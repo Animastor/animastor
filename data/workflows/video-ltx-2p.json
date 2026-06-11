@@ -1,0 +1,668 @@
+{
+  "75": {
+    "inputs": {
+      "filename_prefix": "video/LTX-2",
+      "format": "mp4",
+      "codec": "auto",
+      "video": [
+        "122",
+        0
+      ]
+    },
+    "class_type": "SaveVideo",
+    "_meta": {
+      "title": "Сохранить видео"
+    }
+  },
+  "105": {
+    "inputs": {
+      "image": [
+        "111",
+        0
+      ]
+    },
+    "class_type": "GetImageSize",
+    "_meta": {
+      "title": "Получить размер изображения"
+    }
+  },
+  "107": {
+    "inputs": {
+      "frame_rate": [
+        "129",
+        0
+      ],
+      "positive": [
+        "121",
+        0
+      ],
+      "negative": [
+        "110",
+        0
+      ]
+    },
+    "class_type": "LTXVConditioning",
+    "_meta": {
+      "title": "Кондиционирование LTXV"
+    }
+  },
+  "108": {
+    "inputs": {
+      "width": [
+        "105",
+        0
+      ],
+      "height": [
+        "105",
+        1
+      ],
+      "length": [
+        "112",
+        0
+      ],
+      "batch_size": 1
+    },
+    "class_type": "EmptyLTXVLatentVideo",
+    "_meta": {
+      "title": "Пустой LTXVLatentVideo"
+    }
+  },
+  "109": {
+    "inputs": {
+      "video_latent": [
+        "214",
+        2
+      ],
+      "audio_latent": [
+        "171",
+        0
+      ]
+    },
+    "class_type": "LTXVConcatAVLatent",
+    "_meta": {
+      "title": "LTXVConcatAVLatent"
+    }
+  },
+  "110": {
+    "inputs": {
+      "text": "",
+      "clip": [
+        "227",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "Кодирование текста CLIP (Запрос)"
+    }
+  },
+  "111": {
+    "inputs": {
+      "width": 768,
+      "height": 1024,
+      "batch_size": 1,
+      "color": 0
+    },
+    "class_type": "EmptyImage",
+    "_meta": {
+      "title": "Пустое изображение"
+    }
+  },
+  "112": {
+    "inputs": {
+      "value": 121
+    },
+    "class_type": "PrimitiveInt",
+    "_meta": {
+      "title": "Length"
+    }
+  },
+  "115": {
+    "inputs": {
+      "noise_seed": 604669209278344
+    },
+    "class_type": "RandomNoise",
+    "_meta": {
+      "title": "Случайный шум"
+    }
+  },
+  "116": {
+    "inputs": {
+      "av_latent": [
+        "172",
+        1
+      ]
+    },
+    "class_type": "LTXVSeparateAVLatent",
+    "_meta": {
+      "title": "LTXVSeparateAVLatent"
+    }
+  },
+  "121": {
+    "inputs": {
+      "text": "0-5 секунды: Установочный кадр. Москва, Патриаршие пруды, жаркий весенний вечер. Статичная камера, широкий угол. Золотистый свет заходящего солнца наполняет неподвижный воздух. \nКрупный план дуэта. Берлиоз и Иван встают с лавки. Берлиоз, который в пиджаке с галстуком, продолжает свою речь, его интонации становятся более настойчивыми. Он подаётся корпусом вперёд. Иван, который в рубшке,замирает, глядя на редактора с напряжённым вниманием и растущим сомнением.\n\n24fps, эстетика советского кино 1970-х годов.",
+      "clip": [
+        "227",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "Кодирование текста CLIP (Запрос)"
+    }
+  },
+  "122": {
+    "inputs": {
+      "fps": [
+        "129",
+        0
+      ],
+      "images": [
+        "205",
+        0
+      ]
+    },
+    "class_type": "CreateVideo",
+    "_meta": {
+      "title": "Создать видео"
+    }
+  },
+  "128": {
+    "inputs": {
+      "cfg": 1,
+      "model": [
+        "190",
+        0
+      ],
+      "positive": [
+        "214",
+        0
+      ],
+      "negative": [
+        "214",
+        1
+      ]
+    },
+    "class_type": "CFGGuider",
+    "_meta": {
+      "title": "CFG Гид"
+    }
+  },
+  "129": {
+    "inputs": {
+      "value": 24
+    },
+    "class_type": "PrimitiveFloat",
+    "_meta": {
+      "title": "Frame Rate(float)"
+    }
+  },
+  "130": {
+    "inputs": {
+      "value": 24
+    },
+    "class_type": "PrimitiveInt",
+    "_meta": {
+      "title": "Frame Rate(int)"
+    }
+  },
+  "135": {
+    "inputs": {
+      "sampler_name": "euler_ancestral"
+    },
+    "class_type": "KSamplerSelect",
+    "_meta": {
+      "title": "Выбор KSampler"
+    }
+  },
+  "141": {
+    "inputs": {
+      "unet_name": "LTX-2.3-distilled-Q4_K_M.gguf"
+    },
+    "class_type": "UnetLoaderGGUF",
+    "_meta": {
+      "title": "Unet Loader (GGUF)"
+    }
+  },
+  "149": {
+    "inputs": {
+      "image": "1000084651.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Image 1"
+    }
+  },
+  "152": {
+    "inputs": {
+      "img_compression": 0,
+      "image": [
+        "206",
+        0
+      ]
+    },
+    "class_type": "LTXVPreprocess",
+    "_meta": {
+      "title": "LTXVPreprocess"
+    }
+  },
+  "164": {
+    "inputs": {
+      "sigmas": "1.0, 0.995, 0.99, 0.9875, 0.975, 0.65, 0.28, 0.07, 0.0"
+    },
+    "class_type": "ManualSigmas",
+    "_meta": {
+      "title": "ManualSigmas"
+    }
+  },
+  "171": {
+    "inputs": {
+      "frames_number": [
+        "112",
+        0
+      ],
+      "frame_rate": [
+        "130",
+        0
+      ],
+      "batch_size": 1,
+      "audio_vae": [
+        "226",
+        0
+      ]
+    },
+    "class_type": "LTXVEmptyLatentAudio",
+    "_meta": {
+      "title": "LTXV Пустое латентное аудио"
+    }
+  },
+  "172": {
+    "inputs": {
+      "noise": [
+        "115",
+        0
+      ],
+      "guider": [
+        "128",
+        0
+      ],
+      "sampler": [
+        "135",
+        0
+      ],
+      "sigmas": [
+        "164",
+        0
+      ],
+      "latent_image": [
+        "109",
+        0
+      ]
+    },
+    "class_type": "SamplerCustomAdvanced",
+    "_meta": {
+      "title": "Пользовательский сэмплер (Расширенный)"
+    }
+  },
+  "179": {
+    "inputs": {
+      "image": "1000084650.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Image 2"
+    }
+  },
+  "180": {
+    "inputs": {
+      "img_compression": 0,
+      "image": [
+        "209",
+        0
+      ]
+    },
+    "class_type": "LTXVPreprocess",
+    "_meta": {
+      "title": "LTXVPreprocess"
+    }
+  },
+  "186": {
+    "inputs": {
+      "img_compression": 0,
+      "image": [
+        "210",
+        0
+      ]
+    },
+    "class_type": "LTXVPreprocess",
+    "_meta": {
+      "title": "LTXVPreprocess"
+    }
+  },
+  "187": {
+    "inputs": {
+      "image": "1000084652.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Image 3"
+    }
+  },
+  "188": {
+    "inputs": {
+      "lora_name": "ltx-2-19b-ic-lora-detailer.safetensors",
+      "strength_model": 1,
+      "model": [
+        "141",
+        0
+      ]
+    },
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": {
+      "title": "Загрузчик LoRA (Только модель)"
+    }
+  },
+  "190": {
+    "inputs": {
+      "preview_rate": 8,
+      "model": [
+        "211",
+        0
+      ],
+      "vae": [
+        "191",
+        0
+      ]
+    },
+    "class_type": "LTX2SamplingPreviewOverride",
+    "_meta": {
+      "title": "LTX2 Sampling Preview Override"
+    }
+  },
+  "191": {
+    "inputs": {
+      "vae_name": "taeltx2_3.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Загрузить VAE"
+    }
+  },
+  "199": {
+    "inputs": {
+      "frame_idx": 0,
+      "strength": 0.7,
+      "positive": [
+        "107",
+        0
+      ],
+      "negative": [
+        "107",
+        1
+      ],
+      "vae": [
+        "222",
+        0
+      ],
+      "latent": [
+        "108",
+        0
+      ],
+      "image": [
+        "152",
+        0
+      ]
+    },
+    "class_type": "LTXVAddGuide",
+    "_meta": {
+      "title": "LTXVAddGuide"
+    }
+  },
+  "203": {
+    "inputs": {
+      "positive": [
+        "214",
+        0
+      ],
+      "negative": [
+        "214",
+        1
+      ],
+      "latent": [
+        "116",
+        0
+      ]
+    },
+    "class_type": "LTXVCropGuides",
+    "_meta": {
+      "title": "LTXVCropGuides"
+    }
+  },
+  "204": {
+    "inputs": {
+      "samples": [
+        "116",
+        1
+      ],
+      "audio_vae": [
+        "226",
+        0
+      ]
+    },
+    "class_type": "LTXVAudioVAEDecode",
+    "_meta": {
+      "title": "LTXV Декодирование аудио VAE"
+    }
+  },
+  "205": {
+    "inputs": {
+      "tile_size": 512,
+      "overlap": 64,
+      "temporal_size": 2048,
+      "temporal_overlap": 8,
+      "samples": [
+        "203",
+        2
+      ],
+      "vae": [
+        "222",
+        0
+      ]
+    },
+    "class_type": "VAEDecodeTiled",
+    "_meta": {
+      "title": "Декодировать VAE (плитками)"
+    }
+  },
+  "206": {
+    "inputs": {
+      "resize_type": "scale dimensions",
+      "resize_type.width": [
+        "105",
+        0
+      ],
+      "resize_type.height": [
+        "105",
+        1
+      ],
+      "resize_type.crop": "center",
+      "scale_method": "lanczos",
+      "input": [
+        "149",
+        0
+      ]
+    },
+    "class_type": "ResizeImageMaskNode",
+    "_meta": {
+      "title": "Изменить размер изображения/маски"
+    }
+  },
+  "209": {
+    "inputs": {
+      "resize_type": "scale dimensions",
+      "resize_type.width": [
+        "105",
+        0
+      ],
+      "resize_type.height": [
+        "105",
+        1
+      ],
+      "resize_type.crop": "center",
+      "scale_method": "lanczos",
+      "input": [
+        "179",
+        0
+      ]
+    },
+    "class_type": "ResizeImageMaskNode",
+    "_meta": {
+      "title": "Изменить размер изображения/маски"
+    }
+  },
+  "210": {
+    "inputs": {
+      "resize_type": "scale dimensions",
+      "resize_type.width": [
+        "105",
+        0
+      ],
+      "resize_type.height": [
+        "105",
+        1
+      ],
+      "resize_type.crop": "center",
+      "scale_method": "lanczos",
+      "input": [
+        "187",
+        0
+      ]
+    },
+    "class_type": "ResizeImageMaskNode",
+    "_meta": {
+      "title": "Изменить размер изображения/маски"
+    }
+  },
+  "211": {
+    "inputs": {
+      "chunks": 2,
+      "dim_threshold": 2048,
+      "model": [
+        "188",
+        0
+      ]
+    },
+    "class_type": "LTXVChunkFeedForward",
+    "_meta": {
+      "title": "LTXV Chunk FeedForward"
+    }
+  },
+  "213": {
+    "inputs": {
+      "img_compression": 0,
+      "image": [
+        "215",
+        0
+      ]
+    },
+    "class_type": "LTXVPreprocess",
+    "_meta": {
+      "title": "LTXVPreprocess"
+    }
+  },
+  "214": {
+    "inputs": {
+      "frame_idx": -1,
+      "strength": 0.7,
+      "positive": [
+        "199",
+        0
+      ],
+      "negative": [
+        "199",
+        1
+      ],
+      "vae": [
+        "222",
+        0
+      ],
+      "latent": [
+        "199",
+        2
+      ],
+      "image": [
+        "213",
+        0
+      ]
+    },
+    "class_type": "LTXVAddGuide",
+    "_meta": {
+      "title": "LTXVAddGuide"
+    }
+  },
+  "215": {
+    "inputs": {
+      "resize_type": "scale dimensions",
+      "resize_type.width": [
+        "105",
+        0
+      ],
+      "resize_type.height": [
+        "105",
+        1
+      ],
+      "resize_type.crop": "center",
+      "scale_method": "lanczos",
+      "input": [
+        "216",
+        0
+      ]
+    },
+    "class_type": "ResizeImageMaskNode",
+    "_meta": {
+      "title": "Изменить размер изображения/маски"
+    }
+  },
+  "216": {
+    "inputs": {
+      "image": "1000084661.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Image 3"
+    }
+  },
+  "222": {
+    "inputs": {
+      "vae_name": "ltx-2.3-22b-dev_video_vae.safetensors",
+      "device": "main_device",
+      "weight_dtype": "bf16"
+    },
+    "class_type": "VAELoaderKJ",
+    "_meta": {
+      "title": "VAELoader KJ"
+    }
+  },
+  "226": {
+    "inputs": {
+      "vae_name": "ltx-2.3-22b-dev_audio_vae.safetensors",
+      "device": "main_device",
+      "weight_dtype": "bf16"
+    },
+    "class_type": "VAELoaderKJ",
+    "_meta": {
+      "title": "VAELoader KJ"
+    }
+  },
+  "227": {
+    "inputs": {
+      "clip_name1": "gemma-3-12b-it-qat-UD-Q4_K_XL.gguf",
+      "clip_name2": "ltx-2.3_text_projection_bf16.safetensors",
+      "type": "ltxv"
+    },
+    "class_type": "DualCLIPLoaderGGUF",
+    "_meta": {
+      "title": "DualCLIPLoader (GGUF)"
+    }
+  }
+}

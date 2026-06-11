@@ -1,0 +1,414 @@
+{
+  "chapter": "ch-319c798a",
+  "chapter_title": "Патриаршие пруды",
+  "scenes": [
+    {
+      "scene_id": "sc-5c10f05f",
+      "scene_title": "Патриаршие пруды",
+      "type": "chapter_intro",
+      "style": "soviet_book_page",
+      "audio": {
+        "voice": "narrator",
+        "full_text": "Глава первая. Патриаршие пруды."
+      },
+      "units": [
+        {
+          "id": "iu-6de2005f",
+          "type": "typography",
+          "text": "Глава первая. Патриаршие пруды.",
+          "visual": {
+            "prompt": "full frame soviet literary title page, vertical composition, slightly aged paper texture, minimalist book design, elegant centered cyrillic typography, quiet literary atmosphere, centered chapter title in russian: \"Глава первая. Патриаршие пруды\"",
+            "quality": "sharp typography, clean composition, detailed paper texture",
+            "text_render": true,
+            "negative": ""
+          }
+        }
+      ]
+    },
+    {
+      "scene_id": "sc-63c47a84",
+      "scene_title": "Вечер на Патриарших",
+      "type": "narration",
+      "location": {
+        "id": "patriarch_ponds",
+        "environment": {
+          "time": "warm spring evening",
+          "lighting": "golden sunset light",
+          "weather": "still warm air",
+          "mood": "quiet intellectual atmosphere",
+          "atmosphere": "calm surreal Moscow evening"
+        }
+      },
+      "participants": [
+        "berlioz",
+        "bezdomny"
+      ],
+      "character_anchors": {
+        "berlioz": {
+          "position": "left",
+          "pose": "sitting",
+          "orientation": "right"
+        },
+        "bezdomny": {
+          "position": "right",
+          "pose": "sitting",
+          "orientation": "left"
+        }
+      },
+      "audio": {
+        "voice": "narrator",
+        "full_text": "Был жаркий весенний вечер в Москве. Воздух стоял неподвижно, наполненный золотым светом заходящего солнца. На Патриарших прудах на скамейке сидели двое: редактор Берлиоз и поэт Иван Бездомный. Они вели разговор о религии, негромко, но с заметной убеждённостью."
+      },
+      "units": [
+        {
+          "id": "iu-27550fca",
+          "type": "perception",
+          "text": "Был жаркий весенний вечер в Москве.",
+          "visual": {
+            "shot": "wide",
+            "prompt": "warm golden sunset over patriarch_ponds",
+            "negative": ""
+          }
+        },
+        {
+          "id": "iu-f353a633",
+          "type": "perception",
+          "text": "Воздух стоял неподвижно, наполненный золотым светом заходящего солнца.",
+          "visual": {
+            "shot": "environment",
+            "prompt": "still glowing air and sunlight over patriarch_ponds",
+            "negative": ""
+          }
+        },
+        {
+          "id": "iu-38d6e6ea",
+          "type": "perception",
+          "participants": [
+            "berlioz",
+            "bezdomny"
+          ],
+          "text": "На Патриарших прудах на скамейке сидели двое: редактор Берлиоз и поэт Иван Бездомный.",
+          "visual": {
+            "shot": "medium",
+            "character_binding": true,
+            "prompt": "berlioz sitting on the left and bezdomny sitting on the right on bench at patriarch_ponds",
+            "negative": ""
+          }
+        },
+        {
+          "id": "iu-f1e661d6",
+          "type": "perception",
+          "participants": [
+            "berlioz",
+            "bezdomny"
+          ],
+          "text": "Они вели разговор о религии, негромко, но с заметной убеждённостью.",
+          "visual": {
+            "shot": "medium_close",
+            "character_binding": true,
+            "prompt": "calm conversation of berlioz and bezdomny",
+            "negative": ""
+          }
+        }
+      ]
+    },
+    {
+      "scene_id": "sc-78955ce1",
+      "scene_title": "Появление Воланда",
+      "type": "narration",
+      "location": {
+        "id": "patriarch_ponds",
+        "environment": {
+          "time": "late sunset",
+          "lighting": "cooler fading sunlight",
+          "weather": "strange cool air emerging",
+          "mood": "growing philosophical tension",
+          "atmosphere": "subtle supernatural unease"
+        }
+      },
+      "participants": [
+        "berlioz",
+        "bezdomny",
+        "woland"
+      ],
+      "character_anchors": {
+        "berlioz": {
+          "position": "left",
+          "orientation": "right"
+        },
+        "bezdomny": {
+          "position": "right",
+          "orientation": "left"
+        },
+        "woland": {
+          "position": "background"
+        }
+      },
+      "audio": {
+        "voice": "narrator",
+        "full_text": "Разговор становился всё более напряжённым. Бездомный говорил с жаром, а Берлиоз отвечал спокойно и уверенно. Солнце уже клонилось к закату, и в воздухе появилась странная прохлада. В это время неподалёку возник третий человек."
+      },
+      "units": [
+        {
+          "id": "iu-a74f9f09",
+          "type": "perception",
+          "participants": [
+            "berlioz",
+            "bezdomny"
+          ],
+          "text": "Разговор становился всё более напряжённым.",
+          "visual": {
+            "prompt": "tension rising between berlioz and bezdomny",
+            "negative": ""
+          }
+        },
+        {
+          "id": "iu-4c804090",
+          "type": "perception",
+          "participants": [
+            "berlioz",
+            "bezdomny"
+          ],
+          "text": "Бездомный говорил с жаром, а Берлиоз отвечал спокойно и уверенно.",
+          "visual": {
+            "character_binding": true,
+            "prompt": "contrast between emotional bezdomny and calm berlioz",
+            "negative": ""
+          }
+        },
+        {
+          "id": "iu-009bd7b9",
+          "type": "perception",
+          "text": "Солнце уже клонилось к закату, и в воздухе появилась странная прохлада.",
+          "visual": {
+            "prompt": "sun lowering over patriarch_ponds, cooler tones emerging",
+            "negative": ""
+          }
+        },
+        {
+          "id": "iu-8e4de386",
+          "type": "perception",
+          "participants": [
+            "woland"
+          ],
+          "text": "В это время неподалёку возник третий человек.",
+          "visual": {
+            "character_binding": true,
+            "prompt": "distant mysterious figure of woland",
+            "negative": ""
+          }
+        }
+      ]
+    },
+    {
+      "scene_id": "sc-274b0da4",
+      "scene_title": "Спор",
+      "type": "narration",
+      "location": {
+        "id": "patriarch_ponds",
+        "environment": {
+          "time": "early evening",
+          "lighting": "soft fading daylight",
+          "weather": "heavy still air",
+          "mood": "intellectual conflict",
+          "atmosphere": "emotionally tense evening"
+        }
+      },
+      "participants": [
+        "berlioz",
+        "bezdomny"
+      ],
+      "character_anchors": {
+        "berlioz": {
+          "position": "left"
+        },
+        "bezdomny": {
+          "position": "right"
+        }
+      },
+      "audio": {
+        "voice": "narrator",
+        "full_text": "Спокойный разговор окончательно перешёл в спор."
+      },
+      "units": [
+        {
+          "id": "iu-67a1e2b5",
+          "type": "transition",
+          "participants": [
+            "berlioz",
+            "bezdomny"
+          ],
+          "text": "Спокойный разговор окончательно перешёл в спор.",
+          "visual": {
+            "prompt": "clear emotional transition from calm conversation to conflict between berlioz and bezdomny",
+            "negative": ""
+          }
+        }
+      ]
+    },
+    {
+      "scene_id": "sc-ecda63be",
+      "scene_title": "Доказательства",
+      "type": "dialogue",
+      "location": {
+        "id": "patriarch_ponds",
+        "environment": {
+          "time": "late warm evening",
+          "lighting": "dim sunset glow",
+          "weather": "warm stagnant air",
+          "mood": "heated philosophical argument",
+          "atmosphere": "quiet supernatural observation"
+        }
+      },
+      "participants": [
+        "berlioz",
+        "bezdomny",
+        "woland"
+      ],
+      "character_anchors": {
+        "berlioz": {
+          "position": "left"
+        },
+        "bezdomny": {
+          "position": "right"
+        },
+        "woland": {
+          "position": "background"
+        }
+      },
+      "audio": {
+        "voice": "dialogue",
+        "full_text": "bezdomny: Но ведь Иисуса не существовало!\nberlioz: Вы повторяете распространённое заблуждение.\nbezdomny: Это не заблуждение, а очевидный факт!\nberlioz: Факты требуют доказательств, Иван.\nbezdomny: Да какие ещё доказательства нужны?\nberlioz: История — сложная наука. Нельзя делать выводы сгоряча."
+      },
+      "units": [
+        {
+          "id": "iu-7858cd7e",
+          "type": "dialogue",
+          "participants": [
+            "bezdomny"
+          ],
+          "text": "Но ведь Иисуса не существовало!",
+          "visual": {
+            "shot": "close",
+            "character_binding": true,
+            "prompt": "bezdomny leaning forward emotionally",
+            "negative": ""
+          }
+        },
+        {
+          "id": "iu-cfe9d34c",
+          "type": "performance",
+          "participants": [
+            "bezdomny"
+          ],
+          "text": "",
+          "visual": {
+            "shot": "detail",
+            "character_binding": true,
+            "prompt": "sharp hand gesture of bezdomny during argument",
+            "negative": ""
+          }
+        },
+        {
+          "id": "iu-ac4df088",
+          "type": "dialogue",
+          "participants": [
+            "berlioz"
+          ],
+          "text": "Вы повторяете распространённое заблуждение.",
+          "visual": {
+            "shot": "close",
+            "character_binding": true,
+            "prompt": "calm response of berlioz",
+            "negative": ""
+          }
+        },
+        {
+          "id": "iu-fc1e1761",
+          "type": "dialogue",
+          "participants": [
+            "bezdomny"
+          ],
+          "text": "Это не заблуждение, а очевидный факт!",
+          "visual": {
+            "shot": "close",
+            "character_binding": true,
+            "prompt": "intensified agitation of bezdomny",
+            "negative": ""
+          }
+        },
+        {
+          "id": "iu-32dc7bcd",
+          "type": "performance",
+          "participants": [
+            "berlioz"
+          ],
+          "text": "",
+          "visual": {
+            "shot": "reaction",
+            "character_binding": true,
+            "prompt": "berlioz observing bezdomny calmly",
+            "negative": ""
+          }
+        },
+        {
+          "id": "iu-a580b0f5",
+          "type": "dialogue",
+          "participants": [
+            "berlioz"
+          ],
+          "text": "Факты требуют доказательств, Иван.",
+          "visual": {
+            "shot": "close",
+            "character_binding": true,
+            "prompt": "controlled intellectual tone of berlioz",
+            "negative": ""
+          }
+        },
+        {
+          "id": "iu-f9d35fb2",
+          "type": "dialogue",
+          "participants": [
+            "bezdomny"
+          ],
+          "text": "Да какие ещё доказательства нужны?",
+          "visual": {
+            "shot": "close",
+            "character_binding": true,
+            "prompt": "frustration rising in bezdomny",
+            "negative": ""
+          }
+        },
+        {
+          "id": "iu-b409c20f",
+          "type": "dialogue",
+          "participants": [
+            "berlioz",
+            "woland"
+          ],
+          "text": "История — сложная наука. Нельзя делать выводы сгоряча.",
+          "visual": {
+            "shot": "close",
+            "character_binding": true,
+            "prompt": "final calm statement of berlioz while woland watches from background",
+            "negative": ""
+          }
+        },
+        {
+          "id": "iu-c6b3da9b",
+          "type": "performance",
+          "participants": [
+            "woland"
+          ],
+          "text": "",
+          "visual": {
+            "shot": "reaction",
+            "character_binding": true,
+            "prompt": "silent attentive gaze of woland from background",
+            "negative": ""
+          }
+        }
+      ]
+    }
+  ]
+}

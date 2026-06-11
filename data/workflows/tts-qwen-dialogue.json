@@ -1,0 +1,199 @@
+{
+  "71": {
+    "inputs": {
+      "text": "Это тестовое предложение для согласования голоса.",
+      "voice_instruction": "A calm, warm male voice of a thoughtful Russian writer. \nLow and soft, gentle and reflective, with quiet интеллигент depth. \nSlow, careful speech with natural pauses. \nWhen speaking to Margarita, the voice becomes warmer and more alive, tender and intimate.",
+      "language": "Russian",
+      "output_mode": "Concatenate (Merge)",
+      "seed": 588760720740241,
+      "max_new_tokens": 2048,
+      "temperature": 0.9,
+      "top_p": 1,
+      "top_k": 50,
+      "repetition_penalty": 1.05,
+      "subtalker_temperature": 0.9,
+      "subtalker_top_p": 1,
+      "subtalker_top_k": 50,
+      "model_obj": [
+        "78",
+        0
+      ]
+    },
+    "class_type": "Qwen3TTSVoiceDesign",
+    "_meta": {
+      "title": "Qwen3-TTS Voice Design 🎨"
+    }
+  },
+  "73": {
+    "inputs": {
+      "x_vector_only": false,
+      "ref_text": "Это тестовое предложение для согласования голоса.",
+      "model_obj": [
+        "79",
+        0
+      ],
+      "ref_audio": [
+        "71",
+        0
+      ]
+    },
+    "class_type": "Qwen3TTSVoiceClonePrompt",
+    "_meta": {
+      "title": "Qwen3-TTS Clone Prompt 🧠"
+    }
+  },
+  "74": {
+    "inputs": {
+      "role_name_1": "Master",
+      "role_name_2": "Margo",
+      "role_name_3": "Role3",
+      "prompt_1": [
+        "73",
+        0
+      ],
+      "prompt_2": [
+        "81",
+        0
+      ]
+    },
+    "class_type": "Qwen3TTSRoleBank",
+    "_meta": {
+      "title": "Qwen3-TTS Role Bank 👥"
+    }
+  },
+  "75": {
+    "inputs": {
+      "seed": 516165392319850,
+      "max_new_tokens": 2048,
+      "temperature": 0.9,
+      "top_p": 1,
+      "top_k": 50,
+      "repetition_penalty": 1.05,
+      "subtalker_temperature": 0.9,
+      "subtalker_top_p": 1,
+      "subtalker_top_k": 50,
+      "model_obj": [
+        "79",
+        0
+      ],
+      "texts": [
+        "108",
+        0
+      ],
+      "instructs": [
+        "108",
+        1
+      ],
+      "roles": [
+        "108",
+        2
+      ],
+      "pauses": [
+        "108",
+        3
+      ],
+      "role_bank": [
+        "74",
+        0
+      ]
+    },
+    "class_type": "Qwen3TTSAdvancedDialogue",
+    "_meta": {
+      "title": "Qwen3-TTS Advanced Dialogue Engine 🎭"
+    }
+  },
+  "78": {
+    "inputs": {
+      "model_repo": "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign",
+      "download_source": "ModelScope",
+      "precision": "bf16",
+      "attn_mode": "sdpa",
+      "auto_download": true
+    },
+    "class_type": "Qwen3TTSLoader",
+    "_meta": {
+      "title": "Qwen3-TTS Loader 🚀"
+    }
+  },
+  "79": {
+    "inputs": {
+      "model_repo": "Qwen/Qwen3-TTS-12Hz-1.7B-Base",
+      "download_source": "ModelScope",
+      "precision": "bf16",
+      "attn_mode": "sdpa",
+      "auto_download": true
+    },
+    "class_type": "Qwen3TTSLoader",
+    "_meta": {
+      "title": "Qwen3-TTS Loader 🚀"
+    }
+  },
+  "80": {
+    "inputs": {
+      "text": "Это тестовое предложение для согласования голоса.",
+      "voice_instruction": "A mature Russian woman's voice, warm and expressive. \nMedium-low female voice, confident and elegant. \nClear articulation, emotional depth, calm strength and intelligence.",
+      "language": "Russian",
+      "output_mode": "Concatenate (Merge)",
+      "seed": 304876050292178,
+      "max_new_tokens": 2048,
+      "temperature": 0.9,
+      "top_p": 1,
+      "top_k": 50,
+      "repetition_penalty": 1.05,
+      "subtalker_temperature": 0.9,
+      "subtalker_top_p": 1,
+      "subtalker_top_k": 50,
+      "model_obj": [
+        "78",
+        0
+      ]
+    },
+    "class_type": "Qwen3TTSVoiceDesign",
+    "_meta": {
+      "title": "Qwen3-TTS Voice Design 🎨"
+    }
+  },
+  "81": {
+    "inputs": {
+      "x_vector_only": false,
+      "ref_text": "Это тестовое предложение для согласования голоса.",
+      "model_obj": [
+        "79",
+        0
+      ],
+      "ref_audio": [
+        "80",
+        0
+      ]
+    },
+    "class_type": "Qwen3TTSVoiceClonePrompt",
+    "_meta": {
+      "title": "Qwen3-TTS Clone Prompt 🧠"
+    }
+  },
+  "108": {
+    "inputs": {
+      "script": "Master: Марго… ты пришла. Я думал, мир уже забыл обо мне.\nMargo: Мир может забыть, но я — никогда. Я искала тебя повсюду.\nMaster: У меня ничего не осталось… ни дома, ни имени, даже моей книги.\nMargo: У тебя осталась правда, которую ты написал… и у тебя есть я.\nMaster: Иногда мне кажется, что ночь добрее дня.\nMargo: Пусть тогда ночь сохранит нас. Мы не будем бояться её вместе.\nMaster: Ты говоришь так, будто покой возможен.\nMargo: С тобой… он уже есть.",
+      "default_instruct": ""
+    },
+    "class_type": "Qwen3TTSScriptProcessor",
+    "_meta": {
+      "title": "Qwen3-TTS Smart Script Processor 🧠"
+    }
+  },
+  "1008": {
+    "inputs": {
+      "filename_prefix": "audio/dialogue",
+      "quality": "320k",
+      "audioUI": "",
+      "audio": [
+        "75",
+        0
+      ]
+    },
+    "class_type": "SaveAudioMP3",
+    "_meta": {
+      "title": "Сохранить аудио (MP3)"
+    }
+  }
+}

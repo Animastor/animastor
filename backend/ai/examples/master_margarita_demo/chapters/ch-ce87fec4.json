@@ -1,0 +1,118 @@
+{
+  "chapter": "ch-ce87fec4",
+  "chapter_title": "Пролог",
+  "type": "prologue",
+  "scenes": [
+    {
+      "scene_id": "sc-2a7fee78",
+      "type": "chapter_intro",
+      "style": "title_page",
+      "audio": {
+        "voice": "narrator",
+        "full_text": "Мастер и Маргарита. Михаил Афанасьевич Булгаков."
+      },
+      "units": [
+        {
+          "id": "iu-a8d4f90c",
+          "type": "typography",
+          "text": "Мастер и Маргарита. Михаил Афанасьевич Булгаков.",
+          "visual": {
+            "prompt": "full frame soviet book cover design, vertical composition, cover fills entire screen, minimalist dark soviet aesthetic, elegant typography, cinematic mood, top small cyrillic typography: \"Михаил Афанасьевич Булгаков\", center large cyrillic title: \"Мастер и Маргарита\"",
+            "quality": "highly detailed, sharp typography, clean composition",
+            "text_render": true,
+            "negative": ""
+          }
+        }
+      ]
+    },
+    {
+      "scene_id": "sc-85fda2f1",
+      "scene_title": "Пролог",
+      "type": "chapter_intro",
+      "style": "title_page",
+      "audio": {
+        "voice": "narrator",
+        "full_text": "Пролог."
+      },
+      "units": [
+        {
+          "id": "iu-6ab2e1e0",
+          "type": "typography",
+          "text": "Пролог.",
+          "visual": {
+            "prompt": "full frame cinematic title page, vertical composition, dark minimalist soviet literary aesthetic, elegant typography, subtle cinematic atmosphere, centered large cyrillic title: \"Пролог\"",
+            "quality": "highly detailed, sharp typography, clean composition",
+            "text_render": true,
+            "negative": ""
+          }
+        }
+      ]
+    },
+    {
+      "scene_id": "sc-6c4ea9f6",
+      "scene_title": "Голос автора",
+      "type": "narration",
+      "location": {
+        "id": "symbolic_space",
+        "environment": {
+          "time": "timeless literary evening",
+          "lighting": "soft dim cinematic light",
+          "weather": "still abstract atmosphere",
+          "mood": "philosophical reflection",
+          "atmosphere": "quiet surreal literary space"
+        }
+      },
+      "participants": [
+        "author"
+      ],
+      "audio": {
+        "voice": "author",
+        "full_text": "Рукописи не горят. Но горит время — и в его огне вспыхивают странные истории. В тёплый вечер, среди спокойной воды и ленивого света, иногда появляется то, чему трудно дать имя. И тогда становится ясно: мир устроен гораздо сложнее, чем кажется."
+      },
+      "units": [
+        {
+          "id": "iu-af6b21c6",
+          "type": "talking_head",
+          "participants": [
+            "author"
+          ],
+          "text": "Рукописи не горят.",
+          "visual": {
+            "shot": "close",
+            "focus": "character",
+            "lip_sync": true,
+            "prompt": "author speaking directly to camera",
+            "negative": ""
+          }
+        },
+        {
+          "id": "iu-8eb1d48a",
+          "type": "transition",
+          "text": "Но горит время — и в его огне вспыхивают странные истории.",
+          "visual": {
+            "prompt": "dark abstract fire, symbolic burning time, surreal cinematic transition, glowing embers in darkness",
+            "negative": ""
+          }
+        },
+        {
+          "id": "iu-64a636c5",
+          "type": "perception",
+          "text": "В тёплый вечер, среди спокойной воды и ленивого света, иногда появляется то, чему трудно дать имя.",
+          "visual": {
+            "prompt": "warm evening atmosphere over calm water, soft reflections, subtle cinematic realism, mysterious peaceful mood",
+            "negative": ""
+          }
+        },
+        {
+          "id": "iu-8a836c12",
+          "type": "perception",
+          "text": "И тогда становится ясно: мир устроен гораздо сложнее, чем кажется.",
+          "visual": {
+            "prompt": "subtle surreal tension emerging from darkness, philosophical cinematic atmosphere, quiet unsettling mood",
+            "negative": ""
+          }
+        }
+      ]
+    }
+  ]
+}

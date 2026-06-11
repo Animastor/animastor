@@ -1,0 +1,95 @@
+networks:
+  net:
+    driver: bridge
+
+volumes:
+  pg-data:
+  redis-data:           # Redis persistence — prevents data loss on restart
+
+services:
+
+  postgres:
+    image: postgres:16
+    container_name: animastor-pg
+    restart: unless-stopped
+    networks:
+      - net
+    environment:
+      POSTGRES_DB: animastor
+      POSTGRES_USER: animastor
+      POSTGRES_PASSWORD: animastor_secret_2026
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U animastor -d animastor"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7
+    container_name: animastor-redis
+    restart: unless-stopped
+    networks:
+      - net
+    volumes:
+      - redis-data:/data  # Persistent storage — canonical state survives restart
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  backend:
+    build: ./backend
+    container_name: animastor-backend
+    restart: unless-stopped
+    networks:
+      - net
+    environment:
+      - HUB_URL=http://gpu-hub:5000
+      - PG_HOST=postgres
+      - PG_PORT=5432
+      - PG_DB=animastor
+      - PG_USER=animastor
+      - PG_PASSWORD=animastor_secret_2026
+      - AI_API_BASE_URL=https://api.aicredits.in/v1
+      - OPENROUTER_API_KEY=sk-live-43a077e7c0964272bda8d3024e57be99afee29349d7eda3b9cb180569f72bd0b
+      - OPENROUTER_MODEL=qwen/qwen3-32b
+    volumes:
+      - ./workflow.json:/workflow.json:ro
+      - ./data/output:/data/output
+      - ./data/books:/data/books
+      - ./data/workflows:/data/workflows
+      - ./backend/src:/app/src
+      - ./backend/tests:/app/tests
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  gpu-hub:
+    build: ./gpu-hub
+    container_name: gpu-hub
+    restart: unless-stopped
+    networks:
+      - net
+
+  nginx:
+    image: nginx:alpine
+    container_name: animastor-proxy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    networks:
+      - net
+    volumes:
+      - ./proxy/conf/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+      - /home/sureg/net-disk:/net-disk:ro
+      - /home/sureg/sureg-dev/site:/usr/share/nginx/sureg:ro
+      - ./site:/usr/share/nginx/html:ro
+    depends_on:
+      - backend

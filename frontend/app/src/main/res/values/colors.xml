@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+    ============================================================
+    DARK THEME — тёмный кинозал
+    ============================================================ -->
+    <color name="cinema_background">#12110F</color>
+    <color name="cinema_surface">#1B1816</color>
+    <color name="cinema_surface_variant">#25211E</color>
+    <color name="cinema_surface_dim">#161412</color>
+    <color name="cinema_text_primary">#F2E9DC</color>
+    <color name="cinema_text_secondary">#B8AFA3</color>
+    <color name="cinema_text_disabled">#6B655C</color>
+    <color name="cinema_primary_container">#4A141C</color>
+    <color name="cinema_accent_container">#3A2E1A</color>
+    <color name="cinema_scrim">#800C0A08</color>
+    <color name="cinema_missing_bg">#CC161412</color>
+    <color name="subtitle_background">#BB000000</color>
+    <color name="cinema_outline">#3D3833</color>
+    <color name="cinema_outline_variant">#2D2925</color>
+    <color name="cinema_error_container">#4A1C22</color>
+
+    <!--
+    ============================================================
+    LIGHT THEME — уютный кинозал, светлый зал
+    ============================================================ -->
+    <color name="cinema_light_background">#F0EBE0</color>
+    <color name="cinema_light_surface">#FAF7F0</color>
+    <color name="cinema_light_surface_variant">#F0E9DE</color>
+    <color name="cinema_light_surface_dim">#E6DFD3</color>
+    <color name="cinema_light_text_primary">#2C2418</color>
+    <color name="cinema_light_text_secondary">#6B6258</color>
+    <color name="cinema_light_text_disabled">#A89F94</color>
+    <color name="cinema_light_primary_container">#F5E0E2</color>
+    <color name="cinema_light_accent_container">#F5EDD6</color>
+    <color name="cinema_light_scrim">#80A09880</color>
+    <color name="cinema_light_missing_bg">#CCE6DFD3</color>
+    <color name="cinema_light_outline">#CEC5B8</color>
+    <color name="cinema_light_outline_variant">#E2DACD</color>
+    <color name="cinema_light_error_container">#FCE4E7</color>
+
+    <!--
+    ============================================================
+    SHARED — не меняются между темами
+    ============================================================ -->
+    <color name="cinema_primary">#6E1F2A</color>
+    <color name="cinema_primary_pressed">#8B2E3D</color>
+    <color name="cinema_on_primary">#F2E9DC</color>
+
+    <color name="cinema_accent">#C9A15A</color>
+    <color name="cinema_accent_dim">#A6833E</color>
+    <color name="cinema_on_accent">#12110F</color>
+
+    <color name="cinema_error">#CF6679</color>
+    <color name="cinema_success">#6B9E6B</color>
+
+    <!--
+    ============================================================
+    LEGACY ALIASES
+    ============================================================ -->
+    <color name="animastor_dark">#12110F</color>
+    <color name="animastor_surface">#1B1816</color>
+    <color name="animastor_accent">#6E1F2A</color>
+    <color name="animastor_accent_light">#8B2E3D</color>
+    <color name="animastor_secondary">#C9A15A</color>
+    <color name="animastor_text_primary">#F2E9DC</color>
+    <color name="animastor_text_secondary">#B8AFA3</color>
+    <color name="animastor_error">#CF6679</color>
+    <color name="animastor_light_gray">#2D2925</color>
+    <color name="animastor_text_dark">#12110F</color>
+    <color name="animastor_icon_bg">#25211E</color>
+</resources>

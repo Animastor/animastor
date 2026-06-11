@@ -1,0 +1,27 @@
+{
+  "name": "animastor-backend",
+  "version": "1.0.0",
+  "description": "Animastor backend",
+  "main": "src/backend.cjs",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node src/backend.cjs",
+    "test": "mocha tests/**/*.test.js"
+  },
+  "dependencies": {
+    "adm-zip": "^0.5.10",
+    "cors": "^2.8.5",
+    "express": "^4.18.2",
+    "ioredis": "^5.10.0",
+    "multer": "^1.4.5-lts.1",
+    "music-metadata": "^11.12.3",
+    "pg": "^8.13.0",
+    "sharp": "^0.33.5",
+    "uuid": "^14.0.0",
+    "ws": "^8.14.2"
+  },
+  "devDependencies": {
+    "chai": "^6.2.2",
+    "mocha": "^11.7.5"
+  }
+}

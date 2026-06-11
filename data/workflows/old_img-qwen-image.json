@@ -1,0 +1,139 @@
+{
+  "10": {
+    "inputs": {
+      "unet_name": "qwen-image-2512-Q4_K_M.gguf"
+    },
+    "class_type": "UnetLoaderGGUF",
+    "_meta": {
+      "title": "Unet Loader (GGUF)"
+    }
+  },
+  "11": {
+    "inputs": {
+      "clip_name": "Qwen2.5-VL-7B-Instruct-Q4_K_M.gguf",
+      "type": "qwen_image"
+    },
+    "class_type": "CLIPLoaderGGUF",
+    "_meta": {
+      "title": "CLIPLoader (GGUF)"
+    }
+  },
+  "12": {
+    "inputs": {
+      "vae_name": "qwen_image_vae.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Загрузить VAE"
+    }
+  },
+  "20": {
+    "inputs": {
+      "strength": 1,
+      "model": [
+        "10",
+        0
+      ]
+    },
+    "class_type": "CFGNorm",
+    "_meta": {
+      "title": "CFGNorm"
+    }
+  },
+  "108": {
+    "inputs": {
+      "text": "",
+      "clip": [
+        "11",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "Кодирование текста CLIP (Позитив)"
+    }
+  },
+  "109": {
+    "inputs": {
+      "text": "",
+      "clip": [
+        "11",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "Кодирование текста CLIP (Негатив)"
+    }
+  },
+  "110": {
+    "inputs": {
+      "width": 768,
+      "height": 1024,
+      "batch_size": 1
+    },
+    "class_type": "EmptySD3LatentImage",
+    "_meta": {
+      "title": "Пустой латент"
+    }
+  },
+  "120": {
+    "inputs": {
+      "seed": 0,
+      "steps": 20,
+      "cfg": 7,
+      "sampler_name": "euler",
+      "scheduler": "normal",
+      "denoise": 1,
+      "model": [
+        "20",
+        0
+      ],
+      "positive": [
+        "108",
+        0
+      ],
+      "negative": [
+        "109",
+        0
+      ],
+      "latent_image": [
+        "110",
+        0
+      ]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "KSampler"
+    }
+  },
+  "130": {
+    "inputs": {
+      "samples": [
+        "120",
+        0
+      ],
+      "vae": [
+        "12",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "Декодировать VAE"
+    }
+  },
+  "1008": {
+    "inputs": {
+      "filename_prefix": "ComfyUI",
+      "images": [
+        "130",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Сохранить изображение"
+    }
+  }
+}

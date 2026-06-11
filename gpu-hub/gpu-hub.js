@@ -1,0 +1,414 @@
+// ======================================================
+// GPU HUB - v1.0.0
+// ======================================================
+
+const express = require("express")
+const cors = require("cors")
+
+const redis = new (require("ioredis"))("redis://animastor-redis:6379")
+
+const {
+  PORT = 5000,
+  BACKEND_URL = "http://animastor-backend:3000",
+  GPU_TIMEOUT = 30000
+} = process.env
+
+const app = express()
+app.use(cors())
+app.use(express.json({ limit: "500mb" }))
+
+const gpus = new Map()
+
+// ======================================================
+// CLEANUP (GPU TIMEOUT + REQUEUE)
+// ======================================================
+
+setInterval(async () => {
+
+  const now = Date.now()
+
+  for (const [id, gpu] of gpus.entries()) {
+
+    if (now - gpu.last_seen > GPU_TIMEOUT) {
+
+      console.log("💀 GPU timeout:", id)
+
+      const running = await redis.hgetall("animastor:running")
+
+      for (const job_id in running) {
+
+        try {
+
+          const data = JSON.parse(running[job_id])
+
+          if (data.worker === id) {
+
+            const type = data.job_type || "image"
+
+            console.log("♻️ Requeue:", job_id)
+
+            await redis.lpush(
+              `animastor:queue:${type}`,
+              JSON.stringify({
+                job_id,
+                params: data.params,
+                job_type: type,
+                assets: data.assets || null   // 🔥 СОХРАНЯЕМ ASSETS
+              })
+            )
+
+            await redis.hdel("animastor:running", job_id)
+          }
+
+        } catch (err) {
+          console.error("Requeue error:", err)
+        }
+      }
+
+      gpus.delete(id)
+    }
+  }
+
+}, 10000)
+
+// ======================================================
+// BEACON
+// ======================================================
+
+app.post("/beacon", async (req, res) => {
+
+  const { id, type, gpu, vram } = req.body
+
+  gpus.set(id, {
+    id,
+    type,
+    gpu,
+    vram,
+    last_seen: Date.now()
+  })
+
+  // Also write to Redis for backend worker count panel
+  try {
+    const key = `animastor:worker:heartbeat:${type}:${id}`;
+    const payload = JSON.stringify({ type, worker_id: id, ts: Date.now() });
+    await redis.set(key, payload, 'EX', 30);
+  } catch (_) {}
+
+  res.json({ ok: true })
+})
+
+// ======================================================
+// TASK CREATE
+// ======================================================
+
+app.post("/task", async (req, res) => {
+
+  const { job_id, params, job_type, assets, build_id } = req.body
+
+  const type = job_type || "image"
+
+  console.log("📥 Task:", job_id, type, "build:", build_id)
+
+  if (assets?.image) {
+    console.log(
+      "🖼 asset image size:",
+      Math.round(assets.image.length / 1024),
+      "KB"
+    )
+  }
+  // 🔥 dedup защита
+const isNew = await redis.set(
+  `animastor:job:${job_id}`,
+  1,
+  "NX",
+  "EX",
+  3600
+)
+
+if (!isNew) {
+  console.log("⚠️ Duplicate job ignored:", job_id)
+  return res.json({ ok: true, duplicate: true })
+}
+
+  await redis.lpush(
+    `animastor:queue:${type}`,
+    JSON.stringify({
+      job_id,
+      params,
+      job_type: type,
+      assets: assets || null,
+      build_id: build_id || null   // 🔥 сохраняем build_id для правильной маршрутизации
+    })
+  )
+
+  res.json({ ok: true })
+})
+
+// ======================================================
+// TASK NEXT
+// ======================================================
+
+app.get("/task/next", async (req, res) => {
+
+  const { worker, type } = req.query
+
+  if (!worker) {
+    return res.status(400).json({ error: "worker required" })
+  }
+
+  const gpu = gpus.get(worker)
+  if (!gpu) {
+    return res.status(404).json({ error: "not registered" })
+  }
+
+  gpu.last_seen = Date.now()
+
+  const queueKey = `animastor:queue:${type || "image"}`
+
+  const taskRaw = await redis.rpoplpush(
+  queueKey,
+  "animastor:processing"
+)
+
+  if (!taskRaw) return res.json({ task: null })
+
+  const task = JSON.parse(taskRaw)
+
+  await redis.hset(
+    "animastor:running",
+    task.job_id,
+    JSON.stringify({
+      worker,
+      job_type: task.job_type,
+      params: task.params,
+      assets: task.assets || null,
+      build_id: task.build_id || null,   // 🔥 сохраняем build_id для правильной маршрутизации
+      started_at: Date.now()
+    })
+  )
+
+  console.log(`🚀 ${task.job_id} → ${worker} (${task.job_type}) build:${task.build_id || "none"}`)
+
+  res.json({ task })
+})
+
+// ======================================================
+// RESULT (WITH RETRY)
+// ======================================================
+
+app.post("/task/result", async (req, res) => {
+
+  const { job_id, build_id, result_base64 } = req.body
+
+  if (!job_id || !result_base64) {
+    return res.status(400).json({ error: "invalid" })
+  }
+
+  console.log("📤 Result:", job_id, "build:", build_id || "none")
+
+  await redis.set(
+  `animastor:result:${job_id}`,
+  result_base64,
+  "EX",
+  3600 // 1 час (или больше)
+)
+
+  await redis.hdel("animastor:running", job_id)
+
+  // 🔥 retry отправки в backend
+  let success = false
+
+  for (let i = 0; i < 5; i++) {
+
+  try {
+
+    const res = await fetch(
+      `${BACKEND_URL}/gpu/task/result`,
+      {
+        method: "POST",
+
+        headers: {
+          "Content-Type": "application/json"
+        },
+
+        body: JSON.stringify({
+          job_id,
+          build_id,
+          result_base64
+        })
+      }
+    )
+
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`)
+    }
+
+    success = true
+    break
+
+  } catch (err) {
+
+    console.error(
+      `⚠️ backend retry ${i + 1} failed`,
+      job_id,
+      err.message
+    )
+
+    await new Promise(r =>
+      setTimeout(r, 500)
+    )
+  }
+}
+
+  if (!success) {
+    console.error("❌ backend delivery failed:", job_id)
+  }
+
+  res.json({ ok: true })
+})
+
+// ======================================================
+// ERROR
+// ======================================================
+
+app.post("/task/error", async (req, res) => {
+
+  const { job_id } = req.body
+
+  console.log("❌ Error:", job_id)
+
+  await redis.hdel("animastor:running", job_id)
+
+  res.json({ ok: true })
+})
+
+// ======================================================
+// HEALTH
+// ======================================================
+
+app.get("/health", async (req, res) => {
+
+  const queues = {
+    image: await redis.llen("animastor:queue:image"),
+    audio: await redis.llen("animastor:queue:audio"),
+    video: await redis.llen("animastor:queue:video")
+  }
+
+  const running = await redis.hlen("animastor:running")
+
+  res.json({
+    gpus: gpus.size,
+    queues,
+    running
+  })
+})
+
+app.delete("/queue/clear", async (req, res) => {
+  try {
+    const { book_id } = req.query
+    const queueKeys = [
+      "animastor:queue:image",
+      "animastor:queue:audio",
+      "animastor:queue:video"
+    ]
+    let removed = 0
+
+    if (book_id) {
+      // === FILTERED CLEAR: only tasks for this book ===
+
+      // 1. Clear queue lists (filter by book_id prefix in job_id)
+      for (const key of queueKeys) {
+        const items = await redis.lrange(key, 0, -1)
+        const remaining = []
+        for (const item of items) {
+          try {
+            const parsed = JSON.parse(item)
+            if (parsed.job_id && parsed.job_id.startsWith(book_id + '_')) {
+              removed++
+            } else {
+              remaining.push(item)
+            }
+          } catch (_) { remaining.push(item) }
+        }
+        await redis.del(key)
+        if (remaining.length > 0) {
+          await redis.rpush(key, ...remaining)
+        }
+      }
+
+      // 2. Clear animastor:running entries for this book
+      let cursor = '0'
+      do {
+        const scan = await redis.hscan('animastor:running', cursor, 'COUNT', 500)
+        cursor = scan[0]
+        const entries = scan[1]
+        if (entries && entries.length > 0) {
+          for (let i = 0; i < entries.length; i += 2) {
+            const job_id = entries[i]
+            if (job_id.startsWith(book_id + '_')) {
+              await redis.hdel('animastor:running', job_id)
+              removed++
+            }
+          }
+        }
+      } while (cursor !== '0')
+
+      // 3. Clear result and dedup keys for this book
+      for (const pattern of [`animastor:result:${book_id}_*`, `animastor:job:${book_id}_*`]) {
+        let c = '0'
+        do {
+          const scan = await redis.scan(c, 'MATCH', pattern, 'COUNT', 500)
+          c = scan[0]
+          if (scan[1].length) {
+            await redis.del(scan[1])
+            removed += scan[1].length
+          }
+        } while (c !== '0')
+      }
+
+      console.log(`[QUEUE-CLEAR] Removed ${removed} entries for book ${book_id}`)
+      res.json({ ok: true, message: `Cleared ${removed} tasks for book ${book_id}` })
+
+    } else {
+      // === FULL CLEAR: wipe all queues ===
+
+      for (const key of queueKeys) {
+        const len = await redis.llen(key) || 0
+        await redis.del(key)
+        removed += len
+      }
+
+      // Clear animastor:running
+      const runningLen = await redis.hlen('animastor:running') || 0
+      await redis.del('animastor:running')
+      removed += runningLen
+
+      // Clear all result and dedup keys
+      for (const pattern of ['animastor:result:*', 'animastor:job:*']) {
+        let c = '0'
+        do {
+          const scan = await redis.scan(c, 'MATCH', pattern, 'COUNT', 500)
+          c = scan[0]
+          if (scan[1].length) {
+            await redis.del(scan[1])
+            removed += scan[1].length
+          }
+        } while (c !== '0')
+      }
+
+      console.log(`[QUEUE-CLEAR] Removed ${removed} entries (full clear)`)
+      res.json({ ok: true, message: "All gpu-hub queues cleared", removed })
+    }
+  } catch (err) {
+    console.error("Failed to clear queues:", err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ======================================================
+// START
+// ======================================================
+
+app.listen(PORT, () => {
+  console.log("🚀 GPU HUB v5 FINAL running on", PORT)
+})

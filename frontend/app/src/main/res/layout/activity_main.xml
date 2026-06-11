@@ -1,0 +1,241 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="?attr/colorSurfaceDim">
+
+    <com.google.android.material.appbar.MaterialToolbar
+        android:id="@+id/toolbar"
+        android:layout_width="match_parent"
+        android:layout_height="?attr/actionBarSize"
+        android:background="?attr/colorSurfaceDim"
+        app:titleTextColor="?attr/colorOnSurface"
+        app:subtitleTextColor="?attr/colorOnSurfaceVariant">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/app_name"
+                android:textColor="?attr/colorSecondary"
+                android:textSize="20sp"
+                android:letterSpacing="0.08"
+                android:textStyle="normal"
+                android:fontFamily="sans-serif-medium" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/toolbarGenerateButton"
+                android:layout_width="wrap_content"
+                android:layout_height="40dp"
+                android:layout_marginEnd="4dp"
+                android:text="@string/edit_generate"
+                android:textSize="11sp"
+                android:textAllCaps="true"
+                android:fontFamily="sans-serif-medium"
+                android:visibility="gone"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:minWidth="0dp"
+                android:minHeight="0dp"
+                app:cornerRadius="8dp"
+                app:backgroundTint="@color/btn_generate_bg"
+                app:rippleColor="?attr/colorOnSurface"
+                app:strokeWidth="0dp" />
+
+            <LinearLayout
+                android:id="@+id/workerPanel"
+                android:layout_width="wrap_content"
+                android:layout_height="match_parent"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:visibility="gone">
+
+                <!-- Audio Worker (base layer, always ON) -->
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:layout_marginEnd="6dp">
+
+                    <com.google.android.material.chip.Chip
+                        android:id="@+id/workerAudioLayout"
+                        style="@style/Widget.Animastor.Chip"
+                        android:layout_width="48dp"
+                        android:layout_height="48dp"
+                        android:checked="true"
+                        android:clickable="false"
+                        android:focusable="false"
+                        android:text=""
+                        android:contentDescription="@string/worker_audio_desc"
+                        app:chipIcon="@drawable/ic_volume_up"
+                        app:chipIconVisible="true"
+                        app:checkedIconVisible="false" />
+
+                    <TextView
+                        android:id="@+id/workerAudioCount"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="4dp"
+                        android:textSize="10sp"
+                        android:textColor="?attr/colorOnSurfaceVariant" />
+                </LinearLayout>
+
+                <!-- Image Worker (storyboard layer, toggleable) -->
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:layout_marginEnd="6dp">
+
+                    <com.google.android.material.chip.Chip
+                        android:id="@+id/workerImageLayout"
+                        style="@style/Widget.Animastor.Chip"
+                        android:layout_width="48dp"
+                        android:layout_height="48dp"
+                        android:checked="true"
+                        android:text=""
+                        android:contentDescription="@string/worker_image_desc"
+                        app:chipIcon="@drawable/ic_image"
+                        app:chipIconVisible="true"
+                        app:checkedIconVisible="false" />
+
+                    <TextView
+                        android:id="@+id/workerImageCount"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="4dp"
+                        android:textSize="10sp"
+                        android:textColor="?attr/colorOnSurfaceVariant" />
+                </LinearLayout>
+
+                <!-- Video Worker (full layer, toggleable; requires image) -->
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+
+                    <com.google.android.material.chip.Chip
+                        android:id="@+id/workerVideoLayout"
+                        style="@style/Widget.Animastor.Chip"
+                        android:layout_width="48dp"
+                        android:layout_height="48dp"
+                        android:checked="true"
+                        android:text=""
+                        android:contentDescription="@string/worker_video_desc"
+                        app:chipIcon="@drawable/ic_videocam"
+                        app:chipIconVisible="true"
+                        app:checkedIconVisible="false" />
+
+                    <TextView
+                        android:id="@+id/workerVideoCount"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="4dp"
+                        android:textSize="10sp"
+                        android:textColor="?attr/colorOnSurfaceVariant" />
+                </LinearLayout>
+
+            </LinearLayout>
+
+            <ImageButton
+                android:id="@+id/settings_button"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:layout_marginStart="4dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:src="@drawable/ic_settings"
+                android:contentDescription="@string/settings_title"
+                android:tint="?attr/colorOnSurfaceVariant" />
+
+        </LinearLayout>
+
+    </com.google.android.material.appbar.MaterialToolbar>
+
+    <!-- Golden divider -->
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="@drawable/cinema_glow_divider" />
+
+    <!-- Generation progress bar (hidden when no generation is running) -->
+    <LinearLayout
+        android:id="@+id/generationProgressContainer"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:background="?attr/colorSurfaceDim"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp"
+        android:paddingTop="6dp"
+        android:paddingBottom="6dp"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+
+            <TextView
+                android:id="@+id/generationProgressLabel"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:textSize="11sp"
+                android:textColor="?attr/colorOnSurfaceVariant"
+                android:fontFamily="sans-serif-medium"
+                android:letterSpacing="0.05"
+                android:textAllCaps="true"
+                android:singleLine="true"
+                android:ellipsize="end" />
+
+            <TextView
+                android:id="@+id/generationProgressPercent"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textSize="11sp"
+                android:textColor="?attr/colorOnSurfaceVariant"
+                android:fontFamily="sans-serif-medium"
+                android:singleLine="true" />
+        </LinearLayout>
+
+        <com.google.android.material.progressindicator.LinearProgressIndicator
+            android:id="@+id/generationProgressBar"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            app:trackThickness="3dp"
+            app:trackCornerRadius="2dp"
+            app:indicatorColor="?attr/colorSecondary"
+            app:trackColor="?attr/colorSurfaceVariant" />
+    </LinearLayout>
+
+    <FrameLayout
+        android:id="@+id/nav_host_container"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1" />
+
+    <com.google.android.material.bottomnavigation.BottomNavigationView
+        android:id="@+id/bottom_navigation"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="?attr/colorSurface"
+        app:menu="@menu/bottom_nav"
+        app:itemIconTint="@color/bottom_nav_tint"
+        app:itemTextColor="@color/bottom_nav_tint"
+        app:labelVisibilityMode="labeled" />
+
+</LinearLayout>

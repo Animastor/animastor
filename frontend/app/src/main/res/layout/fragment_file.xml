@@ -1,0 +1,472 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:padding="16dp"
+    android:background="?attr/colorSurfaceDim">
+
+    <!-- Import from Device -->
+    <com.google.android.material.card.MaterialCardView
+        android:id="@+id/importCard"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="0dp"
+        android:clickable="true"
+        android:focusable="true"
+        android:foreground="?attr/selectableItemBackground"
+        app:cardCornerRadius="16dp"
+        app:cardElevation="1dp"
+        app:cardBackgroundColor="?attr/colorSurface"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <androidx.constraintlayout.widget.ConstraintLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:padding="20dp">
+
+            <ImageView
+                android:id="@+id/importIcon"
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:src="@drawable/ic_folder_outline"
+                android:tint="?attr/colorOnSurfaceVariant"
+                app:layout_constraintTop_toTopOf="parent"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintBottom_toBottomOf="parent" />
+
+            <TextView
+                android:id="@+id/importTitle"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="16dp"
+                android:text="@string/file_from_device"
+                android:textColor="?attr/colorOnSurface"
+                android:textSize="16sp"
+                android:fontFamily="sans-serif-medium"
+                app:layout_constraintTop_toTopOf="parent"
+                app:layout_constraintStart_toEndOf="@id/importIcon"
+                app:layout_constraintEnd_toEndOf="parent" />
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="@string/file_from_device_desc"
+                android:textColor="?attr/colorOnSurfaceVariant"
+                android:textSize="13sp"
+                app:layout_constraintTop_toBottomOf="@id/importTitle"
+                app:layout_constraintStart_toEndOf="@id/importIcon"
+                app:layout_constraintEnd_toEndOf="parent" />
+
+        </androidx.constraintlayout.widget.ConstraintLayout>
+
+    </com.google.android.material.card.MaterialCardView>
+
+    <!-- Create New Book -->
+    <com.google.android.material.card.MaterialCardView
+        android:id="@+id/createCard"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="20dp"
+        android:clickable="true"
+        android:focusable="true"
+        android:foreground="?attr/selectableItemBackground"
+        app:cardCornerRadius="16dp"
+        app:cardElevation="1dp"
+        app:cardBackgroundColor="?attr/colorSurface"
+        app:layout_constraintTop_toBottomOf="@id/importCard"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <androidx.constraintlayout.widget.ConstraintLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:padding="20dp">
+
+            <ImageView
+                android:id="@+id/createIcon"
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:src="@drawable/ic_create"
+                android:tint="?attr/colorOnSurfaceVariant"
+                app:layout_constraintTop_toTopOf="parent"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintBottom_toBottomOf="parent" />
+
+            <TextView
+                android:id="@+id/createTitle"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="16dp"
+                android:text="@string/file_create"
+                android:textColor="?attr/colorOnSurface"
+                android:textSize="16sp"
+                android:fontFamily="sans-serif-medium"
+                app:layout_constraintTop_toTopOf="parent"
+                app:layout_constraintStart_toEndOf="@id/createIcon"
+                app:layout_constraintEnd_toEndOf="parent" />
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="@string/file_create_desc"
+                android:textColor="?attr/colorOnSurfaceVariant"
+                android:textSize="13sp"
+                app:layout_constraintTop_toBottomOf="@id/createTitle"
+                app:layout_constraintStart_toEndOf="@id/createIcon"
+                app:layout_constraintEnd_toEndOf="parent" />
+
+        </androidx.constraintlayout.widget.ConstraintLayout>
+
+    </com.google.android.material.card.MaterialCardView>
+
+    <!-- Library -->
+    <com.google.android.material.card.MaterialCardView
+        android:id="@+id/libraryCard"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="20dp"
+        android:clickable="true"
+        android:focusable="true"
+        android:foreground="?attr/selectableItemBackground"
+        app:cardCornerRadius="16dp"
+        app:cardElevation="1dp"
+        app:cardBackgroundColor="?attr/colorSurface"
+        app:layout_constraintTop_toBottomOf="@id/createCard"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <androidx.constraintlayout.widget.ConstraintLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:padding="20dp">
+
+            <ImageView
+                android:id="@+id/libraryIcon"
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:src="@drawable/ic_library"
+                android:tint="?attr/colorOnSurfaceVariant"
+                app:layout_constraintTop_toTopOf="parent"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintBottom_toBottomOf="parent" />
+
+            <TextView
+                android:id="@+id/libraryTitle"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="16dp"
+                android:text="@string/library_button"
+                android:textColor="?attr/colorOnSurface"
+                android:textSize="16sp"
+                android:fontFamily="sans-serif-medium"
+                app:layout_constraintTop_toTopOf="parent"
+                app:layout_constraintStart_toEndOf="@id/libraryIcon"
+                app:layout_constraintEnd_toEndOf="parent" />
+
+            <TextView
+                android:id="@+id/librarySubtitle"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="@string/empty_state"
+                android:textColor="?attr/colorOnSurfaceVariant"
+                android:textSize="13sp"
+                app:layout_constraintTop_toBottomOf="@id/libraryTitle"
+                app:layout_constraintStart_toEndOf="@id/libraryIcon"
+                app:layout_constraintEnd_toEndOf="parent" />
+
+        </androidx.constraintlayout.widget.ConstraintLayout>
+
+    </com.google.android.material.card.MaterialCardView>
+
+    <!-- Download Section Label -->
+    <TextView
+        android:id="@+id/downloadSectionLabel"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="20dp"
+        android:layout_marginStart="4dp"
+        android:text="@string/download_section"
+        android:textColor="?attr/colorOnSurfaceVariant"
+        android:textSize="13sp"
+        android:fontFamily="sans-serif-medium"
+        app:layout_constraintTop_toBottomOf="@id/libraryCard"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
+    <!-- Download Visual Book -->
+    <com.google.android.material.card.MaterialCardView
+        android:id="@+id/downloadBookButton"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:clickable="true"
+        android:focusable="true"
+        android:foreground="?attr/selectableItemBackground"
+        android:enabled="false"
+        app:cardCornerRadius="16dp"
+        app:cardElevation="1dp"
+        app:cardBackgroundColor="?attr/colorSurface"
+        app:layout_constraintTop_toBottomOf="@id/downloadSectionLabel"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <androidx.constraintlayout.widget.ConstraintLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:padding="20dp">
+
+            <ImageView
+                android:id="@+id/downloadBookIcon"
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:src="@drawable/ic_download"
+                android:tint="?attr/colorOnSurfaceVariant"
+                app:layout_constraintTop_toTopOf="parent"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintBottom_toBottomOf="parent" />
+
+            <TextView
+                android:id="@+id/downloadBookTitle"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="16dp"
+                android:text="@string/download_book"
+                android:textColor="?attr/colorOnSurface"
+                android:textSize="16sp"
+                android:fontFamily="sans-serif-medium"
+                app:layout_constraintTop_toTopOf="parent"
+                app:layout_constraintStart_toEndOf="@id/downloadBookIcon"
+                app:layout_constraintEnd_toEndOf="parent" />
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="@string/download_book_desc"
+                android:textColor="?attr/colorOnSurfaceVariant"
+                android:textSize="13sp"
+                app:layout_constraintTop_toBottomOf="@id/downloadBookTitle"
+                app:layout_constraintStart_toEndOf="@id/downloadBookIcon"
+                app:layout_constraintEnd_toEndOf="parent" />
+
+        </androidx.constraintlayout.widget.ConstraintLayout>
+
+    </com.google.android.material.card.MaterialCardView>
+
+    <!-- Download Storyboard -->
+    <com.google.android.material.card.MaterialCardView
+        android:id="@+id/downloadStoryboardButton"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:clickable="true"
+        android:focusable="true"
+        android:foreground="?attr/selectableItemBackground"
+        android:enabled="false"
+        app:cardCornerRadius="16dp"
+        app:cardElevation="1dp"
+        app:cardBackgroundColor="?attr/colorSurface"
+        app:layout_constraintTop_toBottomOf="@id/downloadBookButton"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <androidx.constraintlayout.widget.ConstraintLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:padding="20dp">
+
+            <ImageView
+                android:id="@+id/downloadStoryboardIcon"
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:src="@drawable/ic_image"
+                android:tint="?attr/colorOnSurfaceVariant"
+                app:layout_constraintTop_toTopOf="parent"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintBottom_toBottomOf="parent" />
+
+            <TextView
+                android:id="@+id/downloadStoryboardTitle"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="16dp"
+                android:text="@string/download_storyboard"
+                android:textColor="?attr/colorOnSurface"
+                android:textSize="16sp"
+                android:fontFamily="sans-serif-medium"
+                app:layout_constraintTop_toTopOf="parent"
+                app:layout_constraintStart_toEndOf="@id/downloadStoryboardIcon"
+                app:layout_constraintEnd_toEndOf="parent" />
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="@string/download_storyboard_desc"
+                android:textColor="?attr/colorOnSurfaceVariant"
+                android:textSize="13sp"
+                app:layout_constraintTop_toBottomOf="@id/downloadStoryboardTitle"
+                app:layout_constraintStart_toEndOf="@id/downloadStoryboardIcon"
+                app:layout_constraintEnd_toEndOf="parent" />
+
+        </androidx.constraintlayout.widget.ConstraintLayout>
+
+    </com.google.android.material.card.MaterialCardView>
+
+    <!-- Download Audio -->
+    <com.google.android.material.card.MaterialCardView
+        android:id="@+id/downloadAudioButton"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:clickable="true"
+        android:focusable="true"
+        android:foreground="?attr/selectableItemBackground"
+        android:enabled="false"
+        app:cardCornerRadius="16dp"
+        app:cardElevation="1dp"
+        app:cardBackgroundColor="?attr/colorSurface"
+        app:layout_constraintTop_toBottomOf="@id/downloadStoryboardButton"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <androidx.constraintlayout.widget.ConstraintLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:padding="20dp">
+
+            <ImageView
+                android:id="@+id/downloadAudioIcon"
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:src="@drawable/ic_volume_up"
+                android:tint="?attr/colorOnSurfaceVariant"
+                app:layout_constraintTop_toTopOf="parent"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintBottom_toBottomOf="parent" />
+
+            <TextView
+                android:id="@+id/downloadAudioTitle"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="16dp"
+                android:text="@string/download_audio"
+                android:textColor="?attr/colorOnSurface"
+                android:textSize="16sp"
+                android:fontFamily="sans-serif-medium"
+                app:layout_constraintTop_toTopOf="parent"
+                app:layout_constraintStart_toEndOf="@id/downloadAudioIcon"
+                app:layout_constraintEnd_toEndOf="parent" />
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="@string/download_audio_desc"
+                android:textColor="?attr/colorOnSurfaceVariant"
+                android:textSize="13sp"
+                app:layout_constraintTop_toBottomOf="@id/downloadAudioTitle"
+                app:layout_constraintStart_toEndOf="@id/downloadAudioIcon"
+                app:layout_constraintEnd_toEndOf="parent" />
+
+        </androidx.constraintlayout.widget.ConstraintLayout>
+
+    </com.google.android.material.card.MaterialCardView>
+
+    <!-- Download Video -->
+    <com.google.android.material.card.MaterialCardView
+        android:id="@+id/downloadVideoButton"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:clickable="true"
+        android:focusable="true"
+        android:foreground="?attr/selectableItemBackground"
+        android:enabled="false"
+        app:cardCornerRadius="16dp"
+        app:cardElevation="1dp"
+        app:cardBackgroundColor="?attr/colorSurface"
+        app:layout_constraintTop_toBottomOf="@id/downloadAudioButton"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <androidx.constraintlayout.widget.ConstraintLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:padding="20dp">
+
+            <ImageView
+                android:id="@+id/downloadVideoIcon"
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:src="@drawable/ic_video_outline"
+                android:tint="?attr/colorOnSurfaceVariant"
+                app:layout_constraintTop_toTopOf="parent"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintBottom_toBottomOf="parent" />
+
+            <TextView
+                android:id="@+id/downloadVideoTitle"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="16dp"
+                android:text="@string/download_video"
+                android:textColor="?attr/colorOnSurface"
+                android:textSize="16sp"
+                android:fontFamily="sans-serif-medium"
+                app:layout_constraintTop_toTopOf="parent"
+                app:layout_constraintStart_toEndOf="@id/downloadVideoIcon"
+                app:layout_constraintEnd_toEndOf="parent" />
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="@string/download_video_desc"
+                android:textColor="?attr/colorOnSurfaceVariant"
+                android:textSize="13sp"
+                app:layout_constraintTop_toBottomOf="@id/downloadVideoTitle"
+                app:layout_constraintStart_toEndOf="@id/downloadVideoIcon"
+                app:layout_constraintEnd_toEndOf="parent" />
+
+        </androidx.constraintlayout.widget.ConstraintLayout>
+
+    </com.google.android.material.card.MaterialCardView>
+
+    <!-- Progress bar -->
+    <com.google.android.material.progressindicator.LinearProgressIndicator
+        android:id="@+id/progressBar"
+        android:layout_width="0dp"
+        android:layout_height="4dp"
+        android:layout_marginHorizontal="32dp"
+        android:layout_marginTop="16dp"
+        android:visibility="gone"
+        app:trackColor="?attr/colorOutlineVariant"
+        app:indicatorColor="?attr/colorSecondary"
+        app:layout_constraintTop_toBottomOf="@id/downloadVideoButton"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
+    <TextView
+        android:id="@+id/statusText"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="32dp"
+        android:layout_marginEnd="32dp"
+        android:layout_marginTop="8dp"
+        android:textColor="?attr/colorOnSurfaceVariant"
+        android:textSize="13sp"
+        android:gravity="center"
+        android:visibility="gone"
+        app:layout_constraintTop_toBottomOf="@id/progressBar"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
+</androidx.constraintlayout.widget.ConstraintLayout>

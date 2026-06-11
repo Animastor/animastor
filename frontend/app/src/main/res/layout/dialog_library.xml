@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:padding="8dp"
+    android:background="?attr/colorSurface">
+
+    <com.google.android.material.progressindicator.LinearProgressIndicator
+        android:id="@+id/libraryProgress"
+        android:layout_width="match_parent"
+        android:layout_height="4dp"
+        android:layout_gravity="center_horizontal"
+        android:visibility="gone"
+        app:trackColor="?attr/colorOutlineVariant"
+        app:indicatorColor="?attr/colorSecondary" />
+
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/bookList"
+        android:layout_width="match_parent"
+        android:layout_height="300dp"
+        android:layout_marginTop="8dp" />
+
+    <Button
+        android:id="@+id/selectButton"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:layout_marginTop="8dp"
+        android:text="@string/select_button"
+        style="@style/Widget.Animastor.Button" />
+
+</LinearLayout>

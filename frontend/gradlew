@@ -1,0 +1,2 @@
+#!/usr/bin/env bash
+./gradle-8.12/bin/gradle "$@"

@@ -1,0 +1,29 @@
+{
+  "book_id": "master_margarita_demo",
+  "version": "3.0",
+  "title": "Master and Margarita",
+  "author": "Mikhail Bulgakov",
+  "structure": {
+    "has_prologue": true,
+    "chapters_order": [
+      "ch-ce87fec4.json",
+      "ch-319c798a.json"
+    ]
+  },
+  "defaults": {
+    "narration_voice": "narrator",
+    "language": "ru",
+    "scene": {
+      "auto_anchors": true,
+      "spatial_lock": true
+    },
+    "iu": {
+      "character_binding": true
+    }
+  },
+  "transitions": {
+    "chapter_intro_style": "soviet_book_page",
+    "default_transition": "cut",
+    "soft_transition": "fade"
+  }
+}

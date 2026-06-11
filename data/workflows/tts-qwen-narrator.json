@@ -1,0 +1,62 @@
+{
+  "108": {
+    "inputs": {
+      "text": "",
+
+      "voice_instruction": "A calm, deep male narrator voice with a warm, velvety timbre. The tone is steady and confident, with a gentle gravity that draws the listener in. Speech is unhurried and clear, with natural pauses and smooth intonation. The voice carries a quiet authority and a slightly mysterious atmosphere, as if telling an old, thoughtful story at night. No sharp emotions, no exaggeration — just a composed, reflective delivery that feels intimate and immersive.",
+
+      "language": "Russian",
+      "output_mode": "Concatenate (Merge)",
+
+      "seed": 123456789,
+      "max_new_tokens": 2048,
+      "temperature": 0.9,
+      "top_p": 1,
+      "top_k": 50,
+      "repetition_penalty": 1.05,
+
+      "subtalker_temperature": 0.9,
+      "subtalker_top_p": 1,
+      "subtalker_top_k": 50,
+
+      "model_obj": [
+        "78",
+        0
+      ]
+    },
+    "class_type": "Qwen3TTSVoiceDesign",
+    "_meta": {
+      "title": "Qwen3-TTS Voice Design 🎨"
+    }
+  },
+
+  "78": {
+    "inputs": {
+      "model_repo": "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign",
+      "download_source": "ModelScope",
+      "precision": "bf16",
+      "attn_mode": "sdpa",
+      "auto_download": true
+    },
+    "class_type": "Qwen3TTSLoader",
+    "_meta": {
+      "title": "Qwen3-TTS Loader 🚀"
+    }
+  },
+
+  "1008": {
+    "inputs": {
+      "filename_prefix": "audio/tts",
+      "quality": "320k",
+      "audioUI": "",
+      "audio": [
+        "108",
+        0
+      ]
+    },
+    "class_type": "SaveAudioMP3",
+    "_meta": {
+      "title": "Сохранить аудио (MP3)"
+    }
+  }
+}

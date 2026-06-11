@@ -1,0 +1,306 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="?attr/colorSurface">
+
+    <!-- Position info bar — tappable to open Navigate -->
+    <include
+        android:id="@+id/positionBar"
+        layout="@layout/include_position_bar"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="8dp"
+        android:layout_marginEnd="8dp"
+        android:layout_marginTop="8dp"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
+    <!-- Unit carousel -->
+    <FrameLayout
+        android:id="@+id/carouselContainer"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:minHeight="100dp"
+        android:layout_marginStart="8dp"
+        android:layout_marginEnd="8dp"
+        android:layout_marginTop="8dp"
+        android:clipChildren="false"
+        app:layout_constraintTop_toBottomOf="@id/positionBar"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <LinearLayout
+            android:id="@+id/carouselRow"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:orientation="horizontal"
+            android:gravity="center"
+            android:clipChildren="false">
+
+            <!-- Previous unit thumbnail -->
+            <com.google.android.material.card.MaterialCardView
+                android:id="@+id/prevUnitCard"
+                android:layout_width="0dp"
+                android:layout_height="140dp"
+                android:layout_weight="1"
+                android:layout_marginEnd="4dp"
+                android:clickable="true"
+                android:focusable="true"
+                android:foreground="?attr/selectableItemBackground"
+                app:cardCornerRadius="12dp"
+                app:cardElevation="0dp"
+                app:cardBackgroundColor="?attr/colorSurfaceDim"
+                android:visibility="invisible">
+
+                <ImageView
+                    android:id="@+id/prevUnitImage"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:scaleType="centerCrop"
+                    android:importantForAccessibility="no" />
+            </com.google.android.material.card.MaterialCardView>
+
+            <!-- Current unit (larger) -->
+            <com.google.android.material.card.MaterialCardView
+                android:id="@+id/currentUnitCard"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1.5"
+                android:clickable="true"
+                android:focusable="true"
+                android:foreground="?attr/selectableItemBackground"
+                app:cardCornerRadius="16dp"
+                app:cardElevation="2dp"
+                app:cardBackgroundColor="?attr/colorSurfaceVariant"
+                android:layout_marginHorizontal="4dp">
+
+                <FrameLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent">
+
+                    <ImageView
+                        android:id="@+id/currentUnitImage"
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:scaleType="centerCrop"
+                        android:importantForAccessibility="no" />
+
+                    <TextView
+                        android:id="@+id/currentIuLabel"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_gravity="bottom"
+                        android:gravity="center"
+                        android:background="#66000000"
+                        android:textColor="#FFFFFF"
+                        android:textSize="10sp"
+                        android:paddingVertical="2dp"
+                        android:fontFamily="sans-serif-medium" />
+                </FrameLayout>
+            </com.google.android.material.card.MaterialCardView>
+
+            <!-- Next unit thumbnail -->
+            <com.google.android.material.card.MaterialCardView
+                android:id="@+id/nextUnitCard"
+                android:layout_width="0dp"
+                android:layout_height="140dp"
+                android:layout_weight="1"
+                android:layout_marginStart="4dp"
+                android:clickable="true"
+                android:focusable="true"
+                android:foreground="?attr/selectableItemBackground"
+                app:cardCornerRadius="12dp"
+                app:cardElevation="0dp"
+                app:cardBackgroundColor="?attr/colorSurfaceDim"
+                android:visibility="invisible">
+
+                <ImageView
+                    android:id="@+id/nextUnitImage"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:scaleType="centerCrop"
+                    android:importantForAccessibility="no" />
+            </com.google.android.material.card.MaterialCardView>
+
+        </LinearLayout>
+    </FrameLayout>
+
+    <!-- Audio Timeline Panel -->
+    <com.google.android.material.card.MaterialCardView
+        android:id="@+id/timelinePanel"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="8dp"
+        android:layout_marginEnd="8dp"
+        android:layout_marginTop="8dp"
+        android:visibility="gone"
+        app:cardCornerRadius="12dp"
+        app:cardElevation="1dp"
+        app:cardBackgroundColor="?attr/colorSurfaceVariant"
+        app:layout_constraintTop_toBottomOf="@id/carouselContainer"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:padding="8dp">
+
+            <ImageButton
+                android:id="@+id/timelinePlayButton"
+                android:layout_width="44dp"
+                android:layout_height="44dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:src="@drawable/ic_play"
+                android:contentDescription="@string/timeline_play"
+                android:tint="?attr/colorSecondary"
+                android:scaleType="fitCenter"
+                android:padding="8dp" />
+
+            <com.example.animastor.ui.WaveformView
+                android:id="@+id/timelineWaveform"
+                android:layout_width="0dp"
+                android:layout_height="72dp"
+                android:layout_weight="1"
+                android:layout_marginHorizontal="4dp" />
+
+            <ImageButton
+                android:id="@+id/timelineResetButton"
+                android:layout_width="44dp"
+                android:layout_height="44dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:src="@drawable/ic_reset"
+                android:contentDescription="@string/timeline_reset"
+                android:tint="?attr/colorSecondary"
+                android:scaleType="fitCenter"
+                android:padding="8dp" />
+
+        </LinearLayout>
+    </com.google.android.material.card.MaterialCardView>
+
+    <!-- Section tabs -->
+    <com.google.android.material.tabs.TabLayout
+        android:id="@+id/propertyTabs"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="8dp"
+        android:layout_marginEnd="8dp"
+        android:layout_marginTop="8dp"
+        app:tabMode="fixed"
+        app:tabGravity="fill"
+        app:tabIndicatorHeight="2dp"
+        app:tabIndicatorColor="?attr/colorSecondary"
+        app:tabRippleColor="?attr/colorSecondaryContainer"
+        app:tabTextAppearance="@style/TextAppearance.Material3.LabelLarge"
+        app:tabTextColor="?attr/colorOnSurfaceVariant"
+        app:tabSelectedTextColor="?attr/colorSecondary"
+        app:tabBackground="?attr/colorSurfaceVariant"
+        app:layout_constraintTop_toBottomOf="@id/timelinePanel"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <com.google.android.material.tabs.TabItem
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/edit_scene" />
+
+        <com.google.android.material.tabs.TabItem
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/edit_audio" />
+
+        <com.google.android.material.tabs.TabItem
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/edit_units_tab" />
+    </com.google.android.material.tabs.TabLayout>
+
+    <!-- Content area -->
+    <androidx.core.widget.NestedScrollView
+        android:id="@+id/contentScroll"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:layout_marginStart="8dp"
+        android:layout_marginEnd="8dp"
+        android:layout_marginTop="8dp"
+        android:layout_marginBottom="8dp"
+        android:fillViewport="true"
+        app:layout_constraintTop_toBottomOf="@id/propertyTabs"
+        app:layout_constraintBottom_toTopOf="@id/bottomRow"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <FrameLayout
+            android:id="@+id/contentFrame"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingBottom="8dp" />
+    </androidx.core.widget.NestedScrollView>
+
+    <!-- Bottom row: SAVE -->
+    <LinearLayout
+        android:id="@+id/bottomRow"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginHorizontal="16dp"
+        android:layout_marginBottom="8dp"
+        android:orientation="horizontal"
+        android:gravity="center"
+        app:layout_constraintBottom_toTopOf="@id/dirtyIndicator"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <!-- Save button -->
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/saveButton"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:text="@string/edit_save"
+            android:textSize="14sp"
+            android:fontFamily="sans-serif-medium"
+            app:cornerRadius="14dp"
+            app:icon="@drawable/ic_save"
+            app:iconGravity="textStart"
+            app:iconTint="?attr/colorOnPrimary" />
+
+    </LinearLayout>
+
+    <!-- Dirty indicator -->
+    <TextView
+        android:id="@+id/dirtyIndicator"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="16dp"
+        android:layout_marginEnd="16dp"
+        android:layout_marginBottom="4dp"
+        android:textColor="?attr/colorSecondary"
+        android:textSize="11sp"
+        android:visibility="gone"
+        app:layout_constraintBottom_toTopOf="@id/errorText"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
+    <!-- Error message -->
+    <TextView
+        android:id="@+id/errorText"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="16dp"
+        android:layout_marginEnd="16dp"
+        android:layout_marginBottom="12dp"
+        android:textColor="?attr/colorError"
+        android:textSize="12sp"
+        android:visibility="gone"
+        android:maxLines="3"
+        android:ellipsize="end"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
+</androidx.constraintlayout.widget.ConstraintLayout>

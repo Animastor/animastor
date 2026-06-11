@@ -1,0 +1,226 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Animastor</string>
+
+    <!-- Bottom Navigation -->
+    <string name="tab_file">FILE</string>
+    <string name="tab_edit">EDIT</string>
+    <string name="tab_play">PLAY</string>
+    <string name="tab_navigate">NAVIGATE</string>
+    <string name="tab_ai">AI</string>
+
+    <!-- File Screen -->
+    <string name="file_title">Import Book</string>
+    <string name="file_subtitle">Select a .vbook file to begin</string>
+    <string name="file_from_device">Open</string>
+    <string name="file_from_device_desc">Open a .vbook, .epub, or other file</string>
+    <string name="file_ai_assistant">AI Assistant</string>
+    <string name="file_ai_assistant_desc">Create a book with AI guidance</string>
+    <string name="pick_file">Pick File</string>
+    <string name="start_assistant">Start Assistant</string>
+    <string name="invalid_vbook_format">Invalid book format</string>
+    <string name="upload_failed">Upload failed</string>
+    <string name="file_too_large">File too large</string>
+
+    <!-- File Screen Download -->
+    <string name="download_section">Download:</string>
+    <string name="download_storyboard">Download Storyboard</string>
+    <string name="download_storyboard_desc">Download storyboard images and scene audio</string>
+    <string name="download_audio">Download Audio</string>
+    <string name="download_audio_desc">Export merged audio for the whole book</string>
+    <string name="download_book">Download Visual Book</string>
+    <string name="download_book_desc">Download .vbook</string>
+    <string name="download_video">Download Video</string>
+    <string name="download_video_desc">Export final video with merged scenes</string>
+    <string name="no_book_loaded">No book loaded</string>
+    <string name="download_failed">Download failed</string>
+    <string name="download_saved">Saved: %1$s</string>
+    <string name="export_preparing">Preparing export…</string>
+    <string name="export_preparing_storyboard">Creating storyboard archive…</string>
+    <string name="export_merging_audio">Merging audio tracks…</string>
+    <string name="export_merging_video">Merging scenes and exporting video…</string>
+    <string name="export_saving">Saving to Downloads…</string>
+    <string name="export_progress">%1$d%%</string>
+    <string name="export_saved">Saved</string>
+
+    <!-- File Create -->
+    <string name="file_create">Create</string>
+    <string name="file_create_desc">Create a new visual book with AI</string>
+    <string name="file_status_opening">Opening book…</string>
+    <string name="file_status_generating">Generating scenes…</string>
+    <string name="file_status_checking">Checking media…</string>
+    <string name="ai_creation_welcome">I\'m ready to create a new visual book. What should we name our book? Write or dictate the title and text, and I\'ll turn it into a full visual book.</string>
+
+    <!-- Library -->
+    <string name="library_title">Library</string>
+    <string name="select_book_error">Select a book first</string>
+    <string name="empty_library">No books yet</string>
+
+    <!-- AI Assistant -->
+    <string name="ai_new_chat">New chat</string>
+    <string name="ai_session_list">Chat history</string>
+    <string name="ai_no_sessions">No chats yet</string>
+    <string name="ai_session_delete">Delete</string>
+    <string name="ai_session_delete_confirm">Delete this chat?</string>
+    <string name="ai_input_hint">Type a message…</string>
+    <string name="ai_send">Send</string>
+    <string name="ai_mic">Voice input</string>
+    <string name="ai_welcome">Hello! I\'m Animastor, your intelligent assistant for creating interactive books. How can I help you with your project today?</string>
+    <string name="ai_download_book">Download vbook</string>
+    <string name="ai_placeholder">I understand your request. This feature is coming soon!</string>
+    <string name="ai_error">Error: %1$s</string>
+    <string name="ai_speaking">Listening...</string>
+    <string name="ai_permission_required">Microphone permission required</string>
+
+    <!-- Play Screen -->
+    <string name="play_placeholder">Open a book to start playback</string>
+    <string name="play_generate_hint">Press GENERATE to start</string>
+    <string name="play_generate">GENERATE</string>
+    <string name="play_play">PLAY</string>
+    <string name="play_pause">PAUSE</string>
+    <string name="play_stop">STOP</string>
+    <string name="play_generating">GENERATING…</string>
+    <string name="play_no_workers">Start workers on GPU server</string>
+    <string name="play_downloading">DOWNLOADING…</string>
+    <string name="play_loading">Loading…</string>
+    <string name="play_ready">Ready</string>
+    <string name="play_paused">Paused</string>
+    <string name="play_playing">Playing…</string>
+    <string name="layer_audio">Audio</string>
+    <string name="layer_image">Image</string>
+    <string name="layer_video">Video</string>
+    <string name="layer_subtitles">Subtitles</string>
+    <string name="mode_cinematic">Cinematic</string>
+    <string name="mode_audiobook">Audiobook</string>
+    <string name="mode_slideshow">Slideshow</string>
+    <string name="mode_gallery">Gallery</string>
+
+    <!-- Edit Screen -->
+    <string name="edit_title">Scene Editor</string>
+    <string name="edit_placeholder">Select a scene to edit</string>
+    <string name="edit_scene">Scene</string>
+    <string name="edit_audio">Audio</string>
+    <string name="edit_units">Units</string>
+    <string name="edit_save">Save</string>
+    <string name="edit_saving">Saving…</string>
+    <string name="edit_loading">Loading…</string>
+    <string name="edit_load_failed">Failed to load book data</string>
+    <string name="edit_pacing">Pacing</string>
+    <string name="edit_mood">Mood</string>
+    <string name="edit_prompt">Prompt</string>
+    <string name="edit_duration">Duration</string>
+    <string name="edit_regenerate">Regenerate</string>
+    <string name="edit_generate">GENERATE</string>
+    <string name="edit_generating">GENERATING…</string>
+
+    <!-- Worker Panel as Profile Selector (Phase C) -->
+    <string name="workers_label">workers:</string>
+    <string name="worker_audio_desc">Audio workers (base layer, always on)</string>
+    <string name="worker_image_desc">Image workers (storyboard layer)</string>
+    <string name="worker_video_desc">Video workers (final composition)</string>
+    <string name="worker_label_audio">AUDIO</string>
+    <string name="worker_label_image">STORY</string>
+    <string name="worker_label_video">VIDEO</string>
+    <string name="profile_audio">Audio only</string>
+    <string name="profile_storyboard">Storyboard</string>
+    <string name="profile_video">Video (full)</string>
+    <string name="profile_desc_audio">Audio narration only</string>
+    <string name="profile_desc_storyboard">Audio + storyboard images (no video)</string>
+    <string name="profile_desc_video">Audio + storyboard + video (full)</string>
+
+    <!-- Toolbar Generate Button (Phase C) — always reads "GENERATE" -->
+    <string name="toolbar_generate_create">GENERATE</string>
+    <string name="toolbar_generate_refresh">GENERATE</string>
+    <string name="toolbar_generate_running">GENERATE</string>
+    <string name="toolbar_generate_idle">GENERATE</string>
+    <string name="toolbar_generate_cancel">CANCEL</string>
+
+    <!-- Generate Scope Dialog (Phase C) -->
+    <string name="generate_dialog_title">Generate scope</string>
+    <string name="generate_dialog_subtitle">Profile: %1$s</string>
+    <string name="scope_whole_book">Whole book</string>
+    <string name="scope_current_chapter">Current chapter</string>
+    <string name="scope_current_scene">Current scene</string>
+    <string name="scope_from_current_scene">From this scene onward</string>
+    <string name="dialog_cancel">Cancel</string>
+    <string name="dialog_start">Start</string>
+    <string name="generate_start_failed">Could not start generation: %1$s</string>
+    <string name="generate_no_scene_selected">Open a scene first to target a scope</string>
+
+    <!-- Generation progress -->
+    <string name="progress_label_audio">Audio</string>
+    <string name="progress_label_image">Image</string>
+    <string name="progress_label_video">Video</string>
+    <string name="progress_format">%1$s · %2$d / %3$d scenes</string>
+    <string name="progress_idle">Idle</string>
+
+    <!-- IU not generated -->
+    <string name="iu_not_generated">Not generated</string>
+    <string name="iu_status_label">Image not generated yet</string>
+
+    <!-- Settings -->
+    <string name="settings_title">Settings</string>
+    <string name="settings_api_key">API Key</string>
+    <string name="settings_server">Server URL</string>
+    <string name="settings_quality">Quality</string>
+    <string name="settings_cache">Cache</string>
+    <string name="settings_cache_clear">Clear Cache</string>
+    <string name="settings_cache_clear_confirm">All generated files for the current book will be deleted. You will need to regenerate them. Continue?</string>
+    <string name="settings_cache_cleared">Cache cleared</string>
+    <string name="settings_debug">Debug</string>
+    <string name="settings_theme">Theme</string>
+    <string name="settings_theme_auto">Auto — by time of day</string>
+    <string name="settings_theme_light">Light Cinema</string>
+    <string name="settings_theme_dark">Dark Cinema</string>
+    <string name="settings_language">Language</string>
+    <string name="settings_language_auto">Auto — follow system</string>
+    <string name="settings_language_en">English</string>
+    <string name="settings_language_ru">Русский</string>
+
+    <string name="settings_accept">Accept</string>
+    <string name="action_back">Back</string>
+    <string name="play_fullscreen">Fullscreen</string>
+
+    <!-- Legacy (keep for compatibility) -->
+    <string name="placeholder_default">Scene image</string>
+    <string name="library_button">Library</string>
+    <string name="file_button">Open</string>
+    <string name="select_button">Select</string>
+    <string name="loading_book_status">Loading selected book…</string>
+    <string name="generating_status">Generating scene…</string>
+    <string name="book_selected_status">Book selected: %1$s</string>
+    <string name="ready_status">Ready for %1$s (Scene ID: %2$s)</string>
+    <string name="empty_state">Choose a visual book from the library.</string>
+    <string name="empty_state_book_loaded">Book loaded. Press GENERATE to start.</string>
+
+    <!-- Navigate Screen -->
+    <string name="navigate_title">Book Structure</string>
+    <string name="navigate_empty">No book loaded</string>
+    <string name="navigate_chapter">Chapter</string>
+    <string name="navigate_scene">Scene</string>
+    <string name="navigate_unit">Unit</string>
+    <string name="navigate_units_count">%1$d units</string>
+    <string name="navigate_current_position">Current: %1$s / %2$s / %3$s</string>
+    <string name="navigate_no_position">No position selected</string>
+
+    <!-- AI Tab -->
+    <string name="ai_context_bar">%s</string>
+    <string name="ai_no_context">No book loaded</string>
+    <string name="ai_mode_conversation">Chat</string>
+    <string name="ai_mode_edit">Edit</string>
+    <string name="ai_mode_director">Director</string>
+    <string name="ai_mode_extraction">Extract</string>
+    <string name="ai_mode_validation">Validate</string>
+    <string name="ai_mode_switch">Mode: %1$s — %2$s</string>
+    <string name="ai_welcome_context">You have opened book \"%1$s\".\nCurrent position: %2$s / %3$s / %4$s\n\nWhat mode shall we work in? Chat, Edit, Director, Extract, or Validate?</string>
+    <string name="ai_context_changed">Now analyzing: %1$s / %2$s / Unit %3$d</string>
+
+    <!-- Edit Unit Carousel -->
+    <string name="edit_unit_label">Unit %1$d/%2$d</string>
+    <string name="edit_units_tab">Units</string>
+
+    <!-- Audio Timeline -->
+    <string name="timeline_play">Play scene audio</string>
+    <string name="timeline_stop">Stop playback</string>
+    <string name="timeline_reset">Reset timings</string>
+</resources>

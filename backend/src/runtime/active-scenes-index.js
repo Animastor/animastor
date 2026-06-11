@@ -1,0 +1,170 @@
+// ======================================================
+// ACTIVE SCENES INDEX
+// ======================================================
+// Redis Set tracking active scenes (_audio_pending through video_generating).
+// Enables efficient iteration without SCAN operations.
+
+const state = require('../state');
+
+const ACTIVE_SCENES_KEY = 'animastor:active-scenes';
+
+/**
+ * Get state key prefix.
+ */
+const SCENE_STATE_KEY_PREFIX = state.SCENE_STATE_KEY_PREFIX;
+
+/**
+ * Check if a scene is in the active index.
+ */
+async function isActive(redis, bookId, chapterId, sceneId) {
+    const sceneKey = `${bookId}:${chapterId}:${sceneId}`;
+    return await redis.sismember(ACTIVE_SCENES_KEY, sceneKey);
+}
+
+/**
+ * Get all active scene keys.
+ */
+async function getAllActiveSceneKeys(redis) {
+    return await redis.smembers(ACTIVE_SCENES_KEY);
+}
+
+/**
+ * Get count of active scenes.
+ */
+async function getActiveCount(redis) {
+    return await redis.scard(ACTIVE_SCENES_KEY);
+}
+
+/**
+ * Add scene to active index when it enters generating/pending state.
+ */
+async function addActiveScene(redis, bookId, chapterId, sceneId) {
+    const sceneKey = `${bookId}:${chapterId}:${sceneId}`;
+    const added = await redis.sadd(ACTIVE_SCENES_KEY, sceneKey);
+    return { added: added > 0, sceneKey };
+}
+
+/**
+ * Remove scene from active index when it completes or fails.
+ */
+async function removeActiveScene(redis, bookId, chapterId, sceneId) {
+    const sceneKey = `${bookId}:${chapterId}:${sceneId}`;
+    const removed = await redis.srem(ACTIVE_SCENES_KEY, sceneKey);
+    return { removed: removed > 0, sceneKey };
+}
+
+/**
+ * Parse scene key back to components.
+ */
+function parseSceneKey(sceneKey) {
+    const parts = sceneKey.split(':');
+    if (parts.length !== 3) {
+        return null;
+    }
+    return {
+        bookId: parts[0],
+        chapterId: parts[1],
+        sceneId: parts[2]
+    };
+}
+
+/**
+ * Get detailed info about all active scenes.
+ */
+async function getActiveScenesDetail(redis) {
+    const activeKeys = await getAllActiveSceneKeys(redis);
+    const scenes = [];
+
+    for (const key of activeKeys) {
+        const parsed = parseSceneKey(key);
+        if (!parsed) continue;
+
+        const stateKey = `${runtimeScheduler.SCENE_STATE_KEY_PREFIX}:${parsed.bookId}:${parsed.chapterId}:${parsed.sceneId}`;
+        const stateRaw = await redis.get(stateKey);
+        const stateData = stateRaw ? JSON.parse(stateRaw) : null;
+
+        scenes.push({
+            ...parsed,
+            currentState: stateData?.state || 'unknown',
+            updatedAt: stateData?.updated_at || null,
+            buildId: stateData?.build_id || null
+        });
+    }
+
+    return scenes;
+}
+
+/**
+ * Find scenes in a specific state.
+ */
+async function findScenesByState(redis, targetState) {
+    const allActive = await getActiveScenesDetail(redis);
+    return allActive.filter(s => s.currentState === targetState);
+}
+
+/**
+ * Check if scene is currently generating (audio, image, or video).
+ */
+async function isGenerating(redis, bookId, chapterId, sceneId) {
+    const stateKey = `${state.SCENE_STATE_KEY_PREFIX}:${bookId}:${chapterId}:${sceneId}`;
+    const stateRaw = await redis.get(stateKey);
+    
+    if (!stateRaw) return false;
+    
+    const stateData = JSON.parse(stateRaw);
+    return stateData.state.includes('_generating');
+}
+
+/**
+ * Check if scene is in pending state (waiting to start).
+ */
+async function isPending(redis, bookId, chapterId, sceneId) {
+    const stateKey = `${state.SCENE_STATE_KEY_PREFIX}:${bookId}:${chapterId}:${sceneId}`;
+    const stateRaw = await redis.get(stateKey);
+    
+    if (!stateRaw) return false;
+    
+    const stateData = JSON.parse(stateRaw);
+    const stateName = stateData.state;
+    return stateName === state.SceneState.AUDIO_PENDING ||
+           stateName === state.SceneState.IMAGE_PENDING ||
+           stateName === state.SceneState.VIDEO_PENDING;
+}
+
+/**
+ * Check if scene is in terminal state (complete or failed).
+ */
+async function isTerminal(redis, bookId, chapterId, sceneId) {
+    const stateKey = `${state.SCENE_STATE_KEY_PREFIX}:${bookId}:${chapterId}:${sceneId}`;
+    const stateRaw = await redis.get(stateKey);
+    
+    if (!stateRaw) return false;
+    
+    const stateData = JSON.parse(stateRaw);
+    const stateName = stateData.state;
+    return stateName === state.SceneState.VIDEO_READY ||
+           stateName === state.SceneState.FAILED;
+}
+
+// ======================================================
+// EXPORTS
+// ======================================================
+
+module.exports = {
+    ACTIVE_SCENES_KEY,
+    isActive,
+    getAllActiveSceneKeys,
+    getActiveCount,
+    addActiveScene,
+    removeActiveScene,
+    parseSceneKey,
+    getActiveScenesDetail,
+    findScenesByState,
+    isGenerating,
+    isPending,
+    isTerminal,
+    
+    // Re-exports
+    SceneState: state.SceneState,
+    SCENE_STATE_KEY_PREFIX: state.SCENE_STATE_KEY_PREFIX
+};

@@ -1,0 +1,101 @@
+# ========== Dependencies ==========
+node_modules/
+
+# ========== Build output ==========
+build/
+dist/
+target/
+out/
+
+# ========== Gradle / Android ==========
+.gradle/
+*.apk
+*.apk.idsig
+*.aab
+*.jar
+gradle-*/
+gradlew.bat
+local.properties
+
+# ========== Worker runtime ==========
+worker/models/
+worker/logs/
+logs/
+*.log
+
+# ========== Generated data / User data ==========
+data/output/
+data/books/
+backups/
+
+# ========== Environment / Secrets ==========
+.env
+.env.local
+.env.*.local
+*.env
+
+# ========== Tooling / AI assistants ==========
+.opencode/
+.qwen/
+
+# ========== Docker volumes / Empty mount points ==========
+workflow.json/
+
+# ========== Python ==========
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+.eggs/
+.venv/
+venv/
+
+# ========== Archives / Temporary ==========
+*.tar.gz
+*.tar.xz
+*.tar.bz2
+*.zip
+*.7z
+*.rar
+
+# ========== Coverage / Testing ==========
+coverage/
+.nyc_output/
+*.lcov
+*.coverage
+
+# ========== IDE / Editor ==========
+.idea/
+.vscode/
+*.iml
+.project
+.classpath
+.settings/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+*.sublime-*
+
+# ========== Database files ==========
+*.db
+*.sqlite
+*.sqlite3
+
+# ========== Runtime files ==========
+*.pid
+*.seed
+*.pid.lock
+
+# ========== Docker overrides ==========
+docker-compose.override.yml
+
+# ========== Certs / TLS ==========
+certs/
+*.pem
+*.key
+*.crt
+
+# ========== Other tools ==========
+.aider*

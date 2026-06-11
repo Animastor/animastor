@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android">
+    <item
+        android:id="@+id/fileFragment"
+        android:icon="@drawable/ic_file"
+        android:title="@string/tab_file" />
+    <item
+        android:id="@+id/editFragment"
+        android:icon="@drawable/ic_edit"
+        android:title="@string/tab_edit" />
+    <item
+        android:id="@+id/playFragment"
+        android:icon="@drawable/ic_play"
+        android:title="@string/tab_play" />
+    <item
+        android:id="@+id/navigateFragment"
+        android:icon="@drawable/ic_map"
+        android:title="@string/tab_navigate" />
+    <item
+        android:id="@+id/aiFragment"
+        android:icon="@drawable/ic_sparkle_outline"
+        android:title="@string/tab_ai" />
+</menu>
