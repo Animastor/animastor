@@ -74,11 +74,14 @@ async function markFirstWindowCompleted(bookId, sceneCount) {
     );
     if (existing.rows.length > 0) {
         // Already exists — just mark completed
-        return updateSession(existing.rows[0].id, { status: 'completed', progress_msg: `First window: ${sceneCount} scenes` });
+        const updated = await updateSession(existing.rows[0].id, { status: 'completed', progress_msg: `First window: ${sceneCount} scenes` });
+        // Set book status as in_progress on the first window only
+        await setBookCompletionStatus(bookId, 'in_progress');
+        return updated;
     }
     const result = await query(
-        `INSERT INTO book_generation_sessions (book_id, window_index, window_size, status, progress_msg)
-         VALUES ($1, 0, $2, 'completed', $3) RETURNING *`,
+        `INSERT INTO book_generation_sessions (book_id, window_index, window_size, status, progress_msg, completion_status)
+         VALUES ($1, 0, $2, 'completed', $3, 'in_progress') RETURNING *`,
         [bookId, 3, `First window: ${sceneCount} scenes`]
     );
     return result.rows[0];
@@ -137,6 +140,38 @@ async function getSessionsForBook(bookId) {
     return result.rows;
 }
 
+/**
+ * Set the overall completion status for a book's generation.
+ * Sets on the most recent session only (book-level concept stored on last window).
+ */
+async function setBookCompletionStatus(bookId, status) {
+    if (!['in_progress', 'completed'].includes(status)) {
+        throw new Error(`Invalid completion status: ${status}`);
+    }
+    await query(
+        `UPDATE book_generation_sessions SET completion_status = $1
+         WHERE book_id = $2 AND window_index = (
+             SELECT MAX(window_index) FROM book_generation_sessions WHERE book_id = $2
+         )`,
+        [status, bookId]
+    );
+}
+
+/**
+ * Get the completion status for a book.
+ * Returns 'completed', 'in_progress', or null (no sessions).
+ * Reads from the most recent session only.
+ */
+async function getBookCompletionStatus(bookId) {
+    const result = await query(
+        `SELECT completion_status FROM book_generation_sessions
+         WHERE book_id = $1 AND completion_status IS NOT NULL
+         ORDER BY window_index DESC LIMIT 1`,
+        [bookId]
+    );
+    return result.rows[0]?.completion_status || null;
+}
+
 module.exports = {
     createSession,
     updateSession,
@@ -148,4 +183,6 @@ module.exports = {
     getNextWindowIndex,
     getGenerationState,
     getSessionsForBook,
+    setBookCompletionStatus,
+    getBookCompletionStatus,
 };

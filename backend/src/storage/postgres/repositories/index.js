@@ -8,4 +8,5 @@ module.exports = {
     chatSession: require('./chat-session-repo'),
     events: require('./events-repo'),
     genSession: require('./gen-session-repo'),
+    bookSource: require('./book-source-repo'),
 };

@@ -84,10 +84,6 @@ module.exports = {
         adaptationController: lazyRequire('./adaptation-controller'),
         governanceStability: lazyRequire('./governance-stability'),
         governanceHealth: lazyRequire('./governance-health'),
-        stateGraph: lazyRequire('./state-graph/state-graph'),
-        transitionRules: lazyRequire('./state-graph/transition-rules'),
-        stage: lazyRequire('./state-graph/stage-definitions'),
-        subsystems: lazyRequire('./subsystems/index'),
         executionSemantics: lazyRequire('./execution-semantics'),
         experimental: {
             policySimulator: lazyRequire('./policy-simulator'),

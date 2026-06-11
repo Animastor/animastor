@@ -139,6 +139,7 @@ class GenerateViewModel(
     var currentIuSequence: List<IuImageItem>? = null
 
     private val preloadJobs = mutableMapOf<String, Job>()
+    private var preloadJob: Job? = null
     private var backgroundWindowJob: Job? = null
     private var backgroundWindowStart = -1
     private var backgroundGenPollJob: Job? = null
@@ -632,7 +633,46 @@ class GenerateViewModel(
                 val bookId = importRes.book_id
                 persistBookId(bookId)
                 persistBuildId("")
-                Log.i(TAG, "importTxtFromFile: draft created $bookId")
+                Log.i(TAG, "importTxtFromFile: draft created $bookId (dedup=${importRes.dedup})")
+
+                // If dedup detected (same TXT already imported), skip bootstrap
+                // and load existing chunks directly from Redis
+                if (importRes.dedup) {
+                    msgs.add("✓ Книга уже была импортирована")
+                    msgs.add("✓ Загружаем готовые данные...")
+                    _uiState.update { it.copy(importProgressMessages = msgs.toList()) }
+
+                    val allChunks = runCatching { _repository.getAllChunks(bookId) }.getOrNull()
+                    if (allChunks != null) {
+                        chunkQueue.clear()
+                        chunkQueue.addAll(allChunks.chunk_ids)
+                        for (cid in chunkQueue) {
+                            runCatching {
+                                _repository.getChunkStoryboard(cid).let { sb ->
+                                    chunkPositions[cid] = Pair(sb.chapter_id, sb.scene_id)
+                                }
+                            }
+                        }
+                        val firstId = chunkQueue.firstOrNull()
+                        val firstPos = firstId?.let { chunkPositions[it] }
+                        if (firstPos != null) {
+                            positionManager.navigateTo(chapterId = firstPos.first, sceneId = firstPos.second, unitIndex = 0)
+                            currentChapterId = firstPos.first
+                            currentSceneId = firstPos.second
+                        }
+                        Log.i(TAG, "importTxtFromFile: dedup — loaded ${chunkQueue.size} chunks")
+                    }
+
+                    msgs.add("✓ Загружено ${chunkQueue.size} сцен")
+                    _uiState.update { it.copy(
+                        importProgressMessages = msgs.toList(),
+                        importStage = ImportStage.DONE,
+                        importProgress = 1f,
+                        phase = if (chunkQueue.isNotEmpty()) PlayerPhase.SCENE_READY else PlayerPhase.IDLE,
+                        chunkIds = chunkQueue.toList(),
+                    )}
+                    return@launch
+                }
 
                 // Technical statuses — quick, shown on File screen before AI switch
                 msgs.add("✓ File selected")
@@ -999,6 +1039,26 @@ class GenerateViewModel(
     private val _activeGeneration = MutableStateFlow<ActiveGeneration?>(null)
     val activeGeneration: StateFlow<ActiveGeneration?> = _activeGeneration.asStateFlow()
 
+    // Background window generation progress (0.0–1.0 or null when idle)
+    private val _backgroundGenProgress = MutableStateFlow<Float?>(null)
+    val backgroundGenProgress: StateFlow<Float?> = _backgroundGenProgress.asStateFlow()
+
+    // Background window generation status message
+    private val _backgroundGenStatus = MutableStateFlow<String?>(null)
+    val backgroundGenStatus: StateFlow<String?> = _backgroundGenStatus.asStateFlow()
+
+    // Guard: which (chapterId, sceneId) we already triggered for
+    private var _lastTriggeredScene: Pair<String?, String?>? = null
+    // Guard: prevent duplicate triggerNextWindow calls from overlapping code paths
+    private var _isTriggeringWindow = false
+
+    fun resetBackgroundGenState() {
+        _isTriggeringWindow = false
+        _backgroundGenProgress.value = null
+        _backgroundGenStatus.value = null
+        _lastTriggeredScene = null
+    }
+
     fun markUnsavedChanges() {
         hasUnsavedChanges = true
     }
@@ -1242,8 +1302,13 @@ class GenerateViewModel(
     }
 
     /**
-     * Check if the user has reached the last unit of the last scene in the current window.
-     * If so, trigger background generation of the next window.
+     * Check if the user is near the end of the current window (last 3 units of
+     * the last scene). If so, trigger background generation of the next window
+     * to prepare it in advance.
+     *
+     * Uses a guard (_lastTriggeredScene) to prevent duplicate triggers for
+     * the same (chapterId, sceneId) pair.
+     *
      * Called from all fragments after user-initiated position changes.
      *
      * @param sceneUnitCount total number of units in the current scene
@@ -1257,10 +1322,20 @@ class GenerateViewModel(
     ) {
         if (bookId.isBlank()) return
         if (sceneUnitCount <= 0) return
-        if (unitIndex < sceneUnitCount - 1) return  // not the last unit
-        if (currentIndex < chunkQueue.size - 1) return  // not the last scene
+        if (currentIndex < chunkQueue.size - 1) return  // not the last scene in queue
 
-        Log.i(TAG, "checkEndOfWindowAndTrigger: end of window reached at $chapterId/$sceneId unit=$unitIndex/$sceneUnitCount")
+        // Fire when within last 3 units of the last scene
+        if (unitIndex < sceneUnitCount - 3) return  // not close enough to end
+
+        // Guard: prevent re-triggering for same scene
+        val triggerKey = chapterId to sceneId
+        if (_lastTriggeredScene == triggerKey) {
+            Log.d(TAG, "checkEndOfWindowAndTrigger: already triggered for $chapterId/$sceneId, skipping")
+            return
+        }
+        _lastTriggeredScene = triggerKey
+
+        Log.i(TAG, "checkEndOfWindowAndTrigger: near end of window at $chapterId/$sceneId unit=$unitIndex/$sceneUnitCount, triggering prefetch")
         triggerNextWindow(chapterId, sceneId, unitId)
     }
 
@@ -1271,7 +1346,17 @@ class GenerateViewModel(
      * We poll for completion and silently add new scenes to chunkQueue.
      */
     private fun triggerNextWindow(chapterId: String? = null, sceneId: String? = null, unitId: String? = null) {
-        if (bookId.isBlank()) return
+        if (_isTriggeringWindow) {
+            Log.d(TAG, "triggerNextWindow: already in progress, skipping")
+            return
+        }
+        _isTriggeringWindow = true
+        _backgroundGenStatus.value = "⟳ Starting background generation..."
+        _backgroundGenProgress.value = 0f
+        if (bookId.isBlank()) {
+            _isTriggeringWindow = false
+            return
+        }
         Log.i(TAG, "triggerNextWindow: $bookId ch=$chapterId sc=$sceneId")
 
         // Cancel any existing polling
@@ -1285,21 +1370,26 @@ class GenerateViewModel(
 
             if (response == null) {
                 Log.w(TAG, "triggerNextWindow: API call failed")
+                _backgroundGenStatus.value = "✗ API call failed"
                 return@launch
             }
 
             if (response.all_done) {
                 Log.i(TAG, "triggerNextWindow: all text processed")
+                _backgroundGenStatus.value = "✓ All done, no more windows"
+                _backgroundGenProgress.value = 1f
                 return@launch
             }
 
             if (!response.triggered && !response.queued) {
                 Log.w(TAG, "triggerNextWindow: not triggered: ${response.error}")
+                _backgroundGenStatus.value = "✗ ${response.error}"
                 return@launch
             }
 
             val sessionId = response.session_id
             Log.i(TAG, "triggerNextWindow: session=$sessionId, window=${response.window_index}")
+            _backgroundGenStatus.value = "⟳ Window ${(response.window_index ?: 0) + 1} starting..."
 
             // 2. Poll for generation completion silently
             var pollCount = 0
@@ -1308,6 +1398,23 @@ class GenerateViewModel(
                 delay(5000)
                 pollCount++
 
+                // Poll agent-status for detailed progress (scene count based)
+                runCatching {
+                    val agentStatus = _repository.getAgentStatus(bookId)
+                    if (agentStatus.active) {
+                        val windowLabel = agentStatus.window_index?.let { "window ${it + 1}" } ?: "current window"
+                        if (agentStatus.created_scenes != null && agentStatus.total_scenes != null && agentStatus.total_scenes > 0) {
+                            val pct = agentStatus.created_scenes.toFloat() / agentStatus.total_scenes.toFloat()
+                            _backgroundGenProgress.value = pct.coerceIn(0f, 1f)
+                            _backgroundGenStatus.value = agentStatus.progress_msg
+                                ?: "⟳ $windowLabel: ${agentStatus.created_scenes}/${agentStatus.total_scenes} scenes"
+                        } else {
+                            _backgroundGenStatus.value = agentStatus.progress_msg
+                                ?: "⟳ $windowLabel generating..."
+                        }
+                    }
+                }
+
                 val state = runCatching {
                     _repository.getGenerationState(bookId)
                 }.getOrNull() ?: continue
@@ -1315,8 +1422,11 @@ class GenerateViewModel(
                 if (state.status == "completed" || state.status == "failed") {
                     if (state.status == "failed") {
                         Log.w(TAG, "triggerNextWindow: generation failed: ${state.error}")
+                        _backgroundGenStatus.value = "✗ Generation failed: ${state.error}"
                     } else {
                         Log.i(TAG, "triggerNextWindow: window ${state.last_window_index} completed")
+                        _backgroundGenProgress.value = 1f
+                        _backgroundGenStatus.value = "✓ Window ${state.last_window_index} completed"
                     }
 
                     // 3. Refresh book data to get new scenes
@@ -1335,6 +1445,10 @@ class GenerateViewModel(
                             Log.i(TAG, "triggerNextWindow: added $addedCount new chapters to queue")
                         }
                     }
+
+                    // Reset guards so next window can be triggered
+                    _isTriggeringWindow = false
+                    _lastTriggeredScene = null
                     return@launch
                 }
 
@@ -1345,11 +1459,14 @@ class GenerateViewModel(
             }
 
             Log.w(TAG, "triggerNextWindow: polling timed out")
+            _backgroundGenStatus.value = "✗ Generation timed out"
+            _isTriggeringWindow = false
         }
     }
 
     private fun maybeStartNextWindowInBackground() {
-        // Trigger lazy parse for next window if the current window is nearly consumed.
+        // Trigger lazy parse for TXT books or trigger-next-window for vbook
+        // when the current window is nearly consumed (≤ 2 scenes remaining).
         // This prepares the next batch of scenes in the background.
         if (bookId.isBlank()) return
 
@@ -1373,7 +1490,10 @@ class GenerateViewModel(
                         }
                     }
                 }.onFailure { e ->
-                    Log.w(TAG, "maybeStartNextWindowInBackground: ${e.message}")
+                    // getLazyBookStatus failed → not a lazy book (e.g. vbook)
+                    // or state is BOOTSTRAPPED → trigger AI/gen window instead
+                    Log.d(TAG, "maybeStartNextWindowInBackground: not lazy, falling back to triggerNextWindow: ${e.message}")
+                    triggerNextWindow(currentChapterId, currentSceneId, null)
                 }
             }
         }
@@ -1439,24 +1559,41 @@ class GenerateViewModel(
 
     private fun preloadAhead(includeCurrent: Boolean = false) {
         val start = if (includeCurrent) 0 else 1
-        for (offset in start..PRELOAD_AHEAD) {
-            val idx = currentIndex + offset
-            if (idx >= chunkQueue.size) break
-            val id = chunkQueue[idx]
-            if (preloadCache.containsKey(id) || preloadJobs.containsKey(id)) continue
-            Log.i(TAG, "preloading scene $offset ahead: $id")
-            val job = viewModelScope.launch {
+
+        // Cancel previous preload to prevent duplicate work
+        preloadJob?.cancel()
+
+        // Single sequential preload coroutine: one scene at a time.
+        // Each scene's audio + IU images are fetched completely before the next begins.
+        // This prevents network races on cold cache (old code fired N parallel requests).
+        val job = viewModelScope.launch {
+            for (offset in start..PRELOAD_AHEAD) {
+                val idx = currentIndex + offset
+                if (idx >= chunkQueue.size) break
+                val id = chunkQueue[idx]
+                if (preloadCache.containsKey(id)) continue
+
+                Log.i(TAG, "preloading scene $offset ahead: $id")
                 val data = runCatching { fetchSceneData(id) }.getOrNull()
                 if (data != null) {
                     preloadCache[id] = data
                     _preloadCompleted.tryEmit(id)
-                    Log.i(TAG, "preloaded scene: $id")
+                    Log.i(TAG, "preloaded scene: $id — ${data.iuSequence.size} IUs")
                 } else {
-                    Log.w(TAG, "preload failed for scene: $id")
+                    Log.w(TAG, "preload failed for scene: $id — will load on demand")
                 }
-                preloadJobs.remove(id)
             }
-            preloadJobs[id] = job
+        }
+
+        preloadJob = job
+
+        // Key the job by the first scene being preloaded, so playNext()
+        // can wait for it via preloadJobs[scene0]?.join()
+        // Clear stale entries first to avoid unbounded map growth.
+        preloadJobs.clear()
+        val firstId = chunkQueue.getOrNull(currentIndex + start)
+        if (firstId != null && !preloadCache.containsKey(firstId)) {
+            preloadJobs[firstId] = job
         }
     }
 
@@ -1722,6 +1859,7 @@ class GenerateViewModel(
         lastProcessedChunkSequence = 0
         needsRotationResume = false
         pendingExternalSeek = null
+        resetBackgroundGenState()
         _uiState.update { it.copy(phase = PlayerPhase.SCENE_READY) }
     }
 

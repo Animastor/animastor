@@ -26,11 +26,16 @@
 - vbook не сохраняет связь с исходным TXT
 - `book_generation_sessions` привязаны к `bookId`, который не восстанавливается
 
-### Решение
-- Таблица `book_source` в PG: `file_hash → book_id`
-- При импорте TXT: SHA256 файла → проверка существующей книги
-- При открытии vbook: восстановление bookId изнутри файла + проверка PG
-- Если книга не закончена → continue; если закончена → новая
+### Статус: ✅ Частично реализовано (2026-06)
+- **Таблица `book_source`** в PG: `file_hash → book_id` с репозиторием
+- **Дедупликация TXT**: SHA256 при импорте, проверка `book_source`, возврат существующего bookId
+- **source_file_hash** в manifest.json при создании книги (lazy-book.js)
+- **vbook download**: включает source.txt, manifest с book_id + source_file_hash
+- **load-vbook**: регистрирует source_file_hash в book_source
+- **completion_status**: отслеживание in_progress/completed в книжных сессиях
+
+### Остаётся
+- vbook с другого сервера: PG-сессии не переносятся (cross-server sharing)
 
 ---
 
@@ -46,11 +51,12 @@
 - PlayFragment: ✅ триггер есть (через `checkEndOfWindowAndTrigger`)
 - EditFragment: ✅ триггер есть (через `checkEndOfWindowAndTrigger`)
 - NavigateFragment: ✅ триггер есть (через `checkEndOfWindowAndTrigger`)
-- Бэкенд: `trigger-next-window` эндпоинт есть, но только для TXT
+- Бэкенд: `trigger-next-window` эндпоинт есть, только для TXT
 
-### Решение
-- Для vbook: триггер не нужен — книга уже полностью загружена
-- Для TXT: триггер работает, но нужна привязка к book_source (см. п.1)
+### Статус: ✅ Работает
+- trigger-next-window разрешён для BOOTSTRAPPED + ACTIVE состояний
+- vbook должен быть импортирован как TXT для оконной генерации
+- Если vbook скачан с того же сервера → source.txt в архиве → генерация продолжается
 
 ---
 
@@ -62,10 +68,15 @@
 2. Состояние оконной генерации (book_generation_sessions)
 3. bookId (может измениться при повторной загрузке)
 
-### Решение
-- В manifest.json vbook хранить: `original_book_id`, `source_file_hash`
-- При открытии vbook: восстановить bookId, проверить PG-сессии
-- Если есть исходный TXT на сервере → продолжать генерацию окон
+### Статус: ✅ Частично решено
+- manifest.json содержит `book_id` + `source_file_hash` + source.txt
+- vbook download включает ВСЕ файлы книги, включая source.txt
+- load-vbook восстанавливает bookId из manifest
+- При наличии source.txt → trigger-next-window работает
+
+### Остаётся
+- cross-server: vbook не переносит PG-сессии
+- Нужен механизм: при открытии vbook без source.txt → предложить загрузить TXT
 
 ---
 
@@ -74,25 +85,16 @@
 ### Проблема
 Повторный импорт того же TXT-файла создаёт новую книгу с нуля.
 
-### Решение
-1. Вычислить SHA256 содержимого файла
-2. Таблица `book_source`:
-   ```sql
-   CREATE TABLE book_source (
-       file_hash    TEXT PRIMARY KEY,  -- SHA256
-       book_id      TEXT NOT NULL,
-       source_type  TEXT NOT NULL,     -- 'txt_file', 'ai_text'
-       filename     TEXT,
-       created_at   BIGINT NOT NULL
-   );
-   ```
-3. При `POST /import-txt`:
-   - Проверить `book_source` по хешу
-   - Если книга существует и не закончена → вернуть существующий `bookId`
-   - Если книга закончена → создать новую
-4. При `GET /book/{bookId}/status`:
-   - Показать информацию о source-связи
-   - Показать `parsedChapters / totalChapters`
+### Статус: ✅ Реализовано (2026-06)
+- Таблица `book_source` в PG: `file_hash → book_id`
+- repo: `book-source-repo.js` (registerSource, findByHash, findCandidateBySize, deleteByBookId)
+- При `import-txt`:
+  1. Быстрая проверка по имени + размеру
+  2. При совпадении → SHA256 верификация
+  3. Если книга существует → возвращаем `book_id` + `dedup: true`
+  4. Если книга удалена → чистим ссылку, создаём новую
+- При `createDraftBook`: `source_file_hash` в manifest.json
+- `source_file_hash` используется и при load-vbook для связи
 
 ---
 
@@ -129,7 +131,6 @@
 - `adapterPosition` deprecated в NavigateFragment → мигрировать на `bindingAdapterPosition`
 
 ### Backend
-- `psql` не установлен в контейнере → сложно диагностировать PG вручную
 - `gen-session-repo.js` требует полного тестирования
 - `startup-resume.js` — не было теста на реальном сценарии перезапуска
 
@@ -138,3 +139,16 @@
   - Нет throttling (может вызвать API несколько раз при быстрой навигации)
   - Backend дедуплицирует через PG, но лишние HTTP-вызовы — это шум
   - `triggerNextWindow` теперь `private` — правильная инкапсуляция
+
+---
+
+## 8. Статус книги (completion)
+
+### Статус: ✅ Реализовано (2026-06)
+- `completion_status` колонка в `book_generation_sessions`
+- `setBookCompletionStatus(bookId, 'in_progress'|'completed')`
+- `getBookCompletionStatus(bookId)` — читает с последнего окна
+- Bootstrap: сразу после первого окна → `in_progress`
+- Background gen: после обработки всего текста → `completed`
+- `/api/v1/book/{bookId}/status` возвращает `completion_status`
+- Файл: `backend/src/config/book-architecture.js` (константы)

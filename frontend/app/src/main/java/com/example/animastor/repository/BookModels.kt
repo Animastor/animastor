@@ -150,7 +150,9 @@ data class ImportTxtResponse(
     val state: String? = null,
     val characters: Int = 0,
     val locations: Int = 0,
-    val scenes: Int = 0
+    val scenes: Int = 0,
+    val dedup: Boolean = false,
+    val message: String? = null
 )
 
 data class BookStatus(

@@ -34,9 +34,10 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
     }
     private val positionManager get() = viewModel.positionManager
 
+    private lateinit var sceneAudioPlayer: SceneAudioPlayer
     private var currentPlayer: MediaPlayer? = null
-    private var currentFile: File? = null
     private var nextPlayer: MediaPlayer? = null
+    private var currentFile: File? = null
     private var nextFile: File? = null
     private var currentVideoFile: File? = null
     private var videoPlayer: MediaPlayer? = null
@@ -105,6 +106,41 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         }
     }
 
+    private fun observeBackgroundGenProgress() {
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                launch {
+                    viewModel.backgroundGenProgress.collect { progress ->
+                        val b = binding ?: return@collect
+                        if (progress != null) {
+                            b.progressBar.isIndeterminate = false
+                            b.progressBar.setProgressCompat((progress * 100).toInt(), true)
+                            b.progressBar.visibility = View.VISIBLE
+                        } else if (b.progressBar.isIndeterminate) {
+                            // Leave indeterminate progress bar visible if loading
+                            // Only hide if not in loading phase
+                            val phase = viewModel.uiState.value.phase
+                            if (phase != PlayerPhase.LOADING_BOOK &&
+                                phase != PlayerPhase.DOWNLOADING &&
+                                phase != PlayerPhase.GENERATING) {
+                                b.progressBar.visibility = View.GONE
+                            }
+                        }
+                    }
+                }
+                launch {
+                    viewModel.backgroundGenStatus.collect { status ->
+                        val b = binding ?: return@collect
+                        if (status != null && viewModel.backgroundGenProgress.value != null) {
+                            b.statusText.text = status
+                            b.statusText.visibility = View.VISIBLE
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     private fun showCurtains() {
         if (!isAdded || isInCurtainsState) return
         Log.i(TAG, "showCurtains")
@@ -158,6 +194,11 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
             Toast.makeText(requireContext(), "BIND ERR: ${e.message}", Toast.LENGTH_LONG).show()
             return
         }
+        sceneAudioPlayer = SceneAudioPlayer(
+            cacheDir = requireContext().cacheDir,
+            getChunkId = { viewModel.getCurrentChunkId() },
+            repository = viewModel.repository
+        )
         binding?.progressBar?.isIndeterminate = true
 
         binding?.playButton?.setOnClickListener {
@@ -183,8 +224,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
 
         binding?.layerAudio?.setOnCheckedChangeListener { _, isChecked ->
             currentVolume = if (isChecked) 1.0f else 0.0f
-            currentPlayer?.setVolume(currentVolume, currentVolume)
-            nextPlayer?.setVolume(currentVolume, currentVolume)
+            sceneAudioPlayer.currentVolume = currentVolume
             videoPlayer?.setVolume(currentVolume, currentVolume)
             binding?.layerAudio?.chipIcon = if (isChecked)
                 resources.getDrawable(R.drawable.ic_volume_up, null)
@@ -233,6 +273,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         observeExternalNavigation()
         observeManualUnitChange()
         observePreloadCompletion()
+        observeBackgroundGenProgress()
         checkPendingExternalSeek()
 
         if (currentIuSequence == null && currentPlayer != null) {

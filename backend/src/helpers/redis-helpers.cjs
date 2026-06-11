@@ -1,0 +1,267 @@
+// ======================================================
+// ANIMASTOR BACKEND — REDIS CACHE HELPERS
+// ======================================================
+// Redis chunk metadata helpers extracted from backend.cjs.
+// Usage:
+//   const { saveChunk, getChunk, getAllChunks } = require('./helpers/redis-helpers.cjs')(redis);
+
+const path = require('path');
+const fs = require('fs');
+const state = require('../state');
+const config = require('../config/runtime-config');
+
+module.exports = function(redis) {
+    const pad = (n) => String(n).padStart(4, '0');
+    const log = (...args) => console.log(new Date().toISOString(), ...args);
+
+    async function saveChunk(id, data) {
+        const chunkForRedis = {
+            build_id: data.build_id,
+            book_id: data.book_id,
+            scene_order: data.scene_order,
+            chapter_id: data.chapter_id,
+            scene_id: data.scene_id,
+            chunk_index: data.chunk_index,
+            expected_chunk_count: data.expected_chunk_count || null,
+            runtime_type: data.runtime_type || 'scene',
+            scene_type: data.scene_type || 'narration',
+            image: !!data.image,
+            audio: !!data.audio,
+            video: !!data.video,
+            video_status: data.video_status || 'pending',
+            audio_status: data.audio_status || 'pending',
+            padded_text: !!data.padded_text,
+        };
+        await redis.set(`animastor:chunk:${id}`, JSON.stringify(chunkForRedis));
+        await redis.sadd(`animastor:chunks:${data.book_id}`, id);
+    }
+
+    async function getChunk(id) {
+        const raw = await redis.get(`animastor:chunk:${id}`);
+        if (!raw) return null;
+        const c = JSON.parse(raw);
+        if (c.video === undefined) c.video = false;
+        if (!c.video_status) c.video_status = 'pending';
+        if (!c.audio_status) c.audio_status = 'pending';
+        c.chunk_index = pad(parseInt(c.chunk_index) || 0);
+        c.chapter_id = c.chapter_id || null;
+        c.scene_id = c.scene_id || null;
+        c.runtime_type = c.runtime_type || 'scene';
+        c.scene_type = c.scene_type || 'narration';
+        return c;
+    }
+
+    async function getAllChunks(bookId) {
+        const ids = await redis.smembers(`animastor:chunks:${bookId}`);
+        if (ids.length <= 1) return ids;
+        try {
+            const keys = ids.map(id => `animastor:chunk:${id}`);
+            const raw = await redis.mget(keys);
+            const pairs = ids.map((id, i) => {
+                const data = raw[i] ? JSON.parse(raw[i]) : {};
+                return { id, scene_order: data.scene_order || 0, chunk_index: data.chunk_index || '0001' };
+            });
+            pairs.sort((a, b) => a.scene_order - b.scene_order || a.chunk_index.localeCompare(b.chunk_index));
+            return pairs.map(p => p.id);
+        } catch (e) {
+            log('getAllChunks sort failed, falling back:', e.message);
+            return ids.sort((a, b) => a.localeCompare(b));
+        }
+    }
+
+    async function getBookWindowStatus(bookId) {
+        const book = require('../book');
+        const bookData = book.loadBook(bookId);
+        const scenes = bookData ? book.collectScenes(bookData) : [];
+        const totalScenes = scenes.length;
+        const nextIdx = parseInt(await redis.get(config.BOOK_SCENE_NEXT(bookId)) || '0', 10);
+        const startedScenes = Math.min(nextIdx, totalScenes);
+        let readyScenes = 0;
+
+        for (const s of scenes) {
+            const raw = await redis.get(`${state.SCENE_STATE_KEY_PREFIX}:${bookId}:${s.chapter_id}:${s.scene_id}`);
+            if (!raw) continue;
+            try {
+                const data = JSON.parse(raw);
+                const st = data.state;
+                if (st === state.SceneState.IMAGE_READY ||
+                    st === state.SceneState.VIDEO_PENDING ||
+                    st === state.SceneState.VIDEO_GENERATING ||
+                    st === state.SceneState.VIDEO_READY) {
+                    readyScenes++;
+                }
+            } catch (_) {}
+        }
+
+        return {
+            total_scenes: totalScenes,
+            started_scenes: startedScenes,
+            ready_scenes: readyScenes,
+            next_idx: nextIdx,
+        };
+    }
+
+    async function detectAvailableMode(redis, bookId) {
+        const workerHealth = require('../runtime/worker-health');
+        const hasAudio = await workerHealth.isAvailable(redis, 'audio');
+        const hasImage = await workerHealth.isAvailable(redis, 'image');
+        const hasVideo = await workerHealth.isAvailable(redis, 'video');
+
+        let mode;
+        if (!hasAudio) mode = 'need_audio_worker';
+        else if (!hasImage) mode = 'need_image_worker';
+        else if (hasAudio && hasImage && hasVideo) mode = 'full';
+        else mode = 'storyboard';
+
+        await redis.set(`animastor:mode:${bookId}`, mode);
+        log('Mode detected:', mode, '(aw=' + hasAudio + ' iw=' + hasImage + ' vw=' + hasVideo + ')');
+        return mode;
+    }
+
+    async function saveIURegistry(iuId, buildId) {
+        await redis.set(
+            `animastor:iu:${iuId}`,
+            JSON.stringify({ build_id: buildId })
+        );
+    }
+
+    async function recoverChunksFromDisk(bookId, buildId, scenes) {
+        const dir = path.join(config.OUTPUT_DIR, buildId);
+        if (!fs.existsSync(dir)) {
+            log('Recovery: output dir not found:', dir);
+            return [];
+        }
+
+        const recovered = [];
+        for (const scene of scenes) {
+            const chapterId = scene.chapter_id;
+            const sceneId = scene.scene_id;
+            const audioPath = path.join(dir, `${bookId}_${chapterId}_${sceneId}.mp3`);
+            if (!fs.existsSync(audioPath)) continue;
+
+            const scenePrefix = `${bookId}_${chapterId}_${sceneId}_iu`;
+            let dirFiles = [];
+            try { dirFiles = fs.readdirSync(dir); } catch (_) {}
+            const hasIuImages = dirFiles.some(f => f.startsWith(scenePrefix) && f.endsWith('.png'));
+            const videoPath = path.join(dir, `${bookId}_${chapterId}_${sceneId}.mp4`);
+            const hasVideo = fs.existsSync(videoPath);
+
+            const chunkId = `${bookId}_${chapterId}_${sceneId}_0001`;
+
+            const sceneStateKey = `${state.SCENE_STATE_KEY_PREFIX}:${bookId}:${chapterId}:${sceneId}`;
+            try {
+                await redis.del(sceneStateKey);
+                await state.setSceneStateWithBuildId(redis, bookId, chapterId, sceneId, state.SceneState.VIDEO_READY, buildId);
+            } catch (err) {
+                console.warn('Recovery: failed to reset scene state for', chapterId + '/' + sceneId + ':', err.message);
+            }
+
+            await saveChunk(chunkId, {
+                build_id: buildId,
+                book_id: bookId,
+                scene_order: scene.scene_order || 0,
+                chapter_id: chapterId,
+                scene_id: sceneId,
+                chunk_index: '0001',
+                expected_chunk_count: 1,
+                scene_type: scene.scene_type || 'narration',
+                audio: true,
+                audio_status: 'ready',
+                image: hasIuImages,
+                video: hasVideo,
+                video_status: hasVideo ? 'ready' : 'pending',
+            });
+
+            recovered.push(chunkId);
+            log('Recovered chunk:', chunkId, '(audio=true image=' + hasIuImages + ' video=' + hasVideo + ')');
+        }
+
+        return recovered;
+    }
+
+    async function recoverAllBooksFromDisk() {
+        log('[RECOVERY] Scanning ' + config.OUTPUT_DIR + ' for existing build outputs to restore Redis...');
+
+        const outputDir = config.OUTPUT_DIR;
+        if (!fs.existsSync(outputDir)) {
+            log('[RECOVERY] Output directory not found:', outputDir);
+            return;
+        }
+
+        const buildDirs = fs.readdirSync(outputDir).filter(name => {
+            const fullPath = path.join(outputDir, name);
+            try { return fs.statSync(fullPath).isDirectory(); } catch (_) { return false; }
+        });
+
+        if (buildDirs.length === 0) {
+            log('[RECOVERY] No build directories found in', outputDir);
+            return;
+        }
+
+        let totalRecovered = 0;
+        for (const buildId of buildDirs) {
+            const buildPath = path.join(outputDir, buildId);
+            log('[RECOVERY] Scanning build:', buildId);
+
+            let files = [];
+            try { files = fs.readdirSync(buildPath); } catch (_) { continue; }
+            const sceneFiles = files.filter(f => f.endsWith('.mp3') && f.includes('_ch') && f.includes('_sc'));
+
+            const bookScenes = {};
+            for (const f of sceneFiles) {
+                const base = f.replace(/\.mp3$/, '');
+                const parts = base.split('_');
+                if (parts.length < 3) continue;
+                const sceneId = parts.pop();
+                const chapterId = parts.pop();
+                if (!chapterId.startsWith('ch') || !sceneId.startsWith('sc')) continue;
+                const bookId = parts.join('_');
+                if (!bookScenes[bookId]) bookScenes[bookId] = new Set();
+                bookScenes[bookId].add(chapterId + ':' + sceneId);
+            }
+
+            if (Object.keys(bookScenes).length === 0) {
+                log('[RECOVERY] No recoverable scenes in', buildId + ', skipping');
+                continue;
+            }
+
+            for (const [bookId, sceneSet] of Object.entries(bookScenes)) {
+                const existingIds = await getAllChunks(bookId);
+                if (existingIds.length > 0) {
+                    log('[RECOVERY] Chunks already exist in Redis for', bookId + ', skipping');
+                    continue;
+                }
+
+                const book = require('../book');
+                const bookData = book.loadBook(bookId);
+                const allScenes = bookData ? book.collectScenes(bookData) : [];
+                const scenes = allScenes.filter(s => sceneSet.has(s.chapter_id + ':' + s.scene_id));
+                if (scenes.length === 0) continue;
+
+                log('[RECOVERY] Recovering', scenes.length, 'scenes for book', bookId, 'in build', buildId);
+                const recovered = await recoverChunksFromDisk(bookId, buildId, scenes);
+                if (recovered.length > 0) {
+                    totalRecovered += recovered.length;
+                    await redis.set(config.BOOK_SCENE_TOTAL(bookId), scenes.length);
+                    await redis.set(config.BOOK_SCENE_NEXT(bookId), recovered.length);
+                    log('[RECOVERY] Recovered', recovered.length + '/' + scenes.length, 'chunks for', bookId);
+                } else {
+                    log('[RECOVERY] No files on disk for', bookId, 'in build', buildId);
+                }
+            }
+        }
+
+        log('[RECOVERY] Complete:', totalRecovered, 'chunks recovered across', buildDirs.length, 'build(s)');
+    }
+
+    return {
+        saveChunk,
+        getChunk,
+        getAllChunks,
+        getBookWindowStatus,
+        detectAvailableMode,
+        saveIURegistry,
+        recoverChunksFromDisk,
+        recoverAllBooksFromDisk,
+    };
+};

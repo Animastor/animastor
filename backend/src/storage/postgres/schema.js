@@ -484,6 +484,43 @@ async function runMigrations() {
     console.log('[PG] Schema initialized');
 
     // ======================================================
+    // Book Source (SHA256 hash → book_id mapping)
+    // ======================================================
+
+    try {
+        await query(`CREATE TABLE IF NOT EXISTS book_source (
+            id              BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            file_hash       TEXT NOT NULL,
+            file_name       TEXT NOT NULL DEFAULT '',
+            file_size       BIGINT NOT NULL DEFAULT 0,
+            book_id         TEXT NOT NULL,
+            source_type     TEXT NOT NULL DEFAULT 'txt' CHECK(source_type IN ('txt','ai_text')),
+            created_at      BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::bigint),
+            UNIQUE(file_hash)
+        )`);
+        await query(`CREATE INDEX IF NOT EXISTS idx_book_source_hash ON book_source(file_hash)`);
+        await query(`CREATE INDEX IF NOT EXISTS idx_book_source_book ON book_source(book_id)`);
+        console.log('[PG] Created book_source table');
+    } catch (err) {
+        if (!err.message.includes('already exists')) {
+            console.error('[PG] Failed to create book_source:', err.message);
+        }
+    }
+
+    // ======================================================
+    // Add completion_status column to book_generation_sessions
+    // ======================================================
+
+    try {
+        await query(`ALTER TABLE book_generation_sessions ADD COLUMN IF NOT EXISTS completion_status TEXT DEFAULT NULL`);
+        console.log('[PG] Added completion_status to book_generation_sessions');
+    } catch (err) {
+        if (!err.message.includes('already exists') && !err.message.includes('duplicate column')) {
+            console.error('[PG] Failed to add completion_status:', err.message);
+        }
+    }
+
+    // ======================================================
     // Book Generation Sessions (window state in PG)
     // ======================================================
 
