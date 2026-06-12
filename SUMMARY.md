@@ -21,4 +21,6 @@
 ## Diagnostics
 - **Issue**: Player showing IDLE after TXT import, despite successful book creation.
 - **Root Cause Analysis**: Verified Redis state and chunk creation via direct inspection. Confirmed API route `/api/v1/book/:bookId/chunks` is correct and matches frontend calls. 
-- **Next Steps**: Continued investigation into `playbackPrepared` flow to ensure UI collector captures the emission correctly after bootstrap.
+## Proposed Solution for IDLE Player State
+- **Root Cause**: The `_playbackPrepared` signal in `GenerateViewModel` uses a `MutableSharedFlow` without replay. If `MainActivity` collectors are not yet active when `tryEmit` occurs, the signal is dropped, leaving the player IDLE.
+- **Fix**: Update `MutableSharedFlow` initialization in `GenerateViewModel.kt` to include `replay = 1`. This ensures that even if collection begins slightly after emission, the player state is successfully initialized.
