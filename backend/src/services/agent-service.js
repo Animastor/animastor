@@ -1012,6 +1012,9 @@ async function bootstrapNextWindow(bookId, progress) {
         ? (typeof session.window_data === 'string' ? JSON.parse(session.window_data) : session.window_data)
         : null;
 
+    // Mark session as running so /agent-status returns active:true during processing
+    await updateSession(sessionId, { status: 'running' });
+
     // Check if we have cached remaining scenes
     if (windowData && windowData.remaining_scenes && windowData.remaining_scenes.length > 0) {
         _progress({ stage: 'saving', message: '⟳ Добавляю сцены из кэша...' });

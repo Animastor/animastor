@@ -154,28 +154,23 @@ module.exports = function(app, redis, deps) {
 
             // Auto-redispatch if audio flag says ready but file is missing
             if (c.audio && !fs.existsSync(audioPath)) {
-                let placeholderOk = false;
                 try {
                     const phResult = await placeholderAudio.ensurePlaceholderAudio(
                         c.build_id || 'default', c.book_id, c.chapter_id, c.scene_id
                     );
-                    placeholderOk = !!phResult && (phResult.created || (phResult.reason === 'already_exists' && phResult.path));
-                    if (placeholderOk && fs.existsSync(audioPath)) {
+                    const phOk = !!phResult && (phResult.created || (phResult.reason === 'already_exists' && phResult.path));
+                    if (phOk && fs.existsSync(audioPath)) {
                         log(`Placeholder audio on-demand for ${req.params.id} — keeping chunk ready`);
                         c.audio_status = 'placeholder';
                         await redis.set(`animastor:chunk:${req.params.id}`, JSON.stringify(c));
                     } else {
-                        placeholderOk = false;
+                        // Don't reset c.audio = false — the chunk has audio: true,
+                        // and audio_ready is computed as !!(c.audio || fileExists).
+                        // Resetting permanently breaks the scene for the player.
+                        log(`Placeholder audio generation returned ${JSON.stringify(phResult)} for ${req.params.id} — keeping chunk as-is`);
                     }
                 } catch (phErr) {
-                    log(`Placeholder audio check failed for ${req.params.id}: ${phErr.message}`);
-                }
-
-                if (!placeholderOk) {
-                    log(`Missing audio file for ${req.params.id} — resetting state for redispatch`);
-                    c.audio = false;
-                    c.audio_status = 'pending';
-                    await redis.set(`animastor:chunk:${req.params.id}`, JSON.stringify(c));
+                    log(`Placeholder audio check failed for ${req.params.id}: ${phErr.message} — keeping chunk as-is`);
                     if (c.chapter_id && c.scene_id) {
                         const stateKey = `animastor:scene-state:${c.book_id}:${c.chapter_id}:${c.scene_id}`;
                         await redis.set(stateKey, JSON.stringify({
@@ -265,6 +260,9 @@ module.exports = function(app, redis, deps) {
                 status: allReady ? 'ready' : 'processing', image_ready: imageReady,
                 audio_ready: audioReady, video_ready: videoReady,
                 video_status: c.video_status || 'pending',
+                scene_type: c.scene_type || 'narration',
+                scene_id: c.scene_id,
+                chapter_id: c.chapter_id,
             });
         } catch (err) {
             console.error('❌ CHUNK STATUS ERROR:', err.message);
@@ -375,7 +373,7 @@ module.exports = function(app, redis, deps) {
                 console.warn('[STORYBOARD] DB timing merge failed:', dbErr.message);
             }
 
-            res.json({ chunk_id: id, book_id, chapter_id, scene_id, build_id, ius });
+            res.json({ chunk_id: id, book_id, chapter_id, scene_id, build_id, scene_type: c.scene_type || 'narration', ius });
         } catch (err) {
             res.status(500).json({ error: err.message });
         }

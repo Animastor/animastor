@@ -178,8 +178,7 @@ async function startServer() {
         await storage.postgres.initialize();
         log('[STARTUP] PostgreSQL initialized');
     } catch (pgErr) {
-        console.error('[STARTUP] PostgreSQL initialization failed:', pgErr.message);
-        process.exit(1);
+        console.error('[STARTUP] PostgreSQL initialization failed (non-fatal):', pgErr.message);
     }
 
     // Resume incomplete sessions

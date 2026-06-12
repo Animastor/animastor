@@ -79,7 +79,7 @@ class GenerateViewModel(
         val chunkPositions: Map<String, Pair<String?, String?>> = emptyMap()
     )
 
-    private val _playbackPrepared = MutableSharedFlow<PlaybackPreparation>(extraBufferCapacity = 4)
+    private val _playbackPrepared = MutableSharedFlow<PlaybackPreparation>(replay = 1, extraBufferCapacity = 4)
     val playbackPrepared: SharedFlow<PlaybackPreparation> = _playbackPrepared.asSharedFlow()
 
     // ── UI State (generation/import related only) ─────────────────
@@ -271,6 +271,8 @@ class GenerateViewModel(
                 val dirtyCount = res.dirty_scenes?.size ?: 0
                 onResult(GenerationResult.Started(dirtyCount, res.scope ?: req.scope))
                 viewModelScope.launch { refreshAssetsState() }
+                // Clear active generation so GPU progress bar doesn't stay visible permanently
+                _activeGeneration.value = null
             }.onFailure { e ->
                 if (e is CancellationException) {
                     Log.i(TAG, "startGeneration cancelled")
@@ -283,6 +285,7 @@ class GenerateViewModel(
                         it.copy(phase = PlayerPhase.SCENE_READY, errorMessage = "Generation failed: ${e.message}")
                     }
                     onResult(GenerationResult.Failed(e.message ?: "unknown"))
+                    _activeGeneration.value = null
                 }
             }
             if (_isRegenerating.value) {
@@ -533,14 +536,50 @@ class GenerateViewModel(
                 val importRes = _repository.importTxt(file)
                 val bId = importRes.book_id
                 persistBookId(bId)
-                persistBuildId("")
+                persistBuildId("default")
                 Log.i(TAG, "importTxtFromFile: draft created $bId (dedup=${importRes.dedup})")
 
+                // ── Handle dedup: check book state, resume if incomplete ──
                 if (importRes.dedup) {
-                    msgs.add("✓ Книга уже была импортирована")
-                    msgs.add("✓ Загружаем готовые данные...")
+                    msgs.add("✓ Книга уже существует — проверяем состояние...")
                     _uiState.update { it.copy(importProgressMessages = msgs.toList()) }
 
+                    // Check book state
+                    val bookStatus = runCatching { _repository.getLazyBookStatus(bId) }.getOrNull()
+                    // Book is complete if: exists, has a non-null state, is BOOTSTRAPPED/ACTIVE with parsed chapters
+                    val isComplete = bookStatus?.let { bs ->
+                        bs.state != null &&
+                        (bs.state == "BOOTSTRAPPED" || bs.state == "ACTIVE") &&
+                        bs.parsedChapters > 0
+                    } ?: false
+                    val isIncomplete = !isComplete
+
+                    if (isIncomplete) {
+                        msgs.add("⟳ Книга недостроена — возобновляем импорт...")
+                        _uiState.update { it.copy(importProgressMessages = msgs.toList()) }
+                        Log.i(TAG, "importTxtFromFile: incomplete book $bId (state=${bookStatus?.state}) — resuming bootstrap")
+
+                        // Resume bootstrap — this creates a new agent session
+                        val resumeRes = _repository.resumeBootstrap(bId)
+                        Log.i(TAG, "importTxtFromFile: resumeBootstrap returned state=${resumeRes.state} session=${resumeRes.session_id}")
+
+                        // Only poll if book was NOT already complete (i.e., resume actually started a session)
+                        if (resumeRes.state != "BOOTSTRAPPED" && resumeRes.state != "ACTIVE") {
+                            pollAgentProgress(bId, msgs)
+                        } else {
+                            msgs.add("✓ Книга уже была полностью обработана")
+                        }
+
+                        msgs.add("💬 Импорт восстановлен. Можете задать вопросы или запустить генерацию.")
+                        _uiState.update { it.copy(importProgressMessages = msgs.toList()) }
+                    } else {
+                        // Book is complete (BOOTSTRAPPED/ACTIVE with chapters)
+                        val bs = bookStatus!!
+                        msgs.add("✓ Книга уже готова (${bs.parsedChapters} глав, ${bs.parsedScenes} сцен)")
+                        _uiState.update { it.copy(importProgressMessages = msgs.toList()) }
+                    }
+
+                    // Load all chunks and prepare playback
                     val allChunks = runCatching { _repository.getAllChunks(bId) }.getOrNull()
                     val chunkIds = allChunks?.chunk_ids?.toList() ?: emptyList()
                     val positions = mutableMapOf<String, Pair<String?, String?>>()
@@ -575,6 +614,7 @@ class GenerateViewModel(
                     return@launch
                 }
 
+                // ── New import — bootstrap and poll ──
                 msgs.add("✓ File selected")
                 msgs.add("✓ TXT read")
                 msgs.add("✓ Encoding detected")
@@ -583,56 +623,30 @@ class GenerateViewModel(
 
                 _uiState.update { it.copy(importStage = ImportStage.ANALYZING, importProgress = 0.3f) }
 
-                var pollingDone = false
-                val pollingJob = viewModelScope.launch {
-                    var lastProgressMsg = ""
-                    while (!pollingDone) {
-                        delay(2000)
-                        try {
-                            val status = _repository.getAgentStatus(bId)
-                            if (status.active && status.progress_msg != null) {
-                                val currentMsg = status.progress_msg
-                                if (currentMsg != lastProgressMsg) {
-                                    if (lastProgressMsg.isNotEmpty() && msgs.isNotEmpty() && msgs.last().startsWith("⟳")) {
-                                        msgs[msgs.size - 1] = msgs.last().replace("⟳", "✓")
-                                    }
-                                    msgs.add(currentMsg)
-                                    lastProgressMsg = currentMsg
-                                    if (status.window_index != null && status.created_scenes != null) {
-                                        val windowInfo = "📦 Окно ${status.window_index + 1}: ${status.created_scenes} сцен" +
-                                            if (status.total_scenes != null) " (всего найдено: ${status.total_scenes})" else ""
-                                        if (msgs.none { it.startsWith("📦") && it.contains("Окно ${status.window_index + 1}:") }) {
-                                            val existingWindowIdx = msgs.indexOfLast { it.startsWith("📦") }
-                                            if (existingWindowIdx >= 0) msgs[existingWindowIdx] = windowInfo
-                                            else msgs.add(windowInfo)
-                                        }
-                                    }
-                                    _uiState.update { it.copy(importProgressMessages = msgs.toList()) }
-                                }
-                            }
-                        } catch (_: Exception) {}
-                    }
-                    if (msgs.isNotEmpty() && msgs.last().startsWith("⟳")) {
-                        msgs[msgs.size - 1] = msgs.last().replace("⟳", "✓")
-                        _uiState.update { it.copy(importProgressMessages = msgs.toList()) }
-                    }
-                }
-
-                val bootstrapRes = try {
-                    _repository.bootstrapBook(bId)
-                } finally {
-                    pollingDone = true
-                    pollingJob.cancel()
-                }
-
+                // Start Bootstrap (creates AI session for first window)
+                val bootstrapRes = _repository.bootstrapBook(bId)
                 msgs.add("✓ Импорт завершён: ${bootstrapRes.characters} персонажей, ${bootstrapRes.locations} локаций, ${bootstrapRes.scenes} сцен")
+                _uiState.update { it.copy(importProgressMessages = msgs.toList()) }
+
+                // Continue polling for subsequent windows
+                pollAgentProgress(bId, msgs)
                 msgs.add("💬 Можете задать вопросы или запустить генерацию через кнопку на панели инструментов.")
                 _uiState.update { it.copy(importProgressMessages = msgs.toList()) }
 
-                val chunkIds = (bootstrapRes.chapters ?: emptyList()).mapNotNull { it.chapter }
-                val firstId = chunkIds.firstOrNull()
-                if (firstId != null) {
-                    SharedPositionManager.navigateTo(chapterId = firstId, sceneId = null, unitIndex = 0)
+                // Load all chunks
+                val allChunks = runCatching { _repository.getAllChunks(bId) }.getOrNull()
+                val chunkIds = allChunks?.chunk_ids?.toList() ?: emptyList()
+                val positions = mutableMapOf<String, Pair<String?, String?>>()
+                for (cid in chunkIds) {
+                    runCatching {
+                        _repository.getChunkStoryboard(cid).let { sb ->
+                            positions[cid] = Pair(sb.chapter_id, sb.scene_id)
+                        }
+                    }
+                }
+                val firstPos = chunkIds.firstOrNull()?.let { positions[it] }
+                if (firstPos != null) {
+                    SharedPositionManager.navigateTo(chapterId = firstPos.first, sceneId = firstPos.second, unitIndex = 0)
                 } else {
                     SharedPositionManager.navigateTo(chapterId = null, sceneId = null)
                 }
@@ -641,7 +655,7 @@ class GenerateViewModel(
                     bookId = bId,
                     buildId = buildId,
                     chunkIds = chunkIds,
-                    chunkPositions = emptyMap()
+                    chunkPositions = positions
                 ))
 
                 _uiState.update { it.copy(
@@ -650,7 +664,7 @@ class GenerateViewModel(
                     phase = PlayerPhase.SCENE_READY,
                     chunkIds = chunkIds,
                 )}
-                Log.i(TAG, "importTxtFromFile: ready with ${chunkIds.size} chapters, ${bootstrapRes.scenes} scenes")
+                Log.i(TAG, "importTxtFromFile: ready with ${chunkIds.size} chunks")
 
             } catch (e: Exception) {
                 Log.e(TAG, "importTxtFromFile failed: ${e.message}", e)
@@ -664,6 +678,77 @@ class GenerateViewModel(
                 )}
             }
         }
+    }
+
+    /**
+     * Poll /agent-status until the agent session becomes inactive (completed/failed).
+     * Updates [msgs] with progress messages from the agent.
+     * @return true if the session was still active, false if no session was found
+     */
+    private suspend fun pollAgentProgress(bId: String, msgs: MutableList<String>): Boolean {
+        var lastProgressMsg = ""
+        var consecutiveInactive = 0
+        val maxInactive = 3  // 3 consecutive inactive checks = done
+
+        // First check is IMMEDIATE (no delay) — catches already-completed sessions
+        while (consecutiveInactive < maxInactive) {
+            // Only add initial delay AFTER the first check
+            if (consecutiveInactive > 0 || lastProgressMsg.isNotEmpty()) {
+                delay(2000)
+            }
+            try {
+                val status = _repository.getAgentStatus(bId)
+                if (status.active && status.progress_msg != null) {
+                    consecutiveInactive = 0
+                    val currentMsg = status.progress_msg
+                    if (currentMsg != lastProgressMsg) {
+                        // Mark previous progress message as done
+                        if (lastProgressMsg.isNotEmpty() && msgs.isNotEmpty() && msgs.last().startsWith("⟳")) {
+                            msgs[msgs.size - 1] = msgs.last().replace("⟳", "✓")
+                        }
+                        msgs.add(currentMsg)
+                        lastProgressMsg = currentMsg
+
+                        // Window summary from window_data
+                        if (status.window_index != null && status.created_scenes != null) {
+                            val windowInfo = "📦 Окно ${status.window_index + 1}: ${status.created_scenes} сцен" +
+                                if (status.total_scenes != null) " (всего найдено: ${status.total_scenes})" else ""
+                            val existingWindowIdx = msgs.indexOfLast { it.startsWith("📦") }
+                            if (existingWindowIdx >= 0) msgs[existingWindowIdx] = windowInfo
+                            else msgs.add(windowInfo)
+                        }
+                        _uiState.update { it.copy(importProgressMessages = msgs.toList()) }
+                    }
+                } else {
+                    consecutiveInactive++
+                    Log.d(TAG, "[POLL] agent inactive (x$consecutiveInactive)")
+
+                    // Even when inactive, if there's a progress_msg from the last session, show it
+                    if (status != null && status.progress_msg != null && status.progress_msg != lastProgressMsg) {
+                        val finalMsg = status.progress_msg
+                        Log.i(TAG, "[POLL] showing final progress msg: \"$finalMsg\"")
+                        msgs.add(finalMsg)
+                        lastProgressMsg = finalMsg
+                        _uiState.update { it.copy(importProgressMessages = msgs.toList()) }
+                    }
+
+                    if (consecutiveInactive >= maxInactive) {
+                        // Mark last progress as done
+                        if (msgs.isNotEmpty() && msgs.last().startsWith("⟳")) {
+                            msgs[msgs.size - 1] = msgs.last().replace("⟳", "✓")
+                            _uiState.update { it.copy(importProgressMessages = msgs.toList()) }
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "[POLL] agent-status failed: ${e.message}")
+                // Don't increment consecutiveInactive on network errors — be resilient
+                delay(3000) // Wait a bit longer on error
+            }
+        }
+
+        Log.i(TAG, "[POLL] agent polling finished (consecutiveInactive=$consecutiveInactive)")
+        return consecutiveInactive < maxInactive
     }
 
     fun importText(text: String, title: String? = null, onResult: ((ImportTxtResponse) -> Unit)? = null) {
@@ -687,7 +772,7 @@ class GenerateViewModel(
                 val importRes = _repository.importText(text, title)
                 val bId = importRes.book_id
                 persistBookId(bId)
-                persistBuildId("")
+                persistBuildId("default")
 
                 _uiState.update { it.copy(importStage = ImportStage.ANALYZING, importProgress = 0.3f) }
                 delay(200)
@@ -700,11 +785,20 @@ class GenerateViewModel(
                 _uiState.update { it.copy(importStage = ImportStage.CREATING_SCENES, importProgress = 0.8f) }
                 delay(200)
 
-                val bootstrapRes = _repository.bootstrapBook(bId)
-                val chunkIds = (bootstrapRes.chapters ?: emptyList()).mapNotNull { it.chapter }
-                val firstId = chunkIds.firstOrNull()
-                if (firstId != null) {
-                    SharedPositionManager.navigateTo(chapterId = firstId, sceneId = null, unitIndex = 0)
+                _repository.bootstrapBook(bId)
+                val allChunks = runCatching { _repository.getAllChunks(bId) }.getOrNull()
+                val chunkIds = allChunks?.chunk_ids?.toList() ?: emptyList()
+                val positions = mutableMapOf<String, Pair<String?, String?>>()
+                for (cid in chunkIds) {
+                    runCatching {
+                        _repository.getChunkStoryboard(cid).let { sb ->
+                            positions[cid] = Pair(sb.chapter_id, sb.scene_id)
+                        }
+                    }
+                }
+                val firstPos = chunkIds.firstOrNull()?.let { positions[it] }
+                if (firstPos != null) {
+                    SharedPositionManager.navigateTo(chapterId = firstPos.first, sceneId = firstPos.second, unitIndex = 0)
                 } else {
                     SharedPositionManager.navigateTo(chapterId = null, sceneId = null)
                 }
@@ -713,7 +807,7 @@ class GenerateViewModel(
                     bookId = bId,
                     buildId = buildId,
                     chunkIds = chunkIds,
-                    chunkPositions = emptyMap()
+                    chunkPositions = positions
                 ))
 
                 _uiState.update { it.copy(

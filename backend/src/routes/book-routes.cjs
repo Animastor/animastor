@@ -29,12 +29,97 @@ module.exports = function(app, redis, deps) {
             const { bookId } = req.params;
             const bookData = book.loadBook(bookId);
             if (!bookData) return res.status(404).json({ error: 'Book not found' });
+
+            // Auto-recovery: check for missing placeholder MP3s + missing Redis chunks
+            // Run synchronously (not setImmediate) so files exist before frontend queries.
+            // This is fast — placeholder generation takes <100ms.
+            const buildId = 'default';
+            try {
+                const phResult = await placeholderAudio.recoverMissingPlaceholders(buildId, bookId);
+                if (phResult.created > 0 || phResult.errors.length > 0) {
+                    log(`[BOOK-RECOVER] ${bookId}: ${phResult.created} placeholders created, ${phResult.errors.length} errors`);
+                }
+            } catch (recErr) {
+                console.warn(`[BOOK-RECOVER] ${bookId}: placeholder recovery failed: ${recErr.message}`);
+            }
+
+            // Also create missing Redis chunks for scenes that exist in the book
+            // but don't have corresponding chunks in Redis (e.g., from window generation
+            // that created scenes on disk but failed to create chunks).
+            try {
+                await recoverMissingRedisChunks(buildId, bookId);
+            } catch (chunkErr) {
+                console.warn(`[BOOK-RECOVER] ${bookId}: chunk recovery failed: ${chunkErr.message}`);
+            }
+
             return res.json(bookData);
         } catch (err) {
             console.error('[GET BOOK] Error:', err.message);
             return res.status(500).json({ error: err.message });
         }
     });
+
+/**
+ * Create Redis chunks for scenes that exist in the book JSON but don't
+ * have corresponding chunks in Redis. Also updates scene counters.
+ */
+async function recoverMissingRedisChunks(buildId, bookId) {
+    const loadedBook = book.loadBook(bookId);
+    if (!loadedBook) return;
+
+    const allScenes = book.collectScenes(loadedBook);
+    if (allScenes.length === 0) return;
+
+    const existingChunkIds = await getAllChunks(bookId);
+    const existingKeys = new Set(existingChunkIds);
+
+    let created = 0;
+    for (const s of allScenes) {
+        const chunkId = `${bookId}_${s.chapter_id}_${s.scene_id}_0001`;
+        if (existingKeys.has(chunkId)) continue;
+
+        try {
+            await saveChunk(chunkId, {
+                build_id: buildId, book_id: bookId, scene_order: s.scene_order || 0,
+                chapter_id: s.chapter_id, scene_id: s.scene_id, chunk_index: '0001',
+                expected_chunk_count: 1, scene_type: s.scene_type || 'narration',
+                audio: true, audio_status: 'placeholder', image: false, video: false,
+                video_status: 'pending', padded_text: false,
+            });
+            created++;
+        } catch (chunkErr) {
+            console.warn(`[BOOK-RECOVER] Failed to create chunk ${chunkId}: ${chunkErr.message}`);
+        }
+
+        // Also ensure scene is registered in activeScenes for GPU scheduler
+        try {
+            await state.setSceneStateWithBuildId(
+                redis, bookId, s.chapter_id, s.scene_id,
+                state.SceneState.AUDIO_PENDING, buildId
+            );
+            await activeScenes.addActiveScene(
+                redis, bookId, s.chapter_id, s.scene_id
+            );
+        } catch (regErr) {
+            console.warn(`[BOOK-RECOVER] Failed to register scene ${s.chapter_id}/${s.scene_id}: ${regErr.message}`);
+        }
+    }
+
+    if (created > 0) {
+        // Update scene counters
+        try {
+            const totalStr = await redis.get(config.BOOK_SCENE_TOTAL(bookId));
+            const nextStr = await redis.get(config.BOOK_SCENE_NEXT(bookId));
+            const existingTotal = parseInt(totalStr || '0', 10);
+            const existingNext = parseInt(nextStr || '0', 10);
+            await redis.set(config.BOOK_SCENE_TOTAL(bookId), existingTotal + created);
+            await redis.set(config.BOOK_SCENE_NEXT(bookId), existingNext + created);
+        } catch (idxErr) {
+            console.warn(`[BOOK-RECOVER] Failed to update scene indices: ${idxErr.message}`);
+        }
+        log(`[BOOK-RECOVER] ${bookId}: created ${created} missing Redis chunks`);
+    }
+}
 
     // ======================================================
     // UPDATE BOOK DATA (used by frontend Editor save)
@@ -304,17 +389,44 @@ module.exports = function(app, redis, deps) {
             log(`[BOOTSTRAP] ${bookId}: ${result.characters} chars, ${result.locations} locs, ${result.scenes} scenes`);
 
             if (result.chapter && result.chapter.scenes && result.chapter.scenes.length > 0) {
-                setImmediate(async () => {
+                const buildId = 'default';
+                const chapterId = result.chapter.chapter;
+
+                // Create chunks in Redis (synchronous — fast Redis ops)
+                log(`[BOOTSTRAP] Creating ${result.chapter.scenes.length} chunks for ${bookId}...`);
+                for (let i = 0; i < result.chapter.scenes.length; i++) {
+                    const s = result.chapter.scenes[i];
+                    const chunkId = `${bookId}_${chapterId}_${s.scene_id}_0001`;
                     try {
-                        const buildId = 'default';
-                        const scenes = result.chapter.scenes.map(s => ({ chapter_id: result.chapter.chapter, scene_id: s.scene_id }));
-                        log(`[BOOTSTRAP] Generating placeholder audio for ${scenes.length} scenes...`);
-                        const phResult = await placeholderAudio.ensureAllPlaceholderAudio(buildId, bookId, scenes);
-                        log(`[BOOTSTRAP] Placeholder audio: ${phResult.created} created, ${phResult.skipped} skipped`);
-                    } catch (phErr) {
-                        console.warn(`[BOOTSTRAP] Placeholder audio generation failed: ${phErr.message}`);
+                        await saveChunk(chunkId, {
+                            build_id: buildId, book_id: bookId, scene_order: i,
+                            chapter_id: chapterId, scene_id: s.scene_id, chunk_index: '0001',
+                            expected_chunk_count: 1, scene_type: s.type || 'narration',
+                            audio: true, audio_status: 'placeholder', image: false, video: false,
+                            video_status: 'pending', padded_text: false,
+                        });
+                    } catch (chunkErr) {
+                        console.warn(`[BOOTSTRAP] Failed to create chunk ${chunkId}: ${chunkErr.message}`);
                     }
-                });
+                }
+
+                // Set scene counters
+                try {
+                    await redis.set(config.BOOK_SCENE_TOTAL(bookId), result.chapter.scenes.length);
+                    await redis.set(config.BOOK_SCENE_NEXT(bookId), result.chapter.scenes.length);
+                } catch (idxErr) {
+                    console.warn(`[BOOTSTRAP] Failed to set scene index: ${idxErr.message}`);
+                }
+
+                // Placeholder audio (synchronous — ensures audio files exist when frontend queries)
+                try {
+                    const phScenes = result.chapter.scenes.map(s => ({ chapter_id: chapterId, scene_id: s.scene_id }));
+                    log(`[BOOTSTRAP] Generating placeholder audio for ${phScenes.length} scenes...`);
+                    const phResult = await placeholderAudio.ensureAllPlaceholderAudio(buildId, bookId, phScenes);
+                    log(`[BOOTSTRAP] Placeholder audio: ${phResult.created} created, ${phResult.skipped} skipped`);
+                } catch (phErr) {
+                    console.warn(`[BOOTSTRAP] Placeholder audio generation failed: ${phErr.message}`);
+                }
             }
 
             return res.json({
@@ -352,19 +464,27 @@ module.exports = function(app, redis, deps) {
     });
 
     // ======================================================
-    // TRIGGER NEXT WINDOW
+    // TRIGGER NEXT WINDOW — with detailed logging
     // ======================================================
     app.post('/api/v1/book/:bookId/trigger-next-window', async (req, res) => {
         try {
             const { bookId } = req.params;
-            const { chapter_id, scene_id, unit_id } = req.body || {};
+            const { chapter_id, scene_id, unit_id, register_for_gpu = true } = req.body || {};
+
+            log(`[TRIGGER] ⬇️ === TRIGGER-NEXT-WINDOW called for ${bookId} ===`);
+            log(`[TRIGGER] ⬇️ params: chapter_id=${chapter_id} scene_id=${scene_id} unit_id=${unit_id} register_for_gpu=${register_for_gpu}`);
 
             if (!bookId) return res.status(400).json({ error: 'bookId required' });
 
             const draft = lazyBook.loadDraftBook(bookId);
-            if (!draft || !draft.sourceText) return res.status(404).json({ error: 'Book not found' });
+            if (!draft || !draft.sourceText) {
+                log(`[TRIGGER] ❌ book ${bookId} not found or no source text`);
+                return res.status(404).json({ error: 'Book not found' });
+            }
 
-            if (draft.manifest.state !== lazyBook.BookState.BOOTSTRAPPED) {
+            if (draft.manifest.state !== lazyBook.BookState.BOOTSTRAPPED &&
+                draft.manifest.state !== lazyBook.BookState.ACTIVE) {
+                log(`[TRIGGER] ❌ book state=${draft.manifest.state} not BOOTSTRAPPED or ACTIVE`);
                 return res.status(400).json({ error: 'Book not ready for next window, state: ' + draft.manifest.state });
             }
 
@@ -377,31 +497,36 @@ module.exports = function(app, redis, deps) {
                             for (const sc of (ch.scenes || [])) {
                                 if (sc.scene_id === scene_id) { found = true; break; }
                             }
-                            if (!found) log(`[TRIGGER] ${bookId}: scene ${scene_id} not in chapter ${chapter_id}, continuing anyway`);
+                            if (!found) log(`[TRIGGER] ⚠️ scene ${scene_id} not in chapter ${chapter_id}, continuing anyway`);
                             break;
                         }
                     }
+                    if (found) log(`[TRIGGER] ✅ chapter ${chapter_id}/scene ${scene_id} validated`);
                 }
             }
 
             const lastWindow = await genSessionRepo.getHighestCompletedWindow(bookId);
             const nextWindowIndex = lastWindow + 1;
+            log(`[TRIGGER] 📊 lastWindow=${lastWindow} nextWindow=${nextWindowIndex}`);
 
             const chapters = lazyBook.splitIntoChapters(draft.sourceText);
             if (nextWindowIndex >= chapters.length) {
+                log(`[TRIGGER] 📗 all done: nextWindow=${nextWindowIndex} >= total=${chapters.length}`);
                 return res.json({ triggered: false, error: 'No more text to process', all_done: true });
             }
 
             const activeSessions = await genSessionRepo.getSessionsByStatus(bookId, 'generating');
             const pendingSessions = await genSessionRepo.getSessionsByStatus(bookId, 'pending');
+            log(`[TRIGGER] 📊 activeSessions=${activeSessions.length} pendingSessions=${pendingSessions.length}`);
 
             if (activeSessions.length > 0 || pendingSessions.length > 0) {
                 const queuedSession = await genSessionRepo.createSession(bookId, nextWindowIndex, 3);
                 await genSessionRepo.updateSession(queuedSession.id, { status: 'queued' });
-                log(`[TRIGGER] ${bookId}: queued window ${nextWindowIndex} (generation already active)`);
+                log(`[TRIGGER] 📦 queued window ${nextWindowIndex} (generation already active) session=${queuedSession.id}`);
                 return res.json({ triggered: false, queued: true, session_id: queuedSession.id, window_index: nextWindowIndex });
             }
 
+            log(`[TRIGGER] 🚀 No active sessions — proceeding with new session for window ${nextWindowIndex}`);
             const session = await genSessionRepo.createSession(bookId, nextWindowIndex, 3);
             const chInfo = chapters[nextWindowIndex];
             const sourceOffsetStart = chInfo ? chInfo.startOffset || 0 : 0;
@@ -411,15 +536,16 @@ module.exports = function(app, redis, deps) {
             });
 
             setImmediate(() => {
-                windowGenerator.runBackgroundWindowGeneration(bookId, session.id).catch(err => {
-                    console.error(`[TRIGGER] Background gen crashed: ${err.message}`);
+                log(`[TRIGGER] ▶️ Running background gen for session=${session.id} (register_for_gpu=${register_for_gpu})`);
+                windowGenerator.runBackgroundWindowGeneration(bookId, session.id, { registerForGpu }).catch(err => {
+                    console.error(`[TRIGGER] ❌ Background gen crashed: ${err.message}`);
                 });
             });
 
-            log(`[TRIGGER] ${bookId}: started background window ${nextWindowIndex}, session=${session.id} (from PG ${lastWindow})`);
+            log(`[TRIGGER] ✅ started background window ${nextWindowIndex}, session=${session.id} (from PG ${lastWindow})`);
             return res.json({ triggered: true, session_id: session.id, window_index: nextWindowIndex });
         } catch (err) {
-            console.error('[TRIGGER-NEXT-WINDOW] Error:', err.message);
+            console.error('[TRIGGER-NEXT-WINDOW] ❌ Error:', err.message);
             return res.status(500).json({ error: err.message });
         }
     });
@@ -430,7 +556,9 @@ module.exports = function(app, redis, deps) {
     app.get('/api/v1/book/:bookId/agent-status', async (req, res) => {
         try {
             const { bookId } = req.params;
-            const result = await storage.postgres.query(`
+
+            // 1. Check agent_sessions (AI agent pipeline)
+            const agentResult = await storage.postgres.query(`
                 SELECT session_id, status as session_status, progress_msg,
                        window_data, knowledge_base, source_type
                 FROM agent_sessions
@@ -439,31 +567,85 @@ module.exports = function(app, redis, deps) {
                 LIMIT 1
             `, [bookId]);
 
-            const row = result.rows[0];
-            if (!row) return res.json({ active: false, message: 'No active agent session' });
+            const agentRow = agentResult.rows[0];
 
-            let windowData = null;
-            let windowIndex = null;
-            let createdScenes = null;
-            let totalScenes = null;
-            let remainingCached = null;
+            // If agent session is actively running, return it with full data
+            if (agentRow && agentRow.session_status === 'running') {
+                let windowData = null;
+                let windowIndex = null;
+                let createdScenes = null;
+                let totalScenes = null;
+                let remainingCached = null;
 
-            if (row.window_data) {
-                try {
-                    windowData = typeof row.window_data === 'string' ? JSON.parse(row.window_data) : row.window_data;
-                    windowIndex = windowData.window_index;
-                    createdScenes = windowData.created_scenes;
-                    totalScenes = windowData.total_scenes;
-                    remainingCached = windowData.remaining_scenes ? windowData.remaining_scenes.length : 0;
-                } catch (e) { /* ignore */ }
+                if (agentRow.window_data) {
+                    try {
+                        windowData = typeof agentRow.window_data === 'string' ? JSON.parse(agentRow.window_data) : agentRow.window_data;
+                        windowIndex = windowData.window_index;
+                        createdScenes = windowData.created_scenes;
+                        totalScenes = windowData.total_scenes;
+                        remainingCached = windowData.remaining_scenes ? windowData.remaining_scenes.length : 0;
+                    } catch (e) { /* ignore */ }
+                }
+
+                return res.json({
+                    active: true, session_id: agentRow.session_id,
+                    session_status: 'running', progress_msg: agentRow.progress_msg || 'Working...',
+                    source_type: agentRow.source_type, window_index: windowIndex,
+                    created_scenes: createdScenes, total_scenes: totalScenes, remaining_cached: remainingCached,
+                });
             }
 
-            return res.json({
-                active: row.session_status === 'running', session_id: row.session_id,
-                session_status: row.session_status, progress_msg: row.progress_msg || 'Working...',
-                source_type: row.source_type, window_index: windowIndex,
-                created_scenes: createdScenes, total_scenes: totalScenes, remaining_cached: remainingCached,
-            });
+            // 2. Fallback: check book_generation_sessions (window generator path for vbook)
+            const genResult = await storage.postgres.query(`
+                SELECT id, status, progress_msg, window_index, error
+                FROM book_generation_sessions
+                WHERE book_id = $1 AND status IN ('generating', 'pending', 'queued')
+                ORDER BY created_at DESC
+                LIMIT 1
+            `, [bookId]);
+
+            const genRow = genResult.rows[0];
+            if (genRow) {
+                return res.json({
+                    active: true,
+                    session_id: genRow.id,
+                    session_status: genRow.status,
+                    progress_msg: genRow.progress_msg || 'Processing...',
+                    source_type: 'window_generator',
+                    window_index: genRow.window_index,
+                    created_scenes: null,
+                    total_scenes: null,
+                    remaining_cached: null,
+                });
+            }
+
+            // 3. Fallback to agent session (even if completed) for stale data
+            if (agentRow) {
+                let windowData = null;
+                let windowIndex = null;
+                let createdScenes = null;
+                let totalScenes = null;
+                let remainingCached = null;
+
+                if (agentRow.window_data) {
+                    try {
+                        windowData = typeof agentRow.window_data === 'string' ? JSON.parse(agentRow.window_data) : agentRow.window_data;
+                        windowIndex = windowData.window_index;
+                        createdScenes = windowData.created_scenes;
+                        totalScenes = windowData.total_scenes;
+                        remainingCached = windowData.remaining_scenes ? windowData.remaining_scenes.length : 0;
+                    } catch (e) { /* ignore */ }
+                }
+
+                return res.json({
+                    active: agentRow.session_status === 'running', session_id: agentRow.session_id,
+                    session_status: agentRow.session_status, progress_msg: agentRow.progress_msg || 'Working...',
+                    source_type: agentRow.source_type, window_index: windowIndex,
+                    created_scenes: createdScenes, total_scenes: totalScenes, remaining_cached: remainingCached,
+                });
+            }
+
+            return res.json({ active: false, message: 'No active agent session' });
         } catch (err) {
             console.error('[AGENT-STATUS] Error:', err.message);
             return res.status(500).json({ error: err.message });
@@ -858,6 +1040,32 @@ module.exports = function(app, redis, deps) {
         } catch (err) {
             console.error('[REGENERATE] Error:', err.message);
             res.status(500).json({ error: err.message });
+        }
+    });
+
+    // ======================================================
+    // RECOVER PLACEHOLDERS — fix missing placeholder MP3 files
+    // ======================================================
+    app.post('/api/v1/book/:bookId/recover-placeholders', async (req, res) => {
+        try {
+            const { bookId } = req.params;
+            const { build_id = 'default' } = req.body || {};
+
+            log(`[RECOVER-PLACEHOLDERS] Starting recovery for ${bookId}...`);
+            const result = await placeholderAudio.recoverMissingPlaceholders(build_id, bookId);
+            log(`[RECOVER-PLACEHOLDERS] ${bookId}: ${result.created} created, ${result.skipped} skipped, ${result.errors.length} errors`);
+
+            return res.json({
+                book_id: bookId, build_id,
+                checked: result.checked,
+                created: result.created,
+                skipped: result.skipped,
+                errors: result.errors,
+                recovered: result.created > 0,
+            });
+        } catch (err) {
+            console.error('[RECOVER-PLACEHOLDERS] Error:', err.message);
+            return res.status(500).json({ error: err.message });
         }
     });
 

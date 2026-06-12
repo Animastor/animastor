@@ -267,6 +267,11 @@ interface BackendApi {
         @Path("bookId") bookId: String
     ): BootstrapNextWindowResponse
 
+    @POST("/api/v1/book/{bookId}/resume-bootstrap")
+    suspend fun resumeBootstrap(
+        @Path("bookId") bookId: String
+    ): ResumeBootstrapResponse
+
     @POST("/api/v1/book/import-text")
     suspend fun importText(
         @Body request: ImportTextRequest

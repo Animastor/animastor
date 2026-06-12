@@ -543,6 +543,24 @@ class Repository(
         }
     }
 
+    suspend fun resumeBootstrap(bookId: String): ResumeBootstrapResponse {
+        Log.i("Repo", "resumeBootstrap: $bookId")
+        return try {
+            val response = api.resumeBootstrap(bookId)
+            Log.i("Repo", "resumeBootstrap OK: state=${response.state} session=${response.session_id} msg=${response.progress_msg}")
+            response
+        } catch (e: HttpException) {
+            val errorBody = try { e.response()?.errorBody()?.string() } catch (_: Exception) { null }
+            val backendMsg = if (errorBody != null) {
+                try { JSONObject(errorBody).optString("error", e.message()) } catch (_: Exception) { e.message() }
+            } else {
+                e.message()
+            }
+            Log.w("Repo", "resumeBootstrap FAILED (${e.code()}): $backendMsg")
+            throw IOException(backendMsg ?: "Resume bootstrap failed (${e.code()})")
+        }
+    }
+
     suspend fun getLazyBookStatus(bookId: String): BookStatus {
         Log.d("Repo", "getLazyBookStatus: $bookId")
         return api.getBookStatus(bookId)
@@ -583,13 +601,14 @@ class Repository(
     // Window Generation (trigger + state)
     // ======================================================
 
-    suspend fun triggerNextWindow(bookId: String, chapterId: String? = null, sceneId: String? = null, unitId: String? = null): TriggerNextWindowResponse {
-        Log.i("Repo", "triggerNextWindow: $bookId ch=$chapterId sc=$sceneId")
+    suspend fun triggerNextWindow(bookId: String, chapterId: String? = null, sceneId: String? = null, unitId: String? = null, registerForGpu: Boolean? = null): TriggerNextWindowResponse {
+        Log.i("Repo", "triggerNextWindow: $bookId ch=$chapterId sc=$sceneId register_for_gpu=$registerForGpu")
         return try {
             val response = api.triggerNextWindow(bookId, TriggerNextWindowRequest(
                 chapter_id = chapterId,
                 scene_id = sceneId,
-                unit_id = unitId
+                unit_id = unitId,
+                register_for_gpu = registerForGpu,
             ))
             Log.i("Repo", "triggerNextWindow: triggered=${response.triggered} queued=${response.queued} window=${response.window_index} all_done=${response.all_done}")
             response

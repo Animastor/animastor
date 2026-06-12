@@ -16,42 +16,53 @@ module.exports = function({ redis, txtImporter, genSessionRepo, state, activeSce
      * Creates chunks + placeholder audio + registers scenes for GPU scheduler.
      * Reports progress via genSessionRepo.progress_msg (visible via /agent-status).
      */
-    async function runBackgroundWindowGeneration(bookId, sessionId) {
-        log(`[BG-GEN] Starting background window generation for ${bookId}, session=${sessionId}`);
+    async function runBackgroundWindowGeneration(bookId, sessionId, options = {}) {
+        const { registerForGpu = true } = options;
+        const bgLog = (msg) => log(`[BG-GEN][${bookId}:${sessionId}] ${msg}`);
+        bgLog(`🚀 === BACKGROUND WINDOW GENERATION START (registerForGpu=${registerForGpu}) ===`);
 
         try {
             // — 1. Mark session as generating + set initial progress —
             await genSessionRepo.updateSession(sessionId, { status: 'generating' });
+            bgLog(`✅ Session ${sessionId} marked as 'generating'`);
 
-            // Progress callback: writes progress_msg to PG so frontend can poll /agent-status
-            const progress = async (msg) => {
+            // Progress callback: handles both string and { stage, message } formats
+            // The agent-service passes { stage, message } objects via txtImporter.bootstrapNextWindow
+            const progress = async (msgOrObj) => {
+                const msg = typeof msgOrObj === 'string' ? msgOrObj : (msgOrObj?.message || 'Working...');
                 try {
                     await genSessionRepo.updateSession(sessionId, {
                         progress_msg: msg,
                     });
+                    bgLog(`📊 PROGRESS: "${msg}"`);
                 } catch (_) { /* non-fatal */ }
             };
 
             await progress('⟳ Processing next window...');
 
             // — 2. Bootstrap the next window from source text —
+            bgLog(`📖 Calling txtImporter.bootstrapNextWindow...`);
             const result = await txtImporter.bootstrapNextWindow(bookId, progress);
+            bgLog(`📖 bootstrapNextWindow result: all_done=${result.all_done} added_scenes=${result.added_scenes} cached=${result.cached}`);
 
             if (result.all_done) {
+                bgLog(`📗 All text processed — marking session completed`);
                 await genSessionRepo.updateSession(sessionId, {
                     status: 'completed',
                     progress_msg: '✓ All text processed',
                 });
                 await genSessionRepo.setBookCompletionStatus(bookId, 'completed');
-                log(`[BG-GEN] ${bookId}: all done after window, completion_status=completed`);
+                bgLog(`✅ completion_status=completed`);
             } else {
-                await progress(`⟳ Creating ${result.added_scenes || 0} scenes...`);
+                const sceneCount = result.added_scenes || 0;
+                await progress(`⟳ Creating ${sceneCount} scenes...`);
 
                 // — 3. Create chunks for each new scene in Redis —
                 let chunkCount = 0;
                 const buildId = 'default';
                 if (result.chapter && result.chapter.scenes) {
                     const phScenes = [];
+                    bgLog(`📦 Creating ${result.chapter.scenes.length} chunks for chapter ${result.chapter.chapter}...`);
                     for (const scene of result.chapter.scenes) {
                         const chunkId = `${bookId}_${result.chapter.chapter}_${scene.scene_id}_0001`;
                         try {
@@ -73,6 +84,7 @@ module.exports = function({ redis, txtImporter, genSessionRepo, state, activeSce
                             });
                             chunkCount++;
                             phScenes.push({ chapter_id: result.chapter.chapter, scene_id: scene.scene_id });
+                            bgLog(`  ✅ Chunk created: ${chunkId}`);
                         } catch (chunkErr) {
                             console.warn(`[BG-GEN] Failed to create chunk ${chunkId}: ${chunkErr.message}`);
                         }
@@ -80,14 +92,17 @@ module.exports = function({ redis, txtImporter, genSessionRepo, state, activeSce
 
                     // — 4. Generate placeholder audio —
                     if (phScenes.length > 0) {
+                        bgLog(`🔊 Generating placeholder audio for ${phScenes.length} scenes...`);
                         try {
                             const phResult = await placeholderAudio.ensureAllPlaceholderAudio(buildId, bookId, phScenes);
-                            log(`[BG-GEN] Placeholder audio: ${phResult.created} created, ${phResult.skipped} skipped`);
+                            bgLog(`🔊 Placeholder audio: ${phResult.created} created, ${phResult.skipped} skipped`);
                         } catch (phErr) {
                             console.warn(`[BG-GEN] Placeholder audio failed: ${phErr.message}`);
                         }
 
-                        // — 5. Register scenes for GPU scheduler (critical!) —
+                    // — 5. Register scenes for GPU scheduler (only if registerForGpu is true) —
+                    if (registerForGpu) {
+                        bgLog(`🎮 Registering ${phScenes.length} scenes for GPU scheduler (registerForGpu=true)...`);
                         for (const ps of phScenes) {
                             try {
                                 await state.setSceneStateWithBuildId(
@@ -97,10 +112,15 @@ module.exports = function({ redis, txtImporter, genSessionRepo, state, activeSce
                                 await activeScenes.addActiveScene(
                                     redis, bookId, ps.chapter_id, ps.scene_id
                                 );
+                                bgLog(`  🎮 Scene ${ps.chapter_id}/${ps.scene_id} registered for GPU`);
                             } catch (regErr) {
                                 console.warn(`[BG-GEN] Failed to register scene ${ps.chapter_id}/${ps.scene_id}: ${regErr.message}`);
                             }
                         }
+                    } else {
+                        bgLog(`⏭️ Skipping GPU registration for ${phScenes.length} scenes (triggered by auto window gen, not user Generate button)`);
+                        bgLog(`⏭️ Scenes will be picked up later when user clicks "Generate" button`);
+                    }
 
                         // Update scene indices
                         try {
@@ -108,29 +128,33 @@ module.exports = function({ redis, txtImporter, genSessionRepo, state, activeSce
                             const nextIdx = parseInt(await redis.get(config.BOOK_SCENE_NEXT(bookId)) || '0', 10);
                             await redis.set(config.BOOK_SCENE_TOTAL(bookId), totalScenes + phScenes.length);
                             await redis.set(config.BOOK_SCENE_NEXT(bookId), nextIdx + phScenes.length);
+                            bgLog(`📊 Scene indices updated: total=${totalScenes + phScenes.length} next=${nextIdx + phScenes.length}`);
                         } catch (idxErr) {
                             console.warn(`[BG-GEN] Failed to update scene indices: ${idxErr.message}`);
                         }
                     }
                 }
 
+                const finalMsg = `✓ Added ${result.added_scenes || 0} scenes (${chunkCount} chunks created)`;
+                bgLog(`✅ ${finalMsg}`);
                 await genSessionRepo.updateSession(sessionId, {
                     status: 'completed',
-                    progress_msg: `✓ Added ${result.added_scenes || 0} scenes (${chunkCount} chunks created)`,
+                    progress_msg: finalMsg,
                 });
-                log(`[BG-GEN] ${bookId}: completed, added ${result.added_scenes || 0} scenes, ${chunkCount} chunks`);
             }
 
             // — 6. Process next queued session if any —
             const queued = await genSessionRepo.getSessionsByStatus(bookId, 'queued');
             if (queued.length > 0) {
                 const nextSession = queued[0];
-                log(`[BG-GEN] ${bookId}: processing queued window ${nextSession.window_index}`);
+                bgLog(`🔄 Processing queued window ${nextSession.window_index} (session=${nextSession.id})`);
                 await genSessionRepo.updateSession(nextSession.id, { status: 'pending' });
                 await runBackgroundWindowGeneration(bookId, nextSession.id);
+            } else {
+                bgLog(`✅ No queued sessions — done`);
             }
         } catch (err) {
-            console.error(`[BG-GEN] ${bookId} FAILED:`, err.message);
+            console.error(`[BG-GEN][${bookId}:${sessionId}] ❌ FAILED:`, err.message);
             await genSessionRepo.updateSession(sessionId, {
                 status: 'failed',
                 error: err.message,

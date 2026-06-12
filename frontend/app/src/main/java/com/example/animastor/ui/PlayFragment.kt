@@ -44,6 +44,9 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
     private val playbackViewModel: PlaybackViewModel by activityViewModels {
         PlaybackViewModel.factory
     }
+    private val generateViewModel: GenerateViewModel by activityViewModels {
+        GenerateViewModel.factory
+    }
     private val repository get() = playbackViewModel.repository
 
     private var currentPlayer: MediaPlayer? = null
@@ -172,9 +175,15 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         }
         binding?.progressBar?.isIndeterminate = true
 
-        if (playbackViewModel.chunkQueueSize > 0 && playbackViewModel.uiState.value.phase == PlayerPhase.SCENE_READY) {
+        if (playbackViewModel.chunkQueueSize > 0) {
             binding?.playButton?.isEnabled = true
             binding?.playButton?.alpha = 1.0f
+        }
+
+        // Auto-initialize if PlaybackViewModel is blank but GenerateViewModel has a book
+        if (playbackViewModel.bookId.isBlank() && generateViewModel.bookId.isNotBlank()) {
+            Log.i(TAG, "onViewCreated: bookId blank — auto-initializing from GenVM")
+            playbackViewModel.ensureInitialized(generateViewModel.bookId, generateViewModel.buildId)
         }
 
         binding?.playButton?.setOnClickListener {
@@ -192,6 +201,10 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                     playbackViewModel.resumeFromCurrentScene()
                 }
                 phase == PlayerPhase.SCENE_READY -> {
+                    playbackViewModel.playSceneQueue()
+                }
+                phase == PlayerPhase.IDLE && playbackViewModel.chunkQueueSize > 0 -> {
+                    Log.i(TAG, "playButton: IDLE with ${playbackViewModel.chunkQueueSize} chunks — starting playback")
                     playbackViewModel.playSceneQueue()
                 }
                 else -> Log.w(TAG, "playButton: no matching action for phase=$phase")
@@ -349,6 +362,12 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                         val b = binding ?: return@collect
                         Log.d(TAG, "state: phase=${state.phase} img=${state.previewImage != null} cover=${state.coverImage != null} player=$currentPlayer")
 
+                        // Update play button state BEFORE any early returns
+                        val hasChunks = playbackViewModel.chunkQueueSize > 0
+                        val buttonEnabled = state.phase == PlayerPhase.SCENE_READY || state.phase == PlayerPhase.PLAYING || hasChunks
+                        b.playButton.isEnabled = buttonEnabled
+                        b.playButton.alpha = if (buttonEnabled) 1.0f else 0.4f
+
                         val missingPos = state.missingIuPosition
                         if (missingPos != null) {
                             showMissingChunkOverlay(missingPos)
@@ -451,9 +470,6 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                             PlayerPhase.IMPORTING_TXT -> b.statusText.text = getString(R.string.play_loading)
                         }
 
-                        val enabled = state.phase == PlayerPhase.SCENE_READY || state.phase == PlayerPhase.PLAYING
-                        b.playButton.isEnabled = enabled
-                        b.playButton.alpha = if (enabled) 1.0f else 0.4f
                         val isPlaying = state.phase == PlayerPhase.PLAYING && !isPaused
                         b.playButton.text = if (isPlaying) getString(R.string.play_pause) else getString(R.string.play_play)
                         if (isPlaying) b.playButton.setIconResource(R.drawable.ic_pause) else b.playButton.setIconResource(R.drawable.ic_play)
@@ -1106,6 +1122,11 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
             if (isPaused) {
                 syncVideoFrame()
                 showCurrentIu()
+            }
+            // Auto-initialize when tab becomes visible
+            if (playbackViewModel.bookId.isBlank() && generateViewModel.bookId.isNotBlank()) {
+                Log.i(TAG, "onHiddenChanged: bookId blank — auto-initializing from GenVM")
+                playbackViewModel.ensureInitialized(generateViewModel.bookId, generateViewModel.buildId)
             }
             if (playbackViewModel.pendingExternalSeek != null) {
                 Log.i(TAG, "onHiddenChanged: external seek pending, executing")

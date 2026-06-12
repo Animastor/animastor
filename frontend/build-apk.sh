@@ -9,7 +9,8 @@ if [ ! -f local.properties ]; then
     echo "sdk.dir=/home/sureg/Android/Sdk" > local.properties
 fi
 
-./gradlew assembleDebug
+# Clean build — кеш компилятора часто даёт артефакты при изменении ViewModel логики
+./gradlew clean assembleDebug
 
 echo "Copying APK..."
 

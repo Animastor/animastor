@@ -6,6 +6,7 @@ data class StoryboardResponse(
     val chapter_id: String?,
     val scene_id: String?,
     val build_id: String,
+    val scene_type: String? = null,
     val ius: List<IuItem>
 )
 

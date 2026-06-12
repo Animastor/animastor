@@ -295,6 +295,20 @@ data class BootstrapNextWindowResponse(
     val chapters: List<LazyParseChapterItem>? = null
 )
 
+data class ResumeBootstrapResponse(
+    val book_id: String? = null,
+    val state: String? = null,
+    val title: String? = null,
+    val author: String? = null,
+    val characters: Int = 0,
+    val locations: Int = 0,
+    val scenes: Int = 0,
+    val session_id: String? = null,
+    val session_status: String? = null,
+    val progress_msg: String? = null,
+    val message: String? = null
+)
+
 data class LazyBookChapter(
     val chapter: String? = null,
     val chapter_title: String? = null,
@@ -347,7 +361,8 @@ data class PreliminaryObject(
 data class TriggerNextWindowRequest(
     val chapter_id: String? = null,
     val scene_id: String? = null,
-    val unit_id: String? = null
+    val unit_id: String? = null,
+    val register_for_gpu: Boolean? = null
 )
 
 data class TriggerNextWindowResponse(

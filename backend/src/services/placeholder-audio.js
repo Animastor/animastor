@@ -365,6 +365,111 @@ async function markPlaceholderStale(bookId, chapterId, sceneId, buildId) {
 }
 
 // ======================================================
+// RECOVERY — check + create missing placeholders
+// ======================================================
+
+/**
+ * Recover missing placeholder MP3 files for a book.
+ * Scans all scenes in the book JSON and creates placeholder
+ * audio for any scene that is missing its MP3 file on disk.
+ *
+ * This handles the case where scenes were created by window
+ * generation but placeholder audio was never generated (e.g.,
+ * due to a transient error or an old bug that has since been fixed).
+ *
+ * @param {string} buildId - Build directory (usually 'default')
+ * @param {string} bookId  - Book ID
+ * @returns {Promise<{checked: number, created: number, skipped: number, errors: string[]}>}
+ */
+async function recoverMissingPlaceholders(buildId, bookId) {
+    const result = { checked: 0, created: 0, skipped: 0, errors: [] };
+
+    try {
+        const lazyBook = require('../book/lazy-book');
+        const draft = lazyBook.loadDraftBook(bookId);
+        if (!draft) {
+            log(`[RECOVER] Book ${bookId} not found on disk, skipping`);
+            return result;
+        }
+
+        // If book is in RAW_IMPORTED state, no scenes exist yet
+        if (draft.manifest.state === lazyBook.BookState.RAW_IMPORTED) {
+            log(`[RECOVER] Book ${bookId} is RAW_IMPORTED, no scenes to check`);
+            return result;
+        }
+
+        const scenes = [];
+        for (const ch of draft.chapters) {
+            for (const sc of (ch.scenes || [])) {
+                scenes.push({ chapter_id: ch.chapter, scene_id: sc.scene_id });
+            }
+        }
+
+        if (scenes.length === 0) {
+            log(`[RECOVER] Book ${bookId} has no scenes in chapters, skipping`);
+            return result;
+        }
+
+        result.checked = scenes.length;
+        log(`[RECOVER] Checking ${scenes.length} scenes for ${bookId}...`);
+
+        const outputDir = path.join(config.OUTPUT_DIR, buildId);
+        const needsRecovery = [];
+
+        for (const s of scenes) {
+            const audioPath = path.join(outputDir, `${bookId}_${s.chapter_id}_${s.scene_id}.mp3`);
+
+            // Check if file already exists
+            if (fs.existsSync(audioPath)) {
+                result.skipped++;
+                continue;
+            }
+
+            // Check if scene has real audio (skip if real audio exists in DB)
+            try {
+                const asset = await sceneAssetsRepo.getAsset(bookId, s.chapter_id, s.scene_id, 'audio', buildId);
+                if (asset && asset.status === 'ready' && fs.existsSync(asset.path)) {
+                    result.skipped++;
+                    continue;
+                }
+            } catch (_) {
+                // DB error — proceed with recovery attempt
+            }
+
+            needsRecovery.push(s);
+        }
+
+        if (needsRecovery.length === 0) {
+            log(`[RECOVER] ${bookId}: all ${scenes.length} scenes have valid audio, nothing to do`);
+            return result;
+        }
+
+        log(`[RECOVER] ${bookId}: recovering placeholder audio for ${needsRecovery.length} scenes`);
+
+        for (const s of needsRecovery) {
+            try {
+                const phResult = await ensurePlaceholderAudio(buildId, bookId, s.chapter_id, s.scene_id);
+                if (phResult.created) {
+                    result.created++;
+                } else {
+                    result.skipped++;
+                }
+            } catch (err) {
+                warn(`[RECOVER] Failed for ${bookId}/${s.chapter_id}/${s.scene_id}: ${err.message}`);
+                result.errors.push(`${s.chapter_id}/${s.scene_id}: ${err.message}`);
+            }
+        }
+
+        log(`[RECOVER] ${bookId}: ${result.created} placeholders created, ${result.skipped} skipped, ${result.errors.length} errors`);
+    } catch (err) {
+        warn(`[RECOVER] Error recovering placeholders for ${bookId}: ${err.message}`);
+        result.errors.push(`global: ${err.message}`);
+    }
+
+    return result;
+}
+
+// ======================================================
 // EXPORTS
 // ======================================================
 
@@ -378,4 +483,5 @@ module.exports = {
     getScenesNeedingPlaceholder,
     replacePlaceholderWithRealAudio,
     markPlaceholderStale,
+    recoverMissingPlaceholders,
 };
