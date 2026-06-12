@@ -61,6 +61,16 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 
+app.use((req, res, next) => {
+    const start = Date.now();
+    res.on('finish', () => {
+        const ms = Date.now() - start;
+        const size = res.get('Content-Length') || '-';
+        console.log(`[HTTP] ${req.method} ${req.originalUrl} → ${res.statusCode} (${ms}ms, ${size}B)`);
+    });
+    next();
+});
+
 const OUTPUT_DIR = config.OUTPUT_DIR;
 
 // ======================================================
@@ -174,7 +184,7 @@ async function startServer() {
 
     // Resume incomplete sessions
     try {
-        await resumeIncompleteSessions(redis);
+        await resumeIncompleteSessions(log, windowGenerator.runBackgroundWindowGeneration);
         log('[STARTUP] Incomplete sessions resumed');
     } catch (resumeErr) {
         console.warn('[STARTUP] Session resume failed (non-fatal):', resumeErr.message);
@@ -188,7 +198,7 @@ async function startServer() {
 
         // Post-listen initialization
         try {
-            runtime.loop.start();
+            runtime.loop.start(redis);
             log('[STARTUP] Runtime loop started');
         } catch (loopErr) {
             console.warn('[STARTUP] Runtime loop start failed:', loopErr.message);

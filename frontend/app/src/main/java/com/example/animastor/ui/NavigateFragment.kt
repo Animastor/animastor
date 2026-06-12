@@ -37,7 +37,9 @@ class NavigateFragment : Fragment(R.layout.fragment_navigate) {
     private val viewModel: GenerateViewModel by activityViewModels {
         GenerateViewModel.factory
     }
-    private val positionManager get() = viewModel.positionManager
+    private val playbackViewModel: PlaybackViewModel by activityViewModels {
+        PlaybackViewModel.factory
+    }
 
     private var bookData: BookData? = null
     private val expandedScenes = mutableSetOf<String>()
@@ -46,28 +48,15 @@ class NavigateFragment : Fragment(R.layout.fragment_navigate) {
         onClick = { item ->
             when (item) {
                 is StructureItem.UnitItem -> {
-                    positionManager.navigateTo(
+                    SharedPositionManager.navigateTo(
                         chapterId = item.chapterId,
                         sceneId = item.sceneId,
                         unitId = item.unit.id,
                         unitIndex = item.index
                     )
                     if (item.chapterId != null && item.sceneId != null) {
-                        viewModel.seekToPosition(item.chapterId, item.sceneId, item.index, item.unit.id)
+                        playbackViewModel.seekToPosition(item.chapterId, item.sceneId, item.index, item.unit.id)
                     }
-
-                    // Trigger next window if user clicked the last unit of the last scene
-                    val parentScene = bookData?.chapters
-                        ?.firstOrNull { it.chapter == item.chapterId }
-                        ?.scenes?.firstOrNull { it.scene_id == item.sceneId }
-                    val unitCount = parentScene?.units?.size ?: 0
-                    viewModel.checkEndOfWindowAndTrigger(
-                        chapterId = item.chapterId,
-                        sceneId = item.sceneId,
-                        unitId = item.unit.id,
-                        unitIndex = item.index,
-                        sceneUnitCount = unitCount
-                    )
 
                     (requireActivity() as? MainActivity)?.switchToPlayTab()
                 }
@@ -176,7 +165,7 @@ class NavigateFragment : Fragment(R.layout.fragment_navigate) {
     private fun observePosition() {
         viewLifecycleOwner.lifecycleScope.launch {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
-                positionManager.current.collect { pos ->
+                SharedPositionManager.current.collect { pos ->
                     updatePositionBar(pos)
                     rebuildStructure()
                 }
@@ -225,7 +214,7 @@ class NavigateFragment : Fragment(R.layout.fragment_navigate) {
             try {
                 bookData = viewModel.repository.getBook(bookId).enrichTitles()
                 rebuildStructure()
-                updatePositionBar(positionManager.current.value)
+                updatePositionBar(SharedPositionManager.current.value)
             } catch (_: Exception) {
                 binding?.emptyState?.visibility = View.VISIBLE
             }
@@ -235,7 +224,7 @@ class NavigateFragment : Fragment(R.layout.fragment_navigate) {
     private fun rebuildStructure() {
         val data = bookData ?: return
         val chapters = data.chapters ?: emptyList()
-        val pos = positionManager.current.value
+        val pos = SharedPositionManager.current.value
         val items = mutableListOf<StructureItem>()
 
         // Auto-expand only the current position's scene, collapse others on scene change
@@ -307,7 +296,7 @@ class NavigateFragment : Fragment(R.layout.fragment_navigate) {
     }
 
     private fun scrollToActivePosition() {
-        val pos = positionManager.current.value
+        val pos = SharedPositionManager.current.value
         if (pos.chapterId == null) return
         val activeIndex = adapter.items.indexOfFirst {
             it is StructureItem.UnitItem && it.isActive

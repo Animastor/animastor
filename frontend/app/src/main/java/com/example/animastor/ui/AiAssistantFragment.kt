@@ -58,7 +58,6 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
     }
 
     private val generateViewModel: GenerateViewModel by activityViewModels()
-    private val positionManager get() = generateViewModel.positionManager
     private var argBookId: String? = null
     private var argCreateMode: Boolean = false
 
@@ -250,7 +249,7 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
     private fun observePosition() {
         viewLifecycleOwner.lifecycleScope.launch {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
-                positionManager.current.collect { pos ->
+                SharedPositionManager.current.collect { pos ->
                     updateContextBar(pos)
                 }
             }
@@ -336,7 +335,7 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
         bookDataLoadAttempted = true
         lifecycleScope.launch {
             bookData = runCatching { generateViewModel.repository.getBook(bookId).enrichTitles() }.getOrNull()
-            updateContextBar(positionManager.current.value)
+            updateContextBar(SharedPositionManager.current.value)
         }
     }
 
@@ -526,7 +525,7 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
                 val rawBook = generateViewModel.repository.getBook(bookId)
                 val bookData = rawBook.enrichTitles()
                 val title = bookData.book?.title ?: bookData.manifest?.book_id ?: bookId
-                val pos = positionManager.current.value
+                val pos = SharedPositionManager.current.value
                 val chIdx = bookData.chapterIndex(pos.chapterId)
                 val scIdx = bookData.sceneIndex(pos.chapterId, pos.sceneId)
                 val uIdx = bookData.unitIndex(pos.chapterId, pos.sceneId, pos.unitIndex)
@@ -588,9 +587,8 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
 
         val sessionAtSend = currentSessionId
         lifecycleScope.launch {
-            try {
-                val pos = positionManager.current.value
-                val iuLabel = pos.formatUnitLabel()
+            try {                    val pos = SharedPositionManager.current.value
+                    val iuLabel = pos.formatUnitLabel()
                 val systemCtx = if (pos.chapterId != null) {
                     "Current position: ${pos.chapterId} / ${pos.sceneId} / $iuLabel"
                 } else {

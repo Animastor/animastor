@@ -22,6 +22,18 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
+/**
+ * Media player fragment.
+ *
+ * Depends ONLY on [PlaybackViewModel] — completely independent of
+ * content generation ([GenerateViewModel]).
+ *
+ * Requirements:
+ * - MP3 audio bytes (or empty/silent placeholders)
+ * - IU sequence (images + subtitles per unit)
+ * - Network access to download content
+ * - A [Repository] instance for caching and fetching
+ */
 class PlayFragment : Fragment(R.layout.fragment_play) {
 
     companion object {
@@ -29,12 +41,11 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
     }
 
     private var binding: FragmentPlayBinding? = null
-    private val viewModel: GenerateViewModel by activityViewModels {
-        GenerateViewModel.factory
+    private val playbackViewModel: PlaybackViewModel by activityViewModels {
+        PlaybackViewModel.factory
     }
-    private val positionManager get() = viewModel.positionManager
+    private val repository get() = playbackViewModel.repository
 
-    private lateinit var sceneAudioPlayer: SceneAudioPlayer
     private var currentPlayer: MediaPlayer? = null
     private var nextPlayer: MediaPlayer? = null
     private var currentFile: File? = null
@@ -56,23 +67,23 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
     private var pendingVideoSyncJob: Job? = null
 
     private fun checkPendingExternalSeek() {
-        if (viewModel.pendingExternalSeek != null) {
+        if (playbackViewModel.pendingExternalSeek != null) {
             if (isHidden) return
-            Log.i(TAG, "checkPendingExternalSeek: executing seek to ${viewModel.pendingExternalSeek}")
+            Log.i(TAG, "checkPendingExternalSeek: executing seek to ${playbackViewModel.pendingExternalSeek}")
             stopAll()
-            viewModel.executePendingSeek()
+            playbackViewModel.executePendingSeek()
         }
     }
 
     private fun observeExternalNavigation() {
         viewLifecycleOwner.lifecycleScope.launch {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
-                viewModel.uiState.collect { _ ->
-                    if (viewModel.pendingExternalSeek != null) {
+                playbackViewModel.uiState.collect { _ ->
+                    if (playbackViewModel.pendingExternalSeek != null) {
                         if (isHidden) return@collect
                         Log.i(TAG, "external seek via state")
                         stopAll()
-                        viewModel.executePendingSeek()
+                        playbackViewModel.executePendingSeek()
                     }
                 }
             }
@@ -82,7 +93,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
     private fun observeManualUnitChange() {
         viewLifecycleOwner.lifecycleScope.launch {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
-                positionManager.current.collect { pos ->
+                SharedPositionManager.current.collect { pos ->
                     val ius = currentIuSequence
                     val idx = pos.unitIndex
                     if (!ius.isNullOrEmpty() && idx in ius.indices && idx != currentIuIndex) {
@@ -97,44 +108,9 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
     private fun observePreloadCompletion() {
         viewLifecycleOwner.lifecycleScope.launch {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
-                viewModel.preloadCompleted.collect {
+                playbackViewModel.preloadCompleted.collect {
                     if (currentPlayer != null && !nextChainReady && nextPlayer == null) {
                         preloadAheadAudio()
-                    }
-                }
-            }
-        }
-    }
-
-    private fun observeBackgroundGenProgress() {
-        viewLifecycleOwner.lifecycleScope.launch {
-            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
-                launch {
-                    viewModel.backgroundGenProgress.collect { progress ->
-                        val b = binding ?: return@collect
-                        if (progress != null) {
-                            b.progressBar.isIndeterminate = false
-                            b.progressBar.setProgressCompat((progress * 100).toInt(), true)
-                            b.progressBar.visibility = View.VISIBLE
-                        } else if (b.progressBar.isIndeterminate) {
-                            // Leave indeterminate progress bar visible if loading
-                            // Only hide if not in loading phase
-                            val phase = viewModel.uiState.value.phase
-                            if (phase != PlayerPhase.LOADING_BOOK &&
-                                phase != PlayerPhase.DOWNLOADING &&
-                                phase != PlayerPhase.GENERATING) {
-                                b.progressBar.visibility = View.GONE
-                            }
-                        }
-                    }
-                }
-                launch {
-                    viewModel.backgroundGenStatus.collect { status ->
-                        val b = binding ?: return@collect
-                        if (status != null && viewModel.backgroundGenProgress.value != null) {
-                            b.statusText.text = status
-                            b.statusText.visibility = View.VISIBLE
-                        }
                     }
                 }
             }
@@ -181,7 +157,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         try {
-            hasDisplayedCover = viewModel.uiState.value.coverImage != null
+            hasDisplayedCover = playbackViewModel.uiState.value.coverImage != null
         } catch (e: Exception) {
             Log.e(TAG, "cover check failed: ${e.message}", e)
             Toast.makeText(requireContext(), "ERR: ${e.message}", Toast.LENGTH_LONG).show()
@@ -194,29 +170,29 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
             Toast.makeText(requireContext(), "BIND ERR: ${e.message}", Toast.LENGTH_LONG).show()
             return
         }
-        sceneAudioPlayer = SceneAudioPlayer(
-            cacheDir = requireContext().cacheDir,
-            getChunkId = { viewModel.getCurrentChunkId() },
-            repository = viewModel.repository
-        )
         binding?.progressBar?.isIndeterminate = true
 
+        if (playbackViewModel.chunkQueueSize > 0 && playbackViewModel.uiState.value.phase == PlayerPhase.SCENE_READY) {
+            binding?.playButton?.isEnabled = true
+            binding?.playButton?.alpha = 1.0f
+        }
+
         binding?.playButton?.setOnClickListener {
-            val phase = viewModel.uiState.value.phase
-            Log.i(TAG, "playButton clicked, phase=$phase isPaused=$isPaused player=$currentPlayer rotate=${viewModel.needsRotationResume}")
+            val phase = playbackViewModel.uiState.value.phase
+            Log.i(TAG, "playButton clicked, phase=$phase isPaused=$isPaused player=$currentPlayer rotate=${playbackViewModel.needsRotationResume}")
             when {
                 phase == PlayerPhase.PLAYING && currentPlayer == null -> {
                     Log.i(TAG, "playButton: player was released, restarting")
-                    viewModel.resumeFromCurrentScene()
+                    playbackViewModel.resumeFromCurrentScene()
                 }
                 phase == PlayerPhase.PLAYING && !isPaused -> pausePlayback()
                 phase == PlayerPhase.PLAYING && isPaused -> resumePlayback()
-                phase == PlayerPhase.SCENE_READY && viewModel.needsRotationResume -> {
-                    Log.i(TAG, "playButton: rotation resume from index ${viewModel.currentChunkIndex}")
-                    viewModel.resumeFromCurrentScene()
+                phase == PlayerPhase.SCENE_READY && playbackViewModel.needsRotationResume -> {
+                    Log.i(TAG, "playButton: rotation resume from index ${playbackViewModel.currentChunkIndex}")
+                    playbackViewModel.resumeFromCurrentScene()
                 }
                 phase == PlayerPhase.SCENE_READY -> {
-                    viewModel.playSceneQueue()
+                    playbackViewModel.playSceneQueue()
                 }
                 else -> Log.w(TAG, "playButton: no matching action for phase=$phase")
             }
@@ -224,7 +200,8 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
 
         binding?.layerAudio?.setOnCheckedChangeListener { _, isChecked ->
             currentVolume = if (isChecked) 1.0f else 0.0f
-            sceneAudioPlayer.currentVolume = currentVolume
+            currentPlayer?.setVolume(currentVolume, currentVolume)
+            nextPlayer?.setVolume(currentVolume, currentVolume)
             videoPlayer?.setVolume(currentVolume, currentVolume)
             binding?.layerAudio?.chipIcon = if (isChecked)
                 resources.getDrawable(R.drawable.ic_volume_up, null)
@@ -232,7 +209,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                 resources.getDrawable(R.drawable.ic_volume_off, null)
         }
         binding?.layerImage?.setOnCheckedChangeListener { _, isChecked ->
-            viewModel.setImageEnabled(isChecked)
+            playbackViewModel.setImageEnabled(isChecked)
             binding?.layerImage?.chipIcon = if (isChecked)
                 resources.getDrawable(R.drawable.ic_image, null)
             else
@@ -273,11 +250,10 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         observeExternalNavigation()
         observeManualUnitChange()
         observePreloadCompletion()
-        observeBackgroundGenProgress()
         checkPendingExternalSeek()
 
         if (currentIuSequence == null && currentPlayer != null) {
-            currentIuSequence = viewModel.currentIuSequence
+            currentIuSequence = playbackViewModel.currentIuSequence
         }
         if (currentIuSequence != null && currentPlayer != null) {
             showCurrentIu()
@@ -288,7 +264,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         if (!isAdded) return
         val ius = currentIuSequence ?: return
         if (ius.isEmpty()) return
-        val idx = viewModel.currentUnitIndex.coerceIn(0, ius.size - 1)
+        val idx = playbackViewModel.currentUnitIndex.coerceIn(0, ius.size - 1)
         showIuImage(ius[idx].bitmap)
     }
 
@@ -301,7 +277,6 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         } else {
             b.subtitleText.visibility = View.GONE
         }
-        // Reposition button immediately so it doesn't overlap new subtitle for one frame
         anchorFullscreenToImage()
     }
 
@@ -369,10 +344,10 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         viewLifecycleOwner.lifecycleScope.launch {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 var prevPhase: PlayerPhase? = null
-                viewModel.uiState.collect { state ->
+                playbackViewModel.uiState.collect { state ->
                     try {
                         val b = binding ?: return@collect
-                        Log.d(TAG, "state: phase=${state.phase} seq=${state.chunkSequence} img=${state.currentImage != null} cover=${state.coverImage != null} player=$currentPlayer")
+                        Log.d(TAG, "state: phase=${state.phase} img=${state.previewImage != null} cover=${state.coverImage != null} player=$currentPlayer")
 
                         val missingPos = state.missingIuPosition
                         if (missingPos != null) {
@@ -383,13 +358,13 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                         }
 
                         if (state.phase == PlayerPhase.PLAYING && currentPlayer == null
-                            && state.chunkSequence == viewModel.lastProcessedChunkSequence) {
-                            Log.w(TAG, "rotation recovery: PLAYING with no player -> SCENE_READY")
-                            viewModel.rotationRecovery()
+                            && state.chunkSequence <= playbackViewModel.lastProcessedChunkSequence) {
+                            Log.w(TAG, "rotation recovery: PLAYING with no player (chunk already processed) -> SCENE_READY")
+                            playbackViewModel.rotationRecovery()
                             return@collect
                         }
 
-                        val displayImage = state.previewImage ?: state.currentImage
+                        val displayImage = state.previewImage
 
                         if (state.coverImage != null) {
                             if (isInCurtainsState) {
@@ -403,7 +378,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                         } else {
                             hasDisplayedCover = false
                             showCurtains()
-                        val loading = state.phase == PlayerPhase.LOADING_BOOK || state.phase == PlayerPhase.DOWNLOADING
+                            val loading = state.phase == PlayerPhase.LOADING_BOOK || state.phase == PlayerPhase.DOWNLOADING
                             if (loading) startPulse(b) else stopPulse()
                         }
 
@@ -413,18 +388,18 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                         }
                         prevPhase = state.phase
 
-                        if (state.phase == PlayerPhase.IDLE && viewModel.bookId.isBlank()) {
+                        if (state.phase == PlayerPhase.IDLE && playbackViewModel.bookId.isBlank()) {
                             stopAll()
                             b.coverImage.setImageBitmap(null)
                             b.coverImage.visibility = View.GONE
                             b.fullscreenButton.visibility = View.GONE
                         }
 
-                        if (state.phase == PlayerPhase.PLAYING && state.chunkSequence > viewModel.lastProcessedChunkSequence) {
-                            viewModel.lastProcessedChunkSequence = state.chunkSequence
-                            val audio = viewModel.pendingChunkAudio
+                        if (state.phase == PlayerPhase.PLAYING && state.chunkSequence > playbackViewModel.lastProcessedChunkSequence) {
+                            playbackViewModel.lastProcessedChunkSequence = state.chunkSequence
+                            val audio = playbackViewModel.pendingChunkAudio
                             if (audio != null) {
-                                handleChunk(audio, viewModel.pendingChunkVideo, viewModel.pendingChunkIuSequence)
+                                handleChunk(audio, playbackViewModel.pendingChunkVideo, playbackViewModel.pendingChunkIuSequence)
                             }
                         }
 
@@ -437,15 +412,15 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                             }
                         }
 
-                        if (viewModel.persistedImage != null && b.resultImage.visibility != View.VISIBLE) {
-                            b.resultImage.setImageBitmap(viewModel.persistedImage)
+                        if (playbackViewModel.persistedImage != null && b.resultImage.visibility != View.VISIBLE) {
+                            b.resultImage.setImageBitmap(playbackViewModel.persistedImage)
                             b.resultImage.visibility = View.VISIBLE
                             b.coverImage.visibility = View.GONE
                             b.mediaContainer.post { anchorFullscreenToImage() }
                         }
 
                         if (state.phase == PlayerPhase.IDLE) {
-                            if (viewModel.bookId.isBlank()) {
+                            if (playbackViewModel.bookId.isBlank()) {
                                 b.placeholderText.text = getString(R.string.play_placeholder)
                                 b.placeholderText.visibility = View.VISIBLE
                             } else {
@@ -456,7 +431,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                             b.placeholderText.visibility = View.INVISIBLE
                         }
 
-                            val loading = state.phase == PlayerPhase.LOADING_BOOK || state.phase == PlayerPhase.DOWNLOADING
+                        val loading = state.phase == PlayerPhase.LOADING_BOOK || state.phase == PlayerPhase.DOWNLOADING
                         b.previewOverlay.visibility = if (loading && state.coverImage != null) View.VISIBLE else View.GONE
                         b.progressBar.visibility = if (loading) View.VISIBLE else View.GONE
 
@@ -471,7 +446,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                             PlayerPhase.SCENE_READY -> b.statusText.text = getString(R.string.play_ready)
                             PlayerPhase.PLAYING -> if (isPaused) b.statusText.text = getString(R.string.play_paused)
                                 else b.statusText.text = getString(R.string.play_playing)
-                            PlayerPhase.IDLE -> b.statusText.text = if (viewModel.bookId.isBlank()) getString(R.string.empty_state) else getString(R.string.empty_state_book_loaded)
+                            PlayerPhase.IDLE -> b.statusText.text = if (playbackViewModel.bookId.isBlank()) getString(R.string.empty_state) else getString(R.string.empty_state_book_loaded)
                             PlayerPhase.PAUSED -> b.statusText.text = getString(R.string.play_paused)
                             PlayerPhase.IMPORTING_TXT -> b.statusText.text = getString(R.string.play_loading)
                         }
@@ -533,10 +508,10 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
 
         if (video != null) playVideoOverlay(video)
 
-        viewModel.persistedImage = null
+        playbackViewModel.persistedImage = null
 
         // Calculate seek offset from unitIndex if navigating externally
-        val targetUnit = positionManager.current.value.unitIndex
+        val targetUnit = SharedPositionManager.current.value.unitIndex
         val seekToUnit = if (targetUnit > 0 && !iuSequence.isNullOrEmpty() && targetUnit < iuSequence.size) targetUnit else 0
         var seekMs = 0L
         if (seekToUnit > 0 && !iuSequence.isNullOrEmpty()) {
@@ -547,13 +522,13 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
 
         if (!iuSequence.isNullOrEmpty()) {
             currentIuSequence = iuSequence
-            viewModel.currentIuSequence = iuSequence
+            playbackViewModel.currentIuSequence = iuSequence
             currentIuIndex = seekToUnit
             showIuImage(iuSequence[seekToUnit])
             updateSubtitleIfEnabled(iuSequence[seekToUnit].text)
         } else {
             currentIuSequence = iuSequence
-            viewModel.currentIuSequence = iuSequence
+            playbackViewModel.currentIuSequence = iuSequence
             showIuMissingPlaceholder()
             updateSubtitleIfEnabled(null)
         }
@@ -582,11 +557,11 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
             if (seekMs > 0) {
                 Log.i(TAG, "seeking to unit ${seekToUnit} at ${seekMs}ms")
                 currentPlayer?.seekTo(seekMs.toInt())
-            } else if (viewModel.pendingSeekPositionMs > 0) {
-                val sMs = viewModel.pendingSeekPositionMs.toInt()
+            } else if (playbackViewModel.pendingSeekPositionMs > 0) {
+                val sMs = playbackViewModel.pendingSeekPositionMs.toInt()
                 Log.i(TAG, "seek to ${sMs}ms after rotation resume")
                 currentPlayer?.seekTo(sMs)
-                viewModel.pendingSeekPositionMs = -1
+                playbackViewModel.pendingSeekPositionMs = -1
             }
             Log.i(TAG, "first MediaPlayer started at unit ${seekToUnit}")
             if (!isPaused) startIuCycling()
@@ -604,7 +579,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
     }
 
     private fun preloadAheadAudio() {
-        val nextScene = viewModel.tryPreloadNextScene() ?: return
+        val nextScene = playbackViewModel.tryPreloadNextScene() ?: return
         preloadNext(nextScene.audioBytes)
         currentPlayer?.setNextMediaPlayer(nextPlayer)
         nextPlayer?.setOnCompletionListener { onTrackEnd() }
@@ -663,7 +638,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         Log.w(TAG, "showMissingChunkOverlay: ${position.chapterId}/${position.sceneId}/${position.unitId}")
         try {
             currentIuSequence = emptyList()
-            viewModel.currentIuSequence = emptyList()
+            playbackViewModel.currentIuSequence = emptyList()
             currentPlayer?.runCatching { stop() }
             currentPlayer?.release()
             currentPlayer = null
@@ -675,7 +650,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
             anchorFullscreenToImage()
             b.statusText.text = getString(R.string.iu_not_generated)
             viewLifecycleOwner.lifecycleScope.launch {
-                positionManager.navigateTo(position)
+                SharedPositionManager.navigateTo(position)
             }
         } catch (e: Exception) {
             Log.w(TAG, "showMissingChunkOverlay failed: ${e.message}")
@@ -695,7 +670,6 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         var targetTranslationX = 0f
         var targetTranslationY = 0f
 
-        // Step 1: Compute image-anchored position (horizontal + vertical)
         if (drawable != null && container.width > 0 && container.height > 0) {
             val dWidth = drawable.intrinsicWidth
             val dHeight = drawable.intrinsicHeight
@@ -714,7 +688,6 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
             }
         }
 
-        // Step 2: If subtitles are visible, clamp Y so button is always above subtitle bar
         if (b.subtitleText.visibility == View.VISIBLE) {
             val density = resources.displayMetrics.density
             val gapPx = (6f * density).toInt()
@@ -723,7 +696,6 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
             val subtitleTop = b.subtitleText.top
             val targetBottom = subtitleTop - gapPx
             val subtitleTranslationY = (targetBottom - btnDefaultBottom).toFloat()
-            // Take the higher (more negative) Y shift — ensures button clears subtitle bar
             targetTranslationY = minOf(targetTranslationY, subtitleTranslationY)
         }
 
@@ -782,24 +754,15 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                 if (idx != currentIuIndex) {
                     currentIuIndex = idx
                     if (isPaused) continue
-                    viewModel.currentUnitIndex = idx
+                    playbackViewModel.currentUnitIndex = idx
                     showIuImage(ius[idx])
                     updateSubtitleIfEnabled(ius[idx].text)
-                    positionManager.navigateTo(
-                        chapterId = viewModel.currentChapterId,
-                        sceneId = viewModel.currentSceneId,
+                    SharedPositionManager.navigateTo(
+                        chapterId = playbackViewModel.currentChapterId,
+                        sceneId = playbackViewModel.currentSceneId,
                         unitId = ius[idx].unitId,
-                        chunkId = viewModel.getCurrentChunkId(),
+                        chunkId = playbackViewModel.getCurrentChunkId(),
                         unitIndex = idx
-                    )
-
-                    // Trigger next window generation when reaching the last unit of the last scene
-                    viewModel.checkEndOfWindowAndTrigger(
-                        chapterId = viewModel.currentChapterId,
-                        sceneId = viewModel.currentSceneId,
-                        unitId = ius[idx].unitId,
-                        unitIndex = idx,
-                        sceneUnitCount = ius.size
                     )
                 }
 
@@ -813,7 +776,6 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
     private fun switchToNextPlayer() {
         Log.i(TAG, "switchToNextPlayer: hasNext=${nextPlayer != null} isPaused=$isPaused")
         currentIuIndex = 0
-        // Hide subtitle during transition — new scene's IUs will load after onAudioCompleted
         updateSubtitleIfEnabled(null)
         currentPlayer?.stop()
         currentPlayer = nextPlayer
@@ -830,7 +792,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         } else {
             Log.w(TAG, "switchToNextPlayer: no next player")
         }
-        viewModel.onAudioCompleted()
+        playbackViewModel.onAudioCompleted()
     }
 
     private fun onTrackEnd() {
@@ -846,7 +808,6 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                 nextFile = null
                 if (currentPlayer != null) {
                     currentIuIndex = 0
-                    // Hide subtitle during transition — new scene's IUs will load after onAudioCompleted
                     updateSubtitleIfEnabled(null)
                     if (isPaused) {
                         currentPlayer?.pause()
@@ -857,7 +818,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                 } else {
                     if (isAdded) showCoverOnly()
                 }
-                viewModel.onAudioCompleted()
+                playbackViewModel.onAudioCompleted()
             }
         } catch (e: Exception) {
             Log.e(TAG, "onTrackEnd error: ${e.message}")
@@ -883,27 +844,48 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
     private fun preloadNext(audio: ByteArray) {
         nextFile?.delete()
         nextPlayer?.release()
+        if (audio.isEmpty()) {
+            Log.w(TAG, "preloadNext: empty audio, skipping")
+            nextPlayer = null
+            nextFile = null
+            return
+        }
         val file = writeTemp(audio)
         nextFile = file
-        nextPlayer = MediaPlayer().apply {
-            setDataSource(file.absolutePath)
-            prepare()
-            setVolume(currentVolume, currentVolume)
+        nextPlayer = try {
+            MediaPlayer().apply {
+                setDataSource(file.absolutePath)
+                prepare()
+                setVolume(currentVolume, currentVolume)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "preloadNext failed: ${e.message}")
+            nextFile = null
+            null
         }
     }
 
-    private fun createPlayer(file: File): MediaPlayer {
-        return MediaPlayer().apply {
-            setDataSource(file.absolutePath)
-            prepare()
-            setVolume(currentVolume, currentVolume)
+    private fun createPlayer(file: File): MediaPlayer? {
+        if (file.length() == 0L) {
+            Log.w(TAG, "createPlayer: empty audio file")
+            return null
+        }
+        return try {
+            MediaPlayer().apply {
+                setDataSource(file.absolutePath)
+                prepare()
+                setVolume(currentVolume, currentVolume)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "createPlayer failed: ${e.message}")
+            null
         }
     }
 
     private fun writeTemp(bytes: ByteArray): File {
-        val chunkId = viewModel.getCurrentChunkId()
+        val chunkId = playbackViewModel.getCurrentChunkId()
         if (chunkId != null) {
-            val cached = viewModel.repository.cacheAudioFile(chunkId, bytes)
+            val cached = repository.cacheAudioFile(chunkId, bytes)
             if (cached != null) return cached
         }
         val file = File(requireContext().cacheDir, "chunk-${System.currentTimeMillis()}.mp3")
@@ -916,9 +898,9 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
             videoPlayer?.release()
             videoPlayer = null
             currentVideoFile?.delete()
-            val chunkId = viewModel.getCurrentChunkId()
+            val chunkId = playbackViewModel.getCurrentChunkId()
             val file = if (chunkId != null) {
-                viewModel.repository.cacheVideoFile(chunkId, bytes)
+                repository.cacheVideoFile(chunkId, bytes)
                     ?: File(requireContext().cacheDir, "video-${System.currentTimeMillis()}.mp4").also { it.writeBytes(bytes) }
             } else {
                 File(requireContext().cacheDir, "video-${System.currentTimeMillis()}.mp4").also { it.writeBytes(bytes) }
@@ -1079,7 +1061,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         iuCyclingJob?.cancel()
         iuCyclingJob = null
         currentIuSequence = null
-        viewModel.currentIuSequence = null
+        playbackViewModel.currentIuSequence = null
         currentIuIndex = 0
         sceneTransitionPending = false
         nextChainReady = false
@@ -1087,8 +1069,6 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         nextPlayer?.release()
         videoPlayer?.release()
         videoPlayer = null
-        // Do NOT delete cached files — they are preserved for reuse
-        // Only delete temp files (named with timestamp)
         if (currentFile?.name?.startsWith("chunk-") == true) currentFile?.delete()
         if (nextFile?.name?.startsWith("chunk-") == true) nextFile?.delete()
         if (currentVideoFile?.name?.startsWith("video-") == true) currentVideoFile?.delete()
@@ -1114,7 +1094,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         super.onHiddenChanged(hidden)
         if (hidden) {
             stopPulse()
-            val phase = viewModel.uiState.value.phase
+            val phase = playbackViewModel.uiState.value.phase
             if (phase == PlayerPhase.PLAYING && !isPaused) {
                 pausePlayback()
             }
@@ -1127,11 +1107,11 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                 syncVideoFrame()
                 showCurrentIu()
             }
-            if (viewModel.pendingExternalSeek != null) {
+            if (playbackViewModel.pendingExternalSeek != null) {
                 Log.i(TAG, "onHiddenChanged: external seek pending, executing")
                 pendingLoad = true
                 stopAll()
-                viewModel.executePendingSeek()
+                playbackViewModel.executePendingSeek()
             }
         }
     }
@@ -1146,15 +1126,15 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         if (activity?.isChangingConfigurations == true) {
             if (currentPlayer != null) {
                 val pos = currentPlayer?.currentPosition?.toLong() ?: 0
-                if (pos > 0) viewModel.savedPlaybackPositionMs = pos
+                if (pos > 0) playbackViewModel.savedPlaybackPositionMs = pos
             }
             val b = binding
             if (b != null && b.resultImage.visibility == View.VISIBLE && b.resultImage.drawable != null) {
                 val bmp = (b.resultImage.drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap
-                if (bmp != null) viewModel.persistedImage = bmp
+                if (bmp != null) playbackViewModel.persistedImage = bmp
             }
         }
-        if (viewModel.uiState.value.phase == PlayerPhase.PLAYING && !isPaused) {
+        if (playbackViewModel.uiState.value.phase == PlayerPhase.PLAYING && !isPaused) {
             pausePlayback()
         }
     }

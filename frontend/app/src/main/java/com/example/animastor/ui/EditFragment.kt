@@ -33,7 +33,9 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
 
     private var binding: FragmentEditBinding? = null
     private val viewModel: GenerateViewModel by activityViewModels()
-    private val positionManager get() = viewModel.positionManager
+    private val playbackViewModel: PlaybackViewModel by activityViewModels {
+        PlaybackViewModel.factory
+    }
 
     private var bookData: BookData? = null
     private var chapters: List<Chapter> = emptyList()
@@ -95,7 +97,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
     private fun observePosition() {
         viewLifecycleOwner.lifecycleScope.launch {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
-                positionManager.current.collect { pos ->
+                SharedPositionManager.current.collect { pos ->
                     if (pos.chapterId != null) {
                         loadAndSync(pos)
                     } else if (viewModel.bookId.isNotBlank()) {
@@ -175,7 +177,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                 val firstSc = firstCh?.scenes?.firstOrNull()
                 setSaveLoading(false)
                 if (firstCh != null && firstSc != null) {
-                    positionManager.navigateTo(
+                    SharedPositionManager.navigateTo(
                         chapterId = firstCh.chapter,
                         sceneId = firstSc.scene_id,
                         unitId = firstSc.units?.firstOrNull()?.id,
@@ -231,13 +233,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
             val sc = currentScene()
             val unitCount = sc?.units?.size ?: 0
             if (unitCount > 0) {
-                viewModel.checkEndOfWindowAndTrigger(
-                    chapterId = pos.chapterId,
-                    sceneId = pos.sceneId,
-                    unitId = pos.unitId,
-                    unitIndex = pos.unitIndex,
-                    sceneUnitCount = unitCount
-                )
+                // checkEndOfWindowAndTrigger removed — window management is now handled by PlaybackViewModel
             }
         }
     }
@@ -246,7 +242,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         if (binding == null) return
         val ch = chapters.getOrNull(currentChIndex)
         val sc = currentScene()
-        val pos = positionManager.current.value
+        val pos = SharedPositionManager.current.value
         val totalUnits = sc?.units?.size ?: 0
         val chLabel = if (ch != null) "${getString(R.string.navigate_chapter)} ${currentChIndex + 1}" else "—"
         val scLabel = if (sc != null) "${getString(R.string.navigate_scene)} ${currentScIndex + 1}" else "—"
@@ -268,7 +264,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         val sc = currentScene() ?: return
         val units = sc.units ?: emptyList()
         val scenes = chapters.getOrNull(currentChIndex)?.scenes ?: emptyList()
-        val pos = positionManager.current.value
+        val pos = SharedPositionManager.current.value
         val idx = pos.unitIndex
 
         if (idx > 0 && idx - 1 < units.size) {
@@ -428,7 +424,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         val sc = currentScene() ?: return
         val units = sc.units ?: emptyList()
         val scenes = chapters.getOrNull(currentChIndex)?.scenes ?: emptyList()
-        val pos = positionManager.current.value
+        val pos = SharedPositionManager.current.value
         val idx = pos.unitIndex
 
         val atStart = idx == 0
@@ -443,7 +439,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                     val prevUnitIndex = (if (prevUnits.isEmpty()) 0 else prevUnits.size - 1).coerceAtLeast(0)
                     currentScIndex = prevScIndex
                     fieldValues.clear()
-                    positionManager.navigateTo(
+                    SharedPositionManager.navigateTo(
                         chapterId = chapters.getOrNull(currentChIndex)?.chapter,
                         sceneId = prevSc.scene_id,
                         unitId = prevUnits.getOrNull(prevUnitIndex)?.id,
@@ -455,7 +451,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                     rebuildContent(binding?.propertyTabs?.selectedTabPosition ?: 0)
                     val chId = chapters.getOrNull(currentChIndex)?.chapter
                     if (chId != null && prevSc.scene_id != null) {
-                        viewModel.seekToPosition(chId, prevSc.scene_id, prevUnitIndex, prevUnits.getOrNull(prevUnitIndex)?.id)
+                        playbackViewModel.seekToPosition(chId, prevSc.scene_id, prevUnitIndex, prevUnits.getOrNull(prevUnitIndex)?.id)
                     }
                 }
             }
@@ -470,7 +466,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                     currentChIndex = prevChIndex
                     currentScIndex = prevChScenes.size - 1
                     fieldValues.clear()
-                    positionManager.navigateTo(
+                    SharedPositionManager.navigateTo(
                         chapterId = prevCh?.chapter,
                         sceneId = prevSc.scene_id,
                         unitId = prevUnits.getOrNull(prevUnitIndex)?.id,
@@ -482,7 +478,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                     rebuildContent(binding?.propertyTabs?.selectedTabPosition ?: 0)
                     val chId = prevCh?.chapter
                     if (chId != null && prevSc.scene_id != null) {
-                        viewModel.seekToPosition(chId, prevSc.scene_id, prevUnitIndex, prevUnits.getOrNull(prevUnitIndex)?.id)
+                        playbackViewModel.seekToPosition(chId, prevSc.scene_id, prevUnitIndex, prevUnits.getOrNull(prevUnitIndex)?.id)
                     }
                 }
             }
@@ -493,7 +489,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                     val nextUnits = nextSc.units ?: emptyList()
                     currentScIndex = nextScIndex
                     fieldValues.clear()
-                    positionManager.navigateTo(
+                    SharedPositionManager.navigateTo(
                         chapterId = chapters.getOrNull(currentChIndex)?.chapter,
                         sceneId = nextSc.scene_id,
                         unitId = nextUnits.firstOrNull()?.id,
@@ -505,7 +501,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                     rebuildContent(binding?.propertyTabs?.selectedTabPosition ?: 0)
                     val chId = chapters.getOrNull(currentChIndex)?.chapter
                     if (chId != null && nextSc.scene_id != null) {
-                        viewModel.seekToPosition(chId, nextSc.scene_id, 0, nextUnits.firstOrNull()?.id)
+                        playbackViewModel.seekToPosition(chId, nextSc.scene_id, 0, nextUnits.firstOrNull()?.id)
                     }
                 }
             }
@@ -519,7 +515,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                     currentChIndex = nextChIndex
                     currentScIndex = 0
                     fieldValues.clear()
-                    positionManager.navigateTo(
+                    SharedPositionManager.navigateTo(
                         chapterId = nextCh?.chapter,
                         sceneId = nextSc.scene_id,
                         unitId = nextUnits.firstOrNull()?.id,
@@ -531,15 +527,15 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                     rebuildContent(binding?.propertyTabs?.selectedTabPosition ?: 0)
                     val chId = nextCh?.chapter
                     if (chId != null && nextSc.scene_id != null) {
-                        viewModel.seekToPosition(chId, nextSc.scene_id, 0, nextUnits.firstOrNull()?.id)
+                        playbackViewModel.seekToPosition(chId, nextSc.scene_id, 0, nextUnits.firstOrNull()?.id)
                     }
                 }
             }
             else -> {
                 if (delta < 0) {
-                    positionManager.previousUnit(units)
+                    SharedPositionManager.previousUnit(units)
                 } else {
-                    positionManager.nextUnit(units)
+                    SharedPositionManager.nextUnit(units)
                 }
                 fieldValues.clear()
                 updateCarousel()
@@ -548,19 +544,10 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                 updateTimelineSelection()
                 val chId = chapters.getOrNull(currentChIndex)?.chapter
                 val scId = sc.scene_id
-                val newIndex = positionManager.current.value.unitIndex
+                val newIndex = SharedPositionManager.current.value.unitIndex
                 if (chId != null && scId != null) {
-                    viewModel.seekToPosition(chId, scId, newIndex, units.getOrNull(newIndex)?.id)
+                    playbackViewModel.seekToPosition(chId, scId, newIndex, units.getOrNull(newIndex)?.id)
                 }
-
-                // Trigger next window check after user navigates within the scene
-                viewModel.checkEndOfWindowAndTrigger(
-                    chapterId = chId,
-                    sceneId = scId,
-                    unitId = units.getOrNull(newIndex)?.id,
-                    unitIndex = newIndex,
-                    sceneUnitCount = units.size
-                )
             }
         }
     }
@@ -598,7 +585,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
     private fun buildUnitFields(parent: ViewGroup) {
         val sc = currentScene() ?: return
         val units = sc.units ?: emptyList()
-        val pos = positionManager.current.value
+        val pos = SharedPositionManager.current.value
         val idx = pos.unitIndex.coerceIn(0, units.size - 1)
         val u = units.getOrNull(idx) ?: return
         val ctx = parent.context
@@ -797,7 +784,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         }
         // Unit-level fields
         val sceneUnits = modified.units
-        val pos = positionManager.current.value
+        val pos = SharedPositionManager.current.value
         if (sceneUnits != null && pos.unitIndex < sceneUnits.size) {
             val modifiedUnits = sceneUnits.toMutableList()
             val u = sceneUnits[pos.unitIndex]
@@ -983,7 +970,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
     private fun updateTimelineSelection() {
         val b = binding ?: return
         val td = timingData ?: return
-        val pos = positionManager.current.value
+        val pos = SharedPositionManager.current.value
         val unit = td.units.getOrNull(pos.unitIndex) ?: return
         b.timelineWaveform.setSelectionRange(unit.start_ms, unit.end_ms, unit.unit_id)
     }
@@ -998,7 +985,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
 
     private fun startPlayback() {
         val b = binding ?: return
-        val pos = positionManager.current.value
+        val pos = SharedPositionManager.current.value
         val unit = timingData?.units?.getOrNull(pos.unitIndex) ?: return
 
         val file = audioFile
@@ -1072,7 +1059,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
 
     private fun handleRangeChange(startMs: Long, endMs: Long) {
         val td = timingData ?: return
-        val pos = positionManager.current.value
+        val pos = SharedPositionManager.current.value
         val updated = td.units.toMutableList()
         if (pos.unitIndex in updated.indices) {
             val oldUnit = updated[pos.unitIndex]
@@ -1141,7 +1128,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
     private fun resetCurrentUnitTiming() {
         val orig = originalTimings ?: return
         val td = timingData ?: return
-        val pos = positionManager.current.value
+        val pos = SharedPositionManager.current.value
 
         val updated = td.units.toMutableList()
         if (pos.unitIndex in updated.indices) {

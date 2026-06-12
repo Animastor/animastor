@@ -16,7 +16,6 @@ import com.example.animastor.repository.ImportTxtResponse
 import com.example.animastor.repository.LayerConfigUpdate
 import com.example.animastor.repository.ReorderChapter
 import com.example.animastor.repository.Repository
-import com.example.animastor.repository.SceneUnit
 import com.example.animastor.repository.ChunkListResponse
 import com.example.animastor.repository.ChunkResponse
 import com.example.animastor.util.MediaDecoder
@@ -24,12 +23,17 @@ import com.example.animastor.util.SimpleDiskCache
 import java.io.File
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.async
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 
+/**
+ * ViewModel for content generation, book loading, and import pipeline.
+ *
+ * Does NOT manage playback state — that is handled by [PlaybackViewModel].
+ * Communicates new chunk availability via [playbackPrepared] so the activity
+ * coordinator can inform the player.
+ */
 class GenerateViewModel(
     application: Application,
     private val _repository: Repository
@@ -37,51 +41,18 @@ class GenerateViewModel(
 
     val repository: Repository get() = _repository
 
-    private val _videosReady = MutableStateFlow(false)
-    val videosReady: StateFlow<Boolean> = _videosReady.asStateFlow()
-
-    private var videoCheckJob: Job? = null
-
-    fun startVideoCheck() {
-        videoCheckJob?.cancel()
-        videoCheckJob = viewModelScope.launch {
-            while (true) {
-                val ids = chunkQueue.toList()
-                if (ids.isEmpty() || bookId.isBlank()) {
-                    _videosReady.value = false
-                    delay(5000)
-                    continue
-                }
-                var allReady = true
-                var anyExists = false
-                for (id in ids) {
-                    val chunk = runCatching { _repository.getChunk(id) }.getOrNull()
-                    if (chunk != null) {
-                        if (chunk.video_ready) anyExists = true
-                        else allReady = false
-                    } else {
-                        allReady = false
-                    }
-                }
-                _videosReady.value = allReady && anyExists
-                delay(5000)
-            }
-        }
-    }
-
     companion object {
-        private const val TAG = "VM"
-        private const val POLL_TIMEOUT_MS = 300_000L
+        private const val TAG = "GenVM"
         private const val IMAGE_POLL_TIMEOUT_MS = 1_800_000L
-        private const val POLL_INTERVAL_MS = 300L
-        private const val PRELOAD_AHEAD = 3
-        private const val WINDOW_SIZE = 3
-        private const val LAZY_WINDOW_DEFAULT = 3
         private const val INITIAL_WAIT_COUNT = 3
         private const val WINDOW_RETRY_COUNT = 60
+        private const val POLL_TIMEOUT_MS = 300_000L
+        private const val LAZY_WINDOW_DEFAULT = 3
         private const val MAX_BACKOFF_MS = 5_000L
+        private const val POLL_INTERVAL_MS = 300L
 
         val factory: ViewModelProvider.Factory = object : ViewModelProvider.Factory {
+            @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>, extras: CreationExtras): T {
                 val app = checkNotNull(extras[ViewModelProvider.AndroidViewModelFactory.APPLICATION_KEY])
                 val diskCache = SimpleDiskCache(
@@ -89,19 +60,33 @@ class GenerateViewModel(
                     maxSizeBytes = 256 * 1024 * 1024
                 )
                 val repo = Repository(RetrofitClient.api, diskCache)
-                @Suppress("UNCHECKED_CAST")
                 return GenerateViewModel(application = app, _repository = repo) as T
             }
         }
     }
 
-    val positionManager = PositionManager()
+    // ── Shared playback data — consumed by MainActivity → PlaybackViewModel ─
 
-    private val _uiState = MutableStateFlow(UiState())
-    val uiState: StateFlow<UiState> = _uiState.asStateFlow()
+    /**
+     * Emitted when new chunks are ready for playback.
+     * The activity coordinator observes this and calls [PlaybackViewModel.preparePlayback].
+     */
+    data class PlaybackPreparation(
+        val bookId: String,
+        val buildId: String,
+        val chunkIds: List<String>,
+        val coverImage: Bitmap? = null,
+        val chunkPositions: Map<String, Pair<String?, String?>> = emptyMap()
+    )
 
-    private val chunkQueue = mutableListOf<String>()
-    private var currentIndex = 0
+    private val _playbackPrepared = MutableSharedFlow<PlaybackPreparation>(extraBufferCapacity = 4)
+    val playbackPrepared: SharedFlow<PlaybackPreparation> = _playbackPrepared.asSharedFlow()
+
+    // ── UI State (generation/import related only) ─────────────────
+
+    private val _uiState = MutableStateFlow(GenUiState())
+    val uiState: StateFlow<GenUiState> = _uiState.asStateFlow()
+
     var bookId: String = ""
         private set
     var buildId: String = ""
@@ -125,39 +110,9 @@ class GenerateViewModel(
         prefs.edit().putString("buildId", id).apply()
     }
 
-    private val chunkPositions = mutableMapOf<String, Pair<String?, String?>>()
-
-    var currentChapterId: String? = null
-        private set
-    var currentSceneId: String? = null
-        private set
-    var currentUnitIndex: Int = 0
-        set(value) { if (value >= 0) field = value }
-
-    private val preloadCache = mutableMapOf<String, PreloadedScene>()
-
-    var currentIuSequence: List<IuImageItem>? = null
-
-    private val preloadJobs = mutableMapOf<String, Job>()
-    private var preloadJob: Job? = null
-    private var backgroundWindowJob: Job? = null
-    private var backgroundWindowStart = -1
-    private var backgroundGenPollJob: Job? = null
-    private var coverRefreshJob: Job? = null
-
-    var pendingChunkAudio: ByteArray? = null
-    var pendingChunkVideo: ByteArray? = null
-    var pendingChunkIuSequence: List<IuImageItem>? = null
-    var lastProcessedChunkSequence: Long = 0
-    private var chunkSeqCounter = 0L
     private var generationJob: Job? = null
 
-    var savedPlaybackPositionMs: Long = 0
-    var persistedImage: Bitmap? = null
-    var pendingSeekPositionMs: Long = -1
-    var needsRotationResume = false
-    var pendingExternalSeek: ActivePosition? = null
-    private var isExecutingExternalSeek = false
+    // ── Layer config & profile toggles ────────────────────────────
 
     var imageEnabled: Boolean = true
         private set
@@ -177,8 +132,6 @@ class GenerateViewModel(
     private val _layerConfigLoaded = MutableStateFlow(false)
     val layerConfigLoadedFlow: StateFlow<Boolean> = _layerConfigLoaded.asStateFlow()
 
-    fun setImageEnabled(enabled: Boolean) { imageEnabled = enabled }
-
     fun audioEnabled(): Boolean = _audioEnabled.value
     fun videoEnabled(): Boolean = _videoEnabled.value
     fun currentProfile(): String = computeProfile(imageEnabled, _videoEnabled.value)
@@ -186,7 +139,6 @@ class GenerateViewModel(
 
     fun setAudioEnabled(enabled: Boolean) {
         _audioEnabled.value = enabled
-        imageEnabled = imageEnabled
         viewModelScope.launch { persistLayerConfig() }
     }
 
@@ -271,6 +223,8 @@ class GenerateViewModel(
         }
     }
 
+    // ── Generation ───────────────────────────────────────────────
+
     data class GenerationRequest(
         val profile: String,
         val scope: String,
@@ -296,7 +250,7 @@ class GenerateViewModel(
         )
         generationJob?.cancel()
         generationJob = viewModelScope.launch {
-            _uiState.value = UiState(phase = PlayerPhase.GENERATING)
+            _uiState.value = GenUiState(phase = PlayerPhase.GENERATING)
             runCatching {
                 val res = _repository.regenerateBookScoped(
                     bookId = bookId,
@@ -313,8 +267,6 @@ class GenerateViewModel(
                 res
             }.onSuccess { res ->
                 _repository.clearCache()
-                preloadCache.clear()
-                preloadJobs.clear()
                 _uiState.update { it.copy(phase = PlayerPhase.SCENE_READY) }
                 val dirtyCount = res.dirty_scenes?.size ?: 0
                 onResult(GenerationResult.Started(dirtyCount, res.scope ?: req.scope))
@@ -350,7 +302,6 @@ class GenerateViewModel(
             }.onFailure { e ->
                 Log.w(TAG, "cancelGeneration: backend call failed: ${e.message}")
             }
-            // Always reset local state regardless of backend result
             generationJob?.cancel()
             generationJob = null
             _isRegenerating.value = false
@@ -359,104 +310,15 @@ class GenerateViewModel(
         }
     }
 
-    val currentChunkIndex: Int get() = currentIndex
-    val chunkQueueSize: Int get() = chunkQueue.size
-
-    private val _preloadCompleted = MutableSharedFlow<String>(extraBufferCapacity = 16)
-    val preloadCompleted: SharedFlow<String> = _preloadCompleted
-
-    fun getPreloadedScene(index: Int): PreloadedScene? {
-        if (index < 0 || index >= chunkQueue.size) return null
-        return preloadCache[chunkQueue[index]]
-    }
-
-    fun tryPreloadNextScene(): PreloadedScene? {
-        return getPreloadedScene(currentIndex + 1)
-    }
-
-    private fun emitChunk(audio: ByteArray, video: ByteArray?, iuSequence: List<IuImageItem>?) {
-        val seq = ++chunkSeqCounter
-        Log.i(TAG, "emitChunk #$seq: audio=${audio.size}B")
-        pendingChunkAudio = audio
-        pendingChunkVideo = video
-        pendingChunkIuSequence = iuSequence
-        _uiState.update { it.copy(phase = PlayerPhase.PLAYING, chunkSequence = seq) }
-    }
-
-    fun rotationRecovery() {
-        needsRotationResume = true
-        _uiState.update { it.copy(phase = PlayerPhase.SCENE_READY) }
-    }
-
-    fun resumeFromCurrentScene() {
-        needsRotationResume = false
-        if (chunkQueue.isEmpty()) {
-            Log.w(TAG, "resumeFromCurrentScene: empty queue")
-            return
-        }
-        pendingSeekPositionMs = savedPlaybackPositionMs
-        preloadCache.clear()
-        preloadJobs.clear()
-        preloadAhead(includeCurrent = true)
-        playNext()
-    }
-
-    fun seekToPosition(chapterId: String, sceneId: String, unitIndex: Int, unitId: String? = null) {
-        val chunkId = chunkPositions.entries.firstOrNull {
-            it.value.first == chapterId && it.value.second == sceneId
-        }?.key
-        if (chunkId == null || !chunkQueue.contains(chunkId)) {
-            Log.w(TAG, "seekToPosition: chunk not found for $chapterId/$sceneId — showing missing-IU overlay")
-            val pos = ActivePosition(
-                chapterId = chapterId,
-                sceneId = sceneId,
-                unitId = unitId,
-                chunkId = chunkId,
-                unitIndex = unitIndex
-            )
-            _uiState.update { it.copy(missingIuPosition = pos) }
-            pendingExternalSeek = null
-            return
-        }
-        Log.i(TAG, "seekToPosition: $chapterId/$sceneId unit=$unitIndex chunk=$chunkId")
-        _uiState.update { it.copy(missingIuPosition = null) }
-        pendingExternalSeek = ActivePosition(chapterId, sceneId, unitId, chunkId, unitIndex)
-    }
-
-    fun clearMissingIu() {
-        _uiState.update { it.copy(missingIuPosition = null) }
-    }
-
-    fun executePendingSeek() {
-        val seek = pendingExternalSeek ?: return
-        pendingExternalSeek = null
-
-        val idx = chunkQueue.indexOf(seek.chunkId)
-        if (idx < 0) {
-            Log.w(TAG, "executePendingSeek: chunk ${seek.chunkId} not found, falling back")
-            playSceneQueue()
-            return
-        }
-
-        _uiState.update { it.copy(missingIuPosition = null) }
-        isExecutingExternalSeek = true
-        currentIndex = idx
-        currentUnitIndex = seek.unitIndex
-        positionManager.navigateTo(seek)
-        _uiState.update { it.copy(phase = PlayerPhase.DOWNLOADING) }
-
-        preloadCache.clear()
-        preloadJobs.clear()
-        preloadAhead(includeCurrent = true)
-        playNext()
-    }
+    // ═══════════════════════════════════════════════════════════════
+    //  GENERATE FROM FILE (full pipeline)
+    // ═══════════════════════════════════════════════════════════════
 
     fun generateFromFile(file: File) {
         Log.i(TAG, "generateFromFile: ${file.name}")
-        clearPlaybackState()
         generationJob?.cancel()
         generationJob = viewModelScope.launch {
-            _uiState.value = UiState(phase = PlayerPhase.LOADING_BOOK)
+            _uiState.value = GenUiState(phase = PlayerPhase.LOADING_BOOK)
 
             runCatching {
                 _repository.generate(file, imageEnabled)
@@ -464,123 +326,76 @@ class GenerateViewModel(
                 Log.i(TAG, "generate OK: bookId=${res.book_id} buildId=${res.build_id} #chunks=${res.chunk_ids.size}")
                 persistBookId(res.book_id)
                 persistBuildId(res.build_id ?: "")
-                // Save snapshot of initial book state
+
                 runCatching { _repository.snapshotBook(bookId) }
-                chunkQueue.clear()
-                chunkQueue.addAll(res.chunk_ids)
-                startVideoCheck()
-                // Populate chunk→(chapter,scene) synchronously before any UI
-                for (cid in chunkQueue) {
+
+                val chunkIds = res.chunk_ids.toList()
+                val positions = mutableMapOf<String, Pair<String?, String?>>()
+                for (cid in chunkIds) {
                     runCatching {
                         _repository.getChunkStoryboard(cid).let { sb ->
-                            chunkPositions[cid] = Pair(sb.chapter_id, sb.scene_id)
+                            positions[cid] = Pair(sb.chapter_id, sb.scene_id)
                         }
                     }.onFailure { e ->
                         Log.w(TAG, "failed to get storyboard for $cid: ${e.message}")
                     }
                 }
-                Log.i(TAG, "chunkPositions populated: ${chunkPositions.size} entries")
 
-                var workersRunning = true
-                runCatching {
-                    val counts = _repository.getWorkerCounts()
-                    if (counts.audio == 0 && counts.image == 0 && counts.video == 0) {
-                        workersRunning = false
-                        Log.w(TAG, "no workers detected on GPU server — will poll until they appear")
-                    }
-                }.onFailure { e ->
-                    Log.w(TAG, "worker count fetch failed: ${e.message}")
-                }
-
-                val firstPos = res.chunk_ids.firstOrNull()?.let { chunkPositions[it] }
+                val firstPos = chunkIds.firstOrNull()?.let { positions[it] }
                 if (firstPos != null) {
-                    positionManager.navigateTo(chapterId = firstPos.first, sceneId = firstPos.second, unitIndex = 0)
-                    currentChapterId = firstPos.first
-                    currentSceneId = firstPos.second
+                    SharedPositionManager.navigateTo(chapterId = firstPos.first, sceneId = firstPos.second, unitIndex = 0)
                 } else {
-                    positionManager.navigateTo(chapterId = null, sceneId = null)
+                    SharedPositionManager.navigateTo(chapterId = null, sceneId = null)
                 }
-                preloadCache.clear()
 
-                val firstId = res.chunk_ids.firstOrNull()
+                val firstId = chunkIds.firstOrNull()
+                var cover: Bitmap? = null
                 if (firstId != null) {
                     val isCached = runCatching {
-                        val c = _repository.getChunk(firstId)
-                        c.audio_ready
+                        _repository.getChunk(firstId).audio_ready
                     }.getOrDefault(false)
 
-                    if (!workersRunning && !isCached) {
-                        _uiState.update { it.copy(phase = PlayerPhase.IDLE, errorMessage = "Start workers on GPU server", chunkIds = res.chunk_ids, mode = res.mode ?: "full") }
-                        Log.i(TAG, "waiting for workers to come online...")
-                        waitForWorkers(res.chunk_ids)
-                        return@launch
+                    if (!isCached) {
+                        _uiState.update { it.copy(phase = PlayerPhase.GENERATING, chunkIds = chunkIds, mode = res.mode ?: "full") }
+                        waitWindowReady(chunkIds.take(minOf(INITIAL_WAIT_COUNT, chunkIds.size)))
                     }
 
-                    _uiState.update { it.copy(phase = if (isCached) PlayerPhase.DOWNLOADING else PlayerPhase.GENERATING, chunkIds = res.chunk_ids, mode = res.mode ?: "full") }
-                    startCoverRefresh(firstId)
-                    Log.i(TAG, "waiting for preview + audio: $firstId")
-
+                    // Try to get cover image
                     if (imageEnabled) {
-                        runCatching {
-                            val storyboard = _repository.getChunkStoryboard(firstId)
-                            if (storyboard.ius.isNotEmpty()) {
-                                val iu = storyboard.ius.first()
+                        cover = runCatching {
+                            val sb = _repository.getChunkStoryboard(firstId)
+                            if (sb.ius.isNotEmpty()) {
+                                val iu = sb.ius.first()
                                 val imgBytes = _repository.getIuImage(
-                                    storyboard.book_id ?: bookId,
-                                    storyboard.chapter_id ?: "",
-                                    storyboard.scene_id ?: "",
+                                    sb.book_id ?: bookId,
+                                    sb.chapter_id ?: "",
+                                    sb.scene_id ?: "",
                                     iu.unit_id,
-                                    storyboard.build_id
+                                    sb.build_id
                                 )
-                                val bmp = MediaDecoder.decodeBitmap(imgBytes)
-                                _uiState.update { it.copy(coverImage = bmp) }
-                                Log.i(TAG, "cover image loaded from first IU")
-                            }
-                        }.onFailure { e ->
-                            Log.w(TAG, "cover image from IU failed: ${e.message}, trying scene image")
+                                MediaDecoder.decodeBitmap(imgBytes)
+                            } else null
+                        }.getOrElse { e ->
+                            Log.w(TAG, "cover from IU failed: ${e.message}")
                             runCatching {
                                 val imgBytes = _repository.getChunkImage(firstId)
-                                val bmp = MediaDecoder.decodeBitmap(imgBytes)
-                                _uiState.update { it.copy(coverImage = bmp) }
-                            }.onFailure { e2 ->
-                                Log.w(TAG, "cover image from scene also failed: ${e2.message}")
-                            }
-                        }
-                    } else {
-                        Log.i(TAG, "image disabled, skipping cover fetch")
-                    }
-
-                    Log.i(TAG, "waiting for first window ready: initial ${INITIAL_WAIT_COUNT} chunks")
-                    val waitCount = minOf(INITIAL_WAIT_COUNT, res.chunk_ids.size)
-                    runCatching {
-                        waitWindowReady(res.chunk_ids.take(waitCount))
-                    }.onFailure { e ->
-                        Log.w(TAG, "waitInitialWindow failed: ${e.message}")
-                        _uiState.update { it.copy(errorMessage = "Window timeout: ${e.message}") }
-                        return@launch
-                    }
-                    if (imageEnabled) {
-                        runCatching { waitPreview(firstId) }.onFailure { e ->
-                            Log.w(TAG, "waitPreview failed: ${e.message}")
-                        }
-                    } else {
-                        Log.i(TAG, "image disabled, skipping preview wait")
-                    }
-                    Log.i(TAG, "initial $waitCount chunks ready → preloading first chunk")
-                    if (chunkQueue.isNotEmpty()) {
-                        runCatching {
-                            val firstData = fetchSceneData(chunkQueue[0])
-                            preloadCache[chunkQueue[0]] = firstData
-                            Log.i(TAG, "first chunk preloaded: ${chunkQueue[0]}")
-                        }.onFailure { e ->
-                            Log.w(TAG, "first chunk preload failed: ${e.message}")
+                                MediaDecoder.decodeBitmap(imgBytes)
+                            }.getOrNull()
                         }
                     }
-                    Log.i(TAG, "first window ready → SCENE_READY")
-                    _uiState.update { it.copy(phase = PlayerPhase.SCENE_READY) }
-                } else {
-                    Log.w(TAG, "generate returned empty chunk_ids")
                 }
+
+                // Signal to PlaybackViewModel via activity coordinator
+                _playbackPrepared.tryEmit(PlaybackPreparation(
+                    bookId = bookId,
+                    buildId = buildId,
+                    chunkIds = chunkIds,
+                    coverImage = cover,
+                    chunkPositions = positions
+                ))
+
+                _uiState.update { it.copy(phase = PlayerPhase.SCENE_READY, chunkIds = chunkIds) }
+
             }.onFailure { e ->
                 Log.e(TAG, "generate failed: ${e.message}", e)
                 val msg = if (e is java.io.IOException && e.message != null) e.message!! else "Generate failed: ${e.message}"
@@ -589,29 +404,116 @@ class GenerateViewModel(
         }
     }
 
-    /**
-     * Open a vbook file: load + parse the bundle on the backend (saving the
-     * book to disk if new, or keeping the existing edited version) and
-     * populate the in-memory bookId/buildId/book structure — WITHOUT
-     * auto-starting the generation pipeline. The user must explicitly press
-     * the toolbar "Создать" button to trigger /regenerate.
-     *
-     * After this returns, the player sits in IDLE state, the toolbar's
-     * "Создать" button is enabled, and the Navigate/Edit tabs can show
-     * the book structure.
-     */
-    /**
-     * Import a .txt file using the lazy import pipeline.
-     * Two-step flow with visible progress:
-     *   1. POST /import-txt → RAW_IMPORTED
-     *   2. POST /{bookId}/bootstrap → BOOTSTRAPPED (chars, locs, first 3 scenes)
-     */
-    fun importTxtFromFile(file: File) {
-        Log.i(TAG, "importTxtFromFile: ${file.name}")
-        clearPlaybackState()
+    // ═══════════════════════════════════════════════════════════════
+    //  LOAD VBOOK
+    // ═══════════════════════════════════════════════════════════════
+
+    fun loadBookFromFile(file: File) {
+        Log.i(TAG, "loadBookFromFile: ${file.name}")
         generationJob?.cancel()
         hasUnsavedChanges = false
-        _videosReady.value = false
+        _activeGeneration.value = null
+        _dirtySummary.value = null
+        _dirtyScenes.value = emptyList()
+        _isRegenerating.value = false
+        _uiState.value = GenUiState(phase = PlayerPhase.LOADING_BOOK)
+
+        generationJob = viewModelScope.launch {
+            runCatching {
+                _repository.loadVbook(file)
+            }.onSuccess { res ->
+                Log.i(TAG, "loadBookFromFile OK: bookId=${res.book_id} buildId=${res.build_id} chapters=${res.chapter_count} scenes=${res.scene_count}")
+                persistBookId(res.book_id)
+                persistBuildId(res.build_id ?: "")
+                runCatching { _repository.snapshotBook(bookId) }
+
+                val allChunks = runCatching { _repository.getAllChunks(bookId) }.getOrElse { ChunkListResponse(emptyList()) }
+                val chunkIds = allChunks.chunk_ids.toList()
+                val positions = mutableMapOf<String, Pair<String?, String?>>()
+                for (cid in chunkIds) {
+                    runCatching {
+                        _repository.getChunkStoryboard(cid).let { sb ->
+                            positions[cid] = Pair(sb.chapter_id, sb.scene_id)
+                        }
+                    }
+                }
+                Log.i(TAG, "loadBookFromFile: chunks=${chunkIds.size} positions=${positions.size}")
+
+                val firstPos = chunkIds.firstOrNull()?.let { positions[it] }
+                if (firstPos != null) {
+                    SharedPositionManager.navigateTo(chapterId = firstPos.first, sceneId = firstPos.second, unitIndex = 0)
+                } else {
+                    runCatching {
+                        val bookData = _repository.getBook(bookId)
+                        val firstChapter = bookData.chapters?.firstOrNull()
+                        val firstScene = firstChapter?.scenes?.firstOrNull()
+                        SharedPositionManager.navigateTo(chapterId = firstChapter?.chapter, sceneId = firstScene?.scene_id, unitIndex = 0)
+                    }.onFailure { e ->
+                        Log.w(TAG, "position fallback failed: ${e.message}")
+                        SharedPositionManager.navigateTo(chapterId = null, sceneId = null)
+                    }
+                }
+
+                _uiState.update {
+                    it.copy(
+                        phase = PlayerPhase.DOWNLOADING,
+                        chunkIds = emptyList(),
+                        previewImage = null,
+                        coverImage = null,
+                        errorMessage = null
+                    )
+                }
+
+                var cover: Bitmap? = null
+                val firstId = chunkIds.firstOrNull()
+                if (firstId != null && imageEnabled) {
+                    cover = runCatching {
+                        val sb = _repository.getChunkStoryboard(firstId)
+                        if (sb.ius.isNotEmpty()) {
+                            val iu = sb.ius.first()
+                            val imgBytes = _repository.getIuImage(
+                                sb.book_id ?: bookId,
+                                sb.chapter_id ?: "",
+                                sb.scene_id ?: "",
+                                iu.unit_id,
+                                sb.build_id
+                            )
+                            MediaDecoder.decodeBitmap(imgBytes)
+                        } else null
+                    }.getOrElse {
+                        runCatching {
+                            val imgBytes = _repository.getChunkImage(firstId)
+                            MediaDecoder.decodeBitmap(imgBytes)
+                        }.getOrNull()
+                    }
+                }
+
+                // Signal to PlaybackViewModel
+                _playbackPrepared.tryEmit(PlaybackPreparation(
+                    bookId = bookId,
+                    buildId = buildId,
+                    chunkIds = chunkIds,
+                    coverImage = cover,
+                    chunkPositions = positions
+                ))
+
+                _uiState.update { it.copy(phase = if (chunkIds.isNotEmpty()) PlayerPhase.SCENE_READY else PlayerPhase.IDLE) }
+            }.onFailure { e ->
+                Log.e(TAG, "loadBookFromFile failed: ${e.message}", e)
+                val msg = if (e is java.io.IOException && e.message != null) e.message!! else "Load failed: ${e.message}"
+                _uiState.update { it.copy(phase = PlayerPhase.IDLE, errorMessage = msg) }
+            }
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    //  TXT IMPORT
+    // ═══════════════════════════════════════════════════════════════
+
+    fun importTxtFromFile(file: File) {
+        Log.i(TAG, "importTxtFromFile: ${file.name}")
+        generationJob?.cancel()
+        hasUnsavedChanges = false
         _activeGeneration.value = null
         _dirtySummary.value = null
         _dirtyScenes.value = emptyList()
@@ -619,7 +521,6 @@ class GenerateViewModel(
 
         generationJob = viewModelScope.launch {
             try {
-                // Phase 1 — Technical (shown on File screen)
                 val msgs = mutableListOf<String>()
                 _uiState.update { it.copy(
                     phase = PlayerPhase.IMPORTING_TXT,
@@ -630,112 +531,87 @@ class GenerateViewModel(
                 )}
 
                 val importRes = _repository.importTxt(file)
-                val bookId = importRes.book_id
-                persistBookId(bookId)
+                val bId = importRes.book_id
+                persistBookId(bId)
                 persistBuildId("")
-                Log.i(TAG, "importTxtFromFile: draft created $bookId (dedup=${importRes.dedup})")
+                Log.i(TAG, "importTxtFromFile: draft created $bId (dedup=${importRes.dedup})")
 
-                // If dedup detected (same TXT already imported), skip bootstrap
-                // and load existing chunks directly from Redis
                 if (importRes.dedup) {
                     msgs.add("✓ Книга уже была импортирована")
                     msgs.add("✓ Загружаем готовые данные...")
                     _uiState.update { it.copy(importProgressMessages = msgs.toList()) }
 
-                    val allChunks = runCatching { _repository.getAllChunks(bookId) }.getOrNull()
-                    if (allChunks != null) {
-                        chunkQueue.clear()
-                        chunkQueue.addAll(allChunks.chunk_ids)
-                        for (cid in chunkQueue) {
-                            runCatching {
-                                _repository.getChunkStoryboard(cid).let { sb ->
-                                    chunkPositions[cid] = Pair(sb.chapter_id, sb.scene_id)
-                                }
+                    val allChunks = runCatching { _repository.getAllChunks(bId) }.getOrNull()
+                    val chunkIds = allChunks?.chunk_ids?.toList() ?: emptyList()
+                    val positions = mutableMapOf<String, Pair<String?, String?>>()
+                    for (cid in chunkIds) {
+                        runCatching {
+                            _repository.getChunkStoryboard(cid).let { sb ->
+                                positions[cid] = Pair(sb.chapter_id, sb.scene_id)
                             }
                         }
-                        val firstId = chunkQueue.firstOrNull()
-                        val firstPos = firstId?.let { chunkPositions[it] }
-                        if (firstPos != null) {
-                            positionManager.navigateTo(chapterId = firstPos.first, sceneId = firstPos.second, unitIndex = 0)
-                            currentChapterId = firstPos.first
-                            currentSceneId = firstPos.second
-                        }
-                        Log.i(TAG, "importTxtFromFile: dedup — loaded ${chunkQueue.size} chunks")
                     }
+                    val firstPos = chunkIds.firstOrNull()?.let { positions[it] }
+                    if (firstPos != null) {
+                        SharedPositionManager.navigateTo(chapterId = firstPos.first, sceneId = firstPos.second, unitIndex = 0)
+                    }
+                    Log.i(TAG, "importTxtFromFile: dedup — loaded ${chunkIds.size} chunks")
 
-                    msgs.add("✓ Загружено ${chunkQueue.size} сцен")
+                    _playbackPrepared.tryEmit(PlaybackPreparation(
+                        bookId = bId,
+                        buildId = buildId,
+                        chunkIds = chunkIds,
+                        chunkPositions = positions
+                    ))
+
+                    msgs.add("✓ Загружено ${chunkIds.size} сцен")
                     _uiState.update { it.copy(
                         importProgressMessages = msgs.toList(),
                         importStage = ImportStage.DONE,
                         importProgress = 1f,
-                        phase = if (chunkQueue.isNotEmpty()) PlayerPhase.SCENE_READY else PlayerPhase.IDLE,
-                        chunkIds = chunkQueue.toList(),
+                        phase = if (chunkIds.isNotEmpty()) PlayerPhase.SCENE_READY else PlayerPhase.IDLE,
+                        chunkIds = chunkIds,
                     )}
                     return@launch
                 }
 
-                // Technical statuses — quick, shown on File screen before AI switch
                 msgs.add("✓ File selected")
                 msgs.add("✓ TXT read")
                 msgs.add("✓ Encoding detected")
                 msgs.add("✓ Book created")
-                _uiState.update { it.copy(
-                    importProgress = 0.2f,
-                    importProgressMessages = msgs.toList()
-                )}
-                // FileFragment detects non-empty messages → switches to AI tab
+                _uiState.update { it.copy(importProgress = 0.2f, importProgressMessages = msgs.toList()) }
 
-                // Phase 2 — AI agent pipeline with real-time polling
-                _uiState.update { it.copy(
-                    importStage = ImportStage.ANALYZING,
-                    importProgress = 0.3f,
-                )}
+                _uiState.update { it.copy(importStage = ImportStage.ANALYZING, importProgress = 0.3f) }
 
-                // Launch polling coroutine that runs in parallel with bootstrap
                 var pollingDone = false
                 val pollingJob = viewModelScope.launch {
                     var lastProgressMsg = ""
-
                     while (!pollingDone) {
                         delay(2000)
                         try {
-                            val status = _repository.getAgentStatus(bookId)
+                            val status = _repository.getAgentStatus(bId)
                             if (status.active && status.progress_msg != null) {
                                 val currentMsg = status.progress_msg
-
-                                // If we got a new progress message, add it to the list
                                 if (currentMsg != lastProgressMsg) {
-                                    // Mark previous message as done if it started with ⟳
                                     if (lastProgressMsg.isNotEmpty() && msgs.isNotEmpty() && msgs.last().startsWith("⟳")) {
                                         msgs[msgs.size - 1] = msgs.last().replace("⟳", "✓")
                                     }
-
-                                    // Add new progress message (it already has proper emoji from backend)
                                     msgs.add(currentMsg)
                                     lastProgressMsg = currentMsg
-
-                                    // Add window progress info if available
                                     if (status.window_index != null && status.created_scenes != null) {
                                         val windowInfo = "📦 Окно ${status.window_index + 1}: ${status.created_scenes} сцен" +
                                             if (status.total_scenes != null) " (всего найдено: ${status.total_scenes})" else ""
-                                        // Only add if not already in last messages
                                         if (msgs.none { it.startsWith("📦") && it.contains("Окно ${status.window_index + 1}:") }) {
-                                            // Replace existing window info or add new
                                             val existingWindowIdx = msgs.indexOfLast { it.startsWith("📦") }
-                                            if (existingWindowIdx >= 0) {
-                                                msgs[existingWindowIdx] = windowInfo
-                                            } else {
-                                                msgs.add(windowInfo)
-                                            }
+                                            if (existingWindowIdx >= 0) msgs[existingWindowIdx] = windowInfo
+                                            else msgs.add(windowInfo)
                                         }
                                     }
-
                                     _uiState.update { it.copy(importProgressMessages = msgs.toList()) }
                                 }
                             }
-                        } catch (_: Exception) { }
+                        } catch (_: Exception) {}
                     }
-                    // Mark last message as done if it starts with ⟳
                     if (msgs.isNotEmpty() && msgs.last().startsWith("⟳")) {
                         msgs[msgs.size - 1] = msgs.last().replace("⟳", "✓")
                         _uiState.update { it.copy(importProgressMessages = msgs.toList()) }
@@ -743,42 +619,38 @@ class GenerateViewModel(
                 }
 
                 val bootstrapRes = try {
-                    _repository.bootstrapBook(bookId)
+                    _repository.bootstrapBook(bId)
                 } finally {
                     pollingDone = true
                     pollingJob.cancel()
                 }
-                Log.i(TAG, "importTxtFromFile: bootstrap done — ${bootstrapRes.characters} chars, ${bootstrapRes.locations} locs, ${bootstrapRes.scenes} scenes")
 
-                msgs.add("\u2713 Импорт завершён: ${bootstrapRes.characters} персонажей, ${bootstrapRes.locations} локаций, ${bootstrapRes.scenes} сцен")
-                msgs.add("\uD83D\uDCAC Можете задать вопросы или запустить генерацию через кнопку на панели инструментов.")
-                _uiState.update { it.copy(
-                    importProgressMessages = msgs.toList()
-                )}
+                msgs.add("✓ Импорт завершён: ${bootstrapRes.characters} персонажей, ${bootstrapRes.locations} локаций, ${bootstrapRes.scenes} сцен")
+                msgs.add("💬 Можете задать вопросы или запустить генерацию через кнопку на панели инструментов.")
+                _uiState.update { it.copy(importProgressMessages = msgs.toList()) }
 
-                // Step 7: populate chunk queue from bootstrap result
-                chunkQueue.clear()
-                for (ch in (bootstrapRes.chapters ?: emptyList())) {
-                    ch.chapter?.let { chunkQueue.add(it) }
-                }
-
-                val firstId = chunkQueue.firstOrNull()
+                val chunkIds = (bootstrapRes.chapters ?: emptyList()).mapNotNull { it.chapter }
+                val firstId = chunkIds.firstOrNull()
                 if (firstId != null) {
-                    positionManager.navigateTo(chapterId = firstId, sceneId = null, unitIndex = 0)
-                    currentChapterId = firstId
+                    SharedPositionManager.navigateTo(chapterId = firstId, sceneId = null, unitIndex = 0)
                 } else {
-                    positionManager.navigateTo(chapterId = null, sceneId = null)
+                    SharedPositionManager.navigateTo(chapterId = null, sceneId = null)
                 }
 
-                // Done
+                _playbackPrepared.tryEmit(PlaybackPreparation(
+                    bookId = bId,
+                    buildId = buildId,
+                    chunkIds = chunkIds,
+                    chunkPositions = emptyMap()
+                ))
+
                 _uiState.update { it.copy(
                     importStage = ImportStage.DONE,
                     importProgress = 1f,
                     phase = PlayerPhase.SCENE_READY,
-                    chunkIds = chunkQueue.toList(),
+                    chunkIds = chunkIds,
                 )}
-
-                Log.i(TAG, "importTxtFromFile: ready with ${chunkQueue.size} chapters, ${bootstrapRes.scenes} scenes")
+                Log.i(TAG, "importTxtFromFile: ready with ${chunkIds.size} chapters, ${bootstrapRes.scenes} scenes")
 
             } catch (e: Exception) {
                 Log.e(TAG, "importTxtFromFile failed: ${e.message}", e)
@@ -794,15 +666,10 @@ class GenerateViewModel(
         }
     }
 
-    /**
-     * Import text via AI (same lazy import pipeline as TXT file).
-     */
     fun importText(text: String, title: String? = null, onResult: ((ImportTxtResponse) -> Unit)? = null) {
         Log.i(TAG, "importText: text=${text.length} chars title=$title")
-        clearPlaybackState()
         generationJob?.cancel()
         hasUnsavedChanges = false
-        _videosReady.value = false
         _activeGeneration.value = null
         _dirtySummary.value = null
         _dirtyScenes.value = emptyList()
@@ -818,205 +685,56 @@ class GenerateViewModel(
                 )}
 
                 val importRes = _repository.importText(text, title)
-                val bookId = importRes.book_id
-                persistBookId(bookId)
+                val bId = importRes.book_id
+                persistBookId(bId)
                 persistBuildId("")
 
-                _uiState.update { it.copy(
-                    importStage = ImportStage.ANALYZING,
-                    importProgress = 0.3f
-                )}
+                _uiState.update { it.copy(importStage = ImportStage.ANALYZING, importProgress = 0.3f) }
+                delay(200)
+                _uiState.update { it.copy(importStage = ImportStage.EXTRACTING_CHARACTERS, importProgress = 0.45f) }
+                delay(200)
+                _uiState.update { it.copy(importStage = ImportStage.EXTRACTING_LOCATIONS, importProgress = 0.55f) }
+                delay(200)
+                _uiState.update { it.copy(importStage = ImportStage.CREATING_STRUCTURE, importProgress = 0.65f) }
+                delay(200)
+                _uiState.update { it.copy(importStage = ImportStage.CREATING_SCENES, importProgress = 0.8f) }
                 delay(200)
 
-                _uiState.update { it.copy(
-                    importStage = ImportStage.EXTRACTING_CHARACTERS,
-                    importProgress = 0.45f
-                )}
-                delay(200)
-
-                _uiState.update { it.copy(
-                    importStage = ImportStage.EXTRACTING_LOCATIONS,
-                    importProgress = 0.55f
-                )}
-                delay(200)
-
-                _uiState.update { it.copy(
-                    importStage = ImportStage.CREATING_STRUCTURE,
-                    importProgress = 0.65f
-                )}
-                delay(200)
-
-                _uiState.update { it.copy(
-                    importStage = ImportStage.CREATING_SCENES,
-                    importProgress = 0.8f
-                )}
-                delay(200)
-
-                val bootstrapRes = _repository.bootstrapBook(bookId)
-
-                chunkQueue.clear()
-                for (ch in (bootstrapRes.chapters ?: emptyList())) {
-                    ch.chapter?.let { chunkQueue.add(it) }
-                }
-
-                val firstId = chunkQueue.firstOrNull()
+                val bootstrapRes = _repository.bootstrapBook(bId)
+                val chunkIds = (bootstrapRes.chapters ?: emptyList()).mapNotNull { it.chapter }
+                val firstId = chunkIds.firstOrNull()
                 if (firstId != null) {
-                    positionManager.navigateTo(chapterId = firstId, sceneId = null, unitIndex = 0)
-                    currentChapterId = firstId
+                    SharedPositionManager.navigateTo(chapterId = firstId, sceneId = null, unitIndex = 0)
                 } else {
-                    positionManager.navigateTo(chapterId = null, sceneId = null)
+                    SharedPositionManager.navigateTo(chapterId = null, sceneId = null)
                 }
+
+                _playbackPrepared.tryEmit(PlaybackPreparation(
+                    bookId = bId,
+                    buildId = buildId,
+                    chunkIds = chunkIds,
+                    chunkPositions = emptyMap()
+                ))
 
                 _uiState.update { it.copy(
                     importStage = ImportStage.DONE,
                     importProgress = 1f,
                     phase = PlayerPhase.SCENE_READY,
-                    chunkIds = chunkQueue.toList(),
+                    chunkIds = chunkIds,
                 )}
 
                 onResult?.invoke(importRes)
             } catch (e: Exception) {
                 Log.e(TAG, "importText failed: ${e.message}", e)
                 val msg = if (e is java.io.IOException && e.message != null) e.message!! else "Import text failed: ${e.message}"
-                _uiState.update { it.copy(
-                    phase = PlayerPhase.IDLE,
-                    errorMessage = msg,
-                    importStage = null,
-                    importProgress = 0f
-                )}
+                _uiState.update { it.copy(phase = PlayerPhase.IDLE, errorMessage = msg, importStage = null, importProgress = 0f) }
             }
         }
     }
 
-    fun loadBookFromFile(file: File) {
-        Log.i(TAG, "loadBookFromFile: ${file.name}")
-        clearPlaybackState()
-        generationJob?.cancel()
-        hasUnsavedChanges = false
-        _videosReady.value = false
-        _activeGeneration.value = null
-        _dirtySummary.value = null
-        _dirtyScenes.value = emptyList()
-        _isRegenerating.value = false
-        _uiState.value = UiState(phase = PlayerPhase.LOADING_BOOK)
-
-        generationJob = viewModelScope.launch {
-            runCatching {
-                _repository.loadVbook(file)
-            }.onSuccess { res ->
-                Log.i(TAG, "loadBookFromFile OK: bookId=${res.book_id} buildId=${res.build_id} chapters=${res.chapter_count} scenes=${res.scene_count} existing=${res.was_existing}")
-                persistBookId(res.book_id)
-                persistBuildId(res.build_id ?: "")
-
-                // Save snapshot of initial book state (mirrors generateFromFile)
-                runCatching { _repository.snapshotBook(bookId) }
-
-                chunkQueue.clear()
-
-                // Populate chunk queue and positions for cached/recovered books
-                val allChunks = runCatching { _repository.getAllChunks(bookId) }.getOrElse { ChunkListResponse(emptyList()) }
-                chunkQueue.addAll(allChunks.chunk_ids)
-                for (cid in chunkQueue) {
-                    runCatching {
-                        _repository.getChunkStoryboard(cid).let { sb ->
-                            chunkPositions[cid] = Pair(sb.chapter_id, sb.scene_id)
-                        }
-                    }.onFailure { e ->
-                        Log.w(TAG, "loadBookFromFile: failed to get storyboard for $cid: ${e.message}")
-                    }
-                }
-                Log.i(TAG, "loadBookFromFile: chunkQueue=${chunkQueue.size} chunkPositions=${chunkPositions.size}")
-
-                val firstId = chunkQueue.firstOrNull()
-                val firstPos = firstId?.let { chunkPositions[it] }
-                if (firstPos != null) {
-                    positionManager.navigateTo(chapterId = firstPos.first, sceneId = firstPos.second, unitIndex = 0)
-                    currentChapterId = firstPos.first
-                    currentSceneId = firstPos.second
-                } else {
-                    runCatching {
-                        val bookData = _repository.getBook(bookId)
-                        val firstChapter = bookData.chapters?.firstOrNull()
-                        val firstScene = firstChapter?.scenes?.firstOrNull()
-                        val chId = firstChapter?.chapter
-                        val scId = firstScene?.scene_id
-                        positionManager.navigateTo(chapterId = chId, sceneId = scId, unitIndex = 0)
-                        currentChapterId = chId
-                        currentSceneId = scId
-                        Log.i(TAG, "loadBookFromFile: no chunks yet, positioned to first chapter/scene from book data: $chId / $scId")
-                    }.onFailure { e ->
-                        Log.w(TAG, "loadBookFromFile: failed to get book data for position fallback: ${e.message}")
-                        positionManager.navigateTo(chapterId = null, sceneId = null)
-                    }
-                }
-
-                preloadCache.clear()
-
-                _uiState.update {
-                    it.copy(
-                        phase = PlayerPhase.DOWNLOADING,
-                        chunkIds = emptyList(),
-                        previewImage = null,
-                        currentImage = null,
-                        coverImage = null,
-                        errorMessage = null
-                    )
-                }
-
-                if (firstId != null) {
-                    startCoverRefresh(firstId)
-                    if (imageEnabled) {
-                        runCatching {
-                            val sb = _repository.getChunkStoryboard(firstId)
-                            if (sb.ius.isNotEmpty()) {
-                                val iu = sb.ius.first()
-                                val imgBytes = _repository.getIuImage(
-                                    sb.book_id ?: bookId,
-                                    sb.chapter_id ?: "",
-                                    sb.scene_id ?: "",
-                                    iu.unit_id,
-                                    sb.build_id
-                                )
-                                val bmp = MediaDecoder.decodeBitmap(imgBytes)
-                                _uiState.update { it.copy(coverImage = bmp) }
-                                Log.i(TAG, "loadBookFromFile: cover image loaded from first IU")
-                            }
-                        }.onFailure { e ->
-                            Log.w(TAG, "loadBookFromFile: cover from IU failed: ${e.message}, trying scene image")
-                            runCatching {
-                                val imgBytes = _repository.getChunkImage(firstId)
-                                val bmp = MediaDecoder.decodeBitmap(imgBytes)
-                                _uiState.update { it.copy(coverImage = bmp) }
-                            }.onFailure { e2 ->
-                                Log.w(TAG, "loadBookFromFile: cover from scene also failed: ${e2.message}")
-                            }
-                        }
-                    }
-                }
-
-                _uiState.update { it.copy(phase = if (chunkQueue.isNotEmpty()) PlayerPhase.SCENE_READY else PlayerPhase.IDLE) }
-            }.onFailure { e ->
-                Log.e(TAG, "loadBookFromFile failed: ${e.message}", e)
-                val msg = if (e is java.io.IOException && e.message != null) e.message!! else "Load failed: ${e.message}"
-                _uiState.update { it.copy(phase = PlayerPhase.IDLE, errorMessage = msg) }
-            }
-        }
-    }
-
-    private val _isExporting = MutableStateFlow(false)
-    val isExporting: StateFlow<Boolean> = _isExporting.asStateFlow()
-
-    private val _exportProgress = MutableStateFlow(0f)
-    val exportProgress: StateFlow<Float> = _exportProgress.asStateFlow()
-
-    fun setExporting(exporting: Boolean) {
-        _isExporting.value = exporting
-        if (!exporting) _exportProgress.value = 0f
-    }
-
-    fun setExportProgress(progress: Float) {
-        _exportProgress.value = progress
-    }
+    // ═══════════════════════════════════════════════════════════════
+    //  BOOK MANAGEMENT
+    // ═══════════════════════════════════════════════════════════════
 
     var hasUnsavedChanges = false
         private set
@@ -1039,35 +757,8 @@ class GenerateViewModel(
     private val _activeGeneration = MutableStateFlow<ActiveGeneration?>(null)
     val activeGeneration: StateFlow<ActiveGeneration?> = _activeGeneration.asStateFlow()
 
-    // Background window generation progress (0.0–1.0 or null when idle)
-    private val _backgroundGenProgress = MutableStateFlow<Float?>(null)
-    val backgroundGenProgress: StateFlow<Float?> = _backgroundGenProgress.asStateFlow()
+    fun markUnsavedChanges() { hasUnsavedChanges = true }
 
-    // Background window generation status message
-    private val _backgroundGenStatus = MutableStateFlow<String?>(null)
-    val backgroundGenStatus: StateFlow<String?> = _backgroundGenStatus.asStateFlow()
-
-    // Guard: which (chapterId, sceneId) we already triggered for
-    private var _lastTriggeredScene: Pair<String?, String?>? = null
-    // Guard: prevent duplicate triggerNextWindow calls from overlapping code paths
-    private var _isTriggeringWindow = false
-
-    fun resetBackgroundGenState() {
-        _isTriggeringWindow = false
-        _backgroundGenProgress.value = null
-        _backgroundGenStatus.value = null
-        _lastTriggeredScene = null
-    }
-
-    fun markUnsavedChanges() {
-        hasUnsavedChanges = true
-    }
-
-    /**
-     * Triggers regeneration using snapshot stored on backend (no new_book sent).
-     * For use from toolbar GENERATE button after AI edits.
-     * Now uses scoped regenerate with current layer profile.
-     */
     fun regenerateFromSnapshot() {
         startGeneration(
             req = GenerationRequest(
@@ -1076,13 +767,10 @@ class GenerateViewModel(
                 chapterId = null,
                 sceneId = null
             ),
-            onResult = { /* no-op; UI state handled in VM */ }
+            onResult = {}
         )
     }
 
-    /**
-     * Save snapshot of current book state to backend (captures "old" state).
-     */
     fun snapshotCurrentBook() {
         if (bookId.isNotBlank()) {
             viewModelScope.launch {
@@ -1111,12 +799,10 @@ class GenerateViewModel(
                 persistBuildId("")
                 bookId = ""
                 buildId = ""
-                chunkQueue.clear()
                 _uiState.update { it.copy(
                     phase = PlayerPhase.IDLE,
                     chunkIds = emptyList(),
                     previewImage = null,
-                    currentImage = null,
                     coverImage = null,
                     errorMessage = null
                 )}
@@ -1127,559 +813,42 @@ class GenerateViewModel(
         }
     }
 
-    fun getCurrentChunkId(): String? {
-        return chunkQueue.getOrNull(currentIndex)
-    }
-
     fun closeBook() {
-        videoCheckJob?.cancel()
         generationJob?.cancel()
-        backgroundWindowJob?.cancel()
-        coverRefreshJob?.cancel()
-        clearPlaybackState()
         persistBookId("")
         persistBuildId("")
         hasUnsavedChanges = false
-        _videosReady.value = false
-        persistedImage = null
-        positionManager.navigateTo(chapterId = null, sceneId = null)
         _activeGeneration.value = null
-        _uiState.update { it.copy(
-            coverImage = null,
-            previewImage = null,
-            currentImage = null,
-            phase = PlayerPhase.IDLE
-        )}
+        SharedPositionManager.navigateTo(chapterId = null, sceneId = null)
+        _uiState.update { GenUiState() }
     }
 
-    fun playSceneQueue() {
-        Log.i(TAG, "playSceneQueue: ${chunkQueue.size} chunks")
-        currentIndex = 0
-        preloadJobs.clear()
-        preloadAhead(includeCurrent = true)
-        playNext()
+    private val _isExporting = MutableStateFlow(false)
+    val isExporting: StateFlow<Boolean> = _isExporting.asStateFlow()
+
+    private val _exportProgress = MutableStateFlow(0f)
+    val exportProgress: StateFlow<Float> = _exportProgress.asStateFlow()
+
+    fun setExporting(exporting: Boolean) {
+        _isExporting.value = exporting
+        if (!exporting) _exportProgress.value = 0f
     }
 
-    fun onAudioCompleted() {
-        Log.i(TAG, "onAudioCompleted: index=$currentIndex")
-        currentIndex++
-        playNext()
+    fun setExportProgress(progress: Float) {
+        _exportProgress.value = progress
     }
 
-    private fun playNext() {
-        Log.d(TAG, "playNext: index=$currentIndex queueSize=${chunkQueue.size}")
-        if (currentIndex >= chunkQueue.size) {
-            viewModelScope.launch {
-                if (waitForNextWindow()) {
-                    playNext()
-                } else {
-                    _uiState.update { it.copy(phase = PlayerPhase.SCENE_READY) }
-                }
-            }
-            return
-        }
+    // ── Window polling helpers (for generateFromFile) ─────────────
 
-        val id = chunkQueue[currentIndex]
-        Log.i(TAG, "playNext: loading chunk[$currentIndex]=$id")
-        maybeStartNextWindowInBackground()
-
-        val pos = chunkPositions[id]
-        currentChapterId = pos?.first
-        currentSceneId = pos?.second
-
-        if (!isExecutingExternalSeek) {
-            currentUnitIndex = 0
-            positionManager.navigateTo(
-                chapterId = pos?.first,
-                sceneId = pos?.second,
-                unitId = null,
-                chunkId = id,
-                unitIndex = 0
-            )
-        }
-        isExecutingExternalSeek = false
-
-        val cached = preloadCache.remove(id)
-        if (cached != null) {
-            Log.i(TAG, "playNext: using preloaded data for $id")
-            val chunkPos = chunkPositions[id]
-            currentChapterId = chunkPos?.first
-            currentSceneId = chunkPos?.second
-            emitChunk(cached.audioBytes, cached.videoBytes, cached.iuSequence)
-            preloadAhead()
-            return
-        }
-
-        viewModelScope.launch {
-            _uiState.update { it.copy(phase = PlayerPhase.DOWNLOADING) }
-
-            preloadJobs[id]?.join()
-
-            val cachedAfter = preloadCache.remove(id)
-            if (cachedAfter != null) {
-                Log.i(TAG, "playNext: preload completed for $id")
-                val preloadPos = chunkPositions[id]
-                currentChapterId = preloadPos?.first
-                currentSceneId = preloadPos?.second
-                emitChunk(cachedAfter.audioBytes, cachedAfter.videoBytes, cachedAfter.iuSequence)
-                preloadAhead()
-                return@launch
-            }
-
-            val sceneData = runCatching { fetchSceneData(id) }.getOrElse { err ->
-                Log.e(TAG, "playNext: failed to load scene $id: ${err.message}")
-                _uiState.update { it.copy(phase = PlayerPhase.SCENE_READY, errorMessage = "Scene load failed: ${err.message}") }
-                return@launch
-            }
-
-            Log.i(TAG, "delivering chunk for $id")
-            _uiState.update { it.copy(previewImage = null) }
-            currentChapterId = pos?.first
-            currentSceneId = pos?.second
-            emitChunk(sceneData.audioBytes, sceneData.videoBytes, sceneData.iuSequence)
-            preloadAhead()
-        }
-    }
-
-    private suspend fun fetchSceneData(id: String): PreloadedScene = coroutineScope {
-        Log.d(TAG, "fetchSceneData: $id")
-        val chunk = waitChunkReady(id)
-        Log.i(TAG, "chunk: audio=${chunk.audio_ready} image=${chunk.image_ready} video=${chunk.video_ready}")
-
-        val audioDeferred = async {
-            val a = _repository.getChunkAudio(id)
-            Log.i(TAG, "audio fetched: ${a.size} bytes")
-            a
-        }
-        val videoDeferred = async {
-            if (chunk.video_ready) {
-                runCatching { _repository.getChunkVideo(id) }.getOrNull().also {
-                    Log.d(TAG, if (it != null) "video fetched: ${it.size} bytes" else "video null")
-                }
-            } else null
-        }
-        val iuDeferred = async { fetchIuSequence(id) }
-
-        val audio = audioDeferred.await()
-        val videoBytes = videoDeferred.await()
-        val iuSequence = iuDeferred.await()
-
-        PreloadedScene(audio, videoBytes, iuSequence)
-    }
-
-    private fun startCoverRefresh(firstChunkId: String) {
-        if (!imageEnabled || _uiState.value.coverImage != null) return
-        coverRefreshJob?.cancel()
-        coverRefreshJob = viewModelScope.launch {
-            Log.i(TAG, "coverRefresh: polling first generated cover for $firstChunkId")
-            val bitmap = runCatching { waitGeneratedCover(firstChunkId) }.getOrNull()
-            if (bitmap != null) {
-                _uiState.update { it.copy(coverImage = bitmap, previewImage = it.previewImage ?: bitmap) }
-                Log.i(TAG, "coverRefresh: cover loaded")
-            } else {
-                Log.w(TAG, "coverRefresh: cover not available before timeout")
-            }
-        }
-    }
-
-    private suspend fun waitGeneratedCover(firstChunkId: String): Bitmap? {
-        var result: Bitmap? = null
-        pollWithBackoff(timeoutMs = IMAGE_POLL_TIMEOUT_MS) {
-            if (_uiState.value.coverImage != null) return@pollWithBackoff true
-            val storyboard = _repository.getChunkStoryboard(firstChunkId)
-            val iu = storyboard.ius.firstOrNull() ?: return@pollWithBackoff false
-            val chId = storyboard.chapter_id?.takeIf { it.isNotBlank() } ?: return@pollWithBackoff false
-            val scId = storyboard.scene_id?.takeIf { it.isNotBlank() } ?: return@pollWithBackoff false
-            val bkId = storyboard.book_id?.takeIf { it.isNotBlank() } ?: bookId
-            val bldId = storyboard.build_id.ifBlank { buildId }
-            if (bldId.isBlank()) return@pollWithBackoff false
-
-            val imgBytes = _repository.getIuImage(bkId, chId, scId, iu.unit_id, bldId)
-            result = MediaDecoder.decodeBitmap(imgBytes)
-            true
-        }
-        return result ?: _uiState.value.coverImage
-    }
-
-    /**
-     * Check if the user is near the end of the current window (last 3 units of
-     * the last scene). If so, trigger background generation of the next window
-     * to prepare it in advance.
-     *
-     * Uses a guard (_lastTriggeredScene) to prevent duplicate triggers for
-     * the same (chapterId, sceneId) pair.
-     *
-     * Called from all fragments after user-initiated position changes.
-     *
-     * @param sceneUnitCount total number of units in the current scene
-     */
-    fun checkEndOfWindowAndTrigger(
-        chapterId: String?,
-        sceneId: String?,
-        unitId: String?,
-        unitIndex: Int,
-        sceneUnitCount: Int
-    ) {
-        if (bookId.isBlank()) return
-        if (sceneUnitCount <= 0) return
-        if (currentIndex < chunkQueue.size - 1) return  // not the last scene in queue
-
-        // Fire when within last 3 units of the last scene
-        if (unitIndex < sceneUnitCount - 3) return  // not close enough to end
-
-        // Guard: prevent re-triggering for same scene
-        val triggerKey = chapterId to sceneId
-        if (_lastTriggeredScene == triggerKey) {
-            Log.d(TAG, "checkEndOfWindowAndTrigger: already triggered for $chapterId/$sceneId, skipping")
-            return
-        }
-        _lastTriggeredScene = triggerKey
-
-        Log.i(TAG, "checkEndOfWindowAndTrigger: near end of window at $chapterId/$sceneId unit=$unitIndex/$sceneUnitCount, triggering prefetch")
-        triggerNextWindow(chapterId, sceneId, unitId)
-    }
-
-    /**
-     * Trigger background generation of the next window via the backend API.
-     * Called when the user activates the last unit of the last scene of the current window.
-     * The backend creates a PG session and runs generation in background.
-     * We poll for completion and silently add new scenes to chunkQueue.
-     */
-    private fun triggerNextWindow(chapterId: String? = null, sceneId: String? = null, unitId: String? = null) {
-        if (_isTriggeringWindow) {
-            Log.d(TAG, "triggerNextWindow: already in progress, skipping")
-            return
-        }
-        _isTriggeringWindow = true
-        _backgroundGenStatus.value = "⟳ Starting background generation..."
-        _backgroundGenProgress.value = 0f
-        if (bookId.isBlank()) {
-            _isTriggeringWindow = false
-            return
-        }
-        Log.i(TAG, "triggerNextWindow: $bookId ch=$chapterId sc=$sceneId")
-
-        // Cancel any existing polling
-        backgroundGenPollJob?.cancel()
-
-        backgroundGenPollJob = viewModelScope.launch {
-            // 1. Call the trigger API
-            val response = runCatching {
-                _repository.triggerNextWindow(bookId, chapterId, sceneId, unitId)
-            }.getOrNull()
-
-            if (response == null) {
-                Log.w(TAG, "triggerNextWindow: API call failed")
-                _backgroundGenStatus.value = "✗ API call failed"
-                return@launch
-            }
-
-            if (response.all_done) {
-                Log.i(TAG, "triggerNextWindow: all text processed")
-                _backgroundGenStatus.value = "✓ All done, no more windows"
-                _backgroundGenProgress.value = 1f
-                return@launch
-            }
-
-            if (!response.triggered && !response.queued) {
-                Log.w(TAG, "triggerNextWindow: not triggered: ${response.error}")
-                _backgroundGenStatus.value = "✗ ${response.error}"
-                return@launch
-            }
-
-            val sessionId = response.session_id
-            Log.i(TAG, "triggerNextWindow: session=$sessionId, window=${response.window_index}")
-            _backgroundGenStatus.value = "⟳ Window ${(response.window_index ?: 0) + 1} starting..."
-
-            // 2. Poll for generation completion silently
-            var pollCount = 0
-            val maxPolls = 120 // 120 * 5s = 10 min timeout
-            while (pollCount < maxPolls) {
-                delay(5000)
-                pollCount++
-
-                // Poll agent-status for detailed progress (scene count based)
-                runCatching {
-                    val agentStatus = _repository.getAgentStatus(bookId)
-                    if (agentStatus.active) {
-                        val windowLabel = agentStatus.window_index?.let { "window ${it + 1}" } ?: "current window"
-                        if (agentStatus.created_scenes != null && agentStatus.total_scenes != null && agentStatus.total_scenes > 0) {
-                            val pct = agentStatus.created_scenes.toFloat() / agentStatus.total_scenes.toFloat()
-                            _backgroundGenProgress.value = pct.coerceIn(0f, 1f)
-                            _backgroundGenStatus.value = agentStatus.progress_msg
-                                ?: "⟳ $windowLabel: ${agentStatus.created_scenes}/${agentStatus.total_scenes} scenes"
-                        } else {
-                            _backgroundGenStatus.value = agentStatus.progress_msg
-                                ?: "⟳ $windowLabel generating..."
-                        }
-                    }
-                }
-
-                val state = runCatching {
-                    _repository.getGenerationState(bookId)
-                }.getOrNull() ?: continue
-
-                if (state.status == "completed" || state.status == "failed") {
-                    if (state.status == "failed") {
-                        Log.w(TAG, "triggerNextWindow: generation failed: ${state.error}")
-                        _backgroundGenStatus.value = "✗ Generation failed: ${state.error}"
-                    } else {
-                        Log.i(TAG, "triggerNextWindow: window ${state.last_window_index} completed")
-                        _backgroundGenProgress.value = 1f
-                        _backgroundGenStatus.value = "✓ Window ${state.last_window_index} completed"
-                    }
-
-                    // 3. Refresh book data to get new scenes
-                    runCatching {
-                        val bookData = _repository.getBook(bookId)
-                        var addedCount = 0
-                        for (ch in (bookData.chapters ?: emptyList())) {
-                            ch.chapter?.let { cid ->
-                                if (!chunkQueue.contains(cid)) {
-                                    chunkQueue.add(cid)
-                                    addedCount++
-                                }
-                            }
-                        }
-                        if (addedCount > 0) {
-                            Log.i(TAG, "triggerNextWindow: added $addedCount new chapters to queue")
-                        }
-                    }
-
-                    // Reset guards so next window can be triggered
-                    _isTriggeringWindow = false
-                    _lastTriggeredScene = null
-                    return@launch
-                }
-
-                // Check if active session changed (new window started)
-                if (state.last_window_index > 0 && pollCount % 6 == 0) {
-                    Log.d(TAG, "triggerNextWindow: still generating... window ${state.last_window_index}")
-                }
-            }
-
-            Log.w(TAG, "triggerNextWindow: polling timed out")
-            _backgroundGenStatus.value = "✗ Generation timed out"
-            _isTriggeringWindow = false
-        }
-    }
-
-    private fun maybeStartNextWindowInBackground() {
-        // Trigger lazy parse for TXT books or trigger-next-window for vbook
-        // when the current window is nearly consumed (≤ 2 scenes remaining).
-        // This prepares the next batch of scenes in the background.
-        if (bookId.isBlank()) return
-
-        val remaining = chunkQueue.size - currentIndex - 1
-        if (remaining <= 2) {
-            // User is approaching the end of prepared scenes -> background parse next window
-            backgroundWindowJob?.cancel()
-            backgroundWindowJob = viewModelScope.launch {
-                runCatching {
-                    val status = _repository.getLazyBookStatus(bookId)
-                    if (status.state == "INDEXED" && status.parsedChapters < status.totalChapters) {
-                        val res = _repository.lazyParse(bookId, LAZY_WINDOW_DEFAULT)
-                        Log.i(TAG, "maybeStartNextWindowInBackground: lazy parsed ${res.parsed} chapters")
-                        // Add newly parsed chapters to chunk queue
-                        for (ch in res.chapters) {
-                            ch.chapter?.let { cid ->
-                                if (!chunkQueue.contains(cid)) {
-                                    chunkQueue.add(cid)
-                                }
-                            }
-                        }
-                    }
-                }.onFailure { e ->
-                    // getLazyBookStatus failed → not a lazy book (e.g. vbook)
-                    // or state is BOOTSTRAPPED → trigger AI/gen window instead
-                    Log.d(TAG, "maybeStartNextWindowInBackground: not lazy, falling back to triggerNextWindow: ${e.message}")
-                    triggerNextWindow(currentChapterId, currentSceneId, null)
+    private suspend fun waitWindowReady(ids: List<String>) {
+        for (id in ids) {
+            runCatching {
+                pollWithBackoff(timeoutMs = IMAGE_POLL_TIMEOUT_MS) {
+                    val chunk = _repository.getChunk(id)
+                    chunk.audio_ready
                 }
             }
         }
-    }
-
-    /**
-     * Safe fallback for IU duration when backend provides 0 or null values.
-     * Uses estimated_duration_sec if positive, otherwise returns a safe default of 2000ms.
-     */
-    private fun fallbackDurationMs(estimatedSec: Double?): Long {
-        if (estimatedSec != null && estimatedSec > 0) {
-            return (estimatedSec * 1000).toLong()
-        }
-        return 2000L
-    }
-
-    private suspend fun fetchIuSequence(id: String): List<IuImageItem> {
-        return runCatching {
-            val storyboard = _repository.getChunkStoryboard(id)
-            chunkPositions[id] = Pair(storyboard.chapter_id, storyboard.scene_id)
-            Log.i(TAG, "storyboard: ${storyboard.ius.size} IUs, build_id=${storyboard.build_id}")
-            val chId = (storyboard.chapter_id?.takeIf { it.isNotBlank() } ?: currentChapterId) ?: ""
-            val scId = (storyboard.scene_id?.takeIf { it.isNotBlank() } ?: currentSceneId) ?: ""
-            val bkId = storyboard.book_id?.takeIf { it.isNotBlank() } ?: bookId
-            val bldId = storyboard.build_id.ifBlank { buildId }
-            if (storyboard.ius.isNotEmpty() && bldId.isNotBlank() && chId.isNotBlank()) {
-                storyboard.ius.map { iu ->
-                    val durationMs = when {
-                        iu.start_ms != null && iu.end_ms != null -> {
-                            // Guard: real duration must be positive, fall back to estimated if not
-                            val real = iu.end_ms - iu.start_ms
-                            if (real > 0) real else fallbackDurationMs(iu.estimated_duration_sec)
-                        }
-                        else -> fallbackDurationMs(iu.estimated_duration_sec)
-                    }
-                    val iuText = iu.text
-                val result = runCatching {
-                        Log.d(TAG, "fetching IU image: ${iu.unit_id} (dur=$durationMs ms) bldId=$bldId")
-                        val imgBytes = _repository.getIuImage(bkId, chId, scId, iu.unit_id, bldId)
-                        val bmp = MediaDecoder.decodeBitmap(imgBytes)
-                        IuImageItem(bmp, durationMs, iu.unit_id, iuText, IuStatus.READY)
-                    }
-                    result.getOrNull() ?: run {
-                        Log.w(TAG, "IU image NOT GENERATED: ${iu.unit_id} — using placeholder")
-                        IuImageItem(
-                            bitmap = null,
-                            durationMs = durationMs,
-                            unitId = iu.unit_id,
-                            text = iuText,
-                            status = IuStatus.NOT_GENERATED
-                        )
-                    }
-                }
-            } else {
-                Log.w(TAG, "storyboard empty or missing IDs: ius=${storyboard.ius.size} bldId=$bldId chId=$chId")
-                emptyList()
-            }
-        }.getOrDefault(emptyList()).also {
-            val missing = it.count { item -> item.status == IuStatus.NOT_GENERATED }
-            Log.i(TAG, "IU sequence loaded: ${it.size} images ($missing not generated)")
-        }
-    }
-
-    private fun preloadAhead(includeCurrent: Boolean = false) {
-        val start = if (includeCurrent) 0 else 1
-
-        // Cancel previous preload to prevent duplicate work
-        preloadJob?.cancel()
-
-        // Single sequential preload coroutine: one scene at a time.
-        // Each scene's audio + IU images are fetched completely before the next begins.
-        // This prevents network races on cold cache (old code fired N parallel requests).
-        val job = viewModelScope.launch {
-            for (offset in start..PRELOAD_AHEAD) {
-                val idx = currentIndex + offset
-                if (idx >= chunkQueue.size) break
-                val id = chunkQueue[idx]
-                if (preloadCache.containsKey(id)) continue
-
-                Log.i(TAG, "preloading scene $offset ahead: $id")
-                val data = runCatching { fetchSceneData(id) }.getOrNull()
-                if (data != null) {
-                    preloadCache[id] = data
-                    _preloadCompleted.tryEmit(id)
-                    Log.i(TAG, "preloaded scene: $id — ${data.iuSequence.size} IUs")
-                } else {
-                    Log.w(TAG, "preload failed for scene: $id — will load on demand")
-                }
-            }
-        }
-
-        preloadJob = job
-
-        // Key the job by the first scene being preloaded, so playNext()
-        // can wait for it via preloadJobs[scene0]?.join()
-        // Clear stale entries first to avoid unbounded map growth.
-        preloadJobs.clear()
-        val firstId = chunkQueue.getOrNull(currentIndex + start)
-        if (firstId != null && !preloadCache.containsKey(firstId)) {
-            preloadJobs[firstId] = job
-        }
-    }
-
-    private suspend fun waitForNextWindow(): Boolean {
-        val currentBookId = bookId
-        if (currentBookId.isBlank()) {
-            Log.w(TAG, "waitForNextWindow: empty bookId")
-            return false
-        }
-
-        // Check if book is a lazy book (INDEXED state) — trigger lazy parse
-        val status = runCatching { _repository.getLazyBookStatus(currentBookId) }.getOrNull()
-        if (status != null && (status.state == "INDEXED" || status.state == "RAW")) {
-            _uiState.update { it.copy(phase = PlayerPhase.GENERATING) }
-            return runCatching {
-                val res = _repository.lazyParse(currentBookId, LAZY_WINDOW_DEFAULT)
-                for (ch in res.chapters) {
-                    ch.chapter?.let { cid ->
-                        if (!chunkQueue.contains(cid)) {
-                            chunkQueue.add(cid)
-                        }
-                    }
-                }
-                Log.i(TAG, "waitForNextWindow: lazy parsed ${res.parsed} chapters complete=${res.complete}")
-                if (res.complete || currentIndex < chunkQueue.size) {
-                    _uiState.update { it.copy(phase = PlayerPhase.DOWNLOADING) }
-                    true
-                } else {
-                    false
-                }
-            }.getOrElse { e ->
-                Log.w(TAG, "waitForNextWindow: lazy parse failed: ${e.message}")
-                false
-            }
-        }
-
-        _uiState.update { it.copy(phase = PlayerPhase.GENERATING) }
-        repeat(WINDOW_RETRY_COUNT) { attempt ->
-            // Backend now auto-slides the window; we just poll for new chunks.
-            val chunks = runCatching { _repository.getAllChunks(currentBookId) }.getOrElse { e ->
-                Log.w(TAG, "waitForNextWindow: chunks failed: ${e.message}")
-                null
-            }
-
-            if (chunks != null) {
-                var added = 0
-                for (id in chunks.chunk_ids) {
-                    if (!chunkQueue.contains(id)) {
-                        chunkQueue.add(id)
-                        added++
-                    }
-                }
-                Log.i(TAG, "waitForNextWindow: added=$added queue=${chunkQueue.size} totalScenes=${chunks.total_scenes} started=${chunks.started_scenes} ready=${chunks.ready_scenes}")
-
-                if (currentIndex < chunkQueue.size) {
-                    val nextWindow = chunkQueue.drop(currentIndex).take(WINDOW_SIZE)
-                    return runCatching {
-                        waitWindowReady(nextWindow)
-                        true
-                    }.getOrElse { e ->
-                        Log.w(TAG, "waitForNextWindow: next window not ready: ${e.message}")
-                        false
-                    }.also { ready ->
-                        if (ready) Log.i(TAG, "waitForNextWindow: next window ready")
-                    }
-                }
-
-                val statusSaysDone = chunks.total_scenes > 0 &&
-                    chunks.started_scenes >= chunks.total_scenes
-                val legacyStatusSaysDone = chunks.total > 0 &&
-                    chunks.chunk_ids.size >= chunks.total
-                val noMoreScenes = added == 0 &&
-                    currentIndex >= chunkQueue.size &&
-                    (statusSaysDone || legacyStatusSaysDone)
-                if (noMoreScenes) {
-                    Log.i(TAG, "waitForNextWindow: end of book")
-                    return false
-                }
-            }
-
-            if (attempt < WINDOW_RETRY_COUNT - 1) delay(3_000L)
-        }
-
-        _uiState.update { it.copy(errorMessage = "Timed out waiting for next scene window") }
-        Log.w(TAG, "waitForNextWindow: timeout")
-        return false
     }
 
     private suspend fun pollWithBackoff(timeoutMs: Long = POLL_TIMEOUT_MS, pollAction: suspend () -> Boolean) {
@@ -1690,191 +859,20 @@ class GenerateViewModel(
             if (ok) return
             polls++
             val delayMs = minOf(POLL_INTERVAL_MS * (1L shl minOf(polls / 10, 4)), MAX_BACKOFF_MS)
-            if (polls % 20 == 0) {
-                Log.d(TAG, "poll #$polls, delay=${delayMs}ms")
-                if (polls == 20) {
-                    Log.w(TAG, "poll still waiting after 20 attempts")
-                }
-            }
             delay(delayMs)
         }
     }
-
-    private suspend fun waitForWorkers(chunkIds: List<String>) {
-        Log.i(TAG, "waitForWorkers: polling until workers appear")
-        var polls = 0
-        while (true) {
-            polls++
-            delay(3_000L)
-            val counts = runCatching { _repository.getWorkerCounts() }.getOrNull() ?: continue
-            if (counts.audio > 0 || counts.image > 0 || counts.video > 0) {
-                Log.i(TAG, "waitForWorkers: workers detected after ${polls * 3}s (aw=${counts.audio} iw=${counts.image} vw=${counts.video})")
-                _uiState.update { it.copy(phase = PlayerPhase.GENERATING, errorMessage = null) }
-                resumeAfterWorkers(chunkIds)
-                return
-            }
-            if (polls == 100) {
-                _uiState.update { it.copy(errorMessage = "Still waiting for workers...") }
-            }
-            if (polls % 100 == 0 && polls > 100) {
-                Log.w(TAG, "waitForWorkers: still waiting (${polls * 3}s ≈ ${polls / 20}min)")
-            }
-            // Throttle polling after 10 minutes to reduce load
-            if (polls > 200) {
-                delay(27_000L) // extra 27s = 30s total interval
-            }
-        }
-    }
-
-    private suspend fun resumeAfterWorkers(chunkIds: List<String>) {
-        Log.i(TAG, "resumeAfterWorkers: starting generation flow")
-        startVideoCheck()
-        if (chunkIds.isEmpty()) return
-        startCoverRefresh(chunkIds.first())
-        val waitCount = minOf(INITIAL_WAIT_COUNT, chunkIds.size)
-        runCatching {
-            waitWindowReady(chunkIds.take(waitCount))
-        }.onFailure { e ->
-            Log.w(TAG, "waitInitialWindow failed: ${e.message}")
-            _uiState.update { it.copy(errorMessage = "Window timeout: ${e.message}") }
-            return
-        }
-        if (chunkQueue.isNotEmpty()) {
-            runCatching {
-                val firstData = fetchSceneData(chunkQueue[0])
-                preloadCache[chunkQueue[0]] = firstData
-            }.onFailure { e ->
-                Log.w(TAG, "first chunk preload failed: ${e.message}")
-            }
-        }
-        _uiState.update { it.copy(phase = PlayerPhase.SCENE_READY) }
-    }
-
-    private suspend fun waitChunkReady(id: String): ChunkResponse {
-        // Fast path: single check — if the chunk is already ready, return immediately
-        Log.d(TAG, "waitChunkReady: $id")
-        var last = runCatching { _repository.getChunk(id) }.getOrNull()
-        if (last != null && last.audio_ready && (!imageEnabled || last.image_ready)) {
-            Log.d(TAG, "waitChunkReady: $id already ready")
-            if (imageEnabled) waitStoryboardReady(id)
-            return last
-        }
-
-        // Slow path: poll until the chunk is ready, with exponential backoff
-        pollWithBackoff(timeoutMs = IMAGE_POLL_TIMEOUT_MS) {
-            val chunk = _repository.getChunk(id)
-            last = chunk
-            chunk.audio_ready
-        }
-
-        if (last == null || !last!!.audio_ready) {
-            Log.w(TAG, "waitChunkReady: $id TIMEOUT after ${IMAGE_POLL_TIMEOUT_MS}ms — returning fallback")
-            return ChunkResponse(
-                status = "unknown", audio_ready = false,
-                image_ready = false, video_ready = false, video_status = "pending"
-            )
-        }
-
-        if (imageEnabled) waitStoryboardReady(id)
-        return last!!
-    }
-
-    private suspend fun waitWindowReady(ids: List<String>) {
-        for (id in ids) {
-            Log.i(TAG, "waitWindowReady: $id")
-            waitChunkReady(id)
-        }
-    }
-
-    private suspend fun waitStoryboardReady(id: String, timeoutMs: Long = IMAGE_POLL_TIMEOUT_MS) {
-        var hasStoryboard = false
-        pollWithBackoff(timeoutMs = timeoutMs) {
-            val storyboard = _repository.getChunkStoryboard(id)
-            chunkPositions[id] = Pair(storyboard.chapter_id, storyboard.scene_id)
-            hasStoryboard = storyboard.ius.isNotEmpty()
-            hasStoryboard
-        }
-        if (!hasStoryboard) {
-            Log.w(TAG, "waitStoryboardReady: $id storyboard not ready after ${timeoutMs}ms, continuing anyway")
-        }
-    }
-
-    private suspend fun waitFirstAudio(id: String) {
-        Log.d(TAG, "waitFirstAudio: $id")
-        val ready = runCatching {
-            var result = false
-            pollWithBackoff {
-                val chunk = _repository.getChunk(id)
-                result = chunk.audio_ready
-                result
-            }
-            result
-        }.getOrDefault(false)
-        if (!ready) {
-            Log.w(TAG, "waitFirstAudio: $id TIMEOUT or FAILED")
-        } else {
-            Log.i(TAG, "waitFirstAudio: $id done")
-        }
-    }
-
-    private suspend fun waitPreview(id: String) {
-        Log.d(TAG, "waitPreview: $id")
-        pollWithBackoff {
-            val chunk = _repository.getChunk(id)
-            if (chunk.image_ready) {
-                runCatching {
-                        val imageBytes = _repository.getChunkImage(id)
-                        val bitmap = MediaDecoder.decodeBitmap(imageBytes)
-                        _uiState.update { it.copy(previewImage = bitmap, coverImage = bitmap) }
-                }.onFailure { e ->
-                    Log.e(TAG, "waitPreview: failed to load image: ${e.message}")
-                }
-                return@pollWithBackoff true
-            }
-            false
-        }
-        Log.i(TAG, "waitPreview: $id done")
-    }
-
-    fun clearPlaybackState() {
-        chunkPositions.clear()
-        preloadCache.clear()
-        preloadJobs.clear()
-        backgroundWindowJob?.cancel()
-        backgroundWindowJob = null
-        backgroundWindowStart = -1
-        backgroundGenPollJob?.cancel()
-        backgroundGenPollJob = null
-        coverRefreshJob?.cancel()
-        coverRefreshJob = null
-        chunkQueue.clear()
-        currentIndex = 0
-        currentChapterId = null
-        currentSceneId = null
-        currentUnitIndex = 0
-        currentIuSequence = null
-        pendingChunkAudio = null
-        pendingChunkVideo = null
-        pendingChunkIuSequence = null
-        lastProcessedChunkSequence = 0
-        needsRotationResume = false
-        pendingExternalSeek = null
-        resetBackgroundGenState()
-        _uiState.update { it.copy(phase = PlayerPhase.SCENE_READY) }
-    }
-
 }
 
-data class UiState(
+// ── UI State (generation only) ───────────────────────────────────
+
+data class GenUiState(
     val phase: PlayerPhase = PlayerPhase.IDLE,
     val chunkIds: List<String> = emptyList(),
     val previewImage: Bitmap? = null,
-    val currentImage: Bitmap? = null,
     val coverImage: Bitmap? = null,
     val errorMessage: String? = null,
-    val chunkSequence: Long = 0,
-    val mode: String = "full",  // "audio" | "storyboard" | "full"
-    val missingIuPosition: ActivePosition? = null,
+    val mode: String = "full",
     val importStage: ImportStage? = null,
     val importProgress: Float = 0f,
     val importProgressMessages: List<String> = emptyList()
@@ -1908,6 +906,8 @@ enum class ImportStage(val label: String) {
         }
     }
 }
+
+// ── Shared data types ────────────────────────────────────────────
 
 data class IuImageItem(
     val bitmap: Bitmap?,
@@ -1951,54 +951,4 @@ data class ActivePosition(
     val unitIndex: Int = 0
 ) {
     fun formatUnitLabel(): String = unitId ?: String.format("iu%04d", unitIndex)
-}
-
-class PositionManager {
-
-    private val _current = MutableStateFlow(ActivePosition())
-    val current: StateFlow<ActivePosition> = _current.asStateFlow()
-
-    fun navigateTo(position: ActivePosition) {
-        _current.value = position
-    }
-
-    fun navigateTo(
-        chapterId: String?,
-        sceneId: String?,
-        unitId: String? = null,
-        chunkId: String? = null,
-        unitIndex: Int = 0
-    ) {
-        _current.value = ActivePosition(
-            chapterId = chapterId,
-            sceneId = sceneId,
-            unitId = unitId,
-            chunkId = chunkId,
-            unitIndex = unitIndex
-        )
-    }
-
-    fun previousUnit(sceneUnits: List<SceneUnit>) {
-        val pos = _current.value
-        val idx = pos.unitIndex
-        if (idx > 0) {
-            val newIdx = idx - 1
-            _current.value = pos.copy(
-                unitId = sceneUnits.getOrNull(newIdx)?.id,
-                unitIndex = newIdx
-            )
-        }
-    }
-
-    fun nextUnit(sceneUnits: List<SceneUnit>) {
-        val pos = _current.value
-        val idx = pos.unitIndex
-        if (idx < sceneUnits.size - 1) {
-            val newIdx = idx + 1
-            _current.value = pos.copy(
-                unitId = sceneUnits.getOrNull(newIdx)?.id,
-                unitIndex = newIdx
-            )
-        }
-    }
 }

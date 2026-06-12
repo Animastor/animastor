@@ -37,6 +37,10 @@ class MainActivity : AppCompatActivity() {
         ViewModelProvider(this, GenerateViewModel.factory).get(GenerateViewModel::class.java)
     }
 
+    private val playbackViewModel: PlaybackViewModel by lazy {
+        ViewModelProvider(this, PlaybackViewModel.factory).get(PlaybackViewModel::class.java)
+    }
+
     fun switchToPlayTab() {
         binding.bottomNavigation.selectedItemId = R.id.playFragment
     }
@@ -112,6 +116,7 @@ class MainActivity : AppCompatActivity() {
             // Cold start: drop any persisted session so Navigate/Edit start empty.
             // (On config change savedInstanceState != null and we keep the session.)
             viewModel.closeBook()
+            playbackViewModel.closeBook()
         }
 
         if (savedInstanceState == null) {
@@ -129,6 +134,7 @@ class MainActivity : AppCompatActivity() {
 
         setupWorkerToggles()
         loadInitialLayerConfig()
+        setupPlaybackCoordination()
 
         lifecycleScope.launch {
             binding.workerPanel.visibility = View.VISIBLE
@@ -265,8 +271,27 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // --- REMOVE: This was duplicated ---
-    // private fun applyTheme() { ... }
+    /**
+     * Coordinate between [GenerateViewModel] (generation) and
+     * [PlaybackViewModel] (player) by observing chunk-ready signals
+     * from the generation pipeline and forwarding them to the player.
+     */
+    private fun setupPlaybackCoordination() {
+        lifecycleScope.launch {
+            viewModel.playbackPrepared.collect { prep ->
+                Log.i("MainActivity", "playbackPrepared: book=${prep.bookId} chunks=${prep.chunkIds.size}")
+                playbackViewModel.preparePlayback(
+                    bookId = prep.bookId,
+                    buildId = prep.buildId,
+                    chunkIds = prep.chunkIds,
+                    chunkPositions = prep.chunkPositions
+                )
+                if (prep.coverImage != null) {
+                    playbackViewModel.setCoverImage(prep.coverImage)
+                }
+            }
+        }
+    }
 
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
@@ -385,8 +410,9 @@ class MainActivity : AppCompatActivity() {
         }
 
         val profile = viewModel.currentProfile()
-        val hasChapter = !viewModel.currentChapterId.isNullOrBlank()
-        val hasScene = !viewModel.currentSceneId.isNullOrBlank()
+        val currentPos = SharedPositionManager.current.value
+        val hasChapter = !currentPos.chapterId.isNullOrBlank()
+        val hasScene = !currentPos.sceneId.isNullOrBlank()
 
         val dialogBinding = DialogGenerateScopeBinding.inflate(layoutInflater)
         dialogBinding.dialogSubtitle.text = getString(
@@ -408,12 +434,12 @@ class MainActivity : AppCompatActivity() {
                 when (dialogBinding.scopeGroup.checkedRadioButtonId) {
                     R.id.scopeCurrentScene -> {
                         scope = "current_scene"
-                        chId = viewModel.currentChapterId
-                        scId = viewModel.currentSceneId
+                        chId = SharedPositionManager.current.value.chapterId
+                        scId = SharedPositionManager.current.value.sceneId
                     }
                     R.id.scopeCurrentChapter -> {
                         scope = "current_chapter"
-                        chId = viewModel.currentChapterId
+                        chId = SharedPositionManager.current.value.chapterId
                         scId = null
                     }
                     else -> {
