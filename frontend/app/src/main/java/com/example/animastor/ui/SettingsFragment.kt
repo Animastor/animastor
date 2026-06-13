@@ -77,7 +77,7 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
             val cacheBinding = DialogDeleteVbookBinding.inflate(cacheInflate)
             cacheBinding.dialogMessage.text = getString(R.string.settings_cache_clear_confirm)
 
-            MaterialAlertDialogBuilder(requireContext())
+            MaterialAlertDialogBuilder(requireContext(), R.style.ThemeOverlay_Animastor_Dialog_Alert)
                 .setTitle(R.string.settings_cache_clear)
                 .setView(cacheBinding.root)
                 .setPositiveButton(android.R.string.ok) { _, _ ->
@@ -98,7 +98,7 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
             val dialogBinding = DialogDeleteVbookBinding.inflate(inflater)
             dialogBinding.dialogMessage.text = getString(R.string.settings_delete_vbook_confirm)
 
-            MaterialAlertDialogBuilder(requireContext())
+            MaterialAlertDialogBuilder(requireContext(), R.style.ThemeOverlay_Animastor_Dialog_Alert)
                 .setTitle(R.string.settings_delete_vbook)
                 .setView(dialogBinding.root)
                 .setPositiveButton(android.R.string.ok) { _, _ ->

@@ -432,7 +432,7 @@ class MainActivity : AppCompatActivity() {
         dialogBinding.scopeCurrentChapter.isEnabled = hasChapter
         dialogBinding.scopeWholeBook.isChecked = true
 
-        MaterialAlertDialogBuilder(this)
+        MaterialAlertDialogBuilder(this, R.style.ThemeOverlay_Animastor_Dialog_Alert)
             .setTitle(R.string.generate_dialog_title)
             .setView(dialogBinding.root)
             .setNegativeButton(R.string.dialog_cancel, null)

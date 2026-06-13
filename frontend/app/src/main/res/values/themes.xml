@@ -24,7 +24,6 @@
          DARK — тёмный кинозал с бархатными креслами
          ============================================================ -->
     <style name="Theme.Animastor.CinemaDark" parent="Theme.Material3.Dark.NoActionBar">
-        <item name="materialAlertDialogStyle">@style/ThemeOverlay.Animastor.Dialog.Alert</item>
         <item name="android:statusBarColor">@color/cinema_background</item>
         <item name="android:navigationBarColor">@color/cinema_background</item>
         <item name="android:windowBackground">@color/cinema_background</item>
@@ -77,7 +76,6 @@
          LIGHT — уютный кинозал, светлый зал
          ============================================================ -->
     <style name="Theme.Animastor.CinemaLight" parent="Theme.Material3.Light.NoActionBar">
-        <item name="materialAlertDialogStyle">@style/ThemeOverlay.Animastor.Dialog.Alert.Light</item>
         <item name="android:statusBarColor">@color/cinema_light_surface_dim</item>
         <item name="android:navigationBarColor">@color/cinema_light_background</item>
         <item name="android:windowBackground">@color/cinema_light_background</item>
