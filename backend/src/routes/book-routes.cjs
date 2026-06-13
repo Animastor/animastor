@@ -1326,7 +1326,7 @@ async function recoverMissingRedisChunks(buildId, bookId) {
     app.post('/api/v1/book/:bookId/regenerate', async (req, res) => {
         try {
             const { bookId } = req.params;
-            const { scope, chapter_id, scene_id, profile } = req.body || {};
+            const { scope, chapter_id, scene_id, profile, rebuild_all } = req.body || {};
 
             const loadedBook = book.loadBook(bookId);
             if (!loadedBook) return res.status(404).json({ error: 'book not found' });
@@ -1345,23 +1345,39 @@ async function recoverMissingRedisChunks(buildId, bookId) {
                 return res.status(400).json({ error: 'No layer config found for this book' });
             }
 
-            // Compute diff between current and existing book
-            const existingBook = book.loadBook(bookId);
-            const diff = bookDiff.computeBookDiff(existingBook, loadedBook);
-            log(`[REGENERATE] ${bookId}: ${diff.changes.added} added, ${diff.changes.removed} removed, ${diff.changes.modified} modified`);
-
-            // Filter by scope
             const allScenes = book.collectScenes(loadedBook);
-            const filteredDirty = bookDiff.filterDirtyScenesByScope(
-                diff.dirty_scenes, effectiveScope, chapter_id, scene_id, allScenes
-            );
+            let filteredDirty;
+
+            if (rebuild_all) {
+                // Full rebuild: mark ALL scenes as dirty regardless of diff
+                log(`[REGENERATE] ${bookId}: full rebuild — marking all ${allScenes.length} scenes as dirty`);
+                const allDirty = allScenes.map(s => ({
+                    chapter_id: s.chapter_id,
+                    scene_id: s.scene_id,
+                    reason: 'rebuild',
+                    dirty_layers: ['audio', 'image', 'video'],
+                }));
+
+                filteredDirty = bookDiff.filterDirtyScenesByScope(
+                    allDirty, effectiveScope, chapter_id, scene_id, allScenes
+                );
+            } else {
+                // Diff-based: compare current book with the same book
+                const existingBook = book.loadBook(bookId);
+                const diff = bookDiff.computeBookDiff(existingBook, loadedBook);
+                log(`[REGENERATE] ${bookId}: ${diff.changes.added} added, ${diff.changes.removed} removed, ${diff.changes.modified} modified`);
+
+                filteredDirty = bookDiff.filterDirtyScenesByScope(
+                    diff.dirty_scenes, effectiveScope, chapter_id, scene_id, allScenes
+                );
+            }
 
             // Mark dirty scenes
             const marked = await bookDiff.markDirtyScenes(redis, bookId, buildId, filteredDirty, layerCfg);
 
             res.json({
                 book_id: bookId, scope: effectiveScope,
-                diff: diff.changes, dirty_scenes: filteredDirty.length,
+                dirty_scenes: filteredDirty,
                 marked: marked.marked,
             });
         } catch (err) {

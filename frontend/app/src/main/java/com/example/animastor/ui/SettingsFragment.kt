@@ -8,9 +8,11 @@ import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.activityViewModels
+import androidx.lifecycle.lifecycleScope
 import com.example.animastor.BuildConfig
 import com.example.animastor.R
 import com.example.animastor.databinding.FragmentSettingsBinding
+import kotlinx.coroutines.launch
 
 class SettingsFragment : Fragment(R.layout.fragment_settings) {
 
@@ -75,6 +77,33 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
                 .setPositiveButton(android.R.string.ok) { _, _ ->
                     viewModel.clearBookCache()
                     Toast.makeText(requireContext(), R.string.settings_cache_cleared, Toast.LENGTH_SHORT).show()
+                }
+                .setNegativeButton(android.R.string.cancel, null)
+                .show()
+        }
+
+        b.deleteVbookButton.setOnClickListener {
+            if (viewModel.bookId.isBlank()) {
+                Toast.makeText(requireContext(), "No book open", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+
+            AlertDialog.Builder(requireContext())
+                .setTitle(R.string.settings_delete_vbook)
+                .setMessage(R.string.settings_delete_vbook_confirm)
+                .setPositiveButton(android.R.string.ok) { _, _ ->
+                    val bookId = viewModel.bookId
+                    lifecycleScope.launch {
+                        runCatching {
+                            viewModel.repository.deleteBook(bookId)
+                            viewModel.repository.clearCache()
+                            viewModel.closeBook()
+                        }.onSuccess {
+                            Toast.makeText(requireContext(), R.string.settings_delete_vbook_done, Toast.LENGTH_SHORT).show()
+                        }.onFailure { e ->
+                            Toast.makeText(requireContext(), "Error: ${e.message}", Toast.LENGTH_LONG).show()
+                        }
+                    }
                 }
                 .setNegativeButton(android.R.string.cancel, null)
                 .show()

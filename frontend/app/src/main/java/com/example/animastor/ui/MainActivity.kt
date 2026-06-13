@@ -1,6 +1,7 @@
 package com.example.animastor.ui
 
 import android.app.AlertDialog
+import android.content.ComponentCallbacks2
 import android.content.Context
 import android.os.Bundle
 import android.animation.ObjectAnimator
@@ -73,7 +74,7 @@ class MainActivity : AppCompatActivity() {
     override fun attachBaseContext(newBase: Context) {
         val prefs = newBase.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val lang = prefs.getString(PREFS_LANG, LANG_AUTO)
-        val sysLang = android.content.res.Configuration(newBase.resources.configuration).locale.language
+        val sysLang = newBase.resources.configuration.locales.get(0)?.language ?: "en"
         val locale = when {
             lang == LANG_RU -> Locale("ru")
             lang == LANG_AUTO -> if (sysLang == "ru") Locale("ru") else Locale.ENGLISH
@@ -300,9 +301,10 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    @Suppress("DEPRECATION")
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
-        if (level >= TRIM_MEMORY_MODERATE) {
+        if (level >= ComponentCallbacks2.TRIM_MEMORY_MODERATE) {
             val fragment = supportFragmentManager.findFragmentByTag("PlayFragment") as? PlayFragment
             fragment?.stopAll()
         }

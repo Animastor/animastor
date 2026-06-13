@@ -210,7 +210,7 @@ class PlaybackViewModel(
                     val sb = _repository.getChunkStoryboard(chunkId)
                     _chunkUnitCounts[chunkId] = sb.ius.size
                     if (sb.scene_type != null) {
-                        _chunkSceneTypes[chunkId] = sb.scene_type!!
+                        _chunkSceneTypes[chunkId] = sb.scene_type
                     }
                     Log.i(TAG, "[WINDOW-TRIGGER] on-demand fetch done for $chunkId (${sb.ius.size} units, type=${sb.scene_type})")
                     // Re-check now that we have the data
@@ -530,7 +530,7 @@ class PlaybackViewModel(
                                 chunkPositions[cid] = Pair(sb.chapter_id, sb.scene_id)
                                 _chunkUnitCounts[cid] = sb.ius.size
                                 if (sb.scene_type != null) {
-                                    _chunkSceneTypes[cid] = sb.scene_type!!
+                                    _chunkSceneTypes[cid] = sb.scene_type
                                 }
                             }
                         }
@@ -776,7 +776,7 @@ class PlaybackViewModel(
                 val sb = _repository.getChunkStoryboard(id)
                 _chunkUnitCounts[id] = sb.ius.size
                 if (sb.scene_type != null) {
-                    _chunkSceneTypes[id] = sb.scene_type!!
+                    _chunkSceneTypes[id] = sb.scene_type
                 }
                 Log.d(TAG, "[UNITS] chunk=$id has ${sb.ius.size} units type=${sb.scene_type}")
             } catch (e: Exception) {
@@ -785,7 +785,7 @@ class PlaybackViewModel(
                 try {
                     val chunk = _repository.getChunk(id)
                     if (chunk.scene_type != null) {
-                        _chunkSceneTypes[id] = chunk.scene_type!!
+                        _chunkSceneTypes[id] = chunk.scene_type
                     }
                 } catch (_: Exception) {}
             }

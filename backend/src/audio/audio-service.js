@@ -747,13 +747,24 @@ async function generateSceneAudio(redis, sceneData, loadedBook, buildId, bookId)
             const c1 = chars[0] || {};
             const c2 = chars[1] || {};
             wfAudio["108"].inputs = { script: segment.text, default_instruct: "" };
-            wfAudio["71"].inputs.voice_instruction = c1?.voice?.instruction || "";
-            wfAudio["80"].inputs.voice_instruction = c2?.voice?.instruction || "";
+            // Only overwrite voice_instruction if the character has one defined
+            // otherwise keep the default from the workflow template
+            if (c1?.voice?.instruction) {
+                wfAudio["71"].inputs.voice_instruction = c1.voice.instruction;
+            }
+            if (c2?.voice?.instruction) {
+                wfAudio["80"].inputs.voice_instruction = c2.voice.instruction;
+            }
             wfAudio["74"].inputs.role_name_1 = c1?.id || "role1";
             wfAudio["74"].inputs.role_name_2 = c2?.id || "role2";
         } else {
             wfAudio["108"].inputs.text = segment.text;
-            wfAudio["108"].inputs.voice_instruction = narratorVoice(sceneData.payload, loadedBook);
+            // Only overwrite voice_instruction if the book/scene has one defined
+            // otherwise keep the default from the workflow template
+            const vi = narratorVoice(sceneData.payload, loadedBook);
+            if (vi) {
+                wfAudio["108"].inputs.voice_instruction = vi;
+            }
         }
 
         await gpu.send(`${id}:audio`, wfAudio, "audio", buildId);

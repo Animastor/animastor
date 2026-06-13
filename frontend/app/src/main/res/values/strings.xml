@@ -163,10 +163,13 @@
     <string name="settings_api_key">API Key</string>
     <string name="settings_server">Server URL</string>
     <string name="settings_quality">Quality</string>
-    <string name="settings_cache">Cache</string>
-    <string name="settings_cache_clear">Clear Cache</string>
+    <string name="settings_cache">Clear:</string>
+    <string name="settings_cache_clear">Delete Storyboard from Server</string>
     <string name="settings_cache_clear_confirm">All generated files for the current book will be deleted. You will need to regenerate them. Continue?</string>
-    <string name="settings_cache_cleared">Cache cleared</string>
+    <string name="settings_cache_cleared">Storyboard deleted</string>
+    <string name="settings_delete_vbook">Delete vBook from Server</string>
+    <string name="settings_delete_vbook_confirm">Delete the entire book (vBook) and all associated data (storyboard, Redis, database) from the server? This cannot be undone.</string>
+    <string name="settings_delete_vbook_done">vBook deleted</string>
     <string name="settings_debug">Debug</string>
     <string name="settings_theme">Theme</string>
     <string name="settings_theme_auto">Auto — by time of day</string>

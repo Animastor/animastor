@@ -415,6 +415,10 @@ class Repository(
         api.clearBookCache(bookId)
     }
 
+    suspend fun deleteBook(bookId: String) {
+        api.deleteBook(bookId)
+    }
+
     suspend fun slideWindow(bookId: String): SlideWindowResponse {
         Log.i("Repo", "slideWindow: $bookId")
         return api.slideWindow(bookId)

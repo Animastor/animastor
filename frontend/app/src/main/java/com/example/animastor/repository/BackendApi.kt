@@ -197,6 +197,11 @@ interface BackendApi {
         @Path("bookId") bookId: String
     ): GenericResponse
 
+    @HTTP(method = "DELETE", path = "/api/v1/book/{bookId}", hasBody = false)
+    suspend fun deleteBook(
+        @Path("bookId") bookId: String
+    ): GenericResponse
+
     @POST("/api/v1/book/{bookId}/slide-window")
     suspend fun slideWindow(
         @Path("bookId") bookId: String

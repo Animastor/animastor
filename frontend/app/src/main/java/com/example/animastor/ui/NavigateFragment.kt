@@ -94,7 +94,7 @@ class NavigateFragment : Fragment(R.layout.fragment_navigate) {
             ItemTouchHelper.UP or ItemTouchHelper.DOWN, 0
         ) {
             override fun getDragDirs(recyclerView: RecyclerView, vh: RecyclerView.ViewHolder): Int {
-                val pos = vh.adapterPosition
+                val pos = vh.bindingAdapterPosition
                 if (pos in adapter.items.indices && adapter.items[pos] is StructureItem.SceneItem) {
                     return ItemTouchHelper.UP or ItemTouchHelper.DOWN
                 }
@@ -106,8 +106,8 @@ class NavigateFragment : Fragment(R.layout.fragment_navigate) {
                 viewHolder: RecyclerView.ViewHolder,
                 target: RecyclerView.ViewHolder
             ): Boolean {
-                val from = viewHolder.adapterPosition
-                val to = target.adapterPosition
+                val from = viewHolder.bindingAdapterPosition
+                val to = target.bindingAdapterPosition
                 if (from !in adapter.items.indices || to !in adapter.items.indices) return false
                 val fromItem = adapter.items[from] as? StructureItem.SceneItem ?: return false
                 val toItem = adapter.items[to] as? StructureItem.SceneItem ?: return false

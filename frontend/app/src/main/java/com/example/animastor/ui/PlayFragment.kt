@@ -175,6 +175,8 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         }
         binding?.progressBar?.isIndeterminate = true
 
+        playbackViewModel.clearMissingIu()
+
         if (playbackViewModel.chunkQueueSize > 0) {
             binding?.playButton?.isEnabled = true
             binding?.playButton?.alpha = 1.0f

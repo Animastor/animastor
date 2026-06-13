@@ -222,39 +222,35 @@ module.exports = function(redis, config, deps) {
 
         try {
             // First check if padded audio trimming is needed
-            let finalPaths = chunkPaths;
             if (chunk.padded_text) {
-                const trimmedPaths = chunkPaths.map(cp => {
-                    const trimmedName = cp.replace(/\.mp3$/, '_trimmed.mp3');
-                    return trimmedName;
-                });
-                // Trim each chunk
                 for (let i = 0; i < chunkPaths.length; i++) {
                     try {
-                        await audio.trimAudioChunk(chunkPaths[i], trimmedPaths[i]);
+                        await audio.trimAudioChunk(chunkPaths[i], chunkPaths[i].replace(/\.mp3$/, '_trimmed.mp3'));
                     } catch (trimErr) {
-                        // If trimming fails, use original file
-                        trimmedPaths[i] = chunkPaths[i];
                         console.warn(`⚠️ Trim failed for ${chunkPaths[i]}: ${trimErr.message}`);
                     }
                 }
-                finalPaths = trimmedPaths;
             }
 
-            const outputPath = path.join(buildDir, `${book_id}_${chapter_id}_${scene_id}.mp3`);
-            await audio.mergeSceneAudioChunks(finalPaths, outputPath);
+            // Merge chunks into canonical audio using mergeSceneAudioChunks
+            // (buildSceneAudio handles single-chunk trim, rename, and chunk cleanup)
+            const mergeResult = await audio.mergeSceneAudioChunks(redis, book_id, chapter_id, scene_id, build_id, expectedCount);
 
-            // If this is a single-chunk merge, just copy the file
-            if (chunkPaths.length === 1) {
-                fs.copyFileSync(chunkPaths[0], outputPath);
-                log(`🎵 Single chunk — copied to scene audio: ${outputPath}`);
+            if (!mergeResult) {
+                // Fallback: if merge returned null (lock held or missing chunks), try direct copy
+                const outputPath = path.join(buildDir, `${book_id}_${chapter_id}_${scene_id}.mp3`);
+                if (chunkPaths.length === 1 && fs.existsSync(chunkPaths[0]) && !fs.existsSync(outputPath)) {
+                    fs.copyFileSync(chunkPaths[0], outputPath);
+                    log(`🎵 Single chunk fallback — copied to scene audio: ${outputPath}`);
+                }
             }
 
             // Cleanup trimmed files
             if (chunk.padded_text) {
-                for (const tp of finalPaths) {
-                    if (tp.endsWith('_trimmed.mp3') && fs.existsSync(tp)) {
-                        try { fs.unlinkSync(tp); } catch (_) {}
+                for (const cp of chunkPaths) {
+                    const trimmedPath = cp.replace(/\.mp3$/, '_trimmed.mp3');
+                    if (fs.existsSync(trimmedPath)) {
+                        try { fs.unlinkSync(trimmedPath); } catch (_) {}
                     }
                 }
             }

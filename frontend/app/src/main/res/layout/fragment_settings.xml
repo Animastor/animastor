@@ -94,7 +94,7 @@
                 android:textColor="?attr/colorOnSurface"
                 android:textColorHint="?attr/colorOnSurfaceVariant" />
 
-            <!-- Cache -->
+            <!-- Cache / Storyboard -->
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -109,9 +109,17 @@
                 android:layout_width="match_parent"
                 android:layout_height="48dp"
                 android:layout_marginTop="4dp"
-                android:layout_marginBottom="20dp"
                 android:text="@string/settings_cache_clear"
-                style="@style/Widget.Animastor.Button.Outlined" />
+                style="@style/Widget.Animastor.Button.Outlined.Error" />
+
+            <Button
+                android:id="@+id/deleteVbookButton"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:layout_marginTop="8dp"
+                android:layout_marginBottom="20dp"
+                android:text="@string/settings_delete_vbook"
+                style="@style/Widget.Animastor.Button.Outlined.Error" />
 
             <!-- Debug -->
             <TextView

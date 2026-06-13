@@ -208,10 +208,9 @@ module.exports = function(redis, config, deps) {
                 chunk_index: '0001',
             });
 
-            // Reset scene state in Redis
-            const sceneStateKey = `animastor:scene-state:${bookId}:${chapter_id}:${scene_id}`;
-            const currentState = await state.getSceneState(redis, bookId, chapter_id, scene_id);
-
+            // Reset scene state in Redis (use direct set, not transitionSceneState,
+            // because scenes may be in terminal states like VIDEO_READY which have
+            // no outgoing transitions in the FSM — dirty marking is a forced reset).
             let newState;
             if (resetAudio) {
                 newState = state.SceneState.AUDIO_PENDING;
@@ -221,7 +220,7 @@ module.exports = function(redis, config, deps) {
                 newState = state.SceneState.VIDEO_PENDING;
             }
 
-            await state.transitionSceneState(redis, bookId, chapter_id, scene_id, newState);
+            await state.setSceneStateWithBuildId(redis, bookId, chapter_id, scene_id, newState, buildId);
             await activeScenes.addActiveScene(redis, bookId, chapter_id, scene_id);
 
             log(`📋 Dirty scene marked: ${bookId}/${chapter_id}/${scene_id} → ${newState}`);

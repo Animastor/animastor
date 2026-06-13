@@ -523,8 +523,8 @@ class GenerateViewModel(
         _isRegenerating.value = false
 
         generationJob = viewModelScope.launch {
+            val msgs = mutableListOf<String>()
             try {
-                val msgs = mutableListOf<String>()
                 _uiState.update { it.copy(
                     phase = PlayerPhase.IMPORTING_TXT,
                     importStage = ImportStage.VALIDATING,
@@ -669,12 +669,13 @@ class GenerateViewModel(
             } catch (e: Exception) {
                 Log.e(TAG, "importTxtFromFile failed: ${e.message}", e)
                 val msg = if (e is java.io.IOException && e.message != null) e.message!! else "Import TXT failed: ${e.message}"
+                msgs.add("✗ Ошибка: $msg")
                 _uiState.update { it.copy(
                     phase = PlayerPhase.IDLE,
                     errorMessage = msg,
                     importStage = null,
                     importProgress = 0f,
-                    importProgressMessages = emptyList()
+                    importProgressMessages = msgs.toList()
                 )}
             }
         }
@@ -688,11 +689,15 @@ class GenerateViewModel(
     private suspend fun pollAgentProgress(bId: String, msgs: MutableList<String>): Boolean {
         var lastProgressMsg = ""
         var consecutiveInactive = 0
-        val maxInactive = 3  // 3 consecutive inactive checks = done
+        val maxInactive = 3
+        val maxPollTimeMs = 10 * 60 * 1000L // 10 min safety timeout
+        val startTime = System.currentTimeMillis()
 
-        // First check is IMMEDIATE (no delay) — catches already-completed sessions
         while (consecutiveInactive < maxInactive) {
-            // Only add initial delay AFTER the first check
+            if (System.currentTimeMillis() - startTime > maxPollTimeMs) {
+                Log.w(TAG, "[POLL] safety timeout reached (${maxPollTimeMs}ms), exiting poll loop")
+                break
+            }
             if (consecutiveInactive > 0 || lastProgressMsg.isNotEmpty()) {
                 delay(2000)
             }
@@ -702,14 +707,12 @@ class GenerateViewModel(
                     consecutiveInactive = 0
                     val currentMsg = status.progress_msg
                     if (currentMsg != lastProgressMsg) {
-                        // Mark previous progress message as done
                         if (lastProgressMsg.isNotEmpty() && msgs.isNotEmpty() && msgs.last().startsWith("⟳")) {
                             msgs[msgs.size - 1] = msgs.last().replace("⟳", "✓")
                         }
                         msgs.add(currentMsg)
                         lastProgressMsg = currentMsg
 
-                        // Window summary from window_data
                         if (status.window_index != null && status.created_scenes != null) {
                             val windowInfo = "📦 Окно ${status.window_index + 1}: ${status.created_scenes} сцен" +
                                 if (status.total_scenes != null) " (всего найдено: ${status.total_scenes})" else ""
@@ -723,8 +726,7 @@ class GenerateViewModel(
                     consecutiveInactive++
                     Log.d(TAG, "[POLL] agent inactive (x$consecutiveInactive)")
 
-                    // Even when inactive, if there's a progress_msg from the last session, show it
-                    if (status != null && status.progress_msg != null && status.progress_msg != lastProgressMsg) {
+                    if (status.progress_msg != null && status.progress_msg != lastProgressMsg) {
                         val finalMsg = status.progress_msg
                         Log.i(TAG, "[POLL] showing final progress msg: \"$finalMsg\"")
                         msgs.add(finalMsg)
@@ -733,7 +735,6 @@ class GenerateViewModel(
                     }
 
                     if (consecutiveInactive >= maxInactive) {
-                        // Mark last progress as done
                         if (msgs.isNotEmpty() && msgs.last().startsWith("⟳")) {
                             msgs[msgs.size - 1] = msgs.last().replace("⟳", "✓")
                             _uiState.update { it.copy(importProgressMessages = msgs.toList()) }
@@ -741,9 +742,9 @@ class GenerateViewModel(
                     }
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "[POLL] agent-status failed: ${e.message}")
-                // Don't increment consecutiveInactive on network errors — be resilient
-                delay(3000) // Wait a bit longer on error
+                consecutiveInactive++
+                Log.w(TAG, "[POLL] agent-status failed: ${e.message} (x$consecutiveInactive)")
+                delay(3000)
             }
         }
 

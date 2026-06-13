@@ -139,10 +139,13 @@
     <string name="settings_api_key">API Ключ</string>
     <string name="settings_server">URL сервера</string>
     <string name="settings_quality">Качество</string>
-    <string name="settings_cache">Кэш</string>
-    <string name="settings_cache_clear">Очистить кэш</string>
+    <string name="settings_cache">Очистить:</string>
+    <string name="settings_cache_clear">Удалить Сториборд с сервера</string>
     <string name="settings_cache_clear_confirm">Все сгенерированные файлы текущей книги будут удалены. Потребуется перегенерация. Продолжить?</string>
-    <string name="settings_cache_cleared">Кэш очищен</string>
+    <string name="settings_cache_cleared">Сториборд удалён</string>
+    <string name="settings_delete_vbook">Удалить vBook с сервера</string>
+    <string name="settings_delete_vbook_confirm">Удалить всю книгу (vBook) и все связанные данные (сториборд, Redis, база данных) с сервера? Это действие необратимо.</string>
+    <string name="settings_delete_vbook_done">vBook удалён</string>
     <string name="settings_debug">Отладка</string>
     <string name="settings_theme">Тема</string>
     <string name="settings_theme_auto">Авто — по времени суток</string>

@@ -1021,30 +1021,35 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
     }
 
     // ---- Insert structural scenes (cover + chapter_intro) ----
+    // Only add structural scenes when the chapter is first created,
+    // never when appending to an existing chapter that already has them.
     const structuralScenes = [];
 
-    // Always add cover scene for the first window
-    if (isFirstWindow) {
+    const hasChapterIntro = chapterObj.scenes.some(s => s.type === 'chapter_intro');
+    const hasCover = chapterObj.scenes.some(s => s.type === 'cover');
+
+    // Always add cover scene for the first window (only if not already present)
+    if (isFirstWindow && !hasCover) {
         const coverTitle = structure?.title || bookMeta.title || 'Imported Book';
         const coverAuthor = structure?.author || bookMeta.author || null;
         structuralScenes.push(createCoverScene(coverTitle, coverAuthor, language));
     }
 
-    // Add chapter_intro scenes from structure
-    if (structure && structure.chapters && structure.chapters.length > 0) {
-        // Find the chapter matching this window
-        const chapterInfo = windowConfig.chapterIndex < structure.chapters.length
-            ? structure.chapters[windowConfig.chapterIndex]
-            : null;
-        if (chapterInfo) {
-            const chNum = chapterInfo.number || (windowConfig.chapterIndex + 1);
-            const chTitle = chapterInfo.title || `Глава ${chNum}`;
-            structuralScenes.push(createChapterIntroScene(chTitle, chNum, language));
+    // Add chapter_intro scenes from structure (only if not already present)
+    if (!hasChapterIntro) {
+        if (structure && structure.chapters && structure.chapters.length > 0) {
+            const chapterInfo = windowConfig.chapterIndex < structure.chapters.length
+                ? structure.chapters[windowConfig.chapterIndex]
+                : null;
+            if (chapterInfo) {
+                const chNum = chapterInfo.number || (windowConfig.chapterIndex + 1);
+                const chTitle = chapterInfo.title || `Глава ${chNum}`;
+                structuralScenes.push(createChapterIntroScene(chTitle, chNum, language));
+            }
+        } else if (isFirstWindow) {
+            const chNum = 1;
+            structuralScenes.push(createChapterIntroScene(chapterTitle || 'Глава 1', chNum, language));
         }
-    } else if (isFirstWindow) {
-        // No structure — create chapter_intro from chapterTitle
-        const chNum = 1;
-        structuralScenes.push(createChapterIntroScene(chapterTitle || 'Глава 1', chNum, language));
     }
 
     // Prepend structural scenes before content scenes
