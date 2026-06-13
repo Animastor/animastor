@@ -433,12 +433,12 @@ class MainActivity : AppCompatActivity() {
         dialogBinding.scopeCurrentChapter.isEnabled = hasChapter
         dialogBinding.scopeWholeBook.isChecked = true
 
-        val dialogTheme = if ((resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES)
-            R.style.ThemeOverlay_Animastor_Dialog_Alert
+        val isDark = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+        val dialogBuilder = if (isDark)
+            MaterialAlertDialogBuilder(this, R.style.ThemeOverlay_Animastor_Dialog_Alert)
         else
-            R.style.ThemeOverlay_Animastor_Dialog_Alert_Light
-        MaterialAlertDialogBuilder(this, dialogTheme)
-            .setTitle(R.string.generate_dialog_title)
+            MaterialAlertDialogBuilder(this)
+        dialogBuilder.setTitle(R.string.generate_dialog_title)
             .setView(dialogBinding.root)
             .setNegativeButton(R.string.dialog_cancel, null)
             .setPositiveButton(R.string.dialog_start) { _, _ ->
