@@ -73,9 +73,13 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
                 return@setOnClickListener
             }
 
+            val cacheInflate = LayoutInflater.from(requireContext())
+            val cacheBinding = DialogDeleteVbookBinding.inflate(cacheInflate)
+            cacheBinding.dialogMessage.text = getString(R.string.settings_cache_clear_confirm)
+
             AlertDialog.Builder(requireContext())
                 .setTitle(R.string.settings_cache_clear)
-                .setMessage(R.string.settings_cache_clear_confirm)
+                .setView(cacheBinding.root)
                 .setPositiveButton(android.R.string.ok) { _, _ ->
                     viewModel.clearBookCache()
                     Toast.makeText(requireContext(), R.string.settings_cache_cleared, Toast.LENGTH_SHORT).show()

@@ -70,7 +70,6 @@
         <item name="tabStyle">@style/Widget.Animastor.TabLayout</item>
         <item name="toolbarStyle">@style/Widget.Animastor.Toolbar</item>
         <item name="alertDialogTheme">@style/ThemeOverlay.Animastor.Dialog.Alert</item>
-        <item name="android:alertDialogTheme">@style/ThemeOverlay.Animastor.Dialog.Alert</item>
     </style>
 
     <!-- ============================================================
@@ -123,7 +122,6 @@
         <item name="tabStyle">@style/Widget.Animastor.TabLayout</item>
         <item name="toolbarStyle">@style/Widget.Animastor.Toolbar</item>
         <item name="alertDialogTheme">@style/ThemeOverlay.Animastor.Dialog.Alert.Light</item>
-        <item name="android:alertDialogTheme">@style/ThemeOverlay.Animastor.Dialog.Alert.Light</item>
     </style>
 
     <!-- ============================================================

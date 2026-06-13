@@ -1,6 +1,5 @@
 package com.example.animastor.ui
 
-import android.app.AlertDialog
 import android.content.ComponentCallbacks2
 import android.content.Context
 import android.os.Bundle
@@ -10,6 +9,7 @@ import android.view.View
 import android.widget.TextView
 import android.widget.Toast
 import com.google.android.material.chip.Chip
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import androidx.appcompat.app.AppCompatActivity
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.ViewModelProvider
@@ -432,7 +432,7 @@ class MainActivity : AppCompatActivity() {
         dialogBinding.scopeCurrentChapter.isEnabled = hasChapter
         dialogBinding.scopeWholeBook.isChecked = true
 
-        AlertDialog.Builder(this)
+        MaterialAlertDialogBuilder(this)
             .setTitle(R.string.generate_dialog_title)
             .setView(dialogBinding.root)
             .setNegativeButton(R.string.dialog_cancel, null)
