@@ -1,6 +1,7 @@
 package com.example.animastor.ui
 
 import android.content.Context
+import android.view.LayoutInflater
 import android.os.Bundle
 import android.view.View
 import android.widget.ArrayAdapter
@@ -11,6 +12,7 @@ import androidx.fragment.app.activityViewModels
 import androidx.lifecycle.lifecycleScope
 import com.example.animastor.BuildConfig
 import com.example.animastor.R
+import com.example.animastor.databinding.DialogDeleteVbookBinding
 import com.example.animastor.databinding.FragmentSettingsBinding
 import kotlinx.coroutines.launch
 
@@ -88,9 +90,13 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
                 return@setOnClickListener
             }
 
+            val inflater = LayoutInflater.from(requireContext())
+            val dialogBinding = DialogDeleteVbookBinding.inflate(inflater)
+            dialogBinding.dialogMessage.text = getString(R.string.settings_delete_vbook_confirm)
+
             AlertDialog.Builder(requireContext())
                 .setTitle(R.string.settings_delete_vbook)
-                .setMessage(R.string.settings_delete_vbook_confirm)
+                .setView(dialogBinding.root)
                 .setPositiveButton(android.R.string.ok) { _, _ ->
                     val bookId = viewModel.bookId
                     lifecycleScope.launch {
