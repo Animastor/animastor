@@ -21,6 +21,9 @@ module.exports = function(app, redis, deps) {
     } = deps;
     const { log, pad, collectScenes, buildSegments } = utils;
 
+    // In-flight TXT trigger guard to prevent concurrent window processing
+    const inFlightTriggers = new Set();
+
     // ======================================================
     // GET BOOK DATA (used by frontend Editor & Navigator)
     // ======================================================
@@ -429,7 +432,7 @@ async function recoverMissingRedisChunks(buildId, bookId) {
                 }
             }
 
-            return res.json({
+            res.json({
                 book_id: result.bookId, title: result.title, author: result.author,
                 language: result.language, state: result.state,
                 characters: result.characters, locations: result.locations,
@@ -442,6 +445,63 @@ async function recoverMissingRedisChunks(buildId, bookId) {
                     scene_count: result.chapter.scenes ? result.chapter.scenes.length : 0,
                 }] : [],
             });
+
+            // Process remaining windows in background so the frontend can
+            // see all scenes immediately without manual trigger.
+            if (result.has_more) {
+                setImmediate(async () => {
+                    try {
+                        log(`[BOOTSTRAP] Starting background window processing for ${bookId}`);
+                        for (let w = 0; w < 100; w++) {
+                            const nextRes = await txtImporter.bootstrapNextWindow(bookId);
+                            if (nextRes.all_done) break;
+                            const added = nextRes.added_scenes || 0;
+                            log(`[BOOTSTRAP] Background window ${w + 1}: ${added} scenes, remaining_cached=${nextRes.remaining_cached || 0}, all_done=${nextRes.all_done}`);
+
+                            const chapterId = nextRes.chapter?.chapter;
+                            const allScenes = nextRes.chapter?.scenes || [];
+                            const newScenes = allScenes.slice(-added);
+                            if (chapterId && newScenes.length > 0) {
+                                const buildId = 'default';
+                                for (let si = 0; si < newScenes.length; si++) {
+                                    const s = newScenes[si];
+                                    const chunkId = `${bookId}_${chapterId}_${s.scene_id}_0001`;
+                                    const sceneOrder = allScenes.indexOf(s);
+                                    try {
+                                        await saveChunk(chunkId, {
+                                            build_id: buildId, book_id: bookId, scene_order: sceneOrder,
+                                            chapter_id: chapterId, scene_id: s.scene_id, chunk_index: '0001',
+                                            expected_chunk_count: 1, scene_type: s.type || 'narration',
+                                            audio: true, audio_status: 'placeholder', image: false, video: false,
+                                            video_status: 'pending', padded_text: false,
+                                        });
+                                    } catch (chunkErr) {
+                                        console.warn(`[BOOTSTRAP] Background chunk creation failed for ${chunkId}: ${chunkErr.message}`);
+                                    }
+                                }
+                                try {
+                                    const existingTotal = parseInt(await redis.get(config.BOOK_SCENE_TOTAL(bookId)) || '0', 10);
+                                    const existingNext = parseInt(await redis.get(config.BOOK_SCENE_NEXT(bookId)) || '0', 10);
+                                    await redis.set(config.BOOK_SCENE_TOTAL(bookId), existingTotal + newScenes.length);
+                                    await redis.set(config.BOOK_SCENE_NEXT(bookId), existingNext + newScenes.length);
+                                } catch (idxErr) {
+                                    console.warn(`[BOOTSTRAP] Failed to update scene counters: ${idxErr.message}`);
+                                }
+                                try {
+                                    const phScenes = newScenes.map(s => ({ chapter_id: chapterId, scene_id: s.scene_id }));
+                                    const phResult = await placeholderAudio.ensureAllPlaceholderAudio(buildId, bookId, phScenes);
+                                    log(`[BOOTSTRAP] Background placeholder audio: ${phResult.created} created, ${phResult.skipped} skipped`);
+                                } catch (phErr) {
+                                    console.warn(`[BOOTSTRAP] Background placeholder audio failed: ${phErr.message}`);
+                                }
+                            }
+                        }
+                        log(`[BOOTSTRAP] Background window processing complete for ${bookId}`);
+                    } catch (bgErr) {
+                        console.error(`[BOOTSTRAP] Background window chain failed for ${bookId}: ${bgErr.message}`);
+                    }
+                }, 0);
+            }
         } catch (err) {
             console.error('BOOTSTRAP ERROR:', err);
             return res.status(400).json({ error: err.message || 'unknown error' });
@@ -505,6 +565,86 @@ async function recoverMissingRedisChunks(buildId, bookId) {
                 }
             }
 
+            // TXT import path: use txtImporter.bootstrapNextWindow
+            // Detect TXT book by checking for agent_sessions rows
+            const agentResult = await storage.postgres.query(`
+                SELECT session_id, status, window_data
+                FROM agent_sessions
+                WHERE book_id = $1
+                ORDER BY created_at DESC LIMIT 1
+            `, [bookId]);
+
+            if (agentResult.rows.length > 0) {
+                const agentSession = agentResult.rows[0];
+                const windowData = agentSession.window_data
+                    ? (typeof agentSession.window_data === 'string' ? JSON.parse(agentSession.window_data) : agentSession.window_data)
+                    : null;
+
+                if (agentSession.status === 'completed' ||
+                    (windowData && windowData.remaining_scenes && windowData.remaining_scenes.length === 0 && !windowData.remaining_text)) {
+                    log(`[TRIGGER] 📗 all done for TXT book ${bookId}`);
+                    return res.json({ triggered: false, all_done: true, message: 'All windows processed' });
+                }
+
+                // Concurrency guard: one in-flight trigger per book
+                if (inFlightTriggers.has(bookId)) {
+                    log(`[TRIGGER] ⏳ TXT book ${bookId} already has an in-flight trigger, queuing`);
+                    return res.json({ triggered: false, queued: true, book_id: bookId, source: 'txt_import' });
+                }
+                inFlightTriggers.add(bookId);
+
+                log(`[TRIGGER] 📘 TXT book ${bookId} — calling bootstrapNextWindow`);
+                setImmediate(async () => {
+                    try {
+                        const nextRes = await txtImporter.bootstrapNextWindow(bookId);
+                        log(`[TRIGGER] ✅ TXT window done: added=${nextRes.added_scenes || 0} all_done=${nextRes.all_done}`);
+
+                        if (nextRes.chapter) {
+                            const chapterId = nextRes.chapter.chapter;
+                            const allScenes = nextRes.chapter.scenes || [];
+                            const added = nextRes.added_scenes || 0;
+                            const newScenes = allScenes.slice(-added);
+                            const buildId = 'default';
+                            for (let si = 0; si < newScenes.length; si++) {
+                                const s = newScenes[si];
+                                const chunkId = `${bookId}_${chapterId}_${s.scene_id}_0001`;
+                                try {
+                                    await saveChunk(chunkId, {
+                                        build_id: buildId, book_id: bookId, scene_order: allScenes.indexOf(s),
+                                        chapter_id: chapterId, scene_id: s.scene_id, chunk_index: '0001',
+                                        expected_chunk_count: 1, scene_type: s.type || 'narration',
+                                        audio: true, audio_status: 'placeholder', image: false, video: false,
+                                        video_status: 'pending', padded_text: false,
+                                    });
+                                } catch (chunkErr) {
+                                    console.warn(`[TRIGGER] Chunk creation failed for ${chunkId}: ${chunkErr.message}`);
+                                }
+                            }
+                            try {
+                                const existingTotal = parseInt(await redis.get(config.BOOK_SCENE_TOTAL(bookId)) || '0', 10);
+                                await redis.set(config.BOOK_SCENE_TOTAL(bookId), existingTotal + newScenes.length);
+                                await redis.set(config.BOOK_SCENE_NEXT(bookId), existingTotal + newScenes.length);
+                            } catch (idxErr) {
+                                console.warn(`[TRIGGER] Failed to update scene counters: ${idxErr.message}`);
+                            }
+                            try {
+                                const phScenes = newScenes.map(s => ({ chapter_id: chapterId, scene_id: s.scene_id }));
+                                await placeholderAudio.ensureAllPlaceholderAudio(buildId, bookId, phScenes);
+                            } catch (phErr) {
+                                console.warn(`[TRIGGER] Placeholder audio failed: ${phErr.message}`);
+                            }
+                        }
+                    } catch (err) {
+                        console.error(`[TRIGGER] ❌ TXT bootstrapNextWindow failed: ${err.message}`);
+                    } finally {
+                        inFlightTriggers.delete(bookId);
+                    }
+                });
+
+                return res.json({ triggered: true, source: 'txt_import', session_id: agentSession.session_id });
+            }
+
+            // VBook / windowGenerator path (existing logic)
             const lastWindow = await genSessionRepo.getHighestCompletedWindow(bookId);
             const nextWindowIndex = lastWindow + 1;
             log(`[TRIGGER] 📊 lastWindow=${lastWindow} nextWindow=${nextWindowIndex}`);
@@ -849,6 +989,81 @@ async function recoverMissingRedisChunks(buildId, bookId) {
     });
 
     // ======================================================
+    // ASSETS STATE
+    // ======================================================
+    app.get('/api/v1/book/:bookId/assets-state', async (req, res) => {
+        try {
+            const { bookId } = req.params;
+            const { scope, chapter_id, scene_id } = req.query;
+
+            const allChunkIds = await getAllChunks(bookId);
+            const totalChunks = allChunkIds.length;
+
+            let filteredIds = allChunkIds;
+            if (scope === 'chapter' && chapter_id) {
+                filteredIds = allChunkIds.filter(id => id.includes(`_${chapter_id}_`));
+            } else if (scope === 'scene' && chapter_id && scene_id) {
+                filteredIds = allChunkIds.filter(id => id.includes(`_${chapter_id}_${scene_id}_`));
+            }
+
+            let audioReady = 0;
+            let imageReady = 0;
+            let videoReady = 0;
+            let hasAudio = false;
+            let hasImage = false;
+            let hasVideo = false;
+
+            for (const cid of filteredIds) {
+                try {
+                    const chunk = await getChunk(cid);
+                    if (chunk) {
+                        if (chunk.audio_status === 'ready' || chunk.audio_status === 'placeholder') {
+                            audioReady++;
+                            hasAudio = true;
+                        }
+                        if (chunk.image_status === 'ready') {
+                            imageReady++;
+                            hasImage = true;
+                        }
+                        if (chunk.video_status === 'ready') {
+                            videoReady++;
+                            hasVideo = true;
+                        }
+                    }
+                } catch (_) {}
+            }
+
+            const result = {
+                book_id: bookId,
+                scope: scope || 'book',
+                total_chunks: totalChunks,
+                audio_ready: audioReady,
+                image_ready: imageReady,
+                video_ready: videoReady,
+                has_audio: hasAudio,
+                has_image: hasImage,
+                has_video: hasVideo,
+                all_audio_ready: audioReady === filteredIds.length && filteredIds.length > 0,
+                all_image_ready: imageReady === filteredIds.length && filteredIds.length > 0,
+                all_video_ready: videoReady === filteredIds.length && filteredIds.length > 0,
+                has_assets: audioReady > 0 || imageReady > 0 || videoReady > 0,
+                scope_total: filteredIds.length,
+                scope_audio_ready: audioReady,
+                scope_image_ready: imageReady,
+                scope_video_ready: videoReady,
+                scope_all_audio_ready: audioReady === filteredIds.length && filteredIds.length > 0,
+                scope_all_image_ready: imageReady === filteredIds.length && filteredIds.length > 0,
+                scope_all_video_ready: videoReady === filteredIds.length && filteredIds.length > 0,
+            };
+
+            res.json(result);
+        } catch (err) {
+            console.error('[ASSETS-STATE] Error:', err.message);
+            res.status(500).json({ error: err.message });
+        }
+    });
+
+    // ======================================================
     // GENERATE NEXT (slide window)
     // ======================================================
     app.post('/api/v1/book/:bookId/generate-next', async (req, res) => {
@@ -989,6 +1204,118 @@ async function recoverMissingRedisChunks(buildId, bookId) {
             res.json({ cleared: true, book_id: bookId, builds_removed: buildIds.size });
         } catch (err) {
             console.error('[CACHE] Delete error:', err.message);
+            res.status(500).json({ error: err.message });
+        }
+    });
+
+    // ======================================================
+    // DELETE BOOK — completely remove book + all associated data
+    // ======================================================
+    app.delete('/api/v1/book/:bookId', async (req, res) => {
+        try {
+            const { bookId } = req.params;
+
+            log('[DELETE-BOOK] Deleting', bookId);
+
+            // 1. Delete book files from disk
+            await book.resetBook(bookId);
+            // Also remove snapshot file
+            const snapshotPath = path.join(config.BOOKS_DIR || '/data/books', `${bookId}.snapshot.json`);
+            if (fs.existsSync(snapshotPath)) {
+                try { fs.unlinkSync(snapshotPath); } catch (_) {}
+            }
+            log('[DELETE-BOOK] Disk files removed');
+
+            // 2. Delete output/build directories
+            const OUTPUT_DIR = config.OUTPUT_DIR;
+            const chunkIds = await getAllChunks(bookId).catch(() => []);
+            const buildIds = new Set();
+            for (const cid of chunkIds) {
+                try {
+                    const chunk = await getChunk(cid);
+                    if (chunk?.build_id) buildIds.add(chunk.build_id);
+                } catch (_) {}
+            }
+            for (const buildId of buildIds) {
+                const buildPath = path.join(OUTPUT_DIR, buildId);
+                if (fs.existsSync(buildPath)) {
+                    try { fs.rmSync(buildPath, { recursive: true, force: true }); } catch (_) {}
+                }
+            }
+            // Also delete any directory starting with bookId in output
+            if (fs.existsSync(OUTPUT_DIR)) {
+                for (const entry of fs.readdirSync(OUTPUT_DIR)) {
+                    if (entry.startsWith(bookId)) {
+                        const entryPath = path.join(OUTPUT_DIR, entry);
+                        try { fs.rmSync(entryPath, { recursive: true, force: true }); } catch (_) {}
+                    }
+                }
+            }
+            log('[DELETE-BOOK] Build directories removed');
+
+            // 3. Delete all Redis keys for this book
+            const patterns = [
+                `animastor:chunk:${bookId}_*`,
+                `animastor:chunks:${bookId}`,
+                `animastor:scene-state:${bookId}:*`,
+                `animastor:scene:*:*:${bookId}`,
+                `animastor:layer-config:${bookId}`,
+                `animastor:scope:${bookId}`,
+                `animastor:asset:*:${bookId}:*`,
+                `animastor:snapshot:${bookId}`,
+                `animastor:lease:*:${bookId}:*`,
+                `animastor:audio-scene-lock:${bookId}:*`,
+                `animastor:audio-scene-failsafe:*:${bookId}:*`,
+                `animastor:job:${bookId}_*`,
+                `animastor:mode:${bookId}`,
+                `animastor:book:${bookId}:*`,
+                `animastor:book-scenes:${bookId}:*`,
+            ];
+            for (const pattern of patterns) {
+                try {
+                    let cursor = 0;
+                    do {
+                        const result = await redis.scan(cursor, 'MATCH', pattern, 'COUNT', 200);
+                        cursor = parseInt(result[0], 10);
+                        const keys = result[1];
+                        if (keys.length > 0) await redis.del(...keys);
+                    } while (cursor !== 0);
+                } catch (_) {}
+            }
+            // Remove from active-scenes set
+            await redis.srem('animastor:active-scenes', ...(chunkIds.map(id => `${bookId}:*`)));
+            log('[DELETE-BOOK] Redis keys removed');
+
+            // 4. Delete all PostgreSQL data for this book
+            try {
+                await storage.postgres.query('DELETE FROM scene_assets_cache WHERE book_id = $1', [bookId]);
+                await storage.postgres.query('DELETE FROM scene_assets_state WHERE book_id = $1', [bookId]);
+                await storage.postgres.query('DELETE FROM scene_images WHERE book_id = $1', [bookId]);
+                await storage.postgres.query('DELETE FROM scene_videos WHERE book_id = $1', [bookId]);
+                await storage.postgres.query('DELETE FROM scene_assets WHERE book_id = $1', [bookId]);
+                await storage.postgres.query('DELETE FROM book_snapshots WHERE book_id = $1', [bookId]);
+                await storage.postgres.query('DELETE FROM book_events WHERE book_id = $1', [bookId]);
+                await storage.postgres.query('DELETE FROM cache_entries WHERE book_id = $1', [bookId]);
+                await storage.postgres.query('DELETE FROM book_source WHERE book_id = $1', [bookId]);
+                await storage.postgres.query('DELETE FROM chat_messages WHERE book_id = $1', [bookId]);
+                await storage.postgres.query('DELETE FROM agent_sessions WHERE book_id = $1', [bookId]);
+                await storage.postgres.query('DELETE FROM book_generation_sessions WHERE book_id = $1', [bookId]);
+                await storage.postgres.query('DELETE FROM books WHERE book_id = $1', [bookId]);
+                log('[DELETE-BOOK] PostgreSQL rows removed');
+            } catch (dbErr) {
+                console.warn('[DELETE-BOOK] DB cleanup error:', dbErr.message);
+            }
+
+            // 5. Clear GPU hub queue
+            try {
+                const HUB_URL = process.env.HUB_URL || 'https://animastor.in/gpu';
+                await fetch(`${HUB_URL}/api/v1/queue/${bookId}`, { method: 'DELETE' }).catch(() => {});
+            } catch (_) {}
+
+            log('[DELETE-BOOK] Book completely deleted:', bookId);
+            res.json({ deleted: true, book_id: bookId });
+        } catch (err) {
+            console.error('[DELETE-BOOK] Error:', err.message);
             res.status(500).json({ error: err.message });
         }
     });

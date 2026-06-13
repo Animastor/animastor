@@ -714,84 +714,104 @@ function getFallbackVisual(text, characters, scene) {
 // ======================================================
 // GET WINDOW TEXT — extract text for ~3 scenes
 // ======================================================
+// Uses currentOffset (absolute position in sourceText) as the source of truth.
+// No arithmetic windowIndex-based positioning.
+// Returns the next chunk of text starting from currentOffset.
 
-function getWindowText(sourceText, existingChars, existingLocs, windowIndex) {
-    if (windowIndex === 0) {
-        const chapters = lazyBook.splitIntoChapters(sourceText);
-        const firstChapter = lazyBook.firstMeaningfulChapter
-            ? lazyBook.firstMeaningfulChapter(chapters, sourceText)
-            : (chapters[0] || null);
+function getWindowText(sourceText, existingChars, existingLocs, windowIndex, startOffset) {
+    const chapters = lazyBook.splitIntoChapters(sourceText);
 
-        if (firstChapter) {
-            const fullCh = sourceText.substring(
-                firstChapter.startOffset || 0,
-                firstChapter.endOffset || sourceText.length
-            ).trim();
-            const chLines = fullCh.split('\n');
-            const chFirst = chLines[0]?.trim() || '';
-            let chapterText = /^(?:глава|chapter|часть|part|пролог|prologue|эпилог|epilogue)/i.test(chFirst)
-                ? chLines.slice(1).join('\n').trim() : fullCh;
+    // First window: compute startOffset from the first meaningful chapter
+    if (startOffset === undefined || startOffset === null) {
+        if (windowIndex === 0) {
+            const firstChapter = lazyBook.firstMeaningfulChapter
+                ? lazyBook.firstMeaningfulChapter(chapters, sourceText)
+                : (chapters[0] || null);
 
-            if (chapterText.length > MAX_WINDOW_CHARS) {
-                const truncated = chapterText.substring(0, MAX_WINDOW_CHARS);
-                const lastPeriod = truncated.lastIndexOf('.');
-                const lastNewline = truncated.lastIndexOf('\n\n');
-                const breakAt = Math.max(lastPeriod, lastNewline);
-                if (breakAt > MAX_WINDOW_CHARS / 2) {
-                    chapterText = chapterText.substring(0, breakAt + 1).trim();
-                }
-            }
-            return {
-                text: chapterText,
-                chapterIndex: 0,
-                remainingText: chapterText.length < fullCh.length ? fullCh.substring(chapterText.length).trim() : '',
-                fullChapter: fullCh,
-                chapterTitle: firstChapter.title || null,
-            };
-        }
-
-        const text = sourceText.substring(0, Math.min(sourceText.length, MAX_WINDOW_CHARS));
-        const remaining = sourceText.length > MAX_WINDOW_CHARS
-            ? sourceText.substring(MAX_WINDOW_CHARS).trim() : '';
-        return { text, chapterIndex: 0, remainingText: remaining, fullChapter: text, chapterTitle: null };
-    }
-
-    // Subsequent windows
-    const textStart = windowIndex * MAX_WINDOW_CHARS;
-    let textEnd = (windowIndex + 1) * MAX_WINDOW_CHARS;
-
-    if (textStart >= sourceText.length) {
-        // Find which chapter contains this position
-        const chapters = lazyBook.splitIntoChapters(sourceText);
-        let pos = 0;
-        for (let ci = 0; ci < chapters.length; ci++) {
-            const ch = chapters[ci];
-            const chLen = (ch.endOffset || sourceText.length) - (ch.startOffset || 0);
-            if (pos + chLen > textStart || ci === chapters.length - 1) {
-                const chText = sourceText.substring(ch.startOffset || 0, ch.endOffset || sourceText.length).trim();
+            if (firstChapter) {
+                const chStart = firstChapter.startOffset || 0;
+                const chEnd = firstChapter.endOffset || sourceText.length;
+                const chText = sourceText.substring(chStart, chEnd);
                 const chLines = chText.split('\n');
                 const chFirst = chLines[0]?.trim() || '';
-                const accumulated = /^(?:глава|chapter|часть|part|пролог|prologue|эпилог|epilogue)/i.test(chFirst)
-                    ? chLines.slice(1).join('\n').trim() : chText;
-                return {
-                    text: accumulated || '',
-                    chapterIndex: ci,
-                    remainingText: '',
-                    fullChapter: accumulated,
-                    chapterTitle: ch.title || null,
-                };
+                const headerLen = /^(?:глава|chapter|часть|part|пролог|prologue|эпилог|epilogue)/i.test(chFirst)
+                    ? chLines[0].length + 1 : 0;
+                startOffset = Math.min(chStart + headerLen, sourceText.length);
+            } else {
+                startOffset = 0;
             }
-            pos += chLen;
+        } else {
+            startOffset = 0;
         }
     }
 
-    const text = sourceText.substring(
-        Math.min(textStart, sourceText.length),
-        Math.min(textEnd, sourceText.length)
-    ).trim();
-    const remaining = textEnd < sourceText.length ? sourceText.substring(textEnd).trim() : '';
+    // End of text — nothing more to read
+    if (startOffset >= sourceText.length) {
+        const lastIdx = chapters.length > 0 ? chapters.length - 1 : 0;
+        return {
+            text: '',
+            chapterIndex: lastIdx,
+            remainingText: '',
+            fullChapter: '',
+            chapterTitle: chapters[lastIdx]?.title || null,
+            currentOffset: startOffset,
+        };
+    }
 
-    return { text, chapterIndex: Math.floor(textStart / MAX_WINDOW_CHARS), remainingText: remaining, fullChapter: text, chapterTitle: null };
+    // Slice text from currentOffset
+    let endPos = Math.min(startOffset + MAX_WINDOW_CHARS, sourceText.length);
+    let windowText = sourceText.substring(startOffset, endPos);
+
+    // Skip chapter header if startOffset lands at the beginning of one
+    let skipLen = 0;
+    const windowLines = windowText.split('\n');
+    const firstLine = windowLines[0]?.trim() || '';
+    if (/^(?:глава|chapter|часть|part|пролог|prologue|эпилог|epilogue)/i.test(firstLine)) {
+        skipLen = windowLines[0].length + 1;
+    }
+
+    const actualStart = startOffset + skipLen;
+    if (skipLen > 0 && actualStart < endPos) {
+        windowText = sourceText.substring(actualStart, endPos);
+    }
+
+    // Try to break at a natural boundary if we reached the max size
+    if (endPos < sourceText.length && (endPos - actualStart) >= MAX_WINDOW_CHARS) {
+        const lastPeriod = windowText.lastIndexOf('.');
+        const lastNewline = windowText.lastIndexOf('\n\n');
+        const breakAt = Math.max(lastPeriod, lastNewline);
+        if (breakAt > MAX_WINDOW_CHARS / 2) {
+            windowText = windowText.substring(0, breakAt + 1).trim();
+            endPos = actualStart + breakAt + 1;
+        }
+    }
+
+    const newOffset = endPos;
+    const remaining = sourceText.substring(newOffset).trim();
+
+    // Find which chapter contains the actual reading position
+    let chIdx = 0;
+    for (let ci = 0; ci < chapters.length; ci++) {
+        const chStart = chapters[ci].startOffset || 0;
+        const chEnd = chapters[ci].endOffset || sourceText.length;
+        if (actualStart >= chStart && actualStart < chEnd) {
+            chIdx = ci;
+            break;
+        }
+    }
+
+    const chTitle = chapters[chIdx]?.title || null;
+
+    console.log(`[WINDOW] getWindowText: startOffset=${startOffset}, skipLen=${skipLen}, actualStart=${actualStart}, endPos=${endPos}, newOffset=${newOffset}, chIdx=${chIdx}, chTitle="${chTitle}", textLen=${windowText.trim().length}, sourceLen=${sourceText.length}`);
+
+    return {
+        text: windowText.trim(),
+        chapterIndex: chIdx,
+        remainingText: remaining,
+        fullChapter: windowText,
+        chapterTitle: chTitle,
+        currentOffset: newOffset,
+    };
 }
 
 // ======================================================
@@ -876,14 +896,20 @@ async function bootstrapWithAgent(bookId, progress) {
     console.log(`[AGENT] Session ${sessionId} created for book ${bookId}`);
 
     try {
-        // STEP 0: Analyze structure (author, title, parts, chapters)
-        _progress({ stage: 'analyzing_structure', message: PROGRESS_STAGES.analyzing_structure });
-        const structure = await stepAnalyzeStructure(sessionId, draft.sourceText, 0, _progress);
+        // Get text for first window FIRST (before any AI calls)
+        // This way stepAnalyzeStructure uses only the first window text (~4K chars),
+        // not the entire source text (up to 762K+ chars).
+        // Per architectural-essence.md: knowledge grows progressively as we read.
+        const windowInfo = getWindowText(draft.sourceText, [], [], 0);
+        console.log(`[FIRST-WINDOW] currentOffset=${windowInfo.currentOffset}, chapterIndex=${windowInfo.chapterIndex}, chapterTitle="${windowInfo.chapterTitle}", textLen=${windowInfo.text.length}`);
 
-        // Strip header lines from source text so they don't pollute content analysis
-        const cleanText = structure.chapters.length > 0 || structure.parts.length > 0 || structure.author || structure.title
-            ? stripStructureFromText(draft.sourceText, structure)
-            : draft.sourceText;
+        // STEP 0: Analyze structure (author, title, parts, chapters) — first window only
+        _progress({ stage: 'analyzing_structure', message: PROGRESS_STAGES.analyzing_structure });
+        const structure = await stepAnalyzeStructure(sessionId, windowInfo.text, 0, _progress);
+
+        // stripStructureFromText is intentionally NOT applied here.
+        // Both bootstrapWithAgent and bootstrapNextWindow must use the same
+        // draft.sourceText so that currentOffset stays consistent.
 
         // Update book metadata with author/title
         if (structure.author || structure.title) {
@@ -904,9 +930,6 @@ async function bootstrapWithAgent(bookId, progress) {
                 console.log(`[AGENT] Book metadata updated: author=${structure.author}, title=${structure.title}`);
             }
         }
-
-        // Get text for first window (now with headers stripped)
-        const windowInfo = getWindowText(cleanText, [], [], 0);
         if (!windowInfo.text || !windowInfo.text.trim()) {
             throw new Error('No text to analyze in first window');
         }
@@ -926,6 +949,7 @@ async function bootstrapWithAgent(bookId, progress) {
         const extraScenes = result.allScenes.slice(WINDOW_SIZE);
 
         // Store window data for next-window continuation
+        // currentOffset is the absolute source text position — the single source of truth
         const windowData = {
             window_index: 0,
             chapter_title: windowInfo.chapterTitle,
@@ -934,6 +958,7 @@ async function bootstrapWithAgent(bookId, progress) {
             created_scenes: result.scenes.length,
             remaining_scenes: extraScenes,
             remaining_text: windowInfo.remainingText,
+            currentOffset: windowInfo.currentOffset,
             all_characters: result.characters,
             all_locations: result.locations,
             structure: structure,
@@ -962,11 +987,16 @@ async function bootstrapWithAgent(bookId, progress) {
             structure: structure,
         });
 
+        const hasMoreText = !!windowInfo.remainingText;
+        const allDone = extraScenes.length === 0 && !hasMoreText;
+
         _progress({ stage: 'done', message: `✓ Импорт завершён: ${result.scenes.length} сцен, ${result.characters.length} персонажей, ${result.locations.length} локаций` });
 
         await updateSession(sessionId, {
-            status: 'completed',
-            progress_msg: `Окно 1 готово: ${result.scenes.length} сцен. Всего найдено: ${result.allScenes.length}. Осталось окон: ${extraScenes.length > 0 ? 1 : 0}`,
+            status: allDone ? 'completed' : 'paused',
+            progress_msg: allDone
+                ? `Окно 1 готово: ${result.scenes.length} сцен. Всего найдено: ${result.allScenes.length}`
+                : `⟳ Окно 1: ${result.scenes.length} сцен. Обрабатываю следующие окна...`,
         });
 
         return {
@@ -974,6 +1004,7 @@ async function bootstrapWithAgent(bookId, progress) {
             session_id: sessionId,
             total_scenes_found: result.allScenes.length,
             remaining_scenes: extraScenes.length,
+            has_more: !allDone,
         };
     } catch (err) {
         console.error(`[AGENT] Bootstrap failed: ${err.message}`);
@@ -1008,6 +1039,8 @@ async function bootstrapNextWindow(bookId, progress) {
     if (!session) throw new Error(`No session found for book ${bookId}`);
 
     const sessionId = session.session_id;
+
+    try {
     let windowData = session.window_data
         ? (typeof session.window_data === 'string' ? JSON.parse(session.window_data) : session.window_data)
         : null;
@@ -1078,6 +1111,8 @@ async function bootstrapNextWindow(bookId, progress) {
                 progress_msg: 'Импорт завершён — все сцены обработаны',
             });
             lazyBook.updateBookState(bookId, lazyBook.BookState.ACTIVE);
+        } else {
+            await updateSession(sessionId, { status: 'paused' });
         }
 
         _progress({ stage: 'done', message: `✓ Добавлено ${enrichedScenes.length} сцен из кэша. Всего: ${updatedWindowData.created_scenes}` });
@@ -1096,8 +1131,11 @@ async function bootstrapNextWindow(bookId, progress) {
     const nextWindowIndex = (windowData?.window_index || 0) + 1;
     const existingChars = windowData?.all_characters || [];
     const existingLocs = windowData?.all_locations || [];
+    const readingOffset = windowData?.currentOffset;
 
-    const windowInfo = getWindowText(draft.sourceText, existingChars, existingLocs, nextWindowIndex);
+    console.log(`[NEXT-WINDOW] windowData: window_index=${windowData?.window_index}, chapter_index=${windowData?.chapter_index}, remaining_scenes=${windowData?.remaining_scenes?.length || 0}, currentOffset=${readingOffset}, sourceText.length=${draft.sourceText.length}`);
+
+    const windowInfo = getWindowText(draft.sourceText, existingChars, existingLocs, nextWindowIndex, readingOffset);
     if (!windowInfo.text || !windowInfo.text.trim()) {
         await updateSession(sessionId, {
             status: 'completed',
@@ -1170,6 +1208,7 @@ async function bootstrapNextWindow(bookId, progress) {
         created_scenes: (windowData?.created_scenes || 0) + result.scenes.length,
         remaining_scenes: extraScenes,
         remaining_text: windowInfo.remainingText,
+        currentOffset: windowInfo.currentOffset,
         all_characters: mergedChars,
         all_locations: mergedLocs,
     };
@@ -1178,7 +1217,7 @@ async function bootstrapNextWindow(bookId, progress) {
     await updateSession(sessionId, {
         window_data: JSON.stringify(updatedWindowData),
         progress_msg: `Окно ${nextWindowIndex + 1}: добавлено ${result.scenes.length} сцен. Осталось: ${extraScenes.length} кэшированных`,
-        status: allDone ? 'completed' : 'running',
+        status: allDone ? 'completed' : 'paused',
     });
 
     if (allDone) {
@@ -1195,6 +1234,15 @@ async function bootstrapNextWindow(bookId, progress) {
         remaining_cached: extraScenes.length,
         all_done: allDone,
     };
+    } catch (err) {
+        console.error(`[AGENT] bootstrapNextWindow failed: ${err.message}`);
+        await updateSession(sessionId, {
+            status: 'failed',
+            progress_msg: `Ошибка: ${err.message}`,
+        }).catch(() => {});
+        _progress({ stage: 'error', message: `✗ Ошибка: ${err.message}` });
+        throw err;
+    }
 }
 
 // ======================================================
