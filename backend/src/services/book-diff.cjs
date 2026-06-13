@@ -256,20 +256,20 @@ module.exports = function(redis, config, deps) {
         if (!dirtyScenes || dirtyScenes.length === 0) return [];
 
         switch (scope) {
-            case 'WHOLE_BOOK':
+            case 'whole_book':
                 return dirtyScenes;
 
-            case 'CURRENT_SCENE':
+            case 'current_scene':
                 return dirtyScenes.filter(ds =>
                     ds.chapter_id === chapterId && ds.scene_id === sceneId
                 );
 
-            case 'CURRENT_CHAPTER':
+            case 'current_chapter':
                 return dirtyScenes.filter(ds =>
                     ds.chapter_id === chapterId
                 );
 
-            case 'FROM_CURRENT_SCENE':
+            case 'from_current_scene':
                 if (!allScenes || allScenes.length === 0) return dirtyScenes;
                 const currentSceneIndex = allScenes.findIndex(s =>
                     s.chapter_id === chapterId && s.scene_id === sceneId
@@ -290,11 +290,11 @@ module.exports = function(redis, config, deps) {
 
     // ── Is in scope helper ────────────────────────────
     function isInScope(chunk, scope, chapterId, sceneId) {
-        if (scope === 'WHOLE_BOOK') return true;
-        if (scope === 'CURRENT_SCENE') {
+        if (scope === 'whole_book') return true;
+        if (scope === 'current_scene') {
             return chunk.chapter_id === chapterId && chunk.scene_id === sceneId;
         }
-        if (scope === 'CURRENT_CHAPTER') {
+        if (scope === 'current_chapter') {
             return chunk.chapter_id === chapterId;
         }
         return true;

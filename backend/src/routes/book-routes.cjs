@@ -1005,9 +1005,9 @@ async function recoverMissingRedisChunks(buildId, bookId) {
             const totalChunks = allChunkIds.length;
 
             let filteredIds = allChunkIds;
-            if (scope === 'chapter' && chapter_id) {
+            if ((scope === 'current_chapter' || scope === 'chapter') && chapter_id) {
                 filteredIds = allChunkIds.filter(id => id.includes(`_${chapter_id}_`));
-            } else if (scope === 'scene' && chapter_id && scene_id) {
+            } else if ((scope === 'current_scene' || scope === 'scene') && chapter_id && scene_id) {
                 filteredIds = allChunkIds.filter(id => id.includes(`_${chapter_id}_${scene_id}_`));
             }
 

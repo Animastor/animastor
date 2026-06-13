@@ -7,6 +7,20 @@
     <style name="Theme.Animastor" parent="Theme.Animastor.CinemaDark" />
 
     <!-- ============================================================
+         DIALOG OVERLAY — читаемые кнопки в тёмной теме
+         ============================================================ -->
+    <style name="ThemeOverlay.Animastor.Dialog.Alert" parent="ThemeOverlay.Material3.Dialog.Alert">
+        <item name="colorPrimary">@color/cinema_accent</item>
+    </style>
+
+    <!-- ============================================================
+         LIGHT DIALOG OVERLAY — согласованность со светлой темой
+         ============================================================ -->
+    <style name="ThemeOverlay.Animastor.Dialog.Alert.Light" parent="ThemeOverlay.Material3.Dialog.Alert">
+        <item name="colorPrimary">@color/cinema_accent_dim</item>
+    </style>
+
+    <!-- ============================================================
          DARK — тёмный кинозал с бархатными креслами
          ============================================================ -->
     <style name="Theme.Animastor.CinemaDark" parent="Theme.Material3.Dark.NoActionBar">
@@ -55,6 +69,7 @@
         <item name="chipStyle">@style/Widget.Animastor.Chip</item>
         <item name="tabStyle">@style/Widget.Animastor.TabLayout</item>
         <item name="toolbarStyle">@style/Widget.Animastor.Toolbar</item>
+        <item name="alertDialogTheme">@style/ThemeOverlay.Animastor.Dialog.Alert</item>
     </style>
 
     <!-- ============================================================
@@ -106,6 +121,7 @@
         <item name="chipStyle">@style/Widget.Animastor.Chip</item>
         <item name="tabStyle">@style/Widget.Animastor.TabLayout</item>
         <item name="toolbarStyle">@style/Widget.Animastor.Toolbar</item>
+        <item name="alertDialogTheme">@style/ThemeOverlay.Animastor.Dialog.Alert.Light</item>
     </style>
 
     <!-- ============================================================
