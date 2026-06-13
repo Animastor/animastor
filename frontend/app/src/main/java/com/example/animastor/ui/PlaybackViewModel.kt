@@ -399,6 +399,7 @@ class PlaybackViewModel(
     ) {
         Log.i(TAG, "preparePlayback: book=$bookId chunks=${chunkIds.size}")
         _repository.clearCache()
+        preloadCache.clear()
         this.bookId = bookId
         this.buildId = buildId
         chunkQueue.clear()
