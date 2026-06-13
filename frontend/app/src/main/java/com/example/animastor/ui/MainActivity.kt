@@ -333,7 +333,7 @@ class MainActivity : AppCompatActivity() {
         if (isGenerating && active == 0 && isNeeded && total == 0) {
             tint = errorColor
             chip.alpha = 1f
-        } else if (isGenerating && active > 0) {
+        } else if (active > 0) {
             tint = activeColor
             chip.alpha = 1f
             val pulse = ObjectAnimator.ofFloat(chip, "alpha", 1f, 0.4f, 1f)
