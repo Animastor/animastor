@@ -1,13 +1,12 @@
 package com.example.animastor.ui
 
 import android.content.Context
-import android.content.res.Configuration
+import androidx.appcompat.app.AlertDialog
 import android.view.LayoutInflater
 import android.os.Bundle
 import android.view.View
 import android.widget.ArrayAdapter
 import android.widget.Toast
-import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.activityViewModels
 import androidx.lifecycle.lifecycleScope
@@ -78,12 +77,7 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
             val cacheBinding = DialogDeleteVbookBinding.inflate(cacheInflate)
             cacheBinding.dialogMessage.text = getString(R.string.settings_cache_clear_confirm)
 
-            val isDarkCache = (requireContext().resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
-            val cacheDialogBuilder = if (isDarkCache)
-                MaterialAlertDialogBuilder(requireContext(), R.style.ThemeOverlay_Animastor_Dialog_Alert)
-            else
-                MaterialAlertDialogBuilder(requireContext())
-            cacheDialogBuilder
+            AlertDialog.Builder(requireContext())
                 .setTitle(R.string.settings_cache_clear)
                 .setView(cacheBinding.root)
                 .setPositiveButton(android.R.string.ok) { _, _ ->
@@ -104,12 +98,7 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
             val dialogBinding = DialogDeleteVbookBinding.inflate(inflater)
             dialogBinding.dialogMessage.text = getString(R.string.settings_delete_vbook_confirm)
 
-            val isDarkDel = (requireContext().resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
-            val delDialogBuilder = if (isDarkDel)
-                MaterialAlertDialogBuilder(requireContext(), R.style.ThemeOverlay_Animastor_Dialog_Alert)
-            else
-                MaterialAlertDialogBuilder(requireContext())
-            delDialogBuilder
+            AlertDialog.Builder(requireContext())
                 .setTitle(R.string.settings_delete_vbook)
                 .setView(dialogBinding.root)
                 .setPositiveButton(android.R.string.ok) { _, _ ->
