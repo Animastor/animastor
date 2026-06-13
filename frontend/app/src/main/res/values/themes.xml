@@ -16,9 +16,7 @@
     <!-- ============================================================
          LIGHT DIALOG OVERLAY — согласованность со светлой темой
          ============================================================ -->
-    <style name="ThemeOverlay.Animastor.Dialog.Alert.Light" parent="ThemeOverlay.Material3.Dialog.Alert">
-        <item name="colorPrimary">@color/cinema_accent_dim</item>
-    </style>
+    <style name="ThemeOverlay.Animastor.Dialog.Alert.Light" parent="ThemeOverlay.Material3.Dialog.Alert" />
 
     <!-- ============================================================
          DARK — тёмный кинозал с бархатными креслами

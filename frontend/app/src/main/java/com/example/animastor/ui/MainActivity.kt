@@ -1,6 +1,7 @@
 package com.example.animastor.ui
 
 import android.content.ComponentCallbacks2
+import android.content.res.Configuration
 import android.content.Context
 import android.os.Bundle
 import android.animation.ObjectAnimator
@@ -432,7 +433,11 @@ class MainActivity : AppCompatActivity() {
         dialogBinding.scopeCurrentChapter.isEnabled = hasChapter
         dialogBinding.scopeWholeBook.isChecked = true
 
-        MaterialAlertDialogBuilder(this, R.style.ThemeOverlay_Animastor_Dialog_Alert)
+        val dialogTheme = if ((resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES)
+            R.style.ThemeOverlay_Animastor_Dialog_Alert
+        else
+            R.style.ThemeOverlay_Animastor_Dialog_Alert_Light
+        MaterialAlertDialogBuilder(this, dialogTheme)
             .setTitle(R.string.generate_dialog_title)
             .setView(dialogBinding.root)
             .setNegativeButton(R.string.dialog_cancel, null)

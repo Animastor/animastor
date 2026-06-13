@@ -1,6 +1,7 @@
 package com.example.animastor.ui
 
 import android.content.Context
+import android.content.res.Configuration
 import android.view.LayoutInflater
 import android.os.Bundle
 import android.view.View
@@ -77,7 +78,11 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
             val cacheBinding = DialogDeleteVbookBinding.inflate(cacheInflate)
             cacheBinding.dialogMessage.text = getString(R.string.settings_cache_clear_confirm)
 
-            MaterialAlertDialogBuilder(requireContext(), R.style.ThemeOverlay_Animastor_Dialog_Alert)
+            val dialogTheme = if ((requireContext().resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES)
+                R.style.ThemeOverlay_Animastor_Dialog_Alert
+            else
+                R.style.ThemeOverlay_Animastor_Dialog_Alert_Light
+            MaterialAlertDialogBuilder(requireContext(), dialogTheme)
                 .setTitle(R.string.settings_cache_clear)
                 .setView(cacheBinding.root)
                 .setPositiveButton(android.R.string.ok) { _, _ ->
@@ -98,7 +103,11 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
             val dialogBinding = DialogDeleteVbookBinding.inflate(inflater)
             dialogBinding.dialogMessage.text = getString(R.string.settings_delete_vbook_confirm)
 
-            MaterialAlertDialogBuilder(requireContext(), R.style.ThemeOverlay_Animastor_Dialog_Alert)
+            val delDialogTheme = if ((requireContext().resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES)
+                R.style.ThemeOverlay_Animastor_Dialog_Alert
+            else
+                R.style.ThemeOverlay_Animastor_Dialog_Alert_Light
+            MaterialAlertDialogBuilder(requireContext(), delDialogTheme)
                 .setTitle(R.string.settings_delete_vbook)
                 .setView(dialogBinding.root)
                 .setPositiveButton(android.R.string.ok) { _, _ ->
