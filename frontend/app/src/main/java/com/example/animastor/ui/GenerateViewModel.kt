@@ -271,8 +271,32 @@ class GenerateViewModel(
                 val dirtyCount = res.dirty_scenes?.size ?: 0
                 onResult(GenerationResult.Started(dirtyCount, res.scope ?: req.scope))
                 viewModelScope.launch { refreshAssetsState() }
-                // Clear active generation so GPU progress bar doesn't stay visible permanently
-                _activeGeneration.value = null
+                // Signal to PlaybackViewModel to refresh player state and clear caches
+                viewModelScope.launch {
+                    val allChunks = runCatching { _repository.getAllChunks(bookId) }.getOrNull()
+                    val chunkIds = allChunks?.chunk_ids?.toList() ?: emptyList()
+                    if (chunkIds.isNotEmpty()) {
+                        val positions = mutableMapOf<String, Pair<String?, String?>>()
+                        for (cid in chunkIds) {
+                            runCatching {
+                                _repository.getChunkStoryboard(cid).let { sb ->
+                                    positions[cid] = Pair(sb.chapter_id, sb.scene_id)
+                                }
+                            }
+                        }
+                        Log.i(TAG, "startGeneration: emitting playbackPrepared with ${chunkIds.size} chunks")
+                        _playbackPrepared.tryEmit(PlaybackPreparation(
+                            bookId = bookId,
+                            buildId = buildId,
+                            chunkIds = chunkIds,
+                            chunkPositions = positions
+                        ))
+                    }
+                }
+                // Keep _activeGeneration alive: the progress bar polls getAssetsState
+                // to show actual completion. Only clear when cancelled or on a new
+                // generation that replaces this one. The poller hides the bar when
+                // ready >= total.
             }.onFailure { e ->
                 if (e is CancellationException) {
                     Log.i(TAG, "startGeneration cancelled")

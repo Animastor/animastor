@@ -36,7 +36,7 @@ module.exports = function(app, redis, deps) {
             // Auto-recovery: check for missing placeholder MP3s + missing Redis chunks
             // Run synchronously (not setImmediate) so files exist before frontend queries.
             // This is fast — placeholder generation takes <100ms.
-            const buildId = 'default';
+            const buildId = bookData?.manifest?.build_id || 'default';
             try {
                 const phResult = await placeholderAudio.recoverMissingPlaceholders(buildId, bookId);
                 if (phResult.created > 0 || phResult.errors.length > 0) {
@@ -392,7 +392,8 @@ async function recoverMissingRedisChunks(buildId, bookId) {
             log(`[BOOTSTRAP] ${bookId}: ${result.characters} chars, ${result.locations} locs, ${result.scenes} scenes`);
 
             if (result.chapter && result.chapter.scenes && result.chapter.scenes.length > 0) {
-                const buildId = 'default';
+                const draftBook = lazyBook.loadDraftBook(bookId);
+                const buildId = draftBook?.manifest?.build_id || 'default';
                 const chapterId = result.chapter.chapter;
 
                 // Create chunks in Redis (synchronous — fast Redis ops)
@@ -462,7 +463,8 @@ async function recoverMissingRedisChunks(buildId, bookId) {
                             const allScenes = nextRes.chapter?.scenes || [];
                             const newScenes = allScenes.slice(-added);
                             if (chapterId && newScenes.length > 0) {
-                                const buildId = 'default';
+                                const draftBg = lazyBook.loadDraftBook(bookId);
+                                const buildId = draftBg?.manifest?.build_id || 'default';
                                 for (let si = 0; si < newScenes.length; si++) {
                                     const s = newScenes[si];
                                     const chunkId = `${bookId}_${chapterId}_${s.scene_id}_0001`;
@@ -604,7 +606,8 @@ async function recoverMissingRedisChunks(buildId, bookId) {
                             const allScenes = nextRes.chapter.scenes || [];
                             const added = nextRes.added_scenes || 0;
                             const newScenes = allScenes.slice(-added);
-                            const buildId = 'default';
+                            const draftTrigger = lazyBook.loadDraftBook(bookId);
+                            const buildId = draftTrigger?.manifest?.build_id || 'default';
                             for (let si = 0; si < newScenes.length; si++) {
                                 const s = newScenes[si];
                                 const chunkId = `${bookId}_${chapterId}_${s.scene_id}_0001`;
@@ -677,7 +680,8 @@ async function recoverMissingRedisChunks(buildId, bookId) {
 
             setImmediate(() => {
                 log(`[TRIGGER] ▶️ Running background gen for session=${session.id} (register_for_gpu=${register_for_gpu})`);
-                windowGenerator.runBackgroundWindowGeneration(bookId, session.id, { registerForGpu }).catch(err => {
+                const bgBuildId = draft?.manifest?.build_id || 'default';
+                windowGenerator.runBackgroundWindowGeneration(bookId, session.id, { registerForGpu, buildId: bgBuildId }).catch(err => {
                     console.error(`[TRIGGER] ❌ Background gen crashed: ${err.message}`);
                 });
             });
@@ -880,7 +884,8 @@ async function recoverMissingRedisChunks(buildId, bookId) {
 
             setImmediate(async () => {
                 try {
-                    const buildId = 'default';
+                    const draftLazy = lazyBook.loadDraftBook(bookId);
+                    const buildId = draftLazy?.manifest?.build_id || 'default';
                     const scenes = await placeholderAudio.getScenesNeedingPlaceholder(bookId);
                     log(`[LAZY-PARSE] Checking placeholder audio for ${scenes.length} total scenes...`);
                     const phResult = await placeholderAudio.ensureAllPlaceholderAudio(buildId, bookId, scenes);

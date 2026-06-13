@@ -335,7 +335,7 @@ class MainActivity : AppCompatActivity() {
             chip.alpha = 1f
         } else if (active > 0) {
             tint = activeColor
-            chip.alpha = if (isFromDisk) 0.45f else 1f
+            chip.alpha = 1f
             val pulse = ObjectAnimator.ofFloat(chip, "alpha", 1f, 0.4f, 1f)
             pulse.duration = 1600
             pulse.repeatCount = ObjectAnimator.INFINITE
@@ -555,28 +555,56 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private var gpuProgressDoneAt = 0L
+
     private fun showGpuProgress(assets: com.example.animastor.repository.AssetsStateResponse) {
         val total = assets.scope_total
         if (total <= 0) {
             binding.generationProgressContainer.visibility = View.GONE
+            gpuProgressDoneAt = 0L
             return
         }
-        binding.generationProgressContainer.visibility = View.VISIBLE
-        binding.generationProgressBar.isIndeterminate = false
 
         val profileKey = viewModel.currentProfile()
-        val (label, ready) = when (profileKey) {
+        // For "full" profile, show the most advanced layer (audio → image → video)
+        val (label, ready) = if (profileKey == "full") {
+            when {
+                assets.scope_video_ready > 0 -> R.string.progress_label_video to assets.scope_video_ready
+                assets.scope_image_ready > 0 -> R.string.progress_label_image to assets.scope_image_ready
+                else -> R.string.progress_label_audio to assets.scope_audio_ready
+            }
+        } else when (profileKey) {
             "audio_only" -> R.string.progress_label_audio to assets.scope_audio_ready
             "storyboard" -> R.string.progress_label_image to assets.scope_image_ready
             else -> R.string.progress_label_video to assets.scope_video_ready
         }
-        val progress = if (total > 0) ((ready.toFloat() / total.toFloat()) * 100).toInt().coerceIn(0, 100) else 0
-        binding.generationProgressBar.setProgressCompat(progress, true)
-        binding.generationProgressLabel.text = getString(R.string.progress_format, getString(label), ready, total)
-        binding.generationProgressPercent.text = "${progress}%"
 
         if (ready >= total) {
-            binding.generationProgressContainer.visibility = View.GONE
+            // First time hitting 100% — save the timestamp
+            if (gpuProgressDoneAt == 0L) {
+                gpuProgressDoneAt = System.currentTimeMillis()
+            }
+            val elapsed = System.currentTimeMillis() - gpuProgressDoneAt
+            if (elapsed < 5000) {
+                // Stay visible for 5 seconds showing 100%
+                binding.generationProgressContainer.visibility = View.VISIBLE
+                binding.generationProgressBar.isIndeterminate = false
+                binding.generationProgressBar.setProgressCompat(100, true)
+                binding.generationProgressLabel.text = getString(R.string.generation_done)
+                binding.generationProgressPercent.text = "100%"
+            } else {
+                // 5 seconds passed — hide the bar
+                binding.generationProgressContainer.visibility = View.GONE
+            }
+        } else {
+            // Still in progress — reset done timer and show normal progress
+            gpuProgressDoneAt = 0L
+            binding.generationProgressContainer.visibility = View.VISIBLE
+            binding.generationProgressBar.isIndeterminate = false
+            val progress = if (total > 0) ((ready.toFloat() / total.toFloat()) * 100).toInt().coerceIn(0, 100) else 0
+            binding.generationProgressBar.setProgressCompat(progress, true)
+            binding.generationProgressLabel.text = getString(R.string.progress_format, getString(label), ready, total)
+            binding.generationProgressPercent.text = "${progress}%"
         }
     }
 

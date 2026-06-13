@@ -40,7 +40,11 @@ module.exports = function(redis, config, deps) {
             fs.mkdirSync(outputDir, { recursive: true });
         }
 
-        const resultBuffer = Buffer.from(result_base64, 'base64');
+        // Strip data URL prefix if present (e.g. "data:audio/mp3;base64,")
+        const cleanBase64 = result_base64.includes(',')
+            ? result_base64.split(',')[1]
+            : result_base64;
+        const resultBuffer = Buffer.from(cleanBase64, 'base64');
         fs.writeFileSync(asset.fullPath, resultBuffer);
         log('✅ Saved result to disk:', asset.fullPath, `(${resultBuffer.length} bytes)`);
 
@@ -186,9 +190,20 @@ module.exports = function(redis, config, deps) {
         // Check if scene audio is already ready
         const sceneAudioReady = await audio.isSceneAudioReady(build_id, book_id, chapter_id, scene_id);
         if (sceneAudioReady) {
-            log(`🎵 Scene audio already ready for ${book_id}/${chapter_id}/${scene_id} — delegating to orchestrator`);
-            await orchestrator.handleAudioCompleted(redis, book_id, chapter_id, scene_id, build_id);
-            return;
+            // Check if the existing audio is a placeholder — if so, don't skip merge
+            try {
+                const hasReal = await placeholderAudio.hasRealAudio(book_id, chapter_id, scene_id, build_id);
+                if (hasReal) {
+                    log(`🎵 Scene audio already ready (real): ${book_id}/${chapter_id}/${scene_id} — delegating to orchestrator`);
+                    await orchestrator.handleAudioCompleted(redis, book_id, chapter_id, scene_id, build_id);
+                    return;
+                }
+                log(`🎵 Scene audio is placeholder — proceeding with merge: ${book_id}/${chapter_id}/${scene_id}`);
+            } catch (err) {
+                console.warn(`⚠️ Failed to check audio realness in triggerAudioMerge: ${err.message}`);
+                // Conservative: if we can't check, assume placeholder and merge
+                log(`🎵 Assuming placeholder — proceeding with merge: ${book_id}/${chapter_id}/${scene_id}`);
+            }
         }
 
         // Check if all expected chunks exist

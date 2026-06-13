@@ -398,6 +398,7 @@ class PlaybackViewModel(
         chunkPositions: Map<String, Pair<String?, String?>>
     ) {
         Log.i(TAG, "preparePlayback: book=$bookId chunks=${chunkIds.size}")
+        _repository.clearCache()
         this.bookId = bookId
         this.buildId = buildId
         chunkQueue.clear()

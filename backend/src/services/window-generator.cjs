@@ -17,7 +17,7 @@ module.exports = function({ redis, txtImporter, genSessionRepo, state, activeSce
      * Reports progress via genSessionRepo.progress_msg (visible via /agent-status).
      */
     async function runBackgroundWindowGeneration(bookId, sessionId, options = {}) {
-        const { registerForGpu = true } = options;
+        const { registerForGpu = true, buildId = 'default' } = options;
         const bgLog = (msg) => log(`[BG-GEN][${bookId}:${sessionId}] ${msg}`);
         bgLog(`🚀 === BACKGROUND WINDOW GENERATION START (registerForGpu=${registerForGpu}) ===`);
 
@@ -57,9 +57,7 @@ module.exports = function({ redis, txtImporter, genSessionRepo, state, activeSce
                 const sceneCount = result.added_scenes || 0;
                 await progress(`⟳ Creating ${sceneCount} scenes...`);
 
-                // — 3. Create chunks for each new scene in Redis —
-                let chunkCount = 0;
-                const buildId = 'default';
+                // — 3. Create chunks for each new scene in Redis —                    let chunkCount = 0;
                 if (result.chapter && result.chapter.scenes) {
                     const phScenes = [];
                     bgLog(`📦 Creating ${result.chapter.scenes.length} chunks for chapter ${result.chapter.chapter}...`);

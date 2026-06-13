@@ -254,6 +254,9 @@ async function executeAudioDispatch(redis, scene, loadedBook, buildId) {
 
     // Check if canonical audio already exists AND is real (not placeholder)
     // Placeholder audio is valid MP3 but should NOT prevent real generation.
+    // We do NOT delete the placeholder here — instead, buildSceneAudio with
+    // force=true (called from mergeSceneAudioChunks) skips the canonical check
+    // and always processes chunks, preserving the placeholder until real audio is ready.
     let isReady = await audio.isSceneAudioReady(buildId, bookId, chapterId, sceneId, require('music-metadata'));
     if (isReady) {
         // Double-check: if the audio is placeholder, proceed with real generation
@@ -341,8 +344,27 @@ async function executeAudioDispatch(redis, scene, loadedBook, buildId) {
             log(`Failsafe key deleted: ${failsafeKey}`);
 
             // Validate canonical audio
-            const canonicalReady = await isSceneAudioReady(buildId, bookId, chapterId, sceneId);
+            const canonicalReady = await audio.isSceneAudioReady(buildId, bookId, chapterId, sceneId);
             if (canonicalReady) {
+                // Update PG scene_assets status from 'placeholder' to 'ready'
+                try {
+                    const audioPath = storage.filesystem.getSceneAudioPath(
+                        process.env.OUTPUT_DIR || '/data/output', buildId, bookId, chapterId, sceneId
+                    );
+                    const mm = require('music-metadata');
+                    let realDuration = 0;
+                    try {
+                        const metadata = await mm.parseFile(audioPath);
+                        realDuration = metadata.format.duration || 0;
+                    } catch {}
+                    await placeholderAudio.replacePlaceholderWithRealAudio(
+                        bookId, chapterId, sceneId, buildId, audioPath, realDuration
+                    );
+                    log(`PG scene_assets updated: placeholder → ready for ${bookId}/${chapterId}/${sceneId}`);
+                } catch (e) {
+                    warn(`Failed to update PG scene_assets after merge: ${e.message}`);
+                }
+
                 await logEvent(redis, scene, 'AUDIO_COMPLETED', state.SceneState.AUDIO_READY, {
                     reason: 'merge_success'
                 });

@@ -118,7 +118,7 @@ async function runFFmpegTrim(inputPath, outputPath, startTimeSec = 0, durationSe
  * Unified audio pipeline for final scene audio.
  * Handles both single and multi-chunk cases.
  */
-async function buildSceneAudio(chunks, finalPath, buildId = null) {
+async function buildSceneAudio(chunks, finalPath, buildId = null, force = false) {
     // Validate input
     if (!chunks || !Array.isArray(chunks) || chunks.length === 0) {
         throw new Error("buildSceneAudio: chunks must be a non-empty array");
@@ -147,7 +147,9 @@ async function buildSceneAudio(chunks, finalPath, buildId = null) {
     }
 
     // Validate canonical audio exists and is valid
-    if (fs.existsSync(finalPath)) {
+    // When force=true (merge path), skip validation so we always process chunks.
+    // This preserves placeholder audio on disk until real audio is ready.
+    if (!force && fs.existsSync(finalPath)) {
         try {
             const isValid = await validateCanonicalAudio(finalPath);
             if (isValid) {
@@ -415,7 +417,7 @@ async function mergeSceneAudioChunks(redis, bookId, chapterId, sceneId, buildId,
 
         const chunkPaths = chunks.map(ch => getOutputPath(buildId, `${bookId}_${chapterId}_${sceneId}_${String(ch).padStart(4, '0')}.mp3`));
 
-        const result = await buildSceneAudio(chunkPaths, finalPath, buildId);
+        const result = await buildSceneAudio(chunkPaths, finalPath, buildId, true);
         return result;
     } catch (err) {
         error(`Audio merge error: ${err.message}`);
@@ -522,7 +524,7 @@ async function recoverSceneAudioFromChunks(bookId, chapterId, sceneId, buildId, 
     const chunkPaths = existingChunks.map(c => getOutputPath(buildId, `${bookId}_${chapterId}_${sceneId}_${String(c).padStart(4, '0')}.mp3`));
 
     try {
-        const result = await buildSceneAudio(chunkPaths, finalPath, buildId);
+        const result = await buildSceneAudio(chunkPaths, finalPath, buildId, true);
         if (result) {
             log(`Audio recovery successful: ${path.basename(finalPath)}`);
             return { recovered: true, path: finalPath, reason: 'success' };
