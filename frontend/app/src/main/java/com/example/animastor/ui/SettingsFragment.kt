@@ -6,7 +6,7 @@ import android.os.Bundle
 import android.view.View
 import android.widget.ArrayAdapter
 import android.widget.Toast
-import androidx.appcompat.app.AlertDialog
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.activityViewModels
 import androidx.lifecycle.lifecycleScope
@@ -77,7 +77,7 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
             val cacheBinding = DialogDeleteVbookBinding.inflate(cacheInflate)
             cacheBinding.dialogMessage.text = getString(R.string.settings_cache_clear_confirm)
 
-            AlertDialog.Builder(requireContext())
+            MaterialAlertDialogBuilder(requireContext())
                 .setTitle(R.string.settings_cache_clear)
                 .setView(cacheBinding.root)
                 .setPositiveButton(android.R.string.ok) { _, _ ->
@@ -98,7 +98,7 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
             val dialogBinding = DialogDeleteVbookBinding.inflate(inflater)
             dialogBinding.dialogMessage.text = getString(R.string.settings_delete_vbook_confirm)
 
-            AlertDialog.Builder(requireContext())
+            MaterialAlertDialogBuilder(requireContext())
                 .setTitle(R.string.settings_delete_vbook)
                 .setView(dialogBinding.root)
                 .setPositiveButton(android.R.string.ok) { _, _ ->
