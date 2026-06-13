@@ -307,7 +307,17 @@ async function executeAudioDispatch(redis, scene, loadedBook, buildId) {
                     await redis.sadd(`animastor:chunks:${bookId}`, chunkId);
                     log(`Created chunk metadata: ${chunkId}`);
                 } else {
-                    log(`Chunk already exists: ${chunkId}`);
+                    // Chunk exists but may have stale 'pending' status from a rebuild.
+                    // Update audio_status to 'ready' since the file exists on disk.
+                    const existing = JSON.parse(existingChunk);
+                    if (existing.audio_status !== 'ready') {
+                        existing.audio = true;
+                        existing.audio_status = 'ready';
+                        await redis.set(chunkKey, JSON.stringify(existing));
+                        log(`Updated chunk audio_status to ready: ${chunkId}`);
+                    } else {
+                        log(`Chunk already exists and ready: ${chunkId}`);
+                    }
                 }
             }
         } else {

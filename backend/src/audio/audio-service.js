@@ -697,6 +697,14 @@ async function generateSceneAudio(redis, sceneData, loadedBook, buildId, bookId)
                 };
                 await redis.set(chunkKey, JSON.stringify(chunkData));
                 await redis.sadd(`animastor:chunks:${bookId}`, id);
+            } else {
+                // Chunk exists with stale 'pending' status — update to reflect reality
+                const existing = JSON.parse(existingChunk);
+                if (existing.audio_status !== 'ready') {
+                    existing.audio = true;
+                    existing.audio_status = 'ready';
+                    await redis.set(chunkKey, JSON.stringify(existing));
+                }
             }
         }
         await redis.del(sceneLockKey);
