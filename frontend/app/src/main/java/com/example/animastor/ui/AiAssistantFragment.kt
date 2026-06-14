@@ -351,17 +351,36 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
             val sc = ch?.scenes?.firstOrNull { it.scene_id == pos.sceneId }
             val chIdx = bookData?.chapterIndex(pos.chapterId) ?: 0
             val scIdx = bookData?.sceneIndex(pos.chapterId, pos.sceneId) ?: 0
-            if (chIdx > 0 && scIdx > 0) {
+            val isSpecial = ch?.type == "cover" || ch?.type == "prologue"
+            if (chIdx > 0 || isSpecial) {
                 val uIdx = bookData?.unitIndex(pos.chapterId, pos.sceneId, pos.unitIndex) ?: 0
-                val chLabel = "${getString(R.string.navigate_chapter)} $chIdx"
-                val scLabel = "${getString(R.string.navigate_scene)} $scIdx"
-                val unitLabel = if (uIdx > 0) "${getString(R.string.navigate_unit)} $uIdx" else pos.formatUnitLabel()
                 val chTitle = ch?.chapter_title?.takeIf { it.isNotBlank() }
                 val scTitle = sc?.scene_title?.takeIf { it.isNotBlank() }
-                val fullLabel = if (chTitle != null && scTitle != null) "$chLabel — $chTitle / $scLabel — $scTitle / $unitLabel"
-                    else if (chTitle != null) "$chLabel — $chTitle / $scLabel / $unitLabel"
-                    else if (scTitle != null) "$chLabel / $scLabel — $scTitle / $unitLabel"
+                val chLabel = if (isSpecial) {
+                    chTitle ?: (ch?.type?.replaceFirstChar { it.uppercase() } ?: "")
+                } else if (scIdx > 0) {
+                    "${getString(R.string.navigate_chapter)} $chIdx"
+                } else {
+                    ""
+                }
+                val scLabel = if (scIdx > 0) "${getString(R.string.navigate_scene)} $scIdx" else ""
+                val unitLabel = if (uIdx > 0) "${getString(R.string.navigate_unit)} $uIdx" else pos.formatUnitLabel()
+                if (chLabel.isEmpty() && scLabel.isEmpty()) {
+                    positionLabel()?.text = getString(R.string.navigate_no_position)
+                    return
+                }
+                val fullLabel = if (isSpecial) {
+                    if (scTitle != null) "$chLabel / $scLabel — $scTitle / $unitLabel"
                     else "$chLabel / $scLabel / $unitLabel"
+                } else if (chTitle != null && scTitle != null) {
+                    "$chLabel — $chTitle / $scLabel — $scTitle / $unitLabel"
+                } else if (chTitle != null) {
+                    "$chLabel — $chTitle / $scLabel / $unitLabel"
+                } else if (scTitle != null) {
+                    "$chLabel / $scLabel — $scTitle / $unitLabel"
+                } else {
+                    "$chLabel / $scLabel / $unitLabel"
+                }
                 positionLabel()?.text = fullLabel
                 return
             }
@@ -529,7 +548,16 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
                 val chIdx = bookData.chapterIndex(pos.chapterId)
                 val scIdx = bookData.sceneIndex(pos.chapterId, pos.sceneId)
                 val uIdx = bookData.unitIndex(pos.chapterId, pos.sceneId, pos.unitIndex)
-                val chapterId = if (chIdx > 0) "${getString(R.string.navigate_chapter)} $chIdx" else pos.chapterId ?: "?"
+                val ch = bookData.chapters?.firstOrNull { it.chapter == pos.chapterId }
+                val isSpecial = ch?.type == "cover" || ch?.type == "prologue"
+                val chTitle = ch?.chapter_title?.takeIf { it.isNotBlank() }
+                val chapterId = if (isSpecial) {
+                    chTitle ?: (ch?.type?.replaceFirstChar { it.uppercase() } ?: pos.chapterId ?: "?")
+                } else if (chIdx > 0) {
+                    "${getString(R.string.navigate_chapter)} $chIdx"
+                } else {
+                    pos.chapterId ?: "?"
+                }
                 val sceneId = if (scIdx > 0) "${getString(R.string.navigate_scene)} $scIdx" else pos.sceneId ?: "?"
                 val iuLabel = if (uIdx > 0) "${getString(R.string.navigate_unit)} $uIdx" else pos.formatUnitLabel()
                 val text = getString(R.string.ai_welcome_context, title, chapterId, sceneId, iuLabel)

@@ -188,16 +188,30 @@ class NavigateFragment : Fragment(R.layout.fragment_navigate) {
             val realChNum = chapters.take(chIdx).count { it.type != "cover" && it.type != "prologue" } + 1
             val scIdx = bookData?.sceneIndex(pos.chapterId, pos.sceneId) ?: 0
             val uIdx = bookData?.unitIndex(pos.chapterId, pos.sceneId, pos.unitIndex) ?: 0
-            val chLabel = if (!isSpecial && chIdx > 0) "${getString(R.string.navigate_chapter)} $realChNum" else ""
+            val chTitle = ch?.chapter_title?.takeIf { it.isNotBlank() }
+            val scTitle = sc?.scene_title?.takeIf { it.isNotBlank() }
+            val chLabel = if (isSpecial) {
+                chTitle ?: (ch?.type?.replaceFirstChar { it.uppercase() } ?: "")
+            } else if (chIdx > 0) {
+                "${getString(R.string.navigate_chapter)} $realChNum"
+            } else {
+                ""
+            }
             val scLabel = if (scIdx > 0) "${getString(R.string.navigate_scene)} $scIdx" else ""
             val unitLabel = if (uIdx > 0) "${getString(R.string.navigate_unit)} $uIdx" else ""
             if (chLabel.isEmpty()) { positionLabel()?.text = ""; return }
-            val chTitle = ch?.chapter_title?.takeIf { it.isNotBlank() }
-            val scTitle = sc?.scene_title?.takeIf { it.isNotBlank() }
-            val fullLabel = if (chTitle != null && scTitle != null) "$chLabel — $chTitle / $scLabel — $scTitle / $unitLabel"
-                else if (chTitle != null) "$chLabel — $chTitle / $scLabel / $unitLabel"
-                else if (scTitle != null) "$chLabel / $scLabel — $scTitle / $unitLabel"
+            val fullLabel = if (isSpecial) {
+                if (scTitle != null) "$chLabel / $scLabel — $scTitle / $unitLabel"
                 else "$chLabel / $scLabel / $unitLabel"
+            } else if (chTitle != null && scTitle != null) {
+                "$chLabel — $chTitle / $scLabel — $scTitle / $unitLabel"
+            } else if (chTitle != null) {
+                "$chLabel — $chTitle / $scLabel / $unitLabel"
+            } else if (scTitle != null) {
+                "$chLabel / $scLabel — $scTitle / $unitLabel"
+            } else {
+                "$chLabel / $scLabel / $unitLabel"
+            }
             positionLabel()?.text = fullLabel
         } else {
             positionLabel()?.text = getString(R.string.navigate_no_position)

@@ -244,15 +244,28 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         val ch = chapters.getOrNull(currentChIndex)
         val sc = currentScene()
         val totalUnits = sc?.units?.size ?: 0
-        val chLabel = if (ch != null) "${getString(R.string.navigate_chapter)} ${currentChIndex + 1}" else "—"
-        val scLabel = if (sc != null) "${getString(R.string.navigate_scene)} ${currentScIndex + 1}" else "—"
-        val unitLabel = if (totalUnits > 0) "${getString(R.string.navigate_unit)} ${pos.unitIndex + 1}" else pos.formatUnitLabel()
+        val isSpecial = ch?.type == "cover" || ch?.type == "prologue"
         val chTitle = ch?.chapter_title?.takeIf { it.isNotBlank() }
         val scTitle = sc?.scene_title?.takeIf { it.isNotBlank() }
-        val fullLabel = if (chTitle != null && scTitle != null) "$chLabel — $chTitle / $scLabel — $scTitle / $unitLabel"
-            else if (chTitle != null) "$chLabel — $chTitle / $scLabel / $unitLabel"
-            else if (scTitle != null) "$chLabel / $scLabel — $scTitle / $unitLabel"
+        val chLabel = if (isSpecial) {
+            chTitle ?: (ch?.type?.replaceFirstChar { it.uppercase() } ?: "—")
+        } else if (ch != null) {
+            "${getString(R.string.navigate_chapter)} ${currentChIndex + 1}"
+        } else "—"
+        val scLabel = if (sc != null) "${getString(R.string.navigate_scene)} ${currentScIndex + 1}" else "—"
+        val unitLabel = if (totalUnits > 0) "${getString(R.string.navigate_unit)} ${pos.unitIndex + 1}" else pos.formatUnitLabel()
+        val fullLabel = if (isSpecial) {
+            if (scTitle != null) "$chLabel / $scLabel — $scTitle / $unitLabel"
             else "$chLabel / $scLabel / $unitLabel"
+        } else if (chTitle != null && scTitle != null) {
+            "$chLabel — $chTitle / $scLabel — $scTitle / $unitLabel"
+        } else if (chTitle != null) {
+            "$chLabel — $chTitle / $scLabel / $unitLabel"
+        } else if (scTitle != null) {
+            "$chLabel / $scLabel — $scTitle / $unitLabel"
+        } else {
+            "$chLabel / $scLabel / $unitLabel"
+        }
         positionLabel()?.text = fullLabel
         val uc = unitCount()
         uc?.text = getString(R.string.navigate_units_count, totalUnits)
