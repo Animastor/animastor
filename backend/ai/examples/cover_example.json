@@ -1,32 +1,40 @@
 {
-  "description": "Example of a cover scene stored in separate cover.json file. Covers are NOT stored inside chapters — they live in the book root directory as a dedicated cover.json file. The type field must be \"cover\". Each cover typically has a single typography unit with a text_render visual for the book title and author.",
+  "description": "Example of a Cover chapter. Cover is now a standard chapter stored in chapters/ directory, NOT a standalone cover.json file. The chapter_title should be 'Обложка' and type should be 'cover'. The chapter contains a single scene with one typography unit for the book title and author.",
   "notes": [
-    "cover.json sits at: /data/books/<bookId>/cover.json",
-    "Cover is NOT a scene inside any chapter — it is a standalone file",
-    "type must be \"cover\" (not \"chapter_intro\" or \"narration\")",
-    "Cover always has 1 typography unit with visual.text_render: true",
-    "The system generates Cover image first, before the selected generation range"
+    "Cover chapter sits at: /data/books/<bookId>/chapters/ch-XXXXXXXX.json",
+    "Cover is a regular chapter (chapters[0]) with chapter_title 'Обложка' and type 'cover'",
+    "It MUST have a standard 'chapter' (ch-XXXXXXXX) and 'chapter_title' ('Обложка') fields",
+    "Inside it has a 'scenes' array with one scene containing 'type': 'cover'",
+    "The scene has 1 typography unit with visual.text_render: true",
+    "The system processes the Cover chapter like any other chapter — it gets a chunk, audio placeholder, etc."
   ],
-  "scene_id": "sc-cover-example",
-  "scene_title": "Cover",
+  "chapter": "ch-cover-example",
+  "chapter_title": "Обложка",
   "type": "cover",
-  "style": "title_page",
-  "participants": [],
-  "audio": {
-    "voice": "narrator",
-    "full_text": "Лев Толстой\n\nВойна и мир"
-  },
-  "units": [
+  "scenes": [
     {
-      "id": "iu-cover-example",
-      "type": "typography",
-      "text": "Лев Толстой\n\nВойна и мир",
-      "visual": {
-        "prompt": "full frame book cover design, vertical composition, classic russian literature aesthetic, elegant serif typography, top small text: author name, center large text: book title, dark background with golden accents, cinematic mood",
-        "quality": "highly detailed, sharp typography, clean composition",
-        "text_render": true,
-        "negative": ""
-      }
+      "scene_id": "sc-cover-example",
+      "scene_title": "Cover",
+      "type": "cover",
+      "style": "title_page",
+      "participants": [],
+      "audio": {
+        "voice": "narrator",
+        "full_text": "Лев Толстой\n\nВойна и мир"
+      },
+      "units": [
+        {
+          "id": "iu-cover-example",
+          "type": "typography",
+          "text": "Лев Толстой\n\nВойна и мир",
+          "visual": {
+            "prompt": "full frame book cover design, vertical composition, classic russian literature aesthetic, elegant serif typography, top small text: author name, center large text: book title, dark background with golden accents, cinematic mood",
+            "quality": "highly detailed, sharp typography, clean composition",
+            "text_render": true,
+            "negative": ""
+          }
+        }
+      ]
     }
   ]
 }

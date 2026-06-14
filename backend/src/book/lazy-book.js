@@ -185,15 +185,6 @@ function loadDraftBook(bookId) {
         const bibPath = getBiblePath(bookDir);
         if (fs.existsSync(bibPath)) bible = JSON.parse(fs.readFileSync(bibPath, 'utf8'));
 
-        // Optional cover.json
-        let cover = null;
-        const cvPath = getCoverPath(bookDir);
-        if (fs.existsSync(cvPath)) {
-            try { cover = JSON.parse(fs.readFileSync(cvPath, 'utf8')); } catch (e) {
-                console.warn(`[LAZY-BOOK] Failed to parse cover.json for ${bookId}: ${e.message}`);
-            }
-        }
-
         const chapters = [];
         const chDir = getChapterDir(bookDir);
         if (fs.existsSync(chDir)) {
@@ -204,7 +195,7 @@ function loadDraftBook(bookId) {
             }
         }
 
-        return { manifest, book: bookMeta, sourceText, characters, bible, chapters, cover };
+        return { manifest, book: bookMeta, sourceText, characters, bible, chapters };
     } catch (err) {
         console.error(`[LAZY-BOOK] Failed to load ${bookId}:`, err.message);
         return null;
@@ -706,10 +697,12 @@ function createChapterIntroScene(chapterTitle, chapterNumber, language) {
 }
 
 // ======================================================
-// CREATE COVER SCENE — returns scene object AND saves to cover.json
+// CREATE COVER CHAPTER — returns full chapter object (not scene)
+// Now Cover is a standard chapter, saved in chapters/ directory.
 // ======================================================
 
-function createCoverScene(title, author, language) {
+function createCoverChapter(title, author, language) {
+    const chId = chapterId();
     const scId = sceneId();
     const displayTitle = title || 'Imported Book';
     const displayAuthor = author || '';
@@ -720,42 +713,52 @@ function createCoverScene(title, author, language) {
     const sceneText = textParts.join('\n\n');
 
     return {
-        scene_id: scId,
-        scene_title: 'Cover',
+        chapter: chId,
+        chapter_title: 'Обложка',
         type: 'cover',
-        style: 'soviet_book_page',
-        participants: [],
-        audio: {
-            voice: 'narrator',
-            full_text: sceneText,
-        },
-        units: [{
-            id: unitId(),
-            type: 'typography',
-            text: sceneText,
+        scenes: [{
+            scene_id: scId,
+            scene_title: 'Cover',
+            type: 'cover',
+            style: 'soviet_book_page',
             participants: [],
-            visual: {
-                shot: 'wide',
-                prompt: `Book cover: ${displayTitle}${displayAuthor ? ` by ${displayAuthor}` : ''}, typography, elegant design`,
-                type: 'typography',
-                text_render: sceneText,
-                quality: 'high',
+            audio: {
+                voice: 'narrator',
+                full_text: sceneText,
             },
+            units: [{
+                id: unitId(),
+                type: 'typography',
+                text: sceneText,
+                participants: [],
+                visual: {
+                    shot: 'wide',
+                    prompt: `Book cover: ${displayTitle}${displayAuthor ? ` by ${displayAuthor}` : ''}, typography, elegant design`,
+                    type: 'typography',
+                    text_render: sceneText,
+                    quality: 'high',
+                },
+            }],
         }],
     };
 }
 
 /**
- * Save cover scene to cover.json on disk.
+ * Save cover chapter to chapters/ directory on disk.
+ * Cover is now a standard chapter file, no standalone cover.json.
  * @param {string} bookId
- * @param {Object} coverScene - The cover scene object (from createCoverScene)
+ * @param {Object} coverChapter - The full cover chapter object (from createCoverChapter)
  */
-function saveCoverScene(bookId, coverScene) {
-    if (!coverScene) return;
+function saveCoverChapter(bookId, coverChapter) {
+    if (!coverChapter) return;
     const bookDir = getBookDir(bookId);
-    const coverPath = getCoverPath(bookDir);
-    fs.writeFileSync(coverPath, JSON.stringify(coverScene, null, 2));
-    console.log(`[LAZY-BOOK] Cover saved to cover.json for ${bookId}: "${coverScene.scene_title}"`);
+    const chDir = getChapterDir(bookDir);
+    if (!fs.existsSync(chDir)) fs.mkdirSync(chDir, { recursive: true });
+    
+    const chFile = `${coverChapter.chapter}.json`;
+    const chPath = path.join(chDir, chFile);
+    fs.writeFileSync(chPath, JSON.stringify(coverChapter, null, 2));
+    console.log(`[LAZY-BOOK] Cover chapter saved to chapters/${chFile} for ${bookId}: "${coverChapter.chapter_title}"`);
 }
 
 // ======================================================
@@ -1044,21 +1047,39 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
     }
 
     // ---- Insert structural scenes (chapter_intro only) ----
-    // Cover is no longer a structural scene — it's saved separately as cover.json.
+    // Cover is now a standard chapter, not a structural scene.
     // Only add structural scenes when the chapter is first created,
     // never when appending to an existing chapter that already has them.
     const structuralScenes = [];
 
     const hasChapterIntro = chapterObj.scenes.some(s => s.type === 'chapter_intro');
-    const hasCover = fs.existsSync(getCoverPath(bookDir));
+    const hasCoverChapter = fs.readdirSync(chDir).filter(f => f.endsWith('.json'))
+        .some(f => {
+            try {
+                const ch = JSON.parse(fs.readFileSync(path.join(chDir, f), 'utf8'));
+                return ch.type === 'cover';
+            } catch (_) { return false; }
+        });
 
-    // Save Cover to cover.json on first window (only if not already present on disk)
-    if (isFirstWindow && !hasCover) {
+    // Save Cover as a chapter file on first window
+    if (isFirstWindow && !hasCoverChapter) {
         const coverTitle = structure?.title || bookMeta.title || 'Imported Book';
         const coverAuthor = structure?.author || bookMeta.author || null;
-        const coverScene = createCoverScene(coverTitle, coverAuthor, language);
-        saveCoverScene(bookId, coverScene);
-        console.log(`[LAZY-BOOK] Cover saved as cover.json for ${bookId}`);
+        const coverChapter = createCoverChapter(coverTitle, coverAuthor, language);
+        saveCoverChapter(bookId, coverChapter);
+        console.log(`[LAZY-BOOK] Cover chapter saved for ${bookId}`);
+        
+        // Update chapters_order in book.json
+        const bookMetaPath = getBookMetaPath(bookDir);
+        if (fs.existsSync(bookMetaPath)) {
+            try {
+                const bm = JSON.parse(fs.readFileSync(bookMetaPath, 'utf8'));
+                if (bm.structure?.chapters_order) {
+                    bm.structure.chapters_order.unshift(`${coverChapter.chapter}.json`);
+                    fs.writeFileSync(bookMetaPath, JSON.stringify(bm, null, 2));
+                }
+            } catch (_) {}
+        }
     }
 
     // Add chapter_intro scenes from structure (only if not already present)
@@ -1334,8 +1355,7 @@ module.exports = {
     detectLanguage,
     chapterId, sceneId, unitId, generateBookId,
     DEFAULT_WINDOW_SIZE,
-    // Cover helpers
-    getCoverPath,
-    createCoverScene,
-    saveCoverScene,
+    // Cover chapter helpers
+    createCoverChapter,
+    saveCoverChapter,
 };

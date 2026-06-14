@@ -14,8 +14,7 @@ data class BookData(
     val book: BookMeta? = null,
     val bible: Bible? = null,
     val characters: List<CharDef>? = null,
-    val chapters: List<Chapter>? = null,
-    val cover: CoverData? = null
+    val chapters: List<Chapter>? = null
 )
 
 data class Manifest(

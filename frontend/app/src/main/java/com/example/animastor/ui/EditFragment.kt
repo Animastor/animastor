@@ -41,7 +41,6 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
     private var chapters: List<Chapter> = emptyList()
     private var currentChIndex = 0
     private var currentScIndex = 0
-    private var currentIsCover = false
     private val fieldValues = mutableMapOf<String, String>()
     private var errorText: TextView? = null
     private var dirtyIndicator: TextView? = null
@@ -148,7 +147,6 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         chapters = emptyList()
         currentChIndex = 0
         currentScIndex = 0
-        currentIsCover = false
         fieldValues.clear()
         val b = binding ?: return
         positionLabel()?.text = getString(R.string.navigate_no_position)
@@ -216,25 +214,14 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                 return@launch
             }
 
-            // Handle Cover position
-            if (pos.chapterId == "__cover__") {
-                if (!currentIsCover) {
-                    currentIsCover = true
-                    currentChIndex = -1
-                    currentScIndex = 0
-                    fieldValues.clear()
-                }
-            } else {
-                currentIsCover = false
-                val nc = chapters.indexOfFirst { it.chapter == pos.chapterId }.coerceAtLeast(0)
-                val scenes = chapters.getOrNull(nc)?.scenes ?: emptyList()
-                val ns = scenes.indexOfFirst { it.scene_id == pos.sceneId }.coerceAtLeast(0)
+            val nc = chapters.indexOfFirst { it.chapter == pos.chapterId }.coerceAtLeast(0)
+            val scenes = chapters.getOrNull(nc)?.scenes ?: emptyList()
+            val ns = scenes.indexOfFirst { it.scene_id == pos.sceneId }.coerceAtLeast(0)
 
-                if (nc != currentChIndex || ns != currentScIndex) {
-                    currentChIndex = nc
-                    currentScIndex = ns
-                    fieldValues.clear()
-                }
+            if (nc != currentChIndex || ns != currentScIndex) {
+                currentChIndex = nc
+                currentScIndex = ns
+                fieldValues.clear()
             }
 
             setSaveLoading(false)
@@ -254,21 +241,9 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
     private fun updatePositionLabel() {
         if (binding == null) return
         val pos = SharedPositionManager.current.value
-        val totalUnits: Int
-        if (currentIsCover) {
-            val cover = bookData?.cover
-            totalUnits = cover?.units?.size ?: 0
-            val coverLabel = cover?.scene_title ?: "Cover"
-            val unitLabel = if (totalUnits > 0) "${getString(R.string.navigate_unit)} ${pos.unitIndex + 1}" else ""
-            positionLabel()?.text = "$coverLabel / $unitLabel"
-            val uc = unitCount()
-            uc?.text = getString(R.string.navigate_units_count, totalUnits)
-            uc?.visibility = if (totalUnits > 0) View.VISIBLE else View.GONE
-            return
-        }
         val ch = chapters.getOrNull(currentChIndex)
         val sc = currentScene()
-        totalUnits = sc?.units?.size ?: 0
+        val totalUnits = sc?.units?.size ?: 0
         val chLabel = if (ch != null) "${getString(R.string.navigate_chapter)} ${currentChIndex + 1}" else "—"
         val scLabel = if (sc != null) "${getString(R.string.navigate_scene)} ${currentScIndex + 1}" else "—"
         val unitLabel = if (totalUnits > 0) "${getString(R.string.navigate_unit)} ${pos.unitIndex + 1}" else pos.formatUnitLabel()
@@ -288,42 +263,6 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         val b = binding ?: return
         val pos = SharedPositionManager.current.value
         val idx = pos.unitIndex
-
-        // Handle Cover carousel
-        if (currentIsCover) {
-            val cover = bookData?.cover
-            if (cover != null) {
-                val units = cover.units ?: emptyList()
-                if (idx > 0 && idx - 1 < units.size) {
-                    val prev = units[idx - 1]
-                    b.prevUnitCard.visibility = View.VISIBLE
-                    loadCoverPreview(b.prevUnitImage, b.prevUnitCard, prev, idx - 1)
-                } else {
-                    b.prevUnitCard.visibility = View.INVISIBLE
-                }
-                val current = units.getOrNull(idx)
-                if (current != null) {
-                    b.currentUnitCard.visibility = View.VISIBLE
-                    loadCoverPreview(b.currentUnitImage, b.currentUnitCard, current, idx)
-                    b.currentIuLabel.text = "${getString(R.string.navigate_unit)} ${idx + 1}"
-                } else {
-                    b.currentUnitImage.setImageBitmap(null)
-                    b.currentIuLabel.text = ""
-                }
-                if (idx + 1 < units.size) {
-                    val next = units[idx + 1]
-                    b.nextUnitCard.visibility = View.VISIBLE
-                    loadCoverPreview(b.nextUnitImage, b.nextUnitCard, next, idx + 1)
-                } else {
-                    b.nextUnitCard.visibility = View.INVISIBLE
-                }
-            } else {
-                b.prevUnitCard.visibility = View.INVISIBLE
-                b.currentUnitCard.visibility = View.INVISIBLE
-                b.nextUnitCard.visibility = View.INVISIBLE
-            }
-            return
-        }
 
         val sc = currentScene() ?: return
         val units = sc.units ?: emptyList()
@@ -404,16 +343,8 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
 
     private fun loadPreviewImage(imageView: ImageView, card: MaterialCardView, unit: SceneUnit, index: Int) {
         val bookId = viewModel.bookId.takeIf { it.isNotBlank() } ?: return
-        val chId: String
-        val scId: String
-        if (currentIsCover) {
-            val cover = bookData?.cover ?: return
-            chId = "__cover__"
-            scId = cover.scene_id ?: ""
-        } else {
-            chId = chapters.getOrNull(currentChIndex)?.chapter ?: return
-            scId = currentScene()?.scene_id ?: return
-        }
+        val chId = chapters.getOrNull(currentChIndex)?.chapter ?: return
+        val scId = currentScene()?.scene_id ?: return
         val iuId = unit.id ?: "iu${String.format("%04d", index)}"
         lifecycleScope.launch {
             val bytes = viewModel.repository.getIuPreview(bookId, chId, scId, iuId, viewModel.buildId) ?: return@launch
@@ -432,54 +363,6 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                 card.layoutParams = lp
             } else {
                 showPreviewMissing(imageView, card, isCurrent = card.id == R.id.currentUnitCard)
-            }
-        }
-    }
-
-    private fun loadCoverPreview(imageView: ImageView, card: MaterialCardView, unit: SceneUnit, index: Int) {
-        val bookId = viewModel.bookId.takeIf { it.isNotBlank() } ?: return
-        val cover = bookData?.cover ?: return
-        val chId = "__cover__"
-        val scId = cover.scene_id ?: ""
-        val iuId = unit.id ?: "cover-u${index}"
-        lifecycleScope.launch {
-            val bytes = viewModel.repository.getIuImage(
-                bookId = bookId,
-                chapterId = chId,
-                sceneId = scId,
-                iuId = iuId,
-                buildId = viewModel.buildId
-            )
-            if (bytes.isNotEmpty()) {
-                val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-                if (bmp != null) {
-                    imageView.setImageBitmap(bmp)
-                    val dm = resources.displayMetrics
-                    val scrDp = dm.widthPixels / dm.density
-                    val availDp = scrDp - 32f
-                    val weight = if (card.id == R.id.currentUnitCard) 1.5f else 1.0f
-                    val cardWDp = availDp * weight / 3.5f
-                    val hDp = cardWDp * bmp.height / bmp.width
-                    val hPx = (hDp * dm.density + 0.5f).toInt()
-                    val lp = card.layoutParams
-                    lp.height = hPx
-                    card.layoutParams = lp
-                } else {
-                    imageView.setImageResource(R.drawable.ic_image_off)
-                    val hPx = (140f * resources.displayMetrics.density + 0.5f).toInt()
-                    val lp = card.layoutParams
-                    lp.height = hPx
-                    card.layoutParams = lp
-                }
-            } else {
-                imageView.setImageResource(R.drawable.ic_image_off)
-                imageView.imageTintList = android.content.res.ColorStateList.valueOf(
-                    MaterialColors.getColor(imageView, com.google.android.material.R.attr.colorOnSurfaceVariant)
-                )
-                val hPx = (140f * resources.displayMetrics.density + 0.5f).toInt()
-                val lp = card.layoutParams
-                lp.height = hPx
-                card.layoutParams = lp
             }
         }
     }
@@ -533,23 +416,6 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
     private fun navigateUnit(delta: Int) {
         val pos = SharedPositionManager.current.value
         val idx = pos.unitIndex
-
-        // Handle Cover navigation
-        if (currentIsCover) {
-            val cover = bookData?.cover
-            if (cover == null) return
-            val units = cover.units ?: emptyList()
-            if (delta < 0 && idx > 0) {
-                SharedPositionManager.previousUnit(units)
-            } else if (delta > 0 && idx < units.size - 1) {
-                SharedPositionManager.nextUnit(units)
-            }
-            fieldValues.clear()
-            updateCarousel()
-            updatePositionLabel()
-            rebuildContent(binding?.propertyTabs?.selectedTabPosition ?: 0)
-            return
-        }
 
         val sc = currentScene() ?: return
         val units = sc.units ?: emptyList()
@@ -681,7 +547,6 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
     }
 
     private fun currentScene(): Scene? {
-        if (currentIsCover) return null
         return chapters.getOrNull(currentChIndex)?.scenes?.getOrNull(currentScIndex)
     }
 
@@ -691,13 +556,9 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
             frame.removeAllViews()
             when (tab) {
                 0 -> {
-                    if (currentIsCover) {
-                        buildFields(frame, listOf("scene_title", "scene_id", "type", "style"))
-                    } else {
-                        val ch = chapters.getOrNull(currentChIndex)
-                        if (ch != null) buildChapterTitleField(frame, ch)
-                        buildFields(frame, listOf("scene_title", "scene_id", "type", "style", "location.id", "env.time", "env.lighting", "env.weather", "env.mood", "env.atmosphere", "participants", "character_anchors"))
-                    }
+                    val ch = chapters.getOrNull(currentChIndex)
+                    if (ch != null) buildChapterTitleField(frame, ch)
+                    buildFields(frame, listOf("scene_title", "scene_id", "type", "style", "location.id", "env.time", "env.lighting", "env.weather", "env.mood", "env.atmosphere", "participants", "character_anchors"))
                 }
                 1 -> buildFields(frame, listOf("voice", "full_text"))
                 2 -> buildUnitFields(frame)
@@ -713,15 +574,10 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
     }
 
     private fun buildUnitFields(parent: ViewGroup) {
-        val units: List<SceneUnit>
-        if (currentIsCover) {
-            val cover = bookData?.cover ?: return
-            units = cover.units ?: emptyList()
-        } else {
-            val sc = currentScene() ?: return
-            units = sc.units ?: emptyList()
-        }
+        val sc = currentScene() ?: return
+        val units = sc.units ?: emptyList()
         val pos = SharedPositionManager.current.value
+        if (units.isEmpty()) return
         val idx = pos.unitIndex.coerceIn(0, units.size - 1)
         val u = units.getOrNull(idx) ?: return
         val ctx = parent.context
@@ -742,24 +598,8 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
 
     private fun buildFields(parent: ViewGroup, keys: List<String>) {
         val ctx = parent.context
-        val sceneValues: Map<String, String>?
-        if (currentIsCover) {
-            val cover = bookData?.cover ?: return
-            sceneValues = keys.associateWith { key ->
-                when (key) {
-                    "scene_id" -> cover.scene_id ?: ""
-                    "scene_title" -> cover.scene_title ?: ""
-                    "type" -> cover.type ?: ""
-                    "style" -> cover.style ?: ""
-                    "voice" -> cover.audio?.voice ?: ""
-                    "full_text" -> cover.audio?.full_text ?: ""
-                    else -> ""
-                }
-            }
-        } else {
-            val sc = currentScene() ?: return
-            sceneValues = keys.associateWith { key -> readField(sc, key) }
-        }
+        val sc = currentScene() ?: return
+        val sceneValues = keys.associateWith { key -> readField(sc, key) }
         val ll = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(0, 0, 0, 8)
@@ -983,66 +823,21 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
 
             lifecycleScope.launch {
                 try {
-                    val modifiedBookData: BookData
-                    if (currentIsCover) {
-                        // Save Cover data — update the cover field of BookData
-                        val existingCover = bd.cover ?: run {
-                            showSaveError("No cover data to save")
-                            return@launch
-                        }
-                        var modifiedCover = existingCover
-                        // Apply scene-level fields
-                        fieldValues["scene_id"]?.let { if (it.isNotBlank()) modifiedCover = modifiedCover.copy(scene_id = it) }
-                        fieldValues["scene_title"]?.let { if (it.isNotBlank()) modifiedCover = modifiedCover.copy(scene_title = it) }
-                        fieldValues["type"]?.let { if (it.isNotBlank()) modifiedCover = modifiedCover.copy(type = it) }
-                        fieldValues["style"]?.let { if (it.isNotBlank()) modifiedCover = modifiedCover.copy(style = it) }
-                        fieldValues["voice"]?.let { v ->
-                            val audio = modifiedCover.audio ?: AudioConfig()
-                            modifiedCover = modifiedCover.copy(audio = audio.copy(voice = v.ifEmpty { null }))
-                        }
-                        fieldValues["full_text"]?.let { v ->
-                            val audio = modifiedCover.audio ?: AudioConfig()
-                            modifiedCover = modifiedCover.copy(audio = audio.copy(full_text = v.ifEmpty { null }))
-                        }
-                        // Apply unit-level fields
-                        val pos = SharedPositionManager.current.value
-                        val coverUnits = modifiedCover.units?.toMutableList()
-                        if (coverUnits != null && pos.unitIndex < coverUnits.size) {
-                            var mu = coverUnits[pos.unitIndex]
-                            if (fieldValues.containsKey("id")) mu = mu.copy(id = fieldValues["id"]?.ifEmpty { null })
-                            if (fieldValues.containsKey("type")) mu = mu.copy(type = fieldValues["type"]?.ifEmpty { null })
-                            if (fieldValues.containsKey("text")) mu = mu.copy(text = fieldValues["text"]?.ifEmpty { null })
-                            if (fieldValues.containsKey("visual.prompt")) {
-                                val v = fieldValues["visual.prompt"]?.ifEmpty { null }
-                                val vis = mu.visual ?: VisualConfig()
-                                mu = mu.copy(visual = vis.copy(prompt = v))
-                            }
-                            if (fieldValues.containsKey("visual.negative")) {
-                                val v = fieldValues["visual.negative"]?.ifEmpty { null }
-                                val vis = mu.visual ?: VisualConfig()
-                                mu = mu.copy(visual = vis.copy(negative = v))
-                            }
-                            coverUnits[pos.unitIndex] = mu
-                            modifiedCover = modifiedCover.copy(units = coverUnits.toList())
-                        }
-                        modifiedBookData = bd.copy(cover = modifiedCover)
-                    } else {
-                        val sc = currentScene()
-                        if (sc == null) {
-                            showSaveError("No scene data")
-                            return@launch
-                        }
-                        val modifiedScene = applyFieldValues(sc, fieldValues)
-                        val modifiedChapters = chapters.toMutableList()
-                        val ch = chapters[currentChIndex]
-                        val chapterTitleValue = fieldValues["chapter_title"]?.takeIf { it.isNotBlank() }
-                        val modifiedCh = if (chapterTitleValue != null || fieldValues.containsKey("chapter_title"))
-                            ch.copy(chapter_title = chapterTitleValue) else ch
-                        val scenes = modifiedCh.scenes?.toMutableList() ?: return@launch
-                        scenes[currentScIndex] = modifiedScene
-                        modifiedChapters[currentChIndex] = modifiedCh.copy(scenes = scenes.toList())
-                        modifiedBookData = bd.copy(chapters = modifiedChapters.toList())
+                    val sc = currentScene()
+                    if (sc == null) {
+                        showSaveError("No scene data")
+                        return@launch
                     }
+                    val modifiedScene = applyFieldValues(sc, fieldValues)
+                    val modifiedChapters = chapters.toMutableList()
+                    val ch = chapters[currentChIndex]
+                    val chapterTitleValue = fieldValues["chapter_title"]?.takeIf { it.isNotBlank() }
+                    val modifiedCh = if (chapterTitleValue != null || fieldValues.containsKey("chapter_title"))
+                        ch.copy(chapter_title = chapterTitleValue) else ch
+                    val scenes = modifiedCh.scenes?.toMutableList() ?: return@launch
+                    scenes[currentScIndex] = modifiedScene
+                    modifiedChapters[currentChIndex] = modifiedCh.copy(scenes = scenes.toList())
+                    val modifiedBookData = bd.copy(chapters = modifiedChapters.toList())
 
                     viewModel.repository.updateBook(bookId, modifiedBookData)
                     bookData = modifiedBookData
@@ -1093,22 +888,10 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         val bookId = viewModel.bookId.takeIf { it.isNotBlank() } ?: return
         val buildId = viewModel.buildId.takeIf { it.isNotBlank() } ?: return
 
-        val chId: String
-        val scId: String
-        if (currentIsCover) {
-            val cover = bookData?.cover
-            if (cover == null) {
-                b.timelinePanel.isVisible = false
-                return
-            }
-            chId = "__cover__"
-            scId = cover.scene_id ?: ""
-        } else {
-            val sc = currentScene() ?: return
-            val ch = chapters.getOrNull(currentChIndex) ?: return
-            chId = ch.chapter ?: ""
-            scId = sc.scene_id ?: ""
-        }
+        val sc = currentScene() ?: return
+        val ch = chapters.getOrNull(currentChIndex) ?: return
+        val chId = ch.chapter ?: ""
+        val scId = sc.scene_id ?: ""
 
         try {
             val waveformJob = lifecycleScope.launch {
@@ -1160,18 +943,10 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         val bookId = viewModel.bookId.takeIf { it.isNotBlank() } ?: return
         val buildId = viewModel.buildId.takeIf { it.isNotBlank() } ?: return
 
-        val chId: String
-        val scId: String
-        if (currentIsCover) {
-            val cover = bookData?.cover ?: return
-            chId = "__cover__"
-            scId = cover.scene_id ?: ""
-        } else {
-            val sc = currentScene() ?: return
-            val ch = chapters.getOrNull(currentChIndex) ?: return
-            chId = ch.chapter ?: ""
-            scId = sc.scene_id ?: ""
-        }
+        val sc = currentScene() ?: return
+        val ch = chapters.getOrNull(currentChIndex) ?: return
+        val chId = ch.chapter ?: ""
+        val scId = sc.scene_id ?: ""
 
         lifecycleScope.launch {
             try {

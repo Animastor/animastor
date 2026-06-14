@@ -1066,26 +1066,6 @@ async function recoverMissingRedisChunks(buildId, bookId) {
                         }
                     }
                     
-                    // Include Cover from cover.json in IU count (standalone, not in chapters)
-                    try {
-                        const loadedBook = book.loadBook(bookId);
-                        if (loadedBook && loadedBook.cover && loadedBook.cover.scene_id) {
-                            const coverChId = book.COVER_CHAPTER_ID;
-                            const coverKey = `${coverChId}:${loadedBook.cover.scene_id}`;
-                            if (!uniqueScenes.has(coverKey)) {
-                                const rows = await iuRepo.getImageUnitsForScene(buildId, bookId, coverChId, loadedBook.cover.scene_id);
-                                if (rows.length > 0) {
-                                    coverIuTotal += rows.length;
-                                    const prefix = `${bookId}_${coverChId}_${loadedBook.cover.scene_id}_iu`;
-                                    let files = [];
-                                    try { files = fs.readdirSync(buildDir); } catch (_) {}
-                                    const ready = files.filter(f => f.startsWith(prefix) && f.endsWith('.png')).length;
-                                    coverIuReady += Math.min(ready, rows.length);
-                                }
-                            }
-                        }
-                    } catch (_) {}
-                    
                     for (const { chapter_id: ch, scene_id: sc } of uniqueScenes.values()) {
                         const rows = await iuRepo.getImageUnitsForScene(buildId, bookId, ch, sc);
                         if (rows.length > 0) {
@@ -1099,9 +1079,6 @@ async function recoverMissingRedisChunks(buildId, bookId) {
                     }
                 }
             } catch (_) {}
-
-            // Determine if Cover needs generation (cover.json exists but image not ready)
-            const coverNeedsGeneration = coverIuTotal > 0 && coverIuReady < coverIuTotal;
 
             res.json({
                 book_id: bookId,
@@ -1126,9 +1103,6 @@ async function recoverMissingRedisChunks(buildId, bookId) {
                 scope_all_video_ready: videoReady === filteredIds.length && filteredIds.length > 0,
                 scope_iu_total: scopeIuTotal,
                 scope_iu_ready: scopeIuReady,
-                cover_image_total: coverIuTotal,
-                cover_image_ready: coverIuReady,
-                cover_needs_generation: coverNeedsGeneration,
             });
         } catch (err) {
             console.error('[ASSETS-STATE] Error:', err.message);
@@ -1396,16 +1370,24 @@ async function recoverMissingRedisChunks(buildId, bookId) {
     // ======================================================
     // GET BOOK COVER DATA
     // ======================================================
-    // Returns the standalone Cover scene from cover.json, or 404 if not found.
-    // The frontend uses this to load the Cover image for the player.
+    // Cover is now a regular chapter (chapters[0]), use /api/v1/book/:bookId
+    // to get the full book data including the Cover chapter.
+    // This endpoint is kept for backward compatibility but returns
+    // the first scene of the first chapter if it's a cover chapter.
     app.get('/api/v1/book/:bookId/cover', async (req, res) => {
         try {
             const { bookId } = req.params;
-            const coverData = book.loadCover(bookId);
-            if (!coverData) {
+            const bookData = book.loadBook(bookId);
+            if (!bookData) {
+                return res.status(404).json({ error: 'Book not found' });
+            }
+            // Find the cover chapter (first chapter with type 'cover')
+            const coverCh = (bookData.chapters || []).find(ch => ch.type === 'cover');
+            if (!coverCh || !coverCh.scenes || coverCh.scenes.length === 0) {
                 return res.status(404).json({ error: 'Cover not found for this book' });
             }
-            return res.json(coverData);
+            // Return the first scene of the cover chapter (same format as legacy cover.json)
+            return res.json(coverCh.scenes[0]);
         } catch (err) {
             console.error('[GET COVER] Error:', err.message);
             return res.status(500).json({ error: err.message });
@@ -1463,45 +1445,6 @@ async function recoverMissingRedisChunks(buildId, bookId) {
                 filteredDirty = bookDiff.filterDirtyScenesByScope(
                     diff.dirty_scenes, effectiveScope, chapter_id, scene_id, allScenes
                 );
-            }
-
-            // Always include the standalone Cover from cover.json regardless of scope.
-            // Cover MUST include ALL layers (audio, image, video) so that:
-            //   1. markDirtyScenes creates proper chunk metadata
-            //   2. Audio placeholder is generated
-            //   3. Scheduler can progress through the full pipeline AUDIO → IMAGE → VIDEO
-            const coverData = loadedBook.cover;
-            if (coverData && coverData.scene_id) {
-                const coverChId = book.COVER_CHAPTER_ID;
-                const coverKey = `${coverChId}:${coverData.scene_id}`;
-                const existingDirtyKeys = new Set(filteredDirty.map(d => `${d.chapter_id}:${d.scene_id}`));
-
-                if (!existingDirtyKeys.has(coverKey)) {
-                    // Check if Cover image already exists on disk
-                    const buildDir = path.join(config.OUTPUT_DIR, buildId);
-                    const coverPrefix = `${bookId}_${coverChId}_${coverData.scene_id}_iu`;
-                    let hasCoverImage = false;
-                    try {
-                        if (fs.existsSync(buildDir)) {
-                            const files = fs.readdirSync(buildDir);
-                            hasCoverImage = files.some(f => f.startsWith(coverPrefix) && f.endsWith('.png'));
-                        }
-                    } catch (_) {}
-
-                    if (hasCoverImage) {
-                        log(`[COVER] Cover ${coverChId}/${coverData.scene_id} already exists on disk, skipping`);
-                    } else {
-                        log(`[COVER] Cover ${coverChId}/${coverData.scene_id} needs generation — adding to dirty list`);
-                        filteredDirty.unshift({
-                            chapter_id: coverChId,
-                            scene_id: coverData.scene_id,
-                            reason: 'cover',
-                            dirty_layers: ['audio', 'image', 'video'],
-                        });
-                    }
-                }
-            } else {
-                log(`[COVER] No cover.json found for ${bookId}`);
             }
 
             // Mark dirty scenes

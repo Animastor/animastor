@@ -13,31 +13,39 @@
 }
 ```
 
-## Cover (separate file)
-The book cover is stored in a **separate** `cover.json` file at the book root directory, NOT inside any chapter.
+## Cover (standard chapter)
+The book cover is stored as a **regular chapter** in `chapters/ch-XXXXXXXX.json`, NOT as a standalone `cover.json` file.
+It is the first chapter (`chapters[0]`) with `chapter_title: "Обложка"` and `type: "cover"`.
 
 ```json
 {
-  "scene_id": "sc-cover-example",
-  "scene_title": "Cover",
+  "chapter": "ch-cover-example",
+  "chapter_title": "Обложка",
   "type": "cover",
-  "style": "title_page",
-  "participants": [],
-  "audio": {
-    "voice": "narrator",
-    "full_text": "Author\n\nTitle"
-  },
-  "units": [
+  "scenes": [
     {
-      "id": "iu-cover-example",
-      "type": "typography",
-      "text": "Author\n\nTitle",
-      "visual": {
-        "prompt": "book cover design, vertical composition, elegant typography...",
-        "quality": "highly detailed, sharp typography, clean composition",
-        "text_render": true,
-        "negative": ""
-      }
+      "scene_id": "sc-cover-example",
+      "scene_title": "Cover",
+      "type": "cover",
+      "style": "title_page",
+      "participants": [],
+      "audio": {
+        "voice": "narrator",
+        "full_text": "Author\n\nTitle"
+      },
+      "units": [
+        {
+          "id": "iu-cover-example",
+          "type": "typography",
+          "text": "Author\n\nTitle",
+          "visual": {
+            "prompt": "book cover design, vertical composition, elegant typography...",
+            "quality": "highly detailed, sharp typography, clean composition",
+            "text_render": true,
+            "negative": ""
+          }
+        }
+      ]
     }
   ]
 }
@@ -45,10 +53,10 @@ The book cover is stored in a **separate** `cover.json` file at the book root di
 
 **Cover rules:**
 - `type` must be `"cover"` (not `"chapter_intro"` or `"narration"`)
-- Cover does NOT have a `chapter_id` — it is a standalone file, not a scene inside any chapter
-- Cover always has exactly 1 unit of type `typography` with `visual.text_render: true`
+- Cover is a standard chapter with `chapter` (ch-XXXXXXXX) and `chapter_title` ("Обложка") fields
+- The scene inside has `type: "cover"` and exactly 1 unit of type `typography` with `visual.text_render: true`
 - `audio.full_text` contains the author and title for TTS narration
-- See `cover_example.json` in the examples directory
+- See `cover_example.json` in the examples directory for the exact format
 
 ## Character
 ```json
@@ -79,7 +87,7 @@ The book cover is stored in a **separate** `cover.json` file at the book root di
 ```json
 {
   "id": "string (snake_case)",
-  "chapter_id": "string (required except for Cover — Cover has its own cover.json)",
+  "chapter_id": "string (required)",
   "title": "string",
   "mood": "string (optional)",
   "pacing": "slow | medium | fast",
@@ -89,7 +97,6 @@ The book cover is stored in a **separate** `cover.json` file at the book root di
 }
 ```
 
-> **Note:** The Cover scene is an exception — it does NOT have a `chapter_id` because it lives in its own `cover.json` file, separate from all chapters.
 
 ## Unit
 ```json

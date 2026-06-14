@@ -1,18 +1,20 @@
 // ======================================================
-// Book Module - v2.0.0
+// Book Module - v2.1.0
 // ======================================================
 // Handles book loading, saving, and bundle operations.
 // NOT stateful - just pure file/book operations.
 //
-// Storage format (v2): multi-file directory structure
+// Storage format (v2.1): multi-file directory structure
+// Cover is a standard chapter stored in chapters/ directory
+// with chapter_title: "Обложка". No standalone cover.json.
+//
 //   /data/books/<bookId>/
 //     manifest.json
 //     book.json
 //     bible.json            (optional)
 //     characters.json       (optional)
-//     cover.json            (optional — standalone Cover scene)
 //     chapters/
-//       ch-XXXXXXXX.json    (one per chapter)
+//       ch-XXXXXXXX.json    (one per chapter, Cover is first)
 //
 // Legacy single-file format is still readable for migration:
 //   /data/books/<bookId>.json
@@ -46,9 +48,6 @@ function getChapterDir(bookDir) {
 function getChapterPath(bookDir, chapterFile) {
     return path.join(getChapterDir(bookDir), chapterFile);
 }
-
-/** Sentinel chapter_id used for the standalone Cover scene (cover.json). */
-const COVER_CHAPTER_ID = '__cover__';
 
 // ======================================================
 // BOOK BUNDLE OPERATIONS
@@ -128,17 +127,6 @@ function buildBookFromBundle(rawFiles) {
         }
     }
 
-    // Optional cover.json
-    let cover = null;
-    const coverKey = findFile("cover.json");
-    if (coverKey) {
-        try {
-            cover = JSON.parse(files[coverKey]);
-        } catch {
-            throw new Error("Invalid JSON in cover.json");
-        }
-    }
-
     // Book metadata
     const bookKey = findFile("book.json")
     if (!bookKey) {
@@ -205,8 +193,7 @@ function buildBookFromBundle(rawFiles) {
         book: parsedBook,
         bible,
         characters,
-        chapters,
-        cover
+        chapters
     }
 }
 
@@ -231,82 +218,6 @@ function addDirToZip(zip, dirPath, zipPath) {
             zip.addFile(entryZipPath, fs.readFileSync(fullPath));
         }
     }
-}
-
-// ======================================================
-// COVER HELPERS
-// ======================================================
-
-/**
- * Get path to cover.json for a book directory.
- */
-function getCoverPath(bookDir) {
-    return path.join(bookDir, 'cover.json');
-}
-
-/**
- * Load cover data from disk.
- * @param {string} bookId - The book ID
- * @returns {Object|null} - The cover scene object or null
- */
-function loadCover(bookId) {
-    const bookDir = getBookDir(bookId);
-    const coverPath = getCoverPath(bookDir);
-    if (fs.existsSync(coverPath)) {
-        try {
-            return JSON.parse(fs.readFileSync(coverPath, 'utf8'));
-        } catch (err) {
-            console.error(`[BOOK] Failed to load cover for ${bookId}: ${err.message}`);
-        }
-    }
-    return null;
-}
-
-/**
- * Save cover data to disk.
- * @param {string} bookId - The book ID
- * @param {Object|null} coverData - The cover scene object or null to delete
- */
-function saveCover(bookId, coverData) {
-    const bookDir = getBookDir(bookId);
-    const coverPath = getCoverPath(bookDir);
-    if (coverData) {
-        fs.writeFileSync(coverPath, JSON.stringify(coverData, null, 2));
-    } else if (fs.existsSync(coverPath)) {
-        fs.unlinkSync(coverPath);
-    }
-}
-
-/**
- * Check if cover.json exists for a book.
- */
-function hasCoverFile(bookId) {
-    const bookDir = getBookDir(bookId);
-    return fs.existsSync(getCoverPath(bookDir));
-}
-
-/**
- * Convert cover.json data to a scene runtime entry compatible with collectScenes().
- * @param {Object} coverData - The cover scene object from cover.json
- * @param {Object} manifest - Book manifest (for book_id)
- * @returns {Object|null} - Scene runtime entry or null
- */
-function coverDataToSceneEntry(coverData, manifest) {
-    if (!coverData) return null;
-    return {
-        book_id: manifest?.book_id,
-        chapter_id: COVER_CHAPTER_ID,
-        scene_id: coverData.scene_id,
-        runtime_type: 'scene',
-        scene_type: 'cover',
-        location: null,
-        participants: coverData.participants || [],
-        chapter: null,
-        scene: coverData,
-        sceneIndex: 0,
-        scene_order: 0,
-        payload: coverData
-    };
 }
 
 // ======================================================
@@ -348,7 +259,7 @@ function saveBookBundle(book, files) {
             chaptersOrder.map(cf => cf.split('/').pop())
         );
         const rootBasenames = new Set(
-            ['manifest.json', 'book.json', 'bible.json', 'characters.json', 'cover.json']
+            ['manifest.json', 'book.json', 'bible.json', 'characters.json']
         );
 
         for (const [filePath, content] of Object.entries(files)) {
@@ -422,14 +333,6 @@ function saveBookBundle(book, files) {
         fs.writeFileSync(charPath, JSON.stringify(book.characters, null, 2));
     } else if (fs.existsSync(charPath)) {
         fs.unlinkSync(charPath);
-    }
-
-    // Save cover.json (optional)
-    if (book.cover) {
-        saveCover(bookId, book.cover);
-    } else if (hasCoverFile(bookId)) {
-        // Book has no cover but cover.json exists on disk — remove it
-        saveCover(bookId, null);
     }
 
     // Save chapters
@@ -531,17 +434,6 @@ function loadBookFromDir(bookId, bookDir) {
             characters = JSON.parse(fs.readFileSync(charPath, 'utf8'));
         }
 
-        // Optional cover.json
-        let cover = null;
-        const coverPath = getCoverPath(bookDir);
-        if (fs.existsSync(coverPath)) {
-            try {
-                cover = JSON.parse(fs.readFileSync(coverPath, 'utf8'));
-            } catch (err) {
-                console.warn(`[BOOK] Failed to parse cover.json for ${bookId}: ${err.message}`);
-            }
-        }
-
         // Chapters: look in chapters/ subdirectory first, fall back to root
         const chaptersDir = getChapterDir(bookDir);
         const chapters = [];
@@ -558,7 +450,7 @@ function loadBookFromDir(bookId, bookDir) {
             }
         }
 
-        return { manifest, book: bookMeta, bible, characters, chapters, cover };
+        return { manifest, book: bookMeta, bible, characters, chapters };
     } catch (err) {
         console.error(`Failed to load book from dir ${bookId}:`, err.message);
         return null;
@@ -595,8 +487,8 @@ async function resetBook(bookId) {
 // ======================================================
 
 /**
- * Collect all scenes from book, including standalone Cover from cover.json.
- * Cover is always prepended as scene_order 0 with chapter_id='__cover__'.
+ * Collect all scenes from book chapters.
+ * Cover is now a regular chapter (chapters[0]), no special handling needed.
  * @param {Object} book - The loaded book object
  * @returns {Array} - Array of scene runtime entries
  */
@@ -607,14 +499,6 @@ function collectScenes(book) {
         return scenes;
     }
 
-    // Include standalone Cover from cover.json (if any) as scene 0
-    if (book.cover) {
-        const coverEntry = coverDataToSceneEntry(book.cover, book.manifest);
-        if (coverEntry) {
-            scenes.push(coverEntry);
-        }
-    }
-    
     for (const chapter of book.chapters) {
         if (!chapter.scenes || !Array.isArray(chapter.scenes)) {
             continue;
@@ -640,13 +524,6 @@ function collectScenes(book) {
     }
     
     return scenes;
-}
-
-/**
- * Check if a scene entry is the standalone Cover (chapter_id === '__cover__').
- */
-function isCoverScene(sceneEntry) {
-    return sceneEntry && sceneEntry.chapter_id === COVER_CHAPTER_ID;
 }
 
 // ======================================================
@@ -694,11 +571,6 @@ function findSceneRuntimeData(loadedBook, chapterId, sceneId) {
     }
 
     const bookId = loadedBook.manifest?.book_id;
-
-    // Check standalone Cover first
-    if (chapterId === COVER_CHAPTER_ID && loadedBook.cover && loadedBook.cover.scene_id === sceneId) {
-        return coverDataToSceneEntry(loadedBook.cover, loadedBook.manifest);
-    }
 
     for (const chapter of loadedBook.chapters) {
         if (chapter.chapter !== chapterId) continue;
@@ -748,14 +620,7 @@ module.exports = {
     // ZIP helpers
     addDirToZip,
     
-    // Cover helpers
-    COVER_CHAPTER_ID,
-    getCoverPath,
-    loadCover,
-    saveCover,
-    hasCoverFile,
-    coverDataToSceneEntry,
-    isCoverScene,
+
     
     // Scene collection
     collectScenes,

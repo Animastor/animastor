@@ -846,6 +846,7 @@ class PlaybackViewModel(
 
     private suspend fun fetchSceneData(id: String): PreloadedScene = coroutineScope {
         Log.d(TAG, "fetchSceneData: $id")
+
         val chunk = runCatching { _repository.getChunk(id) }.getOrElse { err ->
             Log.w(TAG, "fetchSceneData: chunk $id not found in Redis: ${err.message}")
             null

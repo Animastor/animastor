@@ -378,6 +378,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                             hideIuMissingPlaceholder()
                         }
 
+                        // Skip rotation recovery when no MediaPlayer available (e.g. silent scenes)
                         if (state.phase == PlayerPhase.PLAYING && currentPlayer == null
                             && state.chunkSequence <= playbackViewModel.lastProcessedChunkSequence) {
                             Log.w(TAG, "rotation recovery: PLAYING with no player (chunk already processed) -> SCENE_READY")
@@ -419,8 +420,12 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                         if (state.phase == PlayerPhase.PLAYING && state.chunkSequence > playbackViewModel.lastProcessedChunkSequence) {
                             playbackViewModel.lastProcessedChunkSequence = state.chunkSequence
                             val audio = playbackViewModel.pendingChunkAudio
-                            if (audio != null) {
+                            val ius = playbackViewModel.pendingChunkIuSequence
+                            if (audio != null && audio.isNotEmpty()) {
                                 handleChunk(audio, playbackViewModel.pendingChunkVideo, playbackViewModel.pendingChunkIuSequence)
+                            } else if (ius != null && ius.isNotEmpty()) {
+                                Log.i(TAG, "no audio — starting timer-based IU cycling")
+                                handleSilentChunk(ius)
                             }
                         }
 
@@ -551,7 +556,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
             updateSubtitleIfEnabled(null)
         }
 
-        if (nextChainReady) {
+        if (nextChainReady && currentPlayer != null) {
             nextChainReady = false
             Log.d(TAG, "handleChunk: chain already set up, preloading next-next audio")
             preloadAheadAudio()
@@ -582,7 +587,14 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                 playbackViewModel.pendingSeekPositionMs = -1
             }
             Log.i(TAG, "first MediaPlayer started at unit ${seekToUnit}")
-            if (!isPaused) startIuCycling()
+            if (!isPaused) {
+                if (currentPlayer != null) {
+                    startIuCycling()
+                } else if (!iuSequence.isNullOrEmpty()) {
+                    Log.i(TAG, "no audio available — timer-based IU cycling")
+                    startSilentIuCycling()
+                }
+            }
             preloadAheadAudio()
         } else {
             Log.d(TAG, "preloading next audio and chaining")
@@ -594,6 +606,83 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
             startIuCycling()
         }
         updateLayers()
+    }
+
+    /** Handle chunk with no audio — show IU images with timer-based cycling (e.g. Cover). */
+    private fun handleSilentChunk(iuSequence: List<IuImageItem>) {
+        if (!isAdded) return
+        Log.i(TAG, "handleSilentChunk: ius=${iuSequence.size}")
+
+        // Stop any existing playback
+        currentPlayer?.release()
+        currentPlayer = null
+        nextPlayer?.release()
+        nextPlayer = null
+        currentFile?.delete()
+        currentFile = null
+        nextFile?.delete()
+        nextFile = null
+        currentVideoFile?.delete()
+        currentVideoFile = null
+        videoPlayer?.release()
+        videoPlayer = null
+
+        currentIuSequence = iuSequence
+        playbackViewModel.currentIuSequence = iuSequence
+        currentIuIndex = 0
+        playbackViewModel.currentUnitIndex = 0
+
+        if (iuSequence.isNotEmpty()) {
+            showIuImage(iuSequence[0])
+            updateSubtitleIfEnabled(iuSequence[0].text)
+        }
+
+        isPaused = false
+        startSilentIuCycling()
+        updateLayers()
+    }
+
+    /** Timer-based IU cycling for silent scenes (no MediaPlayer needed). */
+    private fun startSilentIuCycling() {
+        iuCyclingJob?.cancel()
+        iuCyclingJob = viewLifecycleOwner.lifecycleScope.launch {
+            while (isActive) {
+                if (!isAdded) { delay(500); continue }
+                val ius = currentIuSequence
+                if (ius.isNullOrEmpty()) { delay(500); continue }
+                if (currentIuIndex >= ius.size) { delay(500); continue }
+
+                // Don't cycle if no images are available
+                if (ius.all { it.status != IuStatus.READY && it.bitmap == null }) {
+                    delay(5000)
+                    continue
+                }
+
+                if (isPaused) {
+                    delay(500)
+                    continue
+                }
+
+                val dur = ius[currentIuIndex].durationMs
+                delay(dur)
+
+                if (!isAdded || isPaused || ius != currentIuSequence) continue
+
+                val nextIdx = (currentIuIndex + 1) % ius.size
+                currentIuIndex = nextIdx
+                playbackViewModel.currentUnitIndex = nextIdx
+                showIuImage(ius[nextIdx])
+                updateSubtitleIfEnabled(ius[nextIdx].text)
+                SharedPositionManager.navigateTo(
+                    chapterId = playbackViewModel.currentChapterId,
+                    sceneId = playbackViewModel.currentSceneId,
+                    unitId = ius[nextIdx].unitId,
+                    chunkId = playbackViewModel.getCurrentChunkId(),
+                    unitIndex = nextIdx
+                )
+                if (isAdded) anchorFullscreenToImage()
+            }
+        }
     }
 
     private fun preloadAheadAudio() {
@@ -1124,7 +1213,13 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
             stopPulse()
             val phase = playbackViewModel.uiState.value.phase
             if (phase == PlayerPhase.PLAYING && !isPaused) {
-                pausePlayback()
+                if (currentPlayer == null && currentIuSequence != null) {
+                    // Silent scene (no MediaPlayer) — just stop cycling
+                    iuCyclingJob?.cancel()
+                    isPaused = true
+                } else {
+                    pausePlayback()
+                }
             }
         } else {
             if (isInCurtainsState) {
