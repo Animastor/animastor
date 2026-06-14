@@ -434,9 +434,11 @@ async function mergeSceneAudioChunks(redis, bookId, chapterId, sceneId, buildId,
 function probeDuration(filePath) {
     return new Promise((resolve) => {
         const { spawn } = require('child_process');
+        // Use stream duration (actual audio content) not format duration
+        // (format duration can include metadata/ID3 padding)
         const probe = spawn('ffprobe', [
             '-v', 'error',
-            '-show_entries', 'format=duration',
+            '-show_entries', 'stream=duration',
             '-of', 'csv=p=0',
             filePath
         ]);
@@ -444,8 +446,13 @@ function probeDuration(filePath) {
         probe.stdout.on('data', d => { out += d.toString(); });
         probe.on('close', code => {
             if (code !== 0) { resolve(0); return; }
-            const dur = parseFloat(out.trim());
-            resolve(Number.isFinite(dur) && dur > 0 ? dur : 0);
+            const lines = out.trim().split('\n').filter(Boolean);
+            // Take the first valid stream duration
+            for (const line of lines) {
+                const dur = parseFloat(line);
+                if (Number.isFinite(dur) && dur > 0) { resolve(dur); return; }
+            }
+            resolve(0);
         });
         probe.on('error', () => resolve(0));
     });
@@ -470,28 +477,60 @@ function cutFirstHalf(filePath, outputPath, duration) {
 }
 
 /**
- * Detect first silence end timestamp using ffmpeg silencedetect filter.
- * Returns silence end time in seconds, or 0 if no silence found.
+ * Find the quietest point (minimum RMS energy) between 25%-75% of the audio.
+ * Pipes raw PCM from ffmpeg and computes RMS in 50ms windows to find the
+ * lowest-energy point near the middle of the file.
+ * Returns time in seconds, or 0 if detection fails.
  */
-function detectFirstSilence(filePath) {
+function findQuietestPoint(filePath) {
     return new Promise((resolve) => {
         const { spawn } = require('child_process');
+        const windowMs = 50;
+        const sampleRate = 24000;
+        const windowSamples = Math.floor(sampleRate * windowMs / 1000);
+
         const ff = spawn('ffmpeg', [
             '-i', filePath,
-            '-af', 'silencedetect=noise=-25dB:d=0.25',
-            '-f', 'null',
-            '-y', '/dev/null'
+            '-ac', '1',
+            '-ar', String(sampleRate),
+            '-f', 's16le',
+            '-y',
+            'pipe:1'
         ]);
-        let stderr = '';
-        ff.stderr.on('data', data => { stderr += data.toString(); });
+
+        const chunks = [];
+        ff.stdout.on('data', d => { chunks.push(d); });
+        let stderrBuf = '';
+        ff.stderr.on('data', d => { stderrBuf += d.toString(); });
+
         ff.on('close', code => {
             if (code !== 0) { resolve(0); return; }
-            const matches = [...stderr.matchAll(/silence_end:\s*([\d.]+)/g)];
-            if (matches.length > 0) {
-                const t = parseFloat(matches[0][1]);
-                if (Number.isFinite(t) && t > 0.3) resolve(t);
+            const buf = Buffer.concat(chunks);
+            const totalSamples = Math.floor(buf.length / 2);
+            if (totalSamples < windowSamples * 3) { resolve(0); return; }
+
+            const totalWindows = Math.floor(totalSamples / windowSamples);
+            const lo = Math.floor(totalWindows * 0.25);
+            const hi = Math.floor(totalWindows * 0.75);
+            let minRms = Infinity, minWin = lo;
+
+            for (let w = lo; w < hi && w < totalWindows; w++) {
+                let sumSq = 0;
+                const offset = w * windowSamples * 2;
+                const len = Math.min(windowSamples * 2, buf.length - offset);
+                for (let i = 0; i < len; i += 2) {
+                    const s = buf.readInt16LE(offset + i);
+                    sumSq += s * s;
+                }
+                const rms = Math.sqrt(sumSq / (len / 2));
+                if (rms < minRms) {
+                    minRms = rms;
+                    minWin = w;
+                }
             }
-            resolve(0);
+
+            const cutTime = (minWin * windowMs + windowMs / 2) / 1000;
+            resolve(cutTime);
         });
         ff.on('error', () => resolve(0));
     });
@@ -508,11 +547,11 @@ async function trimPaddedSceneAudio(filePath) {
         return;
     }
 
-    // 2. Try to find silence between the two repeated phrases
-    const silenceEnd = await detectFirstSilence(filePath);
-    const cutTime = (silenceEnd > 0.3) ? silenceEnd : (duration / 2);
+    // 2. Find the quietest point (minimum RMS) between 25%-75% of the audio
+    const quietest = await findQuietestPoint(filePath);
+    const cutTime = (quietest > 0.3) ? quietest : (duration / 2);
 
-    const method = (silenceEnd > 0.3) ? 'silence' : 'half-duration';
+    const method = (quietest > 0.3) ? `quietest@${quietest.toFixed(2)}s` : 'half-duration';
     log(`✂️ trimPaddedSceneAudio: total=${duration.toFixed(2)}s, ${method} cut at ${cutTime.toFixed(2)}s for ${basename}`);
 
     // 3. Cut
