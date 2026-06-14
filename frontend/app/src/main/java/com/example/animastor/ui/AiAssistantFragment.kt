@@ -352,6 +352,8 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
             val chIdx = bookData?.chapterIndex(pos.chapterId) ?: 0
             val scIdx = bookData?.sceneIndex(pos.chapterId, pos.sceneId) ?: 0
             val isSpecial = ch?.type == "cover" || ch?.type == "prologue"
+            val chapters = bookData?.chapters ?: emptyList()
+            val realChNum = chapters.take((chIdx - 1).coerceAtLeast(0)).count { it.type != "cover" && it.type != "prologue" } + 1
             if (chIdx > 0 || isSpecial) {
                 val uIdx = bookData?.unitIndex(pos.chapterId, pos.sceneId, pos.unitIndex) ?: 0
                 val chTitle = ch?.chapter_title?.takeIf { it.isNotBlank() }
@@ -359,7 +361,7 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
                 val chLabel = if (isSpecial) {
                     chTitle ?: (ch?.type?.replaceFirstChar { it.uppercase() } ?: "")
                 } else if (scIdx > 0) {
-                    "${getString(R.string.navigate_chapter)} $chIdx"
+                    "${getString(R.string.navigate_chapter)} $realChNum"
                 } else {
                     ""
                 }
@@ -551,10 +553,12 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
                 val ch = bookData.chapters?.firstOrNull { it.chapter == pos.chapterId }
                 val isSpecial = ch?.type == "cover" || ch?.type == "prologue"
                 val chTitle = ch?.chapter_title?.takeIf { it.isNotBlank() }
+                val chapters = bookData.chapters ?: emptyList()
+                val realChNum = chapters.take((chIdx - 1).coerceAtLeast(0)).count { it.type != "cover" && it.type != "prologue" } + 1
                 val chapterId = if (isSpecial) {
                     chTitle ?: (ch?.type?.replaceFirstChar { it.uppercase() } ?: pos.chapterId ?: "?")
                 } else if (chIdx > 0) {
-                    "${getString(R.string.navigate_chapter)} $chIdx"
+                    "${getString(R.string.navigate_chapter)} $realChNum"
                 } else {
                     pos.chapterId ?: "?"
                 }
