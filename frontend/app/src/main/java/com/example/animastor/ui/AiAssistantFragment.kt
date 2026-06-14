@@ -555,10 +555,11 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
                 val chTitle = ch?.chapter_title?.takeIf { it.isNotBlank() }
                 val chapters = bookData.chapters ?: emptyList()
                 val realChNum = chapters.take((chIdx - 1).coerceAtLeast(0)).count { it.type != "cover" && it.type != "prologue" } + 1
+                val dbg = "${ch?.type ?: "null"}|${chTitle ?: "null"}|isSpecial=$isSpecial|chIdx=$chIdx|realChNum=$realChNum"
                 val chapterId = if (isSpecial) {
                     chTitle ?: (ch?.type?.replaceFirstChar { it.uppercase() } ?: pos.chapterId ?: "?")
                 } else if (chIdx > 0) {
-                    "${getString(R.string.navigate_chapter)} $realChNum"
+                    "${getString(R.string.navigate_chapter)} $realChNum [dbg:$dbg]"
                 } else {
                     pos.chapterId ?: "?"
                 }
