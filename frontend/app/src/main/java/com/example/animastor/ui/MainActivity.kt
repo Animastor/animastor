@@ -151,8 +151,8 @@ class MainActivity : AppCompatActivity() {
                     val isGenerating = phase == PlayerPhase.GENERATING || phase == PlayerPhase.LOADING_BOOK
                     val isFromDisk = phase == PlayerPhase.DOWNLOADING || phase == PlayerPhase.SCENE_READY || phase == PlayerPhase.PLAYING
 
-                    val audioNeeded = mode == "need_audio_worker" || mode == "storyboard" || mode == "full"
-                    val imageNeeded = mode == "need_image_worker" || mode == "storyboard" || mode == "full"
+                    val audioNeeded = mode == "storyboard" || mode == "full" || mode == "image_only"
+                    val imageNeeded = mode == "storyboard" || mode == "full" || mode == "image_only"
                     val videoNeeded = mode == "full"
 
                     updateWorkerPanel(
@@ -353,6 +353,9 @@ class MainActivity : AppCompatActivity() {
     // -------------------------------------------------------------------
 
     private fun setupWorkerToggles() {
+        binding.workerAudioLayout.setOnClickListener {
+            viewModel.toggleAudioForProfile()
+        }
         binding.workerImageLayout.setOnClickListener {
             viewModel.toggleImageForProfile()
         }
@@ -371,14 +374,17 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun refreshWorkerToggleUi() {
+        val isAudioOn = viewModel.audioEnabled()
         val isImageOn = viewModel.imageEnabled
         val isVideoOn = viewModel.videoEnabled()
 
-        // Audio: always ON (base layer, non-clickable in XML)
-        binding.workerAudioLayout.isChecked = true
-        binding.workerAudioLayout.setChipIconResource(R.drawable.ic_volume_up)
+        // Audio: now toggleable
+        binding.workerAudioLayout.isChecked = isAudioOn
+        binding.workerAudioLayout.setChipIconResource(
+            if (isAudioOn) R.drawable.ic_volume_up else R.drawable.ic_volume_off
+        )
 
-        // Image: ON = storyboard profile, OFF = audio-only
+        // Image: ON = storyboard/image_only profile, OFF = audio-only
         binding.workerImageLayout.isChecked = isImageOn
         binding.workerImageLayout.setChipIconResource(
             if (isImageOn) R.drawable.ic_image else R.drawable.ic_image_off
@@ -491,6 +497,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun profileLabel(profile: String): Int = when (profile) {
         "audio_only" -> R.string.profile_audio
+        "image_only" -> R.string.profile_storyboard
         "storyboard" -> R.string.profile_storyboard
         else -> R.string.profile_video
     }
@@ -575,6 +582,7 @@ class MainActivity : AppCompatActivity() {
             }
         } else when (profileKey) {
             "audio_only" -> R.string.progress_label_audio to assets.scope_audio_ready
+            "image_only" -> R.string.progress_label_image to assets.scope_image_ready
             "storyboard" -> R.string.progress_label_image to assets.scope_image_ready
             else -> R.string.progress_label_video to assets.scope_video_ready
         }

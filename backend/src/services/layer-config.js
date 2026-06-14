@@ -19,6 +19,7 @@
 
 const PROFILES = Object.freeze({
     AUDIO_ONLY:    'audio_only',
+    IMAGE_ONLY:    'image_only',
     STORYBOARD:    'storyboard',
     FULL:          'full',
 });
@@ -69,7 +70,6 @@ async function set(redis, bookId, partial) {
     if (partial.video_enabled === true && !next.image_enabled) {
         next.image_enabled = true;
     }
-    next.audio_enabled = true;
     await redis.set(key(bookId), JSON.stringify(next));
     return next;
 }
@@ -77,6 +77,7 @@ async function set(redis, bookId, partial) {
 function resolveProfile(cfg) {
     const c = normalize(cfg);
     if (c.video_enabled) return PROFILES.FULL;
+    if (c.image_enabled && !c.audio_enabled) return PROFILES.IMAGE_ONLY;
     if (c.image_enabled) return PROFILES.STORYBOARD;
     return PROFILES.AUDIO_ONLY;
 }

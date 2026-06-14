@@ -103,18 +103,16 @@ module.exports = function(redis) {
 
     async function detectAvailableMode(redis, bookId) {
         const workerHealth = require('../runtime/worker-health');
-        const hasAudio = await workerHealth.isAvailable(redis, 'audio');
         const hasImage = await workerHealth.isAvailable(redis, 'image');
         const hasVideo = await workerHealth.isAvailable(redis, 'video');
 
         let mode;
-        if (!hasAudio) mode = 'need_audio_worker';
-        else if (!hasImage) mode = 'need_image_worker';
-        else if (hasAudio && hasImage && hasVideo) mode = 'full';
-        else mode = 'storyboard';
+        if (hasImage && hasVideo) mode = 'full';
+        else if (hasImage) mode = 'storyboard';
+        else mode = 'need_audio_worker';
 
         await redis.set(`animastor:mode:${bookId}`, mode);
-        log('Mode detected:', mode, '(aw=' + hasAudio + ' iw=' + hasImage + ' vw=' + hasVideo + ')');
+        log('Mode detected:', mode, '(iw=' + hasImage + ' vw=' + hasVideo + ')');
         return mode;
     }
 

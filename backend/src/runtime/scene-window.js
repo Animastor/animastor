@@ -106,30 +106,16 @@ function _isTerminalState(st) {
  * Check if scene has valid content on disk and can be skipped.
  * Verifies that the prerequisite files exist for each enabled layer.
  *
- * CRITICAL: Placeholder audio does NOT count as valid content.
- * If the audio is 'placeholder' status in the DB, the scene still
- * needs real generation — we return false.
+ * Placeholder audio IS valid content — it provides timing structure
+ * for image generation and playback. Real audio can replace it later.
  */
 async function sceneHasValidContent(redis, buildId, bookId, chapterId, sceneId) {
     const buildDir = path.join(OUTPUT_DIR, buildId);
     if (!fs.existsSync(buildDir)) return false;
 
-    // Audio is always required — check the combined mp3
+    // Audio file must exist (real or placeholder) for timing
     const audioPath = path.join(buildDir, `${bookId}_${chapterId}_${sceneId}.mp3`);
     if (!fs.existsSync(audioPath)) return false;
-
-    // Check that audio is REAL (not placeholder)
-    try {
-        const asset = await sceneAssetsRepo.getAsset(bookId, chapterId, sceneId, 'audio', buildId);
-        if (asset && asset.status === 'placeholder') {
-            log(`Audio is placeholder only for ${bookId}/${chapterId}/${sceneId} — needs real generation`);
-            return false;
-        }
-    } catch (err) {
-        warn(`Failed to check audio status for ${bookId}/${chapterId}/${sceneId}: ${err.message}`);
-        // If we can't check DB, assume not valid (conservative approach)
-        return false;
-    }
 
     // Check for at least one IU image
     let files;
@@ -141,8 +127,7 @@ async function sceneHasValidContent(redis, buildId, bookId, chapterId, sceneId) 
     const videoPath = path.join(buildDir, `${bookId}_${chapterId}_${sceneId}.mp4`);
     const hasVideo = fs.existsSync(videoPath);
 
-    // Scene is valid if it has real audio and at least one of image/video
-    // (if only audio was generated, that's also valid)
+    // Scene is valid if it has audio (real or placeholder) and at least one of image/video
     return hasImage || hasVideo;
 }
 
@@ -329,9 +314,26 @@ async function startScene(redis, s, buildId, bookId) {
         return true;
     }
 
+    // Check layer config: if audio is disabled, skip to IMAGE_PENDING
+    const layerKey = `animastor:layer-config:${bookId}`;
+    const layerRaw = await redis.get(layerKey);
+    let audioDisabled = false;
+    if (layerRaw) {
+        try {
+            const layerCfg = JSON.parse(layerRaw);
+            audioDisabled = layerCfg.audio_enabled === false;
+        } catch (e) {
+            warn(`Failed to parse layer config for ${bookId}: ${e.message}`);
+        }
+    }
+
+    const initialTarget = audioDisabled
+        ? state.SceneState.IMAGE_PENDING
+        : state.SceneState.AUDIO_PENDING;
+
     const result = await state.transitionSceneState(
         redis, bookId, chapterId, sceneId,
-        state.SceneState.AUDIO_PENDING
+        initialTarget
     );
 
     if (!result.success) {
@@ -348,7 +350,7 @@ async function startScene(redis, s, buildId, bookId) {
             } while (iuCursor !== '0');
             const retry = await state.transitionSceneState(
                 redis, bookId, chapterId, sceneId,
-                state.SceneState.AUDIO_PENDING
+                initialTarget
             );
             if (!retry.success) {
                 warn(`Failed to start scene after force-reset ${bookId}/${chapterId}/${sceneId}: ${retry.reason}`);
@@ -358,6 +360,11 @@ async function startScene(redis, s, buildId, bookId) {
             warn(`Failed to start scene ${bookId}/${chapterId}/${sceneId}: ${result.reason}`);
             return false;
         }
+    }
+
+    // If audio disabled, mark asset state as placeholder
+    if (audioDisabled) {
+        await state.setAssetState(redis, bookId, chapterId, sceneId, 'audio', state.AssetState.PLACEHOLDER);
     }
 
     const stateKey = `${state.SCENE_STATE_KEY_PREFIX}:${bookId}:${chapterId}:${sceneId}`;
@@ -404,8 +411,28 @@ async function startScene(redis, s, buildId, bookId) {
         }
     }
 
+    // If audio is disabled, mark all chunks as audio-ready (placeholder timing)
+    if (audioDisabled) {
+        for (let i = 0; i < expectedChunkCount; i++) {
+            const chunkIndex = i + 1;
+            const chunkId = audio.makeChunkId(chapterId, sceneId, chunkIndex, bookId);
+            const chunkKey = `animastor:chunk:${chunkId}`;
+            const existingChunk = await redis.get(chunkKey);
+            if (existingChunk) {
+                const data = JSON.parse(existingChunk);
+                data.audio = true;
+                data.audio_status = 'placeholder';
+                await redis.set(chunkKey, JSON.stringify(data));
+            }
+        }
+    }
+
     const addResult = await activeScenes.addActiveScene(redis, bookId, chapterId, sceneId);
     log(`Scene queued: ${bookId}/${chapterId}/${sceneId}`);
+
+    // Generate placeholder audio for this scene (fire-and-forget, non-blocking)
+    // Only when audio is enabled — if disabled, we already set chunks as ready above
+    if (audioDisabled) return addResult.added;
 
     // Generate placeholder audio for this scene (fire-and-forget, non-blocking)
     setImmediate(async () => {

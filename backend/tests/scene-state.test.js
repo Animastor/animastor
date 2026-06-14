@@ -38,6 +38,7 @@ describe('SceneState', () => {
     it('pipeline is linear forward-only', () => {
         const pipeline = [
             ['new', 'audio_pending'],
+            ['new', 'image_pending'],  // bypass audio
             ['audio_pending', 'audio_generating'],
             ['audio_generating', 'audio_ready'],
             ['audio_ready', 'image_pending'],
@@ -78,7 +79,7 @@ describe('SceneState helpers', () => {
 
     it('validateTransition returns allowed transitions on invalid', () => {
         const result = sceneState.validateTransition('new', 'video_ready');
-        expect(result.allowed).to.deep.equal(['audio_pending']);
+        expect(result.allowed).to.deep.equal(['audio_pending', 'image_pending']);
     });
 
     it('getRecoveryPendingState maps _GENERATING back to _PENDING', () => {

@@ -235,13 +235,16 @@ module.exports = function(redis, config, deps) {
     async function applyProfileToLayerConfig(redis, bookId, profile) {
         let newProfile;
         switch (profile) {
-            case 'AUDIO_ONLY':
+            case 'audio_only':
                 newProfile = { audio_enabled: true, image_enabled: false, video_enabled: false };
                 break;
-            case 'STORYBOARD':
+            case 'image_only':
+                newProfile = { audio_enabled: false, image_enabled: true, video_enabled: false };
+                break;
+            case 'storyboard':
                 newProfile = { audio_enabled: true, image_enabled: true, video_enabled: false };
                 break;
-            case 'FULL':
+            case 'full':
             default:
                 newProfile = { audio_enabled: true, image_enabled: true, video_enabled: true };
                 break;

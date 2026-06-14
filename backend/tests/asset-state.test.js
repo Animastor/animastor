@@ -2,8 +2,8 @@ const { expect } = require('chai');
 const sceneState = require('../src/state/scene-state');
 
 describe('AssetState (v2.0.0 per-asset model)', () => {
-    it('has 6 asset states defined', () => {
-        const expected = ['NEW', 'DIRTY', 'PENDING', 'GENERATING', 'READY', 'FAILED'];
+    it('has 7 asset states defined', () => {
+        const expected = ['NEW', 'DIRTY', 'PENDING', 'GENERATING', 'READY', 'FAILED', 'PLACEHOLDER'];
         const actual = Object.keys(sceneState.AssetState);
         expect(actual).to.have.members(expected);
     });
@@ -56,6 +56,21 @@ describe('AssetState (v2.0.0 per-asset model)', () => {
 
         it('FAILED -> DIRTY is valid (re-mark)', () => {
             const result = sceneState.validateAssetTransition('failed', 'dirty');
+            expect(result.valid).to.be.true;
+        });
+
+        it('NEW -> PLACEHOLDER is valid', () => {
+            const result = sceneState.validateAssetTransition('new', 'placeholder');
+            expect(result.valid).to.be.true;
+        });
+
+        it('PLACEHOLDER -> DIRTY is valid (re-generate)', () => {
+            const result = sceneState.validateAssetTransition('placeholder', 'dirty');
+            expect(result.valid).to.be.true;
+        });
+
+        it('PLACEHOLDER -> GENERATING is valid (upgrade to real)', () => {
+            const result = sceneState.validateAssetTransition('placeholder', 'generating');
             expect(result.valid).to.be.true;
         });
 
@@ -156,6 +171,21 @@ describe('AssetState (v2.0.0 per-asset model)', () => {
         it('all NEW -> NEW', () => {
             expect(sceneState.deriveLinearState({ audio: 'new', image: 'new', video: 'new' }))
                 .to.equal('new');
+        });
+
+        it('audio=placeholder, image=new -> AUDIO_READY', () => {
+            expect(sceneState.deriveLinearState({ audio: 'placeholder', image: 'new', video: 'new' }))
+                .to.equal('audio_ready');
+        });
+
+        it('audio=placeholder, image=pending -> IMAGE_PENDING', () => {
+            expect(sceneState.deriveLinearState({ audio: 'placeholder', image: 'pending', video: 'new' }))
+                .to.equal('image_pending');
+        });
+
+        it('audio=placeholder, image=ready -> IMAGE_READY', () => {
+            expect(sceneState.deriveLinearState({ audio: 'placeholder', image: 'ready', video: 'new' }))
+                .to.equal('image_ready');
         });
     });
 });

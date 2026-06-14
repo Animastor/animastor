@@ -49,13 +49,15 @@ describe('Layer Config Service', () => {
         expect(cfg.video_enabled).to.be.true;
     });
 
-    it('set always forces audio_enabled=true (audio is base)', async () => {
+    it('set allows audio_enabled=false (image-only mode)', async () => {
         const cfg = await layerConfig.set(fakeRedis, 'b4', { audio_enabled: false });
-        expect(cfg.audio_enabled).to.be.true;
+        expect(cfg.audio_enabled).to.be.false;
+        expect(cfg.image_enabled).to.be.true;
     });
 
     it('resolveProfile maps layer config to profile', () => {
         expect(layerConfig.resolveProfile({ audio_enabled: true, image_enabled: false, video_enabled: false })).to.equal('audio_only');
+        expect(layerConfig.resolveProfile({ audio_enabled: false, image_enabled: true, video_enabled: false })).to.equal('image_only');
         expect(layerConfig.resolveProfile({ audio_enabled: true, image_enabled: true, video_enabled: false })).to.equal('storyboard');
         expect(layerConfig.resolveProfile({ audio_enabled: true, image_enabled: true, video_enabled: true })).to.equal('full');
         expect(layerConfig.resolveProfile(null)).to.equal('full');
@@ -64,6 +66,7 @@ describe('Layer Config Service', () => {
 
     it('isValidProfile / isValidScope accept only known values', () => {
         expect(layerConfig.isValidProfile('audio_only')).to.be.true;
+        expect(layerConfig.isValidProfile('image_only')).to.be.true;
         expect(layerConfig.isValidProfile('storyboard')).to.be.true;
         expect(layerConfig.isValidProfile('full')).to.be.true;
         expect(layerConfig.isValidProfile('unknown')).to.be.false;

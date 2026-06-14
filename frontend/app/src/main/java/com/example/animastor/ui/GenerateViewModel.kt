@@ -150,6 +150,14 @@ class GenerateViewModel(
         viewModelScope.launch { persistLayerConfig() }
     }
 
+    fun toggleAudioForProfile() {
+        val next = !_audioEnabled.value
+        _audioEnabled.value = next
+        // When disabling audio with video enabled, video stays enabled (audio not required for video)
+        // When enabling audio with no image/video, that becomes audio_only
+        viewModelScope.launch { persistLayerConfig() }
+    }
+
     fun toggleImageForProfile() {
         val next = !imageEnabled
         imageEnabled = next
@@ -164,10 +172,15 @@ class GenerateViewModel(
         viewModelScope.launch { persistLayerConfig() }
     }
 
-    private fun computeProfile(image: Boolean, video: Boolean): String {
+    private fun computeProfile(audio: Boolean, image: Boolean, video: Boolean): String {
         if (video) return "full"
+        if (image && !audio) return "image_only"
         if (image) return "storyboard"
         return "audio_only"
+    }
+
+    private fun computeProfile(image: Boolean, video: Boolean): String {
+        return computeProfile(_audioEnabled.value, image, video)
     }
 
     suspend fun loadLayerConfig() {
@@ -181,7 +194,7 @@ class GenerateViewModel(
                 _audioEnabled.value = cfg.audio_enabled
                 imageEnabled = cfg.image_enabled
                 _videoEnabled.value = cfg.video_enabled
-                _layerProfile.value = cfg.profile ?: computeProfile(imageEnabled, _videoEnabled.value)
+                _layerProfile.value = cfg.profile ?: computeProfile(_audioEnabled.value, imageEnabled, _videoEnabled.value)
                 _layerConfigLoaded.value = true
                 Log.i(TAG, "loadLayerConfig: ${cfg.profile} (a=${cfg.audio_enabled} i=${cfg.image_enabled} v=${cfg.video_enabled})")
             }
@@ -216,7 +229,7 @@ class GenerateViewModel(
                 image_enabled = imageEnabled,
                 video_enabled = _videoEnabled.value
             ))
-            _layerProfile.value = cfg.profile ?: computeProfile(imageEnabled, _videoEnabled.value)
+            _layerProfile.value = cfg.profile ?: computeProfile(_audioEnabled.value, imageEnabled, _videoEnabled.value)
             Log.i(TAG, "persistLayerConfig: ${cfg.profile}")
         }.onFailure { e ->
             Log.w(TAG, "persistLayerConfig failed: ${e.message}")

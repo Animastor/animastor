@@ -189,6 +189,22 @@ async function decideStage(redis, scene, loadedBook, buildId) {
     const workersAlive = await workerHealth.isAvailable(redis, stage);
     if (!workersAlive) {
         log(`NO ${stage.toUpperCase()} WORKERS — deferring: ${bookId}/${chapterId}/${sceneId}`);
+        // Audio: if stage is AUDIO and no workers, check for placeholder audio
+        // If placeholder exists, complete audio stage so image can proceed
+        if (stage === Stage.AUDIO) {
+            const placeholderService = require('../services/placeholder-audio');
+            const hasAudioFile = fs.existsSync(
+                audio.getOutputPath(buildId, `${bookId}_${chapterId}_${sceneId}.mp3`)
+            );
+            if (hasAudioFile) {
+                log(`Placeholder audio found — completing audio stage without worker: ${bookId}/${chapterId}/${sceneId}`);
+                await state.transitionSceneState(redis, bookId, chapterId, sceneId, state.SceneState.AUDIO_GENERATING);
+                await state.transitionSceneState(redis, bookId, chapterId, sceneId, state.SceneState.AUDIO_READY);
+                await state.setAssetState(redis, bookId, chapterId, sceneId, 'audio', state.AssetState.PLACEHOLDER);
+                return { shouldExecute: false, stage: null, reason: 'audio_completed_placeholder' };
+            }
+            return { shouldExecute: false, stage: null, reason: 'no_audio_workers' };
+        }
         // Image is optional — complete scene at AUDIO_READY if no image workers
         if (stage === Stage.IMAGE && currentState.state === state.SceneState.AUDIO_READY) {
             log(`Completing without image: ${bookId}/${chapterId}/${sceneId}`);
@@ -676,6 +692,27 @@ async function dispatchStage(redis, scene, loadedBook, buildId) {
     }
 
     const { stage } = decideResult;
+
+    // Check layer config: skip audio or image dispatch if disabled by user
+    if (stage === Stage.AUDIO) {
+        const layerKey = `animastor:layer-config:${bookId}`;
+        const layerRaw = await redis.get(layerKey);
+        if (layerRaw) {
+            try {
+                const layerConfig = JSON.parse(layerRaw);
+                if (layerConfig.audio_enabled === false) {
+                    log(`LAYER: audio disabled for ${bookId}, skipping audio dispatch for ${bookId}/${chapterId}/${sceneId}`);
+                    // Complete audio stage with placeholder so image/video can proceed
+                    await state.transitionSceneState(redis, bookId, chapterId, sceneId, state.SceneState.AUDIO_GENERATING);
+                    await state.transitionSceneState(redis, bookId, chapterId, sceneId, state.SceneState.AUDIO_READY);
+                    await state.setAssetState(redis, bookId, chapterId, sceneId, 'audio', state.AssetState.PLACEHOLDER);
+                    return { success: true, dispatched: false, reason: 'audio_disabled_by_layer' };
+                }
+            } catch (e) {
+                warn(`Failed to parse layer config for ${bookId}: ${e.message}`);
+            }
+        }
+    }
 
     // Check layer config: skip image dispatch if disabled by user
     if (stage === Stage.IMAGE) {

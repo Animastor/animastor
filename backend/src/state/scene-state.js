@@ -58,7 +58,7 @@ const SceneState = {
 
 /** @type {{ [state: string]: SceneStateValue[] }} */
 const SceneTransitions = {
-    [SceneState.NEW]: [SceneState.AUDIO_PENDING],
+    [SceneState.NEW]: [SceneState.AUDIO_PENDING, SceneState.IMAGE_PENDING],
     [SceneState.AUDIO_PENDING]: [SceneState.AUDIO_GENERATING],
     [SceneState.AUDIO_GENERATING]: [SceneState.AUDIO_READY, SceneState.FAILED],
     [SceneState.AUDIO_READY]: [SceneState.IMAGE_PENDING],
@@ -615,6 +615,14 @@ function deriveLinearState(assetStates) {
     if (audio === AssetState.PENDING) return SceneState.AUDIO_PENDING;
     if (audio === AssetState.GENERATING) return SceneState.AUDIO_GENERATING;
     if (audio === AssetState.NEW && image === AssetState.NEW && video === AssetState.NEW) return SceneState.NEW;
+
+    // Audio placeholder — allow progression to image
+    if (audio === AssetState.PLACEHOLDER) {
+        if (image === AssetState.NEW) return SceneState.AUDIO_READY;
+        if (image === AssetState.PENDING || image === AssetState.DIRTY) return SceneState.IMAGE_PENDING;
+        if (image === AssetState.GENERATING) return SceneState.IMAGE_GENERATING;
+        if (image === AssetState.READY) return SceneState.IMAGE_READY;
+    }
 
     // Image stage (audio is either READY or FAILED at this point)
     if (image === AssetState.DIRTY) return SceneState.IMAGE_PENDING;

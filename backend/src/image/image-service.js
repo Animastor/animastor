@@ -482,9 +482,22 @@ async function getSceneDuration(buildId, bookId, chapterId, sceneId) {
         try {
             const mm = require('music-metadata');
             const metadata = await mm.parseFile(audioPath);
-            return metadata.format.duration || 0;
+            if (metadata.format.duration > 0) return metadata.format.duration;
         } catch {}
     }
+
+    // Fallback: get duration from scene_assets PG (even for placeholders)
+    try {
+        const { query } = require('../storage/postgres/database');
+        const result = await query(`
+            SELECT duration_sec FROM scene_assets
+            WHERE book_id = $1 AND chapter_id = $2 AND scene_id = $3
+              AND asset_type = 'audio' AND build_id = $4 AND status IN ('placeholder', 'ready')
+            LIMIT 1
+        `, [bookId, chapterId, sceneId, buildId]);
+        if (result.rows.length > 0 && result.rows[0].duration_sec > 0) return result.rows[0].duration_sec;
+    } catch {}
+
     return 0;
 }
 
