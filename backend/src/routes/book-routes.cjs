@@ -18,6 +18,7 @@ module.exports = function(app, redis, deps) {
         utils, saveChunk, getChunk, getAllChunks, getBookWindowStatus,
         detectAvailableMode, recoverChunksFromDisk, recoverAllBooksFromDisk,
         cleanupService, bookDiff, taskHandler, windowGenerator,
+        iuRepo,
     } = deps;
     const { log, pad, collectScenes, buildSegments } = utils;
 
@@ -1038,6 +1039,37 @@ async function recoverMissingRedisChunks(buildId, bookId) {
                 } catch (_) {}
             }
 
+            let scopeIuTotal = 0;
+            let scopeIuReady = 0;
+            try {
+                const firstChunk = await getChunk(filteredIds[0]);
+                const buildId = firstChunk?.build_id;
+                if (buildId) {
+                    const uniqueScenes = new Map();
+                    for (const cid of filteredIds) {
+                        const chunk = await getChunk(cid);
+                        if (chunk?.chapter_id && chunk?.scene_id) {
+                            uniqueScenes.set(`${chunk.chapter_id}:${chunk.scene_id}`, {
+                                chapter_id: chunk.chapter_id,
+                                scene_id: chunk.scene_id,
+                            });
+                        }
+                    }
+                    const buildDir = path.join(config.OUTPUT_DIR, buildId);
+                    for (const { chapter_id: ch, scene_id: sc } of uniqueScenes.values()) {
+                        const rows = await iuRepo.getImageUnitsForScene(buildId, bookId, ch, sc);
+                        if (rows.length > 0) {
+                            scopeIuTotal += rows.length;
+                            const prefix = `${bookId}_${ch}_${sc}_iu`;
+                            let files = [];
+                            try { files = fs.readdirSync(buildDir); } catch (_) {}
+                            const ready = files.filter(f => f.startsWith(prefix) && f.endsWith('.png')).length;
+                            scopeIuReady += Math.min(ready, rows.length);
+                        }
+                    }
+                }
+            } catch (_) {}
+
             const result = {
                 book_id: bookId,
                 scope: scope || 'book',
@@ -1059,6 +1091,8 @@ async function recoverMissingRedisChunks(buildId, bookId) {
                 scope_all_audio_ready: audioReady === filteredIds.length && filteredIds.length > 0,
                 scope_all_image_ready: imageReady === filteredIds.length && filteredIds.length > 0,
                 scope_all_video_ready: videoReady === filteredIds.length && filteredIds.length > 0,
+                scope_iu_total: scopeIuTotal,
+                scope_iu_ready: scopeIuReady,
             };
 
             res.json(result);

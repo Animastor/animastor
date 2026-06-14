@@ -565,26 +565,39 @@ class MainActivity : AppCompatActivity() {
     private var gpuProgressDoneAt = 0L
 
     private fun showGpuProgress(assets: com.example.animastor.repository.AssetsStateResponse) {
-        val total = assets.scope_total
+        val profileKey = viewModel.currentProfile()
+        // For image profiles, prefer IU-level progress when available
+        val isImageProfile = profileKey == "image_only" || profileKey == "storyboard" || (profileKey == "full" && assets.scope_image_ready > 0)
+        val useIuProgress = isImageProfile && assets.scope_iu_total > 0
+
+        val total = if (useIuProgress) assets.scope_iu_total else assets.scope_total
+        val ready = if (useIuProgress) assets.scope_iu_ready else when (profileKey) {
+            "audio_only" -> assets.scope_audio_ready
+            "image_only" -> assets.scope_image_ready
+            "storyboard" -> assets.scope_image_ready
+            "full" -> when {
+                assets.scope_video_ready > 0 -> assets.scope_video_ready
+                assets.scope_image_ready > 0 -> assets.scope_image_ready
+                else -> assets.scope_audio_ready
+            }
+            else -> assets.scope_video_ready
+        }
+
+        val label = when (profileKey) {
+            "audio_only" -> R.string.progress_label_audio
+            "image_only", "storyboard" -> R.string.progress_label_image
+            "full" -> when {
+                assets.scope_video_ready > 0 -> R.string.progress_label_video
+                assets.scope_image_ready > 0 -> R.string.progress_label_image
+                else -> R.string.progress_label_audio
+            }
+            else -> R.string.progress_label_video
+        }
+
         if (total <= 0) {
             binding.generationProgressContainer.visibility = View.GONE
             gpuProgressDoneAt = 0L
             return
-        }
-
-        val profileKey = viewModel.currentProfile()
-        // For "full" profile, show the most advanced layer (audio → image → video)
-        val (label, ready) = if (profileKey == "full") {
-            when {
-                assets.scope_video_ready > 0 -> R.string.progress_label_video to assets.scope_video_ready
-                assets.scope_image_ready > 0 -> R.string.progress_label_image to assets.scope_image_ready
-                else -> R.string.progress_label_audio to assets.scope_audio_ready
-            }
-        } else when (profileKey) {
-            "audio_only" -> R.string.progress_label_audio to assets.scope_audio_ready
-            "image_only" -> R.string.progress_label_image to assets.scope_image_ready
-            "storyboard" -> R.string.progress_label_image to assets.scope_image_ready
-            else -> R.string.progress_label_video to assets.scope_video_ready
         }
 
         if (ready >= total) {

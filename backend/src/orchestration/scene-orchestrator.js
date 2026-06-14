@@ -544,6 +544,7 @@ async function executeImageDispatch(redis, scene, loadedBook, buildId) {
                     const ch = JSON.parse(raw);
                     if (!ch.image) {
                         ch.image = true;
+                        ch.image_status = 'ready';
                         await redis.set(key, JSON.stringify(ch));
                     }
                 }
@@ -935,6 +936,23 @@ async function handleImageCompleted(redis, bookId, chapterId, sceneId, buildId) 
         sceneId,
         state.SceneState.IMAGE_READY
     );
+
+    // Update all chunks for this scene with image_status: ready
+    const chunkPrefix = `animastor:chunk:${bookId}_${chapterId}_${sceneId}_`;
+    let cursor = '0';
+    do {
+        const [nextCursor, keys] = await redis.scan(cursor, 'MATCH', `${chunkPrefix}*`, 'COUNT', 50);
+        cursor = nextCursor;
+        for (const key of keys) {
+            const raw = await redis.get(key);
+            if (raw) {
+                const ch = JSON.parse(raw);
+                ch.image = true;
+                ch.image_status = 'ready';
+                await redis.set(key, JSON.stringify(ch));
+            }
+        }
+    } while (cursor !== '0');
 
     // Release dispatch quota so worker pulse stops
     await dispatchEngine.releaseQuota(redis, 'image');

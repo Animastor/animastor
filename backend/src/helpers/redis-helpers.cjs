@@ -28,6 +28,7 @@ module.exports = function(redis) {
             image: !!data.image,
             audio: !!data.audio,
             video: !!data.video,
+            image_status: data.image_status || 'pending',
             video_status: data.video_status || 'pending',
             audio_status: data.audio_status || 'pending',
             padded_text: !!data.padded_text,
@@ -43,6 +44,7 @@ module.exports = function(redis) {
         if (c.video === undefined) c.video = false;
         if (!c.video_status) c.video_status = 'pending';
         if (!c.audio_status) c.audio_status = 'pending';
+        if (!c.image_status) c.image_status = c.image ? 'ready' : 'pending';
         c.chunk_index = pad(parseInt(c.chunk_index) || 0);
         c.chapter_id = c.chapter_id || null;
         c.scene_id = c.scene_id || null;
@@ -166,6 +168,7 @@ module.exports = function(redis) {
                 audio: true,
                 audio_status: 'ready',
                 image: hasIuImages,
+                image_status: hasIuImages ? 'ready' : 'pending',
                 video: hasVideo,
                 video_status: hasVideo ? 'ready' : 'pending',
             });

@@ -404,6 +404,8 @@ async function startScene(redis, s, buildId, bookId) {
                 scene_order: s.scene_order || 0,
                 audio: false,
                 audio_status: 'pending',
+                image: false,
+                image_status: 'pending',
                 padded_text: segments[i]?.padded || false
             };
             await redis.set(chunkKey, JSON.stringify(chunkData));
