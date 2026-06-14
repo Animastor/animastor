@@ -27,6 +27,7 @@ const storage = require('../storage');
 const runtimeScheduler = require('../runtime/runtime-scheduler');
 const book = require('../book');
 const placeholderAudio = require('../services/placeholder-audio');
+const dispatchEngine = require('../runtime/dispatch-engine');
 
 const logPrefix = '[ORCH]';
 
@@ -301,7 +302,8 @@ async function executeAudioDispatch(redis, scene, loadedBook, buildId) {
                         expected_chunk_count: expectedChunkCount,
                         scene_type: sceneData.scene_type,
                         audio: true,
-                        audio_status: 'ready'
+                        audio_status: 'ready',
+                        padded_text: segments[i]?.padded || false
                     };
                     await redis.set(chunkKey, JSON.stringify(chunkData));
                     await redis.sadd(`animastor:chunks:${bookId}`, chunkId);
@@ -318,10 +320,37 @@ async function executeAudioDispatch(redis, scene, loadedBook, buildId) {
                     } else {
                         log(`Chunk already exists and ready: ${chunkId}`);
                     }
+                    // Ensure padded_text is correct even on existing chunks
+                    existing.padded_text = segments[i]?.padded || false;
+                    await redis.set(chunkKey, JSON.stringify(existing));
                 }
             }
         } else {
             warn(`Scene data not found for chunk metadata creation: ${bookId}/${chapterId}/${sceneId}`);
+        }
+
+        // Re-trim canonical audio if scene has short text (padded)
+        // The padded_text flag in chunk metadata tells us trimming was needed.
+        // If canonical exists from a previous generation where trimming failed,
+        // we fix it here unconditionally — double-trim on already-correct audio
+        // is harmless for these very short clips (typically <1s total).
+        if (sceneData) {
+            try {
+                const segments = audio.buildSegments(sceneData);
+                if (segments.some(s => s.padded)) {
+                    const canonPath = audio.getOutputPath(buildId, `${bookId}_${chapterId}_${sceneId}.mp3`);
+                    if (fs.existsSync(canonPath)) {
+                        log(`✂️ Padded scene with existing canonical — trimming: ${bookId}/${chapterId}/${sceneId}`);
+                        try {
+                            await audio.trimPaddedSceneAudio(canonPath);
+                        } catch (trimErr) {
+                            warn(`Trim of existing canonical failed: ${trimErr.message}`);
+                        }
+                    }
+                }
+            } catch (checkErr) {
+                warn(`Failed to check padded status: ${checkErr.message}`);
+            }
         }
 
         await logEvent(redis, scene, 'AUDIO_COMPLETED', state.SceneState.AUDIO_READY, {
@@ -343,6 +372,31 @@ async function executeAudioDispatch(redis, scene, loadedBook, buildId) {
     const chunkCheck = audio.allSceneChunksExist(bookId, chapterId, sceneId, buildId, null);
     if (chunkCheck.exists) {
         log(`Executing audio merge: ${bookId}/${chapterId}/${sceneId}`);
+
+        // Check if chunks have padded_text flag — trim duplicated audio before merge
+        const chunkIndexes = audio.findExistingSceneChunks(bookId, chapterId, sceneId, buildId);
+        if (chunkIndexes.length > 0) {
+            const firstChunkId = audio.makeChunkId(chapterId, sceneId, chunkIndexes[0], bookId);
+            const firstChunkRaw = await redis.get(`animastor:chunk:${firstChunkId}`);
+            if (firstChunkRaw) {
+                try {
+                    const firstChunk = JSON.parse(firstChunkRaw);
+                    if (firstChunk.padded_text) {
+                        log(`✂️ executeAudioDispatch: padded text detected — trimming chunks for ${bookId}/${chapterId}/${sceneId}`);
+                        for (const idx of chunkIndexes) {
+                            const cp = audio.getChunkAudioPath(buildId, bookId, chapterId, sceneId, idx);
+                            try {
+                                await audio.trimPaddedSceneAudio(cp);
+                            } catch (trimErr) {
+                                warn(`Trim failed for ${cp}: ${trimErr.message}`);
+                            }
+                        }
+                    }
+                } catch (parseErr) {
+                    warn(`Failed to parse chunk metadata for padded_text check: ${parseErr.message}`);
+                }
+            }
+        }
 
         const mergeResult = await audio.mergeSceneAudioChunks(redis, bookId, chapterId, sceneId, buildId, null);
         if (mergeResult) {
@@ -483,7 +537,7 @@ async function executeImageDispatch(redis, scene, loadedBook, buildId) {
         const leaseKey = `animastor:dispatch-lease:${bookId}:${chapterId}:${sceneId}:image`;
         await redis.del(leaseKey);
         log(`Image stage completed from cache: ${bookId}/${chapterId}/${sceneId}`);
-        return { success: true, dispatched: true, waiting: false, stage: Stage.IMAGE };
+        return { success: true, dispatched: false, waiting: false, stage: Stage.IMAGE };
     }
 
     // Transition to IMAGE_GENERATING to mark dispatch complete
@@ -680,17 +734,16 @@ async function dispatchStage(redis, scene, loadedBook, buildId) {
  * It does NOT call progressScene(). The scheduler loop
  * determines progression.
  */
-async function handleAudioCompleted(redis, scene, loadedBook, buildId) {
-    const bookId = scene.book_id;
-    const chapterId = scene.chapter_id;
-    const sceneId = scene.scene_id;
-
+async function handleAudioCompleted(redis, bookId, chapterId, sceneId, buildId) {
     log(`AUDIO_CALLBACK: ${bookId}/${chapterId}/${sceneId}`);
 
     // Only proceed if we're in AUDIO_GENERATING state
     const currentState = await state.getSceneState(redis, bookId, chapterId, sceneId);
     if (!currentState || currentState.state !== state.SceneState.AUDIO_GENERATING) {
         warn(`AUDIO_CALLBACK: Invalid state: ${currentState?.state || 'no_state'}`);
+        // Still release quota to prevent leaked active counter
+        await dispatchEngine.releaseQuota(redis, 'audio');
+        log(`🔻 AUDIO quota released (invalid state fallback): ${bookId}/${chapterId}/${sceneId}`);
         return { handled: false, nextStage: null, reason: 'invalid_state' };
     }
 
@@ -698,13 +751,17 @@ async function handleAudioCompleted(redis, scene, loadedBook, buildId) {
     const isReady = await audio.isSceneAudioReady(buildId, bookId, chapterId, sceneId, require('music-metadata'));
     if (!isReady) {
         error(`Audio not ready after completion: ${bookId}/${chapterId}/${sceneId}`);
+        const scene = { book_id: bookId, chapter_id: chapterId, scene_id: sceneId };
         await logEvent(redis, scene, 'AUDIO_FAILED', state.SceneState.AUDIO_READY, {
             reason: 'not_ready_validation'
         });
+        await dispatchEngine.releaseQuota(redis, 'audio');
+        log(`🔻 AUDIO quota released (not ready fallback): ${bookId}/${chapterId}/${sceneId}`);
         return { handled: true, nextStage: null, reason: 'audio_not_ready' };
     }
 
     // Log event to journal
+    const scene = { book_id: bookId, chapter_id: chapterId, scene_id: sceneId };
     await logEvent(redis, scene, 'AUDIO_COMPLETED', state.SceneState.AUDIO_READY, {
         buildId
     });
@@ -754,6 +811,10 @@ async function handleAudioCompleted(redis, scene, loadedBook, buildId) {
         state.SceneState.AUDIO_READY
     );
 
+    // Release dispatch quota so worker pulse stops
+    await dispatchEngine.releaseQuota(redis, 'audio');
+    log(`🔻 AUDIO quota released (completed): ${bookId}/${chapterId}/${sceneId}`);
+
     log(`AUDIO_CALLBACK: ${bookId}/${chapterId}/${sceneId} -> AUDIO_READY`);
 
     // Return next stage decision (scheduler will decide when to execute)
@@ -770,17 +831,15 @@ async function handleAudioCompleted(redis, scene, loadedBook, buildId) {
  * KEY CHANGE: Passive callback - only registers completion.
  * The scheduler decides when to progress to video.
  */
-async function handleImageCompleted(redis, scene, loadedBook, buildId) {
-    const bookId = scene.book_id;
-    const chapterId = scene.chapter_id;
-    const sceneId = scene.scene_id;
-
+async function handleImageCompleted(redis, bookId, chapterId, sceneId, buildId) {
     log(`IMAGE_CALLBACK: ${bookId}/${chapterId}/${sceneId}`);
 
     // Only proceed if we're in IMAGE_GENERATING state
     const currentState = await state.getSceneState(redis, bookId, chapterId, sceneId);
     if (!currentState || currentState.state !== state.SceneState.IMAGE_GENERATING) {
         warn(`IMAGE_CALLBACK: Invalid state: ${currentState?.state || 'no_state'}`);
+        await dispatchEngine.releaseQuota(redis, 'image');
+        log(`🔻 IMAGE quota released (invalid state fallback): ${bookId}/${chapterId}/${sceneId}`);
         return { handled: false, nextStage: null, reason: 'invalid_state' };
     }
 
@@ -795,9 +854,12 @@ async function handleImageCompleted(redis, scene, loadedBook, buildId) {
 
     if (!sceneImage) {
         error(`Scene image not found after completion: ${bookId}/${chapterId}/${sceneId}`);
+        const scene = { book_id: bookId, chapter_id: chapterId, scene_id: sceneId };
         await logEvent(redis, scene, 'IMAGE_FAILED', state.SceneState.IMAGE_GENERATING, {
             reason: 'not_found'
         });
+        await dispatchEngine.releaseQuota(redis, 'image');
+        log(`🔻 IMAGE quota released (not found fallback): ${bookId}/${chapterId}/${sceneId}`);
         return { handled: true, nextStage: null, reason: 'image_not_found' };
     }
 
@@ -819,6 +881,7 @@ async function handleImageCompleted(redis, scene, loadedBook, buildId) {
     }
 
     // Log completion event
+    const scene = { book_id: bookId, chapter_id: chapterId, scene_id: sceneId };
     await logEvent(redis, scene, 'IMAGE_COMPLETED', state.SceneState.IMAGE_READY, {
         buildId,
         path: sceneImage
@@ -836,9 +899,11 @@ async function handleImageCompleted(redis, scene, loadedBook, buildId) {
         state.SceneState.IMAGE_READY
     );
 
-    log(`IMAGE_CALLBACK: ${bookId}/${chapterId}/${sceneId} -> IMAGE_READY`);
+    // Release dispatch quota so worker pulse stops
+    await dispatchEngine.releaseQuota(redis, 'image');
+    log(`🔻 IMAGE quota released (completed): ${bookId}/${chapterId}/${sceneId}`);
 
-    // Slide window disabled — user triggers next batch via POST /api/v1/book/:id/generate-next
+    log(`IMAGE_CALLBACK: ${bookId}/${chapterId}/${sceneId} -> IMAGE_READY`);
 
     // Return next stage decision (scheduler will decide when to execute)
     return { 
@@ -854,17 +919,15 @@ async function handleImageCompleted(redis, scene, loadedBook, buildId) {
  * KEY CHANGE: Passive callback - only registers completion.
  * The scheduler will remove scene from active index.
  */
-async function handleVideoCompleted(redis, scene, loadedBook, buildId) {
-    const bookId = scene.book_id;
-    const chapterId = scene.chapter_id;
-    const sceneId = scene.scene_id;
-
+async function handleVideoCompleted(redis, bookId, chapterId, sceneId, buildId) {
     log(`VIDEO_CALLBACK: ${bookId}/${chapterId}/${sceneId}`);
 
     // Only proceed if we're in VIDEO_GENERATING state
     const currentState = await state.getSceneState(redis, bookId, chapterId, sceneId);
     if (!currentState || currentState.state !== state.SceneState.VIDEO_GENERATING) {
         warn(`VIDEO_CALLBACK: Invalid state: ${currentState?.state || 'no_state'}`);
+        await dispatchEngine.releaseQuota(redis, 'video');
+        log(`🔻 VIDEO quota released (invalid state fallback): ${bookId}/${chapterId}/${sceneId}`);
         return { handled: false, nextStage: null, reason: 'invalid_state' };
     }
 
@@ -874,9 +937,12 @@ async function handleVideoCompleted(redis, scene, loadedBook, buildId) {
 
     if (!valid) {
         error(`Video not valid after completion: ${bookId}/${chapterId}/${sceneId}`);
+        const scene = { book_id: bookId, chapter_id: chapterId, scene_id: sceneId };
         await logEvent(redis, scene, 'VIDEO_FAILED', state.SceneState.VIDEO_GENERATING, {
             reason: 'invalid'
         });
+        await dispatchEngine.releaseQuota(redis, 'video');
+        log(`🔻 VIDEO quota released (invalid fallback): ${bookId}/${chapterId}/${sceneId}`);
         return { handled: true, nextStage: null, reason: 'video_invalid' };
     }
 
@@ -896,6 +962,7 @@ async function handleVideoCompleted(redis, scene, loadedBook, buildId) {
     }
 
     // Log completion event
+    const scene = { book_id: bookId, chapter_id: chapterId, scene_id: sceneId };
     await logEvent(redis, scene, 'VIDEO_COMPLETED', state.SceneState.VIDEO_READY, {
         buildId,
         path: videoPath,
@@ -917,14 +984,19 @@ async function handleVideoCompleted(redis, scene, loadedBook, buildId) {
         state.SceneState.VIDEO_READY
     );
 
+    // Release dispatch quota so worker pulse stops
+    await dispatchEngine.releaseQuota(redis, 'video');
+    log(`🔻 VIDEO quota released (completed): ${bookId}/${chapterId}/${sceneId}`);
+
     // Remove from active scenes index
     await runtimeScheduler.removeSceneFromActiveIndex(redis, bookId, chapterId, sceneId);
     log(`SCENE COMPLETE: ${bookId}/${chapterId}/${sceneId} - removed from active index`);
 
     // Auto-slide the window: when the current window is fully complete, start the next batch.
     try {
+        const bookData = book.loadBook(bookId);
         const sceneWindow = require('../runtime/scene-window');
-        const slide = await sceneWindow.trySlideWindowOnComplete(redis, bookId, loadedBook, buildId);
+        const slide = await sceneWindow.trySlideWindowOnComplete(redis, bookId, bookData, buildId);
         if (slide && slide.started > 0) {
             log(`SCENE-COMPLETE auto-slide: started=${slide.started} remaining=${slide.remaining}`);
         } else if (slide && slide.remaining === 0 && slide.started === 0) {

@@ -213,9 +213,35 @@ async function startServer() {
             }
         });
 
-        // Reconcile counters
+        // Reset stale active counters and reconcile
         setImmediate(async () => {
             try {
+                // Force-reset active counters to 0 on startup. These are runtime
+                // optimizations (backpressure), not source of truth — leases are.
+                // Prevents stale counters from previous sessions keeping pulse alive.
+                await redis.del('animastor:runtime:active-audio');
+                await redis.del('animastor:runtime:active-image');
+                await redis.del('animastor:runtime:active-video');
+                log('[STARTUP] Stale active counters reset to 0');
+
+                // Clean up stale dispatch leases to prevent DISPATCH_SKIPPED_DUPLICATE loops
+                // Leases that survive a restart are orphans (no worker will complete them).
+                try {
+                    let cursor = '0';
+                    let cleaned = 0;
+                    do {
+                        const scan = await redis.scan(cursor, 'MATCH', 'animastor:dispatch-lease:*', 'COUNT', 200);
+                        cursor = scan[0];
+                        if (scan[1].length > 0) {
+                            await redis.del(scan[1]);
+                            cleaned += scan[1].length;
+                        }
+                    } while (cursor !== '0');
+                    if (cleaned > 0) log(`[STARTUP] Cleared ${cleaned} stale dispatch leases`);
+                } catch (leaseErr) {
+                    warn(`[STARTUP] Failed to clear stale leases: ${leaseErr.message}`);
+                }
+
                 const reconcileCounters = require('./runtime/counter-reconciliation');
                 await reconcileCounters.reconcileCounters(redis);
                 log('[STARTUP] Counter reconciliation complete');

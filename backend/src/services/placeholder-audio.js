@@ -144,11 +144,14 @@ async function hasRealAudio(bookId, chapterId, sceneId, buildId) {
  * @returns {Promise<{created: boolean, path: string|null, durationSec: number, reason: string}>}
  */
 async function ensurePlaceholderAudio(buildId, bookId, chapterId, sceneId) {
-    // 1. Skip if real audio already exists
+    // 1. Skip if real audio already exists AND file is on disk
     const existingAsset = await sceneAssetsRepo.getAsset(bookId, chapterId, sceneId, 'audio', buildId);
     if (existingAsset && existingAsset.status === 'ready') {
-        log(`Real audio already exists for ${bookId}/${chapterId}/${sceneId}, skipping placeholder`);
-        return { created: false, path: existingAsset.path, durationSec: existingAsset.duration_sec, reason: 'real_audio_exists' };
+        if (existingAsset.path && fs.existsSync(existingAsset.path)) {
+            log(`Real audio already exists for ${bookId}/${chapterId}/${sceneId}, skipping placeholder`);
+            return { created: false, path: existingAsset.path, durationSec: existingAsset.duration_sec, reason: 'real_audio_exists' };
+        }
+        log(`Stale ready record for ${bookId}/${chapterId}/${sceneId} (file missing), regenerating placeholder`);
     }
 
     // If a placeholder already exists and is not stale, skip

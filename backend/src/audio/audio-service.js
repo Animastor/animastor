@@ -427,66 +427,108 @@ async function mergeSceneAudioChunks(redis, bookId, chapterId, sceneId, buildId,
     }
 }
 
-async function trimPaddedSceneAudio(filePath) {
-    const { spawn } = require('child_process');
-    const fs = require('fs');
-    return new Promise((resolve, reject) => {
-        // Detect silence between repetitions: use lower threshold and shorter min duration
-        const ffmpeg = spawn('ffmpeg', [
+/**
+ * Probe audio duration via ffprobe.
+ * Returns duration in seconds or 0 on failure.
+ */
+function probeDuration(filePath) {
+    return new Promise((resolve) => {
+        const { spawn } = require('child_process');
+        const probe = spawn('ffprobe', [
+            '-v', 'error',
+            '-show_entries', 'format=duration',
+            '-of', 'csv=p=0',
+            filePath
+        ]);
+        let out = '';
+        probe.stdout.on('data', d => { out += d.toString(); });
+        probe.on('close', code => {
+            if (code !== 0) { resolve(0); return; }
+            const dur = parseFloat(out.trim());
+            resolve(Number.isFinite(dur) && dur > 0 ? dur : 0);
+        });
+        probe.on('error', () => resolve(0));
+    });
+}
+
+/**
+ * Cut first `duration` seconds from filePath into outputPath using stream copy.
+ * Resolves true on success, false on failure.
+ */
+function cutFirstHalf(filePath, outputPath, duration) {
+    return new Promise((resolve) => {
+        const { spawn } = require('child_process');
+        const cut = spawn('ffmpeg', [
+            '-i', filePath,
+            '-t', String(duration),
+            '-c', 'copy',
+            '-y', outputPath
+        ]);
+        cut.on('close', code => resolve(code === 0));
+        cut.on('error', () => resolve(false));
+    });
+}
+
+/**
+ * Detect first silence end timestamp using ffmpeg silencedetect filter.
+ * Returns silence end time in seconds, or 0 if no silence found.
+ */
+function detectFirstSilence(filePath) {
+    return new Promise((resolve) => {
+        const { spawn } = require('child_process');
+        const ff = spawn('ffmpeg', [
             '-i', filePath,
             '-af', 'silencedetect=noise=-25dB:d=0.25',
             '-f', 'null',
             '-y', '/dev/null'
         ]);
-
         let stderr = '';
-        ffmpeg.stderr.on('data', data => { stderr += data.toString(); });
-        ffmpeg.on('close', code => {
-            if (code !== 0) { resolve(); return; }
+        ff.stderr.on('data', data => { stderr += data.toString(); });
+        ff.on('close', code => {
+            if (code !== 0) { resolve(0); return; }
             const matches = [...stderr.matchAll(/silence_end:\s*([\d.]+)/g)];
-            let cutTime = null;
             if (matches.length > 0) {
                 const t = parseFloat(matches[0][1]);
-                if (t && t > 0.3) cutTime = t;
+                if (Number.isFinite(t) && t > 0.3) resolve(t);
             }
-            if (!cutTime) {
-                // Fallback: probe duration and cut at half
-                const { spawn: sp } = require('child_process');
-                const probe = sp('ffprobe', ['-v','error','-show_entries','format=duration','-of','csv=p=0', filePath]);
-                let out = '';
-                probe.stdout.on('data', d => { out += d.toString(); });
-                probe.on('close', pCode => {
-                    if (pCode !== 0) { resolve(); return; }
-                    const dur = parseFloat(out.trim());
-                    if (!dur || dur < 0.6) { resolve(); return; }
-                    cutTime = dur / 2;
-                    doCut(cutTime);
-                });
-                probe.on('error', () => resolve());
-            } else {
-                doCut(cutTime);
-            }
-
-            function doCut(ct) {
-                const tempPath = filePath + '.trim.mp3';
-                const cut = spawn('ffmpeg', [
-                    '-i', filePath, '-t', String(ct),
-                    '-c', 'copy', '-y', tempPath
-                ]);
-                cut.on('close', cutCode => {
-                    if (cutCode === 0 && fs.existsSync(tempPath)) {
-                        try {
-                            fs.renameSync(tempPath, filePath);
-                            log(`Padded audio trimmed at ${ct.toFixed(1)}s: ${path.basename(filePath)}`);
-                        } catch (e) {}
-                    }
-                    resolve();
-                });
-                cut.on('error', () => resolve());
-            }
+            resolve(0);
         });
-        ffmpeg.on('error', () => resolve());
+        ff.on('error', () => resolve(0));
     });
+}
+
+async function trimPaddedSceneAudio(filePath) {
+    const basename = path.basename(filePath);
+    log(`✂️ trimPaddedSceneAudio: trimming ${basename}`);
+
+    // 1. Get total duration
+    const duration = await probeDuration(filePath);
+    if (!duration || duration < 0.5) {
+        log(`⚠️ trimPaddedSceneAudio: duration=${duration}s too short for ${basename}, skipping`);
+        return;
+    }
+
+    // 2. Try to find silence between the two repeated phrases
+    const silenceEnd = await detectFirstSilence(filePath);
+    const cutTime = (silenceEnd > 0.3) ? silenceEnd : (duration / 2);
+
+    const method = (silenceEnd > 0.3) ? 'silence' : 'half-duration';
+    log(`✂️ trimPaddedSceneAudio: total=${duration.toFixed(2)}s, ${method} cut at ${cutTime.toFixed(2)}s for ${basename}`);
+
+    // 3. Cut
+    const tempPath = filePath + '.trim.mp3';
+    const ok = await cutFirstHalf(filePath, tempPath, cutTime);
+    if (ok) {
+        try {
+            const fs = require('fs');
+            fs.renameSync(tempPath, filePath);
+            log(`✅ trimPaddedSceneAudio: trimmed ${basename} → kept first ${cutTime.toFixed(1)}s (${method})`);
+        } catch (e) {
+            log(`⚠️ trimPaddedSceneAudio: rename failed for ${basename}: ${e.message}`);
+        }
+    } else {
+        log(`⚠️ trimPaddedSceneAudio: ffmpeg cut failed for ${basename}, file unchanged`);
+    }
 }
 
 /**
@@ -601,6 +643,7 @@ function narratorVoice(scene, book) {
 
 function padShortText(text) {
     if (text.length >= 40) return text;
+    log(`📐 Short text detected (${text.length} chars) — duplicating: "${text}" → "${text} ${text}"`);
     return text + " " + text;
 }
 
@@ -609,6 +652,9 @@ function buildSegments(runtimeEntry) {
         const rawText = runtimeEntry.payload?.audio?.full_text || "";
         const isPadded = rawText.length < 40;
         const fullText = isPadded ? padShortText(rawText) : rawText;
+        if (isPadded) {
+            log(`📐 buildSegments: short text (${rawText.length} chars) → padded mode ON for "${rawText}"`);
+        }
         const chunks = splitTextIntoChunks(fullText);
         return chunks.map((text, i) => ({
             segment_id: String(i + 1).padStart(4, "0"),
@@ -681,31 +727,32 @@ async function generateSceneAudio(redis, sceneData, loadedBook, buildId, bookId)
             const id = makeChunkId(chapterId, sceneId, chunkIndex, bookId);
             const chunkKey = `animastor:chunk:${id}`;
             const existingChunk = await redis.get(chunkKey);
-            if (!existingChunk) {
-                const segment = segments[i];
-                const chunkData = {
-                    build_id: buildId,
-                    book_id: bookId,
-                    chapter_id: chapterId,
-                    scene_id: sceneId,
-                    chunk_index: String(chunkIndex).padStart(4, '0'),
-                    expected_chunk_count: expectedChunkCount,
-                    scene_type: sceneData.scene_type,
-                    audio: true,
-                    audio_status: 'ready',
-                    padded_text: segment.padded || false
-                };
-                await redis.set(chunkKey, JSON.stringify(chunkData));
-                await redis.sadd(`animastor:chunks:${bookId}`, id);
-            } else {
-                // Chunk exists with stale 'pending' status — update to reflect reality
-                const existing = JSON.parse(existingChunk);
-                if (existing.audio_status !== 'ready') {
-                    existing.audio = true;
-                    existing.audio_status = 'ready';
+                if (existingChunk) {
+                    const segment = segments[i];
+                    const existing = JSON.parse(existingChunk);
+                    existing.padded_text = segment.padded || false;
+                    if (existing.audio_status !== 'ready') {
+                        existing.audio = true;
+                        existing.audio_status = 'ready';
+                    }
                     await redis.set(chunkKey, JSON.stringify(existing));
+                } else {
+                    const segment = segments[i];
+                    const chunkData = {
+                        build_id: buildId,
+                        book_id: bookId,
+                        chapter_id: chapterId,
+                        scene_id: sceneId,
+                        chunk_index: String(chunkIndex).padStart(4, '0'),
+                        expected_chunk_count: expectedChunkCount,
+                        scene_type: sceneData.scene_type,
+                        audio: true,
+                        audio_status: 'ready',
+                        padded_text: segment.padded || false
+                    };
+                    await redis.set(chunkKey, JSON.stringify(chunkData));
+                    await redis.sadd(`animastor:chunks:${bookId}`, id);
                 }
-            }
         }
         await redis.del(sceneLockKey);
         return { generated: false, reason: 'already_ready' };
@@ -723,7 +770,13 @@ async function generateSceneAudio(redis, sceneData, loadedBook, buildId, bookId)
         // Save chunk metadata FIRST so webhook can find it
         const chunkKey = `animastor:chunk:${id}`;
         const existingChunk = await redis.get(chunkKey);
-        if (!existingChunk) {
+        if (existingChunk) {
+            // Fix padded_text on existing chunks (e.g. from LOAD-VBOOK which defaults to false)
+            const segment = segments[i];
+            const existing = JSON.parse(existingChunk);
+            existing.padded_text = segment.padded || false;
+            await redis.set(chunkKey, JSON.stringify(existing));
+        } else {
             const segment = segments[i];
             const chunkData = {
                 build_id: buildId,

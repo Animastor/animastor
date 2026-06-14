@@ -383,6 +383,7 @@ async function startScene(redis, s, buildId, bookId) {
             data.video = false;
             data.video_status = 'pending';
             data.build_id = buildId;
+            data.padded_text = segments[i]?.padded || false;
             await redis.set(chunkKey, JSON.stringify(data));
         } else {
             const chunkData = {

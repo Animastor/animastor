@@ -194,6 +194,17 @@ module.exports = function(redis, config, deps) {
             try {
                 const hasReal = await placeholderAudio.hasRealAudio(book_id, chapter_id, scene_id, build_id);
                 if (hasReal) {
+                    // Before delegating, trim canonical if this scene uses padded text
+                    if (chunk.padded_text) {
+                        const canonPath = path.join(buildDir, `${book_id}_${chapter_id}_${scene_id}.mp3`);
+                        if (fs.existsSync(canonPath)) {
+                            try {
+                                await audio.trimPaddedSceneAudio(canonPath);
+                            } catch (trimErr) {
+                                console.warn(`⚠️ Trim of existing canonical failed: ${trimErr.message}`);
+                            }
+                        }
+                    }
                     log(`🎵 Scene audio already ready (real): ${book_id}/${chapter_id}/${scene_id} — delegating to orchestrator`);
                     await orchestrator.handleAudioCompleted(redis, book_id, chapter_id, scene_id, build_id);
                     return;
@@ -236,11 +247,13 @@ module.exports = function(redis, config, deps) {
         }
 
         try {
-            // First check if padded audio trimming is needed
+            // First check if padded audio trimming is needed (short text duplication removal)
             if (chunk.padded_text) {
+                log(`✂️ Padded text detected — trimming duplicated audio for ${book_id}/${chapter_id}/${scene_id}`);
                 for (let i = 0; i < chunkPaths.length; i++) {
                     try {
-                        await audio.trimAudioChunk(chunkPaths[i], chunkPaths[i].replace(/\.mp3$/, '_trimmed.mp3'));
+                        await audio.trimPaddedSceneAudio(chunkPaths[i]);
+                        log(`✅ Trimmed padded chunk ${i + 1}/${chunkPaths.length}: ${path.basename(chunkPaths[i])}`);
                     } catch (trimErr) {
                         console.warn(`⚠️ Trim failed for ${chunkPaths[i]}: ${trimErr.message}`);
                     }
@@ -248,7 +261,6 @@ module.exports = function(redis, config, deps) {
             }
 
             // Merge chunks into canonical audio using mergeSceneAudioChunks
-            // (buildSceneAudio handles single-chunk trim, rename, and chunk cleanup)
             const mergeResult = await audio.mergeSceneAudioChunks(redis, book_id, chapter_id, scene_id, build_id, expectedCount);
 
             if (!mergeResult) {
@@ -260,17 +272,16 @@ module.exports = function(redis, config, deps) {
                 }
             }
 
-            // Cleanup trimmed files
-            if (chunk.padded_text) {
-                for (const cp of chunkPaths) {
-                    const trimmedPath = cp.replace(/\.mp3$/, '_trimmed.mp3');
-                    if (fs.existsSync(trimmedPath)) {
-                        try { fs.unlinkSync(trimmedPath); } catch (_) {}
-                    }
-                }
+            await orchestrator.handleAudioCompleted(redis, book_id, chapter_id, scene_id, build_id);
+
+            // Release dispatch lease so scene can be re-dispatched
+            try {
+                const dispatchEngine = require('../runtime/dispatch-engine');
+                await dispatchEngine.markDispatchCompleted(redis, book_id, chapter_id, scene_id, 'audio');
+            } catch (dispErr) {
+                console.warn(`⚠️ markDispatchCompleted failed: ${dispErr.message}`);
             }
 
-            await orchestrator.handleAudioCompleted(redis, book_id, chapter_id, scene_id, build_id);
             log(`🎵 Audio merge complete for ${book_id}/${chapter_id}/${scene_id}`);
         } catch (err) {
             console.error(`❌ Audio merge failed for ${book_id}/${chapter_id}/${scene_id}:`, err.message);
