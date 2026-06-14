@@ -400,27 +400,31 @@ class GenerateViewModel(
                         waitWindowReady(chunkIds.take(minOf(INITIAL_WAIT_COUNT, chunkIds.size)))
                     }
 
-                    // Try to get cover image
+                    // Try to get cover image from cover.json first
                     if (imageEnabled) {
-                        cover = runCatching {
-                            val sb = _repository.getChunkStoryboard(firstId)
-                            if (sb.ius.isNotEmpty()) {
-                                val iu = sb.ius.first()
-                                val imgBytes = _repository.getIuImage(
-                                    sb.book_id ?: bookId,
-                                    sb.chapter_id ?: "",
-                                    sb.scene_id ?: "",
-                                    iu.unit_id,
-                                    sb.build_id
-                                )
-                                MediaDecoder.decodeBitmap(imgBytes)
-                            } else null
-                        }.getOrElse { e ->
-                            Log.w(TAG, "cover from IU failed: ${e.message}")
-                            runCatching {
-                                val imgBytes = _repository.getChunkImage(firstId)
-                                MediaDecoder.decodeBitmap(imgBytes)
-                            }.getOrNull()
+                        cover = loadCoverImage()
+                        if (cover == null) {
+                            // Fallback: try first chunk's first IU (legacy)
+                            cover = runCatching {
+                                val sb = _repository.getChunkStoryboard(firstId)
+                                if (sb.ius.isNotEmpty()) {
+                                    val iu = sb.ius.first()
+                                    val imgBytes = _repository.getIuImage(
+                                        sb.book_id ?: bookId,
+                                        sb.chapter_id ?: "",
+                                        sb.scene_id ?: "",
+                                        iu.unit_id,
+                                        sb.build_id
+                                    )
+                                    MediaDecoder.decodeBitmap(imgBytes)
+                                } else null
+                            }.getOrElse { e ->
+                                Log.w(TAG, "cover from IU failed: ${e.message}")
+                                runCatching {
+                                    val imgBytes = _repository.getChunkImage(firstId)
+                                    MediaDecoder.decodeBitmap(imgBytes)
+                                }.getOrNull()
+                            }
                         }
                     }
                 }
@@ -861,6 +865,33 @@ class GenerateViewModel(
                 val msg = if (e is java.io.IOException && e.message != null) e.message!! else "Import text failed: ${e.message}"
                 _uiState.update { it.copy(phase = PlayerPhase.IDLE, errorMessage = msg, importStage = null, importProgress = 0f) }
             }
+        }
+    }
+    // ═══════════════════════════════════════════════════════════════
+    //  COVER IMAGE LOADING (from cover.json)
+    // ═══════════════════════════════════════════════════════════════
+
+    /**
+     * Load Cover image from cover.json via the /cover endpoint.
+     * Returns null if no cover exists or image not yet generated.
+     */
+    private suspend fun loadCoverImage(): Bitmap? {
+        val coverData = _repository.getCover(bookId) ?: return null
+        // If cover.json has units, try to load the first unit's image
+        if (coverData.units.isNullOrEmpty() || !imageEnabled) return null
+        val firstUnit = coverData.units.first()
+        return runCatching {
+            val imgBytes = _repository.getIuImage(
+                bookId = bookId,
+                chapterId = "__cover__",
+                sceneId = coverData.scene_id ?: "",
+                iuId = firstUnit.id ?: "",
+                buildId = buildId
+            )
+            MediaDecoder.decodeBitmap(imgBytes)
+        }.getOrElse { e ->
+            Log.w(TAG, "loadCoverImage: image not ready: ${e.message}")
+            null
         }
     }
 

@@ -635,10 +635,20 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
     private fun showIuMissingPlaceholder() {
         val b = binding ?: return
         try {
-            b.resultImage.setImageBitmap(null)
-            b.resultImage.visibility = View.INVISIBLE
-            b.placeholderText.visibility = View.INVISIBLE
-            b.iuMissingOverlay.visibility = View.VISIBLE
+            // Show Cover as fallback when no scene image is available
+            val cover = playbackViewModel.uiState.value.coverImage
+            if (cover != null) {
+                b.resultImage.setImageBitmap(null)
+                b.resultImage.visibility = View.INVISIBLE
+                b.coverImage.setImageBitmap(cover)
+                b.coverImage.visibility = View.VISIBLE
+                b.iuMissingOverlay.visibility = View.GONE
+            } else {
+                b.resultImage.setImageBitmap(null)
+                b.resultImage.visibility = View.INVISIBLE
+                b.placeholderText.visibility = View.INVISIBLE
+                b.iuMissingOverlay.visibility = View.VISIBLE
+            }
             anchorFullscreenToImage()
         } catch (e: Exception) {
             Log.w(TAG, "showIuMissingPlaceholder failed: ${e.message}")

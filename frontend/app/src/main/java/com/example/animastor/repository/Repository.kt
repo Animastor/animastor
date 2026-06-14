@@ -196,6 +196,16 @@ class Repository(
         return api.getBook(bookId)
     }
 
+    suspend fun getCover(bookId: String): CoverData? {
+        Log.d("Repo", "getCover: $bookId")
+        return runCatching {
+            api.getBookCover(bookId)
+        }.getOrElse { e ->
+            Log.w("Repo", "getCover failed: ${e.message}")
+            null
+        }
+    }
+
     suspend fun updateBook(bookId: String, bookData: BookData) {
         Log.d("Repo", "updateBook: $bookId")
         api.updateBook(bookId, bookData)

@@ -44,6 +44,11 @@ data class AssetsStateResponse(
     val scope_all_video_ready: Boolean = false,
     val scope_iu_total: Int = 0,
     val scope_iu_ready: Int = 0,
+    val cover_iu_total: Int = 0,
+    val cover_iu_ready: Int = 0,
+    val cover_image_total: Int = 0,
+    val cover_image_ready: Int = 0,
+    val cover_needs_generation: Boolean = false,
     val profile: String? = null
 )
 

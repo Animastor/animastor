@@ -4,28 +4,6 @@
   "type": "prologue",
   "scenes": [
     {
-      "scene_id": "sc-2a7fee78",
-      "type": "chapter_intro",
-      "style": "title_page",
-      "audio": {
-        "voice": "narrator",
-        "full_text": "Мастер и Маргарита. Михаил Афанасьевич Булгаков."
-      },
-      "units": [
-        {
-          "id": "iu-a8d4f90c",
-          "type": "typography",
-          "text": "Мастер и Маргарита. Михаил Афанасьевич Булгаков.",
-          "visual": {
-            "prompt": "full frame soviet book cover design, vertical composition, cover fills entire screen, minimalist dark soviet aesthetic, elegant typography, cinematic mood, top small cyrillic typography: \"Михаил Афанасьевич Булгаков\", center large cyrillic title: \"Мастер и Маргарита\"",
-            "quality": "highly detailed, sharp typography, clean composition",
-            "text_render": true,
-            "negative": ""
-          }
-        }
-      ]
-    },
-    {
       "scene_id": "sc-85fda2f1",
       "scene_title": "Пролог",
       "type": "chapter_intro",

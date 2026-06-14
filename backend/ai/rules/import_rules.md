@@ -18,6 +18,18 @@ Create a complete new book structure:
 6. Each unit has `text` field with the actual content
 7. Try to extract characters, locations, and add them to `characters` and `locations` arrays
 
+## Cover Scene (cover.json)
+The book cover is a **separate file** (`cover.json`) at the book root directory, NOT a scene inside any chapter.
+
+When creating a new book:
+1. If the book has a clear title and author, create a `cover.json` with:
+   - `type: "cover"`
+   - `audio.full_text`: author and title (e.g. `"Author Name\n\nBook Title"`)
+   - A single `typography` unit with `visual.text_render: true` and a prompt describing the book cover design
+2. The Cover is NOT added to any chapter — it lives in its own file
+3. See `cover_example.json` in the examples directory for the exact format
+4. See the real `cover.json` in the `master_margarita_demo` example book
+
 ## If a Book Is Already Open
 - **New chapter detected**: Create a new chapter at the end of the book's chapters array. Inside it, create scenes and units from the text.
 - **Current chapter continuation**: Add new scenes and units to the end of the current chapter's scenes array.

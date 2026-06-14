@@ -152,8 +152,10 @@
     <string name="progress_label_image">Image</string>
     <string name="progress_label_video">Video</string>
     <string name="progress_format">%1$s · %2$d / %3$d scenes</string>
+    <string name="progress_format_iu">%1$s · %2$d / %3$d modules</string>
     <string name="progress_idle">Idle</string>
     <string name="generation_done">Done</string>
+    <string name="progress_cover_generating">Generating cover...</string>
 
     <!-- IU not generated -->
     <string name="iu_not_generated">Not generated</string>

@@ -85,6 +85,7 @@ function getCharactersPath(bookDir) { return path.join(bookDir, 'characters.json
 function getBiblePath(bookDir) { return path.join(bookDir, 'bible.json'); }
 function getChapterDir(bookDir) { return path.join(bookDir, 'chapters'); }
 function getChapterPath(bookDir, file) { return path.join(getChapterDir(bookDir), file); }
+function getCoverPath(bookDir) { return path.join(bookDir, 'cover.json'); }
 
 // ======================================================
 // ID GENERATORS
@@ -184,6 +185,15 @@ function loadDraftBook(bookId) {
         const bibPath = getBiblePath(bookDir);
         if (fs.existsSync(bibPath)) bible = JSON.parse(fs.readFileSync(bibPath, 'utf8'));
 
+        // Optional cover.json
+        let cover = null;
+        const cvPath = getCoverPath(bookDir);
+        if (fs.existsSync(cvPath)) {
+            try { cover = JSON.parse(fs.readFileSync(cvPath, 'utf8')); } catch (e) {
+                console.warn(`[LAZY-BOOK] Failed to parse cover.json for ${bookId}: ${e.message}`);
+            }
+        }
+
         const chapters = [];
         const chDir = getChapterDir(bookDir);
         if (fs.existsSync(chDir)) {
@@ -194,7 +204,7 @@ function loadDraftBook(bookId) {
             }
         }
 
-        return { manifest, book: bookMeta, sourceText, characters, bible, chapters };
+        return { manifest, book: bookMeta, sourceText, characters, bible, chapters, cover };
     } catch (err) {
         console.error(`[LAZY-BOOK] Failed to load ${bookId}:`, err.message);
         return null;
@@ -696,7 +706,7 @@ function createChapterIntroScene(chapterTitle, chapterNumber, language) {
 }
 
 // ======================================================
-// CREATE COVER SCENE
+// CREATE COVER SCENE — returns scene object AND saves to cover.json
 // ======================================================
 
 function createCoverScene(title, author, language) {
@@ -733,6 +743,19 @@ function createCoverScene(title, author, language) {
             },
         }],
     };
+}
+
+/**
+ * Save cover scene to cover.json on disk.
+ * @param {string} bookId
+ * @param {Object} coverScene - The cover scene object (from createCoverScene)
+ */
+function saveCoverScene(bookId, coverScene) {
+    if (!coverScene) return;
+    const bookDir = getBookDir(bookId);
+    const coverPath = getCoverPath(bookDir);
+    fs.writeFileSync(coverPath, JSON.stringify(coverScene, null, 2));
+    console.log(`[LAZY-BOOK] Cover saved to cover.json for ${bookId}: "${coverScene.scene_title}"`);
 }
 
 // ======================================================
@@ -1020,19 +1043,22 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
         };
     }
 
-    // ---- Insert structural scenes (cover + chapter_intro) ----
+    // ---- Insert structural scenes (chapter_intro only) ----
+    // Cover is no longer a structural scene — it's saved separately as cover.json.
     // Only add structural scenes when the chapter is first created,
     // never when appending to an existing chapter that already has them.
     const structuralScenes = [];
 
     const hasChapterIntro = chapterObj.scenes.some(s => s.type === 'chapter_intro');
-    const hasCover = chapterObj.scenes.some(s => s.type === 'cover');
+    const hasCover = fs.existsSync(getCoverPath(bookDir));
 
-    // Always add cover scene for the first window (only if not already present)
+    // Save Cover to cover.json on first window (only if not already present on disk)
     if (isFirstWindow && !hasCover) {
         const coverTitle = structure?.title || bookMeta.title || 'Imported Book';
         const coverAuthor = structure?.author || bookMeta.author || null;
-        structuralScenes.push(createCoverScene(coverTitle, coverAuthor, language));
+        const coverScene = createCoverScene(coverTitle, coverAuthor, language);
+        saveCoverScene(bookId, coverScene);
+        console.log(`[LAZY-BOOK] Cover saved as cover.json for ${bookId}`);
     }
 
     // Add chapter_intro scenes from structure (only if not already present)
@@ -1052,7 +1078,7 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
         }
     }
 
-    // Prepend structural scenes before content scenes
+    // Prepend structural scenes (chapter_intro only) before content scenes
     for (const stScene of structuralScenes) {
         chapterObj.scenes.push(stScene);
     }
@@ -1308,4 +1334,8 @@ module.exports = {
     detectLanguage,
     chapterId, sceneId, unitId, generateBookId,
     DEFAULT_WINDOW_SIZE,
+    // Cover helpers
+    getCoverPath,
+    createCoverScene,
+    saveCoverScene,
 };

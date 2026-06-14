@@ -14,7 +14,8 @@ data class BookData(
     val book: BookMeta? = null,
     val bible: Bible? = null,
     val characters: List<CharDef>? = null,
-    val chapters: List<Chapter>? = null
+    val chapters: List<Chapter>? = null,
+    val cover: CoverData? = null
 )
 
 data class Manifest(
@@ -442,6 +443,22 @@ data class VisualConfig(
     val style: String? = null,
     val lighting: String? = null,
     val variation: String? = null
+)
+
+// ======================================================
+// Cover Data (from cover.json)
+// ======================================================
+
+data class CoverData(
+    val scene_id: String? = null,
+    val scene_title: String? = null,
+    val type: String? = null,
+    val style: String? = null,
+    val title: String? = null,
+    val author: String? = null,
+    val participants: List<String>? = null,
+    val audio: AudioConfig? = null,
+    val units: List<SceneUnit>? = null
 )
 
 fun BookData.chapterIndex(chapterId: String?): Int {

@@ -333,7 +333,10 @@ class MainActivity : AppCompatActivity() {
         if (isGenerating && active == 0 && isNeeded && total == 0) {
             tint = errorColor
             chip.alpha = 1f
-        } else if (active > 0) {
+        } else if (active > 0 || (isGenerating && isNeeded)) {
+            // Pulse when active > 0 OR when generation is in progress and this worker type is needed
+            // This prevents pulse from stopping prematurely when all leases are released
+            // but GPU is still processing (e.g. all images dispatched to ComfyUI)
             tint = activeColor
             chip.alpha = 1f
             val pulse = ObjectAnimator.ofFloat(chip, "alpha", 1f, 0.4f, 1f)
@@ -565,6 +568,20 @@ class MainActivity : AppCompatActivity() {
     private var gpuProgressDoneAt = 0L
 
     private fun showGpuProgress(assets: com.example.animastor.repository.AssetsStateResponse) {
+        // Phase 1: Cover generation (if needed) — shown BEFORE normal scope progress
+        if (assets.cover_needs_generation) {
+            gpuProgressDoneAt = 0L
+            binding.generationProgressContainer.visibility = View.VISIBLE
+            binding.generationProgressBar.isIndeterminate = false
+            val coverProgress = if (assets.cover_image_total > 0) {
+                ((assets.cover_image_ready.toFloat() / assets.cover_image_total.toFloat()) * 100).toInt().coerceIn(0, 100)
+            } else 0
+            binding.generationProgressBar.setProgressCompat(coverProgress, true)
+            binding.generationProgressLabel.text = getString(R.string.progress_cover_generating)
+            binding.generationProgressPercent.text = "${assets.cover_image_ready} / ${assets.cover_image_total}"
+            return
+        }
+
         val profileKey = viewModel.currentProfile()
         // For image profiles, prefer IU-level progress when available
         val isImageProfile = profileKey == "image_only" || profileKey == "storyboard" || (profileKey == "full" && assets.scope_image_ready > 0)
@@ -624,7 +641,9 @@ class MainActivity : AppCompatActivity() {
             binding.generationProgressBar.isIndeterminate = false
             val progress = if (total > 0) ((ready.toFloat() / total.toFloat()) * 100).toInt().coerceIn(0, 100) else 0
             binding.generationProgressBar.setProgressCompat(progress, true)
-            binding.generationProgressLabel.text = getString(R.string.progress_format, getString(label), ready, total)
+            // Use IU-specific format when showing image unit progress
+            val formatRes = if (useIuProgress) R.string.progress_format_iu else R.string.progress_format
+            binding.generationProgressLabel.text = getString(formatRes, getString(label), ready, total)
             binding.generationProgressPercent.text = "${progress}%"
         }
     }

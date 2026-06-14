@@ -128,8 +128,10 @@
     <string name="progress_label_image">Изображения</string>
     <string name="progress_label_video">Видео</string>
     <string name="progress_format">%1$s · %2$d / %3$d сцен</string>
+    <string name="progress_format_iu">%1$s · %2$d / %3$d модулей</string>
     <string name="progress_idle">Ожидание</string>
     <string name="generation_done">Готово</string>
+    <string name="progress_cover_generating">Генерация обложки...</string>
 
 
     <!-- IU not generated -->

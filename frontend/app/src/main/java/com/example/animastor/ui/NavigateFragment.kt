@@ -180,6 +180,14 @@ class NavigateFragment : Fragment(R.layout.fragment_navigate) {
     private fun updatePositionBar(pos: ActivePosition) {
         if (binding == null) return
         if (pos.chapterId != null) {
+            // Handle Cover (chapter_id = "__cover__")
+            if (pos.chapterId == "__cover__") {
+                val cover = bookData?.cover
+                val coverLabel = cover?.scene_title ?: "Cover"
+                val unitLabel = "${getString(R.string.navigate_unit)} ${pos.unitIndex + 1}"
+                positionLabel()?.text = "$coverLabel / $unitLabel"
+                return
+            }
             val ch = bookData?.chapters?.firstOrNull { it.chapter == pos.chapterId }
             val sc = ch?.scenes?.firstOrNull { it.scene_id == pos.sceneId }
             val chIdx = bookData?.chapterIndex(pos.chapterId) ?: 0
@@ -233,6 +241,51 @@ class NavigateFragment : Fragment(R.layout.fragment_navigate) {
             expandedScenes.clear()
             expandedScenes.add(posKey)
             lastPositionKey = posKey
+        }
+
+        // ── Cover scene (from cover.json) — first entity in the navigator ──
+        val cover = data.cover
+        if (cover != null && cover.scene_id != null) {
+            val coverChId = "__cover__"
+            val coverKey = "$coverChId|${cover.scene_id}"
+            val isCoverExpanded = expandedScenes.contains(coverKey) || pos.chapterId == coverChId
+            val coverLabel = when {
+                cover.scene_title != null -> "${getString(R.string.navigate_scene)} 1 — ${cover.scene_title}"
+                else -> "${getString(R.string.navigate_scene)} 1 — Cover"
+            }
+            val coverSceneItem = StructureItem.SceneItem(
+                id = coverKey,
+                label = coverLabel,
+                type = "cover",
+                style = cover.style,
+                expanded = isCoverExpanded,
+                units = cover.units ?: emptyList(),
+                chapterId = coverChId,
+                sceneId = cover.scene_id
+            )
+            items.add(coverSceneItem)
+
+            if (isCoverExpanded) {
+                val coverUnits = cover.units ?: emptyList()
+                for ((uIdx, u) in coverUnits.withIndex()) {
+                    val textPreview = u.text?.replace('\n', ' ')?.trim()
+                    val uLabel = if (textPreview != null) "${getString(R.string.navigate_unit)} ${uIdx + 1} — $textPreview"
+                        else "${getString(R.string.navigate_unit)} ${uIdx + 1}"
+                    val isActive = pos.chapterId == coverChId && pos.sceneId == cover.scene_id && uIdx == pos.unitIndex
+                    items.add(
+                        StructureItem.UnitItem(
+                            id = u.id ?: "cover-u$uIdx",
+                            label = uLabel,
+                            type = u.type,
+                            isActive = isActive,
+                            unit = u,
+                            index = uIdx,
+                            chapterId = coverChId,
+                            sceneId = cover.scene_id
+                        )
+                    )
+                }
+            }
         }
 
         for ((chIdx, ch) in chapters.withIndex()) {
@@ -307,6 +360,8 @@ class NavigateFragment : Fragment(R.layout.fragment_navigate) {
             }
         }
     }
+
+
 
     override fun onHiddenChanged(hidden: Boolean) {
         super.onHiddenChanged(hidden)
