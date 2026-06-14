@@ -297,13 +297,74 @@ class GenerateViewModel(
                                 }
                             }
                         }
-                        Log.i(TAG, "startGeneration: emitting playbackPrepared with ${chunkIds.size} chunks")
+                        // Try to load cover image from first chunk's first IU
+                        var cover: Bitmap? = null
+                        val firstId = chunkIds.firstOrNull()
+                        if (firstId != null && imageEnabled) {
+                            cover = runCatching {
+                                val sb = _repository.getChunkStoryboard(firstId)
+                                if (sb.ius.isNotEmpty()) {
+                                    val iu = sb.ius.first()
+                                    val imgBytes = _repository.getIuImage(
+                                        sb.book_id ?: bookId,
+                                        sb.chapter_id ?: "",
+                                        sb.scene_id ?: "",
+                                        iu.unit_id,
+                                        sb.build_id
+                                    )
+                                    MediaDecoder.decodeBitmap(imgBytes)
+                                } else null
+                            }.getOrElse {
+                                runCatching {
+                                    val imgBytes = _repository.getChunkImage(firstId)
+                                    MediaDecoder.decodeBitmap(imgBytes)
+                                }.getOrNull()
+                            }
+                        }
+                        Log.i(TAG, "startGeneration: emitting playbackPrepared with ${chunkIds.size} chunks cover=${cover != null}")
                         _playbackPrepared.tryEmit(PlaybackPreparation(
                             bookId = bookId,
                             buildId = buildId,
                             chunkIds = chunkIds,
+                            coverImage = cover,
                             chunkPositions = positions
                         ))
+                        // If cover wasn't ready yet, poll for it in background
+                        if (cover == null && firstId != null && imageEnabled) {
+                            viewModelScope.launch {
+                                pollWithBackoff(IMAGE_POLL_TIMEOUT_MS) {
+                                    val sb = runCatching { _repository.getChunkStoryboard(firstId) }.getOrNull()
+                                    sb != null && sb.ius.isNotEmpty()
+                                }
+                                // Now try to load the cover image
+                                val coverReady = runCatching {
+                                    val sb = _repository.getChunkStoryboard(firstId)
+                                    if (sb.ius.isNotEmpty()) {
+                                        val iu = sb.ius.first()
+                                        val imgBytes = _repository.getIuImage(
+                                            sb.book_id ?: bookId,
+                                            sb.chapter_id ?: "",
+                                            sb.scene_id ?: "",
+                                            iu.unit_id,
+                                            sb.build_id
+                                        )
+                                        val bitmap = MediaDecoder.decodeBitmap(imgBytes)
+                                        _uiState.update { it.copy(coverImage = bitmap) }
+                                        bitmap
+                                    } else null
+                                }.getOrNull()
+                                if (coverReady != null) {
+                                    _playbackPrepared.tryEmit(PlaybackPreparation(
+                                        bookId = bookId,
+                                        buildId = buildId,
+                                        chunkIds = chunkIds,
+                                        coverImage = coverReady,
+                                        chunkPositions = positions
+                                    ))
+                                    Log.i(TAG, "startGeneration: cover poll succeeded, re-emitted with cover")
+                                }
+                            }
+                        }
                     }
                 }
                 // Keep _activeGeneration alive: the progress bar polls getAssetsState
