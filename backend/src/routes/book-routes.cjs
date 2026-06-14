@@ -1077,6 +1077,32 @@ async function recoverMissingRedisChunks(buildId, bookId) {
                             scopeIuReady += Math.min(ready, rows.length);
                         }
                     }
+                    
+                    // Cover IU counts — read from book data (not from filteredIds, since Cover may be outside scope)
+                    const coverCh = book.loadBook(bookId)?.chapters?.find(ch => ch.type === 'cover');
+                    if (coverCh && coverCh.scenes && coverCh.scenes.length > 0) {
+                        const coverScene = coverCh.scenes[0];
+                        const coverChapterId = coverCh.chapter;
+                        const coverSceneId = coverScene.scene_id;
+                        const rows = await iuRepo.getImageUnitsForScene(buildId, bookId, coverChapterId, coverSceneId);
+                        if (rows.length > 0) {
+                            coverIuTotal = rows.length;
+                            const coverPrefix = `${bookId}_${coverChapterId}_${coverSceneId}_iu`;
+                            let files = [];
+                            try { files = fs.readdirSync(buildDir); } catch (_) {}
+                            coverIuReady = Math.min(files.filter(f => f.startsWith(coverPrefix) && f.endsWith('.png')).length, rows.length);
+                        } else {
+                            // Fallback: count from book data units
+                            const units = coverScene.units || [];
+                            coverIuTotal = units.length;
+                            if (coverIuTotal > 0) {
+                                const coverPrefix = `${bookId}_${coverChapterId}_${coverSceneId}_iu`;
+                                let files = [];
+                                try { files = fs.readdirSync(buildDir); } catch (_) {}
+                                coverIuReady = Math.min(files.filter(f => f.startsWith(coverPrefix) && f.endsWith('.png')).length, units.length);
+                            }
+                        }
+                    }
                 }
             } catch (_) {}
 
@@ -1103,6 +1129,8 @@ async function recoverMissingRedisChunks(buildId, bookId) {
                 scope_all_video_ready: videoReady === filteredIds.length && filteredIds.length > 0,
                 scope_iu_total: scopeIuTotal,
                 scope_iu_ready: scopeIuReady,
+                cover_iu_total: coverIuTotal,
+                cover_iu_ready: coverIuReady,
             });
         } catch (err) {
             console.error('[ASSETS-STATE] Error:', err.message);
@@ -1447,6 +1475,36 @@ async function recoverMissingRedisChunks(buildId, bookId) {
                 );
             }
 
+            // Check Cover chapter — always generate Cover first if missing images
+            const coverCh = (loadedBook.chapters || []).find(ch => ch.type === 'cover');
+            let coverNeedsGeneration = false;
+            if (coverCh && coverCh.scenes && coverCh.scenes.length > 0 && layerCfg.image_enabled !== false) {
+                const coverScene = coverCh.scenes[0];
+                const coverChapterId = coverCh.chapter;
+                const coverSceneId = coverScene.scene_id;
+                const buildDir = path.join(config.OUTPUT_DIR, buildId);
+                let coverHasImages = false;
+                if (fs.existsSync(buildDir)) {
+                    const iuPrefix = `${bookId}_${coverChapterId}_${coverSceneId}_iu`;
+                    const files = fs.readdirSync(buildDir).filter(f => f.startsWith(iuPrefix) && f.endsWith('.png'));
+                    const iuCount = (coverScene.units || []).length;
+                    coverHasImages = files.length >= iuCount && iuCount > 0;
+                }
+                if (!coverHasImages) {
+                    const alreadyDirty = filteredDirty.some(d => d.chapter_id === coverChapterId && d.scene_id === coverSceneId);
+                    if (!alreadyDirty) {
+                        filteredDirty.unshift({
+                            chapter_id: coverChapterId,
+                            scene_id: coverSceneId,
+                            reason: 'cover',
+                            dirty_layers: ['audio', 'image'],
+                        });
+                        coverNeedsGeneration = true;
+                        log(`[REGENERATE] ${bookId}: Cover prepended to dirty scenes (needs images)`);
+                    }
+                }
+            }
+
             // Mark dirty scenes
             const marked = await bookDiff.markDirtyScenes(redis, bookId, buildId, filteredDirty, layerCfg);
 
@@ -1454,6 +1512,7 @@ async function recoverMissingRedisChunks(buildId, bookId) {
                 book_id: bookId, scope: effectiveScope,
                 dirty_scenes: filteredDirty,
                 marked: marked.marked,
+                cover_needs_generation: coverNeedsGeneration,
             });
         } catch (err) {
             console.error('[REGENERATE] Error:', err.message);

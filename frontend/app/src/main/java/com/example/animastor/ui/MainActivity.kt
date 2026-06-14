@@ -569,16 +569,18 @@ class MainActivity : AppCompatActivity() {
 
     private fun showGpuProgress(assets: com.example.animastor.repository.AssetsStateResponse) {
         // Phase 1: Cover generation (if needed) — shown BEFORE normal scope progress
-        if (assets.cover_needs_generation) {
+        // Cover is always processed first when it needs images, regardless of scope
+        val coverInProgress = assets.cover_iu_total > 0 && assets.cover_iu_ready < assets.cover_iu_total
+        if (coverInProgress) {
             gpuProgressDoneAt = 0L
             binding.generationProgressContainer.visibility = View.VISIBLE
             binding.generationProgressBar.isIndeterminate = false
-            val coverProgress = if (assets.cover_image_total > 0) {
-                ((assets.cover_image_ready.toFloat() / assets.cover_image_total.toFloat()) * 100).toInt().coerceIn(0, 100)
+            val coverProgress = if (assets.cover_iu_total > 0) {
+                ((assets.cover_iu_ready.toFloat() / assets.cover_iu_total.toFloat()) * 100).toInt().coerceIn(0, 100)
             } else 0
             binding.generationProgressBar.setProgressCompat(coverProgress, true)
             binding.generationProgressLabel.text = getString(R.string.progress_cover_generating)
-            binding.generationProgressPercent.text = "${assets.cover_image_ready} / ${assets.cover_image_total}"
+            binding.generationProgressPercent.text = "${assets.cover_iu_ready} / ${assets.cover_iu_total}"
             return
         }
 

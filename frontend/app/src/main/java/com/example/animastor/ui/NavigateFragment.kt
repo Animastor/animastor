@@ -183,9 +183,12 @@ class NavigateFragment : Fragment(R.layout.fragment_navigate) {
             val ch = bookData?.chapters?.firstOrNull { it.chapter == pos.chapterId }
             val sc = ch?.scenes?.firstOrNull { it.scene_id == pos.sceneId }
             val chIdx = bookData?.chapterIndex(pos.chapterId) ?: 0
+            val chapters = bookData?.chapters ?: emptyList()
+            val isSpecial = ch?.type == "cover" || ch?.type == "prologue"
+            val realChNum = chapters.take(chIdx).count { it.type != "cover" && it.type != "prologue" } + 1
             val scIdx = bookData?.sceneIndex(pos.chapterId, pos.sceneId) ?: 0
             val uIdx = bookData?.unitIndex(pos.chapterId, pos.sceneId, pos.unitIndex) ?: 0
-            val chLabel = if (chIdx > 0) "${getString(R.string.navigate_chapter)} $chIdx" else ""
+            val chLabel = if (!isSpecial && chIdx > 0) "${getString(R.string.navigate_chapter)} $realChNum" else ""
             val scLabel = if (scIdx > 0) "${getString(R.string.navigate_scene)} $scIdx" else ""
             val unitLabel = if (uIdx > 0) "${getString(R.string.navigate_unit)} $uIdx" else ""
             if (chLabel.isEmpty()) { positionLabel()?.text = ""; return }
@@ -237,12 +240,14 @@ class NavigateFragment : Fragment(R.layout.fragment_navigate) {
 
         for ((chIdx, ch) in chapters.withIndex()) {
             val chTitle = ch.chapter_title?.take(60)?.replace('\n', ' ')?.trim()
-            val chLabel = if (ch.type == "cover") {
-                chTitle ?: "Обложка"
+            val realChNum = chapters.take(chIdx).count { it.type != "cover" && it.type != "prologue" } + 1
+            val isSpecial = ch.type == "cover" || ch.type == "prologue"
+            val chLabel = if (isSpecial) {
+                chTitle ?: (ch.type?.replaceFirstChar { it.uppercase() } ?: "")
             } else if (chTitle != null) {
-                "${getString(R.string.navigate_chapter)} ${chIdx + 1} — $chTitle"
+                "${getString(R.string.navigate_chapter)} $realChNum — $chTitle"
             } else {
-                "${getString(R.string.navigate_chapter)} ${chIdx + 1}"
+                "${getString(R.string.navigate_chapter)} $realChNum"
             }
             val chItem = StructureItem.ChapterItem(
                 id = ch.chapter ?: "ch$chIdx",
