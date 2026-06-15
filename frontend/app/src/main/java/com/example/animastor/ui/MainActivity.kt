@@ -503,6 +503,7 @@ class MainActivity : AppCompatActivity() {
             val bookId = viewModel.bookId
             if (bookId.isBlank()) {
                 binding.generationProgressContainer.visibility = View.GONE
+                lastReadyCount = -1
                 delay(1_500)
                 continue
             }
@@ -518,6 +519,31 @@ class MainActivity : AppCompatActivity() {
                         sceneId = activeGen.sceneId
                     )
                     showGpuProgress(assets)
+
+                    // Detect stuck progress: if ready count hasn't changed for >15s
+                    // AND no worker leases are active, auto-complete.
+                    val profileKey = viewModel.currentProfile()
+                    val currentReady = when (profileKey) {
+                        "audio_only" -> assets.scope_audio_ready
+                        else -> assets.scope_image_ready
+                    }
+                    if (currentReady != lastReadyCount) {
+                        lastReadyCount = currentReady
+                        lastReadyChangeAt = System.currentTimeMillis()
+                    } else if (currentReady < assets.scope_total && System.currentTimeMillis() - lastReadyChangeAt > 15_000) {
+                        // Check if any workers are active
+                        val idle = runCatching {
+                            val counts = RetrofitClient.api.getWorkerCounts()
+                            counts.active_audio + counts.active_image + counts.active_video == 0
+                        }.getOrDefault(true)
+                        if (idle) {
+                            Log.i("MainActivity", "Progress stuck at $currentReady/${assets.scope_total} with idle workers — auto-completing")
+                            viewModel.onGenerationComplete()
+                            refreshGenerateButton()
+                            binding.generationProgressContainer.visibility = View.GONE
+                            lastReadyCount = -1
+                        }
+                    }
                 } catch (e: Exception) {
                     Log.w("MainActivity", "GPU progress poll failed: ${e.message}")
                 }
@@ -525,12 +551,15 @@ class MainActivity : AppCompatActivity() {
                 if (binding.generationProgressContainer.visibility != View.GONE) {
                     binding.generationProgressContainer.visibility = View.GONE
                 }
+                lastReadyCount = -1
             }
             delay(1_500)
         }
     }
 
     private var gpuProgressDoneAt = 0L
+    private var lastReadyCount = -1
+    private var lastReadyChangeAt = 0L
 
     private fun showGpuProgress(assets: com.example.animastor.repository.AssetsStateResponse) {
         // Phase 1: Cover generation (if needed) — shown BEFORE normal scope progress

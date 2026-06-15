@@ -554,8 +554,15 @@ async function trimPaddedSceneAudio(filePath) {
     //    cut. The previous wide window (25%-75%) was unreliable — it could pick
     //    the wrong sentence boundary (e.g. 75%) when TTS added unequal silence gaps.
     const quietest = await findQuietestPoint(filePath, 0.40, 0.60);
-    const cutTime = (quietest > 0.3) ? quietest : (duration / 2);
-    const method = (quietest > 0.3) ? `quietest@${quietest.toFixed(2)}s` : 'half-duration';
+    let cutTime = (quietest > 0.3) ? quietest : (duration / 2);
+    // Add a 100ms safety margin after the quietest point to avoid clipping
+    // the last phoneme of the first repetition. For very short words like
+    // "пролог" the quiet point can fall right at the end of the word, cutting
+    // off the final consonant. The extra margin preserves natural sounding
+    // speech at the cost of a slightly longer silence between the two halves.
+    const safetyMargin = 0.10; // 100ms
+    cutTime = Math.min(cutTime + safetyMargin, duration * 0.55); // never exceed 55% of total
+    const method = (quietest > 0.3) ? `quietest@${quietest.toFixed(2)}s+${(safetyMargin*1000).toFixed(0)}ms` : 'half-duration';
     log(`✂️ trimPaddedSceneAudio: total=${duration.toFixed(2)}s, ${method} cut at ${cutTime.toFixed(2)}s for ${basename}`);
 
     // 3. Cut

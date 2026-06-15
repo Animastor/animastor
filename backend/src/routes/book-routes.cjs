@@ -1553,6 +1553,21 @@ async function recoverMissingRedisChunks(buildId, bookId) {
             // Mark dirty scenes
             const marked = await bookDiff.markDirtyScenes(redis, bookId, buildId, filteredDirty, layerCfg);
 
+            // Immediately restore chunk metadata for scenes that already have
+            // valid content on disk. Otherwise /assets-state would report stale
+            // 'pending' status until the runtime scheduler tick (up to 5s later)
+            // processes each scene via executeAudioDispatch.
+            let restoredCount = 0;
+            for (const ds of filteredDirty) {
+                if (await windowModule.sceneHasValidContent(redis, buildId, bookId, ds.chapter_id, ds.scene_id)) {
+                    await windowModule.restoreChunkStatusForScene(redis, buildId, bookId, ds.chapter_id, ds.scene_id);
+                    restoredCount++;
+                }
+            }
+            if (restoredCount > 0) {
+                log(`[REGENERATE] ${bookId}: restored chunk metadata for ${restoredCount}/${filteredDirty.length} scenes with existing content`);
+            }
+
             res.json({
                 book_id: bookId, scope: effectiveScope,
                 dirty_scenes: filteredDirty,
