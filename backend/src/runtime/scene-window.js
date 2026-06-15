@@ -132,6 +132,54 @@ async function sceneHasValidContent(redis, buildId, bookId, chapterId, sceneId) 
 }
 
 /**
+ * After markDirtyScenes resets chunk metadata, restore it based on
+ * which files actually exist on disk so /assets-state reports correct counts.
+ */
+async function restoreChunkStatusForScene(redis, buildId, bookId, chapterId, sceneId) {
+    const buildDir = path.join(OUTPUT_DIR, buildId);
+    if (!fs.existsSync(buildDir)) return;
+
+    const prefix = `animastor:chunk:${bookId}_${chapterId}_${sceneId}_`;
+    let cursor = '0';
+    do {
+        const scan = await redis.scan(cursor, 'MATCH', `${prefix}*`, 'COUNT', 100);
+        cursor = scan[0];
+        for (const key of scan[1]) {
+            const raw = await redis.get(key);
+            if (!raw) continue;
+            const data = JSON.parse(raw);
+            // Check audio file (real .mp3 or placeholder)
+            const audioPath = path.join(buildDir, `${bookId}_${chapterId}_${sceneId}.mp3`);
+            const audioExists = fs.existsSync(audioPath);
+            // Check for at least one IU image .png
+            const iuPrefix = `${bookId}_${chapterId}_${sceneId}_iu`;
+            let imageExists = false;
+            try {
+                const allFiles = fs.readdirSync(buildDir);
+                imageExists = allFiles.some(f => f.startsWith(iuPrefix) && f.endsWith('.png'));
+            } catch (_) {}
+            // Check video file
+            const videoPath = path.join(buildDir, `${bookId}_${chapterId}_${sceneId}.mp4`);
+            const videoExists = fs.existsSync(videoPath);
+
+            if (audioExists) {
+                data.audio = true;
+                data.audio_status = 'ready';
+            }
+            if (imageExists) {
+                data.image = true;
+                data.image_status = 'ready';
+            }
+            if (videoExists) {
+                data.video = true;
+                data.video_status = 'ready';
+            }
+            await redis.set(key, JSON.stringify(data));
+        }
+    } while (cursor !== '0');
+}
+
+/**
  * Check if generation was cancelled for this book.
  */
 async function isCancelled(redis, bookId) {
@@ -269,6 +317,7 @@ async function slideWindow(redis, bookId, loadedBook, buildId) {
             if (await sceneHasValidContent(redis, buildIdForCheck, bookId, scene.chapter_id, scene.scene_id)) {
                 log(`Scene ${scene.chapter_id}/${scene.scene_id} has valid content (state=${st}), promoting to ${state.SceneState.VIDEO_READY}`);
                 await state.transitionSceneState(redis, bookId, scene.chapter_id, scene.scene_id, state.SceneState.VIDEO_READY);
+                await restoreChunkStatusForScene(redis, buildIdForCheck, bookId, scene.chapter_id, scene.scene_id);
                 nextIdx++;
                 started++;
                 continue;
@@ -311,6 +360,9 @@ async function startScene(redis, s, buildId, bookId) {
     if (await sceneHasValidContent(redis, buildId, bookId, chapterId, sceneId)) {
         log(`Scene ${bookId}/${chapterId}/${sceneId}: valid content on disk, skipping GPU dispatch`);
         await state.setSceneStateWithBuildId(redis, bookId, chapterId, sceneId, state.SceneState.VIDEO_READY, buildId);
+        // Restore chunk metadata that was reset by markDirtyScenes so the progress
+        // endpoint (/assets-state) correctly counts this scene as ready.
+        await restoreChunkStatusForScene(redis, buildId, bookId, chapterId, sceneId);
         return true;
     }
 
