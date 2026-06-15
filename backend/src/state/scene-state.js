@@ -492,11 +492,29 @@ function getRecoveryPendingState(stuckState) {
  * @param {string} sceneId
  * @returns {Promise<string>} The derived linear state
  */
+/**
+ * Sync the linear FSM state from per-asset states.
+ * PRESERVES build_id from the current state so the scheduler can
+ * pass it to dispatch-engine when progressing to the next stage.
+ * Without this, syncLinearState would reset build_id to null,
+ * causing image/video dispatch to fail with "buildId is null".
+ */
 async function syncLinearState(redis, bookId, chapterId, sceneId) {
     const assetStates = await getAssetStates(redis, bookId, chapterId, sceneId);
     const linearState = deriveLinearState(assetStates);
-    await setSceneState(redis, bookId, chapterId, sceneId, linearState);
-    log(`SYNC LINEAR: ${bookId}/${chapterId}/${sceneId} -> ${linearState} (assets=${JSON.stringify(assetStates)})`);
+
+    // Read current state to preserve build_id
+    const currentRaw = await redis.get(`${SCENE_STATE_KEY_PREFIX}:${bookId}:${chapterId}:${sceneId}`);
+    let buildId = null;
+    if (currentRaw) {
+        try {
+            const current = JSON.parse(currentRaw);
+            buildId = current.build_id || null;
+        } catch (_) {}
+    }
+
+    await setSceneStateWithBuildId(redis, bookId, chapterId, sceneId, linearState, buildId);
+    log(`SYNC LINEAR: ${bookId}/${chapterId}/${sceneId} -> ${linearState} (build_id=${buildId}, assets=${JSON.stringify(assetStates)})`);
     return linearState;
 }
 

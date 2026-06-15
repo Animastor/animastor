@@ -488,7 +488,8 @@ async function reconcileWindowStatuses(redis, bookId, buildId) {
         }
 
         if (changed) {
-            await redis.set(`animastor:chunk:${cid}`, JSON.stringify(data));
+            // key is the full Redis key (animastor:chunk:bookId_chapterId_sceneId_index)
+            await redis.set(key, JSON.stringify(data));
             reconciled++;
         }
     }

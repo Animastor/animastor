@@ -135,7 +135,6 @@ class MainActivity : AppCompatActivity() {
         }
 
         setupWorkerToggles()
-        setupGenerationProgressClick()
         loadInitialLayerConfig()
         setupPlaybackCoordination()
 
@@ -354,16 +353,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun setupGenerationProgressClick() {
-        // Tap on progress area switches to the next active worker immediately
-        binding.generationProgressContainer.setOnClickListener {
-            if (activeWorkerList.size > 1) {
-                workerRotationIndex = (workerRotationIndex + 1) % activeWorkerList.size
-                lastWorkerRotationAt = System.currentTimeMillis()
-            }
-        }
-    }
-
     private fun loadInitialLayerConfig() {
         lifecycleScope.launch {
             viewModel.loadLayerConfig()
@@ -566,157 +555,170 @@ class MainActivity : AppCompatActivity() {
     private var lastReadyCount = -1
     private var lastReadyChangeAt = 0L
 
-    // ── Worker rotation state ─────────────────────────────────
+    // ── Progress state ───────────────────────────────────────
 
-    private data class WorkerInfo(
-        val type: String,          // "audio", "image", "video"
-        val labelResId: Int,
-        val ready: Int,
-        val total: Int,
-        val percent: Int,
-        val useIu: Boolean = false  // use IU counts (more granular) for image
-    )
+    private val COMPLETED_WORKER_DISPLAY_MS = 10_000L
 
-    private var workerRotationIndex = 0
-    private var lastWorkerRotationAt = 0L
-    private var activeWorkerList: List<WorkerInfo> = emptyList()
-    private val WORKER_ROTATION_INTERVAL = 5_000L
+    // Track when each worker type completed (to show green "Done" for 10s)
+    private val workerCompletedAt = mutableMapOf<String, Long>()
 
     /**
-     * Compute which workers are still active (have pending work) for the current profile.
-     * Completed workers (ready >= total) are excluded from rotation.
+     * Render progress of all active workers simultaneously — no rotation.
+     * Each worker gets its own row (name + percent + progress bar).
+     * Completed workers stay green for 10s, then fade out.
      */
-    private fun getActiveWorkers(assets: com.example.animastor.repository.AssetsStateResponse): List<WorkerInfo> {
-        val profile = viewModel.currentProfile()
-        val workers = mutableListOf<WorkerInfo>()
-        val total = assets.scope_total
-
-        // Cover: active if cover IU images are still generating.
-        // Cover runs first and in parallel with scene generation, so it gets
-        // a slot in rotation to avoid hiding the other workers while cover is busy.
-        val coverTotal = assets.cover_iu_total
-        if (coverTotal > 0) {
-            val coverReady = assets.cover_iu_ready
-            if (coverReady < coverTotal) {
-                workers.add(WorkerInfo(
-                    type = "cover",
-                    labelResId = R.string.progress_cover_generating,
-                    ready = coverReady,
-                    total = coverTotal,
-                    percent = (coverReady * 100 / coverTotal).coerceIn(0, 99),
-                    useIu = true  // cover counts are image units, not scenes
-                ))
-            }
-        }
-
-        if (total <= 0) return workers
-
-        // Audio: active if needed by profile AND has pending scenes
-        val audioNeeded = profile == "audio_only" || profile == "storyboard" || profile == "full"
-        if (audioNeeded && assets.scope_audio_ready < total) {
-            workers.add(WorkerInfo(
-                type = "audio",
-                labelResId = R.string.progress_label_audio,
-                ready = assets.scope_audio_ready,
-                total = total,
-                percent = (assets.scope_audio_ready * 100 / total).coerceIn(0, 99)
-            ))
-        }
-
-        // Image: active if needed by profile AND has pending scenes
-        val imageNeeded = profile == "image_only" || profile == "storyboard" || profile == "full"
-        if (imageNeeded && assets.scope_image_ready < total) {
-            // Use IU counts when available (more granular)
-            val useIu = assets.scope_iu_total > 0
-            val imgReady = if (useIu) assets.scope_iu_ready else assets.scope_image_ready
-            val imgTotal = if (useIu) assets.scope_iu_total else total
-            workers.add(WorkerInfo(
-                type = "image",
-                labelResId = R.string.progress_label_image,
-                ready = imgReady,
-                total = imgTotal,
-                percent = (imgReady * 100 / imgTotal).coerceIn(0, 99),
-                useIu = useIu
-            ))
-        }
-
-        // Video: active only in "full" profile AND has pending scenes
-        if (profile == "full" && assets.scope_video_ready < total) {
-            workers.add(WorkerInfo(
-                type = "video",
-                labelResId = R.string.progress_label_video,
-                ready = assets.scope_video_ready,
-                total = total,
-                percent = (assets.scope_video_ready * 100 / total).coerceIn(0, 99)
-            ))
-        }
-
-        return workers
-    }
-
     private fun showGpuProgress(assets: com.example.animastor.repository.AssetsStateResponse) {
         val total = assets.scope_total
+        val profile = viewModel.currentProfile()
+        val now = System.currentTimeMillis()
 
-        if (total <= 0) {
+        if (total <= 0 && assets.cover_iu_total <= 0) {
             binding.generationProgressContainer.visibility = View.GONE
             gpuProgressDoneAt = 0L
             return
         }
 
-        // Compute active workers (ones that still have pending work)
-        activeWorkerList = getActiveWorkers(assets)
+        // ── Build worker list ──
+        data class Wrk(
+            val type: String,
+            val label: String,
+            val ready: Int,
+            val total: Int,
+            val percent: Int,
+            val done: Boolean
+        )
 
-        if (activeWorkerList.isEmpty()) {
-            // All workers are done — show "Done" for 5 seconds
-            if (gpuProgressDoneAt == 0L) {
-                gpuProgressDoneAt = System.currentTimeMillis()
+        val workers = mutableListOf<Wrk>()
+
+        fun add(type: String, label: String, ready: Int, total: Int) {
+            if (total <= 0) return
+            val done = ready >= total && ready > 0
+            if (done) {
+                if (!workerCompletedAt.containsKey(type)) {
+                    workerCompletedAt[type] = now
+                }
             }
-            val elapsed = System.currentTimeMillis() - gpuProgressDoneAt
-            if (elapsed < 10000) {
+            val pct = if (done) 100 else (ready * 100 / total).coerceIn(0, 99)
+            if (ready < total || done) {
+                workers.add(Wrk(type, label, ready, total, pct, done))
+            }
+        }
+
+        // Cover (uses IU counts)
+        if (assets.cover_iu_total > 0) {
+            add("cover", getString(R.string.progress_cover_generating), assets.cover_iu_ready, assets.cover_iu_total)
+        }
+
+        if (total > 0) {
+            val audioNeeded = profile == "audio_only" || profile == "storyboard" || profile == "full"
+            if (audioNeeded) {
+                add("audio", getString(R.string.progress_label_audio), assets.scope_audio_ready, total)
+            }
+
+            val imageNeeded = profile == "image_only" || profile == "storyboard" || profile == "full"
+            if (imageNeeded) {
+                val useIu = assets.scope_iu_total > 0
+                add("image", getString(R.string.progress_label_image),
+                    if (useIu) assets.scope_iu_ready else assets.scope_image_ready,
+                    if (useIu) assets.scope_iu_total else total)
+            }
+
+            if (profile == "full") {
+                add("video", getString(R.string.progress_label_video), assets.scope_video_ready, total)
+            }
+        }
+
+        // ── Recently completed workers (green for 10s) ──
+        val activeTypes = workers.map { it.type }.toSet()
+        val staleTypes = mutableListOf<String>()
+        for ((type, completedAt) in workerCompletedAt) {
+            if (now - completedAt >= COMPLETED_WORKER_DISPLAY_MS) {
+                staleTypes.add(type)
+                continue
+            }
+            if (type in activeTypes) continue // already shown as done
+            val label = when (type) {
+                "cover" -> getString(R.string.progress_cover_generating)
+                "audio" -> getString(R.string.progress_label_audio)
+                "image" -> getString(R.string.progress_label_image)
+                "video" -> getString(R.string.progress_label_video)
+                else -> getString(R.string.generation_done)
+            }
+            workers.add(Wrk(type, label, 100, 100, 100, done = true))
+        }
+        staleTypes.forEach { workerCompletedAt.remove(it) }
+
+        // ── Render ──
+        val container = binding.workerProgressList
+        val doneRow = binding.generationDoneRow
+
+        if (workers.isEmpty()) {
+            // All done — show single green row for 10s
+            if (gpuProgressDoneAt == 0L) gpuProgressDoneAt = now
+            val elapsed = now - gpuProgressDoneAt
+            if (elapsed < COMPLETED_WORKER_DISPLAY_MS) {
                 binding.generationProgressContainer.visibility = View.VISIBLE
-                binding.generationProgressBar.isIndeterminate = false
-                binding.generationProgressBar.setProgressCompat(100, true)
-                val greenColor = getColor(R.color.cinema_success)
-                binding.generationProgressLabel.setTextColor(greenColor)
-                binding.generationProgressLabel.text = getString(R.string.generation_done)
-                binding.generationProgressPercent.setTextColor(greenColor)
-                binding.generationProgressPercent.text = "100%"
+                container.visibility = View.GONE
+                doneRow.visibility = View.VISIBLE
             } else {
                 binding.generationProgressContainer.visibility = View.GONE
                 viewModel.onGenerationComplete()
                 refreshGenerateButton()
+                gpuProgressDoneAt = 0L
             }
             return
         }
 
-        // Auto-rotation: advance index every WORKER_ROTATION_INTERVAL
-        val now = System.currentTimeMillis()
-        if (now - lastWorkerRotationAt > WORKER_ROTATION_INTERVAL) {
-            workerRotationIndex = (workerRotationIndex + 1) % activeWorkerList.size
-            lastWorkerRotationAt = now
-        }
-
-        // Ensure index is in bounds (list may have shrunk since last rotation)
-        val idx = workerRotationIndex.coerceIn(0, activeWorkerList.size - 1)
-        val worker = activeWorkerList[idx]
-
-        // Still in progress — reset done timer and show rotating worker
         gpuProgressDoneAt = 0L
-        // Reset text color back to normal (it may have been set to green in "Done" state)
-        binding.generationProgressLabel.setTextColor(getColor(R.color.cinema_text_secondary))
-        binding.generationProgressPercent.setTextColor(getColor(R.color.cinema_text_secondary))
         binding.generationProgressContainer.visibility = View.VISIBLE
-        binding.generationProgressBar.isIndeterminate = false
-        binding.generationProgressBar.setProgressCompat(worker.percent, true)
+        doneRow.visibility = View.GONE
+        container.visibility = View.VISIBLE
 
-        val formatRes = if (worker.useIu) R.string.progress_format_iu else R.string.progress_format
-        binding.generationProgressLabel.text = getString(
-            formatRes,
-            getString(worker.labelResId),
-            worker.ready,
-            worker.total
-        )
-        binding.generationProgressPercent.text = "${worker.percent}%"
+        val greenColor = getColor(R.color.cinema_success)
+        val accentColor = getColor(R.color.cinema_accent)
+        val textColor = getColor(R.color.cinema_text_secondary)
+
+        // Recycle existing rows, create new ones as needed, hide extras
+        val childCount = container.childCount
+        val maxIdx = childCount.coerceAtLeast(workers.size)
+
+        for (i in 0 until maxIdx) {
+            if (i >= workers.size) {
+                // Hide surplus rows
+                container.getChildAt(i).visibility = View.GONE
+                continue
+            }
+
+            val worker = workers[i]
+            val row: View = if (i < childCount) {
+                container.getChildAt(i)
+            } else {
+                layoutInflater.inflate(R.layout.item_worker_progress, container, false).also {
+                    container.addView(it)
+                }
+            }
+            row.visibility = View.VISIBLE
+
+            val nameView = row.findViewById<TextView>(R.id.workerName)
+            val pctView = row.findViewById<TextView>(R.id.workerPercent)
+            val barView = row.findViewById<com.google.android.material.progressindicator.LinearProgressIndicator>(R.id.workerProgressBar)
+
+            if (worker.done) {
+                nameView.text = getString(R.string.generation_done) + " — " + worker.label
+                nameView.setTextColor(greenColor)
+                pctView.text = "100%"
+                pctView.setTextColor(greenColor)
+                barView.setProgressCompat(100, true)
+                barView.setIndicatorColor(greenColor)
+            } else {
+                nameView.text = worker.label
+                nameView.setTextColor(textColor)
+                pctView.text = "${worker.percent}%"
+                pctView.setTextColor(accentColor)
+                barView.setProgressCompat(worker.percent, true)
+                barView.setIndicatorColor(accentColor)
+            }
+        }
     }
 
 
