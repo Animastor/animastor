@@ -305,25 +305,7 @@ class GenerateViewModel(
                         var cover: Bitmap? = null
                         val coverId = coverChunkId ?: chunkIds.firstOrNull()
                         if (coverId != null && imageEnabled) {
-                            cover = runCatching {
-                                val sb = _repository.getChunkStoryboard(coverId)
-                                if (sb.ius.isNotEmpty()) {
-                                    val iu = sb.ius.first()
-                                    val imgBytes = _repository.getIuImage(
-                                        sb.book_id ?: bookId,
-                                        sb.chapter_id ?: "",
-                                        sb.scene_id ?: "",
-                                        iu.unit_id,
-                                        sb.build_id
-                                    )
-                                    MediaDecoder.decodeBitmap(imgBytes)
-                                } else null
-                            }.getOrElse {
-                                runCatching {
-                                    val imgBytes = _repository.getChunkImage(coverId)
-                                    MediaDecoder.decodeBitmap(imgBytes)
-                                }.getOrNull()
-                            }
+                            cover = loadCoverBitmap(coverId)
                         }
                         Log.i(TAG, "startGeneration: emitting playbackPrepared with ${chunkIds.size} chunks cover=${cover != null}")
                         _playbackPrepared.tryEmit(PlaybackPreparation(
@@ -341,22 +323,10 @@ class GenerateViewModel(
                                     chunk?.image_ready == true
                                 }
                                 // Now try to load the cover image
-                                val coverReady = runCatching {
-                                    val sb = _repository.getChunkStoryboard(coverId)
-                                    if (sb.ius.isNotEmpty()) {
-                                        val iu = sb.ius.first()
-                                        val imgBytes = _repository.getIuImage(
-                                            sb.book_id ?: bookId,
-                                            sb.chapter_id ?: "",
-                                            sb.scene_id ?: "",
-                                            iu.unit_id,
-                                            sb.build_id
-                                        )
-                                        val bitmap = MediaDecoder.decodeBitmap(imgBytes)
-                                        _uiState.update { it.copy(coverImage = bitmap) }
-                                        bitmap
-                                    } else null
-                                }.getOrNull()
+                                val coverReady = loadCoverBitmap(coverId)
+                                if (coverReady != null) {
+                                    _uiState.update { it.copy(coverImage = coverReady) }
+                                }
                                 if (coverReady != null) {
                                     _playbackPrepared.tryEmit(PlaybackPreparation(
                                         bookId = bookId,
@@ -471,26 +441,7 @@ class GenerateViewModel(
 
                     // Use explicit scene_type=cover marker to find cover chunk
                     if (imageEnabled) {
-                        cover = runCatching {
-                            val sb = _repository.getChunkStoryboard(coverId)
-                            if (sb.ius.isNotEmpty()) {
-                                val iu = sb.ius.first()
-                                val imgBytes = _repository.getIuImage(
-                                    sb.book_id ?: bookId,
-                                    sb.chapter_id ?: "",
-                                    sb.scene_id ?: "",
-                                    iu.unit_id,
-                                    sb.build_id
-                                )
-                                MediaDecoder.decodeBitmap(imgBytes)
-                            } else null
-                        }.getOrElse { e ->
-                            Log.w(TAG, "cover from IU failed: ${e.message}")
-                            runCatching {
-                                val imgBytes = _repository.getChunkImage(coverId)
-                                MediaDecoder.decodeBitmap(imgBytes)
-                            }.getOrNull()
-                        }
+                        cover = loadCoverBitmap(coverId)
                     }
                 }
 
@@ -577,29 +528,8 @@ class GenerateViewModel(
                     )
                 }
 
-                var cover: Bitmap? = null
                 val coverId = coverChunkId ?: chunkIds.firstOrNull()
-                if (coverId != null && imageEnabled) {
-                    cover = runCatching {
-                        val sb = _repository.getChunkStoryboard(coverId)
-                        if (sb.ius.isNotEmpty()) {
-                            val iu = sb.ius.first()
-                            val imgBytes = _repository.getIuImage(
-                                sb.book_id ?: bookId,
-                                sb.chapter_id ?: "",
-                                sb.scene_id ?: "",
-                                iu.unit_id,
-                                sb.build_id
-                            )
-                            MediaDecoder.decodeBitmap(imgBytes)
-                        } else null
-                    }.getOrElse {
-                        runCatching {
-                            val imgBytes = _repository.getChunkImage(coverId)
-                            MediaDecoder.decodeBitmap(imgBytes)
-                        }.getOrNull()
-                    }
-                }
+                val cover = if (coverId != null && imageEnabled) loadCoverBitmap(coverId) else null
 
                 // Signal to PlaybackViewModel
                 _playbackPrepared.tryEmit(PlaybackPreparation(
@@ -1054,6 +984,28 @@ class GenerateViewModel(
                     chunk.audio_ready
                 }
             }
+        }
+    }
+
+    private suspend fun loadCoverBitmap(coverId: String): Bitmap? {
+        return runCatching {
+            val sb = _repository.getChunkStoryboard(coverId)
+            if (sb.ius.isNotEmpty()) {
+                val iu = sb.ius.first()
+                val imgBytes = _repository.getIuImage(
+                    sb.book_id ?: bookId,
+                    sb.chapter_id ?: "",
+                    sb.scene_id ?: "",
+                    iu.unit_id,
+                    sb.build_id
+                )
+                MediaDecoder.decodeBitmap(imgBytes)
+            } else null
+        }.getOrElse {
+            runCatching {
+                val imgBytes = _repository.getChunkImage(coverId)
+                MediaDecoder.decodeBitmap(imgBytes)
+            }.getOrNull()
         }
     }
 
