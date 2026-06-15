@@ -150,8 +150,6 @@ class MainActivity : AppCompatActivity() {
                     val phase = state.phase
                     val mode = state.mode
                     val isGenerating = phase == PlayerPhase.GENERATING || phase == PlayerPhase.LOADING_BOOK || viewModel.isRegenerating.value
-                    val isFromDisk = phase == PlayerPhase.DOWNLOADING || phase == PlayerPhase.SCENE_READY || phase == PlayerPhase.PLAYING
-
                     val audioNeeded = mode == "storyboard" || mode == "full" || mode == "image_only"
                     val imageNeeded = mode == "storyboard" || mode == "full" || mode == "image_only"
                     val videoNeeded = mode == "full"
@@ -163,7 +161,6 @@ class MainActivity : AppCompatActivity() {
                         active = counts.active_audio,
                         isGenerating = isGenerating,
                         isNeeded = audioNeeded,
-                        isFromDisk = isFromDisk,
                         normalColor = normalColor,
                         activeColor = activeColor,
                         errorColor = errorColor
@@ -175,7 +172,6 @@ class MainActivity : AppCompatActivity() {
                         active = counts.active_image,
                         isGenerating = isGenerating,
                         isNeeded = imageNeeded,
-                        isFromDisk = isFromDisk,
                         normalColor = normalColor,
                         activeColor = activeColor,
                         errorColor = errorColor
@@ -187,7 +183,6 @@ class MainActivity : AppCompatActivity() {
                         active = counts.active_video,
                         isGenerating = isGenerating,
                         isNeeded = videoNeeded,
-                        isFromDisk = isFromDisk,
                         normalColor = normalColor,
                         activeColor = activeColor,
                         errorColor = errorColor
@@ -313,7 +308,6 @@ class MainActivity : AppCompatActivity() {
         active: Int,
         isGenerating: Boolean,
         isNeeded: Boolean,
-        isFromDisk: Boolean,
         normalColor: Int,
         activeColor: Int,
         errorColor: Int
@@ -338,7 +332,7 @@ class MainActivity : AppCompatActivity() {
             pulseAnimators[chip] = pulse
         } else {
             tint = normalColor
-            chip.alpha = if (isFromDisk) 0.45f else 1f
+            chip.alpha = 1f
         }
         chip.setChipIconTint(android.content.res.ColorStateList.valueOf(tint))
     }

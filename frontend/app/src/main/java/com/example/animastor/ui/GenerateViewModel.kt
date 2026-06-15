@@ -272,15 +272,15 @@ class GenerateViewModel(
         generationJob = viewModelScope.launch {
             _uiState.value = GenUiState(phase = PlayerPhase.GENERATING)
             runCatching {
-                // Don't pass profile to backend — the layer config was already
-                // persisted by the independent toggle chips (persistLayerConfig).
-                // Passing profile would override the individual audio/image/video
-                // settings with a predefined profile combination.
+                // Pass profile to backend so /regenerate applies it BEFORE
+                // checking cover/images. This eliminates a race condition where
+                // persistLayerConfig() (called asynchronously by toggle chips)
+                // might not have completed by the time /regenerate reads from Redis.
                 val res = _repository.regenerateBookScoped(
                     bookId = bookId,
                     newBook = null,
                     rebuildAll = true,
-                    profile = null,
+                    profile = req.profile,
                     scope = req.scope,
                     chapterId = req.chapterId,
                     sceneId = req.sceneId
