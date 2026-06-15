@@ -223,6 +223,24 @@ module.exports = function(redis, config, deps) {
             await state.setSceneStateWithBuildId(redis, bookId, chapter_id, scene_id, newState, buildId);
             await activeScenes.addActiveScene(redis, bookId, chapter_id, scene_id);
 
+            // Reset per-asset states so the scheduler doesn't see stale states
+            // from a previous (cancelled) generation run:
+            // e.g. audio=GENERATING from an aborted run would prevent re-dispatch
+            // because shouldScheduleAssets explicitly skips GENERATING.
+            const assetUpdates = {};
+            if (resetAudio) {
+                assetUpdates.audio = state.AssetState.PENDING;
+            }
+            if (resetImage) {
+                assetUpdates.image = state.AssetState.PENDING;
+            }
+            if (resetVideo) {
+                assetUpdates.video = state.AssetState.PENDING;
+            }
+            if (Object.keys(assetUpdates).length > 0) {
+                await state.setAssetStates(redis, bookId, chapter_id, scene_id, assetUpdates);
+            }
+
             log(`📋 Dirty scene marked: ${bookId}/${chapter_id}/${scene_id} → ${newState}`);
             marked++;
         }

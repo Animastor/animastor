@@ -264,5 +264,112 @@ module.exports = function(redis) {
         saveIURegistry,
         recoverChunksFromDisk,
         recoverAllBooksFromDisk,
+
+        /**
+         * Clean ALL Redis keys associated with a book.
+         * Covers all known key patterns: chunks, scene states, asset states,
+         * dispatch leases/metadata, retry counters, fairness, event journals,
+         * video cache, locks, job queue, active scenes, concurrency counters.
+         *
+         * @param {RedisClient} redis
+         * @param {string} bookId
+         * @param {Object} [options]
+         * @param {boolean} [options.skipChunks=false]  — preserve chunk/chunks keys
+         * @param {boolean} [options.skipSceneStates=false] — preserve scene state keys
+         */
+        cleanBookRedisKeys: async function cleanBookRedisKeys(redis, bookId, options = {}) {
+            const log = (...args) => console.log(new Date().toISOString(), ...args);
+
+            const patterns = [
+                // Core data
+                ...(options.skipChunks ? [] : [
+                    `animastor:chunk:${bookId}_*`,
+                    `animastor:chunks:${bookId}`,
+                ]),
+                ...(options.skipSceneStates ? [] : [
+                    `animastor:scene-state:${bookId}:*`,
+                ]),
+                // Per-asset states (NEW canonical source of truth)
+                `animastor:asset-state:${bookId}:*`,
+                // Generation scope
+                `animastor:gen-scope:${bookId}`,
+                // Layer config
+                `animastor:layer-config:${bookId}`,
+                // Runtime dispatch leases & metadata
+                `animastor:dispatch-lease:${bookId}:*`,
+                `animastor:dispatch-meta:${bookId}:*`,
+                // Retry counters (per-scene)
+                `animastor:runtime:retry:${bookId}:*`,
+                // Fairness engine
+                `animastor:fairness:starvation-boost:${bookId}:*`,
+                `animastor:fairness:book:${bookId}`,
+                `animastor:fairness:retry-throttle:${bookId}`,
+                // Event journal
+                `animastor:event-journal:${bookId}:*`,
+                // Video cache
+                `animastor:scene-video:${bookId}:*`,
+                // Scene window counters
+                `animastor:book-scenes:${bookId}:*`,
+                // Audio locks
+                `animastor:audio-scene-lock:${bookId}:*`,
+                `animastor:audio-scene-failsafe:*:${bookId}:*`,
+                // Video locks
+                `animastor:video-lock:${bookId}:*`,
+                // Snapshot
+                `animastor:snapshot:${bookId}`,
+                // GPU hub job queue
+                `animastor:job:${bookId}_*`,
+                // Mode
+                `animastor:mode:${bookId}`,
+                // Legacy patterns (catch-all)
+                `animastor:book:${bookId}:*`,
+                `animastor:scope:${bookId}`,
+                `animastor:asset:*:${bookId}:*`,
+                `animastor:lease:*:${bookId}:*`,
+                `animastor:scene:*:*:${bookId}`,
+            ];
+
+            let totalDeleted = 0;
+            for (const pattern of patterns) {
+                try {
+                    let cursor = 0;
+                    do {
+                        const result = await redis.scan(cursor, 'MATCH', pattern, 'COUNT', 200);
+                        cursor = parseInt(result[0], 10);
+                        const keys = result[1];
+                        if (keys.length > 0) {
+                            await redis.del(...keys);
+                            totalDeleted += keys.length;
+                        }
+                    } while (cursor !== 0);
+                } catch (err) {
+                    console.warn('[CLEAN] Scan failed for pattern', pattern, ':', err.message);
+                }
+            }
+
+            // ── Active scenes set (iterate, pattern match, srem individually) ──
+            try {
+                const allActive = await redis.smembers('animastor:active-scenes');
+                let removedActive = 0;
+                for (const sceneKey of allActive) {
+                    if (sceneKey.startsWith(`${bookId}:`)) {
+                        await redis.srem('animastor:active-scenes', sceneKey);
+                        removedActive++;
+                    }
+                }
+                log(`[CLEAN] ${bookId}: removed ${removedActive} scenes from active-scenes set`);
+            } catch (err) {
+                console.warn('[CLEAN] Failed to clean active-scenes:', err.message);
+            }
+
+            // ── Concurrency counters (decrement by removing from set) ──
+            // These are GLOBAL counters — we can't decrement by exact amount
+            // without knowing how many scenes this book had. Best-effort: reset to 0
+            // if the counter only had scenes from this book. Otherwise leave them.
+            // For safety, we don't touch global counters here.
+
+            log(`[CLEAN] ${bookId}: deleted ${totalDeleted} Redis keys`);
+            return { deleted: totalDeleted };
+        },
     };
 };

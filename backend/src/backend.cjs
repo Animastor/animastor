@@ -99,6 +99,7 @@ const {
     saveChunk, getChunk, getAllChunks, getBookWindowStatus,
     detectAvailableMode, saveIURegistry,
     recoverChunksFromDisk, recoverAllBooksFromDisk,
+    cleanBookRedisKeys,
 } = require('./helpers/redis-helpers.cjs')(redis);
 
 // ======================================================
@@ -145,6 +146,7 @@ const routeDeps = {
     txtImporter, lazyBook, genSessionRepo, bookSourceRepo,
     utils, saveChunk, getChunk, getAllChunks, getBookWindowStatus,
     detectAvailableMode, recoverChunksFromDisk, recoverAllBooksFromDisk,
+    cleanBookRedisKeys,
     cleanupService, taskHandler, bookDiff, windowGenerator, chatEngine,
     iuRepo, computeWaveform, journal,
 };

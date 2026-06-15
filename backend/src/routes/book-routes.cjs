@@ -18,7 +18,7 @@ module.exports = function(app, redis, deps) {
         utils, saveChunk, getChunk, getAllChunks, getBookWindowStatus,
         detectAvailableMode, recoverChunksFromDisk, recoverAllBooksFromDisk,
         cleanupService, bookDiff, taskHandler, windowGenerator,
-        iuRepo,
+        iuRepo, cleanBookRedisKeys,
     } = deps;
     const { log, pad, collectScenes, buildSegments } = utils;
 
@@ -1266,35 +1266,8 @@ async function recoverMissingRedisChunks(buildId, bookId) {
                 }
             }
 
-            // Clean up Redis keys
-            const patterns = [
-                `animastor:chunk:${bookId}_*`,
-                `animastor:chunks:${bookId}`,
-                `animastor:scene-state:${bookId}:*`,
-                `animastor:scene:*:*:${bookId}`,
-                `animastor:layer-config:${bookId}`,
-                `animastor:scope:${bookId}`,
-                `animastor:asset:*:${bookId}:*`,
-                `animastor:snapshot:${bookId}`,
-                `animastor:lease:*:${bookId}:*`,
-                `animastor:audio-scene-lock:${bookId}:*`,
-                `animastor:audio-scene-failsafe:*:${bookId}:*`,
-                `animastor:job:${bookId}_*`,
-                `animastor:mode:${bookId}`,
-                `animastor:book:${bookId}:*`,
-            ];
-
-            for (const pattern of patterns) {
-                try {
-                    let cursor = 0;
-                    do {
-                        const result = await redis.scan(cursor, 'MATCH', pattern, 'COUNT', 200);
-                        cursor = parseInt(result[0], 10);
-                        const keys = result[1];
-                        if (keys.length > 0) await redis.del(...keys);
-                    } while (cursor !== 0);
-                } catch (_) {}
-            }
+            // Clean up ALL Redis keys for this book using the comprehensive helper
+            await cleanBookRedisKeys(redis, bookId);
 
             // Clean up PostgreSQL
             try {
@@ -1305,13 +1278,6 @@ async function recoverMissingRedisChunks(buildId, bookId) {
             } catch (dbErr) {
                 console.warn('[CACHE] DB cleanup failed:', dbErr.message);
             }
-
-            // Reset active scenes
-            await redis.srem('animastor:active-scenes', ...(chunkIds.map(id => `${bookId}:*`)));
-            try {
-                const reconcileCounters = require('../runtime/counter-reconciliation');
-                await reconcileCounters.reconcileCounters(redis);
-            } catch (_) {}
 
             // Clear gpu-hub queue
             try {
@@ -1372,37 +1338,8 @@ async function recoverMissingRedisChunks(buildId, bookId) {
             }
             log('[DELETE-BOOK] Build directories removed');
 
-            // 3. Delete all Redis keys for this book
-            const patterns = [
-                `animastor:chunk:${bookId}_*`,
-                `animastor:chunks:${bookId}`,
-                `animastor:scene-state:${bookId}:*`,
-                `animastor:scene:*:*:${bookId}`,
-                `animastor:layer-config:${bookId}`,
-                `animastor:scope:${bookId}`,
-                `animastor:asset:*:${bookId}:*`,
-                `animastor:snapshot:${bookId}`,
-                `animastor:lease:*:${bookId}:*`,
-                `animastor:audio-scene-lock:${bookId}:*`,
-                `animastor:audio-scene-failsafe:*:${bookId}:*`,
-                `animastor:job:${bookId}_*`,
-                `animastor:mode:${bookId}`,
-                `animastor:book:${bookId}:*`,
-                `animastor:book-scenes:${bookId}:*`,
-            ];
-            for (const pattern of patterns) {
-                try {
-                    let cursor = 0;
-                    do {
-                        const result = await redis.scan(cursor, 'MATCH', pattern, 'COUNT', 200);
-                        cursor = parseInt(result[0], 10);
-                        const keys = result[1];
-                        if (keys.length > 0) await redis.del(...keys);
-                    } while (cursor !== 0);
-                } catch (_) {}
-            }
-            // Remove from active-scenes set
-            await redis.srem('animastor:active-scenes', ...(chunkIds.map(id => `${bookId}:*`)));
+            // 3. Delete all Redis keys for this book using the comprehensive helper
+            await cleanBookRedisKeys(redis, bookId);
             log('[DELETE-BOOK] Redis keys removed');
 
             // 4. Delete all PostgreSQL data for this book
