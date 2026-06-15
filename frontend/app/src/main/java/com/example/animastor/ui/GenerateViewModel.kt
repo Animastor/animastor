@@ -360,10 +360,18 @@ class GenerateViewModel(
                     _activeGeneration.value = null
                 }
             }
-            if (_isRegenerating.value) {
-                _isRegenerating.value = false
-            }
         }
+    }
+
+    /**
+     * Called by the progress poller when assets-state reports all scenes ready.
+     * Cleans up the regeneration flag so the UI can reflect completion.
+     */
+    fun onGenerationComplete() {
+        if (_isRegenerating.value) {
+            _isRegenerating.value = false
+        }
+        _activeGeneration.value = null
     }
 
     fun cancelGeneration() {

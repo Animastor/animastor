@@ -149,7 +149,7 @@ class MainActivity : AppCompatActivity() {
                     val state = viewModel.uiState.value
                     val phase = state.phase
                     val mode = state.mode
-                    val isGenerating = phase == PlayerPhase.GENERATING || phase == PlayerPhase.LOADING_BOOK
+                    val isGenerating = phase == PlayerPhase.GENERATING || phase == PlayerPhase.LOADING_BOOK || viewModel.isRegenerating.value
                     val isFromDisk = phase == PlayerPhase.DOWNLOADING || phase == PlayerPhase.SCENE_READY || phase == PlayerPhase.PLAYING
 
                     val audioNeeded = mode == "storyboard" || mode == "full" || mode == "image_only"
@@ -327,10 +327,8 @@ class MainActivity : AppCompatActivity() {
         if (isGenerating && active == 0 && isNeeded && total == 0) {
             tint = errorColor
             chip.alpha = 1f
-        } else if (active > 0 || (isGenerating && isNeeded)) {
-            // Pulse when active > 0 OR when generation is in progress and this worker type is needed
-            // This prevents pulse from stopping prematurely when all leases are released
-            // but GPU is still processing (e.g. all images dispatched to ComfyUI)
+        } else if (active > 0) {
+            // Pulse only when real worker leases are active on the backend
             tint = activeColor
             chip.alpha = 1f
             val pulse = ObjectAnimator.ofFloat(chip, "alpha", 1f, 0.4f, 1f)
@@ -600,8 +598,10 @@ class MainActivity : AppCompatActivity() {
                 binding.generationProgressLabel.text = getString(R.string.generation_done)
                 binding.generationProgressPercent.text = "100%"
             } else {
-                // 5 seconds passed — hide the bar
+                // 5 seconds passed — hide the bar and signal completion
                 binding.generationProgressContainer.visibility = View.GONE
+                viewModel.onGenerationComplete()
+                refreshGenerateButton()
             }
         } else {
             // Still in progress — reset done timer and show normal progress
