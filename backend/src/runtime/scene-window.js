@@ -117,18 +117,55 @@ async function sceneHasValidContent(redis, buildId, bookId, chapterId, sceneId) 
     const audioPath = path.join(buildDir, `${bookId}_${chapterId}_${sceneId}.mp3`);
     if (!fs.existsSync(audioPath)) return false;
 
-    // Check for at least one IU image
-    let files;
-    try { files = fs.readdirSync(buildDir); } catch { return false; }
-    const imagePrefix = `${bookId}_${chapterId}_${sceneId}_iu`;
-    const hasImage = files.some(f => f.startsWith(imagePrefix) && f.endsWith('.png'));
+    // Check layer config to determine which asset types are needed
+    // The scene is valid if it has audio AND all enabled layers have content.
+    const layerKey = `animastor:layer-config:${bookId}`;
+    const layerRaw = await redis.get(layerKey);
+    let imageEnabled = true;
+    let videoEnabled = true;
+    if (layerRaw) {
+        try {
+            const lc = JSON.parse(layerRaw);
+            imageEnabled = lc.image_enabled !== false;
+            videoEnabled = lc.video_enabled !== false;
+        } catch (_) {}
+    }
 
-    // Check for video
-    const videoPath = path.join(buildDir, `${bookId}_${chapterId}_${sceneId}.mp4`);
-    const hasVideo = fs.existsSync(videoPath);
+    // If images are enabled, check for at least one IU image
+    if (imageEnabled) {
+        let files;
+        try { files = fs.readdirSync(buildDir); } catch { return false; }
+        const imagePrefix = `${bookId}_${chapterId}_${sceneId}_iu`;
+        const hasImage = files.some(f => f.startsWith(imagePrefix) && f.endsWith('.png'));
+        if (!hasImage) {
+            // If video is enabled as fallback, check for video
+            if (videoEnabled) {
+                const videoPath = path.join(buildDir, `${bookId}_${chapterId}_${sceneId}.mp4`);
+                if (!fs.existsSync(videoPath)) return false;
+            } else {
+                return false;
+            }
+        }
+    }
 
-    // Scene is valid if it has audio (real or placeholder) and at least one of image/video
-    return hasImage || hasVideo;
+    // If video is enabled (and image was already checked or not needed), check for video
+    if (videoEnabled) {
+        const videoPath = path.join(buildDir, `${bookId}_${chapterId}_${sceneId}.mp4`);
+        if (!fs.existsSync(videoPath)) {
+            // Try image as fallback
+            if (imageEnabled) {
+                let files;
+                try { files = fs.readdirSync(buildDir); } catch { return false; }
+                const imagePrefix = `${bookId}_${chapterId}_${sceneId}_iu`;
+                if (!files.some(f => f.startsWith(imagePrefix) && f.endsWith('.png'))) return false;
+            } else {
+                return false;
+            }
+        }
+    }
+
+    // Scene has audio and all enabled layers have content
+    return true;
 }
 
 /**

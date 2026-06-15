@@ -1562,10 +1562,14 @@ async function recoverMissingRedisChunks(buildId, bookId) {
             // valid content on disk. Otherwise /assets-state would report stale
             // 'pending' status until the runtime scheduler tick (up to 5s later)
             // processes each scene via executeAudioDispatch.
+            // Also promote scene state to VIDEO_READY and remove from active index
+            // so the runtime tick skips them entirely.
             let restoredCount = 0;
             for (const ds of filteredDirty) {
                 if (await windowModule.sceneHasValidContent(redis, buildId, bookId, ds.chapter_id, ds.scene_id)) {
                     await windowModule.restoreChunkStatusForScene(redis, buildId, bookId, ds.chapter_id, ds.scene_id);
+                    await state.setSceneStateWithBuildId(redis, bookId, ds.chapter_id, ds.scene_id, state.SceneState.VIDEO_READY, buildId);
+                    await scheduler.removeSceneFromActiveIndex(redis, bookId, ds.chapter_id, ds.scene_id);
                     restoredCount++;
                 }
             }
