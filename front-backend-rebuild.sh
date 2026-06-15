@@ -16,10 +16,10 @@ echo "Waiting 5 seconds for container startup..."
 sleep 5
 
 echo
-docker ps
+docker compose logs --tail=30 backend
 
 echo
-docker compose logs --tail=30 backend
+docker ps
 
 echo
 echo "=================================="

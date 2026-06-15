@@ -290,19 +290,23 @@ class GenerateViewModel(
                     val chunkIds = allChunks?.chunk_ids?.toList() ?: emptyList()
                     if (chunkIds.isNotEmpty()) {
                         val positions = mutableMapOf<String, Pair<String?, String?>>()
+                        var coverChunkId: String? = null
                         for (cid in chunkIds) {
                             runCatching {
                                 _repository.getChunkStoryboard(cid).let { sb ->
                                     positions[cid] = Pair(sb.chapter_id, sb.scene_id)
+                                    if (sb.scene_type == "cover") {
+                                        coverChunkId = cid
+                                    }
                                 }
                             }
                         }
-                        // Try to load cover image from first chunk's first IU
+                        // Use explicit scene_type=cover marker to find cover chunk
                         var cover: Bitmap? = null
-                        val firstId = chunkIds.firstOrNull()
-                        if (firstId != null && imageEnabled) {
+                        val coverId = coverChunkId ?: chunkIds.firstOrNull()
+                        if (coverId != null && imageEnabled) {
                             cover = runCatching {
-                                val sb = _repository.getChunkStoryboard(firstId)
+                                val sb = _repository.getChunkStoryboard(coverId)
                                 if (sb.ius.isNotEmpty()) {
                                     val iu = sb.ius.first()
                                     val imgBytes = _repository.getIuImage(
@@ -316,7 +320,7 @@ class GenerateViewModel(
                                 } else null
                             }.getOrElse {
                                 runCatching {
-                                    val imgBytes = _repository.getChunkImage(firstId)
+                                    val imgBytes = _repository.getChunkImage(coverId)
                                     MediaDecoder.decodeBitmap(imgBytes)
                                 }.getOrNull()
                             }
@@ -330,15 +334,15 @@ class GenerateViewModel(
                             chunkPositions = positions
                         ))
                         // If cover wasn't ready yet, poll for it in background
-                        if (cover == null && firstId != null && imageEnabled) {
+                        if (cover == null && coverId != null && imageEnabled) {
                             viewModelScope.launch {
                                 pollWithBackoff(IMAGE_POLL_TIMEOUT_MS) {
-                                    val sb = runCatching { _repository.getChunkStoryboard(firstId) }.getOrNull()
-                                    sb != null && sb.ius.isNotEmpty()
+                                    val chunk = runCatching { _repository.getChunk(coverId) }.getOrNull()
+                                    chunk?.image_ready == true
                                 }
                                 // Now try to load the cover image
                                 val coverReady = runCatching {
-                                    val sb = _repository.getChunkStoryboard(firstId)
+                                    val sb = _repository.getChunkStoryboard(coverId)
                                     if (sb.ius.isNotEmpty()) {
                                         val iu = sb.ius.first()
                                         val imgBytes = _repository.getIuImage(
@@ -432,10 +436,14 @@ class GenerateViewModel(
 
                 val chunkIds = res.chunk_ids.toList()
                 val positions = mutableMapOf<String, Pair<String?, String?>>()
+                var coverChunkId: String? = null
                 for (cid in chunkIds) {
                     runCatching {
                         _repository.getChunkStoryboard(cid).let { sb ->
                             positions[cid] = Pair(sb.chapter_id, sb.scene_id)
+                            if (sb.scene_type == "cover") {
+                                coverChunkId = cid
+                            }
                         }
                     }.onFailure { e ->
                         Log.w(TAG, "failed to get storyboard for $cid: ${e.message}")
@@ -449,11 +457,11 @@ class GenerateViewModel(
                     SharedPositionManager.navigateTo(chapterId = null, sceneId = null)
                 }
 
-                val firstId = chunkIds.firstOrNull()
+                val coverId = coverChunkId ?: chunkIds.firstOrNull()
                 var cover: Bitmap? = null
-                if (firstId != null) {
+                if (coverId != null) {
                     val isCached = runCatching {
-                        _repository.getChunk(firstId).audio_ready
+                        _repository.getChunk(coverId).audio_ready
                     }.getOrDefault(false)
 
                     if (!isCached) {
@@ -461,10 +469,10 @@ class GenerateViewModel(
                         waitWindowReady(chunkIds.take(minOf(INITIAL_WAIT_COUNT, chunkIds.size)))
                     }
 
-                    // Try to get cover image from first IU of first chunk
+                    // Use explicit scene_type=cover marker to find cover chunk
                     if (imageEnabled) {
                         cover = runCatching {
-                            val sb = _repository.getChunkStoryboard(firstId)
+                            val sb = _repository.getChunkStoryboard(coverId)
                             if (sb.ius.isNotEmpty()) {
                                 val iu = sb.ius.first()
                                 val imgBytes = _repository.getIuImage(
@@ -479,7 +487,7 @@ class GenerateViewModel(
                         }.getOrElse { e ->
                             Log.w(TAG, "cover from IU failed: ${e.message}")
                             runCatching {
-                                val imgBytes = _repository.getChunkImage(firstId)
+                                val imgBytes = _repository.getChunkImage(coverId)
                                 MediaDecoder.decodeBitmap(imgBytes)
                             }.getOrNull()
                         }
@@ -531,10 +539,14 @@ class GenerateViewModel(
                 val allChunks = runCatching { _repository.getAllChunks(bookId) }.getOrElse { ChunkListResponse(emptyList()) }
                 val chunkIds = allChunks.chunk_ids.toList()
                 val positions = mutableMapOf<String, Pair<String?, String?>>()
+                var coverChunkId: String? = null
                 for (cid in chunkIds) {
                     runCatching {
                         _repository.getChunkStoryboard(cid).let { sb ->
                             positions[cid] = Pair(sb.chapter_id, sb.scene_id)
+                            if (sb.scene_type == "cover") {
+                                coverChunkId = cid
+                            }
                         }
                     }
                 }
@@ -566,10 +578,10 @@ class GenerateViewModel(
                 }
 
                 var cover: Bitmap? = null
-                val firstId = chunkIds.firstOrNull()
-                if (firstId != null && imageEnabled) {
+                val coverId = coverChunkId ?: chunkIds.firstOrNull()
+                if (coverId != null && imageEnabled) {
                     cover = runCatching {
-                        val sb = _repository.getChunkStoryboard(firstId)
+                        val sb = _repository.getChunkStoryboard(coverId)
                         if (sb.ius.isNotEmpty()) {
                             val iu = sb.ius.first()
                             val imgBytes = _repository.getIuImage(
@@ -583,7 +595,7 @@ class GenerateViewModel(
                         } else null
                     }.getOrElse {
                         runCatching {
-                            val imgBytes = _repository.getChunkImage(firstId)
+                            val imgBytes = _repository.getChunkImage(coverId)
                             MediaDecoder.decodeBitmap(imgBytes)
                         }.getOrNull()
                     }

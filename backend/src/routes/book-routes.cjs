@@ -1007,9 +1007,25 @@ async function recoverMissingRedisChunks(buildId, bookId) {
 
             let filteredIds = allChunkIds;
             if ((scope === 'current_chapter' || scope === 'chapter') && chapter_id) {
-                filteredIds = allChunkIds.filter(id => id.includes(`_${chapter_id}_`));
+                filteredIds = [];
+                for (const cid of allChunkIds) {
+                    try {
+                        const chunk = await getChunk(cid);
+                        if (chunk?.chapter_id === chapter_id) {
+                            filteredIds.push(cid);
+                        }
+                    } catch (_) {}
+                }
             } else if ((scope === 'current_scene' || scope === 'scene') && chapter_id && scene_id) {
-                filteredIds = allChunkIds.filter(id => id.includes(`_${chapter_id}_${scene_id}_`));
+                filteredIds = [];
+                for (const cid of allChunkIds) {
+                    try {
+                        const chunk = await getChunk(cid);
+                        if (chunk?.chapter_id === chapter_id && chunk?.scene_id === scene_id) {
+                            filteredIds.push(cid);
+                        }
+                    } catch (_) {}
+                }
             }
 
             let audioReady = 0;
