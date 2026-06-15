@@ -1180,6 +1180,29 @@ async function recoverMissingRedisChunks(buildId, bookId) {
     });
 
     // ======================================================
+    // CANCEL GENERATION
+    // ======================================================
+    app.post('/api/v1/book/:bookId/cancel-generation', async (req, res) => {
+        try {
+            const { bookId } = req.params;
+            log(`[CANCEL-GENERATION] ${bookId}: cancelling generation`);
+
+            const windowModule = require('../runtime/scene-window');
+            await windowModule.setCancelFlag(redis, bookId);
+
+            // Remove any in-flight scenes from the active index
+            const scheduler = require('../runtime/runtime-scheduler');
+            await scheduler.clearBookFromActiveIndex(redis, bookId);
+
+            log(`[CANCEL-GENERATION] ${bookId}: generation cancelled`);
+            res.json({ ok: true, book_id: bookId });
+        } catch (err) {
+            console.error('[CANCEL-GENERATION] Error:', err.message);
+            res.status(500).json({ error: err.message });
+        }
+    });
+
+    // ======================================================
     // CACHE ENDPOINTS (GET + DELETE)
     // ======================================================
     app.get('/api/v1/book/:bookId/cache', async (req, res) => {
@@ -1450,6 +1473,12 @@ async function recoverMissingRedisChunks(buildId, bookId) {
             if (!loadedBook) return res.status(404).json({ error: 'book not found' });
 
             const buildId = loadedBook.manifest?.build_id || 'default';
+
+            // Clear any previous cancel flag so new generation can proceed
+            const windowModule = require('../runtime/scene-window');
+            await windowModule.clearCancelFlag(redis, bookId);
+            const scheduler = require('../runtime/runtime-scheduler');
+            await scheduler.clearBookFromActiveIndex(redis, bookId);
 
             // Apply scope
             const effectiveScope = scope || 'WHOLE_BOOK';

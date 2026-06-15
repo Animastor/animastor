@@ -2,6 +2,7 @@ package com.example.animastor.ui
 
 import android.content.ComponentCallbacks2
 import android.content.Context
+import android.content.res.ColorStateList
 import android.os.Bundle
 import android.animation.ObjectAnimator
 import android.util.Log
@@ -231,13 +232,6 @@ class MainActivity : AppCompatActivity() {
             startGenerationProgressPoller()
         }
 
-        // Observe window generation status updates
-        lifecycleScope.launch {
-            playbackViewModel.windowGenStatus.collect { status ->
-                Log.d("MainActivity", "windowGenStatus: active=${status.active} msg=\"${status.progressMsg}\" window=${status.windowIndex}")
-            }
-        }
-
         binding.bottomNavigation.setOnItemSelectedListener { item ->
             val tag = when (item.itemId) {
                 R.id.fileFragment -> "FileFragment"
@@ -408,12 +402,13 @@ class MainActivity : AppCompatActivity() {
         genBtn.visibility = View.VISIBLE
 
         if (isRegenerating) {
-            // During generation: show Cancel button
             genBtn.text = getString(R.string.toolbar_generate_cancel)
+            genBtn.backgroundTintList = ColorStateList.valueOf(getColor(R.color.cinema_primary))
             genBtn.isEnabled = true
             genBtn.alpha = 1f
         } else {
             genBtn.text = getString(R.string.toolbar_generate_idle)
+            genBtn.backgroundTintList = ColorStateList.valueOf(getColor(R.color.cinema_accent))
             val canGenerate = bookId.isNotBlank()
             genBtn.isEnabled = canGenerate
             genBtn.alpha = if (bookId.isBlank()) 0.3f else 1f
@@ -514,12 +509,8 @@ class MainActivity : AppCompatActivity() {
                 continue
             }
 
-            val now = System.currentTimeMillis()
             val activeGen = viewModel.activeGeneration.value
-            val windowGenStatus = playbackViewModel.windowGenStatus.value
 
-            // 1. GPU generation progress has priority (only when user clicked Generate)
-            var showedGpu = false
             if (activeGen != null) {
                 try {
                     val assets = viewModel.repository.getAssetsState(
@@ -529,37 +520,13 @@ class MainActivity : AppCompatActivity() {
                         sceneId = activeGen.sceneId
                     )
                     showGpuProgress(assets)
-                    showedGpu = true
                 } catch (e: Exception) {
                     Log.w("MainActivity", "GPU progress poll failed: ${e.message}")
                 }
-            }
-
-            if (showedGpu) {
-                delay(1_500)
-                continue
-            }
-
-            // 2. Window (text analysis) generation — active, in progress, or lingering after completion
-            val windowGenActive = windowGenStatus.active || windowGenStatus.inProgress
-            val windowGenLingering = windowGenStatus.completedLingerMs > 0 && now < windowGenStatus.completedLingerMs
-
-            if (windowGenActive || windowGenLingering) {
-                showWindowGenProgress(windowGenStatus)
-                if (windowGenLingering) {
-                    val lingerRemaining = (windowGenStatus.completedLingerMs - now) / 1000
-                    Log.d("MainActivity", "[WINDOW-GEN] lingering for ${lingerRemaining}s: \"${windowGenStatus.progressMsg}\"")
-                }
-            } else if (windowGenStatus.completedLingerMs > 0 && now >= windowGenStatus.completedLingerMs) {
-                // Linger expired — clear the status and hide the bar
-                Log.i("MainActivity", "[WINDOW-GEN] linger expired — hiding")
-                playbackViewModel.clearWindowGenStatus()
-                binding.generationProgressContainer.visibility = View.GONE
             } else {
                 if (binding.generationProgressContainer.visibility != View.GONE) {
-                    Log.d("MainActivity", "[WINDOW-GEN] no window gen activity — hiding")
+                    binding.generationProgressContainer.visibility = View.GONE
                 }
-                binding.generationProgressContainer.visibility = View.GONE
             }
             delay(1_500)
         }
@@ -650,40 +617,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun showWindowGenProgress(status: PlaybackViewModel.WindowGenStatus) {
-        binding.generationProgressContainer.visibility = View.VISIBLE
 
-        val msg = status.progressMsg.ifBlank { "⏳ Обработка..." }
-        val windowLabel = if (status.windowIndex >= 0) "Окно ${status.windowIndex + 1}" else ""
-        val windowInfo = if (windowLabel.isNotEmpty()) " [$windowLabel]" else ""
-
-        val percent = status.progressPercent
-        if (percent >= 0) {
-            // Determinate: show percentage and scene counts
-            binding.generationProgressBar.isIndeterminate = false
-            binding.generationProgressBar.setProgressCompat(percent, true)
-            val sceneLabel = if (status.totalScenes > 0) {
-                "${status.createdScenes}/${status.totalScenes} сцен"
-            } else {
-                "${status.createdScenes} сцен"
-            }
-            binding.generationProgressLabel.text = msg
-            binding.generationProgressPercent.text = "${percent}% $sceneLabel"
-        } else {
-            // Indeterminate: show agent messages as they arrive
-            binding.generationProgressBar.isIndeterminate = true
-            binding.generationProgressLabel.text = "$msg$windowInfo"
-            binding.generationProgressPercent.text = if (status.createdScenes > 0) {
-                "${status.createdScenes} сцен"
-            } else if (windowLabel.isNotEmpty()) {
-                windowLabel
-            } else {
-                ""
-            }
-        }
-
-        Log.i("MainActivity", "[WINDOW-GEN] $msg (active=${status.active} pct=${percent}%)")
-    }
 
     companion object {
         private const val PREFS_NAME = "animastor_settings"
