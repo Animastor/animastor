@@ -564,8 +564,8 @@ class MainActivity : AppCompatActivity() {
 
     /**
      * Render progress of all active workers simultaneously — no rotation.
-     * Each worker gets its own row (name + percent + progress bar).
-     * Completed workers stay green for 10s, then fade out.
+     * Each worker gets its own row (name + count + percent + progress bar).
+     * Completed workers auto-hide after 10s.
      */
     private fun showGpuProgress(assets: com.example.animastor.repository.AssetsStateResponse) {
         val total = assets.scope_total
@@ -594,14 +594,18 @@ class MainActivity : AppCompatActivity() {
             if (total <= 0) return
             val done = ready >= total && ready > 0
             if (done) {
+                // Record completion time once
                 if (!workerCompletedAt.containsKey(type)) {
                     workerCompletedAt[type] = now
                 }
+                // Auto-hide after COMPLETED_WORKER_DISPLAY_MS (10s)
+                val completedAt = workerCompletedAt[type] ?: now
+                if (now - completedAt >= COMPLETED_WORKER_DISPLAY_MS) {
+                    return // Don't add — already completed, hidden after timeout
+                }
             }
             val pct = if (done) 100 else (ready * 100 / total).coerceIn(0, 99)
-            if (ready < total || done) {
-                workers.add(Wrk(type, label, ready, total, pct, done))
-            }
+            workers.add(Wrk(type, label, ready, total, pct, done))
         }
 
         // Cover (uses IU counts)
@@ -628,7 +632,10 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // ── Recently completed workers (green for 10s) ──
+        // ── Recently completed workers that aren't re-added by add() ──
+        // (This handles the case where the asset state no longer reports
+        // this worker (e.g. scope changed), but we still want to show
+        // green "Done" for 10s.)
         val activeTypes = workers.map { it.type }.toSet()
         val staleTypes = mutableListOf<String>()
         for ((type, completedAt) in workerCompletedAt) {
@@ -636,7 +643,7 @@ class MainActivity : AppCompatActivity() {
                 staleTypes.add(type)
                 continue
             }
-            if (type in activeTypes) continue // already shown as done
+            if (type in activeTypes) continue // already added by add() above
             val label = when (type) {
                 "cover" -> getString(R.string.progress_cover_generating)
                 "audio" -> getString(R.string.progress_label_audio)
@@ -677,6 +684,7 @@ class MainActivity : AppCompatActivity() {
         val greenColor = getColor(R.color.cinema_success)
         val accentColor = getColor(R.color.cinema_accent)
         val textColor = getColor(R.color.cinema_text_secondary)
+        val mutedColor = getColor(R.color.cinema_text_disabled)
 
         // Recycle existing rows, create new ones as needed, hide extras
         val childCount = container.childCount
@@ -700,12 +708,15 @@ class MainActivity : AppCompatActivity() {
             row.visibility = View.VISIBLE
 
             val nameView = row.findViewById<TextView>(R.id.workerName)
+            val countView = row.findViewById<TextView>(R.id.workerCount)
             val pctView = row.findViewById<TextView>(R.id.workerPercent)
             val barView = row.findViewById<com.google.android.material.progressindicator.LinearProgressIndicator>(R.id.workerProgressBar)
 
             if (worker.done) {
                 nameView.text = getString(R.string.generation_done) + " — " + worker.label
                 nameView.setTextColor(greenColor)
+                countView.text = "${worker.ready}/${worker.total}"
+                countView.setTextColor(greenColor)
                 pctView.text = "100%"
                 pctView.setTextColor(greenColor)
                 barView.setProgressCompat(100, true)
@@ -713,6 +724,8 @@ class MainActivity : AppCompatActivity() {
             } else {
                 nameView.text = worker.label
                 nameView.setTextColor(textColor)
+                countView.text = "${worker.ready}/${worker.total}"
+                countView.setTextColor(mutedColor)
                 pctView.text = "${worker.percent}%"
                 pctView.setTextColor(accentColor)
                 barView.setProgressCompat(worker.percent, true)

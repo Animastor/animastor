@@ -20,8 +20,20 @@
             android:layout_weight="1"
             android:textSize="12sp"
             android:textColor="?attr/colorOnSurfaceVariant"
+            android:fontFamily="sans-serif-medium"
             android:singleLine="true"
             android:ellipsize="end" />
+
+        <TextView
+            android:id="@+id/workerCount"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textSize="12sp"
+            android:textColor="?attr/colorOnSurfaceVariant"
+            android:singleLine="true"
+            android:gravity="center"
+            android:paddingStart="8dp"
+            android:paddingEnd="4dp" />
 
         <TextView
             android:id="@+id/workerPercent"
@@ -31,7 +43,7 @@
             android:textColor="?attr/colorSecondary"
             android:textStyle="bold"
             android:singleLine="true"
-            android:minWidth="36dp"
+            android:minWidth="32dp"
             android:gravity="end" />
     </LinearLayout>
 
