@@ -477,12 +477,13 @@ function cutFirstHalf(filePath, outputPath, duration) {
 }
 
 /**
- * Find the quietest point (minimum RMS energy) between 25%-75% of the audio.
- * Pipes raw PCM from ffmpeg and computes RMS in 50ms windows to find the
- * lowest-energy point near the middle of the file.
- * Returns time in seconds, or 0 if detection fails.
+ * Find the quietest point (minimum RMS energy) within a window of the audio.
+ * @param {string} filePath - path to audio file
+ * @param {number} [startPct=0.25] - search window start as fraction of total duration (0.0-1.0)
+ * @param {number} [endPct=0.75] - search window end as fraction of total duration (0.0-1.0)
+ * @returns {Promise<number>} time in seconds, or 0 if detection fails
  */
-function findQuietestPoint(filePath) {
+function findQuietestPoint(filePath, startPct = 0.25, endPct = 0.75) {
     return new Promise((resolve) => {
         const { spawn } = require('child_process');
         const windowMs = 50;
@@ -510,8 +511,8 @@ function findQuietestPoint(filePath) {
             if (totalSamples < windowSamples * 3) { resolve(0); return; }
 
             const totalWindows = Math.floor(totalSamples / windowSamples);
-            const lo = Math.floor(totalWindows * 0.25);
-            const hi = Math.floor(totalWindows * 0.75);
+            const lo = Math.floor(totalWindows * Math.max(0, Math.min(1, startPct)));
+            const hi = Math.floor(totalWindows * Math.max(0, Math.min(1, endPct)));
             let minRms = Infinity, minWin = lo;
 
             for (let w = lo; w < hi && w < totalWindows; w++) {
@@ -547,13 +548,15 @@ async function trimPaddedSceneAudio(filePath) {
         return;
     }
 
-    // 2. Cut at exact midpoint — the text was duplicated by padShortText so
-    //    the ideal cut is always at 50% of the audio duration. The previous
-    //    RMS-based heuristic (findQuietestPoint) was unreliable when sentence
-    //    boundaries had unequal silence gaps, sometimes cutting at 75% instead
-    //    of 50% and producing 3 sentence fragments instead of the expected 2.
-    const cutTime = duration / 2;
-    log(`✂️ trimPaddedSceneAudio: total=${duration.toFixed(2)}s, midpoint cut at ${cutTime.toFixed(2)}s for ${basename}`);
+    // 2. Find the quietest point in a narrow window around the midpoint (40%-60%).
+    //    The text was exactly duplicated by padShortText, so the ideal boundary
+    //    is near 50%, but preferring a quiet gap between sentences gives a cleaner
+    //    cut. The previous wide window (25%-75%) was unreliable — it could pick
+    //    the wrong sentence boundary (e.g. 75%) when TTS added unequal silence gaps.
+    const quietest = await findQuietestPoint(filePath, 0.40, 0.60);
+    const cutTime = (quietest > 0.3) ? quietest : (duration / 2);
+    const method = (quietest > 0.3) ? `quietest@${quietest.toFixed(2)}s` : 'half-duration';
+    log(`✂️ trimPaddedSceneAudio: total=${duration.toFixed(2)}s, ${method} cut at ${cutTime.toFixed(2)}s for ${basename}`);
 
     // 3. Cut
     const tempPath = filePath + '.trim.mp3';
