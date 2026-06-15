@@ -1095,27 +1095,32 @@ async function recoverMissingRedisChunks(buildId, bookId) {
                     }
                     
                     // Cover IU counts — read from book data (not from filteredIds, since Cover may be outside scope)
-                    const coverCh = book.loadBook(bookId)?.chapters?.find(ch => ch.type === 'cover');
-                    if (coverCh && coverCh.scenes && coverCh.scenes.length > 0) {
-                        const coverScene = coverCh.scenes[0];
-                        const coverChapterId = coverCh.chapter;
-                        const coverSceneId = coverScene.scene_id;
-                        const rows = await iuRepo.getImageUnitsForScene(buildId, bookId, coverChapterId, coverSceneId);
-                        if (rows.length > 0) {
-                            coverIuTotal = rows.length;
-                            const coverPrefix = `${bookId}_${coverChapterId}_${coverSceneId}_iu`;
-                            let files = [];
-                            try { files = fs.readdirSync(buildDir); } catch (_) {}
-                            coverIuReady = Math.min(files.filter(f => f.startsWith(coverPrefix) && f.endsWith('.png')).length, rows.length);
-                        } else {
-                            // Fallback: count from book data units
-                            const units = coverScene.units || [];
-                            coverIuTotal = units.length;
-                            if (coverIuTotal > 0) {
+                    // Only compute if images are enabled in the layer config
+                    const layerCfg = await layerConfig.get(redis, bookId);
+                    const imagesEnabled = layerCfg?.image_enabled !== false;
+                    if (imagesEnabled) {
+                        const coverCh = book.loadBook(bookId)?.chapters?.find(ch => ch.type === 'cover');
+                        if (coverCh && coverCh.scenes && coverCh.scenes.length > 0) {
+                            const coverScene = coverCh.scenes[0];
+                            const coverChapterId = coverCh.chapter;
+                            const coverSceneId = coverScene.scene_id;
+                            const rows = await iuRepo.getImageUnitsForScene(buildId, bookId, coverChapterId, coverSceneId);
+                            if (rows.length > 0) {
+                                coverIuTotal = rows.length;
                                 const coverPrefix = `${bookId}_${coverChapterId}_${coverSceneId}_iu`;
                                 let files = [];
                                 try { files = fs.readdirSync(buildDir); } catch (_) {}
-                                coverIuReady = Math.min(files.filter(f => f.startsWith(coverPrefix) && f.endsWith('.png')).length, units.length);
+                                coverIuReady = Math.min(files.filter(f => f.startsWith(coverPrefix) && f.endsWith('.png')).length, rows.length);
+                            } else {
+                                // Fallback: count from book data units
+                                const units = coverScene.units || [];
+                                coverIuTotal = units.length;
+                                if (coverIuTotal > 0) {
+                                    const coverPrefix = `${bookId}_${coverChapterId}_${coverSceneId}_iu`;
+                                    let files = [];
+                                    try { files = fs.readdirSync(buildDir); } catch (_) {}
+                                    coverIuReady = Math.min(files.filter(f => f.startsWith(coverPrefix) && f.endsWith('.png')).length, units.length);
+                                }
                             }
                         }
                     }
