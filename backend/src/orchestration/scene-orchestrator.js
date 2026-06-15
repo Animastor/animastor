@@ -818,14 +818,22 @@ async function dispatchStage(redis, scene, loadedBook, buildId, overrideStage = 
 async function handleAudioCompleted(redis, bookId, chapterId, sceneId, buildId) {
     log(`AUDIO_CALLBACK: ${bookId}/${chapterId}/${sceneId}`);
 
-    // Only proceed if we're in AUDIO_GENERATING state
     const currentState = await state.getSceneState(redis, bookId, chapterId, sceneId);
+
+    // Check if state was reset by markDirtyScenes (e.g. after Cancel→Generate).
+    // The audio file still exists on disk and is real — we should still mark as READY
+    // instead of rejecting and forcing a redundant re-dispatch.
     if (!currentState || currentState.state !== state.SceneState.AUDIO_GENERATING) {
-        warn(`AUDIO_CALLBACK: Invalid state: ${currentState?.state || 'no_state'}`);
-        // Still release quota to prevent leaked active counter
-        await dispatchEngine.releaseQuota(redis, 'audio');
-        log(`🔻 AUDIO quota released (invalid state fallback): ${bookId}/${chapterId}/${sceneId}`);
-        return { handled: false, nextStage: null, reason: 'invalid_state' };
+        const isReal = await placeholderAudio.hasRealAudio(bookId, chapterId, sceneId, buildId).catch(() => false);
+        if (isReal) {
+            log(`AUDIO_CALLBACK: stale state=${currentState?.state || 'none'}, but audio is real — completing anyway`);
+            // Proceed with completion logic below (skip state check)
+        } else {
+            warn(`AUDIO_CALLBACK: Invalid state: ${currentState?.state || 'no_state'}, not real audio`);
+            await dispatchEngine.releaseQuota(redis, 'audio');
+            log(`🔻 AUDIO quota released (invalid state fallback): ${bookId}/${chapterId}/${sceneId}`);
+            return { handled: false, nextStage: null, reason: 'invalid_state' };
+        }
     }
 
     // Validate audio is ready
@@ -909,23 +917,25 @@ async function handleAudioCompleted(redis, bookId, chapterId, sceneId, buildId) 
 async function handleImageCompleted(redis, bookId, chapterId, sceneId, buildId) {
     log(`IMAGE_CALLBACK: ${bookId}/${chapterId}/${sceneId}`);
 
-    // Only proceed if we're in IMAGE_GENERATING state
     const currentState = await state.getSceneState(redis, bookId, chapterId, sceneId);
-    if (!currentState || currentState.state !== state.SceneState.IMAGE_GENERATING) {
-        warn(`IMAGE_CALLBACK: Invalid state: ${currentState?.state || 'no_state'}`);
-        await dispatchEngine.releaseQuota(redis, 'image');
-        log(`🔻 IMAGE quota released (invalid state fallback): ${bookId}/${chapterId}/${sceneId}`);
-        return { handled: false, nextStage: null, reason: 'invalid_state' };
-    }
 
-    // Check if scene image exists
+    // Check if scene image exists (do this once, before the state check)
     const sceneImage = image.resolveCanonicalSceneImage(
-        '/data/output',
-        buildId,
-        bookId,
-        chapterId,
-        sceneId,
+        '/data/output', buildId, bookId, chapterId, sceneId
     );
+
+    // Stale state tolerance: if state was reset by markDirtyScenes but images
+    // actually exist on disk, still proceed to mark READY.
+    if (!currentState || currentState.state !== state.SceneState.IMAGE_GENERATING) {
+        if (sceneImage) {
+            log(`IMAGE_CALLBACK: stale state=${currentState?.state || 'none'}, but images exist — completing anyway`);
+        } else {
+            warn(`IMAGE_CALLBACK: Invalid state: ${currentState?.state || 'no_state'}, no images on disk`);
+            await dispatchEngine.releaseQuota(redis, 'image');
+            log(`🔻 IMAGE quota released (invalid state fallback): ${bookId}/${chapterId}/${sceneId}`);
+            return { handled: false, nextStage: null, reason: 'invalid_state' };
+        }
+    }
 
     if (!sceneImage) {
         error(`Scene image not found after completion: ${bookId}/${chapterId}/${sceneId}`);
@@ -1008,18 +1018,24 @@ async function handleImageCompleted(redis, bookId, chapterId, sceneId, buildId) 
 async function handleVideoCompleted(redis, bookId, chapterId, sceneId, buildId) {
     log(`VIDEO_CALLBACK: ${bookId}/${chapterId}/${sceneId}`);
 
-    // Only proceed if we're in VIDEO_GENERATING state
     const currentState = await state.getSceneState(redis, bookId, chapterId, sceneId);
-    if (!currentState || currentState.state !== state.SceneState.VIDEO_GENERATING) {
-        warn(`VIDEO_CALLBACK: Invalid state: ${currentState?.state || 'no_state'}`);
-        await dispatchEngine.releaseQuota(redis, 'video');
-        log(`🔻 VIDEO quota released (invalid state fallback): ${bookId}/${chapterId}/${sceneId}`);
-        return { handled: false, nextStage: null, reason: 'invalid_state' };
-    }
 
-    // Check if video exists
+    // Check if video exists (do this once, before the state check)
     const videoPath = `/data/output/${buildId}/${bookId}_${chapterId}_${sceneId}.mp4`;
     const { valid, duration, metadata } = video.validateVideoFile(videoPath);
+
+    // Stale state tolerance: if state was reset by markDirtyScenes but video
+    // actually exists on disk, still proceed to mark READY.
+    if (!currentState || currentState.state !== state.SceneState.VIDEO_GENERATING) {
+        if (valid) {
+            log(`VIDEO_CALLBACK: stale state=${currentState?.state || 'none'}, but video exists — completing anyway`);
+        } else {
+            warn(`VIDEO_CALLBACK: Invalid state: ${currentState?.state || 'no_state'}, no video on disk`);
+            await dispatchEngine.releaseQuota(redis, 'video');
+            log(`🔻 VIDEO quota released (invalid state fallback): ${bookId}/${chapterId}/${sceneId}`);
+            return { handled: false, nextStage: null, reason: 'invalid_state' };
+        }
+    }
 
     if (!valid) {
         error(`Video not valid after completion: ${bookId}/${chapterId}/${sceneId}`);

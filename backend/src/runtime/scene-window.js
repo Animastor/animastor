@@ -136,14 +136,22 @@ async function sceneHasValidContent(redis, buildId, bookId, chapterId, sceneId) 
     // Only real TTS audio (status='ready' in scene_assets) counts.
     // This prevents the system from marking scenes as complete before
     // real TTS generation has happened.
+    //
+    // However, after Cancel→Generate, the PG status may still say 'placeholder'
+    // because the stale completion handler was rejected. As a fallback, check
+    // file existence on disk — if real audio exists, it's valid content.
     if (!imageEnabled && !videoEnabled) {
         try {
             const asset = await sceneAssetsRepo.getAsset(bookId, chapterId, sceneId, 'audio', buildId);
-            return !!(asset && asset.status === 'ready');
-        } catch (_) {
-            // DB unavailable — safe fallback: don't assume valid
-            return false;
-        }
+            if (asset && asset.status === 'ready') return true;
+        } catch (_) {}
+        // Fallback: audio file already confirmed to exist above.
+        // Check if it's real TTS audio (not placeholder)
+        try {
+            const hasReal = await placeholderAudio.hasRealAudio(bookId, chapterId, sceneId, buildId);
+            if (hasReal) return true;
+        } catch (_) {}
+        return false;
     }
 
     // If images are enabled, check for at least one IU image
