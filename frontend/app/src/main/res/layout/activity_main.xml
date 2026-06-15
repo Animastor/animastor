@@ -168,6 +168,7 @@
         android:background="@drawable/cinema_glow_divider" />
 
     <!-- Generation progress bar (hidden when no generation is running) -->
+    <!-- Clickable: tap to switch between active workers when multiple are running -->
     <LinearLayout
         android:id="@+id/generationProgressContainer"
         android:layout_width="match_parent"
@@ -178,7 +179,10 @@
         android:paddingEnd="16dp"
         android:paddingTop="6dp"
         android:paddingBottom="6dp"
-        android:visibility="gone">
+        android:visibility="gone"
+        android:clickable="true"
+        android:focusable="true"
+        android:foreground="?attr/selectableItemBackground">
 
         <LinearLayout
             android:layout_width="match_parent"
