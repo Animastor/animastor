@@ -59,7 +59,7 @@
                 android:orientation="horizontal"
                 android:visibility="gone">
 
-                <!-- Audio Worker (base layer, always ON) -->
+                <!-- Audio Worker (independently toggleable) -->
                 <LinearLayout
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
@@ -69,12 +69,10 @@
 
                     <com.google.android.material.chip.Chip
                         android:id="@+id/workerAudioLayout"
-                        style="@style/Widget.Animastor.Chip"
+                        style="@style/Widget.Animastor.Chip.Worker"
                         android:layout_width="48dp"
                         android:layout_height="48dp"
                         android:checked="true"
-                        android:clickable="false"
-                        android:focusable="false"
                         android:text=""
                         android:contentDescription="@string/worker_audio_desc"
                         app:chipIcon="@drawable/ic_volume_up"
@@ -90,7 +88,7 @@
                         android:textColor="?attr/colorOnSurfaceVariant" />
                 </LinearLayout>
 
-                <!-- Image Worker (storyboard layer, toggleable) -->
+                <!-- Image Worker (independently toggleable) -->
                 <LinearLayout
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
@@ -100,7 +98,7 @@
 
                     <com.google.android.material.chip.Chip
                         android:id="@+id/workerImageLayout"
-                        style="@style/Widget.Animastor.Chip"
+                        style="@style/Widget.Animastor.Chip.Worker"
                         android:layout_width="48dp"
                         android:layout_height="48dp"
                         android:checked="true"
@@ -119,7 +117,7 @@
                         android:textColor="?attr/colorOnSurfaceVariant" />
                 </LinearLayout>
 
-                <!-- Video Worker (full layer, toggleable; requires image) -->
+                <!-- Video Worker (independently toggleable) -->
                 <LinearLayout
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
@@ -128,7 +126,7 @@
 
                     <com.google.android.material.chip.Chip
                         android:id="@+id/workerVideoLayout"
-                        style="@style/Widget.Animastor.Chip"
+                        style="@style/Widget.Animastor.Chip.Worker"
                         android:layout_width="48dp"
                         android:layout_height="48dp"
                         android:checked="true"

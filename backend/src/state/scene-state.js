@@ -474,6 +474,33 @@ function getRecoveryPendingState(stuckState) {
 }
 
 // ======================================================
+// LINEAR STATE SYNC (derived from per-asset)
+// ======================================================
+
+/**
+ * Sync the linear FSM state from per-asset states.
+ * Derives the composite linear state from all three asset states
+ * and writes it directly (bypassing FSM validation).
+ * This keeps the linear state in sync for backward compatibility
+ * while allowing independent asset-level transitions.
+ *
+ * Call this after every setAssetState() call.
+ *
+ * @param {RedisClient} redis
+ * @param {string} bookId
+ * @param {string} chapterId
+ * @param {string} sceneId
+ * @returns {Promise<string>} The derived linear state
+ */
+async function syncLinearState(redis, bookId, chapterId, sceneId) {
+    const assetStates = await getAssetStates(redis, bookId, chapterId, sceneId);
+    const linearState = deriveLinearState(assetStates);
+    await setSceneState(redis, bookId, chapterId, sceneId, linearState);
+    log(`SYNC LINEAR: ${bookId}/${chapterId}/${sceneId} -> ${linearState} (assets=${JSON.stringify(assetStates)})`);
+    return linearState;
+}
+
+// ======================================================
 // ASSET STATE OPERATIONS
 // ======================================================
 
@@ -753,5 +780,8 @@ module.exports = {
 
     // Backwards compatibility aliases
     SCENE_STUCK_THRESHOLDS,
-    SCENE_TRANSITION_LOCK_TTL
+    SCENE_TRANSITION_LOCK_TTL,
+
+    // Linear state sync (derives from per-asset)
+    syncLinearState
 };

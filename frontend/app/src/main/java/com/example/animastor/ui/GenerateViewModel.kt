@@ -143,40 +143,47 @@ class GenerateViewModel(
     }
 
     fun setVideoEnabled(enabled: Boolean) {
-        val nextVideo = enabled
-        val nextImage = if (enabled) true else imageEnabled
-        _videoEnabled.value = nextVideo
-        imageEnabled = nextImage
+        _videoEnabled.value = enabled
         viewModelScope.launch { persistLayerConfig() }
     }
 
+    /**
+     * Toggle audio independently. Does NOT affect image or video.
+     */
     fun toggleAudioForProfile() {
-        val next = !_audioEnabled.value
-        _audioEnabled.value = next
-        // When disabling audio with video enabled, video stays enabled (audio not required for video)
-        // When enabling audio with no image/video, that becomes audio_only
+        _audioEnabled.value = !_audioEnabled.value
         viewModelScope.launch { persistLayerConfig() }
     }
 
+    /**
+     * Toggle image independently. Does NOT affect audio or video.
+     */
     fun toggleImageForProfile() {
-        val next = !imageEnabled
-        imageEnabled = next
-        if (!next && _videoEnabled.value) _videoEnabled.value = false
+        imageEnabled = !imageEnabled
         viewModelScope.launch { persistLayerConfig() }
     }
 
+    /**
+     * Toggle video independently. Does NOT affect audio or image.
+     */
     fun toggleVideoForProfile() {
-        val next = !_videoEnabled.value
-        if (next && !imageEnabled) imageEnabled = true
-        _videoEnabled.value = next
+        _videoEnabled.value = !_videoEnabled.value
         viewModelScope.launch { persistLayerConfig() }
     }
 
+    /**
+     * Compute profile string from independent worker states.
+     * All 8 combinations of (audio, image, video) are valid.
+     */
     private fun computeProfile(audio: Boolean, image: Boolean, video: Boolean): String {
-        if (video) return "full"
-        if (image && !audio) return "image_only"
-        if (image) return "storyboard"
-        return "audio_only"
+        if (audio && image && video) return "full"
+        if (!audio && image && video) return "image_only"
+        if (audio && !image && video) return "audio_only"
+        if (!audio && !image && video) return "image_only"  // video without audio/image → just video
+        if (audio && image && !video) return "storyboard"
+        if (!audio && image && !video) return "image_only"
+        if (audio && !image && !video) return "audio_only"
+        return "audio_only"  // all disabled — default to audio_only
     }
 
     private fun computeProfile(image: Boolean, video: Boolean): String {
@@ -265,11 +272,15 @@ class GenerateViewModel(
         generationJob = viewModelScope.launch {
             _uiState.value = GenUiState(phase = PlayerPhase.GENERATING)
             runCatching {
+                // Don't pass profile to backend — the layer config was already
+                // persisted by the independent toggle chips (persistLayerConfig).
+                // Passing profile would override the individual audio/image/video
+                // settings with a predefined profile combination.
                 val res = _repository.regenerateBookScoped(
                     bookId = bookId,
                     newBook = null,
                     rebuildAll = true,
-                    profile = req.profile,
+                    profile = null,
                     scope = req.scope,
                     chapterId = req.chapterId,
                     sceneId = req.sceneId

@@ -131,6 +131,21 @@ async function sceneHasValidContent(redis, buildId, bookId, chapterId, sceneId) 
         } catch (_) {}
     }
 
+    // Audio-only mode: both image and video are disabled.
+    // Placeholder audio is NOT valid content for skipping GPU dispatch.
+    // Only real TTS audio (status='ready' in scene_assets) counts.
+    // This prevents the system from marking scenes as complete before
+    // real TTS generation has happened.
+    if (!imageEnabled && !videoEnabled) {
+        try {
+            const asset = await sceneAssetsRepo.getAsset(bookId, chapterId, sceneId, 'audio', buildId);
+            return !!(asset && asset.status === 'ready');
+        } catch (_) {
+            // DB unavailable — safe fallback: don't assume valid
+            return false;
+        }
+    }
+
     // If images are enabled, check for at least one IU image
     if (imageEnabled) {
         let files;
@@ -249,6 +264,20 @@ async function isWindowComplete(redis, bookId) {
     const workerHealth = require('./worker-health');
     const hasVideo = await workerHealth.isAvailable(redis, 'video');
 
+    // Read layer config so we know which layers are actually enabled.
+    // If a layer is disabled, we don't require it to be 'ready'.
+    const layerKey = `animastor:layer-config:${bookId}`;
+    const layerRaw = await redis.get(layerKey);
+    let imageEnabled = true;
+    let videoEnabled = true;
+    if (layerRaw) {
+        try {
+            const lc = JSON.parse(layerRaw);
+            imageEnabled = lc.image_enabled !== false;
+            videoEnabled = lc.video_enabled !== false;
+        } catch (_) {}
+    }
+
     for (let i = windowStart; i < nextIdx && i < scenes.length; i++) {
         const s = scenes[i];
         const sceneStateKey = `${state.SCENE_STATE_KEY_PREFIX}:${bookId}:${s.chapter_id}:${s.scene_id}`;
@@ -267,13 +296,17 @@ async function isWindowComplete(redis, bookId) {
                         st === state.SceneState.VIDEO_PENDING ||
                         st === state.SceneState.VIDEO_GENERATING ||
                         st === state.SceneState.VIDEO_READY;
-        const imageOk = st === state.SceneState.IMAGE_READY ||
+
+        // If images are disabled by layer config, skip image readiness check
+        const imageOk = !imageEnabled ||
+                        st === state.SceneState.IMAGE_READY ||
                         st === state.SceneState.VIDEO_PENDING ||
                         st === state.SceneState.VIDEO_GENERATING ||
                         st === state.SceneState.VIDEO_READY;
 
+        // If video is disabled by layer config, skip video readiness check
         let videoOk = true;
-        if (hasVideo) {
+        if (hasVideo && videoEnabled) {
             videoOk = st === state.SceneState.VIDEO_READY;
         }
 
@@ -282,7 +315,7 @@ async function isWindowComplete(redis, bookId) {
             return false;
         }
     }
-    log(`Window complete: all ${nextIdx - windowStart} scenes have audio+image${hasVideo ? '+video' : ''} ready`);
+    log(`Window complete: all ${nextIdx - windowStart} scenes have audio+image${hasVideo && videoEnabled ? '+video' : ''} ready`);
     return true;
 }
 

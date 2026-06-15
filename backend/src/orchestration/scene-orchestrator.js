@@ -121,35 +121,24 @@ async function startScene(redis, scene, loadedBook, buildId) {
 function determineNextStage(currentState, videoAvailable = true) {
     const stateName = currentState.state;
 
-    // NEW → start audio pipeline
     if (stateName === state.SceneState.NEW) {
         return { stage: Stage.AUDIO, reason: 'new_scene' };
     }
-
-    // AUDIO stage (first stage)
     if (stateName === state.SceneState.AUDIO_PENDING) {
         return { stage: Stage.AUDIO, reason: 'first_stage' };
     }
-
-    // AUDIO_READY => IMAGE_PENDING
     if (stateName === state.SceneState.AUDIO_READY) {
         return { stage: Stage.IMAGE, reason: 'audio_ready' };
     }
-
-    // IMAGE_PENDING => IMAGE_GENERATING
     if (stateName === state.SceneState.IMAGE_PENDING) {
         return { stage: Stage.IMAGE, reason: 'image_pending' };
     }
-
-    // IMAGE_READY => VIDEO_PENDING (only if video worker available)
     if (stateName === state.SceneState.IMAGE_READY) {
         if (!videoAvailable) {
             return { stage: null, reason: 'no_video_worker' };
         }
         return { stage: Stage.VIDEO, reason: 'image_ready' };
     }
-
-    // All other states: no automatic progression
     return { stage: null, reason: 'no_progression' };
 }
 
@@ -585,6 +574,18 @@ async function executeVideoDispatch(redis, scene, loadedBook, buildId) {
     const chapterId = scene.chapter_id;
     const sceneId = scene.scene_id;
 
+    // [INDEPENDENT WORKERS] Video requires image readiness.
+    // Check per-asset states: if images aren't ready, skip this scene.
+    try {
+        const assetImgStates = await state.getAssetStates(redis, bookId, chapterId, sceneId);
+        if (assetImgStates.image !== state.AssetState.READY) {
+            log(`VIDEO SKIP (images not ready): ${bookId}/${chapterId}/${sceneId} (image=${assetImgStates.image})`);
+            return { success: true, dispatched: false, waiting: false, stage: Stage.VIDEO, reason: 'images_not_ready' };
+        }
+    } catch (e) {
+        warn(`VIDEO image check failed: ${e.message} — proceeding anyway`);
+    }
+
     // Check if video already exists - CACHING CHECK
     const videoPath = `/data/output/${buildId}/${bookId}_${chapterId}_${sceneId}.mp4`;
     const videoCheck = video.validateVideoFile(videoPath);
@@ -679,20 +680,31 @@ async function executeVideoDispatch(redis, scene, loadedBook, buildId) {
 /**
  * Dispatch the next stage for a scene.
  * Pure dispatch - does NOT wait for completion.
+ * 
+ * If overrideStage is provided, uses it directly (from scheduler's per-asset decision).
+ * Otherwise falls back to legacy decideStage (linear FSM).
  */
-async function dispatchStage(redis, scene, loadedBook, buildId) {
+async function dispatchStage(redis, scene, loadedBook, buildId, overrideStage = null) {
     const bookId = scene.book_id;
     const chapterId = scene.chapter_id;
     const sceneId = scene.scene_id;
 
-    const decideResult = await decideStage(redis, scene, loadedBook, buildId);
+    let stage;
 
-    if (!decideResult.shouldExecute) {
-        log(`No stage to dispatch for ${bookId}/${chapterId}/${sceneId}: ${decideResult.reason}`);
-        return { success: true, dispatched: false, reason: decideResult.reason };
+    if (overrideStage) {
+        // Scheduler already determined which stage to dispatch from per-asset states.
+        // Skip re-decision and go directly to layer config checks.
+        stage = overrideStage;
+        log(`DISPATCH (override): ${bookId}/${chapterId}/${sceneId} -> ${stage}`);
+    } else {
+        // Legacy path: use linear FSM to determine stage
+        const decideResult = await decideStage(redis, scene, loadedBook, buildId);
+        if (!decideResult.shouldExecute) {
+            log(`No stage to dispatch for ${bookId}/${chapterId}/${sceneId}: ${decideResult.reason}`);
+            return { success: true, dispatched: false, reason: decideResult.reason };
+        }
+        stage = decideResult.stage;
     }
-
-    const { stage } = decideResult;
 
     // Check layer config: skip audio or image dispatch if disabled by user
     if (stage === Stage.AUDIO) {
@@ -737,6 +749,37 @@ async function dispatchStage(redis, scene, loadedBook, buildId) {
                         }
                     }
                     return { success: true, dispatched: false, reason: 'image_disabled_by_layer' };
+                }
+            } catch (e) {
+                warn(`Failed to parse layer config for ${bookId}: ${e.message}`);
+            }
+        }
+    }
+
+    // Check layer config: skip video dispatch if disabled by user
+    if (stage === Stage.VIDEO) {
+        const layerKey = `animastor:layer-config:${bookId}`;
+        const layerRaw = await redis.get(layerKey);
+        if (layerRaw) {
+            try {
+                const layerConfig = JSON.parse(layerRaw);
+                if (layerConfig.video_enabled === false) {
+                    log(`LAYER: video disabled for ${bookId}, skipping video dispatch for ${bookId}/${chapterId}/${sceneId}`);
+                    await state.transitionSceneState(redis, bookId, chapterId, sceneId, state.SceneState.VIDEO_GENERATING);
+                    await state.transitionSceneState(redis, bookId, chapterId, sceneId, state.SceneState.VIDEO_READY);
+                    await state.setAssetState(redis, bookId, chapterId, sceneId, 'video', state.AssetState.READY);
+                    await runtimeScheduler.removeSceneFromActiveIndex(redis, bookId, chapterId, sceneId);
+                    // Auto-slide the window
+                    try {
+                        const sceneWindow = require('../runtime/scene-window');
+                        const slide = await sceneWindow.trySlideWindowOnComplete(redis, bookId, loadedBook, buildId);
+                        if (slide && slide.started > 0) {
+                            log(`LAYER video-disabled auto-slide: started=${slide.started} remaining=${slide.remaining}`);
+                        }
+                    } catch (e) {
+                        warn(`LAYER video-disabled auto-slide failed: ${e.message}`);
+                    }
+                    return { success: true, dispatched: false, reason: 'video_disabled_by_layer' };
                 }
             } catch (e) {
                 warn(`Failed to parse layer config for ${bookId}: ${e.message}`);
@@ -837,17 +880,11 @@ async function handleAudioCompleted(redis, bookId, chapterId, sceneId, buildId) 
         warn(`Failed to replace placeholder audio: ${err.message}`);
     }
 
-    // Update per-asset state
+    // Update per-asset state (source of truth)
     await state.setAssetState(redis, bookId, chapterId, sceneId, 'audio', state.AssetState.READY);
 
-    // Transition to AUDIO_READY
-    await state.transitionSceneState(
-        redis,
-        bookId,
-        chapterId,
-        sceneId,
-        state.SceneState.AUDIO_READY
-    );
+    // Sync linear FSM from per-asset states (backward compat)
+    await state.syncLinearState(redis, bookId, chapterId, sceneId);
 
     // Release dispatch quota so worker pulse stops
     await dispatchEngine.releaseQuota(redis, 'audio');
@@ -925,17 +962,11 @@ async function handleImageCompleted(redis, bookId, chapterId, sceneId, buildId) 
         path: sceneImage
     });
 
-    // Update per-asset state
+    // Update per-asset state (source of truth)
     await state.setAssetState(redis, bookId, chapterId, sceneId, 'image', state.AssetState.READY);
 
-    // Transition to IMAGE_READY
-    await state.transitionSceneState(
-        redis,
-        bookId,
-        chapterId,
-        sceneId,
-        state.SceneState.IMAGE_READY
-    );
+    // Sync linear FSM from per-asset states (backward compat)
+    await state.syncLinearState(redis, bookId, chapterId, sceneId);
 
     // Update all chunks for this scene with image_status: ready
     const chunkPrefix = `animastor:chunk:${bookId}_${chapterId}_${sceneId}_`;
@@ -1027,17 +1058,11 @@ async function handleVideoCompleted(redis, bookId, chapterId, sceneId, buildId) 
     // Update registry
     await video.updateSceneVideoStatus(redis, bookId, chapterId, sceneId, 'ready');
 
-    // Update per-asset state
+    // Update per-asset state (source of truth)
     await state.setAssetState(redis, bookId, chapterId, sceneId, 'video', state.AssetState.READY);
 
-    // Transition to VIDEO_READY
-    await state.transitionSceneState(
-        redis,
-        bookId,
-        chapterId,
-        sceneId,
-        state.SceneState.VIDEO_READY
-    );
+    // Sync linear FSM from per-asset states (backward compat)
+    await state.syncLinearState(redis, bookId, chapterId, sceneId);
 
     // Release dispatch quota so worker pulse stops
     await dispatchEngine.releaseQuota(redis, 'video');

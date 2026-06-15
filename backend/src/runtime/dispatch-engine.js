@@ -612,13 +612,14 @@ async function dispatchStage(redis, bookId, chapterId, sceneId, stage, loadedBoo
 
     // Step 6: Get orchestrator to perform dispatch
     try {
-        log(`[DISPATCH-DEBUG] Passing buildId=${buildId} to orchestrator for ${bookId}/${chapterId}/${sceneId}:${stage}`);
+        log(`[DISPATCH-DEBUG] Passing buildId=${buildId} stage=${stage} to orchestrator for ${bookId}/${chapterId}/${sceneId}`);
         const orchestrator = require('../orchestration');
         const result = await orchestrator.dispatchStage(
             redis,
             { book_id: bookId, chapter_id: chapterId, scene_id: sceneId },
             loadedBook,
-            buildId
+            buildId,
+            stage  // Pass stage directly — orchestrator uses it instead of re-deciding
         );
 
         // If orchestrator didn't dispatch (already done/cached), release quota and lease

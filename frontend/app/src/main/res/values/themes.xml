@@ -232,6 +232,15 @@
         <item name="elevation">0dp</item>
     </style>
 
+    <!-- Worker Chip — toggleable worker buttons in the toolbar -->
+    <style name="Widget.Animastor.Chip.Worker" parent="Widget.Animastor.Chip">
+        <item name="chipBackgroundColor">@color/worker_chip_bg</item>
+        <item name="chipStrokeColor">@color/worker_chip_stroke</item>
+        <item name="chipStrokeWidth">1.5dp</item>
+        <item name="chipIconTint">@color/worker_chip_icon</item>
+        <item name="elevation">0dp</item>
+    </style>
+
 
 
     <!-- TabLayout -->

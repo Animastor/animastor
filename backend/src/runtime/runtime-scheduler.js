@@ -28,6 +28,22 @@ function error(msg) {
 }
 
 // ======================================================
+// HELPERS
+// ======================================================
+
+/**
+ * Read layer config for a book.
+ */
+async function getLayerConfig(redis, bookId) {
+    const layerKey = `animastor:layer-config:${bookId}`;
+    const layerRaw = await redis.get(layerKey);
+    if (layerRaw) {
+        try { return JSON.parse(layerRaw); } catch (_) {}
+    }
+    return { audio_enabled: true, image_enabled: true, video_enabled: true };
+}
+
+// ======================================================
 // CONFIGURATION
 // ======================================================
 
@@ -172,43 +188,90 @@ function parseSceneKey(sceneKey) {
 }
 
 /**
- * Determine if a scene needs scheduling based on its state.
- * Returns { shouldSchedule: boolean, stage: string | null, reason: string }
+ * Determine which asset stages need scheduling for a scene.
+ * Uses per-asset states as source of truth.
+ * Each worker is independent:
+ *   - Audio: dispatches if enabled and not ready
+ *   - Image: dispatches if enabled and not ready (independent of audio)
+ *   - Video: dispatches if enabled, not ready, and image=ready
+ *
+ * Returns { stages: string[], allDone: boolean }
+ */
+async function shouldScheduleAssets(redis, bookId, chapterId, sceneId) {
+    const assetStates = await state.getAssetStates(redis, bookId, chapterId, sceneId);
+    const layerCfg = await getLayerConfig(redis, bookId);
+
+    const audioEnabled = layerCfg.audio_enabled !== false;
+    const imageEnabled = layerCfg.image_enabled !== false;
+    const videoEnabled = layerCfg.video_enabled !== false;
+
+    // Check if all enabled assets are in terminal states
+    const allDone = (
+        (!audioEnabled || assetStates.audio === state.AssetState.READY || assetStates.audio === state.AssetState.FAILED) &&
+        (!imageEnabled || assetStates.image === state.AssetState.READY || assetStates.image === state.AssetState.FAILED) &&
+        (!videoEnabled || assetStates.video === state.AssetState.READY || assetStates.video === state.AssetState.FAILED)
+    );
+    if (allDone) return { stages: [], allDone: true };
+
+    const stages = [];
+
+    // Audio: independent — dispatch if not ready and not already generating
+    if (audioEnabled &&
+        assetStates.audio !== state.AssetState.READY &&
+        assetStates.audio !== state.AssetState.FAILED &&
+        assetStates.audio !== state.AssetState.GENERATING &&
+        assetStates.audio !== state.AssetState.PLACEHOLDER) {
+        stages.push('audio');
+    }
+
+    // Image: independent of audio — dispatch if not ready and not already generating
+    if (imageEnabled &&
+        assetStates.image !== state.AssetState.READY &&
+        assetStates.image !== state.AssetState.FAILED &&
+        assetStates.image !== state.AssetState.GENERATING) {
+        stages.push('image');
+    }
+
+    // Video: requires image=ready — if images aren't ready, skip silently
+    if (videoEnabled &&
+        assetStates.video !== state.AssetState.READY &&
+        assetStates.video !== state.AssetState.FAILED &&
+        assetStates.video !== state.AssetState.GENERATING) {
+        if (assetStates.image === state.AssetState.READY) {
+            stages.push('video');
+        }
+        // If images not ready, skip video for this scene (not an error)
+    }
+
+    return { stages, allDone };
+}
+
+/**
+ * Legacy: Determine if a scene needs scheduling based on linear FSM state.
+ * Kept for backward compatibility. New code should use shouldScheduleAssets.
  */
 function shouldScheduleScene(currentState) {
     const stateName = currentState.state;
 
-    // Already in a generating state - just monitor
     if (stateName.includes('_generating')) {
         return { shouldSchedule: false, stage: null, reason: 'already_generating' };
     }
-
-    // Already at VIDEO_READY or FAILED - skip
     if (stateName === state.SceneState.VIDEO_READY || stateName === state.SceneState.FAILED) {
         return { shouldSchedule: false, stage: null, reason: 'terminal_state' };
     }
-
-    // NEW state — start audio pipeline
     if (stateName === state.SceneState.NEW) {
         return { shouldSchedule: true, stage: 'audio', reason: 'new_scene' };
     }
-
-    // Check pending states
     const stage = STATE_TO_STAGE[stateName];
     if (stage) {
         return { shouldSchedule: true, stage, reason: 'pending' };
     }
-
-    // AUDIO_READY wait for image
     if (stateName === state.SceneState.AUDIO_READY) {
         return { shouldSchedule: true, stage: 'image', reason: 'audio_ready' };
     }
-
-    // IMAGE_READY wait for video
     if (stateName === state.SceneState.IMAGE_READY) {
         return { shouldSchedule: true, stage: 'video', reason: 'image_ready' };
     }
-
     return { shouldSchedule: false, stage: null, reason: 'no_matching_stage' };
 }
 
@@ -388,10 +451,13 @@ async function tick(redis, loadedBooks = {}) {
 
             if (result.completed) {
                 summary.completed++;
-            } else if (result.dispatched) {
-                summary.dispatched++;
+            } else if (result.dispatched && result.dispatched > 0) {
+                summary.dispatched += result.dispatched;
+                if (result.throttled > 0) summary.throttled += result.throttled;
             } else if (result.skip) {
                 summary.skipped++;
+            } else if (result.throttled > 0) {
+                summary.throttled += result.throttled;
             } else if (result.reason === 'backpressure' || result.reason === 'throttled') {
                 summary.throttled++;
             } else if (result.reason === 'stuck') {
@@ -450,55 +516,62 @@ async function getMetrics(redis) {
 // ======================================================
 
 /**
- * Attempt to dispatch a scene stage using dispatch engine.
- * Returns { dispatched: boolean, skip: boolean, completed: boolean, reason: string }
+ * Attempt to dispatch scene stages using per-asset states.
+ * Supports independent workers: dispatches ALL eligible stages in one tick.
+ * Returns { dispatched: number, completed: boolean, reason: string }
  */
 async function attemptDispatch(redis, bookId, chapterId, sceneId, loadedBook) {
     const sceneKey = `${bookId}:${chapterId}:${sceneId}`;
 
-    // Get current state
+    // Get current linear state for build_id
     const currentStateRaw = await redis.get(`${state.SCENE_STATE_KEY_PREFIX}:${bookId}:${chapterId}:${sceneId}`);
     if (!currentStateRaw) {
         warn(`DISPATCH: State not found for ${sceneKey}`);
         return { success: false, skip: false, reason: 'no_state' };
     }
-
     const currentState = JSON.parse(currentStateRaw);
-    const currentStage = currentState.state;
+    const buildId = currentState.build_id || null;
 
-    // Complete or failed - remove from active index
-    if (currentStage === state.SceneState.VIDEO_READY || currentStage === state.SceneState.FAILED) {
+    // Determine which asset stages need scheduling (from per-asset states)
+    const { stages, allDone } = await shouldScheduleAssets(redis, bookId, chapterId, sceneId);
+
+    if (allDone) {
         await removeSceneFromActiveIndex(redis, bookId, chapterId, sceneId);
-        log(`COMPLETE: ${sceneKey} - removed from active index`);
-        return { completed: true, reason: 'terminal' };
+        log(`COMPLETE: ${sceneKey} (all assets ready) - removed from active index`);
+        return { completed: true, reason: 'all_assets_ready' };
     }
 
-    // Check if scene is stuck
-    const stuck = await state.isSceneStuck(redis, bookId, chapterId, sceneId);
-    if (stuck.isStuck) {
-        warn(`DISPATCH: Scene stuck in ${currentStage} for ${stuck.ageMinutes} minutes`);
-        return { success: false, skip: true, reason: 'stuck' };
+    if (stages.length === 0) {
+        // Assets are in non-dispatchable states (e.g., generating, placeholder)
+        // or video skipped because images not ready
+        return { success: true, skip: true, reason: 'no_dispatchable_stages' };
     }
 
-    // Determine next stage
-    const { shouldSchedule, stage, reason } = shouldScheduleScene(currentState);
+    log(`ATTEMPT_DISPATCH: ${sceneKey} -> stages=[${stages.join(', ')}]`);
 
-    if (!shouldSchedule) {
-        return { success: true, skip: true, reason: 'no_progression_needed' };
+    let dispatched = 0;
+    let throttled = 0;
+
+    // Dispatch ALL eligible stages in this tick.
+    // Concurrency limits per stage type are handled by dispatch engine.
+    for (const stage of stages) {
+        const result = await dispatchEngine.dispatchStage(
+            redis,
+            bookId,
+            chapterId,
+            sceneId,
+            stage,
+            loadedBook,
+            buildId
+        );
+        if (result.dispatched) {
+            dispatched++;
+        } else if (result.reason === 'backpressure' || result.reason === 'throttled') {
+            throttled++;
+        }
     }
 
-    log(`ATTEMPT_DISPATCH: ${sceneKey} -> ${stage}`);
-
-    // Call dispatch engine
-    return await dispatchEngine.dispatchStage(
-        redis,
-        bookId,
-        chapterId,
-        sceneId,
-        stage,
-        loadedBook,
-        currentState.build_id || null
-    );
+    return { dispatched, throttled, stages: stages.length };
 }
 
 // ======================================================
@@ -566,6 +639,8 @@ module.exports = {
     // Scheduling
     registerScene,
     shouldScheduleScene,
+    shouldScheduleAssets,
+    getLayerConfig,
     tick,
     getMetrics,
 
@@ -576,6 +651,7 @@ module.exports = {
 
     // Re-exports
     SceneState: state.SceneState,
+    AssetState: state.AssetState,
     STATE_TO_STAGE,
     STAGE_TO_STATE,
     SCENE_STATE_KEY_PREFIX: state.SCENE_STATE_KEY_PREFIX,
