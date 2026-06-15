@@ -672,11 +672,14 @@ class MainActivity : AppCompatActivity() {
                 gpuProgressDoneAt = System.currentTimeMillis()
             }
             val elapsed = System.currentTimeMillis() - gpuProgressDoneAt
-            if (elapsed < 5000) {
+            if (elapsed < 10000) {
                 binding.generationProgressContainer.visibility = View.VISIBLE
                 binding.generationProgressBar.isIndeterminate = false
                 binding.generationProgressBar.setProgressCompat(100, true)
+                val greenColor = getColor(R.color.cinema_success)
+                binding.generationProgressLabel.setTextColor(greenColor)
                 binding.generationProgressLabel.text = getString(R.string.generation_done)
+                binding.generationProgressPercent.setTextColor(greenColor)
                 binding.generationProgressPercent.text = "100%"
             } else {
                 binding.generationProgressContainer.visibility = View.GONE
@@ -699,6 +702,9 @@ class MainActivity : AppCompatActivity() {
 
         // Still in progress — reset done timer and show rotating worker
         gpuProgressDoneAt = 0L
+        // Reset text color back to normal (it may have been set to green in "Done" state)
+        binding.generationProgressLabel.setTextColor(getColor(R.color.cinema_text_secondary))
+        binding.generationProgressPercent.setTextColor(getColor(R.color.cinema_text_secondary))
         binding.generationProgressContainer.visibility = View.VISIBLE
         binding.generationProgressBar.isIndeterminate = false
         binding.generationProgressBar.setProgressCompat(worker.percent, true)

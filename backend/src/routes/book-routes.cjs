@@ -1199,7 +1199,18 @@ async function recoverMissingRedisChunks(buildId, bookId) {
             const scheduler = require('../runtime/runtime-scheduler');
             await scheduler.clearBookFromActiveIndex(redis, bookId);
 
-            log(`[CANCEL-GENERATION] ${bookId}: generation cancelled`);
+            // Reset concurrent worker counters to prevent stale "active worker" pulse
+            // in the frontend. These counters are incremented on dispatch and
+            // decremented on completion — cancelled jobs may leak them.
+            await redis.del('animastor:runtime:active-audio');
+            await redis.del('animastor:runtime:active-image');
+            await redis.del('animastor:runtime:active-video');
+            // Also reset the scheduler's own backpressure counters (different keys)
+            await redis.del('animastor:concurrent-audio');
+            await redis.del('animastor:concurrent-image');
+            await redis.del('animastor:concurrent-video');
+
+            log(`[CANCEL-GENERATION] ${bookId}: generation cancelled, counters reset`);
             res.json({ ok: true, book_id: bookId });
         } catch (err) {
             console.error('[CANCEL-GENERATION] Error:', err.message);

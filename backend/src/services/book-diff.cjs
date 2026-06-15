@@ -192,7 +192,7 @@ module.exports = function(redis, config, deps) {
             }
             if (resetImage) {
                 chunk.image = false;
-                chunk.video_status = 'pending';
+                chunk.image_status = 'pending';
             }
             if (resetVideo) {
                 chunk.video = false;

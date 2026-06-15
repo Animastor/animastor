@@ -335,8 +335,20 @@ async function trySlideWindowOnComplete(redis, bookId, loadedBook, buildId) {
         log(`trySlideWindowOnComplete: generation cancelled for ${bookId}`);
         return { started: 0, remaining: 0, reason: 'cancelled' };
     }
+
+    // Reconcile chunk statuses against actual files on disk before checking
+    // window completeness. This catches stale 'pending' statuses that may
+    // have survived from a previous Cancel→Generate cycle — allowing the
+    // window to slide without waiting for the next scheduler tick.
+    await reconcileWindowStatuses(redis, bookId, buildId);
+
     if (await isWindowComplete(redis, bookId)) {
-        return await slideWindow(redis, bookId, loadedBook, buildId);
+        const result = await slideWindow(redis, bookId, loadedBook, buildId);
+        // After sliding, do a final reconciliation pass so /assets-state
+        // reports correct counts immediately. This catches any chunk statuses
+        // that startScene reset to 'pending' even though files exist on disk.
+        await reconcileWindowStatuses(redis, bookId, buildId);
+        return result;
     }
     const total = parseInt(await redis.get(BOOK_SCENE_TOTAL(bookId)) || '0', 10);
     const nextIdx = parseInt(await redis.get(BOOK_SCENE_NEXT(bookId)) || '0', 10);
@@ -419,6 +431,72 @@ async function slideWindow(redis, bookId, loadedBook, buildId) {
     await redis.set(BOOK_WINDOW_START(bookId), windowStart);
     log(`Window slid: started ${started} more scenes (next index=${nextIdx}/${total}, windowStart=${windowStart})`);
     return { started, remaining: total - nextIdx };
+}
+
+/**
+ * Reconcile chunk statuses against actual file existence for all scenes in a book.
+ * Scans chunk metadata and updates 'pending' → 'ready' where files exist on disk.
+ * This ensures /assets-state returns correct counts even if completion handlers
+ * were missed (e.g. after Cancel→Generate cycles).
+ */
+async function reconcileWindowStatuses(redis, bookId, buildId) {
+    const buildDir = path.join(OUTPUT_DIR, buildId);
+    if (!fs.existsSync(buildDir)) return { reconciled: 0 };
+
+    const chunkKeys = await redis.keys(`animastor:chunk:${bookId}_*`);
+    let reconciled = 0;
+
+    for (const key of chunkKeys) {
+        const raw = await redis.get(key);
+        if (!raw) continue;
+        const data = JSON.parse(raw);
+        if (!data.chapter_id || !data.scene_id) continue;
+
+        let changed = false;
+
+        // Check audio file (real .mp3 or placeholder)
+        if (data.audio_status === 'pending') {
+            const audioPath = path.join(buildDir, `${data.book_id}_${data.chapter_id}_${data.scene_id}.mp3`);
+            if (fs.existsSync(audioPath)) {
+                data.audio = true;
+                data.audio_status = 'ready';
+                changed = true;
+            }
+        }
+
+        // Check for IU image files
+        if (data.image_status === 'pending') {
+            const iuPrefix = `${data.book_id}_${data.chapter_id}_${data.scene_id}_iu`;
+            try {
+                const allFiles = fs.readdirSync(buildDir);
+                if (allFiles.some(f => f.startsWith(iuPrefix) && f.endsWith('.png'))) {
+                    data.image = true;
+                    data.image_status = 'ready';
+                    changed = true;
+                }
+            } catch (_) {}
+        }
+
+        // Check video file
+        if (data.video_status === 'pending') {
+            const videoPath = path.join(buildDir, `${data.book_id}_${data.chapter_id}_${data.scene_id}.mp4`);
+            if (fs.existsSync(videoPath)) {
+                data.video = true;
+                data.video_status = 'ready';
+                changed = true;
+            }
+        }
+
+        if (changed) {
+            await redis.set(`animastor:chunk:${cid}`, JSON.stringify(data));
+            reconciled++;
+        }
+    }
+
+    if (reconciled > 0) {
+        log(`Reconciled ${reconciled} chunk statuses for book ${bookId}`);
+    }
+    return { reconciled };
 }
 
 async function startScene(redis, s, buildId, bookId) {
@@ -608,6 +686,7 @@ module.exports = {
     cancelKey,
     sceneHasValidContent,
     restoreChunkStatusForScene,
+    reconcileWindowStatuses,
     WINDOW_SIZE,
     BOOK_SCENE_TOTAL,
     BOOK_SCENE_NEXT,

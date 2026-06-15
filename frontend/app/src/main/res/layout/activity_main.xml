@@ -195,11 +195,10 @@
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:textSize="11sp"
+                android:textSize="12sp"
                 android:textColor="?attr/colorOnSurfaceVariant"
                 android:fontFamily="sans-serif-medium"
-                android:letterSpacing="0.05"
-                android:textAllCaps="true"
+                android:letterSpacing="0.03"
                 android:singleLine="true"
                 android:ellipsize="end" />
 
@@ -207,9 +206,10 @@
                 android:id="@+id/generationProgressPercent"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:textSize="11sp"
-                android:textColor="?attr/colorOnSurfaceVariant"
+                android:textSize="14sp"
+                android:textColor="?attr/colorSecondary"
                 android:fontFamily="sans-serif-medium"
+                android:textStyle="bold"
                 android:singleLine="true" />
         </LinearLayout>
 
@@ -218,8 +218,8 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="4dp"
-            app:trackThickness="3dp"
-            app:trackCornerRadius="2dp"
+            app:trackThickness="5dp"
+            app:trackCornerRadius="3dp"
             app:indicatorColor="?attr/colorSecondary"
             app:trackColor="?attr/colorSurfaceVariant" />
     </LinearLayout>

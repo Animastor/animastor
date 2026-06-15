@@ -446,17 +446,48 @@ module.exports = function(app, redis, deps) {
         try {
             const workerHealth = require('../runtime/worker-health');
             const status = await workerHealth.getStatus(redis);
-            const activeAudio = parseInt(await redis.get('animastor:runtime:active-audio') || '0', 10);
-            const activeImage = parseInt(await redis.get('animastor:runtime:active-image') || '0', 10);
-            const activeVideo = parseInt(await redis.get('animastor:runtime:active-video') || '0', 10);
-            const debounceAudio = parseInt(await redis.get('animastor:runtime:last-active:audio') || '0', 10);
-            const debounceImage = parseInt(await redis.get('animastor:runtime:last-active:image') || '0', 10);
-            const debounceVideo = parseInt(await redis.get('animastor:runtime:last-active:video') || '0', 10);
+
+            // Use actual dispatch-lease keys as source of truth for active workers.
+            // A dispatch-lease (set with TTL) exists ONLY while a real GPU task is
+            // in flight. Quota counters (animastor:runtime:active-*) can leak on
+            // cancelled jobs — leases expire cleanly via TTL even if completion
+            // handler was never called.
+            const countLeases = async (stage) => {
+                const pattern = `animastor:dispatch-lease:*:*:*:${stage}`;
+                let cursor = '0';
+                let count = 0;
+                try {
+                    do {
+                        const result = await redis.scan(cursor, 'MATCH', pattern, 'COUNT', 200);
+                        cursor = result[0];
+                        count += result[1].length;
+                    } while (cursor !== '0');
+                } catch (_) {}
+                return count;
+            };
+
+            const [leaseAudio, leaseImage, leaseVideo] = await Promise.all([
+                countLeases('audio'),
+                countLeases('image'),
+                countLeases('video'),
+            ]);
+
+            // Pulse only when both conditions hold:
+            // 1. At least one worker is alive (heartbeat in last ~30-60s)
+            // 2. At least one dispatch-lease exists (real GPU task in flight)
+            // This prevents false pulse from stale leases (worker crashed)
+            // OR from leaked counters (cancel didn't decrement).
+            const activeAudio = status.audio > 0 ? leaseAudio : 0;
+            const activeImage = status.image > 0 ? leaseImage : 0;
+            const activeVideo = status.video > 0 ? leaseVideo : 0;
+
             res.json({
-                audio: status.audio || 0, image: status.image || 0, video: status.video || 0,
-                active_audio: status.audio > 0 ? (activeAudio || debounceAudio) : 0,
-                active_image: status.image > 0 ? (activeImage || debounceImage) : 0,
-                active_video: status.video > 0 ? (activeVideo || debounceVideo) : 0,
+                audio: status.audio || 0,
+                image: status.image || 0,
+                video: status.video || 0,
+                active_audio: activeAudio,
+                active_image: activeImage,
+                active_video: activeVideo,
             });
         } catch (err) {
             res.json({ audio: 0, image: 0, video: 0, active_audio: 0, active_image: 0, active_video: 0 });
