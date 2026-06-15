@@ -505,6 +505,19 @@ class MainActivity : AppCompatActivity() {
             val activeGen = viewModel.activeGeneration.value
 
             if (activeGen != null) {
+                // ── Detect new generation start ─────────────────────────
+                // Clear completion-tracking maps so a fresh generation shows
+                // real progress instead of being immediately hidden by stale
+                // "permanently done" entries.
+                if (_lastActiveGeneration == null || _lastActiveGeneration != activeGen) {
+                    Log.i("MainActivity", "New generation detected (scope=${activeGen.scope}) — resetting completion tracking")
+                    workerCompletedAt.clear()
+                    _workerPermanentlyDone.clear()
+                    gpuProgressDoneAt = 0L
+                    lastReadyCount = -1
+                }
+                _lastActiveGeneration = activeGen
+
                 try {
                     val assets = viewModel.repository.getAssetsState(
                         bookId = bookId,
@@ -545,6 +558,7 @@ class MainActivity : AppCompatActivity() {
                 if (binding.generationProgressContainer.visibility != View.GONE) {
                     binding.generationProgressContainer.visibility = View.GONE
                 }
+                _lastActiveGeneration = null
                 lastReadyCount = -1
             }
             delay(1_500)
@@ -561,6 +575,18 @@ class MainActivity : AppCompatActivity() {
 
     // Track when each worker type completed (to show green "Done" for 10s)
     private val workerCompletedAt = mutableMapOf<String, Long>()
+
+    /**
+     * Tracks workers that have already been shown as "Done" for the full 10s
+     * and then hidden. Once a worker enters this set, [showGpuProgress] will
+     * never re-add it — even if the backend still reports ready == total.
+     *
+     * Cleared together with [workerCompletedAt] when a new generation starts.
+     */
+    private val _workerPermanentlyDone = mutableSetOf<String>()
+
+    // Detect new-generation transitions so we can clear completion tracking.
+    private var _lastActiveGeneration: GenerateViewModel.ActiveGeneration? = null
 
     /**
      * Render progress of all active workers simultaneously — no rotation.
@@ -592,6 +618,9 @@ class MainActivity : AppCompatActivity() {
 
         fun add(type: String, label: String, ready: Int, total: Int) {
             if (total <= 0) return
+            // Once a worker has been shown as Done for the full 10s and hidden,
+            // never re-add it — even if the backend still reports ready == total.
+            if (type in _workerPermanentlyDone) return
             val done = ready >= total && ready > 0
             if (done) {
                 // Record completion time once
@@ -601,7 +630,11 @@ class MainActivity : AppCompatActivity() {
                 // Auto-hide after COMPLETED_WORKER_DISPLAY_MS (10s)
                 val completedAt = workerCompletedAt[type] ?: now
                 if (now - completedAt >= COMPLETED_WORKER_DISPLAY_MS) {
-                    return // Don't add — already completed, hidden after timeout
+                    // Timeout expired — permanently hide this worker so it
+                    // never re-appears on subsequent polls.
+                    _workerPermanentlyDone.add(type)
+                    workerCompletedAt.remove(type)
+                    return
                 }
             }
             val pct = if (done) 100 else (ready * 100 / total).coerceIn(0, 99)
@@ -639,8 +672,11 @@ class MainActivity : AppCompatActivity() {
         val activeTypes = workers.map { it.type }.toSet()
         val staleTypes = mutableListOf<String>()
         for ((type, completedAt) in workerCompletedAt) {
+            if (type in _workerPermanentlyDone) continue
             if (now - completedAt >= COMPLETED_WORKER_DISPLAY_MS) {
+                // Move to permanent-done set so it never re-appears.
                 staleTypes.add(type)
+                _workerPermanentlyDone.add(type)
                 continue
             }
             if (type in activeTypes) continue // already added by add() above
@@ -669,6 +705,9 @@ class MainActivity : AppCompatActivity() {
                 doneRow.visibility = View.VISIBLE
             } else {
                 binding.generationProgressContainer.visibility = View.GONE
+                // Full completion — clear tracking so next generation starts fresh
+                workerCompletedAt.clear()
+                _workerPermanentlyDone.clear()
                 viewModel.onGenerationComplete()
                 refreshGenerateButton()
                 gpuProgressDoneAt = 0L
