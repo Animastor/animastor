@@ -547,12 +547,13 @@ async function trimPaddedSceneAudio(filePath) {
         return;
     }
 
-    // 2. Find the quietest point (minimum RMS) between 25%-75% of the audio
-    const quietest = await findQuietestPoint(filePath);
-    const cutTime = (quietest > 0.3) ? quietest : (duration / 2);
-
-    const method = (quietest > 0.3) ? `quietest@${quietest.toFixed(2)}s` : 'half-duration';
-    log(`✂️ trimPaddedSceneAudio: total=${duration.toFixed(2)}s, ${method} cut at ${cutTime.toFixed(2)}s for ${basename}`);
+    // 2. Cut at exact midpoint — the text was duplicated by padShortText so
+    //    the ideal cut is always at 50% of the audio duration. The previous
+    //    RMS-based heuristic (findQuietestPoint) was unreliable when sentence
+    //    boundaries had unequal silence gaps, sometimes cutting at 75% instead
+    //    of 50% and producing 3 sentence fragments instead of the expected 2.
+    const cutTime = duration / 2;
+    log(`✂️ trimPaddedSceneAudio: total=${duration.toFixed(2)}s, midpoint cut at ${cutTime.toFixed(2)}s for ${basename}`);
 
     // 3. Cut
     const tempPath = filePath + '.trim.mp3';
@@ -561,7 +562,7 @@ async function trimPaddedSceneAudio(filePath) {
         try {
             const fs = require('fs');
             fs.renameSync(tempPath, filePath);
-            log(`✅ trimPaddedSceneAudio: trimmed ${basename} → kept first ${cutTime.toFixed(1)}s (${method})`);
+            log(`✅ trimPaddedSceneAudio: trimmed ${basename} → kept first ${cutTime.toFixed(1)}s`);
         } catch (e) {
             log(`⚠️ trimPaddedSceneAudio: rename failed for ${basename}: ${e.message}`);
         }
