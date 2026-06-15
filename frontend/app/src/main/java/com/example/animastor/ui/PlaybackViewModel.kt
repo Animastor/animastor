@@ -337,15 +337,48 @@ class PlaybackViewModel(
             val allChunks = runCatching { _repository.getAllChunks(targetBookId) }.getOrNull()
             val chunkIds = allChunks?.chunk_ids?.toList() ?: emptyList()
             val positions = mutableMapOf<String, Pair<String?, String?>>()
+            var coverChunkId: String? = null
             for (cid in chunkIds) {
                 runCatching {
                     _repository.getChunkStoryboard(cid).let { sb ->
                         positions[cid] = Pair(sb.chapter_id, sb.scene_id)
+                        if (sb.scene_type == "cover") {
+                            coverChunkId = cid
+                        }
                     }
                 }
             }
             Log.i(TAG, "ensureInitialized: fetched ${chunkIds.size} chunks, ${positions.size} positions")
             preparePlayback(targetBookId, targetBuildId, chunkIds, positions)
+            val coverId = coverChunkId ?: chunkIds.firstOrNull()
+            if (coverId != null) {
+                loadCoverIntoState(coverId)
+            }
+        }
+    }
+
+    private suspend fun loadCoverIntoState(coverId: String) {
+        val bitmap = runCatching {
+            val sb = _repository.getChunkStoryboard(coverId)
+            if (sb.ius.isNotEmpty()) {
+                val iu = sb.ius.first()
+                val imgBytes = _repository.getIuImage(
+                    sb.book_id ?: bookId,
+                    sb.chapter_id ?: "",
+                    sb.scene_id ?: "",
+                    iu.unit_id,
+                    sb.build_id
+                )
+                MediaDecoder.decodeBitmap(imgBytes)
+            } else null
+        }.getOrElse {
+            runCatching {
+                val imgBytes = _repository.getChunkImage(coverId)
+                MediaDecoder.decodeBitmap(imgBytes)
+            }.getOrNull()
+        }
+        if (bitmap != null) {
+            setCoverImage(bitmap)
         }
     }
 
