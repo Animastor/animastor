@@ -528,6 +528,8 @@ module.exports = {
     clearCancelFlag,
     setCancelFlag,
     cancelKey,
+    sceneHasValidContent,
+    restoreChunkStatusForScene,
     WINDOW_SIZE,
     BOOK_SCENE_TOTAL,
     BOOK_SCENE_NEXT,
