@@ -259,6 +259,9 @@ module.exports = function(redis, config, deps) {
             case 'image_only':
                 newProfile = { audio_enabled: false, image_enabled: true, video_enabled: false };
                 break;
+            case 'video_only':
+                newProfile = { audio_enabled: false, image_enabled: false, video_enabled: true };
+                break;
             case 'storyboard':
                 newProfile = { audio_enabled: true, image_enabled: true, video_enabled: false };
                 break;
@@ -267,9 +270,9 @@ module.exports = function(redis, config, deps) {
                 newProfile = { audio_enabled: true, image_enabled: true, video_enabled: true };
                 break;
         }
-        await layerConfig.set(redis, bookId, newProfile);
-        log(`📋 Layer profile updated for ${bookId}:`, JSON.stringify(newProfile));
-        return newProfile;
+        const result = await layerConfig.set(redis, bookId, newProfile);
+        log(`📋 Layer profile updated for ${bookId}:`, JSON.stringify(result));
+        return result;
     }
 
     // ── Filter dirty scenes by scope ──────────────────

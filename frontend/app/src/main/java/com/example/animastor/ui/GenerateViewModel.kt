@@ -179,7 +179,7 @@ class GenerateViewModel(
         if (audio && image && video) return "full"
         if (!audio && image && video) return "image_only"
         if (audio && !image && video) return "audio_only"
-        if (!audio && !image && video) return "image_only"  // video without audio/image → just video
+        if (!audio && !image && video) return "video_only"  // video without audio/image → just video
         if (audio && image && !video) return "storyboard"
         if (!audio && image && !video) return "image_only"
         if (audio && !image && !video) return "audio_only"

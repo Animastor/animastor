@@ -20,6 +20,7 @@
 const PROFILES = Object.freeze({
     AUDIO_ONLY:    'audio_only',
     IMAGE_ONLY:    'image_only',
+    VIDEO_ONLY:    'video_only',
     STORYBOARD:    'storyboard',
     FULL:          'full',
 });
@@ -67,18 +68,19 @@ async function set(redis, bookId, partial) {
         image_enabled: partial.image_enabled !== undefined ? !!partial.image_enabled : current.image_enabled,
         video_enabled: partial.video_enabled !== undefined ? !!partial.video_enabled : current.video_enabled,
     };
-    if (partial.video_enabled === true && !next.image_enabled) {
-        next.image_enabled = true;
-    }
     await redis.set(key(bookId), JSON.stringify(next));
     return next;
 }
 
 function resolveProfile(cfg) {
     const c = normalize(cfg);
-    if (c.video_enabled) return PROFILES.FULL;
-    if (c.image_enabled && !c.audio_enabled) return PROFILES.IMAGE_ONLY;
-    if (c.image_enabled) return PROFILES.STORYBOARD;
+    if (c.audio_enabled && c.image_enabled && c.video_enabled) return PROFILES.FULL;
+    if (!c.audio_enabled && c.image_enabled && c.video_enabled) return PROFILES.IMAGE_ONLY;
+    if (c.audio_enabled && !c.image_enabled && c.video_enabled) return PROFILES.AUDIO_ONLY;
+    if (!c.audio_enabled && !c.image_enabled && c.video_enabled) return PROFILES.VIDEO_ONLY;
+    if (c.audio_enabled && c.image_enabled && !c.video_enabled) return PROFILES.STORYBOARD;
+    if (!c.audio_enabled && c.image_enabled && !c.video_enabled) return PROFILES.IMAGE_ONLY;
+    if (c.audio_enabled && !c.image_enabled && !c.video_enabled) return PROFILES.AUDIO_ONLY;
     return PROFILES.AUDIO_ONLY;
 }
 
