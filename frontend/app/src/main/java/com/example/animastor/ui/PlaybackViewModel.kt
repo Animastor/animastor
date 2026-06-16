@@ -122,24 +122,20 @@ class PlaybackViewModel(
 
     // ── Sliding Window Preload ────────────────────────────────────
     //
-    //                 ┌── window: N chunks ahead ──┐
-    //   [chunk 0] [chunk 1] [chunk 2] [chunk 3] [chunk 4] ...
-    //    ▲ playing    ▲ cached    ▲ cached    ◀─ fill here next
-    //    │
-    //    currentIndex
-    //
-    // 1. Fills sequentially: chunk 0 → 1 → 2 (no parallel burst)
-    // 2. Starts playing as soon as chunk 0 is ready
-    // 3. Slides: after chunk 0 emitted, fill chunk 3
-    // 4. Chunk emitted only after content ready check
+    //   fill order: chunk[0] → chunk[1] → chunk[2]
+    //               └─ as soon as chunk[0] ready → playNext() + continue filling
+    //   slide: after playNext, fill chunk[currentIndex + WINDOW_SIZE]
 
     private val preloadWindow = mutableMapOf<String, PreloadedScene>()
     private var windowFillJob: Job? = null
+    private var windowFillVersion = 0L  // incremented each fill cycle, for log tracing
 
     // ── Cleanup tracking ─────────────────────────────────────────
 
     var hasUnsavedChanges = false
         private set
+
+    // ═══════════════════════════════════════════════════════════════
 
     // ═══════════════════════════════════════════════════════════════
     //  PUBLIC API — called by activity coordinator
@@ -210,18 +206,20 @@ class PlaybackViewModel(
      */
     fun playSceneQueue() {
         if (chunkQueue.isEmpty()) {
-            Log.w(TAG, "playSceneQueue: empty queue")
+            Log.w(TAG, "playSceneQueue: EMPTY QUEUE — abort")
             return
         }
-        Log.i(TAG, "playSceneQueue: ${chunkQueue.size} chunks, window=$WINDOW_SIZE")
+        Log.i(TAG, "▶ playSceneQueue: ${chunkQueue.size} chunks, window=$WINDOW_SIZE")
         currentIndex = 0
         windowFillJob?.cancel()
         preloadWindow.clear()
+        windowFillVersion++
         _uiState.update { it.copy(windowProgress = null) }
 
         windowFillJob = viewModelScope.launch {
             fillWindowSequential(0)
         }
+        Log.i(TAG, "playSceneQueue: coroutine launched (v$windowFillVersion)")
     }
 
     /**
@@ -491,35 +489,52 @@ class PlaybackViewModel(
      */
     private suspend fun fillWindowSequential(startIndex: Int) {
         val total = min(WINDOW_SIZE, chunkQueue.size - startIndex)
+        val v = windowFillVersion
         _uiState.update { it.copy(phase = PlayerPhase.DOWNLOADING, windowProgress = "0/$total") }
+        Log.i(TAG, "=== [WINDOW/$v] fill start: startIndex=$startIndex total=$total ===")
+
+        var loadedCount = 0
 
         for (offset in 0 until WINDOW_SIZE) {
             val idx = startIndex + offset
-            if (idx >= chunkQueue.size) break
+            if (idx >= chunkQueue.size) {
+                Log.i(TAG, "[WINDOW/$v] done — queue end at offset=$offset")
+                break
+            }
             val id = chunkQueue[idx]
-            if (preloadWindow.containsKey(id)) continue
+            if (preloadWindow.containsKey(id)) {
+                Log.i(TAG, "[WINDOW/$v] skip $id — already in window")
+                continue
+            }
 
-            Log.i(TAG, "[WINDOW] fill $offset/$WINDOW_SIZE: chunk[$idx]=$id")
+            Log.i(TAG, "▶ [WINDOW/$v] fetch offset=$offset chunk[$idx]=$id")
             val data = runCatching { fetchSceneData(id) }.getOrNull()
             if (data != null) {
                 preloadWindow[id] = data
                 preloadCompleted.tryEmit(id)
-                Log.i(TAG, "[WINDOW] loaded $id: audio=${data.audioBytes.size}B ius=${data.iuSequence.size}")
+                loadedCount++
+                Log.i(TAG, "✓ [WINDOW/$v] loaded $id: " +
+                        "audio=${data.audioBytes.size}B " +
+                        "video=${data.videoBytes?.size ?: "null"}B " +
+                        "ius=${data.iuSequence.size} " +
+                        "hasVideo=${data.hasVideo}")
             } else {
-                Log.w(TAG, "[WINDOW] FAILED $id")
+                Log.w(TAG, "✗ [WINDOW/$v] FAILED $id — fetchSceneData returned null")
             }
 
-            val loaded = preloadWindow.size
-            _uiState.update { it.copy(windowProgress = "$loaded/$total") }
+            // Use local counter — preloadWindow.size changes when playNext removes chunks
+            _uiState.update { it.copy(windowProgress = "$loadedCount/$total") }
+            Log.d(TAG, "[WINDOW/$v] progress: $loadedCount/$total (window has ${preloadWindow.size} total)")
 
-            // As soon as the first chunk is in the window, start playing immediately
+            // As soon as chunk [startIndex] (offset 0) is in window, start playing
             if (offset == 0 && preloadWindow.containsKey(id)) {
-                Log.i(TAG, "[WINDOW] first chunk ready — starting playback")
+                Log.i(TAG, "▶ [WINDOW/$v] first chunk ready — launching playNext()")
                 viewModelScope.launch { playNext() }
+                Log.i(TAG, "[WINDOW/$v] playNext launched, continuing window fill")
             }
         }
 
-        Log.i(TAG, "[WINDOW] fill complete: ${preloadWindow.size}/${total} chunks in window")
+        Log.i(TAG, "=== [WINDOW/$v] fill complete: $loadedCount/$total loaded (window has ${preloadWindow.size}) ===")
     }
 
     /**
@@ -527,16 +542,16 @@ class PlaybackViewModel(
      * Falls back to on-demand loading only if the chunk is unexpectedly missing.
      */
     private fun playNext() {
-        Log.d(TAG, "playNext: index=$currentIndex queueSize=${chunkQueue.size}")
+        Log.d(TAG, "▶ playNext: index=$currentIndex queueSize=${chunkQueue.size} window.size=${preloadWindow.size}")
 
         if (currentIndex >= chunkQueue.size) {
-            Log.i(TAG, "playNext: end of queue → SCENE_READY")
+            Log.i(TAG, "playNext: END OF QUEUE → SCENE_READY")
             _uiState.update { it.copy(phase = PlayerPhase.SCENE_READY, windowProgress = null) }
             return
         }
 
         val id = chunkQueue[currentIndex]
-        Log.i(TAG, "playNext: chunk[$currentIndex]=$id")
+        Log.i(TAG, "▶ playNext: chunk[$currentIndex]=$id (window has ${preloadWindow.size} items)")
 
         val pos = chunkPositions[id]
         currentChapterId = pos?.first
@@ -557,25 +572,25 @@ class PlaybackViewModel(
         // Take from window (expected path)
         val sceneData = preloadWindow.remove(id)
         if (sceneData != null) {
-            Log.i(TAG, "playNext: from window for $id")
+            Log.i(TAG, "✓ playNext: from window for $id (window now has ${preloadWindow.size} items)")
             _uiState.update { it.copy(previewImage = null, windowProgress = null) }
             emitChunkWithReadinessCheck(id, sceneData)
             slideWindow()
             return
         }
 
-        // Fallback: load on demand (should not happen with healthy window system)
-        Log.w(TAG, "playNext: $id NOT in preload window! Loading on demand...")
+        // Fallback: load on demand
+        Log.w(TAG, "⚠ playNext: $id NOT in window! window keys=${preloadWindow.keys} — loading on demand...")
         viewModelScope.launch {
             _uiState.update { it.copy(phase = PlayerPhase.DOWNLOADING, windowProgress = null) }
 
             runCatching { fetchSceneData(id) }.getOrElse { err ->
                 val msg = "Scene $id: ${err.message} (${err::class.simpleName})"
-                Log.e(TAG, "playNext: on-demand failed $id — $msg", err)
+                Log.e(TAG, "playNext: on-demand FAILED $id — $msg", err)
                 _uiState.update { it.copy(phase = PlayerPhase.SCENE_READY, errorMessage = msg) }
                 return@launch
             }.let { data ->
-                Log.i(TAG, "playNext: on-demand loaded $id")
+                Log.i(TAG, "✓ playNext: on-demand loaded $id")
                 _uiState.update { it.copy(previewImage = null) }
                 currentChapterId = pos?.first
                 currentSceneId = pos?.second
@@ -591,20 +606,26 @@ class PlaybackViewModel(
      */
     private fun slideWindow() {
         val nextFillIndex = currentIndex + WINDOW_SIZE
-        if (nextFillIndex >= chunkQueue.size) return
+        if (nextFillIndex >= chunkQueue.size) {
+            Log.i(TAG, "[SLIDE] skip — queue end (nextFillIndex=$nextFillIndex >= ${chunkQueue.size})")
+            return
+        }
 
         val id = chunkQueue[nextFillIndex]
-        if (preloadWindow.containsKey(id)) return
+        if (preloadWindow.containsKey(id)) {
+            Log.i(TAG, "[SLIDE] skip $id — already in window")
+            return
+        }
 
+        Log.i(TAG, "▶ [SLIDE] filling chunk[$nextFillIndex]=$id")
         viewModelScope.launch {
-            Log.i(TAG, "[WINDOW] slide: filling chunk[$nextFillIndex]=$id")
             val data = runCatching { fetchSceneData(id) }.getOrNull()
             if (data != null) {
                 preloadWindow[id] = data
                 preloadCompleted.tryEmit(id)
-                Log.i(TAG, "[WINDOW] slide loaded: $id")
+                Log.i(TAG, "✓ [SLIDE] loaded $id: audio=${data.audioBytes.size}B ius=${data.iuSequence.size}")
             } else {
-                Log.w(TAG, "[WINDOW] slide FAILED $id")
+                Log.w(TAG, "✗ [SLIDE] FAILED $id")
             }
         }
     }
@@ -648,7 +669,7 @@ class PlaybackViewModel(
 
     private fun emitChunk(audio: ByteArray, video: ByteArray?, iuSequence: List<IuImageItem>?) {
         val seq = ++chunkSeqCounter
-        Log.i(TAG, "emitChunk #$seq: audio=${audio.size}B ius=${iuSequence?.size ?: 0} → PLAYING")
+        Log.i(TAG, "▶ emitChunk #$seq: audio=${audio.size}B video=${video?.size ?: 0}B ius=${iuSequence?.size ?: 0} → PLAYING")
         pendingChunkAudio = audio
         pendingChunkVideo = video
         pendingChunkIuSequence = iuSequence
@@ -656,36 +677,40 @@ class PlaybackViewModel(
     }
 
     private suspend fun fetchSceneData(id: String): PreloadedScene = coroutineScope {
-        Log.d(TAG, "fetchSceneData: $id")
+        Log.i(TAG, "▶ fetchSceneData: $id — start")
 
         val chunk = runCatching { _repository.getChunk(id) }.getOrElse { err ->
-            Log.w(TAG, "fetchSceneData: chunk $id not found in Redis: ${err.message}")
+            Log.w(TAG, "fetchSceneData: chunk $id — getChunk FAILED: ${err.message}")
             null
         }
         val videoReadyOnBackend = chunk?.video_ready == true
-        Log.i(TAG, "fetchSceneData: chunk $id audio_ready=${chunk?.audio_ready} image_ready=${chunk?.image_ready} video_ready=$videoReadyOnBackend")
+        Log.i(TAG, "fetchSceneData: $id — audio_ready=${chunk?.audio_ready} image_ready=${chunk?.image_ready} video_ready=$videoReadyOnBackend")
 
         val audioDeferred = async {
             if (chunk?.audio_ready == true) {
                 runCatching {
                     _repository.getChunkAudio(id).also {
-                        Log.i(TAG, "audio fetched for $id: ${it.size} bytes")
+                        Log.i(TAG, "fetchSceneData: $id — audio downloaded: ${it.size} bytes")
                     }
                 }.getOrElse { e ->
-                    Log.w(TAG, "audio_ready=true but fetch failed for $id: ${e.message}")
+                    Log.w(TAG, "fetchSceneData: $id — audio download FAILED: ${e.message}")
                     byteArrayOf()
                 }
             } else {
-                Log.i(TAG, "audio not ready for $id, skipping fetch")
+                Log.i(TAG, "fetchSceneData: $id — audio not ready, skip")
                 byteArrayOf()
             }
         }
         val videoDeferred = async {
             if (videoReadyOnBackend) {
-                runCatching { _repository.getChunkVideo(id) }.getOrNull().also {
-                    Log.d(TAG, if (it != null) "video fetched: ${it.size} bytes" else "video null")
+                runCatching { _repository.getChunkVideo(id) }.getOrNull().also { bytes ->
+                    if (bytes != null) Log.i(TAG, "fetchSceneData: $id — video downloaded: ${bytes.size} bytes")
+                    else Log.w(TAG, "fetchSceneData: $id — video_ready=true but download returned null")
                 }
-            } else null
+            } else {
+                Log.i(TAG, "fetchSceneData: $id — video not ready, skip")
+                null
+            }
         }
         val iuDeferred = async { fetchIuSequence(id) }
 
@@ -693,6 +718,7 @@ class PlaybackViewModel(
         val videoBytes = videoDeferred.await()
         val iuSequence = iuDeferred.await()
 
+        Log.i(TAG, "✓ fetchSceneData: $id — complete: audio=${audio.size}B video=${videoBytes?.size ?: 0}B ius=${iuSequence.size}")
         PreloadedScene(audio, videoBytes, iuSequence, hasVideo = videoReadyOnBackend)
     }
 
