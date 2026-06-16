@@ -189,6 +189,13 @@ app.get("/task/next", async (req, res) => {
 
   console.log(`🚀 ${task.job_id} → ${worker} (${task.job_type}) build:${task.build_id || "none"}`)
 
+  // Mark worker as busy in heartbeat
+  try {
+    const hbKey = `animastor:worker:heartbeat:${task.job_type}:${worker}`;
+    const hbPayload = JSON.stringify({ type: task.job_type, worker_id: worker, ts: Date.now(), current_job_id: task.job_id });
+    await redis.set(hbKey, hbPayload, 'EX', 30);
+  } catch (_) {}
+
   res.json({ task })
 })
 
@@ -206,6 +213,18 @@ app.post("/task/result", async (req, res) => {
 
   console.log("📤 Result:", job_id, "build:", build_id || "none")
 
+  // Read running info to get worker/job_type before deleting
+  let runningWorker = null;
+  let runningType = null;
+  try {
+    const raw = await redis.hget("animastor:running", job_id);
+    if (raw) {
+      const info = JSON.parse(raw);
+      runningWorker = info.worker;
+      runningType = info.job_type;
+    }
+  } catch (_) {}
+
   await redis.set(
   `animastor:result:${job_id}`,
   result_base64,
@@ -214,6 +233,15 @@ app.post("/task/result", async (req, res) => {
 )
 
   await redis.hdel("animastor:running", job_id)
+
+  // Clear busy flag from worker heartbeat
+  if (runningWorker && runningType) {
+    try {
+      const hbKey = `animastor:worker:heartbeat:${runningType}:${runningWorker}`;
+      const hbPayload = JSON.stringify({ type: runningType, worker_id: runningWorker, ts: Date.now(), current_job_id: null });
+      await redis.set(hbKey, hbPayload, 'EX', 30);
+    } catch (_) {}
+  }
 
   // 🔥 retry отправки в backend
   let success = false
@@ -277,7 +305,28 @@ app.post("/task/error", async (req, res) => {
 
   console.log("❌ Error:", job_id)
 
+  // Read running info before deleting
+  let runningWorker = null;
+  let runningType = null;
+  try {
+    const raw = await redis.hget("animastor:running", job_id);
+    if (raw) {
+      const info = JSON.parse(raw);
+      runningWorker = info.worker;
+      runningType = info.job_type;
+    }
+  } catch (_) {}
+
   await redis.hdel("animastor:running", job_id)
+
+  // Clear busy flag from worker heartbeat
+  if (runningWorker && runningType) {
+    try {
+      const hbKey = `animastor:worker:heartbeat:${runningType}:${runningWorker}`;
+      const hbPayload = JSON.stringify({ type: runningType, worker_id: runningWorker, ts: Date.now(), current_job_id: null });
+      await redis.set(hbKey, hbPayload, 'EX', 30);
+    } catch (_) {}
+  }
 
   res.json({ ok: true })
 })
