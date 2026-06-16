@@ -194,6 +194,14 @@ class PlaybackViewModel(
         videoEnabled = enabled
     }
 
+    fun setStall(msg: String) {
+        _uiState.update { it.copy(stallMessage = msg) }
+    }
+
+    fun clearStall() {
+        _uiState.update { it.copy(stallMessage = null) }
+    }
+
     // ═══════════════════════════════════════════════════════════════
     //  PLAYBACK CONTROL
     // ═══════════════════════════════════════════════════════════════
@@ -813,5 +821,7 @@ data class PlaybackUiState(
     val chunkSequence: Long = 0,
     val missingIuPosition: ActivePosition? = null,
     /** Progress text shown during window fill, e.g. "1/3" */
-    val windowProgress: String? = null
+    val windowProgress: String? = null,
+    /** Stall message shown when IU image is missing and we're retrying, e.g. "Загрузка..." */
+    val stallMessage: String? = null
 )

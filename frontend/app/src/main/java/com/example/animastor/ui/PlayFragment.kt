@@ -16,6 +16,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.example.animastor.R
 import com.example.animastor.databinding.FragmentPlayBinding
+import com.example.animastor.util.MediaDecoder
 import java.io.File
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -68,6 +69,63 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
     private var isFullscreen = false
     private var pendingLoad = false
     private var pendingVideoSyncJob: Job? = null
+
+    // ── IU image stall / retry ────────────────────────────────
+    // When IU cycling reaches an image that wasn't preloaded,
+    // we stall (pause audio) and retry fetching until success.
+    private var stallRetryJob: Job? = null
+    private var isStalling = false
+
+    private fun startIuRetryJob(iu: IuImageItem) {
+        stallRetryJob?.cancel()
+        val bkId = playbackViewModel.bookId
+        val chId = playbackViewModel.currentChapterId ?: ""
+        val scId = playbackViewModel.currentSceneId ?: ""
+        val bldId = playbackViewModel.buildId
+        val unitId = iu.unitId ?: return
+
+        Log.i(TAG, "▶ STALL: IU image missing — retrying $unitId (ch=$chId sc=$scId)")
+
+        stallRetryJob = viewLifecycleOwner.lifecycleScope.launch {
+            var attempt = 0
+            while (isActive) {
+                attempt++
+                // First attempt immediately, then backoff
+                if (attempt > 1) {
+                    val delayMs = minOf(1000L * (attempt - 1), 30_000L)
+                    delay(delayMs)
+                }
+
+                val bytes = try {
+                    repository.getIuImage(bkId, chId, scId, unitId, bldId)
+                } catch (e: Exception) {
+                    Log.d(TAG, "STALL: attempt $attempt failed for $unitId — ${e.message}")
+                    val msg = if (attempt >= 3) "Нет связи, курим ♨️"
+                    else "Загрузка... (попытка $attempt)"
+                    playbackViewModel.setStall(msg)
+                    continue
+                }
+
+                val bmp = runCatching { MediaDecoder.decodeBitmap(bytes) }.getOrNull()
+
+                if (bmp != null) {
+                    Log.i(TAG, "✓ STALL resolved: IU $unitId fetched (attempt $attempt)")
+                    iu.bitmap = bmp  // update in-place
+                    (this@PlayFragment).showIuImage(bmp as Bitmap?)
+                    currentPlayer?.start()
+                    playbackViewModel.clearStall()
+                    isStalling = false
+                    stallRetryJob = null
+                    return@launch
+                }
+
+                Log.d(TAG, "STALL: attempt $attempt — decodeBitmap returned null for $unitId")
+                val msg = if (attempt >= 3) "Нет связи, курим ♨️"
+                else "Загрузка... (попытка $attempt)"
+                playbackViewModel.setStall(msg)
+            }
+        }
+    }
 
     private fun checkPendingExternalSeek() {
         if (playbackViewModel.pendingExternalSeek != null) {
@@ -189,6 +247,10 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         }
 
         binding?.playButton?.setOnClickListener {
+            if (isStalling) {
+                Log.i(TAG, "playButton: ignored — stalling (waiting for IU image)")
+                return@setOnClickListener
+            }
             val phase = playbackViewModel.uiState.value.phase
             Log.i(TAG, "playButton clicked, phase=$phase isPaused=$isPaused player=$currentPlayer rotate=${playbackViewModel.needsRotationResume}")
             when {
@@ -458,36 +520,44 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                             b.placeholderText.visibility = View.INVISIBLE
                         }
 
-                        val loading = state.phase == PlayerPhase.LOADING_BOOK || state.phase == PlayerPhase.DOWNLOADING
-                        b.previewOverlay.visibility = if (loading && state.coverImage != null) View.VISIBLE else View.GONE
-                        b.progressBar.visibility = if (loading) View.VISIBLE else View.GONE
+                        val stallMsg = state.stallMessage
+                        if (stallMsg != null) {
+                            b.statusText.text = stallMsg
+                            b.progressBar.visibility = View.VISIBLE
+                            b.playButton.text = getString(R.string.play_play)
+                            b.playButton.setIconResource(R.drawable.ic_play)
+                        } else {
+                            val loading = state.phase == PlayerPhase.LOADING_BOOK || state.phase == PlayerPhase.DOWNLOADING
+                            b.previewOverlay.visibility = if (loading && state.coverImage != null) View.VISIBLE else View.GONE
+                            b.progressBar.visibility = if (loading || isStalling) View.VISIBLE else View.GONE
 
-                        val errorMsg = state.errorMessage
-                        if (errorMsg != null) {
-                            b.statusText.text = "Error: $errorMsg"
-                            b.placeholderText.text = errorMsg
-                            Log.w(TAG, "error in state: $errorMsg")
-                        } else when (state.phase) {
-                            PlayerPhase.LOADING_BOOK -> b.statusText.text = getString(R.string.play_loading)
-                            PlayerPhase.GENERATING, PlayerPhase.DOWNLOADING -> {
-                                val wp = state.windowProgress
-                                if (wp != null) {
-                                    b.statusText.text = "Loading $wp…"
-                                } else {
-                                    b.statusText.text = getString(R.string.play_loading)
+                            val errorMsg = state.errorMessage
+                            if (errorMsg != null) {
+                                b.statusText.text = "Error: $errorMsg"
+                                b.placeholderText.text = errorMsg
+                                Log.w(TAG, "error in state: $errorMsg")
+                            } else when (state.phase) {
+                                PlayerPhase.LOADING_BOOK -> b.statusText.text = getString(R.string.play_loading)
+                                PlayerPhase.GENERATING, PlayerPhase.DOWNLOADING -> {
+                                    val wp = state.windowProgress
+                                    if (wp != null) {
+                                        b.statusText.text = "Loading $wp…"
+                                    } else {
+                                        b.statusText.text = getString(R.string.play_loading)
+                                    }
                                 }
+                                PlayerPhase.SCENE_READY -> b.statusText.text = getString(R.string.play_ready)
+                                PlayerPhase.PLAYING -> if (isPaused) b.statusText.text = getString(R.string.play_paused)
+                                    else b.statusText.text = getString(R.string.play_playing)
+                                PlayerPhase.IDLE -> b.statusText.text = if (playbackViewModel.bookId.isBlank()) getString(R.string.empty_state) else getString(R.string.empty_state_book_loaded)
+                                PlayerPhase.PAUSED -> b.statusText.text = getString(R.string.play_paused)
+                                PlayerPhase.IMPORTING_TXT -> b.statusText.text = getString(R.string.play_loading)
                             }
-                            PlayerPhase.SCENE_READY -> b.statusText.text = getString(R.string.play_ready)
-                            PlayerPhase.PLAYING -> if (isPaused) b.statusText.text = getString(R.string.play_paused)
-                                else b.statusText.text = getString(R.string.play_playing)
-                            PlayerPhase.IDLE -> b.statusText.text = if (playbackViewModel.bookId.isBlank()) getString(R.string.empty_state) else getString(R.string.empty_state_book_loaded)
-                            PlayerPhase.PAUSED -> b.statusText.text = getString(R.string.play_paused)
-                            PlayerPhase.IMPORTING_TXT -> b.statusText.text = getString(R.string.play_loading)
-                        }
 
-                        val isPlaying = state.phase == PlayerPhase.PLAYING && !isPaused
-                        b.playButton.text = if (isPlaying) getString(R.string.play_pause) else getString(R.string.play_play)
-                        if (isPlaying) b.playButton.setIconResource(R.drawable.ic_pause) else b.playButton.setIconResource(R.drawable.ic_play)
+                            val isPlaying = state.phase == PlayerPhase.PLAYING && !isPaused
+                            b.playButton.text = if (isPlaying) getString(R.string.play_pause) else getString(R.string.play_play)
+                            if (isPlaying) b.playButton.setIconResource(R.drawable.ic_pause) else b.playButton.setIconResource(R.drawable.ic_play)
+                        }
                     } catch (e: Exception) {
                         Log.e(TAG, "===== CRASH IN STATE COLLECTOR =====", e)
                         try {
@@ -677,14 +747,26 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                 if (!isAdded || isPaused || ius != currentIuSequence) continue
 
                 val nextIdx = (currentIuIndex + 1) % ius.size
+                val nextIu = ius[nextIdx]
+                if (nextIu.bitmap == null || nextIu.status != IuStatus.READY) {
+                    // IMAGE NOT AVAILABLE — retry in background, keep previous image
+                    if (!isStalling) {
+                        isStalling = true
+                        playbackViewModel.setStall("Загрузка...")
+                        startIuRetryJob(nextIu)
+                    }
+                    // Still update subtitle so user sees IU changed
+                    updateSubtitleIfEnabled(nextIu.text)
+                    continue  // Don't advance to this IU yet
+                }
                 currentIuIndex = nextIdx
                 playbackViewModel.currentUnitIndex = nextIdx
-                showIuImage(ius[nextIdx])
-                updateSubtitleIfEnabled(ius[nextIdx].text)
+                showIuImage(nextIu)
+                updateSubtitleIfEnabled(nextIu.text)
                 SharedPositionManager.navigateTo(
                     chapterId = playbackViewModel.currentChapterId,
                     sceneId = playbackViewModel.currentSceneId,
-                    unitId = ius[nextIdx].unitId,
+                    unitId = nextIu.unitId,
                     chunkId = playbackViewModel.getCurrentChunkId(),
                     unitIndex = nextIdx
                 )
@@ -880,15 +962,29 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                     currentIuIndex = idx
                     if (isPaused) continue
                     playbackViewModel.currentUnitIndex = idx
-                    showIuImage(ius[idx])
-                    updateSubtitleIfEnabled(ius[idx].text)
-                    SharedPositionManager.navigateTo(
-                        chapterId = playbackViewModel.currentChapterId,
-                        sceneId = playbackViewModel.currentSceneId,
-                        unitId = ius[idx].unitId,
-                        chunkId = playbackViewModel.getCurrentChunkId(),
-                        unitIndex = idx
-                    )
+
+                    val iu = ius[idx]
+                    if (iu.bitmap == null || iu.status != IuStatus.READY) {
+                        // IMAGE NOT AVAILABLE — stall audio, retry in background
+                        if (!isStalling) {
+                            isStalling = true
+                            currentPlayer?.pause()
+                            playbackViewModel.setStall("Загрузка...")
+                            startIuRetryJob(iu)
+                        }
+                        // Still update subtitle so user sees IU changed
+                        updateSubtitleIfEnabled(iu.text)
+                    } else {
+                        showIuImage(iu)
+                        updateSubtitleIfEnabled(iu.text)
+                        SharedPositionManager.navigateTo(
+                            chapterId = playbackViewModel.currentChapterId,
+                            sceneId = playbackViewModel.currentSceneId,
+                            unitId = iu.unitId,
+                            chunkId = playbackViewModel.getCurrentChunkId(),
+                            unitIndex = idx
+                        )
+                    }
                 }
 
                 if (isAdded) anchorFullscreenToImage()
@@ -1182,6 +1278,10 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
 
     fun stopAll() {
         Log.i(TAG, "stopAll")
+        stallRetryJob?.cancel()
+        stallRetryJob = null
+        isStalling = false
+        playbackViewModel.clearStall()
         pendingVideoSyncJob?.cancel()
         iuCyclingJob?.cancel()
         iuCyclingJob = null
@@ -1289,6 +1389,10 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         currentFile = null
         nextFile = null
         currentVideoFile = null
+        stallRetryJob?.cancel()
+        stallRetryJob = null
+        isStalling = false
+        playbackViewModel.clearStall()
         iuCyclingJob?.cancel()
         iuCyclingJob = null
         binding = null
