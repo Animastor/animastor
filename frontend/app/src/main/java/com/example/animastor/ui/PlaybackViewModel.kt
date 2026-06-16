@@ -117,6 +117,8 @@ class PlaybackViewModel(
 
     var imageEnabled: Boolean = true
         private set
+    var videoEnabled: Boolean = true
+        private set
 
     // ── Sliding Window Preload ────────────────────────────────────
     //
@@ -191,6 +193,10 @@ class PlaybackViewModel(
      */
     fun setImageEnabled(enabled: Boolean) {
         imageEnabled = enabled
+    }
+
+    fun setVideoEnabled(enabled: Boolean) {
+        videoEnabled = enabled
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -605,24 +611,36 @@ class PlaybackViewModel(
 
     /**
      * Emit chunk data only after verifying content readiness for active layers.
-     * This prevents audio starting before its images are downloaded (video readiness
-     * is already handled by fetchSceneData — if video wasn't ready, bytes will be null).
+     * This prevents audio starting before its images/video are downloaded.
      *
-     * Readiness check (non-suspend, uses only PreloadedScene data):
-     * - If image layer is ON: all IU images must have status READY
-     * - Images that were truly not generated (NOT_GENERATED) are accepted as-is
+     * Checks:
+     * - Image ON → all IU images must be READY
+     * - Video ON + backend said video_ready=true → video bytes must be present
+     * - If content is truly not generated (backend said not ready), accept and continue
+     *
+     * Note: this is a diagnostic check — `fetchSceneData` already waited for all
+     * downloads. If bytes are still missing, it means the backend confirmed readiness
+     * but the download failed (or timed out).
      */
     private fun emitChunkWithReadinessCheck(id: String, data: PreloadedScene) {
-        // If image layer is ON, verify all IU images are READY
+        // Image readiness check
         val allImagesReady = if (imageEnabled) {
             data.iuSequence.all { it.status == IuStatus.READY }
+        } else true
+
+        // Video readiness check: if video layer ON and backend confirmed video exists
+        val videoReady = if (videoEnabled && data.hasVideo) {
+            data.videoBytes != null
         } else true
 
         if (!allImagesReady) {
             val ready = data.iuSequence.count { it.status == IuStatus.READY }
             val total = data.iuSequence.size
-            Log.w(TAG, "emitChunk $id: $ready/$total IU images READY — " +
-                    "${total - ready} NOT_GENERATED (will show placeholder)")
+            Log.w(TAG, "emitChunk $id: $ready/$total IU images READY")
+        }
+
+        if (!videoReady) {
+            Log.w(TAG, "emitChunk $id: video expected (backend video_ready=true) but bytes not downloaded")
         }
 
         emitChunk(data.audioBytes, data.videoBytes, data.iuSequence)
@@ -644,7 +662,8 @@ class PlaybackViewModel(
             Log.w(TAG, "fetchSceneData: chunk $id not found in Redis: ${err.message}")
             null
         }
-        Log.i(TAG, "fetchSceneData: chunk $id audio_ready=${chunk?.audio_ready} image_ready=${chunk?.image_ready} video_ready=${chunk?.video_ready}")
+        val videoReadyOnBackend = chunk?.video_ready == true
+        Log.i(TAG, "fetchSceneData: chunk $id audio_ready=${chunk?.audio_ready} image_ready=${chunk?.image_ready} video_ready=$videoReadyOnBackend")
 
         val audioDeferred = async {
             if (chunk?.audio_ready == true) {
@@ -662,7 +681,7 @@ class PlaybackViewModel(
             }
         }
         val videoDeferred = async {
-            if (chunk?.video_ready == true) {
+            if (videoReadyOnBackend) {
                 runCatching { _repository.getChunkVideo(id) }.getOrNull().also {
                     Log.d(TAG, if (it != null) "video fetched: ${it.size} bytes" else "video null")
                 }
@@ -674,7 +693,7 @@ class PlaybackViewModel(
         val videoBytes = videoDeferred.await()
         val iuSequence = iuDeferred.await()
 
-        PreloadedScene(audio, videoBytes, iuSequence)
+        PreloadedScene(audio, videoBytes, iuSequence, hasVideo = videoReadyOnBackend)
     }
 
     /**

@@ -1103,19 +1103,22 @@ enum class IuStatus {
 class PreloadedScene(
     val audioBytes: ByteArray,
     val videoBytes: ByteArray?,
-    val iuSequence: List<IuImageItem>
+    val iuSequence: List<IuImageItem>,
+    val hasVideo: Boolean = false
 ) {
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
         if (other !is PreloadedScene) return false
         return audioBytes.contentEquals(other.audioBytes) &&
                videoBytes.contentEquals(other.videoBytes) &&
-               iuSequence == other.iuSequence
+               iuSequence == other.iuSequence &&
+               hasVideo == other.hasVideo
     }
     override fun hashCode(): Int {
         var result = audioBytes.contentHashCode()
         result = 31 * result + (videoBytes?.contentHashCode() ?: 0)
         result = 31 * result + iuSequence.hashCode()
+        result = 31 * result + if (hasVideo) 1 else 0
         return result
     }
 }

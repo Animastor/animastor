@@ -238,6 +238,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
             }
         }
         binding?.layerVideo?.setOnCheckedChangeListener { _, isChecked ->
+            playbackViewModel.setVideoEnabled(isChecked)
             binding?.layerVideo?.chipIcon = if (isChecked)
                 resources.getDrawable(R.drawable.ic_videocam, null)
             else
