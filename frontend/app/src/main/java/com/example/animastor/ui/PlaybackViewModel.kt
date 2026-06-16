@@ -527,16 +527,19 @@ class PlaybackViewModel(
     private fun preloadAhead(includeCurrent: Boolean = false) {
         val start = if (includeCurrent) 0 else 1
 
-        preloadJob?.cancel()
+        // Launch PRELOAD_AHEAD independent jobs — don't cancel previous ones
+        // so that already-started preloads (especially IU images) can complete.
+        for (offset in start..PRELOAD_AHEAD) {
+            val idx = currentIndex + offset
+            if (idx >= chunkQueue.size) break
+            val id = chunkQueue[idx]
+            if (preloadCache.containsKey(id)) continue
 
-        val job = viewModelScope.launch {
-            for (offset in start..PRELOAD_AHEAD) {
-                val idx = currentIndex + offset
-                if (idx >= chunkQueue.size) break
-                val id = chunkQueue[idx]
-                if (preloadCache.containsKey(id)) continue
+            // Skip if a preload job is already running for this chunk
+            if (preloadJobs.containsKey(id)) continue
 
-                Log.i(TAG, "preloading scene $offset ahead: $id")
+            Log.i(TAG, "preloading scene $offset ahead: $id")
+            val job = viewModelScope.launch {
                 val data = runCatching { fetchSceneData(id) }.getOrNull()
                 if (data != null) {
                     preloadCache[id] = data
@@ -546,14 +549,7 @@ class PlaybackViewModel(
                     Log.w(TAG, "preload failed for scene: $id — will load on demand")
                 }
             }
-        }
-
-        preloadJob = job
-
-        preloadJobs.clear()
-        val firstId = chunkQueue.getOrNull(currentIndex + start)
-        if (firstId != null && !preloadCache.containsKey(firstId)) {
-            preloadJobs[firstId] = job
+            preloadJobs[id] = job
         }
     }
 
@@ -597,6 +593,10 @@ class PlaybackViewModel(
         PreloadedScene(audio, videoBytes, iuSequence)
     }
 
+    /**
+     * Fetch all IU images for a scene, with retry on failure for slow connections.
+     * First IU gets extra retries to avoid starting audio without a visible image.
+     */
     private suspend fun fetchIuSequence(id: String): List<IuImageItem> {
         return runCatching {
             val storyboard = _repository.getChunkStoryboard(id)
@@ -607,7 +607,7 @@ class PlaybackViewModel(
             val bkId = storyboard.book_id?.takeIf { it.isNotBlank() } ?: bookId
             val bldId = storyboard.build_id.ifBlank { buildId }
             if (storyboard.ius.isNotEmpty() && bldId.isNotBlank() && chId.isNotBlank()) {
-                storyboard.ius.map { iu ->
+                storyboard.ius.mapIndexed { index, iu ->
                     val durationMs = when {
                         iu.start_ms != null && iu.end_ms != null -> {
                             val real = iu.end_ms - iu.start_ms
@@ -616,20 +616,41 @@ class PlaybackViewModel(
                         else -> fallbackDurationMs(iu.estimated_duration_sec)
                     }
                     val iuText = iu.text
-                    val result = runCatching {
-                        Log.d(TAG, "fetching IU image: ${iu.unit_id} (dur=$durationMs ms) bldId=$bldId")
-                        val imgBytes = _repository.getIuImage(bkId, chId, scId, iu.unit_id, bldId)
-                        val bmp = MediaDecoder.decodeBitmap(imgBytes)
-                        IuImageItem(bmp, durationMs, iu.unit_id, iuText, IuStatus.READY)
+                    // First IU gets 3 attempts, others get 2
+                    val maxAttempts = if (index == 0) 3 else 2
+                    var lastBitmap: Bitmap? = null
+                    for (attempt in 1..maxAttempts) {
+                        val result = runCatching {
+                            Log.d(TAG, "fetching IU image: ${iu.unit_id} (attempt $attempt/$maxAttempts) bldId=$bldId")
+                            val imgBytes = _repository.getIuImage(bkId, chId, scId, iu.unit_id, bldId)
+                            MediaDecoder.decodeBitmap(imgBytes)
+                        }
+                        val bmp = result.getOrNull()
+                        if (bmp != null) {
+                            lastBitmap = bmp
+                            break
+                        }
+                        // Delay before retry — prevents tight retry loops on slow connections
+                        if (attempt < maxAttempts) {
+                            val delayMs = if (index == 0) 500L else 200L
+                            kotlinx.coroutines.delay(delayMs)
+                        }
                     }
-                    result.getOrNull() ?: run {
+                    if (lastBitmap != null) {
+                        IuImageItem(lastBitmap, durationMs, iu.unit_id, iuText, IuStatus.READY)
+                    } else {
                         Log.w(TAG, "IU image NOT GENERATED: ${iu.unit_id} — using placeholder")
+                        // Try preview as fallback
+                        val previewBmp = runCatching {
+                            val prevBytes = _repository.getIuPreview(bkId, chId, scId, iu.unit_id, bldId)
+                            prevBytes?.let { MediaDecoder.decodeBitmap(it) }
+                        }.getOrNull()
                         IuImageItem(
-                            bitmap = null,
+                            bitmap = previewBmp,
                             durationMs = durationMs,
                             unitId = iu.unit_id,
                             text = iuText,
-                            status = IuStatus.NOT_GENERATED
+                            status = if (previewBmp != null) IuStatus.READY else IuStatus.NOT_GENERATED
                         )
                     }
                 }
