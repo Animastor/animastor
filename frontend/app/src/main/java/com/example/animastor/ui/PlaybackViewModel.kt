@@ -495,6 +495,7 @@ class PlaybackViewModel(
 
         var loadedCount = 0
 
+        // Phase 1: fill the ENTIRE window sequentially (no concurrent playNext)
         for (offset in 0 until WINDOW_SIZE) {
             val idx = startIndex + offset
             if (idx >= chunkQueue.size) {
@@ -511,7 +512,6 @@ class PlaybackViewModel(
             val data = runCatching { fetchSceneData(id) }.getOrNull()
             if (data != null) {
                 preloadWindow[id] = data
-                preloadCompleted.tryEmit(id)
                 loadedCount++
                 Log.i(TAG, "✓ [WINDOW/$v] loaded $id: " +
                         "audio=${data.audioBytes.size}B " +
@@ -522,19 +522,20 @@ class PlaybackViewModel(
                 Log.w(TAG, "✗ [WINDOW/$v] FAILED $id — fetchSceneData returned null")
             }
 
-            // Use local counter — preloadWindow.size changes when playNext removes chunks
             _uiState.update { it.copy(windowProgress = "$loadedCount/$total") }
-            Log.d(TAG, "[WINDOW/$v] progress: $loadedCount/$total (window has ${preloadWindow.size} total)")
-
-            // As soon as chunk [startIndex] (offset 0) is in window, start playing
-            if (offset == 0 && preloadWindow.containsKey(id)) {
-                Log.i(TAG, "▶ [WINDOW/$v] first chunk ready — launching playNext()")
-                viewModelScope.launch { playNext() }
-                Log.i(TAG, "[WINDOW/$v] playNext launched, continuing window fill")
-            }
+            Log.d(TAG, "[WINDOW/$v] progress: $loadedCount/$total (window has ${preloadWindow.size})")
         }
 
-        Log.i(TAG, "=== [WINDOW/$v] fill complete: $loadedCount/$total loaded (window has ${preloadWindow.size}) ===")
+        Log.i(TAG, "=== [WINDOW/$v] fill complete: $loadedCount/$total loaded ===")
+
+        // Phase 2: NOW start playback — window is full, chunks 0..WINDOW_SIZE-1 ready
+        val firstId = chunkQueue.getOrNull(startIndex)
+        if (firstId != null && preloadWindow.containsKey(firstId)) {
+            Log.i(TAG, "▶ [WINDOW/$v] window full — starting playback from $firstId")
+            playNext()
+        } else {
+            Log.w(TAG, "✗ [WINDOW/$v] window fill complete but first chunk $firstId not in window — can't start")
+        }
     }
 
     /**
