@@ -181,32 +181,36 @@ module.exports = function(redis, config, deps) {
                 continue;
             }
 
-            // Build chunk ID
-            const chunkId = `${bookId}_${chapter_id}_${scene_id}_0001`;
-            const chunk = await getChunk(chunkId) || {};
-
-            // Reset state based on dirty layers
-            if (resetAudio) {
-                chunk.audio = false;
-                chunk.audio_status = 'pending';
-            }
-            if (resetImage) {
-                chunk.image = false;
-                chunk.image_status = 'pending';
-            }
-            if (resetVideo) {
-                chunk.video = false;
-                chunk.video_status = 'pending';
-            }
-
-            await saveChunk(chunkId, {
-                ...chunk,
-                build_id: buildId,
-                book_id: bookId,
-                chapter_id,
-                scene_id,
-                chunk_index: '0001',
-            });
+            // Reset all chunks for this scene (SCAN pattern, not just _0001)
+            const chunkPrefix = `animastor:chunk:${bookId}_${chapter_id}_${scene_id}_`;
+            let cursor = '0';
+            do {
+                const [nextCursor, keys] = await redis.scan(cursor, 'MATCH', `${chunkPrefix}*`, 'COUNT', 50);
+                cursor = nextCursor;
+                for (const key of keys) {
+                    const raw = await redis.get(key);
+                    const ch = raw ? JSON.parse(raw) : {};
+                    if (resetAudio) {
+                        ch.audio = false;
+                        ch.audio_status = 'pending';
+                    }
+                    if (resetImage) {
+                        ch.image = false;
+                        ch.image_status = 'pending';
+                    }
+                    if (resetVideo) {
+                        ch.video = false;
+                        ch.video_status = 'pending';
+                    }
+                    await redis.set(key, JSON.stringify({
+                        ...ch,
+                        build_id: buildId,
+                        book_id: bookId,
+                        chapter_id,
+                        scene_id,
+                    }));
+                }
+            } while (cursor !== '0');
 
             // Reset scene state in Redis (use direct set, not transitionSceneState,
             // because scenes may be in terminal states like VIDEO_READY which have

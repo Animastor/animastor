@@ -1082,6 +1082,23 @@ async function handleVideoCompleted(redis, bookId, chapterId, sceneId, buildId) 
     // Update registry
     await video.updateSceneVideoStatus(redis, bookId, chapterId, sceneId, 'ready');
 
+    // Update all chunks for this scene with video_status: ready
+    const chunkPrefix = `animastor:chunk:${bookId}_${chapterId}_${sceneId}_`;
+    let cursor = '0';
+    do {
+        const [nextCursor, keys] = await redis.scan(cursor, 'MATCH', `${chunkPrefix}*`, 'COUNT', 50);
+        cursor = nextCursor;
+        for (const key of keys) {
+            const raw = await redis.get(key);
+            if (raw) {
+                const ch = JSON.parse(raw);
+                ch.video = true;
+                ch.video_status = 'ready';
+                await redis.set(key, JSON.stringify(ch));
+            }
+        }
+    } while (cursor !== '0');
+
     // Update per-asset state (source of truth)
     await state.setAssetState(redis, bookId, chapterId, sceneId, 'video', state.AssetState.READY);
 
