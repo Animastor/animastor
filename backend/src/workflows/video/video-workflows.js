@@ -8,6 +8,15 @@
 const book = require('../../book');
 
 const logPrefix = '[WF-VIDEO]';
+
+// Node IDs shared across all video-ltx-* workflows.
+// GUIDE nodes are resolved dynamically per workflow.
+const NODE = {
+    TOTAL_FRAMES: '112',
+    POSITIVE: '121',
+    NEGATIVE: '110',
+    LOAD_IMAGE: ['149', '179', '187', '216'],
+};
 function log(msg) {
     console.log(`${logPrefix} ${msg}`);
 }
@@ -180,6 +189,12 @@ function buildWorkflowForGroup(groupInfo, units, iuDurations, sceneData, loadedB
 
     const wf = JSON.parse(JSON.stringify(baseWorkflow));
 
+    // Resolve LTXVAddGuide nodes from the workflow (sorted by node ID for consistent ordering)
+    const guideNodeIds = Object.entries(wf)
+        .filter(([, v]) => v.class_type === 'LTXVAddGuide')
+        .sort(([a], [b]) => parseInt(a) - parseInt(b))
+        .map(([id]) => id);
+
     // 1. Calculate frames
     const { frameIndices, totalFrames } = calculateFrames(iuDurations);
 
@@ -190,7 +205,7 @@ function buildWorkflowForGroup(groupInfo, units, iuDurations, sceneData, loadedB
     for (let i = 0; i < units.length; i++) {
         const unit = units[i];
         const imageNodeId = NODE.LOAD_IMAGE[i];
-        const guideNodeId = NODE.GUIDE[i];
+        const guideNodeId = guideNodeIds[i];
         const imageName = `${sceneData.book_id}_${sceneData.chapter_id}_${sceneData.scene_id}_${unit.id}.png`;
 
         // Set LoadImage filename
@@ -199,7 +214,7 @@ function buildWorkflowForGroup(groupInfo, units, iuDurations, sceneData, loadedB
         }
 
         // Set frame_idx on LTXVAddGuide
-        if (wf[guideNodeId]) {
+        if (guideNodeId && wf[guideNodeId]) {
             wf[guideNodeId].inputs.frame_idx = frameIndices[i];
         }
     }
