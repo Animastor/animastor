@@ -22,6 +22,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * Media player fragment.
@@ -73,8 +74,20 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
     // ── IU image stall / retry ────────────────────────────────
     // When IU cycling reaches an image that wasn't preloaded,
     // we stall (pause audio) and retry fetching until success.
+    // Backend image_ready check is done inside the retry job
+    // with a short timeout so it never blocks the cycling loop.
     private var stallRetryJob: Job? = null
     private var isStalling = false
+
+    /** Check backend chunk status with 3s timeout. null = unknown/timeout. */
+    private suspend fun getCurrentChunkImageReady(): Boolean? {
+        val chunkId = playbackViewModel.getCurrentChunkId() ?: return null
+        return withTimeoutOrNull(3_000L) {
+            runCatching { repository.getChunk(chunkId) }
+                .map { it.image_ready == true }
+                .getOrNull()
+        }
+    }
 
     private fun startIuRetryJob(iu: IuImageItem) {
         stallRetryJob?.cancel()
@@ -87,6 +100,19 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         Log.i(TAG, "▶ STALL: IU image missing — retrying $unitId (ch=$chId sc=$scId)")
 
         stallRetryJob = viewLifecycleOwner.lifecycleScope.launch {
+            // Before retrying, check if backend says image doesn't exist
+            // Uses 3s timeout so it never blocks the cycling loop
+            val chunkImageReady = getCurrentChunkImageReady()
+            if (chunkImageReady == false) {
+                Log.i(TAG, "STALL aborted: image_ready=false for chunk ${playbackViewModel.getCurrentChunkId()}")
+                (this@PlayFragment).showIuMissingPlaceholder()
+                currentPlayer?.start()
+                playbackViewModel.clearStall()
+                isStalling = false
+                stallRetryJob = null
+                return@launch
+            }
+
             var attempt = 0
             while (isActive) {
                 attempt++
