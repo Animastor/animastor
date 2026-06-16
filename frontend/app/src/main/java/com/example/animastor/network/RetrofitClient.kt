@@ -18,7 +18,7 @@ object RetrofitClient {
 
     val httpClient: OkHttpClient by lazy {
         val logging = HttpLoggingInterceptor { msg -> Log.i("HTTP", msg) }
-        logging.level = HttpLoggingInterceptor.Level.BODY
+        logging.level = HttpLoggingInterceptor.Level.HEADERS
 
         OkHttpClient.Builder()
             .connectTimeout(30, TimeUnit.SECONDS)

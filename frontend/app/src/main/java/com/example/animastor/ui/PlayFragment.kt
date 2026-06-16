@@ -1070,7 +1070,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                 })
             }
         } catch (e: Exception) {
-            println("VIDEO EXCEPTION ${e.message}")
+            Log.e(TAG, "Video exception: ${e.message}", e)
         }
     }
 

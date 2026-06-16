@@ -247,24 +247,31 @@ class Repository(
         }.getOrDefault(emptyList())
     }
 
+    /**
+     * Stream a ResponseBody to a file with progress tracking.
+     * Used by all download/export methods to avoid code duplication.
+     */
+    private suspend fun streamToFile(body: okhttp3.ResponseBody, destFile: File, tag: String, onProgress: ((Float) -> Unit)?): File {
+        val total = body.contentLength()
+        val input = body.byteStream()
+        val output = destFile.outputStream()
+        var read = 0L
+        val buffer = ByteArray(8192)
+        var n: Int
+        while (input.read(buffer).also { n = it } >= 0) {
+            output.write(buffer, 0, n)
+            read += n
+            if (total > 0) onProgress?.invoke(read.toFloat() / total.toFloat())
+        }
+        output.close()
+        Log.i("Repo", "$tag done: ${destFile.length()} bytes")
+        return destFile
+    }
+
     suspend fun exportBookStream(bookId: String, buildId: String, destFile: File, onProgress: ((Float) -> Unit)? = null): File {
         Log.i("Repo", "exportBook: $bookId build=$buildId")
         try {
-            val body = api.exportBook(bookId, buildId)
-            val total = body.contentLength()
-            val input = body.byteStream()
-            val output = destFile.outputStream()
-            var read = 0L
-            val buffer = ByteArray(8192)
-            var n: Int
-            while (input.read(buffer).also { n = it } >= 0) {
-                output.write(buffer, 0, n)
-                read += n
-                if (total > 0) onProgress?.invoke(read.toFloat() / total.toFloat())
-            }
-            output.close()
-            Log.i("Repo", "exportBook done: ${destFile.length()} bytes")
-            return destFile
+            return streamToFile(api.exportBook(bookId, buildId), destFile, "exportBook", onProgress)
         } catch (e: retrofit2.HttpException) {
             val errorBody = try { e.response()?.errorBody()?.string() } catch (_: Exception) { null }
             throw IOException(errorBody ?: "Export failed (${e.code()})")
@@ -274,21 +281,7 @@ class Repository(
     suspend fun downloadStoryboardStream(bookId: String, buildId: String, destFile: File, onProgress: ((Float) -> Unit)? = null): File {
         Log.i("Repo", "downloadStoryboard: $bookId build=$buildId")
         try {
-            val body = api.downloadStoryboard(bookId, buildId)
-            val total = body.contentLength()
-            val input = body.byteStream()
-            val output = destFile.outputStream()
-            var read = 0L
-            val buffer = ByteArray(8192)
-            var n: Int
-            while (input.read(buffer).also { n = it } >= 0) {
-                output.write(buffer, 0, n)
-                read += n
-                if (total > 0) onProgress?.invoke(read.toFloat() / total.toFloat())
-            }
-            output.close()
-            Log.i("Repo", "downloadStoryboard done: ${destFile.length()} bytes")
-            return destFile
+            return streamToFile(api.downloadStoryboard(bookId, buildId), destFile, "downloadStoryboard", onProgress)
         } catch (e: retrofit2.HttpException) {
             val errorBody = try { e.response()?.errorBody()?.string() } catch (_: Exception) { null }
             throw IOException(errorBody ?: "Storyboard download failed (${e.code()})")
@@ -298,21 +291,7 @@ class Repository(
     suspend fun downloadAudioStream(bookId: String, buildId: String, destFile: File, onProgress: ((Float) -> Unit)? = null): File {
         Log.i("Repo", "downloadAudio: $bookId build=$buildId")
         try {
-            val body = api.downloadAudio(bookId, buildId)
-            val total = body.contentLength()
-            val input = body.byteStream()
-            val output = destFile.outputStream()
-            var read = 0L
-            val buffer = ByteArray(8192)
-            var n: Int
-            while (input.read(buffer).also { n = it } >= 0) {
-                output.write(buffer, 0, n)
-                read += n
-                if (total > 0) onProgress?.invoke(read.toFloat() / total.toFloat())
-            }
-            output.close()
-            Log.i("Repo", "downloadAudio done: ${destFile.length()} bytes")
-            return destFile
+            return streamToFile(api.downloadAudio(bookId, buildId), destFile, "downloadAudio", onProgress)
         } catch (e: retrofit2.HttpException) {
             val errorBody = try { e.response()?.errorBody()?.string() } catch (_: Exception) { null }
             throw IOException(errorBody ?: "Audio download failed (${e.code()})")
@@ -322,21 +301,7 @@ class Repository(
     suspend fun downloadBookStream(bookId: String, destFile: File, onProgress: ((Float) -> Unit)? = null): File {
         Log.i("Repo", "downloadBook: $bookId")
         try {
-            val body = api.downloadBook(bookId)
-            val total = body.contentLength()
-            val input = body.byteStream()
-            val output = destFile.outputStream()
-            var read = 0L
-            val buffer = ByteArray(8192)
-            var n: Int
-            while (input.read(buffer).also { n = it } >= 0) {
-                output.write(buffer, 0, n)
-                read += n
-                if (total > 0) onProgress?.invoke(read.toFloat() / total.toFloat())
-            }
-            output.close()
-            Log.i("Repo", "downloadBook done: ${destFile.length()} bytes")
-            return destFile
+            return streamToFile(api.downloadBook(bookId), destFile, "downloadBook", onProgress)
         } catch (e: retrofit2.HttpException) {
             val errorBody = try { e.response()?.errorBody()?.string() } catch (_: Exception) { null }
             throw IOException(errorBody ?: "Download failed (${e.code()})")
