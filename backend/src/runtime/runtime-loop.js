@@ -72,16 +72,23 @@ async function executeTick(redis, loadedBooks = {}) {
         console.warn(`[RUNTIME] Metrics storage error: ${metricsErr.message}`);
     }
 
-    // Phase 5: Cleanup (remove stuck scenes from active index)
+    // Phase 5: Auto-fix detected inconsistencies
     if (reconcileReport && reconcileReport.inconsistentScenes && reconcileReport.inconsistentScenes.length > 0) {
         for (const inconsistent of reconcileReport.inconsistentScenes) {
             const { scene } = inconsistent;
             const sceneKey = `${scene.bookId}:${scene.chapterId}:${scene.sceneId}`;
 
-            // Remove from active index if dealing with stuck scenes
-            if (inconsistent.issue === 'stale_locks' || inconsistent.issue === 'orphan_states') {
-                await runtimeScheduler.removeSceneFromActiveIndex(redis, scene.bookId, scene.chapterId, scene.sceneId);
-                log(`CLEANUP: Removed stuck scene from active index: ${sceneKey}`);
+            // Generate fix recommendation and apply it
+            const fixes = reconciliationEngine.getFixRecommendations([inconsistent]);
+            for (const fix of fixes) {
+                if (fix.safeToExecute) {
+                    try {
+                        const result = await reconciliationEngine.applyFix(redis, fix);
+                        log(`AUTO-FIX: ${fix.action} for ${sceneKey}: ${result.success ? 'OK' : 'FAILED'} (${result.details})`);
+                    } catch (fixErr) {
+                        warn(`AUTO-FIX error for ${sceneKey}: ${fixErr.message}`);
+                    }
+                }
             }
         }
     }
