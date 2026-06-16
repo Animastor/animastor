@@ -679,15 +679,12 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                 val nextIdx = (currentIuIndex + 1) % ius.size
                 currentIuIndex = nextIdx
                 playbackViewModel.currentUnitIndex = nextIdx
-                val iu = ius[nextIdx]
-                if (iu.status == IuStatus.READY && iu.bitmap != null) {
-                    showIuImage(iu.bitmap)
-                }
-                updateSubtitleIfEnabled(iu.text)
+                showIuImage(ius[nextIdx])
+                updateSubtitleIfEnabled(ius[nextIdx].text)
                 SharedPositionManager.navigateTo(
                     chapterId = playbackViewModel.currentChapterId,
                     sceneId = playbackViewModel.currentSceneId,
-                    unitId = iu.unitId,
+                    unitId = ius[nextIdx].unitId,
                     chunkId = playbackViewModel.getCurrentChunkId(),
                     unitIndex = nextIdx
                 )
@@ -883,17 +880,12 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                     currentIuIndex = idx
                     if (isPaused) continue
                     playbackViewModel.currentUnitIndex = idx
-                    val iu = ius[idx]
-                    // Only update image if READY; keep previous image otherwise
-                    // to avoid jarring switches to cover/placeholder
-                    if (iu.status == IuStatus.READY && iu.bitmap != null) {
-                        showIuImage(iu.bitmap)
-                    }
-                    updateSubtitleIfEnabled(iu.text)
+                    showIuImage(ius[idx])
+                    updateSubtitleIfEnabled(ius[idx].text)
                     SharedPositionManager.navigateTo(
                         chapterId = playbackViewModel.currentChapterId,
                         sceneId = playbackViewModel.currentSceneId,
-                        unitId = iu.unitId,
+                        unitId = ius[idx].unitId,
                         chunkId = playbackViewModel.getCurrentChunkId(),
                         unitIndex = idx
                     )
