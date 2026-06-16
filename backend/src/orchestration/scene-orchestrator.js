@@ -576,9 +576,17 @@ async function executeVideoDispatch(redis, scene, loadedBook, buildId) {
 
     // [INDEPENDENT WORKERS] Video requires image readiness.
     // Check per-asset states: if images aren't ready, skip this scene.
+    // When image worker is disabled, verify images via chunk data instead.
     try {
         const assetImgStates = await state.getAssetStates(redis, bookId, chapterId, sceneId);
-        if (assetImgStates.image !== state.AssetState.READY) {
+        let imageReady = assetImgStates.image === state.AssetState.READY;
+        if (!imageReady) {
+            const layerCfg = await runtimeScheduler.getLayerConfig(redis, bookId);
+            if (layerCfg.image_enabled === false) {
+                imageReady = await runtimeScheduler.checkChunksHaveImages(redis, bookId, chapterId, sceneId);
+            }
+        }
+        if (!imageReady) {
             log(`VIDEO SKIP (images not ready): ${bookId}/${chapterId}/${sceneId} (image=${assetImgStates.image})`);
             return { success: true, dispatched: false, waiting: false, stage: Stage.VIDEO, reason: 'images_not_ready' };
         }

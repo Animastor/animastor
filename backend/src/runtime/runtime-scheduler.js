@@ -43,6 +43,33 @@ async function getLayerConfig(redis, bookId) {
     return { audio_enabled: true, image_enabled: true, video_enabled: true };
 }
 
+/**
+ * Check if scene chunks have images marked as ready on disk.
+ * Used when image worker is disabled but video needs to verify images exist.
+ */
+async function checkChunksHaveImages(redis, bookId, chapterId, sceneId) {
+    const chunkPrefix = `animastor:chunk:${bookId}_${chapterId}_${sceneId}_`;
+    let cursor = '0';
+    let hasImages = false;
+    do {
+        const [nextCursor, keys] = await redis.scan(cursor, 'MATCH', `${chunkPrefix}*`, 'COUNT', 50);
+        cursor = nextCursor;
+        for (const key of keys) {
+            const raw = await redis.get(key);
+            if (raw) {
+                try {
+                    const ch = JSON.parse(raw);
+                    if (ch.image === true && ch.image_status === 'ready') {
+                        hasImages = true;
+                        break;
+                    }
+                } catch (_) {}
+            }
+        }
+    } while (cursor !== '0' && !hasImages);
+    return hasImages;
+}
+
 // ======================================================
 // CONFIGURATION
 // ======================================================
@@ -237,7 +264,13 @@ async function shouldScheduleAssets(redis, bookId, chapterId, sceneId) {
         assetStates.video !== state.AssetState.READY &&
         assetStates.video !== state.AssetState.FAILED &&
         assetStates.video !== state.AssetState.GENERATING) {
-        if (assetStates.image === state.AssetState.READY) {
+        let imageReady = assetStates.image === state.AssetState.READY;
+        if (!imageReady && !imageEnabled) {
+            // Image worker disabled but images may already exist on disk.
+            // Check chunks to avoid dispatching video without real images.
+            imageReady = await checkChunksHaveImages(redis, bookId, chapterId, sceneId);
+        }
+        if (imageReady) {
             stages.push('video');
         }
         // If images not ready, skip video for this scene (not an error)
@@ -641,6 +674,7 @@ module.exports = {
     shouldScheduleScene,
     shouldScheduleAssets,
     getLayerConfig,
+    checkChunksHaveImages,
     tick,
     getMetrics,
 
