@@ -184,6 +184,7 @@ module.exports = function(redis, config, deps) {
             // Reset all chunks for this scene (SCAN pattern, not just _0001)
             const chunkPrefix = `animastor:chunk:${bookId}_${chapter_id}_${scene_id}_`;
             let cursor = '0';
+            let createdAny = false;
             do {
                 const [nextCursor, keys] = await redis.scan(cursor, 'MATCH', `${chunkPrefix}*`, 'COUNT', 50);
                 cursor = nextCursor;
@@ -209,8 +210,30 @@ module.exports = function(redis, config, deps) {
                         chapter_id,
                         scene_id,
                     }));
+                    // Register in chunk set so getAllChunks finds it
+                    const chunkId = key.replace('animastor:chunk:', '');
+                    await redis.sadd(`animastor:chunks:${bookId}`, chunkId);
+                    createdAny = true;
                 }
             } while (cursor !== '0');
+            // If no chunks existed yet for this scene, create the default one
+            if (!createdAny) {
+                const chunkId = `${bookId}_${chapter_id}_${scene_id}_0001`;
+                const ch = {};
+                if (resetAudio) { ch.audio = false; ch.audio_status = 'pending'; }
+                if (resetImage) { ch.image = false; ch.image_status = 'pending'; }
+                if (resetVideo) { ch.video = false; ch.video_status = 'pending'; }
+                await redis.set(`animastor:chunk:${chunkId}`, JSON.stringify({
+                    ...ch,
+                    build_id: buildId,
+                    book_id: bookId,
+                    chapter_id,
+                    scene_id,
+                    chunk_index: '0001',
+                    expected_chunk_count: 1,
+                }));
+                await redis.sadd(`animastor:chunks:${bookId}`, chunkId);
+            }
 
             // Reset scene state in Redis (use direct set, not transitionSceneState,
             // because scenes may be in terminal states like VIDEO_READY which have
