@@ -1087,7 +1087,7 @@ enum class ImportStage(val label: String) {
 // ── Shared data types ────────────────────────────────────────────
 
 data class IuImageItem(
-    var bitmap: Bitmap?,
+    val bitmap: Bitmap?,
     val durationMs: Long,
     val unitId: String? = null,
     val text: String? = null,
