@@ -8,7 +8,13 @@
 
 **Выходы:** HTTP-ответы, задачи в GPU Hub, данные в Redis/PG.
 
-**Зависимости:** Express, ioredis, pg, multer, adm-zip, sharp, music-metadata, ws, uuid, cors.
+**Зависимости:** Express, ioredis, pg, multer, adm-zip, sharp, music-metadata, ws, uuid, cors, helmet, express-rate-limit.
+
+**Встроенные улучшения:**
+- **Helmet.js** — HTTP security headers (HSTS, CSP, X-Frame-Options, XSS-Protection)
+- **Rate limiting** — 100 req/min на `/api/`, защита от перегрузок
+- **Request ID** — каждый HTTP-запрос получает короткий ID (`crypto.randomUUID().slice(0,8)`) для трассировки
+- **Graceful shutdown (SIGTERM)** — последовательное завершение: server.close() → redis.quit() → postgres.closePool()
 
 **Используют:** Все внешние клиенты (Android, curl, браузер).
 
@@ -145,7 +151,7 @@
 
 ### 4.8 AI Service (`backend/src/services/ai-service.js`)
 
-**Ответственность:** Клиент внешнего AI API (OpenRouter / NVIDIA). Вызов с ретраями и парсинг JSON.
+**Ответственность:** Клиент внешнего AI API (OpenRouter). Вызов с ретраями и парсинг JSON. API-ключ: `OPENROUTER_API_KEY` (единый для всех AI-вызовов).
 
 ### 4.9 Context Builder (`backend/src/services/context-builder.js`)
 
@@ -160,7 +166,7 @@
 
 ### 4.11 Chat Engine (`backend/src/services/chat-engine.cjs`)
 
-**Ответственность:** AI-чат для ассистента. Управление историей диалога.
+**Ответственность:** AI-чат для ассистента. Управление историей диалога. Использует `config.OPENROUTER_API_KEY` (через ai-routes.cjs).
 
 ### 4.12 Gen Scope (`backend/src/services/gen-scope.js`)
 
@@ -236,6 +242,8 @@
 **API:** POST /task, GET /task/next, POST /task/result, POST /task/error, POST /beacon, GET /health, DELETE /queue/clear.
 
 **Зависимости:** Express, ioredis.
+
+**Graceful shutdown:** SIGTERM → server.close() → redis.quit()
 
 ### 7.2 Worker (`worker/worker/worker.js`)
 

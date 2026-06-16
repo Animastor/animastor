@@ -237,6 +237,26 @@ PlayFragment → PlaybackViewModel.loadScene(bookId, chapterId, sceneId)
 
 ---
 
+## Graceful Shutdown (SIGTERM)
+
+**Триггер:** Docker stop / kill сигнал
+
+**Участвующие компоненты:**
+1. `backend.cjs` — process.on('SIGTERM')
+2. `gpu-hub.js` — process.on('SIGTERM')
+
+**Поток:**
+```
+docker stop → SIGTERM → backend.cjs / gpu-hub.js
+  → log('[SHUTDOWN] Graceful shutdown initiated')
+  → server.close(() => log('[SHUTDOWN] HTTP server closed'))
+  → redis.quit()
+  → storage.postgres.closePool() (backend only)
+  → process.exit(0)
+```
+
+---
+
 ## Сценарий 7: Слайд окна (продвижение генерации)
 
 **Триггер:** Сцена достигла VIDEO_READY или таймаут

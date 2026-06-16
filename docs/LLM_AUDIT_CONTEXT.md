@@ -14,6 +14,9 @@ Animastor — AI-powered animated storytelling platform. Преобразует 
 - Express-сервер на порту 3000
 - DI-контейнер для ~30 сервисов
 - Монтирует 4 route-модуля: books, generation, AI, debug
+- Helmet.js (security headers), express-rate-limit (100 req/min на /api/)
+- Request ID middleware (crypto.randomUUID() для трассировки)
+- Graceful shutdown (SIGTERM → server.close → redis.quit → pg.closePool)
 
 ### 2. Orchestration Engine
 Состоит из 3 ключевых компонентов:
@@ -182,7 +185,7 @@ NEW → DIRTY → PENDING → GENERATING → READY | FAILED | PLACEHOLDER
 **Retry:** 3 попытки, timeout 180s
 **Хранение:** agent_sessions + agent_steps + agent_conversations + agent_messages (PostgreSQL)
 
-**Клиент AI:** ai-service.js — HTTP POST к OpenRouter API, парсинг JSON из ответа.
+**Клиент AI:** ai-service.js — HTTP POST к OpenRouter API, парсинг JSON из ответа. Единый ключ: `OPENROUTER_API_KEY` (через `config.OPENROUTER_API_KEY`).
 
 ## Генераторы
 
@@ -253,7 +256,7 @@ NEW → DIRTY → PENDING → GENERATING → READY | FAILED | PLACEHOLDER
 
 6. **Циклические зависимости:** backend.cjs ↔ task-handler (через DI), orchestrator ↔ dispatch-engine (функционально).
 
-7. **Нет graceful shutdown.** Stale dispatch leases при перезапуске (частично компенсируется очисткой при старте).
+7. **Graceful shutdown — ДОБАВЛЕН.** SIGTERM обработчики в backend.cjs и gpu-hub.js. последовательное завершение HTTP → Redis → PostgreSQL.
 
 8. **База знаний AI загружается, но не используется** в промптах (мёртвый код).
 

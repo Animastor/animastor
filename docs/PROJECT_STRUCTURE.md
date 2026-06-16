@@ -237,8 +237,8 @@
 │   │   ├── package.json                         # Зависимости (node-fetch)
 │   │   └── worker.js                            # [CORE] GPU-воркер (ComfyUI)
 │   └── image/worker/
-│       ├── package.json                         # Зависимости image-воркера
-│       └── worker.js                            # Image-воркер
+│       ├── package.json                         # Зависимости image-воркера (main: worker.js)
+│       └── package-lock.json
 │
 ├── gpu-hub/                                     # Центральный диспетчер GPU
 │   ├── package.json                             # Зависимости (express, ioredis, cors)
@@ -258,7 +258,18 @@
 │   ├── output/                                  # Сгенерированные файлы (MP3, PNG, MP4)
 │   └── workflows/                               # Шаблоны ComfyUI (.json)
 │
-├── docs/                                        # Документация
+├── docs/                                        # Документация (актуализируется по коммитам)
+│   ├── SYSTEM_OVERVIEW.md                       # Обзор системы
+│   ├── PROJECT_STRUCTURE.md                     # Структура проекта
+│   ├── ARCHITECTURE.md                          # Архитектура
+│   ├── ARCHITECTURAL_DEBT.md                    # Технический долг
+│   ├── DATA_FLOW.md                             # Потоки данных
+│   ├── CONNECTORS.md                            # Интеграции
+│   ├── GENERATORS.md                            # Генераторы
+│   ├── AGENTS.md                                # AI-агенты
+│   ├── WORKFLOWS.md                             # Workflow система
+│   ├── DEPENDENCY_ANALYSIS.md                   # Анализ зависимостей
+│   ├── LLM_AUDIT_CONTEXT.md                     # Контекст для аудита LLM
 │   └── architectural-essence.md                 # Архитектурная эссенция
 │
 └── backups/                                     # Бекапы (.tar.gz)

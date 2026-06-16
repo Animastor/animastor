@@ -27,6 +27,10 @@ Animastor — AI-powered animated storytelling platform. Система прео
 
 ### Backend (Node.js/Express)
 Центральный сервер API + оркестратор. Управляет состоянием книги, сценами, dispatching задач на GPU.
+- **Helmet.js** — HTTP security headers (HSTS, CSP, X-Frame-Options)
+- **Rate limiting** — 100 req/min на `/api/`, защита от перегрузок
+- **Request ID** — каждый HTTP-запрос получает короткий ID для трассировки в логах
+- **Graceful shutdown (SIGTERM)** — HTTP server → Redis → PostgreSQL последовательное завершение
 
 ### Frontend (Android/Kotlin)
 Мобильное приложение с bottom-навигацией: файлы, редактор, плеер, навигация, AI-ассистент.
@@ -113,7 +117,7 @@ TXT / VBook
 
 | Компонент | Файл | Роль |
 |-----------|------|------|
-| Backend entry | `backend/src/backend.cjs` | Инициализация сервера, DI, монтирование роутов |
+| Backend entry | `backend/src/backend.cjs` | Инициализация сервера, DI, монтирование роутов, helmet/rate-limit, graceful shutdown |
 | Book routes | `backend/src/routes/book-routes.cjs` | REST API для книг, импорт, статус |
 | AI routes | `backend/src/routes/ai-routes.cjs` | REST API для AI-ассистента |
 | Generation routes | `backend/src/routes/generation-routes.cjs` | REST API для запуска генерации |
@@ -135,7 +139,7 @@ TXT / VBook
 | Task handler | `backend/src/services/task-handler.cjs` | Обработчик результатов GPU задач |
 | Layer config | `backend/src/services/layer-config.js` | Профили генерации (audio/image/video) |
 | Gen scope | `backend/src/services/gen-scope.js` | Область генерации (сцена/глава/книга) |
-| GPU Hub | `gpu-hub/gpu-hub.js` | Диспетчер GPU-очередей |
+| GPU Hub | `gpu-hub/gpu-hub.js` | Диспетчер GPU-очередей + graceful shutdown (SIGTERM) |
 | Worker | `worker/worker/worker.js` | GPU-воркер ComfyUI |
 | Database | `backend/src/storage/postgres/` | PostgreSQL ORM |
 | Runtime config | `backend/src/config/runtime-config.js` | Централизованная конфигурация |

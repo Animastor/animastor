@@ -155,6 +155,10 @@ PostgreSQL 16.
 ### Подключаемая система
 OpenRouter API (внешний REST API).
 
+### Аутентификация
+Единый ключ: `OPENROUTER_API_KEY` (env), доступен через `config.OPENROUTER_API_KEY`.
+Если не задан — AI-ассистент недоступен (предупреждение на `console.debug`).
+
 ### Входные параметры
 ```json
 {
