@@ -23,15 +23,22 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.io.File
+import kotlin.math.min
 
 /**
  * ViewModel for the media player subsystem.
- * Handles ONLY playback logic: chunk queue management, preloading, IU cycling,
- * position tracking, and UI state for the player.
+ * Handles ONLY playback logic: chunk queue management, sliding window preload,
+ * IU cycling, position tracking, and UI state for the player.
  *
  * Designed to be independent of content generation — receives prepared data
  * via [preparePlayback] and [setCoverImage] methods called by the activity
  * coordinator after generation/loading completes.
+ *
+ * Playback model:
+ * 1. User clicks Play → sequential window fill (chunk 0 → 1 → 2)
+ * 2. As soon as chunk 0 is fully ready → start playback
+ * 3. Window slides: preload chunk 3 while chunk 0 plays
+ * 4. Chunk is only emitted when content for active layers is confirmed downloaded
  */
 class PlaybackViewModel(
     application: Application,
@@ -42,11 +49,7 @@ class PlaybackViewModel(
 
     companion object {
         private const val TAG = "PlaybackVM"
-        private const val PRELOAD_AHEAD = 3
-        private const val POLL_TIMEOUT_MS = 300_000L
-        private const val IMAGE_POLL_TIMEOUT_MS = 1_800_000L
-        private const val POLL_INTERVAL_MS = 300L
-        private const val MAX_BACKOFF_MS = 5_000L
+        private const val WINDOW_SIZE = 3
 
         val factory: ViewModelProvider.Factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
@@ -67,7 +70,7 @@ class PlaybackViewModel(
     private val _uiState = MutableStateFlow(PlaybackUiState())
     val uiState: StateFlow<PlaybackUiState> = _uiState.asStateFlow()
 
-    // Signals to the fragment that a new chunk has been emitted
+    // Signals to the fragment that a new chunk has been cached in the window
     val preloadCompleted: MutableSharedFlow<String> = MutableSharedFlow(extraBufferCapacity = 16)
 
     // ── Book / chunk metadata (set externally via preparePlayback) ─
@@ -115,11 +118,21 @@ class PlaybackViewModel(
     var imageEnabled: Boolean = true
         private set
 
-    // ── Preload ──────────────────────────────────────────────────
+    // ── Sliding Window Preload ────────────────────────────────────
+    //
+    //                 ┌── window: N chunks ahead ──┐
+    //   [chunk 0] [chunk 1] [chunk 2] [chunk 3] [chunk 4] ...
+    //    ▲ playing    ▲ cached    ▲ cached    ◀─ fill here next
+    //    │
+    //    currentIndex
+    //
+    // 1. Fills sequentially: chunk 0 → 1 → 2 (no parallel burst)
+    // 2. Starts playing as soon as chunk 0 is ready
+    // 3. Slides: after chunk 0 emitted, fill chunk 3
+    // 4. Chunk emitted only after content ready check
 
-    private val preloadCache = mutableMapOf<String, PreloadedScene>()
-    private val preloadJobs = mutableMapOf<String, Job>()
-    private var preloadJob: Job? = null
+    private val preloadWindow = mutableMapOf<String, PreloadedScene>()
+    private var windowFillJob: Job? = null
 
     // ── Cleanup tracking ─────────────────────────────────────────
 
@@ -143,7 +156,7 @@ class PlaybackViewModel(
     ) {
         Log.i(TAG, "preparePlayback: book=$bookId chunks=${chunkIds.size}")
         _repository.clearCache()
-        preloadCache.clear()
+        preloadWindow.clear()
         this.bookId = bookId
         this.buildId = buildId
         chunkQueue.clear()
@@ -184,18 +197,31 @@ class PlaybackViewModel(
     //  PLAYBACK CONTROL
     // ═══════════════════════════════════════════════════════════════
 
+    /**
+     * Start playback from the beginning.
+     * Fills the sliding window sequentially, then starts playing
+     * as soon as chunk 0 is fully ready.
+     */
     fun playSceneQueue() {
         if (chunkQueue.isEmpty()) {
             Log.w(TAG, "playSceneQueue: empty queue")
             return
         }
-        Log.i(TAG, "playSceneQueue: ${chunkQueue.size} chunks")
+        Log.i(TAG, "playSceneQueue: ${chunkQueue.size} chunks, window=$WINDOW_SIZE")
         currentIndex = 0
-        preloadJobs.clear()
-        preloadAhead(includeCurrent = true)
-        playNext()
+        windowFillJob?.cancel()
+        preloadWindow.clear()
+        _uiState.update { it.copy(windowProgress = null) }
+
+        windowFillJob = viewModelScope.launch {
+            fillWindowSequential(0)
+        }
     }
 
+    /**
+     * Resume playback after rotation or error.
+     * Refills the window starting from the current (or saved) position.
+     */
     fun resumeFromCurrentScene() {
         needsRotationResume = false
         if (chunkQueue.isEmpty()) {
@@ -203,10 +229,13 @@ class PlaybackViewModel(
             return
         }
         pendingSeekPositionMs = savedPlaybackPositionMs
-        preloadCache.clear()
-        preloadJobs.clear()
-        preloadAhead(includeCurrent = true)
-        playNext()
+        windowFillJob?.cancel()
+        preloadWindow.clear()
+        _uiState.update { it.copy(windowProgress = null) }
+
+        windowFillJob = viewModelScope.launch {
+            fillWindowSequential(currentIndex)
+        }
     }
 
     fun rotationRecovery() {
@@ -214,6 +243,10 @@ class PlaybackViewModel(
         _uiState.update { it.copy(phase = PlayerPhase.SCENE_READY) }
     }
 
+    /**
+     * Called by [PlayFragment] when audio track ends naturally.
+     * Advances to the next chunk — it should already be in the preload window.
+     */
     fun onAudioCompleted() {
         Log.i(TAG, "onAudioCompleted: index=$currentIndex")
         currentIndex++
@@ -227,11 +260,18 @@ class PlaybackViewModel(
     val currentChunkIndex: Int get() = currentIndex
     val chunkQueueSize: Int get() = chunkQueue.size
 
+    /**
+     * Get preloaded scene data for a given index from the sliding window.
+     */
     fun getPreloadedScene(index: Int): PreloadedScene? {
         if (index < 0 || index >= chunkQueue.size) return null
-        return preloadCache[chunkQueue[index]]
+        val id = chunkQueue[index]
+        return preloadWindow[id]
     }
 
+    /**
+     * Get preloaded data for the next scene (used by fragment for audio chaining).
+     */
     fun tryPreloadNextScene(): PreloadedScene? {
         return getPreloadedScene(currentIndex + 1)
     }
@@ -244,7 +284,6 @@ class PlaybackViewModel(
         }?.key
         if (chunkId == null || !chunkQueue.contains(chunkId)) {
             Log.w(TAG, "seekToPosition: chunk not found for $chapterId/$sceneId — trying refresh from backend")
-            // Try to refresh chunk list from backend before showing missing overlay
             if (bookId.isBlank()) {
                 Log.w(TAG, "seekToPosition: bookId is blank — can't refresh, showing overlay")
                 val pos = ActivePosition(
@@ -265,13 +304,11 @@ class PlaybackViewModel(
                     for (cid in fresh.chunk_ids) {
                         if (!chunkQueue.contains(cid)) {
                             chunkQueue.add(cid)
-                            // Also try to get position for this new chunk
                             runCatching {
                                 val sb = _repository.getChunkStoryboard(cid)
                                 chunkPositions[cid] = Pair(sb.chapter_id, sb.scene_id)
                             }
                         }
-                        // Check if the target chunk is now available
                         if (!found) {
                             val refreshChunkId = chunkPositions.entries.firstOrNull {
                                 it.value.first == chapterId && it.value.second == sceneId
@@ -281,19 +318,14 @@ class PlaybackViewModel(
                                 Log.i(TAG, "seekToPosition: found after refresh — $refreshChunkId")
                                 _uiState.update { it.copy(missingIuPosition = null) }
                                 pendingExternalSeek = ActivePosition(chapterId, sceneId, unitId, refreshChunkId, unitIndex)
-                                // If PlayFragment is visible, execute immediately
-                                // pendingExternalSeek will be picked up by the fragment
                             }
                         }
                     }
                     if (!found) {
                         Log.w(TAG, "seekToPosition: still not found after refresh — showing missing overlay")
                         val pos = ActivePosition(
-                            chapterId = chapterId,
-                            sceneId = sceneId,
-                            unitId = unitId,
-                            chunkId = chunkId,
-                            unitIndex = unitIndex
+                            chapterId = chapterId, sceneId = sceneId,
+                            unitId = unitId, chunkId = chunkId, unitIndex = unitIndex
                         )
                         _uiState.update { it.copy(missingIuPosition = pos) }
                         pendingExternalSeek = null
@@ -301,11 +333,8 @@ class PlaybackViewModel(
                 } else {
                     Log.w(TAG, "seekToPosition: refresh failed — showing missing overlay")
                     val pos = ActivePosition(
-                        chapterId = chapterId,
-                        sceneId = sceneId,
-                        unitId = unitId,
-                        chunkId = chunkId,
-                        unitIndex = unitIndex
+                        chapterId = chapterId, sceneId = sceneId,
+                        unitId = unitId, chunkId = chunkId, unitIndex = unitIndex
                     )
                     _uiState.update { it.copy(missingIuPosition = pos) }
                     pendingExternalSeek = null
@@ -324,8 +353,6 @@ class PlaybackViewModel(
 
     /**
      * Ensure the player is initialized with chunk data for [targetBookId].
-     * Fetches chunks from the backend and calls [preparePlayback] if [bookId] is blank.
-     * Safe to call multiple times — no-op if already initialized.
      */
     fun ensureInitialized(targetBookId: String, targetBuildId: String) {
         if (bookId.isNotBlank() && bookId == targetBookId) {
@@ -382,6 +409,10 @@ class PlaybackViewModel(
         }
     }
 
+    /**
+     * Execute a pending seek to a specific chunk.
+     * Resets the window and starts filling from the target position.
+     */
     fun executePendingSeek() {
         val seek = pendingExternalSeek ?: return
         pendingExternalSeek = null
@@ -400,18 +431,20 @@ class PlaybackViewModel(
         SharedPositionManager.navigateTo(seek)
         _uiState.update { it.copy(phase = PlayerPhase.DOWNLOADING) }
 
-        preloadCache.clear()
-        preloadJobs.clear()
-        preloadAhead(includeCurrent = true)
-        playNext()
+        windowFillJob?.cancel()
+        preloadWindow.clear()
+
+        windowFillJob = viewModelScope.launch {
+            fillWindowSequential(currentIndex)
+        }
     }
 
     // ── State reset ──────────────────────────────────────────────
 
     fun clearPlaybackState() {
         chunkPositions.clear()
-        preloadCache.clear()
-        preloadJobs.clear()
+        preloadWindow.clear()
+        windowFillJob?.cancel()
         chunkQueue.clear()
         currentIndex = 0
         currentChapterId = null
@@ -441,19 +474,63 @@ class PlaybackViewModel(
     }
 
     // ═══════════════════════════════════════════════════════════════
-    //  INTERNAL — playback logic
+    //  INTERNAL — sliding window & playback logic
     // ═══════════════════════════════════════════════════════════════
 
+    /**
+     * Sequentially fill the preload window starting from [startIndex].
+     * Loads up to WINDOW_SIZE chunks one by one.
+     * As soon as chunk [startIndex] (offset 0) is ready, starts playback
+     * while the rest of the window continues filling in the background.
+     */
+    private suspend fun fillWindowSequential(startIndex: Int) {
+        val total = min(WINDOW_SIZE, chunkQueue.size - startIndex)
+        _uiState.update { it.copy(phase = PlayerPhase.DOWNLOADING, windowProgress = "0/$total") }
+
+        for (offset in 0 until WINDOW_SIZE) {
+            val idx = startIndex + offset
+            if (idx >= chunkQueue.size) break
+            val id = chunkQueue[idx]
+            if (preloadWindow.containsKey(id)) continue
+
+            Log.i(TAG, "[WINDOW] fill $offset/$WINDOW_SIZE: chunk[$idx]=$id")
+            val data = runCatching { fetchSceneData(id) }.getOrNull()
+            if (data != null) {
+                preloadWindow[id] = data
+                preloadCompleted.tryEmit(id)
+                Log.i(TAG, "[WINDOW] loaded $id: audio=${data.audioBytes.size}B ius=${data.iuSequence.size}")
+            } else {
+                Log.w(TAG, "[WINDOW] FAILED $id")
+            }
+
+            val loaded = preloadWindow.size
+            _uiState.update { it.copy(windowProgress = "$loaded/$total") }
+
+            // As soon as the first chunk is in the window, start playing immediately
+            if (offset == 0 && preloadWindow.containsKey(id)) {
+                Log.i(TAG, "[WINDOW] first chunk ready — starting playback")
+                viewModelScope.launch { playNext() }
+            }
+        }
+
+        Log.i(TAG, "[WINDOW] fill complete: ${preloadWindow.size}/${total} chunks in window")
+    }
+
+    /**
+     * Play the current chunk from the preload window.
+     * Falls back to on-demand loading only if the chunk is unexpectedly missing.
+     */
     private fun playNext() {
         Log.d(TAG, "playNext: index=$currentIndex queueSize=${chunkQueue.size}")
+
         if (currentIndex >= chunkQueue.size) {
             Log.i(TAG, "playNext: end of queue → SCENE_READY")
-            _uiState.update { it.copy(phase = PlayerPhase.SCENE_READY) }
+            _uiState.update { it.copy(phase = PlayerPhase.SCENE_READY, windowProgress = null) }
             return
         }
 
         val id = chunkQueue[currentIndex]
-        Log.i(TAG, "playNext: loading chunk[$currentIndex]=$id")
+        Log.i(TAG, "playNext: chunk[$currentIndex]=$id")
 
         val pos = chunkPositions[id]
         currentChapterId = pos?.first
@@ -471,48 +548,84 @@ class PlaybackViewModel(
         }
         isExecutingExternalSeek = false
 
-        val cached = preloadCache.remove(id)
-        if (cached != null) {
-            Log.i(TAG, "playNext: using preloaded data for $id")
-            val chunkPos = chunkPositions[id]
-            currentChapterId = chunkPos?.first
-            currentSceneId = chunkPos?.second
-            emitChunk(cached.audioBytes, cached.videoBytes, cached.iuSequence)
-            preloadAhead()
+        // Take from window (expected path)
+        val sceneData = preloadWindow.remove(id)
+        if (sceneData != null) {
+            Log.i(TAG, "playNext: from window for $id")
+            _uiState.update { it.copy(previewImage = null, windowProgress = null) }
+            emitChunkWithReadinessCheck(id, sceneData)
+            slideWindow()
             return
         }
 
+        // Fallback: load on demand (should not happen with healthy window system)
+        Log.w(TAG, "playNext: $id NOT in preload window! Loading on demand...")
         viewModelScope.launch {
-            _uiState.update { it.copy(phase = PlayerPhase.DOWNLOADING) }
+            _uiState.update { it.copy(phase = PlayerPhase.DOWNLOADING, windowProgress = null) }
 
-            preloadJobs[id]?.join()
-
-            val cachedAfter = preloadCache.remove(id)
-            if (cachedAfter != null) {
-                Log.i(TAG, "playNext: preload completed for $id")
-                val preloadPos = chunkPositions[id]
-                currentChapterId = preloadPos?.first
-                currentSceneId = preloadPos?.second
-                emitChunk(cachedAfter.audioBytes, cachedAfter.videoBytes, cachedAfter.iuSequence)
-                preloadAhead()
-                return@launch
-            }
-
-            val sceneData = runCatching { fetchSceneData(id) }.getOrElse { err ->
+            runCatching { fetchSceneData(id) }.getOrElse { err ->
                 val msg = "Scene $id: ${err.message} (${err::class.simpleName})"
-                Log.e(TAG, "playNext: failed to load $id — $msg", err)
-                Log.w(TAG, "playNext: → SCENE_READY (error)")
+                Log.e(TAG, "playNext: on-demand failed $id — $msg", err)
                 _uiState.update { it.copy(phase = PlayerPhase.SCENE_READY, errorMessage = msg) }
                 return@launch
+            }.let { data ->
+                Log.i(TAG, "playNext: on-demand loaded $id")
+                _uiState.update { it.copy(previewImage = null) }
+                currentChapterId = pos?.first
+                currentSceneId = pos?.second
+                emitChunkWithReadinessCheck(id, data)
+                slideWindow()
             }
-
-            Log.i(TAG, "delivering chunk for $id")
-            _uiState.update { it.copy(previewImage = null) }
-            currentChapterId = pos?.first
-            currentSceneId = pos?.second
-            emitChunk(sceneData.audioBytes, sceneData.videoBytes, sceneData.iuSequence)
-            preloadAhead()
         }
+    }
+
+    /**
+     * Slide the window forward: preload the next unseen chunk
+     * (currentIndex + WINDOW_SIZE) into the window.
+     */
+    private fun slideWindow() {
+        val nextFillIndex = currentIndex + WINDOW_SIZE
+        if (nextFillIndex >= chunkQueue.size) return
+
+        val id = chunkQueue[nextFillIndex]
+        if (preloadWindow.containsKey(id)) return
+
+        viewModelScope.launch {
+            Log.i(TAG, "[WINDOW] slide: filling chunk[$nextFillIndex]=$id")
+            val data = runCatching { fetchSceneData(id) }.getOrNull()
+            if (data != null) {
+                preloadWindow[id] = data
+                preloadCompleted.tryEmit(id)
+                Log.i(TAG, "[WINDOW] slide loaded: $id")
+            } else {
+                Log.w(TAG, "[WINDOW] slide FAILED $id")
+            }
+        }
+    }
+
+    /**
+     * Emit chunk data only after verifying content readiness for active layers.
+     * This prevents audio starting before its images are downloaded (video readiness
+     * is already handled by fetchSceneData — if video wasn't ready, bytes will be null).
+     *
+     * Readiness check (non-suspend, uses only PreloadedScene data):
+     * - If image layer is ON: all IU images must have status READY
+     * - Images that were truly not generated (NOT_GENERATED) are accepted as-is
+     */
+    private fun emitChunkWithReadinessCheck(id: String, data: PreloadedScene) {
+        // If image layer is ON, verify all IU images are READY
+        val allImagesReady = if (imageEnabled) {
+            data.iuSequence.all { it.status == IuStatus.READY }
+        } else true
+
+        if (!allImagesReady) {
+            val ready = data.iuSequence.count { it.status == IuStatus.READY }
+            val total = data.iuSequence.size
+            Log.w(TAG, "emitChunk $id: $ready/$total IU images READY — " +
+                    "${total - ready} NOT_GENERATED (will show placeholder)")
+        }
+
+        emitChunk(data.audioBytes, data.videoBytes, data.iuSequence)
     }
 
     private fun emitChunk(audio: ByteArray, video: ByteArray?, iuSequence: List<IuImageItem>?) {
@@ -522,35 +635,6 @@ class PlaybackViewModel(
         pendingChunkVideo = video
         pendingChunkIuSequence = iuSequence
         _uiState.update { it.copy(phase = PlayerPhase.PLAYING, chunkSequence = seq) }
-    }
-
-    private fun preloadAhead(includeCurrent: Boolean = false) {
-        val start = if (includeCurrent) 0 else 1
-
-        // Launch PRELOAD_AHEAD independent jobs — don't cancel previous ones
-        // so that already-started preloads (especially IU images) can complete.
-        for (offset in start..PRELOAD_AHEAD) {
-            val idx = currentIndex + offset
-            if (idx >= chunkQueue.size) break
-            val id = chunkQueue[idx]
-            if (preloadCache.containsKey(id)) continue
-
-            // Skip if a preload job is already running for this chunk
-            if (preloadJobs.containsKey(id)) continue
-
-            Log.i(TAG, "preloading scene $offset ahead: $id")
-            val job = viewModelScope.launch {
-                val data = runCatching { fetchSceneData(id) }.getOrNull()
-                if (data != null) {
-                    preloadCache[id] = data
-                    preloadCompleted.tryEmit(id)
-                    Log.i(TAG, "preloaded scene: $id — ${data.iuSequence.size} IUs")
-                } else {
-                    Log.w(TAG, "preload failed for scene: $id — will load on demand")
-                }
-            }
-            preloadJobs[id] = job
-        }
     }
 
     private suspend fun fetchSceneData(id: String): PreloadedScene = coroutineScope {
@@ -672,7 +756,6 @@ class PlaybackViewModel(
         return 2000L
     }
 
-
 }
 
 // ── Player UI State ──────────────────────────────────────────────
@@ -683,5 +766,7 @@ data class PlaybackUiState(
     val previewImage: Bitmap? = null,
     val errorMessage: String? = null,
     val chunkSequence: Long = 0,
-    val missingIuPosition: ActivePosition? = null
+    val missingIuPosition: ActivePosition? = null,
+    /** Progress text shown during window fill, e.g. "1/3" */
+    val windowProgress: String? = null
 )

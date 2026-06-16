@@ -468,7 +468,14 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                             Log.w(TAG, "error in state: $errorMsg")
                         } else when (state.phase) {
                             PlayerPhase.LOADING_BOOK -> b.statusText.text = getString(R.string.play_loading)
-                            PlayerPhase.GENERATING, PlayerPhase.DOWNLOADING -> b.statusText.text = getString(R.string.play_loading)
+                            PlayerPhase.GENERATING, PlayerPhase.DOWNLOADING -> {
+                                val wp = state.windowProgress
+                                if (wp != null) {
+                                    b.statusText.text = "Loading $wp…"
+                                } else {
+                                    b.statusText.text = getString(R.string.play_loading)
+                                }
+                            }
                             PlayerPhase.SCENE_READY -> b.statusText.text = getString(R.string.play_ready)
                             PlayerPhase.PLAYING -> if (isPaused) b.statusText.text = getString(R.string.play_paused)
                                 else b.statusText.text = getString(R.string.play_playing)
