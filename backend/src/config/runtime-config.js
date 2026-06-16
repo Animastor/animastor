@@ -137,7 +137,7 @@ const WORKER_HEARTBEAT_TYPE_PATTERN = (type) => `${WORKER_HEARTBEAT_PREFIX}:${ty
 // ======================================================
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 if (!OPENROUTER_API_KEY && process.env.NODE_ENV !== 'test') {
-    console.warn('[CONFIG] WARNING: OPENROUTER_API_KEY is not set — AI assistant will be unavailable');
+    console.debug('[CONFIG] OPENROUTER_API_KEY is not set — AI assistant will be unavailable');
 }
 const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || 'qwen/qwen3.5-122b-a10b';
 

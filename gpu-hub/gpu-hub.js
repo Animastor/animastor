@@ -437,6 +437,20 @@ app.delete("/queue/clear", async (req, res) => {
 // START
 // ======================================================
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log("🚀 GPU HUB running on", PORT)
 })
+
+// Graceful shutdown
+process.on('SIGTERM', async () => {
+  console.log("[SHUTDOWN] SIGTERM received, shutting down...");
+  server.close(() => {
+    console.log("[SHUTDOWN] HTTP server closed");
+  });
+  try {
+    await redis.quit();
+    console.log("[SHUTDOWN] Redis connection closed");
+  } catch (_) {}
+  console.log("[SHUTDOWN] Goodbye");
+  process.exit(0);
+});

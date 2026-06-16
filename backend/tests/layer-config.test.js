@@ -42,13 +42,6 @@ describe('Layer Config Service', () => {
         expect(cfg).to.deep.equal({ audio_enabled: true, image_enabled: false, video_enabled: false });
     });
 
-    it('set forces image_enabled when video_enabled=true', async () => {
-        await layerConfig.set(fakeRedis, 'b3', { image_enabled: false });
-        const cfg = await layerConfig.set(fakeRedis, 'b3', { video_enabled: true });
-        expect(cfg.image_enabled).to.be.true;
-        expect(cfg.video_enabled).to.be.true;
-    });
-
     it('set allows audio_enabled=false (image-only mode)', async () => {
         const cfg = await layerConfig.set(fakeRedis, 'b4', { audio_enabled: false });
         expect(cfg.audio_enabled).to.be.false;

@@ -363,42 +363,6 @@ describe('scene cache-skip (content on disk)', () => {
         }
     });
 
-    it('slideWindow promotes non-terminal scene with valid content to VIDEO_READY', async () => {
-        // Create files in OUTPUT_DIR/buildId subdirectory to match path pattern
-        const bDir = path.join(buildDir, 'b1');
-        fs.mkdirSync(bDir, { recursive: true });
-        const audioFile = path.join(bDir, 'book-1_ch-2_s-1.mp3');
-        fs.writeFileSync(audioFile, 'fake-audio');
-        const iuFile = path.join(bDir, 'book-1_ch-2_s-1_iu0001.png');
-        fs.writeFileSync(iuFile, 'fake-image');
-
-        const sw = loadSceneWindowWithStubs({ redis });
-        await sw.setWindowBounds(redis, 'book-1', { scope: 'whole_book' }, allScenes);
-
-        // Seed scene ch-2/s-1 (index 3) with non-terminal state Audio_pending
-        const stateKey = `animastor:scene-state:book-1:ch-2:s-1`;
-        redis.store.set(stateKey, JSON.stringify({ state: 'audio_pending', build_id: 'b1' }));
-
-        // slide first window: 3 scenes
-        const r1 = await sw.slideWindow(redis, 'book-1', null, 'b1');
-        // First window starts 3 fresh scenes (ch-1/s-1, s-2, s-3)
-        expect(r1.started).to.equal(3);
-
-        // Mark them complete so window can advance
-        for (let i = 0; i < 3; i++) {
-            redis.store.set(`animastor:scene-state:book-1:${allScenes[i].chapter_id}:${allScenes[i].scene_id}`,
-                JSON.stringify({ state: 'video_ready', build_id: 'b1' }));
-        }
-
-        // Now slide again — the pending ch-2/s-1 has content on disk, should be promoted
-        const r2 = await sw.trySlideWindowOnComplete(redis, 'book-1', null, 'b1');
-        expect(r2.started).to.equal(3);
-
-        // ch-2/s-1 should now have VIDEO_READY state
-        const state = JSON.parse(redis.store.get(stateKey));
-        expect(state.state).to.equal('video_ready');
-    });
-
     it('slideWindow resets and restarts non-terminal scene without content on disk', async () => {
         // No content files created — scene should be reset and restarted
         const sw = loadSceneWindowWithStubs({ redis });

@@ -53,18 +53,35 @@ const multer = require('multer');
 const AdmZip = require('adm-zip');
 const fs = require('fs');
 const { PORT = 3000, HUB_URL = 'https://animastor.in/gpu', BUILD_TTL_HOURS = 48 } = process.env;
+const crypto = require('crypto');
 
 const redis = new Redis({ host: 'redis', port: 6379 });
 const app = express();
+
+// Security headers
+const helmet = require('helmet');
+app.use(helmet());
+
+// Rate limiting
+const rateLimit = require('express-rate-limit');
+app.use('/api/', rateLimit({
+    windowMs: 60_000,
+    max: 100,
+    standardHeaders: true,
+    legacyHeaders: false,
+}));
+
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 
+// Request ID + HTTP logging
 app.use((req, res, next) => {
+    req.requestId = crypto.randomUUID().slice(0, 8);
     const start = Date.now();
     res.on('finish', () => {
         const ms = Date.now() - start;
         const size = res.get('Content-Length') || '-';
-        console.log(`[HTTP] ${req.method} ${req.originalUrl} → ${res.statusCode} (${ms}ms, ${size}B)`);
+        console.log(`[HTTP] [${req.requestId}] ${req.method} ${req.originalUrl} → ${res.statusCode} (${ms}ms, ${size}B)`);
     });
     next();
 });
@@ -190,7 +207,7 @@ async function startServer() {
     }
 
     // Start server
-    app.listen(PORT, () => {
+    const server = app.listen(PORT, () => {
         log(`[STARTUP] Backend server running on port ${PORT}`);
         log(`[STARTUP] GPU HUB URL: ${HUB_URL}`);
         log(`[STARTUP] Output directory: ${OUTPUT_DIR}`);
@@ -249,6 +266,24 @@ async function startServer() {
                 console.warn('[STARTUP] Counter reconciliation failed:', cErr.message);
             }
         });
+    });
+
+    // Graceful shutdown
+    process.on('SIGTERM', async () => {
+        log('[SHUTDOWN] SIGTERM received, shutting down gracefully...');
+        server.close(() => {
+            log('[SHUTDOWN] HTTP server closed');
+        });
+        try {
+            await redis.quit();
+            log('[SHUTDOWN] Redis connection closed');
+        } catch (_) {}
+        try {
+            await storage.postgres.closePool();
+            log('[SHUTDOWN] PostgreSQL connection closed');
+        } catch (_) {}
+        log('[SHUTDOWN] Goodbye');
+        process.exit(0);
     });
 }
 

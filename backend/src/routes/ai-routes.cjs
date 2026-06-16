@@ -126,7 +126,7 @@ module.exports = function(app, redis, deps) {
             // Call AI API
             const response = await fetch(`${chatEngine.AI_API_BASE_URL}/chat/completions`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${process.env.AI_API_KEY || ''}` },
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${config.OPENROUTER_API_KEY || process.env.AI_API_KEY || ''}` },
                 body: JSON.stringify({
                     model: process.env.AI_MODEL || 'meta/llama-3.1-8b-instruct',
                     messages: apiMessages,
@@ -252,7 +252,7 @@ module.exports = function(app, redis, deps) {
 
             const aiResponse = await fetch(`${chatEngine.AI_API_BASE_URL}/chat/completions`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${process.env.AI_API_KEY || ''}` },
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${config.OPENROUTER_API_KEY || process.env.AI_API_KEY || ''}` },
                 body: JSON.stringify({
                     model: process.env.AI_MODEL || 'meta/llama-3.1-8b-instruct',
                     messages: apiMessages,
@@ -471,7 +471,7 @@ module.exports = function(app, redis, deps) {
 
             const response = await fetch(`${chatEngine.AI_API_BASE_URL}/chat/completions`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${process.env.AI_API_KEY || ''}` },
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${config.OPENROUTER_API_KEY || process.env.AI_API_KEY || ''}` },
                 body: JSON.stringify({
                     model: process.env.AI_MODEL || 'meta/llama-3.1-8b-instruct',
                     messages: apiMessages,
