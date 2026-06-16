@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 
 # ======================================================
-# Animastor GPU Worker Startup Script v2.1 (FINAL FIX)
+# Animastor GPU Worker Startup Script
 # ======================================================
 
 echo "===================================="
-echo "Animastor Worker Startup v2.1"
+echo "Animastor Worker Startup"
 echo "===================================="
 
 export DEBIAN_FRONTEND=noninteractive
@@ -65,7 +65,7 @@ fi
 echo "Node: $(node -v)"
 
 # ======================================================
-# 4. DETECT COMFY PORT (AUTO 🔥)
+# 4. DETECT COMFY PORT (AUTO)
 # ======================================================
 
 COMFY_PORT=""
@@ -137,7 +137,7 @@ export WORKER_TYPE="$WORKER_TYPE"
 export COMFY_INPUT_DIR="$HOME/ComfyUI/input"
 
 # ======================================================
-# 9. STOP OLD WORKERS (FIX 🔥)
+# 9. STOP OLD WORKERS (FIX)
 # ======================================================
 
 if pgrep -f "node worker.js" >/dev/null; then

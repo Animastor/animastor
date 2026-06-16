@@ -76,7 +76,6 @@ async function callAI(messages, options = {}) {
             const choice = data.choices?.[0]?.message;
             const content = choice?.content || '';
             console.log(`[AI-SERVICE] Response: finish=${data.choices?.[0]?.finish_reason || 'stop'}, ${content.length} chars, tokens=${data.usage?.total_tokens || '?'}`);
-            console.log(`[AI-SERVICE] Content preview: ${content.substring(0, 300)}...`);
             return {
                 content,
                 finishReason: data.choices?.[0]?.finish_reason || 'stop',
@@ -107,9 +106,6 @@ function parseJsonResponse(content) {
     if (!content || !content.trim()) {
         throw new Error('AI response is empty');
     }
-
-    // Log the raw content for debugging
-    console.log(`[AI-SERVICE] Parsing response: ${content.length} chars, starts with: "${content.substring(0, 100)}"`);
 
     // Try markdown code block first
     const jsonMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
@@ -176,7 +172,6 @@ async function refineDraft(chapterText) {
             if (allParts.length > 0) {
                 const totalBytes = allParts.reduce((s, p) => s + p.length, 0);
                 console.log(`[AI-SERVICE] Loaded ${allParts.length} example files (${totalBytes} chars) into prompt`);
-                allParts.forEach(p => console.log(`[AI-SERVICE]   Example: ${p.split('\n')[0].replace('### ', '')}`));
                 examplesBlock = `## Reference Examples (correctly structured data)
 The following examples show the expected data format. They are REFERENCE EXAMPLES only — do not use their content as the actual source text to analyze.
 

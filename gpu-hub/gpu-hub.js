@@ -53,8 +53,8 @@ setInterval(async () => {
                 job_id,
                 params: data.params,
                 job_type: type,
-                assets: data.assets || null   // 🔥 СОХРАНЯЕМ ASSETS
-              })
+              assets: data.assets || null
+            })
             )
 
             await redis.hdel("animastor:running", job_id)
@@ -116,8 +116,7 @@ app.post("/task", async (req, res) => {
       "KB"
     )
   }
-  // 🔥 dedup защита
-const isNew = await redis.set(
+  const isNew = await redis.set(
   `animastor:job:${job_id}`,
   1,
   "NX",
@@ -137,7 +136,7 @@ if (!isNew) {
       params,
       job_type: type,
       assets: assets || null,
-      build_id: build_id || null   // 🔥 сохраняем build_id для правильной маршрутизации
+      build_id: build_id || null
     })
   )
 
@@ -182,7 +181,7 @@ app.get("/task/next", async (req, res) => {
       job_type: task.job_type,
       params: task.params,
       assets: task.assets || null,
-      build_id: task.build_id || null,   // 🔥 сохраняем build_id для правильной маршрутизации
+      build_id: task.build_id || null,
       started_at: Date.now()
     })
   )
@@ -243,50 +242,30 @@ app.post("/task/result", async (req, res) => {
     } catch (_) {}
   }
 
-  // 🔥 retry отправки в backend
   let success = false
 
   for (let i = 0; i < 5; i++) {
+    try {
+      const backendRes = await fetch(
+        `${BACKEND_URL}/gpu/task/result`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ job_id, build_id, result_base64 })
+        }
+      )
 
-  try {
-
-    const res = await fetch(
-      `${BACKEND_URL}/gpu/task/result`,
-      {
-        method: "POST",
-
-        headers: {
-          "Content-Type": "application/json"
-        },
-
-        body: JSON.stringify({
-          job_id,
-          build_id,
-          result_base64
-        })
+      if (!backendRes.ok) {
+        throw new Error(`HTTP ${backendRes.status}`)
       }
-    )
 
-    if (!res.ok) {
-      throw new Error(`HTTP ${res.status}`)
+      success = true
+      break
+    } catch (err) {
+      console.error(`⚠️ backend retry ${i + 1} failed`, job_id, err.message)
+      await new Promise(r => setTimeout(r, 500))
     }
-
-    success = true
-    break
-
-  } catch (err) {
-
-    console.error(
-      `⚠️ backend retry ${i + 1} failed`,
-      job_id,
-      err.message
-    )
-
-    await new Promise(r =>
-      setTimeout(r, 500)
-    )
   }
-}
 
   if (!success) {
     console.error("❌ backend delivery failed:", job_id)
@@ -459,5 +438,5 @@ app.delete("/queue/clear", async (req, res) => {
 // ======================================================
 
 app.listen(PORT, () => {
-  console.log("🚀 GPU HUB v5 FINAL running on", PORT)
+  console.log("🚀 GPU HUB running on", PORT)
 })

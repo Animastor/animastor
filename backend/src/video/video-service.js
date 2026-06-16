@@ -129,63 +129,6 @@ async function generateVideoAnimation(sceneData, loadedBook, buildId, workflows)
 }
 
 // ======================================================
-// LEGACY: Single-image video generation (kept for compat)
-// ======================================================
-async function generateVideoAnimationLegacy(sceneData, loadedBook, buildId, durationSec = 5, wfWorkflows) {
-    const wfBuilderLegacy = require('../workflows/video/video-workflows');
-
-    if (!wfWorkflows || (!wfWorkflows['video-ltx'] && !wfWorkflows['video'])) {
-        error('video-ltx workflow not found');
-        return { success: false, reason: 'workflow_missing' };
-    }
-
-    const wfName = wfWorkflows['video-ltx'] ? 'video-ltx' : 'video';
-    const wfVideo = wfBuilderLegacy.buildVideoWorkflow(
-        sceneData.scene || sceneData.payload,
-        sceneData.chapter,
-        loadedBook
-    );
-
-    const imageFilename = resolveCanonicalSceneImage(
-        OUTPUT_DIR,
-        buildId,
-        sceneData.book_id,
-        sceneData.chapter_id,
-        sceneData.scene_id,
-    );
-
-    if (!imageFilename) {
-        error(`NO IMAGE FOUND: ${buildId}/${sceneData.book_id}/${sceneData.chapter_id}/${sceneData.scene_id}`);
-        return { success: false, reason: 'no_image' };
-    }
-
-    const imgPath = getOutputPath(buildId, imageFilename);
-    if (!fs.existsSync(imgPath)) {
-        error(`IMAGE MISSING: ${imgPath}`);
-        return { success: false, reason: 'image_missing' };
-    }
-
-    let imageBase64;
-    try {
-        imageBase64 = fs.readFileSync(imgPath).toString('base64');
-    } catch (err) {
-        error(`Failed to read image: ${imgPath} - ${err.message}`);
-        return { success: false, reason: 'image_read_failed' };
-    }
-
-    const sceneVideoJobId = `${sceneData.book_id}_${sceneData.chapter_id}_${sceneData.scene_id}`;
-    const jobSpec = {
-        job_id: `${sceneVideoJobId}:video`,
-        params: wfVideo,
-        job_type: 'video',
-        assets: { image: imageBase64 },
-        build_id: buildId
-    };
-
-    return { success: true, jobSpecs: [jobSpec] };
-}
-
-// ======================================================
 // VIDEO VALIDATION HELPERS
 // ======================================================
 async function isSceneVideoReady(buildId, bookId, chapterId, sceneId, getSceneVideoRegistry) {
@@ -261,6 +204,6 @@ module.exports = {
     updateSceneVideoStatus,
     getSceneVideoRegistry,
 
-    generateVideoAnimation,
-    generateVideoAnimationLegacy
+    generateVideoAnimation
+
 };

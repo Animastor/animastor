@@ -71,18 +71,6 @@ function resolveDirtyLayers(dirtyLayers) {
     return [...result];
 }
 
-/**
- * Given a list of per-scene dirty layers (e.g. from diffScene),
- * return consolidated dirty layers across all scenes.
- */
-function consolidateDirtyLayers(sceneDirtyLayers) {
-    const all = new Set();
-    for (const layers of sceneDirtyLayers) {
-        for (const l of layers) all.add(l);
-    }
-    return resolveDirtyLayers([...all]);
-}
-
 module.exports = {
     resolveDirtyLayers
 };

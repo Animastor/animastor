@@ -5,7 +5,6 @@
 // Nothing is overwritten - only appended.
 // Key: animastor:event-journal:${bookId}:${chapterId}:${sceneId}
 
-const redis = null  // Injected at runtime
 const logPrefix = '[JOURNAL]'
 
 function log(msg) {
@@ -350,17 +349,6 @@ module.exports = {
      * Parse causal ID into timestamp and sequence.
      */
     parseCausalId: (causalId) => {
-        const parts = causalId.split(':');
-        return {
-            timestamp: parseInt(parts[0], 10),
-            sequence: parts[1] || ''
-        };
-    },
-
-    /**
-     * Helper for causal ordering - internal use only.
-     */
-    __parseCausalId__: (causalId) => {
         const parts = causalId.split(':');
         return {
             timestamp: parseInt(parts[0], 10),

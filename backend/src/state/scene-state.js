@@ -189,6 +189,27 @@ async function setSceneStateWithBuildId(redis, bookId, chapterId, sceneId, state
     return data;
 }
 
+/**
+ * Read current build_id from scene state, preserving it across transitions.
+ * Prevents resetting build_id to null when syncing linear state.
+ * @param {RedisClient} redis
+ * @param {string} bookId
+ * @param {string} chapterId
+ * @param {string} sceneId
+ * @returns {Promise<string|null>}
+ */
+async function getSceneBuildId(redis, bookId, chapterId, sceneId) {
+    const key = `${SCENE_STATE_KEY_PREFIX}:${bookId}:${chapterId}:${sceneId}`;
+    const currentRaw = await redis.get(key);
+    if (currentRaw) {
+        try {
+            const current = JSON.parse(currentRaw);
+            return current.build_id || null;
+        } catch (_) {}
+    }
+    return null;
+}
+
 // ======================================================
 // ATOMIC STATE TRANSITION (LUA SCRIPT)
 // ======================================================
@@ -504,16 +525,7 @@ async function syncLinearState(redis, bookId, chapterId, sceneId) {
     const assetStates = await getAssetStates(redis, bookId, chapterId, sceneId);
     const linearState = deriveLinearState(assetStates);
 
-    // Read current state to preserve build_id
-    const currentRaw = await redis.get(`${SCENE_STATE_KEY_PREFIX}:${bookId}:${chapterId}:${sceneId}`);
-    let buildId = null;
-    if (currentRaw) {
-        try {
-            const current = JSON.parse(currentRaw);
-            buildId = current.build_id || null;
-        } catch (_) {}
-    }
-
+    const buildId = await getSceneBuildId(redis, bookId, chapterId, sceneId);
     await setSceneStateWithBuildId(redis, bookId, chapterId, sceneId, linearState, buildId);
     log(`SYNC LINEAR: ${bookId}/${chapterId}/${sceneId} -> ${linearState} (build_id=${buildId}, assets=${JSON.stringify(assetStates)})`);
     return linearState;
@@ -803,5 +815,8 @@ module.exports = {
     SCENE_TRANSITION_LOCK_TTL,
 
     // Linear state sync (derives from per-asset)
-    syncLinearState
+    syncLinearState,
+
+    // Build ID helpers
+    getSceneBuildId
 };

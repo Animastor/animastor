@@ -164,33 +164,12 @@ function getSceneHash(bookId, chapterId, sceneId) {
     return computeSceneHash(scene.payload || scene.scene);
 }
 
-function getBookContentHash(bookId) {
-    const b = bookLoader.loadBook(bookId);
-    if (!b) return null;
-    return computeSceneHash(b);
-}
-
-// ======================================================
-// SAVE (write canonical JSON)
-// ======================================================
-
-function saveBookJson(bookId, book) {
-    bookLoader.saveBookBundle(book);
-    log(`SAVED Book JSON: ${bookId}`);
-}
-
-function deleteBookJson(bookId) {
-    return bookLoader.resetBook(bookId);
-}
-
 module.exports = {
     SCENE_KEY,
 
     loadBookJson,
     loadBookJsonOrThrow,
     bookJsonExists,
-    saveBookJson,
-    deleteBookJson,
 
     getCanonicalScenes,
     getCanonicalChapters,
@@ -206,5 +185,4 @@ module.exports = {
 
     getBookFingerprint,
     getSceneHash,
-    getBookContentHash,
 };

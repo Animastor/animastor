@@ -56,7 +56,7 @@ function comfyUrl(path) {
 }
 
 // ======================================================
-// 🔥 FIND OUTPUT NODES (Save*)
+// FIND OUTPUT NODES (Save*)
 // ======================================================
 
 function findOutputNodes(workflow) {
@@ -457,7 +457,6 @@ async function workerLoop() {
 
       const prompt_id = await runWorkflow(task.params)
 
-      // 🔥 ВАЖНО
       const result = await waitResult(prompt_id, task.params)
 
       const base64 = await downloadResult(result)
@@ -468,8 +467,7 @@ async function workerLoop() {
 
     } catch (err) {
 
-      log("error", `Failed ${task.job_id}`)
-      console.error(err)
+      log("error", `Failed ${task.job_id}`, err)
 
       await fetchTimeout(`${HUB_URL}/task/error`, {
         method: "POST",

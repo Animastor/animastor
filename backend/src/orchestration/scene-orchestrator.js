@@ -43,6 +43,31 @@ function error(msg) {
     console.error(`${logPrefix} ❌ ${msg}`);
 }
 
+/**
+ * Update chunk metadata for a scene by scanning and updating matching chunks.
+ * @param {RedisClient} redis
+ * @param {string} bookId
+ * @param {string} chapterId
+ * @param {string} sceneId
+ * @param {object} updates - key/value pairs to merge into each chunk
+ */
+async function updateSceneChunks(redis, bookId, chapterId, sceneId, updates) {
+    const prefix = `animastor:chunk:${bookId}_${chapterId}_${sceneId}_`;
+    let cursor = '0';
+    do {
+        const [nextCursor, keys] = await redis.scan(cursor, 'MATCH', `${prefix}*`, 'COUNT', 50);
+        cursor = nextCursor;
+        for (const key of keys) {
+            const raw = await redis.get(key);
+            if (raw) {
+                const ch = JSON.parse(raw);
+                Object.assign(ch, updates);
+                await redis.set(key, JSON.stringify(ch));
+            }
+        }
+    } while (cursor !== '0');
+}
+
 // ======================================================
 // LIFECYCLE STAGES
 // ======================================================
@@ -522,23 +547,7 @@ async function executeImageDispatch(redis, scene, loadedBook, buildId) {
         await state.transitionSceneState(redis, bookId, chapterId, sceneId, state.SceneState.IMAGE_GENERATING);
         await state.transitionSceneState(redis, bookId, chapterId, sceneId, state.SceneState.IMAGE_READY);
         // Update chunk image flags
-        const chunkPattern = `animastor:chunk:${bookId}_${chapterId}_${sceneId}_*`;
-        let cursor = '0';
-        do {
-            const [nextCursor, keys] = await redis.scan(cursor, 'MATCH', chunkPattern, 'COUNT', 50);
-            cursor = nextCursor;
-            for (const key of keys) {
-                const raw = await redis.get(key);
-                if (raw) {
-                    const ch = JSON.parse(raw);
-                    if (!ch.image) {
-                        ch.image = true;
-                        ch.image_status = 'ready';
-                        await redis.set(key, JSON.stringify(ch));
-                    }
-                }
-            }
-        } while (cursor !== '0');
+        await updateSceneChunks(redis, bookId, chapterId, sceneId, { image: true, image_status: 'ready' });
         // Clean up dispatch lease
         const leaseKey = `animastor:dispatch-lease:${bookId}:${chapterId}:${sceneId}:image`;
         await redis.del(leaseKey);
@@ -987,21 +996,7 @@ async function handleImageCompleted(redis, bookId, chapterId, sceneId, buildId) 
     await state.syncLinearState(redis, bookId, chapterId, sceneId);
 
     // Update all chunks for this scene with image_status: ready
-    const chunkPrefix = `animastor:chunk:${bookId}_${chapterId}_${sceneId}_`;
-    let cursor = '0';
-    do {
-        const [nextCursor, keys] = await redis.scan(cursor, 'MATCH', `${chunkPrefix}*`, 'COUNT', 50);
-        cursor = nextCursor;
-        for (const key of keys) {
-            const raw = await redis.get(key);
-            if (raw) {
-                const ch = JSON.parse(raw);
-                ch.image = true;
-                ch.image_status = 'ready';
-                await redis.set(key, JSON.stringify(ch));
-            }
-        }
-    } while (cursor !== '0');
+    await updateSceneChunks(redis, bookId, chapterId, sceneId, { image: true, image_status: 'ready' });
 
     // Release dispatch quota so worker pulse stops
     await dispatchEngine.releaseQuota(redis, 'image');
@@ -1083,21 +1078,7 @@ async function handleVideoCompleted(redis, bookId, chapterId, sceneId, buildId) 
     await video.updateSceneVideoStatus(redis, bookId, chapterId, sceneId, 'ready');
 
     // Update all chunks for this scene with video_status: ready
-    const chunkPrefix = `animastor:chunk:${bookId}_${chapterId}_${sceneId}_`;
-    let cursor = '0';
-    do {
-        const [nextCursor, keys] = await redis.scan(cursor, 'MATCH', `${chunkPrefix}*`, 'COUNT', 50);
-        cursor = nextCursor;
-        for (const key of keys) {
-            const raw = await redis.get(key);
-            if (raw) {
-                const ch = JSON.parse(raw);
-                ch.video = true;
-                ch.video_status = 'ready';
-                await redis.set(key, JSON.stringify(ch));
-            }
-        }
-    } while (cursor !== '0');
+    await updateSceneChunks(redis, bookId, chapterId, sceneId, { video: true, video_status: 'ready' });
 
     // Update per-asset state (source of truth)
     await state.setAssetState(redis, bookId, chapterId, sceneId, 'video', state.AssetState.READY);

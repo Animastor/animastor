@@ -126,45 +126,6 @@ async function registerSceneVideo(redis, bookId, chapterId, sceneId, {
     return { success: true, asset: 'video' }
 }
 
-/**
- * Unregister audio asset.
- */
-async function unregisterAudio(redis, bookId, chapterId, sceneId) {
-    const key = getAssetRegistryKey(bookId, chapterId, sceneId)
-    
-    await redis.hdel(key, 'audio')
-    
-    log(`UNREGISTERED audio: ${bookId}/${chapterId}/${sceneId}`)
-    
-    return { success: true }
-}
-
-/**
- * Unregister image asset.
- */
-async function unregisterImage(redis, bookId, chapterId, sceneId) {
-    const key = getAssetRegistryKey(bookId, chapterId, sceneId)
-    
-    await redis.hdel(key, 'image')
-    
-    log(`UNREGISTERED image: ${bookId}/${chapterId}/${sceneId}`)
-    
-    return { success: true }
-}
-
-/**
- * Unregister video asset.
- */
-async function unregisterVideo(redis, bookId, chapterId, sceneId) {
-    const key = getAssetRegistryKey(bookId, chapterId, sceneId)
-    
-    await redis.hdel(key, 'video')
-    
-    log(`UNREGISTERED video: ${bookId}/${chapterId}/${sceneId}`)
-    
-    return { success: true }
-}
-
 // ======================================================
 // GET ASSETS
 // ======================================================
@@ -381,9 +342,6 @@ module.exports = {
     registerSceneAudio,
     registerSceneImage,
     registerSceneVideo,
-    unregisterAudio,
-    unregisterImage,
-    unregisterVideo,
     getSceneAssets,
     getAudioAsset,
     getImageAsset,

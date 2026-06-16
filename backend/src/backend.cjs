@@ -52,8 +52,6 @@ const cors = require('cors');
 const multer = require('multer');
 const AdmZip = require('adm-zip');
 const fs = require('fs');
-const fetch = global.fetch || require('node-fetch');
-
 const { PORT = 3000, HUB_URL = 'https://animastor.in/gpu', BUILD_TTL_HOURS = 48 } = process.env;
 
 const redis = new Redis({ host: 'redis', port: 6379 });
@@ -92,7 +90,7 @@ const isSceneAudioReady = (buildId, bookId, chapterId, sceneId) =>
 // ======================================================
 // HELPERS
 // ======================================================
-const { log, pad, parseChunkId, collectScenes, findSceneRuntimeData, buildSegments } = utils;
+const { log, pad, parseChunkId, collectScenes, findSceneRuntimeData } = utils;
 
 // Redis helpers (factory, initialized with redis instance)
 const {

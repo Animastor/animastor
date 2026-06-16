@@ -57,7 +57,7 @@ function error(msg) {
 // DEBUG LOGGING (Compatibility Layer)
 // ======================================================
 function debug(msg) {
-    console.log(`${logPrefix} 🐞 DEBUG: ${msg}`);
+    console.debug(`${logPrefix} 🐞 DEBUG: ${msg}`);
 }
 
 // ======================================================
@@ -502,6 +502,57 @@ async function getSceneDuration(buildId, bookId, chapterId, sceneId) {
 }
 
 /**
+ * Process a single IU unit: check cache, dispatch to GPU if missing.
+ * Extracted from generateSceneIUImages for readability.
+ */
+async function processSingleIU(redis, unit, uIdx, sceneData, loadedBook, buildId, bookId, chapterId, sceneId, sceneDuration, fullText) {
+    const canonicalUnitId = String(unit.id);
+    if (!canonicalUnitId) {
+        error(`IU unit.id missing, skipping: ${chapterId}/${sceneId}`);
+        return { sent: false, cached: false };
+    }
+    const imageIUId = `${bookId}_${chapterId}_${sceneId}_${canonicalUnitId}`;
+
+    const cachedIU = probeIUImage(imageIUId, buildId, config.OUTPUT_DIR);
+    const existingIUImage = cachedIU?.image || null;
+
+    // Save IU metadata (duration proportional to text) to SQLite + JSON
+    try {
+        await saveIUMetadata(buildId, bookId, chapterId, sceneId, unit, sceneDuration, fullText, uIdx);
+    } catch (err) {
+        warn(`Failed to save IU metadata for ${unit.id}: ${err.message}`);
+    }
+
+    if (!existingIUImage) {
+        const finalPrompt = buildImagePrompt(unit, sceneData.payload, sceneData.chapter, loadedBook);
+        const workflow = buildIUImageWorkflow(unit, sceneData.payload, sceneData.chapter, loadedBook);
+
+        debug(`📸 IMAGE DISPATCH:
+  - final_image_prompt: ${finalPrompt}
+  - workflow_id: ${workflow?.workflow || 'unknown'}
+  - scene_id: ${chapterId}/${sceneId}
+  - iu_id: ${canonicalUnitId}`);
+
+        log(`GENERATE IMAGE (IU): ${imageIUId}, unit.id: ${canonicalUnitId}`);
+
+        const wfImg = wfLoader.getWorkflow('img-qwen-image');
+        wfImg["108"].inputs.text = finalPrompt;
+
+        const baseNegative = 'blurry, low quality, artifacts';
+        const customNegative = resolveNegativePrompt(unit, sceneData.payload);
+        wfImg["109"].inputs.text = customNegative ? `${customNegative}, ${baseNegative}` : baseNegative;
+
+        await saveIURegistry(redis, imageIUId, buildId);
+        await gpu.send(`${imageIUId}:image`, wfImg, 'image', buildId);
+        return { sent: true, cached: false };
+    }
+
+    log(`IMAGE (IU) CACHE HIT: ${imageIUId}`);
+    await saveIURegistry(redis, imageIUId, buildId);
+    return { sent: false, cached: true };
+}
+
+/**
  * Generate IU images for a scene, submitting each to GPU HUB.
  * Restored from legacy generateSceneIUImages.
  */
@@ -521,54 +572,9 @@ async function generateSceneIUImages(redis, sceneData, loadedBook, buildId, book
     let sentCount = 0;
     let cacheHitCount = 0;
     for (let uIdx = 0; uIdx < units.length; uIdx++) {
-        const unit = units[uIdx];
-        const canonicalUnitId = String(unit.id);
-        if (!canonicalUnitId) {
-            error(`IU unit.id missing, skipping: ${chapterId}/${sceneId}`);
-            continue;
-        }
-        const imageIUId = `${bookId}_${chapterId}_${sceneId}_${canonicalUnitId}`;
-
-        const cachedIU = probeIUImage(imageIUId, buildId, config.OUTPUT_DIR);
-        const existingIUImage = cachedIU?.image || null;
-
-        // Save IU metadata (duration proportional to text) to SQLite + JSON
-        try {
-            await saveIUMetadata(buildId, bookId, chapterId, sceneId, unit, sceneDuration, fullText, uIdx);
-        } catch (err) {
-            warn(`Failed to save IU metadata for ${unit.id}: ${err.message}`);
-        }
-
-        if (!existingIUImage) {
-            // Build prompt and workflow for debug logging
-            const finalPrompt = buildImagePrompt(unit, sceneData.payload, sceneData.chapter, loadedBook);
-            const workflow = buildIUImageWorkflow(unit, sceneData.payload, sceneData.chapter, loadedBook);
-            const workflowId = workflow?.workflow || 'unknown';
-
-            // DEBUG LOGGING: Log dispatch details before submission
-            debug(`📸 IMAGE DISPATCH:
-  - final_image_prompt: ${finalPrompt}
-  - workflow_id: ${workflowId}
-  - scene_id: ${chapterId}/${sceneId}
-  - iu_id: ${canonicalUnitId}`);
-
-            log(`GENERATE IMAGE (IU): ${imageIUId}, unit.id: ${canonicalUnitId}`);
-
-            const wfImg = wfLoader.getWorkflow('img-qwen-image');
-            wfImg["108"].inputs.text = finalPrompt;
-
-            const baseNegative = 'blurry, low quality, artifacts';
-            const customNegative = resolveNegativePrompt(unit, sceneData.payload);
-            wfImg["109"].inputs.text = customNegative ? `${customNegative}, ${baseNegative}` : baseNegative;
-
-            await saveIURegistry(redis, imageIUId, buildId);
-            await gpu.send(`${imageIUId}:image`, wfImg, 'image', buildId);
-            sentCount++;
-        } else {
-            log(`IMAGE (IU) CACHE HIT: ${imageIUId}`);
-            await saveIURegistry(redis, imageIUId, buildId);
-            cacheHitCount++;
-        }
+        const result = await processSingleIU(redis, units[uIdx], uIdx, sceneData, loadedBook, buildId, bookId, chapterId, sceneId, sceneDuration, fullText);
+        if (result.sent) sentCount++;
+        if (result.cached) cacheHitCount++;
     }
     return { sentCount, cacheHitCount, total: units.length };
 }
@@ -655,6 +661,7 @@ module.exports = {
     buildImagePrompt,
     generateIUImageWorkflow,
     generateSceneIUImages,
+    processSingleIU,
 
     // Metadata
     getImageMetadata,

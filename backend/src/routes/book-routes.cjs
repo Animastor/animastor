@@ -580,8 +580,7 @@ async function clearBookDispatchMeta(redis, bookId) {
             const { bookId } = req.params;
             const { chapter_id, scene_id, unit_id, register_for_gpu = true } = req.body || {};
 
-            log(`[TRIGGER] ⬇️ === TRIGGER-NEXT-WINDOW called for ${bookId} ===`);
-            log(`[TRIGGER] ⬇️ params: chapter_id=${chapter_id} scene_id=${scene_id} unit_id=${unit_id} register_for_gpu=${register_for_gpu}`);
+            log(`[TRIGGER] next-window called for ${bookId} (params: chapter_id=${chapter_id} scene_id=${scene_id})`);
 
             if (!bookId) return res.status(400).json({ error: 'bookId required' });
 
@@ -631,7 +630,7 @@ async function clearBookDispatchMeta(redis, bookId) {
 
                 if (agentSession.status === 'completed' ||
                     (windowData && windowData.remaining_scenes && windowData.remaining_scenes.length === 0 && !windowData.remaining_text)) {
-                    log(`[TRIGGER] 📗 all done for TXT book ${bookId}`);
+                    log(`[TRIGGER] all done for TXT book ${bookId}`);
                     return res.json({ triggered: false, all_done: true, message: 'All windows processed' });
                 }
 
@@ -642,11 +641,11 @@ async function clearBookDispatchMeta(redis, bookId) {
                 }
                 inFlightTriggers.add(bookId);
 
-                log(`[TRIGGER] 📘 TXT book ${bookId} — calling bootstrapNextWindow`);
+                log(`[TRIGGER] TXT book ${bookId}: calling bootstrapNextWindow`);
                 setImmediate(async () => {
                     try {
                         const nextRes = await txtImporter.bootstrapNextWindow(bookId);
-                        log(`[TRIGGER] ✅ TXT window done: added=${nextRes.added_scenes || 0} all_done=${nextRes.all_done}`);
+                        log(`[TRIGGER] TXT window done: added=${nextRes.added_scenes || 0} all_done=${nextRes.all_done}`);
 
                         if (nextRes.chapter) {
                             const chapterId = nextRes.chapter.chapter;
@@ -1375,7 +1374,6 @@ async function clearBookDispatchMeta(redis, bookId) {
             if (fs.existsSync(snapshotPath)) {
                 try { fs.unlinkSync(snapshotPath); } catch (_) {}
             }
-            log('[DELETE-BOOK] Disk files removed');
 
             // 2. Delete output/build directories
             const OUTPUT_DIR = config.OUTPUT_DIR;
@@ -1402,11 +1400,9 @@ async function clearBookDispatchMeta(redis, bookId) {
                     }
                 }
             }
-            log('[DELETE-BOOK] Build directories removed');
 
             // 3. Delete all Redis keys for this book using the comprehensive helper
             await cleanBookRedisKeys(redis, bookId);
-            log('[DELETE-BOOK] Redis keys removed');
 
             // 4. Delete all PostgreSQL data for this book
             try {
@@ -1423,7 +1419,6 @@ async function clearBookDispatchMeta(redis, bookId) {
                 await storage.postgres.query('DELETE FROM agent_sessions WHERE book_id = $1', [bookId]);
                 await storage.postgres.query('DELETE FROM book_generation_sessions WHERE book_id = $1', [bookId]);
                 await storage.postgres.query('DELETE FROM books WHERE book_id = $1', [bookId]);
-                log('[DELETE-BOOK] PostgreSQL rows removed');
             } catch (dbErr) {
                 console.warn('[DELETE-BOOK] DB cleanup error:', dbErr.message);
             }
