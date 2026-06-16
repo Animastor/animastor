@@ -1552,14 +1552,18 @@ async function clearBookDispatchMeta(redis, bookId) {
                 if (!coverHasImages) {
                     const alreadyDirty = filteredDirty.some(d => d.chapter_id === coverChapterId && d.scene_id === coverSceneId);
                     if (!alreadyDirty) {
+                        const coverLayers = ['audio', 'image'];
+                        if (layerCfg.video_enabled !== false) {
+                            coverLayers.push('video');
+                        }
                         filteredDirty.unshift({
                             chapter_id: coverChapterId,
                             scene_id: coverSceneId,
                             reason: 'cover',
-                            dirty_layers: ['audio', 'image'],
+                            dirty_layers: coverLayers,
                         });
                         coverNeedsGeneration = true;
-                        log(`[REGENERATE] ${bookId}: Cover prepended to dirty scenes (needs images)`);
+                        log(`[REGENERATE] ${bookId}: Cover prepended to dirty scenes (layers=${coverLayers.join(',')})`);
                     }
                 }
             }

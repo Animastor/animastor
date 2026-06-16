@@ -527,24 +527,30 @@ class MainActivity : AppCompatActivity() {
                     )
                     showGpuProgress(assets)
 
-                    // Detect stuck progress: if ready count hasn't changed for >15s
-                    // AND no worker leases are active, auto-complete.
-                    val profileKey = viewModel.currentProfile()
-                    val currentReady = when (profileKey) {
+                    // Detect stuck progress: if no ready count has changed for >120s
+                    // AND the backend reports no active scenes, auto-complete.
+                    // Using active_scenes (backend's source of truth) instead of
+                    // worker idle states to avoid false triggers between job transitions.
+                    val progressTotal = when (viewModel.currentProfile()) {
                         "audio_only" -> assets.scope_audio_ready
-                        else -> assets.scope_image_ready
+                        "image_only" -> assets.scope_image_ready
+                        "video_only" -> assets.scope_video_ready
+                        else -> minOf(assets.scope_audio_ready, assets.scope_image_ready, assets.scope_video_ready)
                     }
-                    if (currentReady != lastReadyCount) {
-                        lastReadyCount = currentReady
+                    val anyLayerIncomplete =
+                        assets.scope_audio_ready < assets.scope_total ||
+                        assets.scope_image_ready < assets.scope_total ||
+                        assets.scope_video_ready < assets.scope_total
+                    if (progressTotal != lastReadyCount) {
+                        lastReadyCount = progressTotal
                         lastReadyChangeAt = System.currentTimeMillis()
-                    } else if (currentReady < assets.scope_total && System.currentTimeMillis() - lastReadyChangeAt > 15_000) {
-                        // Check if any workers are active
-                        val idle = runCatching {
+                    } else if (anyLayerIncomplete && System.currentTimeMillis() - lastReadyChangeAt > 120_000) {
+                        val backendActive = runCatching {
                             val counts = RetrofitClient.api.getWorkerCounts()
-                            counts.active_audio + counts.active_image + counts.active_video == 0
+                            counts.active_scenes > 0
                         }.getOrDefault(true)
-                        if (idle) {
-                            Log.i("MainActivity", "Progress stuck at $currentReady/${assets.scope_total} with idle workers — auto-completing")
+                        if (!backendActive) {
+                            Log.i("MainActivity", "Progress stuck at a=$assets.scope_audio_ready i=$assets.scope_image_ready v=$assets.scope_video_ready / total=$assets.scope_total with no active scenes — auto-completing")
                             viewModel.onGenerationComplete()
                             refreshGenerateButton()
                             binding.generationProgressContainer.visibility = View.GONE

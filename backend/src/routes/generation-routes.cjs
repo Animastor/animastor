@@ -466,13 +466,14 @@ module.exports = function(app, redis, deps) {
                 return count;
             };
 
-            const [leaseAudio, leaseImage, leaseVideo, busyAudio, busyImage, busyVideo] = await Promise.all([
+            const [leaseAudio, leaseImage, leaseVideo, busyAudio, busyImage, busyVideo, activeCount] = await Promise.all([
                 countLeases('audio'),
                 countLeases('image'),
                 countLeases('video'),
                 workerHealth.getBusyCount(redis, 'audio'),
                 workerHealth.getBusyCount(redis, 'image'),
                 workerHealth.getBusyCount(redis, 'video'),
+                redis.scard('animastor:active-scenes').catch(() => 0),
             ]);
 
             // Pulse when a worker reports an active job via heartbeat (current_job_id).
@@ -490,6 +491,7 @@ module.exports = function(app, redis, deps) {
                 active_audio: activeAudio,
                 active_image: activeImage,
                 active_video: activeVideo,
+                active_scenes: activeCount || 0,
             });
         } catch (err) {
             res.json({ audio: 0, image: 0, video: 0, active_audio: 0, active_image: 0, active_video: 0 });

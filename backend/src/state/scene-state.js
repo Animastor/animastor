@@ -67,6 +67,7 @@ const SceneTransitions = {
     [SceneState.IMAGE_READY]: [SceneState.VIDEO_PENDING],
     [SceneState.VIDEO_PENDING]: [SceneState.VIDEO_GENERATING],
     [SceneState.VIDEO_GENERATING]: [SceneState.VIDEO_READY, SceneState.FAILED],
+    [SceneState.VIDEO_READY]: [SceneState.VIDEO_PENDING],
     [SceneState.FAILED]: [SceneState.AUDIO_PENDING, SceneState.IMAGE_PENDING, SceneState.VIDEO_PENDING]
 };
 
@@ -678,6 +679,7 @@ function deriveLinearState(assetStates) {
     if (video === AssetState.DIRTY) return SceneState.VIDEO_PENDING;
     if (video === AssetState.PENDING) return SceneState.VIDEO_PENDING;
     if (video === AssetState.GENERATING) return SceneState.VIDEO_GENERATING;
+    if (video === AssetState.NEW) return SceneState.VIDEO_PENDING;
 
     // All assets READY
     return SceneState.VIDEO_READY;

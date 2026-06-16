@@ -6,5 +6,6 @@ data class WorkerCounts(
     val video: Int = 0,
     val active_audio: Int = 0,
     val active_image: Int = 0,
-    val active_video: Int = 0
+    val active_video: Int = 0,
+    val active_scenes: Int = 0
 )
