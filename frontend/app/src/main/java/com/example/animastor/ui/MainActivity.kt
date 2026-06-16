@@ -660,7 +660,7 @@ class MainActivity : AppCompatActivity() {
                     if (useIu) assets.scope_iu_total else total)
             }
 
-            if (profile == "full") {
+            if (profile == "full" || profile == "video_only") {
                 add("video", getString(R.string.progress_label_video), assets.scope_video_ready, total)
             }
         }

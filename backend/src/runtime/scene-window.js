@@ -171,20 +171,10 @@ async function sceneHasValidContent(redis, buildId, bookId, chapterId, sceneId) 
         }
     }
 
-    // If video is enabled (and image was already checked or not needed), check for video
+    // If video is enabled, video file MUST exist — images alone do not count.
     if (videoEnabled) {
         const videoPath = path.join(buildDir, `${bookId}_${chapterId}_${sceneId}.mp4`);
-        if (!fs.existsSync(videoPath)) {
-            // Try image as fallback
-            if (imageEnabled) {
-                let files;
-                try { files = fs.readdirSync(buildDir); } catch { return false; }
-                const imagePrefix = `${bookId}_${chapterId}_${sceneId}_iu`;
-                if (!files.some(f => f.startsWith(imagePrefix) && f.endsWith('.png'))) return false;
-            } else {
-                return false;
-            }
-        }
+        if (!fs.existsSync(videoPath)) return false;
     }
 
     // Scene has audio and all enabled layers have content
