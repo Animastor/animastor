@@ -420,13 +420,13 @@ module.exports = function(app, redis, deps) {
     app.post('/api/v1/worker/heartbeat', async (req, res) => {
         try {
             const workerHealth = require('../runtime/worker-health');
-            const { type, worker_id } = req.body || {};
+            const { type, worker_id, current_job_id } = req.body || {};
             if (!type || !worker_id) return res.status(400).json({ error: 'type and worker_id required' });
             if (!config.WORKER_HEARTBEAT_TYPES.includes(type)) {
                 return res.status(400).json({ error: `invalid type, must be one of: ${config.WORKER_HEARTBEAT_TYPES.join(', ')}` });
             }
-            await workerHealth.reportHeartbeat(redis, type, worker_id);
-            res.json({ ok: true, type, worker_id, ttl: config.WORKER_HEARTBEAT_TTL });
+            await workerHealth.reportHeartbeat(redis, type, worker_id, current_job_id || null);
+            res.json({ ok: true, type, worker_id, current_job_id: current_job_id || null, ttl: config.WORKER_HEARTBEAT_TTL });
         } catch (err) {
             res.status(500).json({ error: err.message });
         }
@@ -466,20 +466,22 @@ module.exports = function(app, redis, deps) {
                 return count;
             };
 
-            const [leaseAudio, leaseImage, leaseVideo] = await Promise.all([
+            const [leaseAudio, leaseImage, leaseVideo, busyAudio, busyImage, busyVideo] = await Promise.all([
                 countLeases('audio'),
                 countLeases('image'),
                 countLeases('video'),
+                workerHealth.getBusyCount(redis, 'audio'),
+                workerHealth.getBusyCount(redis, 'image'),
+                workerHealth.getBusyCount(redis, 'video'),
             ]);
 
-            // Pulse only when both conditions hold:
-            // 1. At least one worker is alive (heartbeat in last ~30-60s)
-            // 2. At least one dispatch-lease exists (real GPU task in flight)
-            // This prevents false pulse from stale leases (worker crashed)
-            // OR from leaked counters (cancel didn't decrement).
-            const activeAudio = status.audio > 0 ? leaseAudio : 0;
-            const activeImage = status.image > 0 ? leaseImage : 0;
-            const activeVideo = status.video > 0 ? leaseVideo : 0;
+            // Pulse when a worker reports an active job via heartbeat (current_job_id).
+            // If workers don't report jobs (old GPU workers), fall back to
+            // dispatch-lease keys as a proxy for in-flight work.
+            // Both checks require at least one alive worker to prevent stale signals.
+            const activeAudio = status.audio > 0 ? (busyAudio > 0 ? busyAudio : leaseAudio) : 0;
+            const activeImage = status.image > 0 ? (busyImage > 0 ? busyImage : leaseImage) : 0;
+            const activeVideo = status.video > 0 ? (busyVideo > 0 ? busyVideo : leaseVideo) : 0;
 
             res.json({
                 audio: status.audio || 0,
