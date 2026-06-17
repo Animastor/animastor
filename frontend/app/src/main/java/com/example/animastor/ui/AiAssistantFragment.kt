@@ -353,7 +353,7 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
             val scIdx = bookData?.sceneIndex(pos.chapterId, pos.sceneId) ?: 0
             val isSpecial = ch?.type == "cover" || ch?.type == "prologue"
             val chapters = bookData?.chapters ?: emptyList()
-            val realChNum = chapters.take((chIdx - 1).coerceAtLeast(0)).count { it.type != "cover" && it.type != "prologue" } + 1
+            val realChNum = chapters.take(chIdx).count { it.type != "cover" && it.type != "prologue" } + 1
             if (chIdx > 0 || isSpecial) {
                 val uIdx = bookData?.unitIndex(pos.chapterId, pos.sceneId, pos.unitIndex) ?: 0
                 val chTitle = ch?.chapter_title?.takeIf { it.isNotBlank() }
@@ -554,7 +554,7 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
                 val isSpecial = ch?.type == "cover" || ch?.type == "prologue"
                 val chTitle = ch?.chapter_title?.takeIf { it.isNotBlank() }
                 val chapters = bookData.chapters ?: emptyList()
-                val realChNum = chapters.take((chIdx - 1).coerceAtLeast(0)).count { it.type != "cover" && it.type != "prologue" } + 1
+                val realChNum = chapters.take(chIdx).count { it.type != "cover" && it.type != "prologue" } + 1
                 val chapterId = if (isSpecial) {
                     chTitle ?: (ch?.type?.replaceFirstChar { it.uppercase() } ?: pos.chapterId ?: "?")
                 } else if (chIdx > 0) {
@@ -619,10 +619,39 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
 
         val sessionAtSend = currentSessionId
         lifecycleScope.launch {
-            try {                    val pos = SharedPositionManager.current.value
+            try {
+                    val pos = SharedPositionManager.current.value
                     val iuLabel = pos.formatUnitLabel()
-                val systemCtx = if (pos.chapterId != null) {
-                    "Current position: ${pos.chapterId} / ${pos.sceneId} / $iuLabel"
+
+                // Resolve hex IDs to human-readable names
+                val resolvedPosition = if (pos.chapterId != null) {
+                    val bookForPos = bookData ?: runCatching {
+                        val bid = generateViewModel.bookId.takeIf { it.isNotBlank() }
+                            ?: argBookId?.takeIf { it.isNotBlank() }
+                        if (bid != null) generateViewModel.repository.getBook(bid).enrichTitles() else null
+                    }.getOrNull()
+                    val ch = bookForPos?.chapters?.firstOrNull { it.chapter == pos.chapterId }
+                    val sc = ch?.scenes?.firstOrNull { it.scene_id == pos.sceneId }
+                    val chIdx = bookForPos?.chapterIndex(pos.chapterId) ?: 0
+                    val scIdx = bookForPos?.sceneIndex(pos.chapterId, pos.sceneId) ?: 0
+                    val isSpecial = ch?.type == "cover" || ch?.type == "prologue"
+                    val chapters = bookForPos?.chapters ?: emptyList()
+                    val realChNum = chapters.take(chIdx).count { it.type != "cover" && it.type != "prologue" } + 1
+                    val chName = if (isSpecial) {
+                        ch?.chapter_title?.takeIf { it.isNotBlank() } ?: ch?.type?.replaceFirstChar { it.uppercase() } ?: pos.chapterId
+                    } else if (chIdx > 0) {
+                        val titleSuffix = ch?.chapter_title?.let { " — $it" } ?: ""
+                        "${getString(R.string.navigate_chapter)} $realChNum$titleSuffix"
+                    } else {
+                        pos.chapterId
+                    }
+                    val scName = if (scIdx > 0) {
+                        val titleSuffix = sc?.scene_title?.let { " — $it" } ?: ""
+                        "${getString(R.string.navigate_scene)} $scIdx$titleSuffix"
+                    } else {
+                        pos.sceneId ?: "?"
+                    }
+                    "Current position: $chName / $scName / $iuLabel"
                 } else {
                     null
                 }
@@ -635,7 +664,7 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
                     .getString("language", "auto")
 
                 val fullSystemPrompt = "Your name is $appName.\n\nMode: ${mode.title}\n${mode.systemPrompt}\n\nTopic: ${topic.title}\n${topic.systemPrompt}\n\n${
-                    if (systemCtx != null) "Current context: $systemCtx" else ""
+                    if (resolvedPosition != null) "Current context: $resolvedPosition" else ""
                 }".trim()
                 val response = generateViewModel.repository.chatWithAiFull(
                     AiChatRequest(
