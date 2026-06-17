@@ -479,11 +479,54 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
                 messages.add(chatMsg)
                 apiMessages.add(AiMessage(role = m.role, content = m.message))
             }
+            // Add position context after loading history
+            addContextualPosition()
             if (isAdded) {
                 adapter.submitList(messages.toList())
                 scrollToBottom()
             }
         }
+    }
+
+    /** Add a system message with current position context. */
+    private suspend fun addContextualPosition() {
+        val pos = SharedPositionManager.current.value
+        if (pos.chapterId == null) return
+        val bid = generateViewModel.bookId.takeIf { it.isNotBlank() }
+            ?: argBookId?.takeIf { it.isNotBlank() } ?: return
+        val bd = runCatching { generateViewModel.repository.getBook(bid).enrichTitles() }.getOrNull() ?: return
+        val ch = bd.chapters?.firstOrNull { it.chapter == pos.chapterId }
+        val sc = ch?.scenes?.firstOrNull { it.scene_id == pos.sceneId }
+        val chIdx = bd.chapterIndex(pos.chapterId)
+        val scIdx = bd.sceneIndex(pos.chapterId, pos.sceneId)
+        val isSpecial = ch?.type == "cover" || ch?.type == "prologue"
+        val chapters = bd.chapters ?: emptyList()
+        val realChNum = chapters.take(chIdx).count { it.type != "cover" && it.type != "prologue" } + 1
+        val chName = if (isSpecial) {
+            ch?.chapter_title?.takeIf { it.isNotBlank() } ?: ch?.type?.replaceFirstChar { it.uppercase() } ?: pos.chapterId ?: "?"
+        } else if (chIdx > 0) {
+            val titleSuffix = ch?.chapter_title?.let { " — $it" } ?: ""
+            "${getString(R.string.navigate_chapter)} $realChNum$titleSuffix"
+        } else {
+            pos.chapterId ?: "?"
+        }
+        val scName = if (scIdx > 0) {
+            val titleSuffix = sc?.scene_title?.let { " — $it" } ?: ""
+            "${getString(R.string.navigate_scene)} $scIdx$titleSuffix"
+        } else {
+            pos.sceneId ?: "?"
+        }
+        val unit = sc?.units?.firstOrNull { it.id == pos.unitId }
+        val unitDesc = if (unit != null) {
+            val typeLabel = unit.type?.replaceFirstChar { it.uppercase() } ?: "Unit"
+            val textSnippet = unit.text?.take(60)?.let { t -> if (t.isNotBlank()) " — \"$t\"" else "" } ?: ""
+            "$typeLabel$textSnippet"
+        } else {
+            pos.formatUnitLabel()
+        }
+        val positionText = "Вы находитесь: $chName / $scName — $unitDesc"
+        val msg = ChatMessage(text = positionText, isUser = false)
+        messages.add(msg)
     }
 
     private fun showSessionListDialog() {
@@ -638,7 +681,7 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
                     val chapters = bookForPos?.chapters ?: emptyList()
                     val realChNum = chapters.take(chIdx).count { it.type != "cover" && it.type != "prologue" } + 1
                     val chName = if (isSpecial) {
-                        ch?.chapter_title?.takeIf { it.isNotBlank() } ?: ch?.type?.replaceFirstChar { it.uppercase() } ?: pos.chapterId
+                        ch?.chapter_title?.takeIf { it.isNotBlank() } ?: ch?.type?.replaceFirstChar { it.uppercase() }
                     } else if (chIdx > 0) {
                         val titleSuffix = ch?.chapter_title?.let { " — $it" } ?: ""
                         "${getString(R.string.navigate_chapter)} $realChNum$titleSuffix"
@@ -646,7 +689,7 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
                         pos.chapterId
                     }
                     val scName = if (scIdx > 0) {
-                        val titleSuffix = sc?.scene_title?.let { " — $it" } ?: ""
+                        val titleSuffix = if (sc?.scene_title != null) " — ${sc.scene_title}" else ""
                         "${getString(R.string.navigate_scene)} $scIdx$titleSuffix"
                     } else {
                         pos.sceneId ?: "?"
