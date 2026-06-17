@@ -14,6 +14,7 @@ import com.example.animastor.util.MediaDecoder
 import com.example.animastor.util.SimpleDiskCache
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -542,20 +543,31 @@ class PlaybackViewModel(
         preloadJob?.cancel()
 
         val job = viewModelScope.launch {
-            for (offset in start..PRELOAD_AHEAD) {
+            // Collect all scenes to preload
+            val scenesToPreload = (start..PRELOAD_AHEAD).mapNotNull { offset ->
                 val idx = currentIndex + offset
-                if (idx >= chunkQueue.size) break
-                val id = chunkQueue[idx]
-                if (preloadCache.containsKey(id)) continue
+                if (idx < chunkQueue.size) chunkQueue[idx] else null
+            }.filter { !preloadCache.containsKey(it) }
 
-                Log.i(TAG, "preloading scene $offset ahead: $id")
-                val data = runCatching { fetchSceneData(id) }.getOrNull()
-                if (data != null) {
-                    preloadCache[id] = data
-                    preloadCompleted.tryEmit(id)
-                    Log.i(TAG, "preloaded scene: $id — ${data.iuSequence.size} IUs")
-                } else {
-                    Log.w(TAG, "preload failed for scene: $id — will load on demand")
+            if (scenesToPreload.isEmpty()) return@launch
+
+            Log.i(TAG, "preloading ${scenesToPreload.size} scenes ahead: ${scenesToPreload.joinToString(",")}")
+
+            // Launch all fetchSceneData calls in parallel
+            coroutineScope {
+                scenesToPreload.map { id ->
+                    async {
+                        id to runCatching { fetchSceneData(id) }.getOrNull()
+                    }
+                }.forEach { deferred ->
+                    val (id, data) = deferred.await()
+                    if (data != null) {
+                        preloadCache[id] = data
+                        preloadCompleted.tryEmit(id)
+                        Log.i(TAG, "preloaded scene: $id — ${data.iuSequence.size} IUs")
+                    } else {
+                        Log.w(TAG, "preload failed for scene: $id — will load on demand")
+                    }
                 }
             }
         }
@@ -619,31 +631,35 @@ class PlaybackViewModel(
             val bkId = storyboard.book_id?.takeIf { it.isNotBlank() } ?: bookId
             val bldId = storyboard.build_id.ifBlank { buildId }
             if (storyboard.ius.isNotEmpty() && bldId.isNotBlank() && chId.isNotBlank()) {
-                storyboard.ius.map { iu ->
-                    val durationMs = when {
-                        iu.start_ms != null && iu.end_ms != null -> {
-                            val real = iu.end_ms - iu.start_ms
-                            if (real > 0) real else fallbackDurationMs(iu.estimated_duration_sec)
+                Log.i(TAG, "fetching ${storyboard.ius.size} IU images in parallel for chunk $id")
+                coroutineScope {
+                    storyboard.ius.map { iu ->
+                        async {
+                            val durationMs = when {
+                                iu.start_ms != null && iu.end_ms != null -> {
+                                    val real = iu.end_ms - iu.start_ms
+                                    if (real > 0) real else fallbackDurationMs(iu.estimated_duration_sec)
+                                }
+                                else -> fallbackDurationMs(iu.estimated_duration_sec)
+                            }
+                            val iuText = iu.text
+                            runCatching {
+                                Log.d(TAG, "fetching IU image: ${iu.unit_id} (dur=$durationMs ms) bldId=$bldId")
+                                val imgBytes = _repository.getIuImage(bkId, chId, scId, iu.unit_id, bldId)
+                                val bmp = MediaDecoder.decodeBitmap(imgBytes)
+                                IuImageItem(bmp, durationMs, iu.unit_id, iuText, IuStatus.READY)
+                            }.getOrNull() ?: run {
+                                Log.w(TAG, "IU image NOT GENERATED: ${iu.unit_id} — using placeholder")
+                                IuImageItem(
+                                    bitmap = null,
+                                    durationMs = durationMs,
+                                    unitId = iu.unit_id,
+                                    text = iuText,
+                                    status = IuStatus.NOT_GENERATED
+                                )
+                            }
                         }
-                        else -> fallbackDurationMs(iu.estimated_duration_sec)
-                    }
-                    val iuText = iu.text
-                    val result = runCatching {
-                        Log.d(TAG, "fetching IU image: ${iu.unit_id} (dur=$durationMs ms) bldId=$bldId")
-                        val imgBytes = _repository.getIuImage(bkId, chId, scId, iu.unit_id, bldId)
-                        val bmp = MediaDecoder.decodeBitmap(imgBytes)
-                        IuImageItem(bmp, durationMs, iu.unit_id, iuText, IuStatus.READY)
-                    }
-                    result.getOrNull() ?: run {
-                        Log.w(TAG, "IU image NOT GENERATED: ${iu.unit_id} — using placeholder")
-                        IuImageItem(
-                            bitmap = null,
-                            durationMs = durationMs,
-                            unitId = iu.unit_id,
-                            text = iuText,
-                            status = IuStatus.NOT_GENERATED
-                        )
-                    }
+                    }.awaitAll()
                 }
             } else {
                 Log.w(TAG, "storyboard empty or missing IDs: ius=${storyboard.ius.size} bldId=$bldId chId=$chId")
