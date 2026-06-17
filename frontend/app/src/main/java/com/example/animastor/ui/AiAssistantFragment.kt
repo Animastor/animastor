@@ -651,7 +651,21 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
                     } else {
                         pos.sceneId ?: "?"
                     }
-                    "Current position: $chName / $scName / $iuLabel"
+                    // Resolve unit to human-readable description
+                    val unit = sc?.units?.firstOrNull { it.id == pos.unitId }
+                    val unitDesc = if (unit != null) {
+                        val typeLabel = unit.type?.replaceFirstChar { it.uppercase() } ?: "Unit"
+                        val textSnippet = unit.text?.take(80)?.let { t -> if (t.isNotBlank()) " — \"$t\"" else "" } ?: ""
+                        "$typeLabel$textSnippet"
+                    } else {
+                        iuLabel
+                    }
+                    buildString {
+                        append("Current position: $chName / $scName — $unitDesc")
+                        if (unit?.participants?.isNotEmpty() == true) {
+                            append(" | Participants: ${unit.participants.joinToString(", ")}")
+                        }
+                    }
                 } else {
                     null
                 }
@@ -663,9 +677,16 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
                 val lang = requireContext().getSharedPreferences("animastor_settings", 0)
                     .getString("language", "auto")
 
+                val langInstruction = when (lang) {
+                    "ru" -> "\n\nIMPORTANT: Always reply in Russian. Use Russian for all responses regardless of the user's language."
+                    "en" -> ""
+                    "auto" -> "\n\nIMPORTANT: Always reply in the user's language. If they write in Russian, reply in Russian. If they write in English, reply in English."
+                    else -> "\n\nIMPORTANT: Always reply in the user's language. If they write in Russian, reply in Russian. If they write in English, reply in English."
+                }
+
                 val fullSystemPrompt = "Your name is $appName.\n\nMode: ${mode.title}\n${mode.systemPrompt}\n\nTopic: ${topic.title}\n${topic.systemPrompt}\n\n${
                     if (resolvedPosition != null) "Current context: $resolvedPosition" else ""
-                }".trim()
+                }$langInstruction".trim()
                 val response = generateViewModel.repository.chatWithAiFull(
                     AiChatRequest(
                         apiMessages.toList(),
