@@ -242,7 +242,8 @@ class PlaybackViewModel(
 
     fun getPreloadedScene(index: Int): PreloadedScene? {
         if (index < 0 || index >= chunkQueue.size) return null
-        return preloadCache[chunkQueue[index]]
+        val key = "${buildId}_${chunkQueue[index]}"
+        return preloadCache[key]
     }
 
     fun tryPreloadNextScene(): PreloadedScene? {
@@ -484,7 +485,7 @@ class PlaybackViewModel(
         }
         isExecutingExternalSeek = false
 
-        val cached = preloadCache.remove(id)
+        val cached = preloadCache.remove("${buildId}_$id")
         if (cached != null) {
             Log.i(TAG, "playNext: using preloaded data for $id")
             val chunkPos = chunkPositions[id]
@@ -500,13 +501,25 @@ class PlaybackViewModel(
 
             preloadJobs[id]?.join()
 
-            val cachedAfter = preloadCache.remove(id)
+            val cachedAfter = preloadCache.remove("${buildId}_$id")
             if (cachedAfter != null) {
-                Log.i(TAG, "playNext: preload completed for $id")
-                val preloadPos = chunkPositions[id]
-                currentChapterId = preloadPos?.first
-                currentSceneId = preloadPos?.second
-                emitChunk(cachedAfter.audioBytes, cachedAfter.videoBytes, cachedAfter.iuSequence)
+                // Verify freshness: check if audio_ready changed since preload
+                val freshChunk = runCatching { _repository.getChunk(id) }.getOrNull()
+                if (freshChunk != null && freshChunk.audio_ready && cachedAfter.audioBytes.isEmpty()) {
+                    Log.i(TAG, "playNext: audio appeared since preload for $id — refetching")
+                    val freshAudio = runCatching { _repository.getChunkAudio(id) }.getOrElse { byteArrayOf() }
+                    Log.i(TAG, "playNext: preload completed for $id (refreshed audio)")
+                    val preloadPos = chunkPositions[id]
+                    currentChapterId = preloadPos?.first
+                    currentSceneId = preloadPos?.second
+                    emitChunk(freshAudio, cachedAfter.videoBytes, cachedAfter.iuSequence)
+                } else {
+                    Log.i(TAG, "playNext: preload completed for $id")
+                    val preloadPos = chunkPositions[id]
+                    currentChapterId = preloadPos?.first
+                    currentSceneId = preloadPos?.second
+                    emitChunk(cachedAfter.audioBytes, cachedAfter.videoBytes, cachedAfter.iuSequence)
+                }
                 preloadAhead()
                 return@launch
             }
@@ -539,6 +552,11 @@ class PlaybackViewModel(
 
     private fun preloadAhead(includeCurrent: Boolean = false) {
         val start = if (includeCurrent) 0 else 1
+        val currentBldId = buildId
+        if (currentBldId.isBlank()) {
+            Log.w(TAG, "preloadAhead: buildId is blank, skipping")
+            return
+        }
 
         preloadJob?.cancel()
 
@@ -547,7 +565,7 @@ class PlaybackViewModel(
             val scenesToPreload = (start..PRELOAD_AHEAD).mapNotNull { offset ->
                 val idx = currentIndex + offset
                 if (idx < chunkQueue.size) chunkQueue[idx] else null
-            }.filter { !preloadCache.containsKey(it) }
+            }.filter { !preloadCache.containsKey("${currentBldId}_$it") }
 
             if (scenesToPreload.isEmpty()) return@launch
 
@@ -562,9 +580,9 @@ class PlaybackViewModel(
                 }.forEach { deferred ->
                     val (id, data) = deferred.await()
                     if (data != null) {
-                        preloadCache[id] = data
+                        preloadCache["${currentBldId}_$id"] = data
                         preloadCompleted.tryEmit(id)
-                        Log.i(TAG, "preloaded scene: $id — ${data.iuSequence.size} IUs")
+                        Log.i(TAG, "preloaded scene: $id — ${data.iuSequence.size} IUs (build=$currentBldId)")
                     } else {
                         Log.w(TAG, "preload failed for scene: $id — will load on demand")
                     }
@@ -576,7 +594,7 @@ class PlaybackViewModel(
 
         preloadJobs.clear()
         val firstId = chunkQueue.getOrNull(currentIndex + start)
-        if (firstId != null && !preloadCache.containsKey(firstId)) {
+        if (firstId != null && !preloadCache.containsKey("${currentBldId}_$firstId")) {
             preloadJobs[firstId] = job
         }
     }

@@ -156,9 +156,9 @@ class Repository(
     }
 
     suspend fun getIuImage(bookId: String, chapterId: String, sceneId: String, iuId: String, buildId: String): ByteArray {
-        val cacheKey = "iu_${bookId}_${chapterId}_${sceneId}_${iuId}"
+        val cacheKey = "iu_${bookId}_${chapterId}_${sceneId}_${iuId}_${buildId}"
         cache.get(cacheKey)?.let { return it }
-        val dk = "iu/${bookId}/${chapterId}/${sceneId}/${iuId}"
+        val dk = "iu/${buildId}/${bookId}/${chapterId}/${sceneId}/${iuId}"
         diskCache?.getFile(dk, "iu")?.let { f ->
             val bytes = f.readBytes()
             cache.put(cacheKey, bytes)
@@ -179,9 +179,9 @@ class Repository(
     }
 
     suspend fun getIuPreview(bookId: String, chapterId: String, sceneId: String, iuId: String, buildId: String): ByteArray? {
-        val cacheKey = "pr_${bookId}_${chapterId}_${sceneId}_${iuId}"
+        val cacheKey = "pr_${bookId}_${chapterId}_${sceneId}_${iuId}_${buildId}"
         cache.get(cacheKey)?.let { return it }
-        val dk = "preview/${bookId}/${chapterId}/${sceneId}/${iuId}"
+        val dk = "preview/${buildId}/${bookId}/${chapterId}/${sceneId}/${iuId}"
         diskCache?.getFile(dk, "preview")?.let { f ->
             val bytes = f.readBytes()
             cache.put(cacheKey, bytes)
@@ -413,9 +413,10 @@ class Repository(
     }
 
     suspend fun getSceneAudio(bookId: String, chapterId: String, sceneId: String, buildId: String): ByteArray {
-        val cacheKey = "sceneaudio_${bookId}_${chapterId}_${sceneId}"
+        val cacheKey = "sceneaudio_${bookId}_${chapterId}_${sceneId}_${buildId}"
         cache.get(cacheKey)?.let { return it }
-        diskCache?.getFile("${bookId}_${chapterId}_${sceneId}", "sceneaudio")?.let { f ->
+        val dk = "sceneaudio/${buildId}/${bookId}_${chapterId}_${sceneId}"
+        diskCache?.getFile(dk, "sceneaudio")?.let { f ->
             val bytes = f.readBytes()
             cache.put(cacheKey, bytes)
             return bytes
@@ -423,7 +424,7 @@ class Repository(
         val body = api.getSceneAudio(bookId, chapterId, sceneId, buildId)
         val bytes = body.bytes()
         cache.put(cacheKey, bytes)
-        diskCache?.put("${bookId}_${chapterId}_${sceneId}", "sceneaudio", bytes, "mp3")
+        diskCache?.put(dk, "sceneaudio", bytes, "mp3")
         return bytes
     }
 
