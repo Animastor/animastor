@@ -16,6 +16,7 @@ class Repository(
 ) {
     private val cache = LruCache<String, ByteArray>(50 * 1024 * 1024)
     private val storyboardCache = LruCache<String, StoryboardResponse>(500)
+    private val chunkCache = LruCache<String, ChunkResponse>(500)
     private val diskCache: SimpleDiskCache? = diskCache
 
     suspend fun generate(file: File, imageEnabled: Boolean = true): GenerateResponse {
@@ -69,7 +70,12 @@ class Repository(
     }
 
     suspend fun getChunk(id: String): ChunkResponse {
+        chunkCache.get(id)?.let {
+            Log.d("Repo", "getChunk $id: mem HIT")
+            return it
+        }
         val result = api.getChunk(id)
+        chunkCache.put(id, result)
         Log.d("Repo", "getChunk $id: audio=${result.audio_ready} img=${result.image_ready} video=${result.video_ready}")
         return result
     }
@@ -79,10 +85,11 @@ class Repository(
         return api.getAllChunks(bookId)
     }
 
-    suspend fun getChunkAudio(id: String): ByteArray {
-        val cacheKey = "audio_$id"
+    suspend fun getChunkAudio(id: String, buildId: String = ""): ByteArray {
+        val cacheKey = "audio_${id}_${buildId}"
         cache.get(cacheKey)?.let { Log.d("Repo", "getChunkAudio $id: mem HIT"); return it }
-        diskCache?.getFile(id, "audio")?.let { f ->
+        val diskKey = "${buildId}_$id"
+        diskCache?.getFile(diskKey, "audio")?.let { f ->
             val bytes = f.readBytes()
             cache.put(cacheKey, bytes)
             Log.d("Repo", "getChunkAudio $id: disk HIT")
@@ -93,7 +100,7 @@ class Repository(
             val body = api.getChunkAudio(id)
             val bytes = body.bytes()
             cache.put(cacheKey, bytes)
-            diskCache?.put(id, "audio", bytes, "mp3")
+            diskCache?.put(diskKey, "audio", bytes, "mp3")
             Log.i("Repo", "getChunkAudio $id: ${bytes.size} bytes")
             bytes
         }.getOrElse {
@@ -102,10 +109,11 @@ class Repository(
         }
     }
 
-    suspend fun getChunkImage(id: String): ByteArray {
-        val cacheKey = "image_$id"
+    suspend fun getChunkImage(id: String, buildId: String = ""): ByteArray {
+        val cacheKey = "image_${id}_${buildId}"
         cache.get(cacheKey)?.let { Log.d("Repo", "getChunkImage $id: mem HIT"); return it }
-        diskCache?.getFile(id, "image")?.let { f ->
+        val diskKey = "${buildId}_$id"
+        diskCache?.getFile(diskKey, "image")?.let { f ->
             val bytes = f.readBytes()
             cache.put(cacheKey, bytes)
             Log.d("Repo", "getChunkImage $id: disk HIT")
@@ -116,7 +124,7 @@ class Repository(
             val body = api.getChunkImage(id)
             val bytes = body.bytes()
             cache.put(cacheKey, bytes)
-            diskCache?.put(id, "image", bytes, "png")
+            diskCache?.put(diskKey, "image", bytes, "png")
             Log.i("Repo", "getChunkImage $id: ${bytes.size} bytes")
             bytes
         }.getOrElse {
@@ -125,10 +133,11 @@ class Repository(
         }
     }
 
-    suspend fun getChunkVideo(id: String): ByteArray {
-        val cacheKey = "video_$id"
+    suspend fun getChunkVideo(id: String, buildId: String = ""): ByteArray {
+        val cacheKey = "video_${id}_${buildId}"
         cache.get(cacheKey)?.let { return it }
-        diskCache?.getFile(id, "video")?.let { f ->
+        val diskKey = "${buildId}_$id"
+        diskCache?.getFile(diskKey, "video")?.let { f ->
             val bytes = f.readBytes()
             cache.put(cacheKey, bytes)
             Log.d("Repo", "getChunkVideo $id: disk HIT")
@@ -138,7 +147,7 @@ class Repository(
             val body = api.getChunkVideo(id)
             val bytes = body.bytes()
             cache.put(cacheKey, bytes)
-            diskCache?.put(id, "video", bytes, "mp4")
+            diskCache?.put(diskKey, "video", bytes, "mp4")
             Log.i("Repo", "getChunkVideo $id: ${bytes.size} bytes")
             bytes
         }.getOrElse { throw IOException("Failed to fetch video for chunk $id") }
@@ -386,6 +395,7 @@ class Repository(
     fun clearCache() {
         cache.evictAll()
         storyboardCache.evictAll()
+        chunkCache.evictAll()
         diskCache?.evictAll()
     }
 

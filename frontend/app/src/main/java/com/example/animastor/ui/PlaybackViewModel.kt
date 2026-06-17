@@ -12,10 +12,12 @@ import com.example.animastor.network.RetrofitClient
 import com.example.animastor.repository.Repository
 import com.example.animastor.util.MediaDecoder
 import com.example.animastor.util.SimpleDiskCache
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -387,8 +389,8 @@ class PlaybackViewModel(
             } else null
         }.getOrElse {
             runCatching {
-                val imgBytes = _repository.getChunkImage(coverId)
-                MediaDecoder.decodeBitmap(imgBytes)
+                val imgBytes = _repository.getChunkImage(coverId, buildId)
+                withContext(Dispatchers.Default) { MediaDecoder.decodeBitmap(imgBytes) }
             }.getOrNull()
         }
         if (bitmap != null) {
@@ -507,7 +509,7 @@ class PlaybackViewModel(
                 val freshChunk = runCatching { _repository.getChunk(id) }.getOrNull()
                 if (freshChunk != null && freshChunk.audio_ready && cachedAfter.audioBytes.isEmpty()) {
                     Log.i(TAG, "playNext: audio appeared since preload for $id — refetching")
-                    val freshAudio = runCatching { _repository.getChunkAudio(id) }.getOrElse { byteArrayOf() }
+                    val freshAudio = runCatching { _repository.getChunkAudio(id, buildId) }.getOrElse { byteArrayOf() }
                     Log.i(TAG, "playNext: preload completed for $id (refreshed audio)")
                     val preloadPos = chunkPositions[id]
                     currentChapterId = preloadPos?.first
@@ -611,7 +613,7 @@ class PlaybackViewModel(
         val audioDeferred = async {
             if (chunk?.audio_ready == true) {
                 runCatching {
-                    _repository.getChunkAudio(id).also {
+                    _repository.getChunkAudio(id, buildId).also {
                         Log.i(TAG, "audio fetched for $id: ${it.size} bytes")
                     }
                 }.getOrElse { e ->
@@ -625,7 +627,7 @@ class PlaybackViewModel(
         }
         val videoDeferred = async {
             if (chunk?.video_ready == true) {
-                runCatching { _repository.getChunkVideo(id) }.getOrNull().also {
+                runCatching { _repository.getChunkVideo(id, buildId) }.getOrNull().also {
                     Log.d(TAG, if (it != null) "video fetched: ${it.size} bytes" else "video null")
                 }
             } else null
@@ -664,7 +666,7 @@ class PlaybackViewModel(
                             runCatching {
                                 Log.d(TAG, "fetching IU image: ${iu.unit_id} (dur=$durationMs ms) bldId=$bldId")
                                 val imgBytes = _repository.getIuImage(bkId, chId, scId, iu.unit_id, bldId)
-                                val bmp = MediaDecoder.decodeBitmap(imgBytes)
+                                val bmp = withContext(Dispatchers.Default) { MediaDecoder.decodeBitmap(imgBytes) }
                                 IuImageItem(bmp, durationMs, iu.unit_id, iuText, IuStatus.READY)
                             }.getOrNull() ?: run {
                                 Log.w(TAG, "IU image NOT GENERATED: ${iu.unit_id} — using placeholder")
