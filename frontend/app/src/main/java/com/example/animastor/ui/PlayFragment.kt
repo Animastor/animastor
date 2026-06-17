@@ -238,12 +238,12 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
             }
         }
         binding?.layerVideo?.setOnCheckedChangeListener { _, isChecked ->
-            playbackViewModel.setVideoEnabled(isChecked)
             binding?.layerVideo?.chipIcon = if (isChecked)
                 resources.getDrawable(R.drawable.ic_videocam, null)
             else
                 resources.getDrawable(R.drawable.ic_videocam_off, null)
             updateLayers()
+            playbackViewModel.setVideoEnabled(isChecked)
         }
         binding?.layerSubtitles?.setOnCheckedChangeListener { _, isChecked ->
             binding?.layerSubtitles?.chipIcon = if (isChecked)
@@ -462,32 +462,25 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                         b.previewOverlay.visibility = if (loading && state.coverImage != null) View.VISIBLE else View.GONE
                         b.progressBar.visibility = if (loading) View.VISIBLE else View.GONE
 
-                            val errorMsg = state.errorMessage
-                            if (errorMsg != null) {
-                                b.statusText.text = "Error: $errorMsg"
-                                b.placeholderText.text = errorMsg
-                                Log.w(TAG, "error in state: $errorMsg")
-                            } else when (state.phase) {
-                                PlayerPhase.LOADING_BOOK -> b.statusText.text = getString(R.string.play_loading)
-                                PlayerPhase.GENERATING, PlayerPhase.DOWNLOADING -> {
-                                    val wp = state.windowProgress
-                                    if (wp != null) {
-                                        b.statusText.text = "Loading $wp…"
-                                    } else {
-                                        b.statusText.text = getString(R.string.play_loading)
-                                    }
-                                }
-                                PlayerPhase.SCENE_READY -> b.statusText.text = getString(R.string.play_ready)
-                                PlayerPhase.PLAYING -> if (isPaused) b.statusText.text = getString(R.string.play_paused)
-                                    else b.statusText.text = getString(R.string.play_playing)
-                                PlayerPhase.IDLE -> b.statusText.text = if (playbackViewModel.bookId.isBlank()) getString(R.string.empty_state) else getString(R.string.empty_state_book_loaded)
-                                PlayerPhase.PAUSED -> b.statusText.text = getString(R.string.play_paused)
-                                PlayerPhase.IMPORTING_TXT -> b.statusText.text = getString(R.string.play_loading)
-                            }
+                        val errorMsg = state.errorMessage
+                        if (errorMsg != null) {
+                            b.statusText.text = "Error: $errorMsg"
+                            b.placeholderText.text = errorMsg
+                            Log.w(TAG, "error in state: $errorMsg")
+                        } else when (state.phase) {
+                            PlayerPhase.LOADING_BOOK -> b.statusText.text = getString(R.string.play_loading)
+                            PlayerPhase.GENERATING, PlayerPhase.DOWNLOADING -> b.statusText.text = getString(R.string.play_loading)
+                            PlayerPhase.SCENE_READY -> b.statusText.text = getString(R.string.play_ready)
+                            PlayerPhase.PLAYING -> if (isPaused) b.statusText.text = getString(R.string.play_paused)
+                                else b.statusText.text = getString(R.string.play_playing)
+                            PlayerPhase.IDLE -> b.statusText.text = if (playbackViewModel.bookId.isBlank()) getString(R.string.empty_state) else getString(R.string.empty_state_book_loaded)
+                            PlayerPhase.PAUSED -> b.statusText.text = getString(R.string.play_paused)
+                            PlayerPhase.IMPORTING_TXT -> b.statusText.text = getString(R.string.play_loading)
+                        }
 
-                            val isPlaying = state.phase == PlayerPhase.PLAYING && !isPaused
-                            b.playButton.text = if (isPlaying) getString(R.string.play_pause) else getString(R.string.play_play)
-                            if (isPlaying) b.playButton.setIconResource(R.drawable.ic_pause) else b.playButton.setIconResource(R.drawable.ic_play)
+                        val isPlaying = state.phase == PlayerPhase.PLAYING && !isPaused
+                        b.playButton.text = if (isPlaying) getString(R.string.play_pause) else getString(R.string.play_play)
+                        if (isPlaying) b.playButton.setIconResource(R.drawable.ic_pause) else b.playButton.setIconResource(R.drawable.ic_play)
                     } catch (e: Exception) {
                         Log.e(TAG, "===== CRASH IN STATE COLLECTOR =====", e)
                         try {
@@ -880,7 +873,6 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                     currentIuIndex = idx
                     if (isPaused) continue
                     playbackViewModel.currentUnitIndex = idx
-
                     showIuImage(ius[idx])
                     updateSubtitleIfEnabled(ius[idx].text)
                     SharedPositionManager.navigateTo(

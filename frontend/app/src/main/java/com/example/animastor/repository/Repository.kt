@@ -15,6 +15,7 @@ class Repository(
     diskCache: SimpleDiskCache? = null
 ) {
     private val cache = LruCache<String, ByteArray>(50 * 1024 * 1024)
+    private val storyboardCache = LruCache<String, StoryboardResponse>(500)
     private val diskCache: SimpleDiskCache? = diskCache
 
     suspend fun generate(file: File, imageEnabled: Boolean = true): GenerateResponse {
@@ -144,8 +145,14 @@ class Repository(
     }
 
     suspend fun getChunkStoryboard(id: String): StoryboardResponse {
-        Log.d("Repo", "getChunkStoryboard: $id")
-        return api.getChunkStoryboard(id)
+        storyboardCache.get(id)?.let {
+            Log.d("Repo", "getChunkStoryboard $id: mem HIT")
+            return it
+        }
+        Log.d("Repo", "getChunkStoryboard $id: fetching")
+        val result = api.getChunkStoryboard(id)
+        storyboardCache.put(id, result)
+        return result
     }
 
     suspend fun getIuImage(bookId: String, chapterId: String, sceneId: String, iuId: String, buildId: String): ByteArray {
@@ -378,6 +385,7 @@ class Repository(
 
     fun clearCache() {
         cache.evictAll()
+        storyboardCache.evictAll()
         diskCache?.evictAll()
     }
 

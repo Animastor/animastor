@@ -79,7 +79,7 @@ interface BackendApi {
 
     @GET("/api/v1/ai/sessions")
     suspend fun listSessions(
-        @Query("bookId") bookId: String
+        @Query("book_id") bookId: String
     ): SessionListResponse
 
     @POST("/api/v1/ai/sessions")

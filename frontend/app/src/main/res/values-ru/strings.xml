@@ -137,6 +137,8 @@
     <!-- IU not generated -->
     <string name="iu_not_generated">Не сгенерировано</string>
     <string name="iu_status_label">Изображение ещё не готово</string>
+    <string name="image_not_generated">Изображение не сгенерировано</string>
+    <string name="video_not_generated">Видео не сгенерировано</string>
 
     <!-- Settings -->
     <string name="settings_title">Настройки</string>

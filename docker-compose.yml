@@ -56,6 +56,7 @@ services:
       - AI_API_BASE_URL=https://api.aicredits.in/v1
       - OPENROUTER_API_KEY=sk-live-43a077e7c0964272bda8d3024e57be99afee29349d7eda3b9cb180569f72bd0b
       - OPENROUTER_MODEL=qwen/qwen3-32b
+      - AI_MODEL=qwen/qwen3-32b
     volumes:
       - ./workflow.json:/workflow.json:ro
       - ./data/output:/data/output

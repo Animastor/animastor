@@ -262,6 +262,20 @@ CREATE INDEX IF NOT EXISTS idx_scene_assets_status ON scene_assets(status);
 CREATE INDEX IF NOT EXISTS idx_scene_assets_type ON scene_assets(asset_type);
 CREATE INDEX IF NOT EXISTS idx_scene_assets_hash ON scene_assets(book_id, scene_hash);
 
+-- AI chat sessions (flat table used by ai-routes.cjs for backward compatibility)
+CREATE TABLE IF NOT EXISTS ai_chat_sessions (
+    id              TEXT PRIMARY KEY,
+    book_id         TEXT NOT NULL,
+    mode            TEXT NOT NULL DEFAULT 'chat',
+    messages        JSONB NOT NULL DEFAULT '[]'::jsonb,
+    context         JSONB DEFAULT '{}'::jsonb,
+    locked          BOOLEAN NOT NULL DEFAULT false,
+    created_at      BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::bigint),
+    updated_at      BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::bigint)
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_chat_sessions_book ON ai_chat_sessions(book_id);
+
 -- Chat sessions (grouping of messages into user conversations)
 CREATE TABLE IF NOT EXISTS chat_sessions (
     session_id      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -478,6 +492,16 @@ async function runMigrations() {
     } catch (err) {
         if (!err.message.includes('does not exist')) {
             console.error('[PG] Failed to update step_type constraint:', err.message);
+        }
+    }
+
+    // Make context column nullable in ai_chat_sessions (routes pass null for new sessions)
+    try {
+        await query(`ALTER TABLE ai_chat_sessions ALTER COLUMN context DROP NOT NULL`);
+        console.log('[PG] Made ai_chat_sessions.context nullable');
+    } catch (err) {
+        if (!err.message.includes('does not exist')) {
+            console.error('[PG] Failed to alter ai_chat_sessions.context:', err.message);
         }
     }
 

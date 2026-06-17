@@ -160,6 +160,8 @@
     <!-- IU not generated -->
     <string name="iu_not_generated">Not generated</string>
     <string name="iu_status_label">Image not generated yet</string>
+    <string name="image_not_generated">Image not generated</string>
+    <string name="video_not_generated">Video not generated</string>
 
     <!-- Settings -->
     <string name="settings_title">Settings</string>

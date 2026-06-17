@@ -70,12 +70,12 @@ module.exports = function(app, redis, deps) {
                 context: null, locked: false,
             };
 
-            await storage.postgres.query(
+             await storage.postgres.query(
                 `INSERT INTO ai_chat_sessions (id, book_id, mode, messages, created_at, updated_at, context, locked)
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
                 [session.id, session.book_id, session.mode, JSON.stringify(session.messages),
-                 new Date(session.created_at), new Date(session.updated_at),
-                 session.context, session.locked]
+                 session.created_at, session.updated_at,
+                 session.context === null ? null : JSON.stringify(session.context), session.locked]
             );
 
             log('[AI] Created session:', id, 'for book:', book_id, 'mode:', session.mode);
@@ -123,7 +123,8 @@ module.exports = function(app, redis, deps) {
                 { role: 'user', content: message },
             ];
 
-            // Call AI API
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 60000);
             const response = await fetch(`${chatEngine.AI_API_BASE_URL}/chat/completions`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${config.OPENROUTER_API_KEY || process.env.AI_API_KEY || ''}` },
@@ -134,7 +135,9 @@ module.exports = function(app, redis, deps) {
                     tool_choice: tools.length > 0 ? 'auto' : undefined,
                     max_tokens: 4096,
                 }),
+                signal: controller.signal,
             });
+            clearTimeout(timeout);
 
             if (!response.ok) {
                 const errText = await response.text();
@@ -195,7 +198,7 @@ module.exports = function(app, redis, deps) {
 
             await storage.postgres.query(
                 'UPDATE ai_chat_sessions SET messages = $1, updated_at = $2 WHERE id = $3',
-                [JSON.stringify(updatedMessages), new Date(), session_id]
+                [JSON.stringify(updatedMessages), Date.now(), session_id]
             );
 
             res.json({
@@ -250,6 +253,8 @@ module.exports = function(app, redis, deps) {
             res.setHeader('Cache-Control', 'no-cache');
             res.setHeader('Connection', 'keep-alive');
 
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 60000);
             const aiResponse = await fetch(`${chatEngine.AI_API_BASE_URL}/chat/completions`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${config.OPENROUTER_API_KEY || process.env.AI_API_KEY || ''}` },
@@ -261,7 +266,9 @@ module.exports = function(app, redis, deps) {
                     max_tokens: 4096,
                     stream: true,
                 }),
+                signal: controller.signal,
             });
+            clearTimeout(timeout);
 
             if (!aiResponse.ok) {
                 const errText = await aiResponse.text();
@@ -314,10 +321,11 @@ module.exports = function(app, redis, deps) {
                 { role: 'user', content: message, timestamp: Date.now() },
                 { role: 'assistant', content: fullContent, timestamp: Date.now() },
             ];
+
             await storage.postgres.query(
                 'UPDATE ai_chat_sessions SET messages = $1, updated_at = $2 WHERE id = $3',
-                [JSON.stringify(updatedMessages), new Date(), session_id]
-            ).catch(err => console.error('[AI] Failed to save streaming messages:', err.message));
+                [JSON.stringify(updatedMessages), Date.now(), session_id]
+            );
         } catch (err) {
             console.error('[AI STREAM] Error:', err.message);
             if (!res.headersSent) return res.status(500).json({ error: err.message });
@@ -341,7 +349,7 @@ module.exports = function(app, redis, deps) {
 
             await storage.postgres.query(
                 'UPDATE ai_chat_sessions SET mode = $1, updated_at = $2 WHERE id = $3',
-                [new_mode, new Date(), session_id]
+                [new_mode, Date.now(), session_id]
             );
 
             log('[AI] Mode switched:', session_id, '→', new_mode);

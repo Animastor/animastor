@@ -3,14 +3,14 @@ package com.example.animastor.repository
 import com.google.gson.annotations.SerializedName
 
 data class ChatSessionApi(
-    @SerializedName("sessionId") val sessionId: String,
-    @SerializedName("bookId") val bookId: String,
-    @SerializedName("title") val title: String,
-    @SerializedName("topicId") val topicId: String,
-    @SerializedName("mode") val mode: String,
-    @SerializedName("messageCount") val messageCount: Int = 0,
-    @SerializedName("createdAt") val createdAt: Long = 0,
-    @SerializedName("updatedAt") val updatedAt: Long = 0
+    @SerializedName("id") val sessionId: String,
+    @SerializedName("book_id") val bookId: String = "",
+    val title: String = "",
+    @SerializedName("mode") val mode: String = "chat",
+    @SerializedName("topic_id") val topicId: String = "",
+    @SerializedName("message_count") val messageCount: Int = 0,
+    @SerializedName("created_at") val createdAt: Long = 0,
+    @SerializedName("updated_at") val updatedAt: Long = 0
 )
 
 data class SessionListResponse(
@@ -22,9 +22,9 @@ data class SessionResponse(
 )
 
 data class CreateSessionRequest(
-    val bookId: String,
+    @SerializedName("book_id") val bookId: String,
     val title: String? = null,
-    val topicId: String? = null,
+    @SerializedName("topic_id") val topicId: String? = null,
     val mode: String? = null
 )
 
@@ -34,10 +34,10 @@ data class SessionMessagesResponse(
 
 data class SessionMessageApi(
     val id: Long,
-    @SerializedName("bookId") val bookId: String,
-    @SerializedName("sessionId") val sessionId: String? = null,
-    @SerializedName("sceneId") val sceneId: String? = null,
+    @SerializedName("book_id") val bookId: String,
+    @SerializedName("session_id") val sessionId: String? = null,
+    @SerializedName("scene_id") val sceneId: String? = null,
     val role: String,
     val message: String,
-    @SerializedName("createdAt") val createdAt: Long = 0
+    @SerializedName("created_at") val createdAt: Long = 0
 )
