@@ -60,20 +60,22 @@ module.exports = function(app, redis, deps) {
     // ======================================================
     app.post('/api/v1/ai/sessions', async (req, res) => {
         try {
-            const { book_id, mode } = req.body || {};
+            const { book_id, mode, topic_id } = req.body || {};
             if (!book_id) return res.status(400).json({ error: 'book_id required' });
 
             const id = `ai-session-${Date.now()}-${++sessionIdCounter}`;
             const session = {
                 id, book_id, mode: mode || 'chat',
+                topic_id: topic_id || 'book',
                 messages: [], created_at: Date.now(), updated_at: Date.now(),
                 context: null, locked: false,
             };
 
              await storage.postgres.query(
-                `INSERT INTO ai_chat_sessions (id, book_id, mode, messages, created_at, updated_at, context, locked)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-                [session.id, session.book_id, session.mode, JSON.stringify(session.messages),
+                `INSERT INTO ai_chat_sessions (id, book_id, mode, topic_id, messages, created_at, updated_at, context, locked)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+                [session.id, session.book_id, session.mode, session.topic_id,
+                 JSON.stringify(session.messages),
                  session.created_at, session.updated_at,
                  session.context === null ? null : JSON.stringify(session.context), session.locked]
             );
@@ -91,16 +93,39 @@ module.exports = function(app, redis, deps) {
     // ======================================================
     app.post('/api/v1/ai/chat', async (req, res) => {
         try {
-            const { session_id, message, book_id } = req.body || {};
-            if (!session_id || !message) return res.status(400).json({ error: 'session_id and message required' });
+            const { session_id, message, messages, book_id, system, mode, scene_id, topic_id } = req.body || {};
+
+            // Accept either `messages` array (frontend format) or `message` string (legacy)
+            const hasMessagesArray = Array.isArray(messages) && messages.length > 0;
+            if (!hasMessagesArray && !message) {
+                return res.status(400).json({ error: 'messages or message required' });
+            }
+
+            // Auto-create session if session_id not provided
+            let activeSessionId = session_id;
+            if (!activeSessionId) {
+                if (!book_id) {
+                    return res.status(400).json({ error: 'book_id required when no session_id' });
+                }
+                const id = `ai-session-${Date.now()}-${++sessionIdCounter}`;
+                await storage.postgres.query(
+                    `INSERT INTO ai_chat_sessions (id, book_id, mode, topic_id, messages, created_at, updated_at, context, locked)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+                    [id, book_id, mode || 'chat', topic_id || 'book',
+                     JSON.stringify([]), Date.now(), Date.now(), null, false]
+                );
+                activeSessionId = id;
+                log('[AI] Auto-created session:', id, 'for book:', book_id);
+            }
 
             const result = await storage.postgres.query(
-                'SELECT * FROM ai_chat_sessions WHERE id = $1', [session_id]
+                'SELECT * FROM ai_chat_sessions WHERE id = $1', [activeSessionId]
             );
             if (!result.rows.length) return res.status(404).json({ error: 'Session not found' });
 
             const session = result.rows[0];
-            const messages = typeof session.messages === 'string' ? JSON.parse(session.messages) : session.messages || [];
+            const storedMessages = typeof session.messages === 'string'
+                ? JSON.parse(session.messages) : session.messages || [];
             const bookId = book_id || session.book_id;
 
             // Load book data for context
@@ -108,20 +133,35 @@ module.exports = function(app, redis, deps) {
             try { bookData = book.loadBook(bookId) || lazyBook.loadLazyBook(bookId); } catch (_) {}
 
             const isLocked = bookData?.manifest?.locked === true;
-            const mode = session.mode || 'chat';
-            const tools = chatEngine.getToolsForMode(mode, bookId, isLocked);
+            const sessionMode = mode || session.mode || 'chat';
+            const tools = chatEngine.getToolsForMode(sessionMode, bookId, isLocked);
 
-            // Build system prompt with book context
-            let systemPrompt = chatEngine.loadSystemPrompt();
+            // Build system prompt: use frontend-provided `system` as base, append book context
+            let systemPrompt = system || chatEngine.loadSystemPrompt();
             const bookContext = chatEngine.buildBookContext(bookData);
             if (bookContext) systemPrompt += '\n\n' + bookContext;
 
-            // Build messages
-            const apiMessages = [
-                { role: 'system', content: systemPrompt },
-                ...(messages.slice(-20).map(m => ({ role: m.role, content: m.content }))),
-                { role: 'user', content: message },
-            ];
+            // Build API messages for AI call
+            let apiMessages;
+            let userContent;
+
+            if (hasMessagesArray) {
+                // Frontend format: full history in `messages` array, `system` as system prompt
+                apiMessages = [
+                    { role: 'system', content: systemPrompt },
+                    ...messages,
+                ];
+                const lastUser = messages.filter(m => m.role === 'user').pop();
+                userContent = lastUser?.content || '';
+            } else {
+                // Legacy format: single `message` string, reconstruct from DB
+                userContent = message;
+                apiMessages = [
+                    { role: 'system', content: systemPrompt },
+                    ...(storedMessages.slice(-20).map(m => ({ role: m.role, content: m.content }))),
+                    { role: 'user', content: message },
+                ];
+            }
 
             const controller = new AbortController();
             const timeout = setTimeout(() => controller.abort(), 60000);
@@ -190,15 +230,16 @@ module.exports = function(app, redis, deps) {
                 }
             }
 
-            // Update session messages
-            const updatedMessages = [...messages,
-                { role: 'user', content: message, timestamp: Date.now() },
+            // Update session messages: merge with stored history
+            const updatedMessages = [
+                ...storedMessages,
+                { role: 'user', content: userContent, timestamp: Date.now() },
                 { role: 'assistant', content: replyText, tool_calls: toolCalls, timestamp: Date.now() },
             ];
 
             await storage.postgres.query(
                 'UPDATE ai_chat_sessions SET messages = $1, updated_at = $2 WHERE id = $3',
-                [JSON.stringify(updatedMessages), Date.now(), session_id]
+                [JSON.stringify(updatedMessages), Date.now(), activeSessionId]
             );
 
             res.json({
@@ -206,7 +247,7 @@ module.exports = function(app, redis, deps) {
                 tool_calls: toolCalls,
                 tool_results: toolResults,
                 patches_applied: patches.length,
-                session_id,
+                session_id: activeSessionId,
             });
         } catch (err) {
             console.error('[AI CHAT] Error:', err.message);

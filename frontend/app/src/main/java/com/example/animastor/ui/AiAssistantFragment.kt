@@ -462,7 +462,7 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
         sessionLoadJob?.cancel()
         welcomeJob?.cancel()
         currentSessionId = session.sessionId
-        currentTopicId = session.topicId
+        currentTopicId = if (session.topicId.isNullOrBlank()) "book" else session.topicId
         messages.clear()
         apiMessages.clear()
         adapter.submitList(messages.toList())
@@ -650,8 +650,14 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
                     )
                 )
 
+                // Save session_id only when backend auto-created it (no session before)
+                if (sessionAtSend == null && response.sessionId != null) {
+                    currentSessionId = response.sessionId
+                }
+
                 // Discard response if user switched to another session while waiting
-                if (currentSessionId != sessionAtSend || !isAdded) return@launch
+                // When sessionAtSend was null, session was being created — not a session switch
+                if ((sessionAtSend != null && currentSessionId != sessionAtSend) || !isAdded) return@launch
 
                 apiMessages.add(AiMessage(role = "assistant", content = response.reply))
                 val aiMsg = if (response.bookId != null) {

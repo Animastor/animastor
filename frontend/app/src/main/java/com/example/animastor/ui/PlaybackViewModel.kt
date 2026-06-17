@@ -17,6 +17,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -205,6 +206,11 @@ class PlaybackViewModel(
             return
         }
         Log.i(TAG, "playSceneQueue: ${chunkQueue.size} chunks")
+        // Reset error state and IU sequence before starting
+        _uiState.update { it.copy(errorMessage = null, missingIuPosition = null) }
+        currentIuSequence = null
+        currentUnitIndex = 0
+        lastProcessedChunkSequence = 0
         currentIndex = 0
         preloadJobs.clear()
         preloadAhead(includeCurrent = true)
@@ -526,9 +532,13 @@ class PlaybackViewModel(
                 return@launch
             }
 
-            val sceneData = runCatching { fetchSceneData(id) }.getOrElse { err ->
+            val sceneData = runCatching {
+                retryWithBackoff(maxRetries = 3, initialDelayMs = 1000, maxDelayMs = 5000) {
+                    fetchSceneData(id)
+                }
+            }.getOrElse { err ->
                 val msg = "Scene $id: ${err.message} (${err::class.simpleName})"
-                Log.e(TAG, "playNext: failed to load $id — $msg", err)
+                Log.e(TAG, "playNext: failed to load $id after retries — $msg", err)
                 Log.w(TAG, "playNext: → SCENE_READY (error)")
                 _uiState.update { it.copy(phase = PlayerPhase.SCENE_READY, errorMessage = msg) }
                 return@launch
@@ -689,6 +699,27 @@ class PlaybackViewModel(
             val missing = it.count { item -> item.status == IuStatus.NOT_GENERATED }
             Log.i(TAG, "IU sequence loaded: ${it.size} images ($missing not generated)")
         }
+    }
+
+    /** Retry a suspend block with exponential backoff on failure. */
+    /** Retry a suspend block with exponential backoff on failure. */
+    private suspend fun <T> retryWithBackoff(
+        maxRetries: Int = 3,
+        initialDelayMs: Long = 1000,
+        maxDelayMs: Long = 10000,
+        block: suspend () -> T
+    ): T {
+        var delayMs = initialDelayMs
+        // First maxRetries-1 attempts with retry; last attempt throws on failure
+        repeat(maxRetries - 1) { attempt ->
+            runCatching { return block() }.getOrElse { e ->
+                Log.w(TAG, "retry ${attempt + 1}/$maxRetries failed: ${e.message}")
+                delay(delayMs)
+                delayMs = (delayMs * 2).coerceAtMost(maxDelayMs)
+            }
+        }
+        // Last attempt — let it throw
+        return block()
     }
 
     /** Fallback duration when backend provides 0 / null. */

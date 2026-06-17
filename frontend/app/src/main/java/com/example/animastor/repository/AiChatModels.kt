@@ -21,5 +21,6 @@ data class AiMessage(
 data class AiChatResponse(
     val reply: String,
     @SerializedName("book_edited") val bookEdited: Boolean = false,
-    @SerializedName("book_id") val bookId: String? = null
+    @SerializedName("book_id") val bookId: String? = null,
+    @SerializedName("session_id") val sessionId: String? = null
 )

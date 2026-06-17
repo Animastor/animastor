@@ -424,6 +424,7 @@ async function runMigrations() {
         { table: 'chat_messages', column: 'session_id', type: 'UUID' },
         { table: 'agent_sessions', column: 'knowledge_base', type: 'JSONB' },
         { table: 'agent_sessions', column: 'window_data', type: 'JSONB' },
+        { table: 'ai_chat_sessions', column: 'topic_id', type: 'TEXT NOT NULL DEFAULT \'book\'' },
     ];
 
     for (const { table, column, type } of columnAdditions) {

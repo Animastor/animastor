@@ -29,6 +29,6 @@ data class ChatTopic(
             )
         )
 
-        fun getById(id: String): ChatTopic = ALL.firstOrNull { it.id == id } ?: ALL.first()
+        fun getById(id: String?): ChatTopic = ALL.firstOrNull { it.id == id } ?: ALL.first()
     }
 }
