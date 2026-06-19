@@ -1429,6 +1429,7 @@ async function clearBookDispatchMeta(redis, bookId) {
                 await storage.postgres.query('DELETE FROM cache_entries WHERE book_id = $1', [bookId]);
                 await storage.postgres.query('DELETE FROM book_source WHERE book_id = $1', [bookId]);
                 await storage.postgres.query('DELETE FROM chat_messages WHERE book_id = $1', [bookId]);
+                await storage.postgres.query('DELETE FROM chat_sessions WHERE book_id = $1', [bookId]);
                 await storage.postgres.query('DELETE FROM agent_sessions WHERE book_id = $1', [bookId]);
                 await storage.postgres.query('DELETE FROM book_generation_sessions WHERE book_id = $1', [bookId]);
                 await storage.postgres.query('DELETE FROM books WHERE book_id = $1', [bookId]);

@@ -50,6 +50,10 @@ async function deleteSession(sessionId) {
     await query('DELETE FROM chat_sessions WHERE session_id = $1', [sessionId]);
 }
 
+async function deleteSessionsByBookId(bookId) {
+    await query('DELETE FROM chat_sessions WHERE book_id = $1', [bookId]);
+}
+
 async function incrementMessageCount(sessionId) {
     const result = await query(`
         UPDATE chat_sessions
@@ -80,5 +84,6 @@ module.exports = {
     getSession,
     updateSession,
     deleteSession,
+    deleteSessionsByBookId,
     incrementMessageCount,
 };

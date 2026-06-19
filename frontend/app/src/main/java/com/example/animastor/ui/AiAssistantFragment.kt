@@ -366,7 +366,7 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
                     ""
                 }
                 val scLabel = if (scIdx > 0) "${getString(R.string.navigate_scene)} $scIdx" else ""
-                val unitLabel = if (uIdx > 0) "${getString(R.string.navigate_unit)} $uIdx" else pos.formatUnitLabel()
+                val unitLabel = if (uIdx > 0) "${getString(R.string.navigate_unit)} $uIdx" else ""
                 if (chLabel.isEmpty() && scLabel.isEmpty()) {
                     positionLabel()?.text = getString(R.string.navigate_no_position)
                     return
@@ -521,8 +521,12 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
             val typeLabel = unit.type?.replaceFirstChar { it.uppercase() } ?: "Unit"
             val textSnippet = unit.text?.take(60)?.let { t -> if (t.isNotBlank()) " — \"$t\"" else "" } ?: ""
             "$typeLabel$textSnippet"
+        } else if (pos.unitId != null) {
+            pos.unitId
+        } else if (pos.unitIndex > 0) {
+            "${getString(R.string.navigate_unit)} ${pos.unitIndex + 1}"
         } else {
-            pos.formatUnitLabel()
+            ""
         }
         val positionText = "Вы находитесь: $chName / $scName — $unitDesc"
         val msg = ChatMessage(text = positionText, isUser = false)
@@ -606,7 +610,7 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
                     pos.chapterId ?: "?"
                 }
                 val sceneId = if (scIdx > 0) "${getString(R.string.navigate_scene)} $scIdx" else pos.sceneId ?: "?"
-                val iuLabel = if (uIdx > 0) "${getString(R.string.navigate_unit)} $uIdx" else pos.formatUnitLabel()
+                val iuLabel = if (uIdx > 0) "${getString(R.string.navigate_unit)} $uIdx" else ""
                 val text = getString(R.string.ai_welcome_context, title, chapterId, sceneId, iuLabel)
                 val msg = ChatMessage(text = text, isUser = false)
                 if (!isAdded || binding == null) return@launch
@@ -664,7 +668,7 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
         lifecycleScope.launch {
             try {
                     val pos = SharedPositionManager.current.value
-                    val iuLabel = pos.formatUnitLabel()
+                    val iuLabel = if (pos.unitId != null) pos.unitId else if (pos.unitIndex > 0) "${getString(R.string.navigate_unit)} ${pos.unitIndex + 1}" else ""
 
                 // Resolve hex IDs to human-readable names
                 val resolvedPosition = if (pos.chapterId != null) {
