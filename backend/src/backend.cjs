@@ -20,6 +20,7 @@ const video = require('./video');
 const workflows = require('./workflows');
 const { resumeIncompleteSessions } = require('./startup-resume');
 const orchestrator = require('./orchestration');
+const wfManager = require('./services/workflow-manager');
 const journal = require('./orchestration/event-journal');
 const storage = require('./storage');
 const runtime = require('./runtime');
@@ -164,6 +165,7 @@ const routeDeps = {
     cleanBookRedisKeys,
     cleanupService, taskHandler, bookDiff, windowGenerator, chatEngine,
     iuRepo, computeWaveform, journal,
+    wfManager,
 };
 
 require('./routes/book-routes.cjs')(app, redis, { ...routeDeps, taskHandler, bookDiff, windowGenerator });
@@ -175,6 +177,10 @@ require('./routes/ai-routes.cjs')(app, redis, {
 require('./routes/debug-routes.cjs')(app, redis, {
     ...routeDeps, taskHandler, bookDiff, iuRepo, computeWaveform, journal,
 });
+
+// Workflow Manager routes
+require('./routes/connector-routes.cjs')(app, redis, routeDeps);
+require('./routes/workflow-routes.cjs')(app, redis, routeDeps);
 
 // ======================================================
 // [14] SERVER STARTUP

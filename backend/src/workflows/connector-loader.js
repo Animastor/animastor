@@ -472,6 +472,109 @@ function getAllConnectors() {
   return Object.values(connectors);
 }
 
+/**
+ * Get all registered connectors grouped by type.
+ * @returns {{ audio: object[], image: object[], video: object[], unknown: object[] }}
+ */
+function getConnectorsByType() {
+  const grouped = { audio: [], image: [], video: [], unknown: [] };
+  for (const conn of Object.values(connectors)) {
+    const type = conn.type || 'unknown';
+    if (grouped[type]) {
+      grouped[type].push(conn);
+    } else {
+      grouped.unknown.push(conn);
+    }
+  }
+  return grouped;
+}
+
+/**
+ * Get status summary for all connectors.
+ * @param {object} workflowMap — optional workflow map for on-demand compatibility check
+ * @returns {Array<{name: string, label: string, type: string, workflow: string, status: string, version: string}>}
+ */
+function getConnectorStatuses(workflowMap) {
+  const statuses = [];
+  for (const [name, connector] of Object.entries(connectorsByName)) {
+    const wfName = connector.workflow;
+    let status = 'unknown';
+
+    if (workflowMap && workflowMap[wfName]) {
+      const compat = checkCompatibility(connector, workflowMap[wfName]);
+      status = compat.compatible ? 'compatible' : 'incompatible';
+    } else if (connector.workflowHash) {
+      status = 'registered';
+    }
+
+    statuses.push({
+      name,
+      label: connector.label || connector.workflow,
+      type: connector.type || 'unknown',
+      workflow: connector.workflow,
+      status,
+      version: connector.connectorVersion || '1.0.0',
+      description: connector.description || ''
+    });
+  }
+  return statuses;
+}
+
+/**
+ * Register a single connector in the in-memory registry.
+ * @param {string} name — connector name (e.g. "conn-image-generation")
+ * @param {object} connector — connector object
+ */
+function registerConnector(name, connector) {
+  connectorsByName[name] = connector;
+  connectors[connector.workflow] = connector;
+  log(`Registered connector: ${name} → workflow "${connector.workflow}"`);
+}
+
+/**
+ * Unregister a connector from the in-memory registry.
+ * @param {string} name — connector name (e.g. "conn-image-generation")
+ * @returns {boolean} — true if connector was found and removed
+ */
+function unregisterConnector(name) {
+  const connector = connectorsByName[name];
+  if (!connector) {
+    warn(`Cannot unregister connector "${name}" — not found`);
+    return false;
+  }
+
+  // Remove from both indices
+  delete connectorsByName[name];
+  if (connectors[connector.workflow] === connector) {
+    delete connectors[connector.workflow];
+  }
+
+  log(`Unregistered connector: ${name} (was → workflow "${connector.workflow}")`);
+  return true;
+}
+
+/**
+ * Reload all connectors from disk, preserving the ones that fail.
+ * Clears registries, re-loads, re-registers, and re-validates.
+ *
+ * @param {object} workflowMap — { workflowName: workflowJson }
+ * @returns {{ connectors: object[], warnings: string[], errors: string[] }}
+ */
+function reload(workflowMap) {
+  log('Reloading connectors from disk...');
+
+  // Clear registries
+  for (const key of Object.keys(connectors)) {
+    delete connectors[key];
+  }
+  for (const key of Object.keys(connectorsByName)) {
+    delete connectorsByName[key];
+  }
+
+  // Re-initialize
+  return initialize(workflowMap);
+}
+
 // ─── Exports ────────────────────────────────────────
 
 module.exports = {
@@ -479,6 +582,9 @@ module.exports = {
   loadConnectors,
   registerConnectors,
   initialize,
+  reload,
+  registerConnector,
+  unregisterConnector,
 
   // Compatibility
   checkCompatibility,
@@ -488,6 +594,8 @@ module.exports = {
   getConnector,
   getConnectorByName,
   getAllConnectors,
+  getConnectorsByType,
+  getConnectorStatuses,
   getBinding,
   getNodeId,
   getGuideBindings,
