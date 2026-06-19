@@ -1,0 +1,184 @@
+{
+  "connectorVersion": "1.0.0",
+  "workflow": "video-ltx-3p",
+  "workflowHash": "",
+  "label": "Video Generation (3 Images)",
+  "description": "LTX video generation with 3 image inputs — 3 LTXVAddGuide nodes",
+  "type": "video",
+  "metadata": {
+    "author": "Animastor",
+    "updated": "2026-06-19",
+    "category": "video-generation",
+    "maxImages": 3
+  },
+  "compatibility": {
+    "nodeClasses": {
+      "75": "SaveVideo",
+      "105": "GetImageSize",
+      "107": "LTXVConditioning",
+      "108": "EmptyLTXVLatentVideo",
+      "109": "LTXVConcatAVLatent",
+      "110": "CLIPTextEncode",
+      "111": "EmptyImage",
+      "112": "PrimitiveInt",
+      "115": "RandomNoise",
+      "116": "LTXVSeparateAVLatent",
+      "121": "CLIPTextEncode",
+      "122": "CreateVideo",
+      "128": "CFGGuider",
+      "129": "PrimitiveFloat",
+      "135": "KSamplerSelect",
+      "141": "UnetLoaderGGUF",
+      "149": "LoadImage",
+      "152": "LTXVPreprocess",
+      "164": "ManualSigmas",
+      "171": "LTXVEmptyLatentAudio",
+      "172": "SamplerCustomAdvanced",
+      "179": "LoadImage",
+      "180": "LTXVPreprocess",
+      "186": "LTXVPreprocess",
+      "187": "LoadImage",
+      "188": "LoraLoaderModelOnly",
+      "190": "LTX2SamplingPreviewOverride",
+      "191": "VAELoader",
+      "199": "LTXVAddGuide",
+      "200": "LTXVAddGuide",
+      "203": "LTXVCropGuides",
+      "204": "LTXVAudioVAEDecode",
+      "205": "VAEDecodeTiled",
+      "206": "ResizeImageMaskNode",
+      "209": "ResizeImageMaskNode",
+      "210": "ResizeImageMaskNode",
+      "211": "LTXVChunkFeedForward",
+      "213": "LTXVPreprocess",
+      "214": "LTXVAddGuide",
+      "215": "ResizeImageMaskNode",
+      "216": "LoadImage",
+      "222": "VAELoaderKJ",
+      "226": "VAELoaderKJ",
+      "227": "DualCLIPLoaderGGUF"
+    }
+  },
+  "inputs": {
+    "sourceImages": {
+      "type": "multi",
+      "bindings": [
+        {
+          "nodeId": "149",
+          "field": "inputs.image",
+          "expectedClass": "LoadImage",
+          "entityType": "sourceImage",
+          "label": "Source Image 1",
+          "arrayPosition": 0,
+          "required": true
+        },
+        {
+          "nodeId": "179",
+          "field": "inputs.image",
+          "expectedClass": "LoadImage",
+          "entityType": "sourceImage",
+          "label": "Source Image 2",
+          "arrayPosition": 1
+        },
+        {
+          "nodeId": "187",
+          "field": "inputs.image",
+          "expectedClass": "LoadImage",
+          "entityType": "sourceImage",
+          "label": "Source Image 3",
+          "arrayPosition": 2
+        },
+        {
+          "nodeId": "216",
+          "field": "inputs.image",
+          "expectedClass": "LoadImage",
+          "entityType": "sourceImage",
+          "label": "Source Image 4",
+          "arrayPosition": 3
+        }
+      ]
+    },
+    "positivePrompt": {
+      "nodeId": "121",
+      "field": "inputs.text",
+      "expectedClass": "CLIPTextEncode",
+      "entityType": "positivePrompt",
+      "label": "Positive Prompt",
+      "required": true
+    },
+    "negativePrompt": {
+      "nodeId": "110",
+      "field": "inputs.text",
+      "expectedClass": "CLIPTextEncode",
+      "entityType": "negativePrompt",
+      "label": "Negative Prompt",
+      "required": true
+    }
+  },
+  "outputs": {
+    "generatedVideo": {
+      "nodeId": "75",
+      "field": "inputs.video",
+      "expectedClass": "SaveVideo",
+      "entityType": "generatedVideo",
+      "label": "Generated Video"
+    }
+  },
+  "parameters": {
+    "totalFrames": {
+      "nodeId": "112",
+      "field": "inputs.value",
+      "expectedClass": "PrimitiveInt",
+      "entityType": "totalFrames",
+      "label": "Total Frames",
+      "default": 433
+    },
+    "fps": {
+      "nodeId": "129",
+      "field": "inputs.value",
+      "expectedClass": "PrimitiveFloat",
+      "entityType": "fps",
+      "label": "Frame Rate",
+      "default": 24
+    },
+    "outputFilenamePrefix": {
+      "nodeId": "75",
+      "field": "inputs.filename_prefix",
+      "expectedClass": "SaveVideo",
+      "entityType": "outputFilenamePrefix",
+      "label": "Output Filename Prefix",
+      "default": "video/LTX-2"
+    },
+    "cfg": {
+      "nodeId": "128",
+      "field": "inputs.cfg",
+      "expectedClass": "CFGGuider",
+      "entityType": "cfg",
+      "label": "CFG Scale",
+      "default": 1
+    }
+  },
+  "guideNodes": {
+    "nodeType": "LTXVAddGuide",
+    "bindings": [
+      {
+        "nodeId": "199",
+        "fieldFrameIdx": "inputs.frame_idx",
+        "fieldStrength": "inputs.strength",
+        "imageSource": "inputs.image"
+      },
+      {
+        "nodeId": "200",
+        "fieldFrameIdx": "inputs.frame_idx",
+        "fieldStrength": "inputs.strength",
+        "imageSource": "inputs.image"
+      },
+      {
+        "nodeId": "214",
+        "fieldFrameIdx": "inputs.frame_idx",
+        "fieldStrength": "inputs.strength",
+        "imageSource": "inputs.image"
+      }
+    ]
+  }
+}

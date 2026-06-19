@@ -1,8 +1,9 @@
 // ======================================================
-// Image Service - v1.0.0
+// Image Service - v1.1.0 (Connector-aware)
 // ======================================================
 // Handles IU image generation, registration, and validation.
-// Does NOT know orchestration, states, or video generation.
+// Uses the connector system to resolve workflow nodeIds instead
+// of hardcoded constants.
 
 const config = require('../config/runtime-config');
 const path = require('path');
@@ -11,6 +12,44 @@ const sharp = require('sharp');
 const gpu = require('../runtime/gpu-dispatcher');
 const wfLoader = require('../workflows/workflow-loader');
 const { makeIUImageFilename, makePreviewFilename } = require('../storage/filesystem-store');
+
+// Connector-aware: resolve nodeId via connector, fallback to hardcoded
+const WORKFLOW_NAME = 'img-qwen-image';
+const FALLBACK_NODES = {
+  positivePrompt: '108',
+  negativePrompt: '109'
+};
+
+/**
+ * Get node ID from connector, or fallback.
+ */
+function getImageNodeId(entityKey) {
+  const connector = wfLoader.getConnector(WORKFLOW_NAME);
+  if (connector) {
+    const cl = require('../workflows/connector-loader');
+    const nodeId = cl.getNodeId(connector, entityKey);
+    if (nodeId) return nodeId;
+  }
+  return FALLBACK_NODES[entityKey] || null;
+}
+
+/**
+ * Apply value to workflow JSON via connector binding.
+ */
+function applyImageValue(wf, entityKey, value) {
+  const connector = wfLoader.getConnector(WORKFLOW_NAME);
+  if (connector) {
+    const cl = require('../workflows/connector-loader');
+    return cl.setValue(wf, connector, entityKey, value);
+  }
+  // Legacy fallback: direct nodeId access
+  const nodeId = FALLBACK_NODES[entityKey];
+  if (nodeId && wf[nodeId]) {
+    wf[nodeId].inputs.text = value;
+    return true;
+  }
+  return false;
+}
 
 // Helper to build output paths
 function getOutputPath(...parts) {
@@ -53,9 +92,6 @@ function error(msg) {
     console.error(`${logPrefix} ❌ ${msg}`);
 }
 
-// ======================================================
-// DEBUG LOGGING (Compatibility Layer)
-// ======================================================
 function debug(msg) {
     console.debug(`${logPrefix} 🐞 DEBUG: ${msg}`);
 }
@@ -64,18 +100,11 @@ function debug(msg) {
 // IU IMAGE REGISTRY
 // ======================================================
 
-/**
- * Save IU image registry entry in Redis.
- * Maps IU ID -> Build ID for asset lookup.
- */
 async function saveIURegistry(redis, iuId, buildId) {
     const key = `${config.REDIS.IU_REGISTRY_PREFIX}:${iuId}`;
     await redis.set(key, JSON.stringify({ build_id: buildId, iu_id: iuId, ts: Date.now() }), 'EX', 86400);
 }
 
-/**
- * Get IU image registry entry.
- */
 async function getIURegistry(redis, iuId) {
     const key = `${config.REDIS.IU_REGISTRY_PREFIX}:${iuId}`;
     const raw = await redis.get(key);
@@ -87,10 +116,6 @@ async function getIURegistry(redis, iuId) {
 // IU IMAGE HELPERS
 // ======================================================
 
-/**
- * Check if IU image exists for given ID.
- * Returns { image: boolean, path: string|null }.
- */
 function probeIUImage(iuId, buildId, OUTPUT_DIR) {
     const dir = path.join(OUTPUT_DIR, buildId);
     try {
@@ -108,10 +133,6 @@ function probeIUImage(iuId, buildId, OUTPUT_DIR) {
     }
 }
 
-/**
- * Determine if IU image should be generated.
- * Returns true if image is missing.
- */
 function shouldGenerateIUImage(iuId, buildId, OUTPUT_DIR) {
     const { image } = probeIUImage(iuId, buildId, OUTPUT_DIR);
     return !image;
@@ -121,11 +142,6 @@ function shouldGenerateIUImage(iuId, buildId, OUTPUT_DIR) {
 // SCENE IMAGE HELPERS
 // ======================================================
 
-/**
- * Resolves canonical scene image for video generation.
- * Scans for IU images first (scene-based).
- * Returns path relative to OUTPUT_DIR/${buildId}.
- */
 function resolveCanonicalSceneImage(OUTPUT_DIR, buildId, bookId, chapterId, sceneId) {
     const dir = path.join(OUTPUT_DIR, buildId);
     const scenePrefix = `${bookId}_${chapterId}_${sceneId}_iu`;
@@ -150,10 +166,6 @@ function resolveCanonicalSceneImage(OUTPUT_DIR, buildId, bookId, chapterId, scen
     return null;
 }
 
-/**
- * Collects all units from a scene payload.
- * Handles narration units and dialogue block units.
- */
 function collectSceneUnits(scenePayload) {
     const result = [];
     if (scenePayload?.units?.length) {
@@ -170,7 +182,7 @@ function collectSceneUnits(scenePayload) {
 }
 
 // ======================================================
-// PROMPT HELPERS (restored from legacy backend)
+// PROMPT HELPERS
 // ======================================================
 
 function cleanJoin(parts) {
@@ -278,19 +290,12 @@ function resolveNegativePrompt(unit, scenePayload) {
         || '';
 }
 
-/**
- * Build image prompt from scene and IU payload.
- * Restored from legacy backend with full character/location/environment resolution.
- */
 function buildImagePrompt(iuPayload, scenePayload, chapterPayload, bookPayload) {
     if (!bookPayload) {
         error("buildImagePrompt: bookPayload is undefined")
         return "cinematic illustration"
     }
 
-    // ======================================================
-    // [TYPOGRAPHY IU]
-    // ======================================================
     if (iuPayload?.type === "typography") {
         const parts = []
         const renderMode = resolveRenderMode(scenePayload, bookPayload)
@@ -311,23 +316,19 @@ function buildImagePrompt(iuPayload, scenePayload, chapterPayload, bookPayload) 
         return finalPrompt || 'cinematic illustration'
     }
 
-    // --- BUILD PARTS ---
     const parts = []
 
-    // 0. RENDER MODE
     const renderMode = resolveRenderMode(scenePayload, bookPayload)
     if (renderMode) {
         parts.push(`style ${renderMode.replace(/_/g, " ")}`)
     }
 
-    // 1. STYLE (UNIT > SCENE)
     if (iuPayload?.visual?.style) {
         parts.push(iuPayload.visual.style)
     } else if (scenePayload?.visual?.style) {
         parts.push(scenePayload.visual.style)
     }
 
-    // 2. LOCATION (support both string and object format)
     const resolvedLocation = resolveSceneLocation(scenePayload)
     const loc = bookPayload?.bible?.locations?.[resolvedLocation.id]
     if (loc?.visual_style) {
@@ -337,13 +338,11 @@ function buildImagePrompt(iuPayload, scenePayload, chapterPayload, bookPayload) 
         parts.push(loc.description)
     }
 
-    // Runtime environment (time, lighting, weather, mood)
     const env = resolvedLocation.environment
     if (env?.time) parts.push(env.time)
     if (env?.weather) parts.push(env.weather)
     if (env?.mood) parts.push(env.mood)
 
-    // 3. LIGHTING (UNIT > SCENE > ENVIRONMENT)
     if (iuPayload?.visual?.lighting) {
         parts.push(iuPayload.visual.lighting)
     } else if (scenePayload?.visual?.lighting) {
@@ -352,26 +351,19 @@ function buildImagePrompt(iuPayload, scenePayload, chapterPayload, bookPayload) 
         parts.push(env.lighting)
     }
 
-    // 4. SHOT (only UNIT)
     const shotPrompt = buildShotPrompt(iuPayload)
     if (shotPrompt) {
         parts.push(shotPrompt)
     }
 
-    // 5. CHARACTERS
     parts.push(...buildCharacters(scenePayload, iuPayload, chapterPayload, bookPayload))
 
-    // 6. DIRECT VISUAL PROMPT (augmentation — placed after context, before quality)
-    // visual.prompt augments the scene description with IU-specific visual detail.
-    // It comes AFTER location/environment/characters so the model first understands
-    // the scene, then gets the specific IU instruction.
     const directPrompt = iuPayload?.visual?.prompt
     if (directPrompt) {
         debug(`DIRECT PROMPT (IU): ${directPrompt}`)
         parts.push(directPrompt)
     }
 
-    // 7. QUALITY (UNIT > SCENE > DEFAULT)
     if (iuPayload?.visual?.quality) {
         parts.push(`image quality: ${iuPayload.visual.quality}`)
     } else if (scenePayload?.visual?.quality) {
@@ -385,17 +377,13 @@ function buildImagePrompt(iuPayload, scenePayload, chapterPayload, bookPayload) 
     return finalPrompt || 'cinematic illustration'
 }
 
-/**
- * Generate IU image workflow payload.
- */
 function buildIUImageWorkflow(iuPayload, scenePayload, chapterPayload, bookPayload) {
     const renderMode = iuPayload.render || scenePayload.render || bookPayload.render?.mode || 'standard';
-
     const baseNegative = 'blurry, low quality, artifacts';
     const customNegative = resolveNegativePrompt(iuPayload, scenePayload);
 
     return {
-        workflow: 'img-qwen-image',
+        workflow: WORKFLOW_NAME,
         render_mode: renderMode,
         prompt: buildImagePrompt(iuPayload, scenePayload, chapterPayload, bookPayload),
         negative_prompt: customNegative ? `${customNegative}, ${baseNegative}` : baseNegative,
@@ -406,9 +394,6 @@ function buildIUImageWorkflow(iuPayload, scenePayload, chapterPayload, bookPaylo
     };
 }
 
-/**
- * Generate IU image workflow for a specific unit.
- */
 function generateIUImageWorkflow(unit, scenePayload, chapterPayload, bookPayload) {
     const renderMode = unit.render || scenePayload.render || bookPayload.render?.mode;
     if (renderMode === 'none') return null;
@@ -417,7 +402,7 @@ function generateIUImageWorkflow(unit, scenePayload, chapterPayload, bookPayload
     const customNegative = resolveNegativePrompt(unit, scenePayload);
 
     return {
-        workflow: 'img-qwen-image',
+        workflow: WORKFLOW_NAME,
         render_mode: renderMode,
         prompt: buildImagePrompt(unit, scenePayload, chapterPayload, bookPayload),
         negative_prompt: customNegative ? `${customNegative}, ${baseNegative}` : baseNegative,
@@ -430,20 +415,14 @@ function generateIUImageWorkflow(unit, scenePayload, chapterPayload, bookPayload
 }
 
 // ======================================================
-// IU METADATA (duration estimation)
+// IU METADATA
 // ======================================================
 
-/**
- * Save IU metadata with estimated duration.
- * Duration is proportional to IU text length vs scene full_text length.
- * Writes to SQLite and also keeps the JSON file for backward compatibility.
- */
 async function saveIUMetadata(buildId, bookId, chapterId, sceneId, unit, sceneDuration, fullText, sceneOrder) {
     const iuText = unit.text || '';
     const proportion = fullText.length > 0 ? iuText.length / fullText.length : 0;
     const iuDuration = sceneDuration * proportion;
 
-    // Write to PostgreSQL
     try {
         const { iu } = require('../storage/postgres/repositories');
         await iu.upsertImageUnit(buildId, bookId, chapterId, sceneId, String(unit.id), {
@@ -461,11 +440,7 @@ async function saveIUMetadata(buildId, bookId, chapterId, sceneId, unit, sceneDu
     }
 }
 
-/**
- * Read scene audio duration from SQLite (preferred), scene metadata JSON, or probe audio file.
- */
 async function getSceneDuration(buildId, bookId, chapterId, sceneId) {
-    // Try PostgreSQL first: read duration from first IU in scene
     try {
         const { query } = require('../storage/postgres/database');
         const result = await query(`
@@ -476,7 +451,6 @@ async function getSceneDuration(buildId, bookId, chapterId, sceneId) {
         if (result.rows.length > 0 && result.rows[0].scene_duration_sec > 0) return result.rows[0].scene_duration_sec;
     } catch {}
 
-    // Fallback: probe audio file directly
     const audioPath = getOutputPath(buildId, `${bookId}_${chapterId}_${sceneId}.mp3`);
     if (fs.existsSync(audioPath)) {
         try {
@@ -486,7 +460,6 @@ async function getSceneDuration(buildId, bookId, chapterId, sceneId) {
         } catch {}
     }
 
-    // Fallback: get duration from scene_assets PG (even for placeholders)
     try {
         const { query } = require('../storage/postgres/database');
         const result = await query(`
@@ -501,10 +474,6 @@ async function getSceneDuration(buildId, bookId, chapterId, sceneId) {
     return 0;
 }
 
-/**
- * Process a single IU unit: check cache, dispatch to GPU if missing.
- * Extracted from generateSceneIUImages for readability.
- */
 async function processSingleIU(redis, unit, uIdx, sceneData, loadedBook, buildId, bookId, chapterId, sceneId, sceneDuration, fullText) {
     const canonicalUnitId = String(unit.id);
     if (!canonicalUnitId) {
@@ -516,7 +485,6 @@ async function processSingleIU(redis, unit, uIdx, sceneData, loadedBook, buildId
     const cachedIU = probeIUImage(imageIUId, buildId, config.OUTPUT_DIR);
     const existingIUImage = cachedIU?.image || null;
 
-    // Save IU metadata (duration proportional to text) to SQLite + JSON
     try {
         await saveIUMetadata(buildId, bookId, chapterId, sceneId, unit, sceneDuration, fullText, uIdx);
     } catch (err) {
@@ -527,20 +495,18 @@ async function processSingleIU(redis, unit, uIdx, sceneData, loadedBook, buildId
         const finalPrompt = buildImagePrompt(unit, sceneData.payload, sceneData.chapter, loadedBook);
         const workflow = buildIUImageWorkflow(unit, sceneData.payload, sceneData.chapter, loadedBook);
 
-        debug(`📸 IMAGE DISPATCH:
-  - final_image_prompt: ${finalPrompt}
-  - workflow_id: ${workflow?.workflow || 'unknown'}
-  - scene_id: ${chapterId}/${sceneId}
-  - iu_id: ${canonicalUnitId}`);
+        debug(`📸 IMAGE DISPATCH:\n  - final_image_prompt: ${finalPrompt}\n  - workflow_id: ${workflow?.workflow || 'unknown'}\n  - scene_id: ${chapterId}/${sceneId}\n  - iu_id: ${canonicalUnitId}`);
 
         log(`GENERATE IMAGE (IU): ${imageIUId}, unit.id: ${canonicalUnitId}`);
 
-        const wfImg = wfLoader.getWorkflow('img-qwen-image');
-        wfImg["108"].inputs.text = finalPrompt;
-
+        // Use connector to resolve nodeIds instead of hardcoded "108"/"109"
+        const wfImg = wfLoader.getWorkflow(WORKFLOW_NAME);
         const baseNegative = 'blurry, low quality, artifacts';
         const customNegative = resolveNegativePrompt(unit, sceneData.payload);
-        wfImg["109"].inputs.text = customNegative ? `${customNegative}, ${baseNegative}` : baseNegative;
+
+        // Apply via connector
+        applyImageValue(wfImg, 'positivePrompt', finalPrompt);
+        applyImageValue(wfImg, 'negativePrompt', customNegative ? `${customNegative}, ${baseNegative}` : baseNegative);
 
         await saveIURegistry(redis, imageIUId, buildId);
         await gpu.send(`${imageIUId}:image`, wfImg, 'image', buildId);
@@ -552,10 +518,6 @@ async function processSingleIU(redis, unit, uIdx, sceneData, loadedBook, buildId
     return { sent: false, cached: true };
 }
 
-/**
- * Generate IU images for a scene, submitting each to GPU HUB.
- * Restored from legacy generateSceneIUImages.
- */
 async function generateSceneIUImages(redis, sceneData, loadedBook, buildId, bookId) {
     const units = collectSceneUnits(sceneData.payload);
     const chapterId = sceneData.chapter_id;
@@ -565,7 +527,6 @@ async function generateSceneIUImages(redis, sceneData, loadedBook, buildId, book
         error(`[IMG-DEBUG] buildId is null for ${bookId}/${chapterId}/${sceneId}!`);
     }
 
-    // Get scene audio duration for IU metadata calculation
     const sceneDuration = await getSceneDuration(buildId, bookId, chapterId, sceneId);
     const fullText = sceneData.payload?.audio?.full_text || '';
 
@@ -580,28 +541,16 @@ async function generateSceneIUImages(redis, sceneData, loadedBook, buildId, book
 }
 
 // ======================================================
-// PREVIEW THUMBNAILS (lazy-generated, cached on disk)
+// PREVIEW THUMBNAILS
 // ======================================================
 
 const PREVIEW_WIDTH = 240;
 
-/**
- * Generate or retrieve a preview image for the IU.
- * Creates a 256x256 PNG thumbnail.
- *
- * @param {string} bookId
- * @param {string} chapterId
- * @param {string} sceneId
- * @param {string} iuId  — e.g. "iu-abcdef01"
- * @param {string} buildId
- * @returns {Promise<{ path: string, created: boolean } | null>}
- */
 async function getOrCreatePreview(bookId, chapterId, sceneId, iuId, buildId) {
     const strippedId = iuId.replace(/^iu/, '');
     const sourceName = makeIUImageFilename(bookId, chapterId, sceneId, strippedId);
     const previewName = makePreviewFilename(bookId, chapterId, sceneId, strippedId);
 
-    // collect candidate build directories: requested one first, then all others
     const outputDir = config.OUTPUT_DIR;
     const dirs = [];
     const requestedDir = path.join(outputDir, buildId);
@@ -646,30 +595,24 @@ async function getOrCreatePreview(bookId, chapterId, sceneId, iuId, buildId) {
 // ======================================================
 
 module.exports = {
-    // Path helpers
     getOutputPath,
-
     saveIURegistry,
     getIURegistry,
     probeIUImage,
     shouldGenerateIUImage,
     resolveCanonicalSceneImage,
     collectSceneUnits,
-
-    // Image generation
     buildIUImageWorkflow,
     buildImagePrompt,
     generateIUImageWorkflow,
     generateSceneIUImages,
     processSingleIU,
-
-    // Metadata
     getImageMetadata,
-
-    // IU metadata
     saveIUMetadata,
     getSceneDuration,
-
-    // Preview thumbnails
     getOrCreatePreview,
+    // Exposed for connector-aware usage
+    applyImageValue,
+    getImageNodeId,
+    WORKFLOW_NAME,
 };

@@ -22,7 +22,7 @@ Workflow в Animastor — это JSON-шаблоны, совместимые с 
 
 1. При старте backend сканирует `/data/workflows/*.json`
 2. Каждый файл загружается как именованный шаблон: `workflows[filenameWithoutExt] = template`
-3. API: `getWorkflow(name)` → возвращает **deep clone** шаблона (изменения не затрагивают оригинал)
+3. API: `getWorkflow(name)` → возвращает **deep clone** шаблона (`JSON.parse(JSON.stringify(template))`)
 
 ### Workflow Builders
 
@@ -46,20 +46,35 @@ Workflow в Animastor — это JSON-шаблоны, совместимые с 
 ## Механизм исполнения
 
 1. **Service вызывает builder** → получает готовый JSON workflow
-2. **Service вызывает `gpu.send(jobId, workflow, type, buildId)`** → HTTP POST в GPU Hub
-3. **GPU Hub** ставит задачу в Redis-очередь (`animastor:queue:audio|image|video`)
-4. **Worker** забирает задачу, отправляет workflow в ComfyUI (`POST /prompt`)
+2. **Service вызывает `gpu.send(job_id, workflow, type, buildId)`** или `gpu.sendUnified(taskSpec)` → HTTP POST в GPU Hub (3 retries, 30s timeout)
+3. **GPU Hub** ставит задачу в Redis-очередь, дедуплицирует (NX EX 3600)
+4. **Worker (ESM)** забирает задачу: сначала сохраняет assets (изображения) в COMFY_INPUT_DIR, затем отправляет workflow в ComfyUI (`POST /prompt`)
 5. **ComfyUI** выполняет ноды и генерирует результат
-6. **Worker** скачивает base64-результат (`GET /history`), отправляет в GPU Hub
-7. **GPU Hub** форвардит результат обратно в backend
+6. **Worker** ждёт результат (long polling, timeout 10 min), скачивает base64-результат из ComfyUI, отправляет в GPU Hub
+7. **GPU Hub** форвардит результат в backend (5 retries, 500ms delay)
+8. **Worker может определять видео через filesystem** (сканирует COMFY_OUTPUT_DIR/video/ для новых .mp4 файлов)
 
 ```
 Backend Service → [buildWorkflow] → JSON
-               → [gpu.send()] → GPU Hub → Redis Queue
-                                          → Worker → ComfyUI
-                                          → Worker → result base64
-                                          → GPU Hub → Backend Task Handler
+               → [gpu.send/sendUnified] → GPU Hub → Redis Queue
+                                          → Worker → save assets to COMFY_INPUT_DIR
+                                          → Worker → ComfyUI POST /prompt
+                                          → Worker → poll /history
+                                          → Worker → download result base64
+                                          → GPU Hub → 5× retry → Backend Task Handler
 ```
+
+## Multi-image assets
+
+Worker поддерживает загрузку нескольких изображений для LTX-видео:
+```
+task.assets.images = {
+  "unitId_1": "base64...",
+  "unitId_2": "base64...",
+  ...
+}
+```
+Каждое изображение сохраняется как `<scenePrefix>_<unitId>.png` в COMFY_INPUT_DIR.
 
 ## Точки расширения
 
@@ -92,20 +107,23 @@ Backend Service → [buildWorkflow] → JSON
                          ║   Filled Workflow    ║
                          ║    (ready to send)   ║
                          ╚══════════╤═══════════╝
-                                    │ gpu.send()
+                                    │ gpu.send/sendUnified()
                                     ▼
                          ╔══════════════════════╗
                          ║   GPU Hub Queue      ║
+                         ║   (dedup: NX EX 3600)║
                          ╚══════════╤═══════════╝
-                                    │ Worker pop
+                                    │ Worker pop (poll)
                                     ▼
                          ╔══════════════════════╗
-                         ║    ComfyUI Execute   ║
+                         ║   ComfyUI Execute    ║
+                         ║   (10 min timeout)   ║
                          ╚══════════╤═══════════╝
                                     │ Result
                                     ▼
                          ╔══════════════════════╗
                          ║   Task Completed     ║
+                         ║   (5× retry to b/e)  ║
                          ╚══════════════════════╝
 ```
 
@@ -121,6 +139,7 @@ Backend Service → [buildWorkflow] → JSON
 - Workflow загружаются только при старте (hot-reload не поддерживается)
 - Все workflow специфичны для ComfyUI (не абстрагированы под другие платформы)
 - Видео-workflow ограничены: максимум 4 изображения на группу (LTX limitation)
+- GPU_TIMEOUT: 10 min (конфигурируется через env)
 
 ## Node ID Map
 

@@ -1,0 +1,88 @@
+{
+  "connectorVersion": "1.0.0",
+  "workflow": "tts-qwen-narrator",
+  "workflowHash": "",
+  "label": "TTS Narration (Qwen)",
+  "description": "Text-to-speech narration using Qwen3-TTS Voice Design",
+  "type": "audio",
+  "metadata": {
+    "author": "Animastor",
+    "updated": "2026-06-19",
+    "category": "audio-generation"
+  },
+  "compatibility": {
+    "nodeClasses": {
+      "108": "Qwen3TTSVoiceDesign",
+      "78": "Qwen3TTSLoader",
+      "1008": "SaveAudioMP3"
+    }
+  },
+  "inputs": {
+    "narrationText": {
+      "nodeId": "108",
+      "field": "inputs.text",
+      "expectedClass": "Qwen3TTSVoiceDesign",
+      "entityType": "narrationText",
+      "label": "Narration Text",
+      "required": true
+    },
+    "voiceInstruction": {
+      "nodeId": "108",
+      "field": "inputs.voice_instruction",
+      "expectedClass": "Qwen3TTSVoiceDesign",
+      "entityType": "voiceInstruction",
+      "label": "Voice Instruction",
+      "required": false
+    }
+  },
+  "outputs": {
+    "generatedAudio": {
+      "nodeId": "1008",
+      "field": "inputs.audio",
+      "expectedClass": "SaveAudioMP3",
+      "entityType": "generatedAudio",
+      "label": "Generated Audio"
+    }
+  },
+  "parameters": {
+    "seed": {
+      "nodeId": "108",
+      "field": "inputs.seed",
+      "expectedClass": "Qwen3TTSVoiceDesign",
+      "entityType": "seed",
+      "label": "Seed"
+    },
+    "quality": {
+      "nodeId": "1008",
+      "field": "inputs.quality",
+      "expectedClass": "SaveAudioMP3",
+      "entityType": "quality",
+      "label": "Audio Quality",
+      "default": "320k"
+    },
+    "outputFilenamePrefix": {
+      "nodeId": "1008",
+      "field": "inputs.filename_prefix",
+      "expectedClass": "SaveAudioMP3",
+      "entityType": "outputFilenamePrefix",
+      "label": "Output Filename Prefix",
+      "default": "audio/tts"
+    },
+    "language": {
+      "nodeId": "108",
+      "field": "inputs.language",
+      "expectedClass": "Qwen3TTSVoiceDesign",
+      "entityType": "language",
+      "label": "Language",
+      "default": "Russian"
+    },
+    "temperature": {
+      "nodeId": "108",
+      "field": "inputs.temperature",
+      "expectedClass": "Qwen3TTSVoiceDesign",
+      "entityType": "temperature",
+      "label": "Temperature",
+      "default": 0.9
+    }
+  }
+}

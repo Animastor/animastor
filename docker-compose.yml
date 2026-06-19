@@ -12,6 +12,8 @@ services:
     image: postgres:16
     container_name: animastor-pg
     restart: unless-stopped
+    ports:
+      - "5432:5432"
     networks:
       - net
     environment:

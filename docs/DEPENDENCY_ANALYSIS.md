@@ -10,10 +10,10 @@
 
 ### 1.1 backend.cjs ↔ task-handler.cjs
 
-- `backend.cjs` импортирует `task-handler.cjs` (строка 123)
-- `task-handler.cjs` получает `backend.cjs` через DI (объект deps на строке 118-122) и использует экспортированные модули
+- `backend.cjs` импортирует `task-handler.cjs`
+- `task-handler.cjs` получает `backend.cjs` через DI (объект deps) и использует экспортированные модули
 
-**Тип:** Косвенная циклическая зависимость через DI-контейнер. backend.cjs создает taskHandler, который зависит от модулей, импортированных в backend.cjs.
+**Тип:** Косвенная циклическая зависимость через DI-контейнер.
 
 ### 1.2 scene-orchestrator.js ↔ dispatch-engine.js
 
@@ -38,22 +38,27 @@
 - book-diff.cjs (получает deps)
 - audio-recovery.cjs (получает deps)
 
-### 2.2 scene-orchestrator.js (1206 строк)
+### 2.2 scene-orchestrator.js (~1200 строк)
 
-**Проблема:** Содержит логику диспетчеризации, обработки callback'ов, state management, и интеграции со всеми тремя сервисами (audio/image/video).
+**Проблема:** Содержит логику диспетчеризации, обработки callback'ов, state management, layer config checks, padded text trimming.
 
 **Связность:** Очень высокая. Зависит от:
 - audio/index.js, image/index.js, video/index.js
-- scene-state.js
+- scene-state.js (dual model: per-asset + linear FSM)
 - event-journal.js
 - active-scenes-index.js
 - layer-config.js
 - gpu-dispatcher.js
 - asset-registry.js
+- placeholder-audio.js
+- dispatch-engine.js
+- runtime-scheduler.js
+- scene-window.js
+- worker-health.js
 
-### 2.3 book-routes.cjs (1800+ строк)
+### 2.3 book-routes.cjs (~1800+ строк)
 
-**Проблема:** Содержит все endpoints для книг, включая импорт, bootstrap, trigger-next-window, agent-status, generation-state, и десятки других. Один файл отвечает за ~30+ endpoint'ов.
+**Проблема:** Содержит все endpoints для книг, включая импорт, bootstrap, trigger-next-window, agent-status, generation-state, и десятки других.
 
 **Связность:** Чрезвычайно высокая. Зависит от ~20+ сервисов.
 
@@ -63,25 +68,34 @@
 
 ### 3.1 GPU Hub (единая точка отказа)
 
-**Проблема:** Все GPU-задачи проходят через единственный GPU Hub. При его недоступности вся генерация останавливается.
+**Проблема:** Все GPU-задачи проходят через единственный GPU Hub.
 
-**Статус:** Нет механизма failover, нет репликации.
+**Текущее состояние (улучшено):**
+- ✅ REQUEUE при timeout воркера (10 min)
+- ✅ Дедупликация задач
+- ✅ Graceful shutdown
+- ❌ Нет failover, нет репликации
 
 ### 3.2 Redis (единая точка отказа для runtime)
 
 **Проблема:** Runtime-состояние (active scenes, dispatch leases, quotas, event journal, worker health, очереди) полностью зависит от Redis.
 
-**Статус:** Нет Redis Sentinel/Cluster конфигурации в docker-compose.
+**Текущее состояние:**
+- ✅ Redis persistence через docker volume (redis-data:/data)
+- ❌ Нет Redis Sentinel/Cluster конфигурации в docker-compose
 
-### 3.3 OpenRouter API (единая точка отказа для AI)
+### 3.3 OpenRouter API / Nvidia API (единая точка отказа для AI)
 
-**Проблема:** Весь AI-пайплайн (agent-service, chat-engine) зависит от OpenRouter API. При недоступности — импорт книг и AI-чат невозможны.
+**Проблема:** Весь AI-пайплайн (agent-service, chat-engine) зависит от внешнего API.
 
-**Статус:** Nvidia API определён как альтернатива, но механизм автоматического переключения не обнаружен.
+**Текущее состояние:**
+- ✅ AI_API_BASE_URL конфигурируется (OpenRouter, Nvidia, custom)
+- ❌ Нет автоматического переключения между провайдерами
+- ❌ Нет fallback цепочки
 
 ### 3.4 Runtime Scheduler (единственный планировщик)
 
-**Проблема:** Весь прогресс генерации зависит от одного tick-планировщика. При его остановке — генерация сцен прекращается.
+**Проблема:** Весь прогресс генерации зависит от одного tick-планировщика (5s). При его остановке — генерация сцен прекращается.
 
 ---
 
@@ -92,10 +106,12 @@
 **Ответственность:**
 - Dispatch execution для audio/image/video
 - Callback handling для всех трёх типов
-- State machine management
-- Event journal logging
-- Quota management (decide/release)
+- State machine management (dual model)
+- Layer config checks (audio_enabled/image_enabled/video_enabled)
+- Stale state tolerance
+- Padded text trimming
 - Lane management (completeWithoutVideo/Image)
+- Event journal logging
 
 **Оценка:** Нарушение Single Responsibility Principle.
 
@@ -115,27 +131,27 @@
 
 **Оценка:** Слишком много ответственности для одного файла.
 
-### 4.3 dispatch-engine.js (1031 строка)
+### 4.3 dispatch-engine.js (~1000 строк)
 
 **Ответственность:**
 - Lease management
 - Quota management
-- Circuit breaker integration
-- Retry budget integration
-- Fairness engine integration
-- Policy engine integration
+- Circuit breaker integration (safeRequire)
+- Retry budget integration (safeRequire)
+- Fairness engine integration (safeRequire)
+- Policy engine integration (safeRequire)
 - Decision tracing
 - Counter reconciliation
 
-**Оценка:** Интегрирует слишком много cross-cutting concerns.
+**Оценка:** Интегрирует слишком много cross-cutting concerns. Однако governance-модули загружаются лениво (safeRequire).
 
 ### 4.4 scene-state.js
 
 **Ответственность:**
-- Определение состояний сцены (SceneState enum)
-- Определение состояний asset'ов (AssetState enum)
-- State transitions
+- Dual state model (per-asset + linear FSM)
+- State transitions для обоих моделей
 - Heartbeat management
+- Stuck detection
 - Redis read/write
 
 ---
@@ -147,23 +163,21 @@
 **Поток логики:**
 - Инициализация → подключение Redis/PG
 - Загрузка workflow
-- DI всех сервисов
+- DI всех сервисов (30+)
 - Монтирование всех роутов
 - Запуск runtime loop
-- Запуск cleanup/audio-recovery
-- Startup recovery
+- Запуск cleanup/audio-recovery/startup-resume
+- Graceful shutdown
 
-**Оценка:** ~265 строк для ~30 зависимостей. Каждая новая функциональность требует изменения этого файла.
+**Оценка:** ~265 строк для ~30 зависимостей.
 
 ### 5.2 task-handler.cjs
 
 **Поток логики:**
 - Callback от GPU Hub (audio, image, video)
-- Валидация результатов
-- Вызов orchestrator.handle*Completed()
+- IU image completion с проверкой PG
+- Аудио-мерж с padded text trimming
 - Регистрация asset'ов
-
-**Оценка:** Единственный вход для всех результатов GPU, но логика диспетчеризации простая.
 
 ### 5.3 scene-orchestrator.js
 
@@ -171,48 +185,69 @@
 - dispatching → выполнение → callback → state update → window slide
 - Проходит через orchestrator практически вся бизнес-логика
 
-**Оценка:** Является центральным "мозгом" системы, вся логика сходится в нём.
+**Оценка:** Является центральным "мозгом" системы.
+
+---
+
+## 6. Slim runtime (v2.0.0)
+
+Модуль `runtime/index.js` экспортирует только core pipeline. Governance-модули загружаются лениво через `runtime.index.debug`.
+
+**Core (всегда загружены):**
+- scheduler, loop, activeScenes, reconciliation, dispatch, leaseManager, counterReconciliation, metrics, gpuDispatcher, workerHealth, sceneWindow
+
+**Error handling (загружены):**
+- failureTaxonomy, retryManager, retentionManager
+
+**Debug (ленивая загрузка):**
+- snapshotManager, circuitBreaker, priorityManager, fairness, retryBudget, policyEngine, workloadClassifier, costEstimator, decisionTrace, feedback, governanceMetrics, adaptationController, governanceStability, governanceHealth, executionSemantics
+
+**Debug/Experimental (ленивая загрузка):**
+- policySimulator, sandbox, failureReplay, validator
 
 ---
 
 ## Визуализация графа зависимостей (критические пути)
 
 ```
-                    ┌─────────────┐
-                    │  backend.cjs│◄─── Центральный DI (30+ зависимостей)
-                    └──────┬──────┘
-                           │
-         ┌─────────────────┼─────────────────┐
-         ▼                 ▼                  ▼
-   ┌──────────┐    ┌──────────────┐   ┌────────────┐
-   │ Routes   │    │  Runtime     │   │  Services  │
-   │ (4 файла)│    │  Scheduler   │   │  (15+)     │
-   └──────────┘    └──────┬───────┘   └────────────┘
-                          │
-                    ┌─────┴──────┐
-                    │  Dispatch  │
-                    │  Engine    │
-                    └─────┬──────┘
-                          │
-                    ┌─────┴──────┐
-                    │  Scene     │◄─── Чрезмерная ответственность
-                    │  Orchestr. │
-                    └─────┬──────┘
-                          │
-         ┌────────────────┼────────────────┐
-         ▼                ▼                ▼
-   ┌──────────┐    ┌───────────┐    ┌──────────┐
-   │  Audio   │    │   Image   │    │  Video   │
-   │  Service │    │  Service  │    │  Service │
-   └──────────┘    └───────────┘    └──────────┘
-         │                │                │
-         └────────────────┼────────────────┘
-                          ▼
+                    ┌──────────────────────┐
+                    │     backend.cjs      │◄─── Центральный DI (30+ зависимостей)
+                    └──────────┬───────────┘
+                               │
+         ┌─────────────────────┼─────────────────────┐
+         ▼                     ▼                      ▼
+   ┌──────────┐       ┌──────────────┐       ┌──────────────┐
+   │ Routes   │       │  Runtime     │       │  Services    │
+   │ (4 файла)│       │  Scheduler   │       │  (20+)       │
+   └──────────┘       └──────┬───────┘       └──────────────┘
+                             │
+                    ┌────────┴────────┐
+                    │  Dispatch       │
+                    │  Engine         │
+                    │  (lazy gov.)    │
+                    └────────┬────────┘
+                             │
+                    ┌────────┴────────┐
+                    │  Scene          │◄─── Чрезмерная ответственность
+                    │  Orchestrator   │     (1200 строк, layer-aware)
+                    └────────┬────────┘
+                             │
+         ┌───────────────────┼───────────────────┐
+         ▼                   ▼                    ▼
+   ┌──────────┐      ┌───────────┐       ┌──────────┐
+   │  Audio   │      │   Image   │       │  Video   │
+   │  Service │      │  Service  │       │  Service │
+   └──────────┘      └───────────┘       └──────────┘
+         │                  │                   │
+         └──────────────────┼───────────────────┘
+                            ▼
                     ┌──────────────┐
                     │GPU Dispatcher│
+                    │  (3 retries) │
                     └──────┬───────┘
                            │
                     ┌──────┴───────┐
                     │   GPU Hub    │◄─── Единая точка отказа
+                    │ (10min t/o)  │     (+ requeue)
                     └──────────────┘
 ```

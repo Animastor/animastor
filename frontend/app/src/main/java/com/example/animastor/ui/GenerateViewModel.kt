@@ -82,6 +82,15 @@ class GenerateViewModel(
     private val _playbackPrepared = MutableSharedFlow<PlaybackPreparation>(replay = 1, extraBufferCapacity = 4)
     val playbackPrepared: SharedFlow<PlaybackPreparation> = _playbackPrepared.asSharedFlow()
 
+    /**
+     * Emitted when the cover image becomes available after generation.
+     * The activity coordinator observes this separately from [playbackPrepared]
+     * to update [PlaybackViewModel.setCoverImage] without disrupting the
+     * playback phase (no call to [PlaybackViewModel.preparePlayback]).
+     */
+    private val _coverUpdated = MutableSharedFlow<Bitmap>(extraBufferCapacity = 4)
+    val coverUpdated: SharedFlow<Bitmap> = _coverUpdated.asSharedFlow()
+
     // ── UI State (generation/import related only) ─────────────────
 
     private val _uiState = MutableStateFlow(GenUiState())
@@ -337,16 +346,9 @@ class GenerateViewModel(
                                 val coverReady = loadCoverBitmap(coverId)
                                 if (coverReady != null) {
                                     _uiState.update { it.copy(coverImage = coverReady) }
-                                }
-                                if (coverReady != null) {
-                                    _playbackPrepared.tryEmit(PlaybackPreparation(
-                                        bookId = bookId,
-                                        buildId = buildId,
-                                        chunkIds = chunkIds,
-                                        coverImage = coverReady,
-                                        chunkPositions = positions
-                                    ))
-                                    Log.i(TAG, "startGeneration: cover poll succeeded, re-emitted with cover")
+                                    // Emit cover update via dedicated flow — does NOT re-prepare playback
+                                    _coverUpdated.tryEmit(coverReady)
+                                    Log.i(TAG, "startGeneration: cover poll succeeded, emitted via coverUpdated")
                                 }
                             }
                         }

@@ -1,17 +1,62 @@
 // ======================================================
-// Audio Service - v1.0.0
+// Audio Service - v1.1.0 (Connector-aware)
 // ======================================================
 // Handles all audio-related operations: generation, processing, validation.
-// Does NOT know orchestration, states, or transitions.
+// Uses the connector system to resolve workflow nodeIds.
 
 const config = require('../config/runtime-config');
 const path = require('path');
 const fs = require('fs');
-const { spawn } = require('child_process');
+const { spawn, execSync } = require('child_process');
 const gpu = require('../runtime/gpu-dispatcher');
 const wfLoader = require('../workflows/workflow-loader');
 
-// Helper to build output paths
+const WORKFLOW_NARRATION = 'tts-qwen-narrator';
+const WORKFLOW_DIALOGUE = 'tts-qwen-dialogue';
+
+/**
+ * Check if ffmpeg is available on the system.
+ */
+let _ffmpegChecked = false;
+let _ffmpegAvailable = false;
+
+function isFFmpegAvailable() {
+  if (!_ffmpegChecked) {
+    try {
+      execSync('ffmpeg -version', { stdio: 'ignore', timeout: 3000 });
+      _ffmpegAvailable = true;
+    } catch {
+      _ffmpegAvailable = false;
+    }
+    _ffmpegChecked = true;
+  }
+  return _ffmpegAvailable;
+}
+
+/**
+ * Apply a value to a workflow JSON via connector binding.
+ */
+function applyAudioValue(wf, workflowName, entityKey, value) {
+  const connector = wfLoader.getConnector(workflowName);
+  if (connector) {
+    const cl = require('../workflows/connector-loader');
+    return cl.setValue(wf, connector, entityKey, value);
+  }
+  return false;
+}
+
+/**
+ * Get node ID from connector for an entity key.
+ */
+function getAudioNodeId(workflowName, entityKey) {
+  const connector = wfLoader.getConnector(workflowName);
+  if (connector) {
+    const cl = require('../workflows/connector-loader');
+    return cl.getNodeId(connector, entityKey);
+  }
+  return null;
+}
+
 function getOutputPath(...parts) {
     return path.join(config.OUTPUT_DIR, ...parts.filter(Boolean));
 }
@@ -34,13 +79,10 @@ function error(msg) {
 // FFMPEG OPERATIONS
 // ======================================================
 
-/**
- * Run ffmpeg merge with stream copy mode (no re-encoding).
- */
 async function runFFmpegMerge(args) {
     return new Promise((resolve, reject) => {
         const ffmpeg = spawn('ffmpeg', args, {
-            stdio: ['ignore', 'pipe', 'pipe'] // Use pipes to prevent blocking
+            stdio: ['ignore', 'pipe', 'pipe']
         });
 
         let stderr = '';
@@ -49,9 +91,7 @@ async function runFFmpegMerge(args) {
             stderr += data.toString();
         });
 
-        ffmpeg.stdout.on('data', () => {
-            // Discard stdout data
-        });
+        ffmpeg.stdout.on('data', () => {});
 
         ffmpeg.on('close', code => {
             if (code === 0) {
@@ -65,9 +105,6 @@ async function runFFmpegMerge(args) {
     });
 }
 
-/**
- * Run ffmpeg to trim/cleanup audio (remove trailing silence).
- */
 async function runFFmpegTrim(inputPath, outputPath, startTimeSec = 0, durationSec = null) {
     return new Promise((resolve, reject) => {
         const args = ['-i', inputPath];
@@ -76,7 +113,6 @@ async function runFFmpegTrim(inputPath, outputPath, startTimeSec = 0, durationSe
             args.push('-ss', String(startTimeSec));
         }
 
-        // Remove trailing silence
         const filterArgs = ['-af', 'silenceremove=stop_periods=-1:stop_duration=0.2:stop_threshold=-50dB'];
         args.push(...filterArgs);
 
@@ -114,12 +150,7 @@ async function runFFmpegTrim(inputPath, outputPath, startTimeSec = 0, durationSe
 // AUDIO BUILD PIPELINE
 // ======================================================
 
-/**
- * Unified audio pipeline for final scene audio.
- * Handles both single and multi-chunk cases.
- */
 async function buildSceneAudio(chunks, finalPath, buildId = null, force = false) {
-    // Validate input
     if (!chunks || !Array.isArray(chunks) || chunks.length === 0) {
         throw new Error("buildSceneAudio: chunks must be a non-empty array");
     }
@@ -128,7 +159,6 @@ async function buildSceneAudio(chunks, finalPath, buildId = null, force = false)
         throw new Error("buildSceneAudio: finalPath must be a non-empty string");
     }
 
-    // Extract buildId from finalPath if not provided
     if (!buildId) {
         const parts = finalPath.split(path.sep);
         const buildIdFromPath = parts[parts.length - 2];
@@ -140,15 +170,11 @@ async function buildSceneAudio(chunks, finalPath, buildId = null, force = false)
         }
     }
 
-    // Ensure output directory exists
     const outputDir = path.dirname(finalPath);
     if (!fs.existsSync(outputDir)) {
         fs.mkdirSync(outputDir, { recursive: true });
     }
 
-    // Validate canonical audio exists and is valid
-    // When force=true (merge path), skip validation so we always process chunks.
-    // This preserves placeholder audio on disk until real audio is ready.
     if (!force && fs.existsSync(finalPath)) {
         try {
             const isValid = await validateCanonicalAudio(finalPath);
@@ -165,7 +191,6 @@ async function buildSceneAudio(chunks, finalPath, buildId = null, force = false)
         }
     }
 
-    // CASE A: Single chunk - use atomic pipeline with temp file
     if (chunks.length === 1) {
         const singleChunk = chunks[0];
         log(`Processing single chunk through unified audio pipeline...`);
@@ -176,7 +201,6 @@ async function buildSceneAudio(chunks, finalPath, buildId = null, force = false)
             log(`ffmpeg cleanup: trim tail and save to temp path...`);
             await runFFmpegTrim(singleChunk, tempPath);
 
-            // Atomically move temp file to final path
             fs.renameSync(tempPath, finalPath);
             log(`✅ Single chunk processed: ${path.basename(finalPath)}`);
 
@@ -198,7 +222,6 @@ async function buildSceneAudio(chunks, finalPath, buildId = null, force = false)
         }
     }
 
-    // CASE B: Multiple chunks - use ffmpeg concat + cleanup
     log(`🎬 Merging ${chunks.length} audio chunks with ffmpeg`);
     const concatPath = createConcatFile(chunks, buildId);
 
@@ -208,7 +231,6 @@ async function buildSceneAudio(chunks, finalPath, buildId = null, force = false)
 
         log(`✅ Audio merge completed: ${path.basename(finalPath)}`);
 
-        // Post-merge silence cleanup (remove trailing silence from merge seams)
         log(`🎬 Applying final audio cleanup filter to canonical output...`);
         const tempCleanupPath = finalPath.replace('.mp3', '.cleanup.mp3');
         try {
@@ -223,7 +245,6 @@ async function buildSceneAudio(chunks, finalPath, buildId = null, force = false)
             }
         }
 
-        // Cleanup temp chunks
         for (const chunk of chunks) {
             if (fs.existsSync(chunk)) {
                 try { fs.unlinkSync(chunk); } catch (e) {}
@@ -246,9 +267,6 @@ async function buildSceneAudio(chunks, finalPath, buildId = null, force = false)
     }
 }
 
-/**
- * Create temporary concat file for ffmpeg.
- */
 function createConcatFile(chunks, buildId) {
     const concatContent = chunks
         .map(chunk => `file '${chunk}'`)
@@ -262,53 +280,45 @@ function createConcatFile(chunks, buildId) {
 // AUDIO VALIDATION
 // ======================================================
 
-/**
- * Validate canonical scene audio file.
- * Returns true only if file exists, is readable, and has valid duration.
- */
-async function validateCanonicalAudio(path) {
-    if (!path || typeof path !== 'string') {
+async function validateCanonicalAudio(filePath) {
+    if (!filePath || typeof filePath !== 'string') {
         warn(`validateCanonicalAudio: invalid path`);
         return false;
     }
 
-    if (!fs.existsSync(path)) {
-        warn(`validateCanonicalAudio: file does not exist: ${path}`);
+    if (!fs.existsSync(filePath)) {
+        warn(`validateCanonicalAudio: file does not exist: ${filePath}`);
         return false;
     }
 
-    const stats = fs.statSync(path);
+    const stats = fs.statSync(filePath);
     if (stats.size < 1024) {
-        warn(`validateCanonicalAudio: file too small: ${path} (${stats.size} bytes)`);
+        warn(`validateCanonicalAudio: file too small: ${filePath} (${stats.size} bytes)`);
         return false;
     }
 
     try {
         const mm = require('music-metadata');
-        const metadata = await mm.parseFile(path);
+        const metadata = await mm.parseFile(filePath);
         const duration = metadata.format.duration || 0;
 
         if (duration <= 0) {
-            warn(`validateCanonicalAudio: invalid duration: ${path} (${duration}s)`);
+            warn(`validateCanonicalAudio: invalid duration: ${filePath} (${duration}s)`);
             return false;
         }
 
         if (duration > 7200) {
-            warn(`validateCanonicalAudio: suspiciously long duration: ${path} (${duration}s)`);
+            warn(`validateCanonicalAudio: suspiciously long duration: ${filePath} (${duration}s)`);
             return false;
         }
 
-        // Success - no log to avoid spam
         return true;
     } catch (err) {
-        warn(`validateCanonicalAudio: parse error: ${path} ${err.message}`);
+        warn(`validateCanonicalAudio: parse error: ${filePath} ${err.message}`);
         return false;
     }
 }
 
-/**
- * Check if canonical scene audio is ready (exists and valid).
- */
 async function isSceneAudioReady(buildId, bookId, chapterId, sceneId, mm) {
     const audioPath = getOutputPath(buildId, `${bookId}_${chapterId}_${sceneId}.mp3`);
 
@@ -320,9 +330,6 @@ async function isSceneAudioReady(buildId, bookId, chapterId, sceneId, mm) {
     return isValid;
 }
 
-/**
- * Get audio duration using music-metadata.
- */
 async function getAudioDuration(filePath, mm) {
     try {
         const metadata = await mm.parseFile(filePath);
@@ -336,9 +343,6 @@ async function getAudioDuration(filePath, mm) {
 // CHUNK HELPERS
 // ======================================================
 
-/**
- * Find existing scene chunks from disk.
- */
 function findExistingSceneChunks(bookId, chapterId, sceneId, buildId) {
     const dir = getOutputPath(buildId);
     const escapedBookId = escapeRegExp(bookId);
@@ -362,9 +366,6 @@ function findExistingSceneChunks(bookId, chapterId, sceneId, buildId) {
     }
 }
 
-/**
- * Check if all expected chunks exist on disk.
- */
 function allSceneChunksExist(bookId, chapterId, sceneId, buildId, expectedChunkCount) {
     const chunks = findExistingSceneChunks(bookId, chapterId, sceneId, buildId);
     return {
@@ -373,9 +374,6 @@ function allSceneChunksExist(bookId, chapterId, sceneId, buildId, expectedChunkC
     };
 }
 
-/**
- * Check if audio chunks are ready for merge.
- */
 function areSceneAudioChunksReady(bookId, chapterId, sceneId, buildId, expectedChunkCount) {
     const result = allSceneChunksExist(bookId, chapterId, sceneId, buildId, expectedChunkCount);
     return {
@@ -389,11 +387,7 @@ function areSceneAudioChunksReady(bookId, chapterId, sceneId, buildId, expectedC
 // AUDIO MERGE / RECOVERY
 // ======================================================
 
-/**
- * Merge audio chunks to build canonical scene audio.
- */
 async function mergeSceneAudioChunks(redis, bookId, chapterId, sceneId, buildId, expectedChunkCount = null) {
-    // Acquire merge lock to prevent concurrent merges
     const mergeLockKey = `animastor:audio-merge-lock:${bookId}:${chapterId}:${sceneId}`;
     const lockAcquired = await redis.set(mergeLockKey, buildId, 'NX', 'EX', 300);
     if (!lockAcquired) {
@@ -427,15 +421,9 @@ async function mergeSceneAudioChunks(redis, bookId, chapterId, sceneId, buildId,
     }
 }
 
-/**
- * Probe audio duration via ffprobe.
- * Returns duration in seconds or 0 on failure.
- */
 function probeDuration(filePath) {
     return new Promise((resolve) => {
         const { spawn } = require('child_process');
-        // Use stream duration (actual audio content) not format duration
-        // (format duration can include metadata/ID3 padding)
         const probe = spawn('ffprobe', [
             '-v', 'error',
             '-show_entries', 'stream=duration',
@@ -447,7 +435,6 @@ function probeDuration(filePath) {
         probe.on('close', code => {
             if (code !== 0) { resolve(0); return; }
             const lines = out.trim().split('\n').filter(Boolean);
-            // Take the first valid stream duration
             for (const line of lines) {
                 const dur = parseFloat(line);
                 if (Number.isFinite(dur) && dur > 0) { resolve(dur); return; }
@@ -458,10 +445,6 @@ function probeDuration(filePath) {
     });
 }
 
-/**
- * Cut first `duration` seconds from filePath into outputPath using stream copy.
- * Resolves true on success, false on failure.
- */
 function cutFirstHalf(filePath, outputPath, duration) {
     return new Promise((resolve) => {
         const { spawn } = require('child_process');
@@ -476,13 +459,6 @@ function cutFirstHalf(filePath, outputPath, duration) {
     });
 }
 
-/**
- * Find the quietest point (minimum RMS energy) within a window of the audio.
- * @param {string} filePath - path to audio file
- * @param {number} [startPct=0.25] - search window start as fraction of total duration (0.0-1.0)
- * @param {number} [endPct=0.75] - search window end as fraction of total duration (0.0-1.0)
- * @returns {Promise<number>} time in seconds, or 0 if detection fails
- */
 function findQuietestPoint(filePath, startPct = 0.25, endPct = 0.75) {
     return new Promise((resolve) => {
         const { spawn } = require('child_process');
@@ -541,31 +517,19 @@ async function trimPaddedSceneAudio(filePath) {
     const basename = path.basename(filePath);
     log(`✂️ trimPaddedSceneAudio: trimming ${basename}`);
 
-    // 1. Get total duration
     const duration = await probeDuration(filePath);
     if (!duration || duration < 0.5) {
         log(`⚠️ trimPaddedSceneAudio: duration=${duration}s too short for ${basename}, skipping`);
         return;
     }
 
-    // 2. Find the quietest point in a narrow window around the midpoint (40%-60%).
-    //    The text was exactly duplicated by padShortText, so the ideal boundary
-    //    is near 50%, but preferring a quiet gap between sentences gives a cleaner
-    //    cut. The previous wide window (25%-75%) was unreliable — it could pick
-    //    the wrong sentence boundary (e.g. 75%) when TTS added unequal silence gaps.
     const quietest = await findQuietestPoint(filePath, 0.40, 0.60);
     let cutTime = (quietest > 0.3) ? quietest : (duration / 2);
-    // Add a 100ms safety margin after the quietest point to avoid clipping
-    // the last phoneme of the first repetition. For very short words like
-    // "пролог" the quiet point can fall right at the end of the word, cutting
-    // off the final consonant. The extra margin preserves natural sounding
-    // speech at the cost of a slightly longer silence between the two halves.
-    const safetyMargin = 0.10; // 100ms
-    cutTime = Math.min(cutTime + safetyMargin, duration * 0.55); // never exceed 55% of total
+    const safetyMargin = 0.10;
+    cutTime = Math.min(cutTime + safetyMargin, duration * 0.55);
     const method = (quietest > 0.3) ? `quietest@${quietest.toFixed(2)}s+${(safetyMargin*1000).toFixed(0)}ms` : 'half-duration';
     log(`✂️ trimPaddedSceneAudio: total=${duration.toFixed(2)}s, ${method} cut at ${cutTime.toFixed(2)}s for ${basename}`);
 
-    // 3. Cut
     const tempPath = filePath + '.trim.mp3';
     const ok = await cutFirstHalf(filePath, tempPath, cutTime);
     if (ok) {
@@ -581,13 +545,9 @@ async function trimPaddedSceneAudio(filePath) {
     }
 }
 
-/**
- * Recover canonical scene audio from chunks if canonical is missing.
- */
 async function recoverSceneAudioFromChunks(bookId, chapterId, sceneId, buildId, expectedChunkCount = null) {
     const finalPath = getOutputPath(buildId, `${bookId}_${chapterId}_${sceneId}.mp3`);
 
-    // Check if canonical audio already exists
     if (fs.existsSync(finalPath)) {
         const isValid = await validateCanonicalAudio(finalPath);
         if (isValid) {
@@ -598,7 +558,6 @@ async function recoverSceneAudioFromChunks(bookId, chapterId, sceneId, buildId, 
         try { fs.unlinkSync(finalPath); } catch (e) {}
     }
 
-    // Find existing chunks
     const existingChunks = findExistingSceneChunks(bookId, chapterId, sceneId, buildId);
 
     if (existingChunks.length === 0) {
@@ -606,7 +565,6 @@ async function recoverSceneAudioFromChunks(bookId, chapterId, sceneId, buildId, 
         return { recovered: false, reason: 'no_chunks' };
     }
 
-    // Validate all chunks exist
     const chunkCheck = allSceneChunksExist(bookId, chapterId, sceneId, buildId, expectedChunkCount);
     if (!chunkCheck.ready) {
         warn(`Not all chunks ready for recovery: ${bookId}/${chapterId}/${sceneId}`);
@@ -629,20 +587,12 @@ async function recoverSceneAudioFromChunks(bookId, chapterId, sceneId, buildId, 
 }
 
 // ======================================================
-// CONVENIENCE FUNCTIONS (DEPRECATED WRAPPERS)
-// ======================================================
-
-// ======================================================
-// ESCAPE REGEXP
+// HELPERS
 // ======================================================
 
 function escapeRegExp(str) {
     return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
-
-// ======================================================
-// TEXT CHUNKING (restored from legacy)
-// ======================================================
 
 function splitTextIntoChunks(text, maxChars = 500) {
     if (!text?.trim()) return [];
@@ -734,14 +684,13 @@ function getChunkAudioPath(buildId, bookId, chapterId, sceneId, chunkIndex) {
 }
 
 // ======================================================
-// AUDIO GENERATION (restored from legacy generateScene)
+// AUDIO GENERATION
 // ======================================================
 
 async function generateSceneAudio(redis, sceneData, loadedBook, buildId, bookId) {
     const chapterId = sceneData.chapter_id;
     const sceneId = sceneData.scene_id;
 
-    // Acquire audio orchestration lock to prevent duplicate TTS submissions
     const sceneLockKey = `animastor:audio-scene-lock:${bookId}:${chapterId}:${sceneId}`;
     const lockAcquired = await redis.set(sceneLockKey, buildId, 'NX', 'EX', 600);
     if (!lockAcquired) {
@@ -749,14 +698,11 @@ async function generateSceneAudio(redis, sceneData, loadedBook, buildId, bookId)
         return { generated: false, reason: 'locked' };
     }
 
-    // Build segments
     const segments = buildSegments(sceneData);
     const expectedChunkCount = segments.length;
 
-    // Check if audio already ready AND is real (not placeholder)
     let isReady = await isSceneAudioReady(buildId, bookId, chapterId, sceneId);
     if (isReady) {
-        // Double-check: if the audio is placeholder, proceed with real generation
         try {
             const sceneAssetsRepo = require('../storage/postgres/repositories/scene-assets-repo');
             const asset = await sceneAssetsRepo.getAsset(bookId, chapterId, sceneId, 'audio', buildId);
@@ -771,7 +717,6 @@ async function generateSceneAudio(redis, sceneData, loadedBook, buildId, bookId)
     }
     if (isReady) {
         log(`Audio already ready, no generation needed: ${bookId}/${chapterId}/${sceneId}`);
-        // Still save chunk metadata for existing audio so /api/v1/chunk/:id/audio works
         for (let i = 0; i < segments.length; i++) {
             const chunkIndex = i + 1;
             const id = makeChunkId(chapterId, sceneId, chunkIndex, bookId);
@@ -808,20 +753,16 @@ async function generateSceneAudio(redis, sceneData, loadedBook, buildId, bookId)
         return { generated: false, reason: 'already_ready' };
     }
 
-    // Submit TTS job for each segment
     for (let i = 0; i < segments.length; i++) {
         const chunkIndex = i + 1;
         const id = makeChunkId(chapterId, sceneId, chunkIndex, bookId);
 
-        // Check if chunk file already exists on disk (per-chunk cache)
         const chunkFilePath = getChunkAudioPath(buildId, bookId, chapterId, sceneId, chunkIndex);
         const chunkFileExists = fs.existsSync(chunkFilePath);
 
-        // Save chunk metadata FIRST so webhook can find it
         const chunkKey = `animastor:chunk:${id}`;
         const existingChunk = await redis.get(chunkKey);
         if (existingChunk) {
-            // Fix padded_text on existing chunks (e.g. from LOAD-VBOOK which defaults to false)
             const segment = segments[i];
             const existing = JSON.parse(existingChunk);
             existing.padded_text = segment.padded || false;
@@ -841,42 +782,69 @@ async function generateSceneAudio(redis, sceneData, loadedBook, buildId, bookId)
                 padded_text: segment.padded || false
             };
             await redis.set(chunkKey, JSON.stringify(chunkData));
-            // Add to chunks set for book
             await redis.sadd(`animastor:chunks:${bookId}`, id);
         }
 
-        // Skip TTS if chunk file already exists on disk
         if (chunkFileExists) {
             log(`AUDIO CHUNK CACHE HIT (disk): ${id}`);
             continue;
         }
 
         const segment = segments[i];
-        let wfAudio = wfLoader.getWorkflow(segment.segment_type === 'dialogue' ? 'tts-qwen-dialogue' : 'tts-qwen-narrator');
+        const isDialogue = segment.segment_type === 'dialogue';
+        const workflowName = isDialogue ? WORKFLOW_DIALOGUE : WORKFLOW_NARRATION;
+        const wfAudio = wfLoader.getWorkflow(workflowName);
 
-        if (segment.segment_type === 'dialogue') {
+        if (isDialogue) {
+            const connector = wfLoader.getConnector(workflowName);
+            if (connector) {
+                const cl = require('../workflows/connector-loader');
+                cl.setValue(wfAudio, connector, 'dialogueScript', segment.text);
+                cl.setValue(wfAudio, connector, 'defaultInstruct', "");
+            } else {
+                wfAudio["108"].inputs = { script: segment.text, default_instruct: "" };
+            }
+
             const participants = sceneData.payload?.participants || [];
             const chars = participants.map(id => loadedBook?.characters?.find(c => c.id === id)).filter(Boolean);
             const c1 = chars[0] || {};
             const c2 = chars[1] || {};
-            wfAudio["108"].inputs = { script: segment.text, default_instruct: "" };
-            // Only overwrite voice_instruction if the character has one defined
-            // otherwise keep the default from the workflow template
-            if (c1?.voice?.instruction) {
-                wfAudio["71"].inputs.voice_instruction = c1.voice.instruction;
+
+            if (connector) {
+                const cl = require('../workflows/connector-loader');
+                if (c1?.voice?.instruction) {
+                    cl.setValue(wfAudio, connector, 'character1Voice', c1.voice.instruction);
+                }
+                if (c2?.voice?.instruction) {
+                    cl.setValue(wfAudio, connector, 'character2Voice', c2.voice.instruction);
+                }
+                cl.setValue(wfAudio, connector, 'roleName1', c1?.id || "role1");
+                cl.setValue(wfAudio, connector, 'roleName2', c2?.id || "role2");
+            } else {
+                if (c1?.voice?.instruction) {
+                    wfAudio["71"].inputs.voice_instruction = c1.voice.instruction;
+                }
+                if (c2?.voice?.instruction) {
+                    wfAudio["80"].inputs.voice_instruction = c2.voice.instruction;
+                }
+                wfAudio["74"].inputs.role_name_1 = c1?.id || "role1";
+                wfAudio["74"].inputs.role_name_2 = c2?.id || "role2";
             }
-            if (c2?.voice?.instruction) {
-                wfAudio["80"].inputs.voice_instruction = c2.voice.instruction;
-            }
-            wfAudio["74"].inputs.role_name_1 = c1?.id || "role1";
-            wfAudio["74"].inputs.role_name_2 = c2?.id || "role2";
         } else {
-            wfAudio["108"].inputs.text = segment.text;
-            // Only overwrite voice_instruction if the book/scene has one defined
-            // otherwise keep the default from the workflow template
-            const vi = narratorVoice(sceneData.payload, loadedBook);
-            if (vi) {
-                wfAudio["108"].inputs.voice_instruction = vi;
+            const connector = wfLoader.getConnector(workflowName);
+            if (connector) {
+                const cl = require('../workflows/connector-loader');
+                cl.setValue(wfAudio, connector, 'narrationText', segment.text);
+                const vi = narratorVoice(sceneData.payload, loadedBook);
+                if (vi) {
+                    cl.setValue(wfAudio, connector, 'voiceInstruction', vi);
+                }
+            } else {
+                wfAudio["108"].inputs.text = segment.text;
+                const vi = narratorVoice(sceneData.payload, loadedBook);
+                if (vi) {
+                    wfAudio["108"].inputs.voice_instruction = vi;
+                }
             }
         }
 
@@ -884,7 +852,6 @@ async function generateSceneAudio(redis, sceneData, loadedBook, buildId, bookId)
         log(`Audio TTS submitted: ${id} (${segment.segment_type})`);
     }
 
-    // Release audio orchestration lock
     await redis.del(sceneLockKey);
     log(`Audio orchestration lock released: ${bookId}/${chapterId}/${sceneId}`);
 
@@ -895,12 +862,6 @@ async function generateSceneAudio(redis, sceneData, loadedBook, buildId, bookId)
 // BOOK-LEVEL AUDIO MERGE
 // ======================================================
 
-/**
- * Merge all scene audio files into a single book-level audio file.
- * Scenes array: [{ chapter_id, scene_id }, ...]
- * Output: {buildDir}/{bookId}.mp3
- * Uses ffmpeg concat demuxer with stream copy (no re-encode).
- */
 async function mergeBookAudio(buildId, bookId, scenes) {
     if (!scenes || scenes.length === 0) {
         warn(`mergeBookAudio: no scenes for book ${bookId}`);
@@ -910,7 +871,6 @@ async function mergeBookAudio(buildId, bookId, scenes) {
     const finalPath = getOutputPath(buildId, `${bookId}.mp3`);
     log(`mergeBookAudio: ${bookId} (${scenes.length} scenes) -> ${finalPath}`);
 
-    // Validate existing canonical audio
     if (fs.existsSync(finalPath)) {
         try {
             const isValid = await validateCanonicalAudio(finalPath);
@@ -974,41 +934,92 @@ async function mergeBookAudio(buildId, bookId, scenes) {
 // ======================================================
 
 /**
- * Generate a silent audio file with the given duration.
- * Uses ffmpeg's anullsrc filter to create silence.
- * Output: MP3, 24000 Hz, mono, 64kbps.
+ * Write a minimal valid MP3 silence file using pure Node.js.
+ * This is a fallback when ffmpeg is not available.
+ * Generates MPEG1 Layer 3 silent frames.
+ */
+function writeSilentMP3Node(outputPath, durationSec) {
+    // MPEG1 Layer 3, 64kbps, 24000Hz, mono, no CRC
+    const sampleRate = 24000;
+    const bitrateKbps = 64;
+    const frameSamples = 1152; // MPEG1 Layer 3 samples per frame
+    const frameSize = Math.floor(144 * bitrateKbps * 1000 / sampleRate); // bytes per frame (384)
+
+    // Build MPEG frame header (4 bytes)
+    const header = Buffer.alloc(4);
+    // Byte 0: sync word (0xFF)
+    header[0] = 0xFF;
+    // Byte 1: 0xFB = sync(3) + MPEG1(2) + Layer3(2) + noCRC(1)
+    // bits: 1111 1011
+    header[1] = 0xFB;
+    // Byte 2: bitrate_idx(4) + sample_rate_idx(2) + padding(1) + private(1)
+    // bitrate_idx=5 (64kbps), sample_rate_idx=2 (24kHz), padding=0, private=0
+    // 0101 1000 = 0x58
+    header[2] = 0x58;
+    // Byte 3: channel_mode(2) + mode_ext(2) + copyright(1) + original(1) + emphasis(2)
+    // channel_mode=3 (mono), original=1
+    // 1100 0100 = 0xC4
+    header[3] = 0xC4;
+
+    // One frame = header + side info + main data (zeros = silence)
+    const frame = Buffer.concat([header, Buffer.alloc(frameSize - 4, 0)]);
+
+    // Calculate number of frames needed for requested duration
+    const framesNeeded = Math.max(1, Math.ceil((durationSec * sampleRate) / frameSamples));
+
+    // Concatenate frames
+    const totalSize = framesNeeded * frameSize;
+    const result = Buffer.alloc(totalSize);
+    for (let i = 0; i < framesNeeded; i++) {
+        frame.copy(result, i * frameSize);
+    }
+
+    fs.writeFileSync(outputPath, result);
+}
+
+/**
+ * Generate a silent MP3 audio file.
+ * Prefers ffmpeg for proper encoding, falls back to pure Node.js MP3 frame generation
+ * when ffmpeg is not available.
  */
 async function generateSilentAudio(outputPath, durationSec) {
-    return new Promise((resolve, reject) => {
-        const args = [
-            '-f', 'lavfi',
-            '-i', 'anullsrc=r=24000:cl=mono',
-            '-t', String(durationSec),
-            '-c:a', 'libmp3lame',
-            '-b:a', '64k',
-            '-y', outputPath
-        ];
+    if (isFFmpegAvailable()) {
+        return new Promise((resolve, reject) => {
+            const args = [
+                '-f', 'lavfi',
+                '-i', 'anullsrc=r=24000:cl=mono',
+                '-t', String(durationSec),
+                '-c:a', 'libmp3lame',
+                '-b:a', '64k',
+                '-y', outputPath
+            ];
 
-        const ffmpeg = spawn('ffmpeg', args, {
-            stdio: ['ignore', 'pipe', 'pipe']
+            const ffmpeg = spawn('ffmpeg', args, {
+                stdio: ['ignore', 'pipe', 'pipe']
+            });
+
+            let stderr = '';
+            ffmpeg.stderr.on('data', data => { stderr += data.toString(); });
+            ffmpeg.stdout.on('data', () => {});
+
+            ffmpeg.on('close', code => {
+                if (code === 0) {
+                    log(`Silent audio generated: ${path.basename(outputPath)} (${durationSec.toFixed(1)}s)`);
+                    resolve(outputPath);
+                } else {
+                    error(`Silent audio generation failed: ffmpeg exited with code ${code}`);
+                    reject(new Error(`ffmpeg silence exited with code ${code}: ${stderr}`));
+                }
+            });
+
+            ffmpeg.on('error', reject);
         });
+    }
 
-        let stderr = '';
-        ffmpeg.stderr.on('data', data => { stderr += data.toString(); });
-        ffmpeg.stdout.on('data', () => {});
-
-        ffmpeg.on('close', code => {
-            if (code === 0) {
-                log(`Silent audio generated: ${path.basename(outputPath)} (${durationSec.toFixed(1)}s)`);
-                resolve(outputPath);
-            } else {
-                error(`Silent audio generation failed: ffmpeg exited with code ${code}`);
-                reject(new Error(`ffmpeg silence exited with code ${code}: ${stderr}`));
-            }
-        });
-
-        ffmpeg.on('error', reject);
-    });
+    // Pure Node.js fallback when ffmpeg is not available
+    log(`ffmpeg not found, generating silent MP3 with Node.js fallback: ${path.basename(outputPath)} (${durationSec.toFixed(1)}s)`);
+    writeSilentMP3Node(outputPath, durationSec);
+    return outputPath;
 }
 
 // ======================================================
@@ -1016,39 +1027,29 @@ async function generateSilentAudio(outputPath, durationSec) {
 // ======================================================
 
 module.exports = {
-    // Path helpers
     getOutputPath,
     makeChunkId,
-
-    // FFMPEG
     runFFmpegMerge,
     runFFmpegTrim,
-
-    // Audio pipeline
     buildSceneAudio,
     mergeSceneAudioChunks,
     recoverSceneAudioFromChunks,
     validateCanonicalAudio,
     isSceneAudioReady,
     getAudioDuration,
-
-    // Chunk helpers
     findExistingSceneChunks,
     allSceneChunksExist,
     areSceneAudioChunksReady,
     mergeBookAudio,
-
-    // Audio generation
     generateSceneAudio,
     buildSegments,
     narratorVoice,
-
-    // Short-text trim
     trimPaddedSceneAudio,
-
-    // Utility
     escapeRegExp,
-
-    // Silent audio (placeholder)
     generateSilentAudio,
+    // Connector-aware utilities
+    applyAudioValue,
+    getAudioNodeId,
+    WORKFLOW_NARRATION,
+    WORKFLOW_DIALOGUE,
 };

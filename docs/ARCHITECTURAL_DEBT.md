@@ -47,7 +47,7 @@
 
 ## 4. Чрезмерная ответственность scene-orchestrator.js
 
-**Описание проблемы:** 1206 строк, смешивающих dispatch execution, callback handling, state management, quota management, event journaling.
+**Описание проблемы:** ~1200 строк, смешивающих dispatch execution, callback handling, state management, layer config, padded text trimming.
 
 **Причина возникновения:** Органический рост — orchestrator стал центральным узлом для всей логики сцены.
 
@@ -62,7 +62,7 @@
 
 ## 5. Смешение runtime и бизнес-логики в dispatch-engine.js
 
-**Описание проблемы:** 1031 строка, содержащая lease management, quota, circuit breaker, retry budget, fairness, policy, decision trace — все cross-cutting concerns в одном файле.
+**Описание проблемы:** ~1000 строк, содержащая lease management, quota, circuit breaker, retry budget, fairness, policy, decision trace — все cross-cutting concerns в одном файле.
 
 **Причина возникновения:** Постепенное добавление механизмов устойчивости без выделения слоёв.
 
@@ -76,15 +76,14 @@
 
 ## 6. Знание о AI-модели захардкожено
 
-**Описание проблемы:** Модель OpenRouter (`qwen/qwen3.5-122b-a10b`) задаётся через переменную окружения `OPENROUTER_MODEL`, но дефолтное значение жёстко зашито в agent-service.js. Нет абстракции "модель AI" с интерфейсом и разными реализациями.
-
-**Причина возникновения:** Проект использует одну модель. Альтернативные провайдеры не были в приоритете.
+**Описание проблемы:** Модель по умолчанию (`qwen/qwen3.5-122b-a10b`) задаётся в runtime-config.js. docker-compose использует другую модель (`qwen/qwen3-32b`). Нет абстракции "модель AI" с интерфейсом и разными реализациями.
 
 **Текущее состояние (частично исправлено):**
 - ✅ `OPENROUTER_API_KEY` унифицирован как единый источник ключа во всех AI-вызовах
 - ✅ AI-роуты используют `config.OPENROUTER_API_KEY` вместо `process.env.AI_API_KEY`
+- ✅ AI_API_BASE_URL конфигурируется через env (по умолчанию Nvidia)
 - ❌ По-прежнему нет абстракции AI-провайдера
-- ❌ Нет fallback цепочки
+- ❌ Нет fallback цепочки между OpenRouter и Nvidia
 - ❌ Провайдер-специфичный код размазан по ai-service.js
 
 **Затрагиваемые компоненты:** agent-service.js, ai-service.js, chat-engine.cjs
@@ -110,12 +109,12 @@
 
 **Описание проблемы:** Все GPU-задачи проходят через один экземпляр GPU Hub. При его падении — вся генерация останавливается.
 
-**Причина возникновения:** Архитектура с одним dispatcher'ом проще в реализации.
-
-**Возможные последствия:**
-- Потеря задач при падении GPU Hub (если задачи не персистентны)
-- Полная остановка генерации до восстановления
-- Нет механизма graceful degradation
+**Текущее состояние (улучшено):**
+- ✅ REQUEUE при timeout воркера (10 min)
+- ✅ Дедупликация задач (NX EX 3600)
+- ✅ Graceful shutdown (SIGTERM)
+- ❌ Нет multi-instance GPU Hub
+- ❌ Нет репликации очередей Redis
 
 **Затрагиваемые компоненты:** gpu-hub.js, gpu-dispatcher.js, dispatch-engine.js
 
@@ -151,7 +150,9 @@
 
 ## 11. База знаний AI загружается, но не используется
 
-**Описание проблемы:** `loadKnowledgeBase()` загружает все правила/навыки, но код содержит комментарий "not used in prompts". Это мёртвый код.
+**Описание проблемы:** `knowledge-base.js` загружает все правила/навыки из `backend/ai/`, но код не использует их в промптах. `ai-loader.js` также загружает их с TTL-кэшем. Это мёртвый код.
+
+**Исключение:** `refineDraft()` в `ai-service.js` загружает примеры из `ai/examples/` и включает их в промпт.
 
 **Причина возникновения:** Вероятно, база знаний была подготовлена для будущего использования или использовалась на ранних этапах.
 
@@ -159,7 +160,7 @@
 - Избыточная загрузка данных при старте
 - Вводящая в заблуждение структура (разработчик может думать, что правила используются)
 
-**Затрагиваемые компоненты:** agent-service.js, ai-loader.js
+**Затрагиваемые компоненты:** agent-service.js, ai-loader.js, knowledge-base.js
 
 ---
 
@@ -198,7 +199,55 @@
 - ✅ Добавлены security headers (Helmet.js)
 - ✅ Добавлен rate limiting (100 req/min)
 - ✅ Добавлена трассировка запросов через requestId
-- ❌ По-прежнему нет метрик CPU/memory/GPU/queue depth
+- ✅ Добавлены runtime metrics (runtime-metrics.js)
+- ✅ Добавлен runtime loop с history (100 ticks)
+- ❌ По-прежнему нет метрик CPU/memory/GPU
 - ❌ Нет внешнего мониторинга (Prometheus/Grafana)
 
 **Затрагиваемые компоненты:** Все модули (используют console.log/warn/error)
+
+---
+
+## 15. Slim runtime — governance модули в debug
+
+**Описание проблемы:** В v2.0.0 runtime/index.js был "slim"-нут: governance-модули (circuit-breaker, fairness, policy-engine и др.) вынесены из core pipeline в debug-секцию и загружаются лениво. Файлы сохранены на диске, но не входят в основной цикл.
+
+**Причина возникновения:** Over-engineering. Модули были написаны, но не интегрированы в реальный dispatch.
+
+**Возможные последствия:**
+- Мёртвый код на диске (вводит в заблуждение)
+- dispatch-engine использует safeRequire — модули могут быть не загружены
+- Непонятно, какие модули реально active, какие — legacy
+
+**Затрагиваемые компоненты:** runtime/index.js, dispatch-engine.js, все governance-файлы
+
+---
+
+## 16. Dual state model — избыточная сложность
+
+**Описание проблемы:** Введён Dual State Model (per-asset + linear FSM). Per-asset — канонический источник, linear FSM — производная проекция. Это добавляет сложность: синхронизация (syncLinearState), дублирование данных, возможные расхождения.
+
+**Причина возникновения:** Желание поддерживать независимую диспетчеризацию audio/image/video без поломки существующего кода, работающего через linear FSM.
+
+**Возможные последствия:**
+- Расхождение состояний между per-asset и linear
+- syncLinearState вызывается после каждого setAssetState — нагрузка на Redis
+- Усложнение отладки
+
+**Затрагиваемые компоненты:** scene-state.js, scene-orchestrator.js, runtime-scheduler.js
+
+---
+
+## 17. Два журнала событий (Redis + PostgreSQL)
+
+**Описание проблемы:** Система имеет два event-журнала: Redis (event-journal.js, TTL 7 дней) и PostgreSQL (book-event-log.js, 30+ типов событий). Они не синхронизированы и дублируют функциональность.
+
+**Затрагиваемые компоненты:** event-journal.js, book-event-log.js
+
+---
+
+## 18. Multi-file формат книг vs. legacy single-file
+
+**Описание проблемы:** Книги переведены на multi-file формат (v2.1), но код book/index.js всё ещё поддерживает legacy single-file формат для миграции. Это добавляет сложность при загрузке.
+
+**Затрагиваемые компоненты:** book/index.js, lazy-book.js

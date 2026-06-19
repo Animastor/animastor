@@ -1,0 +1,123 @@
+{
+  "connectorVersion": "1.0.0",
+  "workflow": "img-qwen-image",
+  "workflowHash": "",
+  "label": "Image Generation (Qwen)",
+  "description": "Generates images using Qwen-based ComfyUI workflow with CLIP text encoding",
+  "type": "image",
+  "metadata": {
+    "author": "Animastor",
+    "updated": "2026-06-19",
+    "category": "image-generation"
+  },
+  "compatibility": {
+    "nodeClasses": {
+      "108": "CLIPTextEncode",
+      "109": "CLIPTextEncode",
+      "110": "EmptySD3LatentImage",
+      "120": "KSampler",
+      "130": "VAEDecode",
+      "1008": "SaveImage"
+    }
+  },
+  "inputs": {
+    "positivePrompt": {
+      "nodeId": "108",
+      "field": "inputs.text",
+      "expectedClass": "CLIPTextEncode",
+      "entityType": "positivePrompt",
+      "label": "Positive Prompt",
+      "required": true
+    },
+    "negativePrompt": {
+      "nodeId": "109",
+      "field": "inputs.text",
+      "expectedClass": "CLIPTextEncode",
+      "entityType": "negativePrompt",
+      "label": "Negative Prompt",
+      "required": true
+    }
+  },
+  "outputs": {
+    "generatedImage": {
+      "nodeId": "1008",
+      "field": "inputs.images",
+      "expectedClass": "SaveImage",
+      "entityType": "generatedImage",
+      "label": "Generated Image"
+    }
+  },
+  "parameters": {
+    "width": {
+      "nodeId": "110",
+      "field": "inputs.width",
+      "expectedClass": "EmptySD3LatentImage",
+      "entityType": "width",
+      "label": "Width",
+      "default": 768,
+      "min": 256,
+      "max": 2048
+    },
+    "height": {
+      "nodeId": "110",
+      "field": "inputs.height",
+      "expectedClass": "EmptySD3LatentImage",
+      "entityType": "height",
+      "label": "Height",
+      "default": 1024,
+      "min": 256,
+      "max": 2048
+    },
+    "steps": {
+      "nodeId": "120",
+      "field": "inputs.steps",
+      "expectedClass": "KSampler",
+      "entityType": "steps",
+      "label": "Steps",
+      "default": 8,
+      "min": 1,
+      "max": 100
+    },
+    "cfg": {
+      "nodeId": "120",
+      "field": "inputs.cfg",
+      "expectedClass": "KSampler",
+      "entityType": "cfg",
+      "label": "CFG Scale",
+      "default": 2,
+      "min": 1,
+      "max": 30
+    },
+    "sampler": {
+      "nodeId": "120",
+      "field": "inputs.sampler_name",
+      "expectedClass": "KSampler",
+      "entityType": "sampler",
+      "label": "Sampler",
+      "default": "euler"
+    },
+    "scheduler": {
+      "nodeId": "120",
+      "field": "inputs.scheduler",
+      "expectedClass": "KSampler",
+      "entityType": "scheduler",
+      "label": "Scheduler",
+      "default": "normal"
+    },
+    "seed": {
+      "nodeId": "120",
+      "field": "inputs.seed",
+      "expectedClass": "KSampler",
+      "entityType": "seed",
+      "label": "Seed"
+    },
+    "outputFilenamePrefix": {
+      "nodeId": "1008",
+      "field": "inputs.filename_prefix",
+      "expectedClass": "SaveImage",
+      "entityType": "outputFilenamePrefix",
+      "label": "Output Filename Prefix",
+      "default": "ComfyUI"
+    }
+  }
+}

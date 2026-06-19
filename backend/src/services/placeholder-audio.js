@@ -22,7 +22,6 @@ const path = require('path');
 const fs = require('fs');
 
 const config = require('../config/runtime-config');
-const audio = require('../audio');
 const sceneAssetsRepo = require('../storage/postgres/repositories/scene-assets-repo');
 const iuRepo = require('../storage/postgres/repositories/iu-repo');
 
@@ -178,7 +177,8 @@ async function ensurePlaceholderAudio(buildId, bookId, chapterId, sceneId) {
     const audioPath = path.join(outputDir, `${bookId}_${chapterId}_${sceneId}.mp3`);
 
     try {
-        await audio.generateSilentAudio(audioPath, effectiveDuration);
+        const { generateSilentAudio } = require('../audio');
+        await generateSilentAudio(audioPath, effectiveDuration);
         log(`Silent audio generated: ${path.basename(audioPath)} (${effectiveDuration.toFixed(1)}s)`);
     } catch (err) {
         warn(`Failed to generate silent audio for ${bookId}/${chapterId}/${sceneId}: ${err.message}`);

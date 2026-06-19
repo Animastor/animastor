@@ -1,0 +1,119 @@
+{
+  "connectorVersion": "1.0.0",
+  "workflow": "tts-qwen-dialogue",
+  "workflowHash": "",
+  "label": "TTS Dialogue (Qwen)",
+  "description": "Multi-character dialogue TTS using Qwen3-TTS Role Bank and Advanced Dialogue Engine",
+  "type": "audio",
+  "metadata": {
+    "author": "Animastor",
+    "updated": "2026-06-19",
+    "category": "audio-generation"
+  },
+  "compatibility": {
+    "nodeClasses": {
+      "71": "Qwen3TTSVoiceDesign",
+      "73": "Qwen3TTSVoiceClonePrompt",
+      "74": "Qwen3TTSRoleBank",
+      "75": "Qwen3TTSAdvancedDialogue",
+      "78": "Qwen3TTSLoader",
+      "79": "Qwen3TTSLoader",
+      "80": "Qwen3TTSVoiceDesign",
+      "81": "Qwen3TTSVoiceClonePrompt",
+      "108": "Qwen3TTSScriptProcessor",
+      "1008": "SaveAudioMP3"
+    }
+  },
+  "inputs": {
+    "dialogueScript": {
+      "nodeId": "108",
+      "field": "inputs.script",
+      "expectedClass": "Qwen3TTSScriptProcessor",
+      "entityType": "dialogueScript",
+      "label": "Dialogue Script",
+      "required": true
+    },
+    "defaultInstruct": {
+      "nodeId": "108",
+      "field": "inputs.default_instruct",
+      "expectedClass": "Qwen3TTSScriptProcessor",
+      "entityType": "defaultInstruct",
+      "label": "Default Instruction",
+      "required": false
+    },
+    "character1Voice": {
+      "nodeId": "71",
+      "field": "inputs.voice_instruction",
+      "expectedClass": "Qwen3TTSVoiceDesign",
+      "entityType": "character1Voice",
+      "label": "Character 1 Voice",
+      "required": false
+    },
+    "character2Voice": {
+      "nodeId": "80",
+      "field": "inputs.voice_instruction",
+      "expectedClass": "Qwen3TTSVoiceDesign",
+      "entityType": "character2Voice",
+      "label": "Character 2 Voice",
+      "required": false
+    },
+    "roleName1": {
+      "nodeId": "74",
+      "field": "inputs.role_name_1",
+      "expectedClass": "Qwen3TTSRoleBank",
+      "entityType": "roleName1",
+      "label": "Role Name 1",
+      "required": false
+    },
+    "roleName2": {
+      "nodeId": "74",
+      "field": "inputs.role_name_2",
+      "expectedClass": "Qwen3TTSRoleBank",
+      "entityType": "roleName2",
+      "label": "Role Name 2",
+      "required": false
+    }
+  },
+  "outputs": {
+    "generatedAudio": {
+      "nodeId": "1008",
+      "field": "inputs.audio",
+      "expectedClass": "SaveAudioMP3",
+      "entityType": "generatedAudio",
+      "label": "Generated Audio"
+    }
+  },
+  "parameters": {
+    "seed": {
+      "nodeId": "75",
+      "field": "inputs.seed",
+      "expectedClass": "Qwen3TTSAdvancedDialogue",
+      "entityType": "seed",
+      "label": "Seed"
+    },
+    "quality": {
+      "nodeId": "1008",
+      "field": "inputs.quality",
+      "expectedClass": "SaveAudioMP3",
+      "entityType": "quality",
+      "label": "Audio Quality",
+      "default": "320k"
+    },
+    "outputFilenamePrefix": {
+      "nodeId": "1008",
+      "field": "inputs.filename_prefix",
+      "expectedClass": "SaveAudioMP3",
+      "entityType": "outputFilenamePrefix",
+      "label": "Output Filename Prefix",
+      "default": "audio/dialogue"
+    },
+    "temperature": {
+      "nodeId": "75",
+      "field": "inputs.temperature",
+      "expectedClass": "Qwen3TTSAdvancedDialogue",
+      "entityType": "temperature",
+      "label": "Temperature",
+      "default": 0.9
+    }
+  }
+}

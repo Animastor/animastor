@@ -1,20 +1,58 @@
+// ======================================================
+// Workflow Loader — v2.0.0 (Connector-aware)
+// ======================================================
+// Loads ComfyUI JSON workflows from /data/workflows/
+// and their corresponding connectors from /data/connectors/.
+//
+// The connector layer abstracts workflow internals (nodeId, fields)
+// so backend code never references them directly.
+
 const fs = require('fs');
 const path = require('path');
+const connectorLoader = require('./connector-loader');
 
 const WF_DIR = "/data/workflows";
 const logPrefix = '[WORKFLOWS]';
 
 const workflows = {};
+const workflowHashes = {}; // name → sha256
+
+function log(msg) {
+    console.log(`${logPrefix} ${msg}`);
+}
 
 function loadWorkflows() {
+    let count = 0;
     if (fs.existsSync(WF_DIR)) {
         fs.readdirSync(WF_DIR).forEach(f => {
-            if (f.endsWith('.json')) {
+            if (f.endsWith('.json') && !f.startsWith('old_')) {
                 const name = f.replace('.json', '');
-                workflows[name] = JSON.parse(fs.readFileSync(path.join(WF_DIR, f), 'utf8'));
+                try {
+                    const raw = fs.readFileSync(path.join(WF_DIR, f), 'utf8');
+                    const json = JSON.parse(raw);
+                    workflows[name] = json;
+                    workflowHashes[name] = connectorLoader.computeWorkflowHash(json);
+                    count++;
+                } catch (err) {
+                    console.warn(`${logPrefix} Error loading workflow ${f}: ${err.message}`);
+                }
             }
         });
-        console.log(`${logPrefix} Loaded ${Object.keys(workflows).length} workflows from ${WF_DIR}`);
+        log(`Loaded ${count} workflows from ${WF_DIR}`);
+
+        // Load and validate connectors against loaded workflows
+        log(`Loading connectors...`);
+        const connResult = connectorLoader.initialize(workflows);
+        if (connResult.warnings.length > 0) {
+            for (const w of connResult.warnings) {
+                console.warn(`${logPrefix} ⚠️ ${w}`);
+            }
+        }
+        if (connResult.errors.length > 0) {
+            console.error(`${logPrefix} ❌ Connector errors: ${connResult.errors.length}`);
+        }
+        log(`Connectors: ${Object.keys(connResult.connectors).length} loaded, ` +
+            `${connResult.warnings.length} warnings, ${connResult.errors.length} errors`);
     } else {
         console.warn(`${logPrefix} Workflow directory not found: ${WF_DIR}`);
     }
@@ -28,4 +66,19 @@ function getWorkflow(name) {
     return JSON.parse(JSON.stringify(workflows[name]));
 }
 
-module.exports = { loadWorkflows, getWorkflow, workflows };
+/**
+ * Get the connector for a given workflow name.
+ * Returns null if no connector is registered for this workflow.
+ */
+function getConnector(workflowName) {
+    return connectorLoader.getConnector(workflowName);
+}
+
+/**
+ * Get the computed hash for a workflow.
+ */
+function getWorkflowHash(name) {
+    return workflowHashes[name] || null;
+}
+
+module.exports = { loadWorkflows, getWorkflow, getConnector, getWorkflowHash, workflows };

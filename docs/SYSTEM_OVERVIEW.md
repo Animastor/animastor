@@ -27,36 +27,41 @@ Animastor — AI-powered animated storytelling platform. Система прео
 
 ### Backend (Node.js/Express)
 Центральный сервер API + оркестратор. Управляет состоянием книги, сценами, dispatching задач на GPU.
+- **Dual State Model:** per-asset состояния (audio/image/video) — канонический источник истины; Linear FSM — производная проекция для обратной совместимости
 - **Helmet.js** — HTTP security headers (HSTS, CSP, X-Frame-Options)
 - **Rate limiting** — 100 req/min на `/api/`, защита от перегрузок
 - **Request ID** — каждый HTTP-запрос получает короткий ID для трассировки в логах
 - **Graceful shutdown (SIGTERM)** — HTTP server → Redis → PostgreSQL последовательное завершение
+- **Startup resume** — возобновление прерванных сессий генерации при старте
 
 ### Frontend (Android/Kotlin)
 Мобильное приложение с bottom-навигацией: файлы, редактор, плеер, навигация, AI-ассистент.
 
 ### Orchestration Engine
-Планировщик (tick-based), диспетчер (dispatch engine), оркестратор сцен (scene orchestrator). Управляет пайплайном AUDIO → IMAGE → VIDEO.
+Планировщик (tick-based, 5s), диспетчер (dispatch engine с lease-механизмом), оркестратор сцен (scene orchestrator). Управляет пайплайном AUDIO → IMAGE → VIDEO с независимым per-asset диспетчированием.
 
 ### Agent Service (AI Pipeline)
-6-шаговый AI-пайплайн анализа текста: структура → персонажи → локации → сцены → units → визуальные промпты.
+6-шаговый AI-пайплайн анализа текста (шаг 0 + 5 шагов): структура → персонажи → локации → сцены → units → визуальные промпты.
 
 ### GPU Hub (Node.js)
-Центральный диспетчер задач на GPU. Принимает задачи от backend, ставит в Redis-очереди, распределяет по воркерам.
+Центральный диспетчер задач на GPU. Принимает задачи от backend, ставит в Redis-очереди, распределяет по воркерам. Graceful shutdown, requeue при timeout (10 min), heartbeat, per-book queue clear.
 
 ### Workers (Node.js + ComfyUI)
-GPU-воркеры, выполняющие генерацию через ComfyUI: image (SD), audio (TTS), video (LTX).
+GPU-воркеры (ESM-модули), выполняющие генерацию через ComfyUI: image (SD), audio (TTS), video (LTX). Поддержка multi-image assets.
 
 ### Workflow Loader
 Загружает JSON-шаблоны ComfyUI из `/data/workflows/` и адаптирует их под конкретные задачи.
 
 ### Storage
-- **PostgreSQL** — каноническое состояние (книги, сцены, assets, чаты, события, сессии агентов)
-- **Redis** — runtime-состояние, очереди задач, heartbeat воркеров, кэш, активные сцены, dispatch-аренда
-- **Filesystem** — файлы книг (JSON), аудио, изображения, видео
+- **PostgreSQL (25+ таблиц)** — каноническое состояние (книги, сцены, assets, чаты, события, сессии агентов, image_units, asset_states, cache_entries, generation_tasks, output_manifests)
+- **Redis (persisted)** — runtime-состояние, очереди задач, heartbeat воркеров, dispatch-аренда, per-asset state, event journal, chunks
+- **Filesystem (multi-file)** — файлы книг (JSON, multi-file format), аудио (MP3), изображения (PNG), видео (MP4)
+
+### Services Layer
+15+ сервисов: Audio/Image/Video Service, Agent Service, TXT Importer, Chat Engine, Gen Scope, Layer Config, Book Source/Sync/Integrity, Scene Asset Registry, Book Event Log, Chat Store, Cleanup Service, Audio Recovery, Placeholder Audio, AI Loader, Knowledge Base, Waveform Service, Window Generator, Startup Resume.
 
 ### AI Knowledge Base
-Markdown-файлы правил, навыков и JSON-примеры для промптинга AI-моделей.
+Markdown-файлы правил, навыков и JSON-примеры для промптинга AI-моделей. **Не используются в промптах** основного пайплайна.
 
 ## Поток данных: от входа до результата
 
@@ -65,18 +70,24 @@ TXT / VBook
   │
   ▼
 ┌─────────────────┐
-│  TXT Importer   │  → Декодирование, создание draft-книги
+│  TXT Importer   │  → Декодирование, создание draft-книги (RAW_IMPORTED)
 └────────┬────────┘
          │
          ▼
 ┌─────────────────┐
-│  Agent Service  │  → 6-шаговый AI-анализ (окнами по 3 сцены)
+│  Agent Service  │  → 6-шаговый AI-анализ (шаг 0 + 5 шагов, окнами по 3 сцены)
 │  (bootstrap)    │  → Извлечение: структура, персонажи, локации,
 └────────┬────────┘    сцены, IU, визуальные промпты
          │
          ▼
 ┌─────────────────┐
-│  Scene State    │  → Инициализация состояния сцен
+│  Book Module    │  → Сохранение в multi-file format
+│  (lazy-book)    │  → manifest.json, book.json, chapters/*.json
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│  Scene State    │  → Инициализация per-asset состояний
 │  Orchestrator   │  → Добавление в active-scenes index
 └────────┬────────┘
          │
@@ -95,6 +106,8 @@ TXT / VBook
                       ▼
               ┌──────────────┐
               │   GPU Hub    │ → Redis Queue
+              │   (5 retries │
+              │   on result) │
               └──────┬───────┘
                      │ poll
               ┌──────┴───────┐
@@ -104,12 +117,16 @@ TXT / VBook
                      ▼
               ┌──────────────┐
               │ Task Handler │ → orchestrator.handle*Completed()
+              │ (IU check,   │
+              │  audio merge,│
+              │  video)      │
               └──────┬───────┘
                      │
               ┌──────┴───────┐
               │ Save Asset   │ → Filesystem (MP3, PNG, MP4)
-              │ Register     │ → Registry (PostgreSQL + Redis)
-              │ Update State │ → SceneState → AUDIO_READY / IMAGE_READY / VIDEO_READY
+              │ Register     │ → Registry (PostgreSQL scene_assets)
+              │ Update State │ → Per-Asset State → READY
+              │ Sync Linear  │ → Linear FSM (derived)
               └──────────────┘
 ```
 
@@ -117,48 +134,44 @@ TXT / VBook
 
 | Компонент | Файл | Роль |
 |-----------|------|------|
-| Backend entry | `backend/src/backend.cjs` | Инициализация сервера, DI, монтирование роутов, helmet/rate-limit, graceful shutdown |
+| Backend entry | `backend/src/backend.cjs` | Инициализация сервера, DI, монтирование роутов, helmet/rate-limit, graceful shutdown, startup resume |
 | Book routes | `backend/src/routes/book-routes.cjs` | REST API для книг, импорт, статус |
 | AI routes | `backend/src/routes/ai-routes.cjs` | REST API для AI-ассистента |
 | Generation routes | `backend/src/routes/generation-routes.cjs` | REST API для запуска генерации |
-| Scene orchestrator | `backend/src/orchestration/scene-orchestrator.js` | Центральный оркестратор сцен |
-| Runtime scheduler | `backend/src/runtime/runtime-scheduler.js` | Tick-based планировщик прогресса сцен |
-| Dispatch engine | `backend/src/runtime/dispatch-engine.js` | Диспетчер с арендой/квотами/CB |
-| GPU dispatcher | `backend/src/runtime/gpu-dispatcher.js` | HTTP-клиент для отправки задач в GPU Hub |
-| Scene window | `backend/src/runtime/scene-window.js` | Оконный менеджер генерации сцен |
+| Scene orchestrator | `backend/src/orchestration/scene-orchestrator.js` | Центральный оркестратор сцен (layer-aware) |
+| Runtime scheduler | `backend/src/runtime/runtime-scheduler.js` | Tick-based планировщик (per-asset диспетчеризация) |
+| Dispatch engine | `backend/src/runtime/dispatch-engine.js` | Диспетчер с арендой/квотами (safeRequire governance) |
+| GPU dispatcher | `backend/src/runtime/gpu-dispatcher.js` | HTTP-клиент для отправки задач в GPU Hub (send/sendVideo/sendUnified) |
+| Scene window | `backend/src/runtime/scene-window.js` | Оконный менеджер генерации (scope-aware, cancel, recover) |
 | Active scenes index | `backend/src/runtime/active-scenes-index.js` | Redis-индекс активных сцен |
-| Audio service | `backend/src/audio/audio-service.js` | TTS-генерация, мерж аудио |
+| Scene state | `backend/src/state/scene-state.js` | Dual state model: per-asset (canonical) + linear FSM (legacy) |
+| Audio service | `backend/src/audio/audio-service.js` | TTS-генерация, мерж аудио, padded text trimming |
 | Image service | `backend/src/image/image-service.js` | Генерация изображений IU |
 | Video service | `backend/src/video/video-service.js` | Видеогенерация (LTX) |
 | Video merge | `backend/src/video/video-merge.js` | Мерж видео + аудио через ffmpeg |
-| Agent service | `backend/src/services/agent-service.js` | AI-пайплайн анализа текста |
+| Agent service | `backend/src/services/agent-service.js` | AI-пайплайн (шаг 0 + 5 шагов) |
 | TXT importer | `backend/src/services/txt-importer.js` | Импорт и парсинг TXT |
 | Window generator | `backend/src/services/window-generator.cjs` | Фоновая оконная генерация |
 | Workflow loader | `backend/src/workflows/workflow-loader.js` | Загрузчик шаблонов ComfyUI |
-| Workflow builders | `backend/src/workflows/*/` | Построители workflow под задачу |
-| Task handler | `backend/src/services/task-handler.cjs` | Обработчик результатов GPU задач |
-| Layer config | `backend/src/services/layer-config.js` | Профили генерации (audio/image/video) |
+| Task handler | `backend/src/services/task-handler.cjs` | Обработчик результатов GPU задач (IU completion, audio merge) |
+| Layer config | `backend/src/services/layer-config.js` | Профили генерации (AUDIO_ONLY, IMAGE_ONLY, VIDEO_ONLY и др.) |
 | Gen scope | `backend/src/services/gen-scope.js` | Область генерации (сцена/глава/книга) |
-| GPU Hub | `gpu-hub/gpu-hub.js` | Диспетчер GPU-очередей + graceful shutdown (SIGTERM) |
-| Worker | `worker/worker/worker.js` | GPU-воркер ComfyUI |
-| Database | `backend/src/storage/postgres/` | PostgreSQL ORM |
+| Scene asset registry | `backend/src/services/scene-asset-registry.js` | PostgreSQL реестр asset'ов |
+| Book source | `backend/src/services/book-source.js` | Канонический индекс сцен |
+| Book sync | `backend/src/services/book-sync.js` | Синхронизация JSON ↔ DB |
+| Book integrity | `backend/src/services/book-integrity.js` | Проверка целостности (orphan detection) |
+| Book event log | `backend/src/services/book-event-log.js` | PostgreSQL журнал событий книги |
+| Chat store | `backend/src/services/chat-store.js` | Хранилище чатов (сессии, топики, поиск) |
+| Chat engine | `backend/src/services/chat-engine.cjs` | AI-чат (tool-based, режимы) |
+| Cleanup service | `backend/src/services/cleanup-service.cjs` | Периодическая очистка, distributed locks |
+| Audio recovery | `backend/src/services/audio-recovery.cjs` | Периодическое восстановление результатов GPU |
+| Placeholder audio | `backend/src/services/placeholder-audio.js` | Генерация MP3-заглушек, замена на real audio |
+| Waveform service | `backend/src/services/waveform-service.js` | Вычисление waveform |
+| AI loader | `backend/src/services/ai-loader.js` | Загрузка базы знаний (TTL cache) |
+| Knowledge base | `backend/src/services/knowledge-base.js` | Загрузка ai/ файлов (не используется в prompts) |
+| Startup resume | `backend/src/startup-resume.js` | Возобновление сессий при старте |
+| Book diff | `backend/src/services/book-diff.cjs` | Diff книг, dirty scene marking |
+| GPU Hub | `gpu-hub/gpu-hub.js` | Диспетчер GPU-очередей + requeue + graceful shutdown |
+| Worker | `worker/worker/worker.js` | GPU-воркер ComfyUI (ESM, multi-image) |
+| Database | `backend/src/storage/postgres/` | PostgreSQL (25+ таблиц) |
 | Runtime config | `backend/src/config/runtime-config.js` | Централизованная конфигурация |
-| Event journal | `backend/src/orchestration/event-journal.js` | Аудит событий сцены |
-| Circuit breaker | `backend/src/runtime/circuit-breaker.js` | Защита от каскадных отказов |
-| Retry budget | `backend/src/runtime/retry-budget-manager.js` | Бюджет повторных попыток |
-| Fairness engine | `backend/src/runtime/fairness-engine.js` | Предотвращение голодания сцен |
-| Policy engine | `backend/src/runtime/policy-engine.js` | Политики диспетчеризации |
-| Governance modules | `backend/src/runtime/governance-*.js` | Мониторинг стабильности и здоровья |
-| AI Loader | `backend/src/services/ai-loader.js` | Загрузка правил/навыков для AI |
-| Context builder | `backend/src/services/context-builder.js` | Построитель контекста для AI |
-| Book load/save | `backend/src/book/` | Загрузка и сохранение книг |
-| Lazy book | `backend/src/book/lazy-book.js` | Ленивая загрузка draft-книги |
-| Placeholder audio | `backend/src/services/placeholder-audio.js` | Генерация заглушек аудио |
-| Waveform service | `backend/src/services/waveform-service.js` | Вычисление waveform для плеера |
-| Chat engine | `backend/src/services/chat-engine.cjs` | AI-чат ассистент |
-| Scene state | `backend/src/state/scene-state.js` | Машина состояний сцены |
-| Redis helpers | `backend/src/helpers/redis-helpers.cjs` | Хелперы Redis |
-| PostgreSQL schema | `backend/src/storage/postgres/schema.js` | DDL схемы БД |
-| Repositories | `backend/src/storage/postgres/repositories/` | Репозитории PG |
-| Nginx proxy | `proxy/conf/default.conf` | Обратный прокси с SSL |
-| Landing page | `site/index.html` | Статическая страница |

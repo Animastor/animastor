@@ -1,32 +1,43 @@
 // ======================================================
-// Video Workflows - v2.0.0 (Multi-Image LTX)
+// Video Workflows - v2.1.0 (Connector-aware)
 // ======================================================
 // Builds multi-image LTX workflows from scene/IU data.
-// Selects 1p/2p/3p/4p workflow based on IU count,
-// assigns frame indices, images, prompts, and total frames.
+// Uses the connector system to resolve nodeIds instead of
+// hardcoded constants, enabling workflow changes without
+// modifying backend code.
 
 const book = require('../../book');
+const wfLoader = require('../workflow-loader');
 
 const logPrefix = '[WF-VIDEO]';
 
-// Node IDs shared across all video-ltx-* workflows.
-// GUIDE nodes are resolved dynamically per workflow.
-const NODE = {
+// Connector fallback constants (used only if connector is missing)
+const FALLBACK_NODE = {
     TOTAL_FRAMES: '112',
     POSITIVE: '121',
     NEGATIVE: '110',
     LOAD_IMAGE: ['149', '179', '187', '216'],
 };
+
 function log(msg) {
     console.log(`${logPrefix} ${msg}`);
 }
 
 // ======================================================
+// CONNECTOR HELPERS
+// ======================================================
+
+/**
+ * Get connector for a workflow name.
+ */
+function getConnector(workflowName) {
+    return wfLoader.getConnector(workflowName);
+}
+
+// ======================================================
 // IU DURATION READER
 // ======================================================
-// Reads IU metadata from PostgreSQL (preferred) or JSON file (fallback)
 async function readIUMetadata(buildId, bookId, chapterId, sceneId, unitId) {
-    // Try PG first
     try {
         const { query } = require('../../storage/postgres/database');
         const result = await query(`
@@ -51,20 +62,12 @@ async function readIUMetadata(buildId, bookId, chapterId, sceneId, unitId) {
     } catch (err) {
         log(`Failed to read IU metadata from SQLite: ${err.message}`);
     }
-
     return null;
 }
 
 // ======================================================
 // VIDEO PROMPT BUILDER
 // ======================================================
-// Format:
-//   character1: video_tokens. character2: video_tokens.
-//
-//   0.0–3.0s: Shot description. Environment. Visual.
-//   3.0–7.0s: Shot. Character description. Visual.
-//
-//   24fps; cinematic realism.
 function buildVideoPrompt(sceneData, loadedBook, units, iuDurations) {
     const scene = sceneData.scene || sceneData.payload || {};
     const chapterData = sceneData.chapter || {};
@@ -98,12 +101,10 @@ function buildVideoPrompt(sceneData, loadedBook, units, iuDurations) {
 
         const descParts = [];
 
-        // Shot type
         if (unit.visual?.shot) {
             descParts.push(`${unit.visual.shot.replace(/_/g, ' ')} shot`);
         }
 
-        // Environment for establishing shot (first IU)
         if (i === 0) {
             if (loc?.description) descParts.push(loc.description);
             if (env.time) descParts.push(env.time);
@@ -112,7 +113,6 @@ function buildVideoPrompt(sceneData, loadedBook, units, iuDurations) {
             if (env.mood) descParts.push(env.mood);
         }
 
-        // Participating character visuals
         if (unit.participants?.length) {
             const chars = unit.participants
                 .filter(id => id !== 'author')
@@ -125,7 +125,6 @@ function buildVideoPrompt(sceneData, loadedBook, units, iuDurations) {
             }
         }
 
-        // Visual prompt
         if (unit.visual?.prompt) {
             descParts.push(unit.visual.prompt);
         }
@@ -134,18 +133,14 @@ function buildVideoPrompt(sceneData, loadedBook, units, iuDurations) {
         storyboardParts.push(line);
     }
 
-    // 4. Assemble final prompt
     const promptParts = [];
-
     if (charLines.length > 0) {
         promptParts.push(charLines.join(' '));
         promptParts.push('');
     }
-
     promptParts.push(storyboardParts.join('\n'));
     promptParts.push('');
 
-    // Footer: FPS + render mode
     const renderMode = scene.visual?.render || loadedBook?.manifest?.render?.mode || '';
     promptParts.push(`${VIDEO_FPS}fps${renderMode ? `; ${renderMode.replace(/_/g, ' ')}` : ''}`);
 
@@ -188,60 +183,89 @@ function buildWorkflowForGroup(groupInfo, units, iuDurations, sceneData, loadedB
     }
 
     const wf = JSON.parse(JSON.stringify(baseWorkflow));
+    const connector = getConnector(workflowName);
+    const cl = require('../connector-loader');
 
-    // Resolve LTXVAddGuide nodes from the workflow (sorted by node ID for consistent ordering)
+    // Resolve guide nodes from the workflow (sorted by node ID for consistent ordering)
     const guideNodeIds = Object.entries(wf)
         .filter(([, v]) => v.class_type === 'LTXVAddGuide')
         .sort(([a], [b]) => parseInt(a) - parseInt(b))
         .map(([id]) => id);
 
+    // Resolve node IDs from connector or fallback
+    const loadImageNodeIds = connector
+        ? cl.getNodeId(connector, 'sourceImages')
+        : FALLBACK_NODE.LOAD_IMAGE;
+
+    const totalFramesNodeId = connector
+        ? cl.getNodeId(connector, 'totalFrames')
+        : FALLBACK_NODE.TOTAL_FRAMES;
+
+    const positiveNodeId = connector
+        ? cl.getNodeId(connector, 'positivePrompt')
+        : FALLBACK_NODE.POSITIVE;
+
+    const negativeNodeId = connector
+        ? cl.getNodeId(connector, 'negativePrompt')
+        : FALLBACK_NODE.NEGATIVE;
+
     // 1. Calculate frames
     const { frameIndices, totalFrames } = calculateFrames(iuDurations);
 
-    // 2. Set total frames
-    wf[NODE.TOTAL_FRAMES].inputs.value = totalFrames;
+    // 2. Set total frames via connector
+    if (connector) {
+        cl.setValue(wf, connector, 'totalFrames', totalFrames);
+    } else if (wf[totalFramesNodeId]) {
+        wf[totalFramesNodeId].inputs.value = totalFrames;
+    }
 
     // 3. Set image filenames and guide frame indices
     for (let i = 0; i < units.length; i++) {
         const unit = units[i];
-        const imageNodeId = NODE.LOAD_IMAGE[i];
+        const imageNodeId = Array.isArray(loadImageNodeIds) ? loadImageNodeIds[i] : loadImageNodeIds;
         const guideNodeId = guideNodeIds[i];
         const imageName = `${sceneData.book_id}_${sceneData.chapter_id}_${sceneData.scene_id}_${unit.id}.png`;
 
-        // Set LoadImage filename
         if (wf[imageNodeId]) {
             wf[imageNodeId].inputs.image = imageName;
         }
 
-        // Set frame_idx on LTXVAddGuide
         if (guideNodeId && wf[guideNodeId]) {
             wf[guideNodeId].inputs.frame_idx = frameIndices[i];
         }
     }
 
-    // Fill unused LoadImage nodes with last available image so ComfyUI validation passes
+    // Fill unused LoadImage nodes with last available image
+    const maxSlots = Array.isArray(loadImageNodeIds) ? loadImageNodeIds.length : (FALLBACK_NODE.LOAD_IMAGE || []).length;
     const lastImageName = `${sceneData.book_id}_${sceneData.chapter_id}_${sceneData.scene_id}_${units[units.length - 1].id}.png`;
-    for (let i = units.length; i < NODE.LOAD_IMAGE.length; i++) {
-        const imageNodeId = NODE.LOAD_IMAGE[i];
-        if (wf[imageNodeId]) {
+    for (let i = units.length; i < maxSlots; i++) {
+        const imageNodeId = Array.isArray(loadImageNodeIds) ? loadImageNodeIds[i] : null;
+        if (imageNodeId && wf[imageNodeId]) {
             wf[imageNodeId].inputs.image = lastImageName;
         }
     }
 
-    // 4. Set video filename prefix to scene ID for precise FS detection
-    if (wf['75']) {
-        wf['75'].inputs.filename_prefix = `video/${sceneData.book_id}_${sceneData.chapter_id}_${sceneData.scene_id}`;
+    // 4. Set video filename prefix via connector
+    const prefixValue = `video/${sceneData.book_id}_${sceneData.chapter_id}_${sceneData.scene_id}`;
+    if (connector) {
+        cl.setValue(wf, connector, 'outputFilenamePrefix', prefixValue);
+    } else if (wf['75']) {
+        wf['75'].inputs.filename_prefix = prefixValue;
     }
 
-    // 5. Set positive prompt
+    // 5. Set positive prompt via connector
     const prompt = buildVideoPrompt(sceneData, loadedBook, units, iuDurations);
-    if (wf[NODE.POSITIVE]) {
-        wf[NODE.POSITIVE].inputs.text = prompt;
+    if (connector) {
+        cl.setValue(wf, connector, 'positivePrompt', prompt);
+    } else if (wf[positiveNodeId]) {
+        wf[positiveNodeId].inputs.text = prompt;
     }
 
-    // 5. Set negative prompt for this IU group
-    if (wf[NODE.NEGATIVE]) {
-        wf[NODE.NEGATIVE].inputs.text = buildVideoNegativePrompt(sceneData, units);
+    // 6. Set negative prompt via connector
+    if (connector) {
+        cl.setValue(wf, connector, 'negativePrompt', buildVideoNegativePrompt(sceneData, units));
+    } else if (wf[negativeNodeId]) {
+        wf[negativeNodeId].inputs.text = buildVideoNegativePrompt(sceneData, units);
     }
 
     log(`Built ${workflowName} workflow: ${units.length} IU(s), ${totalFrames} total frames`);
@@ -252,8 +276,6 @@ function buildWorkflowForGroup(groupInfo, units, iuDurations, sceneData, loadedB
 // ======================================================
 // MAIN ENTRY
 // ======================================================
-// Builds all video workflows for a scene.
-// Returns { success, workflows: [{ workflowName, workflow, units, unitCount }] }
 async function buildVideoWorkflows(sceneData, loadedBook, buildId, workflows) {
     const scene = sceneData.scene || sceneData.payload || {};
     const units = book.collectSceneUnits(scene) || [];
@@ -263,7 +285,6 @@ async function buildVideoWorkflows(sceneData, loadedBook, buildId, workflows) {
         return { success: false, reason: 'no_units' };
     }
 
-    // Read IU durations from PG metadata
     const iuDurations = await Promise.all(units.map(async unit => {
         const meta = await readIUMetadata(
             buildId,
@@ -327,7 +348,6 @@ function buildVideoWorkflow(scene, chapter, bookData) {
     return workflow;
 }
 
-// Old prompt builder (kept for backward compat)
 function buildVideoPromptLegacy(scene, chapter, book) {
     const bookTitle = book?.manifest?.title || book?.manifest?.name || '';
     const chapterTitle = chapter?.title || chapter?.name || '';
@@ -359,14 +379,9 @@ function buildCamera(scene) {
 // FRAME CALCULATORS
 // ======================================================
 const VIDEO_FPS = parseInt(process.env.VIDEO_FPS || '24', 10);
-const LTX_FRAME_ALIGN = parseInt(process.env.LTX_FRAME_ALIGN || '8', 10); // LTX requires % 8
-const MIN_IU_DURATION = 1.0; // minimum IU duration in seconds
+const LTX_FRAME_ALIGN = parseInt(process.env.LTX_FRAME_ALIGN || '8', 10);
+const MIN_IU_DURATION = 1.0;
 
-/**
- * Calculate frame indices per IU, per-IU frame counts, and total frames.
- * Frame indices mark where each IU starts. Last IU gets -1 (end-of-video marker).
- * Total frames = sum of all IU frames + 1 (LTX tail padding).
- */
 function calculateFrames(iuDurations) {
     const minFrames = Math.round(MIN_IU_DURATION * VIDEO_FPS);
     const frameCounts = [];
@@ -378,7 +393,7 @@ function calculateFrames(iuDurations) {
     let cumulative = 0;
     for (let i = 0; i < frameCounts.length; i++) {
         if (i === frameCounts.length - 1) {
-            frameIndices.push(-1); // last IU uses remaining frames
+            frameIndices.push(-1);
         } else {
             frameIndices.push(cumulative);
             cumulative += frameCounts[i];
@@ -389,15 +404,12 @@ function calculateFrames(iuDurations) {
 }
 
 function toValidLTXFrames(rawTotal) {
-    // LTX requires 8n+1 frames: round up to nearest 8n+1
     return Math.ceil((rawTotal - 1) / 8) * 8 + 1;
 }
 
 // ======================================================
 // GROUP SPLITTER
 // ======================================================
-// Splits N IUs into workflow groups (max 4 per group, LTX limit).
-// Returns [{ offset, count, name }] where name = "${count}p"
 function selectWorkflowGroups(unitCount) {
     const groups = [];
     let offset = 0;

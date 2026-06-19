@@ -503,15 +503,15 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
         val chapters = bd.chapters ?: emptyList()
         val realChNum = chapters.take(chIdx).count { it.type != "cover" && it.type != "prologue" } + 1
         val chName = if (isSpecial) {
-            ch?.chapter_title?.takeIf { it.isNotBlank() } ?: ch?.type?.replaceFirstChar { it.uppercase() } ?: pos.chapterId ?: "?"
+            ch?.chapter_title?.takeIf { it.isNotBlank() } ?: ch?.type?.replaceFirstChar { it.uppercase() }
         } else if (chIdx > 0) {
-            val titleSuffix = ch?.chapter_title?.let { " — $it" } ?: ""
+            val titleSuffix = if (ch?.chapter_title != null) " — ${ch.chapter_title}" else ""
             "${getString(R.string.navigate_chapter)} $realChNum$titleSuffix"
         } else {
-            pos.chapterId ?: "?"
+            pos.chapterId
         }
         val scName = if (scIdx > 0) {
-            val titleSuffix = sc?.scene_title?.let { " — $it" } ?: ""
+            val titleSuffix = if (sc?.scene_title != null) " — ${sc.scene_title}" else ""
             "${getString(R.string.navigate_scene)} $scIdx$titleSuffix"
         } else {
             pos.sceneId ?: "?"
@@ -599,7 +599,7 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
                 val chapters = bookData.chapters ?: emptyList()
                 val realChNum = chapters.take(chIdx).count { it.type != "cover" && it.type != "prologue" } + 1
                 val chapterId = if (isSpecial) {
-                    chTitle ?: (ch?.type?.replaceFirstChar { it.uppercase() } ?: pos.chapterId ?: "?")
+                    chTitle ?: ch?.type?.replaceFirstChar { it.uppercase() } ?: "?"
                 } else if (chIdx > 0) {
                     "${getString(R.string.navigate_chapter)} $realChNum"
                 } else {
@@ -683,12 +683,12 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
                     val chName = if (isSpecial) {
                         ch?.chapter_title?.takeIf { it.isNotBlank() } ?: ch?.type?.replaceFirstChar { it.uppercase() }
                     } else if (chIdx > 0) {
-                        val titleSuffix = ch?.chapter_title?.let { " — $it" } ?: ""
+                        val titleSuffix = if (ch?.chapter_title != null) " — ${ch.chapter_title}" else ""
                         "${getString(R.string.navigate_chapter)} $realChNum$titleSuffix"
-                    } else {
-                        pos.chapterId
-                    }
-                    val scName = if (scIdx > 0) {
+        } else {
+            pos.chapterId
+        }
+        val scName = if (scIdx > 0) {
                         val titleSuffix = if (sc?.scene_title != null) " — ${sc.scene_title}" else ""
                         "${getString(R.string.navigate_scene)} $scIdx$titleSuffix"
                     } else {

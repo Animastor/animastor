@@ -272,11 +272,16 @@ class MainActivity : AppCompatActivity() {
      * Coordinate between [GenerateViewModel] (generation) and
      * [PlaybackViewModel] (player) by observing chunk-ready signals
      * from the generation pipeline and forwarding them to the player.
+     *
+     * Cover image updates are handled via a separate [GenerateViewModel.coverUpdated]
+     * flow to avoid [PlaybackViewModel.preparePlayback] being called multiple times
+     * (which would reset the player phase and disrupt playback).
      */
     private fun setupPlaybackCoordination() {
+        // Primary channel: playback preparation (chunks, positions, initial cover)
         lifecycleScope.launch {
             viewModel.playbackPrepared.collect { prep ->
-                Log.i("MainActivity", "playbackPrepared: book=${prep.bookId} chunks=${prep.chunkIds.size}")
+                Log.i("MainActivity", "playbackPrepared: book=${prep.bookId} chunks=${prep.chunkIds.size} cover=${prep.coverImage != null}")
                 playbackViewModel.preparePlayback(
                     bookId = prep.bookId,
                     buildId = prep.buildId,
@@ -286,6 +291,15 @@ class MainActivity : AppCompatActivity() {
                 if (prep.coverImage != null) {
                     playbackViewModel.setCoverImage(prep.coverImage)
                 }
+            }
+        }
+        // Separate channel: cover image becomes available after generation completes.
+        // Updates only the cover — does NOT call preparePlayback, so the player phase
+        // (e.g. SCENE_READY or PLAYING) is preserved.
+        lifecycleScope.launch {
+            viewModel.coverUpdated.collect { bitmap ->
+                Log.i("MainActivity", "coverUpdated: cover image now available (size=${bitmap.width}x${bitmap.height})")
+                playbackViewModel.setCoverImage(bitmap)
             }
         }
     }
