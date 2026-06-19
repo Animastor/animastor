@@ -385,6 +385,12 @@ interface BackendApi {
         @Path("name") name: String
     ): ConnectorParameterValues
 
+    @PUT("/api/v1/connectors/{name}/status")
+    suspend fun putConnectorStatus(
+        @Path("name") name: String,
+        @Body body: ConnectorStatusRequest
+    ): ConnectorStatusResponse
+
     // ======================================================
     // Workflow Status API (Stage 1)
     // ======================================================

@@ -11,13 +11,7 @@ const wfLoader = require('../workflow-loader');
 
 const logPrefix = '[WF-VIDEO]';
 
-// Connector fallback constants (used only if connector is missing)
-const FALLBACK_NODE = {
-    TOTAL_FRAMES: '112',
-    POSITIVE: '121',
-    NEGATIVE: '110',
-    LOAD_IMAGE: ['149', '179', '187', '216'],
-};
+// Connector constants are no longer needed — connectors are required at startup
 
 function log(msg) {
     console.log(`${logPrefix} ${msg}`);
@@ -192,32 +186,17 @@ function buildWorkflowForGroup(groupInfo, units, iuDurations, sceneData, loadedB
         .sort(([a], [b]) => parseInt(a) - parseInt(b))
         .map(([id]) => id);
 
-    // Resolve node IDs from connector or fallback
-    const loadImageNodeIds = connector
-        ? cl.getNodeId(connector, 'sourceImages')
-        : FALLBACK_NODE.LOAD_IMAGE;
-
-    const totalFramesNodeId = connector
-        ? cl.getNodeId(connector, 'totalFrames')
-        : FALLBACK_NODE.TOTAL_FRAMES;
-
-    const positiveNodeId = connector
-        ? cl.getNodeId(connector, 'positivePrompt')
-        : FALLBACK_NODE.POSITIVE;
-
-    const negativeNodeId = connector
-        ? cl.getNodeId(connector, 'negativePrompt')
-        : FALLBACK_NODE.NEGATIVE;
+    // Resolve node IDs from connector (required at startup)
+    const loadImageNodeIds = cl.getNodeId(connector, 'sourceImages');
+    const totalFramesNodeId = cl.getNodeId(connector, 'totalFrames');
+    const positiveNodeId = cl.getNodeId(connector, 'positivePrompt');
+    const negativeNodeId = cl.getNodeId(connector, 'negativePrompt');
 
     // 1. Calculate frames
     const { frameIndices, totalFrames } = calculateFrames(iuDurations);
 
     // 2. Set total frames via connector
-    if (connector) {
-        cl.setValue(wf, connector, 'totalFrames', totalFrames);
-    } else if (wf[totalFramesNodeId]) {
-        wf[totalFramesNodeId].inputs.value = totalFrames;
-    }
+    cl.setValue(wf, connector, 'totalFrames', totalFrames);
 
     // 3. Set image filenames and guide frame indices
     for (let i = 0; i < units.length; i++) {
@@ -236,7 +215,7 @@ function buildWorkflowForGroup(groupInfo, units, iuDurations, sceneData, loadedB
     }
 
     // Fill unused LoadImage nodes with last available image
-    const maxSlots = Array.isArray(loadImageNodeIds) ? loadImageNodeIds.length : (FALLBACK_NODE.LOAD_IMAGE || []).length;
+    const maxSlots = loadImageNodeIds?.length || 0;
     const lastImageName = `${sceneData.book_id}_${sceneData.chapter_id}_${sceneData.scene_id}_${units[units.length - 1].id}.png`;
     for (let i = units.length; i < maxSlots; i++) {
         const imageNodeId = Array.isArray(loadImageNodeIds) ? loadImageNodeIds[i] : null;
@@ -247,26 +226,14 @@ function buildWorkflowForGroup(groupInfo, units, iuDurations, sceneData, loadedB
 
     // 4. Set video filename prefix via connector
     const prefixValue = `video/${sceneData.book_id}_${sceneData.chapter_id}_${sceneData.scene_id}`;
-    if (connector) {
-        cl.setValue(wf, connector, 'outputFilenamePrefix', prefixValue);
-    } else if (wf['75']) {
-        wf['75'].inputs.filename_prefix = prefixValue;
-    }
+    cl.setValue(wf, connector, 'outputFilenamePrefix', prefixValue);
 
     // 5. Set positive prompt via connector
     const prompt = buildVideoPrompt(sceneData, loadedBook, units, iuDurations);
-    if (connector) {
-        cl.setValue(wf, connector, 'positivePrompt', prompt);
-    } else if (wf[positiveNodeId]) {
-        wf[positiveNodeId].inputs.text = prompt;
-    }
+    cl.setValue(wf, connector, 'positivePrompt', prompt);
 
     // 6. Set negative prompt via connector
-    if (connector) {
-        cl.setValue(wf, connector, 'negativePrompt', buildVideoNegativePrompt(sceneData, units));
-    } else if (wf[negativeNodeId]) {
-        wf[negativeNodeId].inputs.text = buildVideoNegativePrompt(sceneData, units);
-    }
+    cl.setValue(wf, connector, 'negativePrompt', buildVideoNegativePrompt(sceneData, units));
 
     log(`Built ${workflowName} workflow: ${units.length} IU(s), ${totalFrames} total frames`);
 

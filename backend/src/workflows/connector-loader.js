@@ -26,6 +26,7 @@ const logPrefix = '[CONNECTOR]';
 // In-memory registry
 const connectors = {};       // workflow_name → connector
 const connectorsByName = {}; // connector_name → connector
+const connectorEnabled = {}; // connector_name → boolean (default: true)
 
 function log(msg) { console.log(`${logPrefix} ${msg}`); }
 function warn(msg) { console.warn(`${logPrefix} ⚠️ ${msg}`); }
@@ -170,12 +171,17 @@ function loadConnectors() {
 
 /**
  * Register connectors in the in-memory registry.
+ * All connectors start as enabled.
  * @param {object} connectorMap — { connectorName: connector }
  */
 function registerConnectors(connectorMap) {
   for (const [name, connector] of Object.entries(connectorMap)) {
     connectorsByName[name] = connector;
     connectors[connector.workflow] = connector;
+    // Default to enabled
+    if (connectorEnabled[name] === undefined) {
+      connectorEnabled[name] = true;
+    }
   }
 }
 
@@ -640,6 +646,7 @@ function getConnectorStatuses(workflowMap) {
 function registerConnector(name, connector) {
   connectorsByName[name] = connector;
   connectors[connector.workflow] = connector;
+  connectorEnabled[name] = true;
   log(`Registered connector: ${name} → workflow "${connector.workflow}"`);
 }
 
@@ -668,12 +675,16 @@ function unregisterConnector(name) {
 /**
  * Reload all connectors from disk, preserving the ones that fail.
  * Clears registries, re-loads, re-registers, and re-validates.
+ * Preserves enabled/disabled state across reload.
  *
  * @param {object} workflowMap — { workflowName: workflowJson }
  * @returns {{ connectors: object[], warnings: string[], errors: string[] }}
  */
 function reload(workflowMap) {
   log('Reloading connectors from disk...');
+
+  // Preserve enabled/disabled state across reload
+  const previousEnabled = { ...connectorEnabled };
 
   // Clear registries
   for (const key of Object.keys(connectors)) {
@@ -682,9 +693,48 @@ function reload(workflowMap) {
   for (const key of Object.keys(connectorsByName)) {
     delete connectorsByName[key];
   }
+  for (const key of Object.keys(connectorEnabled)) {
+    delete connectorEnabled[key];
+  }
 
   // Re-initialize
-  return initialize(workflowMap);
+  const result = initialize(workflowMap);
+
+  // Restore previous enabled/disabled state for connectors that still exist
+  for (const name of Object.keys(result.connectors)) {
+    if (previousEnabled[name] !== undefined) {
+      connectorEnabled[name] = previousEnabled[name];
+    }
+  }
+
+  return result;
+}
+
+// ─── Enable/Disable ────────────────────────────────
+
+/**
+ * Set a connector's enabled/disabled status.
+ * @param {string} connectorName — e.g. "conn-image-generation"
+ * @param {boolean} enabled
+ * @returns {{ ok: boolean, error?: string }}
+ */
+function setConnectorStatus(connectorName, enabled) {
+  if (!connectorsByName[connectorName]) {
+    return { ok: false, error: `Connector "${connectorName}" not found` };
+  }
+  connectorEnabled[connectorName] = !!enabled;
+  log(`Connector "${connectorName}" ${enabled ? 'enabled' : 'disabled'}`);
+  return { ok: true, enabled: !!enabled };
+}
+
+/**
+ * Check if a connector is enabled.
+ * @param {string} connectorName
+ * @returns {boolean} — true if enabled (default), false if disabled
+ */
+function isConnectorEnabled(connectorName) {
+  // Default to enabled if not explicitly set
+  return connectorEnabled[connectorName] !== false;
 }
 
 // ─── Exports ────────────────────────────────────────
@@ -721,5 +771,10 @@ module.exports = {
 
   // Registry (inspectable)
   connectors,
-  connectorsByName
+  connectorsByName,
+  connectorEnabled,
+
+  // Enable/Disable
+  setConnectorStatus,
+  isConnectorEnabled
 };

@@ -15,7 +15,8 @@ data class ConnectorSummary(
     val workflow: String = "",
     val status: String = "unknown",
     val version: String = "1.0.0",
-    val description: String = ""
+    val description: String = "",
+    val enabled: Boolean = true
 )
 
 data class ConnectorDetail(
@@ -81,6 +82,20 @@ data class ConnectorReloadResult(
     val connectorsLoaded: Int = 0,
     val warnings: List<String> = emptyList(),
     val errors: List<String> = emptyList()
+)
+
+// ======================================================
+// Connector Status Models (Enable/Disable)
+// ======================================================
+
+data class ConnectorStatusRequest(
+    val enabled: Boolean
+)
+
+data class ConnectorStatusResponse(
+    val ok: Boolean = false,
+    val error: String? = null,
+    val enabled: Boolean? = null
 )
 
 // ======================================================

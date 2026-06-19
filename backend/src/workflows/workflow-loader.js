@@ -51,6 +51,21 @@ function loadWorkflows() {
         if (connResult.errors.length > 0) {
             console.error(`${logPrefix} ❌ Connector errors: ${connResult.errors.length}`);
         }
+
+        // Check that every workflow has a matching connector
+        const missingConnectors = [];
+        for (const wfName of Object.keys(workflows)) {
+            if (!connectorLoader.getConnector(wfName)) {
+                missingConnectors.push(wfName);
+            }
+        }
+        if (missingConnectors.length > 0) {
+            const msg = `Missing connectors for workflows: ${missingConnectors.join(', ')}. ` +
+                `Every workflow must have a matching connector file in /data/connectors/.`;
+            console.error(`${logPrefix} ❌ FATAL: ${msg}`);
+            throw new Error(msg);
+        }
+
         log(`Connectors: ${Object.keys(connResult.connectors).length} loaded, ` +
             `${connResult.warnings.length} warnings, ${connResult.errors.length} errors`);
     } else {

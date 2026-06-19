@@ -172,6 +172,30 @@ module.exports = function(app, redis, deps) {
     });
 
     // ======================================================
+    // UPDATE CONNECTOR STATUS (enable/disable) (parameterized)
+    // ======================================================
+    app.put('/api/v1/connectors/:name/status', async (req, res) => {
+        try {
+            const { name } = req.params;
+            const { enabled } = req.body || {};
+
+            if (typeof enabled !== 'boolean') {
+                return res.status(400).json({ error: 'enabled (boolean) is required in body' });
+            }
+
+            const result = wfManager.setConnectorStatus(name, enabled);
+            if (!result.ok) {
+                return res.status(404).json({ error: result.error });
+            }
+
+            res.json(result);
+        } catch (err) {
+            console.error('[CONNECTORS] Status error:', err.message);
+            res.status(500).json({ error: err.message });
+        }
+    });
+
+    // ======================================================
     // GET CONNECTOR RAW JSON (parameterized — Developer Mode)
     // ======================================================
     app.get('/api/v1/connectors/:name/raw', async (req, res) => {

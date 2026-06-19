@@ -13,15 +13,11 @@ const gpu = require('../runtime/gpu-dispatcher');
 const wfLoader = require('../workflows/workflow-loader');
 const { makeIUImageFilename, makePreviewFilename } = require('../storage/filesystem-store');
 
-// Connector-aware: resolve nodeId via connector, fallback to hardcoded
+// Connector-aware: resolve nodeId via connector (connectors required)
 const WORKFLOW_NAME = 'img-qwen-image';
-const FALLBACK_NODES = {
-  positivePrompt: '108',
-  negativePrompt: '109'
-};
 
 /**
- * Get node ID from connector, or fallback.
+ * Get node ID from connector.
  */
 function getImageNodeId(entityKey) {
   const connector = wfLoader.getConnector(WORKFLOW_NAME);
@@ -30,7 +26,7 @@ function getImageNodeId(entityKey) {
     const nodeId = cl.getNodeId(connector, entityKey);
     if (nodeId) return nodeId;
   }
-  return FALLBACK_NODES[entityKey] || null;
+  return null;
 }
 
 /**
@@ -41,12 +37,6 @@ function applyImageValue(wf, entityKey, value) {
   if (connector) {
     const cl = require('../workflows/connector-loader');
     return cl.setValue(wf, connector, entityKey, value);
-  }
-  // Legacy fallback: direct nodeId access
-  const nodeId = FALLBACK_NODES[entityKey];
-  if (nodeId && wf[nodeId]) {
-    wf[nodeId].inputs.text = value;
-    return true;
   }
   return false;
 }

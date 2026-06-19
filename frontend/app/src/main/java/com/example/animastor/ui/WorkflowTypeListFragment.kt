@@ -11,7 +11,11 @@ import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.RecyclerView
 import com.example.animastor.R
 import com.example.animastor.databinding.FragmentWorkflowTypeListBinding
+import com.example.animastor.network.RetrofitClient
+import com.example.animastor.repository.ConnectorStatusRequest
 import com.example.animastor.repository.ConnectorSummary
+import com.google.android.material.card.MaterialCardView
+import com.google.android.material.switchmaterial.SwitchMaterial
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
@@ -51,9 +55,16 @@ class WorkflowTypeListFragment : Fragment(R.layout.fragment_workflow_type_list) 
             else -> sharedViewModel.audioWorkflows
         }
 
-        val adapter = WorkflowListAdapter { connector ->
-            openDetails(connector.name, connector.label)
-        }
+        val adapter = WorkflowListAdapter(
+            onItemClick = { connector ->
+                if (connector.enabled) {
+                    openDetails(connector.name, connector.label)
+                }
+            },
+            onToggleEnabled = { connector, enabled ->
+                toggleConnector(connector.name, enabled)
+            }
+        )
         b.workflowList.adapter = adapter
 
         lifecycleScope.launch {
@@ -72,6 +83,26 @@ class WorkflowTypeListFragment : Fragment(R.layout.fragment_workflow_type_list) 
         // Add workflow button (placeholder for future)
         b.addButton.setOnClickListener {
             // Future: file picker for workflow JSON + auto-connector creation
+        }
+    }
+
+    private fun toggleConnector(name: String, enabled: Boolean) {
+        lifecycleScope.launch {
+            try {
+                val api = RetrofitClient.api
+                api.putConnectorStatus(name, ConnectorStatusRequest(enabled))
+                // Refresh the list to reflect the change
+                refreshWorkflows()
+            } catch (_: Exception) {
+                // Revert on error — handled by refresh
+                refreshWorkflows()
+            }
+        }
+    }
+
+    private fun refreshWorkflows() {
+        lifecycleScope.launch {
+            sharedViewModel.loadConnectors()
         }
     }
 
@@ -106,7 +137,8 @@ class WorkflowTypeListFragment : Fragment(R.layout.fragment_workflow_type_list) 
 // ─── Adapter ──────────────────────────────────────────
 
 class WorkflowListAdapter(
-    private val onItemClick: (ConnectorSummary) -> Unit
+    private val onItemClick: (ConnectorSummary) -> Unit,
+    private val onToggleEnabled: (ConnectorSummary, Boolean) -> Unit
 ) : RecyclerView.Adapter<WorkflowListAdapter.ViewHolder>() {
 
     private var items: List<ConnectorSummary> = emptyList()
@@ -133,12 +165,14 @@ class WorkflowListAdapter(
         private val connectorText: TextView = itemView.findViewById(R.id.workflowConnector)
         private val statusText: TextView = itemView.findViewById(R.id.workflowStatus)
         private val detailsButton: View = itemView.findViewById(R.id.detailsButton)
+        private val enableSwitch: SwitchMaterial = itemView.findViewById(R.id.enableSwitch)
+        private val card: MaterialCardView = itemView.findViewById(R.id.workflowCard)
 
         fun bind(item: ConnectorSummary) {
+            val ctx = itemView.context
+
             labelText.text = item.label
-            connectorText.text = itemView.context.getString(
-                R.string.workflow_connector, item.name
-            )
+            connectorText.text = ctx.getString(R.string.workflow_connector, item.name)
 
             val statusRes = when (item.status) {
                 "compatible" -> R.string.workflow_status_compatible
@@ -146,22 +180,42 @@ class WorkflowListAdapter(
                 "registered" -> R.string.workflow_status_registered
                 else -> R.string.workflow_status_unknown
             }
-            statusText.text = itemView.context.getString(statusRes)
+            statusText.text = ctx.getString(statusRes)
 
             when (item.status) {
                 "compatible" -> {
-                    statusText.setTextColor(itemView.context.getColor(R.color.cinema_success))
+                    statusText.setTextColor(ctx.getColor(R.color.cinema_success))
                 }
                 "incompatible" -> {
-                    statusText.setTextColor(itemView.context.getColor(R.color.cinema_error))
+                    statusText.setTextColor(ctx.getColor(R.color.cinema_error))
                 }
                 else -> {
-                    statusText.setTextColor(itemView.context.getColor(R.color.cinema_text_secondary))
+                    statusText.setTextColor(ctx.getColor(R.color.cinema_text_secondary))
                 }
             }
 
-            detailsButton.setOnClickListener { onItemClick(item) }
-            itemView.setOnClickListener { onItemClick(item) }
+            // Enable/Disable toggle
+            // ⚠️ Remove listener before setting isChecked to prevent spurious API calls on bind()
+            enableSwitch.setOnCheckedChangeListener(null)
+            enableSwitch.isChecked = item.enabled
+            enableSwitch.setOnCheckedChangeListener { _, isChecked ->
+                onToggleEnabled(item, isChecked)
+            }
+
+            // Grayed-out style for disabled workflows
+            val alpha = if (item.enabled) 1.0f else 0.45f
+            card.alpha = alpha
+            labelText.alpha = alpha
+            connectorText.alpha = alpha
+            statusText.alpha = alpha
+
+            // Details button only works for enabled workflows
+            detailsButton.setOnClickListener {
+                if (item.enabled) onItemClick(item)
+            }
+            itemView.setOnClickListener {
+                if (item.enabled) onItemClick(item)
+            }
         }
     }
 }

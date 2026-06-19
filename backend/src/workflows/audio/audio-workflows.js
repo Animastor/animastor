@@ -45,14 +45,6 @@ function buildNarrationTTSWorkflow(text, voiceInstruction) {
                 }
             };
         }
-    } else {
-        // Legacy fallback
-        workflow["108"] = {
-            inputs: {
-                text: text,
-                voice_instruction: voiceInstruction
-            }
-        };
     }
 
     return workflow;
@@ -107,30 +99,6 @@ function buildDialogueTTSWorkflow(script, c1Voice, c2Voice, c1Role, c2Role) {
                 }
             };
         }
-    } else {
-        // Legacy fallback
-        workflow["108"] = {
-            inputs: {
-                script: script,
-                default_instruct: ""
-            }
-        };
-        workflow["71"] = {
-            inputs: {
-                voice_instruction: c1Voice || ""
-            }
-        };
-        workflow["80"] = {
-            inputs: {
-                voice_instruction: c2Voice || ""
-            }
-        };
-        workflow["74"] = {
-            inputs: {
-                role_name_1: c1Role || "role1",
-                role_name_2: c2Role || "role2"
-            }
-        };
     }
 
     return workflow;

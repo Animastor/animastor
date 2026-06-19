@@ -187,13 +187,16 @@ require('./routes/workflow-routes.cjs')(app, redis, routeDeps);
 // ======================================================
 
 async function startServer() {
-    // Load workflow templates
+    // Load workflow templates (connectors are required — failure is fatal)
     try {
         const wfLoader = require('./workflows/workflow-loader');
         await wfLoader.loadWorkflows();
         log('[STARTUP] Workflows loaded');
     } catch (wfErr) {
-        console.warn('[STARTUP] Workflow loading failed (non-fatal):', wfErr.message);
+        console.error('[FATAL] Workflow loading failed:', wfErr.message);
+        console.error('[FATAL] Every workflow must have a matching connector in /data/connectors/.');
+        console.error('[FATAL] Starting the server without valid workflows would cause silent failures.');
+        process.exit(1);
     }
 
     // Initialize PostgreSQL storage

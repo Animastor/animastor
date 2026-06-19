@@ -405,6 +405,47 @@ function getEntitiesByKind(kind) {
     return entitySchema.getEntitiesByKind(kind);
 }
 
+// ─── Connector Status (Enable/Disable) ──────────────
+
+/**
+ * Set a connector's enabled/disabled status.
+ * @param {string} connectorName
+ * @param {boolean} enabled
+ * @returns {{ ok: boolean, error?: string, enabled?: boolean }}
+ */
+function setConnectorStatus(connectorName, enabled) {
+    const connector = connectorLoader.getConnectorByName(connectorName);
+    if (!connector) {
+        return { ok: false, error: `Connector "${connectorName}" not found` };
+    }
+    const result = connectorLoader.setConnectorStatus(connectorName, enabled);
+    log(`Connector "${connectorName}" status set to ${enabled ? 'enabled' : 'disabled'}`);
+    return result;
+}
+
+/**
+ * Check if a connector is currently enabled.
+ * @param {string} connectorName
+ * @returns {boolean}
+ */
+function isConnectorEnabled(connectorName) {
+    return connectorLoader.isConnectorEnabled(connectorName);
+}
+
+/**
+ * Get all connector statuses including enabled/disabled info.
+ */
+function listConnectorStatuses() {
+    const connectors = connectorLoader.getAllConnectors();
+    return connectors.map(c => {
+        const name = findConnectorName(c);
+        return {
+            name,
+            enabled: name ? connectorLoader.isConnectorEnabled(name) : true
+        };
+    });
+}
+
 // ─── Exports ────────────────────────────────────────
 
 module.exports = {
@@ -420,6 +461,11 @@ module.exports = {
     // Parameter Management
     updateConnectorParameter,
     getConnectorParameterValues,
+
+    // Connector Status (Enable/Disable)
+    setConnectorStatus,
+    isConnectorEnabled,
+    listConnectorStatuses,
 
     // Workflow
     listWorkflows,

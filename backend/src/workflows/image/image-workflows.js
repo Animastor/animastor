@@ -39,14 +39,6 @@ function buildImageWorkflow(prompt, negativePrompt) {
                 inputs: { text: negativePrompt || "blurry, low quality, artifacts" }
             };
         }
-    } else {
-        // Legacy fallback
-        workflow["108"] = {
-            inputs: { text: prompt }
-        };
-        workflow["109"] = {
-            inputs: { text: negativePrompt || "blurry, low quality, artifacts" }
-        };
     }
 
     return workflow;
