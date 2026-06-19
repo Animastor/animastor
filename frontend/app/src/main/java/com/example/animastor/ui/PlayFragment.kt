@@ -471,16 +471,17 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                             PlayerPhase.LOADING_BOOK -> b.statusText.text = getString(R.string.play_loading)
                             PlayerPhase.GENERATING, PlayerPhase.DOWNLOADING -> b.statusText.text = getString(R.string.play_loading)
                             PlayerPhase.SCENE_READY -> b.statusText.text = getString(R.string.play_ready)
-                            PlayerPhase.PLAYING -> if (isPaused) b.statusText.text = getString(R.string.play_paused)
-                                else b.statusText.text = getString(R.string.play_playing)
+                            PlayerPhase.PLAYING -> b.statusText.text = getString(R.string.play_playing)
                             PlayerPhase.IDLE -> b.statusText.text = if (playbackViewModel.bookId.isBlank()) getString(R.string.empty_state) else getString(R.string.empty_state_book_loaded)
                             PlayerPhase.PAUSED -> b.statusText.text = getString(R.string.play_paused)
                             PlayerPhase.IMPORTING_TXT -> b.statusText.text = getString(R.string.play_loading)
                         }
 
-                        val isPlaying = state.phase == PlayerPhase.PLAYING && !isPaused
-                        b.playButton.text = if (isPlaying) getString(R.string.play_pause) else getString(R.string.play_play)
-                        if (isPlaying) b.playButton.setIconResource(R.drawable.ic_pause) else b.playButton.setIconResource(R.drawable.ic_play)
+                        // Single source of truth: button matches state.phase.
+                        // PLAYING = Pause button, everything else = Play button.
+                        val showPause = state.phase == PlayerPhase.PLAYING
+                        b.playButton.text = if (showPause) getString(R.string.play_pause) else getString(R.string.play_play)
+                        if (showPause) b.playButton.setIconResource(R.drawable.ic_pause) else b.playButton.setIconResource(R.drawable.ic_play)
                     } catch (e: Exception) {
                         Log.e(TAG, "===== CRASH IN STATE COLLECTOR =====", e)
                         try {
@@ -570,10 +571,18 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
             val file = writeTemp(audio)
             currentFile = file
             currentPlayer = createPlayer(file)
+            if (currentPlayer == null) {
+                // Player creation failed (corrupted or empty file).
+                // Reset the phase so the UI shows a Play button and the user can retry.
+                Log.w(TAG, "handleChunk: createPlayer returned null — resetting to SCENE_READY")
+                playbackViewModel.handleNullPlayer(playbackViewModel.getCurrentChunkId() ?: "unknown")
+                return
+            }
             currentPlayer?.setOnCompletionListener { onTrackEnd() }
             if (pendingLoad) {
                 pendingLoad = false
                 isPaused = true
+                playbackViewModel.pausePlayback()
                 Log.i(TAG, "pending load — player stays Prepared")
             } else {
                 currentPlayer?.start()
@@ -588,13 +597,11 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                 playbackViewModel.pendingSeekPositionMs = -1
             }
             Log.i(TAG, "first MediaPlayer started at unit ${seekToUnit}")
-            if (!isPaused) {
-                if (currentPlayer != null) {
-                    startIuCycling()
-                } else if (!iuSequence.isNullOrEmpty()) {
-                    Log.i(TAG, "no audio available — timer-based IU cycling")
-                    startSilentIuCycling()
-                }
+            if (currentPlayer != null) {
+                startIuCycling()
+            } else if (!iuSequence.isNullOrEmpty()) {
+                Log.i(TAG, "no audio available — timer-based IU cycling")
+                startSilentIuCycling()
             }
             preloadAheadAudio()
         } else {
@@ -975,6 +982,12 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                 setDataSource(file.absolutePath)
                 prepare()
                 setVolume(currentVolume, currentVolume)
+                setOnErrorListener { _, what, extra ->
+                    Log.e(TAG, "MediaPlayer (next) error: what=$what extra=$extra")
+                    isPaused = false
+                    playbackViewModel.handlePlaybackError("Audio preload error (what=$what, extra=$extra)")
+                    true
+                }
             }
         } catch (e: Exception) {
             Log.w(TAG, "preloadNext failed: ${e.message}")
@@ -993,6 +1006,12 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                 setDataSource(file.absolutePath)
                 prepare()
                 setVolume(currentVolume, currentVolume)
+                setOnErrorListener { _, what, extra ->
+                    Log.e(TAG, "MediaPlayer error: what=$what extra=$extra")
+                    isPaused = false
+                    playbackViewModel.handlePlaybackError("Audio playback error (what=$what, extra=$extra)")
+                    true // return true = error handled, no callback
+                }
             }
         } catch (e: Exception) {
             Log.w(TAG, "createPlayer failed: ${e.message}")
@@ -1140,9 +1159,8 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
             Log.w(TAG, "videoPlayer pause failed (state issue): ${e.message}")
         }
         isPaused = true
-        binding?.playButton?.text = getString(R.string.play_play)
-        binding?.playButton?.setIconResource(R.drawable.ic_play)
-        binding?.statusText?.text = getString(R.string.play_paused)
+        // Update ViewModel state — this drives the button/status via state.phase
+        playbackViewModel.pausePlayback()
     }
 
     private fun resumePlayback() {
@@ -1159,10 +1177,9 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         }
         updateLayers()
         isPaused = false
+        // Update ViewModel state — restore PLAYING phase
+        playbackViewModel.resumePlayback()
         startIuCycling()
-        binding?.playButton?.text = getString(R.string.play_pause)
-        binding?.playButton?.setIconResource(R.drawable.ic_pause)
-        binding?.statusText?.text = getString(R.string.play_playing)
     }
 
     private fun togglePlay() {

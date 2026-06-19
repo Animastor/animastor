@@ -196,6 +196,44 @@ class PlaybackViewModel(
         imageEnabled = enabled
     }
 
+    /**
+     * Pause playback. Updates the canonical phase to [PlayerPhase.PAUSED]
+     * so the UI button driven by [PlaybackUiState.phase] reflects the
+     * actual player state — the single source of truth.
+     */
+    fun pausePlayback() {
+        _uiState.update { it.copy(phase = PlayerPhase.PAUSED) }
+    }
+
+    /**
+     * Resume playback. Restores the phase to [PlayerPhase.PLAYING].
+     */
+    fun resumePlayback() {
+        _uiState.update { it.copy(phase = PlayerPhase.PLAYING) }
+    }
+
+    /**
+     * Handle a media error that made the current [MediaPlayer] unusable.
+     * Transitions the phase to [PlayerPhase.SCENE_READY] and records the
+     * error so the UI can show the Play button and an error message.
+     * The caller (PlayFragment) is responsible for releasing the broken
+     * player.
+     */
+    fun handlePlaybackError(errorMsg: String) {
+        Log.w(TAG, "handlePlaybackError: $errorMsg")
+        _uiState.update { it.copy(phase = PlayerPhase.SCENE_READY, errorMessage = errorMsg) }
+    }
+
+    /**
+     * Handle a null player returned by createPlayer.
+     * The chunk already emitted PLAYING but no player exists — reset to
+     * SCENE_READY so the button shows Play and the user can retry.
+     */
+    fun handleNullPlayer(chunkId: String) {
+        Log.w(TAG, "handleNullPlayer: no player for $chunkId — resetting to SCENE_READY")
+        _uiState.update { it.copy(phase = PlayerPhase.SCENE_READY, errorMessage = "Audio playback failed: file corrupted") }
+    }
+
     // ═══════════════════════════════════════════════════════════════
     //  PLAYBACK CONTROL
     // ═══════════════════════════════════════════════════════════════
