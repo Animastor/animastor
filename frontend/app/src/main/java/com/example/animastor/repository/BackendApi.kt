@@ -335,4 +335,62 @@ interface BackendApi {
     suspend fun getSourceText(
         @Path("bookId") bookId: String
     ): ResponseBody
+
+    // ======================================================
+    // Connector Registry API (Stage 1)
+    // ======================================================
+
+    @GET("/api/v1/connectors")
+    suspend fun getConnectors(): ConnectorListResponse
+
+    @GET("/api/v1/connectors/{name}")
+    suspend fun getConnectorDetail(
+        @Path("name") name: String
+    ): ConnectorDetail
+
+    @GET("/api/v1/connectors/{name}/compatibility")
+    suspend fun getConnectorCompatibility(
+        @Path("name") name: String
+    ): CompatibilityStatus
+
+    @GET("/api/v1/connectors/{name}/raw")
+    suspend fun getConnectorRaw(
+        @Path("name") name: String
+    ): Map<String, Any>
+
+    @POST("/api/v1/connectors/validate")
+    suspend fun validateConnector(
+        @Body body: Map<String, Any>
+    ): ConnectorValidationResult
+
+    @POST("/api/v1/connectors/reload")
+    suspend fun reloadConnectors(): ConnectorReloadResult
+
+    @GET("/api/v1/connectors/entities")
+    suspend fun getConnectorEntities(
+        @Query("kind") kind: String? = null
+    ): EntitySchemaResponse
+
+    @GET("/api/v1/connectors/grouped")
+    suspend fun getConnectorsGrouped(): ConnectorGroupedResponse
+
+    // ======================================================
+    // Workflow Status API (Stage 1)
+    // ======================================================
+
+    @GET("/api/v1/workflows")
+    suspend fun getWorkflows(): WorkflowListResponse
+
+    @GET("/api/v1/workflows/{name}")
+    suspend fun getWorkflowDetail(
+        @Path("name") name: String
+    ): WorkflowDetail
+
+    @GET("/api/v1/workflows/{name}/hash")
+    suspend fun getWorkflowHash(
+        @Path("name") name: String
+    ): WorkflowHashResponse
+
+    @GET("/api/v1/workflows/summary")
+    suspend fun getWorkflowSummary(): WorkflowSummaryResponse
 }

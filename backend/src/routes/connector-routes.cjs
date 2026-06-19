@@ -12,6 +12,9 @@ module.exports = function(app, redis, deps) {
     const { wfManager } = deps;
     const { log } = deps.utils || { log: console.log };
 
+    // ⚠️ IMPORTANT: Static routes MUST be defined BEFORE parameterized routes (:name).
+    // Express matches routes top-to-bottom — /grouped would match as :name otherwise.
+
     // ======================================================
     // LIST ALL CONNECTORS
     // ======================================================
@@ -26,59 +29,7 @@ module.exports = function(app, redis, deps) {
     });
 
     // ======================================================
-    // GET CONNECTOR DETAIL
-    // ======================================================
-    app.get('/api/v1/connectors/:name', async (req, res) => {
-        try {
-            const { name } = req.params;
-            const detail = wfManager.getConnectorDetail(name);
-            if (!detail) {
-                return res.status(404).json({ error: `Connector "${name}" not found` });
-            }
-            res.json(detail);
-        } catch (err) {
-            console.error('[CONNECTORS] Detail error:', err.message);
-            res.status(500).json({ error: err.message });
-        }
-    });
-
-    // ======================================================
-    // GET CONNECTOR COMPATIBILITY STATUS
-    // ======================================================
-    app.get('/api/v1/connectors/:name/compatibility', async (req, res) => {
-        try {
-            const { name } = req.params;
-            const status = wfManager.getConnectorCompatibility(name);
-            if (!status) {
-                return res.status(404).json({ error: `Connector "${name}" not found` });
-            }
-            res.json(status);
-        } catch (err) {
-            console.error('[CONNECTORS] Compatibility error:', err.message);
-            res.status(500).json({ error: err.message });
-        }
-    });
-
-    // ======================================================
-    // GET CONNECTOR RAW JSON (Developer Mode)
-    // ======================================================
-    app.get('/api/v1/connectors/:name/raw', async (req, res) => {
-        try {
-            const { name } = req.params;
-            const connector = wfManager.getRawConnector(name);
-            if (!connector) {
-                return res.status(404).json({ error: `Connector "${name}" not found` });
-            }
-            // Return full raw connector (including nodeIds, bindings, etc.)
-            res.json(connector);
-        } catch (err) {
-            console.error('[CONNECTORS] Raw error:', err.message);
-            res.status(500).json({ error: err.message });
-        }
-    });
-
-    // ======================================================
-    // VALIDATE CONNECTOR JSON
+    // VALIDATE CONNECTOR JSON (static — must be before :name)
     // ======================================================
     app.post('/api/v1/connectors/validate', async (req, res) => {
         try {
@@ -86,7 +37,6 @@ module.exports = function(app, redis, deps) {
             if (!connector) {
                 return res.status(400).json({ error: 'connector JSON object required in body' });
             }
-
             const result = wfManager.validateConnectorJson(connector, name);
             res.json(result);
         } catch (err) {
@@ -96,7 +46,7 @@ module.exports = function(app, redis, deps) {
     });
 
     // ======================================================
-    // RELOAD ALL CONNECTORS FROM DISK
+    // RELOAD ALL CONNECTORS FROM DISK (static — must be before :name)
     // ======================================================
     app.post('/api/v1/connectors/reload', async (req, res) => {
         try {
@@ -114,7 +64,7 @@ module.exports = function(app, redis, deps) {
     });
 
     // ======================================================
-    // GET ENTITY SCHEMA
+    // GET ENTITY SCHEMA (static — must be before :name)
     // ======================================================
     app.get('/api/v1/connectors/entities', async (req, res) => {
         try {
@@ -133,7 +83,7 @@ module.exports = function(app, redis, deps) {
     });
 
     // ======================================================
-    // GET CONNECTORS BY TYPE (grouped)
+    // GET CONNECTORS BY TYPE (static — must be before :name)
     // ======================================================
     app.get('/api/v1/connectors/grouped', async (req, res) => {
         try {
@@ -141,6 +91,57 @@ module.exports = function(app, redis, deps) {
             res.json(result);
         } catch (err) {
             console.error('[CONNECTORS] Grouped error:', err.message);
+            res.status(500).json({ error: err.message });
+        }
+    });
+
+    // ======================================================
+    // GET CONNECTOR DETAIL (parameterized — must be after all static routes)
+    // ======================================================
+    app.get('/api/v1/connectors/:name', async (req, res) => {
+        try {
+            const { name } = req.params;
+            const detail = wfManager.getConnectorDetail(name);
+            if (!detail) {
+                return res.status(404).json({ error: `Connector "${name}" not found` });
+            }
+            res.json(detail);
+        } catch (err) {
+            console.error('[CONNECTORS] Detail error:', err.message);
+            res.status(500).json({ error: err.message });
+        }
+    });
+
+    // ======================================================
+    // GET CONNECTOR COMPATIBILITY STATUS (parameterized)
+    // ======================================================
+    app.get('/api/v1/connectors/:name/compatibility', async (req, res) => {
+        try {
+            const { name } = req.params;
+            const status = wfManager.getConnectorCompatibility(name);
+            if (!status) {
+                return res.status(404).json({ error: `Connector "${name}" not found` });
+            }
+            res.json(status);
+        } catch (err) {
+            console.error('[CONNECTORS] Compatibility error:', err.message);
+            res.status(500).json({ error: err.message });
+        }
+    });
+
+    // ======================================================
+    // GET CONNECTOR RAW JSON (parameterized — Developer Mode)
+    // ======================================================
+    app.get('/api/v1/connectors/:name/raw', async (req, res) => {
+        try {
+            const { name } = req.params;
+            const connector = wfManager.getRawConnector(name);
+            if (!connector) {
+                return res.status(404).json({ error: `Connector "${name}" not found` });
+            }
+            res.json(connector);
+        } catch (err) {
+            console.error('[CONNECTORS] Raw error:', err.message);
             res.status(500).json({ error: err.message });
         }
     });

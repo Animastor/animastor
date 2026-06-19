@@ -137,6 +137,14 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
             parentFragmentManager.popBackStack()
         }
 
+        // Open Workflow Manager
+        b.workflowManagerButton.setOnClickListener {
+            parentFragmentManager.beginTransaction()
+                .add(R.id.nav_host_container, WorkflowManagerFragment(), "WorkflowManagerFragment")
+                .addToBackStack(null)
+                .commit()
+        }
+
         b.acceptButton.setOnClickListener {
             val selectedTheme = themeValues[b.themeSpinner.selectedItemPosition]
             val selectedLang = langValues[b.languageSpinner.selectedItemPosition]

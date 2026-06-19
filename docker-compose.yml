@@ -64,6 +64,7 @@ services:
       - ./data/output:/data/output
       - ./data/books:/data/books
       - ./data/workflows:/data/workflows
+      - ./data/connectors:/data/connectors
       - ./backend/src:/app/src
       - ./backend/tests:/app/tests
     depends_on:

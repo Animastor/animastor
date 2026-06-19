@@ -231,4 +231,58 @@
     <string name="timeline_play">Play scene audio</string>
     <string name="timeline_stop">Stop playback</string>
     <string name="timeline_reset">Reset timings</string>
+
+    <!-- Workflow Manager -->
+    <string name="workflow_manager_title">Workflow Manager</string>
+    <string name="workflow_manager_audio">Audio Workflows</string>
+    <string name="workflow_manager_image">Image Workflows</string>
+    <string name="workflow_manager_video">Video Workflows</string>
+    <string name="workflow_manager_audio_desc">Text-to-speech and dialogue generation</string>
+    <string name="workflow_manager_image_desc">Image generation pipelines</string>
+    <string name="workflow_manager_video_desc">Video generation and animation</string>
+    <string name="workflow_manager_active">%1$d active workflow</string>
+    <string name="workflow_manager_active_plural">%1$d active workflows</string>
+    <string name="workflow_manager_manage">Manage</string>
+    <string name="workflow_manager_add">Add Workflow</string>
+    <string name="workflow_manager_no_workflows">No workflows configured</string>
+
+    <!-- Workflow Type List -->
+    <string name="workflow_type_title">%1$s Workflows</string>
+    <string name="workflow_status_compatible">Compatible</string>
+    <string name="workflow_status_incompatible">Incompatible</string>
+    <string name="workflow_status_registered">Registered</string>
+    <string name="workflow_status_unknown">Unknown</string>
+    <string name="workflow_connector">Connector: %1$s</string>
+    <string name="workflow_details">Details</string>
+    <string name="workflow_disable">Disable</string>
+    <string name="workflow_enable">Enable</string>
+
+    <!-- Workflow Details -->
+    <string name="workflow_details_title">%1$s</string>
+    <string name="workflow_detail_type">Type</string>
+    <string name="workflow_detail_version">Version</string>
+    <string name="workflow_detail_connector">Connector</string>
+    <string name="workflow_detail_nodes">Nodes</string>
+    <string name="workflow_detail_status">Status</string>
+    <string name="workflow_detail_hash">Workflow Hash</string>
+
+    <string name="workflow_tab_inputs">Inputs</string>
+    <string name="workflow_tab_outputs">Outputs</string>
+    <string name="workflow_tab_parameters">Parameters</string>
+    <string name="workflow_tab_compatibility">Compatibility</string>
+
+    <string name="workflow_input_required">Required</string>
+    <string name="workflow_input_optional">Optional</string>
+    <string name="workflow_param_default">Default: %1$s</string>
+    <string name="workflow_param_edit">Edit</string>
+    <string name="workflow_compat_hash_match">Hash Match</string>
+    <string name="workflow_compat_hash_mismatch">Hash Mismatch</string>
+    <string name="workflow_compat_nodes_checked">Nodes Checked: %1$d/%2$d</string>
+    <string name="workflow_compat_no_warnings">No warnings</string>
+    <string name="workflow_compat_last_validated">Last validated: %1$s</string>
+    <string name="workflow_no_data">No data available</string>
+
+    <!-- Developer Mode (for future use) -->
+    <string name="developer_tools">Developer Tools</string>
+    <string name="developer_workflow">Workflow Developer</string>
 </resources>
