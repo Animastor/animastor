@@ -22,6 +22,9 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
     private val viewModel: GenerateViewModel by activityViewModels {
         GenerateViewModel.factory
     }
+    private val playbackViewModel: PlaybackViewModel by activityViewModels {
+        PlaybackViewModel.factory
+    }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
@@ -107,7 +110,18 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
                         runCatching {
                             viewModel.repository.deleteBook(bookId)
                             viewModel.repository.clearCache()
+                            // Delete local temp cache files (chunk MP3, video, scene audio)
+                            val cacheDir = requireContext().cacheDir
+                            cacheDir.listFiles()?.forEach { file ->
+                                if (file.name.startsWith("chunk-") || file.name.startsWith("video-") || file.name.startsWith("scene_audio-")) {
+                                    file.delete()
+                                }
+                            }
+                            // Clear both ViewModels to prevent stale state from
+                            // lingering after book deletion (preloadCache,
+                            // chunkQueue, chunkPositions, UI state, etc.)
                             viewModel.closeBook()
+                            playbackViewModel.closeBook()
                         }.onSuccess {
                             Toast.makeText(requireContext(), R.string.settings_delete_vbook_done, Toast.LENGTH_SHORT).show()
                         }.onFailure { e ->
