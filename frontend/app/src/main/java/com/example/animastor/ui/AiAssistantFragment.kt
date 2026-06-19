@@ -528,7 +528,7 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
         } else {
             ""
         }
-        val positionText = getString(R.string.ai_position_format, chName ?: "?", scName ?: "?", unitDesc)
+        val positionText = getString(R.string.ai_position_format, chName, scName, unitDesc)
         val msg = ChatMessage(text = positionText, isUser = false)
         messages.add(msg)
     }

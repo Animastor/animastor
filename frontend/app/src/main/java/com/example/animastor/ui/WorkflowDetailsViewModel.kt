@@ -78,11 +78,18 @@ class WorkflowDetailsViewModel : ViewModel() {
             _error.value = null
             try {
             val detail = api.getConnectorDetail(name)
-            // ⚠️ IMPORTANT: Set tabData BEFORE connectorDetail!
-            // setupTabs() is triggered by connectorDetail.collectLatest.
-            // It launches a coroutine that collects tabData immediately
-            // (Dispatchers.Main.immediate). If tabData hasn't been set yet,
-            // the adapter gets created with EMPTY data and never updates.
+
+            // ⚠️ Load compatibility BEFORE setting tabData/connectorDetail!
+            // setupTabs() reads compatibility.value at adapter-creation time.
+            // If compatibility hasn't been fetched yet, the Compatibility tab
+            // gets null data and stays blank on first open.
+            _compatibility.value = try {
+                api.getConnectorCompatibility(name)
+            } catch (_: Exception) {
+                null
+            }
+
+            // Set tabData BEFORE connectorDetail so setupTabs() has real data
             _tabData.value = buildTabData(detail)
             _connectorDetail.value = detail
 
@@ -97,13 +104,6 @@ class WorkflowDetailsViewModel : ViewModel() {
                         defaults[key] = binding.defaultValue
                     }
                     _currentParamValues.value = defaults
-                }
-
-                // Load compatibility
-                try {
-                    _compatibility.value = api.getConnectorCompatibility(name)
-                } catch (_: Exception) {
-                    // compatibility is optional
                 }
             } catch (e: Exception) {
                 _error.value = e.message ?: "Failed to load connector details"

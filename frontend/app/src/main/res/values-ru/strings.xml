@@ -235,4 +235,75 @@
     <string name="ready_status">Готово для %1$s (Сцена ID: %2$s)</string>
     <string name="empty_state">Выберите визуальную книгу из библиотеки.</string>
     <string name="empty_state_book_loaded">Книга загружена. Нажмите «Генерировать».</string>
+
+    <!-- Workflow Manager -->
+    <string name="workflow_manager_title">Менеджер Workflow</string>
+    <string name="workflow_manager_audio">Audio Workflow</string>
+    <string name="workflow_manager_image">Image Workflow</string>
+    <string name="workflow_manager_video">Video Workflow</string>
+    <string name="workflow_manager_audio_desc">Озвучка текста и диалоги</string>
+    <string name="workflow_manager_image_desc">Генерация изображений</string>
+    <string name="workflow_manager_video_desc">Генерация и анимация видео</string>
+    <string name="workflow_manager_active">%1$d активный Workflow</string>
+    <string name="workflow_manager_active_plural">%1$d активных Workflow</string>
+    <string name="workflow_manager_manage">Управление</string>
+    <string name="workflow_manager_add">Добавить Workflow</string>
+    <string name="workflow_manager_no_workflows">Нет настроенных Workflow</string>
+    <string name="workflow_manager_reload">Перезагрузить коннекторы с диска</string>
+
+    <!-- Workflow Type List -->
+    <string name="workflow_type_title">%1$s</string>
+    <string name="workflow_status_compatible">Совместим</string>
+    <string name="workflow_status_incompatible">Несовместим</string>
+    <string name="workflow_status_registered">Зарегистрирован</string>
+    <string name="workflow_status_unknown">Неизвестно</string>
+    <string name="workflow_connector">Коннектор: %1$s</string>
+    <string name="workflow_details">Подробнее</string>
+    <string name="workflow_disable">Отключить</string>
+    <string name="workflow_enable">Включить</string>
+
+    <!-- Workflow Details -->
+    <string name="workflow_details_title">%1$s</string>
+    <string name="workflow_detail_type">Тип</string>
+    <string name="workflow_detail_version">Версия</string>
+    <string name="workflow_detail_connector">Коннектор</string>
+    <string name="workflow_detail_nodes">Ноды</string>
+    <string name="workflow_detail_status">Статус</string>
+    <string name="workflow_detail_hash">Хеш Workflow</string>
+
+    <string name="workflow_tab_inputs">Входы</string>
+    <string name="workflow_tab_outputs">Выходы</string>
+    <string name="workflow_tab_parameters">Параметры</string>
+    <string name="workflow_tab_compatibility">Совместимость</string>
+
+    <string name="workflow_input_required">Обязательно</string>
+    <string name="workflow_input_optional">Опционально</string>
+    <string name="workflow_param_default">По умолчанию: %1$s</string>
+    <string name="workflow_param_edit">Изменить</string>
+    <string name="workflow_compat_hash_match">Хеш совпадает</string>
+    <string name="workflow_compat_hash_mismatch">Хеш не совпадает</string>
+    <string name="workflow_compat_nodes_checked">Нод проверено: %1$d/%2$d</string>
+    <string name="workflow_compat_no_warnings">Нет предупреждений</string>
+    <string name="workflow_compat_last_validated">Последняя проверка: %1$s</string>
+    <string name="workflow_no_data">Нет данных</string>
+
+    <!-- Parameter Editing -->
+    <string name="param_edit_title">Редактировать: %1$s</string>
+    <string name="param_type_range">Тип: %1$s · Мин: %2$s · Макс: %3$s</string>
+    <string name="param_type">Тип: %1$s</string>
+    <string name="param_default_value">По умолчанию: %1$s</string>
+    <string name="param_current_value">Текущее: %1$s</string>
+    <string name="param_save">Сохранить</string>
+    <string name="param_reset_default">Сбросить</string>
+    <string name="param_cancel">Отмена</string>
+    <string name="param_saving">Сохранение…</string>
+    <string name="param_save_success">Сохранено</string>
+    <string name="param_save_error">Ошибка: %1$s</string>
+    <string name="param_edit_hint">Введите значение</string>
+    <string name="param_range_hint">Диапазон: %1$s – %2$s</string>
+    <string name="param_no_range">Без ограничений</string>
+
+    <!-- Developer Mode -->
+    <string name="developer_tools">Инструменты разработчика</string>
+    <string name="developer_workflow">Разработка Workflow</string>
 </resources>

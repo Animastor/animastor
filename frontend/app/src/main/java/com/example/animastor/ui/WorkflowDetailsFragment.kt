@@ -19,6 +19,7 @@ import com.example.animastor.databinding.FragmentWorkflowDetailsBinding
 import com.example.animastor.repository.CompatibilityStatus
 import com.example.animastor.repository.ConnectorDetail
 import com.example.animastor.ui.WorkflowDetailsViewModel.BindingDisplayItem
+import com.google.android.material.color.MaterialColors
 import com.google.android.material.tabs.TabLayout
 import com.google.android.material.tabs.TabLayoutMediator
 import kotlinx.coroutines.flow.collectLatest
@@ -329,7 +330,10 @@ class TabContentFragment : Fragment() {
         if (parameters.isEmpty()) {
             val emptyText = TextView(requireContext())
             emptyText.text = "No parameters"
-            emptyText.setTextColor(requireContext().getColor(R.color.cinema_text_secondary))
+            emptyText.setTextColor(
+                MaterialColors.getColor(requireContext(), com.google.android.material.R.attr.colorOnSurfaceVariant,
+                    requireContext().getColor(R.color.cinema_text_secondary))
+            )
             emptyText.textSize = 14f
             emptyText.setPadding(16, 32, 16, 32)
             emptyText.gravity = Gravity.CENTER
@@ -371,7 +375,10 @@ class TabContentFragment : Fragment() {
         card.radius = 12f
         card.cardElevation = 1f
         card.strokeWidth = 0
-        card.setCardBackgroundColor(ctx.getColor(R.color.cinema_surface_variant))
+        card.setCardBackgroundColor(
+            MaterialColors.getColor(ctx, com.google.android.material.R.attr.colorSurfaceVariant,
+                ctx.getColor(R.color.cinema_surface_variant))
+        )
         card.isClickable = true
         card.isFocusable = true
         // Use a styled background drawable instead of obtaining one that must be recycled
@@ -399,14 +406,20 @@ class TabContentFragment : Fragment() {
 
         val label = TextView(ctx)
         label.text = item.label
-        label.setTextColor(ctx.getColor(R.color.cinema_text_primary))
+        label.setTextColor(
+            MaterialColors.getColor(ctx, com.google.android.material.R.attr.colorOnSurface,
+                ctx.getColor(R.color.cinema_text_primary))
+        )
         label.textSize = 15f
         label.setTypeface(null, android.graphics.Typeface.BOLD)
         textWrap.addView(label)
 
         val valueText = TextView(ctx)
         valueText.text = formatValueText(getCurrentValue(item), item)
-        valueText.setTextColor(ctx.getColor(R.color.cinema_text_secondary))
+        valueText.setTextColor(
+            MaterialColors.getColor(ctx, com.google.android.material.R.attr.colorOnSurfaceVariant,
+                ctx.getColor(R.color.cinema_text_secondary))
+        )
         valueText.textSize = 13f
         valueText.layoutParams = ViewGroup.MarginLayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -423,7 +436,10 @@ class TabContentFragment : Fragment() {
         val editLink = TextView(ctx)
         editLink.text = ctx.getString(R.string.workflow_details)
         editLink.textSize = 13f
-        editLink.setTextColor(ctx.getColor(R.color.cinema_accent))
+        editLink.setTextColor(
+            MaterialColors.getColor(ctx, com.google.android.material.R.attr.colorSecondary,
+                ctx.getColor(R.color.cinema_accent))
+        )
         editLink.setOnClickListener {
             showEditParameterDialog(item)
         }
@@ -550,7 +566,10 @@ class TabContentFragment : Fragment() {
         if (items.isEmpty()) {
             val emptyText = TextView(requireContext())
             emptyText.text = emptyMsg
-            emptyText.setTextColor(requireContext().getColor(R.color.cinema_text_secondary))
+            emptyText.setTextColor(
+                MaterialColors.getColor(requireContext(), com.google.android.material.R.attr.colorOnSurfaceVariant,
+                    requireContext().getColor(R.color.cinema_text_secondary))
+            )
             emptyText.textSize = 14f
             emptyText.setPadding(16, 32, 16, 32)
             emptyText.gravity = Gravity.CENTER
@@ -577,7 +596,10 @@ class TabContentFragment : Fragment() {
         card.radius = 12f
         card.cardElevation = 1f
         card.strokeWidth = 0
-        card.setCardBackgroundColor(ctx.getColor(R.color.cinema_surface_variant))
+        card.setCardBackgroundColor(
+            MaterialColors.getColor(ctx, com.google.android.material.R.attr.colorSurfaceVariant,
+                ctx.getColor(R.color.cinema_surface_variant))
+        )
 
         val inner = LinearLayout(ctx)
         inner.orientation = LinearLayout.VERTICAL
@@ -598,7 +620,10 @@ class TabContentFragment : Fragment() {
 
         val label = TextView(ctx)
         label.text = item.label
-        label.setTextColor(ctx.getColor(R.color.cinema_text_primary))
+        label.setTextColor(
+            MaterialColors.getColor(ctx, com.google.android.material.R.attr.colorOnSurface,
+                ctx.getColor(R.color.cinema_text_primary))
+        )
         label.textSize = 15f
         label.setTypeface(null, android.graphics.Typeface.BOLD)
         label.layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
@@ -608,7 +633,10 @@ class TabContentFragment : Fragment() {
             val requiredBadge = TextView(ctx)
             requiredBadge.text = "Required"
             requiredBadge.textSize = 11f
-            requiredBadge.setTextColor(ctx.getColor(R.color.cinema_accent))
+            requiredBadge.setTextColor(
+                MaterialColors.getColor(ctx, com.google.android.material.R.attr.colorSecondary,
+                    ctx.getColor(R.color.cinema_accent))
+            )
             requiredBadge.setPadding(8, 2, 8, 2)
             topRow.addView(requiredBadge)
         }
@@ -624,7 +652,10 @@ class TabContentFragment : Fragment() {
         if (infoParts.isNotEmpty()) {
             val info = TextView(ctx)
             info.text = infoParts.joinToString("  ·  ")
-            info.setTextColor(ctx.getColor(R.color.cinema_text_secondary))
+            info.setTextColor(
+                MaterialColors.getColor(ctx, com.google.android.material.R.attr.colorOnSurfaceVariant,
+                    ctx.getColor(R.color.cinema_text_secondary))
+            )
             info.textSize = 12f
             info.layoutParams = ViewGroup.MarginLayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -654,7 +685,10 @@ class TabContentFragment : Fragment() {
         if (compat == null) {
             val emptyText = TextView(ctx)
             emptyText.text = "No compatibility data available"
-            emptyText.setTextColor(ctx.getColor(R.color.cinema_text_secondary))
+            emptyText.setTextColor(
+                MaterialColors.getColor(ctx, com.google.android.material.R.attr.colorOnSurfaceVariant,
+                    ctx.getColor(R.color.cinema_text_secondary))
+            )
             emptyText.textSize = 14f
             emptyText.setPadding(16, 32, 16, 32)
             emptyText.gravity = Gravity.CENTER
@@ -691,9 +725,11 @@ class TabContentFragment : Fragment() {
 
         // Tint the card background based on status
         val bgColor = if (compatible)
-            ctx.getColor(R.color.cinema_surface_variant)
+            MaterialColors.getColor(ctx, com.google.android.material.R.attr.colorSurfaceVariant,
+                ctx.getColor(R.color.cinema_surface_variant))
         else
-            ctx.getColor(R.color.cinema_error_container)
+            MaterialColors.getColor(ctx, com.google.android.material.R.attr.colorErrorContainer,
+                ctx.getColor(R.color.cinema_error_container))
         card.setCardBackgroundColor(bgColor)
 
         val inner = LinearLayout(ctx)
@@ -811,7 +847,10 @@ class TabContentFragment : Fragment() {
             val wText = TextView(ctx)
             wText.text = "${i + 1}. $w"
             wText.textSize = 12f
-            wText.setTextColor(ctx.getColor(R.color.cinema_text_secondary))
+            wText.setTextColor(
+                MaterialColors.getColor(ctx, com.google.android.material.R.attr.colorOnSurfaceVariant,
+                    ctx.getColor(R.color.cinema_text_secondary))
+            )
             wText.layoutParams = ViewGroup.MarginLayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
@@ -834,7 +873,10 @@ class TabContentFragment : Fragment() {
         val labelView = TextView(ctx)
         labelView.text = label
         labelView.textSize = 13f
-        labelView.setTextColor(ctx.getColor(R.color.cinema_text_secondary))
+        labelView.setTextColor(
+            MaterialColors.getColor(ctx, com.google.android.material.R.attr.colorOnSurfaceVariant,
+                ctx.getColor(R.color.cinema_text_secondary))
+        )
         labelView.layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         row.addView(labelView)
 

@@ -78,8 +78,8 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:text="@string/workflow_manager_audio"
-                        android:textSize="20sp"
-                        android:textStyle="bold"
+                        android:textSize="16sp"
+                        android:fontFamily="sans-serif-medium"
                         android:textColor="?attr/colorOnSurface" />
 
                     <TextView
@@ -96,7 +96,7 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="12dp"
-                        android:textSize="14sp"
+                        android:textSize="13sp"
                         android:textColor="?attr/colorOnSurface" />
 
                     <com.google.android.material.button.MaterialButton
@@ -136,8 +136,8 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:text="@string/workflow_manager_image"
-                        android:textSize="20sp"
-                        android:textStyle="bold"
+                        android:textSize="16sp"
+                        android:fontFamily="sans-serif-medium"
                         android:textColor="?attr/colorOnSurface" />
 
                     <TextView
@@ -154,7 +154,7 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="12dp"
-                        android:textSize="14sp"
+                        android:textSize="13sp"
                         android:textColor="?attr/colorOnSurface" />
 
                     <com.google.android.material.button.MaterialButton
@@ -194,8 +194,8 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:text="@string/workflow_manager_video"
-                        android:textSize="20sp"
-                        android:textStyle="bold"
+                        android:textSize="16sp"
+                        android:fontFamily="sans-serif-medium"
                         android:textColor="?attr/colorOnSurface" />
 
                     <TextView
@@ -212,7 +212,7 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="12dp"
-                        android:textSize="14sp"
+                        android:textSize="13sp"
                         android:textColor="?attr/colorOnSurface" />
 
                     <com.google.android.material.button.MaterialButton
@@ -234,7 +234,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="48dp"
                 android:layout_marginTop="8dp"
-                android:text="Reload Connectors from Disk"
+                android:text="@string/workflow_manager_reload"
                 android:textSize="14sp"
                 style="@style/Widget.Animastor.Button.Outlined" />
 

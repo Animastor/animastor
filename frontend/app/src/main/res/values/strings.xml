@@ -260,6 +260,7 @@
     <string name="workflow_manager_manage">Manage</string>
     <string name="workflow_manager_add">Add Workflow</string>
     <string name="workflow_manager_no_workflows">No workflows configured</string>
+    <string name="workflow_manager_reload">Reload Connectors from Disk</string>
 
     <!-- Workflow Type List -->
     <string name="workflow_type_title">%1$s Workflows</string>
