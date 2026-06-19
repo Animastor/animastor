@@ -1347,7 +1347,7 @@ async function clearBookDispatchMeta(redis, bookId) {
             // Clear gpu-hub queue
             try {
                 const HUB_URL = process.env.HUB_URL || 'https://animastor.in/gpu';
-                await fetch(`${HUB_URL}/api/v1/queue/${bookId}`, { method: 'DELETE' }).catch(() => {});
+                await fetch(`${HUB_URL}/queue/clear?book_id=${bookId}`, { method: 'DELETE' }).catch(() => {});
             } catch (_) {}
 
             log('[CACHE] Cache cleared for', bookId);
@@ -1401,10 +1401,23 @@ async function clearBookDispatchMeta(redis, bookId) {
                 }
             }
 
-            // 3. Delete all Redis keys for this book using the comprehensive helper
+            // 3. Cancel any active generation for this book first
+            const windowModule = require('../runtime/scene-window');
+            await windowModule.setCancelFlag(redis, bookId);
+
+            // Reset global concurrency counters — they may be inflated by
+            // in-flight tasks from this book. Same as cancel-generation does.
+            await redis.del('animastor:runtime:active-audio');
+            await redis.del('animastor:runtime:active-image');
+            await redis.del('animastor:runtime:active-video');
+            await redis.del('animastor:concurrent-audio');
+            await redis.del('animastor:concurrent-image');
+            await redis.del('animastor:concurrent-video');
+
+            // 4. Delete all Redis keys for this book using the comprehensive helper
             await cleanBookRedisKeys(redis, bookId);
 
-            // 4. Delete all PostgreSQL data for this book
+            // 5. Delete all PostgreSQL data for this book
             try {
                 await storage.postgres.query('DELETE FROM scene_assets_cache WHERE book_id = $1', [bookId]);
                 await storage.postgres.query('DELETE FROM scene_assets_state WHERE book_id = $1', [bookId]);
@@ -1423,10 +1436,10 @@ async function clearBookDispatchMeta(redis, bookId) {
                 console.warn('[DELETE-BOOK] DB cleanup error:', dbErr.message);
             }
 
-            // 5. Clear GPU hub queue
+            // 6. Clear GPU hub queue — cancel all in-flight and queued jobs
             try {
                 const HUB_URL = process.env.HUB_URL || 'https://animastor.in/gpu';
-                await fetch(`${HUB_URL}/api/v1/queue/${bookId}`, { method: 'DELETE' }).catch(() => {});
+                await fetch(`${HUB_URL}/queue/clear?book_id=${bookId}`, { method: 'DELETE' }).catch(() => {});
             } catch (_) {}
 
             log('[DELETE-BOOK] Book completely deleted:', bookId);

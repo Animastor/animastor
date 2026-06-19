@@ -319,6 +319,12 @@ module.exports = function(redis) {
                 `animastor:snapshot:${bookId}`,
                 // GPU hub job queue
                 `animastor:job:${bookId}_*`,
+                // GPU hub results (stale result blobs)
+                `animastor:result:${bookId}_*`,
+                // Scene audio status (used by cleanup-service)
+                `animastor:scene-audio-status:${bookId}:*`,
+                // Generation cancel flag
+                `animastor:generation:cancel:${bookId}`,
                 // Mode
                 `animastor:mode:${bookId}`,
                 // Legacy patterns (catch-all)
