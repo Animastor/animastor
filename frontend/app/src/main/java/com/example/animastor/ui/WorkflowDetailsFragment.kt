@@ -1,10 +1,15 @@
 package com.example.animastor.ui
 
 import android.os.Bundle
+import android.text.InputType
+import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
+import androidx.appcompat.app.AlertDialog
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.activityViewModels
 import androidx.lifecycle.lifecycleScope
@@ -105,6 +110,8 @@ class WorkflowDetailsFragment : Fragment(R.layout.fragment_workflow_details) {
         }
     }
 
+    fun getViewModel(): WorkflowDetailsViewModel = detailsViewModel
+
     private fun setupTabs(b: FragmentWorkflowDetailsBinding) {
         val tabTitles = listOf(
             getString(R.string.workflow_tab_inputs),
@@ -125,7 +132,8 @@ class WorkflowDetailsFragment : Fragment(R.layout.fragment_workflow_details) {
                     tabData.inputs,
                     tabData.outputs,
                     tabData.parameters,
-                    detailsViewModel.compatibility.value
+                    detailsViewModel.compatibility.value,
+                    connectorName
                 )
                 b.viewPager.adapter = adapter
 
@@ -164,12 +172,13 @@ class TabPagerAdapter(
     private val inputs: List<BindingDisplayItem>,
     private val outputs: List<BindingDisplayItem>,
     private val parameters: List<BindingDisplayItem>,
-    private val compatibility: CompatibilityStatus?
+    private val compatibility: CompatibilityStatus?,
+    private val connectorName: String = ""
 ) : androidx.viewpager2.adapter.FragmentStateAdapter(fragment) {
     override fun getItemCount() = 4
 
     override fun createFragment(position: Int): Fragment {
-        return TabContentFragment.newInstance(position, inputs, outputs, parameters, compatibility)
+        return TabContentFragment.newInstance(position, inputs, outputs, parameters, compatibility, connectorName)
     }
 }
 
@@ -177,19 +186,23 @@ class TabPagerAdapter(
 
 class TabContentFragment : Fragment() {
 
+    private var connectorName: String = ""
+
     companion object {
         private const val ARG_POSITION = "position"
         private const val ARG_INPUTS = "inputs"
         private const val ARG_OUTPUTS = "outputs"
         private const val ARG_PARAMETERS = "parameters"
         private const val ARG_COMPAT = "compatibility"
+        private const val ARG_CONNECTOR_NAME = "connector_name"
 
         fun newInstance(
             position: Int,
             inputs: List<BindingDisplayItem>,
             outputs: List<BindingDisplayItem>,
             parameters: List<BindingDisplayItem>,
-            compatibility: CompatibilityStatus?
+            compatibility: CompatibilityStatus?,
+            connectorName: String = ""
         ): TabContentFragment {
             val f = TabContentFragment()
             f.arguments = Bundle().apply {
@@ -197,6 +210,7 @@ class TabContentFragment : Fragment() {
                 putString(ARG_INPUTS, serializeItems(inputs))
                 putString(ARG_OUTPUTS, serializeItems(outputs))
                 putString(ARG_PARAMETERS, serializeItems(parameters))
+                putString(ARG_CONNECTOR_NAME, connectorName)
                 if (compatibility != null) {
                     putString(ARG_COMPAT, serializeCompat(compatibility))
                 }
@@ -206,7 +220,7 @@ class TabContentFragment : Fragment() {
 
         private fun serializeItems(items: List<BindingDisplayItem>): String {
             return items.joinToString("|||") { item ->
-                "${item.key}\n${item.label}\n${item.nodeId}\n${item.field}\n${item.required}\n${item.dataType}"
+                "${item.key}\n${item.label}\n${item.nodeId}\n${item.field}\n${item.required}\n${item.dataType}\n${item.defaultValue}\n${item.min}\n${item.max}"
             }
         }
 
@@ -231,9 +245,17 @@ class TabContentFragment : Fragment() {
                     nodeId = parts.getOrElse(2) { "" },
                     field = parts.getOrElse(3) { "" },
                     required = parts.getOrElse(4) { "false" }.toBoolean(),
-                    dataType = parts.getOrElse(5) { "" }
+                    dataType = parts.getOrElse(5) { "" },
+                    defaultValue = parseAny(parts.getOrElse(6) { "" }),
+                    min = parseAny(parts.getOrElse(7) { "" }),
+                    max = parseAny(parts.getOrElse(8) { "" })
                 )
             }
+        }
+
+        private fun parseAny(value: String): Any? {
+            if (value.isBlank() || value == "null") return null
+            return value.toIntOrNull() ?: value.toFloatOrNull() ?: value.toDoubleOrNull() ?: value
         }
 
         private fun deserializeCompat(raw: String): CompatibilityStatus? {
@@ -260,56 +282,569 @@ class TabContentFragment : Fragment() {
         val outputs = deserializeItems(args.getString(ARG_OUTPUTS, ""))
         val parameters = deserializeItems(args.getString(ARG_PARAMETERS, ""))
         val compatibility = deserializeCompat(args.getString(ARG_COMPAT, ""))
+        connectorName = args.getString(ARG_CONNECTOR_NAME, "")
 
-        val view = inflater.inflate(android.R.layout.simple_list_item_1, container, false) as TextView
-        view.setPadding(32, 16, 32, 16)
-
-        view.text = when (position) {
-            0 -> formatBindings(inputs, "No inputs")
-            1 -> formatBindings(outputs, "No outputs")
-            2 -> formatBindings(parameters, "No parameters")
-            3 -> formatCompat(compatibility)
-            else -> ""
+        // Parameters tab (position 2) gets interactive UI
+        if (position == 2) {
+            return createParameterView(inflater, container, parameters)
         }
-        view.setTextColor(requireContext().getColor(R.color.cinema_text_secondary))
-        view.textSize = 14f
 
-        return view
+        // Inputs / Outputs tabs (positions 0, 1) get card-based UI
+        if (position == 0 || position == 1) {
+            val items = if (position == 0) inputs else outputs
+            val emptyMsg = if (position == 0) "No inputs" else "No outputs"
+            return createBindingView(items, emptyMsg)
+        }
+
+        // Compatibility tab (position 3) gets card-based UI
+        if (position == 3) {
+            return createCompatView(compatibility)
+        }
+
+        // Fallback (should not reach here)
+        return TextView(requireContext()).apply { text = "" }
     }
 
-    private fun formatBindings(items: List<BindingDisplayItem>, emptyMsg: String): String {
-        if (items.isEmpty()) return emptyMsg
-        return items.joinToString("\n\n") { item ->
-            buildString {
-                append("• ${item.label}")
-                if (item.nodeId.isNotBlank()) {
-                    append("\n  Node: ${item.nodeId}")
-                }
-                if (item.field.isNotBlank()) {
-                    append("\n  Field: ${item.field}")
-                }
-                if (item.required) {
-                    append("\n  Required")
-                }
-                if (item.dataType.isNotBlank()) {
-                    append("\n  Type: ${item.dataType}")
+    // ─── Interactive Parameter View ───────────────────
+
+    private var paramValueViews = mutableMapOf<String, TextView>()
+    private var paramDataItems = listOf<BindingDisplayItem>()
+
+    private fun createParameterView(
+        @Suppress("UNUSED_PARAMETER") inflater: LayoutInflater?,
+        @Suppress("UNUSED_PARAMETER") container: ViewGroup?,
+        parameters: List<BindingDisplayItem>
+    ): View {
+        paramDataItems = parameters
+        val scrollView = ScrollView(requireContext())
+        scrollView.setPadding(16, 8, 16, 16)
+
+        val containerLayout = LinearLayout(requireContext())
+        containerLayout.orientation = LinearLayout.VERTICAL
+        containerLayout.layoutParams = ViewGroup.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+
+        if (parameters.isEmpty()) {
+            val emptyText = TextView(requireContext())
+            emptyText.text = "No parameters"
+            emptyText.setTextColor(requireContext().getColor(R.color.cinema_text_secondary))
+            emptyText.textSize = 14f
+            emptyText.setPadding(16, 32, 16, 32)
+            emptyText.gravity = Gravity.CENTER
+            containerLayout.addView(emptyText)
+        } else {
+            for (item in parameters) {
+                containerLayout.addView(createParameterCard(item))
+            }
+        }
+
+        scrollView.addView(containerLayout)
+
+        // Observe live value updates
+        val vm = getParentFragmentViewModel()
+        if (vm != null) {
+            lifecycleScope.launch {
+                vm.currentParamValues.collectLatest { values ->
+                    for ((key, tv) in paramValueViews) {
+                        val newValue = values[key]
+                        val item = paramDataItems.find { it.key == key }
+                        tv.text = formatValueText(newValue, item)
+                    }
                 }
             }
         }
+
+        return scrollView
     }
 
-    private fun formatCompat(c: CompatibilityStatus?): String {
-        if (c == null) return "No compatibility data available"
-        return buildString {
-            append("Compatibility: ${if (c.compatible) "✓ Compatible" else "✗ Incompatible"}")
-            append("\nHash Match: ${if (c.hashMatch) "✓" else "✗"}")
-            append("\nNodes Checked: ${c.nodesChecked}/${c.nodesTotal}")
-            append("\nHash: ${c.workflowHash?.take(12) ?: "N/A"}…")
-            if (c.warnings.isNotEmpty()) {
-                append("\n\nWarnings:")
-                c.warnings.forEach { append("\n  ⚠ $it") }
-            }
-            c.lastValidated?.let { append("\n\nLast validated: $it") }
+    private fun createParameterCard(item: BindingDisplayItem): View {
+        val ctx = requireContext()
+        val card = com.google.android.material.card.MaterialCardView(ctx)
+        val lp = ViewGroup.MarginLayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+        lp.bottomMargin = 8
+        card.layoutParams = lp
+        card.radius = 12f
+        card.cardElevation = 1f
+        card.strokeWidth = 0
+        card.setCardBackgroundColor(ctx.getColor(R.color.cinema_surface_variant))
+        card.isClickable = true
+        card.isFocusable = true
+        // Use a styled background drawable instead of obtaining one that must be recycled
+        val foregroundAttr = intArrayOf(android.R.attr.selectableItemBackground)
+        val ta = ctx.obtainStyledAttributes(foregroundAttr)
+        val foreground = ta.getDrawable(0)
+        ta.recycle()
+        if (foreground != null) card.foreground = foreground
+
+        val inner = LinearLayout(ctx)
+        inner.orientation = LinearLayout.HORIZONTAL
+        inner.setPadding(16, 12, 12, 12)
+        inner.gravity = Gravity.CENTER_VERTICAL
+        inner.layoutParams = ViewGroup.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+
+        // Left side: label + value
+        val textWrap = LinearLayout(ctx)
+        textWrap.orientation = LinearLayout.VERTICAL
+        textWrap.layoutParams = LinearLayout.LayoutParams(
+            0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f
+        )
+
+        val label = TextView(ctx)
+        label.text = item.label
+        label.setTextColor(ctx.getColor(R.color.cinema_text_primary))
+        label.textSize = 15f
+        label.setTypeface(null, android.graphics.Typeface.BOLD)
+        textWrap.addView(label)
+
+        val valueText = TextView(ctx)
+        valueText.text = formatValueText(getCurrentValue(item), item)
+        valueText.setTextColor(ctx.getColor(R.color.cinema_text_secondary))
+        valueText.textSize = 13f
+        valueText.layoutParams = ViewGroup.MarginLayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply { topMargin = 2 }
+        textWrap.addView(valueText)
+
+        // Store reference for live updates
+        paramValueViews[item.key] = valueText
+
+        inner.addView(textWrap)
+
+        // Right side: edit link text
+        val editLink = TextView(ctx)
+        editLink.text = ctx.getString(R.string.workflow_details)
+        editLink.textSize = 13f
+        editLink.setTextColor(ctx.getColor(R.color.cinema_accent))
+        editLink.setOnClickListener {
+            showEditParameterDialog(item)
         }
+        editLink.setPadding(12, 4, 12, 4)
+        editLink.layoutParams = ViewGroup.MarginLayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+
+        inner.addView(editLink)
+        card.addView(inner)
+
+        return card
+    }
+
+    private fun getCurrentValue(item: BindingDisplayItem): Any? {
+        val vm = getParentFragmentViewModel() ?: return item.defaultValue
+        return vm.currentParamValues.value[item.key] ?: item.defaultValue
+    }
+
+    private fun formatValueText(value: Any?, item: BindingDisplayItem?): String {
+        val displayValue = value ?: item?.defaultValue
+        val valueStr = when (displayValue) {
+            null -> "<not set>"
+            is String -> "\"$displayValue\""
+            else -> displayValue.toString()
+        }
+        val typeStr = item?.dataType?.ifBlank { "any" } ?: "any"
+        return "$valueStr  ·  $typeStr"
+    }
+
+    private fun getParentFragmentViewModel(): WorkflowDetailsViewModel? {
+        val parentFrag = parentFragment
+        if (parentFrag is WorkflowDetailsFragment) {
+            return parentFrag.getViewModel()
+        }
+        return null
+    }
+
+    private fun showEditParameterDialog(item: BindingDisplayItem) {
+        val ctx = requireContext()
+        val vm = getParentFragmentViewModel() ?: return
+
+        val currentValue = vm.currentParamValues.value[item.key]
+        val displayValue = currentValue ?: item.defaultValue
+
+        val dialogView = LayoutInflater.from(ctx).inflate(R.layout.dialog_edit_parameter, null)
+        val paramInput = dialogView.findViewById<com.google.android.material.textfield.TextInputEditText>(R.id.paramInput)
+        val inputLayout = dialogView.findViewById<com.google.android.material.textfield.TextInputLayout>(R.id.inputLayout)
+        val currentValueLabel = dialogView.findViewById<TextView>(R.id.currentValueLabel)
+        val typeInfo = dialogView.findViewById<TextView>(R.id.typeInfo)
+
+        // Set current value
+        currentValueLabel.text = getString(R.string.param_current_value, displayValue?.toString() ?: "<not set>")
+
+        // Set type and range info
+        val typeStr = item.dataType.ifBlank { "string" }
+        val rangeInfo = if (item.min != null && item.max != null) {
+            getString(R.string.param_range_hint, item.min.toString(), item.max.toString())
+        } else {
+            getString(R.string.param_no_range)
+        }
+        typeInfo.text = "$typeStr  ·  $rangeInfo"
+
+        // Set input hint and value
+        inputLayout.hint = item.label
+        paramInput.setText(displayValue?.toString() ?: "")
+
+        // Set input type based on data type
+        when (item.dataType) {
+            "int" -> paramInput.inputType = android.text.InputType.TYPE_CLASS_NUMBER
+            "float", "number" -> paramInput.inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+            else -> paramInput.inputType = android.text.InputType.TYPE_CLASS_TEXT
+        }
+
+        val dialog = AlertDialog.Builder(ctx)
+            .setTitle(getString(R.string.param_edit_title, item.label))
+            .setView(dialogView)
+            .create()
+
+        dialog.show()
+
+        // Wire buttons
+        dialogView.findViewById<com.google.android.material.button.MaterialButton>(R.id.saveButton)
+            .setOnClickListener {
+                val newValue = parseInputValue(paramInput.text.toString(), item)
+                vm.saveParameter(connectorName, item.key, newValue)
+                dialog.dismiss()
+            }
+
+        dialogView.findViewById<com.google.android.material.button.MaterialButton>(R.id.resetButton)
+            .setOnClickListener {
+                paramInput.setText(item.defaultValue?.toString() ?: "")
+            }
+
+        dialogView.findViewById<com.google.android.material.button.MaterialButton>(R.id.cancelButton)
+            .setOnClickListener {
+                dialog.dismiss()
+            }
+    }
+
+    private fun parseInputValue(text: String, item: BindingDisplayItem): Any? {
+        if (text.isBlank()) return null
+        return when (item.dataType) {
+            "int" -> text.toIntOrNull() ?: text
+            "float", "number" -> text.toDoubleOrNull() ?: text
+            else -> text
+        }
+    }
+
+    // ─── Card-based Binding View (Inputs / Outputs) ───
+
+    private fun createBindingView(items: List<BindingDisplayItem>, emptyMsg: String): View {
+        val scrollView = ScrollView(requireContext())
+        scrollView.setPadding(16, 8, 16, 16)
+
+        val containerLayout = LinearLayout(requireContext())
+        containerLayout.orientation = LinearLayout.VERTICAL
+        containerLayout.layoutParams = ViewGroup.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+
+        if (items.isEmpty()) {
+            val emptyText = TextView(requireContext())
+            emptyText.text = emptyMsg
+            emptyText.setTextColor(requireContext().getColor(R.color.cinema_text_secondary))
+            emptyText.textSize = 14f
+            emptyText.setPadding(16, 32, 16, 32)
+            emptyText.gravity = Gravity.CENTER
+            containerLayout.addView(emptyText)
+        } else {
+            for (item in items) {
+                containerLayout.addView(createBindingCard(item))
+            }
+        }
+
+        scrollView.addView(containerLayout)
+        return scrollView
+    }
+
+    private fun createBindingCard(item: BindingDisplayItem): View {
+        val ctx = requireContext()
+        val card = com.google.android.material.card.MaterialCardView(ctx)
+        val lp = ViewGroup.MarginLayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+        lp.bottomMargin = 8
+        card.layoutParams = lp
+        card.radius = 12f
+        card.cardElevation = 1f
+        card.strokeWidth = 0
+        card.setCardBackgroundColor(ctx.getColor(R.color.cinema_surface_variant))
+
+        val inner = LinearLayout(ctx)
+        inner.orientation = LinearLayout.VERTICAL
+        inner.setPadding(16, 12, 16, 12)
+        inner.layoutParams = ViewGroup.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+
+        // Top row: label + required badge
+        val topRow = LinearLayout(ctx)
+        topRow.orientation = LinearLayout.HORIZONTAL
+        topRow.gravity = Gravity.CENTER_VERTICAL
+        topRow.layoutParams = ViewGroup.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+
+        val label = TextView(ctx)
+        label.text = item.label
+        label.setTextColor(ctx.getColor(R.color.cinema_text_primary))
+        label.textSize = 15f
+        label.setTypeface(null, android.graphics.Typeface.BOLD)
+        label.layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        topRow.addView(label)
+
+        if (item.required) {
+            val requiredBadge = TextView(ctx)
+            requiredBadge.text = "Required"
+            requiredBadge.textSize = 11f
+            requiredBadge.setTextColor(ctx.getColor(R.color.cinema_accent))
+            requiredBadge.setPadding(8, 2, 8, 2)
+            topRow.addView(requiredBadge)
+        }
+
+        inner.addView(topRow)
+
+        // Bottom row: node · field · type
+        val infoParts = mutableListOf<String>()
+        if (item.nodeId.isNotBlank()) infoParts.add("Node ${item.nodeId}")
+        if (item.field.isNotBlank()) infoParts.add(item.field)
+        if (item.dataType.isNotBlank()) infoParts.add(item.dataType)
+
+        if (infoParts.isNotEmpty()) {
+            val info = TextView(ctx)
+            info.text = infoParts.joinToString("  ·  ")
+            info.setTextColor(ctx.getColor(R.color.cinema_text_secondary))
+            info.textSize = 12f
+            info.layoutParams = ViewGroup.MarginLayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = 4 }
+            inner.addView(info)
+        }
+
+        card.addView(inner)
+        return card
+    }
+
+    // ─── Card-based Compatibility View ───────────────
+
+    private fun createCompatView(compat: CompatibilityStatus?): View {
+        val ctx = requireContext()
+        val scrollView = ScrollView(ctx)
+        scrollView.setPadding(16, 8, 16, 16)
+
+        val containerLayout = LinearLayout(ctx)
+        containerLayout.orientation = LinearLayout.VERTICAL
+        containerLayout.layoutParams = ViewGroup.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+
+        if (compat == null) {
+            val emptyText = TextView(ctx)
+            emptyText.text = "No compatibility data available"
+            emptyText.setTextColor(ctx.getColor(R.color.cinema_text_secondary))
+            emptyText.textSize = 14f
+            emptyText.setPadding(16, 32, 16, 32)
+            emptyText.gravity = Gravity.CENTER
+            containerLayout.addView(emptyText)
+        } else {
+            // ── Status card ────────────────────────────
+            containerLayout.addView(createStatusCard(compat))
+
+            // ── Warnings card (if any) ─────────────────
+            if (compat.warnings.isNotEmpty()) {
+                val wCard = createWarningsCard(compat.warnings)
+                val wLp = (wCard.layoutParams as? ViewGroup.MarginLayoutParams)
+                if (wLp != null) wLp.topMargin = 8
+                containerLayout.addView(wCard)
+            }
+        }
+
+        scrollView.addView(containerLayout)
+        return scrollView
+    }
+
+    private fun createStatusCard(compat: CompatibilityStatus): View {
+        val ctx = requireContext()
+        val compatible = compat.compatible
+        val card = com.google.android.material.card.MaterialCardView(ctx)
+        val lp = ViewGroup.MarginLayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+        card.layoutParams = lp
+        card.radius = 12f
+        card.cardElevation = 1f
+        card.strokeWidth = 0
+
+        // Tint the card background based on status
+        val bgColor = if (compatible)
+            ctx.getColor(R.color.cinema_surface_variant)
+        else
+            ctx.getColor(R.color.cinema_error_container)
+        card.setCardBackgroundColor(bgColor)
+
+        val inner = LinearLayout(ctx)
+        inner.orientation = LinearLayout.VERTICAL
+        inner.setPadding(16, 16, 16, 16)
+        inner.layoutParams = ViewGroup.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+
+        // Status row: icon + text
+        val statusRow = LinearLayout(ctx)
+        statusRow.orientation = LinearLayout.HORIZONTAL
+        statusRow.gravity = Gravity.CENTER_VERTICAL
+        statusRow.layoutParams = ViewGroup.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+
+        val statusIcon = TextView(ctx)
+        statusIcon.text = if (compatible) "✓" else "✗"
+        statusIcon.textSize = 28f
+        statusIcon.setTextColor(if (compatible) ctx.getColor(R.color.cinema_success) else ctx.getColor(R.color.cinema_error))
+        statusIcon.setPadding(0, 0, 12, 0)
+        statusRow.addView(statusIcon)
+
+        val statusText = TextView(ctx)
+        statusText.text = if (compatible) "Compatible" else "Incompatible"
+        statusText.textSize = 18f
+        statusText.setTextColor(if (compatible) ctx.getColor(R.color.cinema_success) else ctx.getColor(R.color.cinema_error))
+        statusText.setTypeface(null, android.graphics.Typeface.BOLD)
+        statusText.layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        statusRow.addView(statusText)
+
+        inner.addView(statusRow)
+
+        // Details section
+        val details = LinearLayout(ctx)
+        details.orientation = LinearLayout.VERTICAL
+        details.layoutParams = ViewGroup.MarginLayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply { topMargin = 12 }
+
+        // Hash match
+        val hashRow = createDetailRow(ctx, "Hash Match", if (compat.hashMatch) "✓" else "✗",
+            if (compat.hashMatch) R.color.cinema_success else R.color.cinema_error)
+        details.addView(hashRow)
+
+        // Nodes checked
+        val nodeText = "${compat.nodesChecked}/${compat.nodesTotal}"
+        val nodeColor = if (compat.nodesChecked == compat.nodesTotal) R.color.cinema_success else R.color.cinema_error
+        val nodesRow = createDetailRow(ctx, "Nodes Checked", nodeText, nodeColor)
+        nodesRow.layoutParams = ViewGroup.MarginLayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply { topMargin = 6 }
+        details.addView(nodesRow)
+
+        // Workflow hash
+        compat.workflowHash?.let { hash ->
+            val hashRow2 = createDetailRow(ctx, "Workflow Hash", hash.take(16) + "…", R.color.cinema_text_secondary)
+            hashRow2.layoutParams = ViewGroup.MarginLayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = 6 }
+            details.addView(hashRow2)
+        }
+
+        // Last validated
+        compat.lastValidated?.let { lv ->
+            val dateStr = lv.take(10) // ISO date YYYY-MM-DD
+            val dateRow = createDetailRow(ctx, "Last Validated", dateStr, R.color.cinema_text_secondary)
+            dateRow.layoutParams = ViewGroup.MarginLayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = 6 }
+            details.addView(dateRow)
+        }
+
+        inner.addView(details)
+        card.addView(inner)
+        return card
+    }
+
+    private fun createWarningsCard(warnings: List<String>): View {
+        val ctx = requireContext()
+        val card = com.google.android.material.card.MaterialCardView(ctx)
+        val lp = ViewGroup.MarginLayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+        card.layoutParams = lp
+        card.radius = 12f
+        card.cardElevation = 1f
+        card.strokeWidth = 0
+        card.setCardBackgroundColor(ctx.getColor(R.color.cinema_warning_container))
+
+        val inner = LinearLayout(ctx)
+        inner.orientation = LinearLayout.VERTICAL
+        inner.setPadding(16, 12, 16, 12)
+        inner.layoutParams = ViewGroup.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+
+        val header = TextView(ctx)
+        header.text = "⚠  Warnings (${warnings.size})"
+        header.textSize = 14f
+        header.setTextColor(ctx.getColor(R.color.cinema_warning))
+        header.setTypeface(null, android.graphics.Typeface.BOLD)
+        inner.addView(header)
+
+        for ((i, w) in warnings.withIndex()) {
+            val wText = TextView(ctx)
+            wText.text = "${i + 1}. $w"
+            wText.textSize = 12f
+            wText.setTextColor(ctx.getColor(R.color.cinema_text_secondary))
+            wText.layoutParams = ViewGroup.MarginLayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = 6 }
+            inner.addView(wText)
+        }
+
+        card.addView(inner)
+        return card
+    }
+
+    private fun createDetailRow(ctx: android.content.Context, label: String, value: String, valueColor: Int): LinearLayout {
+        val row = LinearLayout(ctx)
+        row.orientation = LinearLayout.HORIZONTAL
+        row.layoutParams = ViewGroup.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+
+        val labelView = TextView(ctx)
+        labelView.text = label
+        labelView.textSize = 13f
+        labelView.setTextColor(ctx.getColor(R.color.cinema_text_secondary))
+        labelView.layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        row.addView(labelView)
+
+        val valueView = TextView(ctx)
+        valueView.text = value
+        valueView.textSize = 13f
+        valueView.setTextColor(ctx.getColor(valueColor))
+        valueView.setTypeface(null, android.graphics.Typeface.BOLD)
+        row.addView(valueView)
+
+        return row
     }
 }

@@ -164,7 +164,7 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
         val inactiveFg = themeColor(com.google.android.material.R.attr.colorOnSurfaceVariant)
         AssistantMode.ALL.forEach { mode ->
             val chip = LayoutInflater.from(ctx).inflate(R.layout.item_mode_chip, container, false) as MaterialButton
-            chip.text = mode.title
+            chip.text = getString(mode.titleRes)
             chip.setIconResource(modeIcons[mode] ?: R.drawable.ic_sparkle_outline)
             val isActive = mode == currentMode
             chip.backgroundTintList = ColorStateList.valueOf(if (isActive) activeBg else inactiveBg)
@@ -187,7 +187,7 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
         val inactiveFg = themeColor(com.google.android.material.R.attr.colorOnSurfaceVariant)
         ChatTopic.ALL.forEach { topic ->
             val chip = LayoutInflater.from(ctx).inflate(R.layout.item_mode_chip, container, false) as MaterialButton
-            chip.text = topic.title
+            chip.text = getString(topic.titleRes)
             val isActive = topic.id == currentTopicId
             chip.backgroundTintList = ColorStateList.valueOf(if (isActive) activeBg else inactiveBg)
             chip.setTextColor(if (isActive) activeFg else inactiveFg)
@@ -205,7 +205,7 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
         // Clear API messages so new system prompt takes effect
         apiMessages.clear()
         val topic = ChatTopic.getById(topicId)
-        val msg = ChatMessage(text = "Switched to topic: ${topic.title}", isUser = false)
+        val msg = ChatMessage(text = getString(R.string.ai_topic_switched, getString(topic.titleRes)), isUser = false)
         messages.add(msg)
         adapter.submitList(messages.toList())
         scrollToBottom()
@@ -395,7 +395,7 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
         currentMode = mode
         buildModeChips()
 
-        val text = getString(R.string.ai_mode_switch, mode.title, mode.description)
+        val text = getString(R.string.ai_mode_switch, getString(mode.titleRes), getString(mode.descriptionRes))
         val modeMsg = ChatMessage(text = text, isUser = false)
         messages.add(modeMsg)
         adapter.submitList(messages.toList())
@@ -528,7 +528,7 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
         } else {
             ""
         }
-        val positionText = "Вы находитесь: $chName / $scName — $unitDesc"
+        val positionText = getString(R.string.ai_position_format, chName ?: "?", scName ?: "?", unitDesc)
         val msg = ChatMessage(text = positionText, isUser = false)
         messages.add(msg)
     }
@@ -731,7 +731,7 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
                     else -> "\n\nIMPORTANT: Always reply in the user's language. If they write in Russian, reply in Russian. If they write in English, reply in English."
                 }
 
-                val fullSystemPrompt = "Your name is $appName.\n\nMode: ${mode.title}\n${mode.systemPrompt}\n\nTopic: ${topic.title}\n${topic.systemPrompt}\n\n${
+                val fullSystemPrompt = "Your name is $appName.\n\nMode: ${mode.englishTitle}\n${mode.systemPrompt}\n\nTopic: ${topic.englishTitle}\n${topic.systemPrompt}\n\n${
                     if (resolvedPosition != null) "Current context: $resolvedPosition" else ""
                 }$langInstruction".trim()
                 val response = generateViewModel.repository.chatWithAiFull(

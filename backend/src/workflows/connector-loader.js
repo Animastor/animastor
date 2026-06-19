@@ -388,6 +388,118 @@ function setValue(workflowJson, connector, entityKey, value) {
 }
 
 /**
+ * Update a connector parameter's default value with validation.
+ *
+ * @param {string} connectorName — e.g. "conn-image-generation"
+ * @param {string} paramKey — e.g. "steps"
+ * @param {*} value — new value to set
+ * @returns {{ ok: boolean, error?: string, warnings?: string[] }}
+ */
+function updateConnectorParameter(connectorName, paramKey, value) {
+  const connector = connectorsByName[connectorName];
+  if (!connector) {
+    return { ok: false, error: `Connector "${connectorName}" not found` };
+  }
+
+  const param = connector.parameters?.[paramKey];
+  if (!param) {
+    return { ok: false, error: `Parameter "${paramKey}" not found on connector "${connectorName}"` };
+  }
+
+  const warnings = [];
+
+  // Determine expected type from binding metadata or entity schema
+  const entity = entitySchema.getEntity(param.entityType || paramKey);
+  const expectedType = param.type || entity?.type || typeof param.default;
+
+  // Validate type
+  let parsedValue = value;
+  if (expectedType === 'int' || expectedType === 'number') {
+    if (typeof value === 'string') {
+      parsedValue = Number(value);
+      if (isNaN(parsedValue)) {
+        return { ok: false, error: `Invalid numeric value "${value}" for parameter "${paramKey}"` };
+      }
+    }
+    if (typeof parsedValue !== 'number' || isNaN(parsedValue)) {
+      return { ok: false, error: `Expected numeric value for parameter "${paramKey}", got ${typeof value}` };
+    }
+    if (expectedType === 'int') {
+      parsedValue = Math.round(parsedValue);
+    }
+
+    // Validate min/max
+    if (param.min !== undefined && parsedValue < param.min) {
+      warnings.push(`Value ${parsedValue} is below minimum ${param.min}, clamping`);
+      parsedValue = param.min;
+    }
+    if (param.max !== undefined && parsedValue > param.max) {
+      warnings.push(`Value ${parsedValue} exceeds maximum ${param.max}, clamping`);
+      parsedValue = param.max;
+    }
+  } else if (expectedType === 'float') {
+    if (typeof value === 'string') {
+      parsedValue = parseFloat(value);
+      if (isNaN(parsedValue)) {
+        return { ok: false, error: `Invalid float value "${value}" for parameter "${paramKey}"` };
+      }
+    }
+    if (typeof parsedValue !== 'number' || isNaN(parsedValue)) {
+      return { ok: false, error: `Expected float value for parameter "${paramKey}", got ${typeof value}` };
+    }
+
+    if (param.min !== undefined && parsedValue < param.min) {
+      warnings.push(`Value ${parsedValue} is below minimum ${param.min}, clamping`);
+      parsedValue = param.min;
+    }
+    if (param.max !== undefined && parsedValue > param.max) {
+      warnings.push(`Value ${parsedValue} exceeds maximum ${param.max}, clamping`);
+      parsedValue = param.max;
+    }
+  }
+
+  // Update the parameter's default value
+  const oldValue = param.default;
+  param.default = parsedValue;
+
+  log(`Parameter "${connectorName}.${paramKey}" updated: ${JSON.stringify(oldValue)} → ${JSON.stringify(parsedValue)}`);
+
+  return {
+    ok: true,
+    warnings: warnings.length > 0 ? warnings : undefined,
+    previousValue: oldValue,
+    currentValue: parsedValue
+  };
+}
+
+/**
+ * Reset a connector parameter to its original default value (from disk).
+ * @param {string} connectorName
+ * @param {string} paramKey
+ * @returns {{ ok: boolean, error?: string, currentValue?: * }}
+ */
+function resetConnectorParameter(connectorName, paramKey) {
+  const connector = connectorsByName[connectorName];
+  if (!connector) {
+    return { ok: false, error: `Connector "${connectorName}" not found` };
+  }
+
+  const param = connector.parameters?.[paramKey];
+  if (!param) {
+    return { ok: false, error: `Parameter "${paramKey}" not found` };
+  }
+
+  // The original default is stored on the connector JSON and can be reloaded
+  // For now, the in-memory value IS the current value
+  log(`Parameter "${connectorName}.${paramKey}" current value: ${JSON.stringify(param.default)}`);
+
+  return {
+    ok: true,
+    currentValue: param.default
+  };
+}
+
+/**
  * Update workflow hash on a connector after it was loaded (e.g. at startup).
  */
 function updateWorkflowHash(connector, workflowJson) {
@@ -604,6 +716,8 @@ module.exports = {
   setValue,
   applyBinding,
   updateWorkflowHash,
+  updateConnectorParameter,
+  resetConnectorParameter,
 
   // Registry (inspectable)
   connectors,

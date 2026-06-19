@@ -145,7 +145,7 @@
     <string name="settings_api_key">API Ключ</string>
     <string name="settings_server">URL сервера</string>
     <string name="settings_quality">Качество</string>
-    <string name="settings_cache">Очистить:</string>
+    <string name="settings_cache">Очистить</string>
     <string name="settings_cache_clear">Удалить Сториборд с сервера</string>
     <string name="settings_cache_clear_confirm">Все сгенерированные файлы текущей книги будут удалены. Потребуется перегенерация. Продолжить?</string>
     <string name="settings_cache_cleared">Сториборд удалён</string>
@@ -203,11 +203,26 @@
 
     <!-- AI Assistant Modes (G.1.1) -->
     <string name="ai_mode_conversation">Общение</string>
+    <string name="ai_mode_conversation_desc">Свободный диалог, ответы на вопросы, обсуждение идей</string>
+    <string name="ai_mode_import">Импорт</string>
+    <string name="ai_mode_import_desc">Преобразование произвольного текста в структуру книги</string>
     <string name="ai_mode_edit">Редактор</string>
+    <string name="ai_mode_edit_desc">Изменение сцен, персонажей, локаций, структуры книги</string>
     <string name="ai_mode_director">Режиссёр</string>
+    <string name="ai_mode_director_desc">Композиция кадра, камера, свет, атмосфера, раскадровка</string>
     <string name="ai_mode_extraction">Извлечение</string>
+    <string name="ai_mode_extraction_desc">Извлечение сущностей: персонажи, предметы, локации, ключевые термины</string>
     <string name="ai_mode_validation">Проверка</string>
+    <string name="ai_mode_validation_desc">Проверка JSON, ссылок, обязательных полей, целостности</string>
     <string name="ai_mode_switch">Режим: %1$s — %2$s</string>
+    <string name="ai_position_format">Вы находитесь: %1$s / %2$s — %3$s</string>
+    <string name="ai_topic_switched">Тема: %1$s</string>
+
+    <!-- AI Chat Topics -->
+    <string name="ai_topic_book">Книга</string>
+    <string name="ai_topic_scene">Сцена</string>
+    <string name="ai_topic_characters">Персонажи</string>
+    <string name="ai_topic_script">Сценарий</string>
 
     <!-- Legacy (keep for compatibility) -->
     <string name="placeholder_default">Изображение сцены</string>

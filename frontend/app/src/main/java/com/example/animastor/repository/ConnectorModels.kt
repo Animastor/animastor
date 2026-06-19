@@ -41,6 +41,9 @@ data class BindingDef(
     val required: Boolean = false,
     val dataType: String? = null,
     val kind: String? = null,
+    val defaultValue: Any? = null,
+    val min: Any? = null,
+    val max: Any? = null,
     val type: String? = null,          // "multi" for multi-bindings
     val bindings: List<SubBinding>? = null  // for multi-bindings
 )
@@ -79,6 +82,29 @@ data class ConnectorReloadResult(
     val warnings: List<String> = emptyList(),
     val errors: List<String> = emptyList()
 )
+
+// ======================================================
+// Parameter Update Models (Stage 3)
+// ======================================================
+
+data class UpdateParameterRequest(
+    val paramKey: String,
+    val value: Any?
+)
+
+data class UpdateParameterResponse(
+    val ok: Boolean = false,
+    val error: String? = null,
+    val previousValue: Any? = null,
+    val currentValue: Any? = null,
+    val warnings: List<String>? = null
+)
+
+data class ConnectorParameterValues(
+    val values: Map<String, Any?> = emptyMap()
+)
+
+// ======================================================
 
 data class ConnectorGroupedResponse(
     val audio: List<ConnectorSummary> = emptyList(),

@@ -53,6 +53,8 @@
 
     <color name="cinema_error">#CF6679</color>
     <color name="cinema_success">#6B9E6B</color>
+    <color name="cinema_warning">#D4A84B</color>
+    <color name="cinema_warning_container">#3D3018</color>
 
     <!--
     ============================================================

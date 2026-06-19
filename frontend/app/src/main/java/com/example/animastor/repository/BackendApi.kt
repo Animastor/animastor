@@ -374,6 +374,17 @@ interface BackendApi {
     @GET("/api/v1/connectors/grouped")
     suspend fun getConnectorsGrouped(): ConnectorGroupedResponse
 
+    @PUT("/api/v1/connectors/{name}/parameters")
+    suspend fun putConnectorParameter(
+        @Path("name") name: String,
+        @Body body: UpdateParameterRequest
+    ): UpdateParameterResponse
+
+    @GET("/api/v1/connectors/{name}/parameters")
+    suspend fun getConnectorParameterValues(
+        @Path("name") name: String
+    ): ConnectorParameterValues
+
     // ======================================================
     // Workflow Status API (Stage 1)
     // ======================================================

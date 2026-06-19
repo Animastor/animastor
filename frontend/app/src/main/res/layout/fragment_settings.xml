@@ -94,6 +94,25 @@
                 android:textColor="?attr/colorOnSurface"
                 android:textColorHint="?attr/colorOnSurfaceVariant" />
 
+            <!-- Workflow Manager -->
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/workflow_manager_title"
+                android:textColor="?attr/colorOnSurface"
+                android:textSize="13sp"
+                android:letterSpacing="0.06"
+                android:textStyle="bold" />
+
+            <Button
+                android:id="@+id/workflowManagerButton"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:layout_marginTop="4dp"
+                android:layout_marginBottom="20dp"
+                android:text="@string/workflow_manager_title"
+                style="@style/Widget.Animastor.Button.Outlined" />
+
             <!-- Cache / Storyboard -->
             <TextView
                 android:layout_width="match_parent"
@@ -120,25 +139,6 @@
                 android:layout_marginBottom="20dp"
                 android:text="@string/settings_delete_vbook"
                 style="@style/Widget.Animastor.Button.Outlined.Error" />
-
-            <!-- Workflow Manager -->
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="@string/workflow_manager_title"
-                android:textColor="?attr/colorOnSurface"
-                android:textSize="13sp"
-                android:letterSpacing="0.06"
-                android:textStyle="bold" />
-
-            <Button
-                android:id="@+id/workflowManagerButton"
-                android:layout_width="match_parent"
-                android:layout_height="48dp"
-                android:layout_marginTop="4dp"
-                android:layout_marginBottom="20dp"
-                android:text="@string/workflow_manager_title"
-                style="@style/Widget.Animastor.Button.Outlined" />
 
             <!-- Debug -->
             <TextView

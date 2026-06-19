@@ -168,7 +168,7 @@
     <string name="settings_api_key">API Key</string>
     <string name="settings_server">Server URL</string>
     <string name="settings_quality">Quality</string>
-    <string name="settings_cache">Clear:</string>
+    <string name="settings_cache">Clear</string>
     <string name="settings_cache_clear">Delete Storyboard from Server</string>
     <string name="settings_cache_clear_confirm">All generated files for the current book will be deleted. You will need to regenerate them. Continue?</string>
     <string name="settings_cache_cleared">Storyboard deleted</string>
@@ -215,11 +215,26 @@
     <string name="ai_context_bar">%s</string>
     <string name="ai_no_context">No book loaded</string>
     <string name="ai_mode_conversation">Chat</string>
+    <string name="ai_mode_conversation_desc">Free dialogue, Q&amp;A, idea discussion</string>
+    <string name="ai_mode_import">Import</string>
+    <string name="ai_mode_import_desc">Convert arbitrary text to book structure</string>
     <string name="ai_mode_edit">Edit</string>
+    <string name="ai_mode_edit_desc">Modify scenes, characters, locations, book structure</string>
     <string name="ai_mode_director">Director</string>
+    <string name="ai_mode_director_desc">Camera, lighting, atmosphere, storyboard</string>
     <string name="ai_mode_extraction">Extract</string>
+    <string name="ai_mode_extraction_desc">Extract entities: characters, items, locations, key terms</string>
     <string name="ai_mode_validation">Validate</string>
+    <string name="ai_mode_validation_desc">Validate JSON, references, data integrity</string>
     <string name="ai_mode_switch">Mode: %1$s — %2$s</string>
+    <string name="ai_position_format">You are at: %1$s / %2$s — %3$s</string>
+    <string name="ai_topic_switched">Switched to topic: %1$s</string>
+
+    <!-- AI Chat Topics -->
+    <string name="ai_topic_book">Book</string>
+    <string name="ai_topic_scene">Scene</string>
+    <string name="ai_topic_characters">Characters</string>
+    <string name="ai_topic_script">Script</string>
     <string name="ai_welcome_context">You have opened book \"%1$s\".\nCurrent position: %2$s / %3$s / %4$s\n\nWhat mode shall we work in? Chat, Edit, Director, Extract, or Validate?</string>
     <string name="ai_context_changed">Now analyzing: %1$s / %2$s / Unit %3$d</string>
 
@@ -281,6 +296,22 @@
     <string name="workflow_compat_no_warnings">No warnings</string>
     <string name="workflow_compat_last_validated">Last validated: %1$s</string>
     <string name="workflow_no_data">No data available</string>
+
+    <!-- Parameter Editing (Stage 3) -->
+    <string name="param_edit_title">Edit: %1$s</string>
+    <string name="param_type_range">Type: %1$s · Min: %2$s · Max: %3$s</string>
+    <string name="param_type">Type: %1$s</string>
+    <string name="param_default_value">Default: %1$s</string>
+    <string name="param_current_value">Current: %1$s</string>
+    <string name="param_save">Save</string>
+    <string name="param_reset_default">Reset</string>
+    <string name="param_cancel">Cancel</string>
+    <string name="param_saving">Saving…</string>
+    <string name="param_save_success">Saved successfully</string>
+    <string name="param_save_error">Error: %1$s</string>
+    <string name="param_edit_hint">Enter value</string>
+    <string name="param_range_hint">Range: %1$s – %2$s</string>
+    <string name="param_no_range">No range limits</string>
 
     <!-- Developer Mode (for future use) -->
     <string name="developer_tools">Developer Tools</string>

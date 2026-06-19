@@ -81,7 +81,10 @@ function getConnectorDetail(connectorName) {
                     entityType: binding.entityType,
                     required: binding.required,
                     dataType: entity?.type || null,
-                    kind: entity?.kind || null
+                    kind: entity?.kind || null,
+                    defaultValue: binding.default !== undefined ? binding.default : null,
+                    min: binding.min !== undefined ? binding.min : null,
+                    max: binding.max !== undefined ? binding.max : null
                 };
             }
         }
@@ -322,6 +325,69 @@ function getConnectorsGrouped() {
     return result;
 }
 
+// ─── Parameter Management ────────────────────────────
+
+/**
+ * Update a connector parameter's value.
+ * Validates type, min/max, and persists to in-memory registry.
+ *
+ * @param {string} connectorName
+ * @param {string} paramKey
+ * @param {*} value
+ * @returns {{ ok: boolean, error?: string, previousValue?: *, currentValue?: *, warnings?: string[] }}
+ */
+function updateConnectorParameter(connectorName, paramKey, value) {
+    const connector = connectorLoader.getConnectorByName(connectorName);
+    if (!connector) {
+        return { ok: false, error: `Connector "${connectorName}" not found` };
+    }
+
+    if (!connector.parameters || !connector.parameters[paramKey]) {
+        return { ok: false, error: `Parameter "${paramKey}" not found on connector "${connectorName}"` };
+    }
+
+    const result = connectorLoader.updateConnectorParameter(connectorName, paramKey, value);
+    if (result.ok) {
+        log(`Parameter updated: ${connectorName}.${paramKey} = ${JSON.stringify(value)}`);
+    }
+    return result;
+}
+
+/**
+ * Reset a connector parameter to its current stored value (in-memory default).
+ * @param {string} connectorName
+ * @param {string} paramKey
+ * @returns {{ ok: boolean, error?: string, currentValue?: * }}
+ */
+function resetConnectorParameter(connectorName, paramKey) {
+    const connector = connectorLoader.getConnectorByName(connectorName);
+    if (!connector) {
+        return { ok: false, error: `Connector "${connectorName}" not found` };
+    }
+
+    if (!connector.parameters || !connector.parameters[paramKey]) {
+        return { ok: false, error: `Parameter "${paramKey}" not found on connector "${connectorName}"` };
+    }
+
+    return connectorLoader.resetConnectorParameter(connectorName, paramKey);
+}
+
+/**
+ * Get all current parameter values for a connector.
+ * @param {string} connectorName
+ * @returns {{ [key: string]: * }|null}
+ */
+function getConnectorParameterValues(connectorName) {
+    const connector = connectorLoader.getConnectorByName(connectorName);
+    if (!connector || !connector.parameters) return null;
+
+    const values = {};
+    for (const [key, param] of Object.entries(connector.parameters)) {
+        values[key] = param.default !== undefined ? param.default : null;
+    }
+    return values;
+}
+
 // ─── Entity Schema ─────────────────────────────────
 
 /**
@@ -350,6 +416,10 @@ module.exports = {
     reloadConnectors,
     getRawConnector,
     getConnectorsGrouped,
+
+    // Parameter Management
+    updateConnectorParameter,
+    getConnectorParameterValues,
 
     // Workflow
     listWorkflows,

@@ -130,6 +130,48 @@ module.exports = function(app, redis, deps) {
     });
 
     // ======================================================
+    // UPDATE CONNECTOR PARAMETER (parameterized)
+    // ======================================================
+    app.put('/api/v1/connectors/:name/parameters', async (req, res) => {
+        try {
+            const { name } = req.params;
+            const { paramKey, value } = req.body || {};
+
+            if (!paramKey) {
+                return res.status(400).json({ error: 'paramKey is required in body' });
+            }
+
+            const result = wfManager.updateConnectorParameter(name, paramKey, value);
+            if (!result.ok) {
+                const status = result.error?.includes('not found') ? 404 : 400;
+                return res.status(status).json({ error: result.error });
+            }
+
+            res.json(result);
+        } catch (err) {
+            console.error('[CONNECTORS] Update parameter error:', err.message);
+            res.status(500).json({ error: err.message });
+        }
+    });
+
+    // ======================================================
+    // GET CONNECTOR PARAMETER VALUES (parameterized)
+    // ======================================================
+    app.get('/api/v1/connectors/:name/parameters', async (req, res) => {
+        try {
+            const { name } = req.params;
+            const values = wfManager.getConnectorParameterValues(name);
+            if (values === null) {
+                return res.status(404).json({ error: `Connector "${name}" not found` });
+            }
+            res.json({ values });
+        } catch (err) {
+            console.error('[CONNECTORS] Get parameter values error:', err.message);
+            res.status(500).json({ error: err.message });
+        }
+    });
+
+    // ======================================================
     // GET CONNECTOR RAW JSON (parameterized — Developer Mode)
     // ======================================================
     app.get('/api/v1/connectors/:name/raw', async (req, res) => {
