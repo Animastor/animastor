@@ -1,8 +1,8 @@
 # Connector Architecture — Animastor
 
-> **Version:** 1.0.0  
-> **Status:** Draft  
-> **Last updated:** 2026-06-19
+> **Version:** 1.1.0  
+> **Status:** Active  
+> **Last updated:** 2026-06-19 (Stages 1-3 complete, Enable/Disable added)
 
 ---
 
@@ -318,22 +318,29 @@ Parameters in connectors should be extended with:
 
 ## 5. Migration Plan
 
-### Phase 1: API Extension (back-end only)
-- [ ] Add connector registry API endpoints
-- [ ] Add connector validation endpoint
-- [ ] Add hot-reload support
-- [ ] Enhance parameter metadata in connector files
+### ✅ Phase 1: API Extension (back-end only)
+- [x] Add connector registry API endpoints (connector-routes.cjs + workflow-routes.cjs)
+- [x] Add connector validation endpoint (`POST /connectors/validate`)
+- [x] Add hot-reload support (`POST /connectors/reload`)
+- [ ] Enhance parameter metadata in connector files (step, unit, options, advanced, group)
 
-### Phase 2: UI Integration
-- [ ] Connect Workflow Manager screens to API
-- [ ] Build Compatibility display component
-- [ ] Build Parameter editor component
-- [ ] Build Developer Mode screens
+### ✅ Phase 2: UI Integration
+- [x] Connect Workflow Manager screens to API
+- [x] Build Compatibility display component (Compatibility tab in WorkflowDetailsFragment)
+- [x] Build Parameter editor component (dialog_edit_parameter.xml + showEditParameterDialog)
+- [ ] Build Developer Mode screens (DeveloperViewFragment, MappingEditorFragment)
 
-### Phase 3: Legacy Cleanup
-- [ ] Remove all hardcoded fallback node IDs from workflow builders
-- [ ] Remove FALLBACK_NODE constants
-- [ ] Make connectors required (fail startup if connector missing)
+### ✅ Phase 3: Legacy Cleanup
+- [x] Remove all hardcoded fallback node IDs from workflow builders
+- [x] Remove FALLBACK_NODE constants from image-service.js, video-workflows.js, audio-workflows.js, image-workflows.js
+- [x] Make connectors required (fail startup if connector missing — throw + process.exit(1))
+
+### Phase 4: Enable/Disable & Quick Actions
+- [x] `PUT /api/v1/connectors/:name/status` — Toggle enabled/disabled
+- [x] `setConnectorStatus()` / `isConnectorEnabled()` in connector-loader
+- [x] State preserved across hot-reload
+- [x] Android: SwitchMaterial toggle in WorkflowTypeList
+- [x] Android: Grayed-out style (alpha 0.45) for disabled workflows
 
 ---
 
@@ -354,7 +361,8 @@ Parameters in connectors should be extended with:
 In addition to the standard API, Developer Mode exposes:
 
 **`GET /api/v1/connectors/:name/raw`** — Full raw connector JSON  
-**`GET /api/v1/connectors/:name/bindings`** — Entity → node mapping table  
-**`GET /api/v1/connectors/:name/mapping`** — Structured binding view
+**`PUT /api/v1/connectors/:name/status`** — Enable/disable connector  
+**`GET /api/v1/connectors/:name/bindings`** — Entity → node mapping table (planned)  
+**`GET /api/v1/connectors/:name/mapping`** — Structured binding view (planned)
 
 These endpoints are intended for internal tooling and developer UI only.

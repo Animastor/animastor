@@ -391,6 +391,17 @@ interface BackendApi {
         @Body body: ConnectorStatusRequest
     ): ConnectorStatusResponse
 
+    @PUT("/api/v1/connectors/{name}/bindings")
+    suspend fun putConnectorBinding(
+        @Path("name") name: String,
+        @Body body: UpdateBindingRequest
+    ): UpdateBindingResponse
+
+    @POST("/api/v1/connectors")
+    suspend fun addConnector(
+        @Body body: AddConnectorRequest
+    ): AddConnectorResponse
+
     // ======================================================
     // Workflow Status API (Stage 1)
     // ======================================================

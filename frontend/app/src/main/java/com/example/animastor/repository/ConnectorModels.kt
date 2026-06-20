@@ -99,6 +99,22 @@ data class ConnectorStatusResponse(
 )
 
 // ======================================================
+// Binding Update Models (Edit Mode)
+// ======================================================
+
+data class UpdateBindingRequest(
+    val section: String,
+    val entityKey: String,
+    val nodeId: String? = null,
+    val field: String? = null
+)
+
+data class UpdateBindingResponse(
+    val ok: Boolean = false,
+    val error: String? = null
+)
+
+// ======================================================
 // Parameter Update Models (Stage 3)
 // ======================================================
 
@@ -126,6 +142,23 @@ data class ConnectorGroupedResponse(
     val image: List<ConnectorSummary> = emptyList(),
     val video: List<ConnectorSummary> = emptyList(),
     val unknown: List<ConnectorSummary> = emptyList()
+)
+
+// ======================================================
+// Add Connector Models
+// ======================================================
+
+data class AddConnectorRequest(
+    val name: String,
+    val connector: Map<String, Any?>
+)
+
+data class AddConnectorResponse(
+    val ok: Boolean = false,
+    val error: String? = null,
+    val name: String? = null,
+    val warnings: List<String>? = null,
+    val message: String? = null
 )
 
 // ======================================================

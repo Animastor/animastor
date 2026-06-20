@@ -311,14 +311,16 @@ function getConnectorsGrouped() {
                 const compat = connectorLoader.checkCompatibility(c, workflows[wfName]);
                 status = compat.compatible ? 'compatible' : 'incompatible';
             }
+            const connName = findConnectorName(c) || c.workflow;
             return {
-                name: findConnectorName(c) || c.workflow,
+                name: connName,
                 label: c.label || c.workflow,
                 workflow: c.workflow,
                 type: c.type,
                 status,
                 version: c.connectorVersion || '1.0.0',
-                description: c.description || ''
+                description: c.description || '',
+                enabled: connectorLoader.isConnectorEnabled(connName)
             };
         });
     }
@@ -388,6 +390,20 @@ function getConnectorParameterValues(connectorName) {
     return values;
 }
 
+// ─── Update Binding ────────────────────────────────
+
+/**
+ * Update an input or output binding's nodeId and/or field.
+ * @param {string} connectorName
+ * @param {string} section — "inputs" or "outputs"
+ * @param {string} entityKey — e.g. "positivePrompt"
+ * @param {object} updates — { nodeId?: string, field?: string }
+ * @returns {{ ok: boolean, error?: string }}
+ */
+function updateConnectorBinding(connectorName, section, entityKey, updates) {
+    return connectorLoader.updateConnectorBinding(connectorName, section, entityKey, updates);
+}
+
 // ─── Entity Schema ─────────────────────────────────
 
 /**
@@ -403,6 +419,27 @@ function listEntities() {
  */
 function getEntitiesByKind(kind) {
     return entitySchema.getEntitiesByKind(kind);
+}
+
+// ─── Add Connector ────────────────────────────────
+
+/**
+ * Add a new connector: validate JSON, save to disk, register in memory.
+ * @param {string} connectorName — desired file name (without .json)
+ * @param {object} connectorJson — connector object
+ * @returns {{ ok: boolean, error?: string, warnings?: string[] }}
+ */
+function addConnector(connectorName, connectorJson) {
+    // Validate structure only (not full compatibility — user may be adding a connector
+    // that needs fixes, and compatibility will be checked at runtime)
+    const structureErrors = connectorLoader.validateConnector(connectorJson, connectorName);
+    if (structureErrors.length > 0) {
+        return { ok: false, error: `Structure errors:\n  - ${structureErrors.join('\n  - ')}` };
+    }
+
+    const workflows = workflowLoader.workflows || {};
+    const result = connectorLoader.addConnector(connectorName, connectorJson, workflows);
+    return result;
 }
 
 // ─── Connector Status (Enable/Disable) ──────────────
@@ -466,6 +503,12 @@ module.exports = {
     setConnectorStatus,
     isConnectorEnabled,
     listConnectorStatuses,
+
+    // Add Connector
+    addConnector,
+
+    // Update Binding
+    updateConnectorBinding,
 
     // Workflow
     listWorkflows,

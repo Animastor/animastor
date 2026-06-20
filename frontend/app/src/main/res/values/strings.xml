@@ -268,6 +268,7 @@
     <string name="workflow_status_incompatible">Incompatible</string>
     <string name="workflow_status_registered">Registered</string>
     <string name="workflow_status_unknown">Unknown</string>
+    <string name="workflow_status_edit_mode">Edit Mode</string>
     <string name="workflow_connector">Connector: %1$s</string>
     <string name="workflow_details">Details</string>
     <string name="workflow_disable">Disable</string>

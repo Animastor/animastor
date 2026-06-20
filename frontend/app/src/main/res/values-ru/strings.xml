@@ -257,6 +257,7 @@
     <string name="workflow_status_incompatible">Несовместим</string>
     <string name="workflow_status_registered">Зарегистрирован</string>
     <string name="workflow_status_unknown">Неизвестно</string>
+    <string name="workflow_status_edit_mode">Режим редактирования</string>
     <string name="workflow_connector">Коннектор: %1$s</string>
     <string name="workflow_details">Подробнее</string>
     <string name="workflow_disable">Отключить</string>

@@ -632,7 +632,8 @@ function getConnectorStatuses(workflowMap) {
       workflow: connector.workflow,
       status,
       version: connector.connectorVersion || '1.0.0',
-      description: connector.description || ''
+      description: connector.description || '',
+      enabled: isConnectorEnabled(name)
     });
   }
   return statuses;
@@ -710,6 +711,56 @@ function reload(workflowMap) {
   return result;
 }
 
+// ─── Add Connector ────────────────────────────────
+
+/**
+ * Add a new connector: save to disk, validate, and register.
+ * @param {string} name — connector name (without .json)
+ * @param {object} connectorJson — connector object
+ * @param {object} [workflowMap] — optional workflow map for validation
+ * @returns {{ ok: boolean, error?: string, warnings?: string[] }}
+ */
+function addConnector(name, connectorJson, workflowMap) {
+  // Validate the connector structure first
+  const validationErrors = validateConnector(connectorJson, name);
+  const warnings = [];
+
+  if (validationErrors.length > 0) {
+    return { ok: false, error: `Validation errors:\n  - ${validationErrors.join('\n  - ')}` };
+  }
+
+  // Check referenced workflow exists
+  const wfName = connectorJson.workflow;
+  if (workflowMap && wfName && !workflowMap[wfName]) {
+    const available = Object.keys(workflowMap).join(', ');
+    warnings.push(`Referenced workflow "${wfName}" not loaded. Available workflows: ${available}`);
+  }
+
+  // Write to disk
+  const filePath = path.join(CONNECTOR_DIR, `${name}.json`);
+  try {
+    // Ensure directory exists
+    if (!fs.existsSync(CONNECTOR_DIR)) {
+      fs.mkdirSync(CONNECTOR_DIR, { recursive: true });
+    }
+    // Merge with any existing file content to preserve source
+    fs.writeFileSync(filePath, JSON.stringify(connectorJson, null, 2) + '\n', 'utf8');
+    log(`Connector saved to disk: ${filePath}`);
+  } catch (err) {
+    return { ok: false, error: `Failed to write connector to disk: ${err.message}` };
+  }
+
+  // Register in-memory
+  registerConnector(name, connectorJson);
+
+  // Auto-populate workflow hash if possible
+  if (workflowMap && wfName && workflowMap[wfName]) {
+    updateWorkflowHash(connectorJson, workflowMap[wfName]);
+  }
+
+  return { ok: true, warnings: warnings.length > 0 ? warnings : undefined };
+}
+
 // ─── Enable/Disable ────────────────────────────────
 
 /**
@@ -735,6 +786,57 @@ function setConnectorStatus(connectorName, enabled) {
 function isConnectorEnabled(connectorName) {
   // Default to enabled if not explicitly set
   return connectorEnabled[connectorName] !== false;
+}
+
+// ─── Update Binding ────────────────────────────────
+
+/**
+ * Update an input or output binding's nodeId and/or field.
+ * @param {string} connectorName — e.g. "conn-image-generation"
+ * @param {string} section — "inputs" or "outputs"
+ * @param {string} entityKey — e.g. "positivePrompt"
+ * @param {object} updates — { nodeId?: string, field?: string }
+ * @returns {{ ok: boolean, error?: string }}
+ */
+function updateConnectorBinding(connectorName, section, entityKey, updates) {
+  const connector = connectorsByName[connectorName];
+  if (!connector) {
+    return { ok: false, error: `Connector "${connectorName}" not found` };
+  }
+
+  if (section !== 'inputs' && section !== 'outputs') {
+    return { ok: false, error: `Invalid section "${section}". Must be "inputs" or "outputs"` };
+  }
+
+  const sectionObj = connector[section];
+  if (!sectionObj || !sectionObj[entityKey]) {
+    return { ok: false, error: `Binding "${entityKey}" not found in ${section} of connector "${connectorName}"` };
+  }
+
+  const binding = sectionObj[entityKey];
+
+  // Handle multi-bindings (e.g. sourceImages with array of sub-bindings)
+  if (binding.type === 'multi' && binding.bindings) {
+    if (updates.bindings && Array.isArray(updates.bindings)) {
+      for (let i = 0; i < Math.min(updates.bindings.length, binding.bindings.length); i++) {
+        const subUpdate = updates.bindings[i];
+        if (subUpdate.nodeId) binding.bindings[i].nodeId = subUpdate.nodeId;
+        if (subUpdate.field) binding.bindings[i].field = subUpdate.field;
+      }
+    }
+    return { ok: true };
+  }
+
+  // Update fields
+  if (updates.nodeId !== undefined) {
+    binding.nodeId = updates.nodeId;
+  }
+  if (updates.field !== undefined) {
+    binding.field = updates.field;
+  }
+
+  log(`Binding updated: ${connectorName}.${section}.${entityKey} → ${JSON.stringify({ nodeId: binding.nodeId, field: binding.field })}`);
+  return { ok: true };
 }
 
 // ─── Exports ────────────────────────────────────────
@@ -776,5 +878,11 @@ module.exports = {
 
   // Enable/Disable
   setConnectorStatus,
-  isConnectorEnabled
+  isConnectorEnabled,
+
+  // Add connector
+  addConnector,
+
+  // Update binding
+  updateConnectorBinding
 };

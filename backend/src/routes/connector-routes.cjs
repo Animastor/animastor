@@ -29,6 +29,43 @@ module.exports = function(app, redis, deps) {
     });
 
     // ======================================================
+    // ADD NEW CONNECTOR (static — must be before :name)
+    // ======================================================
+    app.post('/api/v1/connectors', async (req, res) => {
+        try {
+            const { name, connector } = req.body || {};
+            if (!name || !connector) {
+                return res.status(400).json({
+                    error: 'Both "name" (string) and "connector" (object) are required in request body'
+                });
+            }
+
+            // Validate the name format (conn- prefix expected)
+            if (!name.startsWith('conn-')) {
+                return res.status(400).json({
+                    error: 'Connector name must start with "conn-" prefix'
+                });
+            }
+
+            const result = wfManager.addConnector(name, connector);
+            if (!result.ok) {
+                return res.status(400).json({ error: result.error });
+            }
+
+            log(`[CONNECTORS] New connector added: ${name}`);
+            res.status(201).json({
+                ok: true,
+                name,
+                warnings: result.warnings,
+                message: `Connector "${name}" added successfully`
+            });
+        } catch (err) {
+            console.error('[CONNECTORS] Add error:', err.message);
+            res.status(500).json({ error: err.message });
+        }
+    });
+
+    // ======================================================
     // VALIDATE CONNECTOR JSON (static — must be before :name)
     // ======================================================
     app.post('/api/v1/connectors/validate', async (req, res) => {
@@ -191,6 +228,39 @@ module.exports = function(app, redis, deps) {
             res.json(result);
         } catch (err) {
             console.error('[CONNECTORS] Status error:', err.message);
+            res.status(500).json({ error: err.message });
+        }
+    });
+
+    // ======================================================
+    // UPDATE CONNECTOR BINDING (parameterized)
+    // ======================================================
+    app.put('/api/v1/connectors/:name/bindings', async (req, res) => {
+        try {
+            const { name } = req.params;
+            const { section, entityKey, nodeId, field } = req.body || {};
+
+            if (!section || !entityKey) {
+                return res.status(400).json({ error: '"section" (inputs|outputs) and "entityKey" are required in body' });
+            }
+
+            const updates = {};
+            if (nodeId !== undefined) updates.nodeId = nodeId;
+            if (field !== undefined) updates.field = field;
+
+            if (Object.keys(updates).length === 0) {
+                return res.status(400).json({ error: 'At least one of "nodeId" or "field" must be provided' });
+            }
+
+            const result = wfManager.updateConnectorBinding(name, section, entityKey, updates);
+            if (!result.ok) {
+                return res.status(404).json({ error: result.error });
+            }
+
+            log(`[CONNECTORS] Binding updated: ${name}.${section}.${entityKey}`);
+            res.json({ ok: true });
+        } catch (err) {
+            console.error('[CONNECTORS] Update binding error:', err.message);
             res.status(500).json({ error: err.message });
         }
     });
