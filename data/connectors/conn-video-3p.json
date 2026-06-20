@@ -156,6 +156,16 @@
       "entityType": "cfg",
       "label": "CFG Scale",
       "default": 1
+    },
+    "guideStrength": {
+      "nodeId": "199",
+      "field": "inputs.strength",
+      "expectedClass": "LTXVAddGuide",
+      "entityType": "guideStrength",
+      "label": "Image Influence (Strength)",
+      "default": 0.7,
+      "min": 0.0,
+      "max": 1.0
     }
   },
   "guideNodes": {

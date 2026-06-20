@@ -35,10 +35,20 @@ class WorkflowDetailsViewModel : ViewModel() {
 
     // ─── Data ──────────────────────────────────────────
 
+    data class GuideNodeItem(
+        val label: String,
+        val nodeId: String = "",
+        val nodeClass: String = "",
+        val fieldFrameIdx: String = "",
+        val fieldStrength: String = "",
+        val imageSource: String = ""
+    )
+
     data class TabData(
         val inputs: List<BindingDisplayItem> = emptyList(),
         val outputs: List<BindingDisplayItem> = emptyList(),
-        val parameters: List<BindingDisplayItem> = emptyList()
+        val parameters: List<BindingDisplayItem> = emptyList(),
+        val guideNodes: List<GuideNodeItem> = emptyList()
     )
 
     data class BindingDisplayItem(
@@ -129,19 +139,50 @@ class WorkflowDetailsViewModel : ViewModel() {
     }
 
     private fun buildTabData(detail: ConnectorDetail): TabData {
+        // Build guide node items
+        val guideItems = detail.guideNodes?.bindings?.mapIndexed { i, gb ->
+            GuideNodeItem(
+                label = gb.label.ifEmpty { "Guide ${i + 1}" },
+                nodeId = gb.nodeId ?: "",
+                nodeClass = gb.nodeClass ?: "",
+                fieldFrameIdx = gb.fields?.frameIdx ?: "",
+                fieldStrength = gb.fields?.strength ?: "",
+                imageSource = gb.fields?.imageSource ?: ""
+            )
+        } ?: emptyList()
+
         return TabData(
-            inputs = detail.inputs.map { (key, binding) ->
-                BindingDisplayItem(
-                    key = key,
-                    label = binding.label,
-                    nodeId = binding.nodeId ?: "",
-                    field = binding.field ?: "",
-                    required = binding.required,
-                    dataType = binding.dataType ?: "",
-                    kind = binding.kind ?: "input",
-                    expectedClass = binding.expectedClass ?: "",
-                    nodeClass = binding.nodeClass ?: ""
-                )
+            inputs = detail.inputs.flatMap { (key, binding) ->
+                if (binding.type == "multi" && !binding.bindings.isNullOrEmpty()) {
+                    // Expand multi-bindings (e.g. sourceImages → 4 sub-bindings)
+                    binding.bindings.map { sub ->
+                        BindingDisplayItem(
+                            key = "${key}[${sub.arrayPosition ?: 0}]",
+                            label = sub.label ?: "${binding.label} ${(sub.arrayPosition ?: 0) + 1}",
+                            nodeId = sub.nodeId ?: "",
+                            field = "",
+                            required = sub.required,
+                            dataType = "image",
+                            kind = "input",
+                            expectedClass = sub.expectedClass ?: "",
+                            nodeClass = sub.nodeClass ?: ""
+                        )
+                    }
+                } else {
+                    listOf(
+                        BindingDisplayItem(
+                            key = key,
+                            label = binding.label,
+                            nodeId = binding.nodeId ?: "",
+                            field = binding.field ?: "",
+                            required = binding.required,
+                            dataType = binding.dataType ?: "",
+                            kind = binding.kind ?: "input",
+                            expectedClass = binding.expectedClass ?: "",
+                            nodeClass = binding.nodeClass ?: ""
+                        )
+                    )
+                }
             },
             outputs = detail.outputs.map { (key, binding) ->
                 BindingDisplayItem(
@@ -169,7 +210,8 @@ class WorkflowDetailsViewModel : ViewModel() {
                     expectedClass = binding.expectedClass ?: "",
                     nodeClass = binding.nodeClass ?: ""
                 )
-            }
+            },
+            guideNodes = guideItems
         )
     }
 

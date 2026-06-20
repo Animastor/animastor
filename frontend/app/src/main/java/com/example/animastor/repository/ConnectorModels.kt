@@ -31,7 +31,26 @@ data class ConnectorDetail(
     val inputs: Map<String, BindingDef> = emptyMap(),
     val outputs: Map<String, BindingDef> = emptyMap(),
     val parameters: Map<String, BindingDef> = emptyMap(),
+    val guideNodes: GuideNodes? = null,
     val hasGuideNodes: Boolean = false
+)
+
+data class GuideNodes(
+    val nodeType: String = "unknown",
+    val bindings: List<GuideBinding> = emptyList()
+)
+
+data class GuideBinding(
+    val label: String = "",
+    val nodeId: String? = null,
+    val nodeClass: String? = null,
+    val fields: GuideFieldDef? = null
+)
+
+data class GuideFieldDef(
+    val frameIdx: String? = null,
+    val strength: String? = null,
+    val imageSource: String? = null
 )
 
 data class BindingDef(

@@ -13,7 +13,7 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.fragment.app.Fragment
-import androidx.fragment.app.activityViewModels
+import androidx.fragment.app.viewModels
 import androidx.lifecycle.lifecycleScope
 import androidx.viewpager2.widget.ViewPager2
 import com.example.animastor.R
@@ -35,7 +35,7 @@ private const val TAG = "WorkflowDetails"
 class WorkflowDetailsFragment : Fragment(R.layout.fragment_workflow_details) {
 
     private var binding: FragmentWorkflowDetailsBinding? = null
-    private val detailsViewModel: WorkflowDetailsViewModel by activityViewModels {
+    private val detailsViewModel: WorkflowDetailsViewModel by viewModels {
         WorkflowDetailsViewModel.factory
     }
 
@@ -148,6 +148,17 @@ class WorkflowDetailsFragment : Fragment(R.layout.fragment_workflow_details) {
                 if (b.viewPager.adapter != null) return@collectLatest
 
                 val nodeTypes = detailsViewModel.workflowNodeTypes.value
+        val guideItems = tabData.guideNodes.mapIndexed { idx, g ->
+            GuideNodeDisplayItem(
+                label = g.label,
+                nodeId = g.nodeId,
+                nodeClass = g.nodeClass,
+                fieldFrameIdx = g.fieldFrameIdx,
+                fieldStrength = g.fieldStrength,
+                imageSource = g.imageSource,
+                index = idx
+            )
+        }
 
                 // Use this fragment as the parent for FragmentStateAdapter
                 val adapter = TabPagerAdapter(
@@ -158,7 +169,8 @@ class WorkflowDetailsFragment : Fragment(R.layout.fragment_workflow_details) {
                     detailsViewModel.compatibility.value,
                     connectorName,
                     editMode,
-                    nodeTypes
+                    nodeTypes,
+                    guideItems
                 )
                 b.viewPager.adapter = adapter
 
@@ -194,6 +206,18 @@ class WorkflowDetailsFragment : Fragment(R.layout.fragment_workflow_details) {
 
 // ─── Pager Adapter ────────────────────────────────────
 
+// ─── Guide Node Display Item ──────────────────────
+
+data class GuideNodeDisplayItem(
+    val label: String = "",
+    val nodeId: String = "",
+    val nodeClass: String = "",
+    val fieldFrameIdx: String = "",
+    val fieldStrength: String = "",
+    val imageSource: String = "",
+    val index: Int = 0
+)
+
 class TabPagerAdapter(
     fragment: Fragment,
     private val inputs: List<BindingDisplayItem>,
@@ -202,14 +226,15 @@ class TabPagerAdapter(
     private val compatibility: CompatibilityStatus?,
     private val connectorName: String = "",
     private val editMode: Boolean = false,
-    private val workflowNodeTypes: Map<String, String> = emptyMap()
+    private val workflowNodeTypes: Map<String, String> = emptyMap(),
+    private val guideNodes: List<GuideNodeDisplayItem> = emptyList()
 ) : androidx.viewpager2.adapter.FragmentStateAdapter(fragment) {
     override fun getItemCount() = 4
 
     override fun createFragment(position: Int): Fragment {
         return TabContentFragment.newInstance(
             position, inputs, outputs, parameters, compatibility,
-            connectorName, editMode, workflowNodeTypes
+            connectorName, editMode, workflowNodeTypes, guideNodes
         )
     }
 }
@@ -231,6 +256,7 @@ class TabContentFragment : Fragment() {
         private const val ARG_CONNECTOR_NAME = "connector_name"
         private const val ARG_EDIT_MODE = "edit_mode"
         private const val ARG_NODE_TYPES = "node_types"
+        private const val ARG_GUIDE_NODES = "guide_nodes"
 
         fun newInstance(
             position: Int,
@@ -240,7 +266,8 @@ class TabContentFragment : Fragment() {
             compatibility: CompatibilityStatus?,
             connectorName: String = "",
             editMode: Boolean = false,
-            workflowNodeTypes: Map<String, String> = emptyMap()
+            workflowNodeTypes: Map<String, String> = emptyMap(),
+            guideNodes: List<GuideNodeDisplayItem> = emptyList()
         ): TabContentFragment {
             val f = TabContentFragment()
             f.arguments = Bundle().apply {
@@ -251,6 +278,7 @@ class TabContentFragment : Fragment() {
                 putString(ARG_CONNECTOR_NAME, connectorName)
                 putBoolean(ARG_EDIT_MODE, editMode)
                 putString(ARG_NODE_TYPES, serializeNodeTypes(workflowNodeTypes))
+                putString(ARG_GUIDE_NODES, serializeGuideNodes(guideNodes))
                 if (compatibility != null) {
                     putString(ARG_COMPAT, serializeCompat(compatibility))
                 }
@@ -278,6 +306,28 @@ class TabContentFragment : Fragment() {
                 }
             }
             return result
+        }
+
+        private fun serializeGuideNodes(items: List<GuideNodeDisplayItem>): String {
+            return items.joinToString("|||") { g ->
+                "${g.label}\n${g.nodeId}\n${g.nodeClass}\n${g.fieldFrameIdx}\n${g.fieldStrength}\n${g.imageSource}\n${g.index}"
+            }
+        }
+
+        private fun deserializeGuideNodes(raw: String): List<GuideNodeDisplayItem> {
+            if (raw.isBlank()) return emptyList()
+            return raw.split("|||").filter { it.isNotBlank() }.map { entry ->
+                val parts = entry.split("\n")
+                GuideNodeDisplayItem(
+                    label = parts.getOrElse(0) { "" },
+                    nodeId = parts.getOrElse(1) { "" },
+                    nodeClass = parts.getOrElse(2) { "" },
+                    fieldFrameIdx = parts.getOrElse(3) { "" },
+                    fieldStrength = parts.getOrElse(4) { "" },
+                    imageSource = parts.getOrElse(5) { "" },
+                    index = parts.getOrElse(6) { "0" }.toIntOrNull() ?: 0
+                )
+            }
         }
 
         private fun serializeCompat(c: CompatibilityStatus): String {
@@ -343,6 +393,7 @@ class TabContentFragment : Fragment() {
         connectorName = args.getString(ARG_CONNECTOR_NAME, "")
         editMode = args.getBoolean(ARG_EDIT_MODE, false)
         workflowNodeTypes = deserializeNodeTypes(args.getString(ARG_NODE_TYPES, ""))
+        val guideNodes = deserializeGuideNodes(args.getString(ARG_GUIDE_NODES, ""))
 
         // Parameters tab (position 2) gets interactive UI
         if (position == 2) {
@@ -354,7 +405,11 @@ class TabContentFragment : Fragment() {
             val items = if (position == 0) inputs else outputs
             val emptyMsg = if (position == 0) "No inputs" else "No outputs"
             val section = if (position == 0) "inputs" else "outputs"
-            return createBindingView(items, emptyMsg, section)
+            return if (position == 0 && guideNodes.isNotEmpty()) {
+                createBindingViewWithGuides(items, emptyMsg, section, guideNodes)
+            } else {
+                createBindingView(items, emptyMsg, section)
+            }
         }
 
         // Compatibility tab (position 3) gets card-based UI
@@ -629,6 +684,178 @@ class TabContentFragment : Fragment() {
         }
     }
 
+    // ─── Card-based Binding View with Guide Nodes ────
+
+    private fun createBindingViewWithGuides(
+        items: List<BindingDisplayItem>, emptyMsg: String, section: String,
+        guideNodes: List<GuideNodeDisplayItem>
+    ): View {
+        val scrollView = ScrollView(requireContext())
+        scrollView.setPadding(16, 8, 16, 16)
+
+        val containerLayout = LinearLayout(requireContext())
+        containerLayout.orientation = LinearLayout.VERTICAL
+        containerLayout.layoutParams = ViewGroup.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+
+        // Regular bindings
+        if (items.isEmpty()) {
+            val emptyText = TextView(requireContext())
+            emptyText.text = emptyMsg
+            emptyText.setTextColor(
+                MaterialColors.getColor(requireContext(), com.google.android.material.R.attr.colorOnSurfaceVariant,
+                    requireContext().getColor(R.color.cinema_text_secondary))
+            )
+            emptyText.textSize = 14f
+            emptyText.setPadding(16, 16, 16, 16)
+            emptyText.gravity = Gravity.CENTER
+            containerLayout.addView(emptyText)
+        } else {
+            for (item in items) {
+                containerLayout.addView(createBindingCard(item, section))
+            }
+        }
+
+        // Guide nodes section header
+        if (guideNodes.isNotEmpty()) {
+            val divider = View(requireContext())
+            divider.layoutParams = ViewGroup.MarginLayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 1
+            ).apply { topMargin = 16; bottomMargin = 12 }
+            divider.setBackgroundColor(
+                MaterialColors.getColor(requireContext(), com.google.android.material.R.attr.colorOutlineVariant,
+                    requireContext().getColor(R.color.cinema_text_secondary))
+            )
+            containerLayout.addView(divider)
+
+            val header = TextView(requireContext())
+            header.text = "Guide Image Nodes"
+            header.textSize = 13f
+            header.setTextColor(requireContext().getColor(R.color.cinema_accent))
+            header.setTypeface(null, android.graphics.Typeface.BOLD)
+            header.layoutParams = ViewGroup.MarginLayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = 8 }
+            containerLayout.addView(header)
+
+            for (g in guideNodes) {
+                containerLayout.addView(createGuideNodeCard(g))
+            }
+        }
+
+        scrollView.addView(containerLayout)
+        return scrollView
+    }
+
+    private fun createGuideNodeCard(g: GuideNodeDisplayItem): View {
+        val ctx = requireContext()
+        val card = com.google.android.material.card.MaterialCardView(ctx)
+        val lp = ViewGroup.MarginLayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+        lp.bottomMargin = 8
+        card.layoutParams = lp
+        card.radius = 12f
+        card.cardElevation = 1f
+        card.strokeWidth = 0
+        card.setCardBackgroundColor(
+            MaterialColors.getColor(ctx, com.google.android.material.R.attr.colorSurfaceVariant,
+                ctx.getColor(R.color.cinema_surface_variant))
+        )
+
+        val inner = LinearLayout(ctx)
+        inner.orientation = LinearLayout.VERTICAL
+        inner.setPadding(16, 12, 16, 12)
+        inner.layoutParams = ViewGroup.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+
+        // Header: label + node + edit button
+        val headerRow = LinearLayout(ctx)
+        headerRow.orientation = LinearLayout.HORIZONTAL
+        headerRow.gravity = Gravity.CENTER_VERTICAL
+        headerRow.layoutParams = ViewGroup.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+
+        val label = TextView(ctx)
+        label.text = g.label
+        label.setTextColor(
+            MaterialColors.getColor(ctx, com.google.android.material.R.attr.colorOnSurface,
+                ctx.getColor(R.color.cinema_text_primary))
+        )
+        label.textSize = 14f
+        label.setTypeface(null, android.graphics.Typeface.BOLD)
+        label.layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        headerRow.addView(label)
+
+        // Edit button for guide nodes in edit mode
+        if (editMode) {
+            val editBtn = MaterialButton(ctx, null, com.google.android.material.R.attr.materialButtonOutlinedStyle)
+            editBtn.text = "Edit"
+            editBtn.textSize = 11f
+            editBtn.isAllCaps = false
+            editBtn.setTypeface(null, android.graphics.Typeface.BOLD)
+            editBtn.setPadding(8, 0, 8, 0)
+            editBtn.minimumHeight = 32
+            editBtn.minimumWidth = 48
+            val editLp = ViewGroup.MarginLayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+            editLp.marginStart = 8
+            editBtn.layoutParams = editLp
+            editBtn.setOnClickListener {
+                showEditGuideNodeDialog(g)
+            }
+            headerRow.addView(editBtn)
+        }
+
+        inner.addView(headerRow)
+
+        // Node info
+        val displayClass = g.nodeClass.ifBlank { "LTXVAddGuide" }
+        val nodeInfo = TextView(ctx)
+        nodeInfo.text = "$displayClass (${g.nodeId})"
+        nodeInfo.setTextColor(ctx.getColor(R.color.cinema_accent))
+        nodeInfo.textSize = 12f
+        nodeInfo.layoutParams = ViewGroup.MarginLayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply { topMargin = 2 }
+        inner.addView(nodeInfo)
+
+        // Fields
+        val fields = mutableListOf<String>()
+        if (g.fieldFrameIdx.isNotBlank()) fields.add("frame: ${g.fieldFrameIdx}")
+        if (g.fieldStrength.isNotBlank()) fields.add("strength: ${g.fieldStrength}")
+        if (g.imageSource.isNotBlank()) fields.add("image: ${g.imageSource}")
+
+        if (fields.isNotEmpty()) {
+            val fieldsText = TextView(ctx)
+            fieldsText.text = fields.joinToString("  ·  ")
+            fieldsText.setTextColor(
+                MaterialColors.getColor(ctx, com.google.android.material.R.attr.colorOnSurfaceVariant,
+                    ctx.getColor(R.color.cinema_text_secondary))
+            )
+            fieldsText.textSize = 11f
+            fieldsText.layoutParams = ViewGroup.MarginLayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = 4 }
+            inner.addView(fieldsText)
+        }
+
+        card.addView(inner)
+        return card
+    }
+
     // ─── Card-based Binding View (Inputs / Outputs) ───
 
     private fun createBindingView(items: List<BindingDisplayItem>, emptyMsg: String, section: String): View {
@@ -720,14 +947,22 @@ class TabContentFragment : Fragment() {
             topRow.addView(requiredBadge)
         }
 
-        // Edit button in edit mode
+        // Edit button in edit mode — outlined style for visibility
         if (editMode) {
-            val editBtn = TextView(ctx)
+            val editBtn = MaterialButton(ctx, null, com.google.android.material.R.attr.materialButtonOutlinedStyle)
             editBtn.text = "Edit"
-            editBtn.textSize = 12f
-            editBtn.setTextColor(ctx.getColor(R.color.cinema_accent))
+            editBtn.textSize = 11f
+            editBtn.isAllCaps = false
             editBtn.setTypeface(null, android.graphics.Typeface.BOLD)
-            editBtn.setPadding(8, 4, 4, 4)
+            editBtn.setPadding(8, 0, 8, 0)
+            editBtn.minimumHeight = 32
+            editBtn.minimumWidth = 48
+            val editLp = ViewGroup.MarginLayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+            editLp.marginStart = 8
+            editBtn.layoutParams = editLp
             editBtn.setOnClickListener {
                 showEditBindingDialog(item, section)
             }
@@ -881,7 +1116,108 @@ class TabContentFragment : Fragment() {
             }
     }
 
-    private fun saveBinding(connectorName: String, section: String, entityKey: String, nodeId: String, field: String) {
+    // ─── Guide Node Edit Dialog ──────────────────────
+
+    private fun showEditGuideNodeDialog(g: GuideNodeDisplayItem) {
+        val ctx = requireContext()
+
+        // Filter by LTXVAddGuide or show all if no class info
+        val guideNodes = if (g.nodeClass.isNotBlank()) {
+            workflowNodeTypes.filter { (_, cls) -> cls == g.nodeClass }
+        } else {
+            workflowNodeTypes.filter { (_, cls) -> cls == "LTXVAddGuide" }
+        }
+
+        val nodeEntries: List<Pair<String, String>> = if (guideNodes.isNotEmpty()) {
+            guideNodes.entries
+                .sortedBy { it.key.toIntOrNull() ?: 0 }
+                .map { (id, cls) -> "$cls ($id)" to id }
+        } else if (workflowNodeTypes.isNotEmpty()) {
+            workflowNodeTypes.entries
+                .sortedBy { it.key.toIntOrNull() ?: 0 }
+                .map { (id, cls) -> "$cls ($id)" to id }
+        } else {
+            listOf("${g.nodeClass.ifBlank { "LTXVAddGuide" }} (${g.nodeId})" to g.nodeId)
+        }
+
+        val selectedIndex = nodeEntries.indexOfFirst { (_, id) -> id == g.nodeId }
+
+        val dialogView = LayoutInflater.from(ctx).inflate(R.layout.dialog_edit_parameter, null)
+        val inputLayout = dialogView.findViewById<com.google.android.material.textfield.TextInputLayout>(R.id.inputLayout)
+        val currentValueLabel = dialogView.findViewById<TextView>(R.id.currentValueLabel)
+        val typeInfo = dialogView.findViewById<TextView>(R.id.typeInfo)
+
+        inputLayout.visibility = android.view.View.GONE
+        currentValueLabel.visibility = android.view.View.GONE
+        typeInfo.text = "Select a guide node for \"${g.label}\""
+
+        val radioGroup = android.widget.RadioGroup(ctx)
+        radioGroup.layoutParams = ViewGroup.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+        radioGroup.setPadding(0, 8, 0, 8)
+
+        for (i in nodeEntries.indices) {
+            val (label, _) = nodeEntries[i]
+            val radio = android.widget.RadioButton(ctx)
+            radio.text = label
+            radio.id = i
+            radio.isChecked = i == selectedIndex
+            radio.setTextColor(
+                MaterialColors.getColor(ctx, com.google.android.material.R.attr.colorOnSurface,
+                    ctx.getColor(R.color.cinema_text_primary))
+            )
+            radio.textSize = 14f
+            radio.setPadding(16, 8, 16, 8)
+            radio.layoutParams = android.widget.RadioGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+            radioGroup.addView(radio)
+        }
+
+        val dialogRoot = dialogView.findViewById<LinearLayout>(R.id.dialogRoot)
+        dialogRoot.addView(radioGroup, 0)
+
+        var selectedNodeId = nodeEntries.getOrNull(selectedIndex.coerceAtLeast(0))?.second ?: g.nodeId
+
+        radioGroup.setOnCheckedChangeListener { group, checkedId ->
+            val idx = group.indexOfChild(group.findViewById(checkedId))
+            if (idx in nodeEntries.indices) {
+                selectedNodeId = nodeEntries[idx].second
+            }
+        }
+
+        val dialog = AlertDialog.Builder(ctx)
+            .setTitle("Edit Guide: ${g.label}")
+            .setView(dialogView)
+            .create()
+
+        dialog.show()
+
+        dialogView.findViewById<com.google.android.material.button.MaterialButton>(R.id.saveButton)
+            .setOnClickListener {
+                saveBinding(connectorName, "guideNodes", g.index.toString(), selectedNodeId, null)
+                dialog.dismiss()
+            }
+
+        dialogView.findViewById<com.google.android.material.button.MaterialButton>(R.id.resetButton)
+            .setOnClickListener {
+                selectedNodeId = g.nodeId
+                val origIdx = nodeEntries.indexOfFirst { (_, id) -> id == g.nodeId }
+                if (origIdx >= 0) {
+                    radioGroup.check(origIdx)
+                }
+            }
+
+        dialogView.findViewById<com.google.android.material.button.MaterialButton>(R.id.cancelButton)
+            .setOnClickListener {
+                dialog.dismiss()
+            }
+    }
+
+    private fun saveBinding(connectorName: String, section: String, entityKey: String, nodeId: String, field: String?) {
         lifecycleScope.launch {
             try {
                 val api = RetrofitClient.api

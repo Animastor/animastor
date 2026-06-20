@@ -198,7 +198,8 @@ function buildWorkflowForGroup(groupInfo, units, iuDurations, sceneData, loadedB
     // 2. Set total frames via connector
     cl.setValue(wf, connector, 'totalFrames', totalFrames);
 
-    // 3. Set image filenames and guide frame indices
+    // 3. Set image filenames, guide frame indices, and guide strengths
+    const guideStrength = cl.getBinding(connector, 'guideStrength');
     for (let i = 0; i < units.length; i++) {
         const unit = units[i];
         const imageNodeId = Array.isArray(loadImageNodeIds) ? loadImageNodeIds[i] : loadImageNodeIds;
@@ -211,6 +212,10 @@ function buildWorkflowForGroup(groupInfo, units, iuDurations, sceneData, loadedB
 
         if (guideNodeId && wf[guideNodeId]) {
             wf[guideNodeId].inputs.frame_idx = frameIndices[i];
+            // Apply guide strength from connector parameter to each guide node
+            if (guideStrength && guideStrength.default !== undefined) {
+                wf[guideNodeId].inputs.strength = guideStrength.default;
+            }
         }
     }
 

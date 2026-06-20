@@ -105,6 +105,24 @@ function getConnectorDetail(connectorName) {
         return result;
     };
 
+    // Transform guide nodes to clean format
+    const cleanGuideNodes = (gn) => {
+        if (!gn || !gn.bindings || !Array.isArray(gn.bindings)) return null;
+        return {
+            nodeType: gn.nodeType || 'unknown',
+            bindings: gn.bindings.map((b, i) => ({
+                label: `Guide ${i + 1}`,
+                nodeId: b.nodeId,
+                nodeClass: resolveNodeClass(b.nodeId),
+                fields: {
+                    frameIdx: b.fieldFrameIdx || null,
+                    strength: b.fieldStrength || null,
+                    imageSource: b.imageSource || null
+                }
+            }))
+        };
+    };
+
     return {
         name: connectorName,
         workflow: meta.workflow,
@@ -117,6 +135,7 @@ function getConnectorDetail(connectorName) {
         inputs: cleanBindings(inputs),
         outputs: cleanBindings(outputs),
         parameters: cleanBindings(parameters),
+        guideNodes: cleanGuideNodes(guideNodes),
         hasGuideNodes: !!(guideNodes?.bindings?.length)
     };
 }

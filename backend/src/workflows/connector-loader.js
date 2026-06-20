@@ -824,8 +824,25 @@ function updateConnectorBinding(connectorName, section, entityKey, updates) {
     return { ok: false, error: `Connector "${connectorName}" not found` };
   }
 
-  if (section !== 'inputs' && section !== 'outputs') {
-    return { ok: false, error: `Invalid section "${section}". Must be "inputs" or "outputs"` };
+  if (section !== 'inputs' && section !== 'outputs' && section !== 'guideNodes') {
+    return { ok: false, error: `Invalid section "${section}". Must be "inputs", "outputs", or "guideNodes"` };
+  }
+
+  // Handle guideNodes section (array-based, not key-based)
+  if (section === 'guideNodes') {
+    const guideBindings = connector.guideNodes?.bindings;
+    const index = parseInt(entityKey, 10);
+    if (!guideBindings || !Array.isArray(guideBindings)) {
+      return { ok: false, error: `Connector "${connectorName}" has no guideNodes` };
+    }
+    if (isNaN(index) || index < 0 || index >= guideBindings.length) {
+      return { ok: false, error: `Invalid guide node index ${entityKey}. Must be 0-${guideBindings.length - 1}` };
+    }
+    if (updates.nodeId !== undefined) {
+      guideBindings[index].nodeId = updates.nodeId;
+    }
+    log(`Guide node binding updated: ${connectorName}.guideNodes[${index}] → nodeId=${guideBindings[index].nodeId}`);
+    return { ok: true };
   }
 
   const sectionObj = connector[section];
