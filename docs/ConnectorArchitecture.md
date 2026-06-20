@@ -1,8 +1,8 @@
 # Connector Architecture — Animastor
 
-> **Version:** 1.1.0  
+> **Version:** 1.2.0  
 > **Status:** Active  
-> **Last updated:** 2026-06-19 (Stages 1-3 complete, Enable/Disable added)
+> **Last updated:** 2026-06-20 (Stage 3 Edit Mode, Smart Bindings)
 
 ---
 
@@ -335,12 +335,23 @@ Parameters in connectors should be extended with:
 - [x] Remove FALLBACK_NODE constants from image-service.js, video-workflows.js, audio-workflows.js, image-workflows.js
 - [x] Make connectors required (fail startup if connector missing — throw + process.exit(1))
 
-### Phase 4: Enable/Disable & Quick Actions
+### ✅ Phase 4: Enable/Disable & Edit Mode
 - [x] `PUT /api/v1/connectors/:name/status` — Toggle enabled/disabled
 - [x] `setConnectorStatus()` / `isConnectorEnabled()` in connector-loader
 - [x] State preserved across hot-reload
 - [x] Android: SwitchMaterial toggle in WorkflowTypeList
 - [x] Android: Grayed-out style (alpha 0.45) for disabled workflows
+- [x] Edit Mode (toggle OFF → show editable bindings)
+- [x] `PUT /api/v1/connectors/:name/bindings` — Update nodeId/field per binding
+- [x] `updateConnectorBinding()` in connector-loader + workflow-manager
+
+### ✅ Phase 5: Smart Bindings & Compatibility
+- [x] `expectedClass` + `nodeClass` fields in `GET /api/v1/connectors/:name` response
+- [x] Backend resolves `nodeClass` from workflow JSON (class_type lookup)
+- [x] Compatibility check: per-binding `expectedClass` vs `workflowNode.class_type`
+- [x] Compatibility check: required ports without nodeId → warning
+- [x] Android: Card shows "CLIPTextEncode (108)" instead of "Node 108"
+- [x] Android: Edit dialog shows RadioGroup of compatible nodes filtered by expectedClass
 
 ---
 

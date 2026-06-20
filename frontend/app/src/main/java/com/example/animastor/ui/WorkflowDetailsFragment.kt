@@ -147,6 +147,8 @@ class WorkflowDetailsFragment : Fragment(R.layout.fragment_workflow_details) {
                 // Skip if already set up (prevent duplicate TabLayoutMediator.attach())
                 if (b.viewPager.adapter != null) return@collectLatest
 
+                val nodeTypes = detailsViewModel.workflowNodeTypes.value
+
                 // Use this fragment as the parent for FragmentStateAdapter
                 val adapter = TabPagerAdapter(
                     this@WorkflowDetailsFragment,
@@ -155,7 +157,8 @@ class WorkflowDetailsFragment : Fragment(R.layout.fragment_workflow_details) {
                     tabData.parameters,
                     detailsViewModel.compatibility.value,
                     connectorName,
-                    editMode
+                    editMode,
+                    nodeTypes
                 )
                 b.viewPager.adapter = adapter
 
@@ -198,14 +201,15 @@ class TabPagerAdapter(
     private val parameters: List<BindingDisplayItem>,
     private val compatibility: CompatibilityStatus?,
     private val connectorName: String = "",
-    private val editMode: Boolean = false
+    private val editMode: Boolean = false,
+    private val workflowNodeTypes: Map<String, String> = emptyMap()
 ) : androidx.viewpager2.adapter.FragmentStateAdapter(fragment) {
     override fun getItemCount() = 4
 
     override fun createFragment(position: Int): Fragment {
         return TabContentFragment.newInstance(
             position, inputs, outputs, parameters, compatibility,
-            connectorName, editMode
+            connectorName, editMode, workflowNodeTypes
         )
     }
 }
@@ -216,6 +220,7 @@ class TabContentFragment : Fragment() {
 
     private var connectorName: String = ""
     private var editMode: Boolean = false
+    private var workflowNodeTypes: Map<String, String> = emptyMap()
 
     companion object {
         private const val ARG_POSITION = "position"
@@ -225,6 +230,7 @@ class TabContentFragment : Fragment() {
         private const val ARG_COMPAT = "compatibility"
         private const val ARG_CONNECTOR_NAME = "connector_name"
         private const val ARG_EDIT_MODE = "edit_mode"
+        private const val ARG_NODE_TYPES = "node_types"
 
         fun newInstance(
             position: Int,
@@ -233,7 +239,8 @@ class TabContentFragment : Fragment() {
             parameters: List<BindingDisplayItem>,
             compatibility: CompatibilityStatus?,
             connectorName: String = "",
-            editMode: Boolean = false
+            editMode: Boolean = false,
+            workflowNodeTypes: Map<String, String> = emptyMap()
         ): TabContentFragment {
             val f = TabContentFragment()
             f.arguments = Bundle().apply {
@@ -243,6 +250,7 @@ class TabContentFragment : Fragment() {
                 putString(ARG_PARAMETERS, serializeItems(parameters))
                 putString(ARG_CONNECTOR_NAME, connectorName)
                 putBoolean(ARG_EDIT_MODE, editMode)
+                putString(ARG_NODE_TYPES, serializeNodeTypes(workflowNodeTypes))
                 if (compatibility != null) {
                     putString(ARG_COMPAT, serializeCompat(compatibility))
                 }
@@ -252,8 +260,24 @@ class TabContentFragment : Fragment() {
 
         private fun serializeItems(items: List<BindingDisplayItem>): String {
             return items.joinToString("|||") { item ->
-                "${item.key}\n${item.label}\n${item.nodeId}\n${item.field}\n${item.required}\n${item.dataType}\n${item.defaultValue}\n${item.min}\n${item.max}"
+                "${item.key}\n${item.label}\n${item.nodeId}\n${item.field}\n${item.required}\n${item.dataType}\n${item.defaultValue}\n${item.min}\n${item.max}\n${item.expectedClass}\n${item.nodeClass}"
             }
+        }
+
+        private fun serializeNodeTypes(map: Map<String, String>): String {
+            return map.entries.joinToString("||") { "${it.key}:${it.value}" }
+        }
+
+        private fun deserializeNodeTypes(raw: String): Map<String, String> {
+            if (raw.isBlank()) return emptyMap()
+            val result = mutableMapOf<String, String>()
+            for (entry in raw.split("||")) {
+                val idx = entry.indexOf(':')
+                if (idx > 0) {
+                    result[entry.substring(0, idx)] = entry.substring(idx + 1)
+                }
+            }
+            return result
         }
 
         private fun serializeCompat(c: CompatibilityStatus): String {
@@ -280,7 +304,9 @@ class TabContentFragment : Fragment() {
                     dataType = parts.getOrElse(5) { "" },
                     defaultValue = parseAny(parts.getOrElse(6) { "" }),
                     min = parseAny(parts.getOrElse(7) { "" }),
-                    max = parseAny(parts.getOrElse(8) { "" })
+                    max = parseAny(parts.getOrElse(8) { "" }),
+                    expectedClass = parts.getOrElse(9) { "" },
+                    nodeClass = parts.getOrElse(10) { "" }
                 )
             }
         }
@@ -316,6 +342,7 @@ class TabContentFragment : Fragment() {
         val compatibility = deserializeCompat(args.getString(ARG_COMPAT, ""))
         connectorName = args.getString(ARG_CONNECTOR_NAME, "")
         editMode = args.getBoolean(ARG_EDIT_MODE, false)
+        workflowNodeTypes = deserializeNodeTypes(args.getString(ARG_NODE_TYPES, ""))
 
         // Parameters tab (position 2) gets interactive UI
         if (position == 2) {
@@ -359,13 +386,6 @@ class TabContentFragment : Fragment() {
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.WRAP_CONTENT
         )
-
-        // Edit mode banner
-        if (editMode) {
-            containerLayout.addView(createEditModeBanner(
-                "Parameters can be edited — tap \"Details\" on any parameter to change its value"
-            ))
-        }
 
         if (parameters.isEmpty()) {
             val emptyText = TextView(requireContext())
@@ -609,33 +629,6 @@ class TabContentFragment : Fragment() {
         }
     }
 
-    // ─── Edit Mode Banner ───────────────────────────
-
-    private fun createEditModeBanner(text: String): View {
-        val ctx = requireContext()
-        val banner = com.google.android.material.card.MaterialCardView(ctx)
-        val lp = ViewGroup.MarginLayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT
-        )
-        lp.bottomMargin = 12
-        banner.layoutParams = lp
-        banner.radius = 8f
-        banner.cardElevation = 0f
-        banner.strokeWidth = 1
-        banner.strokeColor = ctx.getColor(R.color.cinema_accent)
-        banner.setCardBackgroundColor(ctx.getColor(R.color.cinema_accent_container))
-
-        val textView = TextView(ctx)
-        textView.text = text
-        textView.setTextColor(ctx.getColor(R.color.cinema_accent))
-        textView.textSize = 12f
-        textView.setPadding(12, 8, 12, 8)
-        banner.addView(textView)
-
-        return banner
-    }
-
     // ─── Card-based Binding View (Inputs / Outputs) ───
 
     private fun createBindingView(items: List<BindingDisplayItem>, emptyMsg: String, section: String): View {
@@ -648,13 +641,6 @@ class TabContentFragment : Fragment() {
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.WRAP_CONTENT
         )
-
-        // Edit mode banner
-        if (editMode) {
-            containerLayout.addView(createEditModeBanner(
-                "Edit Mode — tap \"Edit\" on any binding to change its nodeId or field"
-            ))
-        }
 
         if (items.isEmpty()) {
             val emptyText = TextView(requireContext())
@@ -750,9 +736,12 @@ class TabContentFragment : Fragment() {
 
         inner.addView(topRow)
 
-        // Bottom row: node · field · type
+        // Bottom row: ClassName (nodeId) · field · type
         val infoParts = mutableListOf<String>()
-        if (item.nodeId.isNotBlank()) infoParts.add("Node ${item.nodeId}")
+        if (item.nodeId.isNotBlank()) {
+            val displayClass = item.nodeClass.ifBlank { item.expectedClass.ifBlank { "Node" } }
+            infoParts.add("$displayClass ($item.nodeId)")
+        }
         if (item.field.isNotBlank()) infoParts.add(item.field)
         if (item.dataType.isNotBlank()) infoParts.add(item.dataType)
 
@@ -779,26 +768,90 @@ class TabContentFragment : Fragment() {
         return card
     }
 
-    // ─── Binding Edit Dialog ─────────────────────────
+    // ─── Binding Edit Dialog with Smart Node Picker ───
 
     private fun showEditBindingDialog(item: BindingDisplayItem, section: String) {
         val ctx = requireContext()
-        val dialogView = LayoutInflater.from(ctx).inflate(R.layout.dialog_edit_parameter, null)
 
-        val paramInput = dialogView.findViewById<com.google.android.material.textfield.TextInputEditText>(R.id.paramInput)
+        // Find compatible nodes: if expectedClass is set, filter by class_type
+        val compatibleNodes = if (item.expectedClass.isNotBlank()) {
+            workflowNodeTypes.filter { (_, cls) -> cls == item.expectedClass }
+        } else {
+            workflowNodeTypes
+        }
+
+        // Build display list: "CLIPTextEncode (108)" or just "108 (unknown)"
+        val nodeEntries: List<Pair<String, String>> = if (compatibleNodes.isNotEmpty()) {
+            compatibleNodes.entries
+                .sortedBy { it.key.toIntOrNull() ?: 0 }
+                .map { (id, cls) -> "$cls ($id)" to id }
+        } else if (workflowNodeTypes.isNotEmpty()) {
+            // Fallback: show all nodes if none match expectedClass
+            workflowNodeTypes.entries
+                .sortedBy { it.key.toIntOrNull() ?: 0 }
+                .map { (id, cls) -> "$cls ($id)" to id }
+        } else {
+            // No workflow data — show just current node
+            val classLabel = item.nodeClass.ifBlank { item.expectedClass.ifBlank { "Node" } }
+            listOf("$classLabel (${item.nodeId})" to item.nodeId)
+        }
+
+        // Find pre-selected position
+        val selectedIndex = nodeEntries.indexOfFirst { (_, id) -> id == item.nodeId }
+
+        val dialogView = LayoutInflater.from(ctx).inflate(R.layout.dialog_edit_parameter, null)
         val inputLayout = dialogView.findViewById<com.google.android.material.textfield.TextInputLayout>(R.id.inputLayout)
         val currentValueLabel = dialogView.findViewById<TextView>(R.id.currentValueLabel)
         val typeInfo = dialogView.findViewById<TextView>(R.id.typeInfo)
 
-        // Add second field for field name
-        inputLayout.hint = "Node ID"
-        paramInput.setText(item.nodeId)
-        paramInput.inputType = android.text.InputType.TYPE_CLASS_TEXT
+        // Replace input with a selectable list of compatible nodes
+        inputLayout.visibility = android.view.View.GONE
+        currentValueLabel.visibility = android.view.View.GONE
 
-        currentValueLabel.text = "Field: ${item.field}"
-        typeInfo.text = "Entity: ${item.key}  ·  Type: ${item.dataType}"
+        // Show info
+        typeInfo.text = "Select a compatible node for \"${item.label}\""
 
-        // Use save/reset for nodeId/field updates
+        // Create radio group
+        val radioGroup = android.widget.RadioGroup(ctx)
+        radioGroup.layoutParams = ViewGroup.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+        radioGroup.setPadding(0, 8, 0, 8)
+
+        for (i in nodeEntries.indices) {
+            val (label, _) = nodeEntries[i]
+            val radio = android.widget.RadioButton(ctx)
+            radio.text = label
+            radio.id = i
+            radio.isChecked = i == selectedIndex
+            radio.setTextColor(
+                MaterialColors.getColor(ctx, com.google.android.material.R.attr.colorOnSurface,
+                    ctx.getColor(R.color.cinema_text_primary))
+            )
+            radio.textSize = 14f
+            radio.setPadding(16, 8, 16, 8)
+            radio.layoutParams = android.widget.RadioGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+            radioGroup.addView(radio)
+        }
+
+        // Find the dialog's root container and add radio group
+        val dialogRoot = dialogView.findViewById<LinearLayout>(R.id.dialogRoot)
+        dialogRoot.addView(radioGroup, 0)
+
+        // Track selected node ID
+        var selectedNodeId = nodeEntries.getOrNull(selectedIndex.coerceAtLeast(0))?.second ?: item.nodeId
+
+        radioGroup.setOnCheckedChangeListener { group, checkedId ->
+            val idx = group.indexOfChild(group.findViewById(checkedId))
+            if (idx in nodeEntries.indices) {
+                selectedNodeId = nodeEntries[idx].second
+            }
+        }
+
         val dialog = AlertDialog.Builder(ctx)
             .setTitle("Edit Binding: ${item.label}")
             .setView(dialogView)
@@ -808,18 +861,18 @@ class TabContentFragment : Fragment() {
 
         dialogView.findViewById<com.google.android.material.button.MaterialButton>(R.id.saveButton)
             .setOnClickListener {
-                val newNodeId = paramInput.text.toString()
-                if (newNodeId.isBlank()) {
-                    paramInput.error = "Node ID is required"
-                    return@setOnClickListener
-                }
-                saveBinding(connectorName, section, item.key, newNodeId, item.field)
+                saveBinding(connectorName, section, item.key, selectedNodeId, item.field)
                 dialog.dismiss()
             }
 
         dialogView.findViewById<com.google.android.material.button.MaterialButton>(R.id.resetButton)
             .setOnClickListener {
-                paramInput.setText(item.nodeId)
+                selectedNodeId = item.nodeId
+                // Re-select the original node
+                val origIdx = nodeEntries.indexOfFirst { (_, id) -> id == item.nodeId }
+                if (origIdx >= 0) {
+                    radioGroup.check(origIdx)
+                }
             }
 
         dialogView.findViewById<com.google.android.material.button.MaterialButton>(R.id.cancelButton)

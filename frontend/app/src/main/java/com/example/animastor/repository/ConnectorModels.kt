@@ -46,7 +46,9 @@ data class BindingDef(
     val min: Any? = null,
     val max: Any? = null,
     val type: String? = null,          // "multi" for multi-bindings
-    val bindings: List<SubBinding>? = null  // for multi-bindings
+    val bindings: List<SubBinding>? = null,  // for multi-bindings
+    val expectedClass: String? = null,
+    val nodeClass: String? = null
 )
 
 data class SubBinding(
@@ -54,7 +56,9 @@ data class SubBinding(
     val label: String? = null,
     val entityType: String? = null,
     val required: Boolean = false,
-    val arrayPosition: Int? = null
+    val arrayPosition: Int? = null,
+    val expectedClass: String? = null,
+    val nodeClass: String? = null
 )
 
 data class CompatibilityStatus(

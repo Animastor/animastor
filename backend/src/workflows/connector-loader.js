@@ -232,36 +232,56 @@ function checkCompatibility(connector, workflowJson) {
     }
   }
 
-  // 3. Verify all input/output bindings exist in workflow
-  const allBindings = [];
+  // 3. Collect all bindings with their section context
+  const allBindings = []; // { binding, section, entityKey }
 
-  // Collect all bindings
-  if (connector.inputs) {
-    for (const [, binding] of Object.entries(connector.inputs)) {
+  function collectBindings(section, sectionObj) {
+    if (!sectionObj) return;
+    for (const [entityKey, binding] of Object.entries(sectionObj)) {
       if (binding.type === 'multi' && binding.bindings) {
-        allBindings.push(...binding.bindings);
+        for (const subBinding of binding.bindings) {
+          allBindings.push({ binding: subBinding, section, entityKey });
+        }
       } else {
-        allBindings.push(binding);
+        allBindings.push({ binding, section, entityKey });
       }
     }
   }
-  if (connector.outputs) {
-    for (const [, binding] of Object.entries(connector.outputs)) {
-      allBindings.push(binding);
-    }
-  }
-  if (connector.parameters) {
-    for (const [, binding] of Object.entries(connector.parameters)) {
-      allBindings.push(binding);
-    }
-  }
+
+  collectBindings('inputs', connector.inputs);
+  collectBindings('outputs', connector.outputs);
+  collectBindings('parameters', connector.parameters);
 
   // Check each binding's nodeId exists in workflow
-  for (const binding of allBindings) {
-    if (binding.nodeId && !workflowJson[binding.nodeId]) {
+  for (const { binding, section, entityKey } of allBindings) {
+    if (!binding.nodeId) {
+      // Required binding without nodeId — this is a problem
+      if (binding.required) {
+        compatResult.warnings.push(
+          `Required ${section} binding "${entityKey}" has no nodeId assigned. ` +
+          `This port must be connected for the workflow to function.`
+        );
+        compatResult.compatible = false;
+      }
+      continue;
+    }
+
+    const workflowNode = workflowJson[binding.nodeId];
+    if (!workflowNode) {
       compatResult.warnings.push(
-        `Binding references node ${binding.nodeId} (entity: ${binding.entityType}) ` +
+        `Binding references node ${binding.nodeId} (entity: ${entityKey}) ` +
         `but it was not found in workflow "${connector.workflow}".`
+      );
+      compatResult.compatible = false;
+      continue;
+    }
+
+    // 3b. Check class_type match per binding (optional — if expectedClass is set)
+    if (binding.expectedClass && workflowNode.class_type !== binding.expectedClass) {
+      compatResult.warnings.push(
+        `Binding "${entityKey}" (${section}) points to node ${binding.nodeId} ` +
+        `of class "${workflowNode.class_type}", but connector expects "${binding.expectedClass}". ` +
+        `This may indicate a workflow structure change.`
       );
       compatResult.compatible = false;
     }

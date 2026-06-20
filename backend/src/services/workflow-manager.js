@@ -54,6 +54,16 @@ function getConnectorDetail(connectorName) {
     // Don't expose the raw workflow JSON in the detail — just metadata
     const { inputs, outputs, parameters, guideNodes, ...meta } = connector;
 
+    // Get workflow for node class lookup
+    const workflows = workflowLoader.workflows || {};
+    const wf = workflows[connector.workflow];
+
+    // Look up a node's class_type from the workflow JSON
+    function resolveNodeClass(nodeId) {
+        if (!wf || !nodeId || !wf[nodeId]) return null;
+        return wf[nodeId].class_type || null;
+    }
+
     // Transform bindings to a cleaner format for UI
     const cleanBindings = (bindings) => {
         const result = {};
@@ -69,7 +79,9 @@ function getConnectorDetail(connectorName) {
                         label: b.label,
                         entityType: b.entityType,
                         required: b.required,
-                        arrayPosition: b.arrayPosition
+                        arrayPosition: b.arrayPosition,
+                        expectedClass: b.expectedClass || null,
+                        nodeClass: resolveNodeClass(b.nodeId)
                     }))
                 };
             } else {
@@ -84,7 +96,9 @@ function getConnectorDetail(connectorName) {
                     kind: entity?.kind || null,
                     defaultValue: binding.default !== undefined ? binding.default : null,
                     min: binding.min !== undefined ? binding.min : null,
-                    max: binding.max !== undefined ? binding.max : null
+                    max: binding.max !== undefined ? binding.max : null,
+                    expectedClass: binding.expectedClass || null,
+                    nodeClass: resolveNodeClass(binding.nodeId)
                 };
             }
         }

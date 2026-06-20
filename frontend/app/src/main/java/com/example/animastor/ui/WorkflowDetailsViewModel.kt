@@ -51,7 +51,9 @@ class WorkflowDetailsViewModel : ViewModel() {
         val defaultValue: Any? = null,
         val min: Any? = null,
         val max: Any? = null,
-        val kind: String = ""
+        val kind: String = "",
+        val expectedClass: String = "",
+        val nodeClass: String = ""
     )
 
     private val _tabData = MutableStateFlow(TabData())
@@ -70,6 +72,11 @@ class WorkflowDetailsViewModel : ViewModel() {
     private val _saveError = MutableStateFlow<String?>(null)
     val saveError: StateFlow<String?> = _saveError
 
+    // ─── Workflow Node Types ────────────────────────────
+
+    private val _workflowNodeTypes = MutableStateFlow<Map<String, String>>(emptyMap())
+    val workflowNodeTypes: StateFlow<Map<String, String>> = _workflowNodeTypes
+
     // ─── Load ──────────────────────────────────────────
 
     fun loadConnector(name: String) {
@@ -87,6 +94,14 @@ class WorkflowDetailsViewModel : ViewModel() {
                 api.getConnectorCompatibility(name)
             } catch (_: Exception) {
                 null
+            }
+
+            // Load workflow node types for the smart edit dialog
+            _workflowNodeTypes.value = try {
+                val wfDetail = api.getWorkflowDetail(detail.workflow)
+                wfDetail.nodeTypes
+            } catch (_: Exception) {
+                emptyMap()
             }
 
             // Set tabData BEFORE connectorDetail so setupTabs() has real data
@@ -123,7 +138,9 @@ class WorkflowDetailsViewModel : ViewModel() {
                     field = binding.field ?: "",
                     required = binding.required,
                     dataType = binding.dataType ?: "",
-                    kind = binding.kind ?: "input"
+                    kind = binding.kind ?: "input",
+                    expectedClass = binding.expectedClass ?: "",
+                    nodeClass = binding.nodeClass ?: ""
                 )
             },
             outputs = detail.outputs.map { (key, binding) ->
@@ -133,7 +150,9 @@ class WorkflowDetailsViewModel : ViewModel() {
                     nodeId = binding.nodeId ?: "",
                     field = binding.field ?: "",
                     dataType = binding.dataType ?: "",
-                    kind = binding.kind ?: "output"
+                    kind = binding.kind ?: "output",
+                    expectedClass = binding.expectedClass ?: "",
+                    nodeClass = binding.nodeClass ?: ""
                 )
             },
             parameters = detail.parameters.map { (key, binding) ->
@@ -146,7 +165,9 @@ class WorkflowDetailsViewModel : ViewModel() {
                     defaultValue = binding.defaultValue,
                     min = binding.min,
                     max = binding.max,
-                    kind = binding.kind ?: "parameter"
+                    kind = binding.kind ?: "parameter",
+                    expectedClass = binding.expectedClass ?: "",
+                    nodeClass = binding.nodeClass ?: ""
                 )
             }
         )

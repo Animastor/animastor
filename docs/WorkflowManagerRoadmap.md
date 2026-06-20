@@ -1,8 +1,8 @@
 # Workflow Manager — Implementation Roadmap
 
-> **Version:** 1.1.0  
+> **Version:** 1.2.0  
 > **Status:** Active  
-> **Last updated:** 2026-06-19 (Stages 1-3 complete)
+> **Last updated:** 2026-06-20 (Smart Bindings, Edit Mode complete)
 
 ---
 
@@ -182,17 +182,40 @@ This document provides a **phased implementation roadmap** with specific tasks, 
 - RecyclerView-safe: listener removed before `isChecked` set to prevent spurious API calls on bind() ✅
 - Refresh after toggle via `sharedViewModel.loadConnectors()` ✅
 
-#### 3.3 Workflow Quick Actions (not started)
+#### 3.3 Workflow Quick Actions
+- [x] Add workflow (file picker for .json → POST /api/v1/connectors → auto-refresh)
 - [ ] Delete workflow (unregister + remove file)
-- [ ] Add workflow (file picker for .json + auto-connector creation in future)
 
-#### 3.4 Acceptance Criteria (Stage 3)
+#### 3.4 Binding Editing (Edit Mode)
+
+**Backend:**
+- `PUT /api/v1/connectors/:name/bindings` — Update nodeId/field per binding ✅
+- `updateConnectorBinding()` in connector-loader + workflow-manager ✅
+- `expectedClass` + `nodeClass` fields in connector detail API response ✅
+- Backend resolves `nodeClass` from workflow JSON (class_type lookup) ✅
+
+**Frontend:**
+- Edit Mode: toggle OFF → Details opens with editMode=true ✅
+- Inputs/Outputs cards show "Edit" button in edit mode ✅
+- Card shows "CLIPTextEncode (108)" instead of "Node 108" ✅
+- Smart Edit dialog: RadioGroup of compatible nodes filtered by expectedClass ✅
+- Fallback: all nodes if expectedClass not set, current node if no workflow data ✅
+
+#### 3.5 Compatibility Check Upgrade
+- Per-binding `expectedClass` vs `workflowNode.class_type` check ✅
+- Required port without nodeId → warning ✅
+- Backward compatible (checks only run when fields are set) ✅
+
+#### 3.6 Acceptance Criteria (Stage 3)
 
 - [x] Parameter editor opens inline for each parameter (via dialog_edit_parameter.xml)
 - [x] Changes are saved via API (`PUT /connectors/:name/parameters`)
 - [x] Enable/disable toggle works correctly (`PUT /connectors/:name/status`)
 - [x] Disabled workflows are visually distinct (alpha 0.45 + controls disabled)
 - [x] Parameter validation works (rejects out-of-range values, clamps on backend)
+- [x] Binding editing saves nodeId changes via API
+- [x] Smart dialog shows compatible nodes filtered by expectedClass
+- [x] Card display shows class name with node ID
 
 ---
 
@@ -274,14 +297,14 @@ Developer Tools
 |--------|------|---------|
 | `GET` | `/api/v1/connectors/:name/raw` | Raw connector JSON |
 | `GET` | `/api/v1/connectors/:name/mapping` | Structured entity→node mapping |
-| `PUT` | `/api/v1/connectors/:name/mapping/:entityKey` | Update a single binding |
+| `PUT` | `/api/v1/connectors/:name/bindings` | Update a single binding (section/entityKey/nodeId/field) |
 | `PUT` | `/api/v1/connectors/:name/raw` | Update entire connector JSON |
 
 #### 4.5 Acceptance Criteria (Stage 4)
 
 - [ ] Developer Tools screen accessible from Settings
 - [ ] Connector Mapping shows all bindings with nodeIds and expectedClasses
-- [ ] Mapping Editor allows changing entity-to-node bindings
+- [x] Mapping Editor allows changing entity-to-node bindings (Edit Mode dialog)
 - [ ] Raw Connector View shows full JSON
 - [ ] Warnings are hidden from normal user screens
 
@@ -343,8 +366,8 @@ Stage 2 (Frontend Manager)
 | `ui/WorkflowTypeListFragment.kt` | 2 | Workflow list by type |
 | `ui/WorkflowDetailsFragment.kt` | 2 | Workflow detail with tabs |
 | `ui/WorkflowDetailsViewModel.kt` | 2 | ViewModel for details |
-| `ui/DeveloperViewFragment.kt` | 4 | Developer workflow screen |
-| `ui/MappingEditorFragment.kt` | 4 | Mapping editor screen |
+| `ui/DeveloperViewFragment.kt` | 4 | Developer workflow screen (planned) |
+| `ui/MappingEditorFragment.kt` | 4 | Mapping editor screen (planned) |
 | `repository/ConnectorModels.kt` | 2 | Data models for connectors |
 | `repository/WorkflowModels.kt` | 2 | Data models for workflows |
 
