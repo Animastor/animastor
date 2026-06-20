@@ -81,20 +81,12 @@
           "arrayPosition": 1
         },
         {
-          "nodeId": "187",
+          "nodeId": "216",
           "field": "inputs.image",
           "expectedClass": "LoadImage",
           "entityType": "sourceImage",
           "label": "Source Image 3",
           "arrayPosition": 2
-        },
-        {
-          "nodeId": "216",
-          "field": "inputs.image",
-          "expectedClass": "LoadImage",
-          "entityType": "sourceImage",
-          "label": "Source Image 4",
-          "arrayPosition": 3
         }
       ]
     },
@@ -157,12 +149,32 @@
       "label": "CFG Scale",
       "default": 1
     },
-    "guideStrength": {
+    "guideStrength_0": {
       "nodeId": "199",
       "field": "inputs.strength",
       "expectedClass": "LTXVAddGuide",
       "entityType": "guideStrength",
-      "label": "Image Influence (Strength)",
+      "label": "Image 1 Strength",
+      "default": 0.7,
+      "min": 0.0,
+      "max": 1.0
+    },
+    "guideStrength_1": {
+      "nodeId": "200",
+      "field": "inputs.strength",
+      "expectedClass": "LTXVAddGuide",
+      "entityType": "guideStrength",
+      "label": "Image 2 Strength",
+      "default": 0.6,
+      "min": 0.0,
+      "max": 1.0
+    },
+    "guideStrength_2": {
+      "nodeId": "214",
+      "field": "inputs.strength",
+      "expectedClass": "LTXVAddGuide",
+      "entityType": "guideStrength",
+      "label": "Image 3 Strength",
       "default": 0.7,
       "min": 0.0,
       "max": 1.0
