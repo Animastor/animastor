@@ -65,18 +65,26 @@ class WorkflowDetailsFragment : Fragment(R.layout.fragment_workflow_details) {
             b.toolbar.setSubtitleTextColor(requireContext().getColor(R.color.cinema_accent))
         }
 
-        // Add Developer Mode button to toolbar
-        b.toolbar.menu.clear()
-        val DEV_MENU_ID = View.generateViewId()
-        b.toolbar.menu.add(0, DEV_MENU_ID, 0, "Developer")
-            .setIcon(R.drawable.ic_settings)
-            .setShowAsAction(android.view.MenuItem.SHOW_AS_ACTION_ALWAYS)
-        b.toolbar.setOnMenuItemClickListener { item ->
-            if (item.itemId == DEV_MENU_ID) {
-                openDeveloperView()
-                true
-            } else false
-        }
+        // Add Developer Mode chip in toolbar — text "</>" with gold outline
+        val devChip = com.google.android.material.chip.Chip(requireContext(), null, com.google.android.material.R.attr.chipStyle)
+        devChip.text = "</>"
+        devChip.textSize = 13f
+        devChip.isCheckable = false
+        devChip.isClickable = true
+        devChip.setChipBackgroundColorResource(android.R.color.transparent)
+        devChip.setChipStrokeColorResource(R.color.cinema_accent)
+        devChip.chipStrokeWidth = 1.5f
+        devChip.setTextColor(requireContext().getColor(R.color.cinema_accent))
+        devChip.chipCornerRadius = 12f
+        val chipLp = androidx.appcompat.widget.Toolbar.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+        chipLp.gravity = android.view.Gravity.END or android.view.Gravity.CENTER_VERTICAL
+        chipLp.marginEnd = 16
+        devChip.layoutParams = chipLp
+        devChip.setOnClickListener { openDeveloperView() }
+        b.toolbar.addView(devChip)
 
         // Observe loading
         lifecycleScope.launch {
