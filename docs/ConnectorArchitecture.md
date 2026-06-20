@@ -328,7 +328,7 @@ Parameters in connectors should be extended with:
 - [x] Connect Workflow Manager screens to API
 - [x] Build Compatibility display component (Compatibility tab in WorkflowDetailsFragment)
 - [x] Build Parameter editor component (dialog_edit_parameter.xml + showEditParameterDialog)
-- [ ] Build Developer Mode screens (DeveloperViewFragment, MappingEditorFragment)
+- [x] Build Developer Mode screens (DeveloperViewFragment + MappingEditorFragment)
 
 ### ✅ Phase 3: Legacy Cleanup
 - [x] Remove all hardcoded fallback node IDs from workflow builders

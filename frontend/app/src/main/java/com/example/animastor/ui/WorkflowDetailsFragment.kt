@@ -65,6 +65,19 @@ class WorkflowDetailsFragment : Fragment(R.layout.fragment_workflow_details) {
             b.toolbar.setSubtitleTextColor(requireContext().getColor(R.color.cinema_accent))
         }
 
+        // Add Developer Mode button to toolbar
+        b.toolbar.menu.clear()
+        val DEV_MENU_ID = View.generateViewId()
+        b.toolbar.menu.add(0, DEV_MENU_ID, 0, "Developer")
+            .setIcon(R.drawable.ic_settings)
+            .setShowAsAction(android.view.MenuItem.SHOW_AS_ACTION_ALWAYS)
+        b.toolbar.setOnMenuItemClickListener { item ->
+            if (item.itemId == DEV_MENU_ID) {
+                openDeveloperView()
+                true
+            } else false
+        }
+
         // Observe loading
         lifecycleScope.launch {
             detailsViewModel.loading.collectLatest { loading ->
@@ -180,6 +193,14 @@ class WorkflowDetailsFragment : Fragment(R.layout.fragment_workflow_details) {
                 }.attach()
             }
         }
+    }
+
+    private fun openDeveloperView() {
+        val fragment = DeveloperViewFragment.newInstance(connectorName)
+        parentFragmentManager.beginTransaction()
+            .add(R.id.nav_host_container, fragment, "DeveloperViewFragment")
+            .addToBackStack(null)
+            .commit()
     }
 
     override fun onDestroyView() {
