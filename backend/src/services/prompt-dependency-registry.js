@@ -242,6 +242,7 @@ function extractPassport(char) {
  * @returns {boolean}
  */
 function sceneReferencesCharacter(sceneEntry, characterId) {
+    if (!sceneEntry) return false;
     // Check scene-level participants
     if (sceneEntry.participants && sceneEntry.participants.includes(characterId)) return true;
     // Check unit-level participants
