@@ -113,45 +113,41 @@ async function sceneHasValidContent(redis, buildId, bookId, chapterId, sceneId) 
     const buildDir = path.join(OUTPUT_DIR, buildId);
     if (!fs.existsSync(buildDir)) return false;
 
-    // Audio file must exist (real or placeholder) for timing
-    const audioPath = path.join(buildDir, `${bookId}_${chapterId}_${sceneId}.mp3`);
-    if (!fs.existsSync(audioPath)) return false;
-
-    // Check layer config to determine which asset types are needed
-    // The scene is valid if it has audio AND all enabled layers have content.
+    // Check if audio is real TTS (not placeholder) before considering scene valid.
+    // Placeholder audio IS valid for timing/timeline, but NOT valid for skipping
+    // GPU dispatch — real TTS must be generated to replace the placeholder.
+    //
+    // Exception: if audio is disabled by layer config, skip this check.
     const layerKey = `animastor:layer-config:${bookId}`;
     const layerRaw = await redis.get(layerKey);
+    let audioEnabled = true;
     let imageEnabled = true;
     let videoEnabled = true;
     if (layerRaw) {
         try {
             const lc = JSON.parse(layerRaw);
+            audioEnabled = lc.audio_enabled !== false;
             imageEnabled = lc.image_enabled !== false;
             videoEnabled = lc.video_enabled !== false;
         } catch (_) {}
     }
 
-    // Audio-only mode: both image and video are disabled.
-    // Placeholder audio is NOT valid content for skipping GPU dispatch.
-    // Only real TTS audio (status='ready' in scene_assets) counts.
-    // This prevents the system from marking scenes as complete before
-    // real TTS generation has happened.
-    //
-    // However, after Cancel→Generate, the PG status may still say 'placeholder'
-    // because the stale completion handler was rejected. As a fallback, check
-    // file existence on disk — if real audio exists, it's valid content.
-    if (!imageEnabled && !videoEnabled) {
-        try {
-            const asset = await sceneAssetsRepo.getAsset(bookId, chapterId, sceneId, 'audio', buildId);
-            if (asset && asset.status === 'ready') return true;
-        } catch (_) {}
-        // Fallback: audio file already confirmed to exist above.
-        // Check if it's real TTS audio (not placeholder)
+    // Audio must be real (not placeholder) if audio is enabled
+    if (audioEnabled) {
+        const audioPath = path.join(buildDir, `${bookId}_${chapterId}_${sceneId}.mp3`);
+        if (!fs.existsSync(audioPath)) return false;
+
+        // Check PG: is it real TTS audio (status='ready') or placeholder?
         try {
             const hasReal = await placeholderAudio.hasRealAudio(bookId, chapterId, sceneId, buildId);
-            if (hasReal) return true;
-        } catch (_) {}
-        return false;
+            if (!hasReal) {
+                // File exists but it's a placeholder — NOT valid for skipping dispatch
+                return false;
+            }
+        } catch (_) {
+            // PG check failed — conservative: treat as placeholder, not valid
+            return false;
+        }
     }
 
     // If images are enabled, check for at least one IU image
@@ -177,7 +173,7 @@ async function sceneHasValidContent(redis, buildId, bookId, chapterId, sceneId) 
         if (!fs.existsSync(videoPath)) return false;
     }
 
-    // Scene has audio and all enabled layers have content
+    // Scene has real audio and all enabled layers have content
     return true;
 }
 
@@ -198,9 +194,15 @@ async function restoreChunkStatusForScene(redis, buildId, bookId, chapterId, sce
             const raw = await redis.get(key);
             if (!raw) continue;
             const data = JSON.parse(raw);
-            // Check audio file (real .mp3 or placeholder)
+            // Check audio file — distinguish real TTS from placeholder
             const audioPath = path.join(buildDir, `${bookId}_${chapterId}_${sceneId}.mp3`);
             const audioExists = fs.existsSync(audioPath);
+            // Check if audio is real (not placeholder)
+            let audioIsReal = false;
+            if (audioExists) {
+                try { audioIsReal = await placeholderAudio.hasRealAudio(bookId, chapterId, sceneId, buildId); }
+                catch (_) {}
+            }
             // Check for at least one IU image .png
             const iuPrefix = `${bookId}_${chapterId}_${sceneId}_iu`;
             let imageExists = false;
@@ -214,7 +216,7 @@ async function restoreChunkStatusForScene(redis, buildId, bookId, chapterId, sce
 
             if (audioExists) {
                 data.audio = true;
-                data.audio_status = 'ready';
+                data.audio_status = audioIsReal ? 'ready' : 'placeholder';
             }
             if (imageExists) {
                 data.image = true;
@@ -444,12 +446,19 @@ async function reconcileWindowStatuses(redis, bookId, buildId) {
 
         let changed = false;
 
-        // Check audio file (real .mp3 or placeholder)
-        if (data.audio_status === 'pending') {
+        // Check audio file — distinguish real TTS from placeholder
+        if (data.audio_status === 'pending' || data.audio_status === 'placeholder') {
             const audioPath = path.join(buildDir, `${data.book_id}_${data.chapter_id}_${data.scene_id}.mp3`);
             if (fs.existsSync(audioPath)) {
                 data.audio = true;
-                data.audio_status = 'ready';
+                // Check PG: is this real TTS audio or placeholder?
+                try {
+                    const hasReal = await placeholderAudio.hasRealAudio(data.book_id, data.chapter_id, data.scene_id, buildId);
+                    data.audio_status = hasReal ? 'ready' : 'placeholder';
+                } catch (_) {
+                    // PG check failed — conservative: assume placeholder
+                    data.audio_status = 'placeholder';
+                }
                 changed = true;
             }
         }
@@ -642,7 +651,9 @@ async function startScene(redis, s, buildId, bookId) {
             const result = await placeholderAudio.ensurePlaceholderAudio(buildEffective, bookId, chapterId, sceneId);
             if (result.created) {
                 log(`Placeholder audio created for ${bookId}/${chapterId}/${sceneId} (${result.durationSec.toFixed(1)}s)`);
-                // Update chunk metadata so frontend sees audio as ready
+                // Update chunk metadata — audio_status = 'placeholder' (not 'ready')
+                // This preserves timing for the frontend while signaling that real
+                // TTS still needs to be generated.
                 for (let i = 0; i < expectedChunkCount; i++) {
                     const chunkIndex = i + 1;
                     const chunkId = audio.makeChunkId(chapterId, sceneId, chunkIndex, bookId);
@@ -651,7 +662,7 @@ async function startScene(redis, s, buildId, bookId) {
                     if (chunk) {
                         const data = JSON.parse(chunk);
                         data.audio = true;
-                        data.audio_status = 'ready';
+                        data.audio_status = 'placeholder';
                         await redis.set(chunkKey, JSON.stringify(data));
                     }
                 }
