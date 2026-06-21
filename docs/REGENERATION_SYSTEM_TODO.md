@@ -183,13 +183,35 @@
 
 ---
 
+### [R18] Callback Chain Repair (GPU hub → backend) ✅
+
+**Files changed:** gpu-hub/gpu-hub.js, backend/src/ orc hestration/scene-orchestrator.js, backend/src/services/audio-recovery.cjs, backend/src/services/book-diff.cjs, backend/src/services/task-handler.cjs, backend/src/state/scene-state.js, backend/src/runtime/reconciliation-engine.js
+
+**Checklist:**
+- [x] `gpu-hub/gpu-hub.js`: Store results as JSON (`{job_id, result_base64, build_id}`) instead of raw data URL. Key format: `animastor:result:<buildId>:<bookId>:<chapterId>:<sceneId>:<type>`. Correct job_id parsing: pop chunkIndex → sceneId → chapterId → join rest as bookId.
+- [x] `book-diff.cjs`: `markDirtyScenes()` — pass `buildId` to `syncLinearState()` (was silently dropping build_id). Same fix in `fallbackMarkSceneDirty()`.
+- [x] `scene-state.js`: `syncLinearState()` accepts optional `overrideBuildId` parameter.
+- [x] `scene-orchestrator.js`: All `syncLinearState` calls now pass `buildId` — in executeAudioDispatch, executeImageDispatch, executeVideoDispatch, and all handle*Completed callbacks.
+- [x] `audio-recovery.cjs`: Handles both key formats (7+ parts JSON and 4-part data URL). Gracefully handles malformed keys.
+- [x] `reconciliation-engine.js`: Guard against null `build_id` in `checkOrphanAudioState()`. Fixed `applyFix` REGENERATE_MISSING_ASSET — was crashing on undefined `scene.issue`.
+
+### [R19] Frontend audio cache invalidation ✅
+
+**Files changed:** Repository.kt, PlaybackViewModel.kt, GenerateViewModel.kt
+
+**Checklist:**
+- [x] `Repository.kt`: `getChunk(id)` → `getChunk(id, buildId)`. Cache key changed from `id` to `"${id}_${buildId}"`. Prevents stale `audio_ready=false` from cache when build changes.
+- [x] All 5 callers updated to pass `buildId`.
+
+---
+
 ## ⚪ Low
 
-### [R18] Dependency Graph integration
-### [R19] Убрать дублирование event-журналов
-### [R20] Мёртвый governance код
-### [R21] Cancel→Regenerate cleanup
-### [R22] Hardcoded константы
+### [R20] Dependency Graph integration
+### [R21] Убрать дублирование event-журналов
+### [R22] Мёртвый governance код
+### [R23] Cancel→Regenerate cleanup
+### [R24] Hardcoded константы
 
 ---
 
@@ -218,9 +240,9 @@
   R16 Cross-cutting versions
   R17 Redis recovery
 
-🏗  LOW:
-  R18-R22 Прочее
+✅ R18 Callback chain repair
+✅ R19 Frontend audio cache
 
-🗑  LOW:
-  R18-R22 Прочее
+🏗  LOW:
+  R20-R24 Прочее
 ```
