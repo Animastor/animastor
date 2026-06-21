@@ -122,6 +122,9 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
 
     private fun showCurtains() {
         if (!isAdded || isInCurtainsState) return
+        // Once a cover has ever been displayed, curtains are permanently disabled
+        // — the cover becomes the definitive fallback background.
+        if (hasDisplayedCover) return
         Log.i(TAG, "showCurtains")
         val b = binding ?: return
         try {
@@ -403,10 +406,21 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                             b.coverImage.visibility = View.VISIBLE
                             hasDisplayedCover = true
                         } else {
-                            hasDisplayedCover = false
-                            showCurtains()
-                            val loading = state.phase == PlayerPhase.LOADING_BOOK || state.phase == PlayerPhase.DOWNLOADING
-                            if (loading) startPulse(b) else stopPulse()
+                            // Do NOT reset hasDisplayedCover — once a cover was ever shown,
+                            // it remains the definitive fallback background even if this
+                            // particular state emission has coverImage=null momentarily.
+                            if (!hasDisplayedCover) {
+                                showCurtains()
+                                val loading = state.phase == PlayerPhase.LOADING_BOOK || state.phase == PlayerPhase.DOWNLOADING
+                                if (loading) startPulse(b) else stopPulse()
+                            } else {
+                                // Cover was previously loaded — keep it visible as fallback
+                                b.curtainsImage.visibility = View.GONE
+                                if (b.coverImage.drawable != null) {
+                                    b.coverImage.visibility = View.VISIBLE
+                                }
+                                stopPulse()
+                            }
                         }
 
                         if ((state.phase == PlayerPhase.SCENE_READY || state.phase == PlayerPhase.GENERATING)
@@ -416,6 +430,8 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                         prevPhase = state.phase
 
                         if (state.phase == PlayerPhase.IDLE && playbackViewModel.bookId.isBlank()) {
+                            hasDisplayedCover = false
+                            isInCurtainsState = false
                             stopAll()
                             b.coverImage.setImageBitmap(null)
                             b.coverImage.visibility = View.GONE
@@ -1221,6 +1237,12 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         if (b != null) {
             b.resultImage.visibility = View.INVISIBLE
             b.subtitleText.visibility = View.GONE
+            // Always hide curtains when stopping — they should never be visible
+            // behind the cover image (coverImage uses centerInside which may have
+            // transparent margins, revealing curtains underneath).
+            b.curtainsImage.visibility = View.GONE
+            isInCurtainsState = false
+            stopPulse()
             if (b.coverImage.drawable != null) {
                 b.coverImage.visibility = View.VISIBLE
                 b.videoSurface.visibility = View.INVISIBLE

@@ -661,8 +661,9 @@ class MainActivity : AppCompatActivity() {
             workers.add(Wrk(type, label, ready, total, pct, done))
         }
 
-        // Cover (uses IU counts)
-        if (assets.cover_iu_total > 0) {
+        // Cover (uses IU counts) — only show when cover is actually being generated.
+        // If cover is already fully ready, skip it entirely: no fake progress row.
+        if (assets.cover_iu_total > 0 && assets.cover_iu_ready < assets.cover_iu_total) {
             add("cover", getString(R.string.progress_cover_generating), assets.cover_iu_ready, assets.cover_iu_total)
         }
 

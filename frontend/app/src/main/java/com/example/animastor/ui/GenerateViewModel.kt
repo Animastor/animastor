@@ -304,56 +304,6 @@ class GenerateViewModel(
                 val dirtyCount = res.dirty_scenes?.size ?: 0
                 onResult(GenerationResult.Started(dirtyCount, res.scope ?: req.scope))
                 viewModelScope.launch { refreshAssetsState() }
-                // Signal to PlaybackViewModel to refresh player state and clear caches
-                viewModelScope.launch {
-                    val allChunks = runCatching { _repository.getAllChunks(bookId) }.getOrNull()
-                    val chunkIds = allChunks?.chunk_ids?.toList() ?: emptyList()
-                    if (chunkIds.isNotEmpty()) {
-                        val positions = mutableMapOf<String, Pair<String?, String?>>()
-                        var coverChunkId: String? = null
-                        for (cid in chunkIds) {
-                            runCatching {
-                                _repository.getChunkStoryboard(cid).let { sb ->
-                                    positions[cid] = Pair(sb.chapter_id, sb.scene_id)
-                                    if (sb.scene_type == "cover") {
-                                        coverChunkId = cid
-                                    }
-                                }
-                            }
-                        }
-                        // Use explicit scene_type=cover marker to find cover chunk
-                        var cover: Bitmap? = null
-                        val coverId = coverChunkId ?: chunkIds.firstOrNull()
-                        if (coverId != null && imageEnabled) {
-                            cover = loadCoverBitmap(coverId)
-                        }
-                        Log.i(TAG, "startGeneration: emitting playbackPrepared with ${chunkIds.size} chunks cover=${cover != null}")
-                        _playbackPrepared.tryEmit(PlaybackPreparation(
-                            bookId = bookId,
-                            buildId = buildId,
-                            chunkIds = chunkIds,
-                            coverImage = cover,
-                            chunkPositions = positions
-                        ))
-                        // If cover wasn't ready yet, poll for it in background
-                        if (cover == null && coverId != null && imageEnabled) {
-                            viewModelScope.launch {
-                                pollWithBackoff(IMAGE_POLL_TIMEOUT_MS) {
-                                    val chunk = runCatching { _repository.getChunk(coverId, buildId) }.getOrNull()
-                                    chunk?.image_ready == true
-                                }
-                                // Now try to load the cover image
-                                val coverReady = loadCoverBitmap(coverId)
-                                if (coverReady != null) {
-                                    _uiState.update { it.copy(coverImage = coverReady) }
-                                    // Emit cover update via dedicated flow — does NOT re-prepare playback
-                                    _coverUpdated.tryEmit(coverReady)
-                                    Log.i(TAG, "startGeneration: cover poll succeeded, emitted via coverUpdated")
-                                }
-                            }
-                        }
-                    }
-                }
                 // Keep _activeGeneration alive: the progress bar polls getAssetsState
                 // to show actual completion. Only clear when cancelled or on a new
                 // generation that replaces this one. The poller hides the bar when
@@ -378,13 +328,49 @@ class GenerateViewModel(
 
     /**
      * Called by the progress poller when assets-state reports all scenes ready.
-     * Cleans up the regeneration flag so the UI can reflect completion.
+     * Cleans up the regeneration flag so the UI can reflect completion, and
+     * emits [playbackPrepared] with fresh chunk data so the player can resume
+     * with the newly generated content.
      */
     fun onGenerationComplete() {
         if (_isRegenerating.value) {
             _isRegenerating.value = false
         }
         _activeGeneration.value = null
+
+        // Refresh playback data — generation is now truly complete, so chunk
+        // metadata (audio_ready, image_ready, etc.) reflects the fresh state.
+        viewModelScope.launch {
+            val allChunks = runCatching { _repository.getAllChunks(bookId) }.getOrNull()
+            val chunkIds = allChunks?.chunk_ids?.toList() ?: return@launch
+            if (chunkIds.isEmpty()) return@launch
+
+            val positions = mutableMapOf<String, Pair<String?, String?>>()
+            var coverChunkId: String? = null
+            for (cid in chunkIds) {
+                runCatching {
+                    _repository.getChunkStoryboard(cid).let { sb ->
+                        positions[cid] = Pair(sb.chapter_id, sb.scene_id)
+                        if (sb.scene_type == "cover") {
+                            coverChunkId = cid
+                        }
+                    }
+                }
+            }
+            var cover: Bitmap? = null
+            val coverId = coverChunkId ?: chunkIds.firstOrNull()
+            if (coverId != null && imageEnabled) {
+                cover = loadCoverBitmap(coverId)
+            }
+            Log.i(TAG, "onGenerationComplete: emitting playbackPrepared with ${chunkIds.size} chunks cover=${cover != null}")
+            _playbackPrepared.tryEmit(PlaybackPreparation(
+                bookId = bookId,
+                buildId = buildId,
+                chunkIds = chunkIds,
+                coverImage = cover,
+                chunkPositions = positions
+            ))
+        }
     }
 
     fun cancelGeneration() {
