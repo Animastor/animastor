@@ -9,6 +9,7 @@
 const path = require('path');
 const fs = require('fs');
 const multer = require('multer');
+const sceneAssetsRepo = require('../storage/postgres/repositories/scene-assets-repo');
 
 module.exports = function(app, redis, deps) {
     const {
@@ -203,39 +204,27 @@ async function clearBookDispatchMeta(redis, bookId) {
                     log(`[UPDATE BOOK] ${bookId}: reconciled ${syncResult.reconciled} scenes`);
 
                     // R13: Bump version counters for changed scenes
-                    // content_version bumps when scene content changes (text, units)
-                    // audio_config_version bumps when audio config changes
-                    for (const ds of diff.dirty_scenes) {
-                        if (ds.reason === 'removed') continue;
-                        const bumpContent = ds.dirty_layers.includes('image') || ds.dirty_layers.includes('video');
-                        const bumpAudio = ds.dirty_layers.includes('audio');
-                        if (bumpContent || bumpAudio) {
-                            try {
-                                const setClauses = ['updated_at = EXTRACT(EPOCH FROM NOW())::bigint'];
-                                if (bumpContent) setClauses.push('content_version = content_version + 1');
-                                if (bumpAudio) setClauses.push('audio_config_version = audio_config_version + 1');
-                                await storage.postgres.query(`
-                                    UPDATE scenes
-                                    SET ${setClauses.join(', ')}
-                                    WHERE book_id = $1 AND chapter_id = $2 AND scene_id = $3
-                                `, [bookId, ds.chapter_id, ds.scene_id]);
+                    // Uses shared function from scene-assets-repo
+                    try {
+                        await sceneAssetsRepo.bumpSceneVersions(bookId, diff.dirty_scenes);
 
-                                // R16: Log cross-cutting source when version is bumped by entity changes
-                                if (ds.changes && typeof ds.changes === 'object') {
-                                    const crossKeys = Object.keys(ds.changes).filter(k =>
-                                        k.includes('Character') || k.includes('Location') ||
-                                        k.includes('characters') || k.includes('bible') ||
-                                        k.includes('passport') || k.includes('voice')
-                                    );
-                                    if (crossKeys.length > 0) {
-                                        log(`[CROSS-CUTTING] ${bookId}/${ds.chapter_id}/${ds.scene_id}: version bump triggered by ${crossKeys.join(', ')}`);
-                                    }
+                        // R16: Log cross-cutting source when version is bumped by entity changes
+                        for (const ds of diff.dirty_scenes) {
+                            if (ds.reason === 'removed') continue;
+                            if (ds.changes && typeof ds.changes === 'object') {
+                                const crossKeys = Object.keys(ds.changes).filter(k =>
+                                    k.includes('Character') || k.includes('Location') ||
+                                    k.includes('characters') || k.includes('bible') ||
+                                    k.includes('passport') || k.includes('voice')
+                                );
+                                if (crossKeys.length > 0) {
+                                    log(`[CROSS-CUTTING] ${bookId}/${ds.chapter_id}/${ds.scene_id}: version bump triggered by ${crossKeys.join(', ')}`);
                                 }
-                            } catch (verErr) {
-                                // Non-fatal: version bump failure shouldn't block
-                                console.warn(`[UPDATE BOOK] Version bump failed for ${ds.chapter_id}/${ds.scene_id}: ${verErr.message}`);
                             }
                         }
+                    } catch (verErr) {
+                        // Non-fatal: version bump failure shouldn't block
+                        console.warn(`[UPDATE BOOK] Version bump failed: ${verErr.message}`);
                     }
                 }
             } catch (syncErr) {
@@ -1665,37 +1654,26 @@ async function clearBookDispatchMeta(redis, bookId) {
             try {
                 await storage.bookSync.reconcileFromDiff(bookId, filteredDirty, loadedBook);
 
-                // R14: Bump version counters for dirty scenes (same as PUT does)
-                for (const ds of filteredDirty) {
-                    if (ds.reason === 'removed') continue;
-                    const bumpContent = ds.dirty_layers.includes('image') || ds.dirty_layers.includes('video');
-                    const bumpAudio = ds.dirty_layers.includes('audio');
-                    if (bumpContent || bumpAudio) {
-                        try {
-                            const setClauses = ['updated_at = EXTRACT(EPOCH FROM NOW())::bigint'];
-                            if (bumpContent) setClauses.push('content_version = content_version + 1');
-                            if (bumpAudio) setClauses.push('audio_config_version = audio_config_version + 1');
-                            await storage.postgres.query(`
-                                UPDATE scenes
-                                SET ${setClauses.join(', ')}
-                                WHERE book_id = $1 AND chapter_id = $2 AND scene_id = $3
-                            `, [bookId, ds.chapter_id, ds.scene_id]);
+                // R14: Bump version counters for dirty scenes (shared function)
+                try {
+                    await sceneAssetsRepo.bumpSceneVersions(bookId, filteredDirty);
 
-                            // R16: Log cross-cutting source when version is bumped by entity changes
-                            if (ds.changes && typeof ds.changes === 'object') {
-                                const crossKeys = Object.keys(ds.changes).filter(k =>
-                                    k.includes('Character') || k.includes('Location') ||
-                                    k.includes('characters') || k.includes('bible') ||
-                                    k.includes('passport') || k.includes('voice')
-                                );
-                                if (crossKeys.length > 0) {
-                                    log(`[REGENERATE-CROSS-CUTTING] ${bookId}/${ds.chapter_id}/${ds.scene_id}: version bump triggered by ${crossKeys.join(', ')}`);
-                                }
+                    // R16: Log cross-cutting source when version is bumped by entity changes
+                    for (const ds of filteredDirty) {
+                        if (ds.reason === 'removed') continue;
+                        if (ds.changes && typeof ds.changes === 'object') {
+                            const crossKeys = Object.keys(ds.changes).filter(k =>
+                                k.includes('Character') || k.includes('Location') ||
+                                k.includes('characters') || k.includes('bible') ||
+                                k.includes('passport') || k.includes('voice')
+                            );
+                            if (crossKeys.length > 0) {
+                                log(`[REGENERATE-CROSS-CUTTING] ${bookId}/${ds.chapter_id}/${ds.scene_id}: version bump triggered by ${crossKeys.join(', ')}`);
                             }
-                        } catch (verErr) {
-                            console.warn(`[REGENERATE] Version bump failed for ${ds.chapter_id}/${ds.scene_id}: ${verErr.message}`);
                         }
                     }
+                } catch (verErr) {
+                    console.warn(`[REGENERATE] Version bump failed: ${verErr.message}`);
                 }
             } catch (syncErr) {
                 // Non-fatal: PG reconciliation should not block regeneration

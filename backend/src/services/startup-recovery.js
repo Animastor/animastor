@@ -19,6 +19,8 @@
 const path = require('path');
 const fs = require('fs');
 
+const { computeSceneHash } = require('../utils/scene-hash');
+
 const logPrefix = '[STARTUP-RECOVERY]';
 function log(msg) { console.log(`${logPrefix} ${msg}`); }
 function warn(msg) { console.warn(`${logPrefix} ⚠️  ${msg}`); }
@@ -244,6 +246,28 @@ async function reconcileMissingSceneState(redis, deps) {
                     await placeholderAudio.ensurePlaceholderAudio(buildId, bookId, s.chapter_id, s.scene_id);
                 }
                 log(`[COUNTER-RECOVERY] Restored placeholders + counters for ${bookId} (${scenes.length} scenes)`);
+            } catch (_) {
+                // Non-fatal
+            }
+        }
+
+        // Restore scene_hashes from book JSON → PG
+        // This prevents full regeneration after crash (scene_hash matches,
+        // so detection won't flag all scenes as changed).
+        if (bookData) {
+            try {
+                const scenes = book.collectScenes(bookData);
+                for (const s of scenes) {
+                    const hash = computeSceneHash(s.scene || s.payload || s);
+                    await postgres.query(`
+                        INSERT INTO scenes (book_id, chapter_id, scene_id, scene_hash, updated_at)
+                        VALUES ($1, $2, $3, $4, EXTRACT(EPOCH FROM NOW())::bigint)
+                        ON CONFLICT(book_id, chapter_id, scene_id) DO UPDATE SET
+                            scene_hash = EXCLUDED.scene_hash,
+                            updated_at = EXTRACT(EPOCH FROM NOW())::bigint
+                    `, [bookId, s.chapter_id, s.scene_id, hash]);
+                }
+                log(`[HASH-RECOVERY] Restored scene_hashes for ${bookId} (${scenes.length} scenes)`);
             } catch (_) {
                 // Non-fatal
             }

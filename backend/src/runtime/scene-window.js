@@ -23,6 +23,7 @@ const activeScenes = require('./active-scenes-index');
 const audio = require('../audio/audio-service');
 const genScope = require('../services/gen-scope');
 const sceneAssetsRepo = require('../storage/postgres/repositories/scene-assets-repo');
+const { query: pgQuery } = require('../storage/postgres/database');
 const placeholderAudio = require('../services/placeholder-audio');
 const fs = require('fs');
 const path = require('path');
@@ -154,8 +155,7 @@ async function sceneHasValidContent(redis, buildId, bookId, chapterId, sceneId) 
     // the content on disk is stale and needs regeneration.
     // This makes PG version counters the actual source of truth for staleness.
     try {
-        const { query } = require('../storage/postgres/database');
-        const sceneResult = await query(`
+        const sceneResult = await pgQuery(`
             SELECT content_version, audio_config_version FROM scenes
             WHERE book_id = $1 AND chapter_id = $2 AND scene_id = $3
         `, [bookId, chapterId, sceneId]);

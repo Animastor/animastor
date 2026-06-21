@@ -266,6 +266,35 @@ async function getBookAssetSummary(bookId) {
     };
 }
 
+/**
+ * R13/R14: Bump version counters for dirty scenes.
+ * Shared between PUT and /regenerate to eliminate duplicate SQL.
+ *
+ * @param {string} bookId
+ * @param {Array<{chapter_id:string, scene_id:string, reason:string, dirty_layers:string[]}>} dirtyScenes
+ * @returns {Promise<number>} Number of scenes with bumped versions
+ */
+async function bumpSceneVersions(bookId, dirtyScenes) {
+    let bumped = 0;
+    for (const ds of dirtyScenes) {
+        if (ds.reason === 'removed') continue;
+        const bumpContent = ds.dirty_layers.includes('image') || ds.dirty_layers.includes('video');
+        const bumpAudio = ds.dirty_layers.includes('audio');
+        if (bumpContent || bumpAudio) {
+            const setClauses = ['updated_at = EXTRACT(EPOCH FROM NOW())::bigint'];
+            if (bumpContent) setClauses.push('content_version = content_version + 1');
+            if (bumpAudio) setClauses.push('audio_config_version = audio_config_version + 1');
+            await query(`
+                UPDATE scenes
+                SET ${setClauses.join(', ')}
+                WHERE book_id = $1 AND chapter_id = $2 AND scene_id = $3
+            `, [bookId, ds.chapter_id, ds.scene_id]);
+            bumped++;
+        }
+    }
+    return bumped;
+}
+
 module.exports = {
     upsertAsset,
     markReady,
@@ -278,6 +307,7 @@ module.exports = {
     getStaleAssets,
     getOutdatedByHash,
     getOutdatedByVersions,
+    bumpSceneVersions,
     isSceneReady,
     deleteSceneAssets,
     deleteBookAssets,
