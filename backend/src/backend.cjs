@@ -33,6 +33,7 @@ const lazyBook = require('./book/lazy-book');
 const genSessionRepo = require('./storage/postgres/repositories/gen-session-repo');
 const bookSourceRepo = require('./storage/postgres/repositories/book-source-repo');
 const placeholderAudio = require('./services/placeholder-audio');
+const startupRecovery = require('./services/startup-recovery');
 const utils = require('./helpers/utils.cjs');
 
 const filesystem = storage.filesystem;
@@ -207,14 +208,6 @@ async function startServer() {
         console.error('[STARTUP] PostgreSQL initialization failed (non-fatal):', pgErr.message);
     }
 
-    // Resume incomplete sessions
-    try {
-        await resumeIncompleteSessions(log, windowGenerator.runBackgroundWindowGeneration);
-        log('[STARTUP] Incomplete sessions resumed');
-    } catch (resumeErr) {
-        console.warn('[STARTUP] Session resume failed (non-fatal):', resumeErr.message);
-    }
-
     // Start server
     const server = app.listen(PORT, () => {
         log(`[STARTUP] Backend server running on port ${PORT}`);
@@ -229,13 +222,28 @@ async function startServer() {
             console.warn('[STARTUP] Runtime loop start failed:', loopErr.message);
         }
 
-        // Recover books from disk
+        // Centralized startup recovery: chunks, counters, versions, sessions
         setImmediate(async () => {
             try {
-                await recoverAllBooksFromDisk();
-                log('[STARTUP] Disk recovery complete');
+                const recoverDeps = {
+                    recoverAllBooksFromDisk,
+                    postgres: storage.postgres,
+                    config,
+                    state,
+                    book,
+                    placeholderAudio,
+                    resumeIncompleteSessions,
+                    runBackgroundWindowGeneration: windowGenerator.runBackgroundWindowGeneration,
+                };
+                const recResult = await startupRecovery.recoverAll(redis, recoverDeps);
+                log(`[STARTUP] Recovery complete: ${recResult.recovered} items, ` +
+                    `${recResult.version_outdated} version-stale, ${recResult.sessions_resumed} sessions, ` +
+                    `${recResult.errors.length} errors`);
+                if (recResult.errors.length > 0) {
+                    console.warn('[STARTUP] Recovery errors:', recResult.errors.join('; '));
+                }
             } catch (recErr) {
-                console.warn('[STARTUP] Disk recovery failed:', recErr.message);
+                console.warn('[STARTUP] Recovery failed:', recErr.message);
             }
         });
 

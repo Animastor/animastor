@@ -141,22 +141,39 @@
 
 ## 🟢 Medium (v3 — version-based foundation)
 
-### [R13] Фаза 0: Подготовка PG-схемы
+### [R13] Фаза 0: Подготовка PG-схемы ✅
 
 **Checklist:**
-- [ ] `scenes.content_version INTEGER NOT NULL DEFAULT 1`
-- [ ] `scenes.audio_config_version INTEGER NOT NULL DEFAULT 1`
-- [ ] `scene_assets.scene_content_version INTEGER`
-- [ ] `scene_assets.scene_audio_config_version INTEGER` (только для audio assets)
-- [ ] При `PUT /api/v1/book/:bookId`: bump версий
+- [x] `scenes.content_version INTEGER NOT NULL DEFAULT 1`
+- [x] `scenes.audio_config_version INTEGER NOT NULL DEFAULT 1`
+- [x] `scene_assets.scene_content_version INTEGER`
+- [x] `scene_assets.scene_audio_config_version INTEGER` (только для audio assets)
+- [x] При `PUT /api/v1/book/:bookId`: bump версий
 
-### [R14] Фаза 1: Двойной режим (versions + flags)
+### [R14] Фаза 1: Двойной режим (versions + flags) ✅
+- [x] bump версий в /regenerate endpoint
+- [x] version check в sceneHasValidContent (logging)
+- [x] GET /api/v1/book/:bookId/versions diagnostic endpoint
 
-### [R15] Фаза 2: Versions as source of truth
+### [R15] Фаза 2: Versions as source of truth ✅
+- [x] markSceneAssetsStale — propagation versions from scenes table
+- [x] sceneHasValidContent — version check drives invalidation
+- [x] getOutdatedByVersions — version-based staleness in scene-assets-repo
+- [x] placeholder-audio — version propagation on real audio upsert
 
-### [R16] Фаза 3: Cross-cutting dependencies через версии
+### [R16] Фаза 3: Cross-cutting dependencies через версии ✅
+- [x] getOutdatedByVersions integration in reconcileFromDiff
+- [x] Cross-cutting source logging (Character/Location/passport/voice) in PUT + /regenerate
+- [x] /versions endpoint uses getOutdatedByVersions
 
-### [R17] Redis persistence / startup recovery
+### [R17] Redis persistence / startup recovery ✅
+- [x] startup-recovery.js — centralized 5-step recovery:
+  - Step 1: recoverAllBooksFromDisk (existing)
+  - Step 2: recoverIuImagesFromDisk (IU .png → chunk metadata)
+  - Step 3: reconcileMissingSceneState (PG counters → Redis)
+  - Step 4: checkVersionStaleness (PG JOIN version logging)
+  - Step 5: resumeIncompleteSessions (existing, moved)
+- [x] backend.cjs integration (replaces separate recoverAllBooksFromDisk + resumeIncompleteSessions)
 
 ---
 
@@ -188,12 +205,15 @@
   R11  Unit-тесты (295 tests ✅)
   R12  Book-sync после PUT
 
-🏗  ФУНДАМЕНТ (v3):
-  R13 Фаза 0: PG schema
-  R14 Фаза 1: Dual mode
-  R15 Фаза 2: Versions as truth
-  R16 Фаза 3: Cross-cutting versions
+✅ v3 COMPLETE:
+  R13 PG schema
+  R14 Dual mode
+  R15 Versions as truth
+  R16 Cross-cutting versions
   R17 Redis recovery
+
+🏗  LOW:
+  R18-R22 Прочее
 
 🗑  LOW:
   R18-R22 Прочее
