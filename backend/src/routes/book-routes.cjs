@@ -1577,8 +1577,16 @@ async function clearBookDispatchMeta(redis, bookId) {
                 }
             }
 
-            // Mark dirty scenes
+            // Mark dirty scenes (Redis)
             const marked = await bookDiff.markDirtyScenes(redis, bookId, buildId, filteredDirty, layerCfg);
+
+            // Reconcile PG state (hashes, asset status, tasks) via book-sync
+            try {
+                await storage.bookSync.reconcileFromDiff(bookId, filteredDirty, loadedBook);
+            } catch (syncErr) {
+                // Non-fatal: PG reconciliation should not block regeneration
+                console.warn(`[REGENERATE] PG reconcile failed for ${bookId}: ${syncErr.message}`);
+            }
 
             // Immediately restore chunk metadata for scenes that already have
             // valid content on disk. Otherwise /assets-state would report stale
