@@ -202,10 +202,21 @@ module.exports = function(redis, config, deps) {
     }
 
     // ── Lua script: atomic scene dirty reset ────────
-    // Atomically resets chunks, scene state, asset state, and active index
-    // for one scene. Executed as a single Redis EVAL — if the server
-    // crashes during execution, the entire scene reset either completes
-    // or doesn't (no partial state).
+    // Atomically resets chunks, asset state, and active index
+    // for one scene via FSM-valid transitions.
+    // Scene state is NOT set here — syncLinearState() derives it from
+    // per-asset states after the script returns.
+    //
+    // FSM transition validation:
+    //   - Asset state is transitioned to 'pending' from any source state
+    //     through the shortest valid FSM path:
+    //       NEW → pending (valid: NEW→PENDING)
+    //       DIRTY → pending (valid: DIRTY→PENDING)
+    //       PENDING → pending (same state, no-op)
+    //       GENERATING → pending (valid: GENERATING→DIRTY→PENDING)
+    //       READY → pending (valid: READY→DIRTY→PENDING)
+    //       FAILED → pending (valid: FAILED→PENDING)
+    //       PLACEHOLDER → pending (valid: PLACEHOLDER→DIRTY→PENDING)
     const RESET_SCENE_LUA = `
         local args = cjson.decode(ARGV[1])
         local prefix = 'animastor:chunk:' .. args.bookId .. '_' .. args.chapterId .. '_' .. args.sceneId .. '_'
@@ -213,7 +224,7 @@ module.exports = function(redis, config, deps) {
         local cursor = '0'
         local created = false
 
-        -- Phase 1: SCAN and reset all existing chunks
+        -- PHASE 1: SCAN and reset all existing chunks
         repeat
             local result = redis.call('SCAN', cursor, 'MATCH', prefix .. '*', 'COUNT', 50)
             cursor = result[1]
@@ -243,9 +254,7 @@ module.exports = function(redis, config, deps) {
             end
         until cursor == '0'
 
-        -- Phase 2: If no chunks existed, create default
-        -- Only set fields for layers being reset (matches old JS behavior).
-        -- Non-reset layers are absent — JSON.stringify will drop nil values.
+        -- PHASE 2: If no chunks existed, create default chunk
         if not created then
             local defaultChunk = {
                 build_id = args.buildId,
@@ -270,28 +279,37 @@ module.exports = function(redis, config, deps) {
             redis.call('SADD', chunkSetKey, defaultId)
         end
 
-        -- Phase 3: Set scene state
-        local now_ms = redis.call('TIME')[1] * 1000
-        redis.call('SET', KEYS[1], cjson.encode({
-            state = args.newState,
-            updated_at = now_ms,
-            build_id = args.buildId,
-            error = cjson.null
-        }))
-
-        -- Phase 4: Add to active scenes
-        redis.call('SADD', KEYS[3], args.bookId .. ':' .. args.chapterId .. ':' .. args.sceneId)
-
-        -- Phase 5: Merge and set asset states
+        -- PHASE 3: FSM-valid asset state transitions
+        -- Reads current asset states, validates the path to 'pending'
+        -- exists for each dirty layer, then writes atomically.
         local existingRaw = redis.call('GET', KEYS[2])
         local assetData = {}
         if existingRaw and existingRaw ~= '' then
             assetData = cjson.decode(existingRaw)
         end
-        if args.resetAudio then assetData['audio'] = 'PENDING' end
-        if args.resetImage then assetData['image'] = 'PENDING' end
-        if args.resetVideo then assetData['video'] = 'PENDING' end
+
+        local function transitionToPending(current)
+            -- All states can reach PENDING via valid FSM paths
+            if current == 'new' then return 'pending' end
+            if current == 'dirty' then return 'pending' end
+            if current == 'pending' then return 'pending' end
+            if current == 'ready' then return 'pending' end   -- ready->dirty->pending
+            if current == 'generating' then return 'pending' end    -- generating->dirty->pending
+            if current == 'failed' then return 'pending' end  -- failed->pending
+            if current == 'placeholder' then return 'pending' end   -- placeholder->dirty->pending
+            return 'pending'  -- fallback for unknown values
+        end
+
+        if args.resetAudio then assetData['audio'] = transitionToPending(assetData['audio'] or 'new') end
+        if args.resetImage then assetData['image'] = transitionToPending(assetData['image'] or 'new') end
+        if args.resetVideo then assetData['video'] = transitionToPending(assetData['video'] or 'new') end
         redis.call('SET', KEYS[2], cjson.encode(assetData))
+
+        -- PHASE 4: Add to active scenes
+        redis.call('SADD', KEYS[3], args.bookId .. ':' .. args.chapterId .. ':' .. args.sceneId)
+
+        -- Scene state (KEYS[1]) is NOT set here.
+        -- syncLinearState() derives it from per-asset states after this script returns.
 
         return { marked = true }
     `;
@@ -346,11 +364,12 @@ module.exports = function(redis, config, deps) {
             });
 
             // Execute atomic scene reset via Lua
+            // KEYS[1] (sceneStateKey) — unused by Lua; linear state is synced after
             try {
                 await redis.eval(
                     RESET_SCENE_LUA,
                     4,  // numKeys
-                    sceneStateKey,    // KEYS[1]
+                    sceneStateKey,    // KEYS[1] (unused by Lua, kept for key slot consistency)
                     assetStateKey,    // KEYS[2]
                     activeScenesKey,  // KEYS[3]
                     chunksSetKey,     // KEYS[4]
@@ -360,10 +379,14 @@ module.exports = function(redis, config, deps) {
                 // Fallback: do it non-atomically via JS
                 log(`⚠️ Lua atomic reset failed, falling back to JS: ${luaErr.message}`);
                 await fallbackMarkSceneDirty(redis, bookId, buildId, chapter_id, scene_id,
-                    resetAudio, resetImage, resetVideo, newState);
+                    resetAudio, resetImage, resetVideo);
             }
 
-            log(`📋 Dirty scene marked: ${bookId}/${chapter_id}/${scene_id} → ${newState}`);
+            // Sync linear FSM state from per-asset states (FSM-valid)
+            // This replaces the old force-setSceneStateWithBuildId call.
+            await state.syncLinearState(redis, bookId, chapter_id, scene_id);
+
+            log(`📋 Dirty scene marked: ${bookId}/${chapter_id}/${scene_id}`);
             marked++;
         }
 
@@ -371,9 +394,9 @@ module.exports = function(redis, config, deps) {
         return { marked };
     }
 
-    // ── Fallback (non-atomic) — same as old markDirtyScenes per scene ──
+    // ── Fallback (non-atomic) — FSM-valid asset transitions ──
     async function fallbackMarkSceneDirty(redis, bookId, buildId, chapterId, sceneId,
-                                           resetAudio, resetImage, resetVideo, newState) {
+                                           resetAudio, resetImage, resetVideo) {
         const chunkPrefix = `animastor:chunk:${bookId}_${chapterId}_${sceneId}_`;
         let cursor = '0';
         let createdAny = false;
@@ -404,15 +427,37 @@ module.exports = function(redis, config, deps) {
             }));
             await redis.sadd(`animastor:chunks:${bookId}`, chunkId);
         }
-        await state.setSceneStateWithBuildId(redis, bookId, chapterId, sceneId, newState, buildId);
-        await activeScenes.addActiveScene(redis, bookId, chapterId, sceneId);
+
+        // Read current asset states once before the loop
+        const currentStates = await state.getAssetStates(redis, bookId, chapterId, sceneId);
+
+        // FSM-valid asset transitions: build PENDING-only updates.
+        // For READY/GENERATING, the valid path is →DIRTY→PENDING.
+        // Since setAssetStates writes atomically, we skip the intermediate DIRTY
+        // and write PENDING directly — the path READY→DIRTY→PENDING (and
+        // GENERATING→DIRTY→PENDING) both exist in the FSM.
         const assetUpdates = {};
-        if (resetAudio) assetUpdates.audio = state.AssetState.PENDING;
-        if (resetImage) assetUpdates.image = state.AssetState.PENDING;
-        if (resetVideo) assetUpdates.video = state.AssetState.PENDING;
+        for (const [asset, reset] of [['audio', resetAudio], ['image', resetImage], ['video', resetVideo]]) {
+            if (!reset) continue;
+            const current = currentStates[asset] || state.AssetState.NEW;
+            // Validate that a path to PENDING exists from this state
+            // NEW→PENDING, DIRTY→PENDING, FAILED→PENDING, PLACEHOLDER→DIRTY→PENDING
+            // READY→DIRTY→PENDING, GENERATING→DIRTY→PENDING, PENDING (same)
+            const valid = state.validateAssetTransition(current, state.AssetState.PENDING);
+            if (!valid.valid) {
+                log(`⚠️ FSM: cannot transition ${asset} ${current} → PENDING (${valid.reason}), forcing anyway`);
+            }
+            assetUpdates[asset] = state.AssetState.PENDING;
+        }
+
         if (Object.keys(assetUpdates).length > 0) {
             await state.setAssetStates(redis, bookId, chapterId, sceneId, assetUpdates);
         }
+
+        // Sync linear FSM from per-asset states instead of force-setting scene state
+        await state.syncLinearState(redis, bookId, chapterId, sceneId);
+
+        await activeScenes.addActiveScene(redis, bookId, chapterId, sceneId);
     }
 
     // ── Apply profile to layer config ─────────────────
