@@ -22,6 +22,7 @@
 const bookSource = require('./book-source');
 const { query } = require('../storage/postgres/database');
 const { computeSceneHash } = require('../utils/scene-hash');
+const { getOutdatedByVersions } = require('../storage/postgres/repositories/scene-assets-repo');
 
 const logPrefix = '[BOOK-SYNC]';
 function log(msg) { console.log(`${logPrefix} ${msg}`); }
@@ -92,6 +93,45 @@ async function reconcileFromDiff(bookId, dirtyScenes, loadedBook) {
 
     log(`RECONCILE ${bookId}: ~${scenesUpdated} scene hashes, ${assetsStale} assets stale, ${tasksCancelled} tasks cancelled, ${Object.values(purged).reduce((a, b) => a + b, 0)} rows purged`);
 
+    // R16: Cross-cutting version-based staleness check
+    // Find any ready assets whose version is behind the current scene version.
+    // This catches stale assets that may have been missed by the dirty-scene-based
+    // marking above (e.g., assets that were re-generated with an old version).
+    let versionOutdatedCount = 0;
+    try {
+        const sceneVersionsResult = await query(`
+            SELECT chapter_id, scene_id, content_version, audio_config_version
+            FROM scenes
+            WHERE book_id = $1
+        `, [bookId]);
+        const sceneVersionMap = new Map();
+        for (const row of sceneVersionsResult.rows) {
+            const key = `${row.chapter_id}:${row.scene_id}`;
+            sceneVersionMap.set(key, {
+                content_version: row.content_version,
+                audio_config_version: row.audio_config_version,
+            });
+        }
+        if (sceneVersionMap.size > 0) {
+            const outdatedAssets = await getOutdatedByVersions(bookId, sceneVersionMap);
+            if (outdatedAssets.length > 0) {
+                // Log version-based staleness — these assets are stale but might not
+                // have been caught by the scene-level dirty marking (e.g., cross-cutting
+                // changes that affected these scenes indirectly).
+                for (const asset of outdatedAssets) {
+                    log(`[VERSION-OUTDATED] ${bookId}/${asset.chapter_id}/${asset.scene_id}: ${asset.asset_type} ${asset._outdated_reason} (expected ${asset._expected_version}, has ${asset.scene_content_version})`);
+                }
+                versionOutdatedCount = outdatedAssets.length;
+            }
+        }
+    } catch (err) {
+        console.warn(`[BOOK-SYNC] Version-based staleness check failed for ${bookId}: ${err.message}`);
+    }
+
+    if (versionOutdatedCount > 0) {
+        log(`RECONCILE ${bookId}: ${versionOutdatedCount} assets outdated by version check`);
+    }
+
     return {
         book_id: bookId,
         reconciled: changedKeys.length + removedKeys.length,
@@ -99,6 +139,7 @@ async function reconcileFromDiff(bookId, dirtyScenes, loadedBook) {
         assets_marked_stale: assetsStale,
         generation_tasks_cancelled: tasksCancelled,
         purged,
+        version_outdated: versionOutdatedCount,
     };
 }
 

@@ -219,6 +219,18 @@ async function clearBookDispatchMeta(redis, bookId) {
                                     SET ${setClauses.join(', ')}
                                     WHERE book_id = $1 AND chapter_id = $2 AND scene_id = $3
                                 `, [bookId, ds.chapter_id, ds.scene_id]);
+
+                                // R16: Log cross-cutting source when version is bumped by entity changes
+                                if (ds.changes && typeof ds.changes === 'object') {
+                                    const crossKeys = Object.keys(ds.changes).filter(k =>
+                                        k.includes('Character') || k.includes('Location') ||
+                                        k.includes('characters') || k.includes('bible') ||
+                                        k.includes('passport') || k.includes('voice')
+                                    );
+                                    if (crossKeys.length > 0) {
+                                        log(`[CROSS-CUTTING] ${bookId}/${ds.chapter_id}/${ds.scene_id}: version bump triggered by ${crossKeys.join(', ')}`);
+                                    }
+                                }
                             } catch (verErr) {
                                 // Non-fatal: version bump failure shouldn't block
                                 console.warn(`[UPDATE BOOK] Version bump failed for ${ds.chapter_id}/${ds.scene_id}: ${verErr.message}`);
@@ -1668,6 +1680,18 @@ async function clearBookDispatchMeta(redis, bookId) {
                                 SET ${setClauses.join(', ')}
                                 WHERE book_id = $1 AND chapter_id = $2 AND scene_id = $3
                             `, [bookId, ds.chapter_id, ds.scene_id]);
+
+                            // R16: Log cross-cutting source when version is bumped by entity changes
+                            if (ds.changes && typeof ds.changes === 'object') {
+                                const crossKeys = Object.keys(ds.changes).filter(k =>
+                                    k.includes('Character') || k.includes('Location') ||
+                                    k.includes('characters') || k.includes('bible') ||
+                                    k.includes('passport') || k.includes('voice')
+                                );
+                                if (crossKeys.length > 0) {
+                                    log(`[REGENERATE-CROSS-CUTTING] ${bookId}/${ds.chapter_id}/${ds.scene_id}: version bump triggered by ${crossKeys.join(', ')}`);
+                                }
+                            }
                         } catch (verErr) {
                             console.warn(`[REGENERATE] Version bump failed for ${ds.chapter_id}/${ds.scene_id}: ${verErr.message}`);
                         }
@@ -1785,31 +1809,55 @@ async function clearBookDispatchMeta(redis, bookId) {
                 }
             }
 
-            // Detect mismatches: asset version < scene version
-            const mismatches = [];
-            for (const [key, sv] of Object.entries(sceneVersions)) {
-                for (const asset of sv.assets) {
-                    if (asset.scene_content_version != null && sv.content_version != null &&
-                        asset.scene_content_version < sv.content_version) {
-                        mismatches.push({
-                            key,
-                            type: 'content_version',
-                            scene_version: sv.content_version,
-                            asset_version: asset.scene_content_version,
-                            asset_type: asset.asset_type,
-                            status: asset.status,
-                        });
-                    }
-                    if (asset.scene_audio_config_version != null && sv.audio_config_version != null &&
-                        asset.scene_audio_config_version < sv.audio_config_version) {
-                        mismatches.push({
-                            key,
-                            type: 'audio_config_version',
-                            scene_version: sv.audio_config_version,
-                            asset_version: asset.scene_audio_config_version,
-                            asset_type: asset.asset_type,
-                            status: asset.status,
-                        });
+            // R16: Use getOutdatedByVersions for accurate mismatch detection
+            // Build sceneVersionMap in the format expected by getOutdatedByVersions
+            const sceneVersionMap = new Map();
+            for (const row of sceneResult.rows) {
+                const key = `${row.chapter_id}:${row.scene_id}`;
+                sceneVersionMap.set(key, {
+                    content_version: row.content_version,
+                    audio_config_version: row.audio_config_version,
+                });
+            }
+
+            let mismatches = [];
+            try {
+                const sceneAssetsRepo = require('../storage/postgres/repositories/scene-assets-repo');
+                const outdatedAssets = await sceneAssetsRepo.getOutdatedByVersions(bookId, sceneVersionMap);
+                mismatches = outdatedAssets.map(a => ({
+                    key: `${a.chapter_id}/${a.scene_id}`,
+                    type: a._outdated_reason,
+                    scene_version: a._expected_version,
+                    asset_version: a.scene_content_version,
+                    asset_type: a.asset_type,
+                    status: a.status,
+                }));
+            } catch (verErr) {
+                // Fallback to inline comparison if getOutdatedByVersions fails
+                for (const [key, sv] of Object.entries(sceneVersions)) {
+                    for (const asset of sv.assets) {
+                        if (asset.scene_content_version != null && sv.content_version != null &&
+                            asset.scene_content_version < sv.content_version) {
+                            mismatches.push({
+                                key,
+                                type: 'content_version',
+                                scene_version: sv.content_version,
+                                asset_version: asset.scene_content_version,
+                                asset_type: asset.asset_type,
+                                status: asset.status,
+                            });
+                        }
+                        if (asset.scene_audio_config_version != null && sv.audio_config_version != null &&
+                            asset.scene_audio_config_version < sv.audio_config_version) {
+                            mismatches.push({
+                                key,
+                                type: 'audio_config_version',
+                                scene_version: sv.audio_config_version,
+                                asset_version: asset.scene_audio_config_version,
+                                asset_type: asset.asset_type,
+                                status: asset.status,
+                            });
+                        }
                     }
                 }
             }
