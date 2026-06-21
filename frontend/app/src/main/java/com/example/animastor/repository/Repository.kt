@@ -69,13 +69,20 @@ class Repository(
         }
     }
 
-    suspend fun getChunk(id: String): ChunkResponse {
-        chunkCache.get(id)?.let {
+    /**
+     * Get chunk metadata. Caches by chunk ID AND build ID so that when
+     * a new generation completes (new buildId), the stale placeholder
+     * metadata is not served from cache — the app will re-fetch and
+     * discover audio_ready=true, avoiding silent playback.
+     */
+    suspend fun getChunk(id: String, buildId: String = ""): ChunkResponse {
+        val cacheKey = "${id}_${buildId}"
+        chunkCache.get(cacheKey)?.let {
             Log.d("Repo", "getChunk $id: mem HIT")
             return it
         }
         val result = api.getChunk(id)
-        chunkCache.put(id, result)
+        chunkCache.put(cacheKey, result)
         Log.d("Repo", "getChunk $id: audio=${result.audio_ready} img=${result.image_ready} video=${result.video_ready}")
         return result
     }

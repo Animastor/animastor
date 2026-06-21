@@ -198,6 +198,10 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                 }
                 phase == PlayerPhase.PLAYING && !isPaused -> pausePlayback()
                 phase == PlayerPhase.PLAYING && isPaused -> resumePlayback()
+                phase == PlayerPhase.PAUSED -> {
+                    Log.i(TAG, "playButton: PAUSED — resuming playback")
+                    resumePlayback()
+                }
                 phase == PlayerPhase.SCENE_READY && playbackViewModel.needsRotationResume -> {
                     Log.i(TAG, "playButton: rotation resume from index ${playbackViewModel.currentChunkIndex}")
                     playbackViewModel.resumeFromCurrentScene()

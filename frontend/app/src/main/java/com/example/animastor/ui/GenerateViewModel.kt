@@ -339,7 +339,7 @@ class GenerateViewModel(
                         if (cover == null && coverId != null && imageEnabled) {
                             viewModelScope.launch {
                                 pollWithBackoff(IMAGE_POLL_TIMEOUT_MS) {
-                                    val chunk = runCatching { _repository.getChunk(coverId) }.getOrNull()
+                                    val chunk = runCatching { _repository.getChunk(coverId, buildId) }.getOrNull()
                                     chunk?.image_ready == true
                                 }
                                 // Now try to load the cover image
@@ -452,7 +452,7 @@ class GenerateViewModel(
                 var cover: Bitmap? = null
                 if (coverId != null) {
                     val isCached = runCatching {
-                        _repository.getChunk(coverId).audio_ready
+                        _repository.getChunk(coverId, buildId).audio_ready
                     }.getOrDefault(false)
 
                     if (!isCached) {
@@ -1001,7 +1001,7 @@ class GenerateViewModel(
         for (id in ids) {
             runCatching {
                 pollWithBackoff(timeoutMs = IMAGE_POLL_TIMEOUT_MS) {
-                    val chunk = _repository.getChunk(id)
+                    val chunk = _repository.getChunk(id, buildId)
                     chunk.audio_ready
                 }
             }

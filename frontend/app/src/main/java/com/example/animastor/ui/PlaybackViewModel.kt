@@ -550,7 +550,7 @@ class PlaybackViewModel(
             val cachedAfter = preloadCache.remove("${buildId}_$id")
             if (cachedAfter != null) {
                 // Verify freshness: check if audio_ready changed since preload
-                val freshChunk = runCatching { _repository.getChunk(id) }.getOrNull()
+                val freshChunk = runCatching { _repository.getChunk(id, buildId) }.getOrNull()
                 if (freshChunk != null && freshChunk.audio_ready && cachedAfter.audioBytes.isEmpty()) {
                     Log.i(TAG, "playNext: audio appeared since preload for $id — refetching")
                     val freshAudio = runCatching { _repository.getChunkAudio(id, buildId) }.getOrElse { byteArrayOf() }
@@ -652,8 +652,9 @@ class PlaybackViewModel(
     private suspend fun fetchSceneData(id: String): PreloadedScene = coroutineScope {
         Log.d(TAG, "fetchSceneData: $id")
 
-        val chunk = runCatching { _repository.getChunk(id) }.getOrElse { err ->
-            Log.w(TAG, "fetchSceneData: chunk $id not found in Redis: ${err.message}")
+        val chunk =runCatching { _repository.getChunk(id, buildId) }.getOrElse { err ->
+            Log.w(TAG, "fetchSceneData: chunk $id not found in Redis: ${err.message}"
+            )
             null
         }
         Log.i(TAG, "fetchSceneData: chunk $id audio_ready=${chunk?.audio_ready} image_ready=${chunk?.image_ready} video_ready=${chunk?.video_ready}")

@@ -175,6 +175,12 @@
   - Step 5: resumeIncompleteSessions (existing, moved)
 - [x] backend.cjs integration (replaces separate recoverAllBooksFromDisk + resumeIncompleteSessions)
 
+### Polishing (R13-R17) ✅
+- [x] `scene-assets-repo.js`: new `bumpSceneVersions()` — shared function eliminates duplicate inline SQL in PUT and /regenerate
+- [x] `scene-window.js`: lazy `require('../storage/postgres/database')` moved from function body to module top
+- [x] `startup-recovery.js`: Step 3 now restores `scene_hash` from book JSON after crash — prevents full regeneration
+- [x] `book-routes.cjs`: PUT + /regenerate version bumps now call `bumpSceneVersions()` instead of inline SQL
+
 ---
 
 ## ⚪ Low

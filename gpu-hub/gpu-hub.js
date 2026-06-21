@@ -224,12 +224,36 @@ app.post("/task/result", async (req, res) => {
     }
   } catch (_) {}
 
+  // Store result as JSON so audio-recovery can parse it.
+  // key format: animastor:result:<build_id>:<book_id>:<chapter_id>:<scene_id>:<type>
+  // job_id format: "bookId_chapterId_sceneId_chunkIndex:type"
+  // bookId can contain underscores, but chapterId/sceneId/chunkIndex cannot.
+  // Split by ':' first to remove type suffix, then parse from the end.
+  const resultKeyParts = job_id.split(':');
+  const resultType = resultKeyParts.length > 1 ? resultKeyParts.pop() : 'audio';
+  const resultBaseId = resultKeyParts.join(':');
+  const resultIdParts = resultBaseId.split('_');
+  let resultBookId = '';
+  let resultChapterId = '';
+  let resultSceneId = '';
+  if (resultIdParts.length >= 3) {
+    const resultChunkIndex = resultIdParts.pop();  // e.g. '0001' (discarded)
+    resultSceneId = resultIdParts.pop();           // e.g. 'sc-6c4ea9f6'
+    resultChapterId = resultIdParts.pop();         // e.g. 'ch-ce87fec4'
+    resultBookId = resultIdParts.join('_');        // e.g. 'master_margarita_demo'
+  }
+  const resultData = JSON.stringify({
+    job_id,
+    result_base64,
+    build_id: build_id || null
+  });
+  const resultRedisKey = `animastor:result:${build_id || 'default'}:${resultBookId}:${resultChapterId}:${resultSceneId}:${resultType}`;
   await redis.set(
-  `animastor:result:${job_id}`,
-  result_base64,
-  "EX",
-  3600 // 1 час (или больше)
-)
+    resultRedisKey,
+    resultData,
+    "EX",
+    3600 // 1 hour
+  )
 
   await redis.hdel("animastor:running", job_id)
 

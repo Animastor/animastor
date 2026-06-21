@@ -497,7 +497,11 @@ async function executeAudioDispatch(redis, scene, loadedBook, buildId) {
         error(`Audio generation error: ${err.message}`);
         return { success: false, reason: 'audio_generation_error', error: err.message };
     }
-    
+
+    // Store build_id in scene state AFTER successful dispatch so that callbacks
+    // and reconciliation engine can find the output files.
+    await state.syncLinearState(redis, bookId, chapterId, sceneId, buildId);
+
     return { success: true, dispatched: true, waiting: true, stage: Stage.AUDIO };
 }
 
@@ -510,28 +514,26 @@ async function executeImageDispatch(redis, scene, loadedBook, buildId) {
     const chapterId = scene.chapter_id;
     const sceneId = scene.scene_id;
 
-    // Transition to IMAGE_PENDING first
-    const result = await state.transitionSceneState(
-        redis,
-        bookId,
-        chapterId,
-        sceneId,
-        state.SceneState.IMAGE_PENDING
-    );
-
-    if (!result.success) {
-        return result;
-    }
+    // Use per-asset state for transition (independent dispatch mode).
+    // The linear FSM enforces audio→image→video ordering, which would reject
+    // IMAGE_PENDING if audio is still in AUDIO_GENERATING. Since the scheduler
+    // already decided independent stages via shouldScheduleAssets, we skip the
+    // linear FSM validation and use per-asset state directly.
+    // Batch: set PENDING first, then sync linear state once at the end.
+    await state.setAssetState(redis, bookId, chapterId, sceneId, 'image', state.AssetState.PENDING);
 
     // Find scene for IU generation
     const bookData = loadedBook || book.loadBook(bookId);
     const sceneData = book.findSceneRuntimeData(bookData, chapterId, sceneId);
     if (!sceneData) {
         error(`Scene not found in loadedBook: ${bookId}/${chapterId}/${sceneId}`);
+        // Revert asset state on failure
+        await state.setAssetState(redis, bookId, chapterId, sceneId, 'image', state.AssetState.NEW);
+        await state.syncLinearState(redis, bookId, chapterId, sceneId, buildId);
         return { success: false, reason: 'scene_not_found' };
     }
 
-    // Log dispatch event
+    // Log dispatch event (log to per-asset equivalent)
     await logEvent(redis, scene, 'IMAGE_DISPATCHED', state.SceneState.IMAGE_PENDING, {
         buildId
     });
@@ -544,8 +546,10 @@ async function executeImageDispatch(redis, scene, loadedBook, buildId) {
     if (allCached) {
         // All IU images already on disk — immediately mark scene complete
         log(`All IU images cached (${imgResult.cacheHitCount}/${imgResult.total}), completing image stage`);
-        await state.transitionSceneState(redis, bookId, chapterId, sceneId, state.SceneState.IMAGE_GENERATING);
-        await state.transitionSceneState(redis, bookId, chapterId, sceneId, state.SceneState.IMAGE_READY);
+        // Use per-asset state
+        await state.setAssetState(redis, bookId, chapterId, sceneId, 'image', state.AssetState.GENERATING);
+        await state.setAssetState(redis, bookId, chapterId, sceneId, 'image', state.AssetState.READY);
+        await state.syncLinearState(redis, bookId, chapterId, sceneId, buildId);
         // Update chunk image flags
         await updateSceneChunks(redis, bookId, chapterId, sceneId, { image: true, image_status: 'ready' });
         // Clean up dispatch lease
@@ -555,17 +559,9 @@ async function executeImageDispatch(redis, scene, loadedBook, buildId) {
         return { success: true, dispatched: false, waiting: false, stage: Stage.IMAGE };
     }
 
-    // Transition to IMAGE_GENERATING to mark dispatch complete
-    await state.transitionSceneState(
-        redis,
-        bookId,
-        chapterId,
-        sceneId,
-        state.SceneState.IMAGE_GENERATING
-    );
-
-    // Update per-asset state
+    // Mark GENERATING via per-asset state and sync linear FSM once
     await state.setAssetState(redis, bookId, chapterId, sceneId, 'image', state.AssetState.GENERATING);
+    await state.syncLinearState(redis, bookId, chapterId, sceneId, buildId);
 
     log(`Image dispatch complete (${imgResult.sentCount} sent): ${bookId}/${chapterId}/${sceneId}`);
     
@@ -617,29 +613,21 @@ async function executeVideoDispatch(redis, scene, loadedBook, buildId) {
             size: videoCheck.size
         });
         
-        await state.transitionSceneState(
-            redis,
-            bookId,
-            chapterId,
-            sceneId,
-            state.SceneState.VIDEO_READY
-        );
+        // Use per-asset state: linear FSM may reject VIDEO_READY if audio/image
+        // are still in intermediate states (independent dispatch mode).
+        await state.setAssetState(redis, bookId, chapterId, sceneId, 'video', state.AssetState.READY);
+        await state.syncLinearState(redis, bookId, chapterId, sceneId);
         
         return { success: true, dispatched: false, alreadyDone: true, nextStage: null };
     }
 
-    // Transition to VIDEO_PENDING first
-    const result = await state.transitionSceneState(
-        redis,
-        bookId,
-        chapterId,
-        sceneId,
-        state.SceneState.VIDEO_PENDING
-    );
-
-    if (!result.success) {
-        return result;
-    }
+    // Use per-asset state for transition (independent dispatch mode).
+    // The linear FSM enforces audio→image→video ordering, which would reject
+    // VIDEO_PENDING if audio or image are still in generating state. Since the
+    // scheduler already verified image readiness via per-asset states, we skip
+    // the linear FSM validation and use per-asset state directly.
+    await state.setAssetState(redis, bookId, chapterId, sceneId, 'video', state.AssetState.PENDING);
+    await state.syncLinearState(redis, bookId, chapterId, sceneId);
 
     // Log dispatch event
     await logEvent(redis, scene, 'VIDEO_DISPATCHED', state.SceneState.VIDEO_PENDING, {
@@ -651,6 +639,9 @@ async function executeVideoDispatch(redis, scene, loadedBook, buildId) {
     const sceneData = book.findSceneRuntimeData(bookDataVideo, chapterId, sceneId);
     if (!sceneData) {
         error(`Scene not found for video dispatch: ${bookId}/${chapterId}/${sceneId}`);
+        // Revert asset state on failure
+        await state.setAssetState(redis, bookId, chapterId, sceneId, 'video', state.AssetState.NEW);
+        await state.syncLinearState(redis, bookId, chapterId, sceneId, buildId);
         return { success: false, reason: 'scene_not_found' };
     }
 
@@ -667,17 +658,9 @@ async function executeVideoDispatch(redis, scene, loadedBook, buildId) {
             log(`Video job sent: ${jobSpec.job_id}`);
         }
 
-        // Transition to VIDEO_GENERATING so handleVideoCompleted accepts the callback
-        await state.transitionSceneState(
-            redis,
-            bookId,
-            chapterId,
-            sceneId,
-            state.SceneState.VIDEO_GENERATING
-        );
-
-        // Update per-asset state
+        // Mark GENERATING via per-asset state
         await state.setAssetState(redis, bookId, chapterId, sceneId, 'video', state.AssetState.GENERATING);
+        await state.syncLinearState(redis, bookId, chapterId, sceneId, buildId);
 
         log(`${videoResult.jobSpecs.length} video job(s) sent for: ${bookId}/${chapterId}/${sceneId}`);
     } else {
@@ -908,8 +891,9 @@ async function handleAudioCompleted(redis, bookId, chapterId, sceneId, buildId) 
     // Update per-asset state (source of truth)
     await state.setAssetState(redis, bookId, chapterId, sceneId, 'audio', state.AssetState.READY);
 
-    // Sync linear FSM from per-asset states (backward compat)
-    await state.syncLinearState(redis, bookId, chapterId, sceneId);
+    // Sync linear FSM from per-asset states (backward compat).
+    // Pass buildId so it's preserved in the scene state for reconciliation.
+    await state.syncLinearState(redis, bookId, chapterId, sceneId, buildId);
 
     // Release dispatch quota so worker pulse stops
     await dispatchEngine.releaseQuota(redis, 'audio');
@@ -992,8 +976,9 @@ async function handleImageCompleted(redis, bookId, chapterId, sceneId, buildId) 
     // Update per-asset state (source of truth)
     await state.setAssetState(redis, bookId, chapterId, sceneId, 'image', state.AssetState.READY);
 
-    // Sync linear FSM from per-asset states (backward compat)
-    await state.syncLinearState(redis, bookId, chapterId, sceneId);
+    // Sync linear FSM from per-asset states (backward compat).
+    // Pass buildId so it's preserved in the scene state for reconciliation.
+    await state.syncLinearState(redis, bookId, chapterId, sceneId, buildId);
 
     // Update all chunks for this scene with image_status: ready
     await updateSceneChunks(redis, bookId, chapterId, sceneId, { image: true, image_status: 'ready' });
@@ -1083,8 +1068,9 @@ async function handleVideoCompleted(redis, bookId, chapterId, sceneId, buildId) 
     // Update per-asset state (source of truth)
     await state.setAssetState(redis, bookId, chapterId, sceneId, 'video', state.AssetState.READY);
 
-    // Sync linear FSM from per-asset states (backward compat)
-    await state.syncLinearState(redis, bookId, chapterId, sceneId);
+    // Sync linear FSM from per-asset states (backward compat).
+    // Pass buildId so it's preserved in the scene state for reconciliation.
+    await state.syncLinearState(redis, bookId, chapterId, sceneId, buildId);
 
     // Release dispatch quota so worker pulse stops
     await dispatchEngine.releaseQuota(redis, 'video');

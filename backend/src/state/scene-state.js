@@ -520,12 +520,19 @@ function getRecoveryPendingState(stuckState) {
  * pass it to dispatch-engine when progressing to the next stage.
  * Without this, syncLinearState would reset build_id to null,
  * causing image/video dispatch to fail with "buildId is null".
+ *
+ * @param {RedisClient} redis
+ * @param {string} bookId
+ * @param {string} chapterId
+ * @param {string} sceneId
+ * @param {string|null} [overrideBuildId] — optional build_id to store (overrides existing)
+ * @returns {Promise<string>} The derived linear state
  */
-async function syncLinearState(redis, bookId, chapterId, sceneId) {
+async function syncLinearState(redis, bookId, chapterId, sceneId, overrideBuildId = null) {
     const assetStates = await getAssetStates(redis, bookId, chapterId, sceneId);
     const linearState = deriveLinearState(assetStates);
 
-    const buildId = await getSceneBuildId(redis, bookId, chapterId, sceneId);
+    const buildId = overrideBuildId || await getSceneBuildId(redis, bookId, chapterId, sceneId);
     await setSceneStateWithBuildId(redis, bookId, chapterId, sceneId, linearState, buildId);
     log(`SYNC LINEAR: ${bookId}/${chapterId}/${sceneId} -> ${linearState} (build_id=${buildId}, assets=${JSON.stringify(assetStates)})`);
     return linearState;

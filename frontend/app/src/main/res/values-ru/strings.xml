@@ -23,7 +23,7 @@
     <string name="file_too_large">Файл слишком большой</string>
 
     <!-- File Screen Download -->
-    <string name="download_section">Скачать:</string>
+    <string name="download_section">Скачать</string>
     <string name="download_storyboard">Скачать сториборд</string>
     <string name="download_storyboard_desc">Скачать изображения сториборда и аудио сцен</string>
     <string name="download_audio">Скачать аудио</string>

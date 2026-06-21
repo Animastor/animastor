@@ -129,6 +129,20 @@ async function checkOrphanAudioState(redis, bookId, chapterId, sceneId) {
         return null;
     }
 
+    // Guard: build_id must be present to check audio file
+    if (!sceneState.build_id) {
+        // Scene is in AUDIO_READY but has no build_id — this is an inconsistency
+        // that should be flagged but not crash. Return a warning rather than an
+        // orphan state so the auto-fix engine can address it.
+        return {
+            type: 'orphan_audio_state',
+            scene: { bookId, chapterId, sceneId },
+            state: state.SceneState.AUDIO_READY,
+            missingFile: 'build_id_missing',
+            recommendation: 'regenerate_audio'
+        };
+    }
+
     const audioModule = require('../audio');
     const storage = require('../storage');
     const audioPath = storage.filesystem.getSceneAudioPath(
@@ -714,14 +728,20 @@ async function applyFix(redis, fix) {
             case 'REGENERATE_MISSING_ASSET': {
                 // Mark as pending for regeneration
                 const current = await state.getSceneState(redis, scene.bookId, scene.chapterId, scene.sceneId);
-                const pendingState = {
-                    video: state.SceneState.VIDEO_PENDING,
-                    image: state.SceneState.IMAGE_PENDING,
-                    audio: state.SceneState.AUDIO_PENDING
-                }[scene.issue.split('_')[1]]; // Extract audio/image/video from issue
+
+                // Derive asset type from action reason or issue field
+                const reasons = (fix.reason + ' ' + (fix.issue || '')).toLowerCase();
+                const pendingState =
+                    reasons.includes('audio') || reasons.includes('tts')
+                        ? state.SceneState.AUDIO_PENDING
+                        : reasons.includes('video')
+                        ? state.SceneState.VIDEO_PENDING
+                        : reasons.includes('image') || reasons.includes('iu')
+                        ? state.SceneState.IMAGE_PENDING
+                        : null;
 
                 if (!pendingState) {
-                    return { success: false, action, scene, details: 'unknown asset type' };
+                    return { success: false, action, scene, details: `unknown asset type (reason: ${fix.reason})` };
                 }
 
                 await state.transitionSceneState(

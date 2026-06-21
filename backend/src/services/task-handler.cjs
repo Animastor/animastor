@@ -233,6 +233,16 @@ module.exports = function(redis, config, deps) {
                     }
                     log(`🎵 Scene audio already ready (real): ${book_id}/${chapter_id}/${scene_id} — delegating to orchestrator`);
                     await orchestrator.handleAudioCompleted(redis, book_id, chapter_id, scene_id, build_id);
+                    // Release dispatch lease: even though audio is already ready, the
+                    // dispatch engine acquired a lease when orchestrator dispatched this
+                    // stage. Without markDispatchCompleted, the lease persists for 30min
+                    // and the /api/v1/worker/counts endpoint shows the worker as active.
+                    try {
+                        const dispatchEngine = require('../runtime/dispatch-engine');
+                        await dispatchEngine.markDispatchCompleted(redis, book_id, chapter_id, scene_id, 'audio');
+                    } catch (dispErr) {
+                        console.warn(`⚠️ markDispatchCompleted failed in early return: ${dispErr.message}`);
+                    }
                     return;
                 }
                 log(`🎵 Scene audio is placeholder — proceeding with merge: ${book_id}/${chapter_id}/${scene_id}`);

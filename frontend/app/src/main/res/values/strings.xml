@@ -23,7 +23,7 @@
     <string name="file_too_large">File too large</string>
 
     <!-- File Screen Download -->
-    <string name="download_section">Download:</string>
+    <string name="download_section">Download</string>
     <string name="download_storyboard">Download Storyboard</string>
     <string name="download_storyboard_desc">Download storyboard images and scene audio</string>
     <string name="download_audio">Download Audio</string>

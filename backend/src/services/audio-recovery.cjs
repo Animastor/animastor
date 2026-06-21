@@ -32,19 +32,57 @@ module.exports = function(redis, config, deps) {
                     const raw = await redis.get(key);
                     if (!raw) continue;
 
-                    const data = JSON.parse(raw);
-                    const { job_id, result_base64, build_id } = data;
-                    if (!job_id || !result_base64) continue;
+                    let job_id, result_base64, build_id;
+                    let resultBuildId, bookId, chapterId, sceneId, suffix;
+
+                    // Try parsing as JSON first (new format: { job_id, result_base64, build_id })
+                    if (raw.startsWith('{')) {
+                        try {
+                            const data = JSON.parse(raw);
+                            job_id = data.job_id;
+                            result_base64 = data.result_base64;
+                            build_id = data.build_id;
+                        } catch (e) {
+                            console.warn('⚠️ Failed to parse JSON result:', e.message);
+                            await redis.del(key);
+                            continue;
+                        }
+                    }
 
                     // Extract identifiers from key: animastor:result:<buildId>:<bookId>:<chapterId>:<sceneId>:<suffix>
                     const keyParts = key.split(':');
-                    if (keyParts.length < 7) continue;
+                    if (keyParts.length >= 7) {
+                        // New format: animastor:result:<buildId>:<bookId>:<chapterId>:<sceneId>:<type>
+                        resultBuildId = keyParts[2];
+                        bookId = keyParts[3];
+                        chapterId = keyParts[4];
+                        sceneId = keyParts[5];
+                        suffix = keyParts[6];
+                    } else if (keyParts.length >= 4) {
+                        // Old GPU hub format: animastor:result:<bookId_chapterId_sceneId_index>:<type>
+                        // The value is a raw data URL, not JSON. Parse it.
+                        if (!result_base64) {
+                            // Data URL fallback: raw is like "data:audio/mp3;base64,..."
+                            result_base64 = raw;
+                            // Try to extract identifiers from the job_id part
+                            const combinedId = keyParts[2] || '';
+                            suffix = keyParts[3] || 'audio';
+                            // combinedId = bookId_chapterId_sceneId_index
+                            const idParts = combinedId.split('_');
+                            if (idParts.length >= 3) {
+                                sceneId = idParts.pop();
+                                chapterId = idParts.pop();
+                                bookId = idParts.join('_');
+                            }
+                            resultBuildId = build_id || 'default';
+                        }
+                        if (!job_id) {
+                            job_id = `${combinedId || 'unknown'}:${suffix}`;
+                        }
+                    }
 
-                    const resultBuildId = keyParts[2];
-                    const bookId = keyParts[3];
-                    const chapterId = keyParts[4];
-                    const sceneId = keyParts[5];
-                    const suffix = keyParts[6]; // 'audio' or 'image'
+                    if (!result_base64) continue;
+                    if (!bookId || !chapterId || !sceneId) continue;
 
                     const baseId = `${bookId}_${chapterId}_${sceneId}`;
 
