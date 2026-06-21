@@ -201,6 +201,101 @@ module.exports = function(redis, config, deps) {
         };
     }
 
+    // ── Lua script: atomic scene dirty reset ────────
+    // Atomically resets chunks, scene state, asset state, and active index
+    // for one scene. Executed as a single Redis EVAL — if the server
+    // crashes during execution, the entire scene reset either completes
+    // or doesn't (no partial state).
+    const RESET_SCENE_LUA = `
+        local args = cjson.decode(ARGV[1])
+        local prefix = 'animastor:chunk:' .. args.bookId .. '_' .. args.chapterId .. '_' .. args.sceneId .. '_'
+        local chunkSetKey = KEYS[4]
+        local cursor = '0'
+        local created = false
+
+        -- Phase 1: SCAN and reset all existing chunks
+        repeat
+            local result = redis.call('SCAN', cursor, 'MATCH', prefix .. '*', 'COUNT', 50)
+            cursor = result[1]
+            for _, key in ipairs(result[2]) do
+                local raw = redis.call('GET', key)
+                local ch = {}
+                if raw and raw ~= '' then
+                    ch = cjson.decode(raw)
+                end
+                if args.resetAudio then
+                    ch.audio = false; ch.audio_status = 'pending'
+                end
+                if args.resetImage then
+                    ch.image = false; ch.image_status = 'pending'
+                end
+                if args.resetVideo then
+                    ch.video = false; ch.video_status = 'pending'
+                end
+                ch.build_id = args.buildId
+                ch.book_id = args.bookId
+                ch.chapter_id = args.chapterId
+                ch.scene_id = args.sceneId
+                redis.call('SET', key, cjson.encode(ch))
+                local chunkId = key:gsub('^animastor:chunk:', '')
+                redis.call('SADD', chunkSetKey, chunkId)
+                created = true
+            end
+        until cursor == '0'
+
+        -- Phase 2: If no chunks existed, create default
+        -- Only set fields for layers being reset (matches old JS behavior).
+        -- Non-reset layers are absent — JSON.stringify will drop nil values.
+        if not created then
+            local defaultChunk = {
+                build_id = args.buildId,
+                book_id = args.bookId,
+                chapter_id = args.chapterId,
+                scene_id = args.sceneId,
+                chunk_index = '0001',
+                expected_chunk_count = 1,
+                padded_text = false
+            }
+            if args.resetAudio then
+                defaultChunk.audio = false; defaultChunk.audio_status = 'pending'
+            end
+            if args.resetImage then
+                defaultChunk.image = false; defaultChunk.image_status = 'pending'
+            end
+            if args.resetVideo then
+                defaultChunk.video = false; defaultChunk.video_status = 'pending'
+            end
+            local defaultId = args.bookId .. '_' .. args.chapterId .. '_' .. args.sceneId .. '_0001'
+            redis.call('SET', 'animastor:chunk:' .. defaultId, cjson.encode(defaultChunk))
+            redis.call('SADD', chunkSetKey, defaultId)
+        end
+
+        -- Phase 3: Set scene state
+        local now_ms = redis.call('TIME')[1] * 1000
+        redis.call('SET', KEYS[1], cjson.encode({
+            state = args.newState,
+            updated_at = now_ms,
+            build_id = args.buildId,
+            error = cjson.null
+        }))
+
+        -- Phase 4: Add to active scenes
+        redis.call('SADD', KEYS[3], args.bookId .. ':' .. args.chapterId .. ':' .. args.sceneId)
+
+        -- Phase 5: Merge and set asset states
+        local existingRaw = redis.call('GET', KEYS[2])
+        local assetData = {}
+        if existingRaw and existingRaw ~= '' then
+            assetData = cjson.decode(existingRaw)
+        end
+        if args.resetAudio then assetData['audio'] = 'PENDING' end
+        if args.resetImage then assetData['image'] = 'PENDING' end
+        if args.resetVideo then assetData['video'] = 'PENDING' end
+        redis.call('SET', KEYS[2], cjson.encode(assetData))
+
+        return { marked = true }
+    `;
+
     // ── Mark dirty scenes ─────────────────────────────
     async function markDirtyScenes(redis, bookId, buildId, dirtyScenes, layerCfg) {
         if (!dirtyScenes || dirtyScenes.length === 0) {
@@ -221,63 +316,7 @@ module.exports = function(redis, config, deps) {
                 continue;
             }
 
-            // Reset all chunks for this scene (SCAN pattern, not just _0001)
-            const chunkPrefix = `animastor:chunk:${bookId}_${chapter_id}_${scene_id}_`;
-            let cursor = '0';
-            let createdAny = false;
-            do {
-                const [nextCursor, keys] = await redis.scan(cursor, 'MATCH', `${chunkPrefix}*`, 'COUNT', 50);
-                cursor = nextCursor;
-                for (const key of keys) {
-                    const raw = await redis.get(key);
-                    const ch = raw ? JSON.parse(raw) : {};
-                    if (resetAudio) {
-                        ch.audio = false;
-                        ch.audio_status = 'pending';
-                    }
-                    if (resetImage) {
-                        ch.image = false;
-                        ch.image_status = 'pending';
-                    }
-                    if (resetVideo) {
-                        ch.video = false;
-                        ch.video_status = 'pending';
-                    }
-                    await redis.set(key, JSON.stringify({
-                        ...ch,
-                        build_id: buildId,
-                        book_id: bookId,
-                        chapter_id,
-                        scene_id,
-                    }));
-                    // Register in chunk set so getAllChunks finds it
-                    const chunkId = key.replace('animastor:chunk:', '');
-                    await redis.sadd(`animastor:chunks:${bookId}`, chunkId);
-                    createdAny = true;
-                }
-            } while (cursor !== '0');
-            // If no chunks existed yet for this scene, create the default one
-            if (!createdAny) {
-                const chunkId = `${bookId}_${chapter_id}_${scene_id}_0001`;
-                const ch = {};
-                if (resetAudio) { ch.audio = false; ch.audio_status = 'pending'; }
-                if (resetImage) { ch.image = false; ch.image_status = 'pending'; }
-                if (resetVideo) { ch.video = false; ch.video_status = 'pending'; }
-                await redis.set(`animastor:chunk:${chunkId}`, JSON.stringify({
-                    ...ch,
-                    build_id: buildId,
-                    book_id: bookId,
-                    chapter_id,
-                    scene_id,
-                    chunk_index: '0001',
-                    expected_chunk_count: 1,
-                }));
-                await redis.sadd(`animastor:chunks:${bookId}`, chunkId);
-            }
-
-            // Reset scene state in Redis (use direct set, not transitionSceneState,
-            // because scenes may be in terminal states like VIDEO_READY which have
-            // no outgoing transitions in the FSM — dirty marking is a forced reset).
+            // Determine new scene state
             let newState;
             if (resetAudio) {
                 newState = state.SceneState.AUDIO_PENDING;
@@ -287,25 +326,41 @@ module.exports = function(redis, config, deps) {
                 newState = state.SceneState.VIDEO_PENDING;
             }
 
-            await state.setSceneStateWithBuildId(redis, bookId, chapter_id, scene_id, newState, buildId);
-            await activeScenes.addActiveScene(redis, bookId, chapter_id, scene_id);
+            // Build Redis keys for this scene
+            const sceneStateKey = `${state.SCENE_STATE_KEY_PREFIX}:${bookId}:${chapter_id}:${scene_id}`;
+            const assetStateKey = `${state.ASSET_STATE_KEY_PREFIX}:${bookId}:${chapter_id}:${scene_id}`;
+            const activeScenesKey = 'animastor:active-scenes';
+            const chunksSetKey = `animastor:chunks:${bookId}`;
 
-            // Reset per-asset states so the scheduler doesn't see stale states
-            // from a previous (cancelled) generation run:
-            // e.g. audio=GENERATING from an aborted run would prevent re-dispatch
-            // because shouldScheduleAssets explicitly skips GENERATING.
-            const assetUpdates = {};
-            if (resetAudio) {
-                assetUpdates.audio = state.AssetState.PENDING;
-            }
-            if (resetImage) {
-                assetUpdates.image = state.AssetState.PENDING;
-            }
-            if (resetVideo) {
-                assetUpdates.video = state.AssetState.PENDING;
-            }
-            if (Object.keys(assetUpdates).length > 0) {
-                await state.setAssetStates(redis, bookId, chapter_id, scene_id, assetUpdates);
+            // Build args for Lua script
+            const luaArgs = JSON.stringify({
+                bookId,
+                chapterId: chapter_id,
+                sceneId: scene_id,
+                buildId,
+                newState,
+                resetAudio,
+                resetImage,
+                resetVideo,
+                sceneType: ds.scene_type || 'narration',
+            });
+
+            // Execute atomic scene reset via Lua
+            try {
+                await redis.eval(
+                    RESET_SCENE_LUA,
+                    4,  // numKeys
+                    sceneStateKey,    // KEYS[1]
+                    assetStateKey,    // KEYS[2]
+                    activeScenesKey,  // KEYS[3]
+                    chunksSetKey,     // KEYS[4]
+                    luaArgs           // ARGV[1]
+                );
+            } catch (luaErr) {
+                // Fallback: do it non-atomically via JS
+                log(`⚠️ Lua atomic reset failed, falling back to JS: ${luaErr.message}`);
+                await fallbackMarkSceneDirty(redis, bookId, buildId, chapter_id, scene_id,
+                    resetAudio, resetImage, resetVideo, newState);
             }
 
             log(`📋 Dirty scene marked: ${bookId}/${chapter_id}/${scene_id} → ${newState}`);
@@ -314,6 +369,50 @@ module.exports = function(redis, config, deps) {
 
         log(`📋 Marked ${marked}/${dirtyScenes.length} dirty scenes`);
         return { marked };
+    }
+
+    // ── Fallback (non-atomic) — same as old markDirtyScenes per scene ──
+    async function fallbackMarkSceneDirty(redis, bookId, buildId, chapterId, sceneId,
+                                           resetAudio, resetImage, resetVideo, newState) {
+        const chunkPrefix = `animastor:chunk:${bookId}_${chapterId}_${sceneId}_`;
+        let cursor = '0';
+        let createdAny = false;
+        do {
+            const [nextCursor, keys] = await redis.scan(cursor, 'MATCH', `${chunkPrefix}*`, 'COUNT', 50);
+            cursor = nextCursor;
+            for (const key of keys) {
+                const raw = await redis.get(key);
+                const ch = raw ? JSON.parse(raw) : {};
+                if (resetAudio) { ch.audio = false; ch.audio_status = 'pending'; }
+                if (resetImage) { ch.image = false; ch.image_status = 'pending'; }
+                if (resetVideo) { ch.video = false; ch.video_status = 'pending'; }
+                await redis.set(key, JSON.stringify({ ...ch, build_id: buildId, book_id: bookId, chapter_id: chapterId, scene_id: sceneId }));
+                const chunkId = key.replace('animastor:chunk:', '');
+                await redis.sadd(`animastor:chunks:${bookId}`, chunkId);
+                createdAny = true;
+            }
+        } while (cursor !== '0');
+        if (!createdAny) {
+            const chunkId = `${bookId}_${chapterId}_${sceneId}_0001`;
+            const ch = {};
+            if (resetAudio) { ch.audio = false; ch.audio_status = 'pending'; }
+            if (resetImage) { ch.image = false; ch.image_status = 'pending'; }
+            if (resetVideo) { ch.video = false; ch.video_status = 'pending'; }
+            await redis.set(`animastor:chunk:${chunkId}`, JSON.stringify({
+                ...ch, build_id: buildId, book_id: bookId, chapter_id: chapterId,
+                scene_id: sceneId, chunk_index: '0001', expected_chunk_count: 1,
+            }));
+            await redis.sadd(`animastor:chunks:${bookId}`, chunkId);
+        }
+        await state.setSceneStateWithBuildId(redis, bookId, chapterId, sceneId, newState, buildId);
+        await activeScenes.addActiveScene(redis, bookId, chapterId, sceneId);
+        const assetUpdates = {};
+        if (resetAudio) assetUpdates.audio = state.AssetState.PENDING;
+        if (resetImage) assetUpdates.image = state.AssetState.PENDING;
+        if (resetVideo) assetUpdates.video = state.AssetState.PENDING;
+        if (Object.keys(assetUpdates).length > 0) {
+            await state.setAssetStates(redis, bookId, chapterId, sceneId, assetUpdates);
+        }
     }
 
     // ── Apply profile to layer config ─────────────────

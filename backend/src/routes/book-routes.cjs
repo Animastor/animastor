@@ -1482,6 +1482,30 @@ async function clearBookDispatchMeta(redis, bookId) {
     // SELECTIVE REGENERATION
     // ======================================================
     app.post('/api/v1/book/:bookId/regenerate', async (req, res) => {
+        // Redis lock: prevent concurrent /regenerate for the same book
+        const REGENERATE_LOCK_PREFIX = 'animastor:regenerate-lock';
+        const LOCK_TTL = 120; // 2 min — generous for any regenerate operation
+        const lockKey = `${REGENERATE_LOCK_PREFIX}:${req.params.bookId}`;
+        const lockToken = `lock-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        const lockAcquired = await redis.set(lockKey, lockToken, 'NX', 'EX', LOCK_TTL);
+        if (!lockAcquired) {
+            log(`[REGENERATE] 🔒 Lock held for ${req.params.bookId} — rejecting duplicate`);
+            return res.status(429).json({
+                error: 'Regeneration already in progress for this book',
+                retry_after_seconds: LOCK_TTL,
+            });
+        }
+
+        // Release lock helper
+        const releaseRegenerateLock = async () => {
+            try {
+                const current = await redis.get(lockKey);
+                if (current === lockToken) {
+                    await redis.del(lockKey);
+                }
+            } catch (_) { /* best-effort */ }
+        };
+
         try {
             const { bookId } = req.params;
             const { scope, chapter_id, scene_id, profile, rebuild_all } = req.body || {};

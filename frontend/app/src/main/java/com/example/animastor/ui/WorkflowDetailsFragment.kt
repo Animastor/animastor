@@ -25,6 +25,8 @@ import com.example.animastor.repository.UpdateBindingRequest
 import com.example.animastor.ui.WorkflowDetailsViewModel.BindingDisplayItem
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.color.MaterialColors
+import com.google.android.material.shape.RoundedCornerTreatment
+import com.google.android.material.shape.ShapeAppearanceModel
 import com.google.android.material.tabs.TabLayout
 import com.google.android.material.tabs.TabLayoutMediator
 import kotlinx.coroutines.flow.collectLatest
@@ -75,7 +77,10 @@ class WorkflowDetailsFragment : Fragment(R.layout.fragment_workflow_details) {
         devChip.setChipStrokeColorResource(R.color.cinema_accent)
         devChip.chipStrokeWidth = 1.5f
         devChip.setTextColor(requireContext().getColor(R.color.cinema_accent))
-        devChip.chipCornerRadius = 12f
+        devChip.shapeAppearanceModel = ShapeAppearanceModel.builder()
+            .setAllCorners(RoundedCornerTreatment())
+            .setAllCornerSizes(12f)
+            .build()
         val chipLp = androidx.appcompat.widget.Toolbar.LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT,
             ViewGroup.LayoutParams.WRAP_CONTENT
