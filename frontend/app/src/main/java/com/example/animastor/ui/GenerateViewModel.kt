@@ -76,7 +76,8 @@ class GenerateViewModel(
         val buildId: String,
         val chunkIds: List<String>,
         val coverImage: Bitmap? = null,
-        val chunkPositions: Map<String, Pair<String?, String?>> = emptyMap()
+        val chunkPositions: Map<String, Pair<String?, String?>> = emptyMap(),
+        val softRefresh: Boolean = false
     )
 
     private val _playbackPrepared = MutableSharedFlow<PlaybackPreparation>(replay = 1, extraBufferCapacity = 4)
@@ -362,13 +363,14 @@ class GenerateViewModel(
             if (coverId != null && imageEnabled) {
                 cover = loadCoverBitmap(coverId)
             }
-            Log.i(TAG, "onGenerationComplete: emitting playbackPrepared with ${chunkIds.size} chunks cover=${cover != null}")
+            Log.i(TAG, "onGenerationComplete: emitting playbackPrepared (softRefresh) with ${chunkIds.size} chunks cover=${cover != null}")
             _playbackPrepared.tryEmit(PlaybackPreparation(
                 bookId = bookId,
                 buildId = buildId,
                 chunkIds = chunkIds,
                 coverImage = cover,
-                chunkPositions = positions
+                chunkPositions = positions,
+                softRefresh = true
             ))
         }
     }

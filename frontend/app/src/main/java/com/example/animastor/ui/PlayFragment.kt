@@ -210,7 +210,14 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                     playbackViewModel.resumeFromCurrentScene()
                 }
                 phase == PlayerPhase.SCENE_READY -> {
-                    playbackViewModel.playSceneQueue()
+                    // If there's an existing position (content refresh after generation),
+                    // resume from current scene instead of resetting to the beginning.
+                    if (playbackViewModel.currentChunkIndex > 0) {
+                        Log.i(TAG, "playButton: SCENE_READY — resuming from index ${playbackViewModel.currentChunkIndex}")
+                        playbackViewModel.resumeFromCurrentScene()
+                    } else {
+                        playbackViewModel.playSceneQueue()
+                    }
                 }
                 phase == PlayerPhase.IDLE && playbackViewModel.chunkQueueSize > 0 -> {
                     Log.i(TAG, "playButton: IDLE with ${playbackViewModel.chunkQueueSize} chunks — starting playback")
@@ -1186,6 +1193,30 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
     private fun resumePlayback() {
         Log.i(TAG, "resumePlayback")
         pendingVideoSyncJob?.cancel()
+
+        // If content was regenerated while paused, the old MediaPlayer has stale
+        // audio. Release it so the ViewModel's resumePlayback → playNext →
+        // fetchSceneData path creates a brand-new player with fresh content.
+        if (playbackViewModel.needsContentRefresh) {
+            Log.i(TAG, "resumePlayback: content changed, releasing stale player")
+            currentPlayer?.runCatching { stop() }
+            currentPlayer?.release()
+            currentPlayer = null
+            currentFile?.delete()
+            currentFile = null
+            nextPlayer?.release()
+            nextPlayer = null
+            nextFile?.delete()
+            nextFile = null
+            videoPlayer?.release()
+            videoPlayer = null
+            currentVideoFile?.delete()
+            currentVideoFile = null
+            isPaused = false
+            playbackViewModel.resumePlayback()
+            return
+        }
+
         showCurrentIu()
         currentPlayer?.start()
         try {

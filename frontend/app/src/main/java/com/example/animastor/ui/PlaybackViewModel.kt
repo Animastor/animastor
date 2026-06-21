@@ -114,6 +114,17 @@ class PlaybackViewModel(
     var pendingExternalSeek: ActivePosition? = null
     private var isExecutingExternalSeek = false
 
+    // ── Soft content refresh (regeneration completes while player is active) ─
+
+    /**
+     * Set by [refreshContent] when regeneration finishes while the player is
+     * in PAUSED or PLAYING state. The next call to [resumePlayback] will
+     * re-fetch the current scene's content instead of blindly resuming the
+     * stale MediaPlayer.
+     */
+    var needsContentRefresh = false
+        private set
+
     // ── Layer toggles ────────────────────────────────────────────
 
     var imageEnabled: Boolean = true
@@ -143,6 +154,12 @@ class PlaybackViewModel(
     /**
      * Start playback from the beginning.
      */
+    /**
+     * Start playback from the beginning, or refresh content for the same book.
+     *
+     * When called for content refresh (same [bookId]), the current scene position
+     * ([currentIndex]) is preserved so the user doesn't reset to the beginning.
+     */
     fun preparePlayback(
         bookId: String,
         buildId: String,
@@ -150,9 +167,10 @@ class PlaybackViewModel(
         chunkPositions: Map<String, Pair<String?, String?>>
     ) {
         Log.i(TAG, "preparePlayback: book=$bookId build=$buildId chunks=${chunkIds.size}")
-        // Only clear repository cache if generation changed (different buildId or different book)
         val prevBookId = this.bookId
         val prevBuildId = this.buildId
+        val savedIndex = if (currentIndex in chunkIds.indices) currentIndex else 0
+
         preloadCache.clear()
         this.bookId = bookId
         this.buildId = buildId
@@ -160,6 +178,16 @@ class PlaybackViewModel(
         chunkQueue.addAll(chunkIds)
         this.chunkPositions.clear()
         this.chunkPositions.putAll(chunkPositions)
+
+        // Preserve position during content refresh (same book, same chunks)
+        if (prevBookId == bookId && savedIndex in chunkIds.indices) {
+            currentIndex = savedIndex
+            Log.i(TAG, "preparePlayback: preserved position at index $currentIndex")
+        } else {
+            currentIndex = 0
+            Log.i(TAG, "preparePlayback: reset position to 0 (new book or different chunks)")
+        }
+
         if (prevBuildId != buildId || prevBookId != bookId) {
             Log.i(TAG, "preparePlayback: generation changed (${prevBuildId}→$buildId), clearing cache")
             _repository.clearCache()
@@ -167,10 +195,79 @@ class PlaybackViewModel(
             Log.i(TAG, "preparePlayback: same generation, keeping cache")
         }
         if (chunkIds.isNotEmpty()) {
-            Log.i(TAG, "preparePlayback → SCENE_READY (${chunkIds.size} chunks)")
+            Log.i(TAG, "preparePlayback → SCENE_READY (${chunkIds.size} chunks, index=$currentIndex)")
             _uiState.update { it.copy(phase = PlayerPhase.SCENE_READY) }
         } else {
             Log.w(TAG, "preparePlayback → IDLE (no chunks)")
+            _uiState.update { it.copy(phase = PlayerPhase.IDLE) }
+        }
+    }
+
+    /**
+     * Soft-refresh content after regeneration completes while the player is active.
+     *
+     * Unlike [preparePlayback], this preserves the current playback phase and
+     * position when the player is PAUSED or PLAYING — it only updates the backing
+     * data (chunk IDs, positions) and sets [needsContentRefresh] so the next
+     * [resumePlayback] call will re-fetch the current scene's audio/image instead
+     * of resuming the stale [MediaPlayer].
+     *
+     * For IDLE / SCENE_READY phases, it falls through to the same behavior as
+     * [preparePlayback] (full reset to SCENE_READY).
+     */
+    fun refreshContent(
+        bookId: String,
+        buildId: String,
+        chunkIds: List<String>,
+        chunkPositions: Map<String, Pair<String?, String?>>
+    ) {
+        Log.i(TAG, "refreshContent: book=$bookId build=$buildId chunks=${chunkIds.size}")
+
+        val prevBookId = this.bookId
+        val prevBuildId = this.buildId
+
+        // Preserve position relative to chunk IDs (not index), because the queue
+        // is rebuilt and a scene may have been added/removed during regeneration.
+        val currentChunkId = chunkQueue.getOrNull(currentIndex)
+        val newIndex = if (currentChunkId != null) chunkIds.indexOf(currentChunkId) else -1
+
+        preloadCache.clear()
+        preloadJobs.clear()
+        this.bookId = bookId
+        this.buildId = buildId
+        chunkQueue.clear()
+        chunkQueue.addAll(chunkIds)
+        this.chunkPositions.clear()
+        this.chunkPositions.putAll(chunkPositions)
+        if (newIndex >= 0) {
+            currentIndex = newIndex
+        } else {
+            currentIndex = 0
+        }
+
+        val currentPhase = _uiState.value.phase
+        Log.i(TAG, "refreshContent: phase=$currentPhase index=$currentIndex (mapped $currentChunkId → $newIndex)")
+
+        if (currentPhase == PlayerPhase.PAUSED || currentPhase == PlayerPhase.PLAYING) {
+            // Player was active — mark content as stale; the next resume will
+            // re-fetch the current scene instead of resuming the old MediaPlayer.
+            needsContentRefresh = true
+            // Clear stale pending data so the fragment doesn't try to use it
+            pendingChunkAudio = null
+            pendingChunkVideo = null
+            pendingChunkIuSequence = null
+            Log.i(TAG, "refreshContent: player active — marked needsContentRefresh")
+            return
+        }
+
+        // For IDLE / SCENE_READY: behave like preparePlayback (full reset)
+        if (prevBuildId != buildId || prevBookId != bookId) {
+            Log.i(TAG, "refreshContent: generation changed, clearing cache")
+            _repository.clearCache()
+        }
+        if (chunkIds.isNotEmpty()) {
+            _uiState.update { it.copy(phase = PlayerPhase.SCENE_READY) }
+        } else {
             _uiState.update { it.copy(phase = PlayerPhase.IDLE) }
         }
     }
@@ -206,9 +303,21 @@ class PlaybackViewModel(
     }
 
     /**
-     * Resume playback. Restores the phase to [PlayerPhase.PLAYING].
+     * Resume playback. Restores the phase to [PlayerPhase.PLAYING], or — if
+     * [needsContentRefresh] is set (content was regenerated while paused) —
+     * re-fetches the current scene from scratch so the user hears fresh audio.
      */
     fun resumePlayback() {
+        if (needsContentRefresh) {
+            needsContentRefresh = false
+            Log.i(TAG, "resumePlayback: content changed, re-fetching current scene (index=$currentIndex)")
+            // Re-fetch current scene — will set phase to DOWNLOADING → PLAYING
+            viewModelScope.launch {
+                _uiState.update { it.copy(phase = PlayerPhase.DOWNLOADING) }
+                playNext()
+            }
+            return
+        }
         _uiState.update { it.copy(phase = PlayerPhase.PLAYING) }
     }
 
@@ -459,6 +568,7 @@ class PlaybackViewModel(
         currentUnitIndex = seek.unitIndex
         SharedPositionManager.navigateTo(seek)
         _uiState.update { it.copy(phase = PlayerPhase.DOWNLOADING) }
+        needsContentRefresh = false
 
         preloadCache.clear()
         preloadJobs.clear()
@@ -652,30 +762,32 @@ class PlaybackViewModel(
     private suspend fun fetchSceneData(id: String): PreloadedScene = coroutineScope {
         Log.d(TAG, "fetchSceneData: $id")
 
-        val chunk =runCatching { _repository.getChunk(id, buildId) }.getOrElse { err ->
-            Log.w(TAG, "fetchSceneData: chunk $id not found in Redis: ${err.message}"
-            )
+        val chunk = runCatching { _repository.getChunk(id, buildId) }.getOrElse { err ->
+            Log.w(TAG, "fetchSceneData: chunk $id not found in Redis: ${err.message}")
             null
         }
         Log.i(TAG, "fetchSceneData: chunk $id audio_ready=${chunk?.audio_ready} image_ready=${chunk?.image_ready} video_ready=${chunk?.video_ready}")
 
+        // If chunk is unavailable or audio isn't ready yet (e.g. the backend just
+        // finished generation but the audio file isn't fully written), throw so the
+        // caller's retryWithBackoff mechanism retries with exponential backoff.
+        // Without this, we'd emit empty audio → PLAYING with no MediaPlayer → stuck.
+        if (chunk == null || chunk.audio_ready != true) {
+            throw Exception("Audio not ready for $id (ready=${chunk?.audio_ready})")
+        }
+
         val audioDeferred = async {
-            if (chunk?.audio_ready == true) {
-                runCatching {
-                    _repository.getChunkAudio(id, buildId).also {
-                        Log.i(TAG, "audio fetched for $id: ${it.size} bytes")
-                    }
-                }.getOrElse { e ->
-                    Log.w(TAG, "audio_ready=true but fetch failed for $id: ${e.message}")
-                    byteArrayOf()
+            runCatching {
+                _repository.getChunkAudio(id, buildId).also {
+                    Log.i(TAG, "audio fetched for $id: ${it.size} bytes")
                 }
-            } else {
-                Log.i(TAG, "audio not ready for $id, skipping fetch")
+            }.getOrElse { e ->
+                Log.w(TAG, "audio_ready=true but fetch failed for $id: ${e.message}")
                 byteArrayOf()
             }
         }
         val videoDeferred = async {
-            if (chunk?.video_ready == true) {
+            if (chunk.video_ready == true) {
                 runCatching { _repository.getChunkVideo(id, buildId) }.getOrNull().also {
                     Log.d(TAG, if (it != null) "video fetched: ${it.size} bytes" else "video null")
                 }

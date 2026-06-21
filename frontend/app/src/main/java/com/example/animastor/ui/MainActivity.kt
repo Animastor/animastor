@@ -281,13 +281,25 @@ class MainActivity : AppCompatActivity() {
         // Primary channel: playback preparation (chunks, positions, initial cover)
         lifecycleScope.launch {
             viewModel.playbackPrepared.collect { prep ->
-                Log.i("MainActivity", "playbackPrepared: book=${prep.bookId} chunks=${prep.chunkIds.size} cover=${prep.coverImage != null}")
-                playbackViewModel.preparePlayback(
-                    bookId = prep.bookId,
-                    buildId = prep.buildId,
-                    chunkIds = prep.chunkIds,
-                    chunkPositions = prep.chunkPositions
-                )
+                Log.i("MainActivity", "playbackPrepared: book=${prep.bookId} chunks=${prep.chunkIds.size} cover=${prep.coverImage != null} soft=${prep.softRefresh}")
+                if (prep.softRefresh) {
+                    // Regeneration completed while player may be active — use
+                    // soft refresh that preserves the current phase/position.
+                    playbackViewModel.refreshContent(
+                        bookId = prep.bookId,
+                        buildId = prep.buildId,
+                        chunkIds = prep.chunkIds,
+                        chunkPositions = prep.chunkPositions
+                    )
+                } else {
+                    // Initial load or new book — full reset to SCENE_READY.
+                    playbackViewModel.preparePlayback(
+                        bookId = prep.bookId,
+                        buildId = prep.buildId,
+                        chunkIds = prep.chunkIds,
+                        chunkPositions = prep.chunkPositions
+                    )
+                }
                 if (prep.coverImage != null) {
                     playbackViewModel.setCoverImage(prep.coverImage)
                 }
@@ -527,6 +539,7 @@ class MainActivity : AppCompatActivity() {
                     Log.i("MainActivity", "New generation detected (scope=${activeGen.scope}) — resetting completion tracking")
                     workerCompletedAt.clear()
                     _workerPermanentlyDone.clear()
+                    _coverEverIncomplete = false
                     gpuProgressDoneAt = 0L
                     lastReadyCount = -1
                 }
@@ -608,6 +621,11 @@ class MainActivity : AppCompatActivity() {
     // Detect new-generation transitions so we can clear completion tracking.
     private var _lastActiveGeneration: GenerateViewModel.ActiveGeneration? = null
 
+    // Tracks whether cover was ever incomplete (actively being generated)
+    // during the current generation session. If cover was already ready from
+    // the start, we skip the row entirely — no fake "Done" display.
+    private var _coverEverIncomplete = false
+
     /**
      * Render progress of all active workers simultaneously — no rotation.
      * Each worker gets its own row (name + count + percent + progress bar).
@@ -661,10 +679,18 @@ class MainActivity : AppCompatActivity() {
             workers.add(Wrk(type, label, ready, total, pct, done))
         }
 
-        // Cover (uses IU counts) — only show when cover is actually being generated.
-        // If cover is already fully ready, skip it entirely: no fake progress row.
-        if (assets.cover_iu_total > 0 && assets.cover_iu_ready < assets.cover_iu_total) {
-            add("cover", getString(R.string.progress_cover_generating), assets.cover_iu_ready, assets.cover_iu_total)
+        // Cover (uses IU counts) — only show when cover is actually being generated
+        // or just completed during this session. If cover was already ready from the
+        // start, skip entirely — no fake "Done" row for work that never happened.
+        if (assets.cover_iu_total > 0) {
+            if (assets.cover_iu_ready < assets.cover_iu_total) {
+                _coverEverIncomplete = true
+                add("cover", getString(R.string.progress_cover_generating), assets.cover_iu_ready, assets.cover_iu_total)
+            } else if (_coverEverIncomplete) {
+                // Cover just completed — show "Done" for standard duration
+                add("cover", getString(R.string.progress_cover_generating), assets.cover_iu_ready, assets.cover_iu_total)
+            }
+            // If cover was already ready and never incomplete this session: skip entirely
         }
 
         if (total > 0) {
