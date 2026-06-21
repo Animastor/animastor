@@ -9,6 +9,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const registry = require('./prompt-dependency-registry');
 
 module.exports = function(redis, config, deps) {
     const { state, book, layerConfig, genScope, activeScenes, getChunk, saveChunk } = deps;
@@ -41,51 +42,43 @@ module.exports = function(redis, config, deps) {
 
     // ── Scene diff ────────────────────────────────────
     function diffScene(oldScene, newScene) {
-        const dirtyLayers = [];
-        const changes = {};
-
-        // Audio changes
-        if (!isEqual(oldScene.audio?.full_text, newScene.audio?.full_text) ||
-            !isEqual(oldScene.audio?.voice, newScene.audio?.voice)) {
-            dirtyLayers.push('audio', 'video');
-            changes.audio = {
-                full_text_changed: !isEqual(oldScene.audio?.full_text, newScene.audio?.full_text),
-                voice_changed: !isEqual(oldScene.audio?.voice, newScene.audio?.voice),
-            };
-        }
-
-        // Unit/image changes
-        const oldUnits = (oldScene.units || []).concat(
-            (oldScene.dialogue_blocks || []).flatMap(db => db.units || [])
-        );
-        const newUnits = (newScene.units || []).concat(
-            (newScene.dialogue_blocks || []).flatMap(db => db.units || [])
-        );
-
-        if (!isEqual(oldUnits, newUnits)) {
-            dirtyLayers.push('image', 'video');
-            changes.units = {
-                old_count: oldUnits.length,
-                new_count: newUnits.length,
-            };
-        }
-
-        // Scene-level changes
-        if (!isEqual(oldScene.location, newScene.location) ||
-            !isEqual(oldScene.participants, newScene.participants) ||
-            !isEqual(oldScene.style, newScene.style)) {
-            dirtyLayers.push('image', 'video');
-            changes.scene = {
-                location_changed: !isEqual(oldScene.location, newScene.location),
-                participants_changed: !isEqual(oldScene.participants, newScene.participants),
-                style_changed: !isEqual(oldScene.style, newScene.style),
-            };
-        }
-
+        // Delegated to Prompt Dependency Registry — the single source of truth
+        // for which scene-level fields affect which generation layers.
+        // See prompt-dependency-registry.js for the full list of fields.
+        const result = registry.computeSceneDirtyLayers(oldScene, newScene);
         return {
-            dirty_layers: [...new Set(dirtyLayers)],
-            changes: Object.keys(changes).length > 0 ? changes : null,
+            dirty_layers: result.dirtyLayers,
+            changes: result.changes,
         };
+    }
+
+    // ── Merge or add a dirty scene entry ───────────────
+    function ensureDirtyScene(dirtyScenes, chapterId, sceneId, reason, dirtyLayers, changes) {
+        const existing = dirtyScenes.find(d => d.chapter_id === chapterId && d.scene_id === sceneId);
+        if (existing) {
+            for (const layer of dirtyLayers) {
+                if (!existing.dirty_layers.includes(layer)) {
+                    existing.dirty_layers.push(layer);
+                }
+            }
+            if (changes) {
+                existing.changes = { ...existing.changes, ...changes };
+            }
+            // Keep the earliest reason (e.g. 'added' > 'changed' > 'character_changed')
+            if (reason === 'added' || reason === 'changed') {
+                existing.reason = reason;
+            }
+            return existing;
+        }
+        const entry = {
+            chapter_id: chapterId,
+            scene_id: sceneId,
+            reason,
+            dirty_layers: [...dirtyLayers],
+            changes: changes || null,
+        };
+        dirtyScenes.push(entry);
+        return entry;
     }
 
     // ── Compute book diff ─────────────────────────────
@@ -106,7 +99,7 @@ module.exports = function(redis, config, deps) {
         const dirtyScenes = [];
         let reindexNeeded = false;
 
-        // Check for added, removed, or changed scenes
+        // ── Step 1: Scene-level diff (added, removed, changed) ──
         for (const key of Object.keys(newMap)) {
             const newS = newMap[key];
             const oldS = oldMap[key];
@@ -150,12 +143,59 @@ module.exports = function(redis, config, deps) {
             }
         }
 
+        // ── Step 2: Cross-cutting entity changes ───────────────
+        // Use Prompt Dependency Registry to find changed entities
+        // (characters, locations) and mark affected scenes.
+        const crossFields = registry.getCrossFields();
+        const crossChanges = {};  // field.key → count
+        for (const field of crossFields) {
+            const oldEntities = field.entitySource(oldBook);
+            const newEntities = field.entitySource(newBook);
+
+            const oldEntityMap = new Map();
+            for (const e of oldEntities) oldEntityMap.set(field.entityId(e), e);
+            const newEntityMap = new Map();
+            for (const e of newEntities) newEntityMap.set(field.entityId(e), e);
+
+            const changedIds = new Set();
+
+            // Detect changed/added entities
+            for (const [id, newEntity] of newEntityMap) {
+                const oldEntity = oldEntityMap.get(id);
+                if (!oldEntity || field.isChanged(oldEntity, newEntity)) {
+                    changedIds.add(id);
+                }
+            }
+            // Detect removed entities
+            for (const id of oldEntityMap.keys()) {
+                if (!newEntityMap.has(id)) {
+                    changedIds.add(id);
+                }
+            }
+
+            if (changedIds.size > 0) {
+                crossChanges[field.key] = changedIds.size;
+                log(`📋 ${field.key} changes detected: ${changedIds.size} changed`);
+                for (const entityId of changedIds) {
+                    const affected = field.findAffectedScenes(newScenes, entityId);
+                    for (const s of affected) {
+                        const ch = {};
+                        ch[field.label] = entityId;
+                        ensureDirtyScene(dirtyScenes, s.chapter_id, s.scene_id,
+                            field.key.replace(/[.\[\]]/g, '_') + '_changed',
+                            field.layers, ch);
+                    }
+                }
+            }
+        }
+
         return {
             dirty_scenes: dirtyScenes,
             changes: {
                 added: Object.keys(newMap).filter(k => !oldMap[k]).length,
                 removed: Object.keys(oldMap).filter(k => !newMap[k]).length,
                 modified: dirtyScenes.filter(d => d.reason === 'changed').length,
+                ...crossChanges,
             },
             reindex_needed: reindexNeeded,
         };

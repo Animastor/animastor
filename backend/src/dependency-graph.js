@@ -3,33 +3,44 @@
 // ======================================================
 // Defines what depends on what during selective regeneration.
 //
+// DERIVED FROM: prompt-dependency-registry.js
+// The Prompt Dependency Registry is the single source of truth
+// for which scene-level fields affect which generation layers.
+// This file translates that into layer→layer dependencies.
+//
 // Structure:
 //   layer → { regenerate: [affected layers], invalidates: [chunks/state keys] }
 //
 // When a layer changes, all layers in its "regenerate" array
 // must also be regenerated due to data dependencies.
 
+const registry = require('./services/prompt-dependency-registry');
+const layerDeps = registry.getLayerDependencies();
+
 const DEPENDENCY_GRAPH = {
-    // IU (image unit) visual changes → image + video must be regenerated
+    // Image layer — triggered by scene visual fields + unit changes
+    // Image regeneration cascades to video (pipeline dependency)
     image: {
-        label: 'Image / IU',
-        regenerate: ['image', 'video'],
+        label: layerDeps.image.label,
+        regenerate: layerDeps.image.regenerate,
         invalidates: ['scene_image', 'scene_video'],
-        description: 'IU prompt, visual config, location, participants → regen image + video'
+        description: `IU prompt, visual config, location, participants → regen image + video (${layerDeps.image.triggeredBy.length} triggers)`
     },
-    // Audio text/voice changes → audio + video must be regenerated
+    // Audio layer — triggered by text/voice changes only.
+    // Video is generated WITHOUT audio track (mute .mp4), so audio changes
+    // do NOT cascade to video. The final Audio+Video mux happens at export time.
     audio: {
-        label: 'Audio',
-        regenerate: ['audio', 'video'],
-        invalidates: ['scene_audio', 'scene_video'],
-        description: 'full_text, voice → regen audio + video'
+        label: layerDeps.audio.label,
+        regenerate: layerDeps.audio.regenerate,
+        invalidates: ['scene_audio'],
+        description: `full_text, voice → regen audio only (${layerDeps.audio.triggeredBy.length} triggers, video is mute)`
     },
-    // Video-only changes (timing, transitions) → only video
+    // Video layer — only triggers from image cascade, NOT from audio
     video: {
-        label: 'Video',
-        regenerate: ['video'],
+        label: layerDeps.video.label,
+        regenerate: layerDeps.video.regenerate,
         invalidates: ['scene_video'],
-        description: 'timing, transitions → regen video only'
+        description: `Visual changes only (${layerDeps.video.triggeredBy.length} triggers) → regen video`
     },
     // Filesystem/order changes → reindex only
     filesystem: {
