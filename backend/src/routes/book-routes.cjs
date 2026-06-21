@@ -184,8 +184,29 @@ async function clearBookDispatchMeta(redis, bookId) {
             if (updatedBookData.manifest.book_id !== bookId) {
                 return res.status(400).json({ error: 'bookId mismatch' });
             }
+
+            // Load old book before saving to compute diff
+            const oldBook = book.loadBook(bookId);
+
+            // Save new book
             book.saveBookBundle(updatedBookData, null);
             log(`[UPDATE BOOK] ${bookId}: ${updatedBookData.chapters?.length || 0} chapters saved`);
+
+            // Load saved book from disk to get post-save state for hash computation
+            const newBook = book.loadBook(bookId) || updatedBookData;
+
+            // Reconcile PG state (hashes, asset status, tasks) via book-diff
+            try {
+                const diff = bookDiff.computeBookDiff(oldBook || { chapters: [] }, newBook);
+                if (diff.dirty_scenes.length > 0) {
+                    const syncResult = await storage.bookSync.reconcileFromDiff(bookId, diff.dirty_scenes, newBook);
+                    log(`[UPDATE BOOK] ${bookId}: reconciled ${syncResult.reconciled} scenes`);
+                }
+            } catch (syncErr) {
+                // Non-fatal: PG reconciliation should not block the save
+                console.warn(`[UPDATE BOOK] PG reconcile failed for ${bookId}: ${syncErr.message}`);
+            }
+
             return res.json({ saved: true, book_id: bookId });
         } catch (err) {
             console.error('[UPDATE BOOK] Error:', err.message);

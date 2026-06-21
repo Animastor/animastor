@@ -272,6 +272,7 @@ async function syncBook(bookId, { dryRun = false, purgeRemoved = true } = {}) {
 module.exports = {
     detectChangedScenes,
     syncBook,
+    reconcileFromDiff,
     updateSceneHashes,
     markSceneAssetsStale,
     markGenerationTasksStale,
