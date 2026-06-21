@@ -272,6 +272,23 @@ async function getScenesNeedingPlaceholder(bookId) {
  */
 async function replacePlaceholderWithRealAudio(bookId, chapterId, sceneId, buildId, realAudioPath, realDuration) {
     try {
+        // R15: Query current scene version for version-based staleness tracking
+        let currentContentVersion = null;
+        let currentAudioConfigVersion = null;
+        try {
+            const { query } = require('../storage/postgres/database');
+            const verResult = await query(`
+                SELECT content_version, audio_config_version FROM scenes
+                WHERE book_id = $1 AND chapter_id = $2 AND scene_id = $3
+            `, [bookId, chapterId, sceneId]);
+            if (verResult.rows.length > 0) {
+                currentContentVersion = verResult.rows[0].content_version;
+                currentAudioConfigVersion = verResult.rows[0].audio_config_version;
+            }
+        } catch (_) {
+            // Non-fatal: version query failure shouldn't block audio registration
+        }
+
         const existing = await sceneAssetsRepo.getAsset(bookId, chapterId, sceneId, 'audio', buildId);
         if (!existing) {
             log(`No existing audio asset for ${bookId}/${chapterId}/${sceneId} — registering as ready`);
@@ -284,6 +301,8 @@ async function replacePlaceholderWithRealAudio(bookId, chapterId, sceneId, build
                 duration_sec: realDuration,
                 build_id: buildId,
                 status: 'ready',
+                scene_content_version: currentContentVersion,
+                scene_audio_config_version: currentAudioConfigVersion,
             });
             return { replaced: false, reason: 'new_asset' };
         }
@@ -299,6 +318,8 @@ async function replacePlaceholderWithRealAudio(bookId, chapterId, sceneId, build
                 duration_sec: realDuration,
                 build_id: buildId,
                 status: 'ready',
+                scene_content_version: currentContentVersion,
+                scene_audio_config_version: currentAudioConfigVersion,
             });
             // Only delete placeholder file if it's at a different path than the real audio
             // (they usually share the same canonical path, so real audio already overwrote it)
@@ -321,6 +342,8 @@ async function replacePlaceholderWithRealAudio(bookId, chapterId, sceneId, build
                 duration_sec: realDuration,
                 build_id: buildId,
                 status: 'ready',
+                scene_content_version: currentContentVersion,
+                scene_audio_config_version: currentAudioConfigVersion,
             });
             return { replaced: false, reason: 'already_ready_updated' };
         }
@@ -335,6 +358,8 @@ async function replacePlaceholderWithRealAudio(bookId, chapterId, sceneId, build
             duration_sec: realDuration,
             build_id: buildId,
             status: 'ready',
+            scene_content_version: currentContentVersion,
+            scene_audio_config_version: currentAudioConfigVersion,
         });
         return { replaced: true, reason: `upgraded_from_${existing.status}` };
     } catch (err) {

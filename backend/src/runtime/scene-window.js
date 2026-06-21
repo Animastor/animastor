@@ -150,8 +150,9 @@ async function sceneHasValidContent(redis, buildId, bookId, chapterId, sceneId) 
         }
     }
 
-    // R14: Log version discrepancies — detect stale content where asset versions
-    // are behind the scene's expected version. This is non-fatal diagnostic logging.
+    // R15: Version-based staleness check — if asset version < scene version,
+    // the content on disk is stale and needs regeneration.
+    // This makes PG version counters the actual source of truth for staleness.
     try {
         const { query } = require('../storage/postgres/database');
         const sceneResult = await query(`
@@ -163,7 +164,14 @@ async function sceneHasValidContent(redis, buildId, bookId, chapterId, sceneId) 
             const aAsset = await sceneAssetsRepo.getAsset(bookId, chapterId, sceneId, 'audio', buildId);
             if (aAsset && aAsset.scene_content_version != null && sv.content_version != null &&
                 aAsset.scene_content_version < sv.content_version) {
-                log(`[VERSION-MISMATCH] ${bookId}/${chapterId}/${sceneId}: audio content_version=${aAsset.scene_content_version} < scene content_version=${sv.content_version}`);
+                log(`[VERSION-STALE] ${bookId}/${chapterId}/${sceneId}: audio content_version=${aAsset.scene_content_version} < scene content_version=${sv.content_version} — content is stale`);
+                return false; // Content is stale, needs regeneration
+            }
+            // Also check audio config version for audio-specific changes
+            if (aAsset && aAsset.scene_audio_config_version != null && sv.audio_config_version != null &&
+                aAsset.scene_audio_config_version < sv.audio_config_version) {
+                log(`[VERSION-STALE] ${bookId}/${chapterId}/${sceneId}: audio_config_version=${aAsset.scene_audio_config_version} < scene audio_config_version=${sv.audio_config_version} — audio is stale`);
+                return false; // Audio is stale, needs regeneration
             }
         }
     } catch (_) {

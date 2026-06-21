@@ -172,10 +172,20 @@ async function markSceneAssetsStale(bookId, chapterSceneKeys) {
     let total = 0;
     for (const key of chapterSceneKeys) {
         const [chapterId, sceneId] = splitKey(key);
+        // R15: Propagate current scene version to scene_assets when marking stale.
+        // This ensures the asset carries the version at which it became stale,
+        // so future version comparisons (asset.scene_content_version < scene.content_version)
+        // correctly identify this asset as outdated.
         const r = await query(`
-            UPDATE scene_assets
-            SET status = 'stale', updated_at = EXTRACT(EPOCH FROM NOW())::bigint
-            WHERE book_id = $1 AND chapter_id = $2 AND scene_id = $3 AND status = 'ready'
+            UPDATE scene_assets sa
+            SET status = 'stale',
+                scene_content_version = COALESCE(sv.content_version, sa.scene_content_version),
+                scene_audio_config_version = COALESCE(sv.audio_config_version, sa.scene_audio_config_version),
+                updated_at = EXTRACT(EPOCH FROM NOW())::bigint
+            FROM scenes sv
+            WHERE sa.book_id = $1 AND sa.chapter_id = $2 AND sa.scene_id = $3
+              AND sa.status = 'ready'
+              AND sv.book_id = $1 AND sv.chapter_id = $2 AND sv.scene_id = $3
         `, [bookId, chapterId, sceneId]);
         total += r.rowCount || 0;
     }

@@ -180,6 +180,53 @@ async function getOutdatedByHash(bookId, currentHashes) {
     return outdated;
 }
 
+/**
+ * R15: Find assets that are outdated based on version comparison.
+ * An asset is outdated if its stored version is less than the scene's
+ * current version. This is the version-based alternative to hash comparison.
+ *
+ * @param {string} bookId
+ * @param {Map<string, {content_version: number, audio_config_version: number}>} sceneVersions
+ *   Map of "chapter_id:scene_id" -> { content_version, audio_config_version }
+ * @returns {Promise<Array>} outdated assets
+ */
+async function getOutdatedByVersions(bookId, sceneVersions) {
+    if (!sceneVersions || sceneVersions.size === 0) return [];
+    const result = await query(`
+        SELECT * FROM scene_assets
+        WHERE book_id = $1
+    `, [bookId]);
+    const outdated = [];
+    for (const row of result.rows) {
+        const asset = rowToAsset(row);
+        const key = `${asset.chapter_id}:${asset.scene_id}`;
+        const sv = sceneVersions.get(key);
+        if (!sv || asset.status !== 'ready') continue;
+
+        // Check content version
+        if (asset.scene_content_version != null && sv.content_version != null &&
+            asset.scene_content_version < sv.content_version) {
+            outdated.push({
+                ...asset,
+                _outdated_reason: 'content_version',
+                _expected_version: sv.content_version,
+            });
+            continue;
+        }
+
+        // Check audio config version
+        if (asset.scene_audio_config_version != null && sv.audio_config_version != null &&
+            asset.scene_audio_config_version < sv.audio_config_version) {
+            outdated.push({
+                ...asset,
+                _outdated_reason: 'audio_config_version',
+                _expected_version: sv.audio_config_version,
+            });
+        }
+    }
+    return outdated;
+}
+
 async function isSceneReady(bookId, chapterId, sceneId, assetType) {
     const asset = await getAsset(bookId, chapterId, sceneId, assetType);
     return !!(asset && asset.status === 'ready' && asset.path);
@@ -230,6 +277,7 @@ module.exports = {
     getAssetsByBuild,
     getStaleAssets,
     getOutdatedByHash,
+    getOutdatedByVersions,
     isSceneReady,
     deleteSceneAssets,
     deleteBookAssets,
