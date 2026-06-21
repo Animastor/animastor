@@ -109,23 +109,33 @@
 
 ---
 
-## 🟡 High (v2 — следующий спринт)
+## 🟡 High (v2) — ВСЁ ВЫПОЛНЕНО ✅
 
-### [R10] Placeholder audio ≠ valid content
+### [R10] Placeholder audio ≠ valid content ✅
 
-- [ ] Если placeholder audio — не маркировать как `audio_ready` в diff
-- [ ] TTS-генерация должна заменять placeholder, а не пропускать
+**Checklist:**
+- [x] `scene-window.js:sceneHasValidContent()` — placeholder не valid content (проверка `hasRealAudio()`)
+- [x] `restoreChunkStatusForScene()` — `'placeholder'` вместо `'ready'` для placeholder файлов
+- [x] `reconcileWindowStatuses()` — различaет placeholder от real через PG
+- [x] `startScene()` — `audio_status = 'placeholder'` (было `'ready'`)
+- [x] Тест: 295/295 тестов проходят
 
-### [R11] Unit-тесты для book-diff + registry
+### [R11] Unit-тесты для book-diff + registry ✅
 
-- [ ] Прямые тесты для `computeBookDiff()` (character, location, scene changes)
-- [ ] Прямые тесты для `prompt-dependency-registry.js`
-- [ ] Тесты для `markDirtyScenes()` (Lua + fallback)
+**Новые файлы:** `backend/tests/prompt-dependency-registry.test.js` (35 тестов), `backend/tests/book-diff-unit.test.js` (20 тестов)
 
-### [R12] Book-sync вызывать после PUT
+**Checklist:**
+- [x] `prompt-dependency-registry.js`: isEqual, extractPassport, sceneReferencesCharacter, computeSceneDirtyLayers, getLayerDependencies, getCrossFields
+- [x] `book-diff.cjs`: diffScene (empty/full_text/voice), computeBookDiff (added/removed/changed/reorder), cross-cutting (character passport/voice/location, multi-char, new/removed char)
+- [x] filterDirtyScenesByScope (whole_book/current_scene/current_chapter/from_current_scene)
+- [x] Тест: 295/295 тестов проходят
 
-- [ ] В `PUT /api/v1/book/:bookId` — вызывать `bookSync.reconcileFromDiff()`
-- [ ] Или через middleware: после любого save → reconcile
+### [R12] Book-sync вызывать после PUT ✅
+
+**Checklist:**
+- [x] `book-sync.js`: `reconcileFromDiff` добавлен в `module.exports` (баг из R5 — была dead code)
+- [x] `book-routes.cjs` PUT `/api/v1/book/:bookId`: загрузка oldBook до save, `computeBookDiff()` после save, вызов `storage.bookSync.reconcileFromDiff()` при наличии dirty scenes
+- [x] Non-fatal try/catch — ошибка PG не блокирует save
 
 ---
 
@@ -163,24 +173,22 @@
 ## Приоритеты (актуальные)
 
 ```
-✅ ВЫПОЛНЕНО (v2):
-  R0  Audio→Video dependency
-  R1  SceneText diff
-  R2  Character→Scene Index
-  R3  Location→Scene Index
-  R4  Voice-only dirty
-  R5  Унификация book-sync / book-diff
-  R6  Prompt Dependency Registry
-  R7  Lua-транзакции markDirtyScenes
-  R8  Lock на /regenerate
-  R9  FSM-reset вместо force redis.set
+✅ ВЫПОЛНЕНО (v2 — все 13 задач):
+  R0   Audio→Video dependency
+  R1   SceneText diff
+  R2   Character→Scene Index
+  R3   Location→Scene Index
+  R4   Voice-only dirty
+  R5   Унификация book-sync / book-diff
+  R6   Prompt Dependency Registry
+  R7   Lua-транзакции markDirtyScenes
+  R8   Lock на /regenerate
+  R9   FSM-reset вместо force redis.set
+  R10  Placeholder ≠ valid content
+  R11  Unit-тесты (295 tests ✅)
+  R12  Book-sync после PUT
 
-⬜ СЛЕДУЮЩИЙ СПРИНТ:
-  R10 Placeholder ≠ valid content
-  R11 Unit-тесты
-  R12 Book-sync после PUT
-
- 🏗  ФУНДАМЕНТ (v3):
+🏗  ФУНДАМЕНТ (v3):
   R13 Фаза 0: PG schema
   R14 Фаза 1: Dual mode
   R15 Фаза 2: Versions as truth

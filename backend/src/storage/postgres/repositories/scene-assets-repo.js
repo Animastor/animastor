@@ -20,6 +20,8 @@ function rowToAsset(row) {
         chunks: row.chunks,
         build_id: row.build_id,
         scene_hash: row.scene_hash,
+        scene_content_version: row.scene_content_version,
+        scene_audio_config_version: row.scene_audio_config_version,
         status: row.status,
         error: row.error,
         metadata: row.metadata,
@@ -34,6 +36,7 @@ async function upsertAsset(asset) {
         path = null, duration_sec = null, width = null, height = null,
         format = null, sample_rate = null, channel_count = null,
         chunks = null, build_id = null, scene_hash = null,
+        scene_content_version = null, scene_audio_config_version = null,
         status = 'pending', error = null, metadata = null,
     } = asset;
 
@@ -43,10 +46,11 @@ async function upsertAsset(asset) {
             path, duration_sec, width, height,
             format, sample_rate, channel_count,
             chunks, build_id, scene_hash,
+            scene_content_version, scene_audio_config_version,
             status, error, metadata,
             updated_at
         )
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13,$14,$15,$16,$17::jsonb,
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13,$14,$15,$16,$17,$18,$19::jsonb,
                 EXTRACT(EPOCH FROM NOW())::bigint)
         ON CONFLICT(book_id, chapter_id, scene_id, asset_type, build_id) DO UPDATE SET
             path = COALESCE(EXCLUDED.path, scene_assets.path),
@@ -58,6 +62,8 @@ async function upsertAsset(asset) {
             channel_count = COALESCE(EXCLUDED.channel_count, scene_assets.channel_count),
             chunks = COALESCE(EXCLUDED.chunks, scene_assets.chunks),
             scene_hash = COALESCE(EXCLUDED.scene_hash, scene_assets.scene_hash),
+            scene_content_version = COALESCE(EXCLUDED.scene_content_version, scene_assets.scene_content_version),
+            scene_audio_config_version = COALESCE(EXCLUDED.scene_audio_config_version, scene_assets.scene_audio_config_version),
             status = EXCLUDED.status,
             error = EXCLUDED.error,
             metadata = COALESCE(EXCLUDED.metadata, scene_assets.metadata),
@@ -69,6 +75,7 @@ async function upsertAsset(asset) {
         format, sample_rate, channel_count,
         chunks ? JSON.stringify(chunks) : null,
         build_id, scene_hash,
+        scene_content_version, scene_audio_config_version,
         status, error,
         metadata ? JSON.stringify(metadata) : null,
     ]);

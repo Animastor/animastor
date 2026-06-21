@@ -150,6 +150,26 @@ async function sceneHasValidContent(redis, buildId, bookId, chapterId, sceneId) 
         }
     }
 
+    // R14: Log version discrepancies — detect stale content where asset versions
+    // are behind the scene's expected version. This is non-fatal diagnostic logging.
+    try {
+        const { query } = require('../storage/postgres/database');
+        const sceneResult = await query(`
+            SELECT content_version, audio_config_version FROM scenes
+            WHERE book_id = $1 AND chapter_id = $2 AND scene_id = $3
+        `, [bookId, chapterId, sceneId]);
+        if (sceneResult.rows.length > 0) {
+            const sv = sceneResult.rows[0];
+            const aAsset = await sceneAssetsRepo.getAsset(bookId, chapterId, sceneId, 'audio', buildId);
+            if (aAsset && aAsset.scene_content_version != null && sv.content_version != null &&
+                aAsset.scene_content_version < sv.content_version) {
+                log(`[VERSION-MISMATCH] ${bookId}/${chapterId}/${sceneId}: audio content_version=${aAsset.scene_content_version} < scene content_version=${sv.content_version}`);
+            }
+        }
+    } catch (_) {
+        // Non-fatal: version check shouldn't block scene validity determination
+    }
+
     // If images are enabled, check for at least one IU image
     if (imageEnabled) {
         let files;

@@ -201,6 +201,30 @@ async function clearBookDispatchMeta(redis, bookId) {
                 if (diff.dirty_scenes.length > 0) {
                     const syncResult = await storage.bookSync.reconcileFromDiff(bookId, diff.dirty_scenes, newBook);
                     log(`[UPDATE BOOK] ${bookId}: reconciled ${syncResult.reconciled} scenes`);
+
+                    // R13: Bump version counters for changed scenes
+                    // content_version bumps when scene content changes (text, units)
+                    // audio_config_version bumps when audio config changes
+                    for (const ds of diff.dirty_scenes) {
+                        if (ds.reason === 'removed') continue;
+                        const bumpContent = ds.dirty_layers.includes('image') || ds.dirty_layers.includes('video');
+                        const bumpAudio = ds.dirty_layers.includes('audio');
+                        if (bumpContent || bumpAudio) {
+                            try {
+                                const setClauses = ['updated_at = EXTRACT(EPOCH FROM NOW())::bigint'];
+                                if (bumpContent) setClauses.push('content_version = content_version + 1');
+                                if (bumpAudio) setClauses.push('audio_config_version = audio_config_version + 1');
+                                await storage.postgres.query(`
+                                    UPDATE scenes
+                                    SET ${setClauses.join(', ')}
+                                    WHERE book_id = $1 AND chapter_id = $2 AND scene_id = $3
+                                `, [bookId, ds.chapter_id, ds.scene_id]);
+                            } catch (verErr) {
+                                // Non-fatal: version bump failure shouldn't block
+                                console.warn(`[UPDATE BOOK] Version bump failed for ${ds.chapter_id}/${ds.scene_id}: ${verErr.message}`);
+                            }
+                        }
+                    }
                 }
             } catch (syncErr) {
                 // Non-fatal: PG reconciliation should not block the save
@@ -1628,6 +1652,27 @@ async function clearBookDispatchMeta(redis, bookId) {
             // Reconcile PG state (hashes, asset status, tasks) via book-sync
             try {
                 await storage.bookSync.reconcileFromDiff(bookId, filteredDirty, loadedBook);
+
+                // R14: Bump version counters for dirty scenes (same as PUT does)
+                for (const ds of filteredDirty) {
+                    if (ds.reason === 'removed') continue;
+                    const bumpContent = ds.dirty_layers.includes('image') || ds.dirty_layers.includes('video');
+                    const bumpAudio = ds.dirty_layers.includes('audio');
+                    if (bumpContent || bumpAudio) {
+                        try {
+                            const setClauses = ['updated_at = EXTRACT(EPOCH FROM NOW())::bigint'];
+                            if (bumpContent) setClauses.push('content_version = content_version + 1');
+                            if (bumpAudio) setClauses.push('audio_config_version = audio_config_version + 1');
+                            await storage.postgres.query(`
+                                UPDATE scenes
+                                SET ${setClauses.join(', ')}
+                                WHERE book_id = $1 AND chapter_id = $2 AND scene_id = $3
+                            `, [bookId, ds.chapter_id, ds.scene_id]);
+                        } catch (verErr) {
+                            console.warn(`[REGENERATE] Version bump failed for ${ds.chapter_id}/${ds.scene_id}: ${verErr.message}`);
+                        }
+                    }
+                }
             } catch (syncErr) {
                 // Non-fatal: PG reconciliation should not block regeneration
                 console.warn(`[REGENERATE] PG reconcile failed for ${bookId}: ${syncErr.message}`);
@@ -1687,6 +1732,99 @@ async function clearBookDispatchMeta(redis, bookId) {
         } catch (err) {
             console.error('[RECOVER-PLACEHOLDERS] Error:', err.message);
             return res.status(500).json({ error: err.message });
+        }
+    });
+
+    // ======================================================
+    // VERSIONS — diagnostic: view PG version counters per scene
+    // ======================================================
+    app.get('/api/v1/book/:bookId/versions', async (req, res) => {
+        try {
+            const { bookId } = req.params;
+
+            // 1. Scene-level versions from scenes table
+            const sceneResult = await storage.postgres.query(`
+                SELECT chapter_id, scene_id, content_version, audio_config_version, scene_hash, updated_at
+                FROM scenes
+                WHERE book_id = $1
+                ORDER BY chapter_id, scene_id
+            `, [bookId]);
+
+            // 2. Asset-level versions from scene_assets table
+            const assetResult = await storage.postgres.query(`
+                SELECT chapter_id, scene_id, asset_type, scene_content_version, scene_audio_config_version, status, build_id
+                FROM scene_assets
+                WHERE book_id = $1
+                ORDER BY chapter_id, scene_id, asset_type
+            `, [bookId]);
+
+            // Build per-scene view
+            const sceneVersions = {};
+            for (const row of sceneResult.rows) {
+                const key = `${row.chapter_id}/${row.scene_id}`;
+                sceneVersions[key] = {
+                    chapter_id: row.chapter_id,
+                    scene_id: row.scene_id,
+                    content_version: row.content_version,
+                    audio_config_version: row.audio_config_version,
+                    scene_hash: row.scene_hash,
+                    updated_at: row.updated_at,
+                    assets: [],
+                };
+            }
+            for (const row of assetResult.rows) {
+                const key = `${row.chapter_id}/${row.scene_id}`;
+                if (sceneVersions[key]) {
+                    sceneVersions[key].assets.push({
+                        asset_type: row.asset_type,
+                        scene_content_version: row.scene_content_version,
+                        scene_audio_config_version: row.scene_audio_config_version,
+                        status: row.status,
+                        build_id: row.build_id,
+                    });
+                }
+            }
+
+            // Detect mismatches: asset version < scene version
+            const mismatches = [];
+            for (const [key, sv] of Object.entries(sceneVersions)) {
+                for (const asset of sv.assets) {
+                    if (asset.scene_content_version != null && sv.content_version != null &&
+                        asset.scene_content_version < sv.content_version) {
+                        mismatches.push({
+                            key,
+                            type: 'content_version',
+                            scene_version: sv.content_version,
+                            asset_version: asset.scene_content_version,
+                            asset_type: asset.asset_type,
+                            status: asset.status,
+                        });
+                    }
+                    if (asset.scene_audio_config_version != null && sv.audio_config_version != null &&
+                        asset.scene_audio_config_version < sv.audio_config_version) {
+                        mismatches.push({
+                            key,
+                            type: 'audio_config_version',
+                            scene_version: sv.audio_config_version,
+                            asset_version: asset.scene_audio_config_version,
+                            asset_type: asset.asset_type,
+                            status: asset.status,
+                        });
+                    }
+                }
+            }
+
+            res.json({
+                book_id: bookId,
+                scenes: Object.values(sceneVersions),
+                scene_count: sceneResult.rows.length,
+                asset_count: assetResult.rows.length,
+                mismatches,
+                mismatch_count: mismatches.length,
+            });
+        } catch (err) {
+            console.error('[VERSIONS] Error:', err.message);
+            res.status(500).json({ error: err.message });
         }
     });
 

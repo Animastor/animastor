@@ -479,6 +479,46 @@ async function runMigrations() {
         }
     }
 
+    // ======================================================
+    // R13: Version columns for scenes and scene_assets
+    // ======================================================
+    // content_version is bumped when scene content (text/units) changes.
+    // audio_config_version is bumped when audio config (voice/settings) changes.
+    // These enable version-based caching — assets from an older version
+    // are stale and need regeneration.
+    try {
+        await query(`ALTER TABLE scenes ADD COLUMN IF NOT EXISTS content_version INTEGER NOT NULL DEFAULT 1`);
+        console.log('[PG] Added scenes.content_version');
+    } catch (err) {
+        if (!err.message.includes('already exists')) {
+            console.error('[PG] Failed to add scenes.content_version:', err.message);
+        }
+    }
+    try {
+        await query(`ALTER TABLE scenes ADD COLUMN IF NOT EXISTS audio_config_version INTEGER NOT NULL DEFAULT 1`);
+        console.log('[PG] Added scenes.audio_config_version');
+    } catch (err) {
+        if (!err.message.includes('already exists')) {
+            console.error('[PG] Failed to add scenes.audio_config_version:', err.message);
+        }
+    }
+    try {
+        await query(`ALTER TABLE scene_assets ADD COLUMN IF NOT EXISTS scene_content_version INTEGER`);
+        console.log('[PG] Added scene_assets.scene_content_version');
+    } catch (err) {
+        if (!err.message.includes('already exists')) {
+            console.error('[PG] Failed to add scene_assets.scene_content_version:', err.message);
+        }
+    }
+    try {
+        await query(`ALTER TABLE scene_assets ADD COLUMN IF NOT EXISTS scene_audio_config_version INTEGER`);
+        console.log('[PG] Added scene_assets.scene_audio_config_version');
+    } catch (err) {
+        if (!err.message.includes('already exists')) {
+            console.error('[PG] Failed to add scene_assets.scene_audio_config_version:', err.message);
+        }
+    }
+
     // Add 'analyze_structure' to agent_steps step_type check constraint
     try {
         // PostgreSQL doesn't support ALTER CONSTRAINT to add new values to CHECK.
