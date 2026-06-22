@@ -23,10 +23,42 @@ const gpus = new Map()
 // CLEANUP (GPU TIMEOUT + REQUEUE)
 // ======================================================
 
+// ======================================================
+// HEARTBEAT REFRESH (every 15s) + GPU TIMEOUT
+// ======================================================
+// Two responsibilities in one interval:
+// 1. Refresh heartbeat for running tasks so busyImage stays valid
+// 2. Clean up timed-out GPUs and requeue their tasks
+
 setInterval(async () => {
 
   const now = Date.now()
 
+  // ── Refresh heartbeat for all running tasks ──
+  // This keeps animastor:worker:heartbeat:type:id with current_job_id
+  // alive for the ENTIRE duration of generation (15+ min).
+  // Without this refresh, the heartbeat expires after 30s and
+  // backend worker toggle falsely shows idle.
+  try {
+    const running = await redis.hgetall("animastor:running")
+    for (const job_id in running) {
+      try {
+        const data = JSON.parse(running[job_id])
+        if (data.worker && data.job_type) {
+          const hbKey = `animastor:worker:heartbeat:${data.job_type}:${data.worker}`
+          const hbPayload = JSON.stringify({
+            type: data.job_type,
+            worker_id: data.worker,
+            ts: Date.now(),
+            current_job_id: job_id
+          })
+          await redis.set(hbKey, hbPayload, 'EX', 30)
+        }
+      } catch (_) {}
+    }
+  } catch (_) {}
+
+  // ── GPU timeout cleanup ──
   for (const [id, gpu] of gpus.entries()) {
 
     if (now - gpu.last_seen > GPU_TIMEOUT) {

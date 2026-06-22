@@ -464,15 +464,19 @@ async function getSceneDuration(buildId, bookId, chapterId, sceneId) {
     return 0;
 }
 
-async function processSingleIU(redis, unit, uIdx, sceneData, loadedBook, buildId, bookId, chapterId, sceneId, sceneDuration, fullText, force = false) {
+async function processSingleIU(redis, unit, uIdx, sceneData, loadedBook, buildId, bookId, chapterId, sceneId, sceneDuration, fullText, dirtyUnitIds = new Set()) {
     const canonicalUnitId = String(unit.id);
     if (!canonicalUnitId) {
         error(`IU unit.id missing, skipping: ${chapterId}/${sceneId}`);
         return { sent: false, cached: false };
     }
     const imageIUId = `${bookId}_${chapterId}_${sceneId}_${canonicalUnitId}`;
+    // Redis key tracking in-flight regeneration (set after gpu.send(),
+    // cleared in handleImageCompleted). Used to prevent duplicate dispatches.
+    const inFlightKey = `animastor:iu-in-flight:${imageIUId}`;
 
-    // When force=true, skip disk cache check — regenerate regardless of existing files
+    // If this unit is in dirtyUnitIds set, skip disk cache — force regenerate
+    const force = dirtyUnitIds.size > 0 && dirtyUnitIds.has(canonicalUnitId);
     if (!force) {
         const cachedIU = probeIUImage(imageIUId, buildId, config.OUTPUT_DIR);
         if (cachedIU?.image) {
@@ -486,7 +490,35 @@ async function processSingleIU(redis, unit, uIdx, sceneData, loadedBook, buildId
             return { sent: false, cached: true };
         }
     } else {
-        log(`[FORCE-REGEN] Skipping disk cache for ${imageIUId} — content version changed`);
+        log(`[DIRTY-UNIT-REGEN] Force-regenerating ${imageIUId} — this unit was modified`);
+        const oldPng = path.join(config.OUTPUT_DIR, buildId, `${imageIUId}.png`);
+
+        // Check if this dirty unit was already dispatched by a prior scheduler tick
+        // or by the /regenerate handler (which pre-deletes files + clears dedup).
+        // Redis marker prevents duplicate dispatches.
+        const alreadyInFlight = await redis.get(inFlightKey);
+        if (alreadyInFlight) {
+            log(`[IU-ALREADY-IN-FLIGHT] Skipping ${imageIUId} — already dispatched (marker exists)`);
+            return { sent: false, cached: false, skipped: true };
+        }
+
+        // Clear GPU hub dedup key so regeneration task is accepted (not blocked as duplicate).
+        try {
+            await redis.del(`animastor:job:${imageIUId}:image`);
+            log(`[DEDUP-CLEAR] Cleared GPU dedup for ${imageIUId}`);
+        } catch (e) {
+            warn(`[DEDUP-CLEAR] Failed: ${e.message}`);
+        }
+
+        // Delete stale PNG if it still exists (may have been pre-deleted by /regenerate handler).
+        try {
+            if (fs.existsSync(oldPng)) {
+                fs.unlinkSync(oldPng);
+                log(`[DIRTY-UNIT-REGEN] Deleted stale PNG: ${oldPng}`);
+            }
+        } catch (delErr) {
+            warn(`[DIRTY-UNIT-REGEN] Failed to delete stale PNG ${oldPng}: ${delErr.message}`);
+        }
     }
 
     try {
@@ -513,10 +545,20 @@ async function processSingleIU(redis, unit, uIdx, sceneData, loadedBook, buildId
 
     await saveIURegistry(redis, imageIUId, buildId);
     await gpu.send(`${imageIUId}:image`, wfImg, 'image', buildId);
+
+    // Set in-flight marker AFTER successful dispatch so subsequent scheduler
+    // ticks skip this unit (no duplicate dispatches).
+    // TTL = 1200s (20 min) — covers max generation time for any IU type.
+    try {
+        await redis.set(inFlightKey, '1', 'EX', 1200);
+    } catch (e) {
+        warn(`[IU-IN-FLIGHT] Failed to set marker for ${imageIUId}: ${e.message}`);
+    }
+
     return { sent: true, cached: false };
 }
 
-async function generateSceneIUImages(redis, sceneData, loadedBook, buildId, bookId, force = false) {
+async function generateSceneIUImages(redis, sceneData, loadedBook, buildId, bookId, dirtyUnitIds = new Set()) {
     const units = collectSceneUnits(sceneData.payload);
     const chapterId = sceneData.chapter_id;
     const sceneId = sceneData.scene_id;
@@ -531,7 +573,7 @@ async function generateSceneIUImages(redis, sceneData, loadedBook, buildId, book
     let sentCount = 0;
     let cacheHitCount = 0;
     for (let uIdx = 0; uIdx < units.length; uIdx++) {
-        const result = await processSingleIU(redis, units[uIdx], uIdx, sceneData, loadedBook, buildId, bookId, chapterId, sceneId, sceneDuration, fullText, force);
+        const result = await processSingleIU(redis, units[uIdx], uIdx, sceneData, loadedBook, buildId, bookId, chapterId, sceneId, sceneDuration, fullText, dirtyUnitIds);
         if (result.sent) sentCount++;
         if (result.cached) cacheHitCount++;
     }

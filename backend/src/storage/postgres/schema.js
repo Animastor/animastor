@@ -536,6 +536,16 @@ async function runMigrations() {
         }
     }
 
+    // dirty_unit_ids TEXT[] — per-unit dirty tracking for granular force-regen
+    try {
+        await query(`ALTER TABLE scenes ADD COLUMN IF NOT EXISTS dirty_unit_ids TEXT[] DEFAULT '{}'`);
+        console.log('[PG] Added scenes.dirty_unit_ids');
+    } catch (err) {
+        if (!err.message.includes('already exists')) {
+            console.error('[PG] Failed to add scenes.dirty_unit_ids:', err.message);
+        }
+    }
+
     // Make context column nullable in ai_chat_sessions (routes pass null for new sessions)
     try {
         await query(`ALTER TABLE ai_chat_sessions ALTER COLUMN context DROP NOT NULL`);

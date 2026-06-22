@@ -255,6 +255,57 @@
 - [x] `scene-orchestrator.js`: `executeVideoDispatch()` — same version-stale check for video cache
 - [x] `scene-orchestrator.js` + `entity-schema.js`: fixed connector validation warnings (added `language`, `temperature` entityTypes)
 
+### Bugfix: GPU hub dedup key blocking per-unit regeneration ✅
+
+**Files:** `image-service.js`, `scene-orchestrator.js`, `book-routes.cjs`
+
+**Checklist:**
+- [x] GPU hub uses `SET NX EX 3600 animastor:job:{job_id}` for dedup — same job_id from first generation blocks regeneration
+- [x] `image-service.js`: `processSingleIU()` — clear GPU dedup key before dispatch in force=true path
+- [x] `image-service.js`: Redis in-flight marker (`animastor:iu-in-flight:{imageIUId}`, TTL 1200s) instead of fs.existsSync check — prevents duplicate dispatches
+- [x] `scene-orchestrator.js`: `executeImageDispatch()` — don't clear dirtyUnitIds in dispatch; defer to handleImageCompleted
+- [x] `scene-orchestrator.js`: `handleImageCompleted()` — clear dirtyUnitIds + scan+delete in-flight markers on completion
+- [x] `book-routes.cjs`: `/regenerate` handler — pre-delete stale PNGs + clear GPU dedup keys for dirty units before returning, so first frontend poll shows correct progress (e.g. 3/4 instead of 4/4)
+
+### Bugfix: `ensureSceneRow` — scenes table rows never created ✅
+
+**Files:** `scene-assets-repo.js`, `book-routes.cjs`
+
+**Checklist:**
+- [x] `bumpSceneVersions()` and `setDirtyUnitIds()` did UPDATE on `scenes` table — but no rows were ever INSERTed. UPDATE on non-existent row is silent no-op
+- [x] `scene-assets-repo.js`: new `ensureSceneRow()` — INSERT INTO scenes … ON CONFLICT DO NOTHING
+- [x] Called before UPDATE in both `bumpSceneVersions()` and `setDirtyUnitIds()`
+- [x] `book-routes.cjs`: `/regenerate` restore loop — scenes with `hasDirtyUnits` stay in active index, not removed
+
+### Bugfix: Worker toggle pulsing (heartbeat + lease) ✅
+
+**Files:** `gpu-hub/gpu-hub.js`, `generation-routes.cjs`, `dispatch-engine.js`, `lease-manager.js`
+
+**Checklist:**
+- [x] `gpu-hub/gpu-hub.js`: heartbeat refresh for running tasks every 10s (before GPU timeout cleanup) — keeps `current_job_id` alive for entire generation duration
+- [x] `generation-routes.cjs`: removed lease-as-fallback from `/worker/counts` — `active = status > 0 ? busy : 0` (lease doesn't affect toggle)
+- [x] `generation-routes.cjs`: removed dead `countLeases()` function — eliminated 3 unnecessary Redis SCANs every 1.5-5s
+- [x] `dispatch-engine.js`: `LEASE_TTLS` restored to real values (audio 15min, image 20min, video 30min)
+- [x] `lease-manager.js`: `LEASE_TOTAL_TTLS` synchronized
+
 🏗  LOW:
   R20-R24 Прочее
+
+---
+
+## Общая хронология исправлений
+
+### 2026-06 — Массовое исправление per-unit regeneration
+
+1. **Worker toggle fix:** GPU hub heartbeat refresh + lease fallback removal. Worker toggle показывает только реальную занятость GPU, не время жизни lease.
+
+2. **`ensureSceneRow`:** Строки в таблице `scenes` никогда не создавались — `bumpSceneVersions` и `setDirtyUnitIds` делали UPDATE на несуществующую строку (silent no-op). `getDirtyUnitIds` возвращал null → все юниты cache hit → GPU ничего не делал.
+
+3. **GPU hub dedup key:** GPU hub использует `SET NX EX 3600` для дедупликации задач. При перегенерации `job_id` тот же (базируется на unit_id) → задача тихо игнорируется как `⚠️ Duplicate job ignored`. Backend теперь чистит dedup key перед dispatch.
+
+4. **In-flight tracking:** Redis marker `animastor:iu-in-flight:{id}` (TTL 20min) предотвращает повторный dispatch на следующих scheduler tick-ах.
+
+5. **Progress display:** `/regenerate` handler синхронно удаляет stale PNG для dirty units до возврата ответа. Первый frontend poll сразу видит 3/4, без ложного 4/4.
+
+**Архитектурный урок:** GPU hub не должен был иметь долгоживущий (1h) dedup key на job_id. Для per-unit regeneration job_id идентичен при изменении того же unit — dedup блокирует легитимную перегенерацию. Решение: очищать dedup перед dispatch для dirty units.
 ```

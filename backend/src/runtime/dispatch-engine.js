@@ -40,10 +40,16 @@ function error(msg) {
 // ======================================================
 
 // Lease TTLs (seconds)
+// Long enough to cover real generation duration + queue wait:
+//   audio:  up to 10 min gen  → 15 min TTL
+//   image:  up to 15 min gen  → 20 min TTL
+//   video:  up to 20 min gen  → 30 min TTL
+// Leases are released immediately on completion callback — TTL only matters for failures.
+// These are NOT used for worker toggle (toggle uses heartbeat busy status only).
 const LEASE_TTLS = {
-    audio: 30 * 60,   // 30 minutes
-    image: 60 * 60,   // 60 minutes
-    video: 120 * 60   // 120 minutes
+    audio: 15 * 60,   // 15 minutes
+    image: 20 * 60,   // 20 minutes
+    video: 30 * 60    // 30 minutes
 };
 
 // Backpressure limits (active concurrent)

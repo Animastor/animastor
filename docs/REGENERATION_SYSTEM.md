@@ -499,6 +499,15 @@ animastor:runtime:active-video
 animastor:concurrent-audio
 animastor:concurrent-image
 animastor:concurrent-video
+
+# Per-unit regeneration (GPU dedup + in-flight)
+animastor:job:<job_id>                     # GPU hub dedup key (SET NX EX 3600) — очищается перед dispatch dirty unit
+animastor:iu-in-flight:<imageIUId>         # Redis marker (EX 1200) — предотвращает duplicate dispatch на след. tick
+
+# GPU hub heartbeat (shared Redis)
+animastor:worker:heartbeat:<type>:<id>     # Текущий job_id (обновляется каждые 10с для running задач)
+animastor:running                          # Running tasks (hset)
+animastor:queue:<type>                     # Очереди GPU hub (image/audio/video)
 ```
 
 ---

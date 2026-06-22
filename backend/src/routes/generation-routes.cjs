@@ -447,42 +447,22 @@ module.exports = function(app, redis, deps) {
             const workerHealth = require('../runtime/worker-health');
             const status = await workerHealth.getStatus(redis);
 
-            // Use actual dispatch-lease keys as source of truth for active workers.
-            // A dispatch-lease (set with TTL) exists ONLY while a real GPU task is
-            // in flight. Quota counters (animastor:runtime:active-*) can leak on
-            // cancelled jobs — leases expire cleanly via TTL even if completion
-            // handler was never called.
-            const countLeases = async (stage) => {
-                const pattern = `animastor:dispatch-lease:*:*:*:${stage}`;
-                let cursor = '0';
-                let count = 0;
-                try {
-                    do {
-                        const result = await redis.scan(cursor, 'MATCH', pattern, 'COUNT', 200);
-                        cursor = result[0];
-                        count += result[1].length;
-                    } while (cursor !== '0');
-                } catch (_) {}
-                return count;
-            };
-
-            const [leaseAudio, leaseImage, leaseVideo, busyAudio, busyImage, busyVideo, activeCount] = await Promise.all([
-                countLeases('audio'),
-                countLeases('image'),
-                countLeases('video'),
+            const [busyAudio, busyImage, busyVideo, activeCount] = await Promise.all([
                 workerHealth.getBusyCount(redis, 'audio'),
                 workerHealth.getBusyCount(redis, 'image'),
                 workerHealth.getBusyCount(redis, 'video'),
                 redis.scard('animastor:active-scenes').catch(() => 0),
             ]);
 
-            // Pulse when a worker reports an active job via heartbeat (current_job_id).
-            // If workers don't report jobs (old GPU workers), fall back to
-            // dispatch-lease keys as a proxy for in-flight work.
-            // Both checks require at least one alive worker to prevent stale signals.
-            const activeAudio = status.audio > 0 ? (busyAudio > 0 ? busyAudio : leaseAudio) : 0;
-            const activeImage = status.image > 0 ? (busyImage > 0 ? busyImage : leaseImage) : 0;
-            const activeVideo = status.video > 0 ? (busyVideo > 0 ? busyVideo : leaseVideo) : 0;
+            // Only pulse when worker reports actual busy status via heartbeat (current_job_id).
+            // Dispatch-lease keys are NOT a proxy for active work — they exist from dispatch
+            // to completion (up to 30 min for video) and do NOT indicate worker activity.
+            // Using leases would cause false toggle pulse whenever a heartbeat expires
+            // during a long-running GPU job (heartbeat TTL=30s, image gen can be 15 min).
+            // GPU hub refreshes heartbeat every 10s for running tasks, keeping busy accurate.
+            const activeAudio = status.audio > 0 ? busyAudio : 0;
+            const activeImage = status.image > 0 ? busyImage : 0;
+            const activeVideo = status.video > 0 ? busyVideo : 0;
 
             res.json({
                 audio: status.audio || 0,

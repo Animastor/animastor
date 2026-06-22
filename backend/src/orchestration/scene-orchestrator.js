@@ -540,6 +540,7 @@ async function executeImageDispatch(redis, scene, loadedBook, buildId) {
 
     // [VERSION-STALE CHECK] Before generating, verify cached images are current
     let forceRegen = false;
+    let dirtyUnitIds = new Set();
     try {
         const { query } = require('../storage/postgres/database');
         const verResult = await query(`
@@ -555,8 +556,30 @@ async function executeImageDispatch(redis, scene, loadedBook, buildId) {
             const row = verResult.rows[0];
             if (row.scene_content_version != null && row.content_version != null
                 && row.scene_content_version < row.content_version) {
-                log(`[VERSION-STALE-FORCE] image stale: asset_ver=${row.scene_content_version} < scene_ver=${row.content_version}, forcing regen`);
+                log(`[VERSION-STALE-FORCE] image stale: asset_ver=${row.scene_content_version} < scene_ver=${row.content_version}, checking per-unit dirtiness`);
                 forceRegen = true;
+
+                // Read per-unit dirty IDs from PG (stored during PUT/regenerate)
+                try {
+                    const sceneAssetsRepo = require('../storage/postgres/repositories/scene-assets-repo');
+                    const storedIds = await sceneAssetsRepo.getDirtyUnitIds(bookId, chapterId, sceneId);
+                    if (storedIds && Array.isArray(storedIds) && storedIds.length > 0) {
+                        dirtyUnitIds = new Set(storedIds);
+                        log(`[DIRTY-UNITS] ${bookId}/${chapterId}/${sceneId}: ${dirtyUnitIds.size} specific dirty unit(s): ${[...dirtyUnitIds].join(', ')}`);
+                    }
+                } catch (e2) {
+                    warn(`[DIRTY-UNITS] PG read failed: ${e2.message}`);
+                }
+
+                // Fallback: if no specific dirty units found but scene is stale,
+                // regenerate ALL units (no granular info in PG — e.g. rebuild_all)
+                if (forceRegen && dirtyUnitIds.size === 0) {
+                    const sceneUnits = image.collectSceneUnits(sceneData.payload);
+                    for (const u of sceneUnits) {
+                        dirtyUnitIds.add(String(u.id));
+                    }
+                    log(`[DIRTY-UNITS] Fallback: no specific dirty units in PG, regenerating all ${sceneUnits.length} units`);
+                }
             }
         }
     } catch (e) {
@@ -564,8 +587,15 @@ async function executeImageDispatch(redis, scene, loadedBook, buildId) {
     }
 
     // Generate IU images (sync operation)
-    log(`Generating IU images: ${bookId}/${chapterId}/${sceneId}`);
-    const imgResult = await image.generateSceneIUImages(redis, sceneData, bookData, buildId, bookId, forceRegen);
+    log(`Generating IU images: ${bookId}/${chapterId}/${sceneId}${dirtyUnitIds.size > 0 ? ` (${dirtyUnitIds.size} specific dirty units)` : forceRegen ? ' (all units stale)' : ''}`);
+    const imgResult = await image.generateSceneIUImages(redis, sceneData, bookData, buildId, bookId, dirtyUnitIds);
+
+    // NOTE: dirty_unit_ids are NOT cleared here. They persist until the
+    // GPU callback (handleImageCompleted) confirms all IUs are regenerated.
+    // This prevents a race where a subsequent scheduler tick re-dispatches
+    // the same dirty unit (cache miss because file was just deleted).
+    // See [IU-ALREADY-IN-FLIGHT] in processSingleIU for the skip logic.
+
     const allCached = imgResult && imgResult.sentCount === 0 && imgResult.cacheHitCount > 0;
 
     if (allCached && !forceRegen) {
@@ -1022,6 +1052,34 @@ async function handleImageCompleted(redis, bookId, chapterId, sceneId, buildId) 
         buildId,
         path: sceneImage
     });
+
+    // Clear dirty_unit_ids now that the callback confirms all IUs are regenerated.
+    // This is safe: the file exists on disk (validated above), so subsequent
+    // scheduler ticks will CACHE HIT instead of re-dispatching.
+    try {
+        const sceneAssetsRepo = require('../storage/postgres/repositories/scene-assets-repo');
+        await sceneAssetsRepo.clearDirtyUnitIds(bookId, chapterId, sceneId);
+        log(`[DIRTY-UNITS-CLEARED] ${bookId}/${chapterId}/${sceneId}: cleared dirty_unit_ids on completion`);
+    } catch (e) {
+        warn(`Failed to clear dirty_unit_ids in IMAGE_CALLBACK: ${e.message}`);
+    }
+
+    // Clear in-flight markers for all units of this scene so subsequent
+    // regenerations aren't blocked by stale markers.
+    try {
+        const scenePrefix = `${bookId}_${chapterId}_${sceneId}_iu-`;
+        let cursor = '0';
+        do {
+            const [nextCursor, keys] = await redis.scan(cursor, 'MATCH', `animastor:iu-in-flight:${scenePrefix}*`, 'COUNT', 50);
+            cursor = nextCursor;
+            if (keys.length > 0) {
+                await redis.del(...keys);
+                log(`[IU-IN-FLIGHT-CLEARED] ${bookId}/${chapterId}/${sceneId}: cleared ${keys.length} in-flight markers`);
+            }
+        } while (cursor !== '0');
+    } catch (e) {
+        warn(`Failed to clear in-flight markers in IMAGE_CALLBACK: ${e.message}`);
+    }
 
     // Update per-asset state (source of truth)
     await state.setAssetState(redis, bookId, chapterId, sceneId, 'image', state.AssetState.READY);

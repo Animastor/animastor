@@ -285,9 +285,26 @@ function computeSceneDirtyLayers(oldScene, newScene) {
     );
     if (!isEqual(oldUnits, newUnits)) {
         dirtyLayers.push('image', 'video', 'audio');
+        // Compute per-unit changed IDs for granular force-regen
+        // Match by unit ID, not by index — robust against insertions/deletions
+        const changedUnitIds = [];
+        const oldMap = new Map();
+        for (const u of oldUnits) {
+            if (u && u.id != null) oldMap.set(String(u.id), u);
+        }
+        for (const u of newUnits) {
+            if (u && u.id != null) {
+                const oldU = oldMap.get(String(u.id));
+                if (!oldU || !isEqual(oldU, u)) {
+                    changedUnitIds.push(String(u.id));
+                }
+            }
+        }
+        // Units that were deleted (in oldMap but not in new) don't need generation
         changes.units = {
             old_count: oldUnits.length,
             new_count: newUnits.length,
+            unit_ids: changedUnitIds,
         };
     }
 

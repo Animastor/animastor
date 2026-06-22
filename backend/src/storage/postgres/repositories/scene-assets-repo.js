@@ -269,6 +269,7 @@ async function getBookAssetSummary(bookId) {
 /**
  * R13/R14: Bump version counters for dirty scenes.
  * Shared between PUT and /regenerate to eliminate duplicate SQL.
+ * First ensures the row exists (UPSERT) so the UPDATE has effect.
  *
  * @param {string} bookId
  * @param {Array<{chapter_id:string, scene_id:string, reason:string, dirty_layers:string[]}>} dirtyScenes
@@ -281,6 +282,9 @@ async function bumpSceneVersions(bookId, dirtyScenes) {
         const bumpContent = ds.dirty_layers.includes('image') || ds.dirty_layers.includes('video');
         const bumpAudio = ds.dirty_layers.includes('audio');
         if (bumpContent || bumpAudio) {
+            // First ensure the row exists (UPSERT — no-op if already present)
+            await ensureSceneRow(bookId, ds.chapter_id, ds.scene_id);
+
             const setClauses = ['updated_at = EXTRACT(EPOCH FROM NOW())::bigint'];
             if (bumpContent) setClauses.push('content_version = content_version + 1');
             if (bumpAudio) setClauses.push('audio_config_version = audio_config_version + 1');
@@ -293,6 +297,85 @@ async function bumpSceneVersions(bookId, dirtyScenes) {
         }
     }
     return bumped;
+}
+
+/**
+ * Ensure a row exists in the scenes table for a given scene.
+ * Uses INSERT … ON CONFLICT DO NOTHING to create the row if missing.
+ * This is necessary because bumpSceneVersions and setDirtyUnitIds
+ * both UPDATE scenes — without an existing row, the UPDATE is a no-op.
+ *
+ * @param {string} bookId
+ * @param {string} chapterId
+ * @param {string} sceneId
+ */
+async function ensureSceneRow(bookId, chapterId, sceneId) {
+    await query(`
+        INSERT INTO scenes (book_id, chapter_id, scene_id, content_version, audio_config_version, dirty_unit_ids, updated_at)
+        VALUES ($1, $2, $3, 1, 1, '{}', EXTRACT(EPOCH FROM NOW())::bigint)
+        ON CONFLICT (book_id, chapter_id, scene_id) DO NOTHING
+    `, [bookId, chapterId, sceneId]);
+}
+
+/**
+ * Set per-unit dirty IDs for a scene in PG.
+ * These are the unit_ids whose content changed — used by executeImageDispatch
+ * for granular force-regen instead of regenerating ALL units.
+ *
+ * Empty array = regenerate all units (no granular info available).
+ *
+ * @param {string} bookId
+ * @param {string} chapterId
+ * @param {string} sceneId
+ * @param {string[]} unitIds - Array of changed unit IDs (empty = all units stale)
+ */
+async function setDirtyUnitIds(bookId, chapterId, sceneId, unitIds) {
+    const ids = (unitIds && Array.isArray(unitIds) && unitIds.length > 0) ? unitIds : [];
+    // First ensure the row exists (UPSERT — no-op if already present)
+    await ensureSceneRow(bookId, chapterId, sceneId);
+    await query(`
+        UPDATE scenes
+        SET dirty_unit_ids = $4, updated_at = EXTRACT(EPOCH FROM NOW())::bigint
+        WHERE book_id = $1 AND chapter_id = $2 AND scene_id = $3
+    `, [bookId, chapterId, sceneId, ids]);
+}
+
+/**
+ * Get per-unit dirty IDs for a scene from PG.
+ * Returns the array of unit_ids that need regeneration, or null if no row exists.
+ *
+ * @param {string} bookId
+ * @param {string} chapterId
+ * @param {string} sceneId
+ * @returns {Promise<string[]|null>}
+ */
+async function getDirtyUnitIds(bookId, chapterId, sceneId) {
+    const result = await query(`
+        SELECT dirty_unit_ids FROM scenes
+        WHERE book_id = $1 AND chapter_id = $2 AND scene_id = $3
+    `, [bookId, chapterId, sceneId]);
+    if (result.rows.length > 0 && result.rows[0].dirty_unit_ids) {
+        return result.rows[0].dirty_unit_ids;
+    }
+    return null;
+}
+
+/**
+ * Clear per-unit dirty IDs for a scene in PG.
+ * Called AFTER executeImageDispatch reads and dispatches dirty units,
+ * so the next scheduler tick does NOT re-delete already-regenerated files.
+ *
+ * @param {string} bookId
+ * @param {string} chapterId
+ * @param {string} sceneId
+ */
+async function clearDirtyUnitIds(bookId, chapterId, sceneId) {
+    await ensureSceneRow(bookId, chapterId, sceneId);
+    await query(`
+        UPDATE scenes
+        SET dirty_unit_ids = '{}', updated_at = EXTRACT(EPOCH FROM NOW())::bigint
+        WHERE book_id = $1 AND chapter_id = $2 AND scene_id = $3
+    `, [bookId, chapterId, sceneId]);
 }
 
 module.exports = {
@@ -308,6 +391,10 @@ module.exports = {
     getOutdatedByHash,
     getOutdatedByVersions,
     bumpSceneVersions,
+    ensureSceneRow,
+    setDirtyUnitIds,
+    getDirtyUnitIds,
+    clearDirtyUnitIds,
     isSceneReady,
     deleteSceneAssets,
     deleteBookAssets,

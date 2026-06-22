@@ -31,10 +31,12 @@ const RESTART_DELAY_MS = 5000;     // 5 seconds before first renewal
 const LEASE_RENEWAL_TTL_ADD = 180; // Add 3 minutes to TTL on renewal
 
 // Lease TTL extensions (total TTL after first acquire)
+// Must match LEASE_TTLS in dispatch-engine.js.
+// See dispatch-engine.js for rationale.
 const LEASE_TOTAL_TTLS = {
-    audio: 30 * 60,   // 30 minutes (renewable)
-    image: 60 * 60,   // 60 minutes (renewable)
-    video: 120 * 60   // 120 minutes (renewable)
+    audio: 15 * 60,   // 15 minutes
+    image: 20 * 60,   // 20 minutes
+    video: 30 * 60    // 30 minutes
 };
 
 // Lease keys

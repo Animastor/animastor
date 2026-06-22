@@ -222,9 +222,18 @@ async function clearBookDispatchMeta(redis, bookId) {
                                 }
                             }
                         }
+
+                        // Store per-unit dirty IDs in PG for granular force-regen
+                        for (const ds of diff.dirty_scenes) {
+                            const unitIds = ds.changes?.units?.unit_ids;
+                            if (unitIds && Array.isArray(unitIds) && unitIds.length > 0) {
+                                await sceneAssetsRepo.setDirtyUnitIds(bookId, ds.chapter_id, ds.scene_id, unitIds);
+                                log(`[DIRTY-UNITS] ${bookId}/${ds.chapter_id}/${ds.scene_id}: ${unitIds.length} dirty unit(s): ${unitIds.join(', ')}`);
+                            }
+                        }
                     } catch (verErr) {
                         // Non-fatal: version bump failure shouldn't block
-                        console.warn(`[UPDATE BOOK] Version bump failed: ${verErr.message}`);
+                        console.warn(`[UPDATE BOOK] Version bump/failed: ${verErr.message}`);
                     }
                 }
             } catch (syncErr) {
@@ -1659,6 +1668,15 @@ async function clearBookDispatchMeta(redis, bookId) {
                 try {
                     await sceneAssetsRepo.bumpSceneVersions(bookId, filteredDirty);
 
+                    // Store per-unit dirty IDs in PG for granular force-regen
+                    for (const ds of filteredDirty) {
+                        const unitIds = ds.changes?.units?.unit_ids;
+                        if (unitIds && Array.isArray(unitIds) && unitIds.length > 0) {
+                            await sceneAssetsRepo.setDirtyUnitIds(bookId, ds.chapter_id, ds.scene_id, unitIds);
+                            log(`[DIRTY-UNITS] ${bookId}/${ds.chapter_id}/${ds.scene_id}: ${unitIds.length} dirty unit(s): ${unitIds.join(', ')}`);
+                        }
+                    }
+
                     // R16: Log cross-cutting source when version is bumped by entity changes
                     for (const ds of filteredDirty) {
                         if (ds.reason === 'removed') continue;
@@ -1687,14 +1705,61 @@ async function clearBookDispatchMeta(redis, bookId) {
             // processes each scene via executeAudioDispatch.
             // Also promote scene state to VIDEO_READY and remove from active index
             // so the runtime tick skips them entirely.
+            //
+            // IMPORTANT: If a scene has per-unit dirty markers (dirty_unit_ids),
+            // it MUST stay in active index so the scheduler dispatches
+            // executeImageDispatch, which reads dirtyUnitIds from PG and forces
+            // regeneration for specific units. Removing it here would mean the
+            // per-unit regeneration is never triggered.
             let restoredCount = 0;
             for (const ds of filteredDirty) {
+                const hasDirtyUnits = ds.changes?.units?.unit_ids && ds.changes.units.unit_ids.length > 0;
                 const isValid = await windowModule.sceneHasValidContent(redis, buildId, bookId, ds.chapter_id, ds.scene_id);
-                if (isValid) {
+
+                if (isValid && !hasDirtyUnits) {
+                    // Scene has fully valid content (all layers ready, no per-unit changes)
+                    // → restore chunk metadata, mark VIDEO_READY, remove from active index
                     await windowModule.restoreChunkStatusForScene(redis, buildId, bookId, ds.chapter_id, ds.scene_id);
                     await state.setSceneStateWithBuildId(redis, bookId, ds.chapter_id, ds.scene_id, state.SceneState.VIDEO_READY, buildId);
                     await scheduler.removeSceneFromActiveIndex(redis, bookId, ds.chapter_id, ds.scene_id);
                     restoredCount++;
+                } else if (isValid && hasDirtyUnits) {
+                    // Scene has content on disk BUT specific units need regeneration.
+                    // → restore chunk metadata for layers that ARE valid (audio),
+                    //   but KEEP scene in active index so the scheduler dispatches
+                    //   executeImageDispatch (which reads dirtyUnitIds from PG).
+
+                    // PRE-DELETE stale PNG files for dirty units so /assets-state
+                    // immediately reports correct progress (e.g. 3/4 instead of 4/4)
+                    // on the first frontend poll after /regenerate returns.
+                    // Also clear GPU hub dedup keys so the scheduler's dispatch is accepted.
+                    const unitIds = ds.changes.units.unit_ids;
+                    if (unitIds && Array.isArray(unitIds) && unitIds.length > 0) {
+                        const buildDir = path.join(config.OUTPUT_DIR, buildId);
+                        for (const unitId of unitIds) {
+                            const imageIUId = `${bookId}_${ds.chapter_id}_${ds.scene_id}_${unitId}`;
+                            // Delete stale PNG
+                            const pngPath = path.join(buildDir, `${imageIUId}.png`);
+                            try {
+                                if (fs.existsSync(pngPath)) {
+                                    fs.unlinkSync(pngPath);
+                                    log(`[REGENERATE-PRE-DELETE] Deleted stale PNG: ${imageIUId}.png`);
+                                }
+                            } catch (delErr) {
+                                console.warn(`[REGENERATE-PRE-DELETE] Failed to delete ${imageIUId}.png: ${delErr.message}`);
+                            }
+                            // Clear GPU hub dedup key so the scheduler's dispatch is not blocked
+                            try {
+                                await redis.del(`animastor:job:${imageIUId}:image`);
+                                log(`[REGENERATE-PRE-DELETE] Cleared GPU dedup for ${imageIUId}`);
+                            } catch (dedupErr) {
+                                console.warn(`[REGENERATE-PRE-DELETE] Failed to clear dedup for ${imageIUId}: ${dedupErr.message}`);
+                            }
+                        }
+                    }
+
+                    await windowModule.restoreChunkStatusForScene(redis, buildId, bookId, ds.chapter_id, ds.scene_id);
+                    log(`[REGENERATE-PER-UNIT] ${bookId}/${ds.chapter_id}/${ds.scene_id}: ${ds.changes.units.unit_ids.length} dirty unit(s) — keeping in active index for per-unit dispatch, PNG pre-deleted`);
                 }
             }
             if (restoredCount > 0) {
