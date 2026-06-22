@@ -1650,6 +1650,7 @@ async function clearBookDispatchMeta(redis, bookId) {
             // Mark dirty scenes (Redis)
             const marked = await bookDiff.markDirtyScenes(redis, bookId, buildId, filteredDirty, layerCfg);
 
+
             // Reconcile PG state (hashes, asset status, tasks) via book-sync
             try {
                 await storage.bookSync.reconcileFromDiff(bookId, filteredDirty, loadedBook);
@@ -1688,7 +1689,8 @@ async function clearBookDispatchMeta(redis, bookId) {
             // so the runtime tick skips them entirely.
             let restoredCount = 0;
             for (const ds of filteredDirty) {
-                if (await windowModule.sceneHasValidContent(redis, buildId, bookId, ds.chapter_id, ds.scene_id)) {
+                const isValid = await windowModule.sceneHasValidContent(redis, buildId, bookId, ds.chapter_id, ds.scene_id);
+                if (isValid) {
                     await windowModule.restoreChunkStatusForScene(redis, buildId, bookId, ds.chapter_id, ds.scene_id);
                     await state.setSceneStateWithBuildId(redis, bookId, ds.chapter_id, ds.scene_id, state.SceneState.VIDEO_READY, buildId);
                     await scheduler.removeSceneFromActiveIndex(redis, bookId, ds.chapter_id, ds.scene_id);
@@ -1698,6 +1700,7 @@ async function clearBookDispatchMeta(redis, bookId) {
             if (restoredCount > 0) {
                 log(`[REGENERATE] ${bookId}: restored chunk metadata for ${restoredCount}/${filteredDirty.length} scenes with existing content`);
             }
+
 
             res.json({
                 book_id: bookId, scope: effectiveScope,

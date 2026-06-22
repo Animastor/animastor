@@ -464,7 +464,7 @@ async function getSceneDuration(buildId, bookId, chapterId, sceneId) {
     return 0;
 }
 
-async function processSingleIU(redis, unit, uIdx, sceneData, loadedBook, buildId, bookId, chapterId, sceneId, sceneDuration, fullText) {
+async function processSingleIU(redis, unit, uIdx, sceneData, loadedBook, buildId, bookId, chapterId, sceneId, sceneDuration, fullText, force = false) {
     const canonicalUnitId = String(unit.id);
     if (!canonicalUnitId) {
         error(`IU unit.id missing, skipping: ${chapterId}/${sceneId}`);
@@ -472,8 +472,22 @@ async function processSingleIU(redis, unit, uIdx, sceneData, loadedBook, buildId
     }
     const imageIUId = `${bookId}_${chapterId}_${sceneId}_${canonicalUnitId}`;
 
-    const cachedIU = probeIUImage(imageIUId, buildId, config.OUTPUT_DIR);
-    const existingIUImage = cachedIU?.image || null;
+    // When force=true, skip disk cache check — regenerate regardless of existing files
+    if (!force) {
+        const cachedIU = probeIUImage(imageIUId, buildId, config.OUTPUT_DIR);
+        if (cachedIU?.image) {
+            try {
+                await saveIUMetadata(buildId, bookId, chapterId, sceneId, unit, sceneDuration, fullText, uIdx);
+            } catch (err) {
+                warn(`Failed to save IU metadata for ${unit.id}: ${err.message}`);
+            }
+            log(`IMAGE (IU) CACHE HIT: ${imageIUId}`);
+            await saveIURegistry(redis, imageIUId, buildId);
+            return { sent: false, cached: true };
+        }
+    } else {
+        log(`[FORCE-REGEN] Skipping disk cache for ${imageIUId} — content version changed`);
+    }
 
     try {
         await saveIUMetadata(buildId, bookId, chapterId, sceneId, unit, sceneDuration, fullText, uIdx);
@@ -481,34 +495,28 @@ async function processSingleIU(redis, unit, uIdx, sceneData, loadedBook, buildId
         warn(`Failed to save IU metadata for ${unit.id}: ${err.message}`);
     }
 
-    if (!existingIUImage) {
-        const finalPrompt = buildImagePrompt(unit, sceneData.payload, sceneData.chapter, loadedBook);
-        const workflow = buildIUImageWorkflow(unit, sceneData.payload, sceneData.chapter, loadedBook);
+    const finalPrompt = buildImagePrompt(unit, sceneData.payload, sceneData.chapter, loadedBook);
+    const workflow = buildIUImageWorkflow(unit, sceneData.payload, sceneData.chapter, loadedBook);
 
-        debug(`📸 IMAGE DISPATCH:\n  - final_image_prompt: ${finalPrompt}\n  - workflow_id: ${workflow?.workflow || 'unknown'}\n  - scene_id: ${chapterId}/${sceneId}\n  - iu_id: ${canonicalUnitId}`);
+    debug(`📸 IMAGE DISPATCH:\n  - final_image_prompt: ${finalPrompt}\n  - workflow_id: ${workflow?.workflow || 'unknown'}\n  - scene_id: ${chapterId}/${sceneId}\n  - iu_id: ${canonicalUnitId}`);
 
-        log(`GENERATE IMAGE (IU): ${imageIUId}, unit.id: ${canonicalUnitId}`);
+    log(`GENERATE IMAGE (IU): ${imageIUId}, unit.id: ${canonicalUnitId}`);
 
-        // Use connector to resolve nodeIds instead of hardcoded "108"/"109"
-        const wfImg = wfLoader.getWorkflow(WORKFLOW_NAME);
-        const baseNegative = 'blurry, low quality, artifacts';
-        const customNegative = resolveNegativePrompt(unit, sceneData.payload);
+    // Use connector to resolve nodeIds instead of hardcoded "108"/"109"
+    const wfImg = wfLoader.getWorkflow(WORKFLOW_NAME);
+    const baseNegative = 'blurry, low quality, artifacts';
+    const customNegative = resolveNegativePrompt(unit, sceneData.payload);
 
-        // Apply via connector
-        applyImageValue(wfImg, 'positivePrompt', finalPrompt);
-        applyImageValue(wfImg, 'negativePrompt', customNegative ? `${customNegative}, ${baseNegative}` : baseNegative);
+    // Apply via connector
+    applyImageValue(wfImg, 'positivePrompt', finalPrompt);
+    applyImageValue(wfImg, 'negativePrompt', customNegative ? `${customNegative}, ${baseNegative}` : baseNegative);
 
-        await saveIURegistry(redis, imageIUId, buildId);
-        await gpu.send(`${imageIUId}:image`, wfImg, 'image', buildId);
-        return { sent: true, cached: false };
-    }
-
-    log(`IMAGE (IU) CACHE HIT: ${imageIUId}`);
     await saveIURegistry(redis, imageIUId, buildId);
-    return { sent: false, cached: true };
+    await gpu.send(`${imageIUId}:image`, wfImg, 'image', buildId);
+    return { sent: true, cached: false };
 }
 
-async function generateSceneIUImages(redis, sceneData, loadedBook, buildId, bookId) {
+async function generateSceneIUImages(redis, sceneData, loadedBook, buildId, bookId, force = false) {
     const units = collectSceneUnits(sceneData.payload);
     const chapterId = sceneData.chapter_id;
     const sceneId = sceneData.scene_id;
@@ -523,7 +531,7 @@ async function generateSceneIUImages(redis, sceneData, loadedBook, buildId, book
     let sentCount = 0;
     let cacheHitCount = 0;
     for (let uIdx = 0; uIdx < units.length; uIdx++) {
-        const result = await processSingleIU(redis, units[uIdx], uIdx, sceneData, loadedBook, buildId, bookId, chapterId, sceneId, sceneDuration, fullText);
+        const result = await processSingleIU(redis, units[uIdx], uIdx, sceneData, loadedBook, buildId, bookId, chapterId, sceneId, sceneDuration, fullText, force);
         if (result.sent) sentCount++;
         if (result.cached) cacheHitCount++;
     }

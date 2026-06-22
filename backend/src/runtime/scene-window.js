@@ -161,17 +161,21 @@ async function sceneHasValidContent(redis, buildId, bookId, chapterId, sceneId) 
         `, [bookId, chapterId, sceneId]);
         if (sceneResult.rows.length > 0) {
             const sv = sceneResult.rows[0];
-            const aAsset = await sceneAssetsRepo.getAsset(bookId, chapterId, sceneId, 'audio', buildId);
+            // Try with buildId first; if not found (e.g. synthetic row from
+            // markSceneAssetsStale with build_id=NULL), fall back to any audio asset.
+            const aAsset = await sceneAssetsRepo.getAsset(bookId, chapterId, sceneId, 'audio', buildId)
+                || await sceneAssetsRepo.getAsset(bookId, chapterId, sceneId, 'audio');
+
+            // Primary check: version comparison via scene_assets row (R15)
             if (aAsset && aAsset.scene_content_version != null && sv.content_version != null &&
                 aAsset.scene_content_version < sv.content_version) {
                 log(`[VERSION-STALE] ${bookId}/${chapterId}/${sceneId}: audio content_version=${aAsset.scene_content_version} < scene content_version=${sv.content_version} — content is stale`);
-                return false; // Content is stale, needs regeneration
+                return false;
             }
-            // Also check audio config version for audio-specific changes
             if (aAsset && aAsset.scene_audio_config_version != null && sv.audio_config_version != null &&
                 aAsset.scene_audio_config_version < sv.audio_config_version) {
                 log(`[VERSION-STALE] ${bookId}/${chapterId}/${sceneId}: audio_config_version=${aAsset.scene_audio_config_version} < scene audio_config_version=${sv.audio_config_version} — audio is stale`);
-                return false; // Audio is stale, needs regeneration
+                return false;
             }
         }
     } catch (_) {

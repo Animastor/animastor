@@ -127,21 +127,23 @@ orchestrator.executeAudioDispatch()
 
 ```
 orchestrator.executeImageDispatch()
-  → state transition → IMAGE_PENDING
-  → image.generateSceneIUImages() → build prompts → gpu.send()
-  → callback → task-handler (с проверкой IU completion)
-    → saveIURegistry → проверка всех IU для сцены
-    → orchestrator.handleImageCompleted()
-    → IMAGE_READY
+  → state transition → IMAGE_PENDING    → [VERSION-STALE CHECK] PG query: sa.scene_content_version < sv.content_version
+    → Если stale → forceRegen=true (force param обходит disk cache)
+    → image.generateSceneIUImages() → build prompts → gpu.send()
+    → callback → task-handler (с проверкой IU completion)
+      → saveIURegistry → проверка всех IU для сцены
+      → orchestrator.handleImageCompleted()
+      → IMAGE_READY
 ```
 
 ### 3e: Video Generation (зависит от IMAGE_READY)
 
 ```
 orchestrator.executeVideoDispatch()
-  → Проверка: image=READY? (asset states + chunk fallback)
-  → Проверка: video уже существует на диске? (cache hit)
-  → video.generateVideoAnimation() → jobSpecs
+  → Проверка: image=READY? (asset states + chunk fallback)    → Проверка: video уже существует на диске? (cache hit)
+    → [VERSION-STALE CHECK] PG query: sa.scene_content_version < sv.content_version
+    → Если stale → videoForceRegen=true (cache hit игнорируется)
+    → video.generateVideoAnimation() → jobSpecs
   → gpu.sendUnified() для каждой группы
   → callback → orchestrator.handleVideoCompleted()
     → video merge + mux audio
@@ -274,7 +276,7 @@ book-sync.js:syncBook(bookId)
     → SELECT scene_hash FROM scenes — хэши из БД
     → Сравнение: added / changed / removed
   → updateSceneHashes() — INSERT/UPDATE scenes
-  → markSceneAssetsStale() — stale для changed scenes
+  → markSceneAssetsStale() — upsert: UPDATE existing rows + INSERT synthetic 'audio' row if none exist
   → markGenerationTasksStale() — cancel для changed scenes
   → purgeRemovedSceneRows() — DELETE orphan rows
 ```

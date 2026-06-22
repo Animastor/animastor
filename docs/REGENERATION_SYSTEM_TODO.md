@@ -243,6 +243,18 @@
 ✅ R18 Callback chain repair
 ✅ R19 Frontend audio cache
 
+### Bugfix: Image/Video dispatch cache bypassing version staleness ✅
+
+**Files:** `scene-orchestrator.js`, `image-service.js`, `book-sync.js`, `scene-window.js`
+
+**Checklist:**
+- [x] `book-sync.js`: `markSceneAssetsStale()` changed to upsert (INSERT + ON CONFLICT UPDATE) — guarantees scene_assets rows exist after save
+- [x] `scene-window.js`: `sceneHasValidContent()` — getAsset fallback: try with buildId, then without (synthetic row has build_id=NULL)
+- [x] `scene-orchestrator.js`: `executeImageDispatch()` — added version-stale check (`sa.scene_content_version < sv.content_version`). If stale, passes `force=true` to `generateSceneIUImages()` which skips disk cache
+- [x] `image-service.js`: `processSingleIU()` + `generateSceneIUImages()` — new `force` param. When true, skips `probeIUImage()` disk cache check and always sends to GPU
+- [x] `scene-orchestrator.js`: `executeVideoDispatch()` — same version-stale check for video cache
+- [x] `scene-orchestrator.js` + `entity-schema.js`: fixed connector validation warnings (added `language`, `temperature` entityTypes)
+
 🏗  LOW:
   R20-R24 Прочее
 ```

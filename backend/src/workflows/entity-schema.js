@@ -252,6 +252,20 @@ const ENTITIES = {
     kind: 'parameter',
     description: 'Output quality setting (e.g. 320k for audio)'
   },
+  language: {
+    key: 'language',
+    label: 'Language',
+    type: 'string',
+    kind: 'parameter',
+    description: 'Language for TTS output (e.g. Russian, English)'
+  },
+  temperature: {
+    key: 'temperature',
+    label: 'Temperature',
+    type: 'float',
+    kind: 'parameter',
+    description: 'Sampling temperature for generation randomness'
+  },
 
   // ─── Guide Frame (LTX) ──────────────────────────
   guideFrameIndex: {

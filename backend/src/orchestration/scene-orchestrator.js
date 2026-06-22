@@ -538,12 +538,37 @@ async function executeImageDispatch(redis, scene, loadedBook, buildId) {
         buildId
     });
 
+    // [VERSION-STALE CHECK] Before generating, verify cached images are current
+    let forceRegen = false;
+    try {
+        const { query } = require('../storage/postgres/database');
+        const verResult = await query(`
+            SELECT sa.scene_content_version, sv.content_version
+            FROM scenes sv
+            LEFT JOIN scene_assets sa ON sa.book_id = sv.book_id
+                AND sa.chapter_id = sv.chapter_id
+                AND sa.scene_id = sv.scene_id
+            WHERE sv.book_id = $1 AND sv.chapter_id = $2 AND sv.scene_id = $3
+            LIMIT 1
+        `, [bookId, chapterId, sceneId]);
+        if (verResult.rows.length > 0) {
+            const row = verResult.rows[0];
+            if (row.scene_content_version != null && row.content_version != null
+                && row.scene_content_version < row.content_version) {
+                log(`[VERSION-STALE-FORCE] image stale: asset_ver=${row.scene_content_version} < scene_ver=${row.content_version}, forcing regen`);
+                forceRegen = true;
+            }
+        }
+    } catch (e) {
+        warn(`[VERSION-STALE-FORCE] check failed: ${e.message}`);
+    }
+
     // Generate IU images (sync operation)
     log(`Generating IU images: ${bookId}/${chapterId}/${sceneId}`);
-    const imgResult = await image.generateSceneIUImages(redis, sceneData, bookData, buildId, bookId);
+    const imgResult = await image.generateSceneIUImages(redis, sceneData, bookData, buildId, bookId, forceRegen);
     const allCached = imgResult && imgResult.sentCount === 0 && imgResult.cacheHitCount > 0;
 
-    if (allCached) {
+    if (allCached && !forceRegen) {
         // All IU images already on disk — immediately mark scene complete
         log(`All IU images cached (${imgResult.cacheHitCount}/${imgResult.total}), completing image stage`);
         // Use per-asset state
@@ -599,11 +624,36 @@ async function executeVideoDispatch(redis, scene, loadedBook, buildId) {
         warn(`VIDEO image check failed: ${e.message} — proceeding anyway`);
     }
 
+    // [VERSION-STALE CHECK] Before trusting video cache, verify content is current
+    let videoForceRegen = false;
+    try {
+        const { query } = require('../storage/postgres/database');
+        const verResult = await query(`
+            SELECT sa.scene_content_version, sv.content_version
+            FROM scenes sv
+            LEFT JOIN scene_assets sa ON sa.book_id = sv.book_id
+                AND sa.chapter_id = sv.chapter_id
+                AND sa.scene_id = sv.scene_id
+            WHERE sv.book_id = $1 AND sv.chapter_id = $2 AND sv.scene_id = $3
+            LIMIT 1
+        `, [bookId, chapterId, sceneId]);
+        if (verResult.rows.length > 0) {
+            const row = verResult.rows[0];
+            if (row.scene_content_version != null && row.content_version != null
+                && row.scene_content_version < row.content_version) {
+                log(`[VERSION-STALE-FORCE-VIDEO] video stale: asset_ver=${row.scene_content_version} < scene_ver=${row.content_version}, forcing regen`);
+                videoForceRegen = true;
+            }
+        }
+    } catch (e) {
+        warn(`[VERSION-STALE-FORCE-VIDEO] check failed: ${e.message}`);
+    }
+
     // Check if video already exists - CACHING CHECK
     const videoPath = `/data/output/${buildId}/${bookId}_${chapterId}_${sceneId}.mp4`;
     const videoCheck = video.validateVideoFile(videoPath);
     
-    if (videoCheck.valid) {
+    if (videoCheck.valid && !videoForceRegen) {
         log(`VIDEO CACHE HIT: ${bookId}/${chapterId}/${sceneId} - video already exists`);
         
         // Mark video as ready without dispatching generation

@@ -213,22 +213,46 @@ async function markSceneAssetsStale(bookId, chapterSceneKeys) {
     let total = 0;
     for (const key of chapterSceneKeys) {
         const [chapterId, sceneId] = splitKey(key);
-        // R15: Propagate current scene version to scene_assets when marking stale.
-        // This ensures the asset carries the version at which it became stale,
-        // so future version comparisons (asset.scene_content_version < scene.content_version)
-        // correctly identify this asset as outdated.
-        const r = await query(`
+
+        // R15+: Upsert — garantiert, dass für jede geänderte Szene ein
+        // scene_assets-Eintrag existiert. So kann die Versionsprüfung in
+        // sceneHasValidContent() immer greifen.
+        //
+        // 1. Bestehende Zeilen aktualisieren: Version propagieren,
+        //    'ready'-Einträge auf 'stale' setzen.
+        const updateResult = await query(`
             UPDATE scene_assets sa
-            SET status = 'stale',
+            SET status = CASE WHEN sa.status = 'ready' THEN 'stale' ELSE sa.status END,
                 scene_content_version = COALESCE(sv.content_version, sa.scene_content_version),
                 scene_audio_config_version = COALESCE(sv.audio_config_version, sa.scene_audio_config_version),
                 updated_at = EXTRACT(EPOCH FROM NOW())::bigint
             FROM scenes sv
             WHERE sa.book_id = $1 AND sa.chapter_id = $2 AND sa.scene_id = $3
-              AND sa.status = 'ready'
               AND sv.book_id = $1 AND sv.chapter_id = $2 AND sv.scene_id = $3
         `, [bookId, chapterId, sceneId]);
-        total += r.rowCount || 0;
+
+        // 2. Falls keine Zeilen existieren, einen synthetischen 'audio'-Eintrag
+        //    anlegen, damit der Versionsvergleich in sceneHasValidContent()
+        //    die Staleness erkennen kann (asset.scene_content_version < scene.content_version).
+        if (updateResult.rowCount === 0) {
+            await query(`
+                INSERT INTO scene_assets (book_id, chapter_id, scene_id, asset_type, status, scene_content_version, scene_audio_config_version, updated_at)
+                SELECT $1, $2, $3, 'audio', 'stale',
+                       sv.content_version, sv.audio_config_version,
+                       EXTRACT(EPOCH FROM NOW())::bigint
+                FROM scenes sv
+                WHERE sv.book_id = $1 AND sv.chapter_id = $2 AND sv.scene_id = $3
+                ON CONFLICT(book_id, chapter_id, scene_id, asset_type, build_id)
+                DO UPDATE SET
+                    status = 'stale',
+                    scene_content_version = EXCLUDED.scene_content_version,
+                    scene_audio_config_version = EXCLUDED.scene_audio_config_version,
+                    updated_at = EXTRACT(EPOCH FROM NOW())::bigint
+            `, [bookId, chapterId, sceneId]);
+            total++;
+        } else {
+            total += updateResult.rowCount || 0;
+        }
     }
     return total;
 }

@@ -214,6 +214,8 @@ The entity schema (`backend/src/workflows/entity-schema.js`) defines all possibl
 | `height` | int | parameter | Output height |
 | `steps` | int | parameter | Sampling steps |
 | `cfg` | float | parameter | CFG scale |
+| `language` | string | parameter | Language for TTS output (e.g. Russian, English) |
+| `temperature` | float | parameter | Sampling temperature for generation randomness |
 | ... | ... | ... | ... |
 
 ## Compatibility Validation
