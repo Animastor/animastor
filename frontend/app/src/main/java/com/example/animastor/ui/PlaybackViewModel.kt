@@ -223,7 +223,6 @@ class PlaybackViewModel(
     ) {
         Log.i(TAG, "refreshContent: book=$bookId build=$buildId chunks=${chunkIds.size}")
 
-        val prevBookId = this.bookId
         val prevBuildId = this.buildId
 
         // Preserve position relative to chunk IDs (not index), because the queue
@@ -248,6 +247,13 @@ class PlaybackViewModel(
         val currentPhase = _uiState.value.phase
         Log.i(TAG, "refreshContent: phase=$currentPhase index=$currentIndex (mapped $currentChunkId → $newIndex)")
 
+        // After regeneration the buildId typically does NOT change (the backend
+        // updates content in-place). Always clear the repository cache so that
+        // getChunkAudio / getChunkImage hit the network and return newly generated
+        // content instead of stale placeholder files from the old generation.
+        Log.i(TAG, "refreshContent: clearing cache (build=$buildId, prevBuild=$prevBuildId)")
+        _repository.clearCache()
+
         if (currentPhase == PlayerPhase.PAUSED || currentPhase == PlayerPhase.PLAYING) {
             // Player was active — mark content as stale; the next resume will
             // re-fetch the current scene instead of resuming the old MediaPlayer.
@@ -258,12 +264,6 @@ class PlaybackViewModel(
             pendingChunkIuSequence = null
             Log.i(TAG, "refreshContent: player active — marked needsContentRefresh")
             return
-        }
-
-        // For IDLE / SCENE_READY: behave like preparePlayback (full reset)
-        if (prevBuildId != buildId || prevBookId != bookId) {
-            Log.i(TAG, "refreshContent: generation changed, clearing cache")
-            _repository.clearCache()
         }
         if (chunkIds.isNotEmpty()) {
             _uiState.update { it.copy(phase = PlayerPhase.SCENE_READY) }

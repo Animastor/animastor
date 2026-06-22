@@ -83,14 +83,6 @@ class GenerateViewModel(
     private val _playbackPrepared = MutableSharedFlow<PlaybackPreparation>(replay = 1, extraBufferCapacity = 4)
     val playbackPrepared: SharedFlow<PlaybackPreparation> = _playbackPrepared.asSharedFlow()
 
-    /**
-     * Emitted when the cover image becomes available after generation.
-     * The activity coordinator observes this separately from [playbackPrepared]
-     * to update [PlaybackViewModel.setCoverImage] without disrupting the
-     * playback phase (no call to [PlaybackViewModel.preparePlayback]).
-     */
-    private val _coverUpdated = MutableSharedFlow<Bitmap>(extraBufferCapacity = 4)
-    val coverUpdated: SharedFlow<Bitmap> = _coverUpdated.asSharedFlow()
 
     // ── UI State (generation/import related only) ─────────────────
 
@@ -300,6 +292,17 @@ class GenerateViewModel(
                 hasUnsavedChanges = false
                 res
             }.onSuccess { res ->
+                // Update buildId — after regeneration the backend returns a new
+                // build_id so that client-side cache keys change and stale
+                // placeholder data is naturally invalidated (cache miss → fresh
+                // network fetch) without requiring an explicit clearCache().
+                if (res.build_id != null) {
+                    val oldBuildId = buildId
+                    persistBuildId(res.build_id)
+                    Log.i(TAG, "startGeneration: updated buildId from '$oldBuildId' to '${res.build_id}'")
+                } else {
+                    Log.w(TAG, "startGeneration: build_id is null in regenerate response")
+                }
                 _repository.clearCache()
                 _uiState.update { it.copy(phase = PlayerPhase.SCENE_READY) }
                 val dirtyCount = res.dirty_scenes?.size ?: 0
@@ -362,6 +365,18 @@ class GenerateViewModel(
             val coverId = coverChunkId ?: chunkIds.firstOrNull()
             if (coverId != null && imageEnabled) {
                 cover = loadCoverBitmap(coverId)
+                // Retry with exponential backoff — the backend may have just
+                // finished generation and the image file might not be readable
+                // immediately. Without retry, cover stays null → setCoverImage
+                // is never called → curtains remain visible as fallback.
+                if (cover == null) {
+                    for (retry in 1..5) {
+                        delay((1000L shl minOf(retry, 3)).coerceAtMost(5000))
+                        Log.i(TAG, "onGenerationComplete: retry $retry loading cover (coverId=$coverId)")
+                        cover = loadCoverBitmap(coverId)
+                        if (cover != null) break
+                    }
+                }
             }
             Log.i(TAG, "onGenerationComplete: emitting playbackPrepared (softRefresh) with ${chunkIds.size} chunks cover=${cover != null}")
             _playbackPrepared.tryEmit(PlaybackPreparation(
