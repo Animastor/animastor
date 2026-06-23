@@ -22,6 +22,15 @@ module.exports = function(app, redis, deps) {
     const { stats } = cleanupService;
     const OUTPUT_DIR = config.OUTPUT_DIR;
 
+    // Create audioRecovery instance once (R6.3: trigger-based)
+    const audioRecovery = require('../services/audio-recovery.cjs')(redis, config, {
+        audio, image, state, book, orchestrator,
+        taskHandler,
+        getChunk, saveChunk,
+        // saveIURegistry: not needed for per-scene recovery
+        utils,
+    });
+
     // ======================================================
     // DEBUG ROUTES — middleware for runtime access
     // ======================================================
@@ -523,6 +532,25 @@ module.exports = function(app, redis, deps) {
                 active_scenes: activeScenesCount,
             });
         } catch (err) {
+            res.status(500).json({ error: err.message });
+        }
+    });
+
+    // ======================================================
+    // AUDIO RECOVERY — on-demand per-scene (R6.3: trigger-based)
+    // ======================================================
+    app.post('/api/v1/debug/audio/recover', async (req, res) => {
+        try {
+            const { book_id, chapter_id, scene_id, build_id } = req.body || {};
+            if (!book_id || !chapter_id || !scene_id) {
+                return res.status(400).json({ error: 'book_id, chapter_id, scene_id required' });
+            }
+
+            const result = await audioRecovery.recoverAudioForScene(book_id, chapter_id, scene_id, build_id || 'default');
+            log(`[DEBUG AUDIO RECOVER] ${book_id}/${chapter_id}/${scene_id}: ${result.reason}`);
+            res.json(result);
+        } catch (err) {
+            console.error('[DEBUG AUDIO RECOVER] Error:', err.message);
             res.status(500).json({ error: err.message });
         }
     });

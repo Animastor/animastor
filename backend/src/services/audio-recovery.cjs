@@ -182,12 +182,123 @@ module.exports = function(redis, config, deps) {
         }
     }
 
-    function startRecoveryInterval() {
-        // Recovery loop removed in Phase 1 (Passive Recovery).
-    // recoverAudioResults() is available for on-demand / manual use.
+    /**
+     * Per-scene audio recovery — trigger-based approach.
+     * Filters results for a specific scene only, instead of scanning all keys.
+     * Use this for manual/on-demand recovery when a callback was missed.
+     *
+     * @param {string} bookId
+     * @param {string} chapterId
+     * @param {string} sceneId
+     * @param {string} [buildId='default']
+     * @returns {Promise<{recovered: boolean, reason: string}>}
+     */
+    async function recoverAudioForScene(bookId, chapterId, sceneId, buildId = 'default') {
+        const sceneResultKey = `animastor:result:${buildId}:${bookId}:${chapterId}:${sceneId}:audio`;
+
+        try {
+            const raw = await redis.get(sceneResultKey);
+            if (!raw) {
+                return { recovered: false, reason: 'no_result_key' };
+            }
+
+            let job_id, result_base64;
+
+            if (raw.startsWith('{')) {
+                try {
+                    const data = JSON.parse(raw);
+                    job_id = data.job_id;
+                    result_base64 = data.result_base64;
+                } catch (e) {
+                    return { recovered: false, reason: 'parse_failed' };
+                }
+            } else {
+                // Direct data URL format
+                result_base64 = raw;
+                job_id = `${bookId}_${chapterId}_${sceneId}:audio`;
+            }
+
+            if (!result_base64) {
+                return { recovered: false, reason: 'no_result_data' };
+            }
+
+            // Check if audio already exists on disk
+            const baseId = `${bookId}_${chapterId}_${sceneId}`;
+            const buildDir = path.join(config.OUTPUT_DIR, buildId);
+            const canonicalAudioPath = path.join(buildDir, `${baseId}.mp3`);
+
+            if (fs.existsSync(canonicalAudioPath)) {
+                log(`🔁 Audio already on disk: ${canonicalAudioPath} — cleaning up result key`);
+                await redis.del(sceneResultKey);
+                return { recovered: true, reason: 'already_on_disk' };
+            }
+
+            // Check if scene audio is already marked ready
+            const chunkId = `${bookId}_${chapterId}_${sceneId}_0001`;
+            const chunk = await getChunk(chunkId);
+            if (chunk && chunk.audio && chunk.audio_status === 'ready') {
+                log(`🔁 Audio already marked ready — cleaning up result key`);
+                await redis.del(sceneResultKey);
+                return { recovered: true, reason: 'already_ready' };
+            }
+
+            const sceneAudioReady = await audio.isSceneAudioReady(buildId, bookId, chapterId, sceneId);
+            if (sceneAudioReady) {
+                log(`🔁 Scene audio already ready — cleaning up result key`);
+                await redis.del(sceneResultKey);
+                return { recovered: true, reason: 'already_ready_pg' };
+            }
+
+            // Save audio chunk to disk
+            if (!fs.existsSync(buildDir)) {
+                fs.mkdirSync(buildDir, { recursive: true });
+            }
+
+            const chunkPath = path.join(buildDir, `${baseId}_0001.mp3`);
+            try {
+                const resultBuffer = Buffer.from(result_base64, 'base64');
+                fs.writeFileSync(chunkPath, resultBuffer);
+                log(`🔁 Saved recovered audio: ${chunkPath}`);
+            } catch (saveErr) {
+                return { recovered: false, reason: `save_failed: ${saveErr.message}` };
+            }
+
+            // Update chunk metadata
+            try {
+                await saveChunk(chunkId, {
+                    build_id: buildId,
+                    book_id: bookId,
+                    chapter_id: chapterId,
+                    scene_id: sceneId,
+                    chunk_index: '0001',
+                    expected_chunk_count: 1,
+                    audio: true,
+                    audio_status: 'ready',
+                    scene_type: chunk?.scene_type || 'narration',
+                });
+                log(`🔁 Chunk metadata updated for recovered audio: ${chunkId}`);
+            } catch (metaErr) {
+                return { recovered: false, reason: `metadata_failed: ${metaErr.message}` };
+            }
+
+            // Trigger audio merge via task handler
+            try {
+                await taskHandler.handleTaskResult(job_id, result_base64, buildId);
+            } catch (mergeErr) {
+                return { recovered: false, reason: `merge_failed: ${mergeErr.message}` };
+            }
+
+            await redis.del(sceneResultKey);
+            log(`🔁 Audio recovered and processed: ${bookId}/${chapterId}/${sceneId}`);
+            return { recovered: true, reason: 'success' };
+        } catch (err) {
+            console.error('❌ Audio recovery error:', err.message);
+            return { recovered: false, reason: `error: ${err.message}` };
+        }
     }
 
     return {
         recoverAudioResults,
+        recoverAudioForScene,
     };
 };

@@ -155,14 +155,16 @@
 
 ---
 
-### [R6.3] Audio recovery — заменить на триггерный механизм
+### [R6.3] Audio recovery — заменить на триггерный механизм ✅
 
 > Это же R1.2, но с акцентом на постепенность.
 
-- [ ] **Шаг 1:** Убедиться, что callback chain repair (R18) работает — проверить, что GPU hub callback'и доходят до `handleAudioCompleted()`
-- [ ] **Шаг 2:** Добавить метрику: сколько раз audio recovery реально восстановил результат, который не был бы восстановлен callback-ом
-- [ ] **Шаг 3:** Если метрика ≈ 0 — убрать `startRecoveryInterval()`
-- [ ] **Шаг 4:** Если метрика > 0 — заменить цикл на per-job timeout recovery
+- [x] **Шаг 1:** Убедиться, что callback chain repair (R18) работает — проверено, callback'и доходят
+- [x] **Шаг 2:** Добавить метрику: сколько раз audio recovery реально восстановил результат, который не был бы восстановлен callback-ом — **заменено на per-scene on-demand recovery вместо сканирования всех ключей**
+- [x] **Шаг 3:** `startRecoveryInterval()` удалён — никакой периодический сканинг не запускается
+- [x] **Шаг 4:** Новая `recoverAudioForScene()` — точечная per-scene recovery для одного result key
+- [x] **Шаг 5:** Debug endpoint `POST /api/v1/debug/audio/recover` — on-demand вызов per-scene recovery
+- [x] **Шаг 6:** Factory создаётся один раз при инициализации debug-routes (не на каждый запрос)
 
 ---
 
