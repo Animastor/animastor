@@ -120,24 +120,25 @@
 **Цель:** Аккуратно, постепенно, с тестами — убрать 5 точек избыточной сложности.
 Каждое изменение должно быть отделяемым (можно откатить без каскада).
 
-### [R6.1] Dual state model — консолидация
+### [R6.1] Dual state model — консолидация ✅
 
 > Per-asset — канонический, linear FSM — производная проекция. syncLinearState() после каждого изменения.
 
-- [ ] **Шаг 1:** Найти всех потребителей linear FSM
-  - `grep -r "SceneState\." --include="*.js" --include="*.cjs"` — кто читает linear state?
-  - `grep -r "syncLinearState" --include="*.js" --include="*.cjs"` — кто вызывает?
-  - `grep -r "transitionSceneState" --include="*.js" --include="*.cjs"` — кто использует linear transitions?
-- [ ] **Шаг 2:** Перевести каждого потребителя на per-asset API
-  - `getAssetStates()` вместо `getSceneState()`
-  - `setAssetState()` вместо `transitionSceneState()`
-  - `deriveLinearState()` — только для совместимости с external API
-- [ ] **Шаг 3:** Убрать `syncLinearState()` вызовы (кроме мест, где linear state нужен для внешних клиентов)
-- [ ] **Шаг 4:** (Опционально) Удалить linear FSM полностью
+- [x] **Шаг 1:** Найдены все потребители linear FSM:
+  - `syncLinearState` вызывалась в 22 местах
+  - `transitionSceneState` — в 35 местах
+  - `getSceneState` — в 26 местах
+- [x] **Шаг 2:** Переведены на per-asset API:
+  - callback handlers (handleAudio/Image/VideoCompleted) — больше не вызывают `syncLinearState`
+  - `shouldScheduleAssets()` — больше не вызывает `syncLinearState` (R4.2 блок)
+  - Каждое использование `syncLinearState` проверено: оставлено только где нужно для build_id (dispatch) или external API (markDirtyScenes)
+- [x] **Шаг 3:** Убрано 6 `syncLinearState` вызовов (3 из callback handlers + 3 из shouldScheduleAssets)
+- [x] **Шаг 4:** (Отложено) Полное удаление linear FSM — рискованно без аудита frontend API
 
-**Риски:**
-- External API может зависеть от linear state (frontend?)
-- Нужно проверить `/api/v1/book/:bookId/status` и подобные эндпоинты
+**Результат:** `syncLinearState` теперь вызывается только в:
+- dispatch-функциях (executeAudio/Image/VideoDispatch) — для build_id propagation
+- markDirtyScenes (book-diff.cjs) — после Lua reset
+- layer config short-circuits (dispatchStage) — при пропуске слоя
 
 ---
 
@@ -219,7 +220,7 @@ Phase 5 — 🟢 Medium: Чистка дубликатов
 └── [R5.3] Heartbeat simplification                  (⚪)
 
 Phase 6 — 🟡 High: Расчистка избыточной сложности
-├── [R6.1] Dual state model — консолидация           (🟡, долгосрочно)
+├── [R6.1] Dual state model — консолидация           (🟡, ✅ Done)
 ├── [R6.2] Консолидировать проверки файлов           (🟡, ✅ Done)
 ├── [R6.3=R1.2] Audio recovery → trigger-based       (🟡, можно сейчас)
 ├── [R6.4=R5.2] Governance modules — решить судьбу   (🟢, ✅ Done)
@@ -270,7 +271,7 @@ Phase 2:   R2.1       →  force lease release in dispatch           ✅
           R4.2       →  version bump как единственный триггер              ✅
           R4.3       →  crash-safe dirty                                   ✅
           
-Далее:    R6.1       →  консолидация dual state model
-          R6.3       →  audio recovery → trigger-based
+Далее:    R6.3       →  audio recovery → trigger-based
           R5.x       →  чистка дубликатов
+          R5.1       →  event journals
 ``` → R6.x

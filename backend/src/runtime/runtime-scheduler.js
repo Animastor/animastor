@@ -273,24 +273,20 @@ async function shouldScheduleAssets(redis, bookId, chapterId, sceneId) {
         warn(`[VERSION-DIRTY] PG version check failed for ${bookId}/${chapterId}/${sceneId}: ${err.message}`);
     }
 
-    // If version-stale, force the scene into pending state by marking assets
-    // as not-ready. The dispatch engine will pick it up.
+    // R6.1: syncLinearState is NOT called here — deriveLinearState() computes
+    // linear state on demand from per-asset states. The dispatch engine reads
+    // per-asset states directly, so the linear state update is not needed.
     if (pgVersionStale) {
         log(`[VERSION-DIRTY] ${bookId}/${chapterId}/${sceneId}: PG version mismatch — resetting per-asset states for dispatch`);
-        // Reset per-asset states to PENDING so dispatch engine picks them up.
-        // This is safe: the Lua script or fallback won't run here, we just
-        // set the asset state directly to trigger dispatch.
+        // Reset per-asset states to DIRTY so dispatch engine picks them up.
         if (audioEnabled && assetStates.audio === state.AssetState.READY) {
             await state.setAssetState(redis, bookId, chapterId, sceneId, 'audio', state.AssetState.DIRTY);
-            await state.syncLinearState(redis, bookId, chapterId, sceneId);
         }
         if (imageEnabled && assetStates.image === state.AssetState.READY) {
             await state.setAssetState(redis, bookId, chapterId, sceneId, 'image', state.AssetState.DIRTY);
-            await state.syncLinearState(redis, bookId, chapterId, sceneId);
         }
         if (videoEnabled && assetStates.video === state.AssetState.READY) {
             await state.setAssetState(redis, bookId, chapterId, sceneId, 'video', state.AssetState.DIRTY);
-            await state.syncLinearState(redis, bookId, chapterId, sceneId);
         }
         // Re-read asset states after reset
         const updatedStates = await state.getAssetStates(redis, bookId, chapterId, sceneId);

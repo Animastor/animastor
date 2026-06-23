@@ -965,9 +965,10 @@ async function handleAudioCompleted(redis, bookId, chapterId, sceneId, buildId) 
     // Update per-asset state (source of truth)
     await state.setAssetState(redis, bookId, chapterId, sceneId, 'audio', state.AssetState.READY);
 
-    // Sync linear FSM from per-asset states (backward compat).
-    // Pass buildId so it's preserved in the scene state for reconciliation.
-    await state.syncLinearState(redis, bookId, chapterId, sceneId, buildId);
+    // Linear FSM is NOT explicitly synced here — deriveLinearState() computes
+    // it on demand from per-asset states. External API consumers that need
+    // the linear state can call deriveLinearState() or read per-asset states.
+    // build_id was already set in the linear state during dispatch.
 
     // Release dispatch quota so worker pulse stops
     await dispatchEngine.releaseQuota(redis, 'audio');
@@ -1073,9 +1074,8 @@ async function handleImageCompleted(redis, bookId, chapterId, sceneId, buildId) 
     // Update per-asset state (source of truth)
     await state.setAssetState(redis, bookId, chapterId, sceneId, 'image', state.AssetState.READY);
 
-    // Sync linear FSM from per-asset states (backward compat).
-    // Pass buildId so it's preserved in the scene state for reconciliation.
-    await state.syncLinearState(redis, bookId, chapterId, sceneId, buildId);
+    // Linear FSM is NOT explicitly synced here — deriveLinearState() computes
+    // it on demand from per-asset states.
 
     // Update all chunks for this scene with image_status: ready
     await updateSceneChunks(redis, bookId, chapterId, sceneId, { image: true, image_status: 'ready' });
@@ -1160,9 +1160,8 @@ async function handleVideoCompleted(redis, bookId, chapterId, sceneId, buildId) 
     // Update per-asset state (source of truth)
     await state.setAssetState(redis, bookId, chapterId, sceneId, 'video', state.AssetState.READY);
 
-    // Sync linear FSM from per-asset states (backward compat).
-    // Pass buildId so it's preserved in the scene state for reconciliation.
-    await state.syncLinearState(redis, bookId, chapterId, sceneId, buildId);
+    // Linear FSM is NOT explicitly synced here — deriveLinearState() computes
+    // it on demand from per-asset states.
 
     // Release dispatch quota so worker pulse stops
     await dispatchEngine.releaseQuota(redis, 'video');
