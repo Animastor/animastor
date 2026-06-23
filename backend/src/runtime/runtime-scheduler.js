@@ -232,7 +232,73 @@ async function shouldScheduleAssets(redis, bookId, chapterId, sceneId) {
     const imageEnabled = layerCfg.image_enabled !== false;
     const videoEnabled = layerCfg.video_enabled !== false;
 
+    // R4.2: Check PG version staleness as secondary dirty detection mechanism.
+    // If asset_version < scene_version in PG, the scene needs regeneration
+    // even if Redis per-asset states show it as 'ready' (e.g., Redis was flushed
+    // or the version bump happened while Redis was offline).
+    //
+    // This makes PG the source of truth for dirty detection — Redis per-asset
+    // states are only a runtime cache that may lag behind reality.
+    let pgVersionStale = false;
+    try {
+        const { query } = require('../storage/postgres/database');
+        const verResult = await query(`
+            SELECT s.content_version, s.audio_config_version,
+                   a.scene_content_version, a.scene_audio_config_version, a.status as asset_status
+            FROM scenes s
+            LEFT JOIN scene_assets a ON a.book_id = s.book_id
+                AND a.chapter_id = s.chapter_id
+                AND a.scene_id = s.scene_id
+            WHERE s.book_id = $1 AND s.chapter_id = $2 AND s.scene_id = $3
+        `, [bookId, chapterId, sceneId]);
+
+        for (const row of verResult.rows) {
+            if (row.asset_status === 'ready') {
+                // Content version stale
+                if (row.scene_content_version != null && row.content_version != null &&
+                    row.scene_content_version < row.content_version) {
+                    log(`[VERSION-DIRTY] ${bookId}/${chapterId}/${sceneId}: content_version stale (asset=${row.scene_content_version} < scene=${row.content_version})`);
+                    pgVersionStale = true;
+                }
+                // Audio config version stale
+                if (row.scene_audio_config_version != null && row.audio_config_version != null &&
+                    row.scene_audio_config_version < row.audio_config_version) {
+                    log(`[VERSION-DIRTY] ${bookId}/${chapterId}/${sceneId}: audio_config_version stale (asset=${row.scene_audio_config_version} < scene=${row.audio_config_version})`);
+                    pgVersionStale = true;
+                }
+            }
+        }
+    } catch (err) {
+        // PG query failed — fall back to Redis-only detection
+        warn(`[VERSION-DIRTY] PG version check failed for ${bookId}/${chapterId}/${sceneId}: ${err.message}`);
+    }
+
+    // If version-stale, force the scene into pending state by marking assets
+    // as not-ready. The dispatch engine will pick it up.
+    if (pgVersionStale) {
+        log(`[VERSION-DIRTY] ${bookId}/${chapterId}/${sceneId}: PG version mismatch — resetting per-asset states for dispatch`);
+        // Reset per-asset states to PENDING so dispatch engine picks them up.
+        // This is safe: the Lua script or fallback won't run here, we just
+        // set the asset state directly to trigger dispatch.
+        if (audioEnabled && assetStates.audio === state.AssetState.READY) {
+            await state.setAssetState(redis, bookId, chapterId, sceneId, 'audio', state.AssetState.DIRTY);
+            await state.syncLinearState(redis, bookId, chapterId, sceneId);
+        }
+        if (imageEnabled && assetStates.image === state.AssetState.READY) {
+            await state.setAssetState(redis, bookId, chapterId, sceneId, 'image', state.AssetState.DIRTY);
+            await state.syncLinearState(redis, bookId, chapterId, sceneId);
+        }
+        if (videoEnabled && assetStates.video === state.AssetState.READY) {
+            await state.setAssetState(redis, bookId, chapterId, sceneId, 'video', state.AssetState.DIRTY);
+            await state.syncLinearState(redis, bookId, chapterId, sceneId);
+        }
+        // Re-read asset states after reset
+        const updatedStates = await state.getAssetStates(redis, bookId, chapterId, sceneId);
+        Object.assign(assetStates, updatedStates);
+    }
+
     // Check if all enabled assets are in terminal states
+    // (after potential version-stale reset above)
     const allDone = (
         (!audioEnabled || assetStates.audio === state.AssetState.READY || assetStates.audio === state.AssetState.FAILED) &&
         (!imageEnabled || assetStates.image === state.AssetState.READY || assetStates.image === state.AssetState.FAILED) &&
@@ -266,14 +332,11 @@ async function shouldScheduleAssets(redis, bookId, chapterId, sceneId) {
         assetStates.video !== state.AssetState.GENERATING) {
         let imageReady = assetStates.image === state.AssetState.READY;
         if (!imageReady && !imageEnabled) {
-            // Image worker disabled but images may already exist on disk.
-            // Check chunks to avoid dispatching video without real images.
             imageReady = await checkChunksHaveImages(redis, bookId, chapterId, sceneId);
         }
         if (imageReady) {
             stages.push('video');
         }
-        // If images not ready, skip video for this scene (not an error)
     }
 
     return { stages, allDone };

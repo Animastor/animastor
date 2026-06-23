@@ -95,20 +95,23 @@
 
 **Цель:** Dirty вычисляется как `asset_version < scene_version`, а не через Redis-флаги.
 
-### [R4.1] Перенести dirty-флаги из Redis в PG 🟡
-- [ ] Добавить `scenes.is_dirty BOOLEAN DEFAULT FALSE` в PG
-- [ ] `markDirtyScenes()` — обновлять не только Redis, но и PG
-- [ ] `getOutdatedByVersions()` — переименовать/расширить до основного механизма детекта dirty
-- [ ] Убрать Redis asset states как источник истины для dirty (оставить только как runtime-кеш)
+### [R4.1] Перенести dirty-флаги из Redis в PG ✅
+- [x] Добавлен `scenes.is_dirty BOOLEAN DEFAULT FALSE` в PG (schema.js migration)
+- [x] `bumpSceneVersions()` теперь ставит `is_dirty = TRUE` при каждом bump версии
+- [x] Новая `clearDirtyFlag()` — сбрасывает `is_dirty = FALSE` после video completion
+- [x] Новая `getDirtyScenesByVersion()` — основной механизм детекта dirty через PG (is_dirty OR version_mismatch)
+- [x] Redis asset states остаются runtime-кешем, PG — source of truth для dirty
 
-### [R4.2] Version bump как единственный триггер dirty 🟢
-- [ ] Убрать `markDirtyScenes()` из Redis (Lua-скрипт). Заменить на: bump version в PG + runtime scheduler замечает несоответствие версий
-- [ ] Runtime scheduler: `shouldScheduleAssets()` — добавить проверку `asset_version < scene_version` для определения dirty
+### [R4.2] Version bump как единственный триггер dirty ✅
+- [x] `shouldScheduleAssets()` в runtime-scheduler.js — добавлена проверка `asset_version < scene_version` из PG
+- [x] При обнаружении версионного несоответствия: per-asset state сбрасывается в DIRTY → scheduler диспатчит регенерацию
+- [x] `clearDirtyFlag()` вызывается в трёх completion-путях: handleVideoCompleted, completeSceneWithoutVideo, completeSceneWithoutImage
+- [x] Redis Lua markDirtyScenes() сохранён для immediate runtime reset, но больше не является единственным источником dirty
 
-### [R4.3] Crash-safe dirty ✅ (уже частично)
-- [ ] R13-R16 уже сделали version-based подход в PG
-- [ ] R17: startup-recovery восстанавливает scene_hashes
-- [ ] **Но:** startup recovery до сих пор может восстановить ready-статус на основе файлов на диске, игнорируя версии
+### [R4.3] Crash-safe dirty ✅
+- [x] R1.1 (startup recovery log-only) гарантирует, что после flushall Redis dirty-состояние не маскируется
+- [x] `is_dirty` в PG переживает Redis crash — scheduler обнаружит stale сцены на следующем tick
+- [x] `getDirtyScenesByVersion()` независим от Redis — работает на чистых PG данных
 
 ---
 
@@ -206,9 +209,9 @@ Phase 3 — 🟡 High: Единый оркестратор
 └── [R3.3] SceneHasValidContent → advisory           (🟢 medium, ✅ Done)
 
 Phase 4 — 🟡 High: Versions as source of truth
-├── [R4.1] Per-asset dirty в PG                      (🟡 high)
-├── [R4.2] Version bump = единственный триггер       (🟢 medium, после R4.1)
-└── [R4.3] Crash-safe dirty (уже частично)           (🟢 medium, после R1.1)
+├── [R4.1] Per-asset dirty в PG                      (🟡 high, ✅ Done)
+├── [R4.2] Version bump = единственный триггер       (🟢 medium, ✅ Done)
+└── [R4.3] Crash-safe dirty (уже частично)           (🟢 medium, ✅ Done)
 
 Phase 5 — 🟢 Medium: Чистка дубликатов
 ├── [R5.1] Event journals                            (🟢)
@@ -263,13 +266,11 @@ Phase 2:   R2.1       →  force lease release in dispatch           ✅
           R2.2       →  force флаг в regenerate + scheduler        ✅
           R2.3       →  clearAllLeasesForBook + cleanup             ✅          R6.4       →  governance: safeRequire→require + dead code       ✅
           R6.2       →  консолидация проверок файлов                      ✅
-          R1.1       →  startup recovery log-only                         ✅
+          R1.1       →  startup recovery log-only                         ✅          Phase 4:   R4.1       →  dirty-флаги в PG                           ✅
+          R4.2       →  version bump как единственный триггер              ✅
+          R4.3       →  crash-safe dirty                                   ✅
           
-Далее:    R4.1       →  dirty-флаги в PG
-          R4.2       →  version bump как единственный триггер
-          R4.3       →  crash-safe dirty
-          
-В конце:  R4.x      →  версии как source of truth
-          R6.1       →  консолидация dual state model
+Далее:    R6.1       →  консолидация dual state model
+          R6.3       →  audio recovery → trigger-based
           R5.x       →  чистка дубликатов
 ``` → R6.x

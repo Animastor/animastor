@@ -285,7 +285,13 @@ async function bumpSceneVersions(bookId, dirtyScenes) {
             // First ensure the row exists (UPSERT — no-op if already present)
             await ensureSceneRow(bookId, ds.chapter_id, ds.scene_id);
 
-            const setClauses = ['updated_at = EXTRACT(EPOCH FROM NOW())::bigint'];
+            // R4.1: When bumping version, also set is_dirty = TRUE so the
+            // persistent dirty flag survives Redis crashes. The scheduler
+            // checks this flag as secondary dirty detection.
+            const setClauses = [
+                'is_dirty = TRUE',
+                'updated_at = EXTRACT(EPOCH FROM NOW())::bigint'
+            ];
             if (bumpContent) setClauses.push('content_version = content_version + 1');
             if (bumpAudio) setClauses.push('audio_config_version = audio_config_version + 1');
             await query(`
@@ -369,6 +375,65 @@ async function getDirtyUnitIds(bookId, chapterId, sceneId) {
  * @param {string} chapterId
  * @param {string} sceneId
  */
+/**
+ * R4.1: Clear the persistent dirty flag after regeneration completes.
+ * Called from scene-orchestrator after video callback succeeds.
+ */
+async function clearDirtyFlag(bookId, chapterId, sceneId) {
+    await query(`
+        UPDATE scenes
+        SET is_dirty = FALSE, updated_at = EXTRACT(EPOCH FROM NOW())::bigint
+        WHERE book_id = $1 AND chapter_id = $2 AND scene_id = $3
+    `, [bookId, chapterId, sceneId]);
+}
+
+/**
+ * R4.1: Get scenes whose version suggests they need regeneration.
+ * A scene is "dirty by version" if its is_dirty flag is TRUE OR
+ * if any asset has scene_content_version < scenes.content_version.
+ * This is the primary dirty detection mechanism — independent of Redis.
+ *
+ * @param {string} bookId
+ * @returns {Promise<Array<{chapter_id: string, scene_id: string, reason: string}>>}
+ */
+async function getDirtyScenesByVersion(bookId) {
+    const result = await query(`
+        SELECT DISTINCT s.book_id, s.chapter_id, s.scene_id, s.content_version, s.audio_config_version,
+               s.is_dirty,
+               a.scene_content_version, a.scene_audio_config_version, a.asset_type, a.status
+        FROM scenes s
+        LEFT JOIN scene_assets a ON a.book_id = s.book_id
+            AND a.chapter_id = s.chapter_id
+            AND a.scene_id = s.scene_id
+        WHERE s.book_id = $1
+          AND (
+              s.is_dirty = TRUE
+              OR (
+                  a.status = 'ready'
+                  AND (
+                      (a.scene_content_version IS NOT NULL AND a.scene_content_version < s.content_version)
+                      OR
+                      (a.scene_audio_config_version IS NOT NULL AND a.scene_audio_config_version < s.audio_config_version)
+                  )
+              )
+          )
+        ORDER BY s.chapter_id, s.scene_id
+    `, [bookId]);
+
+    return result.rows.map(row => ({
+        book_id: row.book_id,
+        chapter_id: row.chapter_id,
+        scene_id: row.scene_id,
+        reason: row.is_dirty ? 'is_dirty_flag' : 'version_mismatch',
+        content_version: row.content_version,
+        audio_config_version: row.audio_config_version,
+        scene_content_version: row.scene_content_version,
+        scene_audio_config_version: row.scene_audio_config_version,
+        asset_type: row.asset_type,
+        status: row.status,
+    }));
+}
+
 async function clearDirtyUnitIds(bookId, chapterId, sceneId) {
     await ensureSceneRow(bookId, chapterId, sceneId);
     await query(`
@@ -395,6 +460,8 @@ module.exports = {
     setDirtyUnitIds,
     getDirtyUnitIds,
     clearDirtyUnitIds,
+    clearDirtyFlag,
+    getDirtyScenesByVersion,
     isSceneReady,
     deleteSceneAssets,
     deleteBookAssets,

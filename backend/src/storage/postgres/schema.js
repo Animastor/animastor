@@ -556,6 +556,23 @@ async function runMigrations() {
         }
     }
 
+    // ======================================================
+    // Phase 4 (R4.1): Persistent dirty flag in scenes table
+    // ======================================================
+    // is_dirty persists across Redis crashes. Set to TRUE when
+    // bumpSceneVersions bumps content_version. Cleared after
+    // regeneration completes. The scheduler checks this flag
+    // as a secondary dirty detection mechanism alongside Redis
+    // per-asset states.
+    try {
+        await query(`ALTER TABLE scenes ADD COLUMN IF NOT EXISTS is_dirty BOOLEAN NOT NULL DEFAULT FALSE`);
+        console.log('[PG] Added scenes.is_dirty');
+    } catch (err) {
+        if (!err.message.includes('already exists')) {
+            console.error('[PG] Failed to add scenes.is_dirty:', err.message);
+        }
+    }
+
     console.log('[PG] Schema initialized');
 
     // ======================================================

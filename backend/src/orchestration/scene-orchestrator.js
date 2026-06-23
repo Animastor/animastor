@@ -1168,6 +1168,16 @@ async function handleVideoCompleted(redis, bookId, chapterId, sceneId, buildId) 
     await dispatchEngine.releaseQuota(redis, 'video');
     log(`🔻 VIDEO quota released (completed): ${bookId}/${chapterId}/${sceneId}`);
 
+    // Phase 4 (R4.1): Clear persistent dirty flag in PG now that the scene
+    // is fully regenerated (all layers done). This survives Redis crashes.
+    try {
+        const sceneAssetsRepo = require('../storage/postgres/repositories/scene-assets-repo');
+        await sceneAssetsRepo.clearDirtyFlag(bookId, chapterId, sceneId);
+        log(`[DIRTY-FLAG-CLEARED] ${bookId}/${chapterId}/${sceneId}: is_dirty=FALSE`);
+    } catch (e) {
+        warn(`Failed to clear dirty flag: ${e.message}`);
+    }
+
     // Remove from active scenes index
     await runtimeScheduler.removeSceneFromActiveIndex(redis, bookId, chapterId, sceneId);
     log(`SCENE COMPLETE: ${bookId}/${chapterId}/${sceneId} - removed from active index`);
@@ -1210,6 +1220,14 @@ async function completeSceneWithoutVideo(redis, loadedBook, bookId, chapterId, s
     await state.transitionSceneState(redis, bookId, chapterId, sceneId, state.SceneState.VIDEO_GENERATING);
     await state.transitionSceneState(redis, bookId, chapterId, sceneId, state.SceneState.VIDEO_READY);
 
+    // Phase 4 (R4.1): Clear persistent dirty flag
+    try {
+        const sceneAssetsRepo = require('../storage/postgres/repositories/scene-assets-repo');
+        await sceneAssetsRepo.clearDirtyFlag(bookId, chapterId, sceneId);
+    } catch (e) {
+        warn(`Failed to clear dirty flag in completeSceneWithoutVideo: ${e.message}`);
+    }
+
     await runtimeScheduler.removeSceneFromActiveIndex(redis, bookId, chapterId, sceneId);
     log(`Scene complete (no video): ${bookId}/${chapterId}/${sceneId} - removed from active index`);
 
@@ -1235,6 +1253,14 @@ async function completeSceneWithoutImage(redis, loadedBook, bookId, chapterId, s
     await state.transitionSceneState(redis, bookId, chapterId, sceneId, state.SceneState.IMAGE_GENERATING);
     await state.transitionSceneState(redis, bookId, chapterId, sceneId, state.SceneState.IMAGE_READY);
     log(`Scene complete (no image): ${bookId}/${chapterId}/${sceneId}`);
+
+    // Phase 4 (R4.1): Clear persistent dirty flag
+    try {
+        const sceneAssetsRepo = require('../storage/postgres/repositories/scene-assets-repo');
+        await sceneAssetsRepo.clearDirtyFlag(bookId, chapterId, sceneId);
+    } catch (e) {
+        warn(`Failed to clear dirty flag in completeSceneWithoutImage: ${e.message}`);
+    }
 
     await runtimeScheduler.removeSceneFromActiveIndex(redis, bookId, chapterId, sceneId);
 
