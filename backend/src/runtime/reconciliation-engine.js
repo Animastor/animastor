@@ -379,30 +379,6 @@ async function checkStaleDispatchLeases(redis, bookId, chapterId, sceneId) {
 }
 
 // ======================================================
-// STUCK SCENE CHECKS
-// ======================================================
-
-/**
- * Check if scene is stuck in a state.
- */
-async function checkStuckScenes(redis, bookId, chapterId, sceneId) {
-    const stuck = await state.isSceneStuck(redis, bookId, chapterId, sceneId);
-
-    if (!stuck.isStuck) {
-        return null;
-    }
-
-    return {
-        type: 'stuck_state',
-        scene: { bookId, chapterId, sceneId },
-        state: stuck.state,
-        ageMinutes: stuck.ageMinutes,
-        thresholdMinutes: stuck.threshold,
-        recommendation: 'move_to_pending'
-    };
-}
-
-// ======================================================
 // SCENE RECONCILIATION
 // ======================================================
 
@@ -479,15 +455,6 @@ async function reconcileScene(redis, bookId, chapterId, sceneId) {
                     issue: 'stale_locks'
                 });
             }
-        }
-
-        // Check stuck scenes
-        const stuck = await checkStuckScenes(redis, bookId, chapterId, sceneId);
-        if (stuck) {
-            report.inconsistentScenes.push({
-                scene: { bookId, chapterId, sceneId },
-                issue: stuck.type
-            });
         }
 
         // Check counter reconciliation (drift between leases and counters)
@@ -629,40 +596,31 @@ async function applyFix(redis, fix) {
         switch (action) {
             case 'MOVE_TO_PENDING': {
                 const current = await state.getSceneState(redis, scene.bookId, scene.chapterId, scene.sceneId);
-                const pendingState = state.getRecoveryPendingState(current.state);
 
-                if (!pendingState) {
-                    return { success: false, action, scene, details: 'no_recovery_path' };
-                }
+                // Derive pending state from current linear state (heuristic)
+                const s = current?.state || '';
+                const pendingState = s.includes('audio') ? state.SceneState.AUDIO_PENDING
+                    : s.includes('image') ? state.SceneState.IMAGE_PENDING
+                    : s.includes('video') ? state.SceneState.VIDEO_PENDING
+                    : state.SceneState.AUDIO_PENDING;
 
-                await state.transitionSceneState(
-                    redis,
-                    scene.bookId,
-                    scene.chapterId,
-                    scene.sceneId,
-                    pendingState
-                );
+                await state.transitionSceneState(redis, scene.bookId, scene.chapterId, scene.sceneId, pendingState);
+
+                // Mark all per-asset states as DIRTY for redispatch
+                await state.setAssetState(redis, scene.bookId, scene.chapterId, scene.sceneId, 'audio', state.AssetState.DIRTY);
+                await state.setAssetState(redis, scene.bookId, scene.chapterId, scene.sceneId, 'image', state.AssetState.DIRTY);
+                await state.setAssetState(redis, scene.bookId, scene.chapterId, scene.sceneId, 'video', state.AssetState.DIRTY);
 
                 // Remove from active index to avoid immediate re-scheduling
-                await runtimeScheduler.removeSceneFromActiveIndex(
-                    redis,
-                    scene.bookId,
-                    scene.chapterId,
-                    scene.sceneId
-                );
+                await runtimeScheduler.removeSceneFromActiveIndex(redis, scene.bookId, scene.chapterId, scene.sceneId);
 
                 // Log to journal
-                await journal.appendSceneEvent(
-                    redis,
-                    scene.bookId,
-                    scene.chapterId,
-                    scene.sceneId,
-                    'AUTO_RECOVER',
-                    pendingState,
-                    { fromState: current.state, recoveredBy: 'reconciliation-engine' }
+                await journal.appendSceneEvent(redis, scene.bookId, scene.chapterId, scene.sceneId,
+                    'AUTO_RECOVER', pendingState,
+                    { fromState: current?.state, recoveredBy: 'reconciliation-engine' }
                 );
 
-                return { success: true, action, scene, details: `moved to ${pendingState}` };
+                return { success: true, action, scene, details: `moved to ${pendingState} + assets DIRTY` };
             }
 
             case 'RELEASE_STALE_LOCKS': {
@@ -702,24 +660,21 @@ async function applyFix(redis, fix) {
                 // Move to pending state
                 const current = await state.getSceneState(redis, scene.bookId, scene.chapterId, scene.sceneId);
                 if (current) {
-                    const pendingState = state.getRecoveryPendingState(current.state);
-                    if (pendingState) {
-                        await state.transitionSceneState(
-                            redis,
-                            scene.bookId,
-                            scene.chapterId,
-                            scene.sceneId,
-                            pendingState
-                        );
+                    const s = current.state || '';
+                    const pendingState = s.includes('audio') ? state.SceneState.AUDIO_PENDING
+                        : s.includes('image') ? state.SceneState.IMAGE_PENDING
+                        : s.includes('video') ? state.SceneState.VIDEO_PENDING
+                        : state.SceneState.AUDIO_PENDING;
 
-                        // Add back to active index
-                        await runtimeScheduler.addSceneToActiveIndex(
-                            redis,
-                            scene.bookId,
-                            scene.chapterId,
-                            scene.sceneId
-                        );
-                    }
+                    await state.transitionSceneState(redis, scene.bookId, scene.chapterId, scene.sceneId, pendingState);
+
+                    // Mark per-asset states as DIRTY for redispatch
+                    await state.setAssetState(redis, scene.bookId, scene.chapterId, scene.sceneId, 'audio', state.AssetState.DIRTY);
+                    await state.setAssetState(redis, scene.bookId, scene.chapterId, scene.sceneId, 'image', state.AssetState.DIRTY);
+                    await state.setAssetState(redis, scene.bookId, scene.chapterId, scene.sceneId, 'video', state.AssetState.DIRTY);
+
+                    // Add back to active index
+                    await runtimeScheduler.addSceneToActiveIndex(redis, scene.bookId, scene.chapterId, scene.sceneId);
                 }
 
                 return { success: removedCount > 0, action, scene, details: `released ${removedCount} stale leases` };
@@ -967,7 +922,7 @@ module.exports = {
     checkOrphanAssets,
     checkPartialBuilds,
     checkStaleLocks,
-    checkStuckScenes,
+
     getFixRecommendations,
     applyFix,
     getMetrics,

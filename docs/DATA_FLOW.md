@@ -73,9 +73,11 @@ book-routes → txtImporter.bootstrapImportedText(bookId)
 
 ---
 
-## Сценарий 3: Генерация сцены (Per-Asset Parallel)
+## Сценарий 3: Генерация сцены (Per-Asset Parallel Dispatch)
 
 **Триггер:** Scene added to active-scenes index
+
+**Ключевое изменение (v2.1.0):** Линейная FSM удалена. Все callback'и проверяют per-asset state. `transitionSceneState` — прямой write без валидации. `decideStage` удалён — dispatch-engine всегда передаёт `overrideStage`.
 
 **Участвующие компоненты:**
 
@@ -89,10 +91,12 @@ runtime-scheduler.tick() [каждые 5 секунд]
     → shouldScheduleAssets() — ПРОВЕРКА PER-ASSET СОСТОЯНИЙ
       → assetStates = getAssetStates() (audio/image/video)
       → layer config (audio_enabled/image_enabled/video_enabled)
+      → PG version-stale check (если asset_version < scene_version)
       → Решение: какие stage'ы готовы к диспетчеризации
       → Audio: не ready и не generating → dispatch
       → Image: не ready и не generating → dispatch (независимо от audio!)
       → Video: не ready, не generating, image=ready → dispatch
+      → per-asset: NEW/DIRTY/PENDING → dispatch; GENERATING/READY → skip
     → Для каждого eligible stage:
       → dispatchEngine.dispatchStage(stage)
 ```
@@ -110,29 +114,30 @@ dispatchEngine.dispatchStage(redis, bookId, chapterId, sceneId, stage, loadedBoo
   → orchestrator.dispatchStage() с overrideStage
 ```
 
-### 3c: Audio Generation
+### 3c: Audio Generation (per-asset validation)
 
 ```
 orchestrator.executeAudioDispatch()
-  → Проверка: audio уже ready? (skip if real)
-  → Проверка: chunks уже существуют? (merge if yes)
-  → layer config: audio_enabled=false → skip + PLACEHOLDER
+  → Пер-ассет валидация (GENERATING/PENDING/DIRTY)
   → audio.generateSceneAudio() → segments → gpu.send()
   → callback → task-handler → orchestrator.handleAudioCompleted()
-    → Валидация → PG update → ASSET STATE → AUDIO_READY
-    → syncLinearState() (производная)
+    → Per-asset check: audio GENERATING/PENDING/DIRTY
+    → Валидация файла → PG update → ASSET STATE → AUDIO_READY
+    → syncLinearState() (производная для backward compat)
 ```
 
 ### 3d: Image Generation (независим от audio!)
 
 ```
 orchestrator.executeImageDispatch()
-  → state transition → IMAGE_PENDING    → [VERSION-STALE CHECK] PG query: sa.scene_content_version < sv.content_version
-    → Если stale → forceRegen=true (force param обходит disk cache)
+  → Пер-ассет валидация (GENERATING/PENDING/DIRTY)
+  → [VERSION-STALE CHECK] PG query
+    → Если stale → reset per-asset states to DIRTY
     → image.generateSceneIUImages() → build prompts → gpu.send()
     → callback → task-handler (с проверкой IU completion)
       → saveIURegistry → проверка всех IU для сцены
       → orchestrator.handleImageCompleted()
+      → Per-asset check: image GENERATING/PENDING/DIRTY
       → IMAGE_READY
 ```
 
@@ -140,12 +145,13 @@ orchestrator.executeImageDispatch()
 
 ```
 orchestrator.executeVideoDispatch()
-  → Проверка: image=READY? (asset states + chunk fallback)    → Проверка: video уже существует на диске? (cache hit)
-    → [VERSION-STALE CHECK] PG query: sa.scene_content_version < sv.content_version
-    → Если stale → videoForceRegen=true (cache hit игнорируется)
+  → Пер-ассет валидация (GENERATING/PENDING/DIRTY)
+  → Проверка: image=READY? (asset states + chunk fallback)
+    → [VERSION-STALE CHECK] PG query
     → video.generateVideoAnimation() → jobSpecs
   → gpu.sendUnified() для каждой группы
   → callback → orchestrator.handleVideoCompleted()
+    → Per-asset check: video GENERATING/PENDING/DIRTY
     → video merge + mux audio
     → VIDEO_READY → remove from active index
     → trySlideWindowOnComplete() → auto-slide

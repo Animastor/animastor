@@ -27,7 +27,7 @@ Animastor — AI-powered animated storytelling platform. Система прео
 
 ### Backend (Node.js/Express)
 Центральный сервер API + оркестратор. Управляет состоянием книги, сценами, dispatching задач на GPU.
-- **Dual State Model:** per-asset состояния (audio/image/video) — канонический источник истины; Linear FSM — производная проекция для обратной совместимости
+- **State Model (Per-Asset):** per-asset состояния (audio/image/video) — канонический источник истины. Линейная FSM удалена в v2.1.0 (блокировала параллельный диспатч). `SceneState` константы сохранены как производная проекция для backward compat
 - **Helmet.js** — HTTP security headers (HSTS, CSP, X-Frame-Options)
 - **Rate limiting** — 100 req/min на `/api/`, защита от перегрузок
 - **Request ID** — каждый HTTP-запрос получает короткий ID для трассировки в логах
@@ -144,7 +144,7 @@ TXT / VBook
 | GPU dispatcher | `backend/src/runtime/gpu-dispatcher.js` | HTTP-клиент для отправки задач в GPU Hub (send/sendVideo/sendUnified) |
 | Scene window | `backend/src/runtime/scene-window.js` | Оконный менеджер генерации (scope-aware, cancel, recover) |
 | Active scenes index | `backend/src/runtime/active-scenes-index.js` | Redis-индекс активных сцен |
-| Scene state | `backend/src/state/scene-state.js` | Dual state model: per-asset (canonical) + linear FSM (legacy) |
+| Scene state | `backend/src/state/scene-state.js` | Per-asset state (canonical), linear SceneState as derived projection |
 | Audio service | `backend/src/audio/audio-service.js` | TTS-генерация, мерж аудио, padded text trimming |
 | Image service | `backend/src/image/image-service.js` | Генерация изображений IU |
 | Video service | `backend/src/video/video-service.js` | Видеогенерация (LTX) |

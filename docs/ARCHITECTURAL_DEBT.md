@@ -223,18 +223,21 @@
 
 ---
 
-## 16. Dual state model — избыточная сложность
+## 16. Dual state model — избыточная сложность *(ЧАСТИЧНО ИСПРАВЛЕНО в v2.1.0)*
 
-**Описание проблемы:** Введён Dual State Model (per-asset + linear FSM). Per-asset — канонический источник, linear FSM — производная проекция. Это добавляет сложность: синхронизация (syncLinearState), дублирование данных, возможные расхождения.
+**Описание проблемы (было):** Dual State Model (per-asset + linear FSM) с валидацией последовательных переходов, которая блокировала параллельный диспатч.
 
-**Причина возникновения:** Желание поддерживать независимую диспетчеризацию audio/image/video без поломки существующего кода, работающего через linear FSM.
+**Что сделано (v2.1.0):**
+- ✅ Удалена валидация переходов (`SceneTransitions`, `transitionSceneState` c locks/CAS)
+- ✅ Удалён `scene-state-machine.js` (`Stage`, `determineNextStage`) — мёртвый код
+- ✅ Удалён `decideStage` из оркестратора — dispatch-engine всегда передаёт `overrideStage`
+- ✅ Удалены `shouldScheduleScene`, `registerScene`, `progressScene` из scheduler — legacy
+- ✅ Удалены `sceneHeartbeat`, `isSceneStuck`, `getRecoveryPendingState` — не нужны без FSM
+- ✅ All callbacks (`handleAudioCompleted`, `handleImageCompleted`, `handleVideoCompleted`) проверяют per-asset state вместо линейного
+- ❌ `SceneState` константы сохранены для backward compat (их читают плеер и debug endpoint'ы)
+- ❌ `deriveLinearState` / `syncLinearState` сохранены для поддержки старых Redis-ключей
 
-**Возможные последствия:**
-- Расхождение состояний между per-asset и linear
-- syncLinearState вызывается после каждого setAssetState — нагрузка на Redis
-- Усложнение отладки
-
-**Затрагиваемые компоненты:** scene-state.js, scene-orchestrator.js, runtime-scheduler.js
+**Остаётся:** Зависимость от `SceneState` констант в роутах и реконсилейшне — не блокирует, но загрязняет код. Можно убрать в будущем, когда плеер перестанет читать `scene-state` ключи.
 
 ---
 

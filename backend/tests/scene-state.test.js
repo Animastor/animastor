@@ -1,7 +1,7 @@
 const { expect } = require('chai');
 const sceneState = require('../src/state/scene-state');
 
-describe('SceneState', () => {
+describe('SceneState constants', () => {
     it('has all 11 states defined', () => {
         const expected = [
             'NEW', 'AUDIO_PENDING', 'AUDIO_GENERATING', 'AUDIO_READY',
@@ -12,91 +12,140 @@ describe('SceneState', () => {
         expect(actual).to.have.members(expected);
     });
 
-    it('every state has transitions defined', () => {
-        for (const [state, transitions] of Object.entries(sceneState.SceneTransitions)) {
-            expect(transitions).to.be.an('array');
-        }
+    it('SceneState constants are backward-compatible strings', () => {
+        expect(sceneState.SceneState.AUDIO_PENDING).to.equal('audio_pending');
+        expect(sceneState.SceneState.VIDEO_READY).to.equal('video_ready');
+        expect(sceneState.SceneState.FAILED).to.equal('failed');
+    });
+});
+
+describe('AssetState (per-asset) — source of truth', () => {
+    it('has all states defined', () => {
+        const expected = ['NEW', 'DIRTY', 'PENDING', 'GENERATING', 'READY', 'FAILED', 'PLACEHOLDER'];
+        const actual = Object.keys(sceneState.AssetState);
+        expect(actual).to.have.members(expected);
     });
 
-    it('NOOP transitions return same_state', () => {
-        const result = sceneState.validateTransition('audio_pending', 'audio_pending');
+    it('validateAssetTransition rejects invalid transitions', () => {
+        const result = sceneState.validateAssetTransition('new', 'ready');
+        expect(result.valid).to.be.false;
+        expect(result.reason).to.equal('invalid_asset_transition');
+    });
+
+    it('validateAssetTransition accepts same state', () => {
+        const result = sceneState.validateAssetTransition('ready', 'ready');
         expect(result.valid).to.be.true;
         expect(result.reason).to.equal('same_state');
     });
 
-    it('validates NEW -> AUDIO_PENDING', () => {
-        const result = sceneState.validateTransition('new', 'audio_pending');
-        expect(result.valid).to.be.true;
+    it('validateAssetTransition accepts NEW → PENDING', () => {
+        expect(sceneState.validateAssetTransition('new', 'pending').valid).to.be.true;
     });
 
-    it('rejects NEW -> VIDEO_READY (skip pipeline)', () => {
-        const result = sceneState.validateTransition('new', 'video_ready');
-        expect(result.valid).to.be.false;
-        expect(result.reason).to.equal('invalid_transition');
+    it('validateAssetTransition accepts NEW → DIRTY', () => {
+        expect(sceneState.validateAssetTransition('new', 'dirty').valid).to.be.true;
     });
 
-    it('pipeline is linear forward-only', () => {
-        const pipeline = [
-            ['new', 'audio_pending'],
-            ['new', 'image_pending'],  // bypass audio
-            ['audio_pending', 'audio_generating'],
-            ['audio_generating', 'audio_ready'],
-            ['audio_ready', 'image_pending'],
-            ['image_pending', 'image_generating'],
-            ['image_generating', 'image_ready'],
-            ['image_ready', 'video_pending'],
-            ['video_pending', 'video_generating'],
-            ['video_generating', 'video_ready'],
-        ];
-        for (const [from, to] of pipeline) {
-            expect(sceneState.isValidTransition(from, to), `${from} -> ${to}`).to.be.true;
-        }
+    it('validateAssetTransition accepts PENDING → GENERATING', () => {
+        expect(sceneState.validateAssetTransition('pending', 'generating').valid).to.be.true;
     });
 
-    it('FAILED can retry any pending stage', () => {
-        expect(sceneState.isValidTransition('failed', 'audio_pending')).to.be.true;
-        expect(sceneState.isValidTransition('failed', 'image_pending')).to.be.true;
-        expect(sceneState.isValidTransition('failed', 'video_pending')).to.be.true;
+    it('validateAssetTransition accepts GENERATING → READY', () => {
+        expect(sceneState.validateAssetTransition('generating', 'ready').valid).to.be.true;
     });
 
-    it('no backward transitions allowed', () => {
-        const backward = [
-            ['audio_ready', 'audio_generating'],
-            ['audio_generating', 'audio_pending'],
-            ['image_ready', 'image_generating'],
-            ['video_ready', 'video_generating'],
-        ];
-        for (const [from, to] of backward) {
-            expect(sceneState.isValidTransition(from, to), `${from} -> ${to}`).to.be.false;
-        }
+    it('validateAssetTransition accepts READY → DIRTY (regeneration)', () => {
+        expect(sceneState.validateAssetTransition('ready', 'dirty').valid).to.be.true;
     });
 });
 
-describe('SceneState helpers', () => {
-    it('isValidTransition returns false for unknown states', () => {
-        expect(sceneState.isValidTransition('nonexistent', 'new')).to.be.false;
+describe('deriveLinearState (backward compat)', () => {
+    it('all NEW -> SceneState.NEW', () => {
+        const result = sceneState.deriveLinearState({ audio: 'new', image: 'new', video: 'new' });
+        expect(result).to.equal(sceneState.SceneState.NEW);
     });
 
-    it('validateTransition returns allowed transitions on invalid', () => {
-        const result = sceneState.validateTransition('new', 'video_ready');
-        expect(result.allowed).to.deep.equal(['audio_pending', 'image_pending']);
+    it('audio pending -> AUDIO_PENDING', () => {
+        const result = sceneState.deriveLinearState({ audio: 'pending', image: 'new', video: 'new' });
+        expect(result).to.equal(sceneState.SceneState.AUDIO_PENDING);
     });
 
-    it('getRecoveryPendingState maps _GENERATING back to _PENDING', () => {
-        expect(sceneState.getRecoveryPendingState('audio_generating')).to.equal('audio_pending');
-        expect(sceneState.getRecoveryPendingState('image_generating')).to.equal('image_pending');
-        expect(sceneState.getRecoveryPendingState('video_generating')).to.equal('video_pending');
+    it('audio generating -> AUDIO_GENERATING', () => {
+        const result = sceneState.deriveLinearState({ audio: 'generating', image: 'new', video: 'new' });
+        expect(result).to.equal(sceneState.SceneState.AUDIO_GENERATING);
     });
 
-    it('getRecoveryPendingState keeps _PENDING as-is', () => {
-        expect(sceneState.getRecoveryPendingState('audio_pending')).to.equal('audio_pending');
-        expect(sceneState.getRecoveryPendingState('image_pending')).to.equal('image_pending');
-        expect(sceneState.getRecoveryPendingState('video_pending')).to.equal('video_pending');
+    it('image pending -> IMAGE_PENDING (audio is ready)', () => {
+        const result = sceneState.deriveLinearState({ audio: 'ready', image: 'pending', video: 'new' });
+        expect(result).to.equal(sceneState.SceneState.IMAGE_PENDING);
     });
 
-    it('getRecoveryPendingState returns undefined for terminal states', () => {
-        expect(sceneState.getRecoveryPendingState('video_ready')).to.be.undefined;
-        expect(sceneState.getRecoveryPendingState('failed')).to.be.undefined;
-        expect(sceneState.getRecoveryPendingState('new')).to.be.undefined;
+    it('image generating -> IMAGE_GENERATING', () => {
+        const result = sceneState.deriveLinearState({ audio: 'ready', image: 'generating', video: 'new' });
+        expect(result).to.equal(sceneState.SceneState.IMAGE_GENERATING);
+    });
+
+    it('all ready -> VIDEO_READY', () => {
+        const result = sceneState.deriveLinearState({ audio: 'ready', image: 'ready', video: 'ready' });
+        expect(result).to.equal(sceneState.SceneState.VIDEO_READY);
+    });
+
+    it('any failed -> FAILED', () => {
+        const result = sceneState.deriveLinearState({ audio: 'failed', image: 'ready', video: 'ready' });
+        expect(result).to.equal(sceneState.SceneState.FAILED);
+    });
+
+    it('audio placeholder allows progression to image', () => {
+        const result = sceneState.deriveLinearState({ audio: 'placeholder', image: 'new', video: 'new' });
+        expect(result).to.equal(sceneState.SceneState.AUDIO_READY);
+    });
+
+    it('audio placeholder + image ready -> IMAGE_READY', () => {
+        const result = sceneState.deriveLinearState({ audio: 'placeholder', image: 'ready', video: 'new' });
+        expect(result).to.equal(sceneState.SceneState.IMAGE_READY);
+    });
+
+    it('audio ready + video generating -> VIDEO_GENERATING', () => {
+        const result = sceneState.deriveLinearState({ audio: 'ready', image: 'ready', video: 'generating' });
+        expect(result).to.equal(sceneState.SceneState.VIDEO_GENERATING);
+    });
+});
+
+describe('deriveAssetStatesFromLinear (fallback)', () => {
+    it('null state -> all NEW', () => {
+        const result = sceneState.deriveAssetStatesFromLinear(null);
+        expect(result).to.deep.equal({ audio: 'new', image: 'new', video: 'new' });
+    });
+
+    it('NEW -> all NEW', () => {
+        const result = sceneState.deriveAssetStatesFromLinear({ state: 'new' });
+        expect(result).to.deep.equal({ audio: 'new', image: 'new', video: 'new' });
+    });
+
+    it('AUDIO_GENERATING -> audio generating', () => {
+        const result = sceneState.deriveAssetStatesFromLinear({ state: 'audio_generating' });
+        expect(result.audio).to.equal('generating');
+        expect(result.image).to.equal('new');
+        expect(result.video).to.equal('new');
+    });
+
+    it('VIDEO_READY -> all ready', () => {
+        const result = sceneState.deriveAssetStatesFromLinear({ state: 'video_ready' });
+        expect(result).to.deep.equal({ audio: 'ready', image: 'ready', video: 'ready' });
+    });
+});
+
+describe('transitionSceneState (simplified direct write)', () => {
+    it('returns success always (no validation)', async () => {
+        // Calls setSceneStateWithBuildId internally — no validation logic
+        // This test verifies the export exists and returns the expected shape
+        expect(sceneState.transitionSceneState).to.be.a('function');
+    });
+
+    it('getSceneState and setSceneState exist', () => {
+        expect(sceneState.getSceneState).to.be.a('function');
+        expect(sceneState.setSceneState).to.be.a('function');
+        expect(sceneState.setSceneStateWithBuildId).to.be.a('function');
+        expect(sceneState.syncLinearState).to.be.a('function');
     });
 });

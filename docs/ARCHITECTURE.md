@@ -209,23 +209,17 @@
 
 ---
 
-## 5. State Layer (Dual State Model)
+## 5. State Layer
 
-### 5.1 Linear FSM (legacy)
-Состояния сцены (SceneState):
-```
-NEW → AUDIO_PENDING → AUDIO_GENERATING → AUDIO_READY
-    → IMAGE_PENDING → IMAGE_GENERATING → IMAGE_READY
-    → VIDEO_PENDING → VIDEO_GENERATING → VIDEO_READY
-```
-
-### 5.2 Per-Asset States (CANONICAL — новый стандарт)
+### Per-Asset States (CANONICAL)
 Каждый asset (audio/image/video) имеет независимое состояние (AssetState):
 ```
 NEW → DIRTY → PENDING → GENERATING → READY | FAILED | PLACEHOLDER
 ```
 
-**Ключевое изменение:** per-asset состояния — канонический источник истины. Linear FSM — производная проекция для обратной совместимости.
+**Ключевое изменение (v2.1.0):** Per-asset состояния — канонический источник истины. Линейная FSM была **удалена** — её валидация переходов (SceneTransitions) блокировала параллельный диспатч. Теперь `transitionSceneState` — прямой `setSceneStateWithBuildId` без проверок.
+
+Линейный `SceneState` (константы: `AUDIO_PENDING`, `IMAGE_GENERATING` и т.д.) сохранён как производная проекция для backward compatibility — `deriveLinearState()` вычисляет его из per-asset состояний на лету. Другие Redis-потребители (плеер, debug-энпоинты) всё ещё читают эти ключи.
 
 ---
 
@@ -482,60 +476,14 @@ NEW → DIRTY → PENDING → GENERATING → READY | FAILED | PLACEHOLDER
 
 **Важно:** Governance-модули загружаются через `safeRequire()` и находятся в `runtime.index.debug` (не core pipeline).
 
-## 14. Scene State Machine (Dual Model)
+## 14. State Model (Per-Asset, Canonical)
 
-### 14.1 Linear FSM (Legacy)
-```
-                              ┌──────────────────────┐
-                              │         NEW          │
-                              └──────────┬───────────┘
-                                         │ startScene()
-                                         ▼
-                              ┌──────────────────────┐
-                         ┌───│    AUDIO_PENDING      │◄──── (если audio disabled)
-                         │   └──────────┬───────────┘
-                         │              │ dispatch audio
-                         │              ▼
-                         │   ┌──────────────────────┐
-                         │   │   AUDIO_GENERATING   │
-                         │   └──────────┬───────────┘
-                         │              │ callback
-                         │              ▼
-                         │   ┌──────────────────────┐
-                         │   │    AUDIO_READY       │
-                         │   └──────────┬───────────┘
-                         │              │ dispatch image
-                         │              ▼
-                         │   ┌──────────────────────┐
-                         │   │   IMAGE_PENDING      │
-                         │   └──────────┬───────────┘
-                         │              │
-                         │              ▼
-                         │   ┌──────────────────────┐
-                         │   │  IMAGE_GENERATING    │
-                         │   └──────────┬───────────┘
-                         │              │ callback
-                         │              ▼
-                         │   ┌──────────────────────┐
-                         │   │    IMAGE_READY       │
-                         │   └──────────┬───────────┘
-                         │              │ dispatch video
-                         │              ▼
-                         │   ┌──────────────────────┐
-                         │   │   VIDEO_PENDING      │
-                         │   └──────────┬───────────┘
-                         │              │
-                         │              ▼
-                         │   ┌──────────────────────┐
-                         │   │  VIDEO_GENERATING    │
-                         │   └──────────┬───────────┘
-                         │              │ callback
-                         │              ▼
-                         └──►│     VIDEO_READY      │
-                             └──────────────────────┘
-```
+### Единая модель состояний — Per-Asset
 
-### 14.2 Per-Asset States (Canonical)
+Линейная FSM **удалена** в v2.1.0. Валидация последовательных переходов (SceneTransitions) блокировала параллельный диспатч аудио и изображений.
+
+Каждый asset (audio/image/video) имеет **независимое** состояние:
+
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                                                                 │
@@ -554,6 +502,8 @@ NEW → DIRTY → PENDING → GENERATING → READY | FAILED | PLACEHOLDER
 │                                                       │        │
 └─────────────────────────────────────────────────────────────────┘
 
-Audio, Image, Video диспатчатся НЕЗАВИСИМО (параллельно).
-Video требует image=READY для старта.
-```
+**Ключевые правила:**
+- Audio, Image диспатчатся **НЕЗАВИСИМО** (параллельно)
+- Video требует `image=READY` для старта (функциональная зависимость — видео собирается из IU-картинок)
+- `transitionSceneState` — теперь прямой `setSceneStateWithBuildId` без валидации
+- Линейный `SceneState` — производная проекция (`deriveLinearState()`) для backward compat

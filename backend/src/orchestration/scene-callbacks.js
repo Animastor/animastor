@@ -8,7 +8,9 @@ const dispatchEngine = require('../runtime/dispatch-engine');
 const book = require('../book');
 const placeholderAudio = require('../services/placeholder-audio');
 const { log, warn, error, logEvent } = require('./scene-utils');
-const { Stage } = require('./scene-state-machine');
+
+// Stage constants (replaces removed scene-state-machine.js)
+const Stage = { AUDIO: 'audio', IMAGE: 'image', VIDEO: 'video' };
 
 async function updateSceneChunks(redis, bookId, chapterId, sceneId, updates) {
     const prefix = `animastor:chunk:${bookId}_${chapterId}_${sceneId}_`;
@@ -34,13 +36,18 @@ async function updateSceneChunks(redis, bookId, chapterId, sceneId, updates) {
 async function handleAudioCompleted(redis, bookId, chapterId, sceneId, buildId) {
     log(`AUDIO_CALLBACK: ${bookId}/${chapterId}/${sceneId}`);
 
-    const currentState = await state.getSceneState(redis, bookId, chapterId, sceneId);
+    const assetStates = await state.getAssetStates(redis, bookId, chapterId, sceneId);
+    const audioAllowed = assetStates && (
+        assetStates.audio === state.AssetState.GENERATING ||
+        assetStates.audio === state.AssetState.PENDING ||
+        assetStates.audio === state.AssetState.DIRTY
+    );
 
-    if (!currentState || currentState.state !== state.SceneState.AUDIO_GENERATING) {
-        warn(`AUDIO_CALLBACK: Invalid state: ${currentState?.state || 'no_state'} (expected AUDIO_GENERATING)`);
+    if (!audioAllowed) {
+        warn(`AUDIO_CALLBACK: Invalid per-asset state: ${assetStates?.audio || 'unknown'} (expected GENERATING/PENDING)`);
         await dispatchEngine.releaseQuota(redis, 'audio');
-        log(`🔻 AUDIO quota released (invalid state): ${bookId}/${chapterId}/${sceneId}`);
-        return { handled: false, nextStage: null, reason: 'invalid_state' };
+        log(`🔻 AUDIO quota released (invalid per-asset state): ${bookId}/${chapterId}/${sceneId}`);
+        return { handled: false, nextStage: null, reason: 'invalid_asset_state' };
     }
 
     const isReady = await audio.isSceneAudioReady(buildId, bookId, chapterId, sceneId, require('music-metadata'));
@@ -114,11 +121,21 @@ async function handleImageCompleted(redis, bookId, chapterId, sceneId, buildId) 
         '/data/output', buildId, bookId, chapterId, sceneId
     );
 
-    if (!currentState || currentState.state !== state.SceneState.IMAGE_GENERATING) {
-        warn(`IMAGE_CALLBACK: Invalid state: ${currentState?.state || 'no_state'} (expected IMAGE_GENERATING)`);
+    // Per-asset check: image can complete in parallel with audio.
+    // Linear state may be 'audio_generating' or 'audio_ready', not necessarily
+    // 'image_generating'. Accept callback if per-asset state allows it.
+    const assetStates = await state.getAssetStates(redis, bookId, chapterId, sceneId);
+    const imageAllowed = assetStates && (
+        assetStates.image === state.AssetState.GENERATING ||
+        assetStates.image === state.AssetState.PENDING ||
+        assetStates.image === state.AssetState.DIRTY
+    );
+
+    if (!imageAllowed) {
+        warn(`IMAGE_CALLBACK: Invalid per-asset state: ${assetStates?.image || 'unknown'} — expected GENERATING/PENDING`);
         await dispatchEngine.releaseQuota(redis, 'image');
-        log(`🔻 IMAGE quota released (invalid state): ${bookId}/${chapterId}/${sceneId}`);
-        return { handled: false, nextStage: null, reason: 'invalid_state' };
+        log(`🔻 IMAGE quota released (invalid per-asset state): ${bookId}/${chapterId}/${sceneId}`);
+        return { handled: false, nextStage: null, reason: 'invalid_asset_state' };
     }
 
     if (!sceneImage) {
@@ -195,16 +212,21 @@ async function handleImageCompleted(redis, bookId, chapterId, sceneId, buildId) 
 async function handleVideoCompleted(redis, bookId, chapterId, sceneId, buildId) {
     log(`VIDEO_CALLBACK: ${bookId}/${chapterId}/${sceneId}`);
 
-    const currentState = await state.getSceneState(redis, bookId, chapterId, sceneId);
-
     const videoPath = `/data/output/${buildId}/${bookId}_${chapterId}_${sceneId}.mp4`;
     const { valid, duration, metadata } = video.validateVideoFile(videoPath);
 
-    if (!currentState || currentState.state !== state.SceneState.VIDEO_GENERATING) {
-        warn(`VIDEO_CALLBACK: Invalid state: ${currentState?.state || 'no_state'} (expected VIDEO_GENERATING)`);
+    const assetStates = await state.getAssetStates(redis, bookId, chapterId, sceneId);
+    const videoAllowed = assetStates && (
+        assetStates.video === state.AssetState.GENERATING ||
+        assetStates.video === state.AssetState.PENDING ||
+        assetStates.video === state.AssetState.DIRTY
+    );
+
+    if (!videoAllowed) {
+        warn(`VIDEO_CALLBACK: Invalid per-asset state: ${assetStates?.video || 'unknown'} (expected GENERATING/PENDING)`);
         await dispatchEngine.releaseQuota(redis, 'video');
-        log(`🔻 VIDEO quota released (invalid state): ${bookId}/${chapterId}/${sceneId}`);
-        return { handled: false, nextStage: null, reason: 'invalid_state' };
+        log(`🔻 VIDEO quota released (invalid per-asset state): ${bookId}/${chapterId}/${sceneId}`);
+        return { handled: false, nextStage: null, reason: 'invalid_asset_state' };
     }
 
     if (!valid) {

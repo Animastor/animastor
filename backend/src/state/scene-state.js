@@ -1,24 +1,16 @@
 // ======================================================
-// Scene State - v2.0.0
+// Scene State - v2.1.0
 // ======================================================
-// DUAL state model:
-//   1. Linear FSM (legacy) — single state per scene for backward compatibility
-//   2. Per-asset states — independent states for audio/image/video (new)
+// Per-asset states are the CANONICAL source of truth.
+// Linear state (SceneState) is a DERIVED projection kept
+// for backward compatibility with Redis consumers.
 //
-// Per-asset states enable selective regeneration:
-//   scene can have audio=ready, image=dirty, video=dirty
-//   without going through the full linear pipeline.
-//
-// Architecture:
-//   - Linear state is a DERIVED projection of per-asset states
-//   - Per-asset states are the CANONICAL source of truth
-//   - All NEW code should use per-asset functions
-//   - Linear FSM kept for backward compatibility
+// All NEW code should use per-asset functions (AssetState).
+// The linear state transition validation has been REMOVED
+// because parallel dispatch requires independent asset states.
 
 const config = require('../config/runtime-config');
 const SCENE_STATE_KEY_PREFIX = config.REDIS.SCENE_STATE_KEY_PREFIX;
-const SCENE_TRANSITION_LOCK_PREFIX = config.REDIS.SCENE_TRANSITION_LOCK_PREFIX;
-const SCENE_TRANSITION_LOCK_TTL = 15; // 15 seconds (can be overridden by config)
 
 // ======================================================
 // ASSET STATE — NEW per-asset model
@@ -38,8 +30,7 @@ const AssetState = {
     PLACEHOLDER: 'placeholder'
 };
 
-// Stuck detection thresholds (minutes by state)
-const SCENE_STUCK_THRESHOLDS = config.STUCK_THRESHOLDS;
+
 
 /** @type {{ [name: string]: SceneStateValue }} */
 const SceneState = {
@@ -56,20 +47,7 @@ const SceneState = {
     FAILED: 'failed'
 };
 
-/** @type {{ [state: string]: SceneStateValue[] }} */
-const SceneTransitions = {
-    [SceneState.NEW]: [SceneState.AUDIO_PENDING, SceneState.IMAGE_PENDING],
-    [SceneState.AUDIO_PENDING]: [SceneState.AUDIO_GENERATING],
-    [SceneState.AUDIO_GENERATING]: [SceneState.AUDIO_READY, SceneState.FAILED],
-    [SceneState.AUDIO_READY]: [SceneState.IMAGE_PENDING],
-    [SceneState.IMAGE_PENDING]: [SceneState.IMAGE_GENERATING],
-    [SceneState.IMAGE_GENERATING]: [SceneState.IMAGE_READY, SceneState.FAILED],
-    [SceneState.IMAGE_READY]: [SceneState.VIDEO_PENDING],
-    [SceneState.VIDEO_PENDING]: [SceneState.VIDEO_GENERATING],
-    [SceneState.VIDEO_GENERATING]: [SceneState.VIDEO_READY, SceneState.FAILED],
-    [SceneState.VIDEO_READY]: [SceneState.VIDEO_PENDING],
-    [SceneState.FAILED]: [SceneState.AUDIO_PENDING, SceneState.IMAGE_PENDING, SceneState.VIDEO_PENDING]
-};
+
 
 
 // ======================================================
@@ -89,49 +67,7 @@ function error(msg) {
     console.error(`${logPrefix} ❌ ${msg}`);
 }
 
-// ======================================================
-// TRANSITION LOCK
-// ======================================================
 
-/**
- * Acquire transition lock for scene (short-lived, prevents parallel transitions).
- * @param {RedisClient} redis
- * @param {string} bookId
- * @param {string} chapterId
- * @param {string} sceneId
- * @returns {Promise<LockResult>}
- */
-async function acquireTransitionLock(redis, bookId, chapterId, sceneId) {
-    const lockKey = `${SCENE_TRANSITION_LOCK_PREFIX}:${bookId}:${chapterId}:${sceneId}`;
-    const lockToken = `lock-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    
-    const locked = await redis.set(lockKey, lockToken, 'NX', 'EX', SCENE_TRANSITION_LOCK_TTL);
-    if (locked) {
-        return { acquired: true, lockKey, lockToken };
-    }
-    return { acquired: false, lockKey: null, lockToken: null };
-}
-
-/**
- * Release transition lock (only if owner matches).
- * @param {RedisClient} redis
- * @param {string|null} lockKey
- * @param {string|null} lockToken
- * @returns {Promise<ReleaseResult>}
- */
-async function releaseTransitionLock(redis, lockKey, lockToken) {
-    if (!lockKey || !lockToken) return { released: false };
-
-    const current = await redis.get(lockKey);
-    if (!current) return { released: true, reason: 'already_expired' };
-
-    if (current === lockToken) {
-        await redis.del(lockKey);
-        return { released: true, reason: 'success' };
-    }
-
-    return { released: false, reason: 'token_mismatch' };
-}
 
 // ======================================================
 // STATE QUERY HELPERS
@@ -209,219 +145,28 @@ async function getSceneBuildId(redis, bookId, chapterId, sceneId) {
 }
 
 // ======================================================
-// ATOMIC STATE TRANSITION (LUA SCRIPT)
+// DIRECT STATE WRITE (replaces validated transitionSceneState)
 // ======================================================
 
 /**
- * Atomic compare-and-set transition.
- * @param {RedisClient} redis
- * @param {string} bookId
- * @param {string} chapterId
- * @param {string} sceneId
- * @param {string|null} expectedState
- * @param {string} targetState
- * @returns {Promise<TransitionResult>}
- */
-async function atomicTransitionSceneState(redis, bookId, chapterId, sceneId, expectedState, targetState) {
-    const key = `${SCENE_STATE_KEY_PREFIX}:${bookId}:${chapterId}:${sceneId}`;
-
-    const luaScript = `
-        local key = KEYS[1]
-        local expected = ARGV[1]
-        local newState = ARGV[2]
-        local now = ARGV[3]
-
-        local current = redis.call('GET', key)
-
-        if not current and expected == 'null' then
-            redis.call('SET', key, cjson.encode({
-                state = newState,
-                updated_at = tonumber(now)
-            }))
-            return {tostring(true), 'null', newState}
-        end
-
-        if current then
-            local data = cjson.decode(current)
-            if data.state == expected then
-                redis.call('SET', key, cjson.encode({
-                    state = newState,
-                    updated_at = tonumber(now),
-                    build_id = data.build_id,
-                    error = data.error
-                }))
-                return {tostring(true), data.state, newState}
-            end
-            return {tostring(false), data.state, expected}
-        end
-
-        return {tostring(false), 'unknown', expected}
-    `;
-
-    const result = await redis.eval(luaScript, 1, key,
-        expectedState === null ? 'null' : expectedState,
-        targetState,
-        Date.now().toString()
-    );
-
-    const success = result[0] === 'true';
-    const oldState = result[1] === 'null' ? null : result[1];
-    const newState = result[2];
-
-    if (success) {
-        log(`🎯 SCENE STATE: ${bookId}/${chapterId}/${sceneId}: ${oldState} -> ${newState} (atomic)`);
-        return { success: true, oldState, newState, reason: 'success', duplicate: false };
-    }
-
-    if (oldState === targetState) {
-        log(`🔁 DUPLICATE TRANSITION: ${bookId}/${chapterId}/${sceneId}: ${oldState} -> ${targetState} (already at target)`);
-        return { success: true, oldState, newState: oldState, reason: 'idempotent_duplicate', duplicate: true };
-    }
-
-    warn(`🔒 CAS FAILED: ${bookId}/${chapterId}/${sceneId}: expected=${expectedState}, current=${oldState}`);
-    return { success: false, oldState, newState: oldState, reason: 'conflict', duplicate: false };
-}
-
-// ======================================================
-// TRANSITION LOGIC
-// ======================================================
-
-/**
- * Main transition function - wraps atomic CAS with validation and locking.
- * @param {RedisClient} redis
- * @param {string} bookId
- * @param {string} chapterId
- * @param {string} sceneId
- * @param {SceneStateValue} newState
- * @returns {Promise<TransitionResult>}
+ * Direct state write — no validation, no locks, no FSM checks.
+ * Simply writes the new state to Redis with updated_at.
+ * This is the replacement for the removed transitionSceneState.
+ *
+ * Per-asset states (not linear state) are the source of truth.
+ * Linear state is kept for backward compatibility only.
  */
 async function transitionSceneState(redis, bookId, chapterId, sceneId, newState) {
-    const lockResult = await acquireTransitionLock(redis, bookId, chapterId, sceneId);
-    
-    if (!lockResult.acquired) {
-        log(`⏳ Transition already in progress for scene: ${bookId}/${chapterId}/${sceneId}`);
-        return { success: false, oldState: null, newState, reason: 'lock_held' };
-    }
+    const currentState = await getSceneState(redis, bookId, chapterId, sceneId);
+    const oldState = currentState?.state || SceneState.NEW;
 
-    try {
-        const currentState = await getSceneState(redis, bookId, chapterId, sceneId);
-        const oldState = currentState?.state || SceneState.NEW;
+    await setSceneStateWithBuildId(redis, bookId, chapterId, sceneId, newState, currentState?.build_id || null);
 
-        // Check for idempotent duplicate
-        if (oldState === newState) {
-            log(`🔁 DUPLICATE TRANSITION: ${bookId}/${chapterId}/${sceneId}: ${oldState} -> ${newState} (already at target)`);
-            return { success: true, oldState, newState, reason: 'idempotent_duplicate', duplicate: true };
-        }
-
-        // Validate transition
-        const validTransitions = SceneTransitions[oldState] || [];
-        if (!validTransitions.includes(newState)) {
-            error(`❌ SCENE STATE TRANSITION INVALID: ${oldState} -> ${newState} (valid: ${validTransitions.join(', ')})`);
-            return { success: false, oldState, newState, reason: 'invalid_transition' };
-        }
-
-        // Use atomic CAS
-        // Pass null (not 'new') when state doesn't exist, so Lua script can handle it
-        const casExpected = currentState ? oldState : null;
-        const result = await atomicTransitionSceneState(redis, bookId, chapterId, sceneId, casExpected, newState);
-
-        return result;
-    } finally {
-        await releaseTransitionLock(redis, lockResult.lockKey, lockResult.lockToken);
-    }
+    log(`⚡ SCENE STATE: ${bookId}/${chapterId}/${sceneId}: ${oldState} -> ${newState} (direct write)`);
+    return { success: true, oldState, newState, reason: 'direct_write' };
 }
 
-// ======================================================
-// HEARTBEAT MANAGEMENT
-// ======================================================
 
-/**
- * Update scene state heartbeat (refresh updated_at timestamp).
- * @param {RedisClient} redis
- * @param {string} bookId
- * @param {string} chapterId
- * @param {string} sceneId
- * @returns {Promise<boolean>}
- */
-async function sceneHeartbeat(redis, bookId, chapterId, sceneId) {
-    const key = `${SCENE_STATE_KEY_PREFIX}:${bookId}:${chapterId}:${sceneId}`;
-
-    try {
-        const current = await redis.get(key);
-        if (!current) {
-            warn(`Scene state not found for heartbeat: ${bookId}/${chapterId}/${sceneId}`);
-            return false;
-        }
-
-        const data = JSON.parse(current);
-        data.updated_at = Date.now();
-        await redis.set(key, JSON.stringify(data));
-        return true;
-    } catch (err) {
-        error(`Scene heartbeat failed: ${bookId}/${chapterId}/${sceneId}`, err.message);
-        return false;
-    }
-}
-
-// ======================================================
-// STUCK DETECTION & RECOVERY
-// ======================================================
-
-/**
- * Check if a scene is stuck in a state longer than threshold.
- * @param {RedisClient} redis
- * @param {string} bookId
- * @param {string} chapterId
- * @param {string} sceneId
- * @returns {Promise<StuckResult>}
- */
-async function isSceneStuck(redis, bookId, chapterId, sceneId) {
-    const state = await getSceneState(redis, bookId, chapterId, sceneId);
-
-    if (!state || !state.state) {
-        return { isStuck: false, reason: 'no_state', state: null, ageMinutes: null };
-    }
-
-    const stateName = state.state;
-    const thresholdMinutes = SCENE_STUCK_THRESHOLDS[stateName];
-
-    if (!thresholdMinutes) {
-        return { isStuck: false, reason: 'no_threshold', state: stateName, ageMinutes: null };
-    }
-
-    const now = Date.now();
-    const updated_at = state.updated_at || 0;
-    const ageMinutes = (now - updated_at) / 60000;
-
-    if (ageMinutes > thresholdMinutes) {
-        return {
-            isStuck: true,
-            reason: `state_${stateName}_exceeded_threshold`,
-            state: stateName,
-            ageMinutes: Math.floor(ageMinutes),
-            threshold: thresholdMinutes
-        };
-    }
-
-    return { isStuck: false, reason: 'ok', state: stateName, ageMinutes: Math.floor(ageMinutes) };
-}
-
-/**
- * Get pending state for a given stuck state.
- * @param {string} stuckState
- * @returns {SceneStateValue|undefined}
- */
-function getRecoveryPendingState(stuckState) {
-    const recoveryMap = {
-        [SceneState.AUDIO_GENERATING]: SceneState.AUDIO_PENDING,
-        [SceneState.AUDIO_PENDING]: SceneState.AUDIO_PENDING,
-        [SceneState.IMAGE_GENERATING]: SceneState.IMAGE_PENDING,
-        [SceneState.IMAGE_PENDING]: SceneState.IMAGE_PENDING,
-        [SceneState.VIDEO_GENERATING]: SceneState.VIDEO_PENDING,
-        [SceneState.VIDEO_PENDING]: SceneState.VIDEO_PENDING
-    };
-    return recoveryMap[stuckState];
-}
 
 // ======================================================
 // LINEAR STATE SYNC (derived from per-asset)
@@ -685,25 +430,7 @@ async function setAssetStates(redis, bookId, chapterId, sceneId, updates) {
     return updated;
 }
 
-// ======================================================
-// TRANSITION VALIDATION HELPERS
-// ======================================================
 
-function validateTransition(fromState, toState) {
-    if (fromState === toState) {
-        return { valid: true, reason: 'same_state' };
-    }
-    const validTransitions = SceneTransitions[fromState] || [];
-    if (validTransitions.includes(toState)) {
-        return { valid: true };
-    }
-    return { valid: false, reason: 'invalid_transition', allowed: validTransitions };
-}
-
-function isValidTransition(fromState, toState) {
-    const validTransitions = SceneTransitions[fromState] || [];
-    return validTransitions.includes(toState);
-}
 
 // ======================================================
 // EXPORTS
@@ -711,7 +438,6 @@ function isValidTransition(fromState, toState) {
 
 module.exports = {
     SceneState,
-    SceneTransitions,
     SCENE_STATE_KEY_PREFIX,
 
     // Asset state (new)
@@ -730,17 +456,8 @@ module.exports = {
     setSceneState,
     setSceneStateWithBuildId,
 
-    // Validation
+    // Direct state write (replaces validated transitions)
     transitionSceneState,
-    validateTransition,
-    isValidTransition,
-
-    // Heartbeat
-    sceneHeartbeat,
-
-    // Stuck detection
-    isSceneStuck,
-    getRecoveryPendingState,
 
     // Linear state sync (derives from per-asset)
     syncLinearState

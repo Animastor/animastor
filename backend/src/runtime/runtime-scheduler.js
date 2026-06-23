@@ -6,11 +6,6 @@
 // Callbacks only register results - scheduler owns progression.
 
 const state = require('../state');
-const audio = require('../audio');
-const image = require('../image');
-const video = require('../video');
-const journal = require('../orchestration/event-journal');
-const storage = require('../storage');
 const dispatchEngine = require('./dispatch-engine');
 
 const logPrefix = '[SCHEDULER]';
@@ -339,166 +334,6 @@ async function shouldScheduleAssets(redis, bookId, chapterId, sceneId) {
 }
 
 /**
- * Legacy: Determine if a scene needs scheduling based on linear FSM state.
- * Kept for backward compatibility. New code should use shouldScheduleAssets.
- */
-function shouldScheduleScene(currentState) {
-    const stateName = currentState.state;
-
-    if (stateName.includes('_generating')) {
-        return { shouldSchedule: false, stage: null, reason: 'already_generating' };
-    }
-    if (stateName === state.SceneState.VIDEO_READY || stateName === state.SceneState.FAILED) {
-        return { shouldSchedule: false, stage: null, reason: 'terminal_state' };
-    }
-    if (stateName === state.SceneState.NEW) {
-        return { shouldSchedule: true, stage: 'audio', reason: 'new_scene' };
-    }
-    const stage = STATE_TO_STAGE[stateName];
-    if (stage) {
-        return { shouldSchedule: true, stage, reason: 'pending' };
-    }
-    if (stateName === state.SceneState.AUDIO_READY) {
-        return { shouldSchedule: true, stage: 'image', reason: 'audio_ready' };
-    }
-    if (stateName === state.SceneState.IMAGE_READY) {
-        return { shouldSchedule: true, stage: 'video', reason: 'image_ready' };
-    }
-    return { shouldSchedule: false, stage: null, reason: 'no_matching_stage' };
-}
-
-/**
- * Register a scene to be managed by scheduler.
- * Adds to active index and records initial state.
- */
-async function registerScene(redis, bookId, chapterId, sceneId) {
-    const sceneKey = `${bookId}:${chapterId}:${sceneId}`;
-    const sceneStateKey = `${state.SCENE_STATE_KEY_PREFIX}:${bookId}:${chapterId}:${sceneId}`;
-    
-    const currentState = await redis.get(sceneStateKey);
-    if (!currentState) {
-        log(`REGISTER: State not found for ${sceneKey}, skipping`);
-        return false;
-    }
-
-    const stateData = JSON.parse(currentState);
-    const { shouldSchedule, stage, reason } = shouldScheduleScene(stateData);
-
-    if (shouldSchedule && stage) {
-        await addSceneToActiveIndex(redis, bookId, chapterId, sceneId);
-        log(`REGISTER: ${sceneKey} added (stage=${stage}, reason=${reason})`);
-    } else {
-        // Check if already in generating state (should be active)
-        if (stateData.state.includes('_generating')) {
-            await addSceneToActiveIndex(redis, bookId, chapterId, sceneId);
-            log(`REGISTER: ${sceneKey} added (generating_state=${stateData.state})`);
-        }
-        // Terminal states don't get added to active index
-    }
-
-    return true;
-}
-
-/**
- * Progress a single scene to its next stage.
- * Returns { success: boolean, nextStage: string | null, completed: boolean }
- */
-async function progressScene(redis, bookId, chapterId, sceneId) {
-    const sceneKey = `${bookId}:${chapterId}:${sceneId}`;
-    const sceneStateKey = `${state.SCENE_STATE_KEY_PREFIX}:${bookId}:${chapterId}:${sceneId}`;
-
-    // Get current state
-    const currentStateRaw = await redis.get(sceneStateKey);
-    if (!currentStateRaw) {
-        warn(`PROGRESS: State not found for ${sceneKey}`);
-        return { success: false, nextStage: null, reason: 'no_state' };
-    }
-
-    const currentState = JSON.parse(currentStateRaw);
-    const currentStage = currentState.state;
-
-    // Check if scene has been stuck too long
-    const stuck = await state.isSceneStuck(redis, bookId, chapterId, sceneId);
-    if (stuck.isStuck) {
-        warn(`PROGRESS: Scene stuck in ${currentStage} for ${stuck.ageMinutes} minutes`);
-        // Will be handled by reconciliation engine
-        return { success: false, nextStage: null, reason: 'stuck' };
-    }
-
-    // Determine next stage
-    const { shouldSchedule, stage, reason } = shouldScheduleScene(currentState);
-
-    if (!shouldSchedule) {
-        if (currentStage === state.SceneState.VIDEO_READY) {
-            // Scene is complete - remove from active index
-            await removeSceneFromActiveIndex(redis, bookId, chapterId, sceneId);
-            log(`PROGRESS: ${sceneKey} completed - removed from active index`);
-            return { success: true, nextStage: null, completed: true };
-        }
-        return { success: true, nextStage: null, reason: 'no_progression_needed' };
-    }
-
-    // Check concurrency limits
-    const canSchedule = await canScheduleStage(redis, stage);
-    if (!canSchedule) {
-        log(`PROGRESS: ${sceneKey} throttled - max concurrent ${stage} reached`);
-        return { success: false, nextStage: null, reason: 'throttled' };
-    }
-
-    // Increment concurrent counter
-    const concurrentKey = {
-        audio: AUDIO_IN_PROGRESS_KEY,
-        image: IMAGE_IN_PROGRESS_KEY,
-        video: VIDEO_IN_PROGRESS_KEY
-    }[stage];
-
-    await incrementConcurrent(redis, concurrentKey);
-    log(`CONCURRENCY: ${stage} counter incremented: ${concurrentKey}`);
-
-    // Transition to generating state
-    const generatingState = {
-        audio: state.SceneState.AUDIO_GENERATING,
-        image: state.SceneState.IMAGE_GENERATING,
-        video: state.SceneState.VIDEO_GENERATING
-    }[stage];
-
-    const transitionResult = await state.transitionSceneState(
-        redis,
-        bookId,
-        chapterId,
-        sceneId,
-        generatingState
-    );
-
-    if (!transitionResult.success) {
-        // Decrement counter on failure
-        await decrementConcurrent(redis, concurrentKey);
-        warn(`PROGRESS: Transition failed for ${sceneKey}: ${transitionResult.reason}`);
-        return { success: false, nextStage: null, reason: 'transition_failed' };
-    }
-
-    // Log to event journal
-    await journal.appendSceneEvent(
-        redis,
-        bookId,
-        chapterId,
-        sceneId,
-        `SCHEDULER_${stage.toUpperCase()}_STARTED`,
-        generatingState,
-        { scheduler: 'animastor-v1' }
-    );
-
-    // Return success - actual execution happens via external orchestration
-    log(`PROGRESS: ${sceneKey} ready for ${stage} generation`);
-    return { 
-        success: true, 
-        nextStage: stage, 
-        generatingState,
-        reason: 'ready_to_dispatch' 
-    };
-}
-
-/**
  * Process all active scenes.
  * Returns summary of operations.
  */
@@ -524,7 +359,6 @@ async function tick(redis, loadedBooks = {}) {
         throttled: 0,
         skipped: 0,
         completed: 0,
-        stuck: 0,
         errors: []
     };
 
@@ -565,8 +399,6 @@ async function tick(redis, loadedBooks = {}) {
                 summary.throttled += result.throttled;
             } else if (result.reason === 'backpressure' || result.reason === 'throttled') {
                 summary.throttled++;
-            } else if (result.reason === 'stuck') {
-                summary.stuck++;
             } else if (result.success) {
                 // No action needed
             } else {
@@ -744,8 +576,6 @@ module.exports = {
     parseSceneKey,
 
     // Scheduling
-    registerScene,
-    shouldScheduleScene,
     shouldScheduleAssets,
     getLayerConfig,
     checkChunksHaveImages,
