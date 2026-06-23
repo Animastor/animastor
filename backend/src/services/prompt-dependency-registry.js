@@ -284,23 +284,113 @@ function computeSceneDirtyLayers(oldScene, newScene) {
         (newScene?.dialogue_blocks || []).flatMap(db => db.units || [])
     );
     if (!isEqual(oldUnits, newUnits)) {
-        dirtyLayers.push('image', 'video', 'audio');
-        // Compute per-unit changed IDs for granular force-regen
-        // Match by unit ID, not by index — robust against insertions/deletions
+        const unitChanges = { audio: false, image: false, video: false };
         const changedUnitIds = [];
+
+        // Build ID-based maps for field-level comparison
         const oldMap = new Map();
         for (const u of oldUnits) {
             if (u && u.id != null) oldMap.set(String(u.id), u);
         }
+        const newMap = new Map();
         for (const u of newUnits) {
-            if (u && u.id != null) {
-                const oldU = oldMap.get(String(u.id));
-                if (!oldU || !isEqual(oldU, u)) {
+            if (u && u.id != null) newMap.set(String(u.id), u);
+        }
+
+        // If units are anonymous (no IDs), we can't do field-level matching.
+        // Conservatively regenerate all layers.
+        const oldHasIds = oldUnits.some(u => u && u.id != null);
+        const newHasIds = newUnits.some(u => u && u.id != null);
+        if (!oldHasIds || !newHasIds) {
+            unitChanges.audio = true;
+            unitChanges.image = true;
+            unitChanges.video = true;
+        } else {
+            // Field-level analysis: determine WHICH layers are affected by unit changes.
+            // Only mark a layer dirty if its specific fields actually changed.
+
+            // Check unit order changes (sequence matters for both audio and visual context)
+            const oldIds = oldUnits.filter(u => u && u.id != null).map(u => String(u.id));
+            const newIds = newUnits.filter(u => u && u.id != null).map(u => String(u.id));
+            const orderChanged = !isEqual(oldIds, newIds);
+            if (orderChanged) {
+                unitChanges.audio = true;
+                unitChanges.image = true;
+                unitChanges.video = true;
+            }
+
+            // New units (added) — affect all layers
+            for (const u of newUnits) {
+                if (u && u.id != null && !oldMap.has(String(u.id))) {
+                    unitChanges.audio = true;
+                    unitChanges.image = true;
+                    unitChanges.video = true;
                     changedUnitIds.push(String(u.id));
                 }
             }
+
+            // Removed units — affect all layers
+            for (const u of oldUnits) {
+                if (u && u.id != null && !newMap.has(String(u.id))) {
+                    unitChanges.audio = true;
+                    unitChanges.image = true;
+                    unitChanges.video = true;
+                }
+            }
+
+            // Changed units — field-level analysis per unit
+            for (const u of newUnits) {
+                if (u && u.id != null) {
+                    const oldU = oldMap.get(String(u.id));
+                    if (!oldU || isEqual(oldU, u)) continue;
+
+                    changedUnitIds.push(String(u.id));
+
+                    // content / text changed → audio only
+                    if (!isEqual(oldU.content, u.content) || !isEqual(oldU.text, u.text)) {
+                        unitChanges.audio = true;
+                    }
+
+                    // type changed (narration ↔ dialogue) → audio only
+                    if (!isEqual(oldU.type, u.type)) {
+                        unitChanges.audio = true;
+                    }
+
+                    // visual changed → image + video (video depends on images)
+                    if (!isEqual(oldU.visual, u.visual)) {
+                        unitChanges.image = true;
+                        unitChanges.video = true;
+                    }
+
+                    // participants changed → all layers (character voice + appearance)
+                    if (!isEqual(oldU.participants, u.participants)) {
+                        unitChanges.audio = true;
+                        unitChanges.image = true;
+                        unitChanges.video = true;
+                    }
+
+                    // Unknown fields — conservative, mark all layers
+                    const knownUnitKeys = new Set(['id', 'type', 'content', 'text', 'visual', 'participants']);
+                    for (const key of Object.keys(u)) {
+                        if (knownUnitKeys.has(key)) continue;
+                        if (!isEqual(oldU[key], u[key])) {
+                            unitChanges.audio = true;
+                            unitChanges.image = true;
+                            unitChanges.video = true;
+                            break;
+                        }
+                    }
+                }
+            }
         }
-        // Units that were deleted (in oldMap but not in new) don't need generation
+
+        // Apply collected layer changes
+        for (const [layer, dirty] of Object.entries(unitChanges)) {
+            if (dirty && !dirtyLayers.includes(layer)) {
+                dirtyLayers.push(layer);
+            }
+        }
+
         changes.units = {
             old_count: oldUnits.length,
             new_count: newUnits.length,

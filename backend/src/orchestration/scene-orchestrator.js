@@ -76,7 +76,22 @@ async function executeImageDispatch(redis, scene, loadedBook, buildId) {
     const bookData = loadedBook || book.loadBook(bookId);
     const sceneData = book.findSceneRuntimeData(bookData, chapterId, sceneId);
     if (sceneData) {
-        const dirtyUnitIds = new Set();
+        // Read dirty unit IDs from PG — these are set by /regenerate when
+        // a visual prompt is edited. Without this, processSingleIU will see
+        // old images on disk (cache hit) and skip GPU dispatch, leaving
+        // image: pending forever.
+        let dirtyUnitIds = new Set();
+        try {
+            const { getDirtyUnitIds } = require('../storage/postgres/repositories/scene-assets-repo');
+            const ids = await getDirtyUnitIds(bookId, chapterId, sceneId);
+            if (ids && ids.length > 0) {
+                dirtyUnitIds = new Set(ids);
+                log(`[DIRTY-UNITS] ${bookId}/${chapterId}/${sceneId}: ${ids.length} dirty unit(s) from PG`);
+            }
+        } catch (err) {
+            warn(`[DIRTY-UNITS] PG read failed for ${bookId}/${chapterId}/${sceneId}: ${err.message}`);
+        }
+
         await image.generateSceneIUImages(redis, sceneData, bookData, buildId, bookId, dirtyUnitIds);
         log(`IMAGE_DISPATCHED: ${bookId}/${chapterId}/${sceneId}`);
     } else {

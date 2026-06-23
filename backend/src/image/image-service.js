@@ -543,17 +543,20 @@ async function processSingleIU(redis, unit, uIdx, sceneData, loadedBook, buildId
     applyImageValue(wfImg, 'positivePrompt', finalPrompt);
     applyImageValue(wfImg, 'negativePrompt', customNegative ? `${customNegative}, ${baseNegative}` : baseNegative);
 
-    await saveIURegistry(redis, imageIUId, buildId);
-    await gpu.send(`${imageIUId}:image`, wfImg, 'image', buildId);
-
-    // Set in-flight marker AFTER successful dispatch so subsequent scheduler
-    // ticks skip this unit (no duplicate dispatches).
+    // Set in-flight marker BEFORE gpu.send() to prevent race condition:
+    // without this, a second tick between PNG-delete and gpu.send() would
+    // also delete the (already deleted) PNG, find no file, clear dedup again,
+    // and send a duplicate GPU task. The first such task to finish triggers
+    // handleImageCompleted (4/4 files on disk) while others are still running.
     // TTL = 1200s (20 min) — covers max generation time for any IU type.
     try {
         await redis.set(inFlightKey, '1', 'EX', 1200);
     } catch (e) {
         warn(`[IU-IN-FLIGHT] Failed to set marker for ${imageIUId}: ${e.message}`);
     }
+
+    await saveIURegistry(redis, imageIUId, buildId);
+    await gpu.send(`${imageIUId}:image`, wfImg, 'image', buildId);
 
     return { sent: true, cached: false };
 }
