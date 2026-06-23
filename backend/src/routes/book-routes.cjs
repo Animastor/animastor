@@ -1661,68 +1661,18 @@ async function recoverMissingRedisChunks(buildId, bookId) {
                 console.warn(`[REGENERATE] PG reconcile failed for ${bookId}: ${syncErr.message}`);
             }
 
-            // Immediately restore chunk metadata for scenes that already have
-            // valid content on disk. Otherwise /assets-state would report stale
-            // 'pending' status until the runtime scheduler tick (up to 5s later)
-            // processes each scene via executeAudioDispatch.
-            // Also promote scene state to VIDEO_READY and remove from active index
-            // so the runtime tick skips them entirely.
-            //
-            // IMPORTANT: If a scene has per-unit dirty markers (dirty_unit_ids),
-            // it MUST stay in active index so the scheduler dispatches
-            // executeImageDispatch, which reads dirtyUnitIds from PG and forces
-            // regeneration for specific units. Removing it here would mean the
-            // per-unit regeneration is never triggered.
+            // Restore chunk metadata for scenes with existing content.
+            // Delegated to orchestrator.restoreSceneChunkStatus() (Phase 3: R3.2).
             let restoredCount = 0;
             for (const ds of filteredDirty) {
                 const hasDirtyUnits = ds.changes?.units?.unit_ids && ds.changes.units.unit_ids.length > 0;
-                const isValid = await windowModule.sceneHasValidContent(redis, buildId, bookId, ds.chapter_id, ds.scene_id);
-
-                if (isValid && !hasDirtyUnits) {
-                    // Scene has fully valid content (all layers ready, no per-unit changes)
-                    // → restore chunk metadata, mark VIDEO_READY, remove from active index
-                    await windowModule.restoreChunkStatusForScene(redis, buildId, bookId, ds.chapter_id, ds.scene_id);
-                    await state.setSceneStateWithBuildId(redis, bookId, ds.chapter_id, ds.scene_id, state.SceneState.VIDEO_READY, buildId);
-                    await scheduler.removeSceneFromActiveIndex(redis, bookId, ds.chapter_id, ds.scene_id);
-                    restoredCount++;
-                } else if (isValid && hasDirtyUnits) {
-                    // Scene has content on disk BUT specific units need regeneration.
-                    // → restore chunk metadata for layers that ARE valid (audio),
-                    //   but KEEP scene in active index so the scheduler dispatches
-                    //   executeImageDispatch (which reads dirtyUnitIds from PG).
-
-                    // PRE-DELETE stale PNG files for dirty units so /assets-state
-                    // immediately reports correct progress (e.g. 3/4 instead of 4/4)
-                    // on the first frontend poll after /regenerate returns.
-                    // Also clear GPU hub dedup keys so the scheduler's dispatch is accepted.
-                    const unitIds = ds.changes.units.unit_ids;
-                    if (unitIds && Array.isArray(unitIds) && unitIds.length > 0) {
-                        const buildDir = path.join(config.OUTPUT_DIR, buildId);
-                        for (const unitId of unitIds) {
-                            const imageIUId = `${bookId}_${ds.chapter_id}_${ds.scene_id}_${unitId}`;
-                            // Delete stale PNG
-                            const pngPath = path.join(buildDir, `${imageIUId}.png`);
-                            try {
-                                if (fs.existsSync(pngPath)) {
-                                    fs.unlinkSync(pngPath);
-                                    log(`[REGENERATE-PRE-DELETE] Deleted stale PNG: ${imageIUId}.png`);
-                                }
-                            } catch (delErr) {
-                                console.warn(`[REGENERATE-PRE-DELETE] Failed to delete ${imageIUId}.png: ${delErr.message}`);
-                            }
-                            // Clear GPU hub dedup key so the scheduler's dispatch is not blocked
-                            try {
-                                await redis.del(`animastor:job:${imageIUId}:image`);
-                                log(`[REGENERATE-PRE-DELETE] Cleared GPU dedup for ${imageIUId}`);
-                            } catch (dedupErr) {
-                                console.warn(`[REGENERATE-PRE-DELETE] Failed to clear dedup for ${imageIUId}: ${dedupErr.message}`);
-                            }
-                        }
-                    }
-
-                    await windowModule.restoreChunkStatusForScene(redis, buildId, bookId, ds.chapter_id, ds.scene_id);
-                    log(`[REGENERATE-PER-UNIT] ${bookId}/${ds.chapter_id}/${ds.scene_id}: ${ds.changes.units.unit_ids.length} dirty unit(s) — keeping in active index for per-unit dispatch, PNG pre-deleted`);
-                }
+                const unitIds = hasDirtyUnits ? ds.changes.units.unit_ids : [];
+                const result = await orchestrator.restoreSceneChunkStatus(
+                    redis, buildId, bookId,
+                    ds.chapter_id, ds.scene_id,
+                    hasDirtyUnits, unitIds
+                );
+                if (result.restored) restoredCount++;
             }
             if (restoredCount > 0) {
                 log(`[REGENERATE] ${bookId}: restored chunk metadata for ${restoredCount}/${filteredDirty.length} scenes with existing content`);

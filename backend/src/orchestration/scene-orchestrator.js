@@ -900,20 +900,14 @@ async function handleAudioCompleted(redis, bookId, chapterId, sceneId, buildId) 
 
     const currentState = await state.getSceneState(redis, bookId, chapterId, sceneId);
 
-    // Check if state was reset by markDirtyScenes (e.g. after Cancel→Generate).
-    // The audio file still exists on disk and is real — we should still mark as READY
-    // instead of rejecting and forcing a redundant re-dispatch.
+    // Stale state tolerance removed in Phase 3 (R3.1) — relies on R2 force lease release.
+    // If state was reset by markDirtyScenes (e.g. after Cancel→Regenerate), the callback
+    // belongs to the old generation cycle. The new cycle will produce its own callback.
     if (!currentState || currentState.state !== state.SceneState.AUDIO_GENERATING) {
-        const isReal = await placeholderAudio.hasRealAudio(bookId, chapterId, sceneId, buildId).catch(() => false);
-        if (isReal) {
-            log(`AUDIO_CALLBACK: stale state=${currentState?.state || 'none'}, but audio is real — completing anyway`);
-            // Proceed with completion logic below (skip state check)
-        } else {
-            warn(`AUDIO_CALLBACK: Invalid state: ${currentState?.state || 'no_state'}, not real audio`);
-            await dispatchEngine.releaseQuota(redis, 'audio');
-            log(`🔻 AUDIO quota released (invalid state fallback): ${bookId}/${chapterId}/${sceneId}`);
-            return { handled: false, nextStage: null, reason: 'invalid_state' };
-        }
+        warn(`AUDIO_CALLBACK: Invalid state: ${currentState?.state || 'no_state'} (expected AUDIO_GENERATING)`);
+        await dispatchEngine.releaseQuota(redis, 'audio');
+        log(`🔻 AUDIO quota released (invalid state): ${bookId}/${chapterId}/${sceneId}`);
+        return { handled: false, nextStage: null, reason: 'invalid_state' };
     }
 
     // Validate audio is ready
@@ -1005,17 +999,12 @@ async function handleImageCompleted(redis, bookId, chapterId, sceneId, buildId) 
         '/data/output', buildId, bookId, chapterId, sceneId
     );
 
-    // Stale state tolerance: if state was reset by markDirtyScenes but images
-    // actually exist on disk, still proceed to mark READY.
+    // Stale state tolerance removed in Phase 3 (R3.1) — relies on R2 force lease release.
     if (!currentState || currentState.state !== state.SceneState.IMAGE_GENERATING) {
-        if (sceneImage) {
-            log(`IMAGE_CALLBACK: stale state=${currentState?.state || 'none'}, but images exist — completing anyway`);
-        } else {
-            warn(`IMAGE_CALLBACK: Invalid state: ${currentState?.state || 'no_state'}, no images on disk`);
-            await dispatchEngine.releaseQuota(redis, 'image');
-            log(`🔻 IMAGE quota released (invalid state fallback): ${bookId}/${chapterId}/${sceneId}`);
-            return { handled: false, nextStage: null, reason: 'invalid_state' };
-        }
+        warn(`IMAGE_CALLBACK: Invalid state: ${currentState?.state || 'no_state'} (expected IMAGE_GENERATING)`);
+        await dispatchEngine.releaseQuota(redis, 'image');
+        log(`🔻 IMAGE quota released (invalid state): ${bookId}/${chapterId}/${sceneId}`);
+        return { handled: false, nextStage: null, reason: 'invalid_state' };
     }
 
     if (!sceneImage) {
@@ -1120,17 +1109,12 @@ async function handleVideoCompleted(redis, bookId, chapterId, sceneId, buildId) 
     const videoPath = `/data/output/${buildId}/${bookId}_${chapterId}_${sceneId}.mp4`;
     const { valid, duration, metadata } = video.validateVideoFile(videoPath);
 
-    // Stale state tolerance: if state was reset by markDirtyScenes but video
-    // actually exists on disk, still proceed to mark READY.
+    // Stale state tolerance removed in Phase 3 (R3.1) — relies on R2 force lease release.
     if (!currentState || currentState.state !== state.SceneState.VIDEO_GENERATING) {
-        if (valid) {
-            log(`VIDEO_CALLBACK: stale state=${currentState?.state || 'none'}, but video exists — completing anyway`);
-        } else {
-            warn(`VIDEO_CALLBACK: Invalid state: ${currentState?.state || 'no_state'}, no video on disk`);
-            await dispatchEngine.releaseQuota(redis, 'video');
-            log(`🔻 VIDEO quota released (invalid state fallback): ${bookId}/${chapterId}/${sceneId}`);
-            return { handled: false, nextStage: null, reason: 'invalid_state' };
-        }
+        warn(`VIDEO_CALLBACK: Invalid state: ${currentState?.state || 'no_state'} (expected VIDEO_GENERATING)`);
+        await dispatchEngine.releaseQuota(redis, 'video');
+        log(`🔻 VIDEO quota released (invalid state): ${bookId}/${chapterId}/${sceneId}`);
+        return { handled: false, nextStage: null, reason: 'invalid_state' };
     }
 
     if (!valid) {
@@ -1267,12 +1251,89 @@ async function completeSceneWithoutImage(redis, loadedBook, bookId, chapterId, s
 }
 
 // ======================================================
+// RESTORE SCENE AFTER REGENERATE (Phase 3 — orchestrator-owned)
+// ======================================================
+
+/**
+ * Restore chunk metadata and state for a scene after regeneration.
+ * Encapsulates the decision logic that was previously inline in book-routes.cjs.
+ * Called from /regenerate for each dirty scene.
+ *
+ * @param {Object} redis
+ * @param {string} buildId
+ * @param {string} bookId
+ * @param {string} chapterId
+ * @param {string} sceneId
+ * @param {boolean} hasDirtyUnits - whether specific units need per-unit regen
+ * @param {string[]} [unitIds] - specific dirty unit IDs
+ * @returns {Promise<{restored: boolean, reason: string}>}
+ */
+async function restoreSceneChunkStatus(redis, buildId, bookId, chapterId, sceneId, hasDirtyUnits, unitIds) {
+    const sceneWindow = require('../runtime/scene-window');
+
+    const cacheInfo = await sceneWindow.checkSceneContentCache(redis, buildId, bookId, chapterId, sceneId);
+
+    if (!cacheInfo.valid) {
+        return { restored: false, reason: 'no_valid_content' };
+    }
+
+    if (!hasDirtyUnits) {
+        // Scene has fully valid content (all layers ready, no per-unit changes)
+        // → restore chunk metadata, mark VIDEO_READY, remove from active index
+        await sceneWindow.restoreChunkStatusForScene(redis, buildId, bookId, chapterId, sceneId);
+        await state.setSceneStateWithBuildId(redis, bookId, chapterId, sceneId, state.SceneState.VIDEO_READY, buildId);
+        await runtimeScheduler.removeSceneFromActiveIndex(redis, bookId, chapterId, sceneId);
+        log(`[RESTORE] ${bookId}/${chapterId}/${sceneId}: fully restored, VIDEO_READY, removed from active index`);
+        return { restored: true, reason: 'full_restore' };
+    }
+
+    // Scene has content on disk BUT specific units need regeneration.
+    // → restore chunk metadata for layers that ARE valid (audio),
+    //   but KEEP scene in active index so the scheduler dispatches
+    //   executeImageDispatch (which reads dirtyUnitIds from PG).
+    //
+    // PRE-DELETE stale PNG files for dirty units so /assets-state
+    // immediately reports correct progress (e.g. 3/4 instead of 4/4).
+    // Also clear GPU hub dedup keys so the scheduler's dispatch is accepted.
+    if (unitIds && Array.isArray(unitIds) && unitIds.length > 0) {
+        const buildDir = path.join(OUTPUT_DIR, buildId);
+        for (const unitId of unitIds) {
+            const imageIUId = `${bookId}_${chapterId}_${sceneId}_${unitId}`;
+            // Delete stale PNG
+            const pngPath = path.join(buildDir, `${imageIUId}.png`);
+            try {
+                if (fs.existsSync(pngPath)) {
+                    fs.unlinkSync(pngPath);
+                    log(`[RESTORE-PRE-DELETE] Deleted stale PNG: ${imageIUId}.png`);
+                }
+            } catch (delErr) {
+                console.warn(`[RESTORE-PRE-DELETE] Failed to delete ${imageIUId}.png: ${delErr.message}`);
+            }
+            // Clear GPU hub dedup key
+            try {
+                await redis.del(`animastor:job:${imageIUId}:image`);
+                log(`[RESTORE-PRE-DELETE] Cleared GPU dedup for ${imageIUId}`);
+            } catch (dedupErr) {
+                console.warn(`[RESTORE-PRE-DELETE] Failed to clear dedup for ${imageIUId}: ${dedupErr.message}`);
+            }
+        }
+    }
+
+    await sceneWindow.restoreChunkStatusForScene(redis, buildId, bookId, chapterId, sceneId);
+    log(`[RESTORE-PER-UNIT] ${bookId}/${chapterId}/${sceneId}: ${unitIds?.length || 0} dirty unit(s) — keeping in active index for per-unit dispatch, PNG pre-deleted`);
+    return { restored: true, reason: 'per_unit_restore' };
+}
+
+// ======================================================
 // EXPORTS
 // ======================================================
 
 module.exports = {
     // Execution dispatch (pure dispatch, no waiting)
     dispatchStage,
+
+    // Scene restore after regenerate (Phase 3)
+    restoreSceneChunkStatus,
     
     // Callback handlers (passive - only register results)
     handleAudioCompleted,

@@ -72,22 +72,22 @@
 
 **Цель:** Только scene-orchestrator может изменять состояние. Остальные — только читают.
 
-### [R3.1] Убрать stale state tolerance 🟢
-- [ ] `scene-orchestrator.js`: `handleAudioCompleted()` — убрать stale state tolerance (блок кода "stale state but audio is real — completing anyway")
-- [ ] `handleImageCompleted()` — то же
-- [ ] `handleVideoCompleted()` — то же
-- [ ] **Условие:** должно быть сделано после R2 (force lease release), иначе Cancel→Regenerate снова будет ломаться
+### [R3.1] Убрать stale state tolerance ✅
+- [x] `handleAudioCompleted()` — убран stale state tolerance блок
+- [x] `handleImageCompleted()` — убран stale state tolerance блок
+- [x] `handleVideoCompleted()` — убран stale state tolerance блок
+- [x] **Условие:** R2 (force lease release) выполнен перед этим шагом
 
-### [R3.2] RestoreChunkStatus — только в orchestration слое 🟢
-- [ ] `scene-window.js`: `restoreChunkStatusForScene()` — вызывается из `markDirtyScenes` (через `/regenerate`). Перенести вызов в orchestrator
-- [ ] Идея: только orchestrator может восстанавливать chunk status после dirty
+### [R3.2] RestoreChunkStatus — только в orchestration слое ✅
+- [x] Новый метод `restoreSceneChunkStatus()` в `scene-orchestrator.js` — инкапсулирует валидацию контента + восстановление chunk metadata + state transition + PNG pre-delete + GPU dedup clear
+- [x] `book-routes.cjs`: ~60 строк inline restore логики заменены на `orchestrator.restoreSceneChunkStatus()`
+- [x] Убраны лишние inline require внутри метода (fs/path уже на уровне модуля)
 
-### [R3.3] SceneHasValidContent — переименовать в advisory 🟢
-- [ ] `scene-window.js:sceneHasValidContent()`:
-  - Переименовать в `checkSceneContentCache(redis, ...)` — возвращает advisory-информацию
-  - Не принимает решений (не пропускает dispatch)
-  - Только возвращает: `{ audioOnDisk, imageOnDisk, videoOnDisk, staleByVersion }`
-- [ ] Решение о пропуске dispatch принимает orchestrator
+### [R3.3] SceneHasValidContent → checkSceneContentCache (advisory) ✅
+- [x] `scene-window.js`: `sceneHasValidContent()` → `checkSceneContentCache()`
+- [x] Возвращает advisory-объект `{ audioOnDisk, imageOnDisk, videoOnDisk, staleByVersion, valid }` вместо boolean
+- [x] Все потребители обновлены: slideWindow, startScene, restoreSceneChunkStatus
+- [x] book-sync.js: только комментарии (не трогаем)
 
 ---
 
@@ -210,7 +210,7 @@ Phase 2 — 🔴 Critical: Force Lease Release
 └── [R2.3] Cleanup stale leases при regenerate       (🟢 medium, ✅ Done)
 
 Phase 3 — 🟡 High: Единый оркестратор
-├── [R3.1=R6.5] Убрать stale state tolerance         (🟢 medium, после R2.x)
+├── [R3.1=R6.5] Убрать stale state tolerance         (🟢 medium, ✅ Done)
 ├── [R3.2] RestoreChunkStatus → orchestrator         (🟢 medium)
 └── [R3.3] SceneHasValidContent → advisory           (🟢 medium)
 
@@ -277,9 +277,10 @@ Phase 2:   R2.1       →  force lease release in dispatch           ✅
 Затем:    R2.1       →  force lease release
           R2.2+R2.3  →  force в regenerate + cleanup
           
-Потом:    R3.1/R6.5 →  убрать stale state tolerance
-          R1.1       →  startup recovery только логировать
-          R1.3       →  reconciliation engine только аудит
+Phase 3:   R3.1       →  убрать stale state tolerance            ✅
+          
+Потом:    R1.1       →  startup recovery только логировать
+          R3.2+R3.3  →  единый оркестратор
           
 Далее:    R3.2+R3.3 →  единый оркестратор
           R6.2       →  консолидация проверок файлов

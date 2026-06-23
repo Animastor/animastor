@@ -165,7 +165,7 @@ describe('Prompt Dependency Registry', () => {
             const newScene = { units: [{ text: 'Hello world' }] };
             const result = registry.computeSceneDirtyLayers(oldScene, newScene);
             expect(result.dirtyLayers).to.include.members(['image', 'video', 'audio']);
-            expect(result.changes.units).to.deep.equal({ old_count: 1, new_count: 1 });
+            expect(result.changes.units).to.deep.equal({ old_count: 1, new_count: 1, unit_ids: [] });
         });
 
         it('detects dialogue_blocks units change', () => {

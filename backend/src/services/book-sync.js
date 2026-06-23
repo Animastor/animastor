@@ -220,14 +220,17 @@ async function markSceneAssetsStale(bookId, chapterSceneKeys) {
         //
         // 1. Bestehende Zeilen aktualisieren: Version propagieren,
         //    'ready'-Einträge auf 'stale' setzen.
+        //    Filter by sa.status = 'ready' so rowCount reflects only
+        //    assets whose status actually changed — not already-stale rows.
         const updateResult = await query(`
             UPDATE scene_assets sa
-            SET status = CASE WHEN sa.status = 'ready' THEN 'stale' ELSE sa.status END,
+            SET status = 'stale',
                 scene_content_version = COALESCE(sv.content_version, sa.scene_content_version),
                 scene_audio_config_version = COALESCE(sv.audio_config_version, sa.scene_audio_config_version),
                 updated_at = EXTRACT(EPOCH FROM NOW())::bigint
             FROM scenes sv
             WHERE sa.book_id = $1 AND sa.chapter_id = $2 AND sa.scene_id = $3
+              AND sa.status = 'ready'
               AND sv.book_id = $1 AND sv.chapter_id = $2 AND sv.scene_id = $3
         `, [bookId, chapterId, sceneId]);
 

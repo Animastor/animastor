@@ -104,21 +104,28 @@ function _isTerminalState(st) {
 }
 
 /**
- * Check if scene has valid content on disk and can be skipped.
- * Verifies that the prerequisite files exist for each enabled layer.
+ * Check scene content cache — returns advisory info about what files
+ * exist on disk and whether content is stale by version.
  *
- * Placeholder audio IS valid content — it provides timing structure
- * for image generation and playback. Real audio can replace it later.
+ * Phase 3 (R3.3): This function NO LONGER makes decisions about skipping dispatch.
+ * It only returns information. The caller (orchestrator) decides what to do.
+ *
+ * @returns {{ audioOnDisk: boolean, imageOnDisk: boolean, videoOnDisk: boolean,
+ *            staleByVersion: boolean, valid: boolean }}
  */
-async function sceneHasValidContent(redis, buildId, bookId, chapterId, sceneId) {
+async function checkSceneContentCache(redis, buildId, bookId, chapterId, sceneId) {
     const buildDir = path.join(OUTPUT_DIR, buildId);
-    if (!fs.existsSync(buildDir)) return false;
+    const result = {
+        audioOnDisk: false,
+        imageOnDisk: false,
+        videoOnDisk: false,
+        staleByVersion: false,
+        valid: false,
+    };
 
-    // Check if audio is real TTS (not placeholder) before considering scene valid.
-    // Placeholder audio IS valid for timing/timeline, but NOT valid for skipping
-    // GPU dispatch — real TTS must be generated to replace the placeholder.
-    //
-    // Exception: if audio is disabled by layer config, skip this check.
+    if (!fs.existsSync(buildDir)) return result;
+
+    // Read layer config
     const layerKey = `animastor:layer-config:${bookId}`;
     const layerRaw = await redis.get(layerKey);
     let audioEnabled = true;
@@ -133,27 +140,49 @@ async function sceneHasValidContent(redis, buildId, bookId, chapterId, sceneId) 
         } catch (_) {}
     }
 
-    // Audio must be real (not placeholder) if audio is enabled
+    // Check audio file — distinguish real TTS from placeholder
     if (audioEnabled) {
         const audioPath = path.join(buildDir, `${bookId}_${chapterId}_${sceneId}.mp3`);
-        if (!fs.existsSync(audioPath)) return false;
-
-        // Check PG: is it real TTS audio (status='ready') or placeholder?
-        try {
-            const hasReal = await placeholderAudio.hasRealAudio(bookId, chapterId, sceneId, buildId);
-            if (!hasReal) {
-                // File exists but it's a placeholder — NOT valid for skipping dispatch
-                return false;
+        result.audioOnDisk = fs.existsSync(audioPath);
+        if (result.audioOnDisk) {
+            try {
+                const hasReal = await placeholderAudio.hasRealAudio(bookId, chapterId, sceneId, buildId);
+                // audioOnDisk stays true, but if not real (placeholder), it won't pass valid check
+                if (!hasReal) result.audioOnDisk = false; // placeholder doesn't count as valid content
+            } catch (_) {
+                result.audioOnDisk = false;
             }
-        } catch (_) {
-            // PG check failed — conservative: treat as placeholder, not valid
-            return false;
         }
+    } else {
+        // Audio disabled — consider it satisfied for validity check
+        result.audioOnDisk = true;
     }
 
-    // R15: Version-based staleness check — if asset version < scene version,
-    // the content on disk is stale and needs regeneration.
-    // This makes PG version counters the actual source of truth for staleness.
+    // Check for IU image files
+    if (imageEnabled) {
+        try {
+            const files = fs.readdirSync(buildDir);
+            const imagePrefix = `${bookId}_${chapterId}_${sceneId}_iu`;
+            result.imageOnDisk = files.some(f => f.startsWith(imagePrefix) && f.endsWith('.png'));
+            if (!result.imageOnDisk && videoEnabled) {
+                // Fallback: check if video exists instead
+                const videoPath = path.join(buildDir, `${bookId}_${chapterId}_${sceneId}.mp4`);
+                result.imageOnDisk = fs.existsSync(videoPath);
+            }
+        } catch (_) {}
+    } else {
+        result.imageOnDisk = true;
+    }
+
+    // Check video file
+    if (videoEnabled) {
+        const videoPath = path.join(buildDir, `${bookId}_${chapterId}_${sceneId}.mp4`);
+        result.videoOnDisk = fs.existsSync(videoPath);
+    } else {
+        result.videoOnDisk = true;
+    }
+
+    // R15: Version-based staleness check
     try {
         const sceneResult = await pgQuery(`
             SELECT content_version, audio_config_version FROM scenes
@@ -161,52 +190,26 @@ async function sceneHasValidContent(redis, buildId, bookId, chapterId, sceneId) 
         `, [bookId, chapterId, sceneId]);
         if (sceneResult.rows.length > 0) {
             const sv = sceneResult.rows[0];
-            // Try with buildId first; if not found (e.g. synthetic row from
-            // markSceneAssetsStale with build_id=NULL), fall back to any audio asset.
             const aAsset = await sceneAssetsRepo.getAsset(bookId, chapterId, sceneId, 'audio', buildId)
                 || await sceneAssetsRepo.getAsset(bookId, chapterId, sceneId, 'audio');
 
-            // Primary check: version comparison via scene_assets row (R15)
             if (aAsset && aAsset.scene_content_version != null && sv.content_version != null &&
                 aAsset.scene_content_version < sv.content_version) {
-                log(`[VERSION-STALE] ${bookId}/${chapterId}/${sceneId}: audio content_version=${aAsset.scene_content_version} < scene content_version=${sv.content_version} — content is stale`);
-                return false;
+                log(`[VERSION-STALE] ${bookId}/${chapterId}/${sceneId}: audio content_version=${aAsset.scene_content_version} < scene content_version=${sv.content_version}`);
+                result.staleByVersion = true;
             }
             if (aAsset && aAsset.scene_audio_config_version != null && sv.audio_config_version != null &&
                 aAsset.scene_audio_config_version < sv.audio_config_version) {
-                log(`[VERSION-STALE] ${bookId}/${chapterId}/${sceneId}: audio_config_version=${aAsset.scene_audio_config_version} < scene audio_config_version=${sv.audio_config_version} — audio is stale`);
-                return false;
+                log(`[VERSION-STALE] ${bookId}/${chapterId}/${sceneId}: audio_config_version=${aAsset.scene_audio_config_version} < scene audio_config_version=${sv.audio_config_version}`);
+                result.staleByVersion = true;
             }
         }
-    } catch (_) {
-        // Non-fatal: version check shouldn't block scene validity determination
-    }
+    } catch (_) {}
 
-    // If images are enabled, check for at least one IU image
-    if (imageEnabled) {
-        let files;
-        try { files = fs.readdirSync(buildDir); } catch { return false; }
-        const imagePrefix = `${bookId}_${chapterId}_${sceneId}_iu`;
-        const hasImage = files.some(f => f.startsWith(imagePrefix) && f.endsWith('.png'));
-        if (!hasImage) {
-            // If video is enabled as fallback, check for video
-            if (videoEnabled) {
-                const videoPath = path.join(buildDir, `${bookId}_${chapterId}_${sceneId}.mp4`);
-                if (!fs.existsSync(videoPath)) return false;
-            } else {
-                return false;
-            }
-        }
-    }
+    // Scene is valid if all enabled layers have content AND content is not stale by version
+    result.valid = result.audioOnDisk && result.imageOnDisk && result.videoOnDisk && !result.staleByVersion;
 
-    // If video is enabled, video file MUST exist — images alone do not count.
-    if (videoEnabled) {
-        const videoPath = path.join(buildDir, `${bookId}_${chapterId}_${sceneId}.mp4`);
-        if (!fs.existsSync(videoPath)) return false;
-    }
-
-    // Scene has real audio and all enabled layers have content
-    return true;
+    return result;
 }
 
 /**
@@ -426,9 +429,10 @@ async function slideWindow(redis, bookId, loadedBook, buildId) {
                 continue;
             }
 
-            // Scene has non-terminal state. Check if valid content exists on disk.
+            // Scene has non-terminal state. Check cache advisory for valid content.
             const buildIdForCheck = data.build_id || buildId;
-            if (await sceneHasValidContent(redis, buildIdForCheck, bookId, scene.chapter_id, scene.scene_id)) {
+            const cacheInfo = await checkSceneContentCache(redis, buildIdForCheck, bookId, scene.chapter_id, scene.scene_id);
+            if (cacheInfo.valid) {
                 log(`Scene ${scene.chapter_id}/${scene.scene_id} has valid content (state=${st}), promoting to ${state.SceneState.VIDEO_READY}`);
                 await state.transitionSceneState(redis, bookId, scene.chapter_id, scene.scene_id, state.SceneState.VIDEO_READY);
                 await restoreChunkStatusForScene(redis, buildIdForCheck, bookId, scene.chapter_id, scene.scene_id);
@@ -542,10 +546,10 @@ async function startScene(redis, s, buildId, bookId) {
 
     log(`Starting scene: ${bookId}/${chapterId}/${sceneId}`);
 
-    // Before dispatching to GPU, check if valid content already exists on disk.
-    // This handles the case where content was generated in a previous run and
-    // is still valid — we skip the expensive GPU dispatch entirely.
-    if (await sceneHasValidContent(redis, buildId, bookId, chapterId, sceneId)) {
+    // Before dispatching to GPU, check cache advisory for valid content on disk.
+    // The orchestrator decides whether to skip GPU dispatch based on the advisory.
+    const cacheInfo = await checkSceneContentCache(redis, buildId, bookId, chapterId, sceneId);
+    if (cacheInfo.valid) {
         log(`Scene ${bookId}/${chapterId}/${sceneId}: valid content on disk, skipping GPU dispatch`);
         await state.setSceneStateWithBuildId(redis, bookId, chapterId, sceneId, state.SceneState.VIDEO_READY, buildId);
         // Restore chunk metadata that was reset by markDirtyScenes so the progress
@@ -718,7 +722,7 @@ module.exports = {
     clearCancelFlag,
     setCancelFlag,
     cancelKey,
-    sceneHasValidContent,
+    checkSceneContentCache,
     restoreChunkStatusForScene,
     reconcileWindowStatuses,
     WINDOW_SIZE,
