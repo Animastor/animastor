@@ -183,13 +183,11 @@ module.exports = function(redis, config, deps) {
     }
 
     function startRecoveryInterval() {
-        // Run recovery every 5 seconds
-        setInterval(recoverAudioResults, 5000);
-        log('🔁 Audio recovery loop started (every 5s)');
+        // Recovery loop removed in Phase 1 (Passive Recovery).
+    // recoverAudioResults() is available for on-demand / manual use.
     }
 
     return {
         recoverAudioResults,
-        startRecoveryInterval,
     };
 };

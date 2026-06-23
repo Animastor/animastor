@@ -152,7 +152,8 @@ const audioRecovery = require('./services/audio-recovery.cjs')(redis, config, au
 // SERVICES — start periodic tasks
 // ======================================================
 cleanupService.startCleanupInterval();
-audioRecovery.startRecoveryInterval();
+// Audio recovery auto-cycle removed in Phase 1 (Passive Recovery).
+// recoverAudioResults() is available for on-demand use via debug endpoint.
 
 // ======================================================
 // ROUTES (each registers endpoints on app)

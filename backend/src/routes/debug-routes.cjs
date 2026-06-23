@@ -527,5 +527,59 @@ module.exports = function(app, redis, deps) {
         }
     });
 
+    // ======================================================
+    // APPLY FIX — manual reconciliation fix (Phase 1: Passive Recovery)
+    // ======================================================
+    app.post('/api/v1/debug/runtime/apply-fix', async (req, res) => {
+        try {
+            const { book_id, chapter_id, scene_id, issue } = req.body || {};
+            if (!book_id || !chapter_id || !scene_id || !issue) {
+                return res.status(400).json({ error: 'book_id, chapter_id, scene_id, issue required' });
+            }
+
+            const reconciliationEngine = runtime.reconciliation;
+            if (!reconciliationEngine) {
+                return res.status(500).json({ error: 'reconciliation engine not available' });
+            }
+
+            // Run reconciliation for this scene to get the report
+            const report = await reconciliationEngine.reconcileScene(redis, book_id, chapter_id, scene_id);
+
+            // Find the matching inconsistency
+            const inconsistent = report.inconsistentScenes.find(s =>
+                s.scene.bookId === book_id &&
+                s.scene.chapterId === chapter_id &&
+                s.scene.sceneId === scene_id &&
+                s.issue === issue
+            );
+
+            if (!inconsistent) {
+                return res.status(404).json({
+                    error: 'No matching inconsistency found',
+                    report: report.toSummary(),
+                });
+            }
+
+            // Generate fix and apply it
+            const fixes = reconciliationEngine.getFixRecommendations([inconsistent]);
+            const results = [];
+
+            for (const fix of fixes) {
+                try {
+                    const result = await reconciliationEngine.applyFix(redis, fix);
+                    results.push(result);
+                    log(`[APPLY-FIX] ${fix.action} for ${book_id}/${chapter_id}/${scene_id}: ${result.success ? 'OK' : 'FAILED'} (${result.details})`);
+                } catch (fixErr) {
+                    results.push({ success: false, action: fix.action, details: fixErr.message });
+                }
+            }
+
+            res.json({ applied: true, book_id, chapter_id, scene_id, issue, results });
+        } catch (err) {
+            console.error('[APPLY-FIX] Error:', err.message);
+            res.status(500).json({ error: err.message });
+        }
+    });
+
     log('[ROUTES] Debug routes loaded');
 };
