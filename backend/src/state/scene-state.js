@@ -71,8 +71,6 @@ const SceneTransitions = {
     [SceneState.FAILED]: [SceneState.AUDIO_PENDING, SceneState.IMAGE_PENDING, SceneState.VIDEO_PENDING]
 };
 
-// Heartbeat timer tracking
-const activeHeartbeatTimers = new Map();
 
 // ======================================================
 // LOGGING HELPERS
@@ -363,48 +361,6 @@ async function sceneHeartbeat(redis, bookId, chapterId, sceneId) {
         error(`Scene heartbeat failed: ${bookId}/${chapterId}/${sceneId}`, err.message);
         return false;
     }
-}
-
-/**
- * Start periodic heartbeat timer for a scene.
- * NOTE: This requires redis to be passed from the calling context.
- * The timer calls sceneHeartbeat() to refresh the updated_at timestamp.
- * @param {RedisClient} redis
- * @param {string} bookId
- * @param {string} chapterId
- * @param {string} sceneId
- * @param {number} [intervalMs]
- * @returns {NodeJS.Timeout}
- */
-function startSceneHeartbeatTimer(redis, bookId, chapterId, sceneId, intervalMs = 30000) {
-    const key = `${bookId}:${chapterId}:${sceneId}`;
-    const timerId = setInterval(async () => {
-        await sceneHeartbeat(redis, bookId, chapterId, sceneId);
-    }, intervalMs);
-
-    activeHeartbeatTimers.set(key, timerId);
-    log(`🫀 HEARTBEAT START: ${bookId}/${chapterId}/${sceneId} (every ${intervalMs}ms)`);
-    return timerId;
-}
-
-/**
- * Stop periodic heartbeat timer for a scene.
- * @param {string} bookId
- * @param {string} chapterId
- * @param {string} sceneId
- * @returns {boolean}
- */
-function stopSceneHeartbeatTimer(bookId, chapterId, sceneId) {
-    const key = `${bookId}:${chapterId}:${sceneId}`;
-    const timerId = activeHeartbeatTimers.get(key);
-
-    if (timerId) {
-        clearInterval(timerId);
-        activeHeartbeatTimers.delete(key);
-        log(`🫀 HEARTBEAT STOP: ${bookId}/${chapterId}/${sceneId}`);
-        return true;
-    }
-    return false;
 }
 
 // ======================================================
@@ -809,8 +765,6 @@ module.exports = {
 
     // Heartbeat
     sceneHeartbeat,
-    startSceneHeartbeatTimer,
-    stopSceneHeartbeatTimer,
 
     // Stuck detection
     isSceneStuck,

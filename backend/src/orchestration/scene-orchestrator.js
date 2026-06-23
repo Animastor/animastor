@@ -212,9 +212,8 @@ async function decideStage(redis, scene, loadedBook, buildId) {
             );
             if (hasAudioFile) {
                 log(`Placeholder audio found — completing audio stage without worker: ${bookId}/${chapterId}/${sceneId}`);
-                await state.transitionSceneState(redis, bookId, chapterId, sceneId, state.SceneState.AUDIO_GENERATING);
-                await state.transitionSceneState(redis, bookId, chapterId, sceneId, state.SceneState.AUDIO_READY);
                 await state.setAssetState(redis, bookId, chapterId, sceneId, 'audio', state.AssetState.PLACEHOLDER);
+                await state.setSceneStateWithBuildId(redis, bookId, chapterId, sceneId, state.SceneState.AUDIO_READY, buildId);
                 return { shouldExecute: false, stage: null, reason: 'audio_completed_placeholder' };
             }
             return { shouldExecute: false, stage: null, reason: 'no_audio_workers' };
@@ -796,9 +795,8 @@ async function dispatchStage(redis, scene, loadedBook, buildId, overrideStage = 
                 if (layerConfig.audio_enabled === false) {
                     log(`LAYER: audio disabled for ${bookId}, skipping audio dispatch for ${bookId}/${chapterId}/${sceneId}`);
                     // Complete audio stage with placeholder so image/video can proceed
-                    await state.transitionSceneState(redis, bookId, chapterId, sceneId, state.SceneState.AUDIO_GENERATING);
-                    await state.transitionSceneState(redis, bookId, chapterId, sceneId, state.SceneState.AUDIO_READY);
                     await state.setAssetState(redis, bookId, chapterId, sceneId, 'audio', state.AssetState.PLACEHOLDER);
+                    await state.setSceneStateWithBuildId(redis, bookId, chapterId, sceneId, state.SceneState.AUDIO_READY, buildId);
                     return { success: true, dispatched: false, reason: 'audio_disabled_by_layer' };
                 }
             } catch (e) {
@@ -816,7 +814,8 @@ async function dispatchStage(redis, scene, loadedBook, buildId, overrideStage = 
                 const layerConfig = JSON.parse(layerRaw);
                 if (layerConfig.image_enabled === false) {
                     log(`LAYER: image disabled for ${bookId}, skipping image dispatch for ${bookId}/${chapterId}/${sceneId}`);
-                    await state.transitionSceneState(redis, bookId, chapterId, sceneId, state.SceneState.IMAGE_READY);
+                    await state.setAssetState(redis, bookId, chapterId, sceneId, 'image', state.AssetState.READY);
+                    await state.setSceneStateWithBuildId(redis, bookId, chapterId, sceneId, state.SceneState.IMAGE_READY, buildId);
                     // Mark all scene chunks as image ready
                     const chunkPrefix = `animastor:chunk:${bookId}_${chapterId}_${sceneId}_`;
                     const allChunks = await redis.keys(`${chunkPrefix}*`);
@@ -845,9 +844,8 @@ async function dispatchStage(redis, scene, loadedBook, buildId, overrideStage = 
                 const layerConfig = JSON.parse(layerRaw);
                 if (layerConfig.video_enabled === false) {
                     log(`LAYER: video disabled for ${bookId}, skipping video dispatch for ${bookId}/${chapterId}/${sceneId}`);
-                    await state.transitionSceneState(redis, bookId, chapterId, sceneId, state.SceneState.VIDEO_GENERATING);
-                    await state.transitionSceneState(redis, bookId, chapterId, sceneId, state.SceneState.VIDEO_READY);
                     await state.setAssetState(redis, bookId, chapterId, sceneId, 'video', state.AssetState.READY);
+                    await state.setSceneStateWithBuildId(redis, bookId, chapterId, sceneId, state.SceneState.VIDEO_READY, buildId);
                     await runtimeScheduler.removeSceneFromActiveIndex(redis, bookId, chapterId, sceneId);
                     // Auto-slide the window
                     try {
@@ -1214,10 +1212,9 @@ async function handleVideoCompleted(redis, bookId, chapterId, sceneId, buildId) 
 async function completeSceneWithoutVideo(redis, loadedBook, bookId, chapterId, sceneId, buildId) {
     log(`Completing scene without video: ${bookId}/${chapterId}/${sceneId}`);
 
-    // Transition through full video chain: pending → generating → ready
-    await state.transitionSceneState(redis, bookId, chapterId, sceneId, state.SceneState.VIDEO_PENDING);
-    await state.transitionSceneState(redis, bookId, chapterId, sceneId, state.SceneState.VIDEO_GENERATING);
-    await state.transitionSceneState(redis, bookId, chapterId, sceneId, state.SceneState.VIDEO_READY);
+    // Per-asset: mark video READY and write linear state directly
+    await state.setAssetState(redis, bookId, chapterId, sceneId, 'video', state.AssetState.READY);
+    await state.setSceneStateWithBuildId(redis, bookId, chapterId, sceneId, state.SceneState.VIDEO_READY, buildId);
 
     // Phase 4 (R4.1): Clear persistent dirty flag
     try {
@@ -1248,9 +1245,9 @@ async function completeSceneWithoutVideo(redis, loadedBook, bookId, chapterId, s
 
 async function completeSceneWithoutImage(redis, loadedBook, bookId, chapterId, sceneId, buildId) {
     log(`Completing scene without image: ${bookId}/${chapterId}/${sceneId}`);
-    await state.transitionSceneState(redis, bookId, chapterId, sceneId, state.SceneState.IMAGE_PENDING);
-    await state.transitionSceneState(redis, bookId, chapterId, sceneId, state.SceneState.IMAGE_GENERATING);
-    await state.transitionSceneState(redis, bookId, chapterId, sceneId, state.SceneState.IMAGE_READY);
+    // Per-asset: mark image READY and write linear state directly
+    await state.setAssetState(redis, bookId, chapterId, sceneId, 'image', state.AssetState.READY);
+    await state.setSceneStateWithBuildId(redis, bookId, chapterId, sceneId, state.SceneState.IMAGE_READY, buildId);
     log(`Scene complete (no image): ${bookId}/${chapterId}/${sceneId}`);
 
     // Phase 4 (R4.1): Clear persistent dirty flag

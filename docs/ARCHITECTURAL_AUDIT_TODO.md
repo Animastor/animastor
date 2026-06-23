@@ -122,23 +122,14 @@
 
 ### [R6.1] Dual state model — консолидация ✅
 
-> Per-asset — канонический, linear FSM — производная проекция. syncLinearState() после каждого изменения.
+> Per-asset — канонический, linear FSM — производная проекция.
 
-- [x] **Шаг 1:** Найдены все потребители linear FSM:
-  - `syncLinearState` вызывалась в 22 местах
-  - `transitionSceneState` — в 35 местах
-  - `getSceneState` — в 26 местах
-- [x] **Шаг 2:** Переведены на per-asset API:
-  - callback handlers (handleAudio/Image/VideoCompleted) — больше не вызывают `syncLinearState`
-  - `shouldScheduleAssets()` — больше не вызывает `syncLinearState` (R4.2 блок)
-  - Каждое использование `syncLinearState` проверено: оставлено только где нужно для build_id (dispatch) или external API (markDirtyScenes)
-- [x] **Шаг 3:** Убрано 6 `syncLinearState` вызовов (3 из callback handlers + 3 из shouldScheduleAssets)
-- [x] **Шаг 4:** (Отложено) Полное удаление linear FSM — рискованно без аудита frontend API
+- [x] **Шаг 1:** Найдены все потребители linear FSM (syncLinearState: 22 места, transitionSceneState: 35 мест)
+- [x] **Шаг 2:** callback handlers переведены на per-asset API (убрано 6 syncLinearState вызовов)
+- [x] **Шаг 3:** dispatchStage layer short-circuits (audio/image/video disabled) — `transitionSceneState` заменён на `setAssetState()` + `setSceneStateWithBuildId()`
+- [x] **Шаг 4:** completeSceneWithoutVideo / completeSceneWithoutImage — `transitionSceneState` (3 вызова каждый) заменён на per-asset API
 
-**Результат:** `syncLinearState` теперь вызывается только в:
-- dispatch-функциях (executeAudio/Image/VideoDispatch) — для build_id propagation
-- markDirtyScenes (book-diff.cjs) — после Lua reset
-- layer config short-circuits (dispatchStage) — при пропуске слоя
+**Результат:** `transitionSceneState` (c lock+CAS) больше не вызывается в short-circuit путях. Per-asset — единственный source of truth. Linear FSM — проекция.
 
 ---
 
@@ -217,14 +208,15 @@ Phase 4 — 🟡 High: Versions as source of truth
 └── [R4.3] Crash-safe dirty (уже частично)           (🟢 medium, ✅ Done)
 
 Phase 5 — 🟢 Medium: Чистка дубликатов
-├── [R5.1] Event journals                            (🟢)
-├── [R5.2=R6.4] Governance dead code                 (🟢)
-└── [R5.3] Heartbeat simplification                  (⚪)
+├── [R5.1] Event journals — сокращён EventType enum с ~100 до ~30, убраны causal ordering helpers (🟢, ✅ Done)
+├── [R5.2=R6.4] Governance dead code                 (🟢, ✅ Done)
+└── [R5.3] Heartbeat simplification — убраны startSceneHeartbeatTimer/stopSceneHeartbeatTimer (⚪, ✅ Done)
 
 Phase 6 — 🟡 High: Расчистка избыточной сложности
 ├── [R6.1] Dual state model — консолидация           (🟡, ✅ Done)
+│   └── dispatchStage short-circuits → per-asset API
 ├── [R6.2] Консолидировать проверки файлов           (🟡, ✅ Done)
-├── [R6.3=R1.2] Audio recovery → trigger-based       (🟡, можно сейчас)
+├── [R6.3=R1.2] Audio recovery → trigger-based       (🟡, ✅ Done)
 ├── [R6.4=R5.2] Governance modules — решить судьбу   (🟢, ✅ Done)
 └── [R6.5=R3.1] Убрать stale state tolerance        (🟢, ✅ Done)
 ```
