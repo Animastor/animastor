@@ -23,11 +23,11 @@
 
 **Цель:** Recovery перестаёт быть активным участником принятия решений. Только логирует расхождения, не чинит их автоматически.
 
-### [R1.1] Startup recovery — только логировать, не чинить ⚪
-- [ ] `startup-recovery.js`: Step 2 (`recoverIuImagesFromDisk`) — убрать auto-fix chunk metadata. Только логировать: "найдено N PNG без Redis-статуса"
-- [ ] Step 3 (`reconcileMissingSceneState`) — убрать установку counters и scene_hashes. Только логировать
-- [ ] Step 4 (`checkVersionStaleness`) — уже только логирует, оставить
-- [ ] **Важно:** crash recovery должен гарантировать, что dirty-состояние не теряется. Если книга была изменена (content_version поднят), startup recovery не должен это маскировать.
+### [R1.1] Startup recovery — только логировать, не чинить ✅
+- [x] `recoverIuImagesFromDisk()` — сканирует PNG, только логирует найденные сцены (не обновляет Redis)
+- [x] `reconcileMissingSceneState()` — только логирует книги с отсутствующими Redis counters (не восстанавливает counters/placeholders/hashes)
+- [x] `checkVersionStaleness()` — уже только логирует (не меняли)
+- [x] **Важно:** crash recovery больше не маскирует dirty-состояние — после flushall Redis книга должна быть явно загружена через PUT/regenerate
 
 ### [R1.2] Audio recovery — убрать рантайм-цикл ✅
 - [x] `audio-recovery.cjs`: убрать `startRecoveryInterval()` (setInterval every 5s)
@@ -138,25 +138,16 @@
 
 ---
 
-### [R6.2] Консолидировать проверки файлов на диске
+### [R6.2] Консолидировать проверки файлов на диске ✅
 
-> Четыре места делают одно и то же: `sceneHasValidContent()`, `restoreChunkStatusForScene()`, `reconcileWindowStatuses()`, `recoverIuImagesFromDisk()`.
+> Четыре места делали одно и то же: `checkSceneContentCache()`, `restoreChunkStatusForScene()`, `reconcileWindowStatuses()`, `recoverIuImagesFromDisk()`.
 
-- [ ] **Шаг 1:** Выделить единую функцию `getSceneFilesStatus(buildDir, bookId, chapterId, sceneId)`:
-  ```javascript
-  // Возвращает:
-  // { audio: { exists: bool, isReal: bool },
-  //   image: { exists: bool },
-  //   video: { exists: bool } }
-  ```
-- [ ] **Шаг 2:** Переписать `sceneHasValidContent()` на `getSceneFilesStatus()`
-- [ ] **Шаг 3:** Переписать `restoreChunkStatusForScene()` на `getSceneFilesStatus()`
-- [ ] **Шаг 4:** Переписать `reconcileWindowStatuses()` на `getSceneFilesStatus()`
-- [ ] **Шаг 5:** Переписать `recoverIuImagesFromDisk()` на `getSceneFilesStatus()`
-- [ ] **Шаг 6:** Убрать дублирующиеся fs.readdirSync/existsSync вызовы
-
-**Риски:**
-- Каждое место сейчас имеет slightly разную логику (например, `sceneHasValidContent` проверяет placeholder audio, а `reconcileWindowStatuses` — нет). Нужно сохранить все различия при консолидации.
+- [x] **Шаг 1:** Создана единая `getSceneFilesStatus(buildDir, bookId, chapterId, sceneId)` — возвращает `{ audio: { exists, isReal }, image: { exists }, video: { exists } }`
+- [x] **Шаг 2:** `checkSceneContentCache()` переписана на `getSceneFilesStatus()`
+- [x] **Шаг 3:** `restoreChunkStatusForScene()` переписана на `getSceneFilesStatus()`
+- [x] **Шаг 4:** `reconcileWindowStatuses()` переписана на `getSceneFilesStatus()`
+- [x] **Шаг 5:** `recoverIuImagesFromDisk()` теперь log-only (R1.1) — больше не использует I/O
+- [x] **Шаг 6:** Убраны дублирующиеся fs.readdirSync/existsSync вызовы — все идут через единую функцию
 
 ---
 
@@ -171,15 +162,15 @@
 
 ---
 
-### [R6.4] Governance модули — решить судьбу
+### [R6.4] Governance модули — решить судьбу ✅
 
-> 6 модулей загружаются через `safeRequire()`, не используются в production.
+> 6 модулей загружались через `safeRequire()`. Решение:
+> - **circuitBreaker, retryBudget, fairness** — используются в `dispatchStage()` → заменён `safeRequire` на прямой `require()`
+> - **policyEngine, workloadClassifier, costEstimator** — только в мёртвых функциях `dispatchStageWithPolicy()` / `evaluateDispatchPolicy()` → функции удалены, safeRequire убран
 
-- [ ] **Шаг 1:** Проверить git log — были ли эти модули хоть раз включены?
-- [ ] **Шаг 2:** Решить: нужны или нет
-  - Если нужны — добавить в core pipeline dispatch-engine.js (убрать safeRequire)
-  - Если не нужны — удалить файлы с диска
-- [ ] **Шаг 3:** Обновить `runtime/index.js` если нужно
+- [x] **Шаг 1:** Проверен git log — модули существуют, но `dispatchStageWithPolicy()` и `evaluateDispatchPolicy()` никогда не вызывались
+- [x] **Шаг 2:** circuitBreaker/retryBudget/fairness — `safeRequire` → прямой `require()`. policyEngine/workloadClassifier/costEstimator — удалены из dispatch-engine (остаются доступны через собственные require в других файлах)
+- [x] **Шаг 3:** dispatch-engine больше не грузит лишние модули, null-проверки убраны
 
 ---
 
@@ -200,7 +191,7 @@
 
 ```
 Phase 1 — 🔴 Critical: Passive Recovery
-├── [R1.1] Startup recovery — только логировать      (⚪ low urgency, after R2)
+├── [R1.1] Startup recovery — только логировать      (⚪ low urgency, ✅ Done)
 ├── [R1.2] Audio recovery — убрать рантайм-цикл      (🟡 high, ✅ Done)
 └── [R1.3] Reconciliation — убрать auto-fix          (🟡 high, ✅ Done)
 
@@ -211,8 +202,8 @@ Phase 2 — 🔴 Critical: Force Lease Release
 
 Phase 3 — 🟡 High: Единый оркестратор
 ├── [R3.1=R6.5] Убрать stale state tolerance         (🟢 medium, ✅ Done)
-├── [R3.2] RestoreChunkStatus → orchestrator         (🟢 medium)
-└── [R3.3] SceneHasValidContent → advisory           (🟢 medium)
+├── [R3.2] RestoreChunkStatus → orchestrator         (🟢 medium, ✅ Done)
+└── [R3.3] SceneHasValidContent → advisory           (🟢 medium, ✅ Done)
 
 Phase 4 — 🟡 High: Versions as source of truth
 ├── [R4.1] Per-asset dirty в PG                      (🟡 high)
@@ -226,10 +217,10 @@ Phase 5 — 🟢 Medium: Чистка дубликатов
 
 Phase 6 — 🟡 High: Расчистка избыточной сложности
 ├── [R6.1] Dual state model — консолидация           (🟡, долгосрочно)
-├── [R6.2] Консолидировать проверки файлов           (🟡, среднесрочно)
+├── [R6.2] Консолидировать проверки файлов           (🟡, ✅ Done)
 ├── [R6.3=R1.2] Audio recovery → trigger-based       (🟡, можно сейчас)
-├── [R6.4=R5.2] Governance modules — решить судьбу   (🟢, можно сейчас)
-└── [R6.5=R3.1] Убрать stale state tolerance        (🟢, после R2.x)
+├── [R6.4=R5.2] Governance modules — решить судьбу   (🟢, ✅ Done)
+└── [R6.5=R3.1] Убрать stale state tolerance        (🟢, ✅ Done)
 ```
 
 ---
@@ -270,20 +261,13 @@ Phase 1:   R1.2       →  убрать audio recovery cycle             ✅
           
 Phase 2:   R2.1       →  force lease release in dispatch           ✅
           R2.2       →  force флаг в regenerate + scheduler        ✅
-          R2.3       →  clearAllLeasesForBook + cleanup             ✅
+          R2.3       →  clearAllLeasesForBook + cleanup             ✅          R6.4       →  governance: safeRequire→require + dead code       ✅
+          R6.2       →  консолидация проверок файлов                      ✅
+          R1.1       →  startup recovery log-only                         ✅
           
-Сейчас:   R6.4       →  решить судьбу governance модулей
-          
-Затем:    R2.1       →  force lease release
-          R2.2+R2.3  →  force в regenerate + cleanup
-          
-Phase 3:   R3.1       →  убрать stale state tolerance            ✅
-          
-Потом:    R1.1       →  startup recovery только логировать
-          R3.2+R3.3  →  единый оркестратор
-          
-Далее:    R3.2+R3.3 →  единый оркестратор
-          R6.2       →  консолидация проверок файлов
+Далее:    R4.1       →  dirty-флаги в PG
+          R4.2       →  version bump как единственный триггер
+          R4.3       →  crash-safe dirty
           
 В конце:  R4.x      →  версии как source of truth
           R6.1       →  консолидация dual state model

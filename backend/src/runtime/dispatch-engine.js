@@ -11,15 +11,9 @@ const leaseManager = require('./lease-manager');
 const counterReconciliation = require('./counter-reconciliation');
 const runtimeMetrics = require('./runtime-metrics');
 const storage = require('../storage');
-function safeRequire(mod) {
-    try { return require(mod); } catch { return null; }
-}
-const circuitBreaker = safeRequire('./circuit-breaker');
-const retryBudget = safeRequire('./retry-budget-manager');
-const fairness = safeRequire('./fairness-engine');
-const policyEngine = safeRequire('./policy-engine');
-const workloadClassifier = safeRequire('./workload-classifier');
-const costEstimator = safeRequire('./cost-estimator');
+const circuitBreaker = require('./circuit-breaker');
+const retryBudget = require('./retry-budget-manager');
+const fairness = require('./fairness-engine');
 
 const logPrefix = '[DISPATCH]';
 
@@ -368,151 +362,10 @@ async function shouldSkipDispatch(redis, bookId, chapterId, sceneId, stage) {
 }
 
 /**
- * Evaluate policy for dispatch decision.
- * Returns policy decision object with allowed/delayed/denied and associated metadata.
+ * Evaluate policy for dispatch decision — UNUSED (removed in Phase 6).
+ * Legacy governance modules (policyEngine, workloadClassifier, costEstimator)
+ * were loaded via safeRequire but never wired into the production dispatch path.
  */
-async function evaluateDispatchPolicy(redis, bookId, chapterId, sceneId, stage, runtimeState) {
-    const scene = {
-        book_id: bookId,
-        chapter_id: chapterId,
-        scene_id: sceneId
-    };
-
-    // Classify workload
-    const workload = workloadClassifier
-        ? (await workloadClassifier.getClassification(redis, scene)).workload
-        : 'standard';
-
-    // Calculate priority
-    const priorityScore = await runtimeMetrics.calculatePriorityScore(
-        redis,
-        bookId,
-        chapterId,
-        sceneId,
-        scene
-    );
-
-    // Get runtime metrics
-    const activeAudio = await getActiveCounter(redis, 'audio');
-    const activeImage = await getActiveCounter(redis, 'image');
-    const activeVideo = await getActiveCounter(redis, 'video');
-
-    // Evaluate policy
-    const decision = policyEngine
-        ? await policyEngine.evaluatePolicy(redis, {
-            scene,
-            state: { stage },
-            workload,
-            priority: priorityScore,
-            retryBudget: {},
-            quotas: {
-                audio: activeAudio,
-                image: activeImage,
-                video: activeVideo
-            },
-            circuits: {},
-            runtimeMetrics: {
-                active: {
-                    audio: activeAudio,
-                    image: activeImage,
-                    video: activeVideo
-                }
-            },
-            fairnessState: {}
-        })
-        : { allowed: true };
-
-    return decision;
-}
-
-/**
- * Dispatch a scene stage using policy engine.
- * This is the ONLY way to start a scene stage.
- *
- * Returns:
- * - { dispatched: true, dispatchId, stage, leaseKey }
- * - { dispatched: false, reason, skip: true/false, decision: PolicyDecision }
- */
-async function dispatchStageWithPolicy(redis, bookId, chapterId, sceneId, stage, loadedBook, buildId) {
-    const dispatchId = generateDispatchToken();
-
-    log(`DISPATCH_POLICY_REQUEST: ${bookId}/${chapterId}/${sceneId}:${stage}`);
-
-    // Get runtime metrics
-    const activeAudio = await getActiveCounter(redis, 'audio');
-    const activeImage = await getActiveCounter(redis, 'image');
-    const activeVideo = await getActiveCounter(redis, 'video');
-
-    // Evaluate policy BEFORE any blocking operations
-    const policyDecision = policyEngine
-        ? await policyEngine.evaluatePolicy(redis, {
-            scene: {
-                book_id: bookId,
-                chapter_id: chapterId,
-                scene_id: sceneId
-            },
-            state: { stage },
-            workload: 'MEDIUM',
-            priority: 50,
-            retryBudget: {},
-            quotas: {
-                audio: activeAudio,
-                image: activeImage,
-                video: activeVideo
-            },
-            circuits: {},
-            runtimeMetrics: {
-                active: {
-                    audio: activeAudio,
-                    image: activeImage,
-                    video: activeVideo
-                }
-            },
-            fairnessState: {}
-        })
-        : { allowed: true, decisionType: 'permit', priority: 50, throttle: 0, delayMs: 0 };
-
-    // Log policy decision
-    log(`POLICY_DECISION: ${policyDecision.decisionType} (priority=${policyDecision.priority}, throttle=${policyDecision.throttle}, delay=${policyDecision.delayMs}ms)`);
-
-    // Check if policy allows dispatch
-    if (!policyDecision.allowed) {
-        await journal.appendSceneEvent(
-            redis,
-            bookId,
-            chapterId,
-            sceneId,
-            policyDecision.eventType || 'POLICY_BLOCKED',
-            stage,
-            { ...policyDecision, reason: policyDecision.reason }
-        );
-
-        if (policyDecision.delayMs > 0) {
-            log(`POLICY_DELAYED: ${bookId}/${chapterId}/${sceneId}:${stage} (${policyDecision.delayMs}ms)`);
-            return { dispatched: false, reason: 'policy_delayed', delayMs: policyDecision.delayMs, decision: policyDecision, dispatchId };
-        }
-
-        log(`POLICY_BLOCKED: ${bookId}/${chapterId}/${sceneId}:${stage} (${policyDecision.reason})`);
-        return { dispatched: false, reason: 'policy_blocked', decision: policyDecision, dispatchId };
-    }
-
-    // Apply throttle delay if present
-    if (policyDecision.delayMs > 0) {
-        log(`APPLYING_POLICY_DELAY: ${policyDecision.delayMs}ms`);
-        // In production, this would await a timeout
-    }
-
-    // Proceed with dispatch
-    const result = await dispatchStage(redis, bookId, chapterId, sceneId, stage, loadedBook, buildId);
-
-    if (result.dispatched && costEstimator) {
-        const scene = { book_id: bookId, chapter_id: chapterId, scene_id: sceneId };
-        const costEstimate = await costEstimator.estimateSceneCost(redis, scene);
-        log(`COST_ESTIMATED: ${bookId}/${chapterId}/${sceneId} = ${costEstimate.estimatedCost}gpu-sec`);
-    }
-
-    return result;
-}
 
 /**
  * Dispatch a scene stage.
@@ -543,9 +396,7 @@ async function dispatchStage(redis, bookId, chapterId, sceneId, stage, loadedBoo
     }
 
     // Phase 9 Step 0: Check circuit breaker
-    const circuitStatus = circuitBreaker
-        ? await circuitBreaker.checkDispatch(redis, stage)
-        : { allowed: true };
+    const circuitStatus = await circuitBreaker.checkDispatch(redis, stage);
     if (!circuitStatus.allowed) {
         log(`CIRCUIT_BLOCKED: ${bookId}/${chapterId}/${sceneId}:${stage} (circuit: ${circuitStatus.circuitState})`);
         await journal.appendSceneEvent(
@@ -594,17 +445,15 @@ async function dispatchStage(redis, bookId, chapterId, sceneId, stage, loadedBoo
 
     // Phase 9: Check retry budget
     const failureType = 'transient';
-    const retryBudgetCheck = retryBudget
-        ? await retryBudget.checkRetryBudget(
-            redis,
-            bookId,
-            chapterId,
-            sceneId,
-            stage,
-            failureType,
-            'scheduler'
-        )
-        : { allowed: true };
+    const retryBudgetCheck = await retryBudget.checkRetryBudget(
+        redis,
+        bookId,
+        chapterId,
+        sceneId,
+        stage,
+        failureType,
+        'scheduler'
+    );
     if (!retryBudgetCheck.allowed) {
         log(`RETRY_BUDGET_EXCEEDED: ${bookId}/${chapterId}/${sceneId}:${stage} (${retryBudgetCheck.reason})`);
         await releaseQuota(redis, stage);
@@ -621,12 +470,10 @@ async function dispatchStage(redis, bookId, chapterId, sceneId, stage, loadedBoo
     }
 
     // Phase 9: Check fairness - detect starvation
-    if (fairness) {
-        const fairnessStatus = await fairness.isStarving(redis, bookId, chapterId, sceneId);
-        if (fairnessStatus.starving) {
-            log(`STARVATION_DETECTED: ${bookId}/${chapterId}/${sceneId}:${stage} (age: ${fairnessStatus.ageMinutes}m)`);
-            await fairness.boostStarvingScene(redis, bookId, chapterId, sceneId);
-        }
+    const fairnessStatus = await fairness.isStarving(redis, bookId, chapterId, sceneId);
+    if (fairnessStatus.starving) {
+        log(`STARVATION_DETECTED: ${bookId}/${chapterId}/${sceneId}:${stage} (age: ${fairnessStatus.ageMinutes}m)`);
+        await fairness.boostStarvingScene(redis, bookId, chapterId, sceneId);
     }
 
     // Step 3: Acquire lease (force mode bypasses existing lease)
@@ -693,11 +540,9 @@ async function markDispatchCompleted(redis, bookId, chapterId, sceneId, stage) {
     log(`DISPATCH_COMPLETE: ${bookId}/${chapterId}/${sceneId}:${stage}`);
 
     // Phase 9: Record success for circuit breaker recovery
-    if (circuitBreaker) {
-        const circuitResult = await circuitBreaker.recordSuccess(redis, stage);
-        if (circuitResult.state === circuitBreaker.CircuitState.HALF_OPEN && circuitResult.testRequest) {
-            log(`CIRCUIT_HALF_OPEN_TEST: ${stage} (test request ${circuitResult.halfOpenCount})`);
-        }
+    const circuitResult = await circuitBreaker.recordSuccess(redis, stage);
+    if (circuitResult.state === circuitBreaker.CircuitState.HALF_OPEN && circuitResult.testRequest) {
+        log(`CIRCUIT_HALF_OPEN_TEST: ${stage} (test request ${circuitResult.halfOpenCount})`);
     }
 
     // Stop lease renewal timer
@@ -733,20 +578,18 @@ async function markDispatchFailed(redis, bookId, chapterId, sceneId, stage, erro
     log(`DISPATCH_FAILED: ${bookId}/${chapterId}/${sceneId}:${stage}: ${error}`);
 
     // Phase 9: Record failure for circuit breaker
-    if (circuitBreaker) {
-        const circuitResult = await circuitBreaker.recordFailure(redis, stage);
-        if (circuitResult.isTripped) {
-            log(`CIRCUIT_OPENED: ${stage} (threshold reached)`);
-            await journal.appendSceneEvent(
-                redis,
-                bookId,
-                chapterId,
-                sceneId,
-                'CIRCUIT_OPENED',
-                stage,
-                { failureType: stage, failures: circuitResult.newCount }
-            );
-        }
+    const circuitResult = await circuitBreaker.recordFailure(redis, stage);
+    if (circuitResult.isTripped) {
+        log(`CIRCUIT_OPENED: ${stage} (threshold reached)`);
+        await journal.appendSceneEvent(
+            redis,
+            bookId,
+            chapterId,
+            sceneId,
+            'CIRCUIT_OPENED',
+            stage,
+            { failureType: stage, failures: circuitResult.newCount }
+        );
     }
 
     // Stop lease renewal timer
@@ -1098,10 +941,6 @@ module.exports = {
     getActiveDispatches,
     getActiveLeases,
     getQuotaStatus,
-
-    // Policy engine integration
-    evaluateDispatchPolicy,
-    dispatchStageWithPolicy,
 
     // Constants
     QUOTAS,

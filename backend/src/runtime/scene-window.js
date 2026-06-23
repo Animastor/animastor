@@ -104,6 +104,45 @@ function _isTerminalState(st) {
 }
 
 /**
+ * Unified file status checker — single source of truth for checking
+ * what files exist on disk for a given scene.
+ *
+ * Phase 6 (R6.2): All four consumers (checkSceneContentCache,
+ * restoreChunkStatusForScene, reconcileWindowStatuses, recoverIuImagesFromDisk)
+ * use this function instead of duplicating fs.* calls.
+ *
+ * @returns {{ audio: { exists: boolean, isReal: boolean },
+ *             image: { exists: boolean },
+ *             video: { exists: boolean } }}
+ */
+async function getSceneFilesStatus(buildDir, bookId, chapterId, sceneId) {
+    const result = {
+        audio: { exists: false, isReal: false },
+        image: { exists: false },
+        video: { exists: false }
+    };
+
+    if (!fs.existsSync(buildDir)) return result;
+
+    // Check audio file
+    const audioPath = path.join(buildDir, `${bookId}_${chapterId}_${sceneId}.mp3`);
+    result.audio.exists = fs.existsSync(audioPath);
+
+    // Check IU image files (.png)
+    try {
+        const files = fs.readdirSync(buildDir);
+        const imagePrefix = `${bookId}_${chapterId}_${sceneId}_iu`;
+        result.image.exists = files.some(f => f.startsWith(imagePrefix) && f.endsWith('.png'));
+    } catch (_) {}
+
+    // Check video file
+    const videoPath = path.join(buildDir, `${bookId}_${chapterId}_${sceneId}.mp4`);
+    result.video.exists = fs.existsSync(videoPath);
+
+    return result;
+}
+
+/**
  * Check scene content cache — returns advisory info about what files
  * exist on disk and whether content is stale by version.
  *
@@ -140,44 +179,37 @@ async function checkSceneContentCache(redis, buildId, bookId, chapterId, sceneId
         } catch (_) {}
     }
 
+    // Use unified file status
+    const fileStatus = await getSceneFilesStatus(buildDir, bookId, chapterId, sceneId);
+
     // Check audio file — distinguish real TTS from placeholder
     if (audioEnabled) {
-        const audioPath = path.join(buildDir, `${bookId}_${chapterId}_${sceneId}.mp3`);
-        result.audioOnDisk = fs.existsSync(audioPath);
+        result.audioOnDisk = fileStatus.audio.exists;
         if (result.audioOnDisk) {
             try {
                 const hasReal = await placeholderAudio.hasRealAudio(bookId, chapterId, sceneId, buildId);
-                // audioOnDisk stays true, but if not real (placeholder), it won't pass valid check
                 if (!hasReal) result.audioOnDisk = false; // placeholder doesn't count as valid content
             } catch (_) {
                 result.audioOnDisk = false;
             }
         }
     } else {
-        // Audio disabled — consider it satisfied for validity check
         result.audioOnDisk = true;
     }
 
     // Check for IU image files
     if (imageEnabled) {
-        try {
-            const files = fs.readdirSync(buildDir);
-            const imagePrefix = `${bookId}_${chapterId}_${sceneId}_iu`;
-            result.imageOnDisk = files.some(f => f.startsWith(imagePrefix) && f.endsWith('.png'));
-            if (!result.imageOnDisk && videoEnabled) {
-                // Fallback: check if video exists instead
-                const videoPath = path.join(buildDir, `${bookId}_${chapterId}_${sceneId}.mp4`);
-                result.imageOnDisk = fs.existsSync(videoPath);
-            }
-        } catch (_) {}
+        result.imageOnDisk = fileStatus.image.exists;
+        if (!result.imageOnDisk && videoEnabled) {
+            result.imageOnDisk = fileStatus.video.exists; // video as fallback
+        }
     } else {
         result.imageOnDisk = true;
     }
 
     // Check video file
     if (videoEnabled) {
-        const videoPath = path.join(buildDir, `${bookId}_${chapterId}_${sceneId}.mp4`);
-        result.videoOnDisk = fs.existsSync(videoPath);
+        result.videoOnDisk = fileStatus.video.exists;
     } else {
         result.videoOnDisk = true;
     }
@@ -220,6 +252,13 @@ async function restoreChunkStatusForScene(redis, buildId, bookId, chapterId, sce
     const buildDir = path.join(OUTPUT_DIR, buildId);
     if (!fs.existsSync(buildDir)) return;
 
+    const fileStatus = await getSceneFilesStatus(buildDir, bookId, chapterId, sceneId);
+    let audioIsReal = false;
+    if (fileStatus.audio.exists) {
+        try { audioIsReal = await placeholderAudio.hasRealAudio(bookId, chapterId, sceneId, buildId); }
+        catch (_) {}
+    }
+
     const prefix = `animastor:chunk:${bookId}_${chapterId}_${sceneId}_`;
     let cursor = '0';
     do {
@@ -229,35 +268,16 @@ async function restoreChunkStatusForScene(redis, buildId, bookId, chapterId, sce
             const raw = await redis.get(key);
             if (!raw) continue;
             const data = JSON.parse(raw);
-            // Check audio file — distinguish real TTS from placeholder
-            const audioPath = path.join(buildDir, `${bookId}_${chapterId}_${sceneId}.mp3`);
-            const audioExists = fs.existsSync(audioPath);
-            // Check if audio is real (not placeholder)
-            let audioIsReal = false;
-            if (audioExists) {
-                try { audioIsReal = await placeholderAudio.hasRealAudio(bookId, chapterId, sceneId, buildId); }
-                catch (_) {}
-            }
-            // Check for at least one IU image .png
-            const iuPrefix = `${bookId}_${chapterId}_${sceneId}_iu`;
-            let imageExists = false;
-            try {
-                const allFiles = fs.readdirSync(buildDir);
-                imageExists = allFiles.some(f => f.startsWith(iuPrefix) && f.endsWith('.png'));
-            } catch (_) {}
-            // Check video file
-            const videoPath = path.join(buildDir, `${bookId}_${chapterId}_${sceneId}.mp4`);
-            const videoExists = fs.existsSync(videoPath);
 
-            if (audioExists) {
+            if (fileStatus.audio.exists) {
                 data.audio = true;
                 data.audio_status = audioIsReal ? 'ready' : 'placeholder';
             }
-            if (imageExists) {
+            if (fileStatus.image.exists) {
                 data.image = true;
                 data.image_status = 'ready';
             }
-            if (videoExists) {
+            if (fileStatus.video.exists) {
                 data.video = true;
                 data.video_status = 'ready';
             }
@@ -482,17 +502,17 @@ async function reconcileWindowStatuses(redis, bookId, buildId) {
 
         let changed = false;
 
+        // Use unified file status
+        const fileStatus = await getSceneFilesStatus(buildDir, data.book_id, data.chapter_id, data.scene_id);
+
         // Check audio file — distinguish real TTS from placeholder
         if (data.audio_status === 'pending' || data.audio_status === 'placeholder') {
-            const audioPath = path.join(buildDir, `${data.book_id}_${data.chapter_id}_${data.scene_id}.mp3`);
-            if (fs.existsSync(audioPath)) {
+            if (fileStatus.audio.exists) {
                 data.audio = true;
-                // Check PG: is this real TTS audio or placeholder?
                 try {
                     const hasReal = await placeholderAudio.hasRealAudio(data.book_id, data.chapter_id, data.scene_id, buildId);
                     data.audio_status = hasReal ? 'ready' : 'placeholder';
                 } catch (_) {
-                    // PG check failed — conservative: assume placeholder
                     data.audio_status = 'placeholder';
                 }
                 changed = true;
@@ -501,21 +521,16 @@ async function reconcileWindowStatuses(redis, bookId, buildId) {
 
         // Check for IU image files
         if (data.image_status === 'pending') {
-            const iuPrefix = `${data.book_id}_${data.chapter_id}_${data.scene_id}_iu`;
-            try {
-                const allFiles = fs.readdirSync(buildDir);
-                if (allFiles.some(f => f.startsWith(iuPrefix) && f.endsWith('.png'))) {
-                    data.image = true;
-                    data.image_status = 'ready';
-                    changed = true;
-                }
-            } catch (_) {}
+            if (fileStatus.image.exists) {
+                data.image = true;
+                data.image_status = 'ready';
+                changed = true;
+            }
         }
 
         // Check video file
         if (data.video_status === 'pending') {
-            const videoPath = path.join(buildDir, `${data.book_id}_${data.chapter_id}_${data.scene_id}.mp4`);
-            if (fs.existsSync(videoPath)) {
+            if (fileStatus.video.exists) {
                 data.video = true;
                 data.video_status = 'ready';
                 changed = true;
@@ -722,6 +737,7 @@ module.exports = {
     clearCancelFlag,
     setCancelFlag,
     cancelKey,
+    getSceneFilesStatus,
     checkSceneContentCache,
     restoreChunkStatusForScene,
     reconcileWindowStatuses,

@@ -19,8 +19,6 @@
 const path = require('path');
 const fs = require('fs');
 
-const { computeSceneHash } = require('../utils/scene-hash');
-
 const logPrefix = '[STARTUP-RECOVERY]';
 function log(msg) { console.log(`${logPrefix} ${msg}`); }
 function warn(msg) { console.warn(`${logPrefix} ⚠️  ${msg}`); }
@@ -120,13 +118,15 @@ async function recoverAll(redis, deps) {
 // ======================================================
 
 /**
- * Scan output directories for IU images (.png files) and update
- * chunk metadata for any scenes that have images but are still
- * marked as 'pending'.
+ * Scan output directories for IU images (.png files) and log findings.
+ * Phase 1 (R1.1): Log-only — does NOT update Redis chunk metadata.
+ * The runtime scheduler's tick() will naturally discover pending scenes
+ * and dispatch them. This is safer than silently marking images 'ready'
+ * without version verification.
  *
  * @param {Object} redis
  * @param {Object} deps
- * @returns {Promise<number>} Number of chunks updated
+ * @returns {Promise<number>} Number of scenes with IU images found (informational)
  */
 async function recoverIuImagesFromDisk(redis, deps) {
     const OUTPUT_DIR = deps.config?.OUTPUT_DIR || '/data/output';
@@ -137,7 +137,7 @@ async function recoverIuImagesFromDisk(redis, deps) {
         try { return fs.statSync(fullPath).isDirectory(); } catch { return false; }
     });
 
-    let totalUpdated = 0;
+    let totalFound = 0;
 
     for (const buildId of buildDirs) {
         const buildPath = path.join(OUTPUT_DIR, buildId);
@@ -145,10 +145,9 @@ async function recoverIuImagesFromDisk(redis, deps) {
         try { allFiles = fs.readdirSync(buildPath); } catch { continue; }
 
         // Find all scenes that have IU images (.png files)
-        const sceneIuMap = {};  // bookId:chapterId:sceneId → true
+        const sceneIuMap = {};
         for (const f of allFiles) {
             if (!f.endsWith('.png')) continue;
-            // Pattern: bookId_chapterId_sceneId_iu*.png
             const match = f.match(/^(.+)_(ch[^_]+)_(sc[^_]+)_iu/);
             if (match) {
                 const key = `${match[1]}:${match[2]}:${match[3]}`;
@@ -156,34 +155,14 @@ async function recoverIuImagesFromDisk(redis, deps) {
             }
         }
 
-        if (Object.keys(sceneIuMap).length === 0) continue;
-
-        // For each scene with IU images, update chunk metadata
-        for (const sceneKey of Object.keys(sceneIuMap)) {
-            const parts = sceneKey.split(':');
-            const bookId = parts[0];
-            const chapterId = parts[1];
-            const sceneId = parts[2];
-
-            const chunkKey = `animastor:chunk:${bookId}_${chapterId}_${sceneId}_0001`;
-            try {
-                const raw = await redis.get(chunkKey);
-                if (!raw) continue; // No chunk to update
-                const chunk = JSON.parse(raw);
-                if (chunk.image_status === 'pending') {
-                    chunk.image = true;
-                    chunk.image_status = 'ready';
-                    await redis.set(chunkKey, JSON.stringify(chunk));
-                    totalUpdated++;
-                    log(`[IU-RECOVERY] Updated chunk image status: ${chunkKey}`);
-                }
-            } catch (err) {
-                // Skip — chunk may not exist or invalid JSON
-            }
+        if (Object.keys(sceneIuMap).length > 0) {
+            const sceneCount = Object.keys(sceneIuMap).length;
+            log(`[IU-LOG-ONLY] Found ${sceneCount} scenes with IU images in build ${buildId} — NOT updating Redis (scheduler will dispatch naturally)`);
+            totalFound += sceneCount;
         }
     }
 
-    return totalUpdated;
+    return totalFound;
 }
 
 // ======================================================
@@ -191,90 +170,41 @@ async function recoverIuImagesFromDisk(redis, deps) {
 // ======================================================
 
 /**
- * For scenes that exist in PG (scenes table) but have missing Redis
- * state, restore the scene counters and chunk metadata.
+ * Log missing Redis scene counters for books that exist in PG.
+ * Phase 1 (R1.1): Log-only — does NOT restore counters or placeholders.
+ * The book must be naturally loaded via PUT or /regenerate to create
+ * Redis state. Crash recovery must not mask the fact that Redis was
+ * flushed — that's a signal that something went wrong.
  *
  * @param {Object} redis
  * @param {Object} deps
- * @returns {Promise<number>} Number of scenes reconciled
+ * @returns {Promise<number>} Number of books with missing counters (informational)
  */
 async function reconcileMissingSceneState(redis, deps) {
-    const { postgres, config: cfg, book, placeholderAudio } = deps;
+    const { postgres } = deps;
     if (!postgres || !postgres.query) return 0;
 
-    // Get all books that have PG scene records
     const bookResult = await postgres.query(`
         SELECT DISTINCT book_id FROM scenes
     `);
 
-    let totalReconciled = 0;
+    let totalMissing = 0;
 
     for (const row of bookResult.rows) {
         const bookId = row.book_id;
 
-        // Check if book has scene counters in Redis
         const totalKey = `animastor:book-scenes:${bookId}:total`;
         const totalRaw = await redis.get(totalKey);
         if (totalRaw && parseInt(totalRaw, 10) > 0) {
-            continue; // Already has counters
+            continue;
         }
 
-        // Get scene count from PG
-        const sceneCountResult = await postgres.query(`
-            SELECT COUNT(*)::int as cnt FROM scenes WHERE book_id = $1
-        `, [bookId]);
-        const pgSceneCount = sceneCountResult.rows[0]?.cnt || 0;
-        if (pgSceneCount === 0) continue;
-
-        // Check if book JSON exists on disk
-        const bookData = book?.loadBook ? book.loadBook(bookId) : null;
-        const totalScenes = bookData ? book.collectScenes(bookData).length : pgSceneCount;
-
-        // Set scene counters
-        await redis.set(totalKey, totalScenes);
-        await redis.set(`animastor:book-scenes:${bookId}:next-index`, totalScenes);
-        await redis.set(`animastor:book-scenes:${bookId}:window-start`, 0);
-
-        totalReconciled++;
-
-        // Restore placeholder audio for missing scenes
-        if (placeholderAudio && bookData) {
-            try {
-                const scenes = book.collectScenes(bookData);
-                const buildId = bookData.manifest?.build_id || 'default';
-                for (const s of scenes) {
-                    await placeholderAudio.ensurePlaceholderAudio(buildId, bookId, s.chapter_id, s.scene_id);
-                }
-                log(`[COUNTER-RECOVERY] Restored placeholders + counters for ${bookId} (${scenes.length} scenes)`);
-            } catch (_) {
-                // Non-fatal
-            }
-        }
-
-        // Restore scene_hashes from book JSON → PG
-        // This prevents full regeneration after crash (scene_hash matches,
-        // so detection won't flag all scenes as changed).
-        if (bookData) {
-            try {
-                const scenes = book.collectScenes(bookData);
-                for (const s of scenes) {
-                    const hash = computeSceneHash(s.scene || s.payload || s);
-                    await postgres.query(`
-                        INSERT INTO scenes (book_id, chapter_id, scene_id, scene_hash, updated_at)
-                        VALUES ($1, $2, $3, $4, EXTRACT(EPOCH FROM NOW())::bigint)
-                        ON CONFLICT(book_id, chapter_id, scene_id) DO UPDATE SET
-                            scene_hash = EXCLUDED.scene_hash,
-                            updated_at = EXTRACT(EPOCH FROM NOW())::bigint
-                    `, [bookId, s.chapter_id, s.scene_id, hash]);
-                }
-                log(`[HASH-RECOVERY] Restored scene_hashes for ${bookId} (${scenes.length} scenes)`);
-            } catch (_) {
-                // Non-fatal
-            }
-        }
+        // Log but don't restore — book must be reloaded naturally
+        log(`[COUNTER-LOG-ONLY] Book ${bookId} has PG records but no Redis scene counters — NOT restoring (book must be loaded via PUT/regenerate)`);
+        totalMissing++;
     }
 
-    return totalReconciled;
+    return totalMissing;
 }
 
 // ======================================================
