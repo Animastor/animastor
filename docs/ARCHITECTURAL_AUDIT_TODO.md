@@ -48,23 +48,23 @@
 
 **Цель:** При regenerate dispatch lease не блокирует новую генерацию.
 
-### [R2.1] Force-параметр в dispatch engine 🟡
-- [ ] `dispatch-engine.js`: `dispatchStage()` — добавить параметр `{ force: boolean }`
-- [ ] При `force=true`: 
+### [R2.1] Force-параметр в dispatch engine ✅
+- [x] `dispatch-engine.js`: `dispatchStage()` — добавить параметр `{ force: boolean }`
+- [x] При `force=true`: 
   1. `redis.del(leaseKey)` — очистить старый lease
   2. `releaseQuota()` — очистить старую quota  
   3. Только потом acquire нового lease и dispatch
-- [ ] `acquireStageLease()` — добавить режим force: если lease есть и force=true, удалить и создать новый
+- [x] `acquireStageLease()` — добавить режим force: если lease есть и force=true, удалить и создать новый
 
-### [R2.2] Force-параметр в regenerate endpoint 🟡
-- [ ] `book-routes.cjs`: в `/regenerate` передавать `force: true` в dispatch
-- [ ] В цепочку вызовов: `markDirtyScenes()` → `reconcileFromDiff()` → `dispatchEngine.dispatchStage(force=true)`
-- [ ] `runtime-scheduler.js`: `attemptDispatch()` — передавать force=true для сцен, которые были только что помечены dirty
+### [R2.2] Force-параметр в regenerate endpoint ✅
+- [x] `book-routes.cjs`: установка `animastor:force-dispatch:{bookId}` флага (TTL 120s) после очистки leases
+- [x] `runtime-scheduler.js`: `tick()` — проверяет force-флаг, передаёт force=true в `attemptDispatch()`
+- [x] `attemptDispatch()` — получает `force` параметр, передаёт в `dispatchStage(..., { force })`
 
-### [R2.3] Cleanup stale leases при regenerate 🟢
-- [ ] `book-routes.cjs`: в `/regenerate`, до markDirtyScenes — очистить все dispatch leases для этой книги
-- [ ] `dispatch-engine.js`: новый метод `clearAllLeasesForBook(redis, bookId)`
-- [ ] SCAN `animastor:dispatch-lease:{bookId}:*` → DEL each
+### [R2.3] Cleanup stale leases при regenerate ✅
+- [x] `dispatch-engine.js`: новый метод `clearAllLeasesForBook(redis, bookId)` — SCAN + DEL для lease и meta ключей
+- [x] `book-routes.cjs`: `/regenerate` и `/cancel-generation` используют `dispatchEngine.clearAllLeasesForBook()` вместо локальных helpers
+- [x] Локальные `clearBookLeases()` / `clearBookDispatchMeta()` удалены как dead code
 
 ---
 
@@ -205,9 +205,9 @@ Phase 1 — 🔴 Critical: Passive Recovery
 └── [R1.3] Reconciliation — убрать auto-fix          (🟡 high, ✅ Done)
 
 Phase 2 — 🔴 Critical: Force Lease Release
-├── [R2.1] Force-параметр в dispatch                 (🟡 high, блокирует R3.1)
-├── [R2.2] Force в regenerate endpoint               (🟡 high, после R2.1)
-└── [R2.3] Cleanup stale leases при regenerate       (🟢 medium, после R2.1)
+├── [R2.1] Force-параметр в dispatch                 (🟡 high, ✅ Done)
+├── [R2.2] Force в regenerate endpoint               (🟡 high, ✅ Done)
+└── [R2.3] Cleanup stale leases при regenerate       (🟢 medium, ✅ Done)
 
 Phase 3 — 🟡 High: Единый оркестратор
 ├── [R3.1=R6.5] Убрать stale state tolerance         (🟢 medium, после R2.x)
@@ -267,6 +267,10 @@ R6.4 (governance dead code)
 ```
 Phase 1:   R1.2       →  убрать audio recovery cycle             ✅
           R1.3       →  убрать reconciliation auto-fix            ✅
+          
+Phase 2:   R2.1       →  force lease release in dispatch           ✅
+          R2.2       →  force флаг в regenerate + scheduler        ✅
+          R2.3       →  clearAllLeasesForBook + cleanup             ✅
           
 Сейчас:   R6.4       →  решить судьбу governance модулей
           

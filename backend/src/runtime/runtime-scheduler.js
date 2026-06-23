@@ -469,6 +469,9 @@ async function tick(redis, loadedBooks = {}) {
         errors: []
     };
 
+    // Cache force-dispatch flags per book to avoid redundant Redis calls
+    const forceCache = new Map();
+
     for (const sceneKey of activeKeys) {
         const parsed = parseSceneKey(sceneKey);
         if (!parsed) {
@@ -478,8 +481,18 @@ async function tick(redis, loadedBooks = {}) {
 
         const { bookId, chapterId, sceneId } = parsed;
 
+        // Check force-dispatch flag for recently regenerated books (cached per book)
+        let force = false;
+        if (forceCache.has(bookId)) {
+            force = forceCache.get(bookId);
+        } else {
+            const forceFlag = await redis.get(`animastor:force-dispatch:${bookId}`);
+            force = forceFlag === '1';
+            forceCache.set(bookId, force);
+        }
+
         try {
-            const result = await attemptDispatch(redis, bookId, chapterId, sceneId, loadedBooks[bookId]);
+            const result = await attemptDispatch(redis, bookId, chapterId, sceneId, loadedBooks[bookId], force);
             summary.processed++;
 
             if (result.completed) {
@@ -551,9 +564,10 @@ async function getMetrics(redis) {
 /**
  * Attempt to dispatch scene stages using per-asset states.
  * Supports independent workers: dispatches ALL eligible stages in one tick.
+ * When force=true, any existing lease is cleared before dispatch.
  * Returns { dispatched: number, completed: boolean, reason: string }
  */
-async function attemptDispatch(redis, bookId, chapterId, sceneId, loadedBook) {
+async function attemptDispatch(redis, bookId, chapterId, sceneId, loadedBook, force = false) {
     const sceneKey = `${bookId}:${chapterId}:${sceneId}`;
 
     // Get current linear state for build_id
@@ -580,7 +594,7 @@ async function attemptDispatch(redis, bookId, chapterId, sceneId, loadedBook) {
         return { success: true, skip: true, reason: 'no_dispatchable_stages' };
     }
 
-    log(`ATTEMPT_DISPATCH: ${sceneKey} -> stages=[${stages.join(', ')}]`);
+    log(`ATTEMPT_DISPATCH: ${sceneKey} -> stages=[${stages.join(', ')}]${force ? ' (force=true)' : ''}`);
 
     let dispatched = 0;
     let throttled = 0;
@@ -595,7 +609,8 @@ async function attemptDispatch(redis, bookId, chapterId, sceneId, loadedBook) {
             sceneId,
             stage,
             loadedBook,
-            buildId
+            buildId,
+            { force }
         );
         if (result.dispatched) {
             dispatched++;

@@ -126,51 +126,8 @@ async function recoverMissingRedisChunks(buildId, bookId) {
     }
 }
 
-/**
- * Delete all dispatch-lease keys for a book.
- * Stale leases cause the frontend worker toggle to pulse even when
- * no real GPU work is happening — leases have 30-120 min TTL.
- */
-async function clearBookLeases(redis, bookId) {
-    const DISPATCH_LEASE_PREFIX = 'animastor:dispatch-lease';
-    const pattern = `${DISPATCH_LEASE_PREFIX}:${bookId}:*`;
-    let cursor = 0;
-    let deleted = 0;
-    do {
-        const result = await redis.scan(cursor, 'MATCH', pattern, 'COUNT', 200);
-        cursor = parseInt(result[0], 10);
-        const keys = result[1];
-        if (keys.length > 0) {
-            await redis.del(...keys);
-            deleted += keys.length;
-        }
-    } while (cursor !== 0);
-    if (deleted > 0) {
-        log(`[CLEAR-BOOK-LEASES] ${bookId}: deleted ${deleted} stale dispatch leases`);
-    }
-}
-
-/**
- * Delete all dispatch-meta keys for a book.
- */
-async function clearBookDispatchMeta(redis, bookId) {
-    const DISPATCH_META_PREFIX = 'animastor:dispatch-meta';
-    const pattern = `${DISPATCH_META_PREFIX}:${bookId}:*`;
-    let cursor = 0;
-    let deleted = 0;
-    do {
-        const result = await redis.scan(cursor, 'MATCH', pattern, 'COUNT', 200);
-        cursor = parseInt(result[0], 10);
-        const keys = result[1];
-        if (keys.length > 0) {
-            await redis.del(...keys);
-            deleted += keys.length;
-        }
-    } while (cursor !== 0);
-    if (deleted > 0) {
-        log(`[CLEAR-BOOK-META] ${bookId}: deleted ${deleted} dispatch metadata keys`);
-    }
-}
+    // clearBookLeases / clearBookDispatchMeta removed in Phase 2 (Force Lease Release).
+    // Replaced by dispatchEngine.clearAllLeasesForBook().
 
     // ======================================================
     // UPDATE BOOK DATA (used by frontend Editor save)
@@ -1314,10 +1271,9 @@ async function clearBookDispatchMeta(redis, bookId) {
             // to pulse even when no real GPU work is happening. Each lease has a
             // TTL of 30-120 minutes — without explicit cleanup the toggle would
             // pulse for up to 2 hours after cancel, wasting GPU credits.
-            // Delete all dispatch leases + metadata for this book.
-            await clearBookLeases(redis, bookId);
-            // Also clean up dispatch metadata keys for this book
-            await clearBookDispatchMeta(redis, bookId);
+            // Uses centralized clearAllLeasesForBook (Phase 2: Force Lease Release)
+            const dispatchEngine = require('../runtime/dispatch-engine');
+            await dispatchEngine.clearAllLeasesForBook(redis, bookId);
 
             log(`[CANCEL-GENERATION] ${bookId}: generation cancelled, counters + leases reset`);
             res.json({ ok: true, book_id: bookId });
@@ -1579,8 +1535,14 @@ async function clearBookDispatchMeta(redis, bookId) {
             // CRITICAL: Remove stale dispatch leases so the frontend worker toggle
             // doesn't pulse after cancel/regenerate. Leases persist for 30-120 min
             // TTL and would cause false "active worker" pulse toggles.
-            await clearBookLeases(redis, bookId);
-            await clearBookDispatchMeta(redis, bookId);
+            // Uses centralized clearAllLeasesForBook (Phase 2: Force Lease Release)
+            const dispatchEngine = require('../runtime/dispatch-engine');
+            await dispatchEngine.clearAllLeasesForBook(redis, bookId);
+
+            // Set force-dispatch flag for the scheduler tick.
+            // The scheduler checks this flag and passes force=true to dispatchStage(),
+            // ensuring any race-condition lease is cleared before dispatch.
+            await redis.set(`animastor:force-dispatch:${bookId}`, '1', 'EX', 120);
 
             // Apply scope
             const effectiveScope = scope || 'WHOLE_BOOK';

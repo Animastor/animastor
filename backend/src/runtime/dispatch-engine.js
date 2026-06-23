@@ -104,12 +104,25 @@ function generateDispatchToken() {
 
 /**
  * Acquire stage lease for scene.
+ * When force=true, any existing lease is deleted and a new one is created.
  * Returns { acquired: boolean, token: string | null, leaseKey: string }
  */
-async function acquireStageLease(redis, bookId, chapterId, sceneId, stage) {
+async function acquireStageLease(redis, bookId, chapterId, sceneId, stage, force = false) {
     const leaseKey = getLeaseKey(bookId, chapterId, sceneId, stage);
     const token = generateDispatchToken();
     const ttl = LEASE_TTLS[stage];
+
+    if (force) {
+        // Force mode: delete any existing lease, then set new one
+        const existing = await redis.get(leaseKey);
+        if (existing) {
+            log(`LEASE_FORCE_REPLACE: ${bookId}/${chapterId}/${sceneId}:${stage} — replacing existing lease`);
+            await redis.del(leaseKey);
+        }
+        await redis.set(leaseKey, token, 'EX', ttl);
+        log(`LEASE_FORCE_ACQUIRED: ${bookId}/${chapterId}/${sceneId}:${stage} (ttl=${ttl}s, token=${token.slice(0, 16)}...)`);
+        return { acquired: true, token, leaseKey, forced: true };
+    }
 
     const acquired = await redis.set(leaseKey, token, 'NX', 'EX', ttl);
 
@@ -504,15 +517,30 @@ async function dispatchStageWithPolicy(redis, bookId, chapterId, sceneId, stage,
 /**
  * Dispatch a scene stage.
  * This is the ONLY way to start a scene stage.
+ * When options.force=true, any existing lease is cleared before dispatch.
  *
  * Returns:
  * - { dispatched: true, dispatchId, stage, leaseKey }
  * - { dispatched: false, reason, skip: true/false }
  */
-async function dispatchStage(redis, bookId, chapterId, sceneId, stage, loadedBook, buildId) {
+async function dispatchStage(redis, bookId, chapterId, sceneId, stage, loadedBook, buildId, options = {}) {
+    const { force = false } = options;
     const dispatchId = generateDispatchToken();
 
-    log(`DISPATCH_REQUEST: ${bookId}/${chapterId}/${sceneId}:${stage}`);
+    log(`DISPATCH_REQUEST: ${bookId}/${chapterId}/${sceneId}:${stage}${force ? ' (force=true)' : ''}`);
+
+    // Force mode pre-clear: before any checks, nuke any existing lease + quota + metadata
+    if (force) {
+        const { leaseKey, token } = await getLeaseData(redis, bookId, chapterId, sceneId, stage);
+        if (token) {
+            log(`FORCE_CLEAR_LEASE: ${bookId}/${chapterId}/${sceneId}:${stage} — deleting existing lease`);
+            await redis.del(leaseKey);
+        }
+        // Release quota if leaked
+        await releaseQuota(redis, stage);
+        // Delete metadata
+        await deleteDispatchMetadata(redis, bookId, chapterId, sceneId, stage);
+    }
 
     // Phase 9 Step 0: Check circuit breaker
     const circuitStatus = circuitBreaker
@@ -532,20 +560,24 @@ async function dispatchStage(redis, bookId, chapterId, sceneId, stage, loadedBoo
         return { dispatched: false, reason: 'circuit_open', circuitState: circuitStatus.circuitState, dispatchId };
     }
 
-    // Step 1: Check for duplicate/lease
-    const shouldSkip = await shouldSkipDispatch(redis, bookId, chapterId, sceneId, stage);
-    if (shouldSkip.skip) {
-        if (shouldSkip.reason === 'stale_lease') {
-            // Try to recover stale lease
-            await releaseStageLease(redis, shouldSkip.leaseKey, shouldSkip.currentToken);
-            // Fall through to create new lease
-        } else {
-            await logDispatchEvent(redis, bookId, chapterId, sceneId, 'SKIPPED_DUPLICATE', stage, {
-                reason: shouldSkip.reason,
-                dispatchId
-            });
-            return { dispatched: false, reason: 'duplicate', skip: true, dispatchId };
+    // Step 1: Check for duplicate/lease (skipped in force mode — lease was already cleared)
+    if (!force) {
+        const shouldSkip = await shouldSkipDispatch(redis, bookId, chapterId, sceneId, stage);
+        if (shouldSkip.skip) {
+            if (shouldSkip.reason === 'stale_lease') {
+                // Try to recover stale lease
+                await releaseStageLease(redis, shouldSkip.leaseKey, shouldSkip.currentToken);
+                // Fall through to create new lease
+            } else {
+                await logDispatchEvent(redis, bookId, chapterId, sceneId, 'SKIPPED_DUPLICATE', stage, {
+                    reason: shouldSkip.reason,
+                    dispatchId
+                });
+                return { dispatched: false, reason: 'duplicate', skip: true, dispatchId };
+            }
         }
+    } else {
+        log(`FORCE_DISPATCH: ${bookId}/${chapterId}/${sceneId}:${stage} — duplicate check skipped`);
     }
 
     // Step 2: Acquire quota
@@ -597,8 +629,8 @@ async function dispatchStage(redis, bookId, chapterId, sceneId, stage, loadedBoo
         }
     }
 
-    // Step 3: Acquire lease
-    const lease = await acquireStageLease(redis, bookId, chapterId, sceneId, stage);
+    // Step 3: Acquire lease (force mode bypasses existing lease)
+    const lease = await acquireStageLease(redis, bookId, chapterId, sceneId, stage, force);
     if (!lease.acquired) {
         // Release quota if lease acquisition failed
         await releaseQuota(redis, stage);
@@ -749,6 +781,45 @@ async function markDispatchFailed(redis, bookId, chapterId, sceneId, stage, erro
 // ======================================================
 // RECOVERY
 // ======================================================
+
+/**
+ * Clear all dispatch leases and metadata for a book.
+ * Used when cancelling or regenerating a book.
+ */
+async function clearAllLeasesForBook(redis, bookId) {
+    let deleted = 0;
+    let cursor = 0;
+    
+    // Delete all dispatch leases
+    const leasePattern = `${DISPATCH_LEASE_PREFIX}:${bookId}:*`;
+    do {
+        const result = await redis.scan(cursor, 'MATCH', leasePattern, 'COUNT', 200);
+        cursor = parseInt(result[0], 10);
+        const keys = result[1];
+        if (keys.length > 0) {
+            await redis.del(...keys);
+            deleted += keys.length;
+        }
+    } while (cursor !== 0);
+
+    // Delete all dispatch metadata
+    cursor = 0;
+    const metaPattern = `${DISPATCH_META_PREFIX}:${bookId}:*`;
+    do {
+        const result = await redis.scan(cursor, 'MATCH', metaPattern, 'COUNT', 200);
+        cursor = parseInt(result[0], 10);
+        const keys = result[1];
+        if (keys.length > 0) {
+            await redis.del(...keys);
+            deleted += keys.length;
+        }
+    } while (cursor !== 0);
+
+    if (deleted > 0) {
+        log(`CLEAR_ALL_LEASES: ${bookId} — ${deleted} keys deleted`);
+    }
+    return { deleted };
+}
 
 /**
  * Recover a stale lease.
@@ -1013,6 +1084,7 @@ module.exports = {
 
     // Recovery
     recoverStaleLease,
+    clearAllLeasesForBook,
 
     // Reconciliation
     reconcileCounters,
