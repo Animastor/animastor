@@ -1,113 +1,19 @@
-// ======================================================
-// Lazy Book Module - v2.0.0
-// ======================================================
-// State machine: RAW_IMPORTED → BOOTSTRAPPED → ACTIVE
-//
-// RAW_IMPORTED — source text loaded, no analysis
-// BOOTSTRAPPED — chars/locations/first 3 scenes created
-// ACTIVE — user is working with the book
-//
-// Storage:
-//   /data/books/<bookId>/
-//     manifest.json
-//     book.json
-//     source.txt
-//     characters.json
-//     bible.json
-//     chapters/
-//       ch-*.json  (created on BOOTSTRAP for first 3 scenes)
-// ======================================================
-
 const fs = require('fs');
 const path = require('path');
-const crypto = require('crypto');
-const config = require('../config/runtime-config');
 
-// ======================================================
-// BOOK STATES
-// ======================================================
-
-const BookState = {
-    RAW_IMPORTED: 'RAW_IMPORTED',
-    BOOTSTRAPPED: 'BOOTSTRAPPED',
-    ACTIVE: 'ACTIVE',
-};
-
-// ======================================================
-// CHAPTER/SCENE STATUSES
-// ======================================================
-
-const SceneStatus = {
-    NOT_PARSED: 'NOT_PARSED',
-    PARSING: 'PARSING',
-    PARSED: 'PARSED',
-    GENERATED: 'GENERATED',
-};
-
-// ======================================================
-// SOURCE TYPE
-// ======================================================
-
-const SourceType = {
-    TXT: 'TXT',
-    AI_IMPORT: 'AI_IMPORT',
-};
-
-// ======================================================
-// DEFAULT WINDOW SIZE
-// ======================================================
-
-const DEFAULT_WINDOW_SIZE = 3;
-
-// ======================================================
-// UNIT TYPES (match existing vbook format)
-// ======================================================
-
-const UnitType = {
-    TYPOGRAPHY: 'typography',
-    TALKING_HEAD: 'talking_head',
-    TRANSITION: 'transition',
-    PERCEPTION: 'perception',
-    DIALOGUE: 'dialogue',
-    PERFORMANCE: 'performance',
-};
-
-// ======================================================
-// PATH HELPERS
-// ======================================================
-
-function getBooksDir() { return config.BOOKS_DIR; }
-function getBookDir(bookId) { return path.join(getBooksDir(), bookId); }
-function getSourcePath(bookDir) { return path.join(bookDir, 'source.txt'); }
-function getManifestPath(bookDir) { return path.join(bookDir, 'manifest.json'); }
-function getBookMetaPath(bookDir) { return path.join(bookDir, 'book.json'); }
-function getCharactersPath(bookDir) { return path.join(bookDir, 'characters.json'); }
-function getBiblePath(bookDir) { return path.join(bookDir, 'bible.json'); }
-function getChapterDir(bookDir) { return path.join(bookDir, 'chapters'); }
-function getChapterPath(bookDir, file) { return path.join(getChapterDir(bookDir), file); }
-function getCoverPath(bookDir) { return path.join(bookDir, 'cover.json'); }
-
-// ======================================================
-// ID GENERATORS
-// ======================================================
-
-function generateId(prefix) {
-    return prefix + '-' + crypto.randomBytes(4).toString('hex');
-}
-const chapterId = () => generateId('ch');
-const sceneId = () => generateId('sc');
-const unitId = () => generateId('iu');
-
-function generateBookId(title) {
-    const base = title
-        ? title.toLowerCase().replace(/[^a-z0-9\u0400-\u04FF]+/g, '_').replace(/^_|_$/g, '').substring(0, 48)
-        : 'imported';
-    return base + '_' + Date.now();
-}
-
-// ======================================================
-// CREATE DRAFT (RAW_IMPORTED state)
-// ======================================================
+const config = require('../../config/runtime-config');
+const {
+    BookState, SceneStatus, SourceType, UnitType, DEFAULT_WINDOW_SIZE,
+} = require('./constants');
+const {
+    getBookDir, getSourcePath, getManifestPath, getBookMetaPath,
+    getCharactersPath, getBiblePath, getChapterDir, getChapterPath,
+    generateId, chapterId, sceneId, unitId, generateBookId,
+} = require('./paths');
+const {
+    splitIntoChapters, splitIntoScenes, splitIntoUnits,
+    firstMeaningfulChapter, detectLanguage,
+} = require('./parser');
 
 function createDraftBook(sourceText, sourceType, title) {
     const bookId = generateBookId(title || 'untitled');
@@ -159,10 +65,6 @@ function createDraftBook(sourceText, sourceType, title) {
     return { bookId, manifest, book: bookMeta };
 }
 
-// ======================================================
-// LOAD DRAFT
-// ======================================================
-
 function loadDraftBook(bookId) {
     const bookDir = getBookDir(bookId);
     if (!fs.existsSync(bookDir)) return null;
@@ -202,10 +104,6 @@ function loadDraftBook(bookId) {
     }
 }
 
-// ======================================================
-// UPDATE STATE
-// ======================================================
-
 function updateBookState(bookId, newState) {
     const mp = getManifestPath(getBookDir(bookId));
     if (!fs.existsSync(mp)) throw new Error(`Book ${bookId} not found`);
@@ -217,168 +115,6 @@ function updateBookState(bookId, newState) {
     return m;
 }
 
-// ======================================================
-// DETECT LANGUAGE (simple heuristics)
-// ======================================================
-
-function detectLanguage(text) {
-    const sample = text.slice(0, 2000);
-    const cyrillicCount = (sample.match(/[\u0400-\u04FF]/g) || []).length;
-    const latinCount = (sample.match(/[a-zA-Z]/g) || []).length;
-    if (cyrillicCount > latinCount) return 'ru';
-    return 'en';
-}
-
-// ======================================================
-// EXTRACT CHARACTERS FROM TEXT
-// ======================================================
-
-// ======================================================
-// SPLIT TEXT INTO CHAPTERS (robust for RU/EN)
-// ======================================================
-
-function splitIntoChapters(text) {
-    const lines = text.split('\n');
-
-    // Chapter headers — only Глава/Chapter create chapter boundaries.
-    // Часть/Part is a grouping element (contains multiple chapters), NOT a chapter itself.
-    const chapterRe = /^(?:Глава|Chapter)\s*[.:]?\s*(.+)$/i;
-    const prologueRe = /^(?:Пролог|Prologue|Эпилог|Epilogue|Введение|Introduction|Предисловие|Preface)$/i;
-
-    const chapters = [];
-    let curStart = 0;
-    let curTitle = null;
-
-    for (let i = 0; i < lines.length; i++) {
-        const line = lines[i].trim();
-        if (!line) continue;
-
-        let match;
-        if ((match = prologueRe.exec(line))) {
-            if (curTitle !== null) {
-                chapters.push({ title: curTitle, startLine: curStart, endLine: i - 1 });
-            }
-            curStart = i;
-            curTitle = match[0];
-        } else if ((match = chapterRe.exec(line))) {
-            if (curTitle !== null) {
-                chapters.push({ title: curTitle, startLine: curStart, endLine: i - 1 });
-            }
-            curStart = i;
-            curTitle = match[1] ? match[1].trim() : line;
-        }
-    }
-
-    // Last chapter
-    if (curTitle !== null) {
-        chapters.push({ title: curTitle, startLine: curStart, endLine: lines.length - 1 });
-    }
-
-    // Fallback: if no chapters detected, split by large gaps or make one chapter
-    if (chapters.length === 0) {
-        // Try splitting by double blank lines as scene breaks
-        const parts = text.split(/\n\s*\n\s*\n+/);
-        if (parts.length >= 2) {
-            let offset = 0;
-            for (let pi = 0; pi < Math.min(parts.length, 10); pi++) {
-                const pLines = parts[pi].split('\n');
-                chapters.push({
-                    title: `Chapter ${pi + 1}`,
-                    startLine: offset,
-                    endLine: offset + pLines.length - 1,
-                });
-                offset += pLines.length + 2;
-            }
-        } else {
-            chapters.push({ title: 'Chapter 1', startLine: 0, endLine: lines.length - 1 });
-        }
-    }
-
-    // Calculate offsets
-    for (const ch of chapters) {
-        const startOff = lines.slice(0, ch.startLine).join('\n').length;
-        const endOff = lines.slice(0, ch.endLine + 1).join('\n').length;
-        ch.startOffset = startOff;
-        ch.endOffset = endOff;
-        ch.length = endOff - startOff;
-    }
-
-    return chapters;
-}
-
-// ======================================================
-// FIND FIRST MEANINGFUL CHAPTER (skip empty headers)
-// ======================================================
-
-function firstMeaningfulChapter(chapters, sourceText) {
-    if (!chapters || chapters.length === 0) return null;
-    for (const ch of chapters) {
-        const text = sourceText.substring(ch.startOffset || 0, ch.endOffset || sourceText.length).trim();
-        // Skip chapters that are just headers (< 50 meaningful chars)
-        if (text.length >= 50) return ch;
-    }
-    // Fall back to first chapter even if short
-    return chapters[0];
-}
-
-// ======================================================
-// SPLIT CHAPTER TEXT INTO SCENES
-// ======================================================
-
-function splitIntoScenes(chapterText) {
-    // Scene break patterns
-    const breakRe = /(?:\n\s*\n\s*\n+|^\s*[-–—]{3,}\s*$|^\s*\*{3,}\s*$|^\s*_{3,}\s*$)/gm;
-
-    // Try scene breaks first
-    const parts = chapterText.split(breakRe).filter(s => s.trim());
-
-    // If too many parts, limit to reasonable scenes
-    if (parts.length >= 2 && parts.length <= 20) {
-        return parts.map(p => p.trim());
-    }
-
-    // Try paragraph-level splits (double newlines)
-    const paragraphs = chapterText.split(/\n\s*\n/).filter(p => p.trim());
-    if (paragraphs.length >= 2) {
-        const maxParas = Math.min(paragraphs.length, 30);
-        const result = [];
-        // Group paragraphs into max 3 scenes
-        const perScene = Math.max(1, Math.floor(maxParas / 3));
-        for (let i = 0; i < maxParas && result.length < 3; i += perScene) {
-            const group = paragraphs.slice(i, i + perScene).join('\n\n');
-            result.push(group);
-        }
-        return result;
-    }
-
-    // Single block — return as-is
-    return [chapterText.trim()];
-}
-
-// ======================================================
-// SPLIT SCENE TEXT INTO UNITS (proper vbook format)
-// ======================================================
-
-function splitIntoUnits(sceneText) {
-    const t = sceneText.trim();
-    if (!t) return [{ type: 'narration', text: '', participants: [] }];
-    return [{
-        type: 'narration',
-        text: t,
-        participants: [],
-    }];
-}
-
-// NOTE: No programmatic NLP functions here.
-// The AI assistant handles all character/location extraction,
-// scene decomposition, unit splitting, and type detection.
-// This module only provides structural book operations and
-// stores AI-generated data.
-
-// ======================================================
-// LAZY PARSE NEXT WINDOW (after BOOTSTRAPPED)
-// ======================================================
-
 function lazyParseNextWindow(bookId, windowSize) {
     const draft = loadDraftBook(bookId);
     if (!draft) throw new Error(`Book ${bookId} not found`);
@@ -387,13 +123,11 @@ function lazyParseNextWindow(bookId, windowSize) {
     const ws = windowSize || DEFAULT_WINDOW_SIZE;
     const chapters = splitIntoChapters(draft.sourceText);
 
-    // Find which chapters are already parsed
     const parsedIndices = new Set();
     for (const ch of draft.chapters) {
         if (ch.chapter_index !== undefined) parsedIndices.add(ch.chapter_index);
     }
 
-    // Find next unparsed chapter index
     let nextIdx = -1;
     for (let i = 0; i < chapters.length; i++) {
         if (!parsedIndices.has(i)) { nextIdx = i; break; }
@@ -427,7 +161,7 @@ function lazyParseNextWindow(bookId, windowSize) {
         const chObj = {
             chapter: chId,
             chapter_title: chInfo.title,
-            type: /пролог|prologue/i.test(chInfo.title) ? 'prologue' 
+            type: /пролог|prologue/i.test(chInfo.title) ? 'prologue'
                 : /эпилог|epilogue/i.test(chInfo.title) ? 'epilogue' : 'chapter',
             chapter_index: ci,
             status: SceneStatus.PARSED,
@@ -466,7 +200,6 @@ function lazyParseNextWindow(bookId, windowSize) {
         parsedChapters.push(chObj);
     }
 
-    // Update book.json chapters_order
     const bookMeta = JSON.parse(fs.readFileSync(getBookMetaPath(bookDir), 'utf8'));
     const existingFiles = fs.readdirSync(chDir).filter(f => f.endsWith('.json')).sort();
     bookMeta.structure.chapters_order = existingFiles;
@@ -490,10 +223,6 @@ function lazyParseNextWindow(bookId, windowSize) {
     };
 }
 
-// ======================================================
-// PARSE SPECIFIC CHAPTER
-// ======================================================
-
 function lazyParseChapter(bookId, chapterIndex) {
     const draft = loadDraftBook(bookId);
     if (!draft || !draft.sourceText) throw new Error(`Book ${bookId} not found`);
@@ -505,7 +234,6 @@ function lazyParseChapter(bookId, chapterIndex) {
     const chDir = getChapterDir(bookDir);
     if (!fs.existsSync(chDir)) fs.mkdirSync(chDir, { recursive: true });
 
-    // Check if already parsed
     for (const cf of fs.readdirSync(chDir).filter(f => f.endsWith('.json'))) {
         try {
             const ch = JSON.parse(fs.readFileSync(path.join(chDir, cf), 'utf8'));
@@ -562,7 +290,6 @@ function lazyParseChapter(bookId, chapterIndex) {
     const chFile = `${chId}.json`;
     fs.writeFileSync(path.join(chDir, chFile), JSON.stringify(chObj, null, 2));
 
-    // Refresh chapters_order
     const bookMeta = JSON.parse(fs.readFileSync(getBookMetaPath(bookDir), 'utf8'));
     const existingFiles = fs.readdirSync(chDir).filter(f => f.endsWith('.json')).sort();
     bookMeta.structure.chapters_order = existingFiles;
@@ -570,10 +297,6 @@ function lazyParseChapter(bookId, chapterIndex) {
 
     return { chapter: chObj, wasExisting: false };
 }
-
-// ======================================================
-// GET BOOK STATUS
-// ======================================================
 
 function getBookStatus(bookId) {
     const draft = loadDraftBook(bookId);
@@ -612,10 +335,6 @@ function getBookStatus(bookId) {
     };
 }
 
-// ======================================================
-// GET CHAPTERS SUMMARY
-// ======================================================
-
 function getChaptersSummary(bookId) {
     const draft = loadDraftBook(bookId);
     if (!draft) return null;
@@ -645,24 +364,9 @@ function getChaptersSummary(bookId) {
     };
 }
 
-// ======================================================
-// CANDIDATE EXTRACTION (lightweight, for AI refinement)
-// ======================================================
-
-// ======================================================
-// CREATE FROM AI ANALYSIS
-// ======================================================
-// Takes a structured AI analysis and creates the book structure.
-// NO programmatic NLP fallbacks — AI is the sole source of truth.
-
-// ======================================================
-// CREATE CHAPTER INTRO SCENE — typography unit
-// ======================================================
-
 function createChapterIntroScene(chapterTitle, chapterNumber, language) {
     const scId = sceneId();
 
-    // Clean title: remove "Глава N:" or "Глава N" prefix if present
     let cleanTitle = (chapterTitle || '').trim();
     cleanTitle = cleanTitle.replace(/^(?:Глава|Chapter)\s*\d+\s*[.:]?\s*/i, '').trim();
 
@@ -695,11 +399,6 @@ function createChapterIntroScene(chapterTitle, chapterNumber, language) {
         }],
     };
 }
-
-// ======================================================
-// CREATE COVER CHAPTER — returns full chapter object (not scene)
-// Now Cover is a standard chapter, saved in chapters/ directory.
-// ======================================================
 
 function createCoverChapter(title, author, language) {
     const chId = chapterId();
@@ -743,27 +442,17 @@ function createCoverChapter(title, author, language) {
     };
 }
 
-/**
- * Save cover chapter to chapters/ directory on disk.
- * Cover is now a standard chapter file, no standalone cover.json.
- * @param {string} bookId
- * @param {Object} coverChapter - The full cover chapter object (from createCoverChapter)
- */
 function saveCoverChapter(bookId, coverChapter) {
     if (!coverChapter) return;
     const bookDir = getBookDir(bookId);
     const chDir = getChapterDir(bookDir);
     if (!fs.existsSync(chDir)) fs.mkdirSync(chDir, { recursive: true });
-    
+
     const chFile = `${coverChapter.chapter}.json`;
     const chPath = path.join(chDir, chFile);
     fs.writeFileSync(chPath, JSON.stringify(coverChapter, null, 2));
     console.log(`[LAZY-BOOK] Cover chapter saved to chapters/${chFile} for ${bookId}: "${coverChapter.chapter_title}"`);
 }
-
-// ======================================================
-// UPDATE BOOK METADATA in book.json
-// ======================================================
 
 function updateBookMetadata(bookDir, updates) {
     const bp = getBookMetaPath(bookDir);
@@ -803,16 +492,8 @@ function updateBookMetadata(bookDir, updates) {
     }
 }
 
-// ======================================================
-// CREATE FIRST WINDOW — from AI analysis
-// ======================================================
-// Takes a structured AI analysis and creates/updates the book structure.
-// Supports: first window (create) and subsequent windows (append).
-// NO programmatic NLP fallbacks — AI is the sole source of truth.
-
 function createFromAnalysis(bookId, analysis, options = {}) {
     const { maxScenes, chapterTitle } = options;
-    // structure may be in analysis (passed by bootstrapWithAgent as 2nd arg) or in options
     const structure = options.structure || analysis.structure || null;
     return createOrAppendScenes(bookId, analysis, {
         maxScenes: maxScenes || 6,
@@ -823,15 +504,8 @@ function createFromAnalysis(bookId, analysis, options = {}) {
     });
 }
 
-// ======================================================
-// APPEND TO BOOK — add scenes from subsequent windows
-// ======================================================
-// Merges new characters/locations into existing book structure.
-// Creates new chapter or appends to existing one.
-
 function appendToBook(bookId, analysis, options = {}) {
     const { chapterTitle, chapterIndex } = options;
-    // structure may be in analysis (passed by bootstrapNextWindow as 2nd arg) or in options
     const structure = options.structure || analysis.structure || null;
     return createOrAppendScenes(bookId, analysis, {
         maxScenes: options.maxScenes || 6,
@@ -842,9 +516,131 @@ function appendToBook(bookId, analysis, options = {}) {
     });
 }
 
-// ======================================================
-// INTERNAL — create or append scenes
-// ======================================================
+function fragmentAppearanceForVideo(appearance, charName) {
+    if (!appearance || appearance.length < 5) {
+        return `${charName.toLowerCase()} character, distinctive appearance`;
+    }
+
+    const sentences = appearance.match(/[^.!?]+[.!?]+/g) || [appearance];
+
+    const fragments = [];
+
+    const ageBuildRe = /(\d+[-\s]year[-\s]old|young|middle[-\s]aged|elderly|old|teen|child|\bkid\b|toddler|infant|adult)|(?:thin|slim|stocky|muscular|strong|heavy|overweight|obese|frail|petite|broad|wide|narrow|tall|short|average|athletic|lean|buff|chubby|plump|curvy|slender|small|large)/i;
+    for (const s of sentences) {
+        const match = s.match(ageBuildRe);
+        if (match) {
+            const frag = s.replace(ageBuildRe, '$1 $2').split(/[.,;]/)[0].trim();
+            const clean = frag.replace(/^(his|her|a |the |an )/i, '').trim();
+            if (clean.length > 5 && clean.length < 60) {
+                fragments.push(clean.toLowerCase());
+                break;
+            }
+        }
+    }
+
+    const faceHairRe = /(?:face|hair|eyes|brow|beard|moustache|mustache|whisker|cheek|chin|jaw|nose|lips|mouth|forehead|skin|complexion|pale|wrinkle|freckle|scar|clean[-\s]shaven|bald|haired|hairstyle|bearded|glasses|spectacles|oculus)/i;
+    const faceHairRu = /(?:лиц|волос|глаз|бров|бород|ус|щек|подбород|нос|губ|рот|лоб|кож|морщин|веснуш|шрам|брит|лыс|очк)/i;
+    for (const s of sentences) {
+        if (faceHairRe.test(s) || faceHairRu.test(s)) {
+            const clean = s.replace(/^(his|her|a |the |an |его|ее|его|их|моя|мои|наши)/i, '').trim();
+            if (clean.length > 5 && clean.length < 80) {
+                fragments.push(clean.toLowerCase());
+                break;
+            }
+        }
+    }
+
+    const clothingRe = /(?:wearing|dressed|suit|shirt|coat|dress|hat|jacket|tie|shoes|boots|uniform|robe|cloak|outfit|sweater|vest|hoodie|pants|jeans|skirt|scarf|gloves|belt|cape|gown|tunic|armor|crown|necklace|bracelet|ring|earring|tattoo|piercing)|(?:костюм|пиджак|брюк|шляп|кепк|фуражк|рубашк|сорочк|галстук|пальто|плать|ботинк|сапог|халат|куртк|сюртук|жилет|френч|шинел|мундир|плащ|шарф|перчатк|ремень|пояс)/i;
+    for (const s of sentences) {
+        if (clothingRe.test(s)) {
+            const clean = s.replace(/^(in |wearing |dressed in |a |the |his |her |одет|в |надет|облачен)/i, '').trim();
+            if (clean.length > 3 && clean.length < 80) {
+                fragments.push(clean.toLowerCase());
+                break;
+            }
+        }
+    }
+
+    const featureRe = /(?:distinctive|unusual|notable|remarkable|striking|peculiar|curious|strange|odd|unique|special|особ|необыч|примечател|выдающ|стран|уникал)/i;
+    for (const s of sentences) {
+        if (featureRe.test(s)) {
+            let clean = s.replace(featureRe, '').replace(/^(his|her|a |the |an |with a |with |has a |имеет|обладает|c |со |сво|его|ее)/i, '').trim();
+            clean = clean.replace(/[.,;:!?]+$/, '').trim();
+            if (clean.length > 5 && clean.length < 60) {
+                fragments.push(clean.toLowerCase());
+                break;
+            }
+        }
+    }
+
+    if (fragments.length < 2) {
+        const parts = appearance.split(/[,;]/).map(p => p.trim()).filter(p => p.length > 3);
+        for (const part of parts) {
+            if (/выглядит|кажется|похож|как будто|словно|looks? like|seems|appears|feels|emotion|trembl|тревог|волн|радост|груст|печал|страх|испуг|удивлен/i.test(part)) continue;
+            const clean = part.replace(/^(a |the |his |her |an |and |with )/i, '').trim();
+            if (clean.length > 5 && clean.length < 60) {
+                fragments.push(clean.toLowerCase());
+                if (fragments.length >= 4) break;
+            }
+        }
+    }
+
+    const unique = [];
+    for (const f of fragments) {
+        const isDuplicate = unique.some(u =>
+            u.includes(f) || f.includes(u) ||
+            u.split(/\s+/).slice(0, 3).join(' ') === f.split(/\s+/).slice(0, 3).join(' ')
+        );
+        if (!isDuplicate) unique.push(f);
+    }
+
+    let result = unique.join(', ');
+    if (result.length > 120) {
+        result = result.substring(0, 120).replace(/\s+\S*$/, '');
+    }
+
+    return result || `${charName.toLowerCase()} character, distinctive appearance`;
+}
+
+function extractClothing(appearance) {
+    if (!appearance) {
+        return {
+            clothingBase: 'period-appropriate clothing',
+            clothingDetails: 'clothing as described in the narrative',
+        };
+    }
+
+    const clothingRe = /((?:wearing|dressed in|in a|in an|clad in|adorned in|wore|wears|wearing a|dressed|clothed|attired|outfitted)\s+[^.,;!?]{3,60})|([^.,;!?]{3,60}(?:suit|shirt|coat|dress|hat|jacket|tie|shoes|boots|uniform|robe|cloak|outfit|sweater|vest|hoodie|pants|jeans|skirt|scarf|gloves|belt|cape|gown|tunic|armor|crown|necklace|ring)[^.,;!?]{0,40})|((?:костюм|пиджак|брюк|шляп|кепк|фуражк|рубашк|сорочк|галстук|пальто|плать|ботинк|сапог|халат|куртк|сюртук|жилет|френч|шинел|мундир|плащ|шарф|перчатк|ремень|пояс|кепка|фуражка)[^.,;!?]{0,40})/gi;
+
+    const matches = appearance.match(clothingRe);
+
+    if (matches && matches.length > 0) {
+        const cleanMatches = matches
+            .map(m => m.replace(/^(in |a |the |his |her |wearing |dressed |clad in|adorned in|wore|wears|одет|в |надет|облачен|на нем|на ней|на нем была|на ней была)/i, '').trim())
+            .filter(m => m.length > 3);
+
+        if (cleanMatches.length > 0) {
+            return {
+                clothingBase: cleanMatches[0].toLowerCase(),
+                clothingDetails: cleanMatches.slice(0, 3).join('; ').toLowerCase(),
+            };
+        }
+    }
+
+    const fallbackRe = /(?:в [^.,;!?]{5,60}|[нН]осит [^.,;!?]{5,60}|одет[аоы]? [в] [^.,;!?]{5,60}|wear(?:ing)? [^.,;!?]{5,60}|dressed [^.,;!?]{5,60}|clad [^.,;!?]{5,60})/i;
+    const fallbackMatch = appearance.match(fallbackRe);
+    if (fallbackMatch) {
+        return {
+            clothingBase: fallbackMatch[0].trim().toLowerCase(),
+            clothingDetails: fallbackMatch[0].trim().toLowerCase(),
+        };
+    }
+
+    return {
+        clothingBase: 'period-appropriate clothing',
+        clothingDetails: 'clothing as described in the text',
+    };
+}
 
 function createOrAppendScenes(bookId, analysis, windowConfig) {
     const draft = loadDraftBook(bookId);
@@ -858,7 +654,6 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
     const { maxScenes, chapterTitle, chapterIndex, isFirstWindow, structure } = windowConfig;
     const bookDir = getBookDir(bookId);
 
-    // Update book metadata from structure analysis
     if (structure && isFirstWindow) {
         updateBookMetadata(bookDir, {
             author: structure.author,
@@ -872,7 +667,6 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
         });
     }
 
-    // Load existing characters/bible if this is NOT the first window
     let existingCharacters = [];
     let existingBible = null;
 
@@ -895,22 +689,18 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
         }
     }
 
-    // Merge characters (avoid duplicates by id)
     const existingIds = new Set(existingCharacters.map(c => c.id));
     const mergedCharacters = [...existingCharacters];
 
     const defaultVoiceRu = 'A mature Russian male voice. Deep, calm, reflective. Native Russian pronunciation.';
     const defaultVoiceEn = 'A mature male voice. Deep, calm, reflective. Native English pronunciation.';
 
-    // Build characters with proper passport and video_tokens
     for (const ch of (analysis.characters || [])) {
         if (existingIds.has(ch.id)) continue;
         const charId = ch.id || ch.name.toLowerCase().replace(/[^a-zа-яё0-9]+/g, '_').replace(/^_|_$/g, '');
 
-        // Use appearance from AI if available, fall back to description, then generic
         const rawAppearance = ch.appearance || ch.description || null;
 
-        // If AI said "не описана" or similar — generate a plausible default
         let appearance;
         if (!rawAppearance || /не опис|no descr|unknown|unclear/i.test(rawAppearance)) {
             appearance = `${ch.name}: a character from the story, seen in period-appropriate clothing, with distinctive features as described in the narrative context`;
@@ -918,25 +708,14 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
             appearance = rawAppearance;
         }
 
-        // Split appearance into base (first sentence/segment) and detailed (full)
         const baseMatch = appearance.match(/^[^.!?]+[.!?]?/);
         const baseAppearance = baseMatch ? baseMatch[0].trim() : appearance;
         const detailedAppearance = appearance;
 
-        // ======================================================
-        // VIDEO_TOKENS — discriminative visual fragments for LTX 2.3
-        // Extract: age/build, face/hair, clothing, distinctive features
-        // Filter OUT: emotional states, narrative descriptions, temporary conditions
-        // Format: comma-separated English short phrases, max ~120 chars
-        // ======================================================
         const videoTokens = fragmentAppearanceForVideo(appearance, ch.name);
 
-        // ======================================================
-        // CLOTHING — extract from appearance (EN + RU keywords)
-        // ======================================================
         const { clothingBase, clothingDetails } = extractClothing(appearance);
 
-        // Use voice from AI if available (it's an instruction for the TTS system)
         const voiceInstruction = ch.voice
             ? ch.voice
             : (mergedCharacters.length === 0
@@ -963,7 +742,6 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
         existingIds.add(charId);
     }
 
-    // Merge locations into bible
     let locations = {};
     if (existingBible && existingBible.locations) {
         locations = { ...existingBible.locations };
@@ -980,7 +758,6 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
         }
     }
 
-    // Build bible
     const narratorVoice = language === 'ru'
         ? 'A mature Russian male voice. Deep, calm, reflective, slightly melancholic. Slow literary narration, soft authority, philosophical tone. Native Russian pronunciation.'
         : 'A mature male voice. Deep, calm, reflective. Slow literary narration, soft authority. Native English pronunciation.';
@@ -997,20 +774,16 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
         },
     };
 
-    // Save characters and bible
     fs.writeFileSync(getCharactersPath(bookDir), JSON.stringify(mergedCharacters, null, 2));
     fs.writeFileSync(getBiblePath(bookDir), JSON.stringify(bible, null, 2));
 
-    // ---- Create/append scenes ----
     const aiScenes = (analysis.scenes || []).slice(0, maxScenes);
 
-    // Validate that AI returned at least one non-empty scene
     const validScenes = aiScenes.filter(s => s.text && s.text.trim().length > 0 && s.units && s.units.some(u => (u.text || '').trim()));
     if (validScenes.length === 0) {
         throw new Error('AI returned no valid scenes — book cannot be created');
     }
 
-    // Find or create chapter
     const chDir = getChapterDir(bookDir);
     if (!fs.existsSync(chDir)) fs.mkdirSync(chDir, { recursive: true });
 
@@ -1018,7 +791,6 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
     let chFile = null;
 
     if (!isFirstWindow) {
-        // Look for existing chapter at this index
         const existingChapters = fs.readdirSync(chDir).filter(f => f.endsWith('.json')).sort();
         for (const cf of existingChapters) {
             try {
@@ -1033,7 +805,6 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
     }
 
     if (!chapterObj) {
-        // Create new chapter
         const chId = chapterId();
         chFile = `${chId}.json`;
         chapterObj = {
@@ -1046,10 +817,6 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
         };
     }
 
-    // ---- Insert structural scenes (chapter_intro only) ----
-    // Cover is now a standard chapter, not a structural scene.
-    // Only add structural scenes when the chapter is first created,
-    // never when appending to an existing chapter that already has them.
     const structuralScenes = [];
 
     const hasChapterIntro = chapterObj.scenes.some(s => s.type === 'chapter_intro');
@@ -1061,15 +828,13 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
             } catch (_) { return false; }
         });
 
-    // Save Cover as a chapter file on first window
     if (isFirstWindow && !hasCoverChapter) {
         const coverTitle = structure?.title || bookMeta.title || 'Imported Book';
         const coverAuthor = structure?.author || bookMeta.author || null;
         const coverChapter = createCoverChapter(coverTitle, coverAuthor, language);
         saveCoverChapter(bookId, coverChapter);
         console.log(`[LAZY-BOOK] Cover chapter saved for ${bookId}`);
-        
-        // Update chapters_order in book.json
+
         const bookMetaPath = getBookMetaPath(bookDir);
         if (fs.existsSync(bookMetaPath)) {
             try {
@@ -1082,7 +847,6 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
         }
     }
 
-    // Add chapter_intro scenes from structure (only if not already present)
     if (!hasChapterIntro) {
         if (structure && structure.chapters && structure.chapters.length > 0) {
             const chapterInfo = windowConfig.chapterIndex < structure.chapters.length
@@ -1099,7 +863,6 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
         }
     }
 
-    // Prepend structural scenes (chapter_intro only) before content scenes
     for (const stScene of structuralScenes) {
         chapterObj.scenes.push(stScene);
     }
@@ -1108,7 +871,6 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
         const scId = sceneId();
         const sceneText = aiScene.text.trim();
 
-        // AI units are the sole source of truth
         const sceneUnits = aiScene.units
             .filter(u => (u.text || '').trim())
             .map(u => ({
@@ -1154,20 +916,16 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
         });
     }
 
-    // Ensure at least 1 scene
     if (chapterObj.scenes.length === 0) {
         throw new Error('No valid scenes created from AI analysis');
     }
 
-    // Save chapter file
     fs.writeFileSync(path.join(chDir, chFile), JSON.stringify(chapterObj, null, 2));
 
-    // Update book.json chapters_order
     const existingFiles = fs.readdirSync(chDir).filter(f => f.endsWith('.json')).sort();
     bookMeta.structure.chapters_order = existingFiles;
     fs.writeFileSync(getBookMetaPath(bookDir), JSON.stringify(bookMeta, null, 2));
 
-    // Update state
     const bookState = isFirstWindow ? BookState.BOOTSTRAPPED : BookState.BOOTSTRAPPED;
     updateBookState(bookId, bookState);
 
@@ -1186,162 +944,6 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
     };
 }
 
-// ======================================================
-// FRAGMENT APPEARANCE FOR VIDEO TOKENS (LTX 2.3)
-// ======================================================
-// Extract discriminative visual fragments from appearance text.
-// Output: comma-separated English fragments: age/build, face/hair, clothing, features
-// Filters OUT: emotions, narrative, temporary states
-// ======================================================
-
-function fragmentAppearanceForVideo(appearance, charName) {
-    if (!appearance || appearance.length < 5) {
-        return `${charName.toLowerCase()} character, distinctive appearance`;
-    }
-
-    // Split into sentences first
-    const sentences = appearance.match(/[^.!?]+[.!?]+/g) || [appearance];
-
-    const fragments = [];
-
-    // Try to extract age/build fragment
-    const ageBuildRe = /(\d+[-\s]year[-\s]old|young|middle[-\s]aged|elderly|old|teen|child|\bkid\b|toddler|infant|adult)|(?:thin|slim|stocky|muscular|strong|heavy|overweight|obese|frail|petite|broad|wide|narrow|tall|short|average|athletic|lean|buff|chubby|plump|curvy|slender|small|large)/i;
-    for (const s of sentences) {
-        const match = s.match(ageBuildRe);
-        if (match) {
-            const frag = s.replace(ageBuildRe, '$1 $2').split(/[.,;]/)[0].trim();
-            // Take first ~40 chars max for this fragment
-            const clean = frag.replace(/^(his|her|a |the |an )/i, '').trim();
-            if (clean.length > 5 && clean.length < 60) {
-                fragments.push(clean.toLowerCase());
-                break;
-            }
-        }
-    }
-
-    // Try to extract face/hair fragment
-    const faceHairRe = /(?:face|hair|eyes|brow|beard|moustache|mustache|whisker|cheek|chin|jaw|nose|lips|mouth|forehead|skin|complexion|pale|wrinkle|freckle|scar|clean[-\s]shaven|bald|haired|hairstyle|bearded|glasses|spectacles|oculus)/i;
-    const faceHairRu = /(?:лиц|волос|глаз|бров|бород|ус|щек|подбород|нос|губ|рот|лоб|кож|морщин|веснуш|шрам|брит|лыс|очк)/i;
-    for (const s of sentences) {
-        if (faceHairRe.test(s) || faceHairRu.test(s)) {
-            const clean = s.replace(/^(his|her|a |the |an |его|ее|его|их|моя|мои|наши)/i, '').trim();
-            if (clean.length > 5 && clean.length < 80) {
-                fragments.push(clean.toLowerCase());
-                break;
-            }
-        }
-    }
-
-    // Try to extract clothing fragment
-    const clothingRe = /(?:wearing|dressed|suit|shirt|coat|dress|hat|jacket|tie|shoes|boots|uniform|robe|cloak|outfit|sweater|vest|hoodie|pants|jeans|skirt|scarf|gloves|belt|cape|gown|tunic|armor|crown|necklace|bracelet|ring|earring|tattoo|piercing)|(?:костюм|пиджак|брюк|шляп|кепк|фуражк|рубашк|сорочк|галстук|пальто|плать|ботинк|сапог|халат|куртк|сюртук|жилет|френч|шинел|мундир|плащ|шарф|перчатк|ремень|пояс)/i;
-    for (const s of sentences) {
-        if (clothingRe.test(s)) {
-            const clean = s.replace(/^(in |wearing |dressed in |a |the |his |her |одет|в |надет|облачен)/i, '').trim();
-            if (clean.length > 3 && clean.length < 80) {
-                fragments.push(clean.toLowerCase());
-                break;
-            }
-        }
-    }
-
-    // Try to extract distinctive features (unique identifiers)
-    const featureRe = /(?:distinctive|unusual|notable|remarkable|striking|peculiar|curious|strange|odd|unique|special|особ|необыч|примечател|выдающ|стран|уникал)/i;
-    for (const s of sentences) {
-        if (featureRe.test(s)) {
-            let clean = s.replace(featureRe, '').replace(/^(his|her|a |the |an |with a |with |has a |имеет|обладает|c |со |сво|его|ее)/i, '').trim();
-            // Remove trailing punctuation and trim
-            clean = clean.replace(/[.,;:!?]+$/, '').trim();
-            if (clean.length > 5 && clean.length < 60) {
-                fragments.push(clean.toLowerCase());
-                break;
-            }
-        }
-    }
-
-    // If we got 0-1 fragments, do a broad fallback: just take key descriptive phrases
-    if (fragments.length < 2) {
-        // Split by commas and take meaningful short phrases
-        const parts = appearance.split(/[,;]/).map(p => p.trim()).filter(p => p.length > 3);
-        for (const part of parts) {
-            // Skip emotional/narrative/irrelevant phrases
-            if (/выглядит|кажется|похож|как будто|словно|looks? like|seems|appears|feels|emotion|trembl|тревог|волн|радост|груст|печал|страх|испуг|удивлен/i.test(part)) continue;
-            const clean = part.replace(/^(a |the |his |her |an |and |with )/i, '').trim();
-            if (clean.length > 5 && clean.length < 60) {
-                fragments.push(clean.toLowerCase());
-                if (fragments.length >= 4) break;
-            }
-        }
-    }
-
-    // Remove duplicates (case-insensitive fuzzy match)
-    const unique = [];
-    for (const f of fragments) {
-        const isDuplicate = unique.some(u =>
-            u.includes(f) || f.includes(u) ||
-            u.split(/\s+/).slice(0, 3).join(' ') === f.split(/\s+/).slice(0, 3).join(' ')
-        );
-        if (!isDuplicate) unique.push(f);
-    }
-
-    // Build final string: comma-separated, max 120 chars, trimmed at word boundary
-    let result = unique.join(', ');
-    if (result.length > 120) {
-        result = result.substring(0, 120).replace(/\s+\S*$/, '');
-    }
-
-    return result || `${charName.toLowerCase()} character, distinctive appearance`;
-}
-
-// ======================================================
-// EXTRACT CLOTHING FROM APPEARANCE (EN + RU)
-// ======================================================
-
-function extractClothing(appearance) {
-    if (!appearance) {
-        return {
-            clothingBase: 'period-appropriate clothing',
-            clothingDetails: 'clothing as described in the narrative',
-        };
-    }
-
-    // Find clothing mentions (English + Russian keywords)
-    const clothingRe = /((?:wearing|dressed in|in a|in an|clad in|adorned in|wore|wears|wearing a|dressed|clothed|attired|outfitted)\s+[^.,;!?]{3,60})|([^.,;!?]{3,60}(?:suit|shirt|coat|dress|hat|jacket|tie|shoes|boots|uniform|robe|cloak|outfit|sweater|vest|hoodie|pants|jeans|skirt|scarf|gloves|belt|cape|gown|tunic|armor|crown|necklace|ring)[^.,;!?]{0,40})|((?:костюм|пиджак|брюк|шляп|кепк|фуражк|рубашк|сорочк|галстук|пальто|плать|ботинк|сапог|халат|куртк|сюртук|жилет|френч|шинел|мундир|плащ|шарф|перчатк|ремень|пояс|кепка|фуражка)[^.,;!?]{0,40})/gi;
-
-    const matches = appearance.match(clothingRe);
-
-    if (matches && matches.length > 0) {
-        const cleanMatches = matches
-            .map(m => m.replace(/^(in |a |the |his |her |wearing |dressed |clad in|adorned in|wore|wears|одет|в |надет|облачен|на нем|на ней|на нем была|на ней была)/i, '').trim())
-            .filter(m => m.length > 3);
-
-        if (cleanMatches.length > 0) {
-            return {
-                clothingBase: cleanMatches[0].toLowerCase(),
-                clothingDetails: cleanMatches.slice(0, 3).join('; ').toLowerCase(),
-            };
-        }
-    }
-
-    // Fallback: try to find any clothing-adjacent phrase
-    const fallbackRe = /(?:в [^.,;!?]{5,60}|[нН]осит [^.,;!?]{5,60}|одет[аоы]? [в] [^.,;!?]{5,60}|wear(?:ing)? [^.,;!?]{5,60}|dressed [^.,;!?]{5,60}|clad [^.,;!?]{5,60})/i;
-    const fallbackMatch = appearance.match(fallbackRe);
-    if (fallbackMatch) {
-        return {
-            clothingBase: fallbackMatch[0].trim().toLowerCase(),
-            clothingDetails: fallbackMatch[0].trim().toLowerCase(),
-        };
-    }
-
-    return {
-        clothingBase: 'period-appropriate clothing',
-        clothingDetails: 'clothing as described in the text',
-    };
-}
-
-// ======================================================
-// EXPORTS
-// ======================================================
-
 module.exports = {
     BookState, SceneStatus, SourceType, UnitType,
     getBookDir, getSourcePath, getManifestPath, getBookMetaPath,
@@ -1355,7 +957,6 @@ module.exports = {
     detectLanguage,
     chapterId, sceneId, unitId, generateBookId,
     DEFAULT_WINDOW_SIZE,
-    // Cover chapter helpers
     createCoverChapter,
     saveCoverChapter,
 };
