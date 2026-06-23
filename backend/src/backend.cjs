@@ -17,7 +17,6 @@ const state = require('./state');
 const audio = require('./audio');
 const image = require('./image');
 const video = require('./video');
-const workflows = require('./workflows');
 const { resumeIncompleteSessions } = require('./startup-resume');
 const orchestrator = require('./orchestration');
 const wfManager = require('./services/workflow-manager');
@@ -27,7 +26,6 @@ const runtime = require('./runtime');
 const activeScenes = require('./runtime/active-scenes-index');
 const book = require('./book');
 const config = require('./config/runtime-config');
-const aiLoader = require('./services/ai-loader');
 const txtImporter = require('./services/txt-importer');
 const lazyBook = require('./book/lazy-book');
 const genSessionRepo = require('./storage/postgres/repositories/gen-session-repo');
@@ -40,10 +38,6 @@ const filesystem = storage.filesystem;
 const layerConfig = storage.layerConfig;
 const genScope = storage.genScope;
 
-const SCENE_STATE_KEY_PREFIX = state.SCENE_STATE_KEY_PREFIX;
-const SCENE_TRANSITION_LOCK_PREFIX = state.SCENE_TRANSITION_LOCK_PREFIX;
-const SCENE_TRANSITION_LOCK_TTL = state.SCENE_TRANSITION_LOCK_TTL || 15;
-const SCENE_STUCK_THRESHOLDS = config.STUCK_THRESHOLDS;
 
 // ======================================================
 // [02] CORE INIT
@@ -97,10 +91,6 @@ const transitionSceneState = (bookId, chapterId, sceneId, newState) =>
     state.transitionSceneState(redis, bookId, chapterId, sceneId, newState);
 const sceneHeartbeat = (bookId, chapterId, sceneId) =>
     state.sceneHeartbeat(redis, bookId, chapterId, sceneId);
-const startSceneHeartbeatTimer = (bookId, chapterId, sceneId, intervalMs) =>
-    state.startSceneHeartbeatTimer(redis, bookId, chapterId, sceneId, intervalMs);
-const stopSceneHeartbeatTimer = (bookId, chapterId, sceneId) =>
-    state.stopSceneHeartbeatTimer(bookId, chapterId, sceneId);
 const getSceneState = (bookId, chapterId, sceneId) =>
     state.getSceneState(redis, bookId, chapterId, sceneId);
 const isSceneAudioReady = (buildId, bookId, chapterId, sceneId) =>

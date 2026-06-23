@@ -280,35 +280,6 @@ async function incrementCounter(redis, stage) {
     return { stage, key, value: newVal };
 }
 
-/**
- * Decrement counter atomically (if > 0).
- */
-async function decrementCounter(redis, stage) {
-    const key = getCounterKey(stage);
-    const luaScript = `
-        local key = KEYS[1]
-        local current = redis.call('GET', key)
-
-        if not current then
-            return {tostring(0), 'not_found'}
-        end
-
-        local val = tonumber(current)
-        if val <= 0 then
-            return {tostring(0), 'already_zero'}
-        end
-
-        redis.call('DECR', key)
-        return {redis.call('GET', key), 'decremented'}
-    `;
-
-    const result = await redis.eval(luaScript, 1, key);
-    const newVal = parseInt(result[0], 10);
-    const reason = result[1];
-
-    return { stage, key, value: newVal, reason };
-}
-
 // ======================================================
 // EXPORTS
 // ======================================================
@@ -335,6 +306,5 @@ module.exports = {
     manualCounterCorrection,
 
     // Counter manipulation
-    incrementCounter,
-    decrementCounter
+    incrementCounter
 };

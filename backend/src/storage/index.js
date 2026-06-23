@@ -23,11 +23,8 @@ const manifest = require('./manifest');
 module.exports = {
     filesystem: require('./filesystem-store'),
     registry: require('./asset-registry'),
-    sceneAssetRegistry: require('../services/scene-asset-registry'),
     bookEventLog: require('../services/book-event-log'),
-    chatStore: require('../services/chat-store'),
     bookSource: require('../services/book-source'),
-    bookIntegrity: require('../services/book-integrity'),
     bookSync: require('../services/book-sync'),
     layerConfig: require('../services/layer-config'),
     genScope: require('../services/gen-scope'),

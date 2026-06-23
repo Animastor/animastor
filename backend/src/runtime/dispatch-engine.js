@@ -664,46 +664,6 @@ async function clearAllLeasesForBook(redis, bookId) {
     return { deleted };
 }
 
-/**
- * Recover a stale lease.
- * Moves scene back to pending state.
- */
-async function recoverStaleLease(redis, bookId, chapterId, sceneId, stage) {
-    log(`RECOVERY_START: ${bookId}/${chapterId}/${sceneId}:${stage}`);
-
-    const { leaseKey, token } = await getLeaseData(redis, bookId, chapterId, sceneId, stage);
-
-    if (token) {
-        // Release the stale lease
-        await releaseStageLease(redis, leaseKey, token);
-    }
-
-    // Release quota (if leaked)
-    await releaseQuota(redis, stage);
-
-    // Move scene back to pending
-    const currentState = await state.getSceneState(redis, bookId, chapterId, sceneId);
-    if (currentState) {
-        const pendingState = state.getRecoveryPendingState(currentState.state);
-        if (pendingState) {
-            await state.transitionSceneState(
-                redis,
-                bookId,
-                chapterId,
-                sceneId,
-                pendingState
-            );
-
-            await logDispatchEvent(redis, bookId, chapterId, sceneId, 'STALE_LEASE_RECOVERED', pendingState, {
-                recoveredFrom: currentState.state,
-                stage
-            });
-
-            log(`RECOVERY_COMPLETE: ${bookId}/${chapterId}/${sceneId}:${stage} -> ${pendingState}`);
-        }
-    }
-}
-
 // ======================================================
 // METRICS
 // ======================================================
@@ -846,32 +806,6 @@ function stopDispatchRenewal(bookId, chapterId, sceneId, stage) {
 }
 
 /**
- * Get current renewal timer count.
- */
-function getRenewalTimerCount() {
-    return leaseManager.getRenewalCount();
-}
-
-// ======================================================
-// RECONCILIATION UTILS
-// ======================================================
-
-/**
- * Reconcile counter drift for all stages.
- * Uses leases as source of truth.
- */
-async function reconcileCounters(redis) {
-    return await counterReconciliation.reconcileCounters(redis);
-}
-
-/**
- * Get reconciliation metrics.
- */
-async function getReconciliationMetrics(redis) {
-    return await counterReconciliation.getReconciliationMetrics(redis);
-}
-
-/**
  * Get metrics for runtime.
  */
 async function getRuntimeMetrics(redis) {
@@ -923,15 +857,9 @@ module.exports = {
     // Renewal management
     startDispatchRenewal,
     stopDispatchRenewal,
-    getRenewalTimerCount,
 
     // Recovery
-    recoverStaleLease,
     clearAllLeasesForBook,
-
-    // Reconciliation
-    reconcileCounters,
-    getReconciliationMetrics,
 
     // Runtime metrics
     getRuntimeMetrics,

@@ -269,7 +269,7 @@ app.post("/task/result", async (req, res) => {
   let resultChapterId = '';
   let resultSceneId = '';
   if (resultIdParts.length >= 3) {
-    const resultChunkIndex = resultIdParts.pop();  // e.g. '0001' (discarded)
+    resultIdParts.pop();  // discard chunk index e.g. '0001'
     resultSceneId = resultIdParts.pop();           // e.g. 'sc-6c4ea9f6'
     resultChapterId = resultIdParts.pop();         // e.g. 'ch-ce87fec4'
     resultBookId = resultIdParts.join('_');        // e.g. 'master_margarita_demo'

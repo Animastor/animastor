@@ -162,9 +162,5 @@ module.exports = {
     findScenesByState,
     isGenerating,
     isPending,
-    isTerminal,
-    
-    // Re-exports
-    SceneState: state.SceneState,
-    SCENE_STATE_KEY_PREFIX: state.SCENE_STATE_KEY_PREFIX
+    isTerminal
 };

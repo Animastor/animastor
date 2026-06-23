@@ -763,9 +763,7 @@ module.exports = {
     STATE_TO_STAGE,
     STAGE_TO_STATE,
     SCENE_STATE_KEY_PREFIX: state.SCENE_STATE_KEY_PREFIX,
-    dispatchEngine,
 
     // Phase 11: Runtime initialization
-    initializeRuntime,
-    runtimePersistence
+    initializeRuntime
 };

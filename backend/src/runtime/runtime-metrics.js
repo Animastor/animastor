@@ -441,7 +441,6 @@ module.exports = {
     recordStuckScene,
 
     // Counters
-    incrementCounter,
     getCounterMetric,
 
     // Helper

@@ -18,9 +18,7 @@
     "multer": "^2.2.0",
     "music-metadata": "^11.12.3",
     "pg": "^8.13.0",
-    "sharp": "^0.33.5",
-    "uuid": "^14.0.0",
-    "ws": "^8.21.0"
+    "sharp": "^0.33.5"
   },
   "devDependencies": {
     "chai": "^6.2.2",

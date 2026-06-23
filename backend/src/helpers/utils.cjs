@@ -220,11 +220,9 @@ module.exports = {
     pad,
     parseChunkId,
     safeBuildPath,
-    safeBuildPathAbsolute,
     collectScenes,
     splitTextIntoChunks,
     splitDialogueIntoChunks,
     buildSegments,
-    resolveAssetPath,
     findSceneRuntimeData,
 };

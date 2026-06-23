@@ -9,7 +9,6 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.CreationExtras
 import com.example.animastor.network.RetrofitClient
-import com.example.animastor.repository.BookData
 import com.example.animastor.repository.DiffSummary
 import com.example.animastor.repository.DirtyScene
 import com.example.animastor.repository.ImportTxtResponse
@@ -17,7 +16,6 @@ import com.example.animastor.repository.LayerConfigUpdate
 import com.example.animastor.repository.ReorderChapter
 import com.example.animastor.repository.Repository
 import com.example.animastor.repository.ChunkListResponse
-import com.example.animastor.repository.ChunkResponse
 import com.example.animastor.util.MediaDecoder
 import com.example.animastor.util.SimpleDiskCache
 import java.io.File

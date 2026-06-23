@@ -407,34 +407,6 @@ async function isSceneStuck(redis, bookId, chapterId, sceneId) {
 }
 
 /**
- * Check if scene has active processing (lock/heartbeat).
- * @param {RedisClient} redis
- * @param {string} bookId
- * @param {string} chapterId
- * @param {string} sceneId
- * @returns {Promise<boolean>}
- */
-async function isSceneActivelyProcessing(redis, bookId, chapterId, sceneId) {
-    const transitionLockKey = `${SCENE_TRANSITION_LOCK_PREFIX}:${bookId}:${chapterId}:${sceneId}`;
-    const audioLockKey = `animastor:audio-scene-lock:${bookId}:${chapterId}:${sceneId}`;
-    const videoLockKey = `animastor:video-lock:${bookId}:${chapterId}:${sceneId}`;
-
-    const state = await getSceneState(redis, bookId, chapterId, sceneId);
-    if (!state) return false;
-
-    // Check for active heartbeat (< 2 minutes)
-    const now = Date.now();
-    const heartbeatFresh = (now - (state.updated_at || 0)) < 2 * 60 * 1000;
-
-    // Check for active locks
-    const hasTransitionLock = await redis.exists(transitionLockKey);
-    const hasAudioLock = await redis.exists(audioLockKey);
-    const hasVideoLock = await redis.exists(videoLockKey);
-
-    return !!(heartbeatFresh && (hasTransitionLock || hasAudioLock || hasVideoLock));
-}
-
-/**
  * Get pending state for a given stuck state.
  * @param {string} stuckState
  * @returns {SceneStateValue|undefined}
@@ -768,16 +740,8 @@ module.exports = {
 
     // Stuck detection
     isSceneStuck,
-    isSceneActivelyProcessing,
     getRecoveryPendingState,
 
-    // Backwards compatibility aliases
-    SCENE_STUCK_THRESHOLDS,
-    SCENE_TRANSITION_LOCK_TTL,
-
     // Linear state sync (derives from per-asset)
-    syncLinearState,
-
-    // Build ID helpers
-    getSceneBuildId
+    syncLinearState
 };

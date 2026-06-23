@@ -3,7 +3,7 @@ const config = require('../config/runtime-config');
 const logPrefix = '[GPU]';
 function log(msg) { console.log(`${logPrefix} ${msg}`); }
 
-let stats = { audio_jobs_started: 0, image_jobs_started: 0, video_jobs_started: 0, failed_jobs: 0 };
+
 
 async function sendUnified(taskSpec) {
     if (!taskSpec.job_id || !taskSpec.params || !taskSpec.job_type) {
@@ -53,10 +53,4 @@ async function send(job_id, workflow, type, build_id) {
     await sendUnified({ job_id, params: workflow, job_type: type, build_id });
 }
 
-async function sendVideo(job_id, wf, imageBase64, build_id) {
-    await sendUnified({ job_id, params: wf, job_type: "video", assets: { image: imageBase64 }, build_id });
-}
-
-module.exports = { send, sendVideo, sendUnified, stats };
-
-module.exports.resetStats = () => { stats = { audio_jobs_started: 0, image_jobs_started: 0, video_jobs_started: 0, failed_jobs: 0 }; };
+module.exports = { send, sendUnified };
