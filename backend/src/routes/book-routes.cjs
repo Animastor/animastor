@@ -1688,6 +1688,8 @@ async function recoverMissingRedisChunks(buildId, bookId) {
         } catch (err) {
             console.error('[REGENERATE] Error:', err.message);
             res.status(500).json({ error: err.message });
+        } finally {
+            await releaseRegenerateLock();
         }
     });
 

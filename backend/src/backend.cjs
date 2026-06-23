@@ -68,7 +68,7 @@ app.use(helmet());
 const rateLimit = require('express-rate-limit');
 app.use('/api/', rateLimit({
     windowMs: 60_000,
-    max: 100,
+    max: 500,
     standardHeaders: true,
     legacyHeaders: false,
 }));
