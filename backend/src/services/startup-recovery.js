@@ -212,7 +212,10 @@ async function reconcileMissingSceneState(redis, deps) {
 // ======================================================
 
 /**
- * Query PG for version-based staleness and log findings.
+ * Query PG for version-based staleness, log findings (deduplicated),
+ * and proactively reset stale assets in Redis so the scheduler
+ * picks them up immediately on startup.
+ *
  * Assets whose scene_content_version < scenes.content_version
  * are outdated and need regeneration.
  *
@@ -221,10 +224,9 @@ async function reconcileMissingSceneState(redis, deps) {
  * @returns {Promise<number>} Count of outdated assets found
  */
 async function checkVersionStaleness(redis, deps) {
-    const { postgres, config: cfg } = deps;
+    const { postgres, state, config: cfg } = deps;
     if (!postgres || !postgres.query) return 0;
 
-    // Query all books with version info
     const result = await postgres.query(`
         SELECT s.book_id, s.chapter_id, s.scene_id, s.content_version, s.audio_config_version,
                a.asset_type, a.scene_content_version, a.scene_audio_config_version, a.status
@@ -236,27 +238,69 @@ async function checkVersionStaleness(redis, deps) {
         ORDER BY s.book_id, s.chapter_id, s.scene_id, a.asset_type
     `);
 
-    let outdatedCount = 0;
-
+    // Aggregate staleness per unique scene (the LEFT JOIN may produce
+    // multiple rows per scene for different asset types).
+    const sceneMap = new Map();
     for (const row of result.rows) {
-        // Check content version mismatch
+        const key = `${row.book_id}|${row.chapter_id}|${row.scene_id}`;
+        if (!sceneMap.has(key)) {
+            sceneMap.set(key, {
+                bookId: row.book_id,
+                chapterId: row.chapter_id,
+                sceneId: row.scene_id,
+                contentStale: false,
+                audioConfigStale: false,
+            });
+        }
+        const entry = sceneMap.get(key);
         if (row.scene_content_version != null && row.content_version != null &&
             row.scene_content_version < row.content_version) {
-            log(`[VERSION-STALE] ${row.book_id}/${row.chapter_id}/${row.scene_id}: ` +
-                `${row.asset_type || 'asset'} content_version=${row.scene_content_version} < scene=${row.content_version}`);
-            outdatedCount++;
+            entry.contentStale = true;
         }
-        // Check audio config version mismatch
         if (row.scene_audio_config_version != null && row.audio_config_version != null &&
             row.scene_audio_config_version < row.audio_config_version) {
-            log(`[VERSION-STALE] ${row.book_id}/${row.chapter_id}/${row.scene_id}: ` +
-                `${row.asset_type || 'asset'} audio_config_version=${row.scene_audio_config_version} < scene=${row.audio_config_version}`);
+            entry.audioConfigStale = true;
+        }
+    }
+
+    let outdatedCount = 0;
+    let resetCount = 0;
+
+    for (const entry of sceneMap.values()) {
+        const { bookId, chapterId, sceneId, contentStale, audioConfigStale } = entry;
+
+        if (contentStale) {
+            log(`[VERSION-STALE] ${bookId}/${chapterId}/${sceneId}: content_version stale`);
             outdatedCount++;
+        }
+        if (audioConfigStale) {
+            log(`[VERSION-STALE] ${bookId}/${chapterId}/${sceneId}: audio_config_version stale`);
+            outdatedCount++;
+        }
+
+        // Proactively reset stale assets in Redis so the scheduler
+        // dispatches them on the very first tick instead of relying
+        // on per-scene PG checks during shouldScheduleAssets().
+        if ((contentStale || audioConfigStale) && state && state.setAssetStates && state.AssetState) {
+            await state.setAssetStates(redis, bookId, chapterId, sceneId, {
+                audio: state.AssetState.DIRTY,
+                image: state.AssetState.DIRTY,
+                video: state.AssetState.DIRTY,
+            });
+            resetCount++;
+
+            // Ensure the scene is in the active index so tick() finds it
+            try {
+                const activeScenesIndex = require('../runtime/active-scenes-index');
+                await activeScenesIndex.addActiveScene(redis, bookId, chapterId, sceneId);
+            } catch (_) {}
         }
     }
 
     if (outdatedCount > 0) {
-        log(`[VERSION-STALE] Found ${outdatedCount} outdated assets across ${result.rows.length} rows`);
+        log(`[VERSION-STALE] Found ${outdatedCount} outdated assets, reset ${resetCount} scenes in Redis`);
+    } else {
+        log(`No version-stale assets found`);
     }
 
     return outdatedCount;
