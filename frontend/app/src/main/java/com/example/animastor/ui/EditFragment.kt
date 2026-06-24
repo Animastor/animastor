@@ -851,9 +851,9 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
 
             lifecycleScope.launch {
                 try {
+                    val modifiedScene = applyFieldValues(sc, fieldValues)
                     val patchBody = mutableMapOf<String, Any?>()
                     val chapterTitleValue = fieldValues["chapter_title"]?.takeIf { it.isNotBlank() }
-                    var modifiedScene: Scene? = null
 
                     if (onlyUnitFields && hasUnit && sceneUnits != null) {
                         // Mode A: send only the changed unit fields
@@ -864,10 +864,8 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                             }
                         }
                         patchBody["unit_id"] = currentUnit.id
-                        modifiedScene = applyFieldValues(sc, fieldValues)
                     } else {
                         // Mode B: send full modified scene
-                        modifiedScene = applyFieldValues(sc, fieldValues)
                         patchBody["scene"] = modifiedScene
                     }
 
@@ -878,12 +876,11 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                     viewModel.repository.patchScene(bookId, chapterId, sceneId, patchBody)
 
                     // Apply changes locally for UI consistency
-                    val actualScene = modifiedScene ?: applyFieldValues(sc, fieldValues)
                     val modifiedChapters = chapters.toMutableList()
                     val modifiedCh = if (chapterTitleValue != null || fieldValues.containsKey("chapter_title"))
                         ch.copy(chapter_title = chapterTitleValue) else ch
                     val scenes = modifiedCh.scenes?.toMutableList() ?: return@launch
-                    scenes[currentScIndex] = actualScene
+                    scenes[currentScIndex] = modifiedScene
                     modifiedChapters[currentChIndex] = modifiedCh.copy(scenes = scenes.toList())
                     val modifiedBookData = bd.copy(chapters = modifiedChapters.toList())
 
