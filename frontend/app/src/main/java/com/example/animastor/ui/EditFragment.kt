@@ -55,6 +55,11 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
     private var playbackJob: Job? = null
     private var timelineDirty = false
 
+    // ── End-of-window trigger dedup ───────────────────────────
+    // Prevents duplicate triggerNextWindow calls for the same window.
+    // Key format: "${chIndex}:${scIndex / 3}"
+    private val _triggeredWindows = mutableSetOf<String>()
+
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         binding = FragmentEditBinding.bind(view)
@@ -233,7 +238,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
             val sc = currentScene()
             val unitCount = sc?.units?.size ?: 0
             if (unitCount > 0) {
-                // checkEndOfWindowAndTrigger removed — window management is now handled by PlaybackViewModel
+                checkEndOfWindowAndTrigger()
             }
         }
     }
@@ -556,6 +561,63 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                 if (chId != null && scId != null) {
                     playbackViewModel.seekToPosition(chId, scId, newIndex, units.getOrNull(newIndex)?.id)
                 }
+            }
+        }
+        checkEndOfWindowAndTrigger()
+    }
+
+    /**
+     * Check if we're at the end of a window and trigger generation of the next one.
+     *
+     * Triggers when the user selects one of the last 3 units of the last scene
+     * in the current window (WINDOW_SIZE=3 scenes per window).
+     * Deduplicates so each window is triggered only once.
+     */
+    private fun checkEndOfWindowAndTrigger() {
+        val sc = currentScene() ?: return
+        val units = sc.units ?: return
+        if (units.isEmpty()) return
+
+        val pos = SharedPositionManager.current.value
+        val idx = pos.unitIndex
+
+        // Must be among the last 3 units of the scene
+        val last3Start = if (units.size <= 3) 0 else units.size - 3
+        if (idx < last3Start) return
+
+        // Scene must be the last scene in its window (WINDOW_SIZE=3)
+        // 0-indexed: window ends at indices 2, 5, 8... i.e., scIndex % 3 == 2
+        val scenes = chapters.getOrNull(currentChIndex)?.scenes ?: return
+        if (currentScIndex < 0) return
+        val isLastOfWindow = currentScIndex % 3 == 2
+        val isLastChapterScene = currentScIndex == scenes.size - 1
+        if (!isLastOfWindow && !isLastChapterScene) return
+
+        // Dedup
+        val windowKey = "${currentChIndex}:${currentScIndex / 3}"
+        if (_triggeredWindows.contains(windowKey)) return
+        _triggeredWindows.add(windowKey)
+
+        val bookId = viewModel.bookId
+        if (bookId.isBlank()) return
+        val chId = chapters.getOrNull(currentChIndex)?.chapter ?: return
+        val scId = sc.scene_id ?: return
+        val unitId = units.getOrNull(idx)?.id
+
+        Log.i("EditFragment", "checkEndOfWindowAndTrigger: triggering next window (ch=$currentChIndex sc=$currentScIndex unit=$idx)")
+
+        lifecycleScope.launch {
+            try {
+                val result = viewModel.repository.triggerNextWindow(
+                    bookId = bookId,
+                    chapterId = chId,
+                    sceneId = scId,
+                    unitId = unitId,
+                    registerForGpu = true
+                )
+                Log.i("EditFragment", "triggerNextWindow: triggered=${result.triggered} queued=${result.queued} all_done=${result.all_done}")
+            } catch (e: Exception) {
+                Log.w("EditFragment", "triggerNextWindow failed: ${e.message}")
             }
         }
     }

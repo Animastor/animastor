@@ -619,15 +619,31 @@ async function bootstrapNextWindow(bookId, progress) {
         const fs_local = require('fs');
         if (!fs_local.existsSync(bp)) throw new Error(`Book metadata not found: ${bookId}`);
 
-        const startSessionResult = await getSession(sessionId);
+        // ── Look up the PREVIOUS session's window_data ─────────────────
+        // bootstrapNextWindow creates a NEW session for each window,
+        // so window_data on the new session is always null. We need the
+        // last session's data (currentOffset, all_characters, all_locations)
+        // to know where to continue processing.
         let windowData = null;
-        if (startSessionResult?.window_data) {
-            try { windowData = JSON.parse(startSessionResult.window_data); } catch (_) {}
+        try {
+            const prevResult = await query(
+                `SELECT window_data FROM agent_sessions WHERE book_id = $1 AND window_data IS NOT NULL ORDER BY created_at DESC LIMIT 1`,
+                [bookId]
+            );
+            if (prevResult?.rows?.[0]?.window_data) {
+                const raw = prevResult.rows[0].window_data;
+                windowData = typeof raw === 'string' ? JSON.parse(raw) : raw;
+                console.log(`[AGENT] bootstrapNextWindow: recovered window_data from previous session (currentOffset=${windowData?.currentOffset})`);
+            }
+        } catch (lookupErr) {
+            console.warn(`[AGENT] bootstrapNextWindow: failed to look up previous window_data: ${lookupErr.message}`);
         }
 
         const currentOffset = windowData?.currentOffset || 0;
         const existingChars = windowData?.all_characters || [];
         const existingLocs = windowData?.all_locations || [];
+
+        console.log(`[AGENT] bootstrapNextWindow: currentOffset=${currentOffset}, existingChars=${existingChars.length}, existingLocs=${existingLocs.length}`);
 
         const windowInfo = getWindowText(draft.sourceText, existingChars, existingLocs, 1, currentOffset);
 

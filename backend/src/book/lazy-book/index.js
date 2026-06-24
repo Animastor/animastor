@@ -923,6 +923,17 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
     fs.writeFileSync(path.join(chDir, chFile), JSON.stringify(chapterObj, null, 2));
 
     const existingFiles = fs.readdirSync(chDir).filter(f => f.endsWith('.json')).sort();
+    // Preserve cover chapter at position 0 (it was saved earlier via saveCoverChapter)
+    const coverIdx = existingFiles.findIndex(f => {
+        try {
+            const ch = JSON.parse(fs.readFileSync(path.join(chDir, f), 'utf8'));
+            return ch.type === 'cover';
+        } catch (_) { return false; }
+    });
+    if (coverIdx > 0) {
+        const coverFile = existingFiles.splice(coverIdx, 1)[0];
+        existingFiles.unshift(coverFile);
+    }
     bookMeta.structure.chapters_order = existingFiles;
     fs.writeFileSync(getBookMetaPath(bookDir), JSON.stringify(bookMeta, null, 2));
 

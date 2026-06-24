@@ -342,6 +342,17 @@ module.exports = function(app, redis, deps) {
                         iu.estimated_duration_sec = parseFloat((sceneDuration * (iu.text_proportion || 0)).toFixed(3));
                     }
                 }
+                // Compute timing boundaries (start_ms/end_ms) from cumulative durations
+                const sceneDurationMs = Math.round(sceneDuration * 1000);
+                let cursorMs = 0;
+                for (const iu of ius) {
+                    const durMs = Math.max(200, Math.round((iu.estimated_duration_sec || 1) * 1000));
+                    iu._start_ms = cursorMs;
+                    let endMs = cursorMs + durMs;
+                    if (sceneDurationMs > 0 && endMs > sceneDurationMs) endMs = sceneDurationMs;
+                    iu._end_ms = endMs;
+                    cursorMs = endMs;
+                }
                 for (const [idx, iu] of ius.entries()) {
                     try {
                         await iuRepo.upsertImageUnit(build_id, book_id, chapter_id, scene_id, iu.unit_id, {
@@ -349,7 +360,8 @@ module.exports = function(app, redis, deps) {
                             text_proportion: iu.text_proportion || 0, scene_duration_sec: sceneDuration || 0,
                             estimated_duration_sec: iu.estimated_duration_sec || 0,
                             scene_audio_file: `${book_id}_${chapter_id}_${scene_id}.mp3`,
-                            start_ms: null, end_ms: null,
+                            start_ms: iu._start_ms != null ? iu._start_ms : null,
+                            end_ms: iu._end_ms != null ? iu._end_ms : null,
                         });
                     } catch (pgErr) {
                         console.warn('[STORYBOARD] Failed to persist IU to PG:', pgErr.message);
@@ -636,8 +648,9 @@ module.exports = function(app, redis, deps) {
             ius.sort((a, b) => a.scene_order - b.scene_order);
 
             let cursorMs = 0;
+            const needsCompute = ius.some(iu => iu.start_ms == null || iu.end_ms == null || (Number(iu.end_ms) - Number(iu.start_ms)) <= 0);
             const units = ius.map(iu => {
-                if (iu.start_ms != null && iu.end_ms != null) {
+                if (iu.start_ms != null && iu.end_ms != null && (Number(iu.end_ms) - Number(iu.start_ms)) > 0) {
                     cursorMs = iu.end_ms;
                     const clampedEndMs = sceneDurationMs > 0 ? Math.min(iu.end_ms, sceneDurationMs) : iu.end_ms;
                     return { unit_id: iu.unit_id, scene_order: iu.scene_order, start_ms: iu.start_ms, end_ms: clampedEndMs, estimated_duration_sec: iu.estimated_duration_sec, text_proportion: iu.text_proportion };
@@ -649,6 +662,19 @@ module.exports = function(app, redis, deps) {
                 cursorMs = end;
                 return { unit_id: iu.unit_id, scene_order: iu.scene_order, start_ms: start, end_ms: end, estimated_duration_sec: iu.estimated_duration_sec || 0, text_proportion: iu.text_proportion || 0 };
             });
+
+            // Persist computed start_ms/end_ms back to PG so subsequent calls
+            // don't recompute from scratch.
+            if (needsCompute && units.length > 0) {
+                for (const u of units) {
+                    try {
+                        await iuRepo.upsertIuTiming(buildId, bookId, chapterId, sceneId, u.unit_id, u.start_ms, u.end_ms);
+                    } catch (persistErr) {
+                        console.warn('[TIMINGS] Failed to persist timing:', persistErr.message);
+                    }
+                }
+                log(`[TIMINGS] Persisted ${units.length} timing boundaries for ${bookId}/${chapterId}/${sceneId}`);
+            }
 
             const totalMs = units.reduce((sum, u) => sum + (u.end_ms - u.start_ms), 0);
             res.json({ units, total_duration_ms: totalMs });

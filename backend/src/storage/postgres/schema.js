@@ -342,7 +342,7 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
     session_id      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     book_id         TEXT NOT NULL,
     source_type     TEXT NOT NULL DEFAULT 'txt_import' CHECK(source_type IN ('txt_import','ai_text','manual')),
-    status          TEXT NOT NULL DEFAULT 'running' CHECK(status IN ('running','completed','failed')),
+    status          TEXT NOT NULL DEFAULT 'running' CHECK(status IN ('running','paused','completed','failed')),
     progress_msg    TEXT,
     knowledge_base  JSONB,
     window_data     JSONB,
@@ -516,6 +516,18 @@ async function runMigrations() {
     } catch (err) {
         if (!err.message.includes('already exists')) {
             console.error('[PG] Failed to add scene_assets.scene_audio_config_version:', err.message);
+        }
+    }
+
+    // Add 'paused' to agent_sessions status check constraint
+    try {
+        await query(`ALTER TABLE agent_sessions DROP CONSTRAINT IF EXISTS agent_sessions_status_check`);
+        await query(`ALTER TABLE agent_sessions ADD CONSTRAINT agent_sessions_status_check
+            CHECK (status IN ('running','paused','completed','failed'))`);
+        console.log('[PG] Updated agent_sessions status check constraint (added paused)');
+    } catch (err) {
+        if (!err.message.includes('does not exist')) {
+            console.error('[PG] Failed to update agent_sessions status constraint:', err.message);
         }
     }
 
