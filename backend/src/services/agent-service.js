@@ -432,8 +432,9 @@ function getWindowText(sourceText, existingChars, existingLocs, windowIndex, sta
     };
 }
 
-async function runPipeline(sessionId, text, existingChars, existingLocs, stepIndex, progress) {
+async function runPipeline(sessionId, text, existingChars, existingLocs, stepIndex, progress, baseSceneCount) {
     const _progress = progress || (() => {});
+    const sceneOffset = baseSceneCount || 0;
     let characters = existingChars || [];
     let locations = existingLocs || [];
 
@@ -465,10 +466,11 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
     const enrichedScenes = [];
     for (let si = 0; si < windowScenes.length; si++) {
         const scene = windowScenes[si];
+        const globalSceneIndex = sceneOffset + si;
 
-        const units = await stepCreateUnits(sessionId, scene, si, characters, stepIndex, _progress);
+        const units = await stepCreateUnits(sessionId, scene, globalSceneIndex, characters, stepIndex, _progress);
 
-        const visualUnits = await stepCreateVisuals(sessionId, scene, units, si, characters, locations, stepIndex, _progress);
+        const visualUnits = await stepCreateVisuals(sessionId, scene, units, globalSceneIndex, characters, locations, stepIndex, _progress);
 
         enrichedScenes.push({
             ...scene,
@@ -531,7 +533,7 @@ async function bootstrapWithAgent(bookId, progress) {
             progress_msg: '⟳ Анализирую текст: извлекаю персонажей и локации...',
         });
 
-        const result = await runPipeline(sessionId, windowInfo.text, [], [], 0, _progress);
+        const result = await runPipeline(sessionId, windowInfo.text, [], [], 0, _progress, 0);
 
         if (result.scenes.length === 0) {
             throw new Error('AI returned no scenes — cannot create book');
@@ -700,7 +702,7 @@ async function bootstrapNextWindow(bookId, progress) {
             parts: windowData.structure.parts,
         } : null;
 
-        const result = await runPipeline(sessionId, windowInfo.text, existingChars, existingLocs, nextWindowIndex, _progress);
+        const result = await runPipeline(sessionId, windowInfo.text, existingChars, existingLocs, nextWindowIndex, _progress, (windowData?.created_scenes || 0));
 
         const extraScenes = result.allScenes.slice(WINDOW_SIZE);
 
