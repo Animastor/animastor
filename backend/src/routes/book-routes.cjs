@@ -146,6 +146,36 @@ async function recoverMissingRedisChunks(buildId, bookId) {
             // Load old book before saving to compute diff
             const oldBook = book.loadBook(bookId);
 
+            // CRITICAL: Merge incoming book data with existing book on disk
+            // to preserve top-level fields that the frontend may not send:
+            //   - characters (character passports with appearance descriptions)
+            //   - bible (locations, lore)
+            //   - manifest (build_id, metadata)
+            //
+            // The frontend's PUT request typically only sends chapter/scene
+            // data. Without this merge, characters and bible are overwritten
+            // with empty/null, permanently losing character passports.
+            if (oldBook) {
+                if (!updatedBookData.characters || (Array.isArray(updatedBookData.characters) && updatedBookData.characters.length === 0)) {
+                    if (oldBook.characters && oldBook.characters.length > 0) {
+                        updatedBookData.characters = oldBook.characters;
+                        log(`[UPDATE BOOK] ${bookId}: preserved ${oldBook.characters.length} character passports from existing book`);
+                    }
+                }
+                if (!updatedBookData.bible || (typeof updatedBookData.bible === 'object' && Object.keys(updatedBookData.bible).length === 0)) {
+                    if (oldBook.bible && Object.keys(oldBook.bible).length > 0) {
+                        updatedBookData.bible = oldBook.bible;
+                        log(`[UPDATE BOOK] ${bookId}: preserved bible data from existing book`);
+                    }
+                }
+                if (!updatedBookData.manifest || !updatedBookData.manifest.book_id) {
+                    if (oldBook.manifest && oldBook.manifest.book_id) {
+                        updatedBookData.manifest = oldBook.manifest;
+                        log(`[UPDATE BOOK] ${bookId}: preserved manifest from existing book`);
+                    }
+                }
+            }
+
             // Save new book
             book.saveBookBundle(updatedBookData, null);
             log(`[UPDATE BOOK] ${bookId}: ${updatedBookData.chapters?.length || 0} chapters saved`);
@@ -1582,6 +1612,49 @@ async function recoverMissingRedisChunks(buildId, bookId) {
                 filteredDirty = bookDiff.filterDirtyScenesByScope(
                     diff.dirty_scenes, effectiveScope, chapter_id, scene_id, allScenes
                 );
+
+                // FALLBACK: If diff is empty (book already saved by PUT — both loads
+                // return identical data), query PG directly for dirty scenes via
+                // is_dirty flag and dirty_unit_ids. The PUT handler correctly stores
+                // these before /regenerate is called.
+                if (filteredDirty.length === 0) {
+                    log(`[REGENERATE] ${bookId}: diff is empty (already saved by PUT) — querying PG for dirty scenes`);
+                    try {
+                        const pgResult = await storage.postgres.query(`
+                            SELECT chapter_id, scene_id, is_dirty, dirty_unit_ids
+                            FROM scenes
+                            WHERE book_id = $1
+                              AND (
+                                  is_dirty = TRUE
+                                  OR (dirty_unit_ids IS NOT NULL AND array_length(dirty_unit_ids, 1) > 0)
+                              )
+                            ORDER BY chapter_id, scene_id
+                        `, [bookId]);
+
+                        if (pgResult.rows.length > 0) {
+                            filteredDirty = pgResult.rows.map(row => ({
+                                chapter_id: row.chapter_id,
+                                scene_id: row.scene_id,
+                                reason: row.is_dirty ? 'version_stale' : 'dirty_units',
+                                // Image layer is always regenerated for visual changes.
+                                // Audio is left as-is (visual prompt changes don't affect audio).
+                                dirty_layers: ['image'],
+                                changes: row.dirty_unit_ids && row.dirty_unit_ids.length > 0
+                                    ? { units: { unit_ids: row.dirty_unit_ids } }
+                                    : null,
+                            }));
+
+                            filteredDirty = bookDiff.filterDirtyScenesByScope(
+                                filteredDirty, effectiveScope, chapter_id, scene_id, allScenes
+                            );
+                            log(`[REGENERATE] ${bookId}: PG fallback found ${filteredDirty.length} dirty scene(s) via is_dirty/dirty_unit_ids`);
+                        } else {
+                            log(`[REGENERATE] ${bookId}: PG fallback also empty — no dirty scenes in PG`);
+                        }
+                    } catch (pgErr) {
+                        console.warn(`[REGENERATE] PG fallback query failed: ${pgErr.message}`);
+                    }
+                }
             }
 
             // Check Cover chapter — always generate Cover first if missing images
@@ -1678,6 +1751,13 @@ async function recoverMissingRedisChunks(buildId, bookId) {
                 log(`[REGENERATE] ${bookId}: restored chunk metadata for ${restoredCount}/${filteredDirty.length} scenes with existing content`);
             }
 
+            // CRITICAL: Add all dirty scenes to active index so runtime scheduler processes them.
+            // clearBookFromActiveIndex() at the top removes everything — without this loop
+            // the scheduler sees Active: 0 and never dispatches any generation tasks.
+            for (const ds of filteredDirty) {
+                await scheduler.addSceneToActiveIndex(redis, bookId, ds.chapter_id, ds.scene_id);
+            }
+            log(`[REGENERATE] ${bookId}: added ${filteredDirty.length} scenes to active index for scheduling`);
 
             res.json({
                 book_id: bookId, scope: effectiveScope,

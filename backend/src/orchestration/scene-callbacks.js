@@ -1,3 +1,5 @@
+const path = require('path');
+const fs = require('fs');
 const state = require('../state');
 const audio = require('../audio');
 const image = require('../image');
@@ -170,13 +172,36 @@ async function handleImageCompleted(redis, bookId, chapterId, sceneId, buildId) 
         path: sceneImage
     });
 
+    // R4.1: Clear dirty unit IDs ONLY for units that have been processed.
+    // Do NOT clear ALL dirty IDs — there may still be unprocessed dirty units.
+    // Instead, remove only the completed unit IDs from the dirty list.
     try {
         const sceneAssetsRepo = require('../storage/postgres/repositories/scene-assets-repo');
-        await sceneAssetsRepo.clearDirtyUnitIds(bookId, chapterId, sceneId);
-        log(`[DIRTY-UNITS-CLEARED] ${bookId}/${chapterId}/${sceneId}: cleared dirty_unit_ids on completion`);
+        const dirtyIds = await sceneAssetsRepo.getDirtyUnitIds(bookId, chapterId, sceneId);
+        if (dirtyIds && dirtyIds.length > 0) {
+            // Check which dirty units have PNG files on disk
+            const buildDir = path.join(process.env.OUTPUT_DIR || '/data/output', buildId);
+            const stillPending = [];
+            for (const uid of dirtyIds) {
+                const pngPath = path.join(buildDir, `${bookId}_${chapterId}_${sceneId}_${uid}.png`);
+                if (!fs.existsSync(pngPath)) {
+                    stillPending.push(uid);
+                }
+            }
+            if (stillPending.length === 0) {
+                // All dirty units have been processed — safe to clear
+                await sceneAssetsRepo.clearDirtyUnitIds(bookId, chapterId, sceneId);
+                log(`[DIRTY-UNITS-CLEARED] ${bookId}/${chapterId}/${sceneId}: all ${dirtyIds.length} dirty unit(s) completed, cleared`);
+            } else {
+                // Some units still pending — keep them
+                await sceneAssetsRepo.setDirtyUnitIds(bookId, chapterId, sceneId, stillPending);
+                log(`[DIRTY-UNITS-PARTIAL] ${bookId}/${chapterId}/${sceneId}: ${stillPending.length}/${dirtyIds.length} dirty units still pending: ${stillPending.join(', ')}`);
+            }
+        }
     } catch (e) {
-        warn(`Failed to clear dirty_unit_ids in IMAGE_CALLBACK: ${e.message}`);
+        warn(`Failed to update dirty_unit_ids in IMAGE_CALLBACK: ${e.message}`);
     }
+
 
     try {
         const scenePrefix = `${bookId}_${chapterId}_${sceneId}_iu-`;

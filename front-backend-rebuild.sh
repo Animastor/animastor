@@ -11,6 +11,10 @@ echo
 docker compose build --no-cache backend
 docker compose up -d backend
 
+sleep 3
+
+docker compose restart backend
+
 echo
 echo "Waiting 5 seconds for container startup..."
 sleep 5

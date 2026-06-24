@@ -254,15 +254,31 @@ class PlaybackViewModel(
         Log.i(TAG, "refreshContent: clearing cache (build=$buildId, prevBuild=$prevBuildId)")
         _repository.clearCache()
 
-        if (currentPhase == PlayerPhase.PAUSED || currentPhase == PlayerPhase.PLAYING) {
-            // Player was active — mark content as stale; the next resume will
+        if (currentPhase == PlayerPhase.PLAYING) {
+            // Player is actively playing — proactively reload the current scene
+            // so the user hears fresh audio immediately without pressing Play again.
+            // The MediaPlayer will be released by the fragment's onTrackEnd or
+            // switchToNextPlayer when the stale track ends.
+            needsContentRefresh = true
+            pendingChunkAudio = null
+            pendingChunkVideo = null
+            pendingChunkIuSequence = null
+            Log.i(TAG, "refreshContent: player PLAYING — proactively reloading current scene (index=$currentIndex)")
+            // Trigger immediate reload: the next fragment tick will see
+            // the state change to SCENE_READY (via stale player detection),
+            // then resumePlayback with needsContentRefresh=true re-fetches.
+            _uiState.update { it.copy(phase = PlayerPhase.SCENE_READY) }
+            return
+        }
+        if (currentPhase == PlayerPhase.PAUSED) {
+            // Player was paused — mark content as stale; the next resume will
             // re-fetch the current scene instead of resuming the old MediaPlayer.
             needsContentRefresh = true
             // Clear stale pending data so the fragment doesn't try to use it
             pendingChunkAudio = null
             pendingChunkVideo = null
             pendingChunkIuSequence = null
-            Log.i(TAG, "refreshContent: player active — marked needsContentRefresh")
+            Log.i(TAG, "refreshContent: player PAUSED — marked needsContentRefresh")
             return
         }
         if (chunkIds.isNotEmpty()) {
@@ -370,7 +386,21 @@ class PlaybackViewModel(
             Log.w(TAG, "resumeFromCurrentScene: empty queue")
             return
         }
-        pendingSeekPositionMs = savedPlaybackPositionMs
+
+        // Если контент был перегенерирован (needsContentRefresh=true),
+        // сбрасываем savedPlaybackPositionMs — новый контент может иметь
+        // другую длительность, и seek по старой позиции приведёт к ошибке.
+        if (needsContentRefresh) {
+            Log.i(TAG, "resumeFromCurrentScene: content was refreshed — discarding old seek position")
+            pendingSeekPositionMs = -1L
+            savedPlaybackPositionMs = 0L
+            needsContentRefresh = false
+            // Принудительно очищаем кеш репозитория, чтобы скачать свежий контент
+            _repository.clearCache()
+        } else {
+            pendingSeekPositionMs = savedPlaybackPositionMs
+        }
+
         preloadCache.clear()
         preloadJobs.clear()
         preloadAhead(includeCurrent = true)
