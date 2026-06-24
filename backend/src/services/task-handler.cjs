@@ -69,6 +69,16 @@ module.exports = function(redis, config, deps) {
                     console.warn('⚠️ Failed to register IU in Redis:', registryErr.message);
                 }
 
+                // Increment per-IU progress counter (used by assets-state endpoint
+                // instead of filesystem listing, which includes stale PNGs).
+                try {
+                    const progKey = `animastor:iu-progress:${bookId}:${chapterId}:${sceneId}:image`;
+                    await redis.incr(progKey);
+                    await redis.expire(progKey, 7200);
+                } catch (progErr) {
+                    console.warn(`⚠️ Failed to increment IU progress counter: ${progErr.message}`);
+                }
+
                 // Check if all IUs for this scene are complete
                 try {
                     const pgRows = await deps.iuRepo.getImageUnitsForScene(build_id, bookId, chapterId, sceneId);

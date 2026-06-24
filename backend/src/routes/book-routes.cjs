@@ -419,6 +419,14 @@ async function recoverMissingRedisChunks(buildId, bookId) {
                 }
             }
 
+            // Mode A: force-set dirty unit ID — diff is useless here because
+            // saveBookBundle(oldBook) + loadBook() returns the same data,
+            // so computeBookDiff always returns empty for unit field patches.
+            if (unit_id) {
+                await sceneAssetsRepo.setDirtyUnitIds(bookId, chapterId, sceneId, [unit_id]);
+                log(`[DIRTY-UNITS] ${bookId}/${chapterId}/${sceneId}: ${[unit_id].length} dirty unit(s): ${[unit_id].join(', ')}`);
+            }
+
             return res.json({
                 saved: true,
                 book_id: bookId,
@@ -1355,7 +1363,6 @@ async function recoverMissingRedisChunks(buildId, bookId) {
                 }
                 
                 if (buildId) {
-                    const buildDir = path.join(config.OUTPUT_DIR, buildId);
                     const uniqueScenes = new Map();
                     for (const cid of filteredIds) {
                         const chunk = await getChunk(cid);
@@ -1371,11 +1378,19 @@ async function recoverMissingRedisChunks(buildId, bookId) {
                         const rows = await iuRepo.getImageUnitsForScene(buildId, bookId, ch, sc);
                         if (rows.length > 0) {
                             scopeIuTotal += rows.length;
-                            const prefix = `${bookId}_${ch}_${sc}_iu`;
-                            let files = [];
-                            try { files = fs.readdirSync(buildDir); } catch (_) {}
-                            const ready = files.filter(f => f.startsWith(prefix) && f.endsWith('.png')).length;
-                            scopeIuReady += Math.min(ready, rows.length);
+                            // Count ready IUs: non-dirty IUs are always ready; dirty
+                            // IUs are ready when confirmed by GPU callback (Redis counter).
+                            // This avoids counting stale PNGs from a prior generation.
+                            const dirtyIds = await sceneAssetsRepo.getDirtyUnitIds(bookId, ch, sc);
+                            const dirtyCount = dirtyIds ? dirtyIds.length : 0;
+                            const progKey = `animastor:iu-progress:${bookId}:${ch}:${sc}:image`;
+                            let confirmedCount = 0;
+                            try {
+                                const val = await redis.get(progKey);
+                                if (val) confirmedCount = parseInt(val, 10);
+                            } catch (_) {}
+                            const ready = rows.length - Math.max(0, dirtyCount - confirmedCount);
+                            scopeIuReady += Math.max(0, ready);
                         }
                     }
                     
@@ -1392,19 +1407,31 @@ async function recoverMissingRedisChunks(buildId, bookId) {
                             const rows = await iuRepo.getImageUnitsForScene(buildId, bookId, coverChapterId, coverSceneId);
                             if (rows.length > 0) {
                                 coverIuTotal = rows.length;
-                                const coverPrefix = `${bookId}_${coverChapterId}_${coverSceneId}_iu`;
-                                let files = [];
-                                try { files = fs.readdirSync(buildDir); } catch (_) {}
-                                coverIuReady = Math.min(files.filter(f => f.startsWith(coverPrefix) && f.endsWith('.png')).length, rows.length);
+                                const dirtyIds = await sceneAssetsRepo.getDirtyUnitIds(bookId, coverChapterId, coverSceneId);
+                                const dirtyCount = dirtyIds ? dirtyIds.length : 0;
+                                const progKey = `animastor:iu-progress:${bookId}:${coverChapterId}:${coverSceneId}:image`;
+                                let confirmedCount = 0;
+                                try {
+                                    const val = await redis.get(progKey);
+                                    if (val) confirmedCount = parseInt(val, 10);
+                                } catch (_) {}
+                                coverIuReady = rows.length - Math.max(0, dirtyCount - confirmedCount);
+                                coverIuReady = Math.max(0, coverIuReady);
                             } else {
                                 // Fallback: count from book data units
                                 const units = coverScene.units || [];
                                 coverIuTotal = units.length;
                                 if (coverIuTotal > 0) {
-                                    const coverPrefix = `${bookId}_${coverChapterId}_${coverSceneId}_iu`;
-                                    let files = [];
-                                    try { files = fs.readdirSync(buildDir); } catch (_) {}
-                                    coverIuReady = Math.min(files.filter(f => f.startsWith(coverPrefix) && f.endsWith('.png')).length, units.length);
+                                    const dirtyIds = await sceneAssetsRepo.getDirtyUnitIds(bookId, coverChapterId, coverSceneId);
+                                    const dirtyCount = dirtyIds ? dirtyIds.length : 0;
+                                    const progKey = `animastor:iu-progress:${bookId}:${coverChapterId}:${coverSceneId}:image`;
+                                    let confirmedCount = 0;
+                                    try {
+                                        const val = await redis.get(progKey);
+                                        if (val) confirmedCount = parseInt(val, 10);
+                                    } catch (_) {}
+                                    coverIuReady = units.length - Math.max(0, dirtyCount - confirmedCount);
+                                    coverIuReady = Math.max(0, coverIuReady);
                                 }
                             }
                         }
@@ -1910,6 +1937,13 @@ async function recoverMissingRedisChunks(buildId, bookId) {
                         }
                     }
                 }
+            }
+
+            // Reset per-IU progress counters for each dirty scene so assets-state
+            // doesn't see stale counts from a previous regen cycle.
+            for (const ds of filteredDirty) {
+                const progKey = `animastor:iu-progress:${bookId}:${ds.chapter_id}:${ds.scene_id}:image`;
+                try { await redis.del(progKey); } catch (_) {}
             }
 
             // Mark dirty scenes (Redis)
