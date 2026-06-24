@@ -92,16 +92,32 @@ class GenerateViewModel(
     var buildId: String = ""
         private set
 
+    // ── Global window trigger (observes SharedPositionManager) ───
+    val windowTriggerManager: WindowTriggerManager = WindowTriggerManager(_repository, viewModelScope)
+
     init {
         val prefs = getApplication<Application>().getSharedPreferences("animastor", 0)
         bookId = prefs.getString("bookId", "") ?: ""
         buildId = prefs.getString("buildId", "") ?: ""
+        // Start global window trigger if a book is already loaded from prefs
+        if (bookId.isNotBlank()) {
+            windowTriggerManager.start(bookId)
+        }
     }
 
     private fun persistBookId(id: String) {
+        val oldId = bookId
         bookId = id
         val prefs = getApplication<Application>().getSharedPreferences("animastor", 0)
         prefs.edit().putString("bookId", id).apply()
+        // Restart window trigger for the new book
+        if (oldId != id) {
+            if (id.isNotBlank()) {
+                windowTriggerManager.start(id)
+            } else {
+                windowTriggerManager.stop()
+            }
+        }
     }
 
     private fun persistBuildId(id: String) {
@@ -973,6 +989,7 @@ class GenerateViewModel(
 
     fun closeBook() {
         generationJob?.cancel()
+        windowTriggerManager.stop()
         persistBookId("")
         persistBuildId("")
         hasUnsavedChanges = false
