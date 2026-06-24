@@ -156,6 +156,8 @@
     <string name="progress_idle">Idle</string>
     <string name="generation_done">Done</string>
     <string name="progress_cover_generating">Generating cover...</string>
+    <string name="progress_vbook_analyzing">Analyzing...</string>
+    <string name="progress_vbook_scenes">sc.%1$d/%2$d</string>
 
     <!-- IU not generated -->
     <string name="iu_not_generated">Not generated</string>

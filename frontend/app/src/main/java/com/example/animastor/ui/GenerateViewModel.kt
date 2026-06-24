@@ -762,6 +762,7 @@ class GenerateViewModel(
     /**
      * Poll /agent-status until the agent session becomes inactive (completed/failed).
      * Updates [msgs] with progress messages from the agent.
+     * Also updates [vbookProgress] in [GenUiState] with structured data for the GPU-style panel.
      * @return true if the session was still active, false if no session was found
      */
     private suspend fun pollAgentProgress(bId: String, msgs: MutableList<String>): Boolean {
@@ -800,6 +801,10 @@ class GenerateViewModel(
                         }
                         _uiState.update { it.copy(importProgressMessages = msgs.toList()) }
                     }
+
+                    // ── Update structured VBook progress for the GPU-style panel ──
+                    updateVBookProgress(status)
+
                 } else {
                     consecutiveInactive++
                     Log.d(TAG, "[POLL] agent inactive (x$consecutiveInactive)")
@@ -817,6 +822,10 @@ class GenerateViewModel(
                             msgs[msgs.size - 1] = msgs.last().replace("⟳", "✓")
                             _uiState.update { it.copy(importProgressMessages = msgs.toList()) }
                         }
+                        // Mark VBook as completed
+                        _uiState.update { it.copy(
+                            vbookProgress = VBookProgress(stage = VBookStage.COMPLETED)
+                        )}
                     }
                 }
             } catch (e: Exception) {
@@ -828,6 +837,57 @@ class GenerateViewModel(
 
         Log.i(TAG, "[POLL] agent polling finished (consecutiveInactive=$consecutiveInactive)")
         return consecutiveInactive < maxInactive
+    }
+
+    /**
+     * Parse [AgentStatusResponse] into structured [VBookProgress] and store in [GenUiState].
+     * Extracts stage (ANALYZING / CREATING_SCENES), scene-within-window number,
+     * and total scenes from the progress message and response fields.
+     */
+    private fun updateVBookProgress(status: com.example.animastor.repository.AgentStatusResponse) {
+        val msg = status.progress_msg?.lowercase() ?: ""
+
+        // Determine stage from message content
+        val stage = when {
+            msg.contains("анализ") ||
+            msg.contains("analyzing") ||
+            msg.contains("extracting") ||
+            msg.contains("character") ||
+            msg.contains("location") ||
+            msg.contains("structure") ||
+            msg.contains("персонаж") ||
+            msg.contains("локац") -> VBookStage.ANALYZING
+
+            msg.contains("сцен") ||
+            msg.contains("создаю юниты") ||
+            msg.contains("окно") ||
+            msg.contains("scene") ||
+            msg.contains("unit") ||
+            msg.contains("visual") ||
+            msg.contains("юнит") ||
+            msg.contains("визуал") -> VBookStage.CREATING_SCENES
+
+            else -> VBookStage.ANALYZING
+        }
+
+        // Extract global scene number from "Создаю юниты для сцены 5..."
+        val sceneMatch = Regex("""сцены[\s]*?(\d+)""", RegexOption.IGNORE_CASE).find(status.progress_msg ?: "")
+        val globalScene = sceneMatch?.groupValues?.get(1)?.toIntOrNull() ?: 0
+
+        // Window-local scene index: (global - 1) % WINDOW_SIZE + 1 → 0-based
+        val windowSize = 3
+        val sceneInWindow = if (globalScene > 0) ((globalScene - 1) % windowSize) else 0
+        val totalInWindow = if (globalScene > 0) windowSize else 0
+
+        _uiState.update { it.copy(
+            vbookProgress = VBookProgress(
+                stage = stage,
+                sceneIndex = sceneInWindow,
+                scenesInWindow = totalInWindow,
+                totalScenes = status.total_scenes ?: status.created_scenes,
+                windowIndex = status.window_index ?: 0
+            )
+        )}
     }
 
     fun importText(text: String, title: String? = null, onResult: ((ImportTxtResponse) -> Unit)? = null) {
@@ -1072,7 +1132,9 @@ data class GenUiState(
     val mode: String = "full",
     val importStage: ImportStage? = null,
     val importProgress: Float = 0f,
-    val importProgressMessages: List<String> = emptyList()
+    val importProgressMessages: List<String> = emptyList(),
+    /** Structured VBook agent progress for the GPU-style panel */
+    val vbookProgress: VBookProgress? = null
 )
 
 enum class PlayerPhase {
@@ -1102,6 +1164,33 @@ enum class ImportStage(val label: String) {
             return entries.find { it.name.lowercase() == s.lowercase() } ?: COMPLETING
         }
     }
+}
+
+/**
+ * Structured progress for the VBook/AI agent pipeline.
+ * Displayed as a row in the GPU progress panel (alongside audio/image/video workers).
+ */
+data class VBookProgress(
+    val stage: VBookStage = VBookStage.IDLE,
+    /** 0-based scene index within the current window (e.g. 0, 1, 2) */
+    val sceneIndex: Int = 0,
+    /** Total scenes in the current window (typically 3) */
+    val scenesInWindow: Int = 0,
+    /** Total scenes found so far across all windows (can grow) */
+    val totalScenes: Int? = null,
+    /** Current window index (0-based) */
+    val windowIndex: Int = 0
+)
+
+enum class VBookStage {
+    /** No import in progress */
+    IDLE,
+    /** AI is analyzing text, extracting characters/locations */
+    ANALYZING,
+    /** AI is creating scenes and writing units */
+    CREATING_SCENES,
+    /** All windows processed */
+    COMPLETED
 }
 
 // ── Shared data types ────────────────────────────────────────────

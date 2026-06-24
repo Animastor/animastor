@@ -519,22 +519,46 @@ class MainActivity : AppCompatActivity() {
             }
 
             val activeGen = viewModel.activeGeneration.value
+            val uiState = viewModel.uiState.value
+            val vbookProg = uiState.vbookProgress
+            val hasVBook = vbookProg != null && vbookProg.stage != VBookStage.IDLE
+            val hasActiveWork = activeGen != null || hasVBook
 
-            if (activeGen != null) {
-                // ── Detect new generation start ─────────────────────────
-                // Clear completion-tracking maps so a fresh generation shows
-                // real progress instead of being immediately hidden by stale
-                // "permanently done" entries.
-                if (_lastActiveGeneration == null || _lastActiveGeneration != activeGen) {
-                    Log.i("MainActivity", "New generation detected (scope=${activeGen.scope}) — resetting completion tracking")
-                    workerCompletedAt.clear()
-                    _workerPermanentlyDone.clear()
-                    _coverEverIncomplete = false
-                    gpuProgressDoneAt = 0L
-                    lastReadyCount = -1
+            if (!hasActiveWork) {
+                // Keep showing completed VBook "Done" row for COMPLETED_WORKER_DISPLAY_MS
+                if (vbookProg?.stage == VBookStage.COMPLETED &&
+                    gpuProgressDoneAt > 0 &&
+                    System.currentTimeMillis() - gpuProgressDoneAt < COMPLETED_WORKER_DISPLAY_MS) {
+                    // Still showing the done row — keep the panel visible
+                    showGpuProgress(null, vbookProgress = vbookProg)
+                    delay(1_500)
+                    continue
                 }
-                _lastActiveGeneration = activeGen
+                if (binding.generationProgressContainer.visibility != View.GONE) {
+                    binding.generationProgressContainer.visibility = View.GONE
+                }
+                _lastActiveGeneration = null
+                _lastHasVBook = false
+                lastReadyCount = -1
+                delay(1_500)
+                continue
+            }
 
+            // ── Detect new work start ─────────────────────────
+            if ((activeGen != null && (_lastActiveGeneration == null || _lastActiveGeneration != activeGen)) ||
+                (hasVBook && !_lastHasVBook)) {
+                Log.i("MainActivity", "New work detected (gen=${activeGen != null} vbook=$hasVBook) — resetting completion tracking")
+                workerCompletedAt.clear()
+                _workerPermanentlyDone.clear()
+                _coverEverIncomplete = false
+                gpuProgressDoneAt = 0L
+                lastReadyCount = -1
+            }
+            _lastActiveGeneration = activeGen
+            _lastHasVBook = hasVBook
+
+            // ── Poll GPU assets (if GPU gen active) or just show VBook ──
+            if (activeGen != null) {
                 try {
                     val assets = viewModel.repository.getAssetsState(
                         bookId = bookId,
@@ -542,12 +566,9 @@ class MainActivity : AppCompatActivity() {
                         chapterId = activeGen.chapterId,
                         sceneId = activeGen.sceneId
                     )
-                    showGpuProgress(assets)
+                    showGpuProgress(assets, vbookProgress = if (hasVBook) vbookProg else null)
 
-                    // Detect stuck progress: if no ready count has changed for >120s
-                    // AND the backend reports no active scenes, auto-complete.
-                    // Using active_scenes (backend's source of truth) instead of
-                    // worker idle states to avoid false triggers between job transitions.
+                    // Detect stuck progress
                     val progressTotal = when (viewModel.currentProfile()) {
                         "audio_only" -> assets.scope_audio_ready
                         "image_only" -> assets.scope_image_ready
@@ -567,7 +588,7 @@ class MainActivity : AppCompatActivity() {
                             counts.active_scenes > 0
                         }.getOrDefault(true)
                         if (!backendActive) {
-                            Log.i("MainActivity", "Progress stuck at a=$assets.scope_audio_ready i=$assets.scope_image_ready v=$assets.scope_video_ready / total=$assets.scope_total with no active scenes — auto-completing")
+                            Log.i("MainActivity", "Progress stuck — auto-completing")
                             viewModel.onGenerationComplete()
                             refreshGenerateButton()
                             binding.generationProgressContainer.visibility = View.GONE
@@ -576,14 +597,16 @@ class MainActivity : AppCompatActivity() {
                     }
                 } catch (e: Exception) {
                     Log.w("MainActivity", "GPU progress poll failed: ${e.message}")
+                    // Still show VBook if available
+                    if (hasVBook) {
+                        showGpuProgress(null, vbookProgress = vbookProg)
+                    }
                 }
-            } else {
-                if (binding.generationProgressContainer.visibility != View.GONE) {
-                    binding.generationProgressContainer.visibility = View.GONE
-                }
-                _lastActiveGeneration = null
-                lastReadyCount = -1
+            } else if (hasVBook) {
+                // VBook only (no GPU gen) — show just the VBook row
+                showGpuProgress(null, vbookProgress = vbookProg)
             }
+
             delay(1_500)
         }
     }
@@ -611,6 +634,9 @@ class MainActivity : AppCompatActivity() {
     // Detect new-generation transitions so we can clear completion tracking.
     private var _lastActiveGeneration: GenerateViewModel.ActiveGeneration? = null
 
+    // Track VBook presence transitions
+    private var _lastHasVBook = false
+
     // Tracks whether cover was ever incomplete (actively being generated)
     // during the current generation session. If cover was already ready from
     // the start, we skip the row entirely — no fake "Done" display.
@@ -620,17 +646,15 @@ class MainActivity : AppCompatActivity() {
      * Render progress of all active workers simultaneously — no rotation.
      * Each worker gets its own row (name + count + percent + progress bar).
      * Completed workers auto-hide after 10s.
+     *
+     * @param assets GPU assets state, or null if only VBook progress to show
+     * @param vbookProgress structured VBook agent progress, or null
      */
-    private fun showGpuProgress(assets: com.example.animastor.repository.AssetsStateResponse) {
-        val total = assets.scope_total
-        val profile = viewModel.currentProfile()
+    private fun showGpuProgress(
+        assets: com.example.animastor.repository.AssetsStateResponse?,
+        vbookProgress: VBookProgress? = null
+    ) {
         val now = System.currentTimeMillis()
-
-        if (total <= 0 && assets.cover_iu_total <= 0) {
-            binding.generationProgressContainer.visibility = View.GONE
-            gpuProgressDoneAt = 0L
-            return
-        }
 
         // ── Build worker list ──
         data class Wrk(
@@ -639,89 +663,121 @@ class MainActivity : AppCompatActivity() {
             val ready: Int,
             val total: Int,
             val percent: Int,
-            val done: Boolean
+            val done: Boolean,
+            /** Optional string override for the count display (e.g. "анализ...") */
+            val countText: String? = null
         )
 
         val workers = mutableListOf<Wrk>()
 
-        fun add(type: String, label: String, ready: Int, total: Int) {
+        fun add(type: String, label: String, ready: Int, total: Int, countText: String? = null) {
             if (total <= 0) return
-            // Once a worker has been shown as Done for the full 10s and hidden,
-            // never re-add it — even if the backend still reports ready == total.
             if (type in _workerPermanentlyDone) return
             val done = ready >= total && ready > 0
             if (done) {
-                // Record completion time once
                 if (!workerCompletedAt.containsKey(type)) {
                     workerCompletedAt[type] = now
                 }
-                // Auto-hide after COMPLETED_WORKER_DISPLAY_MS (10s)
                 val completedAt = workerCompletedAt[type] ?: now
                 if (now - completedAt >= COMPLETED_WORKER_DISPLAY_MS) {
-                    // Timeout expired — permanently hide this worker so it
-                    // never re-appears on subsequent polls.
                     _workerPermanentlyDone.add(type)
                     workerCompletedAt.remove(type)
                     return
                 }
             }
             val pct = if (done) 100 else (ready * 100 / total).coerceIn(0, 99)
-            workers.add(Wrk(type, label, ready, total, pct, done))
+            workers.add(Wrk(type, label, ready, total, pct, done, countText))
         }
 
-        // Cover (uses IU counts) — only show when cover is actually being generated
-        // or just completed during this session. If cover was already ready from the
-        // start, skip entirely — no fake "Done" row for work that never happened.
-        if (assets.cover_iu_total > 0) {
-            if (assets.cover_iu_ready < assets.cover_iu_total) {
-                _coverEverIncomplete = true
-                add("cover", getString(R.string.progress_cover_generating), assets.cover_iu_ready, assets.cover_iu_total)
-            } else if (_coverEverIncomplete) {
-                // Cover just completed — show "Done" for standard duration
-                add("cover", getString(R.string.progress_cover_generating), assets.cover_iu_ready, assets.cover_iu_total)
+        // ── GPU workers (from assets) ──
+        if (assets != null) {
+            val total = assets.scope_total
+            val profile = viewModel.currentProfile()
+
+            // Cover
+            if (assets.cover_iu_total > 0) {
+                if (assets.cover_iu_ready < assets.cover_iu_total) {
+                    _coverEverIncomplete = true
+                    add("cover", getString(R.string.progress_cover_generating), assets.cover_iu_ready, assets.cover_iu_total)
+                } else if (_coverEverIncomplete) {
+                    add("cover", getString(R.string.progress_cover_generating), assets.cover_iu_ready, assets.cover_iu_total)
+                }
             }
-            // If cover was already ready and never incomplete this session: skip entirely
+
+            if (total > 0) {
+                val audioNeeded = profile == "audio_only" || profile == "storyboard" || profile == "full"
+                if (audioNeeded) {
+                    add("audio", getString(R.string.progress_label_audio), assets.scope_audio_ready, total)
+                }
+
+                val imageNeeded = profile == "image_only" || profile == "storyboard" || profile == "full"
+                if (imageNeeded) {
+                    val useIu = assets.scope_iu_total > 0
+                    add("image", getString(R.string.progress_label_image),
+                        if (useIu) assets.scope_iu_ready else assets.scope_image_ready,
+                        if (useIu) assets.scope_iu_total else total)
+                }
+
+                if (profile == "full" || profile == "video_only") {
+                    add("video", getString(R.string.progress_label_video), assets.scope_video_ready, total)
+                }
+            }
         }
 
-        if (total > 0) {
-            val audioNeeded = profile == "audio_only" || profile == "storyboard" || profile == "full"
-            if (audioNeeded) {
-                add("audio", getString(R.string.progress_label_audio), assets.scope_audio_ready, total)
-            }
-
-            val imageNeeded = profile == "image_only" || profile == "storyboard" || profile == "full"
-            if (imageNeeded) {
-                val useIu = assets.scope_iu_total > 0
-                add("image", getString(R.string.progress_label_image),
-                    if (useIu) assets.scope_iu_ready else assets.scope_image_ready,
-                    if (useIu) assets.scope_iu_total else total)
-            }
-
-            if (profile == "full" || profile == "video_only") {
-                add("video", getString(R.string.progress_label_video), assets.scope_video_ready, total)
+        // ── VBook worker ──
+        if (vbookProgress != null && vbookProgress.stage != VBookStage.IDLE) {
+            if (vbookProgress.stage == VBookStage.COMPLETED) {
+                // VBook done — show green "Done" for 10s
+                val completedAt = workerCompletedAt.getOrPut("vbook") { now }
+                if (now - completedAt < COMPLETED_WORKER_DISPLAY_MS && "vbook" !in _workerPermanentlyDone) {
+                    workers.add(Wrk("vbook", "📖 VBook", 1, 1, 100, done = true))
+                } else {
+                    _workerPermanentlyDone.add("vbook")
+                    workerCompletedAt.remove("vbook")
+                }
+            } else {
+                val label = "📖 VBook"
+                val ready: Int
+                val total: Int
+                val pct: Int
+                val countText: String
+                when (vbookProgress.stage) {
+                    VBookStage.ANALYZING -> {
+                        ready = 0; total = 1; pct = 0
+                        countText = getString(R.string.progress_vbook_analyzing)
+                    }
+                    VBookStage.CREATING_SCENES -> {
+                        ready = vbookProgress.sceneIndex + 1
+                        total = vbookProgress.scenesInWindow.coerceAtLeast(1)
+                        pct = (ready * 100 / total).coerceIn(0, 99)
+                        countText = getString(R.string.progress_vbook_scenes, ready, total)
+                    }
+                    else -> {
+                        ready = 0; total = 1; pct = 0
+                        countText = ""
+                    }
+                }
+                workers.add(Wrk("vbook", label, ready, total, pct, done = false, countText = countText))
             }
         }
 
-        // ── Recently completed workers that aren't re-added by add() ──
-        // (This handles the case where the asset state no longer reports
-        // this worker (e.g. scope changed), but we still want to show
-        // green "Done" for 10s.)
+        // ── Recently completed workers ──
         val activeTypes = workers.map { it.type }.toSet()
         val staleTypes = mutableListOf<String>()
         for ((type, completedAt) in workerCompletedAt) {
             if (type in _workerPermanentlyDone) continue
             if (now - completedAt >= COMPLETED_WORKER_DISPLAY_MS) {
-                // Move to permanent-done set so it never re-appears.
                 staleTypes.add(type)
                 _workerPermanentlyDone.add(type)
                 continue
             }
-            if (type in activeTypes) continue // already added by add() above
+            if (type in activeTypes) continue
             val label = when (type) {
                 "cover" -> getString(R.string.progress_cover_generating)
                 "audio" -> getString(R.string.progress_label_audio)
                 "image" -> getString(R.string.progress_label_image)
                 "video" -> getString(R.string.progress_label_video)
+                "vbook" -> "📖 VBook"
                 else -> getString(R.string.generation_done)
             }
             workers.add(Wrk(type, label, 100, 100, 100, done = true))
@@ -742,11 +798,12 @@ class MainActivity : AppCompatActivity() {
                 doneRow.visibility = View.VISIBLE
             } else {
                 binding.generationProgressContainer.visibility = View.GONE
-                // Full completion — clear tracking so next generation starts fresh
                 workerCompletedAt.clear()
                 _workerPermanentlyDone.clear()
-                viewModel.onGenerationComplete()
-                refreshGenerateButton()
+                if (assets != null) {
+                    viewModel.onGenerationComplete()
+                    refreshGenerateButton()
+                }
                 gpuProgressDoneAt = 0L
             }
             return
@@ -762,13 +819,11 @@ class MainActivity : AppCompatActivity() {
         val textColor = getColor(R.color.cinema_text_secondary)
         val mutedColor = getColor(R.color.cinema_text_disabled)
 
-        // Recycle existing rows, create new ones as needed, hide extras
         val childCount = container.childCount
         val maxIdx = childCount.coerceAtLeast(workers.size)
 
         for (i in 0 until maxIdx) {
             if (i >= workers.size) {
-                // Hide surplus rows
                 container.getChildAt(i).visibility = View.GONE
                 continue
             }
@@ -791,7 +846,7 @@ class MainActivity : AppCompatActivity() {
             if (worker.done) {
                 nameView.text = getString(R.string.generation_done) + " — " + worker.label
                 nameView.setTextColor(greenColor)
-                countView.text = "${worker.ready}/${worker.total}"
+                countView.text = worker.countText ?: "${worker.ready}/${worker.total}"
                 countView.setTextColor(greenColor)
                 pctView.text = "100%"
                 pctView.setTextColor(greenColor)
@@ -800,7 +855,7 @@ class MainActivity : AppCompatActivity() {
             } else {
                 nameView.text = worker.label
                 nameView.setTextColor(textColor)
-                countView.text = "${worker.ready}/${worker.total}"
+                countView.text = worker.countText ?: "${worker.ready}/${worker.total}"
                 countView.setTextColor(mutedColor)
                 pctView.text = "${worker.percent}%"
                 pctView.setTextColor(accentColor)
