@@ -51,7 +51,8 @@ Regenerate → POST /api/v1/book/:bookId/regenerate
 
 | Эндпоинт | Файл | Роль |
 |---|---|---|
-| `PUT /api/v1/book/:bookId` | `book-routes.cjs` | Сохранение отредактированной книги на диск |
+| `PUT /api/v1/book/:bookId` | `book-routes.cjs` | Сохранение отредактированной книги на диск (полная замена) |
+| `PATCH /api/v1/book/:bookId/scene/:chapterId/:sceneId` | `book-routes.cjs` | Точечное обновление полей юнита (Mode A) или полная замена сцены (Mode B) без round-trip потери данных |
 | `POST /api/v1/book/:bookId/regenerate` | `book-routes.cjs` | Запуск перегенерации |
 
 ### 2.3 Core Services
@@ -499,6 +500,11 @@ animastor:runtime:active-video
 animastor:concurrent-audio
 animastor:concurrent-image
 animastor:concurrent-video
+
+# Per-unit progress (Redis counter — не filesystem PNG count)
+animastor:iu-progress:<bookId>:<ch>:<sc>:image   # Счётчик подтверждённых GPU-завершений IU (INCR, TTL=14400s).
+                                                  # Используется в /assets-state вместо fs.readdirSync(),
+                                                  # чтобы stale PNG от предыдущей генерации не искажали прогресс.
 
 # Per-unit regeneration (GPU dedup + in-flight)
 animastor:job:<job_id>                     # GPU hub dedup key (SET NX EX 3600) — очищается перед dispatch dirty unit

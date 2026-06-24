@@ -348,6 +348,11 @@ async function recoverMissingRedisChunks(buildId, bookId) {
             const oldBook = book.loadBook(bookId);
             if (!oldBook) return res.status(404).json({ error: 'Book not found' });
 
+            // SNAPSHOT: deep-clone before any mutations so computeBookDiff
+            // can accurately detect what changed (PATCH mutates oldBook in-place,
+            // making a post-hoc comparison against itself return empty).
+            const bookBeforePatch = JSON.parse(JSON.stringify(oldBook));
+
             // Find scene + chapter
             let targetScene = null;
             let targetChapter = null;
@@ -401,7 +406,9 @@ async function recoverMissingRedisChunks(buildId, bookId) {
             book.saveBookBundle(oldBook, null);
 
             const newBook = book.loadBook(bookId) || oldBook;
-            const diff = bookDiff.computeBookDiff(oldBook, newBook);
+            // Compare against the pre-mutation snapshot — always accurate
+            // for both Mode A (targeted unit field) and Mode B (full scene).
+            const diff = bookDiff.computeBookDiff(bookBeforePatch, newBook);
 
             if (diff.dirty_scenes.length > 0) {
                 try {
@@ -417,14 +424,6 @@ async function recoverMissingRedisChunks(buildId, bookId) {
                 } catch (syncErr) {
                     console.warn(`[PATCH BOOK] PG reconcile/bump failed: ${syncErr.message}`);
                 }
-            }
-
-            // Mode A: force-set dirty unit ID — diff is useless here because
-            // saveBookBundle(oldBook) + loadBook() returns the same data,
-            // so computeBookDiff always returns empty for unit field patches.
-            if (unit_id) {
-                await sceneAssetsRepo.setDirtyUnitIds(bookId, chapterId, sceneId, [unit_id]);
-                log(`[DIRTY-UNITS] ${bookId}/${chapterId}/${sceneId}: ${[unit_id].length} dirty unit(s): ${[unit_id].join(', ')}`);
             }
 
             return res.json({

@@ -74,7 +74,7 @@ module.exports = function(redis, config, deps) {
                 try {
                     const progKey = `animastor:iu-progress:${bookId}:${chapterId}:${sceneId}:image`;
                     await redis.incr(progKey);
-                    await redis.expire(progKey, 7200);
+                    await redis.expire(progKey, 14400);
                 } catch (progErr) {
                     console.warn(`⚠️ Failed to increment IU progress counter: ${progErr.message}`);
                 }

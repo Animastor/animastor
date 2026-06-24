@@ -123,11 +123,6 @@ function probeIUImage(iuId, buildId, OUTPUT_DIR) {
     }
 }
 
-function shouldGenerateIUImage(iuId, buildId, OUTPUT_DIR) {
-    const { image } = probeIUImage(iuId, buildId, OUTPUT_DIR);
-    return !image;
-}
-
 // ======================================================
 // SCENE IMAGE HELPERS
 // ======================================================
@@ -574,13 +569,11 @@ async function generateSceneIUImages(redis, sceneData, loadedBook, buildId, book
     const fullText = sceneData.payload?.audio?.full_text || '';
 
     let sentCount = 0;
-    let cacheHitCount = 0;
     for (let uIdx = 0; uIdx < units.length; uIdx++) {
         const result = await processSingleIU(redis, units[uIdx], uIdx, sceneData, loadedBook, buildId, bookId, chapterId, sceneId, sceneDuration, fullText, dirtyUnitIds);
         if (result.sent) sentCount++;
-        if (result.cached) cacheHitCount++;
     }
-    return { sentCount, cacheHitCount, total: units.length };
+    return { sentCount, total: units.length };
 }
 
 // ======================================================
@@ -642,7 +635,6 @@ module.exports = {
     saveIURegistry,
     getIURegistry,
     probeIUImage,
-    shouldGenerateIUImage,
     resolveCanonicalSceneImage,
     collectSceneUnits,
     buildIUImageWorkflow,
