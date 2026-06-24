@@ -127,7 +127,7 @@ interface BackendApi {
         @Path("bookId") bookId: String,
         @Path("chapterId") chapterId: String,
         @Path("sceneId") sceneId: String,
-        @Body body: Map<String, @JvmSuppressWildcards Any>
+        @Body body: Map<String, @JvmSuppressWildcards Any?>
     ): GenericResponse
 
     @Streaming

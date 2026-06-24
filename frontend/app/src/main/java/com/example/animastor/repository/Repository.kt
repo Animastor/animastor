@@ -234,7 +234,7 @@ class Repository(
         api.updateBook(bookId, bookData)
     }
 
-    suspend fun patchScene(bookId: String, chapterId: String, sceneId: String, body: Map<String, @JvmSuppressWildcards Any>) {
+    suspend fun patchScene(bookId: String, chapterId: String, sceneId: String, body: Map<String, @JvmSuppressWildcards Any?>) {
         Log.d("Repo", "patchScene: $bookId/$chapterId/$sceneId keys=${body.keys}")
         api.patchScene(bookId, chapterId, sceneId, body)
     }

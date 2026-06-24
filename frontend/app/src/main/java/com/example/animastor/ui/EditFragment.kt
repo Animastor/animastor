@@ -855,7 +855,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                     val chapterTitleValue = fieldValues["chapter_title"]?.takeIf { it.isNotBlank() }
                     var modifiedScene: Scene? = null
 
-                    if (onlyUnitFields && hasUnit) {
+                    if (onlyUnitFields && hasUnit && sceneUnits != null) {
                         // Mode A: send only the changed unit fields
                         val currentUnit = sceneUnits[pos.unitIndex]
                         for ((key, value) in fieldValues) {
