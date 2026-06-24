@@ -420,10 +420,14 @@ function getWindowText(sourceText, existingChars, existingLocs, windowIndex, sta
 
     const chTitle = chapters[chIdx]?.title || null;
 
+    // Inject [ГЛАВА: TITLE] markers for ALL-CAPS chapter headings without
+    // explicit "Глава"/"Chapter" — so the AI always sees chapter boundaries
+    const aiText = lazyBook.injectChapterMarkers(windowText.trim());
+
     console.log(`[WINDOW] getWindowText: startOffset=${startOffset}, skipLen=${skipLen}, actualStart=${actualStart}, endPos=${endPos}, newOffset=${newOffset}, chIdx=${chIdx}, chTitle="${chTitle}", textLen=${windowText.trim().length}, sourceLen=${sourceText.length}`);
 
     return {
-        text: windowText.trim(),
+        text: aiText,
         chapterIndex: chIdx,
         remainingText: remaining,
         fullChapter: windowText,
