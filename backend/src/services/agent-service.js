@@ -442,26 +442,87 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
     let characters = existingChars || [];
     let locations = existingLocs || [];
 
-    // Full extraction only for first window (~4000 chars reconnaissance)
-    // Subsequent windows reuse existing set — no extra AI cost
-    if (!existingChars || existingChars.length === 0) {
-        characters = await stepExtractCharacters(sessionId, text, stepIndex, _progress);
-        if (!characters || characters.length === 0) {
-            console.warn('[AGENT] No characters extracted, continuing with empty set');
-            characters = [{ id: 'unknown', name: 'Unknown', role: 'minor', description: 'Unidentified character' }];
-        }
+    // Reconnaissance: extract chars/locs from each ~4000-char window
+    // New characters added, existing ones enriched with more detail
+    const newCharacters = await stepExtractCharacters(sessionId, text, stepIndex, _progress);
+    if (!newCharacters || newCharacters.length === 0) {
+        console.warn('[AGENT] No characters extracted from window, keeping existing set');
+        characters = existingChars.length > 0
+            ? existingChars
+            : [{ id: 'unknown', name: 'Unknown', role: 'minor', description: 'Unidentified character' }];
     } else {
-        console.log(`[AGENT] Skipping characters step: ${existingChars.length} already known`);
+        const mergedMap = new Map((existingChars || []).map(c => [c.id, c]));
+        let enriched = 0;
+        let added = 0;
+        for (const ch of newCharacters) {
+            if (mergedMap.has(ch.id)) {
+                // Enrich existing character with new info
+                const existing = mergedMap.get(ch.id);
+                const enrichedCh = { ...existing };
+                if (ch.description && ch.description.length > (existing.description || '').length) {
+                    enrichedCh.description = existing.description
+                        ? existing.description + ' ' + ch.description
+                        : ch.description;
+                }
+                if (ch.appearance && ch.appearance.length > (existing.appearance || '').length) {
+                    enrichedCh.appearance = existing.appearance
+                        ? existing.appearance + ' ' + ch.appearance
+                        : ch.appearance;
+                }
+                if (ch.traits && Array.isArray(ch.traits)) {
+                    const existingTraits = new Set(existing.traits || []);
+                    for (const t of ch.traits) {
+                        if (!existingTraits.has(t)) {
+                            enrichedCh.traits = enrichedCh.traits || [];
+                            enrichedCh.traits.push(t);
+                            existingTraits.add(t);
+                        }
+                    }
+                }
+                if (ch.voice && ch.voice.length > (existing.voice || '').length) {
+                    enrichedCh.voice = ch.voice;
+                }
+                mergedMap.set(ch.id, enrichedCh);
+                enriched++;
+            } else {
+                mergedMap.set(ch.id, ch);
+                added++;
+            }
+        }
+        characters = Array.from(mergedMap.values());
+        console.log(`[AGENT] Characters: ${existingChars.length} existing + ${added} new + ${enriched} enriched = ${characters.length} total`);
     }
 
-    if (!existingLocs || existingLocs.length === 0) {
-        locations = await stepExtractLocations(sessionId, text, characters, stepIndex, _progress);
-        if (!locations || locations.length === 0) {
-            console.warn('[AGENT] No locations extracted, continuing with empty set');
-            locations = [{ id: 'unknown', name: 'Unknown', type: 'outdoor', description: 'Unspecified location' }];
-        }
+    // Always extract locations from each window, merge with enrichment
+    const newLocations = await stepExtractLocations(sessionId, text, characters, stepIndex, _progress);
+    if (!newLocations || newLocations.length === 0) {
+        console.warn('[AGENT] No locations extracted from window, keeping existing set');
+        locations = existingLocs.length > 0
+            ? existingLocs
+            : [{ id: 'unknown', name: 'Unknown', type: 'outdoor', description: 'Unspecified location' }];
     } else {
-        console.log(`[AGENT] Skipping locations step: ${existingLocs.length} already known`);
+        const mergedMap = new Map((existingLocs || []).map(l => [l.id, l]));
+        let enriched = 0;
+        let added = 0;
+        for (const loc of newLocations) {
+            if (mergedMap.has(loc.id)) {
+                const existing = mergedMap.get(loc.id);
+                if (loc.description && loc.description.length > (existing.description || '').length) {
+                    mergedMap.set(loc.id, {
+                        ...existing,
+                        description: existing.description
+                            ? existing.description + ' ' + loc.description
+                            : loc.description,
+                    });
+                    enriched++;
+                }
+            } else {
+                mergedMap.set(loc.id, loc);
+                added++;
+            }
+        }
+        locations = Array.from(mergedMap.values());
+        console.log(`[AGENT] Locations: ${existingLocs.length} existing + ${added} new + ${enriched} enriched = ${locations.length} total`);
     }
 
     const scenes = await stepCreateScenes(sessionId, text, characters, locations, stepIndex, _progress);
@@ -722,20 +783,7 @@ async function bootstrapNextWindow(bookId, progress) {
             structure: structure,
         });
 
-        // Merge characters/locations across windows (runPipeline returns only window-specific)
-        const mergedChars = [...existingChars];
-        const existingCharIds = new Set(existingChars.map(c => c.id));
-        for (const ch of (result.characters || [])) {
-            if (!existingCharIds.has(ch.id)) {
-                mergedChars.push(ch);
-                existingCharIds.add(ch.id);
-            }
-        }
-        const mergedLocsMap = {};
-        for (const loc of existingLocs) mergedLocsMap[loc.id] = loc;
-        for (const loc of (result.locations || [])) mergedLocsMap[loc.id] = loc;
-        const mergedLocs = Object.values(mergedLocsMap);
-
+        // runPipeline returns already-merged set (chars enriched, new added)
         const updatedWindowData = {
             window_index: nextWindowIndex,
             chapter_title: windowInfo.chapterTitle,
@@ -745,8 +793,8 @@ async function bootstrapNextWindow(bookId, progress) {
             remaining_scenes: extraScenes,
             remaining_text: windowInfo.remainingText,
             currentOffset: windowInfo.currentOffset,
-            all_characters: mergedChars,
-            all_locations: mergedLocs,
+            all_characters: result.characters,
+            all_locations: result.locations,
         };
 
         const allDone = extraScenes.length === 0 && !windowInfo.remainingText;
