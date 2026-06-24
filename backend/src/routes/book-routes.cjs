@@ -155,11 +155,55 @@ async function recoverMissingRedisChunks(buildId, bookId) {
             // The frontend's PUT request typically only sends chapter/scene
             // data. Without this merge, characters and bible are overwritten
             // with empty/null, permanently losing character passports.
+            //
+            // Additionally, the frontend's CharDef model does NOT include
+            // the `passport` field, so when the frontend round-trips
+            // character data, passport fields (base_appearance,
+            // detailed_appearance, clothing_base, clothing_details) are
+            // silently dropped. We detect this case and do a per-character
+            // deep merge of passport data from the old book.
             if (oldBook) {
-                if (!updatedBookData.characters || (Array.isArray(updatedBookData.characters) && updatedBookData.characters.length === 0)) {
-                    if (oldBook.characters && oldBook.characters.length > 0) {
-                        updatedBookData.characters = oldBook.characters;
-                        log(`[UPDATE BOOK] ${bookId}: preserved ${oldBook.characters.length} character passports from existing book`);
+                const oldChars = oldBook.characters;
+                if (updatedBookData.characters && Array.isArray(updatedBookData.characters)) {
+                    if (updatedBookData.characters.length === 0 && oldChars && oldChars.length > 0) {
+                        // Empty array: full replace with old book's characters
+                        updatedBookData.characters = oldChars;
+                        log(`[UPDATE BOOK] ${bookId}: preserved ${oldChars.length} character passports from existing book (empty array)`);
+                    } else if (oldChars && oldChars.length > 0) {
+                        // Non-empty: deep-merge passport data per character
+                        let mergedCount = 0;
+                        const mergedChars = updatedBookData.characters.map(incomingChar => {
+                            const oldChar = oldChars.find(c => c && c.id === incomingChar.id);
+                            if (oldChar && oldChar.passport) {
+                                const ip = incomingChar.passport;
+                                const hasPassportData = ip && (
+                                    ip.base_appearance ||
+                                    ip.detailed_appearance ||
+                                    ip.clothing_base ||
+                                    ip.clothing_details
+                                );
+                                if (!hasPassportData) {
+                                    mergedCount++;
+                                    return { ...incomingChar, passport: oldChar.passport };
+                                }
+                            }
+                            return incomingChar;
+                        });
+                        // Add any characters from old book missing in incoming
+                        for (const oldChar of oldChars) {
+                            if (oldChar && !mergedChars.find(c => c && c.id === oldChar.id)) {
+                                mergedChars.push(oldChar);
+                            }
+                        }
+                        if (mergedCount > 0 || mergedChars.length > updatedBookData.characters.length) {
+                            updatedBookData.characters = mergedChars;
+                            log(`[UPDATE BOOK] ${bookId}: deep-merged passport data for ${mergedCount} characters, added ${mergedChars.length - updatedBookData.characters.length} missing`);
+                        }
+                    }
+                } else if (!updatedBookData.characters) {
+                    if (oldChars && oldChars.length > 0) {
+                        updatedBookData.characters = oldChars;
+                        log(`[UPDATE BOOK] ${bookId}: preserved ${oldChars.length} character passports from existing book (null)`);
                     }
                 }
                 if (!updatedBookData.bible || (typeof updatedBookData.bible === 'object' && Object.keys(updatedBookData.bible).length === 0)) {
@@ -231,6 +275,160 @@ async function recoverMissingRedisChunks(buildId, bookId) {
             return res.json({ saved: true, book_id: bookId });
         } catch (err) {
             console.error('[UPDATE BOOK] Error:', err.message);
+            return res.status(500).json({ error: err.message });
+        }
+    });
+
+    // ======================================================
+    // PATCH BOOK DATA (targeted update — no round-trip loss)
+    // ======================================================
+    // Unlike PUT which sends the entire book (causing field loss when
+    // frontend models drop unknown fields like character passports),
+    // PATCH sends only what changed. Two modes:
+    //
+    // Mode A — Unit field patch (most common for editing visual.prompt):
+    //   Body: { "unit_id": "iu-xxx", "visual.prompt": "...", "text": "..." }
+    //   Applies fields directly to the unit. No key mapping needed —
+    //   unit fields are exact dot-paths (visual.prompt, visual.negative, etc.)
+    //
+    // Mode B — Full scene replacement (when scene-level fields change):
+    //   Body: { "scene": { ... full scene object ... } }
+    //   Replaces the scene entirely. Frontend builds it via applyFieldValues().
+    //
+    // Both modes support optional "chapter_title" for chapter-level changes.
+
+    function setDeep(obj, path, value) {
+        const keys = path.split('.');
+        let current = obj;
+        for (let i = 0; i < keys.length - 1; i++) {
+            if (current[keys[i]] === undefined || current[keys[i]] === null) {
+                current[keys[i]] = {};
+            }
+            current = current[keys[i]];
+        }
+        current[keys[keys.length - 1]] = value;
+    }
+
+    function findUnitInScene(scene, unitId) {
+        const search = (units) => {
+            for (const u of units) {
+                if (u && u.id === unitId) return u;
+            }
+            return null;
+        };
+        if (scene.units) {
+            const found = search(scene.units);
+            if (found) return found;
+        }
+        if (scene.dialogue_blocks) {
+            for (const block of scene.dialogue_blocks) {
+                if (block.units) {
+                    const found = search(block.units);
+                    if (found) return found;
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * PATCH /api/v1/book/:bookId/scene/:chapterId/:sceneId
+     *
+     * Two modes (see above for details).
+     */
+    app.patch('/api/v1/book/:bookId/scene/:chapterId/:sceneId', async (req, res) => {
+        try {
+            const { bookId, chapterId, sceneId } = req.params;
+            const { scene: incomingScene, unit_id, chapter_title } = req.body;
+
+            if (!incomingScene && !unit_id) {
+                return res.status(400).json({ error: 'Provide either "scene" (full replace) or "unit_id" with fields (targeted patch)' });
+            }
+
+            const oldBook = book.loadBook(bookId);
+            if (!oldBook) return res.status(404).json({ error: 'Book not found' });
+
+            // Find scene + chapter
+            let targetScene = null;
+            let targetChapter = null;
+            let sceneIndex = -1;
+            for (const ch of oldBook.chapters) {
+                if (ch.chapter === chapterId && ch.scenes) {
+                    for (let i = 0; i < ch.scenes.length; i++) {
+                        if (ch.scenes[i].scene_id === sceneId) {
+                            targetScene = ch.scenes[i];
+                            targetChapter = ch;
+                            sceneIndex = i;
+                            break;
+                        }
+                    }
+                }
+                if (targetScene) break;
+            }
+
+            if (!targetScene) {
+                return res.status(404).json({ error: 'Scene not found in book' });
+            }
+
+            if (unit_id) {
+                // Mode A: targeted unit field patch
+                const unit = findUnitInScene(targetScene, unit_id);
+                if (!unit) {
+                    return res.status(404).json({ error: `Unit ${unit_id} not found in scene` });
+                }
+                const unitFields = {};
+                for (const [key, value] of Object.entries(req.body)) {
+                    if (key === 'unit_id' || key === 'chapter_title' || key === 'scene') continue;
+                    unitFields[key] = value;
+                }
+                if (Object.keys(unitFields).length === 0) {
+                    return res.status(400).json({ error: 'No unit fields to update' });
+                }
+                for (const [key, value] of Object.entries(unitFields)) {
+                    setDeep(unit, key, value);
+                }
+                log(`[PATCH BOOK] ${bookId}/${chapterId}/${sceneId}/${unit_id}: ${Object.keys(unitFields).join(', ')}`);
+            } else {
+                // Mode B: full scene replacement
+                oldBook.chapters.find(ch => ch.chapter === chapterId).scenes[sceneIndex] = incomingScene;
+                log(`[PATCH BOOK] ${bookId}/${chapterId}/${sceneId}: full scene replaced`);
+            }
+
+            if (chapter_title !== undefined && chapter_title !== null && targetChapter) {
+                targetChapter.chapter_title = chapter_title;
+            }
+
+            book.saveBookBundle(oldBook, null);
+
+            const newBook = book.loadBook(bookId) || oldBook;
+            const diff = bookDiff.computeBookDiff(oldBook, newBook);
+
+            if (diff.dirty_scenes.length > 0) {
+                try {
+                    await storage.bookSync.reconcileFromDiff(bookId, diff.dirty_scenes, newBook);
+                    await sceneAssetsRepo.bumpSceneVersions(bookId, diff.dirty_scenes);
+
+                    for (const ds of diff.dirty_scenes) {
+                        const ids = ds.changes?.units?.unit_ids;
+                        if (ids && Array.isArray(ids) && ids.length > 0) {
+                            await sceneAssetsRepo.setDirtyUnitIds(bookId, ds.chapter_id, ds.scene_id, ids);
+                        }
+                    }
+                } catch (syncErr) {
+                    console.warn(`[PATCH BOOK] PG reconcile/bump failed: ${syncErr.message}`);
+                }
+            }
+
+            return res.json({
+                saved: true,
+                book_id: bookId,
+                chapter_id: chapterId,
+                scene_id: sceneId,
+                unit_id: unit_id || null,
+                dirty_scenes: diff.dirty_scenes.length,
+            });
+        } catch (err) {
+            console.error('[PATCH BOOK] Error:', err.message);
             return res.status(500).json({ error: err.message });
         }
     });
@@ -1687,6 +1885,29 @@ async function recoverMissingRedisChunks(buildId, bookId) {
                         });
                         coverNeedsGeneration = true;
                         log(`[REGENERATE] ${bookId}: Cover prepended to dirty scenes (layers=${coverLayers.join(',')})`);
+                    }
+                }
+            }
+
+            // Pre-delete stale PNGs for known dirty units BEFORE the scheduler
+            // picks them up. This ensures the first assets-state poll correctly
+            // reflects what needs regeneration, avoiding a 100% → drop pattern.
+            for (const ds of filteredDirty) {
+                const unitIds = ds.changes?.units?.unit_ids;
+                if (unitIds && Array.isArray(unitIds) && unitIds.length > 0) {
+                    const buildDir = path.join(config.OUTPUT_DIR, buildId);
+                    if (fs.existsSync(buildDir)) {
+                        for (const uid of unitIds) {
+                            const pngPath = path.join(buildDir, `${bookId}_${ds.chapter_id}_${ds.scene_id}_${uid}.png`);
+                            try {
+                                if (fs.existsSync(pngPath)) {
+                                    fs.unlinkSync(pngPath);
+                                    log(`[REGENERATE-PRE-DELETE] Deleted stale PNG: ${pngPath}`);
+                                }
+                            } catch (delErr) {
+                                console.warn(`[REGENERATE-PRE-DELETE] Failed to delete ${pngPath}: ${delErr.message}`);
+                            }
+                        }
                     }
                 }
             }

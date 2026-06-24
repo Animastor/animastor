@@ -122,6 +122,14 @@ interface BackendApi {
         @Body bookData: BookData
     )
 
+    @PATCH("/api/v1/book/{bookId}/scene/{chapterId}/{sceneId}")
+    suspend fun patchScene(
+        @Path("bookId") bookId: String,
+        @Path("chapterId") chapterId: String,
+        @Path("sceneId") sceneId: String,
+        @Body body: Map<String, @JvmSuppressWildcards Any>
+    ): GenericResponse
+
     @Streaming
     @GET("/api/v1/book/{bookId}/export")
     suspend fun exportBook(

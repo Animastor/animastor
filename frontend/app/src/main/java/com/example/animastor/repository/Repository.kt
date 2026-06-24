@@ -234,6 +234,11 @@ class Repository(
         api.updateBook(bookId, bookData)
     }
 
+    suspend fun patchScene(bookId: String, chapterId: String, sceneId: String, body: Map<String, @JvmSuppressWildcards Any>) {
+        Log.d("Repo", "patchScene: $bookId/$chapterId/$sceneId keys=${body.keys}")
+        api.patchScene(bookId, chapterId, sceneId, body)
+    }
+
     suspend fun chatWithAiFull(request: AiChatRequest): AiChatResponse {
         Log.d("Repo", "chatWithAiFull: ${request.messages.size} messages")
         val response = api.chatWithAi(request)

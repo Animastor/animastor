@@ -339,9 +339,27 @@ async function setDirtyUnitIds(bookId, chapterId, sceneId, unitIds) {
     const ids = (unitIds && Array.isArray(unitIds) && unitIds.length > 0) ? unitIds : [];
     // First ensure the row exists (UPSERT — no-op if already present)
     await ensureSceneRow(bookId, chapterId, sceneId);
+    if (ids.length === 0) {
+        // Empty array = no granular info; set as-is (backward compat)
+        await query(`
+            UPDATE scenes
+            SET dirty_unit_ids = '{}', updated_at = EXTRACT(EPOCH FROM NOW())::bigint
+            WHERE book_id = $1 AND chapter_id = $2 AND scene_id = $3
+        `, [bookId, chapterId, sceneId]);
+        return;
+    }
+    // Merge with existing dirty_unit_ids (UNION + DISTINCT) instead of replacing.
+    // This prevents losing previously saved dirty units when the user saves
+    // multiple units in the same scene sequentially.
     await query(`
         UPDATE scenes
-        SET dirty_unit_ids = $4, updated_at = EXTRACT(EPOCH FROM NOW())::bigint
+        SET dirty_unit_ids = (
+            SELECT array_agg(DISTINCT x) FROM (
+                SELECT unnest($4::text[])
+                UNION
+                SELECT unnest(COALESCE(dirty_unit_ids, '{}'::text[]))
+            ) AS t(x)
+        ), updated_at = EXTRACT(EPOCH FROM NOW())::bigint
         WHERE book_id = $1 AND chapter_id = $2 AND scene_id = $3
     `, [bookId, chapterId, sceneId, ids]);
 }

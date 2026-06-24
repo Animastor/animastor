@@ -670,14 +670,6 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         binding?.saveButton?.text = "${getString(R.string.edit_save)} *"
     }
 
-    private fun setSaveLoading(loading: Boolean) {
-        binding?.saveButton?.apply {
-            text = if (loading) getString(R.string.edit_loading) else getString(R.string.edit_save)
-            isEnabled = !loading
-            alpha = if (loading) 0.5f else 1.0f
-        }
-    }
-
     private fun saveButtonSetError(message: String) {
         binding?.saveButton?.apply {
             text = getString(R.string.edit_save)
@@ -815,6 +807,10 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         return modified
     }
 
+    companion object {
+        private val UNIT_ONLY_KEYS = setOf("id", "type", "text", "visual.prompt", "visual.negative")
+    }
+
     private fun saveToBackend() {
         try {
             val bd = bookData
@@ -829,39 +825,72 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                 return
             }
 
-            binding?.saveButton?.apply {
-                text = getString(R.string.edit_saving)
-                isEnabled = false
-                alpha = 0.5f
+            val ch = chapters.getOrNull(currentChIndex) ?: run {
+                showSaveError("No chapter data")
+                return
             }
+            val sc = currentScene() ?: run {
+                showSaveError("No scene data")
+                return
+            }
+            val chapterId = ch.chapter ?: run {
+                showSaveError("No chapter ID")
+                return
+            }
+            val sceneId = sc.scene_id ?: run {
+                showSaveError("No scene ID")
+                return
+            }
+
+            val pos = SharedPositionManager.current.value
+            val sceneUnits = sc.units
+            val hasUnit = sceneUnits != null && pos.unitIndex < sceneUnits.size
+            val onlyUnitFields = hasUnit && fieldValues.keys.all { it in UNIT_ONLY_KEYS || it == "chapter_title" }
+
+            setSaveLoading(true)
 
             lifecycleScope.launch {
                 try {
-                    val sc = currentScene()
-                    if (sc == null) {
-                        showSaveError("No scene data")
-                        return@launch
-                    }
-                    val modifiedScene = applyFieldValues(sc, fieldValues)
-                    val modifiedChapters = chapters.toMutableList()
-                    val ch = chapters[currentChIndex]
+                    val patchBody = mutableMapOf<String, Any?>()
                     val chapterTitleValue = fieldValues["chapter_title"]?.takeIf { it.isNotBlank() }
+                    var modifiedScene: Scene? = null
+
+                    if (onlyUnitFields && hasUnit) {
+                        // Mode A: send only the changed unit fields
+                        val currentUnit = sceneUnits[pos.unitIndex]
+                        for ((key, value) in fieldValues) {
+                            if (key in UNIT_ONLY_KEYS) {
+                                patchBody[key] = value
+                            }
+                        }
+                        patchBody["unit_id"] = currentUnit.id
+                        modifiedScene = applyFieldValues(sc, fieldValues)
+                    } else {
+                        // Mode B: send full modified scene
+                        modifiedScene = applyFieldValues(sc, fieldValues)
+                        patchBody["scene"] = modifiedScene
+                    }
+
+                    if (chapterTitleValue != null) {
+                        patchBody["chapter_title"] = chapterTitleValue
+                    }
+
+                    viewModel.repository.patchScene(bookId, chapterId, sceneId, patchBody)
+
+                    // Apply changes locally for UI consistency
+                    val actualScene = modifiedScene ?: applyFieldValues(sc, fieldValues)
+                    val modifiedChapters = chapters.toMutableList()
                     val modifiedCh = if (chapterTitleValue != null || fieldValues.containsKey("chapter_title"))
                         ch.copy(chapter_title = chapterTitleValue) else ch
                     val scenes = modifiedCh.scenes?.toMutableList() ?: return@launch
-                    scenes[currentScIndex] = modifiedScene
+                    scenes[currentScIndex] = actualScene
                     modifiedChapters[currentChIndex] = modifiedCh.copy(scenes = scenes.toList())
                     val modifiedBookData = bd.copy(chapters = modifiedChapters.toList())
 
-                    viewModel.repository.updateBook(bookId, modifiedBookData)
                     bookData = modifiedBookData
                     chapters = modifiedBookData.chapters ?: emptyList()
                     viewModel.markUnsavedChanges()
-                    binding?.saveButton?.apply {
-                        text = getString(R.string.edit_save)
-                        isEnabled = true
-                        alpha = 1.0f
-                    }
+                    setSaveLoading(false)
                     errorText?.visibility = View.GONE
                 } catch (e: Exception) {
                     Log.e("EditFragment", "save failed", e)
@@ -871,6 +900,14 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         } catch (e: Exception) {
             Log.e("EditFragment", "saveToBackend exception", e)
             showSaveError("${e::class.simpleName}: ${e.message ?: "unknown"}")
+        }
+    }
+
+    private fun setSaveLoading(loading: Boolean) {
+        binding?.saveButton?.apply {
+            text = if (loading) getString(R.string.edit_saving) else getString(R.string.edit_save)
+            isEnabled = !loading
+            alpha = if (loading) 0.5f else 1.0f
         }
     }
 
