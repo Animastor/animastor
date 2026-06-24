@@ -12,8 +12,12 @@ import kotlinx.coroutines.launch
  * the next-window generation when the user navigates to one of the last 3
  * units of the last scene in a window (WINDOW_SIZE = 3 scenes per window).
  *
- * Works from any screen — Edit, Navigate, Play — because it observes the
- * shared position flow via [SharedPositionManager.current].
+ * Works from any screen — Edit, Navigate, Play.
+ *
+ * **Important**: Only triggers on explicit `isLastOfWindow` boundaries
+ * (every 3rd scene). Does NOT trigger on `isLastChapterScene` alone,
+ * which previously caused infinite re-triggering during auto-playback.
+ * A cooldown prevents rapid re-triggers.
  */
 class WindowTriggerManager(
     private val repository: Repository,
@@ -23,16 +27,24 @@ class WindowTriggerManager(
     companion object {
         private const val TAG = "WindowTrigger"
         private const val WINDOW_SIZE = 3
+        private const val COOLDOWN_MS = 60_000L // 1 min between triggers
     }
 
     private var collectionJob: Job? = null
     private val triggeredWindows = mutableSetOf<String>()
 
     // Cache for book data — only re-fetch when chapter or scene changes
-    // to avoid excessive API calls during playback (position fires every 50ms).
     private var cachedBookChapters: List<com.example.animastor.repository.Chapter>? = null
     private var lastChapterId: String? = null
     private var lastSceneId: String? = null
+
+    // Cooldown: prevents rapid re-triggers during playback auto-cycling
+    private var lastTriggerTime = 0L
+
+    // Track last-scene-unit to only trigger once when entering the last-3-zone,
+    // not on every auto-cycling step within it.
+    private var lastCheckedUnitIndex = -1
+    private var lastCheckedSceneId: String? = null
 
     /**
      * Start observing position changes. Call this when a book is loaded.
@@ -42,6 +54,9 @@ class WindowTriggerManager(
         cachedBookChapters = null
         lastChapterId = null
         lastSceneId = null
+        lastTriggerTime = 0L
+        lastCheckedUnitIndex = -1
+        lastCheckedSceneId = null
         collectionJob?.cancel()
         collectionJob = scope.launch {
             SharedPositionManager.current.collectLatest { pos ->
@@ -62,6 +77,9 @@ class WindowTriggerManager(
         cachedBookChapters = null
         lastChapterId = null
         lastSceneId = null
+        lastTriggerTime = 0L
+        lastCheckedUnitIndex = -1
+        lastCheckedSceneId = null
         Log.i(TAG, "stopped")
     }
 
@@ -77,8 +95,11 @@ class WindowTriggerManager(
         val idx = pos.unitIndex
         if (idx < 0) return
 
+        // ── Cooldown: don't trigger more often than once per interval ──
+        val now = System.currentTimeMillis()
+        if (now - lastTriggerTime < COOLDOWN_MS) return
+
         // Fetch book data — only re-fetch when chapter or scene changes
-        // (unit-to-unit navigation within the same scene reuses the cache).
         val chapters = if (pos.chapterId != lastChapterId || pos.sceneId != lastSceneId) {
             lastChapterId = pos.chapterId
             lastSceneId = pos.sceneId
@@ -109,10 +130,17 @@ class WindowTriggerManager(
         val last3Start = if (units.size <= 3) 0 else units.size - 3
         if (idx < last3Start) return
 
-        // Condition 2: scene must be the last in its window (WINDOW_SIZE=3)
+        // ── Only trigger on IS_LAST_OF_WINDOW boundary ─────────────
+        // Not on isLastChapterScene alone — that caused infinite
+        // re-triggers during playback (auto-play hits every last scene).
         val isLastOfWindow = scIdx % WINDOW_SIZE == (WINDOW_SIZE - 1)
-        val isLastChapterScene = scIdx == scenes.size - 1
-        if (!isLastOfWindow && !isLastChapterScene) return
+        if (!isLastOfWindow) return
+
+        // ── One-shot per unit position within the scene ────────────
+        // Avoid re-triggering as auto-play cycles through the last 3 units.
+        if (idx == lastCheckedUnitIndex && pos.sceneId == lastCheckedSceneId) return
+        lastCheckedUnitIndex = idx
+        lastCheckedSceneId = pos.sceneId
 
         // Dedup by window key
         val windowKey = "${pos.chapterId}:${scIdx / WINDOW_SIZE}"
@@ -134,5 +162,7 @@ class WindowTriggerManager(
         } catch (e: Exception) {
             Log.w(TAG, "triggerNextWindow failed: ${e.message}")
         }
+        // Always update cooldown — even on queue/error — to prevent rapid retries
+        lastTriggerTime = System.currentTimeMillis()
     }
 }
