@@ -610,6 +610,60 @@ async function bootstrapNextWindow(bookId, progress) {
     const draft = lazyBook.loadDraftBook(bookId);
     if (!draft || !draft.sourceText) throw new Error(`Book ${bookId} not found`);
 
+    // ── Dedup: check if the CURRENT offset has already been processed ──
+    // If there's a recent 'paused' or 'completed' session whose window_data
+    // has the same currentOffset as we'd compute, skip processing to avoid
+    // re-processing the same text window (infinite loop).
+    let windowData = null;
+    try {
+        const prevResult = await query(
+            `SELECT status, window_data FROM agent_sessions WHERE book_id = $1 AND window_data IS NOT NULL ORDER BY created_at DESC LIMIT 1`,
+            [bookId]
+        );
+        if (prevResult?.rows?.[0]?.window_data) {
+            const raw = prevResult.rows[0].window_data;
+            windowData = typeof raw === 'string' ? JSON.parse(raw) : raw;
+            const prevStatus = prevResult.rows[0].status;
+            console.log(`[AGENT] bootstrapNextWindow: prev session status=${prevStatus}, currentOffset=${windowData?.currentOffset}`);
+
+            // If the previous session was 'completed' and had the same
+            // currentOffset remaining_text is empty, then all windows are done.
+            if (prevStatus === 'completed') {
+                console.log(`[AGENT] bootstrapNextWindow: previous session completed, all done`);
+                return { session_id: null, cached: false, added_scenes: 0, all_done: true };
+            }
+
+            // If previous session is 'paused' with no remaining text and no
+            // remaining scenes, it's also done.
+            if (prevStatus === 'paused' &&
+                (!windowData.remaining_text || windowData.remaining_text.length === 0) &&
+                (!windowData.remaining_scenes || windowData.remaining_scenes.length === 0)) {
+                console.log(`[AGENT] bootstrapNextWindow: paused with no remaining text/scenes, all done`);
+                return { session_id: null, cached: false, added_scenes: 0, all_done: true };
+            }
+        }
+    } catch (lookupErr) {
+        console.warn(`[AGENT] bootstrapNextWindow: failed to look up previous window_data: ${lookupErr.message}`);
+    }
+
+    const currentOffset = windowData?.currentOffset || 0;
+    const existingChars = windowData?.all_characters || [];
+    const existingLocs = windowData?.all_locations || [];
+
+    // ── Final dedup: if we already have a session for THIS offset, skip ──
+    try {
+        const dupCheck = await query(
+            `SELECT COUNT(*) as cnt FROM agent_sessions WHERE book_id = $1 AND window_data IS NOT NULL AND window_data->>'currentOffset' = $2 AND status IN ('paused','completed')`,
+            [bookId, String(currentOffset)]
+        );
+        if (parseInt(dupCheck.rows[0]?.cnt || '0', 10) > 0) {
+            console.log(`[AGENT] bootstrapNextWindow: offset ${currentOffset} already processed, skipping`);
+            return { session_id: null, cached: true, added_scenes: 0, all_done: true };
+        }
+    } catch (dupErr) {
+        console.warn(`[AGENT] bootstrapNextWindow: dedup check failed: ${dupErr.message}`);
+    }
+
     const session = await createSession(bookId, 'txt_import');
     const sessionId = session.session_id;
 
@@ -618,28 +672,6 @@ async function bootstrapNextWindow(bookId, progress) {
         const bp = lazyBook.getBookMetaPath(bookDir);
         const fs_local = require('fs');
         if (!fs_local.existsSync(bp)) throw new Error(`Book metadata not found: ${bookId}`);
-
-        // ── Look up the PREVIOUS session's window_data ─────────────────
-        // bootstrapNextWindow creates a NEW session for each window,
-        // so window_data on the new session is always null. We need the
-        // last session's data (currentOffset, all_characters, all_locations)
-        // to know where to continue processing.
-        let windowData = null;
-        try {
-            const prevResult = await query(
-                `SELECT window_data FROM agent_sessions WHERE book_id = $1 AND window_data IS NOT NULL ORDER BY created_at DESC LIMIT 1`,
-                [bookId]
-            );
-            if (prevResult?.rows?.[0]?.window_data) {
-                const raw = prevResult.rows[0].window_data;
-                windowData = typeof raw === 'string' ? JSON.parse(raw) : raw;
-                console.log(`[AGENT] bootstrapNextWindow: recovered window_data from previous session (currentOffset=${windowData?.currentOffset})`);
-            }
-        } catch (lookupErr) {
-            console.warn(`[AGENT] bootstrapNextWindow: failed to look up previous window_data: ${lookupErr.message}`);
-        }
-
-        const currentOffset = windowData?.currentOffset || 0;
         const existingChars = windowData?.all_characters || [];
         const existingLocs = windowData?.all_locations || [];
 
