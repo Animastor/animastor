@@ -442,24 +442,44 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
     let characters = existingChars || [];
     let locations = existingLocs || [];
 
-    if (!existingChars || existingChars.length === 0) {
-        characters = await stepExtractCharacters(sessionId, text, stepIndex, _progress);
-        if (!characters || characters.length === 0) {
-            console.warn('[AGENT] No characters extracted, continuing with empty set');
-            characters = [{ id: 'unknown', name: 'Unknown', role: 'minor', description: 'Unidentified character' }];
-        }
+    // Always extract characters from this window's text, then merge with existing
+    const newCharacters = await stepExtractCharacters(sessionId, text, stepIndex, _progress);
+    if (!newCharacters || newCharacters.length === 0) {
+        console.warn('[AGENT] No characters extracted from window, keeping existing set');
+        characters = existingChars.length > 0
+            ? existingChars
+            : [{ id: 'unknown', name: 'Unknown', role: 'minor', description: 'Unidentified character' }];
     } else {
-        console.log(`[AGENT] Skipping characters step: ${existingChars.length} already known`);
+        const mergedMap = new Map((existingChars || []).map(c => [c.id, c]));
+        let added = 0;
+        for (const ch of newCharacters) {
+            if (!mergedMap.has(ch.id)) {
+                mergedMap.set(ch.id, ch);
+                added++;
+            }
+        }
+        characters = Array.from(mergedMap.values());
+        console.log(`[AGENT] Characters: ${existingChars.length} existing + ${added} new = ${characters.length} total`);
     }
 
-    if (!existingLocs || existingLocs.length === 0) {
-        locations = await stepExtractLocations(sessionId, text, characters, stepIndex, _progress);
-        if (!locations || locations.length === 0) {
-            console.warn('[AGENT] No locations extracted, continuing with empty set');
-            locations = [{ id: 'unknown', name: 'Unknown', type: 'outdoor', description: 'Unspecified location' }];
-        }
+    // Always extract locations from this window's text, then merge with existing
+    const newLocations = await stepExtractLocations(sessionId, text, characters, stepIndex, _progress);
+    if (!newLocations || newLocations.length === 0) {
+        console.warn('[AGENT] No locations extracted from window, keeping existing set');
+        locations = existingLocs.length > 0
+            ? existingLocs
+            : [{ id: 'unknown', name: 'Unknown', type: 'outdoor', description: 'Unspecified location' }];
     } else {
-        console.log(`[AGENT] Skipping locations step: ${existingLocs.length} already known`);
+        const mergedMap = new Map((existingLocs || []).map(l => [l.id, l]));
+        let added = 0;
+        for (const loc of newLocations) {
+            if (!mergedMap.has(loc.id)) {
+                mergedMap.set(loc.id, loc);
+                added++;
+            }
+        }
+        locations = Array.from(mergedMap.values());
+        console.log(`[AGENT] Locations: ${existingLocs.length} existing + ${added} new = ${locations.length} total`);
     }
 
     const scenes = await stepCreateScenes(sessionId, text, characters, locations, stepIndex, _progress);
@@ -720,21 +740,7 @@ async function bootstrapNextWindow(bookId, progress) {
             structure: structure,
         });
 
-        // Merge characters and locations
-        const mergedChars = [...existingChars];
-        const existingCharIds = new Set(existingChars.map(c => c.id));
-        for (const ch of (result.characters || [])) {
-            if (!existingCharIds.has(ch.id)) {
-                mergedChars.push(ch);
-                existingCharIds.add(ch.id);
-            }
-        }
-
-        const mergedLocsMap = {};
-        for (const loc of existingLocs) mergedLocsMap[loc.id] = loc;
-        for (const loc of (result.locations || [])) mergedLocsMap[loc.id] = loc;
-        const mergedLocs = Object.values(mergedLocsMap);
-
+        // result.characters/locations are already merged with existing by runPipeline
         const updatedWindowData = {
             window_index: nextWindowIndex,
             chapter_title: windowInfo.chapterTitle,
@@ -744,8 +750,8 @@ async function bootstrapNextWindow(bookId, progress) {
             remaining_scenes: extraScenes,
             remaining_text: windowInfo.remainingText,
             currentOffset: windowInfo.currentOffset,
-            all_characters: mergedChars,
-            all_locations: mergedLocs,
+            all_characters: result.characters,
+            all_locations: result.locations,
         };
 
         const allDone = extraScenes.length === 0 && !windowInfo.remainingText;
