@@ -73,7 +73,7 @@ async function stepAnalyzeStructure(sessionId, sourceText, stepIndex, progress) 
     ];
 
     try {
-        const result = await callAI(messages, { maxTokens: 2048 });
+        const result = await callAI(messages, { maxTokens: 4096 });
         const structure = {
             author: result.author || null,
             title: result.title || null,
@@ -155,7 +155,7 @@ async function stepExtractCharacters(sessionId, text, stepIndex, progress) {
     ];
 
     try {
-        const result = await callAI(messages, { maxTokens: 2048 });
+        const result = await callAI(messages, { maxTokens: 4096 });
         const characters = result.characters || [];
         await logConversation(sessionId, step.step_id, messages, JSON.stringify(result));
         await completeStep(step.step_id, characters);
@@ -183,7 +183,7 @@ async function stepExtractLocations(sessionId, text, characters, stepIndex, prog
     ];
 
     try {
-        const result = await callAI(messages, { maxTokens: 1024 });
+        const result = await callAI(messages, { maxTokens: 4096 });
         const locations = result.locations || [];
         await logConversation(sessionId, step.step_id, messages, JSON.stringify(result));
         await completeStep(step.step_id, locations);
@@ -250,7 +250,7 @@ async function stepCreateUnits(sessionId, scene, sceneIndex, characters, stepInd
     ];
 
     try {
-        const result = await callAI(messages, { maxTokens: 2048 });
+        const result = await callAI(messages, { maxTokens: 4096 });
         const units = result.units || [];
         if (units.length === 0) {
             units.push({ text: sceneText, type: scene.type === 'dialogue' ? 'dialogue' : 'narration' });
@@ -299,7 +299,7 @@ async function stepCreateVisuals(sessionId, scene, units, sceneIndex, characters
     ];
 
     try {
-        const result = await callAI(messages, { maxTokens: 2048 });
+        const result = await callAI(messages, { maxTokens: 4096 });
         const visualUnits = result.units || [];
 
         const merged = units.map((u, i) => {

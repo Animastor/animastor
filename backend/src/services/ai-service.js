@@ -107,9 +107,13 @@ function parseJsonResponse(content) {
         throw new Error('AI response is empty');
     }
 
+    // Strip chain-of-thought reasoning blocks (e.g. <think>...</think>, <reasoning>...</reasoning>)
+    let cleaned = content.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+    cleaned = cleaned.replace(/<reasoning>[\s\S]*?<\/reasoning>/g, '').trim();
+
     // Try markdown code block first
-    const jsonMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
-    const jsonStr = jsonMatch ? jsonMatch[1].trim() : content.trim();
+    const jsonMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/);
+    const jsonStr = jsonMatch ? jsonMatch[1].trim() : cleaned.trim();
 
     // Try direct parse
     try {
