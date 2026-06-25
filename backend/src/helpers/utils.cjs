@@ -34,40 +34,6 @@ function parseChunkId(chunkId) {
     return { bookId, chapterId, sceneId, chunkIndex };
 }
 
-// ── Safe build path ───────────────────────────────────
-
-function safeBuildPath(buildId) {
-    if (!buildId || buildId === '.' || buildId === '..') {
-        console.error('⚠️ Invalid buildId (empty, ., ..):', buildId);
-        return null;
-    }
-    if (buildId.includes('/') || buildId.includes('\\\\')) {
-        console.error('⚠️ buildId contains path separators:', buildId);
-        return null;
-    }
-    const regex = /^[a-zA-Z0-9._-]+$/;
-    if (!regex.test(buildId)) {
-        console.error('⚠️ buildId fails regex validation:', buildId);
-        return null;
-    }
-    const safeId = path.basename(buildId);
-    return safeId;
-}
-
-function safeBuildPathAbsolute(buildId, outputDir) {
-    if (!buildId || buildId === '.' || buildId === '..') return null;
-    if (buildId.includes('/') || buildId.includes('\\\\')) return null;
-    const regex = /^[a-zA-Z0-9._-]+$/;
-    if (!regex.test(buildId)) return null;
-    const safeId = path.basename(buildId);
-    const fullPath = path.resolve(outputDir, safeId);
-    const outputDirResolved = path.resolve(outputDir);
-    const relative = path.relative(outputDirResolved, fullPath);
-    if (relative.startsWith('..') || path.isAbsolute(relative)) return null;
-    if (fullPath === outputDirResolved) return null;
-    return fullPath;
-}
-
 // ── Scene collector ───────────────────────────────────
 
 function collectScenes(book) {
@@ -219,7 +185,6 @@ module.exports = {
     log,
     pad,
     parseChunkId,
-    safeBuildPath,
     collectScenes,
     splitTextIntoChunks,
     splitDialogueIntoChunks,

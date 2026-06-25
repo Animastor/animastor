@@ -4,7 +4,35 @@ All notable changes to Animastor are documented here.
 
 ---
 
-## [Unreleased] — 2026-06-24
+## [Unreleased] — 2026-06-25
+
+### Fixed
+
+- **AI chat errors & VBook progress polling** (`backend/src/routes/ai-routes.cjs`, `backend/src/services/ai-service.js`, `frontend/.../GenerateViewModel.kt`):
+  - Fixed AI chat error handling and trigger endpoint.
+  - Fixed VBook progress polling from frontend.
+  - Fixed missing `gpuProgressDoneAt` reset after `clearVBookProgress`.
+
+- **Trigger dedup & background loop** (`frontend/.../WindowTriggerManager.kt`, `frontend/.../MainActivity.kt`):
+  - Fixed trigger deduplication to prevent duplicate window triggers.
+  - Fixed background polling loop for VBook progress.
+  - Fixed position label rendering in EditFragment.
+
+- **AI JSON parse error — CoT think tags** (`backend/src/services/ai-service.js`):
+  - Strip chain-of-thought XML tags (`<think>`, `<reasoning>`) from AI responses before JSON parsing.
+  - Increased `maxTokens` from 2048 to 4096 for analysis steps.
+
+- **VBook agent status polling** (`frontend/.../GenerateViewModel.kt`, `frontend/.../AiAssistantFragment.kt`):
+  - Fixed `poll checkVBookAgentStatus` to work in the active VBook branch.
+  - Fixed chapter numbering for special types (cover, prologue) in `AiAssistantFragment`.
+
+### Chore
+
+- **Dead code removal** (`backend/src/helpers/utils.cjs`): Removed unused `safeBuildPath` and `safeBuildPathAbsolute` functions (duplicated in `cleanup-service.cjs`).
+
+---
+
+## [2026-06-24]
 
 ### Fixed
 
@@ -25,3 +53,27 @@ All notable changes to Animastor are documented here.
   - **GET /timings endpoint**: After computing timing boundaries in memory, persists them via `upsertIuTiming()` so subsequent calls don't recompute from scratch.
 
 - **End-of-window trigger restored** (`frontend/app/src/main/java/com/example/animastor/ui/EditFragment.kt`): Recreated `checkEndOfWindowAndTrigger()` — detects the user selecting one of the last 3 units of the last scene in a window and calls `repository.triggerNextWindow()`. The function was previously removed during a refactor with a note that it was moved to `PlaybackViewModel`, but was never re-implemented there.
+
+### Feat
+
+- **Per-window reconnaissance** (`backend/src/services/agent-service.js`, `backend/src/book/lazy-book/parser.js`):
+  - Characters and locations are now extracted and merged from each window, not just the first.
+  - ALL-CAPS chapter headings detection without explicit `Глава` marker.
+  - `injectChapterMarkers()` auto-inserts `[ГЛАВА: TITLE]` markers into source text.
+
+- **Unified GPU+VBook progress panel** (`frontend/.../MainActivity.kt`, `frontend/.../GenerateViewModel.kt`):
+  - VBook agent shown alongside GPU workers in the same progress panel.
+  - Each worker type gets its own row (name + count + percent + progress bar).
+  - Completed workers auto-hide after 10 seconds.
+
+- **Global window trigger** (`frontend/.../WindowTriggerManager.kt`):
+  - `WindowTriggerManager` observes `SharedPositionManager` from any screen.
+  - Triggers next-window generation when user navigates to last 3 units of the last scene in a window.
+  - 60s cooldown, dedup per window, one-shot per unit position.
+
+### Chore
+
+- **TTL 14400 for iu-progress** (`backend/src/.../iu-repo.js`): TTL increased from 3600 to 14400 seconds.
+- **Remove shouldGenerateIUImage dead code**: Removed unused function that was already dead.
+- **PATCH snapshot-based diff**: Updated diff algorithm to work with PATCH endpoint.
+- **Update docs**: CHANGELOG.md, PROJECT_STRUCTURE.md.

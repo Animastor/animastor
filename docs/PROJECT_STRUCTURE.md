@@ -232,6 +232,8 @@
 │           │       ├── ChatMessage.kt           # Модель сообщения чата
 │           │       ├── ChatTopic.kt             # Тема чата
 │           │       ├── PositionManager.kt       # Менеджер позиции
+│           │       ├── SharedPositionManager.kt  # Глобальное состояние позиции
+│           │       ├── WindowTriggerManager.kt   # [CORE] Глобальный триггер окон генерации
 │           │       ├── SceneAudioPlayer.kt      # [CORE] Плеер аудио (ExoPlayer/Media3)
 │           │       ├── WaveformView.kt          # Waveform View
 │           │       └── adapter/BookAdapter.kt   # Адаптер списка книг
