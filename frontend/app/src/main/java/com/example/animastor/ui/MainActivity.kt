@@ -610,8 +610,13 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
             } else if (hasVBook) {
-                // VBook only (no GPU gen) — show just the VBook row
-                showGpuProgress(null, vbookProgress = vbookProg)
+                // VBook only (no GPU gen) — poll agent status and show progress
+                val updated = viewModel.checkVBookAgentStatus()
+                if (updated.stage != VBookStage.IDLE) {
+                    showGpuProgress(null, vbookProgress = updated)
+                } else {
+                    showGpuProgress(null, vbookProgress = vbookProg)
+                }
             }
 
             delay(1_500)
