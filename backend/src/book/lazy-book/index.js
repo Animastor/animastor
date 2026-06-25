@@ -13,6 +13,7 @@ const {
 const {
     splitIntoChapters, splitIntoScenes, splitIntoUnits,
     firstMeaningfulChapter, detectLanguage,
+    injectChapterMarkers,
 } = require('./parser');
 
 function createDraftBook(sourceText, sourceType, title) {
@@ -965,7 +966,7 @@ module.exports = {
     lazyParseNextWindow, lazyParseChapter,
     getBookStatus, getChaptersSummary,
     splitIntoChapters, splitIntoScenes, splitIntoUnits, firstMeaningfulChapter,
-    detectLanguage,
+    detectLanguage, injectChapterMarkers,
     chapterId, sceneId, unitId, generateBookId,
     DEFAULT_WINDOW_SIZE,
     createCoverChapter,

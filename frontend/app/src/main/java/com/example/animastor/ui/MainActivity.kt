@@ -534,6 +534,13 @@ class MainActivity : AppCompatActivity() {
                     delay(1_500)
                     continue
                 }
+                // Poll agent status for VBook windows triggered by WindowTriggerManager
+                val agentProg = viewModel.checkVBookAgentStatus()
+                if (agentProg.stage != VBookStage.IDLE) {
+                    showGpuProgress(null, vbookProgress = agentProg)
+                    delay(1_500)
+                    continue
+                }
                 if (binding.generationProgressContainer.visibility != View.GONE) {
                     binding.generationProgressContainer.visibility = View.GONE
                 }
@@ -800,10 +807,15 @@ class MainActivity : AppCompatActivity() {
                 binding.generationProgressContainer.visibility = View.GONE
                 workerCompletedAt.clear()
                 _workerPermanentlyDone.clear()
+                // Auto-reset COMPLETED state so the poller doesn't keep processing it
+                if (vbookProgress?.stage == VBookStage.COMPLETED) {
+                    viewModel.clearVBookProgress()
+                }
                 if (assets != null) {
                     viewModel.onGenerationComplete()
-                    refreshGenerateButton()
                 }
+                gpuProgressDoneAt = 0L
+            }
                 gpuProgressDoneAt = 0L
             }
             return

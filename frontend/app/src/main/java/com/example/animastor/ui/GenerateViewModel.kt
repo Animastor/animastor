@@ -707,7 +707,7 @@ class GenerateViewModel(
                 _uiState.update { it.copy(importProgressMessages = msgs.toList()) }
 
                 // Continue polling for subsequent windows
-                pollAgentProgress(bId, msgs)
+                pollAgentProgress(bId, msgs);
                 msgs.add("💬 Можете задать вопросы или запустить генерацию через кнопку на панели инструментов.")
                 _uiState.update { it.copy(importProgressMessages = msgs.toList()) }
 
@@ -837,6 +837,41 @@ class GenerateViewModel(
 
         Log.i(TAG, "[POLL] agent polling finished (consecutiveInactive=$consecutiveInactive)")
         return consecutiveInactive < maxInactive
+    }
+
+    /**
+     * Reset vbook progress to IDLE.
+     * Called by MainActivity after the COMPLETED display cycle finishes.
+     */
+    fun clearVBookProgress() {
+        _uiState.update { it.copy(vbookProgress = VBookProgress(stage = VBookStage.IDLE)) }
+    }
+
+    /**
+     * Poll /agent-status and update [vbookProgress] in [GenUiState].
+     * Designed to be called periodically from the MainActivity progress poller
+     * so that subsequent windows triggered by WindowTriggerManager show progress.
+     * @return the current [VBookProgress] after the poll (may be IDLE if inactive).
+     */
+    suspend fun checkVBookAgentStatus(): VBookProgress {
+        val bid = bookId.takeIf { it.isNotBlank() } ?: return VBookProgress(stage = VBookStage.IDLE)
+        return try {
+            val status = _repository.getAgentStatus(bid)
+            if (status.active && status.progress_msg != null) {
+                updateVBookProgress(status)
+            } else {
+                val current = _uiState.value.vbookProgress
+                // Don't reset COMPLETED — it's handled by MainActivity display cycle
+                if (current != null && current.stage != VBookStage.IDLE && current.stage != VBookStage.COMPLETED) {
+                    _uiState.update { it.copy(
+                        vbookProgress = VBookProgress(stage = VBookStage.IDLE)
+                    )}
+                }
+            }
+            _uiState.value.vbookProgress ?: VBookProgress(stage = VBookStage.IDLE)
+        } catch (_: Exception) {
+            _uiState.value.vbookProgress ?: VBookProgress(stage = VBookStage.IDLE)
+        }
     }
 
     /**

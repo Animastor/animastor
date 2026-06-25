@@ -565,7 +565,7 @@ async function recoverMissingRedisChunks(buildId, bookId) {
             // Check if there's an active agent session
             const { postgres } = storage;
             const activeSessions = await postgres.query(`
-                SELECT id, status, progress_msg, window_data
+                SELECT session_id, status, progress_msg, window_data
                 FROM agent_sessions
                 WHERE book_id = $1 AND status IN ('running', 'pending')
                 ORDER BY created_at DESC LIMIT 1
@@ -573,10 +573,10 @@ async function recoverMissingRedisChunks(buildId, bookId) {
 
             if (activeSessions.rows.length > 0) {
                 const session = activeSessions.rows[0];
-                log(`[RESUME-BOOTSTRAP] ${bookId}: active session ${session.id} (${session.status})`);
+                log(`[RESUME-BOOTSTRAP] ${bookId}: active session ${session.session_id} (${session.status})`);
                 return res.json({
                     book_id: bookId, state: 'resuming',
-                    session_id: session.id, session_status: session.status,
+                    session_id: session.session_id, session_status: session.status,
                     progress_msg: session.progress_msg || 'Resuming...',
                 });
             }
@@ -844,10 +844,11 @@ async function recoverMissingRedisChunks(buildId, bookId) {
             }
 
             if (chapter_id && scene_id) {
-                const bookData = lazyBook.loadBook(bookId);
-                if (bookData) {
+                const draft = lazyBook.loadDraftBook(bookId);
+                const chapters = draft?.chapters || [];
+                if (chapters.length > 0) {
                     let found = false;
-                    for (const ch of (bookData.chapters || [])) {
+                    for (const ch of chapters) {
                         if (ch.chapter === chapter_id) {
                             for (const sc of (ch.scenes || [])) {
                                 if (sc.scene_id === scene_id) { found = true; break; }

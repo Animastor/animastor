@@ -130,7 +130,7 @@ module.exports = function(app, redis, deps) {
 
             // Load book data for context
             let bookData = null;
-            try { bookData = book.loadBook(bookId) || lazyBook.loadLazyBook(bookId); } catch (_) {}
+            try { bookData = book.loadBook(bookId) || lazyBook.loadDraftBook(bookId); } catch (_) {}
 
             const isLocked = bookData?.manifest?.locked === true;
             const sessionMode = mode || session.mode || 'chat';
@@ -273,7 +273,7 @@ module.exports = function(app, redis, deps) {
             const bookId = book_id || session.book_id;
 
             let bookData = null;
-            try { bookData = book.loadBook(bookId) || lazyBook.loadLazyBook(bookId); } catch (_) {}
+            try { bookData = book.loadBook(bookId) || lazyBook.loadDraftBook(bookId); } catch (_) {}
 
             const isLocked = bookData?.manifest?.locked === true;
             const mode = session.mode || 'chat';
@@ -409,7 +409,7 @@ module.exports = function(app, redis, deps) {
             const { book_id, locked } = req.body || {};
             if (!book_id) return res.status(400).json({ error: 'book_id required' });
 
-            const bookData = book.loadBook(book_id) || lazyBook.loadLazyBook(book_id);
+            const bookData = book.loadBook(book_id) || lazyBook.loadDraftBook(book_id);
             if (!bookData) return res.status(404).json({ error: 'Book not found' });
 
             if (locked !== undefined) bookData.manifest.locked = locked;
@@ -499,7 +499,7 @@ module.exports = function(app, redis, deps) {
             if (!book_id || !prompt) return res.status(400).json({ error: 'book_id and prompt required' });
 
             let bookData = null;
-            try { bookData = book.loadBook(book_id) || lazyBook.loadLazyBook(book_id); } catch (_) {}
+            try { bookData = book.loadBook(book_id) || lazyBook.loadDraftBook(book_id); } catch (_) {}
 
             const isLocked = bookData?.manifest?.locked === true;
             const tools = chatEngine.getToolsForMode(isLocked ? 'chat' : 'edit', book_id, isLocked);
