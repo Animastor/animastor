@@ -741,63 +741,10 @@ async function recoverMissingRedisChunks(buildId, bookId) {
                 }] : [],
             });
 
-            // Process remaining windows in background so the frontend can
-            // see all scenes immediately without manual trigger.
-            if (result.has_more) {
-                setImmediate(async () => {
-                    try {
-                        log(`[BOOTSTRAP] Starting background window processing for ${bookId}`);
-                        for (let w = 0; w < 100; w++) {
-                            const nextRes = await txtImporter.bootstrapNextWindow(bookId);
-                            if (nextRes.all_done) break;
-                            const added = nextRes.added_scenes || 0;
-                            log(`[BOOTSTRAP] Background window ${w + 1}: ${added} scenes, remaining_cached=${nextRes.remaining_cached || 0}, all_done=${nextRes.all_done}`);
-
-                            const chapterId = nextRes.chapter?.chapter;
-                            const allScenes = nextRes.chapter?.scenes || [];
-                            const newScenes = allScenes.slice(-added);
-                            if (chapterId && newScenes.length > 0) {
-                                const draftBg = lazyBook.loadDraftBook(bookId);
-                                const buildId = draftBg?.manifest?.build_id || 'default';
-                                for (let si = 0; si < newScenes.length; si++) {
-                                    const s = newScenes[si];
-                                    const chunkId = `${bookId}_${chapterId}_${s.scene_id}_0001`;
-                                    const sceneOrder = allScenes.indexOf(s);
-                                    try {
-                                        await saveChunk(chunkId, {
-                                            build_id: buildId, book_id: bookId, scene_order: sceneOrder,
-                                            chapter_id: chapterId, scene_id: s.scene_id, chunk_index: '0001',
-                                            expected_chunk_count: 1, scene_type: s.type || 'narration',
-                                            audio: true, audio_status: 'placeholder', image: false, video: false,
-                                            video_status: 'pending', padded_text: false,
-                                        });
-                                    } catch (chunkErr) {
-                                        console.warn(`[BOOTSTRAP] Background chunk creation failed for ${chunkId}: ${chunkErr.message}`);
-                                    }
-                                }
-                                try {
-                                    const existingTotal = parseInt(await redis.get(config.BOOK_SCENE_TOTAL(bookId)) || '0', 10);
-                                    const existingNext = parseInt(await redis.get(config.BOOK_SCENE_NEXT(bookId)) || '0', 10);
-                                    await redis.set(config.BOOK_SCENE_TOTAL(bookId), existingTotal + newScenes.length);
-                                    await redis.set(config.BOOK_SCENE_NEXT(bookId), existingNext + newScenes.length);
-                                } catch (idxErr) {
-                                    console.warn(`[BOOTSTRAP] Failed to update scene counters: ${idxErr.message}`);
-                                }
-                                try {
-                                    const phScenes = newScenes.map(s => ({ chapter_id: chapterId, scene_id: s.scene_id }));
-                                    const phResult = await placeholderAudio.ensureAllPlaceholderAudio(buildId, bookId, phScenes);
-                                    log(`[BOOTSTRAP] Background placeholder audio: ${phResult.created} created, ${phResult.skipped} skipped`);
-                                } catch (phErr) {
-                                    console.warn(`[BOOTSTRAP] Background placeholder audio failed: ${phErr.message}`);
-                                }
-                            }
-                        }
-                        log(`[BOOTSTRAP] Background window processing complete for ${bookId}`);
-                    } catch (bgErr) {
-                        console.error(`[BOOTSTRAP] Background window chain failed for ${bookId}: ${bgErr.message}`);
-                    }
-                }, 0);
-            }
+            // Background window processing is intentionally disabled:
+            // subsequent windows are triggered by WindowTriggerManager
+            // when the user navigates to the last 3 units of the last scene.
+            // This ensures visible progress (1/3, 2/3, 3/3) for every window.
         } catch (err) {
             console.error('BOOTSTRAP ERROR:', err);
             return res.status(400).json({ error: err.message || 'unknown error' });

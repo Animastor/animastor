@@ -354,16 +354,14 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
             val isSpecial = ch?.type == "cover" || ch?.type == "prologue"
             val chapters = bookData?.chapters ?: emptyList()
             val realChNum = chapters.take(chIdx).count { it.type != "cover" && it.type != "prologue" } + 1
-            if (chIdx > 0 || isSpecial) {
+            if (chIdx >= 0) {
                 val uIdx = bookData?.unitIndex(pos.chapterId, pos.sceneId, pos.unitIndex) ?: 0
                 val chTitle = ch?.chapter_title?.takeIf { it.isNotBlank() }
                 val scTitle = sc?.scene_title?.takeIf { it.isNotBlank() }
                 val chLabel = if (isSpecial) {
                     chTitle ?: (ch?.type?.replaceFirstChar { it.uppercase() } ?: "")
-                } else if (scIdx > 0) {
-                    "${getString(R.string.navigate_chapter)} $realChNum"
                 } else {
-                    ""
+                    "${getString(R.string.navigate_chapter)} $realChNum"
                 }
                 val scLabel = if (scIdx > 0) "${getString(R.string.navigate_scene)} $scIdx" else ""
                 val unitLabel = if (uIdx > 0) "${getString(R.string.navigate_unit)} $uIdx" else ""

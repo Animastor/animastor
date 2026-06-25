@@ -377,6 +377,7 @@ function getWindowText(sourceText, existingChars, existingLocs, windowIndex, sta
             fullChapter: '',
             chapterTitle: chapters[lastIdx]?.title || null,
             currentOffset: startOffset,
+            windowStartOffset: startOffset,
         };
     }
 
@@ -433,6 +434,7 @@ function getWindowText(sourceText, existingChars, existingLocs, windowIndex, sta
         fullChapter: windowText,
         chapterTitle: chTitle,
         currentOffset: newOffset,
+        windowStartOffset: actualStart,
     };
 }
 
@@ -617,6 +619,7 @@ async function bootstrapWithAgent(bookId, progress) {
             remaining_scenes: extraScenes,
             remaining_text: windowInfo.remainingText,
             currentOffset: windowInfo.currentOffset,
+            windowStartOffset: windowInfo.windowStartOffset,
             all_characters: result.characters,
             all_locations: result.locations,
             structure: structure,
@@ -719,14 +722,18 @@ async function bootstrapNextWindow(bookId, progress) {
     const existingChars = windowData?.all_characters || [];
     const existingLocs = windowData?.all_locations || [];
 
-    // ── Final dedup: if we already have a session for THIS offset, skip ──
+    // ── Final dedup: if we already have a session for THIS windowStartOffset, skip ──
+    // Use windowStartOffset (start of AI-processed text) rather than currentOffset
+    // (end of previous window) to avoid matching the previous session itself.
+    const windowInfo = getWindowText(draft.sourceText, existingChars, existingLocs, 1, currentOffset);
+    const dedupKey = String(windowInfo.windowStartOffset);
     try {
         const dupCheck = await query(
-            `SELECT COUNT(*) as cnt FROM agent_sessions WHERE book_id = $1 AND window_data IS NOT NULL AND window_data->>'currentOffset' = $2 AND status IN ('paused','completed')`,
-            [bookId, String(currentOffset)]
+            `SELECT COUNT(*) as cnt FROM agent_sessions WHERE book_id = $1 AND window_data IS NOT NULL AND window_data->>'windowStartOffset' = $2 AND status IN ('paused','completed')`,
+            [bookId, dedupKey]
         );
         if (parseInt(dupCheck.rows[0]?.cnt || '0', 10) > 0) {
-            console.log(`[AGENT] bootstrapNextWindow: offset ${currentOffset} already processed, skipping`);
+            console.log(`[AGENT] bootstrapNextWindow: offset ${dedupKey} already processed, skipping`);
             return { session_id: null, cached: true, added_scenes: 0, all_done: true };
         }
     } catch (dupErr) {
@@ -745,8 +752,6 @@ async function bootstrapNextWindow(bookId, progress) {
         const existingLocs = windowData?.all_locations || [];
 
         console.log(`[AGENT] bootstrapNextWindow: currentOffset=${currentOffset}, existingChars=${existingChars.length}, existingLocs=${existingLocs.length}`);
-
-        const windowInfo = getWindowText(draft.sourceText, existingChars, existingLocs, 1, currentOffset);
 
         if (!windowInfo.text || !windowInfo.text.trim()) {
             await updateSession(sessionId, {
@@ -793,6 +798,7 @@ async function bootstrapNextWindow(bookId, progress) {
             remaining_scenes: extraScenes,
             remaining_text: windowInfo.remainingText,
             currentOffset: windowInfo.currentOffset,
+            windowStartOffset: windowInfo.windowStartOffset,
             all_characters: result.characters,
             all_locations: result.locations,
         };

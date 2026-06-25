@@ -861,11 +861,17 @@ class GenerateViewModel(
                 updateVBookProgress(status)
             } else {
                 val current = _uiState.value.vbookProgress
-                // Don't reset COMPLETED — it's handled by MainActivity display cycle
-                if (current != null && current.stage != VBookStage.IDLE && current.stage != VBookStage.COMPLETED) {
-                    _uiState.update { it.copy(
-                        vbookProgress = VBookProgress(stage = VBookStage.IDLE)
-                    )}
+                if (current != null) {
+                    when (current.stage) {
+                        VBookStage.ANALYZING, VBookStage.CREATING_SCENES -> {
+                            // Agent just finished, transition to COMPLETED
+                            _uiState.update { it.copy(
+                                vbookProgress = VBookProgress(stage = VBookStage.COMPLETED)
+                            )}
+                        }
+                        VBookStage.COMPLETED -> { /* keep — MainActivity handles display cycle */ }
+                        VBookStage.IDLE -> { /* keep idle */ }
+                    }
                 }
             }
             _uiState.value.vbookProgress ?: VBookProgress(stage = VBookStage.IDLE)
