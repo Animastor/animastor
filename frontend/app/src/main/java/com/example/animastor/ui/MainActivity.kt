@@ -816,8 +816,6 @@ class MainActivity : AppCompatActivity() {
                 }
                 gpuProgressDoneAt = 0L
             }
-                gpuProgressDoneAt = 0L
-            }
             return
         }
 
