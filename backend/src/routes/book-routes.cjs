@@ -10,6 +10,7 @@ const path = require('path');
 const fs = require('fs');
 const multer = require('multer');
 const sceneAssetsRepo = require('../storage/postgres/repositories/scene-assets-repo');
+const { restoreSceneChunkStatus } = require('../orchestration/scene-restoration');
 
 module.exports = function(app, redis, deps) {
     const {
@@ -2004,7 +2005,7 @@ async function recoverMissingRedisChunks(buildId, bookId) {
             for (const ds of filteredDirty) {
                 const hasDirtyUnits = ds.changes?.units?.unit_ids && ds.changes.units.unit_ids.length > 0;
                 const unitIds = hasDirtyUnits ? ds.changes.units.unit_ids : [];
-                const result = await orchestrator.restoreSceneChunkStatus(
+                const result = await restoreSceneChunkStatus(
                     redis, buildId, bookId,
                     ds.chapter_id, ds.scene_id,
                     hasDirtyUnits, unitIds
