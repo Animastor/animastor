@@ -435,10 +435,10 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                 b?.nextIuLabel?.visibility = View.VISIBLE
             }
         }
-        val hPx = (140f * resources.displayMetrics.density + 0.5f).toInt()
-        val lp = card.layoutParams
-        lp.height = hPx
-        card.layoutParams = lp
+        // Don't override card height — keep whatever height the card already has
+        // (XML default 140dp for prev/next, match_parent for current, or the
+        // aspect-ratio-based height from a previously loaded image).
+        // This prevents the card from visually snapping to a different proportion.
     }
 
     private fun hidePreviewMissing(card: MaterialCardView) {

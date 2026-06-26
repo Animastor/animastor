@@ -1355,7 +1355,7 @@ async function recoverMissingRedisChunks(buildId, bookId) {
                                         try {
                                             const iuPrefix = `${bookId}_${ch}_${sc}_`;
                                             const files = fs.readdirSync(buildDir2)
-                                                .filter(f => f.startsWith(iuPrefix) && f.endsWith('.png'));
+                                                .filter(f => f.startsWith(iuPrefix) && f.endsWith('.png') && !f.includes('_pr'));
                                             return Math.max(files.length, Math.min(confirmedCount, rows.length));
                                         } catch (_) {}
                                     }
@@ -1395,7 +1395,7 @@ async function recoverMissingRedisChunks(buildId, bookId) {
                                             try {
                                                 const iuPrefix = `${bookId}_${coverChapterId}_${coverSceneId}_`;
                                                 const files = fs.readdirSync(buildDir2)
-                                                    .filter(f => f.startsWith(iuPrefix) && f.endsWith('.png'));
+                                                    .filter(f => f.startsWith(iuPrefix) && f.endsWith('.png') && !f.includes('_pr'));
                                                 return Math.max(files.length, Math.min(confirmedCount, rows.length));
                                             } catch (_) {}
                                         }
@@ -1424,7 +1424,7 @@ async function recoverMissingRedisChunks(buildId, bookId) {
                                                 try {
                                                     const iuPrefix = `${bookId}_${coverChapterId}_${coverSceneId}_`;
                                                     const files = fs.readdirSync(buildDir2)
-                                                        .filter(f => f.startsWith(iuPrefix) && f.endsWith('.png'));
+                                                        .filter(f => f.startsWith(iuPrefix) && f.endsWith('.png') && !f.includes('_pr'));
                                                     return Math.max(files.length, Math.min(confirmedCount, units.length));
                                                 } catch (_) {}
                                             }
