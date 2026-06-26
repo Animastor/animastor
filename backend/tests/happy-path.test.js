@@ -1223,3 +1223,166 @@ describe('Happy Path: Scheduler Tick Lock', () => {
         expect(await dispatchEngine.isSchedulerTickRunning(redis)).to.equal(1);
     });
 });
+
+// ======================================================
+// SECTION 6: ORCHESTRATOR FACADE (Шаг 0)
+// ======================================================
+// The facade delegates to existing functions without changing behaviour.
+// These tests assert delegation contracts, so later steps (Д.1/Д.2/Д.3)
+// can change internals while keeping the same command surface.
+
+describe('Happy Path: Orchestrator facade — planScene', () => {
+    let redis;
+    let orchestrator;
+
+    beforeEach(() => {
+        redis = new FakeRedis();
+        orchestrator = require('../src/orchestration/orchestrator');
+    });
+
+    it('planScene delegates to shouldScheduleAssets and returns {stages, allDone}', async () => {
+        // No state set → audio+image schedulable, video gated on image (not ready)
+        const result = await orchestrator.planScene(redis, BOOK_ID, CHAPTER_ID, SCENE_ID);
+        expect(result).to.have.keys('stages', 'allDone');
+        expect(result.stages).to.include('audio');
+        expect(result.stages).to.include('image');
+        expect(result.stages).to.not.include('video');
+        expect(result.allDone).to.be.false;
+    });
+
+    it('planScene reports allDone when all assets terminal', async () => {
+        await sceneState.setAssetStates(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, {
+            audio: 'ready', image: 'ready', video: 'ready',
+        });
+        const result = await orchestrator.planScene(redis, BOOK_ID, CHAPTER_ID, SCENE_ID);
+        expect(result.allDone).to.be.true;
+        expect(result.stages).to.be.an('array').that.is.empty;
+    });
+});
+
+describe('Happy Path: Orchestrator facade — markDirty', () => {
+    let redis;
+    let orchestrator;
+
+    beforeEach(() => {
+        redis = new FakeRedis();
+        orchestrator = require('../src/orchestration/orchestrator');
+    });
+
+    it('markDirty delegates to deps.bookDiff.markDirtyScenes with same args', async () => {
+        let captured = null;
+        const deps = {
+            bookDiff: {
+                markDirtyScenes: async (r, bookId, buildId, dirty, layerCfg) => {
+                    captured = { r, bookId, buildId, dirty, layerCfg };
+                    return { marked: dirty.length };
+                },
+            },
+        };
+        const dirtyScenes = [{ chapter_id: CHAPTER_ID, scene_id: SCENE_ID }];
+        const layerCfg = { audio_enabled: true };
+
+        const result = await orchestrator.markDirty(deps, redis, BOOK_ID, BUILD_ID, dirtyScenes, layerCfg);
+
+        expect(result).to.deep.equal({ marked: 1 });
+        expect(captured.r).to.equal(redis);
+        expect(captured.bookId).to.equal(BOOK_ID);
+        expect(captured.buildId).to.equal(BUILD_ID);
+        expect(captured.dirty).to.equal(dirtyScenes);
+        expect(captured.layerCfg).to.equal(layerCfg);
+    });
+
+    it('markDirty throws when deps.bookDiff is missing', async () => {
+        let threw = false;
+        try {
+            await orchestrator.markDirty({}, redis, BOOK_ID, BUILD_ID, [], {});
+        } catch (e) {
+            threw = true;
+            expect(e.message).to.match(/bookDiff/);
+        }
+        expect(threw).to.be.true;
+    });
+});
+
+describe('Happy Path: Orchestrator facade — completeStage', () => {
+    let redis;
+    let orchestrator;
+    let calls;
+
+    beforeEach(() => {
+        redis = new FakeRedis();
+        calls = { handler: [], markComplete: [] };
+
+        // Stub scene-callbacks: record which handler ran
+        const cbPath = require.resolve('../src/orchestration/scene-callbacks');
+        require.cache[cbPath] = {
+            exports: {
+                handleAudioCompleted: async (...a) => { calls.handler.push(['audio', a]); },
+                handleImageCompleted: async (...a) => { calls.handler.push(['image', a]); },
+                handleVideoCompleted: async (...a) => { calls.handler.push(['video', a]); },
+            },
+            loaded: true,
+        };
+
+        // Stub dispatch-engine: record markDispatchCompleted calls
+        const dePath = require.resolve('../src/runtime/dispatch-engine');
+        require.cache[dePath] = {
+            exports: {
+                markDispatchCompleted: async (r, b, c, s, stage) => { calls.markComplete.push(stage); },
+            },
+            loaded: true,
+        };
+
+        // Stub scene-utils (warn used in finally)
+        const utilsPath = require.resolve('../src/orchestration/scene-utils');
+        require.cache[utilsPath] = {
+            exports: { log: () => {}, warn: () => {}, error: () => {}, logEvent: async () => {} },
+            loaded: true,
+        };
+
+        delete require.cache[require.resolve('../src/orchestration/orchestrator')];
+        orchestrator = require('../src/orchestration/orchestrator');
+    });
+
+    afterEach(() => {
+        for (const p of [
+            '../src/orchestration/scene-callbacks',
+            '../src/runtime/dispatch-engine',
+            '../src/orchestration/scene-utils',
+            '../src/orchestration/orchestrator',
+        ]) {
+            delete require.cache[require.resolve(p)];
+        }
+    });
+
+    it('completeStage runs the stage handler then markDispatchCompleted exactly once', async () => {
+        await orchestrator.completeStage(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, 'audio', BUILD_ID);
+        expect(calls.handler.map(c => c[0])).to.deep.equal(['audio']);
+        expect(calls.markComplete).to.deep.equal(['audio']);
+    });
+
+    it('completeStage still releases (markDispatchCompleted) when handler throws', async () => {
+        const cbPath = require.resolve('../src/orchestration/scene-callbacks');
+        require.cache[cbPath].exports.handleImageCompleted = async () => { throw new Error('boom'); };
+
+        let threw = false;
+        try {
+            await orchestrator.completeStage(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, 'image', BUILD_ID);
+        } catch (e) { threw = true; }
+
+        // finally runs release even though the handler threw (single-owner C1, error-safe)
+        expect(threw).to.be.true;
+        expect(calls.markComplete).to.deep.equal(['image']);
+    });
+
+    it('completeStage throws on unknown stage', async () => {
+        let threw = false;
+        try {
+            await orchestrator.completeStage(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, 'bogus', BUILD_ID);
+        } catch (e) {
+            threw = true;
+            expect(e.message).to.match(/unknown stage/);
+        }
+        expect(threw).to.be.true;
+    });
+});

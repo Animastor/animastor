@@ -1952,8 +1952,12 @@ async function recoverMissingRedisChunks(buildId, bookId) {
                 try { await redis.del(progKey); } catch (_) {}
             }
 
-            // Mark dirty scenes (Redis)
-            const marked = await bookDiff.markDirtyScenes(redis, bookId, buildId, filteredDirty, layerCfg);
+            // Mark dirty scenes (Redis) — routed through the Orchestrator facade
+            // (Шаг 0, docs-claude/03_Orchestrator.md): markDirty is the single
+            // entry point for declaring "needs regeneration". Delegates back to
+            // bookDiff.markDirtyScenes, so behaviour is identical for now.
+            const { orchestrator } = require('../orchestration');
+            const marked = await orchestrator.markDirty({ bookDiff }, redis, bookId, buildId, filteredDirty, layerCfg);
 
 
             // Reconcile PG state (hashes, asset status, tasks) via book-sync
