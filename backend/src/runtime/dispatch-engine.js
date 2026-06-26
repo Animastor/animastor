@@ -59,6 +59,10 @@ const QUOTAS = {
 
 const DISPATCH_LEASE_PREFIX = 'animastor:dispatch-lease';
 const DISPATCH_META_PREFIX = 'animastor:dispatch-meta';
+// Д.1: idempotency marker for completion — guards releaseQuota against a
+// repeated markDispatchCompleted (e.g. a callback retry that slipped past the
+// HTTP-layer dedup). Cleared at dispatch start so each new dispatch completes once.
+const DISPATCH_COMPLETED_PREFIX = 'animastor:dispatch-completed';
 const ACTIVE_STAGE_PREFIX = 'animastor:runtime:active';
 
 const SCHEDULER_TICK_LOCK = 'animastor:runtime:scheduler-lock';
@@ -80,6 +84,13 @@ function getLeaseKey(bookId, chapterId, sceneId, stage) {
  */
 function getDispatchMetaKey(bookId, chapterId, sceneId, stage) {
     return `${DISPATCH_META_PREFIX}:${bookId}:${chapterId}:${sceneId}:${stage}`;
+}
+
+/**
+ * Get dispatch-completed idempotency key (Д.1).
+ */
+function getDispatchCompletedKey(bookId, chapterId, sceneId, stage) {
+    return `${DISPATCH_COMPLETED_PREFIX}:${bookId}:${chapterId}:${sceneId}:${stage}`;
 }
 
 /**
@@ -508,6 +519,11 @@ async function dispatchStage(redis, bookId, chapterId, sceneId, stage, loadedBoo
     const metadata = createDispatchMetadata(dispatchId, stage);
     await setDispatchMetadata(redis, bookId, chapterId, sceneId, stage, metadata);
 
+    // Д.1: Clear the completion marker for this fresh dispatch, so its eventual
+    // markDispatchCompleted runs once (and a force-regen re-dispatch isn't blocked
+    // by the previous build's marker).
+    await redis.del(getDispatchCompletedKey(bookId, chapterId, sceneId, stage));
+
     // Step 5: Log dispatch event
     await logDispatchEvent(redis, bookId, chapterId, sceneId, 'STARTED', stage, {
         dispatchId,
@@ -556,6 +572,19 @@ async function dispatchStage(redis, bookId, chapterId, sceneId, stage, loadedBoo
  */
 async function markDispatchCompleted(redis, bookId, chapterId, sceneId, stage) {
     const dispatchId = generateDispatchToken();
+
+    // Д.1: Idempotency guard. releaseQuota is an unconditional decrement, so a
+    // repeated markDispatchCompleted (callback retry past the HTTP dedup, manual
+    // reconcile, etc.) would double-release a quota slot and drift backpressure.
+    // SET NX claims the completion exactly once per dispatch; the marker is cleared
+    // at dispatch start (see dispatchStage), so the next real dispatch completes again.
+    // TTL matches the lease so a leaked marker self-expires.
+    const completedKey = getDispatchCompletedKey(bookId, chapterId, sceneId, stage);
+    const claimed = await redis.set(completedKey, '1', 'NX', 'EX', LEASE_TTLS[stage] || 1800);
+    if (!claimed) {
+        log(`DISPATCH_COMPLETE: already completed for ${bookId}/${chapterId}/${sceneId}:${stage} — skipping release`);
+        return;
+    }
 
     log(`DISPATCH_COMPLETE: ${bookId}/${chapterId}/${sceneId}:${stage}`);
 
@@ -670,6 +699,20 @@ async function clearAllLeasesForBook(redis, bookId) {
     const metaPattern = `${DISPATCH_META_PREFIX}:${bookId}:*`;
     do {
         const result = await redis.scan(cursor, 'MATCH', metaPattern, 'COUNT', 200);
+        cursor = parseInt(result[0], 10);
+        const keys = result[1];
+        if (keys.length > 0) {
+            await redis.del(...keys);
+            deleted += keys.length;
+        }
+    } while (cursor !== 0);
+
+    // Д.1: Delete completion markers too, so a regenerated scene's first
+    // completion isn't skipped by a stale marker from the cancelled build.
+    cursor = 0;
+    const completedPattern = `${DISPATCH_COMPLETED_PREFIX}:${bookId}:*`;
+    do {
+        const result = await redis.scan(cursor, 'MATCH', completedPattern, 'COUNT', 200);
         cursor = parseInt(result[0], 10);
         const keys = result[1];
         if (keys.length > 0) {
@@ -840,6 +883,7 @@ module.exports = {
     // Keys and patterns
     getLeaseKey,
     getDispatchMetaKey,
+    getDispatchCompletedKey,
     getActiveCounterKey,
     SCHEDULER_TICK_LOCK,
     SCHEDULER_TICK_LOCK_TTL,

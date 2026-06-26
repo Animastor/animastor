@@ -24,17 +24,22 @@ C1–C4, M1, M2, M4, §5.1 — закрыты (Н.0–Н.9). Н.10 — дора�
 
 ---
 
-## ⬜ Д.1: `markDispatchCompleted` идемпотентен
+## ✅ Д.1: `markDispatchCompleted` идемпотентен — выполнено
 
 **Риск:** низкий. **Прямое продолжение ревью.** Не зависит от Д.0.
 
-Из ревью: `markDispatchCompleted` безусловно делает `releaseQuota` → целостность квот
-держится только на C4-dedup. Если вызвать дважды в обход dedup (истёкший TTL, reconciliation,
-force-regen) — двойной декремент квоты вернётся.
+Из ревью: `markDispatchCompleted` безусловно делал `releaseQuota` → целостность квот
+держалась только на C4-dedup. Двойной вызов в обход dedup (истёкший TTL, reconciliation,
+force-regen) давал двойной декремент квоты.
 
-- Признак completed: `SET NX animastor:dispatch-completed:<scene>:<stage>` (TTL), пропускать `releaseQuota` при повторе.
-- Не ломать force-regen: `build_id` в ключе **или** снятие признака при новом lease.
-- +тест: двойной `markDispatchCompleted` декрементит квоту ровно один раз.
+Сделано:
+- `SET NX animastor:dispatch-completed:<scene>:<stage>` (TTL = lease TTL) в начале
+  `markDispatchCompleted`; при повторе — ранний `return`, release пропускается.
+- Маркер снимается в `dispatchStage` (шаг 4, после lease) → force-regen/re-dispatch
+  завершается заново. Плюс маркеры чистятся в `clearAllLeasesForBook` (cancel/regen).
+- Экспортирован `getDispatchCompletedKey` для тестов.
+- +2 теста: двойной вызов декрементит ровно раз; после снятия маркера release снова работает.
+- **365 passing** (было 363).
 
 ---
 

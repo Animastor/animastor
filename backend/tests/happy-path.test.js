@@ -654,6 +654,46 @@ describe('Happy Path: Dispatch Engine — Quotas', () => {
         const after = await dispatchEngine.getActiveCounter(redis, 'audio');
         expect(after).to.equal(0);
     });
+
+    // Д.1: markDispatchCompleted is idempotent — a repeated call (callback retry
+    // past the HTTP dedup, manual reconcile) must NOT double-release the quota.
+    it('Д.1: repeated markDispatchCompleted releases quota exactly once', async () => {
+        // Two slots held (e.g. two concurrent audio dispatches)
+        await dispatchEngine.acquireQuota(redis, 'audio');
+        await dispatchEngine.acquireQuota(redis, 'audio');
+        expect(await dispatchEngine.getActiveCounter(redis, 'audio')).to.equal(2);
+
+        // First completion releases one slot: 2 → 1
+        await dispatchEngine.markDispatchCompleted(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, 'audio');
+        expect(await dispatchEngine.getActiveCounter(redis, 'audio')).to.equal(1);
+
+        // Duplicate completion for the SAME dispatch must be a no-op (still 1),
+        // not steal the other in-flight dispatch's slot.
+        await dispatchEngine.markDispatchCompleted(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, 'audio');
+        expect(await dispatchEngine.getActiveCounter(redis, 'audio')).to.equal(1);
+
+        // The completion marker exists for this scene/stage.
+        const completedKey = dispatchEngine.getDispatchCompletedKey(BOOK_ID, CHAPTER_ID, SCENE_ID, 'audio');
+        expect(await redis.get(completedKey)).to.not.be.null;
+    });
+
+    // Д.1: clearing the marker (as dispatchStage does at the start of a fresh
+    // dispatch) lets the next completion release again — force-regen is not blocked.
+    it('Д.1: clearing the completion marker re-enables release for the next dispatch', async () => {
+        await dispatchEngine.acquireQuota(redis, 'audio');
+        await dispatchEngine.markDispatchCompleted(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, 'audio');
+        expect(await dispatchEngine.getActiveCounter(redis, 'audio')).to.equal(0);
+
+        // Simulate a new dispatch: clear marker + acquire a fresh slot.
+        const completedKey = dispatchEngine.getDispatchCompletedKey(BOOK_ID, CHAPTER_ID, SCENE_ID, 'audio');
+        await redis.del(completedKey);
+        await dispatchEngine.acquireQuota(redis, 'audio');
+        expect(await dispatchEngine.getActiveCounter(redis, 'audio')).to.equal(1);
+
+        // Completion now releases again: 1 → 0.
+        await dispatchEngine.markDispatchCompleted(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, 'audio');
+        expect(await dispatchEngine.getActiveCounter(redis, 'audio')).to.equal(0);
+    });
 });
 
 // ======================================================
