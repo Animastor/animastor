@@ -1268,7 +1268,8 @@ async function recoverMissingRedisChunks(buildId, bookId) {
                 }
             }
 
-            let audioReady = 0;
+            let audioReady = 0;          // any audio including placeholder (for completion/playback)
+            let audioReadyReal = 0;      // real audio only (status = 'ready', for progress display)
             let imageReady = 0;
             let videoReady = 0;
             let hasAudio = false;
@@ -1282,6 +1283,9 @@ async function recoverMissingRedisChunks(buildId, bookId) {
                         if (chunk.audio_status === 'ready' || chunk.audio_status === 'placeholder') {
                             audioReady++;
                             hasAudio = true;
+                            if (chunk.audio_status === 'ready') {
+                                audioReadyReal++;
+                            }
                         }
                         if (chunk.image_status === 'ready') {
                             imageReady++;
@@ -1336,7 +1340,27 @@ async function recoverMissingRedisChunks(buildId, bookId) {
                                 const val = await redis.get(progKey);
                                 if (val) confirmedCount = parseInt(val, 10);
                             } catch (_) {}
-                            const ready = rows.length - Math.max(0, dirtyCount - confirmedCount);
+                            // For regeneration (dirtyCount>0): non-dirty units are already ready
+                            // plus confirmedCount of the regenerating dirty units.
+                            // For dirtyCount=0: use disk-based count because handleImageCompleted
+                            // clears dirty_unit_ids mid-regen, making dirtyCount=0 while only a
+                            // subset of IUs have been confirmed. Counting PNGs on disk handles this.
+                            const ready = dirtyCount > 0
+                                ? rows.length - dirtyCount + Math.min(confirmedCount, dirtyCount)
+                                : (() => {
+                                    if (confirmedCount >= rows.length) return rows.length;
+                                    // Check actual PNGs on disk to handle regen edge case
+                                    const buildDir2 = path.join(config.OUTPUT_DIR, buildId);
+                                    if (buildDir2) {
+                                        try {
+                                            const iuPrefix = `${bookId}_${ch}_${sc}_`;
+                                            const files = fs.readdirSync(buildDir2)
+                                                .filter(f => f.startsWith(iuPrefix) && f.endsWith('.png'));
+                                            return Math.max(files.length, Math.min(confirmedCount, rows.length));
+                                        } catch (_) {}
+                                    }
+                                    return Math.min(confirmedCount, rows.length);
+                                })();
                             scopeIuReady += Math.max(0, ready);
                         }
                     }
@@ -1362,7 +1386,21 @@ async function recoverMissingRedisChunks(buildId, bookId) {
                                     const val = await redis.get(progKey);
                                     if (val) confirmedCount = parseInt(val, 10);
                                 } catch (_) {}
-                                coverIuReady = rows.length - Math.max(0, dirtyCount - confirmedCount);
+                                coverIuReady = dirtyCount > 0
+                                    ? rows.length - dirtyCount + Math.min(confirmedCount, dirtyCount)
+                                    : (() => {
+                                        if (confirmedCount >= rows.length) return rows.length;
+                                        const buildDir2 = path.join(config.OUTPUT_DIR, buildId);
+                                        if (buildDir2) {
+                                            try {
+                                                const iuPrefix = `${bookId}_${coverChapterId}_${coverSceneId}_`;
+                                                const files = fs.readdirSync(buildDir2)
+                                                    .filter(f => f.startsWith(iuPrefix) && f.endsWith('.png'));
+                                                return Math.max(files.length, Math.min(confirmedCount, rows.length));
+                                            } catch (_) {}
+                                        }
+                                        return Math.min(confirmedCount, rows.length);
+                                    })();
                                 coverIuReady = Math.max(0, coverIuReady);
                             } else {
                                 // Fallback: count from book data units
@@ -1377,7 +1415,21 @@ async function recoverMissingRedisChunks(buildId, bookId) {
                                         const val = await redis.get(progKey);
                                         if (val) confirmedCount = parseInt(val, 10);
                                     } catch (_) {}
-                                    coverIuReady = units.length - Math.max(0, dirtyCount - confirmedCount);
+                                    coverIuReady = dirtyCount > 0
+                                        ? units.length - dirtyCount + Math.min(confirmedCount, dirtyCount)
+                                        : (() => {
+                                            if (confirmedCount >= units.length) return units.length;
+                                            const buildDir2 = path.join(config.OUTPUT_DIR, buildId);
+                                            if (buildDir2) {
+                                                try {
+                                                    const iuPrefix = `${bookId}_${coverChapterId}_${coverSceneId}_`;
+                                                    const files = fs.readdirSync(buildDir2)
+                                                        .filter(f => f.startsWith(iuPrefix) && f.endsWith('.png'));
+                                                    return Math.max(files.length, Math.min(confirmedCount, units.length));
+                                                } catch (_) {}
+                                            }
+                                            return Math.min(confirmedCount, units.length);
+                                        })();
                                     coverIuReady = Math.max(0, coverIuReady);
                                 }
                             }
@@ -1391,6 +1443,7 @@ async function recoverMissingRedisChunks(buildId, bookId) {
                 scope: scope || 'book',
                 total_chunks: totalChunks,
                 audio_ready: audioReady,
+                audio_ready_real: audioReadyReal,
                 image_ready: imageReady,
                 video_ready: videoReady,
                 has_audio: hasAudio,
@@ -1402,6 +1455,7 @@ async function recoverMissingRedisChunks(buildId, bookId) {
                 has_assets: audioReady > 0 || imageReady > 0 || videoReady > 0,
                 scope_total: filteredIds.length,
                 scope_audio_ready: audioReady,
+                scope_audio_ready_real: audioReadyReal,
                 scope_image_ready: imageReady,
                 scope_video_ready: videoReady,
                 scope_all_audio_ready: audioReady === filteredIds.length && filteredIds.length > 0,
@@ -1880,6 +1934,18 @@ async function recoverMissingRedisChunks(buildId, bookId) {
                                 }
                             } catch (delErr) {
                                 console.warn(`[REGENERATE-PRE-DELETE] Failed to delete ${pngPath}: ${delErr.message}`);
+                            }
+                            // Also delete stale preview thumbnail (pr-*.png) so getOrCreatePreview
+                            // regenerates it from the new IU image instead of returning the old one.
+                            const strippedUid = uid.replace(/^iu/, '');
+                            const previewPath = path.join(buildDir, `${bookId}_${ds.chapter_id}_${ds.scene_id}_pr${strippedUid}.png`);
+                            try {
+                                if (fs.existsSync(previewPath)) {
+                                    fs.unlinkSync(previewPath);
+                                    log(`[REGENERATE-PRE-DELETE] Deleted stale preview: ${previewPath}`);
+                                }
+                            } catch (delErr) {
+                                console.warn(`[REGENERATE-PRE-DELETE] Failed to delete ${previewPath}: ${delErr.message}`);
                             }
                         }
                     }

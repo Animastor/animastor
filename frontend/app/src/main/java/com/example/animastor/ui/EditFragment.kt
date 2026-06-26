@@ -357,10 +357,15 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         val scId = currentScene()?.scene_id ?: return
         val iuId = unit.id ?: "iu${String.format("%04d", index)}"
         lifecycleScope.launch {
-            val bytes = viewModel.repository.getIuPreview(bookId, chId, scId, iuId, viewModel.buildId) ?: return@launch
+            val bytes = viewModel.repository.getIuPreview(bookId, chId, scId, iuId, viewModel.buildId)
+            if (bytes == null) {
+                showPreviewMissing(imageView, card)
+                return@launch
+            }
             val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
             if (bmp != null) {
                 imageView.setImageBitmap(bmp)
+                hidePreviewMissing(card)
                 val dm = resources.displayMetrics
                 val scrDp = dm.widthPixels / dm.density
                 val availDp = scrDp - 32f
@@ -372,7 +377,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                 lp.height = hPx
                 card.layoutParams = lp
             } else {
-                showPreviewMissing(imageView, card, isCurrent = card.id == R.id.currentUnitCard)
+                showPreviewMissing(imageView, card)
             }
         }
     }
@@ -383,10 +388,15 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         val scId = scene?.scene_id ?: return
         val iuId = unit.id ?: "iu${String.format("%04d", index)}"
         lifecycleScope.launch {
-            val bytes = viewModel.repository.getIuPreview(bookId, chId, scId, iuId, viewModel.buildId) ?: return@launch
+            val bytes = viewModel.repository.getIuPreview(bookId, chId, scId, iuId, viewModel.buildId)
+            if (bytes == null) {
+                showPreviewMissing(imageView, card)
+                return@launch
+            }
             val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
             if (bmp != null) {
                 imageView.setImageBitmap(bmp)
+                hidePreviewMissing(card)
                 val dm = resources.displayMetrics
                 val scrDp = dm.widthPixels / dm.density
                 val availDp = scrDp - 32f
@@ -398,28 +408,54 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                 lp.height = hPx
                 card.layoutParams = lp
             } else {
-                showPreviewMissing(imageView, card, isCurrent = card.id == R.id.currentUnitCard)
+                showPreviewMissing(imageView, card)
             }
         }
     }
 
-    private fun showPreviewMissing(imageView: ImageView, card: MaterialCardView, isCurrent: Boolean) {
+    private fun showPreviewMissing(imageView: ImageView, card: MaterialCardView) {
         imageView.setImageResource(R.drawable.ic_image_off)
         imageView.scaleType = ImageView.ScaleType.CENTER_INSIDE
         imageView.imageTintList = android.content.res.ColorStateList.valueOf(
             MaterialColors.getColor(imageView, com.google.android.material.R.attr.colorOnSurfaceVariant)
         )
-        if (isCurrent) {
-            binding?.currentIuLabel?.text = getString(R.string.iu_not_generated)
-            val hPx = (140f * resources.displayMetrics.density + 0.5f).toInt()
-            val lp = card.layoutParams
-            lp.height = hPx
-            card.layoutParams = lp
-        } else {
-            val hPx = (140f * resources.displayMetrics.density + 0.5f).toInt()
-            val lp = card.layoutParams
-            lp.height = hPx
-            card.layoutParams = lp
+        val label = getString(R.string.iu_not_generated)
+        val b = binding
+        when (card.id) {
+            R.id.currentUnitCard -> {
+                b?.currentIuLabel?.text = label
+                b?.currentIuLabel?.visibility = View.VISIBLE
+            }
+            R.id.prevUnitCard -> {
+                b?.prevIuLabel?.text = label
+                b?.prevIuLabel?.visibility = View.VISIBLE
+            }
+            R.id.nextUnitCard -> {
+                b?.nextIuLabel?.text = label
+                b?.nextIuLabel?.visibility = View.VISIBLE
+            }
+        }
+        val hPx = (140f * resources.displayMetrics.density + 0.5f).toInt()
+        val lp = card.layoutParams
+        lp.height = hPx
+        card.layoutParams = lp
+    }
+
+    private fun hidePreviewMissing(card: MaterialCardView) {
+        val b = binding
+        when (card.id) {
+            R.id.currentUnitCard -> {
+                // currentIuLabel text is managed by updateCarousel —
+                // don't clear it, just revert visibility if showPreviewMissing set it.
+                // Next updateCarousel will set the correct "Unit X" label.
+                b?.currentIuLabel?.visibility = View.VISIBLE
+            }
+            R.id.prevUnitCard -> {
+                b?.prevIuLabel?.visibility = View.GONE
+            }
+            R.id.nextUnitCard -> {
+                b?.nextIuLabel?.visibility = View.GONE
+            }
         }
     }
 

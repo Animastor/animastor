@@ -162,6 +162,43 @@ async function ensurePlaceholderAudio(buildId, bookId, chapterId, sceneId) {
         log(`Placeholder file missing for ${bookId}/${chapterId}/${sceneId}, regenerating`);
     }
 
+    // 1.b Safety: if the audio file already exists on disk (real generated audio),
+    // DO NOT overwrite it — even if the DB record is missing or stale.
+    // This prevents data loss when Redis/PG is reset but files survive.
+    const audioPath = path.join(config.OUTPUT_DIR, buildId, `${bookId}_${chapterId}_${sceneId}.mp3`);
+    if (fs.existsSync(audioPath)) {
+        // Check if it's a real audio file (larger than max silent placeholder)
+        const stats = fs.statSync(audioPath);
+        if (stats.size > 8192) {
+            log(`Safety: real audio file exists on disk for ${bookId}/${chapterId}/${sceneId} (${stats.size} bytes) — NOT overwriting with placeholder`);
+            // Register it in DB if missing, so subsequent checks find it
+            try {
+                const { generateSilentAudio } = require('../audio');
+                const dummyPath = audioPath + '.placeholder_check.mp3';
+                await generateSilentAudio(dummyPath, 2);
+                const placeholderSize = fs.statSync(dummyPath).size;
+                try { fs.unlinkSync(dummyPath); } catch (_) {}
+                if (stats.size > placeholderSize * 1.5) {
+                    // File is significantly larger than a 2s placeholder — it's real audio
+                    await sceneAssetsRepo.upsertAsset({
+                        book_id: bookId,
+                        chapter_id: chapterId,
+                        scene_id: sceneId,
+                        asset_type: 'audio',
+                        path: audioPath,
+                        duration_sec: 0,
+                        build_id: buildId,
+                        status: 'ready',
+                    });
+                    log(`Safety: registered existing real audio as ready: ${bookId}/${chapterId}/${sceneId}`);
+                }
+            } catch (_) {}
+            return { created: false, path: audioPath, durationSec: 0, reason: 'real_audio_protected' };
+        }
+        // Small file — it's likely a placeholder, not real audio
+        log(`Existing audio file is small (${stats.size} bytes), may be stale placeholder — will regenerate`);
+    }
+
     // 2. Calculate scene estimated duration
     const durationSec = await getSceneEstimatedDurationSec(buildId, bookId, chapterId, sceneId);
     if (durationSec <= 0) {
@@ -169,12 +206,11 @@ async function ensurePlaceholderAudio(buildId, bookId, chapterId, sceneId) {
     }
     const effectiveDuration = Math.max(durationSec, 2);
 
-    // 3. Generate silent audio
-    const outputDir = path.join(config.OUTPUT_DIR, buildId);
-    if (!fs.existsSync(outputDir)) {
-        fs.mkdirSync(outputDir, { recursive: true });
+    // 3. Generate silent audio (file will be overwritten — safe because we checked it's not real audio above)
+    const outputDir3 = path.dirname(audioPath);
+    if (!fs.existsSync(outputDir3)) {
+        fs.mkdirSync(outputDir3, { recursive: true });
     }
-    const audioPath = path.join(outputDir, `${bookId}_${chapterId}_${sceneId}.mp3`);
 
     try {
         const { generateSilentAudio } = require('../audio');

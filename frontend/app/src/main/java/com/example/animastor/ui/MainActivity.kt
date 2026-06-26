@@ -719,7 +719,7 @@ class MainActivity : AppCompatActivity() {
             if (total > 0) {
                 val audioNeeded = profile == "audio_only" || profile == "storyboard" || profile == "full"
                 if (audioNeeded) {
-                    add("audio", getString(R.string.progress_label_audio), assets.scope_audio_ready, total)
+                    add("audio", getString(R.string.progress_label_audio), assets.scope_audio_ready_real, total)
                 }
 
                 val imageNeeded = profile == "image_only" || profile == "storyboard" || profile == "full"

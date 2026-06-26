@@ -514,6 +514,20 @@ async function processSingleIU(redis, unit, uIdx, sceneData, loadedBook, buildId
         } catch (delErr) {
             warn(`[DIRTY-UNIT-REGEN] Failed to delete stale PNG ${oldPng}: ${delErr.message}`);
         }
+
+        // Also delete stale preview thumbnail (pr-*.png) so getOrCreatePreview
+        // regenerates it from the new IU image instead of returning the old one.
+        const strippedUnitId = canonicalUnitId.replace(/^iu/, '');
+        const oldPreview = path.join(config.OUTPUT_DIR, buildId,
+            `${bookId}_${chapterId}_${sceneId}_pr${strippedUnitId}.png`);
+        try {
+            if (fs.existsSync(oldPreview)) {
+                fs.unlinkSync(oldPreview);
+                log(`[DIRTY-UNIT-REGEN] Deleted stale preview: ${oldPreview}`);
+            }
+        } catch (delErr) {
+            warn(`[DIRTY-UNIT-REGEN] Failed to delete stale preview ${oldPreview}: ${delErr.message}`);
+        }
     }
 
     try {

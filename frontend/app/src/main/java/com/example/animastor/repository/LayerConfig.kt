@@ -37,6 +37,7 @@ data class AssetsStateResponse(
     val has_assets: Boolean = false,
     val scope_total: Int = 0,
     val scope_audio_ready: Int = 0,
+    val scope_audio_ready_real: Int = 0,
     val scope_image_ready: Int = 0,
     val scope_video_ready: Int = 0,
     val scope_all_audio_ready: Boolean = false,
