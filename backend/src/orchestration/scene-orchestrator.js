@@ -28,7 +28,9 @@ async function startScene(redis, scene, loadedBook, buildId) {
         buildId, bookId, chapterId, sceneId
     });
 
-    await state.transitionSceneState(redis, bookId, chapterId, sceneId, state.SceneState.AUDIO_PENDING);
+    // L1: Set per-asset state first, then sync linear state from it
+    await state.setAssetState(redis, bookId, chapterId, sceneId, 'audio', state.AssetState.PENDING);
+    await state.syncLinearState(redis, bookId, chapterId, sceneId);
     await runtimeScheduler.addSceneToActiveIndex(redis, bookId, chapterId, sceneId);
     log(`ADDED TO ACTIVE: ${bookId}/${chapterId}/${sceneId}`);
 
@@ -46,10 +48,11 @@ async function executeAudioDispatch(redis, scene, loadedBook, buildId) {
         buildId, dispatchType: 'orchestrator'
     });
 
-    await state.transitionSceneState(redis, bookId, chapterId, sceneId, state.SceneState.AUDIO_GENERATING);
-
     // §5.1: Set per-asset state to generating so callbacks can validate correctly
     await state.setAssetState(redis, bookId, chapterId, sceneId, 'audio', state.AssetState.GENERATING);
+
+    // L1: Derive linear state from per-asset
+    await state.syncLinearState(redis, bookId, chapterId, sceneId);
 
     // Fallback to disk load when runtime doesn't pass loadedBook
     const bookData = loadedBook || book.loadBook(bookId);
@@ -73,11 +76,11 @@ async function executeImageDispatch(redis, scene, loadedBook, buildId) {
         buildId, dispatchType: 'orchestrator'
     });
 
-    // Linear state is updated directly (no validation) — per-asset state is the source of truth.
-    await state.transitionSceneState(redis, bookId, chapterId, sceneId, state.SceneState.IMAGE_GENERATING);
-
     // §5.1: Set per-asset state to generating so callbacks can validate correctly
     await state.setAssetState(redis, bookId, chapterId, sceneId, 'image', state.AssetState.GENERATING);
+
+    // L1: Derive linear state from per-asset (per-asset уже установлен выше)
+    await state.syncLinearState(redis, bookId, chapterId, sceneId);
 
     // Fallback to disk load when runtime doesn't pass loadedBook
     const bookData = loadedBook || book.loadBook(bookId);
@@ -117,11 +120,11 @@ async function executeVideoDispatch(redis, scene, loadedBook, buildId) {
         buildId, dispatchType: 'orchestrator'
     });
 
-    // Linear state is updated directly — per-asset state is the source of truth.
-    await state.transitionSceneState(redis, bookId, chapterId, sceneId, state.SceneState.VIDEO_GENERATING);
-
     // §5.1: Set per-asset state to generating so callbacks can validate correctly
     await state.setAssetState(redis, bookId, chapterId, sceneId, 'video', state.AssetState.GENERATING);
+
+    // L1: Derive linear state from per-asset (per-asset уже установлен выше)
+    await state.syncLinearState(redis, bookId, chapterId, sceneId);
 
     // Fallback to disk load when runtime doesn't pass loadedBook
     const bookData = loadedBook || book.loadBook(bookId);

@@ -359,7 +359,8 @@ async function completeSceneWithoutVideo(redis, loadedBook, bookId, chapterId, s
     log(`Completing scene without video: ${bookId}/${chapterId}/${sceneId}`);
 
     await state.setAssetState(redis, bookId, chapterId, sceneId, 'video', state.AssetState.READY);
-    await state.setSceneStateWithBuildId(redis, bookId, chapterId, sceneId, state.SceneState.VIDEO_READY, buildId);
+    // L2: Derive linear state from per-asset
+    await state.syncLinearState(redis, bookId, chapterId, sceneId, buildId);
 
     try {
         const sceneAssetsRepo = require('../storage/postgres/repositories/scene-assets-repo');
@@ -385,7 +386,8 @@ async function completeSceneWithoutVideo(redis, loadedBook, bookId, chapterId, s
 async function completeSceneWithoutImage(redis, loadedBook, bookId, chapterId, sceneId, buildId) {
     log(`Completing scene without image: ${bookId}/${chapterId}/${sceneId}`);
     await state.setAssetState(redis, bookId, chapterId, sceneId, 'image', state.AssetState.READY);
-    await state.setSceneStateWithBuildId(redis, bookId, chapterId, sceneId, state.SceneState.IMAGE_READY, buildId);
+    // L2: Derive linear state from per-asset
+    await state.syncLinearState(redis, bookId, chapterId, sceneId, buildId);
     log(`Scene complete (no image): ${bookId}/${chapterId}/${sceneId}`);
 
     try {
