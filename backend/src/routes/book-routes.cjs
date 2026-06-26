@@ -98,10 +98,9 @@ async function recoverMissingRedisChunks(buildId, bookId) {
 
         // Also ensure scene is registered in activeScenes for GPU scheduler
         try {
-            await state.setSceneStateWithBuildId(
-                redis, bookId, s.chapter_id, s.scene_id,
-                state.SceneState.AUDIO_PENDING, buildId
-            );
+            // L5: Set per-asset state first, then derive linear state
+            await state.setAssetState(redis, bookId, s.chapter_id, s.scene_id, 'audio', state.AssetState.PENDING);
+            await state.syncLinearState(redis, bookId, s.chapter_id, s.scene_id, buildId);
             await activeScenes.addActiveScene(
                 redis, bookId, s.chapter_id, s.scene_id
             );

@@ -151,7 +151,13 @@ module.exports = function(redis) {
             const sceneStateKey = `${state.SCENE_STATE_KEY_PREFIX}:${bookId}:${chapterId}:${sceneId}`;
             try {
                 await redis.del(sceneStateKey);
-                await state.setSceneStateWithBuildId(redis, bookId, chapterId, sceneId, state.SceneState.VIDEO_READY, buildId);
+                // L5: Set per-asset to all READY (files exist on disk), then derive VIDEO_READY
+                await state.setAssetStates(redis, bookId, chapterId, sceneId, {
+                    audio: state.AssetState.READY,
+                    image: state.AssetState.READY,
+                    video: state.AssetState.READY
+                });
+                await state.syncLinearState(redis, bookId, chapterId, sceneId, buildId);
             } catch (err) {
                 console.warn('Recovery: failed to reset scene state for', chapterId + '/' + sceneId + ':', err.message);
             }

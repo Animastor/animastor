@@ -103,10 +103,8 @@ module.exports = function({ redis, txtImporter, genSessionRepo, state, activeSce
                         bgLog(`🎮 Registering ${phScenes.length} scenes for GPU scheduler (registerForGpu=true)...`);
                         for (const ps of phScenes) {
                             try {
-                                await state.setSceneStateWithBuildId(
-                                    redis, bookId, ps.chapter_id, ps.scene_id,
-                                    state.SceneState.NEW, buildId
-                                );
+                                // L5: syncLinearState derives NEW from default per-asset (all NEW via fallback)
+                                await state.syncLinearState(redis, bookId, ps.chapter_id, ps.scene_id, buildId);
                                 await activeScenes.addActiveScene(
                                     redis, bookId, ps.chapter_id, ps.scene_id
                                 );
