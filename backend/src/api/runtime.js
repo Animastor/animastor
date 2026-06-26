@@ -154,12 +154,7 @@ async function handleRuntimeDebug(req, res) {
             // Scheduler
             scheduler: {
                 metrics: schedulerMetrics,
-                loop: loopStatus,
-                limits: {
-                    maxConcurrentAudio: runtime.scheduler.MAX_CONCURRENT_AUDIO,
-                    maxConcurrentImage: runtime.scheduler.MAX_CONCURRENT_IMAGE,
-                    maxConcurrentVideo: runtime.scheduler.MAX_CONCURRENT_VIDEO
-                }
+                loop: loopStatus
             },
 
             // Active scenes

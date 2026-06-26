@@ -69,10 +69,6 @@ async function checkChunksHaveImages(redis, bookId, chapterId, sceneId) {
 // CONFIGURATION
 // ======================================================
 
-const MAX_CONCURRENT_AUDIO = 3;
-const MAX_CONCURRENT_IMAGE = 2;
-const MAX_CONCURRENT_VIDEO = 1;
-
 const SCHEDULER_TICK_MS = 5000; // 5 seconds
 
 // ======================================================
@@ -80,9 +76,6 @@ const SCHEDULER_TICK_MS = 5000; // 5 seconds
 // ======================================================
 
 const ACTIVE_SCENES_KEY = 'animastor:active-scenes';
-const AUDIO_IN_PROGRESS_KEY = 'animastor:concurrent-audio';
-const IMAGE_IN_PROGRESS_KEY = 'animastor:concurrent-image';
-const VIDEO_IN_PROGRESS_KEY = 'animastor:concurrent-video';
 
 /**
  * Add scene to active index when it enters a generating/pending state.
@@ -106,46 +99,7 @@ async function removeSceneFromActiveIndex(redis, bookId, chapterId, sceneId) {
     }
 }
 
-/**
- * Get count of scenes in a specific state (for throttling).
- */
-async function getCountInState(redis, stateKey) {
-    const count = await redis.get(stateKey);
-    return parseInt(count || '0', 10);
-}
-
-/**
- * Increment concurrent counter atomically.
- */
-async function incrementConcurrent(redis, stateKey) {
-    return await redis.incr(stateKey);
-}
-
-/**
- * Decrement concurrent counter atomically.
- */
-async function decrementConcurrent(redis, stateKey) {
-    return await redis.decr(stateKey);
-}
-
-/**
- * Check if we can schedule a new stage (respecting concurrency limits).
- */
-async function canScheduleStage(redis, stage) {
-    switch (stage) {
-        case 'audio':
-            const audioCount = await getCountInState(redis, AUDIO_IN_PROGRESS_KEY);
-            return audioCount < MAX_CONCURRENT_AUDIO;
-        case 'image':
-            const imageCount = await getCountInState(redis, IMAGE_IN_PROGRESS_KEY);
-            return imageCount < MAX_CONCURRENT_IMAGE;
-        case 'video':
-            const videoCount = await getCountInState(redis, VIDEO_IN_PROGRESS_KEY);
-            return videoCount < MAX_CONCURRENT_VIDEO;
-        default:
-            return true;
-    }
-}
+// M4 (Н.9): removed dead concurrent counter functions — dispatchEngine owns quotas
 
 // ======================================================
 // STATE TO STAGE MAPPING
@@ -429,21 +383,26 @@ async function tick(redis, loadedBooks = {}) {
  */
 async function getMetrics(redis) {
     const activeCount = await redis.scard(ACTIVE_SCENES_KEY);
-    const audioCount = await getCountInState(redis, AUDIO_IN_PROGRESS_KEY);
-    const imageCount = await getCountInState(redis, IMAGE_IN_PROGRESS_KEY);
-    const videoCount = await getCountInState(redis, VIDEO_IN_PROGRESS_KEY);
+    
+    // M4 (Н.9): quotas are owned by dispatchEngine — delegate to getQuotaStatus
+    let quotaStatus = { audio: { current: 0, max: 0 }, image: { current: 0, max: 0 }, video: { current: 0, max: 0 } };
+    try {
+        quotaStatus = await dispatchEngine.getQuotaStatus(redis);
+    } catch (e) {
+        warn(`getMetrics: dispatchEngine.getQuotaStatus failed: ${e.message}`);
+    }
 
     return {
         activeScenes: activeCount,
         concurrent: {
-            audio: audioCount,
-            image: imageCount,
-            video: videoCount
+            audio: quotaStatus.audio.current,
+            image: quotaStatus.image.current,
+            video: quotaStatus.video.current
         },
         limits: {
-            audio: MAX_CONCURRENT_AUDIO,
-            image: MAX_CONCURRENT_IMAGE,
-            video: MAX_CONCURRENT_VIDEO
+            audio: quotaStatus.audio.max,
+            image: quotaStatus.image.max,
+            video: quotaStatus.video.max
         }
     };
 }
@@ -563,9 +522,6 @@ async function initializeRuntime(redis) {
 module.exports = {
     // Configuration
     SCHEDULER_TICK_MS,
-    MAX_CONCURRENT_AUDIO,
-    MAX_CONCURRENT_IMAGE,
-    MAX_CONCURRENT_VIDEO,
 
     // Active scene index
     ACTIVE_SCENES_KEY,
@@ -581,11 +537,6 @@ module.exports = {
     checkChunksHaveImages,
     tick,
     getMetrics,
-
-    // Helpers
-    incrementConcurrent,
-    decrementConcurrent,
-    canScheduleStage,
 
     // Re-exports
     SceneState: state.SceneState,
