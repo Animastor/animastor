@@ -1427,6 +1427,242 @@ describe('Happy Path: Orchestrator facade — completeStage', () => {
     });
 });
 
+describe('Happy Path: Orchestrator facade — beginStage', () => {
+    let redis;
+    let orchestrator;
+
+    beforeEach(() => {
+        redis = new FakeRedis();
+
+        // Stub dispatch-engine: record calls and return controlled results
+        const dePath = require.resolve('../src/runtime/dispatch-engine');
+        require.cache[dePath] = {
+            exports: {
+                acquireStageLease: async () => ({ acquired: true, token: 'test-token', leaseKey: 'lease:test' }),
+                releaseStageLease: async () => ({ released: true }),
+                getLeaseData: async () => ({ leaseKey: 'lease:test', token: null }),
+                getDispatchMetaKey: (b, c, s, st) => `meta:${b}:${c}:${s}:${st}`,
+                createDispatchMetadata: () => ({}),
+                setDispatchMetadata: async () => {},
+                checkQuota: async () => ({ exceeded: false, current: 1, max: 3 }),
+                acquireQuota: async () => ({ acquired: true, current: 1, max: 3 }),
+                releaseQuota: async () => ({ released: true, current: 0 }),
+                shouldSkipDispatch: async () => ({ skip: false, reason: 'no_lease' }),
+                isLeaseValid: async () => true,
+                getActiveCounter: async () => 0,
+                dispatchStage: async (r, b, c, s, stage, lb, bid) => ({
+                    dispatched: true,
+                    dispatchId: 'dispatch-test',
+                    stage,
+                }),
+                startDispatchRenewal: () => {},
+                stopDispatchRenewal: () => {},
+                acquireSchedulerTickLock: async () => ({ acquired: true, token: 'tick-token' }),
+                releaseSchedulerTickLock: async () => ({ released: true }),
+                isSchedulerTickRunning: async () => 0,
+                markDispatchCompleted: async () => {},
+                markDispatchFailed: async () => {},
+                getMetrics: async () => ({ quotas: {}, active: {} }),
+                getDispatchCompletedKey: (b, c, s, st) => `completed:${b}:${c}:${s}:${st}`,
+                clearAllLeasesForBook: async () => ({ deleted: 0 }),
+                getQuotaStatus: async () => ({}),
+                LEASE_TTLS: { audio: 900, image: 1200, video: 1800 },
+                QUOTAS: { maxActiveAudio: 3, maxActiveImage: 2, maxActiveVideo: 1 },
+                SCHEDULER_TICK_LOCK: 'animastor:runtime:scheduler-lock',
+                SCHEDULER_TICK_LOCK_TTL: 30,
+            },
+            loaded: true,
+        };
+
+        // Stub scene-utils (used by dispatch-engine internally)
+        const utilsPath = require.resolve('../src/orchestration/scene-utils');
+        require.cache[utilsPath] = {
+            exports: { log: () => {}, warn: () => {}, error: () => {}, logEvent: async () => {} },
+            loaded: true,
+        };
+
+        delete require.cache[require.resolve('../src/orchestration/orchestrator')];
+        orchestrator = require('../src/orchestration/orchestrator');
+    });
+
+    afterEach(() => {
+        for (const p of [
+            '../src/runtime/dispatch-engine',
+            '../src/orchestration/scene-utils',
+            '../src/orchestration/orchestrator',
+        ]) {
+            delete require.cache[require.resolve(p)];
+        }
+    });
+
+    it('beginStage calls dispatchEngine.dispatchStage with correct params', async () => {
+        let captured = null;
+        const dePath = require.resolve('../src/runtime/dispatch-engine');
+        require.cache[dePath].exports.dispatchStage = async (r, b, c, s, stage, lb, bid) => {
+            captured = { r, b, c, s, stage, lb, bid };
+            return { dispatched: true, stage };
+        };
+
+        delete require.cache[require.resolve('../src/orchestration/orchestrator')];
+        orchestrator = require('../src/orchestration/orchestrator');
+
+        const scene = { book_id: BOOK_ID, chapter_id: CHAPTER_ID, scene_id: SCENE_ID };
+        const result = await orchestrator.beginStage(redis, scene, null, BUILD_ID, 'audio');
+
+        expect(captured.r).to.equal(redis);
+        expect(captured.b).to.equal(BOOK_ID);
+        expect(captured.c).to.equal(CHAPTER_ID);
+        expect(captured.s).to.equal(SCENE_ID);
+        expect(captured.stage).to.equal('audio');
+        expect(captured.lb).to.be.null;
+        expect(captured.bid).to.equal(BUILD_ID);
+        expect(result.dispatched).to.be.true;
+        expect(result.stage).to.equal('audio');
+    });
+
+    it('beginStage extracts book/chapter/scene from scene object', async () => {
+        let captured = null;
+        const dePath = require.resolve('../src/runtime/dispatch-engine');
+        require.cache[dePath].exports.dispatchStage = async (r, b, c, s) => {
+            captured = { b, c, s };
+            return { dispatched: true };
+        };
+
+        delete require.cache[require.resolve('../src/orchestration/orchestrator')];
+        orchestrator = require('../src/orchestration/orchestrator');
+
+        const scene = { book_id: 'b1', chapter_id: 'ch2', scene_id: 's3' };
+        await orchestrator.beginStage(redis, scene, {}, 'build-42', 'image');
+
+        expect(captured.b).to.equal('b1');
+        expect(captured.c).to.equal('ch2');
+        expect(captured.s).to.equal('s3');
+    });
+
+    it('beginStage propagates errors from dispatchStage', async () => {
+        const dePath = require.resolve('../src/runtime/dispatch-engine');
+        require.cache[dePath].exports.dispatchStage = async () => { throw new Error('dispatch failed'); };
+
+        delete require.cache[require.resolve('../src/orchestration/orchestrator')];
+        orchestrator = require('../src/orchestration/orchestrator');
+
+        const scene = { book_id: BOOK_ID, chapter_id: CHAPTER_ID, scene_id: SCENE_ID };
+        let threw = false;
+        try {
+            await orchestrator.beginStage(redis, scene, null, BUILD_ID, 'video');
+        } catch (e) {
+            threw = true;
+            expect(e.message).to.match(/dispatch failed/);
+        }
+        expect(threw).to.be.true;
+    });
+});
+
+describe('Happy Path: Orchestrator facade — reconcile', () => {
+    let redis;
+    let orchestrator;
+
+    beforeEach(() => {
+        redis = new FakeRedis();
+
+        // Stub reconciliation-engine
+        const rePath = require.resolve('../src/runtime/reconciliation-engine');
+        require.cache[rePath] = {
+            exports: {
+                reconcileScene: async (r, b, c, s) => ({
+                    toSummary: () => ({
+                        totalOrphanStates: 0,
+                        totalOrphanAssets: 0,
+                        totalPartialBuilds: 0,
+                        totalStaleLocks: 0,
+                        totalInconsistent: 0,
+                        orphanStates: [],
+                        orphanAssets: [],
+                        partialBuilds: [],
+                        staleLocks: [],
+                        inconsistentScenes: [],
+                    }),
+                    orphanStates: [],
+                    orphanAssets: [],
+                    partialBuilds: [],
+                    staleLocks: [],
+                    inconsistentScenes: [],
+                }),
+            },
+            loaded: true,
+        };
+
+        delete require.cache[require.resolve('../src/orchestration/orchestrator')];
+        orchestrator = require('../src/orchestration/orchestrator');
+    });
+
+    afterEach(() => {
+        for (const p of [
+            '../src/runtime/reconciliation-engine',
+            '../src/orchestration/orchestrator',
+        ]) {
+            delete require.cache[require.resolve(p)];
+        }
+    });
+
+    it('reconcile calls reconciliationEngine.reconcileScene with correct params', async () => {
+        let captured = null;
+        const rePath = require.resolve('../src/runtime/reconciliation-engine');
+        require.cache[rePath].exports.reconcileScene = async (r, b, c, s) => {
+            captured = { r, b, c, s };
+            return { toSummary: () => ({ totalInconsistent: 0 }) };
+        };
+
+        delete require.cache[require.resolve('../src/orchestration/orchestrator')];
+        orchestrator = require('../src/orchestration/orchestrator');
+
+        await orchestrator.reconcile(redis, BOOK_ID, CHAPTER_ID, SCENE_ID);
+
+        expect(captured.r).to.equal(redis);
+        expect(captured.b).to.equal(BOOK_ID);
+        expect(captured.c).to.equal(CHAPTER_ID);
+        expect(captured.s).to.equal(SCENE_ID);
+    });
+
+    it('reconcile returns a ReconciliationReport-shaped object with toSummary()', async () => {
+        const result = await orchestrator.reconcile(redis, BOOK_ID, CHAPTER_ID, SCENE_ID);
+        expect(result).to.have.property('toSummary').that.is.a('function');
+
+        const summary = result.toSummary();
+        expect(summary).to.have.property('totalInconsistent');
+        expect(summary).to.have.property('orphanStates');
+        expect(summary).to.have.property('orphanAssets');
+        expect(summary).to.have.property('partialBuilds');
+        expect(summary).to.have.property('staleLocks');
+    });
+
+    it('reconcile returns a report even for empty/nonexistent scene (no crash)', async () => {
+        // No state, no assets, no keys exist — reconcile must still return a report
+        const result = await orchestrator.reconcile(redis, 'nonexistent-book', 'ch-99', 's-99');
+
+        expect(result).to.exist;
+        const summary = result.toSummary();
+        expect(summary.totalInconsistent).to.equal(0);
+    });
+
+    it('reconcile propagates errors from reconciliationEngine', async () => {
+        const rePath = require.resolve('../src/runtime/reconciliation-engine');
+        require.cache[rePath].exports.reconcileScene = async () => { throw new Error('reconcile boom'); };
+
+        delete require.cache[require.resolve('../src/orchestration/orchestrator')];
+        orchestrator = require('../src/orchestration/orchestrator');
+
+        let threw = false;
+        try {
+            await orchestrator.reconcile(redis, BOOK_ID, CHAPTER_ID, SCENE_ID);
+        } catch (e) {
+            threw = true;
+            expect(e.message).to.match(/reconcile boom/);
+        }
+        expect(threw).to.be.true;
+    });
+});
+
 // ======================================================
 // SECTION 7: Д.2 — shouldScheduleAssets is pure
 // ======================================================
