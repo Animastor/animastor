@@ -79,6 +79,15 @@ async function handleAudioCompleted(redis, bookId, chapterId, sceneId, buildId) 
         });
         storage.manifest.recordAsset(bookId, chapterId, sceneId, 'audio', audioPath);
         log(`CACHE-MANIFEST: audio recorded for ${bookId}/${chapterId}/${sceneId}`);
+
+        // C2: Write PG status='ready' so version-stale detection works
+        try {
+            const sceneAssetsRepo = require('../storage/postgres/repositories/scene-assets-repo');
+            await sceneAssetsRepo.markReady(bookId, chapterId, sceneId, 'audio', audioPath);
+            log(`[PG-AUDIO-READY] ${bookId}/${chapterId}/${sceneId}: status=ready`);
+        } catch (pgErr) {
+            warn(`Failed to mark audio READY in PG: ${pgErr.message}`);
+        }
     } catch (err) {
         warn(`Failed to register audio asset: ${err.message}`);
     }
@@ -160,6 +169,18 @@ async function handleImageCompleted(redis, bookId, chapterId, sceneId, buildId) 
         });
         storage.manifest.recordAsset(bookId, chapterId, sceneId, 'image', sceneImage);
         log(`CACHE-MANIFEST: image recorded for ${bookId}/${chapterId}/${sceneId}`);
+
+        // C2: Write PG status='ready' so version-stale detection works
+        try {
+            const sceneAssetsRepo = require('../storage/postgres/repositories/scene-assets-repo');
+            await sceneAssetsRepo.markReady(bookId, chapterId, sceneId, 'image', sceneImage, {
+                width: imageInfo?.width || null,
+                height: imageInfo?.height || null,
+            });
+            log(`[PG-IMAGE-READY] ${bookId}/${chapterId}/${sceneId}: status=ready`);
+        } catch (pgErr) {
+            warn(`Failed to mark image READY in PG: ${pgErr.message}`);
+        }
     } catch (err) {
         warn(`Failed to register image asset: ${err.message}`);
     }
@@ -271,6 +292,19 @@ async function handleVideoCompleted(redis, bookId, chapterId, sceneId, buildId) 
         });
         storage.manifest.recordAsset(bookId, chapterId, sceneId, 'video', videoPath);
         log(`CACHE-MANIFEST: video recorded for ${bookId}/${chapterId}/${sceneId}`);
+
+        // C2: Write PG status='ready' so version-stale detection works
+        try {
+            const sceneAssetsRepo = require('../storage/postgres/repositories/scene-assets-repo');
+            await sceneAssetsRepo.markReady(bookId, chapterId, sceneId, 'video', videoPath, {
+                duration: duration || null,
+                width: metadata?.width || null,
+                height: metadata?.height || null,
+            });
+            log(`[PG-VIDEO-READY] ${bookId}/${chapterId}/${sceneId}: status=ready`);
+        } catch (pgErr) {
+            warn(`Failed to mark video READY in PG: ${pgErr.message}`);
+        }
     } catch (err) {
         warn(`Failed to register video asset: ${err.message}`);
     }

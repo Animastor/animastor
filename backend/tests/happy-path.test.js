@@ -893,9 +893,13 @@ describe('Happy Path: Scene Callbacks (with mocks)', () => {
         };
 
         // Mock postgres scene-assets-repo (required inline)
+        this.repoCalls = []; // track markReady calls
         const repoPath = require.resolve('../src/storage/postgres/repositories/scene-assets-repo');
         require.cache[repoPath] = {
             exports: {
+                markReady: async (bookId, chapterId, sceneId, assetType, path, extras) => {
+                    this.repoCalls.push({ method: 'markReady', bookId, chapterId, sceneId, assetType, path, extras });
+                },
                 clearDirtyFlag: async () => {},
                 getDirtyUnitIds: async () => [],
                 clearDirtyUnitIds: async () => {},
@@ -952,20 +956,73 @@ describe('Happy Path: Scene Callbacks (with mocks)', () => {
         expect(states.audio).to.equal('ready');
     });
 
-    // KNOWN BUG C2: PG scene_assets.status is NOT set to 'ready' in callbacks
-    // scene-assets-repo.markReady() is NEVER called from production code path.
-    // This test is a documentation marker — it always passes.
-    // To verify the fix: after Н.2, add a spy on sceneAssetsRepo.markReady
-    // and assert it IS called with correct book/chapter/scene/asset_type.
-    it('KNOWN BUG C2: handleAudioCompleted does NOT write PG status=ready (docs marker)', async () => {
+    // FIXED C2 (Н.5): handleAudioCompleted writes PG status='ready' via markReady.
+    // scene-assets-repo.markReady() is now called with correct book/chapter/scene/asset_type.
+    it('FIXED C2 (Н.5): handleAudioCompleted writes PG status=ready via markReady', async () => {
         await sceneState.setAssetState(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, 'audio', 'pending');
         await dispatchEngine.acquireQuota(redis, 'audio');
 
         const result = await callbacks.handleAudioCompleted(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, BUILD_ID);
         expect(result.handled).to.be.true;
 
-        // PG scene_assets.status remains unchanged by callbacks.
-        // C2: https://github.com/user/repo/issues/...
+        // Verify markReady was called with correct params
+        const markReadyCalls = this.repoCalls.filter(c => c.method === 'markReady' && c.assetType === 'audio');
+        expect(markReadyCalls.length).to.equal(1);
+        expect(markReadyCalls[0].bookId).to.equal(BOOK_ID);
+        expect(markReadyCalls[0].chapterId).to.equal(CHAPTER_ID);
+        expect(markReadyCalls[0].sceneId).to.equal(SCENE_ID);
+        expect(markReadyCalls[0].assetType).to.equal('audio');
+        expect(markReadyCalls[0].path).to.include(SCENE_ID);
+        expect(markReadyCalls[0].path).to.include('.mp3');
+    });
+
+    it('FIXED C2 (Н.5): handleImageCompleted writes PG status=ready via markReady', async () => {
+        await sceneState.setAssetStates(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, {
+            audio: 'ready',
+            image: 'pending',
+        });
+        await dispatchEngine.acquireQuota(redis, 'image');
+
+        const result = await callbacks.handleImageCompleted(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, BUILD_ID);
+        expect(result.handled).to.be.true;
+
+        const markReadyCalls = this.repoCalls.filter(c => c.method === 'markReady' && c.assetType === 'image');
+        expect(markReadyCalls.length).to.equal(1);
+        expect(markReadyCalls[0].bookId).to.equal(BOOK_ID);
+        expect(markReadyCalls[0].chapterId).to.equal(CHAPTER_ID);
+        expect(markReadyCalls[0].sceneId).to.equal(SCENE_ID);
+        expect(markReadyCalls[0].assetType).to.equal('image');
+        expect(markReadyCalls[0].path).to.include(SCENE_ID);
+        expect(markReadyCalls[0].path).to.include('.png');
+        // extras should include dimensions
+        expect(markReadyCalls[0].extras).to.have.property('width', 1024);
+        expect(markReadyCalls[0].extras).to.have.property('height', 768);
+    });
+
+    it('FIXED C2 (Н.5): handleVideoCompleted writes PG status=ready via markReady', async () => {
+        await sceneState.setAssetStates(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, {
+            audio: 'ready',
+            image: 'ready',
+            video: 'pending',
+        });
+        await dispatchEngine.acquireQuota(redis, 'video');
+
+        const result = await callbacks.handleVideoCompleted(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, BUILD_ID);
+        expect(result.handled).to.be.true;
+        expect(result.completed).to.be.true;
+
+        const markReadyCalls = this.repoCalls.filter(c => c.method === 'markReady' && c.assetType === 'video');
+        expect(markReadyCalls.length).to.equal(1);
+        expect(markReadyCalls[0].bookId).to.equal(BOOK_ID);
+        expect(markReadyCalls[0].chapterId).to.equal(CHAPTER_ID);
+        expect(markReadyCalls[0].sceneId).to.equal(SCENE_ID);
+        expect(markReadyCalls[0].assetType).to.equal('video');
+        expect(markReadyCalls[0].path).to.include(SCENE_ID);
+        expect(markReadyCalls[0].path).to.include('.mp4');
+        // extras should include metadata
+        expect(markReadyCalls[0].extras).to.have.property('duration', 30);
+        expect(markReadyCalls[0].extras).to.have.property('width', 1920);
+        expect(markReadyCalls[0].extras).to.have.property('height', 1080);
     });
 
     it('handleImageCompleted sets image to READY', async () => {
