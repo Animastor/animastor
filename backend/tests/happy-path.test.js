@@ -1426,3 +1426,74 @@ describe('Happy Path: Orchestrator facade — completeStage', () => {
         expect(threw).to.be.true;
     });
 });
+
+// ======================================================
+// SECTION 7: Д.2 — shouldScheduleAssets is pure
+// ======================================================
+
+describe('Happy Path: Д.2 — shouldScheduleAssets is a pure decision', () => {
+    let redis;
+    let scheduler;
+
+    beforeEach(() => {
+        redis = new FakeRedis();
+        scheduler = require('../src/runtime/runtime-scheduler');
+    });
+
+    it('shouldScheduleAssets does NOT mutate per-asset state (pure read)', async () => {
+        // A fully-ready scene
+        await sceneState.setAssetStates(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, {
+            audio: 'ready', image: 'ready', video: 'ready',
+        });
+
+        const before = await sceneState.getAssetStates(redis, BOOK_ID, CHAPTER_ID, SCENE_ID);
+        const result = await scheduler.shouldScheduleAssets(redis, BOOK_ID, CHAPTER_ID, SCENE_ID);
+        const after = await sceneState.getAssetStates(redis, BOOK_ID, CHAPTER_ID, SCENE_ID);
+
+        // Decision is correct AND state is untouched (no version-stale write)
+        expect(result.allDone).to.be.true;
+        expect(after).to.deep.equal(before);
+    });
+
+    it('shouldScheduleAssets on a generating scene leaves state unchanged', async () => {
+        await sceneState.setAssetStates(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, {
+            audio: 'generating', image: 'pending', video: 'new',
+        });
+        const before = await sceneState.getAssetStates(redis, BOOK_ID, CHAPTER_ID, SCENE_ID);
+        const result = await scheduler.shouldScheduleAssets(redis, BOOK_ID, CHAPTER_ID, SCENE_ID);
+        const after = await sceneState.getAssetStates(redis, BOOK_ID, CHAPTER_ID, SCENE_ID);
+
+        // image is pending → schedulable; audio generating → not; state unchanged
+        expect(result.stages).to.include('image');
+        expect(result.stages).to.not.include('audio');
+        expect(after).to.deep.equal(before);
+    });
+
+    it('markVersionStaleDirty resets enabled READY assets to DIRTY (explicit write pass)', async () => {
+        await sceneState.setAssetStates(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, {
+            audio: 'ready', image: 'ready', video: 'ready',
+        });
+
+        const reset = await scheduler.markVersionStaleDirty(redis, BOOK_ID, CHAPTER_ID, SCENE_ID);
+
+        expect(reset).to.equal(3);
+        const after = await sceneState.getAssetStates(redis, BOOK_ID, CHAPTER_ID, SCENE_ID);
+        expect(after.audio).to.equal('dirty');
+        expect(after.image).to.equal('dirty');
+        expect(after.video).to.equal('dirty');
+    });
+
+    it('markVersionStaleDirty leaves non-READY assets alone', async () => {
+        await sceneState.setAssetStates(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, {
+            audio: 'ready', image: 'generating', video: 'new',
+        });
+
+        const reset = await scheduler.markVersionStaleDirty(redis, BOOK_ID, CHAPTER_ID, SCENE_ID);
+
+        expect(reset).to.equal(1); // only audio was READY
+        const after = await sceneState.getAssetStates(redis, BOOK_ID, CHAPTER_ID, SCENE_ID);
+        expect(after.audio).to.equal('dirty');
+        expect(after.image).to.equal('generating');
+        expect(after.video).to.equal('new');
+    });
+});

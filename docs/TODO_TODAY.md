@@ -45,17 +45,21 @@ force-regen) давал двойной декремент квоты.
 
 ---
 
-## ⬜ Д.2: `planScene`/`shouldScheduleAssets` — чистая (Шаг 9, часть M5)
+## ✅ Д.2: `planScene`/`shouldScheduleAssets` — чистая (Шаг 9, часть M5) — выполнено
 
 **Риск:** средний. **После Д.0.**
 
-Сейчас `shouldScheduleAssets` (`runtime-scheduler.js:~274–289`) при version-stale **сама** пишет
-Redis READY→DIRTY — побочный эффект в функции планирования.
+`shouldScheduleAssets` при version-stale **сама** писала Redis READY→DIRTY — побочный эффект
+в функции планирования (P3 в карте писателей).
 
-- Сделать функцию только читающей: возвращает `{ stages, allDone }`, без мутаций.
-- Запись DIRTY вынести в отдельный явный проход (detect-stale → `markDirty`), в том же тике.
-- Тест: `planScene` не делает ни одной записи (мок Redis — только чтения).
-- Регресс: version-bump → сцена регенерируется в тот же тик (без лага).
+Сделано:
+- `shouldScheduleAssets` теперь ЧИСТАЯ: только читает per-asset + layer-config, возвращает
+  `{ stages, allDone }`, без единой записи.
+- Version-stale разделён на два: `detectVersionStale` (чистый PG-read → bool) и
+  `markVersionStaleDirty` (явная запись READY→DIRTY).
+- Пред-проход в `attemptDispatch`: detect → mark → plan, **в том же тике** (без лага регена).
+- Оба экспортированы; facade `planScene` JSDoc обновлён.
+- +4 теста: pure (no mutation) ×2, markVersionStaleDirty reset ×2. **369 passing** (было 365).
 
 ---
 

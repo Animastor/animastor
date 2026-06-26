@@ -21,7 +21,7 @@
 |---|---|---|---|---|
 | P1 | `scene-orchestrator.js:51,79,123` | → GENERATING (audio/image/video) | старт диспатча (§5.1) | `beginStage` (фасад) |
 | P2 | `scene-callbacks.js:112,240,323,361,387` | → READY | колбэк GPU-завершения | `completeStage` (фасад) |
-| P3 | `runtime-scheduler.js:232,235,238` | READY → DIRTY | тик: PG version-stale | **`markDirty` (Д.2 — убрать отсюда)** |
+| P3 | `runtime-scheduler.js` `markVersionStaleDirty` | READY → DIRTY | тик: PG version-stale | ✅ Д.2: вынесено из `shouldScheduleAssets` в явный пред-проход |
 | P4 | `reconciliation-engine.js:610-612,672-674` | → DIRTY | reconcile (auto-fix) | `reconcile` (фасад) |
 | P5 | `startup-recovery.js:285` | → DIRTY/READY | старт сервера (version-stale) | `reconcile`/`markDirty` (Д.3) |
 | P6 | `scene-restoration.js:66,71` | audio→READY, image→DIRTY | восстановление сцены | `reconcile` (Д.3) |

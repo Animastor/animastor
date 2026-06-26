@@ -30,8 +30,10 @@ async function markDirty(deps, redis, bookId, buildId, dirtyScenes, layerCfg) {
 }
 
 // ── planScene ─────────────────────────────────────────
-// Решение «что генерировать». Делегирует в shouldScheduleAssets.
-// ЦЕЛЬ Д.2: сделать чистой (убрать побочную version-stale запись).
+// Решение «что генерировать». Делегирует в shouldScheduleAssets — теперь это
+// ЧИСТАЯ функция (Д.2): только читает per-asset состояния и layer-config, ничего
+// не пишет. Version-stale reset вынесен в явный пред-проход attemptDispatch
+// (detectVersionStale → markVersionStaleDirty).
 async function planScene(redis, bookId, chapterId, sceneId) {
     const scheduler = require('../runtime/runtime-scheduler');
     return scheduler.shouldScheduleAssets(redis, bookId, chapterId, sceneId);
