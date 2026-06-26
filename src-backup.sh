@@ -23,7 +23,7 @@ from pathlib import Path
 # Modify these lists to add/remove directories and file types.
 
 # Output directory for the archive
-OUTPUT_DIR = Path('/backups')
+OUTPUT_DIR = Path('backups')
 
 # Directories to EXCLUDE entirely (will be skipped during traversal)
 EXCLUDE_DIRS = [
