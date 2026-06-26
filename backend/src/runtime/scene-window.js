@@ -245,16 +245,66 @@ async function checkSceneContentCache(redis, buildId, bookId, chapterId, sceneId
 }
 
 /**
+ * Д.3 (M3): Check if each asset type is stale by PG version.
+ * Returns { audio: boolean, image: boolean, video: boolean } where true means
+ * the asset's content_version is behind the scene's current version and needs regen.
+ * Used by restoreChunkStatusForScene and reconcileWindowStatuses to prevent disk-based
+ * 'ready' writes from overriding a pending force-regen.
+ */
+async function _checkAssetVersionStale(bookId, chapterId, sceneId, buildId) {
+    const stale = { audio: false, image: false, video: false };
+    try {
+        const sceneResult = await pgQuery(`
+            SELECT content_version, audio_config_version FROM scenes
+            WHERE book_id = $1 AND chapter_id = $2 AND scene_id = $3
+        `, [bookId, chapterId, sceneId]);
+        if (sceneResult.rows.length === 0) return stale;
+        const sv = sceneResult.rows[0];
+
+        const checkAsset = async (assetType) => {
+            const asset = await sceneAssetsRepo.getAsset(bookId, chapterId, sceneId, assetType, buildId)
+                || await sceneAssetsRepo.getAsset(bookId, chapterId, sceneId, assetType);
+            if (!asset) return false;
+            if (asset.scene_content_version != null && sv.content_version != null &&
+                asset.scene_content_version < sv.content_version) {
+                log(`[VERSION-STALE] ${bookId}/${chapterId}/${sceneId}: ${assetType} content_version=${asset.scene_content_version} < scene=${sv.content_version}`);
+                return true;
+            }
+            if (asset.scene_audio_config_version != null && sv.audio_config_version != null &&
+                asset.scene_audio_config_version < sv.audio_config_version) {
+                log(`[VERSION-STALE] ${bookId}/${chapterId}/${sceneId}: ${assetType} audio_config_version=${asset.scene_audio_config_version} < scene=${sv.audio_config_version}`);
+                return true;
+            }
+            return false;
+        };
+
+        stale.audio = await checkAsset('audio');
+        stale.image = await checkAsset('image');
+        stale.video = await checkAsset('video');
+    } catch (_) {}
+    return stale;
+}
+
+/**
  * After markDirtyScenes resets chunk metadata, restore it based on
  * which files actually exist on disk so /assets-state reports correct counts.
+ *
+ * Д.3 (M3): Only writes 'ready' if the asset version in PG is current.
+ * If the content_version has been bumped (force-regen), stale files on disk
+ * do NOT override the pending state — the scene stays pending for regeneration.
  */
 async function restoreChunkStatusForScene(redis, buildId, bookId, chapterId, sceneId) {
     const buildDir = path.join(OUTPUT_DIR, buildId);
     if (!fs.existsSync(buildDir)) return;
 
+    // Д.3: Check PG version staleness before writing chunk statuses.
+    // If the asset is stale by version, don't mark chunks as 'ready' even
+    // if files exist on disk — the scene needs regeneration.
+    const versionStale = await _checkAssetVersionStale(bookId, chapterId, sceneId, buildId);
+
     const fileStatus = await getSceneFilesStatus(buildDir, bookId, chapterId, sceneId);
     let audioIsReal = false;
-    if (fileStatus.audio.exists) {
+    if (fileStatus.audio.exists && !versionStale.audio) {
         try { audioIsReal = await placeholderAudio.hasRealAudio(bookId, chapterId, sceneId, buildId); }
         catch (_) {}
     }
@@ -269,15 +319,15 @@ async function restoreChunkStatusForScene(redis, buildId, bookId, chapterId, sce
             if (!raw) continue;
             const data = JSON.parse(raw);
 
-            if (fileStatus.audio.exists) {
+            if (fileStatus.audio.exists && !versionStale.audio) {
                 data.audio = true;
                 data.audio_status = audioIsReal ? 'ready' : 'placeholder';
             }
-            if (fileStatus.image.exists) {
+            if (fileStatus.image.exists && !versionStale.image) {
                 data.image = true;
                 data.image_status = 'ready';
             }
-            if (fileStatus.video.exists) {
+            if (fileStatus.video.exists && !versionStale.video) {
                 data.video = true;
                 data.video_status = 'ready';
             }
@@ -494,6 +544,9 @@ async function reconcileWindowStatuses(redis, bookId, buildId) {
     const chunkKeys = await redis.keys(`animastor:chunk:${bookId}_*`);
     let reconciled = 0;
 
+    // Track which scenes we've already checked (avoid duplicate PG queries)
+    const versionCache = new Map();
+
     for (const key of chunkKeys) {
         const raw = await redis.get(key);
         if (!raw) continue;
@@ -505,9 +558,16 @@ async function reconcileWindowStatuses(redis, bookId, buildId) {
         // Use unified file status
         const fileStatus = await getSceneFilesStatus(buildDir, data.book_id, data.chapter_id, data.scene_id);
 
+        // Д.3: Check PG version staleness (cache per scene to avoid N+1 queries)
+        const sceneKey = `${data.book_id}:${data.chapter_id}:${data.scene_id}`;
+        if (!versionCache.has(sceneKey)) {
+            versionCache.set(sceneKey, await _checkAssetVersionStale(data.book_id, data.chapter_id, data.scene_id, buildId));
+        }
+        const stale = versionCache.get(sceneKey);
+
         // Check audio file — distinguish real TTS from placeholder
         if (data.audio_status === 'pending' || data.audio_status === 'placeholder') {
-            if (fileStatus.audio.exists) {
+            if (fileStatus.audio.exists && !stale.audio) {
                 data.audio = true;
                 try {
                     const hasReal = await placeholderAudio.hasRealAudio(data.book_id, data.chapter_id, data.scene_id, buildId);
@@ -521,7 +581,7 @@ async function reconcileWindowStatuses(redis, bookId, buildId) {
 
         // Check for IU image files
         if (data.image_status === 'pending') {
-            if (fileStatus.image.exists) {
+            if (fileStatus.image.exists && !stale.image) {
                 data.image = true;
                 data.image_status = 'ready';
                 changed = true;
@@ -530,7 +590,7 @@ async function reconcileWindowStatuses(redis, bookId, buildId) {
 
         // Check video file
         if (data.video_status === 'pending') {
-            if (fileStatus.video.exists) {
+            if (fileStatus.video.exists && !stale.video) {
                 data.video = true;
                 data.video_status = 'ready';
                 changed = true;

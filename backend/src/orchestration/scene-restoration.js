@@ -2,6 +2,8 @@ const fs = require('fs');
 const path = require('path');
 const state = require('../state');
 const runtimeScheduler = require('../runtime/runtime-scheduler');
+const sceneAssetsRepo = require('../storage/postgres/repositories/scene-assets-repo');
+const { query: pgQuery } = require('../storage/postgres/database');
 const { log, warn } = require('./scene-utils');
 
 const OUTPUT_DIR = process.env.OUTPUT_DIR || '/data/output';
@@ -61,9 +63,36 @@ async function restoreSceneChunkStatus(redis, buildId, bookId, chapterId, sceneI
     // Аудио не было затронуто изменением visual prompt — восстанавливаем.
     await sceneWindow.restoreChunkStatusForScene(redis, buildId, bookId, chapterId, sceneId);
 
-    // Audio: не затронуто, оставляем READY (если файл существует).
+    // Audio: не затронуто, оставляем READY (если файл существует И версия актуальна).
+    // Д.3 (M3): Don't mark audio as READY solely based on file existence —
+    // check PG version first. If content_version was bumped (force-regen),
+    // stale audio files don't count as ready.
     if (fileStatus.audio.exists) {
-        await state.setAssetState(redis, bookId, chapterId, sceneId, 'audio', state.AssetState.READY);
+        let audioVersionStale = false;
+        try {
+            const sceneResult = await pgQuery(`
+                SELECT content_version, audio_config_version FROM scenes
+                WHERE book_id = $1 AND chapter_id = $2 AND scene_id = $3
+            `, [bookId, chapterId, sceneId]);
+            if (sceneResult.rows.length > 0) {
+                const sv = sceneResult.rows[0];
+                const aAsset = await sceneAssetsRepo.getAsset(bookId, chapterId, sceneId, 'audio', buildId)
+                    || await sceneAssetsRepo.getAsset(bookId, chapterId, sceneId, 'audio');
+                if (aAsset && aAsset.scene_content_version != null && sv.content_version != null &&
+                    aAsset.scene_content_version < sv.content_version) {
+                    audioVersionStale = true;
+                }
+                if (aAsset && aAsset.scene_audio_config_version != null && sv.audio_config_version != null &&
+                    aAsset.scene_audio_config_version < sv.audio_config_version) {
+                    audioVersionStale = true;
+                }
+            }
+        } catch (_) {}
+        if (!audioVersionStale) {
+            await state.setAssetState(redis, bookId, chapterId, sceneId, 'audio', state.AssetState.READY);
+        } else {
+            log(`[RESTORE-AUDIO-STALE] ${bookId}/${chapterId}/${sceneId}: audio file exists but version is stale — leaving pending`);
+        }
     }
     // Image: всегда DIRTY — при наличии dirty-юнитов визуальный контент
     // нужно перегенерировать. Если сюда попали с hasDirtyUnits=true,
