@@ -585,14 +585,12 @@ describe('Happy Path: Dispatch Engine — Quotas', () => {
         expect(status.video.current).to.equal(0);
     });
 
-    // KNOWN BUG — C1: Double quota release
-    // Currently: acquireQuota(+1) happens once, but releaseQuota(-1) happens twice
-    // (once in scene-callbacks, once in markDispatchCompleted).
-    // This test captures the CURRENT (buggy) behavior.
-    // After the fix (Н.2), this test should be updated to expect 0.
-    it('KNOWN BUG C1: markDispatchCompleted calls releaseQuota (one of two releases)', async () => {
+    // FIXED C1 (Н.2): Single quota release in markDispatchCompleted.
+    // releaseQuota was removed from scene-callbacks.js — markDispatchCompleted
+    // is now the sole owner. One acquire → one release.
+    it('FIXED C1 (Н.2): markDispatchCompleted is the sole owner of quota release', async () => {
         await dispatchEngine.acquireQuota(redis, 'audio');
-        expect((await dispatchEngine.getActiveCounter(redis, 'audio'))).to.equal(1);
+        expect(await dispatchEngine.getActiveCounter(redis, 'audio')).to.equal(1);
 
         await dispatchEngine.markDispatchCompleted(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, 'audio');
 
@@ -940,20 +938,26 @@ describe('Happy Path: Scene Callbacks (with mocks)', () => {
         expect(states.video).to.equal('ready');
     });
 
-    // KNOWN BUG C1: Double quota release in callbacks
-    // handleAudioCompleted calls releaseQuota AND markDispatchCompleted also calls releaseQuota
-    it('KNOWN BUG C1: handleAudioCompleted releases quota (first of two releases)', async () => {
+    // FIXED C1 (Н.2): Callback no longer releases quota — markDispatchCompleted is the sole owner.
+    // The callback completes successfully but the quota is still held until markDispatchCompleted.
+    it('FIXED C1 (Н.2): handleAudioCompleted does NOT release quota — deferred to markDispatchCompleted', async () => {
         await sceneState.setAssetState(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, 'audio', 'pending');
         await dispatchEngine.acquireQuota(redis, 'audio');
 
         // Before: counter = 1
         expect(await dispatchEngine.getActiveCounter(redis, 'audio')).to.equal(1);
 
-        await callbacks.handleAudioCompleted(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, BUILD_ID);
+        const result = await callbacks.handleAudioCompleted(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, BUILD_ID);
+        expect(result.handled).to.be.true;
 
-        // After: callback released quota once → counter = 0
+        // After callback: counter still 1 (callback no longer releases quota)
         const afterCallback = await dispatchEngine.getActiveCounter(redis, 'audio');
-        expect(afterCallback).to.equal(0);
+        expect(afterCallback).to.equal(1);
+
+        // After markDispatchCompleted: counter goes to 0 (single release)
+        await dispatchEngine.markDispatchCompleted(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, 'audio');
+        const afterRelease = await dispatchEngine.getActiveCounter(redis, 'audio');
+        expect(afterRelease).to.equal(0);
     });
 
     it('handleAudioCompleted accepts callback in states: GENERATING, PENDING, DIRTY', async () => {

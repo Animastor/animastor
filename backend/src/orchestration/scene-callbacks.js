@@ -45,22 +45,22 @@ async function handleAudioCompleted(redis, bookId, chapterId, sceneId, buildId) 
         assetStates.audio === state.AssetState.DIRTY
     );
 
+    // Н.2: Quota is released by markDispatchCompleted (single owner).
     if (!audioAllowed) {
         warn(`AUDIO_CALLBACK: Invalid per-asset state: ${assetStates?.audio || 'unknown'} (expected GENERATING/PENDING)`);
-        await dispatchEngine.releaseQuota(redis, 'audio');
-        log(`🔻 AUDIO quota released (invalid per-asset state): ${bookId}/${chapterId}/${sceneId}`);
+        log(`🔻 AUDIO callback rejected (invalid per-asset state): ${bookId}/${chapterId}/${sceneId}`);
         return { handled: false, nextStage: null, reason: 'invalid_asset_state' };
     }
 
     const isReady = await audio.isSceneAudioReady(buildId, bookId, chapterId, sceneId, require('music-metadata'));
+    // Н.2: Quota is released by markDispatchCompleted (single owner).
     if (!isReady) {
         error(`Audio not ready after completion: ${bookId}/${chapterId}/${sceneId}`);
         const scene = { book_id: bookId, chapter_id: chapterId, scene_id: sceneId };
         await logEvent(redis, scene, 'AUDIO_FAILED', state.SceneState.AUDIO_READY, {
             reason: 'not_ready_validation'
         });
-        await dispatchEngine.releaseQuota(redis, 'audio');
-        log(`🔻 AUDIO quota released (not ready fallback): ${bookId}/${chapterId}/${sceneId}`);
+        log(`🔻 AUDIO callback: audio not ready: ${bookId}/${chapterId}/${sceneId}`);
         return { handled: true, nextStage: null, reason: 'audio_not_ready' };
     }
 
@@ -102,9 +102,7 @@ async function handleAudioCompleted(redis, bookId, chapterId, sceneId, buildId) 
 
     await state.setAssetState(redis, bookId, chapterId, sceneId, 'audio', state.AssetState.READY);
 
-    await dispatchEngine.releaseQuota(redis, 'audio');
-    log(`🔻 AUDIO quota released (completed): ${bookId}/${chapterId}/${sceneId}`);
-
+    // Н.2: Quota is released by markDispatchCompleted (single owner).
     log(`AUDIO_CALLBACK: ${bookId}/${chapterId}/${sceneId} -> AUDIO_READY`);
 
     return { 
@@ -133,21 +131,21 @@ async function handleImageCompleted(redis, bookId, chapterId, sceneId, buildId) 
         assetStates.image === state.AssetState.DIRTY
     );
 
+    // Н.2: Quota is released by markDispatchCompleted (single owner).
     if (!imageAllowed) {
         warn(`IMAGE_CALLBACK: Invalid per-asset state: ${assetStates?.image || 'unknown'} — expected GENERATING/PENDING`);
-        await dispatchEngine.releaseQuota(redis, 'image');
-        log(`🔻 IMAGE quota released (invalid per-asset state): ${bookId}/${chapterId}/${sceneId}`);
+        log(`🔻 IMAGE callback rejected (invalid per-asset state): ${bookId}/${chapterId}/${sceneId}`);
         return { handled: false, nextStage: null, reason: 'invalid_asset_state' };
     }
 
+    // Н.2: Quota is released by markDispatchCompleted (single owner).
     if (!sceneImage) {
         error(`Scene image not found after completion: ${bookId}/${chapterId}/${sceneId}`);
         const scene = { book_id: bookId, chapter_id: chapterId, scene_id: sceneId };
         await logEvent(redis, scene, 'IMAGE_FAILED', state.SceneState.IMAGE_GENERATING, {
             reason: 'not_found'
         });
-        await dispatchEngine.releaseQuota(redis, 'image');
-        log(`🔻 IMAGE quota released (not found fallback): ${bookId}/${chapterId}/${sceneId}`);
+        log(`🔻 IMAGE callback: image not found: ${bookId}/${chapterId}/${sceneId}`);
         return { handled: true, nextStage: null, reason: 'image_not_found' };
     }
 
@@ -222,9 +220,7 @@ async function handleImageCompleted(redis, bookId, chapterId, sceneId, buildId) 
 
     await updateSceneChunks(redis, bookId, chapterId, sceneId, { image: true, image_status: 'ready' });
 
-    await dispatchEngine.releaseQuota(redis, 'image');
-    log(`🔻 IMAGE quota released (completed): ${bookId}/${chapterId}/${sceneId}`);
-
+    // Н.2: Quota is released by markDispatchCompleted (single owner).
     log(`IMAGE_CALLBACK: ${bookId}/${chapterId}/${sceneId} -> IMAGE_READY`);
 
     return { 
@@ -247,21 +243,21 @@ async function handleVideoCompleted(redis, bookId, chapterId, sceneId, buildId) 
         assetStates.video === state.AssetState.DIRTY
     );
 
+    // Н.2: Quota is released by markDispatchCompleted (single owner).
     if (!videoAllowed) {
         warn(`VIDEO_CALLBACK: Invalid per-asset state: ${assetStates?.video || 'unknown'} (expected GENERATING/PENDING)`);
-        await dispatchEngine.releaseQuota(redis, 'video');
-        log(`🔻 VIDEO quota released (invalid per-asset state): ${bookId}/${chapterId}/${sceneId}`);
+        log(`🔻 VIDEO callback rejected (invalid per-asset state): ${bookId}/${chapterId}/${sceneId}`);
         return { handled: false, nextStage: null, reason: 'invalid_asset_state' };
     }
 
+    // Н.2: Quota is released by markDispatchCompleted (single owner).
     if (!valid) {
         error(`Video not valid after completion: ${bookId}/${chapterId}/${sceneId}`);
         const scene = { book_id: bookId, chapter_id: chapterId, scene_id: sceneId };
         await logEvent(redis, scene, 'VIDEO_FAILED', state.SceneState.VIDEO_GENERATING, {
             reason: 'invalid'
         });
-        await dispatchEngine.releaseQuota(redis, 'video');
-        log(`🔻 VIDEO quota released (invalid fallback): ${bookId}/${chapterId}/${sceneId}`);
+        log(`🔻 VIDEO callback: video invalid: ${bookId}/${chapterId}/${sceneId}`);
         return { handled: true, nextStage: null, reason: 'video_invalid' };
     }
 
@@ -292,8 +288,7 @@ async function handleVideoCompleted(redis, bookId, chapterId, sceneId, buildId) 
 
     await state.setAssetState(redis, bookId, chapterId, sceneId, 'video', state.AssetState.READY);
 
-    await dispatchEngine.releaseQuota(redis, 'video');
-    log(`🔻 VIDEO quota released (completed): ${bookId}/${chapterId}/${sceneId}`);
+    // Н.2: Quota is released by markDispatchCompleted (single owner).
 
     try {
         const sceneAssetsRepo = require('../storage/postgres/repositories/scene-assets-repo');
