@@ -85,18 +85,6 @@ app.use((req, res, next) => {
 const OUTPUT_DIR = config.OUTPUT_DIR;
 
 // ======================================================
-// STATE WRAPPERS (inject global redis)
-// ======================================================
-const transitionSceneState = (bookId, chapterId, sceneId, newState) =>
-    state.transitionSceneState(redis, bookId, chapterId, sceneId, newState);
-const sceneHeartbeat = (bookId, chapterId, sceneId) =>
-    state.sceneHeartbeat(redis, bookId, chapterId, sceneId);
-const getSceneState = (bookId, chapterId, sceneId) =>
-    state.getSceneState(redis, bookId, chapterId, sceneId);
-const isSceneAudioReady = (buildId, bookId, chapterId, sceneId) =>
-    audio.isSceneAudioReady(buildId, bookId, chapterId, sceneId);
-
-// ======================================================
 // HELPERS
 // ======================================================
 const { log, pad, parseChunkId, collectScenes, findSceneRuntimeData } = utils;
