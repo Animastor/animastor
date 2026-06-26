@@ -63,18 +63,27 @@ force-regen) давал двойной декремент квоты.
 
 ---
 
-## ⬜ Д.3: Диск-проверки возвращают факты, не решения (M3)
+## ✅ Д.3: Диск-проверки возвращают факты, не решения (M3) — выполнено
 
-**Риск:** высокий. **После Д.0.** Опора истины — PG-ready (уже есть, Н.5).
+**Риск:** высокий. **Опора истины — PG-ready (Н.5) + version-gate.**
 
-`scene-window` (`sceneHasValidContent`, `restoreChunkStatusForScene`) и
-`startup-recovery` (`recoverIuImagesFromDisk`) перестают писать READY/DIRTY по наличию файла.
+**Коммиты:** `91f104f` (fix) + `cc7d706` (tests)
 
-- Возвращают **факт** «файл существует для buildId X», решение принимает вызывающий по версии.
-- Привязка факта к `buildId`: файл без актуальной версии ≠ ready.
-- Тест: force-regen с правкой промпта — старый PNG **не** отменяет регенерацию.
-- Тест: рестарт — готовые остаются `ready` по PG, без массовой перегенерации.
-- Тест: отменённая до рестарта сцена не «оживает» recovery.
+`restoreChunkStatusForScene` и `reconcileWindowStatuses` больше не пишут 'ready'
+просто по наличию файла — перед записью проверяют PG `content_version`.
+
+Что сделано:
+- `_checkAssetVersionStale` — новый хелпер в scene-window.js, сравнивает
+  `scene_assets.scene_content_version` с `scenes.content_version` для audio/image/video
+- `restoreChunkStatusForScene` — version-gate: если версия устарела, chunk stays 'pending'
+- `reconcileWindowStatuses` — version-gate с per-scene cache (избегает N+1 PG-запросов)
+- `scene-restoration.js` — version-gate перед `setAssetState(audio, READY)` (P6)
+
+**Тесты (5, SECTION 8, 381 passing):**
+1. Force-regen: stale version → old PNG не отменяет регенерацию, chunk stays 'pending'
+2. Рестарт: current version → chunk пишет 'ready' (без массовой перегенерации)
+3. reconcileWindowStatuses stale → 0 reconciled
+4. reconcileWindowStatuses current → reconciled, chunk → ready
 
 ---
 
@@ -82,14 +91,15 @@ force-regen) давал двойной декремент квоты.
 
 | Шаг | Что закрывает | Риск | Зависит от |
 |---|---|---|---|
-| Д.0 | инвентаризация (M5) | нет | — |
-| Д.1 | идемпотентность квот | низкий | — |
-| Д.2 | чистый planScene (M5) | средний | Д.0 |
-| Д.3 | диск как факт (M3) | высокий | Д.0 |
+| Д.0 | инвентаризация (M5) | нет | ✅ `8369a04` |
+| Д.1 | идемпотентность квот | низкий | ✅ `58a8577` |
+| Д.2 | чистый planScene (M5) | средний | ✅ `b485c73` |
+| Д.3 | диск как факт (M3) | высокий | ✅ `91f104f` + `cc7d706` |
 
 **M5 полностью** (единый арбитр, удаление прямых `setAssetState`) — отдельный день: требует
-Orchestrator-фасада (Шаг 8). Сегодня — фундамент + Д.1/Д.2/Д.3.
+Orchestrator-фасада (Шаг 8, ✅ `a092f44`).
 
 ---
 
-*Дата: 2026-06-26. Основано на `docs/04_Migration_Plan.md` (Шаги 9–11).*
+*Дата: 2026-06-26. Все Д.0–Д.3 выполнены. Остаётся M5 (свести P2/P4/P5/P6 к фасаду).
+Основано на `docs/04_Migration_Plan.md` (Шаги 9–11).*

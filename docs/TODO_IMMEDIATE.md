@@ -139,7 +139,76 @@
 
 ---
 
+## ✅ Д.0–Д.3: Подготовительные шаги к M3/M5 — выполнено
+
+### ✅ Д.0: Карта писателей состояния
+
+**Коммит:** `8369a04` — создан `docs/STATE_WRITERS_MAP.md`
+
+Инвентаризация всех мест, пишущих состояние: 8 per-asset writers (P1–P8),
+7 linear-state writers (L1–L7), 3 disk-derived chunk writers (D1–D3).
+Порядок безопасного перевода к фасаду: P3 → D1–D3 → P5/P6 → P4 → P2.
+
+---
+
+### ✅ Д.1: markDispatchCompleted идемпотентен по dispatch
+
+**Коммит:** `58a8577`
+
+- SET NX `animastor:dispatch-completed:<scene>:<stage>` (TTL = lease TTL)
+- Маркер снимается в `dispatchStage` (шаг 4, после lease) и в `clearAllLeasesForBook`
+- +2 теста
+
+---
+
+### ✅ Д.2: shouldScheduleAssets — чистая функция
+
+**Коммит:** `b485c73`
+
+- version-stale разделён на `detectVersionStale` (чистый PG-read) +
+  `markVersionStaleDirty` (явная запись)
+- shouldScheduleAssets теперь только читает, не пишет
+- +4 теста (pure ×2, markVersionStaleDirty ×2)
+
+---
+
+### ✅ Д.3: Диск — факт, не решение (M3)
+
+**Коммиты:** `91f104f` (fix) + `cc7d706` (tests)
+
+- `_checkAssetVersionStale` — хелпер: сравнивает PG content_version для audio/image/video
+- `restoreChunkStatusForScene` — version-gate перед записью 'ready'
+- `reconcileWindowStatuses` — version-gate с per-scene cache
+- `scene-restoration.js` — version-gate перед `setAssetState(audio, READY)` (P6)
+- +5 тестов (force-regen не отменяется старым файлом; рестарт без массовой регенерации)
+- **381 passing** (было 376)
+
+---
+
+## ✅ Итог: Закрытые проблемы
+
+| Проблема | Статус | Коммит |
+|---|---|---|
+| **C1** — двойной release квоты | ✅ | `4e007e2` |
+| **C2** — PG `status='ready'` не пишется | ✅ | `cf0a48a` |
+| **C3** — два registry с одинаковыми именами | ✅ | `5182455` |
+| **C4** — неидемпотентность колбэков | ✅ | `d804a77` |
+| **M1** — неатомарный RMW per-asset | ✅ | `1a0867d` |
+| **M2** — check-then-incr в quota | ✅ | `636da04` |
+| **M3** — диск как факт, не решение | ✅ | `91f104f` |
+| **M4** — две системы лимитов | ✅ | `0adc930` |
+| **M5** — несколько центров записи | ⬜ | _частично: фасад (a092f44), чистый planScene (b485c73)_ |
+| **§5.1** — GENERATING не выставляется | ✅ | `f0b81de` |
+
+---
+
 ## 🔭 Дальнейшие планы
+
+### 🔜 M5: Свести writers к Orchestrator
+- P2 (scene-callbacks: setAssetState READY) → `completeStage`
+- P4 (reconciliation-engine: setAssetState DIRTY) → `reconcile`
+- P5 (startup-recovery: setAssetStates DIRTY) → `reconcile`
+- P6 (scene-restoration: setAssetState READY/DIRTY) → частично исправлено (Д.3)
 
 ### 🔜 O1: Принять 03_Orchestrator.md как архитектурный стандарт
 - Использовать концепцию Orchestrator как единого владельца lifecycle при новых изменениях
