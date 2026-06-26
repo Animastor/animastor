@@ -251,6 +251,8 @@ function validateAssetTransition(fromState, toState) {
  * Returns { audio: 'ready', image: 'ready', video: 'ready' }
  * If no asset states exist, returns defaults based on linear state.
  *
+ * Uses HGETALL for atomic read — no race with concurrent HSET writes.
+ *
  * @param {RedisClient} redis
  * @param {string} bookId
  * @param {string} chapterId
@@ -259,22 +261,24 @@ function validateAssetTransition(fromState, toState) {
  */
 async function getAssetStates(redis, bookId, chapterId, sceneId) {
     const key = `${ASSET_STATE_KEY_PREFIX}:${bookId}:${chapterId}:${sceneId}`;
-    const raw = await redis.get(key);
 
-    if (raw) {
-        try {
-            const parsed = JSON.parse(raw);
-            return {
-                audio: parsed.audio || AssetState.NEW,
-                image: parsed.image || AssetState.NEW,
-                video: parsed.video || AssetState.NEW
-            };
-        } catch (e) {
-            warn(`Failed to parse asset states for ${bookId}/${chapterId}/${sceneId}: ${e.message}`);
-        }
+    let raw;
+    try {
+        raw = await redis.hgetall(key);
+    } catch (e) {
+        // Key exists but is not a hash (old JSON format or wrong type) — fall through
+        warn(`Asset state key ${key} not a hash — falling back to linear state: ${e.message}`);
     }
 
-    // Fallback: derive from linear state (backward compat)
+    if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+        return {
+            audio: raw.audio || AssetState.NEW,
+            image: raw.image || AssetState.NEW,
+            video: raw.video || AssetState.NEW
+        };
+    }
+
+    // Fallback: derive from linear state (backward compat for missing keys or old JSON format)
     const linearState = await getSceneState(redis, bookId, chapterId, sceneId);
     return deriveAssetStatesFromLinear(linearState);
 }
@@ -379,7 +383,7 @@ function deriveLinearState(assetStates) {
 
 /**
  * Set a single asset's state in the per-asset store.
- * Does NOT validate transitions — use transitionAssetState() for that.
+ * Uses HSET for atomic per-field update — no RMW race.
  *
  * @param {RedisClient} redis
  * @param {string} bookId
@@ -396,16 +400,14 @@ async function setAssetState(redis, bookId, chapterId, sceneId, asset, status) {
     }
 
     const key = `${ASSET_STATE_KEY_PREFIX}:${bookId}:${chapterId}:${sceneId}`;
-    const current = await getAssetStates(redis, bookId, chapterId, sceneId);
-    const updated = { ...current, [asset]: status };
-
-    await redis.set(key, JSON.stringify(updated));
-    log(`ASSET STATE: ${bookId}/${chapterId}/${sceneId} ${asset}: ${current[asset]} -> ${status}`);
-    return updated;
+    // Н.6: Atomic HSET — no GET+merge+SET race
+    await redis.hset(key, asset, status);
+    log(`ASSET STATE: ${bookId}/${chapterId}/${sceneId} ${asset}: -> ${status}`);
+    return await getAssetStates(redis, bookId, chapterId, sceneId);
 }
 
 /**
- * Set multiple asset states at once (atomic).
+ * Set multiple asset states at once (atomic via HSET).
  *
  * @param {RedisClient} redis
  * @param {string} bookId
@@ -416,18 +418,10 @@ async function setAssetState(redis, bookId, chapterId, sceneId, asset, status) {
  */
 async function setAssetStates(redis, bookId, chapterId, sceneId, updates) {
     const key = `${ASSET_STATE_KEY_PREFIX}:${bookId}:${chapterId}:${sceneId}`;
-    const current = await getAssetStates(redis, bookId, chapterId, sceneId);
-    const updated = { ...current };
-
-    for (const [asset, status] of Object.entries(updates)) {
-        if (ASSETS.includes(asset)) {
-            updated[asset] = status;
-        }
-    }
-
-    await redis.set(key, JSON.stringify(updated));
-    log(`ASSET STATES: ${bookId}/${chapterId}/${sceneId} -> ${JSON.stringify(updated)}`);
-    return updated;
+    // Н.6: Atomic HSET with multiple fields — no GET+merge+SET race
+    await redis.hset(key, updates);
+    log(`ASSET STATES: ${bookId}/${chapterId}/${sceneId} -> ${JSON.stringify(updates)}`);
+    return await getAssetStates(redis, bookId, chapterId, sceneId);
 }
 
 

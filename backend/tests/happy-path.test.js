@@ -732,24 +732,28 @@ describe('Happy Path: State — Per-Asset Operations', () => {
         expect(v2.acquired).to.be.false;
     });
 
-    // KNOWN BUG — M1: Non-atomic RMW on per-asset state
-    // setAssetState does GET → merge → SET without atomicity.
-    // This test captures the current behavior but does NOT test the race condition
-    // (that requires concurrent async operations on the same FakeRedis).
-    // This is a SEPARATE issue from M2 (quota) — will be fixed in a future step.
-    it('KNOWN BUG M1: setAssetState uses non-atomic read-modify-write', async () => {
-        // Set initial state
+    // FIXED M1 (Н.6): setAssetState uses atomic HSET — no RMW race.
+    // Direct HSET with field name — single Redis command, no GET+merge+SET.
+    it('FIXED M1 (Н.6): setAssetState uses atomic HSET — no RMW race', async () => {
         await sceneState.setAssetStates(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, {
             audio: 'generating',
             image: 'generating'
         });
 
-        // Set audio to ready (this is RMW: GET → merge → SET)
+        // HSET audio atomically — image field is untouched
         await sceneState.setAssetState(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, 'audio', 'ready');
 
         const states = await sceneState.getAssetStates(redis, BOOK_ID, CHAPTER_ID, SCENE_ID);
         expect(states.audio).to.equal('ready');
         expect(states.image).to.equal('generating');
+        expect(states.video).to.equal('new');
+
+        // Verify stored as hash (not JSON string)
+        const key = `animastor:asset-state:${BOOK_ID}:${CHAPTER_ID}:${SCENE_ID}`;
+        const raw = redis._getRaw(key);
+        expect(typeof raw).to.equal('object'); // should be hash object, not string
+        expect(raw).to.have.property('audio', 'ready');
+        expect(raw).to.have.property('image', 'generating');
     });
 
     // KNOWN BUG — §5.1: GENERATING not set in per-asset during dispatch
