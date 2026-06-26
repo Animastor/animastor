@@ -72,30 +72,78 @@
 
 ---
 
-## 📋 Текущие и следующие шаги
+## ✅ Н.6: Атомарность per-asset RMW (M1) — выполнено
 
-### 🔜 Н.6: Атомарность per-asset RMW (M1)
-**Цель:** Убрать гонку GET→merge→SET в `setAssetState`.
+**Коммит:** `1a0867d`
 
-**Что сделать:**
-- Перевести `setAssetState` с JSON-RMW на Redis HSET (поле `audio`/`image`/`video` обновляется атомарно)
-- `setAssetStates` → `HMSET` для множественных полей
-- `getAssetStates` → `HGETALL` (остаётся без изменений)
-
-**Файлы:** `backend/src/state/scene-state.js`
-
-### 🔜 Н.7: GENERATING per-asset при диспатче (§5.1)
-**Цель:** `executeAudioDispatch` / `executeImageDispatch` / `executeVideoDispatch` пишут `setAssetState(..., 'generating')`.
-
-### 🔜 Н.8: Развести два registry (C3)
-**Цель:** `storage/asset-registry.js` (Redis) → `redisAssetCache`, `services/scene-asset-registry.js` (PG) → `pgAssetRepo`.
-
-### 🔜 Н.9: Убрать мертвый дубль MAX_CONCURRENT (M4)
-**Цель:** Удалить `MAX_CONCURRENT_AUDIO/IMAGE/VIDEO`, `incrementConcurrent/decrementConcurrent/canScheduleStage` из `runtime-scheduler.js`.
+- `setAssetState` / `setAssetStates` / `getAssetStates` переведены с JSON-строк на Redis Hash (HSET/HGETALL)
+- Устранена гонка GET→merge→SET
+- `try/catch` вокруг HGETALL для backward compat со старыми JSON-ключами
 
 ---
 
-## Сводка зависимостей
+## ✅ Н.7: GENERATING per-asset при диспатче (§5.1) — выполнено
+
+**Коммит:** `f0b81de`
+
+- `executeAudioDispatch` → `setAssetState(audio, generating)`
+- `executeImageDispatch` → `setAssetState(image, generating)`
+- `executeVideoDispatch` → `setAssetState(video, generating)`
+
+---
+
+## ✅ Н.8: Развести два registry (C3) — выполнено
+
+**Коммит:** `5182455`
+
+- `storage/asset-registry.js` (Redis): функции переименованы с суффиксом `Redis` (`registerSceneAudioRedis`, `getSceneAssetsRedis`, …)
+- `services/scene-asset-registry.js` (PG): имена не изменены (канонический registry)
+- Обновлены вызовы: `scene-callbacks.js`, `reconciliation-engine.js`, mock в тестах
+
+---
+
+## ✅ Н.9: Убрать мертвый дубль MAX_CONCURRENT (M4) — выполнено
+
+**Коммит:** `0adc930`
+
+- Удалены `MAX_CONCURRENT_AUDIO/IMAGE/VIDEO`, `*_IN_PROGRESS_KEY`, `getCountInState`, `incrementConcurrent`, `decrementConcurrent`, `canScheduleStage`
+- `getMetrics` делегирует в `dispatchEngine.getQuotaStatus`
+- `runtime.js` API — удалена мёртвая секция `limits`
+
+---
+
+## 🏆 Итог: Все критические баги закрыты
+
+| Проблема | Статус | Коммит |
+|---|---|---|
+| **C1** — двойной release квоты | ✅ | `4e007e2` |
+| **C2** — PG `status='ready'` не пишется | ✅ | `cf0a48a` |
+| **C3** — два registry с одинаковыми именами | ✅ | `5182455` |
+| **C4** — неидемпотентность колбэков | ✅ | `d804a77` |
+| **M1** — неатомарный RMW per-asset | ✅ | `1a0867d` |
+| **M2** — check-then-incr в quota | ✅ | `636da04` |
+| **M4** — две системы лимитов | ✅ | `0adc930` |
+| **§5.1** — GENERATING не выставляется | ✅ | `f0b81de` |
+
+---
+
+## 🔭 Дальнейшие планы
+
+### 🔜 O1: Принять 03_Orchestrator.md как архитектурный стандарт
+- Использовать концепцию Orchestrator как единого владельца lifecycle при новых изменениях
+- Направлять новые изменения через фасад вместо прямого вызова state/scene-callbacks/...
+
+### 🔜 O2: Улучшить observability
+- Добавить метрики (prometheus) по: quota utilisation, lease age, tick duration
+- Мониторинг дрифта квот после каждого релиза
+
+### 🔜 O3: Привести в порядок docs
+- Синхронизировать `ARCHITECTURAL_DEBT.md`, `LLM_AUDIT_CONTEXT.md` с текущим состоянием кода
+- Добавить диаграмму потоков для Orchestrator
+
+---
+
+## Сводка зависимостей (историческая)
 
 ```
 Н.0 (тесты) ─── фундамент для всего
@@ -106,16 +154,17 @@
     │
     ├──→ Н.5 (PG status=ready)
     │
-    ├──→ Н.6 (per-asset RMW) ─── независим
+    ├──→ Н.6 (per-asset RMW)
     │
-    └──→ Н.7 (generating per-asset)
-
-Н.8 (rename registries) ─── можно в любой момент
-Н.9 (dead code) ─── можно в любой момент
+    ├──→ Н.7 (generating per-asset)
+    │
+    ├──→ Н.8 (rename registries)
+    │
+    └──→ Н.9 (dead code removal)
 ```
 
 **Каждый шаг:** отдельный коммит → npm test → git push.
 
 ---
 
-*Дата: 2026-06-26. Обновлено после Н.0–Н.5. Основано на `docs/06_Roadmap.md` (Неделя A) и `docs/04_Migration_Plan.md` (Шаги 0–3).*
+*Дата: 2026-06-26. Все Н.0–Н.9 выполнены. Основано на `docs/06_Roadmap.md` (Неделя A) и `docs/04_Migration_Plan.md` (Шаги 0–3).*
