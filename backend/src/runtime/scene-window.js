@@ -504,7 +504,9 @@ async function slideWindow(redis, bookId, loadedBook, buildId) {
             const cacheInfo = await checkSceneContentCache(redis, buildIdForCheck, bookId, scene.chapter_id, scene.scene_id);
             if (cacheInfo.valid) {
                 log(`Scene ${scene.chapter_id}/${scene.scene_id} has valid content (state=${st}), promoting to ${state.SceneState.VIDEO_READY}`);
-                await state.transitionSceneState(redis, bookId, scene.chapter_id, scene.scene_id, state.SceneState.VIDEO_READY);
+                // L4: Derive linear state from per-asset (should be all READY from previous generation)
+                await state.setAssetStates(redis, bookId, scene.chapter_id, scene.scene_id, { audio: state.AssetState.READY, image: state.AssetState.READY, video: state.AssetState.READY });
+                await state.syncLinearState(redis, bookId, scene.chapter_id, scene.scene_id, buildIdForCheck);
                 await restoreChunkStatusForScene(redis, buildIdForCheck, bookId, scene.chapter_id, scene.scene_id);
                 nextIdx++;
                 started++;
@@ -626,7 +628,8 @@ async function startScene(redis, s, buildId, bookId) {
     const cacheInfo = await checkSceneContentCache(redis, buildId, bookId, chapterId, sceneId);
     if (cacheInfo.valid) {
         log(`Scene ${bookId}/${chapterId}/${sceneId}: valid content on disk, skipping GPU dispatch`);
-        await state.setSceneStateWithBuildId(redis, bookId, chapterId, sceneId, state.SceneState.VIDEO_READY, buildId);
+        await state.setAssetStates(redis, bookId, chapterId, sceneId, { audio: state.AssetState.READY, image: state.AssetState.READY, video: state.AssetState.READY });
+        await state.syncLinearState(redis, bookId, chapterId, sceneId, buildId);
         // Restore chunk metadata that was reset by markDirtyScenes so the progress
         // endpoint (/assets-state) correctly counts this scene as ready.
         await restoreChunkStatusForScene(redis, buildId, bookId, chapterId, sceneId);
@@ -646,14 +649,14 @@ async function startScene(redis, s, buildId, bookId) {
         }
     }
 
-    const initialTarget = audioDisabled
-        ? state.SceneState.IMAGE_PENDING
-        : state.SceneState.AUDIO_PENDING;
-
-    const result = await state.transitionSceneState(
-        redis, bookId, chapterId, sceneId,
-        initialTarget
-    );
+    // L4: Set per-asset state first, then derive linear state
+    if (audioDisabled) {
+        await state.setAssetState(redis, bookId, chapterId, sceneId, 'image', state.AssetState.PENDING);
+    } else {
+        await state.setAssetState(redis, bookId, chapterId, sceneId, 'audio', state.AssetState.PENDING);
+    }
+    const resultState = await state.syncLinearState(redis, bookId, chapterId, sceneId);
+    const result = { success: true, oldState: 'unknown', newState: resultState, reason: 'derived' };
 
     if (!result.success) {
         if (result.reason === 'invalid_transition' || result.reason === 'lock_held') {
@@ -667,10 +670,14 @@ async function startScene(redis, s, buildId, bookId) {
                 iuCursor = scan[0];
                 if (scan[1].length) await redis.del(scan[1]);
             } while (iuCursor !== '0');
-            const retry = await state.transitionSceneState(
-                redis, bookId, chapterId, sceneId,
-                initialTarget
-            );
+            // L4: Re-set per-asset and re-derive after force-reset
+            if (audioDisabled) {
+                await state.setAssetState(redis, bookId, chapterId, sceneId, 'image', state.AssetState.PENDING);
+            } else {
+                await state.setAssetState(redis, bookId, chapterId, sceneId, 'audio', state.AssetState.PENDING);
+            }
+            const retryState = await state.syncLinearState(redis, bookId, chapterId, sceneId);
+            const retry = { success: true, oldState: 'unknown', newState: retryState, reason: 'derived' };
             if (!retry.success) {
                 warn(`Failed to start scene after force-reset ${bookId}/${chapterId}/${sceneId}: ${retry.reason}`);
                 return false;

@@ -25,6 +25,23 @@ class FakeRedis {
         const regex = new RegExp('^' + pattern.replace(/\*/g, '.*') + '$');
         return [...this.store.keys()].filter(k => regex.test(k));
     }
+    async hset(k, field, value) {
+        // Simple flat storage for test: store as JSON array of entries
+        const existing = this.store.get(k);
+        if (existing && typeof existing === 'string') {
+            try {
+                const obj = JSON.parse(existing);
+                if (typeof obj === 'object' && !Array.isArray(obj)) {
+                    obj[field] = value;
+                    this.store.set(k, JSON.stringify(obj));
+                    return 1;
+                }
+            } catch {}
+        }
+        // First write — create as JSON object
+        this.store.set(k, JSON.stringify({ [field]: value }));
+        return 1;
+    }
     async scan(cursor, ...args) {
         let pattern = null;
         for (let i = 0; i < args.length; i++) {
@@ -62,6 +79,8 @@ function loadSceneWindowWithStubs({ redis, startedStateByScene = new Set(), addA
     const statePath = path.join(cwd, 'src/state/index.js');
     const stateStub = {
         SCENE_STATE_KEY_PREFIX: 'animastor:scene-state',
+        ASSET_STATE_KEY_PREFIX: 'animastor:asset-state',
+        ASSETS: ['audio', 'image', 'video'],
         SceneState: {
             AUDIO_PENDING: 'audio_pending',
             AUDIO_GENERATING: 'audio_generating',
@@ -74,6 +93,15 @@ function loadSceneWindowWithStubs({ redis, startedStateByScene = new Set(), addA
             VIDEO_READY: 'video_ready',
             FAILED: 'failed',
         },
+        AssetState: {
+            NEW: 'new',
+            DIRTY: 'dirty',
+            PENDING: 'pending',
+            GENERATING: 'generating',
+            READY: 'ready',
+            FAILED: 'failed',
+            PLACEHOLDER: 'placeholder',
+        },
         transitionSceneState: async (r, bId, chId, scId, newState) => {
             const key = `animastor:scene-state:${bId}:${chId}:${scId}`;
             const raw = await r.get(key);
@@ -85,6 +113,47 @@ function loadSceneWindowWithStubs({ redis, startedStateByScene = new Set(), addA
                 await r.set(key, JSON.stringify({ state: newState, build_id: 'b1' }));
             }
             return { success: true };
+        },
+        setAssetState: async (r, bId, chId, scId, asset, status) => {
+            const key = `animastor:asset-state:${bId}:${chId}:${scId}`;
+            const existing = r.store.get(key);
+            let obj = {};
+            if (existing && typeof existing === 'string') {
+                try { obj = JSON.parse(existing); } catch {}
+            }
+            if (typeof obj === 'object' && !Array.isArray(obj)) {
+                obj[asset] = status;
+                r.store.set(key, JSON.stringify(obj));
+            } else {
+                r.store.set(key, JSON.stringify({ [asset]: status }));
+            }
+            return { audio: 'new', image: 'new', video: 'new' };
+        },
+        setAssetStates: async (r, bId, chId, scId, updates) => {
+            const key = `animastor:asset-state:${bId}:${chId}:${scId}`;
+            const existing = r.store.get(key);
+            let obj = {};
+            if (existing && typeof existing === 'string') {
+                try { obj = JSON.parse(existing); } catch {}
+            }
+            if (typeof obj === 'object' && !Array.isArray(obj)) {
+                Object.assign(obj, updates);
+                r.store.set(key, JSON.stringify(obj));
+            } else {
+                r.store.set(key, JSON.stringify(updates));
+            }
+            return { ...updates };
+        },
+        syncLinearState: async (r, bId, chId, scId, overrideBuildId) => {
+            // Derive minimal linear state for tests
+            let linearState = 'audio_pending';
+            const key = `animastor:scene-state:${bId}:${chId}:${scId}`;
+            const raw = await r.get(key);
+            const buildId = overrideBuildId || (raw ? JSON.parse(raw).build_id : 'b1');
+            const existing = raw ? JSON.parse(raw).state : null;
+            if (existing === 'video_ready') linearState = 'video_ready';
+            await r.set(key, JSON.stringify({ state: linearState, build_id: buildId }));
+            return linearState;
         },
     };
     require.cache[statePath] = { exports: stateStub, id: statePath, loaded: true, filename: statePath, children: [], paths: [] };
