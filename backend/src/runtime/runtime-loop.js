@@ -9,6 +9,7 @@ const reconciliationEngine = require('./reconciliation-engine');
 const runtimeMetrics = require('./runtime-metrics');
 const counterReconciliation = require('./counter-reconciliation');
 const dispatchEngine = require('./dispatch-engine');
+const prometheus = require('../metrics/prometheus');
 
 const logPrefix = '[RUNTIME-LOOP]';
 
@@ -72,9 +73,12 @@ async function executeTick(redis, loadedBooks = {}) {
         console.warn(`[RUNTIME] Metrics storage error: ${metricsErr.message}`);
     }
 
-    // Phase 5 removed in Phase 1 (Passive Recovery).
-    // Reconciliation engine only collects reports — does not auto-apply fixes.
-    // applyFix() is available manually via POST /debug/runtime/apply-fix
+    // Phase 5: Collect Prometheus metrics
+    try {
+        await prometheus.collect(redis);
+    } catch (promErr) {
+        console.warn(`[RUNTIME] Prometheus collect error: ${promErr.message}`);
+    }
 
     const duration = Date.now() - startTime;
     const metrics = {

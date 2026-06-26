@@ -175,6 +175,22 @@ require('./routes/connector-routes.cjs')(app, redis, routeDeps);
 require('./routes/workflow-routes.cjs')(app, redis, routeDeps);
 
 // ======================================================
+// PROMETHEUS METRICS
+// ======================================================
+const prometheus = require('./metrics/prometheus');
+
+app.get('/metrics', async (req, res) => {
+    try {
+        const metrics = await prometheus.getMetricsContent();
+        res.set('Content-Type', prometheus.getContentType());
+        res.end(metrics);
+    } catch (err) {
+        console.error('[METRICS] Error:', err.message);
+        res.status(500).send('Internal Server Error');
+    }
+});
+
+// ======================================================
 // [14] SERVER STARTUP
 // ======================================================
 
