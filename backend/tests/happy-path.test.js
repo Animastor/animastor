@@ -314,6 +314,31 @@ class FakeRedis {
         return [...this.store.keys()].filter(k => regex.test(k));
     }
 
+    async eval(script, numKeys, ...args) {
+        const keys = args.slice(0, numKeys);
+        const scriptArgs = args.slice(numKeys);
+
+        // Atomic acquire quota: GET key, check < max, INCR
+        // Returns 0 if exceeded, new count if acquired
+        if (script.includes('tonumber')) {
+            const key = keys[0];
+            const max = parseInt(scriptArgs[0], 10);
+            const raw = this.store.get(key);
+            let current = 0;
+            if (raw !== undefined && raw !== null) {
+                if (typeof raw === 'object' && raw.value !== undefined) {
+                    current = parseInt(raw.value, 10) || 0;
+                } else {
+                    current = parseInt(raw, 10) || 0;
+                }
+            }
+            if (current >= max) return 0;
+            return await this.incr(key);
+        }
+
+        throw new Error(`FakeRedis.eval: unsupported script`);
+    }
+
     // Helpers for testing
     _getRaw(key) {
         const v = this.store.get(key);
@@ -661,10 +686,57 @@ describe('Happy Path: State — Per-Asset Operations', () => {
         expect(states.video).to.equal('new');
     });
 
+    // FIXED M2 (Н.3): acquireQuota is now atomic via Lua EVAL.
+    // Uses a single EVAL call that atomically GETs the counter, checks the limit,
+    // and INCRs — eliminating the race between checkQuota and incrementActiveCounter.
+    it('FIXED M2 (Н.3): acquireQuota is atomic — respects limits with Lua eval', async () => {
+        // Acquire all audio slots (max 3)
+        for (let i = 0; i < 3; i++) {
+            const r = await dispatchEngine.acquireQuota(redis, 'audio');
+            expect(r.acquired).to.be.true;
+            expect(r.current).to.equal(i + 1);
+        }
+
+        // Fourth should fail (atomic — no race possible)
+        const result = await dispatchEngine.acquireQuota(redis, 'audio');
+        expect(result.acquired).to.be.false;
+        expect(result.reason).to.equal('quota_exceeded');
+        expect(result.current).to.equal(3);
+
+        // Verify counter is exactly 3 (not overshot)
+        const counter = await dispatchEngine.getActiveCounter(redis, 'audio');
+        expect(counter).to.equal(3);
+    });
+
+    it('FIXED M2 (Н.3): acquireQuota handles first-time key (nil → INCR)', async () => {
+        // Key doesn't exist yet — Lua script should GET nil, then INCR to 1
+        const result = await dispatchEngine.acquireQuota(redis, 'video');
+        expect(result.acquired).to.be.true;
+        expect(result.current).to.equal(1);
+    });
+
+    it('FIXED M2 (Н.3): acquireQuota respects different limits per stage atomically', async () => {
+        // Image max is 2
+        const r1 = await dispatchEngine.acquireQuota(redis, 'image');
+        expect(r1.acquired).to.be.true;
+        const r2 = await dispatchEngine.acquireQuota(redis, 'image');
+        expect(r2.acquired).to.be.true;
+        // Third should fail atomically
+        const r3 = await dispatchEngine.acquireQuota(redis, 'image');
+        expect(r3.acquired).to.be.false;
+
+        // Video max is 1
+        const v1 = await dispatchEngine.acquireQuota(redis, 'video');
+        expect(v1.acquired).to.be.true;
+        const v2 = await dispatchEngine.acquireQuota(redis, 'video');
+        expect(v2.acquired).to.be.false;
+    });
+
     // KNOWN BUG — M1: Non-atomic RMW on per-asset state
     // setAssetState does GET → merge → SET without atomicity.
     // This test captures the current behavior but does NOT test the race condition
     // (that requires concurrent async operations on the same FakeRedis).
+    // This is a SEPARATE issue from M2 (quota) — will be fixed in a future step.
     it('KNOWN BUG M1: setAssetState uses non-atomic read-modify-write', async () => {
         // Set initial state
         await sceneState.setAssetStates(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, {

@@ -266,16 +266,36 @@ async function checkQuota(redis, stage) {
     return { exceeded: current >= max, current, max };
 }
 
+// Lua script for atomic quota acquire: check limit and increment in one Redis call.
+// Returns 0 if quota exceeded, or new counter value if acquired.
+const ATOMIC_ACQUIRE_SCRIPT = `
+    local key = KEYS[1]
+    local max = tonumber(ARGV[1])
+    local current = redis.call('GET', key)
+    if current and tonumber(current) >= max then
+        return 0
+    end
+    return redis.call('INCR', key)
+`;
+
 /**
- * Acquire quota slot.
+ * Acquire quota slot — atomically.
+ * Uses Lua EVAL to check limit and increment in a single Redis call.
+ * Eliminates race condition between checkQuota (GET) and incrementActiveCounter (INCR).
  */
 async function acquireQuota(redis, stage) {
-    const result = await checkQuota(redis, stage);
-    if (result.exceeded) {
-        return { acquired: false, reason: 'quota_exceeded', current: result.current, max: result.max };
+    const key = getActiveCounterKey(stage);
+    const max = QUOTAS[`maxActive${stage.charAt(0).toUpperCase() + stage.slice(1)}`];
+
+    const result = await redis.eval(ATOMIC_ACQUIRE_SCRIPT, 1, key, max);
+
+    // ioredis may return EVAL result as string '0' — use loose check
+    if (!result || result === 0) {
+        const current = await getActiveCounter(redis, stage);
+        return { acquired: false, reason: 'quota_exceeded', current, max };
     }
-    await incrementActiveCounter(redis, stage);
-    return { acquired: true, current: result.current + 1, max: result.max };
+
+    return { acquired: true, current: result, max };
 }
 
 /**
