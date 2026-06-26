@@ -47,6 +47,9 @@ async function executeAudioDispatch(redis, scene, loadedBook, buildId) {
 
     await state.transitionSceneState(redis, bookId, chapterId, sceneId, state.SceneState.AUDIO_GENERATING);
 
+    // §5.1: Set per-asset state to generating so callbacks can validate correctly
+    await state.setAssetState(redis, bookId, chapterId, sceneId, 'audio', state.AssetState.GENERATING);
+
     // Fallback to disk load when runtime doesn't pass loadedBook
     const bookData = loadedBook || book.loadBook(bookId);
     const sceneData = book.findSceneRuntimeData(bookData, chapterId, sceneId);
@@ -71,6 +74,9 @@ async function executeImageDispatch(redis, scene, loadedBook, buildId) {
 
     // Linear state is updated directly (no validation) — per-asset state is the source of truth.
     await state.transitionSceneState(redis, bookId, chapterId, sceneId, state.SceneState.IMAGE_GENERATING);
+
+    // §5.1: Set per-asset state to generating so callbacks can validate correctly
+    await state.setAssetState(redis, bookId, chapterId, sceneId, 'image', state.AssetState.GENERATING);
 
     // Fallback to disk load when runtime doesn't pass loadedBook
     const bookData = loadedBook || book.loadBook(bookId);
@@ -112,6 +118,9 @@ async function executeVideoDispatch(redis, scene, loadedBook, buildId) {
 
     // Linear state is updated directly — per-asset state is the source of truth.
     await state.transitionSceneState(redis, bookId, chapterId, sceneId, state.SceneState.VIDEO_GENERATING);
+
+    // §5.1: Set per-asset state to generating so callbacks can validate correctly
+    await state.setAssetState(redis, bookId, chapterId, sceneId, 'video', state.AssetState.GENERATING);
 
     // Fallback to disk load when runtime doesn't pass loadedBook
     const bookData = loadedBook || book.loadBook(bookId);

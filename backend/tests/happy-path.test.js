@@ -756,23 +756,36 @@ describe('Happy Path: State — Per-Asset Operations', () => {
         expect(raw).to.have.property('image', 'generating');
     });
 
-    // KNOWN BUG — §5.1: GENERATING not set in per-asset during dispatch
-    // When executeAudioDispatch runs, it only sets linear state (transitionSceneState)
-    // but does NOT call setAssetState(..., 'generating').
-    // This test documents that.
-    it('KNOWN BUG §5.1: GENERATING is NOT set in per-asset during dispatch', async () => {
-        // Simulate what executeAudioDispatch does:
-        // It calls transitionSceneState (linear) but NOT setAssetState
-        
-        // Set per-asset to pending (as bootstrap does)
+    // FIXED §5.1 (Н.7): GENERATING is now set in per-asset during dispatch.
+    // executeAudioDispatch/ImageDispatch/VideoDispatch call setAssetState(..., 'generating')
+    // right after transitionSceneState, so callbacks can validate correctly.
+    it('FIXED §5.1 (Н.7): GENERATING IS set in per-asset after dispatch', async () => {
+        // Simulate what executeAudioDispatch now does:
+        // transitionSceneState + setAssetState(..., 'generating')
+
         await sceneState.setAssetState(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, 'audio', 'pending');
 
-        // Now simulate dispatch: only linear state is updated
+        // Dispatch: linear state + per-asset generating
         await sceneState.transitionSceneState(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, 'audio_generating');
+        await sceneState.setAssetState(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, 'audio', 'generating');
 
-        // Per-asset state should still be 'pending' (NOT 'generating')
+        // Per-asset state should now be 'generating'
         const states = await sceneState.getAssetStates(redis, BOOK_ID, CHAPTER_ID, SCENE_ID);
-        expect(states.audio).to.equal('pending');
+        expect(states.audio).to.equal('generating');
+
+        // Same for image dispatch
+        await sceneState.setAssetState(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, 'image', 'pending');
+        await sceneState.transitionSceneState(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, 'image_generating');
+        await sceneState.setAssetState(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, 'image', 'generating');
+        const states2 = await sceneState.getAssetStates(redis, BOOK_ID, CHAPTER_ID, SCENE_ID);
+        expect(states2.image).to.equal('generating');
+
+        // Same for video dispatch
+        await sceneState.setAssetState(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, 'video', 'pending');
+        await sceneState.transitionSceneState(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, 'video_generating');
+        await sceneState.setAssetState(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, 'video', 'generating');
+        const states3 = await sceneState.getAssetStates(redis, BOOK_ID, CHAPTER_ID, SCENE_ID);
+        expect(states3.video).to.equal('generating');
     });
 });
 
