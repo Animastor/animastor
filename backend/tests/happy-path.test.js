@@ -13,6 +13,9 @@
 // be updated to reflect the correct behavior.
 
 const { expect } = require('chai');
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
 
 // ======================================================
 // Н.1: Idempotency test for /gpu/task/result dedup
@@ -1731,5 +1734,268 @@ describe('Happy Path: Д.2 — shouldScheduleAssets is a pure decision', () => {
         expect(after.audio).to.equal('dirty');
         expect(after.image).to.equal('generating');
         expect(after.video).to.equal('new');
+    });
+});
+
+// ======================================================
+// SECTION 8: Д.3 — Disk as fact, not decision (M3)
+// ======================================================
+// Tests that restoreChunkStatusForScene and reconcileWindowStatuses
+// check PG version before writing 'ready' to chunk metadata.
+// Files on disk are no longer sufficient — PG must confirm version.
+
+describe('Happy Path: Д.3 — Disk as fact, not decision (M3)', () => {
+    let redis;
+    let sceneWindow;
+
+    const D3_TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'animastor-d3-'));
+    const D3_BUILD = 'd3-build';
+    const D3_BOOK = 'd3-book';
+    const D3_CH = 'ch-1';
+    const D3_SC = 's-1';
+    const D3_CHUNK_KEY = `animastor:chunk:${D3_BOOK}_${D3_CH}_${D3_SC}_0001`;
+
+    // Store original config reference for cleanup
+    let originalConfigCache;
+    let originalConfigPath;
+
+    before(() => {
+        const buildDir = path.join(D3_TMP, D3_BUILD);
+        if (!fs.existsSync(buildDir)) {
+            fs.mkdirSync(buildDir, { recursive: true });
+        }
+        // Create test files on disk
+        fs.writeFileSync(path.join(buildDir, `${D3_BOOK}_${D3_CH}_${D3_SC}.mp3`), 'test-audio');
+        fs.writeFileSync(path.join(buildDir, `${D3_BOOK}_${D3_CH}_${D3_SC}_iu-001.png`), 'test-image');
+    });
+
+    after(() => {
+        try { fs.rmSync(D3_TMP, { recursive: true, force: true }); } catch {}
+    });
+
+    beforeEach(() => {
+        redis = new FakeRedis();
+
+        // Create chunk metadata in FakeRedis (pending)
+        const chunkData = JSON.stringify({
+            book_id: D3_BOOK,
+            chapter_id: D3_CH,
+            scene_id: D3_SC,
+            audio: false,
+            audio_status: 'pending',
+            image: false,
+            image_status: 'pending',
+            video: false,
+            video_status: 'pending',
+        });
+        redis.store.set(D3_CHUNK_KEY, chunkData);
+
+        // Stub config: point OUTPUT_DIR to temp dir
+        originalConfigPath = require.resolve('../src/config/runtime-config');
+        originalConfigCache = require.cache[originalConfigPath];
+        const orig = originalConfigCache.exports;
+        require.cache[originalConfigPath] = {
+            exports: { ...orig, OUTPUT_DIR: D3_TMP },
+            loaded: true,
+        };
+
+        // Stub database: pgQuery
+        const dbPath = require.resolve('../src/storage/postgres/database');
+        require.cache[dbPath] = {
+            exports: {
+                query: async () => ({ rows: [] }),
+            },
+            loaded: true,
+        };
+
+        // Stub scene-assets-repo: getAsset
+        const repoPath = require.resolve('../src/storage/postgres/repositories/scene-assets-repo');
+        require.cache[repoPath] = {
+            exports: {
+                getAsset: async () => null,
+                markReady: async () => {},
+                clearDirtyFlag: async () => {},
+                getDirtyUnitIds: async () => [],
+                clearDirtyUnitIds: async () => {},
+                setDirtyUnitIds: async () => {},
+            },
+            loaded: true,
+        };
+
+        // Stub placeholderAudio: hasRealAudio returns true
+        const paPath = require.resolve('../src/services/placeholder-audio');
+        require.cache[paPath] = {
+            exports: {
+                hasRealAudio: async () => true,
+                replacePlaceholderWithRealAudio: async () => {},
+                ensurePlaceholderAudio: async () => ({ created: false }),
+            },
+            loaded: true,
+        };
+
+        // Clear scene-window cache so it re-loads with mocks
+        delete require.cache[require.resolve('../src/runtime/scene-window')];
+        sceneWindow = require('../src/runtime/scene-window');
+    });
+
+    afterEach(() => {
+        // Restore original module caches
+        if (originalConfigCache && originalConfigPath) {
+            require.cache[originalConfigPath] = originalConfigCache;
+        }
+        for (const p of [
+            '../src/runtime/scene-window',
+            '../src/storage/postgres/database',
+            '../src/storage/postgres/repositories/scene-assets-repo',
+            '../src/services/placeholder-audio',
+        ]) {
+            delete require.cache[require.resolve(p)];
+        }
+    });
+
+    it('Д.3: restoreChunkStatusForScene writes ready when version is current (normal restart)', async () => {
+        // Setup: PG returns current version (content_version matches scene_assets)
+        const dbPath = require.resolve('../src/storage/postgres/database');
+        require.cache[dbPath].exports.query = async (sql, params) => {
+            return { rows: [{ content_version: 2, audio_config_version: 1 }] };
+        };
+        const repoPath = require.resolve('../src/storage/postgres/repositories/scene-assets-repo');
+        require.cache[repoPath].exports.getAsset = async (b, c, s, type, bid) => {
+            return { scene_content_version: 2, scene_audio_config_version: 1 };
+        };
+
+        delete require.cache[require.resolve('../src/runtime/scene-window')];
+        sceneWindow = require('../src/runtime/scene-window');
+
+        await sceneWindow.restoreChunkStatusForScene(redis, D3_BUILD, D3_BOOK, D3_CH, D3_SC);
+
+        // Chunk should be updated: audio_status = 'ready' (file exists, version current)
+        const raw = await redis.get(D3_CHUNK_KEY);
+        const data = JSON.parse(raw);
+        expect(data.audio).to.be.true;
+        expect(data.audio_status).to.equal('ready');
+        expect(data.image).to.be.true;
+        expect(data.image_status).to.equal('ready');
+    });
+
+    it('Д.3: restoreChunkStatusForScene preserves pending when version is stale (force-regen)', async () => {
+        // Setup: PG says content_version=3 but scene_assets says scene_content_version=2 → stale!
+        const dbPath = require.resolve('../src/storage/postgres/database');
+        require.cache[dbPath].exports.query = async (sql, params) => {
+            return { rows: [{ content_version: 3, audio_config_version: 2 }] };
+        };
+        const repoPath = require.resolve('../src/storage/postgres/repositories/scene-assets-repo');
+        require.cache[repoPath].exports.getAsset = async (b, c, s, type, bid) => {
+            if (type === 'audio') return { scene_content_version: 2, scene_audio_config_version: 1 };
+            if (type === 'image') return { scene_content_version: 2, scene_audio_config_version: 1 };
+            if (type === 'video') return { scene_content_version: 2, scene_audio_config_version: 1 };
+            return null;
+        };
+
+        delete require.cache[require.resolve('../src/runtime/scene-window')];
+        sceneWindow = require('../src/runtime/scene-window');
+
+        await sceneWindow.restoreChunkStatusForScene(redis, D3_BUILD, D3_BOOK, D3_CH, D3_SC);
+
+        // Chunk should remain pending (version stale → don't write ready)
+        const raw = await redis.get(D3_CHUNK_KEY);
+        const data = JSON.parse(raw);
+        expect(data.audio).to.be.false;
+        expect(data.audio_status).to.equal('pending');
+        expect(data.image).to.be.false;
+        expect(data.image_status).to.equal('pending');
+        expect(data.video).to.be.false;
+        expect(data.video_status).to.equal('pending');
+    });
+
+    it('Д.3: restart with ready scene_assets — restoreChunkStatusForScene writes ready (no mass regen)', async () => {
+        // Setup: PG version 2, scene_assets version 2 — current
+        const dbPath = require.resolve('../src/storage/postgres/database');
+        require.cache[dbPath].exports.query = async (sql, params) => {
+            return { rows: [{ content_version: 2, audio_config_version: 1 }] };
+        };
+        const repoPath = require.resolve('../src/storage/postgres/repositories/scene-assets-repo');
+        require.cache[repoPath].exports.getAsset = async (b, c, s, type, bid) => {
+            if (type === 'audio') return { scene_content_version: 2, scene_audio_config_version: 1 };
+            if (type === 'image') return { scene_content_version: 2, scene_audio_config_version: 1 };
+            if (type === 'video') return { scene_content_version: 2, scene_audio_config_version: 1 };
+            return null;
+        };
+
+        delete require.cache[require.resolve('../src/runtime/scene-window')];
+        sceneWindow = require('../src/runtime/scene-window');
+
+        await sceneWindow.restoreChunkStatusForScene(redis, D3_BUILD, D3_BOOK, D3_CH, D3_SC);
+
+        // Version is current, files exist → write ready (normal restart, not mass regen)
+        const raw = await redis.get(D3_CHUNK_KEY);
+        const data = JSON.parse(raw);
+        expect(data.audio_status).to.equal('ready');
+        expect(data.image_status).to.equal('ready');
+    });
+
+    it('Д.3: reconcileWindowStatuses skips stale assets and reports 0 reconciled', async () => {
+        // Setup: Multiple chunks, all stale by version
+        const chunkKey2 = `animastor:chunk:${D3_BOOK}_${D3_CH}_${D3_SC}_0002`;
+        const chunkData2 = JSON.stringify({
+            book_id: D3_BOOK, chapter_id: D3_CH, scene_id: D3_SC,
+            audio: false, audio_status: 'pending',
+            image: false, image_status: 'pending',
+            video: false, video_status: 'pending',
+        });
+        redis.store.set(chunkKey2, chunkData2);
+        redis.store.set(`animastor:chunk:other_book_ch-1_s-1_0001`, JSON.stringify({
+            book_id: 'other_book', chapter_id: 'ch-1', scene_id: 's-1',
+            audio: false, audio_status: 'pending',
+            image: false, image_status: 'pending',
+            video: false, video_status: 'pending',
+        }));
+
+        // PG says stale
+        const dbPath = require.resolve('../src/storage/postgres/database');
+        require.cache[dbPath].exports.query = async () => {
+            return { rows: [{ content_version: 5, audio_config_version: 3 }] };
+        };
+        const repoPath = require.resolve('../src/storage/postgres/repositories/scene-assets-repo');
+        require.cache[repoPath].exports.getAsset = async () => {
+            return { scene_content_version: 2, scene_audio_config_version: 1 };
+        };
+
+        delete require.cache[require.resolve('../src/runtime/scene-window')];
+        sceneWindow = require('../src/runtime/scene-window');
+
+        const result = await sceneWindow.reconcileWindowStatuses(redis, D3_BOOK, D3_BUILD);
+
+        // All chunks should stay pending, reconciled=0
+        expect(result.reconciled).to.equal(0);
+
+        const raw = await redis.get(D3_CHUNK_KEY);
+        const data = JSON.parse(raw);
+        expect(data.audio_status).to.equal('pending');
+    });
+
+    it('Д.3: reconcileWindowStatuses writes ready when version is current', async () => {
+        // PG says current version
+        const dbPath = require.resolve('../src/storage/postgres/database');
+        require.cache[dbPath].exports.query = async () => {
+            return { rows: [{ content_version: 2, audio_config_version: 1 }] };
+        };
+        const repoPath = require.resolve('../src/storage/postgres/repositories/scene-assets-repo');
+        require.cache[repoPath].exports.getAsset = async (b, c, s, type) => {
+            return { scene_content_version: 2, scene_audio_config_version: 1 };
+        };
+
+        delete require.cache[require.resolve('../src/runtime/scene-window')];
+        sceneWindow = require('../src/runtime/scene-window');
+
+        const result = await sceneWindow.reconcileWindowStatuses(redis, D3_BOOK, D3_BUILD);
+
+        // Chunks should be reconciled: audio→ready, image→ready
+        expect(result.reconciled).to.equal(1);
+
+        const raw = await redis.get(D3_CHUNK_KEY);
+        const data = JSON.parse(raw);
+        expect(data.audio_status).to.equal('ready');
+        expect(data.image_status).to.equal('ready');
     });
 });
