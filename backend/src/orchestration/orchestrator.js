@@ -84,6 +84,19 @@ async function completeStage(redis, bookId, chapterId, sceneId, stage, buildId) 
     }
 }
 
+// ── markDirtyScene ────────────────────────────────────
+// M5: Direct per-scene DIRTY writer — единственный способ выставить
+// per-asset DIRTY напрямую (без bookDiff/regen). Заменяет P4/P5/P6.
+// В отличие от markDirty (который регенерирует сцену через bookDiff),
+// этот метод просто маркирует assets как DIRTY, оставляя активный индекс
+// scheduler'у. Разница: markDirty → for regeneration, markDirtyScene → for recovery.
+async function markDirtyScene(redis, bookId, chapterId, sceneId, assets = ['audio', 'image', 'video']) {
+    const state = require('../state');
+    for (const asset of assets) {
+        await state.setAssetState(redis, bookId, chapterId, sceneId, asset, state.AssetState.DIRTY);
+    }
+}
+
 // ── reconcile ─────────────────────────────────────────
 // Сверка фактов (PG/диск) с состоянием. Делегирует в reconciliation-engine.
 // ЦЕЛЬ Д.3: диск становится источником ФАКТА, решение принимает фасад.
@@ -94,6 +107,7 @@ async function reconcile(redis, bookId, chapterId, sceneId) {
 
 module.exports = {
     markDirty,
+    markDirtyScene,
     planScene,
     beginStage,
     completeStage,

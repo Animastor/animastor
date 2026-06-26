@@ -281,12 +281,10 @@ async function checkVersionStaleness(redis, deps) {
         // Proactively reset stale assets in Redis so the scheduler
         // dispatches them on the very first tick instead of relying
         // on per-scene PG checks during shouldScheduleAssets().
-        if ((contentStale || audioConfigStale) && state && state.setAssetStates && state.AssetState) {
-            await state.setAssetStates(redis, bookId, chapterId, sceneId, {
-                audio: state.AssetState.DIRTY,
-                image: state.AssetState.DIRTY,
-                video: state.AssetState.DIRTY,
-            });
+        if ((contentStale || audioConfigStale) && state && state.AssetState) {
+            // M5: Route through orchestrator.markDirtyScene
+            const orchestrator = require('../orchestration/orchestrator');
+            await orchestrator.markDirtyScene(redis, bookId, chapterId, sceneId);
             resetCount++;
 
             // Ensure the scene is in the active index so tick() finds it

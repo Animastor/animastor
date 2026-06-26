@@ -607,9 +607,9 @@ async function applyFix(redis, fix) {
                 await state.transitionSceneState(redis, scene.bookId, scene.chapterId, scene.sceneId, pendingState);
 
                 // Mark all per-asset states as DIRTY for redispatch
-                await state.setAssetState(redis, scene.bookId, scene.chapterId, scene.sceneId, 'audio', state.AssetState.DIRTY);
-                await state.setAssetState(redis, scene.bookId, scene.chapterId, scene.sceneId, 'image', state.AssetState.DIRTY);
-                await state.setAssetState(redis, scene.bookId, scene.chapterId, scene.sceneId, 'video', state.AssetState.DIRTY);
+                // M5: Route through orchestrator.markDirtyScene instead of direct state.setAssetState
+                const orchestrator = require('../orchestration/orchestrator');
+                await orchestrator.markDirtyScene(redis, scene.bookId, scene.chapterId, scene.sceneId);
 
                 // Remove from active index to avoid immediate re-scheduling
                 await runtimeScheduler.removeSceneFromActiveIndex(redis, scene.bookId, scene.chapterId, scene.sceneId);
@@ -669,9 +669,9 @@ async function applyFix(redis, fix) {
                     await state.transitionSceneState(redis, scene.bookId, scene.chapterId, scene.sceneId, pendingState);
 
                     // Mark per-asset states as DIRTY for redispatch
-                    await state.setAssetState(redis, scene.bookId, scene.chapterId, scene.sceneId, 'audio', state.AssetState.DIRTY);
-                    await state.setAssetState(redis, scene.bookId, scene.chapterId, scene.sceneId, 'image', state.AssetState.DIRTY);
-                    await state.setAssetState(redis, scene.bookId, scene.chapterId, scene.sceneId, 'video', state.AssetState.DIRTY);
+                    // M5: Route through orchestrator.markDirtyScene instead of direct state.setAssetState
+                    const orchestrator = require('../orchestration/orchestrator');
+                    await orchestrator.markDirtyScene(redis, scene.bookId, scene.chapterId, scene.sceneId);
 
                     // Add back to active index
                     await runtimeScheduler.addSceneToActiveIndex(redis, scene.bookId, scene.chapterId, scene.sceneId);

@@ -97,7 +97,10 @@ async function restoreSceneChunkStatus(redis, buildId, bookId, chapterId, sceneI
     // Image: всегда DIRTY — при наличии dirty-юнитов визуальный контент
     // нужно перегенерировать. Если сюда попали с hasDirtyUnits=true,
     // значит есть изменения, влияющие на image.
-    await state.setAssetState(redis, bookId, chapterId, sceneId, 'image', state.AssetState.DIRTY);
+    // M5: Route through orchestrator.markDirtyScene — only image needs DIRTY
+    // (audio was just set to READY above, video is not affected)
+    const orchestrator = require('../orchestration/orchestrator');
+    await orchestrator.markDirtyScene(redis, bookId, chapterId, sceneId, ['image']);
     await state.syncLinearState(redis, bookId, chapterId, sceneId, buildId);
 
     log(`[RESTORE-PER-UNIT] ${bookId}/${chapterId}/${sceneId}: ${unitIds?.length || 0} dirty unit(s) — audio=${fileStatus.audio.exists}, image=${unitIds?.length > 0 ? 'dirty' : fileStatus.image.exists}, PNG pre-deleted`);
