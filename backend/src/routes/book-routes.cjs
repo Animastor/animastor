@@ -1518,10 +1518,6 @@ async function recoverMissingRedisChunks(buildId, bookId) {
             await redis.del('animastor:runtime:active-audio');
             await redis.del('animastor:runtime:active-image');
             await redis.del('animastor:runtime:active-video');
-            // Also reset the scheduler's own backpressure counters (different keys)
-            await redis.del('animastor:concurrent-audio');
-            await redis.del('animastor:concurrent-image');
-            await redis.del('animastor:concurrent-video');
 
             // CRITICAL: Stale dispatch-lease keys cause the frontend worker toggle
             // to pulse even when no real GPU work is happening. Each lease has a
@@ -1677,9 +1673,6 @@ async function recoverMissingRedisChunks(buildId, bookId) {
             await redis.del('animastor:runtime:active-audio');
             await redis.del('animastor:runtime:active-image');
             await redis.del('animastor:runtime:active-video');
-            await redis.del('animastor:concurrent-audio');
-            await redis.del('animastor:concurrent-image');
-            await redis.del('animastor:concurrent-video');
 
             // 4. Delete all Redis keys for this book using the comprehensive helper
             await cleanBookRedisKeys(redis, bookId);

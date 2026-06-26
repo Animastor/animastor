@@ -26,14 +26,24 @@ describe('Happy Path: GPU Task Result Idempotency (Н.1)', () => {
     });
 
     // Simulates the dedup logic from generation-routes.cjs:/gpu/task/result
-    async function handleGpuTaskResult(job_id, result_base64, build_id) {
+    // handler may throw to simulate a failing handleTaskResult.
+    async function handleGpuTaskResult(job_id, result_base64, build_id, handler) {
         const dedupKey = `animastor:result-processed:${job_id}:${build_id || 'nobuild'}`;
         const alreadyProcessed = await redis.set(dedupKey, '1', 'NX', 'EX', 3600);
         if (!alreadyProcessed) {
             return { ok: true, deduped: true };
         }
-        // Simulating handleTaskResult
-        await redis.set(`processed:${job_id}`, result_base64);
+        // Simulating handleTaskResult — on failure, release the dedup key so a retry re-processes
+        try {
+            if (handler) {
+                await handler();
+            } else {
+                await redis.set(`processed:${job_id}`, result_base64);
+            }
+        } catch (err) {
+            await redis.del(dedupKey).catch(() => {});
+            throw err;
+        }
         return { ok: true };
     }
 
@@ -92,6 +102,27 @@ describe('Happy Path: GPU Task Result Idempotency (Н.1)', () => {
 
         const dup = await handleGpuTaskResult('job-1', 'data', 'build-1');
         expect(dup.deduped).to.be.true;
+    });
+
+    it('failed processing releases dedup key so retry re-processes (no lost result)', async () => {
+        // First delivery fails mid-processing
+        let err;
+        try {
+            await handleGpuTaskResult('job-1', 'data', 'build-1', async () => {
+                throw new Error('boom');
+            });
+        } catch (e) { err = e; }
+        expect(err).to.be.an('error');
+
+        // Dedup key must have been released — otherwise the retry would be silently dropped
+        const stillHeld = await redis.get('animastor:result-processed:job-1:build-1');
+        expect(stillHeld).to.equal(null);
+
+        // Hub retry now succeeds and the result is actually processed (not deduped)
+        const retry = await handleGpuTaskResult('job-1', 'data', 'build-1');
+        expect(retry.ok).to.be.true;
+        expect(retry.deduped).to.be.undefined;
+        expect(await redis.get('processed:job-1')).to.equal('data');
     });
 });
 
@@ -659,6 +690,18 @@ describe('Happy Path: State — Per-Asset Operations', () => {
         expect(states).to.have.keys('audio', 'image', 'video');
         // All should be 'new' when no state exists
         expect(states.audio).to.equal('new');
+        expect(states.image).to.equal('new');
+        expect(states.video).to.equal('new');
+    });
+
+    it('getAssetStates falls back to linear state when per-asset hash is missing', async () => {
+        // Only linear state exists (e.g. legacy scene, or before any per-asset write).
+        // The empty hgetall hash must NOT shadow the linear-derived state.
+        await sceneState.setSceneState(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, sceneState.SceneState.AUDIO_READY);
+
+        const states = await sceneState.getAssetStates(redis, BOOK_ID, CHAPTER_ID, SCENE_ID);
+        // AUDIO_READY → audio ready, image/video new (derived from linear)
+        expect(states.audio).to.equal('ready');
         expect(states.image).to.equal('new');
         expect(states.video).to.equal('new');
     });

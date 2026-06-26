@@ -266,11 +266,15 @@ async function getAssetStates(redis, bookId, chapterId, sceneId) {
     try {
         raw = await redis.hgetall(key);
     } catch (e) {
-        // Key exists but is not a hash (old JSON format or wrong type) — fall through
-        warn(`Asset state key ${key} not a hash — falling back to linear state: ${e.message}`);
+        // Key exists but is not a hash (old JSON format from before Н.6) — delete it
+        // so the next setAssetState writes a clean hash. Without this, every read of
+        // a stale key throws WRONGTYPE and we silently fall back to linear forever.
+        warn(`Asset state key ${key} not a hash — deleting stale key, falling back to linear: ${e.message}`);
+        await redis.del(key).catch(() => {});
     }
 
-    if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    // hgetall returns {} for a missing key — only treat as authoritative when it has fields.
+    if (raw && typeof raw === 'object' && !Array.isArray(raw) && Object.keys(raw).length > 0) {
         return {
             audio: raw.audio || AssetState.NEW,
             image: raw.image || AssetState.NEW,

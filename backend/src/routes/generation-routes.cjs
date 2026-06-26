@@ -747,7 +747,16 @@ module.exports = function(app, redis, deps) {
                 return res.json({ ok: true, deduped: true });
             }
 
-            await deps.taskHandler.handleTaskResult(job_id, result_base64, build_id);
+            // The dedup key is claimed BEFORE processing to win the race against
+            // concurrent retries. But if processing throws, the result would be lost
+            // forever (the key blocks every retry for 1h). So on failure we release
+            // the key, letting the Hub's next retry re-process this result.
+            try {
+                await deps.taskHandler.handleTaskResult(job_id, result_base64, build_id);
+            } catch (procErr) {
+                await redis.del(dedupKey).catch(() => {});
+                throw procErr;
+            }
             res.json({ ok: true });
         } catch (err) {
             console.error('[GPU RESULT] Error:', err.message);
