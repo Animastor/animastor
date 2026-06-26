@@ -377,8 +377,13 @@ module.exports = function(app, redis, deps) {
 
             const buildId = req.body.build_id || 'default';
 
-            // Reset scene state to image_ready
-            await state.transitionSceneState(redis, book_id, chapter_id, scene_id, state.SceneState.IMAGE_READY);
+            // L7: Set per-asset (audio+image READY, video DIRTY to force regen), then derive
+            await state.setAssetStates(redis, book_id, chapter_id, scene_id, {
+                audio: state.AssetState.READY,
+                image: state.AssetState.READY,
+                video: state.AssetState.DIRTY
+            });
+            await state.syncLinearState(redis, book_id, chapter_id, scene_id);
 
             // Clean up stale Redis state
             const lockKey = `animastor:video-lock:${book_id}:${chapter_id}:${scene_id}`;
@@ -439,7 +444,7 @@ module.exports = function(app, redis, deps) {
                 if (result[1].length > 0) await redis.del(...result[1]);
             } while (cursor !== 0);
 
-            // Reset scene state
+            // Reset scene state — debug route: write exact linear state the user asked for
             await state.transitionSceneState(redis, book_id, chapter_id, scene_id, target_state);
 
             // Reset chunk flags
