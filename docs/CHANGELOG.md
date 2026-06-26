@@ -4,7 +4,41 @@ All notable changes to Animastor are documented here.
 
 ---
 
-## [Unreleased] — 2026-06-25
+## [Unreleased] — 2026-06-26
+
+### Fixed
+
+#### Н.0–Н.9: Критические баги closed
+
+- **Н.0: Happy path tests** (`backend/tests/happy-path.test.js`) — 30+ тестов на lease, quota, per-asset state, callbacks, scheduler.
+  Коммит: `15978e6`
+
+- **Н.1: Идемпотентность /gpu/task/result (C4)** (`backend/src/services/task-handler.cjs`) — SET NX dedup по ключу с build_id, TTL 3600s.
+  Коммит: `d804a77`
+
+- **Н.2: Один владелец release квоты (C1)** (`backend/src/runtime/dispatch-engine.js`) — удалены все releaseQuota из scene-callbacks, markDispatchCompleted — единственный владелец.
+  Коммит: `4e007e2`
+
+- **Н.3: Атомарные квоты (M2)** (`backend/src/runtime/dispatch-engine.js`) — acquireQuota на Lua EVAL: атомарные GET+check+INCR.
+  Коммит: `636da04`
+
+- **Н.4: Error-safe markDispatchCompleted** (`backend/src/services/task-handler.cjs`) — 6 callback+markDispatchCompleted пар в try/finally.
+  Коммит: `fbb6493`
+
+- **Н.5: PG status=ready (C2)** (`backend/src/orchestration/scene-callbacks.js`, `backend/src/storage/postgres/repositories/scene-assets-repo.js`) — markReady добавлен во все три completion-колбэка.
+  Коммит: `cf0a48a`
+
+- **Н.6: Атомарный per-asset RMW (M1)** (`backend/src/state/scene-state.js`) — JSON (GET+merge+SET) → Redis Hash (HSET/HGETALL).
+  Коммит: `1a0867d`
+
+- **Н.7: GENERATING per-asset при диспатче (§5.1)** (`backend/src/orchestration/scene-orchestrator.js`) — setAssetState(..., GENERATING) во всех execute*Dispatch.
+  Коммит: `f0b81de`
+
+- **Н.8: Развести два registry (C3)** (`backend/src/storage/asset-registry.js`, callers) — Redis registry функции переименованы с суффиксом `Redis`.
+  Коммит: `5182455`
+
+- **Н.9: Убрать dead MAX_CONCURRENT counters (M4)** (`backend/src/runtime/runtime-scheduler.js`) — удалены дублирующие quota функции и константы.
+  Коммит: `0adc930`
 
 ### Fixed
 

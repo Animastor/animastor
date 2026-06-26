@@ -76,10 +76,10 @@ Client (Android)
 │                Book Event Log / Chat Store / Cleanup / Startup Rec. │
 │                Placeholder Audio / AI Loader / Workflow Manager     │
 │                Waveform Service / Connector Loader                   │
-│                                                                     │
-│  State:        DUAL MODEL — Per-Asset (CANONICAL) + Linear FSM     │
-│                (syncLinearState убран из callback'ов R6.1;          │
-│                 GENERATING не выставляется в per-asset — §5.1)      │
+│                                                                     ││  State:        DUAL MODEL — Per-Asset (CANONICAL) + Linear FSM     │
+│                (syncLinearState убран из callback'ов R6.1;         │
+│                 per-asset storage: HSET/HGETALL (Н.6/M1);         │
+│                 GENERATING выставляется при диспатче (Н.7/§5.1))   │
 │                                                                     │
 │  GPU Dispatch: gpu-dispatcher.js (send/sendUnified)                │
 │                                                                     │

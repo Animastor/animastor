@@ -1,5 +1,22 @@
 # Architectural Debt: Animastor
 
+## ✅ Resolved Bugs (Н.0–Н.9, 2026-06-26)
+
+Нижеперечисленные баги закрыты в рамках спринта Н.0–Н.9. Подробности — в `docs/TODO_IMMEDIATE.md`.
+
+| Код | Проблема | Статус | Коммит |
+|---|---|---|---|
+| **C1** | Двойной release квоты (markDispatchCompleted + callback) | ✅ | `4e007e2` |
+| **C2** | PG `status='ready'` не пишется в колбэках | ✅ | `cf0a48a` |
+| **C3** | Два registry с одинаковыми именами | ✅ | `5182455` |
+| **C4** | Неидемпотентность /gpu/task/result (двойная обработка) | ✅ | `d804a77` |
+| **M1** | Неатомарный RMW в per-asset state (GET+merge+SET) | ✅ | `1a0867d` |
+| **M2** | Check-then-incr race в quota | ✅ | `636da04` |
+| **M4** | Две системы лимитов (MAX_CONCURRENT + dispatch quotas) | ✅ | `0adc930` |
+| **§5.1** | GENERATING не выставляется в per-asset при диспатче | ✅ | `f0b81de` |
+
+---
+
 ## 1. Отсутствие формальной абстракции коннекторов
 
 **Описание проблемы:** В проекте нет формального интерфейса или абстракции для коннекторов/адаптеров. Интеграция с GPU Hub, OpenRouter, PostgreSQL, Redis — прямые вызовы через HTTP и SQL.
@@ -222,7 +239,7 @@
 
 ---
 
-## 16. Dual state model — избыточная сложность *(ЧАСТИЧНО ИСПРАВЛЕНО в v2.1.0)*
+## 16. Dual state model — избыточная сложность *(ЧАСТИЧНО ИСПРАВЛЕНО в v2.1.0, Н.6+Н.7)*
 
 **Описание проблемы (было):** Dual State Model (per-asset + linear FSM) с валидацией последовательных переходов, которая блокировала параллельный диспатч.
 
@@ -233,10 +250,18 @@
 - ✅ Удалены `shouldScheduleScene`, `registerScene`, `progressScene` из scheduler — legacy
 - ✅ Удалены `sceneHeartbeat`, `isSceneStuck`, `getRecoveryPendingState` — не нужны без FSM
 - ✅ All callbacks (`handleAudioCompleted`, `handleImageCompleted`, `handleVideoCompleted`) проверяют per-asset state вместо линейного
+
+**Что сделано (Н.6, М1 — `1a0867d`):**
+- ✅ Per-asset storage: JSON (GET+merge+SET) → Redis Hash (HSET/HGETALL) — устранён неатомарный RMW
+
+**Что сделано (Н.7, §5.1 — `f0b81de`):**
+- ✅ `executeAudioDispatch/ImageDispatch/VideoDispatch` → `setAssetState(..., AssetState.GENERATING)`
+
+**Остаётся:**
 - ❌ `SceneState` константы сохранены для backward compat (их читают плеер и debug endpoint'ы)
 - ❌ `deriveLinearState` / `syncLinearState` сохранены для поддержки старых Redis-ключей
 
-**Остаётся:** Зависимость от `SceneState` констант в роутах и реконсилейшне — не блокирует, но загрязняет код. Можно убрать в будущем, когда плеер перестанет читать `scene-state` ключи.
+Зависимость от `SceneState` констант в роутах и реконсилейшне — не блокирует, но загрязняет код. Можно убрать в будущем, когда плеер перестанет читать `scene-state` ключи.
 
 ---
 

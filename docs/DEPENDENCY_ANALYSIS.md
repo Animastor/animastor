@@ -38,11 +38,13 @@
 - book-diff.cjs (получает deps)
 - audio-recovery.cjs (получает deps)
 
-### 2.2 scene-orchestrator.js (~1200 строк)
+### 2.2 scene-orchestrator.js (~173 строки, фасад)
 
-**Проблема:** Содержит логику диспетчеризации, обработки callback'ов, state management, layer config checks, padded text trimming.
+**Проблема (было):** Содержал логику диспетчеризации, обработки callback'ов, state management, layer config checks, padded text trimming.
 
-**Связность:** Очень высокая. Зависит от:
+**Исправлено:** Логика вынесена в `scene-callbacks.js`, `scene-restoration.js`, `scene-utils.js`. Сейчас `scene-orchestrator.js` — фасад **~173 строки**.
+
+**Связность (историческая):** Зависит от:
 - audio/index.js, image/index.js, video/index.js
 - scene-state.js (dual model: per-asset + linear FSM)
 - event-journal.js
@@ -103,17 +105,26 @@
 
 ### 4.1 scene-orchestrator.js
 
-**Ответственность:**
+> **UPD 2026-06-26:** Логика callback'ов вынесена в `scene-callbacks.js` (R3). Сейчас orchestrator — фасад ~173 строки.
+> stale state tolerance убран (R3.1 = R6.5).
+> GENERATING per-asset добавлен при диспатче (Н.7/§5.1).
+
+**Текущая ответственность:**
 - Dispatch execution для audio/image/video
-- Callback handling для всех трёх типов
-- State machine management (dual model)
 - Layer config checks (audio_enabled/image_enabled/video_enabled)
-- Stale state tolerance
-- Padded text trimming
 - Lane management (completeWithoutVideo/Image)
 - Event journal logging
 
-**Оценка:** Нарушение Single Responsibility Principle.
+**Ответственность (ВЫНЕСЕНА в scene-callbacks.js):**
+- Callback handling для всех трёх типов
+- State machine management (per-asset state)
+
+**Убрано:**
+- stale state tolerance (R6.5)
+- padded text trimming (в audio-service, передаётся через DI)
+- syncLinearState вызовы (→ per-asset API, R6.1)
+
+**Оценка:** Существенно уменьшена, но всё ещё фасад с несколькими обязанностями.
 
 ### 4.2 book-routes.cjs
 
