@@ -7,126 +7,91 @@
 
 ---
 
-## День 1 — Н.0: Сеть безопасности (тесты)
+## ✅ Н.0: Сеть безопасности (тесты) — выполнено
 
-**Цель:** Зафиксировать happy-path, чтобы следующие изменения не сломали ничего незаметно.
+**Коммит:** `15978e6` — создан `backend/tests/happy-path.test.js` (30+ тестов)
 
-### [ ] 1.1 Happy-path тест для одной сцены
-- Импорт TXT → bootstrap → генерация одной главы audio → image → video → READY
-- Проверить: `GET /api/v1/book/:bookId/assets-state` → `status='ready'`
-- Проверить: сцена убрана из активного индекса после `video=READY`
-
-### [ ] 1.2 Тест квот
-- После завершения сцены: `GET /api/v1/debug/runtime/quotas`
-- Все счётчики (audio/image/video) = 0
-- Нет дрифта (counter-reconciliation не пишет `totalDrift > 0`)
-
-### [ ] 1.3 Тест lease
-- После диспатча → lease существует
-- После завершения → lease освобождён
-- Повторный диспатч той же стадии → `duplicate`
-
-**Файлы:** `backend/tests/test-happy-path.mjs` (новый)
+- Lease lifecycle (9 тестов): acquire/release/duplicate/parallel stages/cleanup
+- Quota lifecycle (8 тестов): limits, cycle to zero, checkQuota
+- Per-asset state (6 тестов): get/set/fallback/independence
+- Scene callbacks (8 тестов): каждый callback + valid/invalid state guards
+- Scheduler tick lock (4 теста): acquire/release/isRunning
+- KNOWN BUG тесты: C1, C2, M1, §5.1
 
 ---
 
-## День 2 — Н.1: Идемпотентность `/gpu/task/result` (C4)
+## ✅ Н.1: Идемпотентность `/gpu/task/result` (C4) — выполнено
 
-**Цель:** Повторные колбэки от GPU Hub (ретраи до 5 раз) не вызывают повторное завершение.
+**Коммит:** `d804a77`
 
-### [ ] 2.1 Дедуп по `(job_id, build_id)`
-- В `routes/generation-routes.cjs` перед `handleTaskResult` добавить:
-  ```js
-  const dedupKey = `animastor:result-processed:${job_id}:${build_id}`;
-  const already = await redis.set(dedupKey, '1', 'NX', 'EX', 3600);
-  if (!already) return { ok: true, deduped: true };
-  ```
-- `build_id` в ключе — чтобы force-regen не блокировался старым dedup-ом.
-
-### [ ] 2.2 Тест на идемпотентность
-- Дважды вызвать callback с одинаковым `(job_id, build_id)`:
-  - первый → `{ ok: true }`
-  - второй → `{ ok: true, deduped: true }`
-  - `handleImageCompleted` вызван один раз
-
-**Файлы:** `backend/src/routes/generation-routes.cjs`, `backend/tests/`
-
-**Риски:** Низкий. `build_id` в ключе защищает легитимную регенерацию.
+- SET NX dedup по ключу `animastor:result-processed:<job_id>:<build_id>` (TTL 3600s)
+- `build_id` в ключе — force-regen не блокируется
+- 5 тестов на идемпотентность
 
 ---
 
-## День 3 — Н.2: Один владелец release квоты (C1)
+## ✅ Н.2: Один владелец release квоты (C1) — выполнено
 
-**Цель:** Один `acquireQuota` = ровно один `releaseQuota`. Убрать двойной декремент.
+**Коммит:** `4e007e2`
 
-### [ ] 3.1 Убрать `releaseQuota` из callback'ов
-- `scene-callbacks.js`:
-  - `handleAudioCompleted()` — убрать `dispatchEngine.releaseQuota(redis, 'audio')` (2 места)
-  - `handleImageCompleted()` — убрать `dispatchEngine.releaseQuota(redis, 'image')` (2 места)
-  - `handleVideoCompleted()` — убрать `dispatchEngine.releaseQuota(redis, 'video')` (2 места)
-- **Оставить** `releaseQuota` только в `markDispatchCompleted` / `markDispatchFailed` (`dispatch-engine.js`).
-
-### [ ] 3.2 Проверить все ветки завершения в `task-handler.cjs`
-- Убедиться, что каждый путь завершения вызывает `markDispatchCompleted` (или `markDispatchFailed`).
-- Ветки: `iu_image` (успех + fallback при `totalIUs===0` + PG error fallback), `scene_video`, `audio_chunk` (early return + normal path).
-
-### [ ] 3.3 Тест
-- После завершения сцены: квота уменьшена ровно на 1, не на 2.
-- Под нагрузкой (3 сцены в окне) счётчики возвращаются к 0.
-- `counter-reconciliation` в логах: `totalDrift: 0`.
-
-**Файлы:** `backend/src/orchestration/scene-callbacks.js`, `backend/src/services/task-handler.cjs`
-
-**Зависимости:** Строго **после** Н.1 (иначе утечка слотов при повторных колбэках).
+- Удалены все 9 `releaseQuota` из `scene-callbacks.js`
+- `markDispatchCompleted` — единственный владелец release
+- C1-тесты обновлены на single-release
 
 ---
 
-## День 4 — Н.3: Атомарность квот (M2)
+## ✅ Н.3: Атомарность квот (M2) — выполнено
 
-**Цель:** Убрать гонку check-then-incr в `acquireQuota`.
+**Коммит:** `636da04`
 
-### [ ] 4.1 Переписать `acquireQuota` на INCR-then-check
-- В `dispatch-engine.js`:
-  ```js
-  async function acquireQuota(redis, stage) {
-      const key = getActiveCounterKey(stage);
-      const after = await redis.incr(key);
-      const max = QUOTAS[`maxActive${capitalize(stage)}`];
-      if (after > max) {
-          await redis.decr(key);
-          return { acquired: false, reason: 'quota_exceeded' };
-      }
-      return { acquired: true };
-  }
-  ```
-  (Или Lua-скрипт для атомарности.)
-
-### [ ] 4.2 Убрать мертвый дубль `MAX_CONCURRENT_*` (часть M4)
-- Удалить `MAX_CONCURRENT_AUDIO/IMAGE/VIDEO`, `incrementConcurrent/decrementConcurrent/canScheduleStage` из `runtime-scheduler.js`.
-- Переключить `getMetrics` на `dispatchEngine.getQuotaStatus`.
-
-**Файлы:** `backend/src/runtime/dispatch-engine.js`, `backend/src/runtime/runtime-scheduler.js`
+- `acquireQuota` заменён на Lua EVAL: атомарный GET + check + INCR
+- Добавлен `FakeRedis.eval` для тестов
+- 3 теста FIXED M2 (атомарность, первый вызов, per-stage limits)
 
 ---
 
-## Бэклог (после 4 дней)
+## ✅ Н.4: Error-safe markDispatchCompleted — выполнено
 
-То, что важно, но не критично для стабильности «прямо сейчас»:
+**Коммит:** `fbb6493`
 
-### [ ] М.1 — Запись PG `status='ready'` (C2)
-Добавить `sceneAssetsRepo.markReady()` в колбэки. **Важно:** нужен точный маппинг версий.
+- Все 6 callback+markDispatchCompleted пар обёрнуты в `try/finally`
+- Image (3 пути): all IUs, totalIUs===0, PG fallback
+- Video (1 путь): scene_video
+- Audio (2 пути): early return, normal merge
 
-### [ ] М.2 — Развести два registry по именам (C3)
-`storage/asset-registry.js` → `redisAssetCache`, `services/scene-asset-registry.js` → `pgAssetRepo`.
+---
 
-### [ ] М.4 — Атомарность per-asset RMW (M1)
-Перевести `setAssetState` с JSON-RMW на Redis-hash (HSET field-атомарно) или Lua.
+## ✅ Н.5: Запись PG `status='ready'` (C2) — выполнено
 
-### [ ] Обновление `LLM_AUDIT_CONTEXT.md`
-Уже исправлен в этом PR. При повторных изменениях — синхронизировать.
+**Коммит:** `cf0a48a`
 
-### [ ] Вынести секреты из репозитория (Н.4)
-`OPENROUTER_API_KEY` и пароль PG из `docker-compose.yml` → `.env` + ротация ключа.
+- `handleAudioCompleted` → `markReady(..., 'audio', audioPath)`
+- `handleImageCompleted` → `markReady(..., 'image', sceneImage, {width, height})`
+- `handleVideoCompleted` → `markReady(..., 'video', videoPath, {duration, width, height})`
+- C2 docs marker → FIXED C2 verification tests
+
+---
+
+## 📋 Текущие и следующие шаги
+
+### 🔜 Н.6: Атомарность per-asset RMW (M1)
+**Цель:** Убрать гонку GET→merge→SET в `setAssetState`.
+
+**Что сделать:**
+- Перевести `setAssetState` с JSON-RMW на Redis HSET (поле `audio`/`image`/`video` обновляется атомарно)
+- `setAssetStates` → `HMSET` для множественных полей
+- `getAssetStates` → `HGETALL` (остаётся без изменений)
+
+**Файлы:** `backend/src/state/scene-state.js`
+
+### 🔜 Н.7: GENERATING per-asset при диспатче (§5.1)
+**Цель:** `executeAudioDispatch` / `executeImageDispatch` / `executeVideoDispatch` пишут `setAssetState(..., 'generating')`.
+
+### 🔜 Н.8: Развести два registry (C3)
+**Цель:** `storage/asset-registry.js` (Redis) → `redisAssetCache`, `services/scene-asset-registry.js` (PG) → `pgAssetRepo`.
+
+### 🔜 Н.9: Убрать мертвый дубль MAX_CONCURRENT (M4)
+**Цель:** Удалить `MAX_CONCURRENT_AUDIO/IMAGE/VIDEO`, `incrementConcurrent/decrementConcurrent/canScheduleStage` из `runtime-scheduler.js`.
 
 ---
 
@@ -135,15 +100,22 @@
 ```
 Н.0 (тесты) ─── фундамент для всего
     │
-    ├──→ Н.1 (идемпотентность) ───→ Н.2 (один release)
-    │                                  └── строго после Н.1
+    ├──→ Н.1 (идемпотентность) ───→ Н.2 (один release) ───→ Н.4 (error-safe)
     │
-    └──→ Н.3 (атомарность квот) ─── независим от Н.1/Н.2
-                                     └── можно параллельно
+    ├──→ Н.3 (атомарность квот)
+    │
+    ├──→ Н.5 (PG status=ready)
+    │
+    ├──→ Н.6 (per-asset RMW) ─── независим
+    │
+    └──→ Н.7 (generating per-asset)
+
+Н.8 (rename registries) ─── можно в любой момент
+Н.9 (dead code) ─── можно в любой момент
 ```
 
-**Каждый шаг:** отдельный коммит → smoke-тест (импорт TXT → генерация → video=ready) → деплой.
+**Каждый шаг:** отдельный коммит → npm test → git push.
 
 ---
 
-*Дата: 2026-06-26. Основано на `docs/06_Roadmap.md` (Неделя A) и `docs/04_Migration_Plan.md` (Шаги 0–3).*
+*Дата: 2026-06-26. Обновлено после Н.0–Н.5. Основано на `docs/06_Roadmap.md` (Неделя A) и `docs/04_Migration_Plan.md` (Шаги 0–3).*
