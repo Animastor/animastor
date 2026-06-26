@@ -365,6 +365,9 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
             val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
             if (bmp != null) {
                 imageView.setImageBitmap(bmp)
+                // Reset properties that showPreviewMissing may have changed
+                imageView.scaleType = ImageView.ScaleType.CENTER_CROP
+                imageView.imageTintList = null
                 hidePreviewMissing(card)
                 val dm = resources.displayMetrics
                 val scrDp = dm.widthPixels / dm.density
@@ -396,6 +399,9 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
             val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
             if (bmp != null) {
                 imageView.setImageBitmap(bmp)
+                // Reset properties that showPreviewMissing may have changed
+                imageView.scaleType = ImageView.ScaleType.CENTER_CROP
+                imageView.imageTintList = null
                 hidePreviewMissing(card)
                 val dm = resources.displayMetrics
                 val scrDp = dm.widthPixels / dm.density
