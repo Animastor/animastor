@@ -23,11 +23,17 @@
 
 **Цель:** Recovery перестаёт быть активным участником принятия решений. Только логирует расхождения, не чинит их автоматически.
 
-### [R1.1] Startup recovery — только логировать, не чинить ✅
+### [R1.1] Startup recovery — только логировать, не чинить ✅ (частично)
 - [x] `recoverIuImagesFromDisk()` — сканирует PNG, только логирует найденные сцены (не обновляет Redis)
 - [x] `reconcileMissingSceneState()` — только логирует книги с отсутствующими Redis counters (не восстанавливает counters/placeholders/hashes)
 - [x] `checkVersionStaleness()` — уже только логирует (не меняли)
 - [x] **Важно:** crash recovery больше не маскирует dirty-состояние — после flushall Redis книга должна быть явно загружена через PUT/regenerate
+
+> ⚠️ **Расхождение с кодом:** version-stale ветка в `startup-recovery.js:284-288` всё ещё пишет `setAssetStates(... DIRTY)`.
+> То есть R1.1 верен для `recoverIuImagesFromDisk`, но не полностью — код на version-stale пути всё ещё мутирует состояние.
+> См. `02_Claude_Audit.md §ARCHITECTURAL_AUDIT_TODO`.
+
+> **UPD 2026-06-26:** Добавлена пометка о расхождении.
 
 ### [R1.2] Audio recovery — убрать рантайм-цикл ✅
 - [x] `audio-recovery.cjs`: убрать `startRecoveryInterval()` (setInterval every 5s)
@@ -171,16 +177,21 @@
 
 ---
 
-### [R6.5] Убрать stale state tolerance
+### [R6.5] Убрать stale state tolerance ✅
 
 > Это же R3.1, но с явными шагами и зависимостями.
 
-- [ ] **Pre-requisite:** R2.1 (force lease release) — должен быть сделан ДО этого шага
-- [ ] **Pre-requisite:** R2.3 (cleanup leases at regenerate) — гарантирует, что при regenerate все старые leases сняты
-- [ ] **Шаг 1:** `handleAudioCompleted()` — убрать stale state tolerance блок
-- [ ] **Шаг 2:** `handleImageCompleted()` — то же
-- [ ] **Шаг 3:** `handleVideoCompleted()` — то же
-- [ ] **Шаг 4:** Интеграционный тест: Cancel→Regenerate→callback должен корректно завершиться без stale tolerance
+- [x] **Pre-requisite:** R2.1 (force lease release) — уже сделан
+- [x] **Pre-requisite:** R2.3 (cleanup leases at regenerate) — уже сделан
+- [x] **Шаг 1:** `handleAudioCompleted()` — убран stale state tolerance блок
+- [x] **Шаг 2:** `handleImageCompleted()` — убран
+- [x] **Шаг 3:** `handleVideoCompleted()` — убран
+- [x] **Шаг 4:** Интеграционный тест: Cancel→Regenerate→callback
+
+> ⚠️ **Было внутреннее противоречие:** в приоритетном списке сверху R6.5 помечен ✅ Done, а здесь стоял `[ ]`.
+> Исправлено: теперь везде ✅. Подтверждено кодом — stale state tolerance блоков нет в `scene-callbacks.js`.
+
+> **UPD 2026-06-26:** Внутреннее противоречие снято.
 
 ---
 

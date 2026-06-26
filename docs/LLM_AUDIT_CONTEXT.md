@@ -13,18 +13,20 @@ Animastor — AI-powered animated storytelling platform. Преобразует 
 ### 1. Backend API Server (`backend/src/backend.cjs`)
 - Express-сервер на порту 3000
 - DI-контейнер для ~30 сервисов
-- Монтирует 4 route-модуля: books, generation, AI, debug
-- Helmet.js (security headers), express-rate-limit (100 req/min на /api/)
+- Монтирует 6 route-модулей: books, generation, AI, debug, connector, workflow
+- Helmet.js (security headers), express-rate-limit (500 req/min на /api/)
 - Request ID middleware (crypto.randomUUID() для трассировки)
 - Graceful shutdown (SIGTERM → server.close → redis.quit → pg.closePool)
 - Startup resume (возобновление прерванных сессий генерации)
+
+> **UPD 2026-06-26:** Исправлен rate limit (500, не 100). Аудит: `02_Claude_Audit.md §C1-C4`, `05_Documentation_Audit.md §LLM_AUDIT_CONTEXT`.
 
 ### 2. Orchestration Engine
 Состоит из 3 ключевых компонентов:
 
 - **Runtime Scheduler** (`runtime/runtime-scheduler.js`): Tick-based (5s), per-asset диспетчеризация (audio/image/video независимо)
 - **Dispatch Engine** (`runtime/dispatch-engine.js`): Leases, quotas, backpressure + lazy governance modules
-- **Scene Orchestrator** (`orchestration/scene-orchestrator.js`): Layer-aware dispatch (audio_enabled/image_enabled/video_enabled)
+- **Scene Orchestrator** (`orchestration/scene-orchestrator.js`): Layer-aware dispatch (audio_enabled/image_enabled/video_enabled) — **~173 строки** (фасад, логика вынесена в scene-callbacks.js/scene-restoration.js/scene-utils.js)
 
 ### 3. AI Agent Pipeline (`services/agent-service.js`)
 6-шаговый последовательный AI-пайплайн: structure (шаг 0) → characters → locations → scenes → IU → visuals
@@ -62,7 +64,8 @@ Client (Android)
 ┌───────────┴─────────────────────────────────────────────────────────┐
 │                     Backend (Node.js, port 3000)                     │
 │                                                                     │
-│  API Layer:    book-routes / generation-routes / ai-routes / debug  │
+│  API Layer:    book-routes / generation-routes / ai-routes / debug /  │
+│                connector / workflow                                  │
 │                                                                     │
 │  Orchestration: Scheduler (tick 5s, per-asset) → Dispatch Engine    │
 │                 → Scene Orchestrator (layer-aware)                   │
@@ -70,17 +73,18 @@ Client (Android)
 │  Services:     Audio / Image / Video / Agent / Chat (tool-based)    │
 │                TXT Importer / Window Gen / Gen Scope / Layer Config │
 │                Book Source/Sync/Integrity / Scene Asset Registry    │
-│                Book Event Log / Chat Store / Cleanup / Audio Recov. │
-│                Placeholder Audio / AI Loader / Knowledge Base       │
-│                Waveform Service                                     │
+│                Book Event Log / Chat Store / Cleanup / Startup Rec. │
+│                Placeholder Audio / AI Loader / Workflow Manager     │
+│                Waveform Service / Connector Loader                   │
 │                                                                     │
 │  State:        DUAL MODEL — Per-Asset (CANONICAL) + Linear FSM     │
+│                (syncLinearState убран из callback'ов R6.1;          │
+│                 GENERATING не выставляется в per-asset — §5.1)      │
 │                                                                     │
-│  GPU Dispatch: gpu-dispatcher.js (send/sendVideo/sendUnified)       │
+│  GPU Dispatch: gpu-dispatcher.js (send/sendUnified)                │
 │                                                                     │
-│  Governance:   CORE: lease-manager, counter-reconciliation          │
-│                DEBUG (lazy): circuit-breaker, retry-budget,         │
-│                fairness, policy-engine, workload-classifier,        │
+│  Governance (LIVE): circuit-breaker, retry-budget, fairness         │
+│  Governance (DEBUG/мёртвые): policy-engine, workload-classifier,   │
 │                cost-estimator, decision-trace, feedback,            │
 │                governance-*, adaptation-controller, exec-semantics  │
 │                                                                     │
@@ -181,7 +185,7 @@ NEW → AUDIO_PENDING → AUDIO_GENERATING → AUDIO_READY
    a. Audio Service → TTS → GPU Hub → Worker → MP3
    b. Image Service → image → GPU Hub → Worker → PNG (независимо от audio!)
    c. Video Service → video → GPU Hub → Worker → MP4 (требует image=READY)
-7. Callback → Task Handler → orchestrator → per-asset state update → syncLinearState
+7. Callback → Task Handler → orchestrator → per-asset state update (syncLinearState убран из callback'ов в R6.1)
 8. Scene complete → remove from active → window slide → следующая партия
 9. Android плеер воспроизводит сгенерированный контент
 ```
@@ -211,7 +215,9 @@ NEW → AUDIO_PENDING → AUDIO_GENERATING → AUDIO_READY
 
 ## Коннекторы
 
-Формальной системы коннекторов нет. GPU Dispatcher (send/sendVideo/sendUnified с 3 retries, 30s timeout), Task Handler (IU completion + audio merge). GPU Hub (10 min timeout, requeue, 5 retries result forward).
+Формальной системы коннекторов нет. GPU Dispatcher (send/sendUnified с 3 retries, 30s timeout), Task Handler (IU completion + audio merge). GPU Hub (10 min timeout, requeue, 5 retries result forward).
+
+> **UPD 2026-06-26:** `sendVideo` не существует — только `send` и `sendUnified`.
 
 ## Runtime Module (slim v2.0.0)
 
@@ -225,7 +231,7 @@ NEW → AUDIO_PENDING → AUDIO_GENERATING → AUDIO_READY
 | Файл | Роль | Размер |
 |------|------|--------|
 | backend/src/backend.cjs | Точка входа, DI, graceful shutdown | ~265 строк |
-| backend/src/orchestration/scene-orchestrator.js | Оркестратор сцен (layer-aware) | ~1200 строк |
+| backend/src/orchestration/scene-orchestrator.js | Оркестратор сцен (layer-aware, фасад) | ~173 строки |
 | backend/src/runtime/dispatch-engine.js | Диспетчер с governance (lazy) | ~1000 строк |
 | backend/src/runtime/runtime-scheduler.js | Tick-планировщик (per-asset) | ~700 строк |
 | backend/src/services/agent-service.js | AI-пайплайн (6 шагов) | ~1328 строк |
@@ -248,7 +254,7 @@ NEW → AUDIO_PENDING → AUDIO_GENERATING → AUDIO_READY
 3. **Dual State Model.** Per-asset + linear FSM добавляет сложность синхронизации.
 4. **Чрезмерная связанность.** book-routes.cjs, scene-orchestrator.js, dispatch-engine.js.
 5. **Отсутствие unit-тестов** для критических компонентов.
-6. **Governance модули в DEBUG.** Мёртвый код на диске (safeRequire).
+6. **Governance модули — часть LIVE, часть DEBUG.** circuit-breaker, retry-budget, fairness реально вызываются; policy-engine/workload-classifier/cost-estimator — мёртвые.
 7. **Graceful shutdown — ИСПРАВЛЕНО.** SIGTERM в backend.cjs и gpu-hub.js.
 8. **База знаний AI загружается, но не используется** в промптах (мёртвый код, кроме refineDraft).
 9. **Два event-журнала:** Redis + PostgreSQL.

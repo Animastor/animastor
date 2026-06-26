@@ -110,31 +110,38 @@ dispatchEngine.dispatchStage(redis, bookId, chapterId, sceneId, stage, loadedBoo
   → Acquire quota (backpressure: audio max 3, image max 2, video max 1)
   → Check retry budget (если загружен)
   → Check fairness (если загружен)
-  → Acquire stage lease (NX, TTL: audio 30min, image 60min, video 120min)
+  → Acquire stage lease (NX, TTL: audio 15min, image 20min, video 30min)
+
+  > **UPD 2026-06-26:** TTL исправлены (15/20/30, не 30/60/120). Код: `dispatch-engine.js:43-47`.
   → orchestrator.dispatchStage() с overrideStage
 ```
 
 ### 3c: Audio Generation (per-asset validation)
 
+> **UPD 2026-06-26:** syncLinearState убран из callback'ов (R6.1).
+> Per-asset GENERATING НЕ выставляется при диспатче (дыра §5.1 — `03_Orchestrator.md §5.1`).
+> PG `scene_assets.status='ready'` НЕ пишется (C2 — `02_Claude_Audit.md §C2`).
+
 ```
 orchestrator.executeAudioDispatch()
-  → Пер-ассет валидация (GENERATING/PENDING/DIRTY)
+  → НЕ выставляет per-asset GENERATING (только линейное *_GENERATING)
   → audio.generateSceneAudio() → segments → gpu.send()
   → callback → task-handler → orchestrator.handleAudioCompleted()
     → Per-asset check: audio GENERATING/PENDING/DIRTY
-    → Валидация файла → PG update → ASSET STATE → AUDIO_READY
-    → syncLinearState() (производная для backward compat)
+    → Валидация файла → ASSET STATE → AUDIO_READY
+    → (syncLinearState убран — R6.1)
 ```
 
 ### 3d: Image Generation (независим от audio!)
 
+> **UPD 2026-06-26:** VERSION-STALE CHECK живёт в `shouldScheduleAssets()` (runtime-scheduler.js:230-289),
+> НЕ в execute*Dispatch. Схема DOCS помещала его не туда.
+
 ```
 orchestrator.executeImageDispatch()
-  → Пер-ассет валидация (GENERATING/PENDING/DIRTY)
-  → [VERSION-STALE CHECK] PG query
-    → Если stale → reset per-asset states to DIRTY
-    → image.generateSceneIUImages() → build prompts → gpu.send()
-    → callback → task-handler (с проверкой IU completion)
+  → НЕ выставляет per-asset GENERATING (только линейное *_GENERATING)
+  → image.generateSceneIUImages() → build prompts → gpu.send()
+  → callback → task-handler (с проверкой IU completion)
       → saveIURegistry → проверка всех IU для сцены
       → orchestrator.handleImageCompleted()
       → Per-asset check: image GENERATING/PENDING/DIRTY
@@ -143,11 +150,12 @@ orchestrator.executeImageDispatch()
 
 ### 3e: Video Generation (зависит от IMAGE_READY)
 
+> **UPD 2026-06-26:** VERSION-STALE CHECK — см. 3d, не здесь.
+
 ```
 orchestrator.executeVideoDispatch()
-  → Пер-ассет валидация (GENERATING/PENDING/DIRTY)
+  → НЕ выставляет per-asset GENERATING (только линейное *_GENERATING)
   → Проверка: image=READY? (asset states + chunk fallback)
-    → [VERSION-STALE CHECK] PG query
     → video.generateVideoAnimation() → jobSpecs
   → gpu.sendUnified() для каждой группы
   → callback → orchestrator.handleVideoCompleted()

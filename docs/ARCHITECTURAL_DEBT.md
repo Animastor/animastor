@@ -45,18 +45,15 @@
 
 ---
 
-## 4. Чрезмерная ответственность scene-orchestrator.js
+## 4. Чрезмерная ответственность scene-orchestrator.js (ЧАСТИЧНО ИСПРАВЛЕНО)
 
-**Описание проблемы:** ~1200 строк, смешивающих dispatch execution, callback handling, state management, layer config, padded text trimming.
+**Описание проблемы (было):** ~1200 строк, смешивающих dispatch execution, callback handling, state management, layer config, padded text trimming.
 
-**Причина возникновения:** Органический рост — orchestrator стал центральным узлом для всей логики сцены.
+**Что сделано:** Логика вынесена в `scene-callbacks.js` (~17 КБ), `scene-restoration.js`, `scene-utils.js`. Сейчас `scene-orchestrator.js` — фасад **~173 строки**. stale state tolerance убран (R3.1/R6.5).
 
-**Возможные последствия:**
-- Сложность понимания и модификации
-- Высокая связанность с 6+ модулями
-- При изменении любого сервиса (audio/image/video) требуется модификация orchestrator
+**Остаётся:** inline require() внутри scene-callbacks.js (8+ мест) — скрытые циклические зависимости.
 
-**Затрагиваемые компоненты:** scene-orchestrator.js
+> **UPD 2026-06-26:** Размер orchestrator исправлен (~173, не ~1200). Код: `orchestration/*`.
 
 ---
 
@@ -101,7 +98,7 @@
 - Невозможность безопасного рефакторинга
 - Ручное тестирование как единственный метод верификации
 
-**Затрагиваемые компоненты:** scene-orchestrator.js, dispatch-engine.js, runtime-scheduler.js, agent-service.js
+**Затрагиваемые компоненты:** scene-orchestrator.js (refactored to ~173 lines), dispatch-engine.js, runtime-scheduler.js, agent-service.js
 
 ---
 
@@ -197,7 +194,9 @@
 
 **Текущее состояние (частично исправлено):**
 - ✅ Добавлены security headers (Helmet.js)
-- ✅ Добавлен rate limiting (100 req/min)
+- ✅ Добавлен rate limiting (500 req/min)
+
+> **UPD 2026-06-26:** Исправлен rate limit (500, не 100). Код: `backend.cjs:64-65`.
 - ✅ Добавлена трассировка запросов через requestId
 - ✅ Добавлены runtime metrics (runtime-metrics.js)
 - ✅ Добавлен runtime loop с history (100 ticks)
@@ -208,18 +207,18 @@
 
 ---
 
-## 15. Slim runtime — governance модули в debug
+## 15. Slim runtime — governance модули в debug (ЧАСТИЧНО ИСПРАВЛЕНО)
 
-**Описание проблемы:** В v2.0.0 runtime/index.js был "slim"-нут: governance-модули (circuit-breaker, fairness, policy-engine и др.) вынесены из core pipeline в debug-секцию и загружаются лениво. Файлы сохранены на диске, но не входят в основной цикл.
+**Описание проблемы (было):** В v2.0.0 runtime/index.js был "slim"-нут: governance-модули (circuit-breaker, fairness, policy-engine и др.) вынесены из core pipeline в debug-секцию и загружаются лениво. Файлы сохранены на диске, но не входят в основной цикл.
 
-**Причина возникновения:** Over-engineering. Модули были написаны, но не интегрированы в реальный dispatch.
+**Что сделано (Phase 6, R6.4):**
+- circuitBreaker, retryBudget, fairness — переведены с safeRequire на прямой require() и реально вызываются в dispatch-engine
+- policyEngine, workloadClassifier, costEstimator — удалены из dispatch-engine (safeRequire убран), файлы сохранены как архив
+- Убраны мёртвые функции `dispatchStageWithPolicy()` и `evaluateDispatchPolicy()`
 
-**Возможные последствия:**
-- Мёртвый код на диске (вводит в заблуждение)
-- dispatch-engine использует safeRequire — модули могут быть не загружены
-- Непонятно, какие модули реально active, какие — legacy
+**Остаётся:** 18 из 36 модулей runtime/ — debug-only, 5 из них имеют require на несуществующие файлы (мина для debug-эндпоинтов).
 
-**Затрагиваемые компоненты:** runtime/index.js, dispatch-engine.js, все governance-файлы
+> **UPD 2026-06-26:** 3 governance-модуля LIVE, 3 мёртвых удалены из dispatch-engine.
 
 ---
 

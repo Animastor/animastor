@@ -12,7 +12,9 @@
 
 **Встроенные улучшения:**
 - **Helmet.js** — HTTP security headers (HSTS, CSP, X-Frame-Options, XSS-Protection)
-- **Rate limiting** — 100 req/min на `/api/`, защита от перегрузок
+- **Rate limiting** — 500 req/min на `/api/`, защита от перегрузок
+
+> **UPD 2026-06-26:** Исправлен rate limit (500, не 100). Код: `backend.cjs:64-65`.
 - **Request ID** — каждый HTTP-запрос получает короткий ID (`crypto.randomUUID().slice(0,8)`) для трассировки
 - **Graceful shutdown (SIGTERM)** — последовательное завершение: server.close() → redis.quit() → postgres.closePool()
 
@@ -39,7 +41,13 @@
 ### 2.4 Debug Routes (`backend/src/routes/debug-routes.cjs`)
 **Ответственность:** Отладка: дампы состояния, очереди, ивент-журнал.
 
----
+### 2.5 Connector Routes (`backend/src/routes/connector-routes.cjs`)
+**Ответственность:** Управление коннекторами (13 эндпоинтов).
+
+### 2.6 Workflow Routes (`backend/src/routes/workflow-routes.cjs`)
+**Ответственность:** Управление workflow (4 эндпоинта).
+
+> **UPD 2026-06-26:** Добавлены connector-routes и workflow-routes (всего 6, не 4). Код: `routes/`.
 
 ## 3. Orchestration Layer
 
@@ -69,9 +77,17 @@
 
 ### 3.3 Scene Orchestrator (`backend/src/orchestration/scene-orchestrator.js`)
 
-**Ответственность:** Центральный оркестратор жизненного цикла сцены. Dispatch execution (audio/image/video), обработка callback'ов завершения, layer config checks (audio_enabled/image_enabled/video_enabled), stale state tolerance, padded text trimming.
+**Ответственность:** Центральный оркестратор жизненного цикла сцены (фасад, ~173 строки). Dispatch execution (audio/image/video), обработка callback'ов завершения, layer config checks (audio_enabled/image_enabled/video_enabled), padded text trimming.
 
-**Входы:** Команды dispatch (с overrideStage для per-asset диспетчеризации), callback'и от GPU Hub.
+Логика вынесена в:
+- `scene-callbacks.js` (~17 КБ) — handle*Completed
+- `scene-restoration.js` — восстановление чанков
+- `scene-utils.js` — утилиты/логирование
+- `event-journal.js` — журнал событий
+
+> **UPD 2026-06-26:** Рефакторинг orchestrator уже произошёл: ~173 строки (не ~1200). stale state tolerance убран (R3.1/R6.5). Код: `orchestration/*`.
+
+**Входы:** Команды dispatch (с overrideStage — dispatch-engine всегда передаёт stage, не решает сам), callback'и от GPU Hub.
 **Выходы:** Задачи в audio/image/video service, обновления состояния.
 
 **Зависимости:** audio-service, image-service, video-service, scene-state, event-journal, active-scenes-index, layer-config, gpu-dispatcher.
@@ -258,7 +274,11 @@ NEW → DIRTY → PENDING → GENERATING → READY | FAILED | PLACEHOLDER
 **Пути данных:** `data/books/<bookId>/`, `data/output/<buildId>/`.
 
 ### 6.4 Asset Registry (`backend/src/storage/asset-registry.js`)
-**Ответственность:** Устаревший Redis-реестр asset'ов. Заменён на PostgreSQL-backed scene-asset-registry.
+**Ответственность:** Redis-реестр asset'ов (используется в боевых колбэках через `storage.registry.*`).
+
+**Важно:** Существует также `services/scene-asset-registry.js` (PostgreSQL-backed) с **теми же именами функций**, но он вызывается только из тестов и placeholder-audio — не из боевого пути. Это известная ловушка (см. `02_Claude_Audit.md §C3`).
+
+> **UPD 2026-06-26:** Два registry с одинаковыми именами — C3. `scene_assets.status='ready'` не пишется в боевом пути — C2.
 
 ---
 
@@ -474,7 +494,9 @@ NEW → DIRTY → PENDING → GENERATING → READY | FAILED | PLACEHOLDER
 | failure-replay.js | Воспроизведение ошибок | DEBUG/Experimental |
 | snapshot-manager.js | Менеджер снепшотов | DEBUG |
 
-**Важно:** Governance-модули загружаются через `safeRequire()` и находятся в `runtime.index.debug` (не core pipeline).
+**Важно:** **Три** governance-модуля (circuit-breaker, retry-budget, fairness) реально вызываются в dispatch-engine через прямой `require()`. Остальные (policy-engine, workload-classifier, cost-estimator) — мёртвый код, загружались через `safeRequire()` и удалены из боевого пути (Phase 6).
+
+> **UPD 2026-06-26:** circuit-breaker/retry-budget/fairness — LIVE (переведены с safeRequire на прямой require). policy-engine/workload-classifier/cost-estimator — мертвы, safeRequire убран. Код: `dispatch-engine.js:399,448,473`.
 
 ## 14. State Model (Per-Asset, Canonical)
 
