@@ -92,28 +92,10 @@ module.exports = function(redis, config, deps) {
 
                     if (iuFiles.length >= totalIUs && totalIUs > 0) {
                         log('🎯 All IUs complete for scene — triggering image completed');
-                        try {
-                            await orchestrator.handleImageCompleted(redis, bookId, chapterId, sceneId, build_id);
-                        } finally {
-                            try {
-                                const dispatchEngine = require('../runtime/dispatch-engine');
-                                await dispatchEngine.markDispatchCompleted(redis, bookId, chapterId, sceneId, 'image');
-                            } catch (dispErr) {
-                                console.warn('⚠️ markDispatchCompleted(image) failed:', dispErr.message);
-                            }
-                        }
+                        await orchestrator.completeStage(redis, bookId, chapterId, sceneId, 'image', build_id);
                     } else if (totalIUs === 0) {
                         log('⚠️ No IUs registered in PG for scene — triggering completion anyway');
-                        try {
-                            await orchestrator.handleImageCompleted(redis, bookId, chapterId, sceneId, build_id);
-                        } finally {
-                            try {
-                                const dispatchEngine = require('../runtime/dispatch-engine');
-                                await dispatchEngine.markDispatchCompleted(redis, bookId, chapterId, sceneId, 'image');
-                            } catch (dispErr) {
-                                console.warn('⚠️ markDispatchCompleted(image) failed:', dispErr.message);
-                            }
-                        }
+                        await orchestrator.completeStage(redis, bookId, chapterId, sceneId, 'image', build_id);
                     }
                 } catch (err) {
                     console.error('❌ Failed to check IU completion:', err.message);
@@ -125,16 +107,7 @@ module.exports = function(redis, config, deps) {
                         const chapterId2 = baseParts2.pop();
                         const bookId2 = baseParts2.join('_');
                         log('⚠️ Falling back to trigger image completed despite PG error');
-                        try {
-                            await orchestrator.handleImageCompleted(redis, bookId2, chapterId2, sceneId2, build_id);
-                        } finally {
-                            try {
-                                const dispatchEngine = require('../runtime/dispatch-engine');
-                                await dispatchEngine.markDispatchCompleted(redis, bookId2, chapterId2, sceneId2, 'image');
-                            } catch (dispErr) {
-                                console.warn('⚠️ markDispatchCompleted(image) failed:', dispErr.message);
-                            }
-                        }
+                        await orchestrator.completeStage(redis, bookId2, chapterId2, sceneId2, 'image', build_id);
                     }
                 }
                 break;
@@ -187,18 +160,7 @@ module.exports = function(redis, config, deps) {
                 const sceneId3 = baseParts3.pop();
                 const chapterId3 = baseParts3.pop();
                 const bookId3 = baseParts3.join('_');
-                try {
-                    await orchestrator.handleVideoCompleted(redis, bookId3, chapterId3, sceneId3, build_id);
-                } finally {
-                    // Release dispatch lease so worker toggle stops pulsing
-                    // Always execute — even if handleVideoCompleted throws
-                    try {
-                        const dispatchEngine = require('../runtime/dispatch-engine');
-                        await dispatchEngine.markDispatchCompleted(redis, bookId3, chapterId3, sceneId3, 'video');
-                    } catch (dispErr) {
-                        console.warn('⚠️ markDispatchCompleted(video) failed:', dispErr.message);
-                    }
-                }
+                await orchestrator.completeStage(redis, bookId3, chapterId3, sceneId3, 'video', build_id);
                 break;
             }
 
@@ -211,7 +173,7 @@ module.exports = function(redis, config, deps) {
                 const sceneId4 = baseParts4.pop();
                 const chapterId4 = baseParts4.pop();
                 const bookId4 = baseParts4.join('_');
-                await orchestrator.handleSceneImageCompleted(redis, bookId4, chapterId4, sceneId4, build_id);
+                await orchestrator.completeStage(redis, bookId4, chapterId4, sceneId4, 'image', build_id);
                 break;
             }
 
@@ -254,21 +216,7 @@ module.exports = function(redis, config, deps) {
                         }
                     }
                     log(`🎵 Scene audio already ready (real): ${book_id}/${chapter_id}/${scene_id} — delegating to orchestrator`);
-                    try {
-                        await orchestrator.handleAudioCompleted(redis, book_id, chapter_id, scene_id, build_id);
-                    } finally {
-                        // Release dispatch lease: even though audio is already ready, the
-                        // dispatch engine acquired a lease when orchestrator dispatched this
-                        // stage. Without markDispatchCompleted, the lease persists for 30min
-                        // and the /api/v1/worker/counts endpoint shows the worker as active.
-                        // Always execute — even if handleAudioCompleted throws
-                        try {
-                            const dispatchEngine = require('../runtime/dispatch-engine');
-                            await dispatchEngine.markDispatchCompleted(redis, book_id, chapter_id, scene_id, 'audio');
-                        } catch (dispErr) {
-                            console.warn(`⚠️ markDispatchCompleted failed in early return: ${dispErr.message}`);
-                        }
-                    }
+                    await orchestrator.completeStage(redis, book_id, chapter_id, scene_id, 'audio', build_id);
                     return;
                 }
                 log(`🎵 Scene audio is placeholder — proceeding with merge: ${book_id}/${chapter_id}/${scene_id}`);
@@ -334,18 +282,7 @@ module.exports = function(redis, config, deps) {
                 }
             }
 
-            try {
-                await orchestrator.handleAudioCompleted(redis, book_id, chapter_id, scene_id, build_id);
-            } finally {
-                // Release dispatch lease so scene can be re-dispatched
-                // Always execute — even if handleAudioCompleted throws
-                try {
-                    const dispatchEngine = require('../runtime/dispatch-engine');
-                    await dispatchEngine.markDispatchCompleted(redis, book_id, chapter_id, scene_id, 'audio');
-                } catch (dispErr) {
-                    console.warn(`⚠️ markDispatchCompleted failed: ${dispErr.message}`);
-                }
-            }
+            await orchestrator.completeStage(redis, book_id, chapter_id, scene_id, 'audio', build_id);
 
             log(`🎵 Audio merge complete for ${book_id}/${chapter_id}/${scene_id}`);
         } catch (err) {
