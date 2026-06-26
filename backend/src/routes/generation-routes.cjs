@@ -725,10 +725,27 @@ module.exports = function(app, redis, deps) {
     // ======================================================
     // GPU TASK RESULT
     // ======================================================
+    // Н.1: Idempotent callback handling.
+    // GPU Hub retries result delivery up to 5 times.
+    // Without dedup, each retry triggers handleTaskResult again,
+    // causing duplicate image completion, double quota release (C1),
+    // and redundant scene window slides.
+    //
+    // Dedup key includes build_id so force-regen (new build) is not blocked
+    // by a stale dedup from the previous build.
+    // TTL = 3600s (1h) — longer than any plausible GPU generation window.
     app.post('/gpu/task/result', async (req, res) => {
         try {
             const { job_id, result_base64, build_id } = req.body || {};
             if (!job_id || !result_base64) return res.status(400).json({ error: 'job_id and result_base64 required' });
+
+            // Н.1: Dedup — skip if already processed for this (job_id, build_id)
+            const dedupKey = `animastor:result-processed:${job_id}:${build_id || 'nobuild'}`;
+            const alreadyProcessed = await redis.set(dedupKey, '1', 'NX', 'EX', 3600);
+            if (!alreadyProcessed) {
+                log(`[GPU RESULT] Dedup: ${job_id} (build=${build_id}) already processed — skipping`);
+                return res.json({ ok: true, deduped: true });
+            }
 
             await deps.taskHandler.handleTaskResult(job_id, result_base64, build_id);
             res.json({ ok: true });

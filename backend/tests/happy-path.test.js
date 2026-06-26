@@ -15,6 +15,87 @@
 const { expect } = require('chai');
 
 // ======================================================
+// Н.1: Idempotency test for /gpu/task/result dedup
+// ======================================================
+
+describe('Happy Path: GPU Task Result Idempotency (Н.1)', () => {
+    let redis;
+
+    beforeEach(() => {
+        redis = new FakeRedis();
+    });
+
+    // Simulates the dedup logic from generation-routes.cjs:/gpu/task/result
+    async function handleGpuTaskResult(job_id, result_base64, build_id) {
+        const dedupKey = `animastor:result-processed:${job_id}:${build_id || 'nobuild'}`;
+        const alreadyProcessed = await redis.set(dedupKey, '1', 'NX', 'EX', 3600);
+        if (!alreadyProcessed) {
+            return { ok: true, deduped: true };
+        }
+        // Simulating handleTaskResult
+        await redis.set(`processed:${job_id}`, result_base64);
+        return { ok: true };
+    }
+
+    it('first call processes the result', async () => {
+        const result = await handleGpuTaskResult('job-1', 'base64data', 'build-1');
+        expect(result.ok).to.be.true;
+        expect(result.deduped).to.be.undefined;
+
+        // Verify result was stored
+        const stored = await redis.get('processed:job-1');
+        expect(stored).to.equal('base64data');
+    });
+
+    it('second call with same (job_id, build_id) returns deduped', async () => {
+        const first = await handleGpuTaskResult('job-1', 'base64data-v1', 'build-1');
+        expect(first.ok).to.be.true;
+        expect(first.deduped).to.be.undefined;
+
+        const second = await handleGpuTaskResult('job-1', 'base64data-v2', 'build-1');
+        expect(second.ok).to.be.true;
+        expect(second.deduped).to.be.true;
+
+        // Result should still be the FIRST one (not overwritten)
+        const stored = await redis.get('processed:job-1');
+        expect(stored).to.equal('base64data-v1');
+    });
+
+    it('different build_id bypasses dedup (force-regen)', async () => {
+        const first = await handleGpuTaskResult('job-1', 'base64data-v1', 'build-1');
+        expect(first.ok).to.be.true;
+
+        // Force-regen with new build_id — should process again
+        const second = await handleGpuTaskResult('job-1', 'base64data-v2', 'build-2');
+        expect(second.ok).to.be.true;
+        expect(second.deduped).to.be.undefined;
+
+        const stored = await redis.get('processed:job-1');
+        expect(stored).to.equal('base64data-v2');
+    });
+
+    it('different job_id both process independently', async () => {
+        const a = await handleGpuTaskResult('job-a', 'data-a', 'build-1');
+        expect(a.ok).to.be.true;
+
+        const b = await handleGpuTaskResult('job-b', 'data-b', 'build-1');
+        expect(b.ok).to.be.true;
+
+        const storedA = await redis.get('processed:job-a');
+        expect(storedA).to.equal('data-a');
+        const storedB = await redis.get('processed:job-b');
+        expect(storedB).to.equal('data-b');
+    });
+
+    it('dedup key respects NX — second call with same key is skipped', async () => {
+        await handleGpuTaskResult('job-1', 'data', 'build-1');
+
+        const dup = await handleGpuTaskResult('job-1', 'data', 'build-1');
+        expect(dup.deduped).to.be.true;
+    });
+});
+
+// ======================================================
 // FakeRedis — in-memory mock for testing
 // ======================================================
 
