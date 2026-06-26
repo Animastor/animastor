@@ -31,7 +31,7 @@ function getAssetRegistryKey(bookId, chapterId, sceneId) {
 /**
  * Register scene audio asset.
  */
-async function registerSceneAudio(redis, bookId, chapterId, sceneId, {
+async function registerSceneAudioRedis(redis, bookId, chapterId, sceneId, {
     canonicalPath,
     chunkPaths = [],
     duration = null,
@@ -65,7 +65,7 @@ async function registerSceneAudio(redis, bookId, chapterId, sceneId, {
 /**
  * Register scene image asset.
  */
-async function registerSceneImage(redis, bookId, chapterId, sceneId, {
+async function registerSceneImageRedis(redis, bookId, chapterId, sceneId, {
     path,
     width = null,
     height = null,
@@ -97,7 +97,7 @@ async function registerSceneImage(redis, bookId, chapterId, sceneId, {
 /**
  * Register scene video asset.
  */
-async function registerSceneVideo(redis, bookId, chapterId, sceneId, {
+async function registerSceneVideoRedis(redis, bookId, chapterId, sceneId, {
     path,
     duration = null,
     width = null,
@@ -133,7 +133,7 @@ async function registerSceneVideo(redis, bookId, chapterId, sceneId, {
 /**
  * Get all assets for a scene.
  */
-async function getSceneAssets(redis, bookId, chapterId, sceneId) {
+async function getSceneAssetsRedis(redis, bookId, chapterId, sceneId) {
     const key = getAssetRegistryKey(bookId, chapterId, sceneId)
     
     const assetsRaw = await redis.hgetall(key)
@@ -158,24 +158,24 @@ async function getSceneAssets(redis, bookId, chapterId, sceneId) {
 /**
  * Get audio asset for scene.
  */
-async function getAudioAsset(redis, bookId, chapterId, sceneId) {
-    const assets = await getSceneAssets(redis, bookId, chapterId, sceneId)
+async function getAudioAssetRedis(redis, bookId, chapterId, sceneId) {
+    const assets = await getSceneAssetsRedis(redis, bookId, chapterId, sceneId)
     return assets?.audio || null
 }
 
 /**
  * Get image asset for scene.
  */
-async function getImageAsset(redis, bookId, chapterId, sceneId) {
-    const assets = await getSceneAssets(redis, bookId, chapterId, sceneId)
+async function getImageAssetRedis(redis, bookId, chapterId, sceneId) {
+    const assets = await getSceneAssetsRedis(redis, bookId, chapterId, sceneId)
     return assets?.image || null
 }
 
 /**
  * Get video asset for scene.
  */
-async function getVideoAsset(redis, bookId, chapterId, sceneId) {
-    const assets = await getSceneAssets(redis, bookId, chapterId, sceneId)
+async function getVideoAssetRedis(redis, bookId, chapterId, sceneId) {
+    const assets = await getSceneAssetsRedis(redis, bookId, chapterId, sceneId)
     return assets?.video || null
 }
 
@@ -186,32 +186,32 @@ async function getVideoAsset(redis, bookId, chapterId, sceneId) {
 /**
  * Check if audio exists (registry check).
  */
-async function hasAudioAsset(redis, bookId, chapterId, sceneId) {
-    const audio = await getAudioAsset(redis, bookId, chapterId, sceneId)
+async function hasAudioAssetRedis(redis, bookId, chapterId, sceneId) {
+    const audio = await getAudioAssetRedis(redis, bookId, chapterId, sceneId)
     return !!audio
 }
 
 /**
  * Check if image exists (registry check).
  */
-async function hasImageAsset(redis, bookId, chapterId, sceneId) {
-    const image = await getImageAsset(redis, bookId, chapterId, sceneId)
+async function hasImageAssetRedis(redis, bookId, chapterId, sceneId) {
+    const image = await getImageAssetRedis(redis, bookId, chapterId, sceneId)
     return !!image
 }
 
 /**
  * Check if video exists (registry check).
  */
-async function hasVideoAsset(redis, bookId, chapterId, sceneId) {
-    const video = await getVideoAsset(redis, bookId, chapterId, sceneId)
+async function hasVideoAssetRedis(redis, bookId, chapterId, sceneId) {
+    const video = await getVideoAssetRedis(redis, bookId, chapterId, sceneId)
     return !!video
 }
 
 /**
  * Check if scene has all required assets.
  */
-async function hasAllAssets(redis, bookId, chapterId, sceneId) {
-    const assets = await getSceneAssets(redis, bookId, chapterId, sceneId)
+async function hasAllAssetsRedis(redis, bookId, chapterId, sceneId) {
+    const assets = await getSceneAssetsRedis(redis, bookId, chapterId, sceneId)
     
     if (!assets) return false
     
@@ -294,7 +294,7 @@ async function updateVideoDuration(redis, bookId, chapterId, sceneId, duration) 
 /**
  * Delete all assets for a scene.
  */
-async function deleteSceneAssets(redis, bookId, chapterId, sceneId) {
+async function deleteSceneAssetsRedis(redis, bookId, chapterId, sceneId) {
     const key = getAssetRegistryKey(bookId, chapterId, sceneId)
     
     return await redis.del(key)
@@ -303,7 +303,7 @@ async function deleteSceneAssets(redis, bookId, chapterId, sceneId) {
 /**
  * Delete all assets for all scenes in a chapter.
  */
-async function deleteChapterAssets(redis, bookId, chapterId) {
+async function deleteChapterAssetsRedis(redis, bookId, chapterId) {
     const pattern = `animastor:assets:${bookId}:${chapterId}:*`
     
     const keys = await storage.scanKeys(redis, pattern)
@@ -320,7 +320,7 @@ async function deleteChapterAssets(redis, bookId, chapterId) {
 /**
  * Delete all assets for all scenes in a book.
  */
-async function deleteBookAssets(redis, bookId) {
+async function deleteBookAssetsRedis(redis, bookId) {
     const pattern = `animastor:assets:${bookId}:*`
     
     const keys = await storage.scanKeys(redis, pattern)
@@ -339,21 +339,22 @@ async function deleteBookAssets(redis, bookId) {
 // ======================================================
 
 module.exports = {
-    registerSceneAudio,
-    registerSceneImage,
-    registerSceneVideo,
-    getSceneAssets,
-    getAudioAsset,
-    getImageAsset,
-    getVideoAsset,
-    hasAudioAsset,
-    hasImageAsset,
-    hasVideoAsset,
-    hasAllAssets,
+    // Redis-prefixed names to distinguish from PG scene-asset-registry (C3)
+    registerSceneAudioRedis,
+    registerSceneImageRedis,
+    registerSceneVideoRedis,
+    getSceneAssetsRedis,
+    getAudioAssetRedis,
+    getImageAssetRedis,
+    getVideoAssetRedis,
+    hasAudioAssetRedis,
+    hasImageAssetRedis,
+    hasVideoAssetRedis,
+    hasAllAssetsRedis,
     updateAudioDuration,
     updateImageDimensions,
     updateVideoDuration,
-    deleteSceneAssets,
-    deleteChapterAssets,
-    deleteBookAssets
+    deleteSceneAssetsRedis,
+    deleteChapterAssetsRedis,
+    deleteBookAssetsRedis
 }

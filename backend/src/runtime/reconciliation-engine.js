@@ -175,7 +175,7 @@ async function checkOrphanAudioState(redis, bookId, chapterId, sceneId) {
  * Check for assets in registry but no files.
  */
 async function checkOrphanAssets(redis, bookId, chapterId, sceneId) {
-    const assets = await storage.registry.getSceneAssets(redis, bookId, chapterId, sceneId);
+    const assets = await storage.registry.getSceneAssetsRedis(redis, bookId, chapterId, sceneId);
 
     if (!assets) {
         return null;
@@ -237,7 +237,7 @@ async function checkPartialBuilds(redis, bookId, chapterId, sceneId) {
     }
 
     const stateName = sceneState.state;
-    const assets = await storage.registry.getSceneAssets(redis, bookId, chapterId, sceneId);
+    const assets = await storage.registry.getSceneAssetsRedis(redis, bookId, chapterId, sceneId);
 
     // AUDIO_READY but no image asset
     if (stateName === state.SceneState.AUDIO_READY && !assets?.image) {
@@ -767,22 +767,22 @@ async function applyFix(redis, fix) {
 
             case 'RECOVER_ORPHAN_ASSETS': {
                 // Clear registry entries for missing assets
-                const assets = await storage.registry.getSceneAssets(redis, scene.bookId, scene.chapterId, scene.sceneId);
+                const assets = await storage.registry.getSceneAssetsRedis(redis, scene.bookId, scene.chapterId, scene.sceneId);
                 if (assets) {
                     if (assets.audio && assets.audio.canonical) {
-                        await storage.registry.registerSceneAudio(redis, scene.bookId, scene.chapterId, scene.sceneId, {
+                        await storage.registry.registerSceneAudioRedis(redis, scene.bookId, scene.chapterId, scene.sceneId, {
                             canonicalPath: assets.audio.canonical,
                             ready: false
                         });
                     }
                     if (assets.image && assets.image.path) {
-                        await storage.registry.registerSceneImage(redis, scene.bookId, scene.chapterId, scene.sceneId, {
+                        await storage.registry.registerSceneImageRedis(redis, scene.bookId, scene.chapterId, scene.sceneId, {
                             path: assets.image.path,
                             ready: false
                         });
                     }
                     if (assets.video && assets.video.path) {
-                        await storage.registry.registerSceneVideo(redis, scene.bookId, scene.chapterId, scene.sceneId, {
+                        await storage.registry.registerSceneVideoRedis(redis, scene.bookId, scene.chapterId, scene.sceneId, {
                             path: assets.video.path,
                             ready: false
                         });

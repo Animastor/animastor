@@ -837,14 +837,15 @@ describe('Happy Path: Scene Callbacks (with mocks)', () => {
         require.cache[videoPath] = { exports: mockVideo, loaded: true };
 
         // Mock storage
+        // Н.8: Redis registry functions renamed with Redis suffix (C3)
         mockStorage = {
             filesystem: {
                 getSceneAudioPath: () => `/data/output/${BUILD_ID}/${BOOK_ID}_${CHAPTER_ID}_${SCENE_ID}.mp3`,
             },
             registry: {
-                registerSceneAudio: async () => ({ success: true }),
-                registerSceneImage: async () => ({ success: true }),
-                registerSceneVideo: async () => ({ success: true }),
+                registerSceneAudioRedis: async () => ({ success: true }),
+                registerSceneImageRedis: async () => ({ success: true }),
+                registerSceneVideoRedis: async () => ({ success: true }),
             },
             manifest: {
                 recordAsset: () => {},

@@ -73,7 +73,7 @@ async function handleAudioCompleted(redis, bookId, chapterId, sceneId, buildId) 
         const audioPath = storage.filesystem.getSceneAudioPath(
             process.env.OUTPUT_DIR || '/data/output', buildId, bookId, chapterId, sceneId
         );
-        await storage.registry.registerSceneAudio(redis, bookId, chapterId, sceneId, {
+        await storage.registry.registerSceneAudioRedis(redis, bookId, chapterId, sceneId, {
             canonicalPath: audioPath,
             ready: true
         });
@@ -161,7 +161,7 @@ async function handleImageCompleted(redis, bookId, chapterId, sceneId, buildId) 
     const imageInfo = await image.getImageMetadata(sceneImage);
 
     try {
-        await storage.registry.registerSceneImage(redis, bookId, chapterId, sceneId, {
+        await storage.registry.registerSceneImageRedis(redis, bookId, chapterId, sceneId, {
             path: sceneImage,
             width: imageInfo?.width || null,
             height: imageInfo?.height || null,
@@ -283,7 +283,7 @@ async function handleVideoCompleted(redis, bookId, chapterId, sceneId, buildId) 
     }
 
     try {
-        await storage.registry.registerSceneVideo(redis, bookId, chapterId, sceneId, {
+        await storage.registry.registerSceneVideoRedis(redis, bookId, chapterId, sceneId, {
             path: videoPath,
             duration: duration || null,
             width: metadata?.width || null,
