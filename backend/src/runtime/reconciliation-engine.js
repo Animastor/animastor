@@ -604,12 +604,13 @@ async function applyFix(redis, fix) {
                     : s.includes('video') ? state.SceneState.VIDEO_PENDING
                     : state.SceneState.AUDIO_PENDING;
 
-                await state.transitionSceneState(redis, scene.bookId, scene.chapterId, scene.sceneId, pendingState);
-
                 // Mark all per-asset states as DIRTY for redispatch
                 // M5: Route through orchestrator.markDirtyScene instead of direct state.setAssetState
                 const orchestrator = require('../orchestration/orchestrator');
                 await orchestrator.markDirtyScene(redis, scene.bookId, scene.chapterId, scene.sceneId);
+
+                // L3: Derive linear state from per-asset (DIRTY → AUDIO_PENDING/IMAGE_PENDING/VIDEO_PENDING)
+                await state.syncLinearState(redis, scene.bookId, scene.chapterId, scene.sceneId);
 
                 // Remove from active index to avoid immediate re-scheduling
                 await runtimeScheduler.removeSceneFromActiveIndex(redis, scene.bookId, scene.chapterId, scene.sceneId);
@@ -666,12 +667,13 @@ async function applyFix(redis, fix) {
                         : s.includes('video') ? state.SceneState.VIDEO_PENDING
                         : state.SceneState.AUDIO_PENDING;
 
-                    await state.transitionSceneState(redis, scene.bookId, scene.chapterId, scene.sceneId, pendingState);
-
                     // Mark per-asset states as DIRTY for redispatch
                     // M5: Route through orchestrator.markDirtyScene instead of direct state.setAssetState
                     const orchestrator = require('../orchestration/orchestrator');
                     await orchestrator.markDirtyScene(redis, scene.bookId, scene.chapterId, scene.sceneId);
+
+                    // L3: Derive linear state from per-asset (DIRTY → pending stage)
+                    await state.syncLinearState(redis, scene.bookId, scene.chapterId, scene.sceneId);
 
                     // Add back to active index
                     await runtimeScheduler.addSceneToActiveIndex(redis, scene.bookId, scene.chapterId, scene.sceneId);
@@ -699,13 +701,16 @@ async function applyFix(redis, fix) {
                     return { success: false, action, scene, details: `unknown asset type (reason: ${fix.reason})` };
                 }
 
-                await state.transitionSceneState(
-                    redis,
-                    scene.bookId,
-                    scene.chapterId,
-                    scene.sceneId,
-                    pendingState
-                );
+                // L3: Set per-asset state first, then derive linear from it
+                const orchestrator = require('../orchestration/orchestrator');
+                const assetType = pendingState === state.SceneState.AUDIO_PENDING ? 'audio'
+                    : pendingState === state.SceneState.IMAGE_PENDING ? 'image'
+                    : pendingState === state.SceneState.VIDEO_PENDING ? 'video'
+                    : null;
+                if (assetType) {
+                    await state.setAssetState(redis, scene.bookId, scene.chapterId, scene.sceneId, assetType, state.AssetState.PENDING);
+                }
+                await state.syncLinearState(redis, scene.bookId, scene.chapterId, scene.sceneId);
 
                 await runtimeScheduler.addSceneToActiveIndex(
                     redis,
@@ -718,13 +723,9 @@ async function applyFix(redis, fix) {
             }
 
             case 'PROGRESS_TO_IMAGE': {
-                await state.transitionSceneState(
-                    redis,
-                    scene.bookId,
-                    scene.chapterId,
-                    scene.sceneId,
-                    state.SceneState.IMAGE_PENDING
-                );
+                // L3: Set per-asset first, then derive linear from it
+                await state.setAssetState(redis, scene.bookId, scene.chapterId, scene.sceneId, 'image', state.AssetState.PENDING);
+                await state.syncLinearState(redis, scene.bookId, scene.chapterId, scene.sceneId);
 
                 await runtimeScheduler.addSceneToActiveIndex(
                     redis,
@@ -747,13 +748,9 @@ async function applyFix(redis, fix) {
             }
 
             case 'PROGRESS_TO_VIDEO': {
-                await state.transitionSceneState(
-                    redis,
-                    scene.bookId,
-                    scene.chapterId,
-                    scene.sceneId,
-                    state.SceneState.VIDEO_PENDING
-                );
+                // L3: Set per-asset first, then derive linear from it
+                await state.setAssetState(redis, scene.bookId, scene.chapterId, scene.sceneId, 'video', state.AssetState.PENDING);
+                await state.syncLinearState(redis, scene.bookId, scene.chapterId, scene.sceneId);
 
                 await runtimeScheduler.addSceneToActiveIndex(
                     redis,
@@ -789,14 +786,9 @@ async function applyFix(redis, fix) {
                     }
                 }
 
-                // Mark scene as pending for regeneration
-                await state.transitionSceneState(
-                    redis,
-                    scene.bookId,
-                    scene.chapterId,
-                    scene.sceneId,
-                    state.SceneState.AUDIO_PENDING
-                );
+                // L3: Set per-asset audio PENDING, then derive linear
+                await state.setAssetState(redis, scene.bookId, scene.chapterId, scene.sceneId, 'audio', state.AssetState.PENDING);
+                await state.syncLinearState(redis, scene.bookId, scene.chapterId, scene.sceneId);
 
                 return { success: true, action, scene, details: 'registry marked for recovery' };
             }
