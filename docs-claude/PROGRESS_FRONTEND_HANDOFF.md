@@ -1,10 +1,9 @@
 # GPU Progress — Frontend Handoff (F1–F7)
 
-> **Статус на 2026-06-27.** Backend-часть (B1–B5) уже сделана и закоммичена
-> (`feat(progress): deterministic GPU progress + SSE push channel (backend)`,
-> ветка `feat/orchestrator-facade`, 400 тестов зелёные). Этот документ —
-> пошаговая инструкция для следующей модели/сессии, чтобы доделать фронтенд.
-> Контекст создателя мог закончиться по токенам — здесь всё, что нужно знать.
+> **Статус на 2026-06-27.** Backend-часть (B1–B5) и frontend-часть (F3–F7)
+> сделаны и закоммичены (ветка `feat/orchestrator-facade`, сборка `assembleDebug`
+> успешна). Остаётся F1 (SSE-клиент) и F2 (рефакторинг в VM) — опционально.
+> Этот документ — пошаговая инструкция для следующей модели/сессии.
 
 ## Зачем это
 
@@ -84,85 +83,40 @@ cd /home/sureg/animastor/frontend && ./gradlew assembleDebug
 фиксы видимых сбоев на текущем поллинге, потом SSE. (Можно и наоборот, но так
 быстрее виден эффект.) Коммить и пушить после каждого логического шага.
 
-## F7. Поля ошибок в модели ответа
+## ✅ F7. Поля ошибок в модели ответа
 
-Файл `repository/LayerConfig.kt`, в `data class AssetsStateResponse` добавить
-перед `cover_needs_generation`:
+Добавлены `audio_error: Int = 0`, `image_error: Int = 0`, `video_error: Int = 0`
+в `AssetsStateResponse` (`LayerConfig.kt`). Gson маппит по имени, дефолт 0
+безопасен для старого бэка.
 
-```kotlin
-    val audio_error: Int = 0,
-    val image_error: Int = 0,
-    val video_error: Int = 0,
-```
+## ✅ F3. Монотонность прогресса (никаких откатов)
 
-Gson сам смапит по имени; дефолт 0 — безопасен для старого бэка.
+Добавлен `workerReadyFloor: MutableMap<String, Int>` в `MainActivity.kt`.
+- В `add()`: `val r = maxOf(ready, floor); workerReadyFloor[type] = r`
+- `workerReadyFloor.clear()` при детекте новой генерации (рядом с `workerCompletedAt.clear()`)
+- Значение `r` используется для процента и `Wrk.ready`
 
-## F3. Монотонность прогресса (никаких откатов)
+## ✅ F4. Stuck-детект (ложный авто-complete)
 
-Проблема: `ready` из бэка теперь монотонный, но при смене источника
-(SSE-инкремент vs поллинг-сверка) и при пересборке списка воркеров значение
-может на кадр уменьшиться. Гарантия на фронте:
+- `progressTotal` теперь СУММА:
+  `audio_ready_real + (IU ? scope_iu_ready : scope_image_ready) + video_ready + cover_iu_ready`
+- `STUCK_TIMEOUT_MS = 120_000L` — именованная константа
+- Проверка `!lastPollFailed` перед stuck-веткой
+- `getWorkerCounts().getOrDefault(false)` — ошибка сети ≠ «бэк активен»
 
-- Завести `MutableMap<String, Int>` (`workerReadyFloor`) — пол по типу воркера.
-- В `showGpuProgress`/будущем VM перед использованием `ready` делать:
-  `val r = max(ready, workerReadyFloor[type] ?: 0); workerReadyFloor[type] = r`.
-- **Сбрасывать `workerReadyFloor.clear()`** в том же месте, где сейчас
-  сбрасывается `workerCompletedAt` при детекте новой генерации
-  (`MainActivity.kt:555-563`).
+## ✅ F5. Завершение слоя по флагам, не по эвристике (ложный Done)
 
-## F4. Stuck-детект (ложный авто-complete)
-
-Файл `MainActivity.kt:579-604`. Сейчас `progressTotal` считается по ОДНОМУ слою
-и НЕ учитывает `scope_iu_ready` → image-прогресс «не виден» детектору.
-
-Заменить расчёт `progressTotal` на СУММУ всех релевантных по профилю слоёв,
-включая IU:
-
-```kotlin
-val progressTotal =
-    assets.scope_audio_ready_real +
-    (if (assets.scope_iu_total > 0) assets.scope_iu_ready else assets.scope_image_ready) +
-    assets.scope_video_ready +
-    assets.cover_iu_ready
-```
-
-- Вынести `120_000` в именованную константу (напр. `STUCK_TIMEOUT_MS`).
-- `getWorkerCounts()` при ошибке сейчас даёт `backendActive=true` навсегда → не
-  завершится. Разделить: ошибка сети ≠ «бэк активен». См. F6 — не двигать окно
-  stuck при сетевых ошибках вообще.
-
-## F5. Завершение слоя по флагам, не по эвристике (ложный Done)
-
-Файл `MainActivity.kt`, функция `add()` (685-702) и `_workerPermanentlyDone`.
-
-Сейчас `done = ready >= total && ready > 0` — эвристика, ловит гонки. Заменить
-на явные флаги из ответа, передаваемые в `add()`:
-
-- audio → `assets.scope_all_audio_ready`
-- image → `assets.scope_all_image_ready` (для IU-режима опираться на
-  `scope_iu_ready >= scope_iu_total`, т.к. all_image_ready считается по чанкам)
-- video → `assets.scope_all_video_ready`
+Параметр `doneFlag` в `add()`:
+- audio → `scope_all_audio_ready`
+- image → IU-режим: `scope_iu_ready >= scope_iu_total`, иначе `scope_all_image_ready`
+- video → `scope_all_video_ready`
 - cover → `cover_iu_ready >= cover_iu_total && cover_iu_total > 0`
 
-Воркер уходит в `_workerPermanentlyDone` ТОЛЬКО когда соответствующий флаг
-`true` (а не когда `ready>=total` мигнул). Единицы `total` НЕ сравнивать между
-слоями: image меряется в IU (`scope_iu_total`), audio/video — в чанках
-(`scope_total`).
+## ✅ F6. Устойчивость поллера
 
-## F6. Устойчивость поллера
-
-Файл `MainActivity.kt:567-620`.
-
-- В `catch (e: Exception)` НЕ трогать `lastReadyChangeAt`/`lastReadyCount` (уже
-  так), но также: не позволять stuck-детекту срабатывать, если последний
-  `getAssetsState` упал. Завести флаг `lastPollFailed` и пропускать stuck-ветку,
-  если он `true`.
-- Backoff: при серии ошибок увеличивать `delay` (1.5с → 3с → 6с, cap 6с),
-  сбрасывать на успехе.
-- `showGpuProgress` каждые 1.5с делает `findViewById`/`inflate` в цикле —
-  закэшировать ссылки на вью строк (массив holder'ов), переиспользовать.
-- Весь IO уже в suspend на корутине; убедиться, что обновления UI идут на main
-  (lifecycleScope по умолчанию main — ок).
+- `lastPollFailed` — stuck-детект не срабатывает при ошибках сети
+- Backoff: 1.5с → 3с → 6с (cap), сброс на успехе
+- View уже переиспользуются через `getChildAt(i)` — кэширование из коробки
 
 ## F1. SSE-клиент
 
@@ -208,8 +162,8 @@ F3–F6 на месте. F2 — рефакторинг ради чистоты, 
 - [x] #2 монотонность (бэк)
 - [x] #7 детерминизм assets-state (бэк)
 - [ ] #1 SSE: бэк готов, фронт-клиент (F1) — TODO
-- [ ] #8 ошибки: бэк-поля готовы, фронт-отображение (F7) — TODO
-- [ ] #3 stuck-детект (F4)
-- [ ] #4 единицы total (F5)
-- [ ] #5 ложный Done (F5)
-- [ ] #6 устойчивость поллера (F6)
+- [x] #8 ошибки: бэк-поля готовы, фронт-отображение (F7)
+- [x] #3 stuck-детект (F4)
+- [x] #4 единицы total (F5)
+- [x] #5 ложный Done (F5)
+- [x] #6 устойчивость поллера (F6)

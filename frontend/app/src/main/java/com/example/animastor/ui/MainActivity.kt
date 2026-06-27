@@ -560,6 +560,7 @@ class MainActivity : AppCompatActivity() {
                 _coverEverIncomplete = false
                 gpuProgressDoneAt = 0L
                 lastReadyCount = -1
+                workerReadyFloor.clear()
             }
             _lastActiveGeneration = activeGen
             _lastHasVBook = hasVBook
@@ -576,24 +577,26 @@ class MainActivity : AppCompatActivity() {
                     showGpuProgress(assets, vbookProgress = if (hasVBook) vbookProg else null)
 
                     // Detect stuck progress
-                    val progressTotal = when (viewModel.currentProfile()) {
-                        "audio_only" -> assets.scope_audio_ready
-                        "image_only" -> assets.scope_image_ready
-                        "video_only" -> assets.scope_video_ready
-                        else -> minOf(assets.scope_audio_ready, assets.scope_image_ready, assets.scope_video_ready)
-                    }
+                    val imageReady = if (assets.scope_iu_total > 0) assets.scope_iu_ready else assets.scope_image_ready
+                    val imageTotal = if (assets.scope_iu_total > 0) assets.scope_iu_total else assets.scope_total
+                    val progressTotal =
+                        assets.scope_audio_ready_real +
+                        imageReady +
+                        assets.scope_video_ready +
+                        assets.cover_iu_ready
                     val anyLayerIncomplete =
-                        assets.scope_audio_ready < assets.scope_total ||
-                        assets.scope_image_ready < assets.scope_total ||
-                        assets.scope_video_ready < assets.scope_total
+                        assets.scope_audio_ready_real < assets.scope_total ||
+                        imageReady < imageTotal ||
+                        assets.scope_video_ready < assets.scope_total ||
+                        assets.cover_iu_ready < assets.cover_iu_total
                     if (progressTotal != lastReadyCount) {
                         lastReadyCount = progressTotal
                         lastReadyChangeAt = System.currentTimeMillis()
-                    } else if (anyLayerIncomplete && System.currentTimeMillis() - lastReadyChangeAt > 120_000) {
+                    } else if (!lastPollFailed && anyLayerIncomplete && System.currentTimeMillis() - lastReadyChangeAt > STUCK_TIMEOUT_MS) {
                         val backendActive = runCatching {
                             val counts = RetrofitClient.api.getWorkerCounts()
                             counts.active_scenes > 0
-                        }.getOrDefault(true)
+                        }.getOrDefault(false)
                         if (!backendActive) {
                             Log.i("MainActivity", "Progress stuck — auto-completing")
                             viewModel.onGenerationComplete()
@@ -602,8 +605,15 @@ class MainActivity : AppCompatActivity() {
                             lastReadyCount = -1
                         }
                     }
+
+                    // Reset backoff + failure flag on successful poll
+                    lastPollFailed = false
+                    pollerBackoffMs = 1_500L
                 } catch (e: Exception) {
                     Log.w("MainActivity", "GPU progress poll failed: ${e.message}")
+                    lastPollFailed = true
+                    // Exponential backoff on errors (1.5s → 3s → 6s cap)
+                    pollerBackoffMs = (pollerBackoffMs * 2).coerceAtMost(6_000L)
                     // Still show VBook if available
                     if (hasVBook) {
                         showGpuProgress(null, vbookProgress = vbookProg)
@@ -619,7 +629,7 @@ class MainActivity : AppCompatActivity() {
                 }
             }
 
-            delay(1_500)
+            delay(pollerBackoffMs)
         }
     }
 
@@ -627,9 +637,22 @@ class MainActivity : AppCompatActivity() {
     private var lastReadyCount = -1
     private var lastReadyChangeAt = 0L
 
+    /** Set to true when getAssetsState throws, to suppress stuck-detection */
+    private var lastPollFailed = false
+
+    /** Exponential backoff for poller errors (1.5s → 3s → 6s cap), reset on success */
+    private var pollerBackoffMs = 1_500L
+
+    /**
+     * Floor per worker type to prevent progress rollback.
+     * Cleared when a new generation starts (same as [workerCompletedAt]).
+     */
+    private val workerReadyFloor = mutableMapOf<String, Int>()
+
     // ── Progress state ───────────────────────────────────────
 
     private val COMPLETED_WORKER_DISPLAY_MS = 10_000L
+    private val STUCK_TIMEOUT_MS = 120_000L
 
     // Track when each worker type completed (to show green "Done" for 10s)
     private val workerCompletedAt = mutableMapOf<String, Long>()
@@ -682,10 +705,14 @@ class MainActivity : AppCompatActivity() {
 
         val workers = mutableListOf<Wrk>()
 
-        fun add(type: String, label: String, ready: Int, total: Int, countText: String? = null) {
+        fun add(type: String, label: String, ready: Int, total: Int, doneFlag: Boolean = false, countText: String? = null) {
             if (total <= 0) return
             if (type in _workerPermanentlyDone) return
-            val done = ready >= total && ready > 0
+            // Monotonic floor: never show progress decreasing
+            val r = maxOf(ready, workerReadyFloor[type] ?: 0)
+            workerReadyFloor[type] = r
+            // Done by explicit backend flag, or fallback heuristic
+            val done = doneFlag || (r >= total && r > 0)
             if (done) {
                 if (!workerCompletedAt.containsKey(type)) {
                     workerCompletedAt[type] = now
@@ -697,8 +724,8 @@ class MainActivity : AppCompatActivity() {
                     return
                 }
             }
-            val pct = if (done) 100 else (ready * 100 / total).coerceIn(0, 99)
-            workers.add(Wrk(type, label, ready, total, pct, done, countText))
+            val pct = if (done) 100 else (r * 100 / total).coerceIn(0, 99)
+            workers.add(Wrk(type, label, r, total, pct, done, countText))
         }
 
         // ── GPU workers (from assets) ──
@@ -710,28 +737,32 @@ class MainActivity : AppCompatActivity() {
             if (assets.cover_iu_total > 0) {
                 if (assets.cover_iu_ready < assets.cover_iu_total) {
                     _coverEverIncomplete = true
-                    add("cover", getString(R.string.progress_cover_generating), assets.cover_iu_ready, assets.cover_iu_total)
+                    val coverDone = assets.cover_iu_ready >= assets.cover_iu_total && assets.cover_iu_total > 0
+                    add("cover", getString(R.string.progress_cover_generating), assets.cover_iu_ready, assets.cover_iu_total, doneFlag = coverDone)
                 } else if (_coverEverIncomplete) {
-                    add("cover", getString(R.string.progress_cover_generating), assets.cover_iu_ready, assets.cover_iu_total)
+                    val coverDone = assets.cover_iu_ready >= assets.cover_iu_total && assets.cover_iu_total > 0
+                    add("cover", getString(R.string.progress_cover_generating), assets.cover_iu_ready, assets.cover_iu_total, doneFlag = coverDone)
                 }
             }
 
             if (total > 0) {
                 val audioNeeded = profile == "audio_only" || profile == "storyboard" || profile == "full"
                 if (audioNeeded) {
-                    add("audio", getString(R.string.progress_label_audio), assets.scope_audio_ready_real, total)
+                    add("audio", getString(R.string.progress_label_audio), assets.scope_audio_ready_real, total, doneFlag = assets.scope_all_audio_ready)
                 }
 
                 val imageNeeded = profile == "image_only" || profile == "storyboard" || profile == "full"
                 if (imageNeeded) {
                     val useIu = assets.scope_iu_total > 0
+                    val imageDone = if (useIu) assets.scope_iu_ready >= assets.scope_iu_total else assets.scope_all_image_ready
                     add("image", getString(R.string.progress_label_image),
                         if (useIu) assets.scope_iu_ready else assets.scope_image_ready,
-                        if (useIu) assets.scope_iu_total else total)
+                        if (useIu) assets.scope_iu_total else total,
+                        doneFlag = imageDone)
                 }
 
                 if (profile == "full" || profile == "video_only") {
-                    add("video", getString(R.string.progress_label_video), assets.scope_video_ready, total)
+                    add("video", getString(R.string.progress_label_video), assets.scope_video_ready, total, doneFlag = assets.scope_all_video_ready)
                 }
             }
         }
