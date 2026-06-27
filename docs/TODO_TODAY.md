@@ -87,6 +87,31 @@ force-regen) давал двойной декремент квоты.
 
 ---
 
+## ✅ M5: Свести писателей состояния к одному арбитру — выполнено
+
+**Риск:** средний. **После Д.0–Д.3.** Получилось закрыть в тот же день (фасад уже был, `a092f44`).
+
+### Per-asset writers → orchestrator-фасад
+- **P2** — `task-handler.cjs`: 7 мест прямого `callback + markDispatchCompleted` сведены
+  к `orchestrator.completeStage` (включая отсутствовавший `handleSceneImageCompleted`).
+  ✅ `5d5e1a3`
+- **P4/P5/P6** — прямые `setAssetState` в `reconciliation-engine`, `scene-restoration`,
+  `startup-recovery` → через фасад. ✅ `2807a38`
+
+### Linear-state writers (L1–L7) → `deriveLinearState` (производная проекция)
+- L1–L2 ✅ `3562778` · L3 (reconciliation-engine) ✅ `84fa8da` · L4 (scene-window) ✅ `58a24a0`
+- L5 (book-routes + window-generator + redis-helpers) ✅ `908207f`
+- L6 (runtime-persistence `recoverActiveScenes`) ✅ `5b2a11a`
+- L7 (debug-routes → recover-video через per-asset + `syncLinearState`) ✅ `cadad04`
+
+### Сопутствующее
+- **O2** — Prometheus-метрики: quota utilisation, lease age, tick duration. ✅ `40acaf4`
+- Чистка мёртвого кода (`backend.cjs` wrappers, asset-registry exports). ✅ `d713e20`
+- Fix: 500 в `/regenerate` — циркулярная зависимость на `restoreSceneChunkStatus`
+  (импорт напрямую из leaf-модуля `scene-restoration.js`). ✅ `968d1f6`
+
+---
+
 ## Итог дня
 
 | Шаг | Что закрывает | Риск | Зависит от |
@@ -95,11 +120,13 @@ force-regen) давал двойной декремент квоты.
 | Д.1 | идемпотентность квот | низкий | ✅ `58a8577` |
 | Д.2 | чистый planScene (M5) | средний | ✅ `b485c73` |
 | Д.3 | диск как факт (M3) | высокий | ✅ `91f104f` + `cc7d706` |
+| M5 | единый арбитр (P2/P4/P5/P6 + L1–L7) | средний | ✅ `5d5e1a3` … `cadad04` |
+| O2 | Prometheus-метрики | низкий | ✅ `40acaf4` |
 
-**M5 полностью** (единый арбитр, удаление прямых `setAssetState`) — отдельный день: требует
-Orchestrator-фасада (Шаг 8, ✅ `a092f44`).
+**M3 и M5 закрыты.** Все прямые `setAssetState` / `callback+markDispatchCompleted`
+проходят через Orchestrator-фасад (`a092f44`); linear-state — производная (`deriveLinearState`).
 
 ---
 
-*Дата: 2026-06-26. Все Д.0–Д.3 выполнены. Остаётся M5 (свести P2/P4/P5/P6 к фасаду).
+*Дата: 2026-06-26. Д.0–Д.3, M5 и O2 выполнены. Тесты: 381 passing, 0 failing.
 Основано на `docs/04_Migration_Plan.md` (Шаги 9–11).*
