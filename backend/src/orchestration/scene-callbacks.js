@@ -9,6 +9,7 @@ const runtimeScheduler = require('../runtime/runtime-scheduler');
 const dispatchEngine = require('../runtime/dispatch-engine');
 const book = require('../book');
 const placeholderAudio = require('../services/placeholder-audio');
+const sceneAssetsRepo = require('../storage/postgres/repositories/scene-assets-repo');
 const { log, warn, error, logEvent } = require('./scene-utils');
 
 // Stage constants (replaces removed scene-state-machine.js)
@@ -82,7 +83,6 @@ async function handleAudioCompleted(redis, bookId, chapterId, sceneId, buildId) 
 
         // C2: Write PG status='ready' so version-stale detection works
         try {
-            const sceneAssetsRepo = require('../storage/postgres/repositories/scene-assets-repo');
             await sceneAssetsRepo.markReady(bookId, chapterId, sceneId, 'audio', audioPath);
             log(`[PG-AUDIO-READY] ${bookId}/${chapterId}/${sceneId}: status=ready`);
         } catch (pgErr) {
@@ -172,7 +172,6 @@ async function handleImageCompleted(redis, bookId, chapterId, sceneId, buildId) 
 
         // C2: Write PG status='ready' so version-stale detection works
         try {
-            const sceneAssetsRepo = require('../storage/postgres/repositories/scene-assets-repo');
             await sceneAssetsRepo.markReady(bookId, chapterId, sceneId, 'image', sceneImage, {
                 width: imageInfo?.width || null,
                 height: imageInfo?.height || null,
@@ -195,7 +194,6 @@ async function handleImageCompleted(redis, bookId, chapterId, sceneId, buildId) 
     // Do NOT clear ALL dirty IDs — there may still be unprocessed dirty units.
     // Instead, remove only the completed unit IDs from the dirty list.
     try {
-        const sceneAssetsRepo = require('../storage/postgres/repositories/scene-assets-repo');
         const dirtyIds = await sceneAssetsRepo.getDirtyUnitIds(bookId, chapterId, sceneId);
         if (dirtyIds && dirtyIds.length > 0) {
             // Check which dirty units have PNG files on disk
@@ -295,7 +293,6 @@ async function handleVideoCompleted(redis, bookId, chapterId, sceneId, buildId) 
 
         // C2: Write PG status='ready' so version-stale detection works
         try {
-            const sceneAssetsRepo = require('../storage/postgres/repositories/scene-assets-repo');
             await sceneAssetsRepo.markReady(bookId, chapterId, sceneId, 'video', videoPath, {
                 duration: duration || null,
                 width: metadata?.width || null,
@@ -325,7 +322,6 @@ async function handleVideoCompleted(redis, bookId, chapterId, sceneId, buildId) 
     // Н.2: Quota is released by markDispatchCompleted (single owner).
 
     try {
-        const sceneAssetsRepo = require('../storage/postgres/repositories/scene-assets-repo');
         await sceneAssetsRepo.clearDirtyFlag(bookId, chapterId, sceneId);
         log(`[DIRTY-FLAG-CLEARED] ${bookId}/${chapterId}/${sceneId}: is_dirty=FALSE`);
     } catch (e) {
@@ -363,7 +359,6 @@ async function completeSceneWithoutVideo(redis, loadedBook, bookId, chapterId, s
     await state.syncLinearState(redis, bookId, chapterId, sceneId, buildId);
 
     try {
-        const sceneAssetsRepo = require('../storage/postgres/repositories/scene-assets-repo');
         await sceneAssetsRepo.clearDirtyFlag(bookId, chapterId, sceneId);
     } catch (e) {
         warn(`Failed to clear dirty flag in completeSceneWithoutVideo: ${e.message}`);
@@ -391,7 +386,6 @@ async function completeSceneWithoutImage(redis, loadedBook, bookId, chapterId, s
     log(`Scene complete (no image): ${bookId}/${chapterId}/${sceneId}`);
 
     try {
-        const sceneAssetsRepo = require('../storage/postgres/repositories/scene-assets-repo');
         await sceneAssetsRepo.clearDirtyFlag(bookId, chapterId, sceneId);
     } catch (e) {
         warn(`Failed to clear dirty flag in completeSceneWithoutImage: ${e.message}`);
