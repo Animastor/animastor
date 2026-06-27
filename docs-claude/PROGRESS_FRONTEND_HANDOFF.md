@@ -1,9 +1,9 @@
 # GPU Progress — Frontend Handoff (F1–F7)
 
-> **Статус на 2026-06-27.** Backend-часть (B1–B5) и frontend-часть (F3–F7)
-> сделаны и закоммичены (ветка `feat/orchestrator-facade`, сборка `assembleDebug`
-> успешна). Остаётся F1 (SSE-клиент) и F2 (рефакторинг в VM) — опционально.
-> Этот документ — пошаговая инструкция для следующей модели/сессии.
+> **Статус на 2026-06-27.** Backend-часть (B1–B5) и frontend-часть (F1–F7)
+> полностью сделаны и закоммичены (ветка `feat/orchestrator-facade`, сборка
+> `assembleDebug` успешна). Документ — архивная инструкция.
+> **Все задачи GPU Progress закрыты.**
 
 ## Зачем это
 
@@ -118,23 +118,23 @@ cd /home/sureg/animastor/frontend && ./gradlew assembleDebug
 - Backoff: 1.5с → 3с → 6с (cap), сброс на успехе
 - View уже переиспользуются через `getChildAt(i)` — кэширование из коробки
 
-## F1. SSE-клиент
+## ✅ F1. SSE-клиент
 
-1. `build.gradle.kts` deps:
-   ```kotlin
-   implementation("com.squareup.okhttp3:okhttp-sse:4.12.0")
-   ```
-2. Новый `network/ProgressStream.kt`:
-   - Использовать `RetrofitClient.httpClient` и `RetrofitClient.baseUrl`.
-   - `EventSources.createFactory(client).newEventSource(request, listener)`.
-   - URL: `${baseUrl.trimEnd('/')}/api/v1/book/$bookId/progress-stream`.
-   - В `EventSourceListener.onEvent` парсить JSON (Gson) в data class
-     `ProgressEvent(type, layer, chapterId, sceneId, ready)` и эмитить в
-     `MutableSharedFlow<ProgressEvent>(extraBufferCapacity=64)`.
-   - Реконнект: в `onFailure` — backoff и пересоздание EventSource, пока активна
-     генерация. Закрытие: `eventSource.cancel()` при остановке.
-3. Подписку открывать при старте генерации (где ставится `activeGeneration`),
-   закрывать в `onGenerationComplete`/при уходе с экрана.
+Создан `network/ProgressStream.kt` — SSE клиент для push-канала прогресса.
+
+- `ProgressStream(scope)` — принимает `CoroutineScope`, использует `lifecycleScope`
+- `start(bookId)` — подключается к `GET /api/v1/book/{bookId}/progress-stream`
+- `cancel()` — закрывает соединение и отменяет реконнект
+- Парсит `ProgressEvent(type, layer, chapterId, sceneId, ready)` через Gson
+- Авто-реконнект: 1s → 2s → 4s → 8s → 15s (cap) через coroutine delay
+- `onProgressEvent` callback — обновляет `workerReadyFloor["image"]` для плавности
+- `okhttp-sse:4.12.0` добавлен в `build.gradle.kts`
+- `RetrofitClient.gson` открыт (был private)
+
+**Интеграция в MainActivity:**
+- SSE стартует при детекте новой GPU-генерации (`activeGen != null`)
+- SSE останавливается: при stuck auto-complete, завершении done-row, скрытии панели, `onDestroy`
+- `workerReadyFloor` использует `ConcurrentHashMap` для thread-safety (SSE → OkHttp thread, polling → main thread)
 
 ## F2. Вынос логики в ViewModel (опционально, но желательно)
 
@@ -161,7 +161,7 @@ F3–F6 на месте. F2 — рефакторинг ради чистоты, 
 # Чеклист задач (трекер)
 - [x] #2 монотонность (бэк)
 - [x] #7 детерминизм assets-state (бэк)
-- [ ] #1 SSE: бэк готов, фронт-клиент (F1) — TODO
+- [x] #1 SSE: бэк готов, фронт-клиент (F1)
 - [x] #8 ошибки: бэк-поля готовы, фронт-отображение (F7)
 - [x] #3 stuck-детект (F4)
 - [x] #4 единицы total (F5)

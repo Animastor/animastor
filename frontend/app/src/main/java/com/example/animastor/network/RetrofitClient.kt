@@ -13,7 +13,7 @@ import java.util.concurrent.TimeUnit
 
 object RetrofitClient {
 
-    private val gson: Gson = GsonBuilder()
+    val gson: Gson = GsonBuilder()
         .create()
 
     val httpClient: OkHttpClient by lazy {
