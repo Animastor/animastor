@@ -1386,6 +1386,11 @@ class GenerateViewModel(
 
         // ── Decide panel state ──
         if (workers.isEmpty()) {
+            // Nothing ever started — panel should stay hidden.
+            // This prevents infinite flickering when polling with null assets/VBook.
+            if (gpuProgressDoneAt == 0L && workerCompletedAt.isEmpty() && _workerPermanentlyDone.isEmpty()) {
+                return ProgressPanelState.Hidden
+            }
             // All done — show single green row for 10s
             if (gpuProgressDoneAt == 0L) gpuProgressDoneAt = now
             val elapsed = now - gpuProgressDoneAt
