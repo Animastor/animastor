@@ -503,19 +503,19 @@ async function processSingleIU(redis, unit, uIdx, sceneData, loadedBook, buildId
             return { sent: false, cached: false, skipped: true };
         }
 
-        // Clear dedup keys so the regeneration task is accepted (not blocked as
-        // duplicate). Three keys:
-        //   animastor:job:{iuId}:iu_image — GPU hub dedup (blocks /task acceptance)
-        //   animastor:job:{iuId}:image   — legacy GPU hub dedup
-        //   animastor:result-processed:{iuId}:iu_image:{buildId} — backend dedup
-        //     (blocks /gpu/task/result from saving the new PNG)
+        // Clear GPU hub dedup keys BEFORE sending the new task — the hub checks
+        //   animastor:job:{iuId}:iu_image  to reject duplicate /task submissions.
+        // Without clearing, the hub would reject our regen task as duplicate.
+        //   animastor:result-processed:{iuId}:iu_image:{buildId}  is our OWN
+        // backend dedup (blocks /gpu/task/result retries). We clear it AFTER
+        // gpu.send() to prevent a stale hub retry from grabbing it before the
+        // new task is accepted. See race analysis below.
         try {
             await redis.del(
                 `animastor:job:${imageIUId}:iu_image`,
-                `animastor:job:${imageIUId}:image`,
-                `animastor:result-processed:${imageIUId}:iu_image:${buildId}`
+                `animastor:job:${imageIUId}:image`
             );
-            log(`[DEDUP-CLEAR] Cleared all dedup keys for ${imageIUId}`);
+            log(`[DEDUP-CLEAR] Cleared hub dedup keys for ${imageIUId}`);
         } catch (e) {
             warn(`[DEDUP-CLEAR] Failed: ${e.message}`);
         }
@@ -582,6 +582,25 @@ async function processSingleIU(redis, unit, uIdx, sceneData, loadedBook, buildId
     await saveIURegistry(redis, imageIUId, buildId);
     // Use :iu_image suffix for unambiguous type detection in resolveAssetPath
     await gpu.send(`${imageIUId}:iu_image`, wfImg, 'image', buildId);
+
+    // ── Race-avoidance: clear backend dedup AFTER gpu.send() ──────
+    //
+    // Clearing animastor:result-processed BEFORE gpu.send() creates a
+    // window where a stale GPU hub result retry (from the previous IU
+    // generation) sets the dedup key. When the NEW generation's result
+    // arrives, it gets silently deduped — the IU progress counter never
+    // increments and the frontend stays at 3/4 forever.
+    //
+    // By keeping result-processed locked until AFTER the hub has accepted
+    // our new task, we ensure old retries are still blocked. The hub stops
+    // retrying failed deliveries once a new task with the same job_id is
+    // accepted (the hub replaces its in-flight state).
+    try {
+        await redis.del(`animastor:result-processed:${imageIUId}:iu_image:${buildId}`);
+        log(`[DEDUP-CLEAR-BACKEND] Cleared result-processed dedup for ${imageIUId}`);
+    } catch (e) {
+        warn(`[DEDUP-CLEAR-BACKEND] Failed: ${e.message}`);
+    }
 
     return { sent: true, cached: false };
 }
