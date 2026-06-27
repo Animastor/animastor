@@ -1434,22 +1434,65 @@ module.exports = function(app, redis, deps) {
                 filteredDirty = bookDiff.filterDirtyScenesByScope(
                     allDirty, effectiveScope, chapter_id, scene_id, allScenes
                 );
+            } else if (chapter_id && scene_id) {
+                // PRIMARY PATH: client explicitly specified what to regenerate.
+                // Build dirty entry from request params + book data directly.
+                // Skip diff entirely — PUT already saved the book, so diff is
+                // always empty. The client knows what changed.
+                const targetScene = allScenes.find(s =>
+                    s.chapter_id === chapter_id && s.scene_id === scene_id
+                );
+                if (!targetScene) {
+                    log(`[REGENERATE] ${bookId}: scene ${chapter_id}/${scene_id} not found in book data`);
+                    filteredDirty = [];
+                } else {
+                    const scenePayload = targetScene.payload || targetScene;
+                    const changedUnitIds = [];
+                    if (req.body.unit_id) {
+                        changedUnitIds.push(req.body.unit_id);
+                    } else {
+                        const allUnits = [...(scenePayload.units || [])];
+                        for (const db of (scenePayload.dialogue_blocks || [])) {
+                            if (db.units) allUnits.push(...db.units);
+                        }
+                        for (const u of allUnits) {
+                            if (u.id) changedUnitIds.push(String(u.id));
+                        }
+                    }
+                    const dirtyLayers = ['image'];
+                    // Only image needs regeneration — user edited visual prompt.
+                    // Audio is left as-is (placeholder or completed).
+                    filteredDirty = [{
+                        chapter_id,
+                        scene_id,
+                        reason: 'explicit_regen',
+                        dirty_layers: dirtyLayers,
+                        changes: changedUnitIds.length > 0
+                            ? { units: { unit_ids: changedUnitIds } }
+                            : null,
+                    }];
+                    log(`[REGENERATE] ${bookId}: primary path — created dirty entry for ${chapter_id}/${scene_id} (${changedUnitIds.length} units, layers=${dirtyLayers.join(',')})`);
+
+                    filteredDirty = bookDiff.filterDirtyScenesByScope(
+                        filteredDirty, effectiveScope, chapter_id, scene_id, allScenes
+                    );
+                }
             } else {
-                // Diff-based: compare current book with the same book
+                // FALLBACK PATH: no explicit scene params — use diff to detect changes.
+                // This handles "Regenerate all" or scope-based bulk regeneration
+                // where the client didn't specify exact coordinates.
                 const existingBook = book.loadBook(bookId);
                 const diff = bookDiff.computeBookDiff(existingBook, loadedBook);
-                log(`[REGENERATE] ${bookId}: ${diff.changes.added} added, ${diff.changes.removed} removed, ${diff.changes.modified} modified`);
+                log(`[REGENERATE] ${bookId}: fallback diff — ${diff.changes.added} added, ${diff.changes.removed} removed, ${diff.changes.modified} modified`);
 
                 filteredDirty = bookDiff.filterDirtyScenesByScope(
                     diff.dirty_scenes, effectiveScope, chapter_id, scene_id, allScenes
                 );
 
-                // FALLBACK: If diff is empty (book already saved by PUT — both loads
-                // return identical data), query PG directly for dirty scenes via
-                // is_dirty flag and dirty_unit_ids. The PUT handler correctly stores
-                // these before /regenerate is called.
+                // PG fallback: if diff is empty (book already saved by PUT),
+                // query PG for dirty scenes. Only works for books in PG.
                 if (filteredDirty.length === 0) {
-                    log(`[REGENERATE] ${bookId}: diff is empty (already saved by PUT) — querying PG for dirty scenes`);
+                    log(`[REGENERATE] ${bookId}: diff empty — querying PG for dirty scenes`);
                     try {
                         const pgResult = await storage.postgres.query(`
                             SELECT chapter_id, scene_id, is_dirty, dirty_unit_ids
@@ -1467,8 +1510,6 @@ module.exports = function(app, redis, deps) {
                                 chapter_id: row.chapter_id,
                                 scene_id: row.scene_id,
                                 reason: row.is_dirty ? 'version_stale' : 'dirty_units',
-                                // Image layer is always regenerated for visual changes.
-                                // Audio is left as-is (visual prompt changes don't affect audio).
                                 dirty_layers: ['image'],
                                 changes: row.dirty_unit_ids && row.dirty_unit_ids.length > 0
                                     ? { units: { unit_ids: row.dirty_unit_ids } }
@@ -1478,50 +1519,12 @@ module.exports = function(app, redis, deps) {
                             filteredDirty = bookDiff.filterDirtyScenesByScope(
                                 filteredDirty, effectiveScope, chapter_id, scene_id, allScenes
                             );
-                            log(`[REGENERATE] ${bookId}: PG fallback found ${filteredDirty.length} dirty scene(s) via is_dirty/dirty_unit_ids`);
+                            log(`[REGENERATE] ${bookId}: PG fallback found ${filteredDirty.length} dirty scene(s)`);
                         } else {
-                            log(`[REGENERATE] ${bookId}: PG fallback also empty — no dirty scenes in PG`);
+                            log(`[REGENERATE] ${bookId}: PG fallback also empty`);
                         }
                     } catch (pgErr) {
                         console.warn(`[REGENERATE] PG fallback query failed: ${pgErr.message}`);
-                    }
-
-                    // THIRD FALLBACK: vbook not in PG — use request params + book data
-                    if (filteredDirty.length === 0 && chapter_id && scene_id) {
-                        // Find the scene in the book data to get IU info
-                        const targetScene = allScenes.find(s =>
-                            s.chapter_id === chapter_id && s.scene_id === scene_id
-                        );
-                        if (targetScene) {
-                            // Collect unit IDs from scene (inline of collectSceneUnits)
-                            const scenePayload = targetScene.payload || targetScene;
-                            const changedUnitIds = [];
-                            // If frontend sent unit_id in body, use that;
-                            // otherwise regenerate all units in the scene
-                            if (req.body.unit_id) {
-                                changedUnitIds.push(req.body.unit_id);
-                            } else {
-                                const allUnits = [...(scenePayload.units || [])];
-                                for (const db of (scenePayload.dialogue_blocks || [])) {
-                                    if (db.units) allUnits.push(...db.units);
-                                }
-                                for (const u of allUnits) {
-                                    if (u.id) changedUnitIds.push(String(u.id));
-                                }
-                            }
-                            filteredDirty = [{
-                                chapter_id,
-                                scene_id,
-                                reason: 'vbook_regen',
-                                dirty_layers: ['image'],
-                                changes: changedUnitIds.length > 0
-                                    ? { units: { unit_ids: changedUnitIds } }
-                                    : null,
-                            }];
-                            log(`[REGENERATE] ${bookId}: vbook fallback — created dirty entry for ${chapter_id}/${scene_id} (${changedUnitIds.length} units)`);
-                        } else {
-                            log(`[REGENERATE] ${bookId}: vbook fallback — scene ${chapter_id}/${scene_id} not found in book data`);
-                        }
                     }
                 }
             }
