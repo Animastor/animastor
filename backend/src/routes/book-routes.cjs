@@ -1391,6 +1391,15 @@ module.exports = function(app, redis, deps) {
             const dispatchEngine = require('../runtime/dispatch-engine');
             await dispatchEngine.clearAllLeasesForBook(redis, bookId);
 
+            // Reset global active counters — they may be leaked from a previous
+            // incomplete dispatch (e.g. crash, failed callback). Without reset,
+            // backpressure quota blocks ALL new dispatches because the counter
+            // shows maxActiveImage (2) even though no tasks are actually running.
+            // cancel-generation does this; regenerate must too.
+            await redis.del('animastor:runtime:active-audio');
+            await redis.del('animastor:runtime:active-image');
+            await redis.del('animastor:runtime:active-video');
+
             // Set force-dispatch flag for the scheduler tick.
             // The scheduler checks this flag and passes force=true to dispatchStage(),
             // ensuring any race-condition lease is cleared before dispatch.
