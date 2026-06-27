@@ -29,11 +29,12 @@
 - [x] `checkVersionStaleness()` — уже только логирует (не меняли)
 - [x] **Важно:** crash recovery больше не маскирует dirty-состояние — после flushall Redis книга должна быть явно загружена через PUT/regenerate
 
-> ⚠️ **Расхождение с кодом:** version-stale ветка в `startup-recovery.js:284-288` всё ещё пишет `setAssetStates(... DIRTY)`.
-> То есть R1.1 верен для `recoverIuImagesFromDisk`, но не полностью — код на version-stale пути всё ещё мутирует состояние.
-> См. `02_Claude_Audit.md §ARCHITECTURAL_AUDIT_TODO`.
+> ✅ **Расхождение снято (2026-06-27):** version-stale ветка в `startup-recovery.js:284-288`
+> больше не пишет `setAssetStates(... DIRTY)` напрямую — идёт через `orchestrator.markDirtyScene`
+> (M5, коммит `2807a38`). Единственный арбитр записи соблюдён, R1.1 теперь верен полностью.
 
 > **UPD 2026-06-26:** Добавлена пометка о расхождении.
+> **UPD 2026-06-27:** Расхождение устранено M5-рефактором; пометка обновлена.
 
 ### [R1.2] Audio recovery — убрать рантайм-цикл ✅
 - [x] `audio-recovery.cjs`: убрать `startRecoveryInterval()` (setInterval every 5s)

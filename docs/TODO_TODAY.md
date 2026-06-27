@@ -31,24 +31,34 @@
 **Риск:** низкий. M4 закрыт (`0adc930`), но roadmap Д.1 шире: убедиться, что `getMetrics`
 планировщика отдаёт **реальные** счётчики dispatch-engine, а не мёртвые нули.
 
-Сделать:
-- [ ] `grep -rn "MAX_CONCURRENT\|concurrent-\|canScheduleStage\|incrementConcurrent"` — нет боевых вызовов.
-- [ ] `getMetrics` / `/api/v1/debug/runtime` показывает счётчики, совпадающие с `/quotas`.
-- [ ] Если уже сделано в `0adc930` — отметить Д.1 как полностью закрытый, не дублировать.
+Проверено ✅ (изменений не потребовалось):
+- [x] `grep` — мёртвых `MAX_CONCURRENT/concurrent-/canScheduleStage/incrementConcurrent` нет.
+- [x] `getMetrics` (`runtime-scheduler.js:403`) делегирует `dispatchEngine.getQuotaStatus` —
+  возвращает реальные per-stage счётчики (audio/image/video current+max), не нули.
+- [x] Д.1 уже полностью закрыт в `0adc930` (Н.9). Дублировать нечего.
 
 ---
 
-## 🟢 D.3: Снять мёртвый governance и битые `require` (L1 / Д.3)
+## ✅ D.3: Снять мёртвый governance и битые `require` (L1 / Д.3) — выполнено
 
-**Риск:** низкий (вне боевого пути), но **проверить достижимость перед удалением.**
+**Коммит:** `311f44a`
 
-37 модулей в `runtime/`, ~18 debug-only; часть с `require()` на несуществующие файлы —
-мина для debug-эндпоинтов (500-е). Живые `circuit-breaker`/`retry-budget`/`fairness` — оставить.
+Находка оказалась шире и **безопаснее**, чем в плане: `src/api/runtime.js` (1758 строк)
+**нигде не импортируется** — мёртвый файл и единственный потребитель 16 debug-only
+модулей `runtime/`. Шесть из них делали `require()` на несуществующие файлы
+(trace-compactor, invariant-engine, safe-mode, state-graph/*, policies, admission-control) →
+обращение к `/debug/runtime/governance-health` и `/execution-semantics` дало бы 500.
+Живые debug-роуты (`debug-routes.cjs`) этот кластер **не трогают** (только `reconciliation`).
 
-Сделать:
-- [ ] Найти `require()` на отсутствующие файлы: пройтись по debug-only модулям `runtime/`.
-- [ ] Архивировать/удалить мёртвые модули (не входят в dispatch-путь — сверить grep'ом).
-- [ ] Прогнать debug-эндпоинты — ни один не падает с 500 из-за битого require.
+Сделано:
+- [x] Удалён `src/api/runtime.js` (несвязанный dead-код).
+- [x] Удалены 16 мёртвых модулей `runtime/` (snapshot/priority/policy-engine/workload/cost/
+  decision-trace/feedback/governance-metrics/adaptation/governance-stability/governance-health/
+  execution-semantics/policy-simulator/governance-sandbox/failure-replay/governance-validator).
+- [x] Удалён `debug: { ... }` фасад из `runtime/index.js` (читал только `api/runtime.js`).
+- [x] Оставлены живые `circuit-breaker`/`fairness-engine`/`retry-budget-manager` —
+  они `require()`-ятся напрямую из `dispatch-engine`/`runtime-persistence`.
+- [x] Проверено: битых require нет, `runtime/index.js`+`debug-routes` грузятся чисто, **381 passing**.
 
 ---
 
@@ -69,18 +79,22 @@
 
 ---
 
-## Приоритет дня
+## Итог дня
 
-| # | Шаг | Закрывает | Риск | Почему сейчас |
+| # | Шаг | Закрывает | Статус | Коммит |
 |---|---|---|---|---|
-| 1 | **S.1** секреты + ротация | Н.4 | критич. (безоп.) | live-ключ в git, просрочено с «недели» |
-| 2 | D.1 доуборка лимитов | M4/Д.1 | низкий | проверка/закрытие, дёшево |
-| 3 | D.3 мёртвый governance | L1/Д.3 | низкий | убирает 500-е на debug |
-| — | док-хвост | — | низкий | снять устаревшее предупреждение |
+| 1 | **S.1** секреты в `.env` + ротация | Н.4 | ✅ код / ⏳ ротация (ручная) | `6dca53a` |
+| 2 | D.1 доуборка лимитов | M4/Д.1 | ✅ уже закрыт в `0adc930` | — |
+| 3 | D.3 мёртвый governance + dead api/runtime.js | L1/Д.3 | ✅ выполнено | `311f44a` |
+| — | док-хвост (R1.1 расхождение) | — | ✅ снято | (этот коммит) |
 
-**Зависимости:** S.1 независим (делать первым). D.2/D.4 — только после стабилизации (не сегодня).
+**Осталось вручную (вне кода):** ротировать утёкший `OPENROUTER_API_KEY` и пароль PG
+(старые значения в истории git с `380a777`, 2026-06-09). После ротации — обновить `.env`.
+
+**Отложено:** Д.2 (вывод linear-проекции, блокирует frontend), Д.4 (циклические зависимости,
+после К.4), Д.5 (недостающие docs) — см. раздел «Отложено» выше.
 
 ---
 
-*Дата: 2026-06-27. Релизы A/B/C закрыты. Сегодня — security (S.1) + Релиз D «уборка».
-Основано на `docs-claude/06_Roadmap.md` (Долгосрок) и `04_Migration_Plan.md` (Шаг 12).*
+*Дата: 2026-06-27. Релизы A/B/C закрыты. Сегодня — S.1 (security), D.3 (уборка L1), D.1 (проверен).
+Тесты: 381 passing. Основано на `docs-claude/06_Roadmap.md` (Долгосрок) и `04_Migration_Plan.md` (Шаг 12).*
