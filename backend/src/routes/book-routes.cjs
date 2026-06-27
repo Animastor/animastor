@@ -1555,6 +1555,30 @@ module.exports = function(app, redis, deps) {
                 try { await redis.del(progKey); } catch (_) {}
             }
 
+            // Clear in-flight markers for dirty scenes so processSingleIU doesn't
+            // skip the dirty unit. In-flight markers are normally cleared by
+            // handleImageCompleted when the scene completes, but if the scene
+            // didn't fully complete (e.g. only some IUs were generated), stale
+            // markers persist for their 1200s TTL and block re-dispatch.
+            for (const ds of filteredDirty) {
+                try {
+                    const scenePrefix = `${bookId}_${ds.chapter_id}_${ds.scene_id}_iu-`;
+                    let cursor = '0';
+                    do {
+                        const [nextCursor, keys] = await redis.scan(
+                            cursor, 'MATCH', `animastor:iu-in-flight:${scenePrefix}*`, 'COUNT', 50
+                        );
+                        cursor = nextCursor;
+                        if (keys.length > 0) {
+                            await redis.del(...keys);
+                            log(`[REGENERATE-IU-IN-FLIGHT-CLEAR] ${bookId}/${ds.chapter_id}/${ds.scene_id}: cleared ${keys.length} markers`);
+                        }
+                    } while (cursor !== '0');
+                } catch (e) {
+                    console.warn(`[REGENERATE-IU-IN-FLIGHT-CLEAR] Failed for ${bookId}/${ds.chapter_id}/${ds.scene_id}: ${e.message}`);
+                }
+            }
+
             // Mark dirty scenes (Redis) — routed through the Orchestrator facade
             // (Шаг 0, docs-claude/03_Orchestrator.md): markDirty is the single
             // entry point for declaring "needs regeneration". Delegates back to
