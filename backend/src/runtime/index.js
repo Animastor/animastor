@@ -66,30 +66,9 @@ module.exports = {
     retryManager: lazyRequire('./retry-manager'),
     retentionManager: lazyRequire('./retention-manager'),
 
-    // DEBUG/ADMIN endpoints only — not part of core pipeline
-    // These are loaded ONLY when the debug API is accessed.
-    // Files are preserved on disk for git history.
-    debug: {
-        snapshotManager: lazyRequire('./snapshot-manager'),
-        circuitBreaker: lazyRequire('./circuit-breaker'),
-        priorityManager: lazyRequire('./priority-manager'),
-        fairness: lazyRequire('./fairness-engine'),
-        retryBudget: lazyRequire('./retry-budget-manager'),
-        policyEngine: lazyRequire('./policy-engine'),
-        workloadClassifier: lazyRequire('./workload-classifier'),
-        costEstimator: lazyRequire('./cost-estimator'),
-        decisionTrace: lazyRequire('./decision-trace'),
-        feedback: lazyRequire('./feedback-engine'),
-        governanceMetrics: lazyRequire('./governance-metrics'),
-        adaptationController: lazyRequire('./adaptation-controller'),
-        governanceStability: lazyRequire('./governance-stability'),
-        governanceHealth: lazyRequire('./governance-health'),
-        executionSemantics: lazyRequire('./execution-semantics'),
-        experimental: {
-            policySimulator: lazyRequire('./policy-simulator'),
-            sandbox: lazyRequire('./governance-sandbox'),
-            failureReplay: lazyRequire('./failure-replay'),
-            validator: lazyRequire('./governance-validator'),
-        }
-    }
+    // NOTE: the former `debug: { ... }` governance facade (D.3/L1) was removed —
+    // its only consumer was the unreferenced src/api/runtime.js, and several of
+    // its modules require()'d files that no longer exist (debug-endpoint 500s).
+    // Live resilience modules (circuit-breaker, fairness-engine, retry-budget-manager)
+    // are require()'d directly by dispatch-engine / runtime-persistence and remain.
 };
