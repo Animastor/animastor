@@ -503,9 +503,11 @@ async function processSingleIU(redis, unit, uIdx, sceneData, loadedBook, buildId
             return { sent: false, cached: false, skipped: true };
         }
 
-        // Clear GPU hub dedup key so regeneration task is accepted (not blocked as duplicate).
+        // Clear both :iu_image (new) and :image (legacy) GPU hub dedup keys so the
+        // regeneration task is accepted (not blocked as duplicate). The hub uses the
+        // full job_id (including suffix) as the dedup key — see gpu-hub.js /task.
         try {
-            await redis.del(`animastor:job:${imageIUId}:image`);
+            await redis.del(`animastor:job:${imageIUId}:iu_image`, `animastor:job:${imageIUId}:image`);
             log(`[DEDUP-CLEAR] Cleared GPU dedup for ${imageIUId}`);
         } catch (e) {
             warn(`[DEDUP-CLEAR] Failed: ${e.message}`);

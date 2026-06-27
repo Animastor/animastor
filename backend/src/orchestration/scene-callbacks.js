@@ -147,7 +147,8 @@ async function handleImageCompleted(redis, bookId, chapterId, sceneId, buildId) 
         return { handled: false, nextStage: null, reason: 'invalid_asset_state' };
     }
 
-    // Н.2: Quota is released by markDispatchCompleted (single owner).
+    // Н.2: image_not_found — throw so the dedup is deleted and GPU hub retries.
+    // Silent return here leaves the scene stuck in GENERATING forever.
     if (!sceneImage) {
         error(`Scene image not found after completion: ${bookId}/${chapterId}/${sceneId}`);
         const scene = { book_id: bookId, chapter_id: chapterId, scene_id: sceneId };
@@ -155,7 +156,7 @@ async function handleImageCompleted(redis, bookId, chapterId, sceneId, buildId) 
             reason: 'not_found'
         });
         log(`🔻 IMAGE callback: image not found: ${bookId}/${chapterId}/${sceneId}`);
-        return { handled: true, nextStage: null, reason: 'image_not_found' };
+        throw new Error(`Scene image not found for ${bookId}/${chapterId}/${sceneId} in build ${buildId}`);
     }
 
     const imageInfo = await image.getImageMetadata(sceneImage);
