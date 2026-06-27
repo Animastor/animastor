@@ -1485,6 +1485,44 @@ module.exports = function(app, redis, deps) {
                     } catch (pgErr) {
                         console.warn(`[REGENERATE] PG fallback query failed: ${pgErr.message}`);
                     }
+
+                    // THIRD FALLBACK: vbook not in PG — use request params + book data
+                    if (filteredDirty.length === 0 && chapter_id && scene_id) {
+                        // Find the scene in the book data to get IU info
+                        const targetScene = allScenes.find(s =>
+                            s.chapter_id === chapter_id && s.scene_id === scene_id
+                        );
+                        if (targetScene) {
+                            // Collect unit IDs from scene (inline of collectSceneUnits)
+                            const scenePayload = targetScene.payload || targetScene;
+                            const changedUnitIds = [];
+                            // If frontend sent unit_id in body, use that;
+                            // otherwise regenerate all units in the scene
+                            if (req.body.unit_id) {
+                                changedUnitIds.push(req.body.unit_id);
+                            } else {
+                                const allUnits = [...(scenePayload.units || [])];
+                                for (const db of (scenePayload.dialogue_blocks || [])) {
+                                    if (db.units) allUnits.push(...db.units);
+                                }
+                                for (const u of allUnits) {
+                                    if (u.id) changedUnitIds.push(String(u.id));
+                                }
+                            }
+                            filteredDirty = [{
+                                chapter_id,
+                                scene_id,
+                                reason: 'vbook_regen',
+                                dirty_layers: ['image'],
+                                changes: changedUnitIds.length > 0
+                                    ? { units: { unit_ids: changedUnitIds } }
+                                    : null,
+                            }];
+                            log(`[REGENERATE] ${bookId}: vbook fallback — created dirty entry for ${chapter_id}/${scene_id} (${changedUnitIds.length} units)`);
+                        } else {
+                            log(`[REGENERATE] ${bookId}: vbook fallback — scene ${chapter_id}/${scene_id} not found in book data`);
+                        }
+                    }
                 }
             }
 
