@@ -200,8 +200,19 @@ module.exports = function(redis, config, { log }) {
             };
         }
 
+        // :iu_image suffix (new format) — unambiguous IU image marker
+    if (job_id.endsWith(':iu_image')) {
+            const assetId = job_id.replace(/:iu_image$/, '');
+            return {
+                type: 'iu_image',
+                extension: 'png',
+                fullPath: path.join(outputDir, `${assetId}.png`),
+            };
+        }
+
         if (job_id.endsWith(':image')) {
             const assetId = job_id.replace(/:image$/, '');
+            // Legacy detection: check for _iu substring (works with iu-XXXX unit IDs)
             if (assetId.includes('_iu')) {
                 return {
                     type: 'iu_image',

@@ -473,6 +473,12 @@ async function processSingleIU(redis, unit, uIdx, sceneData, loadedBook, buildId
     // If this unit is in dirtyUnitIds set, skip disk cache — force regenerate
     const force = dirtyUnitIds.size > 0 && dirtyUnitIds.has(canonicalUnitId);
     if (!force) {
+        // Check in-flight marker to prevent duplicate dispatch across ticks
+        const alreadyInFlight = await redis.get(inFlightKey);
+        if (alreadyInFlight) {
+            log(`[IU-ALREADY-IN-FLIGHT] Skipping ${imageIUId} — already dispatched (marker exists)`);
+            return { sent: false, cached: false, skipped: true };
+        }
         const cachedIU = probeIUImage(imageIUId, buildId, config.OUTPUT_DIR);
         if (cachedIU?.image) {
             try {
@@ -565,7 +571,8 @@ async function processSingleIU(redis, unit, uIdx, sceneData, loadedBook, buildId
     }
 
     await saveIURegistry(redis, imageIUId, buildId);
-    await gpu.send(`${imageIUId}:image`, wfImg, 'image', buildId);
+    // Use :iu_image suffix for unambiguous type detection in resolveAssetPath
+    await gpu.send(`${imageIUId}:iu_image`, wfImg, 'image', buildId);
 
     return { sent: true, cached: false };
 }

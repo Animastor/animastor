@@ -3,6 +3,13 @@ const config = require('../config/runtime-config');
 const logPrefix = '[GPU]';
 function log(msg) { console.log(`${logPrefix} ${msg}`); }
 
+const stats = {
+    audio_jobs_started: 0,
+    image_jobs_started: 0,
+    video_jobs_started: 0,
+    failed_jobs: 0
+};
+
 
 
 async function sendUnified(taskSpec) {

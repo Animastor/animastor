@@ -148,8 +148,10 @@ async function recoverIuImagesFromDisk(redis, deps) {
         const sceneIuMap = {};
         for (const f of allFiles) {
             if (!f.endsWith('.png')) continue;
-            const match = f.match(/^(.+)_(ch[^_]+)_(sc[^_]+)_iu/);
-            if (match) {
+            // Match IU image filenames: bookId_chapterId_sceneId_iu-XXXX.png
+        // Capture groups: [1]=bookId, [2]=chapterId, [3]=sceneId
+        const match = f.match(/^(.+)_(ch[^_]+)_(sc[^_]+)_iu[^_]*\.png$/);
+        if (match) {
                 const key = `${match[1]}:${match[2]}:${match[3]}`;
                 sceneIuMap[key] = true;
             }

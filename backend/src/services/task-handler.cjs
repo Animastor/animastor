@@ -170,9 +170,12 @@ module.exports = function(redis, config, deps) {
                     console.warn('⚠️ Invalid scene image job_id format:', job_id);
                     break;
                 }
-                const sceneId4 = baseParts4.pop();
-                const chapterId4 = baseParts4.pop();
-                const bookId4 = baseParts4.join('_');
+                // Legacy scene_image: job_id = bookId_chapterId_sceneId:image
+                // Parse from the end: sceneId is last, chapterId is second-to-last
+                const sceneId4 = baseParts4[baseParts4.length - 1];
+                const chapterId4 = baseParts4[baseParts4.length - 2];
+                const bookId4 = baseParts4.slice(0, -2).join('_');
+                log(`⚠️ SCENE_IMAGE (legacy) callback: ${bookId4}/${chapterId4}/${sceneId4}`);
                 await orchestrator.completeStage(redis, bookId4, chapterId4, sceneId4, 'image', build_id);
                 break;
             }
