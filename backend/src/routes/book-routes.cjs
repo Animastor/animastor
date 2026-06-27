@@ -17,6 +17,7 @@ const registerStatusRoutes = require('./book/status-routes.cjs');
 const registerParseRoutes = require('./book/parse-routes.cjs');
 const { setDeep, findUnitInScene } = require('./book/scene-patch-utils.cjs');
 const { recoverMissingRedisChunks } = require('./book/recover-chunks.cjs');
+const { computeIuReady } = require('./book/iu-progress-utils.cjs');
 
 module.exports = function(app, redis, deps) {
     const {
@@ -978,58 +979,75 @@ module.exports = function(app, redis, deps) {
             const allChunkIds = await getAllChunks(bookId);
             const totalChunks = allChunkIds.length;
 
+            // Batch-load all chunk metadata in ONE round-trip instead of N
+            // sequential getChunk() calls. We then filter by scope and tally
+            // status from the in-memory objects, so each chunk is read once.
+            const chunkById = new Map();
+            if (allChunkIds.length > 0) {
+                try {
+                    const raw = await redis.mget(allChunkIds.map(id => `animastor:chunk:${id}`));
+                    for (let i = 0; i < allChunkIds.length; i++) {
+                        if (!raw[i]) continue;
+                        try {
+                            const c = JSON.parse(raw[i]);
+                            if (!c.audio_status) c.audio_status = 'pending';
+                            if (!c.image_status) c.image_status = c.image ? 'ready' : 'pending';
+                            if (!c.video_status) c.video_status = 'pending';
+                            chunkById.set(allChunkIds[i], c);
+                        } catch (_) {}
+                    }
+                } catch (mgetErr) {
+                    // Fall back to per-chunk reads if the pipeline fails.
+                    for (const cid of allChunkIds) {
+                        try { const c = await getChunk(cid); if (c) chunkById.set(cid, c); } catch (_) {}
+                    }
+                }
+            }
+
             let filteredIds = allChunkIds;
             if ((scope === 'current_chapter' || scope === 'chapter') && chapter_id) {
-                filteredIds = [];
-                for (const cid of allChunkIds) {
-                    try {
-                        const chunk = await getChunk(cid);
-                        if (chunk?.chapter_id === chapter_id) {
-                            filteredIds.push(cid);
-                        }
-                    } catch (_) {}
-                }
+                filteredIds = allChunkIds.filter(cid => chunkById.get(cid)?.chapter_id === chapter_id);
             } else if ((scope === 'current_scene' || scope === 'scene') && chapter_id && scene_id) {
-                filteredIds = [];
-                for (const cid of allChunkIds) {
-                    try {
-                        const chunk = await getChunk(cid);
-                        if (chunk?.chapter_id === chapter_id && chunk?.scene_id === scene_id) {
-                            filteredIds.push(cid);
-                        }
-                    } catch (_) {}
-                }
+                filteredIds = allChunkIds.filter(cid => {
+                    const c = chunkById.get(cid);
+                    return c?.chapter_id === chapter_id && c?.scene_id === scene_id;
+                });
             }
 
             let audioReady = 0;          // any audio including placeholder (for completion/playback)
             let audioReadyReal = 0;      // real audio only (status = 'ready', for progress display)
             let imageReady = 0;
             let videoReady = 0;
+            let audioError = 0;
+            let imageError = 0;
+            let videoError = 0;
             let hasAudio = false;
             let hasImage = false;
             let hasVideo = false;
 
+            const isErr = (s) => s === 'error' || s === 'failed';
             for (const cid of filteredIds) {
-                try {
-                    const chunk = await getChunk(cid);
-                    if (chunk) {
-                        if (chunk.audio_status === 'ready' || chunk.audio_status === 'placeholder') {
-                            audioReady++;
-                            hasAudio = true;
-                            if (chunk.audio_status === 'ready') {
-                                audioReadyReal++;
-                            }
-                        }
-                        if (chunk.image_status === 'ready') {
-                            imageReady++;
-                            hasImage = true;
-                        }
-                        if (chunk.video_status === 'ready') {
-                            videoReady++;
-                            hasVideo = true;
-                        }
-                    }
-                } catch (_) {}
+                const chunk = chunkById.get(cid);
+                if (!chunk) continue;
+                if (chunk.audio_status === 'ready' || chunk.audio_status === 'placeholder') {
+                    audioReady++;
+                    hasAudio = true;
+                    if (chunk.audio_status === 'ready') audioReadyReal++;
+                } else if (isErr(chunk.audio_status)) {
+                    audioError++;
+                }
+                if (chunk.image_status === 'ready') {
+                    imageReady++;
+                    hasImage = true;
+                } else if (isErr(chunk.image_status)) {
+                    imageError++;
+                }
+                if (chunk.video_status === 'ready') {
+                    videoReady++;
+                    hasVideo = true;
+                } else if (isErr(chunk.video_status)) {
+                    videoError++;
+                }
             }
 
             let scopeIuTotal = 0;
@@ -1037,19 +1055,19 @@ module.exports = function(app, redis, deps) {
             let coverIuTotal = 0;
             let coverIuReady = 0;
             try {
-                const firstChunk = await getChunk(filteredIds[0]);
-                let buildId = firstChunk?.build_id;
-                
-                // If filteredIds is empty, try to get buildId from any chunk
+                // Reuse the already-loaded chunk metadata — no extra reads.
+                let buildId = chunkById.get(filteredIds[0])?.build_id;
                 if (!buildId) {
-                    const anyChunk = await getChunk((await getAllChunks(bookId))[0]);
-                    buildId = anyChunk?.build_id;
+                    for (const cid of allChunkIds) {
+                        const b = chunkById.get(cid)?.build_id;
+                        if (b) { buildId = b; break; }
+                    }
                 }
-                
+
                 if (buildId) {
                     const uniqueScenes = new Map();
                     for (const cid of filteredIds) {
-                        const chunk = await getChunk(cid);
+                        const chunk = chunkById.get(cid);
                         if (chunk?.chapter_id && chunk?.scene_id) {
                             uniqueScenes.set(`${chunk.chapter_id}:${chunk.scene_id}`, {
                                 chapter_id: chunk.chapter_id,
@@ -1062,39 +1080,7 @@ module.exports = function(app, redis, deps) {
                         const rows = await iuRepo.getImageUnitsForScene(buildId, bookId, ch, sc);
                         if (rows.length > 0) {
                             scopeIuTotal += rows.length;
-                            // Count ready IUs: non-dirty IUs are always ready; dirty
-                            // IUs are ready when confirmed by GPU callback (Redis counter).
-                            // This avoids counting stale PNGs from a prior generation.
-                            const dirtyIds = await sceneAssetsRepo.getDirtyUnitIds(bookId, ch, sc);
-                            const dirtyCount = dirtyIds ? dirtyIds.length : 0;
-                            const progKey = `animastor:iu-progress:${bookId}:${ch}:${sc}:image`;
-                            let confirmedCount = 0;
-                            try {
-                                const val = await redis.get(progKey);
-                                if (val) confirmedCount = parseInt(val, 10);
-                            } catch (_) {}
-                            // For regeneration (dirtyCount>0): non-dirty units are already ready
-                            // plus confirmedCount of the regenerating dirty units.
-                            // For dirtyCount=0: use disk-based count because handleImageCompleted
-                            // clears dirty_unit_ids mid-regen, making dirtyCount=0 while only a
-                            // subset of IUs have been confirmed. Counting PNGs on disk handles this.
-                            const ready = dirtyCount > 0
-                                ? rows.length - dirtyCount + Math.min(confirmedCount, dirtyCount)
-                                : (() => {
-                                    if (confirmedCount >= rows.length) return rows.length;
-                                    // Check actual PNGs on disk to handle regen edge case
-                                    const buildDir2 = path.join(config.OUTPUT_DIR, buildId);
-                                    if (buildDir2) {
-                                        try {
-                                            const iuPrefix = `${bookId}_${ch}_${sc}_`;
-                                            const files = fs.readdirSync(buildDir2)
-                                                .filter(f => f.startsWith(iuPrefix) && f.endsWith('.png') && !f.includes('_pr'));
-                                            return Math.max(files.length, Math.min(confirmedCount, rows.length));
-                                        } catch (_) {}
-                                    }
-                                    return Math.min(confirmedCount, rows.length);
-                                })();
-                            scopeIuReady += Math.max(0, ready);
+                            scopeIuReady += await computeIuReady(redis, sceneAssetsRepo, bookId, ch, sc, rows.length);
                         }
                     }
                     
@@ -1111,59 +1097,13 @@ module.exports = function(app, redis, deps) {
                             const rows = await iuRepo.getImageUnitsForScene(buildId, bookId, coverChapterId, coverSceneId);
                             if (rows.length > 0) {
                                 coverIuTotal = rows.length;
-                                const dirtyIds = await sceneAssetsRepo.getDirtyUnitIds(bookId, coverChapterId, coverSceneId);
-                                const dirtyCount = dirtyIds ? dirtyIds.length : 0;
-                                const progKey = `animastor:iu-progress:${bookId}:${coverChapterId}:${coverSceneId}:image`;
-                                let confirmedCount = 0;
-                                try {
-                                    const val = await redis.get(progKey);
-                                    if (val) confirmedCount = parseInt(val, 10);
-                                } catch (_) {}
-                                coverIuReady = dirtyCount > 0
-                                    ? rows.length - dirtyCount + Math.min(confirmedCount, dirtyCount)
-                                    : (() => {
-                                        if (confirmedCount >= rows.length) return rows.length;
-                                        const buildDir2 = path.join(config.OUTPUT_DIR, buildId);
-                                        if (buildDir2) {
-                                            try {
-                                                const iuPrefix = `${bookId}_${coverChapterId}_${coverSceneId}_`;
-                                                const files = fs.readdirSync(buildDir2)
-                                                    .filter(f => f.startsWith(iuPrefix) && f.endsWith('.png') && !f.includes('_pr'));
-                                                return Math.max(files.length, Math.min(confirmedCount, rows.length));
-                                            } catch (_) {}
-                                        }
-                                        return Math.min(confirmedCount, rows.length);
-                                    })();
-                                coverIuReady = Math.max(0, coverIuReady);
+                                coverIuReady = await computeIuReady(redis, sceneAssetsRepo, bookId, coverChapterId, coverSceneId, rows.length);
                             } else {
                                 // Fallback: count from book data units
                                 const units = coverScene.units || [];
                                 coverIuTotal = units.length;
                                 if (coverIuTotal > 0) {
-                                    const dirtyIds = await sceneAssetsRepo.getDirtyUnitIds(bookId, coverChapterId, coverSceneId);
-                                    const dirtyCount = dirtyIds ? dirtyIds.length : 0;
-                                    const progKey = `animastor:iu-progress:${bookId}:${coverChapterId}:${coverSceneId}:image`;
-                                    let confirmedCount = 0;
-                                    try {
-                                        const val = await redis.get(progKey);
-                                        if (val) confirmedCount = parseInt(val, 10);
-                                    } catch (_) {}
-                                    coverIuReady = dirtyCount > 0
-                                        ? units.length - dirtyCount + Math.min(confirmedCount, dirtyCount)
-                                        : (() => {
-                                            if (confirmedCount >= units.length) return units.length;
-                                            const buildDir2 = path.join(config.OUTPUT_DIR, buildId);
-                                            if (buildDir2) {
-                                                try {
-                                                    const iuPrefix = `${bookId}_${coverChapterId}_${coverSceneId}_`;
-                                                    const files = fs.readdirSync(buildDir2)
-                                                        .filter(f => f.startsWith(iuPrefix) && f.endsWith('.png') && !f.includes('_pr'));
-                                                    return Math.max(files.length, Math.min(confirmedCount, units.length));
-                                                } catch (_) {}
-                                            }
-                                            return Math.min(confirmedCount, units.length);
-                                        })();
-                                    coverIuReady = Math.max(0, coverIuReady);
+                                    coverIuReady = await computeIuReady(redis, sceneAssetsRepo, bookId, coverChapterId, coverSceneId, units.length);
                                 }
                             }
                         }
@@ -1198,6 +1138,12 @@ module.exports = function(app, redis, deps) {
                 scope_iu_ready: scopeIuReady,
                 cover_iu_total: coverIuTotal,
                 cover_iu_ready: coverIuReady,
+                // Per-layer error counts (chunks with status 'error'/'failed').
+                // Lets the frontend surface a failed worker instead of showing
+                // a silently stalled progress bar that never completes.
+                audio_error: audioError,
+                image_error: imageError,
+                video_error: videoError,
             });
         } catch (err) {
             console.error('[ASSETS-STATE] Error:', err.message);

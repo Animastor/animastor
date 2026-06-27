@@ -9,6 +9,7 @@
 
 const path = require('path');
 const fs = require('fs');
+const { publishProgress } = require('./progress-pubsub.cjs');
 
 module.exports = function(redis, config, deps) {
     const { audio, image, video, state, book, orchestrator, activeScenes, placeholderAudio, cleanupService, utils, bookDiff } = deps;
@@ -73,8 +74,13 @@ module.exports = function(redis, config, deps) {
                 // instead of filesystem listing, which includes stale PNGs).
                 try {
                     const progKey = `animastor:iu-progress:${bookId}:${chapterId}:${sceneId}:image`;
-                    await redis.incr(progKey);
+                    const ready = await redis.incr(progKey);
                     await redis.expire(progKey, 14400);
+                    // Push an immediate increment to any open SSE stream so the
+                    // UI advances without waiting for the next poll tick.
+                    await publishProgress(redis, bookId, {
+                        layer: 'image', chapterId, sceneId, ready,
+                    });
                 } catch (progErr) {
                     console.warn(`⚠️ Failed to increment IU progress counter: ${progErr.message}`);
                 }

@@ -10,6 +10,7 @@ const dispatchEngine = require('../runtime/dispatch-engine');
 const book = require('../book');
 const placeholderAudio = require('../services/placeholder-audio');
 const sceneAssetsRepo = require('../storage/postgres/repositories/scene-assets-repo');
+const { publishProgress } = require('../services/progress-pubsub.cjs');
 const { log, warn, error, logEvent } = require('./scene-utils');
 
 // Stage constants (replaces removed scene-state-machine.js)
@@ -110,6 +111,7 @@ async function handleAudioCompleted(redis, bookId, chapterId, sceneId, buildId) 
     }
 
     await state.setAssetState(redis, bookId, chapterId, sceneId, 'audio', state.AssetState.READY);
+    await publishProgress(redis, bookId, { layer: 'audio', chapterId, sceneId });
 
     // Н.2: Quota is released by markDispatchCompleted (single owner).
     log(`AUDIO_CALLBACK: ${bookId}/${chapterId}/${sceneId} -> AUDIO_READY`);
@@ -319,6 +321,7 @@ async function handleVideoCompleted(redis, bookId, chapterId, sceneId, buildId) 
     await updateSceneChunks(redis, bookId, chapterId, sceneId, { video: true, video_status: 'ready' });
 
     await state.setAssetState(redis, bookId, chapterId, sceneId, 'video', state.AssetState.READY);
+    await publishProgress(redis, bookId, { layer: 'video', chapterId, sceneId });
 
     // Н.2: Quota is released by markDispatchCompleted (single owner).
 

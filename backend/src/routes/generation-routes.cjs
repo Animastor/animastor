@@ -491,6 +491,66 @@ module.exports = function(app, redis, deps) {
     });
 
     // ======================================================
+    // PROGRESS STREAM (SSE) — real-time GPU generation progress
+    // ======================================================
+    // Pushes per-layer increment events as the GPU confirms work, so the
+    // frontend advances immediately instead of waiting for the next poll.
+    // Polling /assets-state remains the source of truth / reconcile path;
+    // these events are advisory hints. Mirrors the SSE pattern in ai-routes.cjs.
+    const { channel: progressChannel } = require('../services/progress-pubsub.cjs');
+    app.get('/api/v1/book/:bookId/progress-stream', async (req, res) => {
+        const { bookId } = req.params;
+
+        res.setHeader('Content-Type', 'text/event-stream');
+        res.setHeader('Cache-Control', 'no-cache');
+        res.setHeader('Connection', 'keep-alive');
+        res.setHeader('X-Accel-Buffering', 'no'); // disable nginx buffering
+        res.flushHeaders?.();
+
+        // Tell the client we're connected (also primes proxies).
+        res.write(`event: open\ndata: ${JSON.stringify({ book_id: bookId })}\n\n`);
+
+        // Dedicated subscriber connection — a SUBSCRIBE-mode client cannot run
+        // normal commands, so we duplicate rather than reuse the shared client.
+        const sub = redis.duplicate();
+        const ch = progressChannel(bookId);
+
+        const onMessage = (chan, message) => {
+            if (chan !== ch) return;
+            try { res.write(`data: ${message}\n\n`); } catch (_) {}
+        };
+
+        sub.on('message', onMessage);
+        sub.on('error', (err) => {
+            console.warn('[PROGRESS-STREAM] subscriber error:', err.message);
+        });
+        try {
+            await sub.subscribe(ch);
+        } catch (err) {
+            console.warn('[PROGRESS-STREAM] subscribe failed:', err.message);
+            try { res.end(); } catch (_) {}
+            try { sub.disconnect(); } catch (_) {}
+            return;
+        }
+
+        // Heartbeat comment keeps the connection alive through idle periods and
+        // proxy timeouts. SSE comments (lines starting with ':') are ignored by
+        // the client's event parser.
+        const heartbeat = setInterval(() => {
+            try { res.write(`: ping\n\n`); } catch (_) {}
+        }, 15_000);
+
+        const cleanup = () => {
+            clearInterval(heartbeat);
+            try { sub.removeListener('message', onMessage); } catch (_) {}
+            try { sub.unsubscribe(ch).catch(() => {}); } catch (_) {}
+            try { sub.disconnect(); } catch (_) {}
+        };
+        req.on('close', cleanup);
+        res.on('error', cleanup);
+    });
+
+    // ======================================================
     // MEDIA SERVING
     // ======================================================
     app.get('/api/v1/chunk/:id/audio', async (req, res) => {
