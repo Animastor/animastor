@@ -94,25 +94,15 @@
 │   │   │   ├── retry-manager.js                 # Менеджер повторных попыток
 │   │   │   ├── retention-manager.js             # Управление удержанием
 │   │   │   ├── failure-taxonomy.js              # Таксономия ошибок
-│   │   │   ├── failure-replay.js                # Воспроизведение ошибок (DEBUG)
-│   │   │   ├── snapshot-manager.js              # Менеджер снепшотов (DEBUG)
-│   │   │   ├── circuit-breaker.js               # Размыкатель цепи (DEBUG)
-│   │   │   ├── priority-manager.js              # Приоритезация сцен (DEBUG)
-│   │   │   ├── fairness-engine.js               # Предотвращение голодания (DEBUG)
-│   │   │   ├── retry-budget-manager.js          # Бюджет повторных попыток (DEBUG)
-│   │   │   ├── policy-engine.js                 # Оценка политик (DEBUG)
-│   │   │   ├── policy-simulator.js              # Симулятор политик (DEBUG/Experimental)
-│   │   │   ├── workload-classifier.js           # Классификация нагрузки (DEBUG)
-│   │   │   ├── cost-estimator.js                # Оценка стоимости GPU (DEBUG)
-│   │   │   ├── decision-trace.js                # Трассировка решений (DEBUG)
-│   │   │   ├── feedback-engine.js               # Адаптивная обратная связь (DEBUG)
-│   │   │   ├── governance-health.js             # Мониторинг здоровья (DEBUG)
-│   │   │   ├── governance-metrics.js            # Метрики управления (DEBUG)
-│   │   │   ├── governance-sandbox.js            # Песочница политик (DEBUG/Experimental)
-│   │   │   ├── governance-stability.js          # Мониторинг стабильности (DEBUG)
-│   │   │   ├── governance-validator.js          # Валидация политик (DEBUG/Experimental)
-│   │   │   ├── adaptation-controller.js         # Адаптивное управление (DEBUG)
-│   │   │   └── execution-semantics.js           # Семантика выполнения (DEBUG)
+│   │   │   ├── circuit-breaker.js               # [LIVE] Размыкатель цепи (used by dispatch-engine)
+│   │   │   ├── fairness-engine.js               # [LIVE] Предотвращение голодания (used by dispatch-engine)
+│   │   │   ├── retry-budget-manager.js          # [LIVE] Бюджет повторных попыток (used by dispatch-engine)
+│   │   │   ├── feedback-config.js               # Конфиг адаптивной обратной связи
+│   │   │   └── feedback-recorder.js             # Запись сигналов обратной связи
+│   │   │   # NB: 16 debug-only governance-модулей + dead api/runtime.js удалены 2026-06-27 (D.3/L1, 311f44a):
+│   │   │   #     snapshot/priority/policy-engine/policy-simulator/workload-classifier/cost-estimator/
+│   │   │   #     decision-trace/feedback-engine/governance-{health,metrics,sandbox,stability,validator}/
+│   │   │   #     adaptation-controller/execution-semantics/failure-replay. runtime/: 37 → 21 модуль.
 │   │   ├── services/
 │   │   │   ├── agent-service.js                 # [CORE] AI-пайплайн (6 шагов)
 │   │   │   ├── ai-loader.js                     # Загрузка базы знаний AI (TTL 1 мин)

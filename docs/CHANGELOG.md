@@ -4,6 +4,40 @@ All notable changes to Animastor are documented here.
 
 ---
 
+## [Unreleased] — 2026-06-27
+
+### Security
+
+- **S.1 / Н.4: Секреты вынесены из git** (`docker-compose.yml`, `.env`, `.env.example`) —
+  боевые `OPENROUTER_API_KEY` и пароль PG больше не хранятся в открытом виде в отслеживаемом
+  файле; читаются из gitignored `.env` через `${VAR:?...}`-ссылки (fail-fast при отсутствии).
+  ⚠️ Старые значения остаются в истории git с `380a777` — **требуется ротация**.
+  Коммит: `6dca53a`
+
+### Removed
+
+- **D.3 / L1: Удалён мёртвый governance-кластер** — `src/api/runtime.js` (1758 строк, нигде
+  не импортировался) + 16 debug-only модулей `runtime/`, шесть из которых делали `require()`
+  на несуществующие файлы (потенциальные 500-е на debug-эндпоинтах). `runtime/`: 37 → 21 модуль.
+  Живые `circuit-breaker`/`fairness-engine`/`retry-budget-manager` сохранены. Коммит: `311f44a`
+
+### Changed
+
+- **M5: Единый арбитр состояния** — все прямые `setAssetState` / `callback+markDispatchCompleted`
+  заведены через Orchestrator-фасад (`completeStage`); P2 (task-handler), P4/P5/P6 (reconciliation,
+  scene-restoration, startup-recovery). Linear-state (L1–L7) → производная `deriveLinearState`.
+  Коммиты: `5d5e1a3`, `2807a38`, `3562778`…`cadad04`
+
+- **M3: Диск — факт, не решение** — `restoreChunkStatusForScene`/`reconcileWindowStatuses` пишут
+  `ready` только при актуальной PG-версии (version-gate); stale-файлы не отменяют force-regen.
+  Коммиты: `91f104f`, `cc7d706`
+
+### Added
+
+- **O2: Prometheus-метрики** — quota utilisation, lease age, tick duration. Коммит: `40acaf4`
+
+---
+
 ## [Unreleased] — 2026-06-26
 
 ### Fixed

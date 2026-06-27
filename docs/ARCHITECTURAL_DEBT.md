@@ -224,18 +224,25 @@
 
 ---
 
-## 15. Slim runtime — governance модули в debug (ЧАСТИЧНО ИСПРАВЛЕНО)
+## 15. Slim runtime — governance модули в debug (✅ ИСПРАВЛЕНО)
 
-**Описание проблемы (было):** В v2.0.0 runtime/index.js был "slim"-нут: governance-модули (circuit-breaker, fairness, policy-engine и др.) вынесены из core pipeline в debug-секцию и загружаются лениво. Файлы сохранены на диске, но не входят в основной цикл.
+**Описание проблемы (было):** В v2.0.0 runtime/index.js был "slim"-нут: governance-модули (circuit-breaker, fairness, policy-engine и др.) вынесены из core pipeline в debug-секцию и загружаются лениво. Файлы сохранены на диске, но не входят в основной цикл. Часть из них делала `require()` на несуществующие файлы — мина для debug-эндпоинтов (500-е).
 
 **Что сделано (Phase 6, R6.4):**
 - circuitBreaker, retryBudget, fairness — переведены с safeRequire на прямой require() и реально вызываются в dispatch-engine
-- policyEngine, workloadClassifier, costEstimator — удалены из dispatch-engine (safeRequire убран), файлы сохранены как архив
+- policyEngine, workloadClassifier, costEstimator — удалены из dispatch-engine (safeRequire убран)
 - Убраны мёртвые функции `dispatchStageWithPolicy()` и `evaluateDispatchPolicy()`
 
-**Остаётся:** 18 из 36 модулей runtime/ — debug-only, 5 из них имеют require на несуществующие файлы (мина для debug-эндпоинтов).
+**Что сделано (D.3/L1, 2026-06-27, коммит `311f44a`):**
+- Удалён `src/api/runtime.js` (1758 строк) — нигде не импортировался, единственный потребитель debug-кластера.
+- Удалены 16 мёртвых модулей `runtime/` (включая 6 с битыми require: policy-engine, policy-simulator, failure-replay, governance-validator, governance-sandbox, governance-health, execution-semantics и др.).
+- Удалён `debug: { ... }` фасад из `runtime/index.js`.
+- `runtime/` сокращён с **37 до 21 модуля** — все живые, debug-only governance-балласта больше нет.
+
+**Остаётся:** живые `circuit-breaker`/`fairness-engine`/`retry-budget-manager` (используются dispatch-engine напрямую). Битых require в кодовой базе нет.
 
 > **UPD 2026-06-26:** 3 governance-модуля LIVE, 3 мёртвых удалены из dispatch-engine.
+> **UPD 2026-06-27:** Мёртвый кластер и dead `api/runtime.js` удалены (D.3). Пункт закрыт.
 
 ---
 
