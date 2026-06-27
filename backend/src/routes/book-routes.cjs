@@ -12,6 +12,7 @@ const multer = require('multer');
 const sceneAssetsRepo = require('../storage/postgres/repositories/scene-assets-repo');
 const { restoreSceneChunkStatus } = require('../orchestration/scene-restoration');
 const registerVersionRoutes = require('./book/versions-routes.cjs');
+const registerCacheRoutes = require('./book/cache-routes.cjs');
 
 module.exports = function(app, redis, deps) {
     const {
@@ -1539,87 +1540,11 @@ async function recoverMissingRedisChunks(buildId, bookId) {
     // ======================================================
     // CACHE ENDPOINTS (GET + DELETE)
     // ======================================================
-    app.get('/api/v1/book/:bookId/cache', async (req, res) => {
-        try {
-            const { bookId } = req.params;
-            const cacheStatus = {};
-            try {
-                const pgRows = await storage.postgres.query(`
-                    SELECT chapter_id, scene_id, status, layer
-                    FROM scene_assets_cache
-                    WHERE book_id = $1
-                `, [bookId]);
-                for (const row of pgRows.rows) {
-                    if (!cacheStatus[row.chapter_id]) cacheStatus[row.chapter_id] = {};
-                    if (!cacheStatus[row.chapter_id][row.scene_id]) cacheStatus[row.chapter_id][row.scene_id] = [];
-                    cacheStatus[row.chapter_id][row.scene_id].push({ status: row.status, layer: row.layer });
-                }
-            } catch (dbErr) {
-                console.warn('[CACHE] DB query failed:', dbErr.message);
-            }
-            const totalStale = Object.values(cacheStatus).reduce((acc, ch) =>
-                acc + Object.values(ch).reduce((acc2, sc) => acc2 + sc.filter(s => s.status === 'stale').length, 0), 0);
-            const totalPending = Object.values(cacheStatus).reduce((acc, ch) =>
-                acc + Object.values(ch).reduce((acc2, sc) => acc2 + sc.filter(s => s.status === 'pending').length, 0), 0);
-            const totalReady = Object.values(cacheStatus).reduce((acc, ch) =>
-                acc + Object.values(ch).reduce((acc2, sc) => acc2 + sc.filter(s => s.status === 'ready').length, 0), 0);
-            res.json({ book_id: bookId, chapters: cacheStatus, summary: { stale: totalStale, pending: totalPending, ready: totalReady } });
-        } catch (err) {
-            console.error('[CACHE] Error:', err.message);
-            res.status(500).json({ error: err.message });
-        }
-    });
-
-    app.delete('/api/v1/book/:bookId/cache', async (req, res) => {
-        try {
-            const { bookId } = req.params;
-
-            // Get build IDs from chunks
-            const chunkIds = await getAllChunks(bookId);
-            const buildIds = new Set();
-            for (const cid of chunkIds) {
-                try {
-                    const chunk = await getChunk(cid);
-                    if (chunk?.build_id) buildIds.add(chunk.build_id);
-                } catch (_) {}
-            }
-
-            // Clean up build directories
-            const OUTPUT_DIR = config.OUTPUT_DIR;
-            for (const buildId of buildIds) {
-                const buildPath = path.join(OUTPUT_DIR, buildId);
-                if (fs.existsSync(buildPath)) {
-                    try { fs.rmSync(buildPath, { recursive: true, force: true }); } catch (e) {
-                        console.warn('[CACHE] Failed to delete build dir:', buildPath);
-                    }
-                }
-            }
-
-            // Clean up ALL Redis keys for this book using the comprehensive helper
-            await cleanBookRedisKeys(redis, bookId);
-
-            // Clean up PostgreSQL
-            try {
-                await storage.postgres.query('DELETE FROM scene_assets_cache WHERE book_id = $1', [bookId]);
-                await storage.postgres.query('DELETE FROM scene_assets_state WHERE book_id = $1', [bookId]);
-                await storage.postgres.query('DELETE FROM scene_images WHERE book_id = $1', [bookId]);
-                await storage.postgres.query('DELETE FROM scene_videos WHERE book_id = $1', [bookId]);
-            } catch (dbErr) {
-                console.warn('[CACHE] DB cleanup failed:', dbErr.message);
-            }
-
-            // Clear gpu-hub queue
-            try {
-                const HUB_URL = process.env.HUB_URL || 'https://animastor.in/gpu';
-                await fetch(`${HUB_URL}/queue/clear?book_id=${bookId}`, { method: 'DELETE' }).catch(() => {});
-            } catch (_) {}
-
-            log('[CACHE] Cache cleared for', bookId);
-            res.json({ cleared: true, book_id: bookId, builds_removed: buildIds.size });
-        } catch (err) {
-            console.error('[CACHE] Delete error:', err.message);
-            res.status(500).json({ error: err.message });
-        }
+    // Cache inspection + teardown routes — extracted to ./book/cache-routes.cjs
+    // (Architectural Debt #3 split, sub-registrar pattern).
+    registerCacheRoutes(app, {
+        redis, config, storage, path, fs,
+        getAllChunks, getChunk, cleanBookRedisKeys, log,
     });
 
     // ======================================================
