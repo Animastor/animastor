@@ -1,132 +1,86 @@
-# TODO — Сегодня (26 июня 2026)
+# TODO — Сегодня (27 июня 2026)
 
-> Фокус: закрыть остаток аудита — **M3** (диск как факт, не решение) и **M5** (свести писателей состояния к одному арбитру).
-> Основано на `04_Migration_Plan.md` (Шаги 9–11) и наблюдении из ревью Н.0–Н.10.
-
-## Контекст
-
-C1–C4, M1, M2, M4, §5.1 — закрыты (Н.0–Н.9). Н.10 — доработки по ревью.
-Остались **M3** и **M5**. По плану это Релиз C, который требует Orchestrator-фасада
-(`markDirty`/`reconcile`/`completeStage`) — а его пока нет. Поэтому сегодня — подготовительные,
-низкорисковые шаги к M3/M5: каждый самодостаточен, с тестом, в духе Н.0–Н.9.
-
-**Правило:** каждый шаг = отдельный коммит → `npm test` → push. Высокий риск у Д.3 — только после Д.0.
+> Контекст: Релизы A/B/C (`04_Migration_Plan.md`) закрыты — C1–C4, M1–M5, §5.1.
+> M5 (P2/P4/P5/P6 + L1–L7) и O2 завершены 26 июня. См. вчерашний `TODO_TODAY` в git (`9668f4c`).
+> Остаётся: **1 просроченный security-пункт** + **Релиз D «уборка»** (Долгосрок Д.1–Д.5 из `06_Roadmap.md`).
+>
+> **Правило:** каждый шаг = отдельный коммит → `npm test` (база 381 passing) → push.
 
 ---
 
-## ✅ Д.0: Карта писателей состояния (инвентаризация) — выполнено
+## 🔴 S.1: Вынести секреты из git + ротация (Н.4 — ПРОСРОЧЕНО)
 
-**Риск:** нет (только чтение). **Фундамент для Д.2, Д.3.**
+**Риск:** низкий технически, но **критичный по безопасности**. **Делать первым.**
 
-Результат → `docs/STATE_WRITERS_MAP.md`:
-- **8 per-asset writers** (P1–P8) с точными строками; P8 уже за фасадом.
-- **7 linear-state writers** (L1–L7) — производная проекция, вывод позже.
-- **3 disk-derived chunk writers** (D1–D3) — цель Д.3 (M3).
-- Порядок безопасного перевода к фасаду: P3 (Д.2) → D1–D3 (Д.3) → P5/P6 → P4 → P2.
+В `docker-compose.yml` (отслеживается git) — боевые секреты в открытом виде:
+- `OPENROUTER_API_KEY=sk-live-…bd0b` (строка 59)
+- `POSTGRES_PASSWORD=animastor_secret_2026` (строка 22) + `PG_PASSWORD` (строка 57)
 
----
+`.gitignore` уже покрывает `.env` / `*.env` — инфраструктура для выноса готова, `.env`-файлов пока нет.
 
-## ✅ Д.1: `markDispatchCompleted` идемпотентен — выполнено
-
-**Риск:** низкий. **Прямое продолжение ревью.** Не зависит от Д.0.
-
-Из ревью: `markDispatchCompleted` безусловно делал `releaseQuota` → целостность квот
-держалась только на C4-dedup. Двойной вызов в обход dedup (истёкший TTL, reconciliation,
-force-regen) давал двойной декремент квоты.
-
-Сделано:
-- `SET NX animastor:dispatch-completed:<scene>:<stage>` (TTL = lease TTL) в начале
-  `markDispatchCompleted`; при повторе — ранний `return`, release пропускается.
-- Маркер снимается в `dispatchStage` (шаг 4, после lease) → force-regen/re-dispatch
-  завершается заново. Плюс маркеры чистятся в `clearAllLeasesForBook` (cancel/regen).
-- Экспортирован `getDispatchCompletedKey` для тестов.
-- +2 теста: двойной вызов декрементит ровно раз; после снятия маркера release снова работает.
-- **365 passing** (было 363).
+Сделать:
+- [ ] `.env` (не коммитится) + `.env.example` с плейсхолдерами.
+- [ ] `docker-compose.yml` → `${OPENROUTER_API_KEY}` / `${POSTGRES_PASSWORD}` через `env_file`.
+- [ ] **Ротировать утёкший ключ OpenRouter и пароль PG** — ключ в истории git, считается скомпрометированным.
+- [ ] (опц.) почистить ключ из истории git или принять как «ротирован, старый мёртв».
 
 ---
 
-## ✅ Д.2: `planScene`/`shouldScheduleAssets` — чистая (Шаг 9, часть M5) — выполнено
+## 🟢 D.1: Доуборка мёртвого дубля лимитов (M4 / Д.1) — проверить
 
-**Риск:** средний. **После Д.0.**
+**Риск:** низкий. M4 закрыт (`0adc930`), но roadmap Д.1 шире: убедиться, что `getMetrics`
+планировщика отдаёт **реальные** счётчики dispatch-engine, а не мёртвые нули.
 
-`shouldScheduleAssets` при version-stale **сама** писала Redis READY→DIRTY — побочный эффект
-в функции планирования (P3 в карте писателей).
-
-Сделано:
-- `shouldScheduleAssets` теперь ЧИСТАЯ: только читает per-asset + layer-config, возвращает
-  `{ stages, allDone }`, без единой записи.
-- Version-stale разделён на два: `detectVersionStale` (чистый PG-read → bool) и
-  `markVersionStaleDirty` (явная запись READY→DIRTY).
-- Пред-проход в `attemptDispatch`: detect → mark → plan, **в том же тике** (без лага регена).
-- Оба экспортированы; facade `planScene` JSDoc обновлён.
-- +4 теста: pure (no mutation) ×2, markVersionStaleDirty reset ×2. **369 passing** (было 365).
+Сделать:
+- [ ] `grep -rn "MAX_CONCURRENT\|concurrent-\|canScheduleStage\|incrementConcurrent"` — нет боевых вызовов.
+- [ ] `getMetrics` / `/api/v1/debug/runtime` показывает счётчики, совпадающие с `/quotas`.
+- [ ] Если уже сделано в `0adc930` — отметить Д.1 как полностью закрытый, не дублировать.
 
 ---
 
-## ✅ Д.3: Диск-проверки возвращают факты, не решения (M3) — выполнено
+## 🟢 D.3: Снять мёртвый governance и битые `require` (L1 / Д.3)
 
-**Риск:** высокий. **Опора истины — PG-ready (Н.5) + version-gate.**
+**Риск:** низкий (вне боевого пути), но **проверить достижимость перед удалением.**
 
-**Коммиты:** `91f104f` (fix) + `cc7d706` (tests)
+37 модулей в `runtime/`, ~18 debug-only; часть с `require()` на несуществующие файлы —
+мина для debug-эндпоинтов (500-е). Живые `circuit-breaker`/`retry-budget`/`fairness` — оставить.
 
-`restoreChunkStatusForScene` и `reconcileWindowStatuses` больше не пишут 'ready'
-просто по наличию файла — перед записью проверяют PG `content_version`.
-
-Что сделано:
-- `_checkAssetVersionStale` — новый хелпер в scene-window.js, сравнивает
-  `scene_assets.scene_content_version` с `scenes.content_version` для audio/image/video
-- `restoreChunkStatusForScene` — version-gate: если версия устарела, chunk stays 'pending'
-- `reconcileWindowStatuses` — version-gate с per-scene cache (избегает N+1 PG-запросов)
-- `scene-restoration.js` — version-gate перед `setAssetState(audio, READY)` (P6)
-
-**Тесты (5, SECTION 8, 381 passing):**
-1. Force-regen: stale version → old PNG не отменяет регенерацию, chunk stays 'pending'
-2. Рестарт: current version → chunk пишет 'ready' (без массовой перегенерации)
-3. reconcileWindowStatuses stale → 0 reconciled
-4. reconcileWindowStatuses current → reconciled, chunk → ready
+Сделать:
+- [ ] Найти `require()` на отсутствующие файлы: пройтись по debug-only модулям `runtime/`.
+- [ ] Архивировать/удалить мёртвые модули (не входят в dispatch-путь — сверить grep'ом).
+- [ ] Прогнать debug-эндпоинты — ни один не падает с 500 из-за битого require.
 
 ---
 
-## ✅ M5: Свести писателей состояния к одному арбитру — выполнено
+## ⚪ Отложено (не сегодня — большие/зависимые)
 
-**Риск:** средний. **После Д.0–Д.3.** Получилось закрыть в тот же день (фасад уже был, `a092f44`).
-
-### Per-asset writers → orchestrator-фасад
-- **P2** — `task-handler.cjs`: 7 мест прямого `callback + markDispatchCompleted` сведены
-  к `orchestrator.completeStage` (включая отсутствовавший `handleSceneImageCompleted`).
-  ✅ `5d5e1a3`
-- **P4/P5/P6** — прямые `setAssetState` в `reconciliation-engine`, `scene-restoration`,
-  `startup-recovery` → через фасад. ✅ `2807a38`
-
-### Linear-state writers (L1–L7) → `deriveLinearState` (производная проекция)
-- L1–L2 ✅ `3562778` · L3 (reconciliation-engine) ✅ `84fa8da` · L4 (scene-window) ✅ `58a24a0`
-- L5 (book-routes + window-generator + redis-helpers) ✅ `908207f`
-- L6 (runtime-persistence `recoverActiveScenes`) ✅ `5b2a11a`
-- L7 (debug-routes → recover-video через per-asset + `syncLinearState`) ✅ `cadad04`
-
-### Сопутствующее
-- **O2** — Prometheus-метрики: quota utilisation, lease age, tick duration. ✅ `40acaf4`
-- Чистка мёртвого кода (`backend.cjs` wrappers, asset-registry exports). ✅ `d713e20`
-- Fix: 500 в `/regenerate` — циркулярная зависимость на `restoreSceneChunkStatus`
-  (импорт напрямую из leaf-модуля `scene-restoration.js`). ✅ `968d1f6`
+- **Д.2 — вывод линейной проекции (L3):** удалить `SceneState`/`syncLinearState`/`deriveLinearState`.
+  Блокирует frontend — плеер и debug ещё читают `scene-state` ключи. Делать **после** стабилизации.
+- **Д.4 — развязать циклические зависимости (L2):** убрать inline `require()` внутри функций
+  (8+ мест в `scene-callbacks.js`). По roadmap — **после** К.4 (Orchestrator уже даёт границу).
+- **Д.5 — недостающие docs:** backpressure/квоты/lease, per-asset vs linear, идемпотентность колбэков.
 
 ---
 
-## Итог дня
+## 🟢 Док-хвост (быстро, low-risk)
 
-| Шаг | Что закрывает | Риск | Зависит от |
-|---|---|---|---|
-| Д.0 | инвентаризация (M5) | нет | ✅ `8369a04` |
-| Д.1 | идемпотентность квот | низкий | ✅ `58a8577` |
-| Д.2 | чистый planScene (M5) | средний | ✅ `b485c73` |
-| Д.3 | диск как факт (M3) | высокий | ✅ `91f104f` + `cc7d706` |
-| M5 | единый арбитр (P2/P4/P5/P6 + L1–L7) | средний | ✅ `5d5e1a3` … `cadad04` |
-| O2 | Prometheus-метрики | низкий | ✅ `40acaf4` |
-
-**M3 и M5 закрыты.** Все прямые `setAssetState` / `callback+markDispatchCompleted`
-проходят через Orchestrator-фасад (`a092f44`); linear-state — производная (`deriveLinearState`).
+- [ ] `ARCHITECTURAL_AUDIT_TODO.md` строки 32–34: снять предупреждение о R1.1-расхождении —
+  version-stale в `startup-recovery.js:284-288` уже идёт через `orchestrator.markDirtyScene` (`2807a38`).
 
 ---
 
-*Дата: 2026-06-26. Д.0–Д.3, M5 и O2 выполнены. Тесты: 381 passing, 0 failing.
-Основано на `docs/04_Migration_Plan.md` (Шаги 9–11).*
+## Приоритет дня
+
+| # | Шаг | Закрывает | Риск | Почему сейчас |
+|---|---|---|---|---|
+| 1 | **S.1** секреты + ротация | Н.4 | критич. (безоп.) | live-ключ в git, просрочено с «недели» |
+| 2 | D.1 доуборка лимитов | M4/Д.1 | низкий | проверка/закрытие, дёшево |
+| 3 | D.3 мёртвый governance | L1/Д.3 | низкий | убирает 500-е на debug |
+| — | док-хвост | — | низкий | снять устаревшее предупреждение |
+
+**Зависимости:** S.1 независим (делать первым). D.2/D.4 — только после стабилизации (не сегодня).
+
+---
+
+*Дата: 2026-06-27. Релизы A/B/C закрыты. Сегодня — security (S.1) + Релиз D «уборка».
+Основано на `docs-claude/06_Roadmap.md` (Долгосрок) и `04_Migration_Plan.md` (Шаг 12).*
