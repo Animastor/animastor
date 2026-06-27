@@ -1,0 +1,60 @@
+const assert = require('assert');
+const { setDeep, findUnitInScene } = require('../src/routes/book/scene-patch-utils.cjs');
+
+describe('scene-patch-utils', () => {
+    describe('setDeep', () => {
+        it('sets a top-level key', () => {
+            const o = {};
+            setDeep(o, 'a', 1);
+            assert.strictEqual(o.a, 1);
+        });
+
+        it('creates intermediate objects for a dotted path', () => {
+            const o = {};
+            setDeep(o, 'a.b.c', 'x');
+            assert.deepStrictEqual(o, { a: { b: { c: 'x' } } });
+        });
+
+        it('overwrites an existing leaf without clobbering siblings', () => {
+            const o = { a: { b: 1, keep: 2 } };
+            setDeep(o, 'a.b', 9);
+            assert.deepStrictEqual(o, { a: { b: 9, keep: 2 } });
+        });
+
+        it('treats a null intermediate as missing and replaces it', () => {
+            const o = { a: null };
+            setDeep(o, 'a.b', 5);
+            assert.deepStrictEqual(o, { a: { b: 5 } });
+        });
+    });
+
+    describe('findUnitInScene', () => {
+        it('finds a unit in scene.units', () => {
+            const scene = { units: [{ id: 'u1' }, { id: 'u2' }] };
+            assert.strictEqual(findUnitInScene(scene, 'u2').id, 'u2');
+        });
+
+        it('finds a unit inside dialogue_blocks[].units', () => {
+            const scene = { dialogue_blocks: [{ units: [{ id: 'd1' }] }, { units: [{ id: 'd2' }] }] };
+            assert.strictEqual(findUnitInScene(scene, 'd2').id, 'd2');
+        });
+
+        it('prefers scene.units over dialogue_blocks when both match-eligible', () => {
+            const scene = { units: [{ id: 'u1' }], dialogue_blocks: [{ units: [{ id: 'x' }] }] };
+            assert.strictEqual(findUnitInScene(scene, 'u1').id, 'u1');
+        });
+
+        it('returns null when the unit is absent', () => {
+            assert.strictEqual(findUnitInScene({ units: [{ id: 'a' }] }, 'missing'), null);
+        });
+
+        it('tolerates a scene with neither units nor dialogue_blocks', () => {
+            assert.strictEqual(findUnitInScene({}, 'whatever'), null);
+        });
+
+        it('skips null entries in a units array without throwing', () => {
+            const scene = { units: [null, { id: 'u9' }] };
+            assert.strictEqual(findUnitInScene(scene, 'u9').id, 'u9');
+        });
+    });
+});

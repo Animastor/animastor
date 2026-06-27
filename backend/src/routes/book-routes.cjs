@@ -15,6 +15,7 @@ const registerVersionRoutes = require('./book/versions-routes.cjs');
 const registerCacheRoutes = require('./book/cache-routes.cjs');
 const registerStatusRoutes = require('./book/status-routes.cjs');
 const registerParseRoutes = require('./book/parse-routes.cjs');
+const { setDeep, findUnitInScene } = require('./book/scene-patch-utils.cjs');
 
 module.exports = function(app, redis, deps) {
     const {
@@ -301,39 +302,7 @@ async function recoverMissingRedisChunks(buildId, bookId) {
     //
     // Both modes support optional "chapter_title" for chapter-level changes.
 
-    function setDeep(obj, path, value) {
-        const keys = path.split('.');
-        let current = obj;
-        for (let i = 0; i < keys.length - 1; i++) {
-            if (current[keys[i]] === undefined || current[keys[i]] === null) {
-                current[keys[i]] = {};
-            }
-            current = current[keys[i]];
-        }
-        current[keys[keys.length - 1]] = value;
-    }
-
-    function findUnitInScene(scene, unitId) {
-        const search = (units) => {
-            for (const u of units) {
-                if (u && u.id === unitId) return u;
-            }
-            return null;
-        };
-        if (scene.units) {
-            const found = search(scene.units);
-            if (found) return found;
-        }
-        if (scene.dialogue_blocks) {
-            for (const block of scene.dialogue_blocks) {
-                if (block.units) {
-                    const found = search(block.units);
-                    if (found) return found;
-                }
-            }
-        }
-        return null;
-    }
+    // setDeep / findUnitInScene moved to ./book/scene-patch-utils.cjs (Debt #3).
 
     /**
      * PATCH /api/v1/book/:bookId/scene/:chapterId/:sceneId
