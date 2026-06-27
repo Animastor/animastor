@@ -280,12 +280,15 @@ module.exports = function(redis, config, deps) {
         end
 
         -- PHASE 3: FSM-valid asset state transitions
-        -- Reads current asset states, validates the path to 'pending'
-        -- exists for each dirty layer, then writes atomically.
-        local existingRaw = redis.call('GET', KEYS[2])
+        -- Reads current asset states via HGETALL (same format as JS code),
+        -- validates the path to 'pending' exists for each dirty layer,
+        -- then writes atomically via HSET. Must NOT use SET/GET here —
+        -- the JS code (scene-state.js) uses HSET/HGETALL and would throw
+        -- WRONGTYPE on a string-typed key, losing the new asset states.
+        local existingFields = redis.call('HGETALL', KEYS[2])
         local assetData = {}
-        if existingRaw and existingRaw ~= '' then
-            assetData = cjson.decode(existingRaw)
+        for i = 1, #existingFields, 2 do
+            assetData[existingFields[i]] = existingFields[i + 1]
         end
 
         local function transitionToPending(current)
@@ -303,7 +306,11 @@ module.exports = function(redis, config, deps) {
         if args.resetAudio then assetData['audio'] = transitionToPending(assetData['audio'] or 'new') end
         if args.resetImage then assetData['image'] = transitionToPending(assetData['image'] or 'new') end
         if args.resetVideo then assetData['video'] = transitionToPending(assetData['video'] or 'new') end
-        redis.call('SET', KEYS[2], cjson.encode(assetData))
+        -- Write via HSET to maintain hash type compatibility with JS code
+        redis.call('DEL', KEYS[2])
+        for k, v in pairs(assetData) do
+            redis.call('HSET', KEYS[2], k, v)
+        end
 
         -- PHASE 4: Add to active scenes
         redis.call('SADD', KEYS[3], args.bookId .. ':' .. args.chapterId .. ':' .. args.sceneId)
