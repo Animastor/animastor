@@ -212,6 +212,28 @@ async function handleImageCompleted(redis, bookId, chapterId, sceneId, buildId) 
                 // All dirty units have been processed — safe to clear
                 await sceneAssetsRepo.clearDirtyUnitIds(bookId, chapterId, sceneId);
                 log(`[DIRTY-UNITS-CLEARED] ${bookId}/${chapterId}/${sceneId}: all ${dirtyIds.length} dirty unit(s) completed, cleared`);
+
+                // CRITICAL: Reset the IU progress counter to the actual file count on disk.
+                // During regeneration, /regenerate deletes the counter (confirmed=0) so the
+                // formula (t-dirty)+min(confirmed,dirty) shows 3/4 before results. But after
+                // handleImageCompleted clears dirty unit IDs, iuReadyFromCounters switches to
+                // the dirty=0 branch: min(confirmed, t). With confirmed=1 (only the newly
+                // regenerated IU was counted) this gives 1/4 instead of 4/4.
+                //
+                // By setting the counter to the total file count AFTER clearing dirty IDs,
+                // the formula min(confirmed, t) = min(totalFiles, totalIUs) = totalIUs = 4/4.
+                try {
+                    const iuPrefix = `${bookId}_${chapterId}_${sceneId}_iu`;
+                    const allFiles = fs.existsSync(buildDir) ? fs.readdirSync(buildDir) : [];
+                    const iuFileCount = allFiles.filter(f => f.startsWith(iuPrefix) && f.endsWith('.png')).length;
+                    if (iuFileCount > 0) {
+                        const progKey = `animastor:iu-progress:${bookId}:${chapterId}:${sceneId}:image`;
+                        await redis.set(progKey, String(iuFileCount), 'EX', 14400);
+                        log(`[IU-COUNTER-RESET] ${bookId}/${chapterId}/${sceneId}: counter set to ${iuFileCount}`);
+                    }
+                } catch (counterErr) {
+                    warn(`Failed to reset IU progress counter: ${counterErr.message}`);
+                }
             } else {
                 // Some units still pending — keep them
                 await sceneAssetsRepo.setDirtyUnitIds(bookId, chapterId, sceneId, stillPending);

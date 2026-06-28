@@ -1563,6 +1563,18 @@ module.exports = function(app, redis, deps) {
                 }
             }
 
+            // Filter out scenes whose dirty layers are entirely disabled in layer
+            // config. This mirrors the check in markDirtyScenes (book-diff.cjs:340-342):
+            // if no layer would be reset there, we must skip cleanup here too to
+            // avoid orphaned scenes (PNGs deleted but per-asset state never set to
+            // PENDING).
+            filteredDirty = filteredDirty.filter(ds => {
+                const resetAudio = layerCfg.audio_enabled !== false && ds.dirty_layers.includes('audio');
+                const resetImage = layerCfg.image_enabled !== false && ds.dirty_layers.includes('image');
+                const resetVideo = layerCfg.video_enabled !== false && ds.dirty_layers.includes('video');
+                return resetAudio || resetImage || resetVideo;
+            });
+
             // Pre-delete stale PNGs for known dirty units BEFORE the scheduler
             // picks them up. This ensures the first assets-state poll correctly
             // reflects what needs regeneration, avoiding a 100% → drop pattern.
