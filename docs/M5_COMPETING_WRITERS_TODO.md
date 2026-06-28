@@ -106,34 +106,25 @@
 
 ---
 
-### Шаг 3: syncLinearState — автоматический побочный эффект facade
+### ✅ Шаг 3 выполнен: syncLinearState — автоматический побочный эффект facade
 
-**Цель:** Все facade-команды вызывают `syncLinearState` автоматически, ручные вызовы удалить.
+**Цель достигнута:** syncLinearState вызывается автоматически внутри каждой facade-команды, ручные вызовы из callers удалены.
 
-**Изменения:**
+**Что сделано:**
+- `orchestrator.beginStage` — добавлен `syncLinearState` после `dispatchStage` (PENDING/GENERATING)
+- `scene-orchestrator.js` — удалены 4 вызова `syncLinearState` из `startScene`, `executeAudioDispatch`, `executeImageDispatch`, `executeVideoDispatch`
+- `reconciliation-engine.js` — удалены 2 редундантных `syncLinearState` после `orchestrator.markDirtyScene`
+- `scene-restoration.js` — удалён 1 редундантный `syncLinearState` после `orchestrator.markDirtyScene`
 
-#### 3a. Добавить syncLinearState в каждую facade-команду:
+**Оставшиеся ручные вызовы (легитимные):**
+- `reconciliation-engine.js` — 4 вызова после прямых `state.setAssetState` (ждёт Шага 4)
+- `runtime-persistence.js` — 1 вызов (snapshot restore, вне facade)
+- `debug-routes.cjs` — 2 вызова (debug, вне facade)
+- `scene-restoration.js` — 1 вызов после `restoreChunkStatusForScene` (только chunk metadata, не per-asset)
 
-- `orchestrator.markDirtyScene` — после `setAssetState(DIRTY)` (**выполняется в Шаге 2**)
-- `orchestrator.beginStage` — после `setAssetState(GENERATING)` (уже есть внутри dispatchStage)
-- `orchestrator.completeStage` — после `setAssetState(READY)` (✅ Шаг 1)
-- `orchestrator.setScenePending` — после `setAssetState(PENDING)` (✅ Шаг 2, возвращает результат)
-- `orchestrator.reconcile` — после любого изменения
+**Файлы:** `orchestrator.js`, `scene-orchestrator.js`, `reconciliation-engine.js`, `scene-restoration.js`
 
-#### 3b. Убрать ручные вызовы syncLinearState:
-
-Из:
-- `scene-orchestrator.js` (L1: 4 места) — убрать, syncLinearState будет в beginStage
-- ~~`scene-callbacks.js`~~ (✅ Шаг 1 — `completeStage` владеет syncLinearState)
-- `reconciliation-engine.js` (L3: 4 места) — убрать, будет в markDirtyScene
-- `scene-window.js` (L4: 4 места) — ~~убрать, будет в setScenePending/setSceneAllReady (✅ Шаг 2)~~
-- `scene-restoration.js` (1 место) — убрать, будет в markDirtyScene
-- `runtime-persistence.js` (L6: 1 место) — оставить, т.к. snapshot restore вне facade
-- `debug-routes.cjs` (L7: 2 места) — оставить для debug
-
-**Файлы:** `orchestrator.js`, `scene-orchestrator.js`, ~~`scene-callbacks.js`~~, `reconciliation-engine.js`, ~~`scene-window.js`~~, `scene-restoration.js`, `runtime-persistence.js`, `debug-routes.cjs`
-
-**Риск:** Средний. syncLinearState критичен для backward compatibility.
+**Тесты:** 400/400 passing
 
 ---
 
@@ -213,9 +204,9 @@ async function completeStage(redis, bookId, chapterId, sceneId, stage, buildId) 
    2 файла, ~15 строк
    Риск: средний
 
-Шаг 3 (auto syncLinearState) ───────── □ ОЧЕРЕДЬ
-   6 файлов, ~15 строк удаления
-   Риск: средний
+Шаг 3 (auto syncLinearState) ──────── ✅ ВЫПОЛНЕН
+   4 файла, 400/400 тестов
+   Риск: средний — syncLinearState критичен, но изменения безопасны (call chain verified)
 
 Шаг 4 (reconciliation → audit-only) ── □ ОЧЕРЕДЬ
    2 файла, ~5 строк

@@ -28,9 +28,8 @@ async function startScene(redis, scene, loadedBook, buildId) {
         buildId, bookId, chapterId, sceneId
     });
 
-    // L1: Set per-asset state first, then sync linear state from it
+    // M5 Шаг 3: syncLinearState в начале beginStage, не здесь
     await state.setAssetState(redis, bookId, chapterId, sceneId, 'audio', state.AssetState.PENDING);
-    await state.syncLinearState(redis, bookId, chapterId, sceneId);
     await runtimeScheduler.addSceneToActiveIndex(redis, bookId, chapterId, sceneId);
     log(`ADDED TO ACTIVE: ${bookId}/${chapterId}/${sceneId}`);
 
@@ -49,10 +48,8 @@ async function executeAudioDispatch(redis, scene, loadedBook, buildId) {
     });
 
     // §5.1: Set per-asset state to generating so callbacks can validate correctly
+    // M5 Шаг 3: syncLinearState в beginStage, не здесь
     await state.setAssetState(redis, bookId, chapterId, sceneId, 'audio', state.AssetState.GENERATING);
-
-    // L1: Derive linear state from per-asset
-    await state.syncLinearState(redis, bookId, chapterId, sceneId);
 
     // Fallback to disk load when runtime doesn't pass loadedBook
     const bookData = loadedBook || book.loadBook(bookId);
@@ -77,10 +74,8 @@ async function executeImageDispatch(redis, scene, loadedBook, buildId) {
     });
 
     // §5.1: Set per-asset state to generating so callbacks can validate correctly
+    // M5 Шаг 3: syncLinearState в beginStage, не здесь
     await state.setAssetState(redis, bookId, chapterId, sceneId, 'image', state.AssetState.GENERATING);
-
-    // L1: Derive linear state from per-asset (per-asset уже установлен выше)
-    await state.syncLinearState(redis, bookId, chapterId, sceneId);
 
     // Fallback to disk load when runtime doesn't pass loadedBook
     const bookData = loadedBook || book.loadBook(bookId);
@@ -121,10 +116,8 @@ async function executeVideoDispatch(redis, scene, loadedBook, buildId) {
     });
 
     // §5.1: Set per-asset state to generating so callbacks can validate correctly
+    // M5 Шаг 3: syncLinearState в beginStage, не здесь
     await state.setAssetState(redis, bookId, chapterId, sceneId, 'video', state.AssetState.GENERATING);
-
-    // L1: Derive linear state from per-asset (per-asset уже установлен выше)
-    await state.syncLinearState(redis, bookId, chapterId, sceneId);
 
     // Fallback to disk load when runtime doesn't pass loadedBook
     const bookData = loadedBook || book.loadBook(bookId);

@@ -45,10 +45,16 @@ async function planScene(redis, bookId, chapterId, sceneId) {
 // для исполнения генерации).
 async function beginStage(redis, scene, loadedBook, buildId, stage) {
     const dispatchEngine = require('../runtime/dispatch-engine');
+    const state = require('../state');
     const bookId = scene.book_id;
     const chapterId = scene.chapter_id;
     const sceneId = scene.scene_id;
-    return dispatchEngine.dispatchStage(redis, bookId, chapterId, sceneId, stage, loadedBook, buildId);
+    const result = await dispatchEngine.dispatchStage(redis, bookId, chapterId, sceneId, stage, loadedBook, buildId);
+    // M5 Шаг 3: syncLinearState — автоматически после dispatchStage (который выставляет PENDING/GENERATING).
+    // dispatchStage вызывает scene-orchestrator.dispatchStage → executeAudio/Image/VideoDispatch,
+    // которые больше не вызывают syncLinearState сами — это делает beginStage.
+    await state.syncLinearState(redis, bookId, chapterId, sceneId);
+    return result;
 }
 
 // ── completeStage ─────────────────────────────────────

@@ -606,11 +606,9 @@ async function applyFix(redis, fix) {
 
                 // Mark all per-asset states as DIRTY for redispatch
                 // M5: Route through orchestrator.markDirtyScene instead of direct state.setAssetState
+                // M5 Шаг 3: syncLinearState уже внутри markDirtyScene
                 const orchestrator = require('../orchestration/orchestrator');
                 await orchestrator.markDirtyScene(redis, scene.bookId, scene.chapterId, scene.sceneId);
-
-                // L3: Derive linear state from per-asset (DIRTY → AUDIO_PENDING/IMAGE_PENDING/VIDEO_PENDING)
-                await state.syncLinearState(redis, scene.bookId, scene.chapterId, scene.sceneId);
 
                 // Remove from active index to avoid immediate re-scheduling
                 await runtimeScheduler.removeSceneFromActiveIndex(redis, scene.bookId, scene.chapterId, scene.sceneId);
@@ -669,11 +667,9 @@ async function applyFix(redis, fix) {
 
                     // Mark per-asset states as DIRTY for redispatch
                     // M5: Route through orchestrator.markDirtyScene instead of direct state.setAssetState
+                    // M5 Шаг 3: syncLinearState уже внутри markDirtyScene
                     const orchestrator = require('../orchestration/orchestrator');
                     await orchestrator.markDirtyScene(redis, scene.bookId, scene.chapterId, scene.sceneId);
-
-                    // L3: Derive linear state from per-asset (DIRTY → pending stage)
-                    await state.syncLinearState(redis, scene.bookId, scene.chapterId, scene.sceneId);
 
                     // Add back to active index
                     await runtimeScheduler.addSceneToActiveIndex(redis, scene.bookId, scene.chapterId, scene.sceneId);
