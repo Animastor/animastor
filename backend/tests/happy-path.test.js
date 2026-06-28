@@ -1041,7 +1041,7 @@ describe('Happy Path: Scene Callbacks (with mocks)', () => {
         } catch {}
     });
 
-    it('handleAudioCompleted sets audio to READY', async () => {
+    it('handleAudioCompleted validates and handles audio completion (READY set by facade)', async () => {
         // Set up initial state: audio is pending
         await sceneState.setAssetState(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, 'audio', 'pending');
 
@@ -1055,9 +1055,17 @@ describe('Happy Path: Scene Callbacks (with mocks)', () => {
         expect(result.handled).to.be.true;
         expect(result.nextStage).to.equal('image');
 
-        // Verify per-asset state is READY
+        // M5: setAssetState(READY) moved to orchestrator.completeStage (Шаг 1).
+        // Handler no longer sets READY — it only validates + does side effects.
         const states = await sceneState.getAssetStates(redis, BOOK_ID, CHAPTER_ID, SCENE_ID);
-        expect(states.audio).to.equal('ready');
+        expect(states.audio).to.equal('pending'); // handler no longer sets READY
+
+        // Simulate what completeStage does after the handler:
+        await sceneState.setAssetState(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, 'audio', 'ready');
+        await sceneState.syncLinearState(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, BUILD_ID);
+
+        const statesAfter = await sceneState.getAssetStates(redis, BOOK_ID, CHAPTER_ID, SCENE_ID);
+        expect(statesAfter.audio).to.equal('ready');
     });
 
     // FIXED C2 (Н.5): handleAudioCompleted writes PG status='ready' via markReady.
@@ -1129,7 +1137,7 @@ describe('Happy Path: Scene Callbacks (with mocks)', () => {
         expect(markReadyCalls[0].extras).to.have.property('height', 1080);
     });
 
-    it('handleImageCompleted sets image to READY', async () => {
+    it('handleImageCompleted validates and handles image completion (READY set by facade)', async () => {
         // Set initial per-asset state
         await sceneState.setAssetStates(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, {
             audio: 'ready',
@@ -1146,11 +1154,20 @@ describe('Happy Path: Scene Callbacks (with mocks)', () => {
         expect(result.handled).to.be.true;
         expect(result.nextStage).to.equal('video');
 
+        // M5: setAssetState(READY) moved to orchestrator.completeStage (Шаг 1).
+        // Handler no longer sets READY — only validates + side effects.
         const states = await sceneState.getAssetStates(redis, BOOK_ID, CHAPTER_ID, SCENE_ID);
-        expect(states.image).to.equal('ready');
+        expect(states.image).to.equal('pending'); // handler no longer sets READY
+
+        // Simulate what completeStage does after the handler:
+        await sceneState.setAssetState(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, 'image', 'ready');
+        await sceneState.syncLinearState(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, BUILD_ID);
+
+        const statesAfter = await sceneState.getAssetStates(redis, BOOK_ID, CHAPTER_ID, SCENE_ID);
+        expect(statesAfter.image).to.equal('ready');
     });
 
-    it('handleVideoCompleted sets video to READY and completes scene', async () => {
+    it('handleVideoCompleted validates and handles video completion (READY set by facade)', async () => {
         // Set initial per-asset state
         await sceneState.setAssetStates(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, {
             audio: 'ready',
@@ -1167,8 +1184,17 @@ describe('Happy Path: Scene Callbacks (with mocks)', () => {
         expect(result.handled).to.be.true;
         expect(result.completed).to.be.true;
 
+        // M5: setAssetState(READY) moved to orchestrator.completeStage (Шаг 1).
+        // Handler no longer sets READY — only validates + side effects.
         const states = await sceneState.getAssetStates(redis, BOOK_ID, CHAPTER_ID, SCENE_ID);
-        expect(states.video).to.equal('ready');
+        expect(states.video).to.equal('pending'); // handler no longer sets READY
+
+        // Simulate what completeStage does after the handler:
+        await sceneState.setAssetState(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, 'video', 'ready');
+        await sceneState.syncLinearState(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, BUILD_ID);
+
+        const statesAfter = await sceneState.getAssetStates(redis, BOOK_ID, CHAPTER_ID, SCENE_ID);
+        expect(statesAfter.video).to.equal('ready');
     });
 
     // FIXED C1 (Н.2): Callback no longer releases quota — markDispatchCompleted is the sole owner.

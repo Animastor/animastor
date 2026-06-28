@@ -59,6 +59,8 @@ async function beginStage(redis, scene, loadedBook, buildId, stage) {
 async function completeStage(redis, bookId, chapterId, sceneId, stage, buildId) {
     const callbacks = require('./scene-callbacks');
     const dispatchEngine = require('../runtime/dispatch-engine');
+    const state = require('../state');
+    const { warn } = require('./scene-utils');
 
     const handler = {
         audio: callbacks.handleAudioCompleted,
@@ -72,13 +74,16 @@ async function completeStage(redis, bookId, chapterId, sceneId, stage, buildId) 
 
     try {
         await handler(redis, bookId, chapterId, sceneId, buildId);
+        // M5: Фасад — единый владелец перехода в READY и syncLinearState.
+        // Callback больше не пишет setAssetState сам (убрано из scene-callbacks.js).
+        await state.setAssetState(redis, bookId, chapterId, sceneId, stage, state.AssetState.READY);
+        await state.syncLinearState(redis, bookId, chapterId, sceneId, buildId);
     } finally {
         // Always release lease+quota even if the callback throws — single owner
         // of release (C1). Wrapped so a release error never masks a callback error.
         try {
             await dispatchEngine.markDispatchCompleted(redis, bookId, chapterId, sceneId, stage);
         } catch (dispErr) {
-            const { warn } = require('./scene-utils');
             warn(`completeStage: markDispatchCompleted(${stage}) failed: ${dispErr.message}`);
         }
     }
@@ -97,6 +102,29 @@ async function markDirtyScene(redis, bookId, chapterId, sceneId, assets = ['audi
     }
 }
 
+// ── completeStageWithoutVideo ────────────────────────
+// When video is disabled by layer config, mark video as READY
+// and complete remaining scene lifecycle (cleanup, slide).
+// Callback function handles cleanup only — state is set here in the facade.
+async function completeStageWithoutVideo(redis, loadedBook, bookId, chapterId, sceneId, buildId) {
+    const state = require('../state');
+    const callbacks = require('./scene-callbacks');
+    await state.setAssetState(redis, bookId, chapterId, sceneId, 'video', state.AssetState.READY);
+    await state.syncLinearState(redis, bookId, chapterId, sceneId, buildId);
+    await callbacks.completeSceneWithoutVideo(redis, loadedBook, bookId, chapterId, sceneId, buildId);
+}
+
+// ── completeStageWithoutImage ─────────────────────────
+// When image is disabled by layer config, mark image as READY
+// and complete remaining scene lifecycle.
+async function completeStageWithoutImage(redis, loadedBook, bookId, chapterId, sceneId, buildId) {
+    const state = require('../state');
+    const callbacks = require('./scene-callbacks');
+    await state.setAssetState(redis, bookId, chapterId, sceneId, 'image', state.AssetState.READY);
+    await state.syncLinearState(redis, bookId, chapterId, sceneId, buildId);
+    await callbacks.completeSceneWithoutImage(redis, loadedBook, bookId, chapterId, sceneId, buildId);
+}
+
 // ── reconcile ─────────────────────────────────────────
 // Сверка фактов (PG/диск) с состоянием. Делегирует в reconciliation-engine.
 // ЦЕЛЬ Д.3: диск становится источником ФАКТА, решение принимает фасад.
@@ -111,5 +139,7 @@ module.exports = {
     planScene,
     beginStage,
     completeStage,
+    completeStageWithoutVideo,
+    completeStageWithoutImage,
     reconcile,
 };

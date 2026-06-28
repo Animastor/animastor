@@ -110,7 +110,7 @@ async function handleAudioCompleted(redis, bookId, chapterId, sceneId, buildId) 
         warn(`Failed to replace placeholder audio: ${err.message}`);
     }
 
-    await state.setAssetState(redis, bookId, chapterId, sceneId, 'audio', state.AssetState.READY);
+    // M5: setAssetState(READY) moved to orchestrator.completeStage
     await publishProgress(redis, bookId, { layer: 'audio', chapterId, sceneId });
 
     // Н.2: Quota is released by markDispatchCompleted (single owner).
@@ -260,7 +260,7 @@ async function handleImageCompleted(redis, bookId, chapterId, sceneId, buildId) 
         warn(`Failed to clear in-flight markers in IMAGE_CALLBACK: ${e.message}`);
     }
 
-    await state.setAssetState(redis, bookId, chapterId, sceneId, 'image', state.AssetState.READY);
+    // M5: setAssetState(READY) moved to orchestrator.completeStage
 
     await updateSceneChunks(redis, bookId, chapterId, sceneId, { image: true, image_status: 'ready' });
 
@@ -342,7 +342,7 @@ async function handleVideoCompleted(redis, bookId, chapterId, sceneId, buildId) 
 
     await updateSceneChunks(redis, bookId, chapterId, sceneId, { video: true, video_status: 'ready' });
 
-    await state.setAssetState(redis, bookId, chapterId, sceneId, 'video', state.AssetState.READY);
+    // M5: setAssetState(READY) moved to orchestrator.completeStage
     await publishProgress(redis, bookId, { layer: 'video', chapterId, sceneId });
 
     // Н.2: Quota is released by markDispatchCompleted (single owner).
@@ -380,9 +380,9 @@ async function handleVideoCompleted(redis, bookId, chapterId, sceneId, buildId) 
 async function completeSceneWithoutVideo(redis, loadedBook, bookId, chapterId, sceneId, buildId) {
     log(`Completing scene without video: ${bookId}/${chapterId}/${sceneId}`);
 
-    await state.setAssetState(redis, bookId, chapterId, sceneId, 'video', state.AssetState.READY);
-    // L2: Derive linear state from per-asset
-    await state.syncLinearState(redis, bookId, chapterId, sceneId, buildId);
+    // M5: setAssetState(READY) + syncLinearState moved to orchestrator.completeStageWithoutVideo
+    // This function is called THROUGH the facade, which handles state BEFORE calling here.
+
 
     try {
         await sceneAssetsRepo.clearDirtyFlag(bookId, chapterId, sceneId);
@@ -406,9 +406,8 @@ async function completeSceneWithoutVideo(redis, loadedBook, bookId, chapterId, s
 
 async function completeSceneWithoutImage(redis, loadedBook, bookId, chapterId, sceneId, buildId) {
     log(`Completing scene without image: ${bookId}/${chapterId}/${sceneId}`);
-    await state.setAssetState(redis, bookId, chapterId, sceneId, 'image', state.AssetState.READY);
-    // L2: Derive linear state from per-asset
-    await state.syncLinearState(redis, bookId, chapterId, sceneId, buildId);
+    // M5: setAssetState(READY) + syncLinearState moved to orchestrator.completeStageWithoutImage
+    // This function is called THROUGH the facade, which handles state BEFORE calling here.
     log(`Scene complete (no image): ${bookId}/${chapterId}/${sceneId}`);
 
     try {
