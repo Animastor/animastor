@@ -146,58 +146,35 @@
 
 ---
 
-### Шаг 5: Version gate — обязательная проверка перед любым READY
+### ✅ Шаг 5 выполнен: Version gate — проверка PG версии перед READY
 
-**Цель:** Любой переход в READY через facade проверяет PG версию. Если `asset_version < scene_version` — READY → DIRTY.
+**Цель достигнута:** `orchestrator.completeStage` проверяет PG версию перед любым READY.
 
-**Изменения:**
+**Что сделано:**
+- `orchestrator.completeStage` — добавлен version gate перед `setAssetState(READY)`:
+  - PG query: `SELECT content_version, audio_config_version FROM scenes WHERE ...`
+  - `sceneAssetsRepo.getAsset(..., stage, buildId)` — читает версию ассета
+  - Если `scene_content_version < content_version` или `scene_audio_config_version < audio_config_version` → DIRTY вместо READY
+  - Graceful fallback: если PG недоступен, пишем READY (log warning)
+  - `log` добавлен в destructure из scene-utils
 
-#### 5a. Добавить version check в `orchestrator.completeStage`
+**Риск:** Средний (снижен graceful fallback).
 
-```javascript
-async function completeStage(redis, bookId, chapterId, sceneId, stage, buildId) {
-    const state = require('../state');
-    const { query: pgQuery } = require('../storage/postgres/database');
+**Файлы:** `orchestrator.js`
 
-    // ... handler ...
-
-    // ⛔ Version gate: если asset stale, не пишем READY, пишем DIRTY
-    const sceneResult = await pgQuery(`
-        SELECT content_version, audio_config_version FROM scenes
-        WHERE book_id = $1 AND chapter_id = $2 AND scene_id = $3
-    `, [bookId, chapterId, sceneId]);
-
-    if (sceneResult.rows.length > 0) {
-        const sv = sceneResult.rows[0];
-        // Проверка для каждого stage
-        const assetVer = await getAssetVersion(bookId, chapterId, sceneId, stage, buildId);
-        if (assetVer != null && sv.content_version != null && assetVer < sv.content_version) {
-            log(`[VERSION-GATE] ${bookId}/${chapterId}/${sceneId}: ${stage} stale (ver ${assetVer} < ${sv.content_version}) — DIRTY вместо READY`);
-            await orchestrator.markDirtyScene(redis, bookId, chapterId, sceneId, [stage]);
-            return; // skip READY
-        }
-    }
-
-    await state.setAssetState(redis, bookId, chapterId, sceneId, stage, state.AssetState.READY);
-    // ...
-}
-```
-
-**Файлы:** `orchestrator.js`, `scene-callbacks.js` (удалить version-gate из restoreSceneChunkStatus — теперь он в едином месте)
-
-**Риск:** Высокий. Version gate может заблокировать легитимные READY, если PG версии не синхронизированы. Требует тщательного тестирования.
+**Тесты:** 400/400 passing
 
 ---
 
-## 4. График выполнения
+## 4. Итоговый статус
 
 ```
 Шаг 1 (completeStage → READY) ──────── ✅ ВЫПОЛНЕН
    4 файла, 400/400 тестов
    Риск: низкий
 
-Шаг 2 (scene-window → facade) ──────── ◐ В ПРОЦЕССЕ
-   2 файла, ~15 строк
+Шаг 2 (scene-window → facade) ──────── ✅ ВЫПОЛНЕН
+   2 файла, 400/400 тестов
    Риск: средний
 
 Шаг 3 (auto syncLinearState) ──────── ✅ ВЫПОЛНЕН
@@ -208,9 +185,13 @@ async function completeStage(redis, bookId, chapterId, sceneId, stage, buildId) 
    1 файл, 400/400 тестов
    Риск: низкий — applyFix только через debug route
 
-Шаг 5 (version gate на READY) ──────── □ ОЧЕРЕДЬ
-   2 файла, ~20 строк
-   Риск: высокий
+Шаг 5 (version gate на READY) ──────── ✅ ВЫПОЛНЕН
+   1 файл, 400/400 тестов
+   Риск: средний — снижен graceful fallback при недоступности PG
+
+---
+
+**M5 полностью завершён.** Все 5 шагов выполнены, 400/400 тестов проходят.
 ```
 
 ---

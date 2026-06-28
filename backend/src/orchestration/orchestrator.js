@@ -66,7 +66,7 @@ async function completeStage(redis, bookId, chapterId, sceneId, stage, buildId) 
     const callbacks = require('./scene-callbacks');
     const dispatchEngine = require('../runtime/dispatch-engine');
     const state = require('../state');
-    const { warn } = require('./scene-utils');
+    const { log, warn } = require('./scene-utils');
 
     const handler = {
         audio: callbacks.handleAudioCompleted,
@@ -80,10 +80,49 @@ async function completeStage(redis, bookId, chapterId, sceneId, stage, buildId) 
 
     try {
         await handler(redis, bookId, chapterId, sceneId, buildId);
-        // M5: Фасад — единый владелец перехода в READY и syncLinearState.
-        // Callback больше не пишет setAssetState сам (убрано из scene-callbacks.js).
-        await state.setAssetState(redis, bookId, chapterId, sceneId, stage, state.AssetState.READY);
-        await state.syncLinearState(redis, bookId, chapterId, sceneId, buildId);
+
+        // M5 Шаг 5: Version gate — проверяем PG версию перед READY.
+        // Если asset_version < scene_version, пишем DIRTY вместо READY,
+        // чтобы stale GPU callback не отменял force-regen.
+        // Graceful fallback: если PG недоступен, пропускаем gate (log warning).
+        let shouldWriteReady = true;
+        try {
+            const { query: pgQuery } = require('../storage/postgres/database');
+            const sceneAssetsRepo = require('../storage/postgres/repositories/scene-assets-repo');
+
+            const sceneResult = await pgQuery(`
+                SELECT content_version, audio_config_version FROM scenes
+                WHERE book_id = $1 AND chapter_id = $2 AND scene_id = $3
+            `, [bookId, chapterId, sceneId]);
+
+            if (sceneResult.rows.length > 0) {
+                const sv = sceneResult.rows[0];
+                const asset = await sceneAssetsRepo.getAsset(bookId, chapterId, sceneId, stage, buildId)
+                    || await sceneAssetsRepo.getAsset(bookId, chapterId, sceneId, stage);
+
+                if (asset) {
+                    if (asset.scene_content_version != null && sv.content_version != null &&
+                        asset.scene_content_version < sv.content_version) {
+                        shouldWriteReady = false;
+                    }
+                    if (asset.scene_audio_config_version != null && sv.audio_config_version != null &&
+                        asset.scene_audio_config_version < sv.audio_config_version) {
+                        shouldWriteReady = false;
+                    }
+                }
+            }
+        } catch (pgErr) {
+            warn(`[VERSION-GATE] PG query failed for ${bookId}/${chapterId}/${sceneId}: ${pgErr.message} — allowing READY`);
+        }
+
+        if (shouldWriteReady) {
+            await state.setAssetState(redis, bookId, chapterId, sceneId, stage, state.AssetState.READY);
+            await state.syncLinearState(redis, bookId, chapterId, sceneId, buildId);
+        } else {
+            log(`[VERSION-GATE] ${bookId}/${chapterId}/${sceneId}: ${stage} stale — DIRTY instead of READY`);
+            await state.setAssetState(redis, bookId, chapterId, sceneId, stage, state.AssetState.DIRTY);
+            await state.syncLinearState(redis, bookId, chapterId, sceneId, buildId);
+        }
     } finally {
         // Always release lease+quota even if the callback throws — single owner
         // of release (C1). Wrapped so a release error never masks a callback error.
