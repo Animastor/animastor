@@ -59,17 +59,17 @@
 | L | `redis-helpers.cjs` | `setAssetStates(...)` — хелпер |
 | L | `scene-restoration.js` | `setAssetState(audio, READY)` (Д.3: с version gate) |
 
-### ❌ syncLinearState вызывается вручную (L1-L7)
+### ✅ syncLinearState — автоматически (за исключением легитимных)
 
-| Writer | Файл | Строки |
-|---|---|---|
-| L1 | `scene-orchestrator.js` | 30, 48, 76, 120 |
-| L2 | `scene-callbacks.js` | 362, 388, 540, 558 |
-| L3 | `reconciliation-engine.js` | 711, 727, 752, 790 |
-| L4 | `scene-window.js` | 457, 569, 593, 610 |
-| L5 | `book-routes.cjs`, `window-generator.cjs`, `redis-helpers.cjs` | по 1 |
-| L6 | `runtime-persistence.js` | 604 |
-| L7 | `debug-routes.cjs` | 381, 443 |
+| Writer | Файл | Строки | Статус |
+|---|---|---|---|
+| L1 | `scene-orchestrator.js` | 30, 48, 76, 120 | ✅ удалены (Шаг 3) |
+| L2 | `scene-callbacks.js` | 362, 388, 540, 558 | ✅ удалены (Шаг 1) |
+| L3 | `reconciliation-engine.js` | 711, 727, 752, 790 | ✅ удалены (Шаги 3+4) |
+| L4 | `scene-window.js` | 457, 569, 593, 610 | ✅ удалены (Шаг 2) |
+| L5 | `book-routes.cjs`, `window-generator.cjs`, `redis-helpers.cjs` | по 1 | ⏳ не трогали |
+| L6 | `runtime-persistence.js` | 604 | ◐ оставлен (snapshot restore) |
+| L7 | `debug-routes.cjs` | 381, 443 | ◐ оставлен (debug) |
 
 ---
 
@@ -128,25 +128,21 @@
 
 ---
 
-### Шаг 4: Reconciliation — только аудит, auto-fix через facade
+### ✅ Шаг 4 выполнен: Reconciliation — только аудит, auto-fix через facade
 
-**Цель:** Убрать auto-fix из runtime-loop (уже R1.2 — только логирует), оставить applyFix только через явный POST /debug.
+**Цель достигнута:** Все 4 оставшихся кейса `applyFix` теперь идут через facade.
 
-**Изменения:**
+**Что сделано:**
+- **Шаг 4a уже выполнен** — `applyFix` вызывается только через `POST /api/v1/debug/runtime/apply-fix`, нигде в рантайме автоматически (code-searcher подтвердил)
+- **Шаг 4b:** 4 прямых вызова `state.setAssetState(..., PENDING)` + `state.syncLinearState()` заменены на `orchestrator.setScenePending(...)`:
+  - `REGENERATE_MISSING_ASSET`
+  - `PROGRESS_TO_IMAGE`
+  - `PROGRESS_TO_VIDEO`
+  - `RECOVER_ORPHAN_ASSETS`
 
-#### 4a. runtime-loop.js — убрать reconcileAll (уже log-only)
+**Файлы:** `reconciliation-engine.js` (только 4b)
 
-```javascript
-// Было (строка 56):
-const reconcileReport = await reconciliationEngine.reconcileAll(redis);
-// Стало: убрать или закомментировать
-```
-
-#### 4b. reconciliation-engine.js applyFix — route через orchestrator
-
-Уже сделано для `MOVE_TO_PENDING` (строка 610) и `RELEASE_STALE_LEASE` (строка 673). Остальные кейсы (`REGENERATE_MISSING_ASSET`, `PROGRESS_TO_IMAGE`, `PROGRESS_TO_VIDEO`, `RECOVER_ORPHAN_ASSETS`) всё ещё используют прямой `state.setAssetState`. Их нужно перевести на `orchestrator.markDirtyScene` / `orchestrator.setScenePending`.
-
-**Файлы:** `runtime-loop.js`, `reconciliation-engine.js`
+**Тесты:** 400/400 passing
 
 ---
 
@@ -208,9 +204,9 @@ async function completeStage(redis, bookId, chapterId, sceneId, stage, buildId) 
    4 файла, 400/400 тестов
    Риск: средний — syncLinearState критичен, но изменения безопасны (call chain verified)
 
-Шаг 4 (reconciliation → audit-only) ── □ ОЧЕРЕДЬ
-   2 файла, ~5 строк
-   Риск: низкий
+Шаг 4 (reconciliation → audit-only) ── ✅ ВЫПОЛНЕН
+   1 файл, 400/400 тестов
+   Риск: низкий — applyFix только через debug route
 
 Шаг 5 (version gate на READY) ──────── □ ОЧЕРЕДЬ
    2 файла, ~20 строк
