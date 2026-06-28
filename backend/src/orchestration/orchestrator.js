@@ -100,6 +100,42 @@ async function markDirtyScene(redis, bookId, chapterId, sceneId, assets = ['audi
     for (const asset of assets) {
         await state.setAssetState(redis, bookId, chapterId, sceneId, asset, state.AssetState.DIRTY);
     }
+    // M5: syncLinearState — автоматически после setAssetState (Шаг 3 prep)
+    await state.syncLinearState(redis, bookId, chapterId, sceneId);
+}
+
+// ── setScenePending ──────────────────────────────────
+// Set an asset to PENDING and sync linear state.
+// Used by scene-window when starting a scene.
+// M5: Единственный владелец перехода в PENDING.
+async function setScenePending(redis, bookId, chapterId, sceneId, asset, buildId = null) {
+    const state = require('../state');
+    await state.setAssetState(redis, bookId, chapterId, sceneId, asset, state.AssetState.PENDING);
+    return await state.syncLinearState(redis, bookId, chapterId, sceneId, buildId);
+}
+
+// ── setSceneAllReady ─────────────────────────────────
+// Set all three assets to READY and sync linear state.
+// Used by scene-window when valid content found on disk (cache hit).
+// M5: Единственный владелец перехода в READY для cache-попаданий.
+async function setSceneAllReady(redis, bookId, chapterId, sceneId, buildId = null) {
+    const state = require('../state');
+    await state.setAssetStates(redis, bookId, chapterId, sceneId, {
+        audio: state.AssetState.READY,
+        image: state.AssetState.READY,
+        video: state.AssetState.READY,
+    });
+    return await state.syncLinearState(redis, bookId, chapterId, sceneId, buildId);
+}
+
+// ── setScenePlaceholder ──────────────────────────────
+// Set audio to PLACEHOLDER and sync linear state.
+// Used by scene-window when audio is disabled by layer config.
+// M5: Единственный владелец перехода в PLACEHOLDER.
+async function setScenePlaceholder(redis, bookId, chapterId, sceneId, buildId = null) {
+    const state = require('../state');
+    await state.setAssetState(redis, bookId, chapterId, sceneId, 'audio', state.AssetState.PLACEHOLDER);
+    return await state.syncLinearState(redis, bookId, chapterId, sceneId, buildId);
 }
 
 // ── completeStageWithoutVideo ────────────────────────
@@ -141,5 +177,8 @@ module.exports = {
     completeStage,
     completeStageWithoutVideo,
     completeStageWithoutImage,
+    setScenePending,
+    setSceneAllReady,
+    setScenePlaceholder,
     reconcile,
 };

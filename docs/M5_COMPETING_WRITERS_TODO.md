@@ -44,11 +44,16 @@
 |---|---|---|
 | P2 | `scene-callbacks.js` | ✅ `orchestrator.completeStage` (READY) |
 
+### ✅ Шаг 2 выполнен: D1 за фасадом
+
+| Writer | Файл | Статус |
+|---|---|---|
+| D1 | `scene-window.js` | ✅ 7 прямых вызовов → `orchestrator.*` |
+
 ### ❌ Ещё пишут напрямую через state.setAssetState
 
 | Writer | Файл | Что пишет |
 |---|---|---|
-| D1 | `scene-window.js` | `setAssetStates(READY/PENDING/PLACEHOLDER)` — 7 мест |
 | L | `runtime-persistence.js` | `setAssetStates(...)` — snapshot restore |
 | L | `debug-routes.cjs` | `setAssetStates(...)` — ручной debug |
 | L | `redis-helpers.cjs` | `setAssetStates(...)` — хелпер |
@@ -85,43 +90,19 @@
 
 ---
 
-### Шаг 2: scene-window — диск как факт, не решение
+### ✅ Шаг 2 выполнен: scene-window → facade
 
-**Цель:** Заменить прямые `setAssetStates()` в **D1** на вызовы через facade.
+**Цель достигнута:** Все прямые вызовы `state.setAssetState/setAssetStates/syncLinearState` в `scene-window.js` заменены на facade-методы.
 
-**Изменения:**
-
-#### 2a. Добавить `orchestrator.startScene()` или `orchestrator.setScenePending()`
-
-Фасад получит метод для установки начального PENDING состояния:
-```javascript
-async function setScenePending(redis, bookId, chapterId, sceneId, stage) {
-    const state = require('../state');
-    await state.setAssetState(redis, bookId, chapterId, sceneId, stage, state.AssetState.PENDING);
-    await state.syncLinearState(redis, bookId, chapterId, sceneId);
-}
-```
-
-#### 2b. scene-window.js — заменить 6 прямых вызовов
-
-- `startScene` (строки 631, 654, 656, 675, 677, 693)
-- `slideWindow` (строка 508)
-
-**Вместо:**
-```javascript
-await state.setAssetStates(redis, bookId, chapterId, sceneId, 
-    { audio: AssetState.READY, image: AssetState.READY, video: AssetState.READY });
-```
-
-**Стало:**
-```javascript
-// diskFacts — информация о наличии файлов
-await orchestrator.reconcileWithFacts(redis, bookId, chapterId, sceneId, diskFacts);
-```
-
-Это требует расширения `orchestrator.reconcile` для приёма external facts.
+**Что сделано:**
+- `orchestrator.js` — добавлены `setScenePending`, `setSceneAllReady`, `setScenePlaceholder` (каждый делает setAssetState + syncLinearState)
+- `orchestrator.js` — добавлен `syncLinearState` в `markDirtyScene` (Шаг 3 prep)
+- `scene-window.js` — 7 прямых вызовов заменены на `orchestrator.*`
+- `scene-window.js` — `const resultState` → `let resultState` для if/else assignment
 
 **Файлы:** `orchestrator.js`, `scene-window.js`
+
+**Тесты:** 400/400 passing. Без циклических зависимостей (facade использует lazy require).
 
 ---
 
@@ -332,7 +313,7 @@ npm test
 | P5 | startup-recovery: DIRTY | `markDirtyScene` |
 | P6 | scene-restoration: DIRTY | `markDirtyScene` |
 | P8 | book-routes: PENDING | `markDirty` → `bookDiff.markDirtyScenes` |
-| D1 | scene-window: PENDING/READY/PLACEHOLDER | `setScenePending`/`setSceneAllReady`/`setScenePlaceholder` (◐ Шаг 2) |
+| D1 | scene-window: PENDING/READY/PLACEHOLDER | `setScenePending`/`setSceneAllReady`/`setScenePlaceholder` (✅ Шаг 2) |
 
 ### ❌ Ещё НЕ за фасадом
 
