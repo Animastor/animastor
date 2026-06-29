@@ -51,11 +51,32 @@
 
 ## 3. Orchestration Layer
 
+### 3.0 Orchestrator Facade (`backend/src/orchestration/orchestrator.js`) — Единый арбитр состояния
+
+**Ответственность:** Единственный владелец lifecycle-состояния сцены. Фасад из 11 команд, через которые проходят ВСЕ писатели состояния (M5).
+
+**Команды:**
+- `markDirty(deps, redis, bookId, buildId, dirtyScenes, layerCfg)` — через bookDiff.markDirtyScenes (Lua-атомарный reset)
+- `markDirtyScene(redis, bookId, chapterId, sceneId, assets)` — прямой per-scene DIRTY (для recovery)
+- `planScene(redis, bookId, chapterId, sceneId)` — чистая функция, читает per-asset состояния, НЕ пишет
+- `beginStage(redis, scene, loadedBook, buildId, stage)` — dispatch + syncLinearState (GENERATING/PENDING)
+- `completeStage(redis, bookId, chapterId, sceneId, stage, buildId)` — callback + version gate + READY + release + syncLinearState
+- `completeStageWithoutVideo(redis, loadedBook, bookId, chapterId, sceneId, buildId)` — video disabled
+- `completeStageWithoutImage(redis, loadedBook, bookId, chapterId, sceneId, buildId)` — image disabled
+- `setScenePending(redis, bookId, chapterId, sceneId, asset, buildId)` — PENDING + syncLinearState
+- `setSceneAllReady(redis, bookId, chapterId, sceneId, buildId)` — cache hit: все ассеты READY
+- `setScenePlaceholder(redis, bookId, chapterId, sceneId, buildId)` — audio PLACEHOLDER
+- `reconcile(redis, bookId, chapterId, sceneId)` — сверка фактов через reconciliation-engine
+
+**Версионный гейт (M5 Шаг 5):** `completeStage` проверяет `scene_assets.scene_content_version < scenes.content_version` в PG перед READY. Если версия устарела → DIRTY вместо READY. Graceful fallback при недоступности PG.
+
+> **UPD 2026-06-28:** M5 шаги 1-5 завершены. Все 8+ писателей per-asset состояния сведены к фасаду. syncLinearState — автоматический побочный эффект каждой facade-команды.
+
 ### 3.1 Runtime Scheduler (`backend/src/runtime/runtime-scheduler.js`)
 
-**Ответственность:** Единственный авторитет прогресса сцен. Tick-based (5s). Определяет, какие сцены нуждаются в диспетчеризации. Поддерживает независимые per-asset состояния (audio/image/video могут диспатчиться параллельно).
+**Ответственность:** Tick-based (5s) планировщик. **Чистая функция решения** — `shouldScheduleAssets()` только читает per-asset состояния и layer-config, ничего не пишет (Д.2). Version-stale reset — явный пред-проход в `attemptDispatch()` через `detectVersionStale()` + `markVersionStaleDirty()`.
 
-**Входы:** Redis (active scenes set), heartbeat worker'ов.
+**Входы:** Redis (active scenes set), heartbeat воркеров.
 **Выходы:** Вызовы `dispatchEngine.dispatchStage()`.
 
 **Зависимости:** Redis, dispatch-engine, active-scenes-index, scene-state, worker-health.
@@ -64,49 +85,49 @@
 
 ### 3.2 Dispatch Engine (`backend/src/runtime/dispatch-engine.js`)
 
-**Ответственность:** Dispatch с lease-механизмом (предотвращение дублирования), quota-контроль (backpressure). Интеграция с governance-модулями (circuit-breaker, retry-budget, fairness-engine, policy-engine) — эти модули загружаются лениво через `safeRequire()` и находятся в `runtime.index.debug` (не входят в core pipeline).
+**Ответственность:** Dispatch с lease-механизмом (NX TTL, предотвращение дублирования), quota-контроль (backpressure с **атомарным Lua EVAL** для acquire), idempotent completion (NX marker). Интеграция с governance-модулями: circuit-breaker, retry-budget, fairness-engine — напрямую через `require()` (LIVE, не lazy).
 
-**Входы:** Запрос на dispatch (bookId, chapterId, sceneId, stage).
-**Выходы:** Решение о старте/пропуске/отложении dispatch'а.
+**Ключевые изменения:**
+- **Атомарные квоты (M2):** `ATOMIC_ACQUIRE_SCRIPT` (Lua EVAL) — проверка лимита и INCR в одной Redis-операции. Устранён race между GET и INCR.
+- **Idempotent completion (C4):** `markDispatchCompleted` защищён `SET NX` по ключу `animastor:dispatch-completed:*`. Повторный колбэк безвреден.
+- **Д.1 (C1):** Единственный владелец release квоты — `markDispatchCompleted`. Из scene-callbacks releaseQuota убран.
+- **Force dispatch:** Поддержка `force=true` — очистка существующего lease + quota + metadata перед повторным dispatch.
 
-**Зависимости:** Redis, lease-manager, runtime-config, counter-reconciliation, runtime-metrics.
-**Опционально:** circuit-breaker, retry-budget-manager, fairness-engine, policy-engine, workload-classifier, cost-estimator.
+**Зависимости:** Redis, lease-manager, runtime-config, counter-reconciliation, runtime-metrics, **circuit-breaker (LIVE)**, **retry-budget-manager (LIVE)**, **fairness-engine (LIVE)**.
+**Удалены из core:** policy-engine, workload-classifier, cost-estimator (мёртвый код, Phase 6).
 
 **Используют:** runtime-scheduler.
 **Использует:** orchestrator.dispatchStage().
 
+**Lease TTL (актуальные):** audio 15min, image 20min, video 30min.
+
 ### 3.3 Scene Orchestrator (`backend/src/orchestration/scene-orchestrator.js`)
 
-**Ответственность:** Центральный оркестратор жизненного цикла сцены (фасад, ~173 строки). Dispatch execution (audio/image/video), обработка callback'ов завершения, layer config checks (audio_enabled/image_enabled/video_enabled), padded text trimming.
+**Ответственность:** Dispatch execution (audio/image/video). Чистый исполнитель — НЕ принимает решений о состоянии. Отвечает за старт сцены, выполнение dispatch для audio/image/video, обработку dirty-unit IDs для image.
 
 Логика вынесена в:
-- `scene-callbacks.js` (~17 КБ) — handle*Completed
-- `scene-restoration.js` — восстановление чанков
+- `scene-callbacks.js` (~17 КБ) — handle*Completed, completeSceneWithoutVideo/Image
+- `scene-restoration.js` — восстановление чанков, pre-delete stale PNG при dirty units, version gate
 - `scene-utils.js` — утилиты/логирование
 - `event-journal.js` — журнал событий
 
-> **UPD 2026-06-26:** Рефакторинг orchestrator уже произошёл: ~173 строки (не ~1200). stale state tolerance убран (R3.1/R6.5). Код: `orchestration/*`.
-
-**Входы:** Команды dispatch (с overrideStage — dispatch-engine всегда передаёт stage, не решает сам), callback'и от GPU Hub.
-**Выходы:** Задачи в audio/image/video service, обновления состояния.
-
-**Зависимости:** audio-service, image-service, video-service, scene-state, event-journal, active-scenes-index, layer-config, gpu-dispatcher.
-**Используют:** dispatch-engine, task-handler.
-**Использует:** audio/image/video services, gpu-dispatcher, event-journal, scene-state.
-
 ### 3.4 Scene Window (`backend/src/runtime/scene-window.js`)
 
-**Ответственность:** Управление окном генерации (scope-aware). Старт/стоп/слайд окна по мере завершения сцен. Включает проверку наличия контента на диске (`sceneHasValidContent`), восстановление статусов чанков (`reconcileWindowStatuses`, `restoreChunkStatusForScene`), поддержку cancel-флага.
+**Ответственность:** Управление окном генерации (scope-aware). Старт/стоп/слайд окна по мере завершения сцен.
 
-**Входы:** Команды start/stop/slide.
-**Выходы:** Регистрация сцен в active-scenes, dispatch задач.
+**Ключевые изменения:**
+- **Все записи состояния через facade (M5 Шаг 2):** `setScenePending`, `setSceneAllReady`, `setScenePlaceholder` — 7 прямых вызовов `state.setAssetState/setAssetStates/syncLinearState` заменены на `orchestrator.*`
+- **Cache advisory (Phase 3/R3.3):** `checkSceneContentCache` — только информация, решение принимает facade. Version-based staleness check.
+- **Единый источник статусов файлов:** `getSceneFilesStatus()` — четырежды используемая функция для проверки наличия файлов на диске.
+- **Version gate (Д.3/M3):** `restoreChunkStatusForScene` и `reconcileWindowStatuses` проверяют PG версию перед записью 'ready'. Stale файлы не отменяют force-regen.
 
-### 3.5 Event Journal (`backend/src/orchestration/event-journal.js`)
+### 3.5 Event Journal (`backend/src/orchestration/event-journal.js`) v1.1.0
 
-**Ответственность:** Append-only журнал событий сцены в Redis. Аудит жизненного цикла. TTL 7 дней.
+**Ответственность:** Append-only журнал событий сцены в Redis (List). Аудит жизненного цикла. TTL 7 дней. Core scene lifecycle типы (R5.1) — governance/phase-specific типы удалены.
 
-**Входы:** События (SCENE_STARTED, AUDIO_STARTED, и т.д.).
-**Выходы:** Ничего (только запись).
+**API:** appendSceneEvent, getSceneEvents, getSceneEventsByTime, getLastEvents, getEventsByType, getEventCount, getFirstEventTime, getLastEventTime, getEventTimeRange, deleteSceneEvents.
+
+**Event types:** SCENE_STARTED, AUDIO_DISPATCHED, AUDIO_COMPLETED, AUDIO_FAILED, IMAGE_DISPATCHED, IMAGE_FAILED, VIDEO_DISPATCHED, VIDEO_COMPLETED, VIDEO_FAILED, RECOVERY_*, DUPLICATE_CALLBACK, INVALID_STATE_CALLBACK, LOCK_*, DISPATCH_BLOCKED_CIRCUIT, RETRY_BUDGET_EXCEEDED, STARVATION_DETECTED, OVERLOAD_PROTECTION_ENABLED и др.
 
 ### 3.6 Active Scenes Index (`backend/src/runtime/active-scenes-index.js`)
 
@@ -244,16 +265,35 @@ NEW → DIRTY → PENDING → GENERATING → READY | FAILED | PLACEHOLDER
 ### 6.1 PostgreSQL (`backend/src/storage/postgres/`)
 **Ответственность:** Каноническое состояние. Схема: 25+ таблиц (users, books, book_snapshots, scenes, asset_states, cache_entries, asset_dependencies, generation_tasks, workers, reconciliation_events, output_manifests, image_units, storyboard_elements, audio_layers, scene_assets, ai_chat_sessions, chat_sessions, chat_messages, book_events, agent_sessions, agent_steps, agent_conversations, agent_messages, book_source, book_generation_sessions).
 
+**Репозитории** (`backend/src/storage/postgres/repositories/`):
+- `book-repo.js` — CRUD операций с книгами
+- `scene-assets-repo.js` — scene_assets: markReady, getAsset, getDirtyUnitIds, clearDirtyUnitIds, setDirtyUnitIds, clearDirtyFlag
+- `iu-repo.js` — image_units
+- `task-repo.js` — generation_tasks
+- `cache-repo.js` — cache_entries
+- `chat-repo.js` / `chat-session-repo.js` — чаты AI-ассистента
+- `events-repo.js` — book_events
+- `gen-session-repo.js` — agent_sessions
+- `book-source-repo.js` — book_source
+
 **Входы:** SQL-запросы от сервисов и репозиториев.
 **Выходы:** Данные.
 
 **Используют:** Все сервисы.
 
 ### 6.2 Redis (через ioredis)
-**Ответственность:** Runtime-состояние: активные сцены, heartbeat воркеров, очереди задач, dispatch-аренда, квоты, event journal, кэш чанков, scene state, per-asset state.
+**Ответственность:** Runtime-состояние: активные сцены, heartbeat воркеров, очереди задач, dispatch-аренда, dispatch-completed markers, квоты (counter), event journal (List), кэш чанков, scene state (JSON), per-asset state (HASH — HSET/HGETALL для атомарности), iu-progress (counter TTL 4h), iu-in-flight (EX 1200).
 
-**Входы:** SET/GET/DEL/SCAN от всего runtime.
-**Выходы:** Данные для оркестрации.
+**Ключевые структуры:**
+- `animastor:asset-state:<bookId>:<ch>:<sc>` — HASH с полями audio/image/video
+- `animastor:scene-state:<bookId>:<ch>:<sc>` — JSON { state, build_id, updated_at }
+- `animastor:dispatch-lease:*` — SET NX EX (15/20/30 min)
+- `animastor:dispatch-completed:*` — SET NX EX (idempotency marker)
+- `animastor:runtime:active-{audio,image,video}` — counter (backpressure quota)
+- `animastor:event-journal:*` — List (append-only, TTL 7d)
+- `animastor:chunk:*` — JSON metadata per chunk
+- `animastor:iu-progress:*` — counter TTL 14400s
+- `animastor:iu-in-flight:*` — marker EX 1200
 
 **Персистентность:** Redis-данные сохраняются через docker volume `redis-data:/data`.
 
@@ -469,34 +509,23 @@ NEW → DIRTY → PENDING → GENERATING → READY | FAILED | PLACEHOLDER
 └───────────────────────────────────────────────────────────────────────────┘
 ```
 
-## 13. Governance Layer (Runtime — Debug/Lazy)
+## 13. Governance Layer (Runtime)
 
 | Компонент | Роль | Статус |
 |-----------|------|--------|
-| circuit-breaker.js | Размыкание цепи при превышении порога ошибок | DEBUG (ленивая загрузка) |
-| retry-budget-manager.js | Бюджет повторных попыток per-type | DEBUG (ленивая загрузка) |
-| fairness-engine.js | Предотвращение голодания сцен | DEBUG (ленивая загрузка) |
-| policy-engine.js | Оценка политик диспетчеризации | DEBUG (ленивая загрузка) |
-| workload-classifier.js | Классификация сложности сцены | DEBUG (ленивая загрузка) |
-| cost-estimator.js | Оценка стоимости GPU-генерации | DEBUG (ленивая загрузка) |
-| lease-manager.js | Управление продлением аренды | CORE |
-| counter-reconciliation.js | Сверка счетчиков backpressure | CORE |
-| decision-trace.js | Трассировка решений диспетчера | DEBUG |
-| feedback-engine.js | Адаптивная обратная связь | DEBUG |
-| governance-health.js | Мониторинг здоровья | DEBUG |
-| governance-stability.js | Мониторинг стабильности | DEBUG |
-| governance-metrics.js | Сбор метрик | DEBUG |
-| governance-validator.js | Валидация политик | DEBUG/Experimental |
-| governance-sandbox.js | Песочница для политик | DEBUG/Experimental |
-| adaptation-controller.js | Адаптивное управление параметрами | DEBUG |
-| execution-semantics.js | Семантика выполнения | DEBUG |
-| policy-simulator.js | Симулятор политик | DEBUG/Experimental |
-| failure-replay.js | Воспроизведение ошибок | DEBUG/Experimental |
-| snapshot-manager.js | Менеджер снепшотов | DEBUG |
+| circuit-breaker.js | Размыкание цепи при превышении порога ошибок | **LIVE** (прямой require в dispatch-engine) |
+| retry-budget-manager.js | Бюджет повторных попыток per-type | **LIVE** (прямой require в dispatch-engine) |
+| fairness-engine.js | Предотвращение голодания сцен | **LIVE** (прямой require в dispatch-engine) |
+| lease-manager.js | Управление продлением аренды | **CORE** |
+| counter-reconciliation.js | Сверка счетчиков backpressure | **CORE** |
 
-**Важно:** **Три** governance-модуля (circuit-breaker, retry-budget, fairness) реально вызываются в dispatch-engine через прямой `require()`. Остальные (policy-engine, workload-classifier, cost-estimator) — мёртвый код, загружались через `safeRequire()` и удалены из боевого пути (Phase 6).
+**Удалены из exports runtime/index.js (D.3/L1):**
+- policy-engine, workload-classifier, cost-estimator — мёртвый код, safeRequire убран (Phase 6)
+- decision-trace, feedback-engine, governance-*, adaptation-controller, execution-semantics — не в core pipeline
+- snapshot-manager, runtime-persistence — удалены из exports (файлы на диске сохранены)
+- policy-simulator, governance-sandbox, failure-replay, governance-validator — experimental, не экспортируются
 
-> **UPD 2026-06-26:** circuit-breaker/retry-budget/fairness — LIVE (переведены с safeRequire на прямой require). policy-engine/workload-classifier/cost-estimator — мертвы, safeRequire убран. Код: `dispatch-engine.js:399,448,473`.
+> **UPD 2026-06-28:** `runtime/index.js` экспортирует только 11 модулей (против 37+ ранее). Governance facade (debug: {}) удалён. circuit-breaker/retry-budget/fairness — LIVE, напрямую require().
 
 ## 14. State Model (Per-Asset, Canonical)
 
@@ -529,3 +558,6 @@ NEW → DIRTY → PENDING → GENERATING → READY | FAILED | PLACEHOLDER
 - Video требует `image=READY` для старта (функциональная зависимость — видео собирается из IU-картинок)
 - `transitionSceneState` — теперь прямой `setSceneStateWithBuildId` без валидации
 - Линейный `SceneState` — производная проекция (`deriveLinearState()`) для backward compat
+- **Per-asset state хранится как Redis HASH** (`animastor:asset-state:<scene>`) для атомарного HSET/HGETALL — устранён RMW race между GET+merge+SET
+- **syncLinearState** — автоматический побочный эффект каждой facade-команды (M5 Шаг 3)
+- **Version gate** — `completeStage` проверяет PG-версию перед READY: stale GPU callback → DIRTY, не READY (M5 Шаг 5)

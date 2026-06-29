@@ -104,65 +104,88 @@ runtime-scheduler.tick() [каждые 5 секунд]
 ### 3b: Dispatch Engine
 
 ```
-dispatchEngine.dispatchStage(redis, bookId, chapterId, sceneId, stage, loadedBook, buildId)
-  → Check circuit breaker (если загружен)
-  → Check duplicate/lease
-  → Acquire quota (backpressure: audio max 3, image max 2, video max 1)
-  → Check retry budget (если загружен)
-  → Check fairness (если загружен)
+dispatchEngine.dispatchStage(redis, bookId, chapterId, sceneId, stage, loadedBook, buildId, { force })
+  → Check circuit breaker (LIVE — прямой require)
+  → Check duplicate/lease (force=true → очистка существующего lease)
+  → Acquire quota (атомарно через Lua EVAL — устранён race GET+INCR)
+  → Check retry budget (LIVE — прямой require)
+  → Check fairness (LIVE — прямой require)
   → Acquire stage lease (NX, TTL: audio 15min, image 20min, video 30min)
-
-  > **UPD 2026-06-26:** TTL исправлены (15/20/30, не 30/60/120). Код: `dispatch-engine.js:43-47`.
+  → Clear dispatch-completed marker (для idempotent completion)
   → orchestrator.dispatchStage() с overrideStage
 ```
 
-### 3c: Audio Generation (per-asset validation)
+### 3c: Audio Generation (через Orchestrator Facade)
 
-> **UPD 2026-06-26:** syncLinearState убран из callback'ов (R6.1).
-> Per-asset GENERATING НЕ выставляется при диспатче (дыра §5.1 — `03_Orchestrator.md §5.1`).
-> PG `scene_assets.status='ready'` НЕ пишется (C2 — `02_Claude_Audit.md §C2`).
+> **UPD 2026-06-28 (M5):** Все lifecycle-переходы через `orchestrator.completeStage`.
+> GENERATING выставляется в beginStage через scene-orchestrator (дыра §5.1 FIXED).
+> PG `scene_assets.status='ready'` пишется в callback'ах (C2 FIXED).
 
 ```
-orchestrator.executeAudioDispatch()
-  → НЕ выставляет per-asset GENERATING (только линейное *_GENERATING)
-  → audio.generateSceneAudio() → segments → gpu.send()
-  → callback → task-handler → orchestrator.handleAudioCompleted()
-    → Per-asset check: audio GENERATING/PENDING/DIRTY
-    → Валидация файла → ASSET STATE → AUDIO_READY
-    → (syncLinearState убран — R6.1)
+orchestrator.beginStage() → dispatchEngine.dispatchStage()
+  → scene-orchestrator.executeAudioDispatch()
+    → per-asset GENERATING (выставляется)
+    → syncLinearState (auto, в beginStage)
+    → audio.generateSceneAudio() → segments → gpu.send()
+  → callback → task-handler → orchestrator.completeStage('audio')
+    → scene-callbacks.handleAudioCompleted()
+      → Per-asset check: audio GENERATING/PENDING/DIRTY
+      → Валидация файла
+      → PG markReady('audio') — C2 FIXED
+      → placeholder replacement
+    → Version gate: проверка asset_version < scene_version
+      → stale → DIRTY (force-regen не отменяется)
+      → OK → setAssetState(READY) + syncLinearState
+    → finally: markDispatchCompleted (release lease + quota, РОВНО один раз — C1/C4)
 ```
 
 ### 3d: Image Generation (независим от audio!)
 
-> **UPD 2026-06-26:** VERSION-STALE CHECK живёт в `shouldScheduleAssets()` (runtime-scheduler.js:230-289),
-> НЕ в execute*Dispatch. Схема DOCS помещала его не туда.
+> **UPD 2026-06-28:** version-stale check — явный пред-проход в attemptDispatch() (Д.2).
+> dirty unit IDs из PG передаются в executeImageDispatch для регенерации конкретных IU.
 
 ```
-orchestrator.executeImageDispatch()
-  → НЕ выставляет per-asset GENERATING (только линейное *_GENERATING)
-  → image.generateSceneIUImages() → build prompts → gpu.send()
-  → callback → task-handler (с проверкой IU completion)
-      → saveIURegistry → проверка всех IU для сцены
-      → orchestrator.handleImageCompleted()
-      → Per-asset check: image GENERATING/PENDING/DIRTY
-      → IMAGE_READY
+orchestrator.beginStage() → dispatchEngine.dispatchStage()
+  → scene-orchestrator.executeImageDispatch()
+    → per-asset GENERATING + syncLinearState (auto)
+    → Чтение dirtyUnitIds из PG (для точечной регенерации IU)
+    → image.generateSceneIUImages() → build prompts → gpu.send()
+  → callback → task-handler (проверка IU completion)
+    → saveIURegistry → проверка всех IU для сцены
+    → orchestrator.completeStage('image')
+      → scene-callbacks.handleImageCompleted()
+        → Per-asset check: image GENERATING/PENDING/DIRTY
+        → PG markReady('image') — C2 FIXED
+        → Очистка только завершённых dirty unit IDs
+        → Сброс IU-счётчика на актуальное количество файлов
+        → Очистка in-flight markers
+      → Version gate → READY or DIRTY
+      → finally: markDispatchCompleted (release lease + quota)
 ```
 
 ### 3e: Video Generation (зависит от IMAGE_READY)
 
-> **UPD 2026-06-26:** VERSION-STALE CHECK — см. 3d, не здесь.
+> **UPD 2026-06-28:** Video — последняя стадия. После READY → remove from active index + auto-slide.
 
 ```
-orchestrator.executeVideoDispatch()
-  → НЕ выставляет per-asset GENERATING (только линейное *_GENERATING)
-  → Проверка: image=READY? (asset states + chunk fallback)
+orchestrator.beginStage() → dispatchEngine.dispatchStage()
+  → scene-orchestrator.executeVideoDispatch()
+    → per-asset GENERATING + syncLinearState (auto)
+    → Проверка: image=READY? (asset states + chunk fallback)
     → video.generateVideoAnimation() → jobSpecs
-  → gpu.sendUnified() для каждой группы
-  → callback → orchestrator.handleVideoCompleted()
-    → Per-asset check: video GENERATING/PENDING/DIRTY
-    → video merge + mux audio
-    → VIDEO_READY → remove from active index
-    → trySlideWindowOnComplete() → auto-slide
+    → gpu.sendUnified() для каждой группы
+  → callback → orchestrator.completeStage('video')
+    → scene-callbacks.handleVideoCompleted()
+      → Per-asset check: video GENERATING/PENDING/DIRTY
+      → Валидация .mp4 файла
+      → PG markReady('video') — C2 FIXED
+      → updateSceneVideoStatus → updateSceneChunks
+      → clearDirtyFlag в PG
+      → publishProgress
+      → removeSceneFromActiveIndex
+      → trySlideWindowOnComplete() → auto-slide
+    → Version gate → READY or DIRTY
+    → finally: markDispatchCompleted (release lease + quota)
 ```
 
 ---
