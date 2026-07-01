@@ -41,8 +41,7 @@
             -->
 
             <!-- Match by .vbook filename (file:// URIs; also content:// on API 31+). -->
-            <intent-filter
-                android:label="@string/vbook_file">
+            <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
@@ -57,8 +56,7 @@
             </intent-filter>
 
             <!-- Custom VBook MIME types, if a provider ever exposes them. -->
-            <intent-filter
-                android:label="@string/vbook_file">
+            <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
@@ -78,8 +76,7 @@
                 appears in "Open with" for other zip/binary files. text/* is
                 intentionally excluded — a .vbook is never text.
             -->
-            <intent-filter
-                android:label="@string/vbook_file">
+            <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
