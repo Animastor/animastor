@@ -108,7 +108,15 @@ data class Chapter(
     val chapter: String? = null,
     val chapter_title: String? = null,
     val type: String? = null,
-    val scenes: List<Scene>? = null
+    val scenes: List<Scene>? = null,
+    /** Programmatic chapter intro metadata (not a narrative scene) */
+    val intro: ChapterIntro? = null
+)
+
+data class ChapterIntro(
+    val text: String? = null,
+    val scene_title: String? = null,
+    val style: String? = null
 )
 
 data class Scene(
@@ -123,9 +131,8 @@ data class Scene(
     val units: List<SceneUnit>? = null
 )
 
-fun extractChapterTitleFromIntro(introScene: Scene?): String? {
-    if (introScene?.type != "chapter_intro") return null
-    val text = introScene.audio?.full_text ?: return null
+fun extractChapterTitleFromIntro(intro: ChapterIntro?): String? {
+    val text = intro?.text ?: return null
     // Try to split on em-dash or period+space, take the second part as title
     val separators = listOf(" — ", " – ", ". ", "! ", "? ")
     for (sep in separators) {
@@ -394,10 +401,25 @@ fun BookData.enrichTitles(): BookData {
             // Already has a title
             ch
         } else {
-            // Try to extract from chapter_intro scene
-            val introScene = ch.scenes?.firstOrNull { it.type == "chapter_intro" }
-            val extractedTitle = extractChapterTitleFromIntro(introScene)
-            ch.copy(chapter_title = extractedTitle)
+            // Extract from chapter.intro metadata (new format, programmatic)
+            val extractedTitle = extractChapterTitleFromIntro(ch.intro)
+            // Fallback: old format — look for chapter_intro scene in scenes[]
+            val fallbackTitle = if (extractedTitle == null) {
+                val introScene = ch.scenes?.firstOrNull { it.type == "chapter_intro" }
+                val text = introScene?.audio?.full_text ?: introScene?.units?.firstOrNull()?.text
+                text?.let { t ->
+                    val separators = listOf(" — ", " – ", ". ", "! ", "? ")
+                    for (sep in separators) {
+                        val idx = t.indexOf(sep)
+                        if (idx > 0 && idx < t.length - sep.length) {
+                            val candidate = t.substring(idx + sep.length).trim().removeSuffix(".").removeSuffix("!").removeSuffix("?").trim()
+                            if (candidate.isNotBlank()) return@let candidate
+                        }
+                    }
+                    null
+                }
+            } else null
+            ch.copy(chapter_title = extractedTitle ?: fallbackTitle)
         }
     }
     return if (enriched != null) copy(chapters = enriched) else this

@@ -68,7 +68,8 @@ function injectChapterMarkers(text) {
 function splitIntoChapters(text) {
     const lines = text.split('\n');
 
-    const chapterRe = /^(?:Глава|Chapter)\s*[.:]?\s*(.+)$/i;
+    const chapterRe = /^(?:Глава|Chapter)\s*\d+\s*[.:]?\s*$/i;
+    const chapterWithTitleRe = /^(?:Глава|Chapter)\s*[.:]?\s*(.+)$/i;
     const prologueRe = /^(?:Пролог|Prologue|Эпилог|Epilogue|Введение|Introduction|Предисловие|Preface|Послесловие|Afterword)$/i;
     // ALL-CAPS chapter heading (for books without explicit "Глава" markers)
     const allCapsHeadingRe = /^\[ГЛАВА:\s+(.+)\]$/;
@@ -89,6 +90,24 @@ function splitIntoChapters(text) {
             curStart = i;
             curTitle = match[0];
         } else if ((match = chapterRe.exec(line))) {
+            // Multi-line header: "Глава 1" followed by title on the next line
+            if (curTitle !== null) {
+                chapters.push({ title: curTitle, startLine: curStart, endLine: i - 1 });
+            }
+            curStart = i;
+            // Look ahead for the title on the next non-empty line
+            let titleLine = '';
+            for (let j = i + 1; j < lines.length; j++) {
+                const nextLine = lines[j].trim();
+                if (!nextLine) continue;
+                // If next line is another header, stop
+                if (chapterRe.test(nextLine) || chapterWithTitleRe.test(nextLine) || prologueRe.test(nextLine) || allCapsHeadingRe.test(nextLine)) break;
+                titleLine = nextLine;
+                break;
+            }
+            curTitle = titleLine || line;
+        } else if ((match = chapterWithTitleRe.exec(line))) {
+            // Single-line header: "Глава 1: Никогда не разговаривайте с неизвестными"
             if (curTitle !== null) {
                 chapters.push({ title: curTitle, startLine: curStart, endLine: i - 1 });
             }

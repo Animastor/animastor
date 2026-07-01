@@ -7,7 +7,7 @@ const {
     createStep, completeStep, failStep,
 } = require('./agent-session');
 const {
-    PROGRESS_STAGES, WINDOW_SIZE, MAX_WINDOW_CHARS, STEP_RETRIES, SYSTEM_PROMPTS,
+    PROGRESS_STAGES, WINDOW_SIZE, MAX_WINDOW_CHARS, SCENE_CHUNK_SIZE, STEP_RETRIES, SYSTEM_PROMPTS,
 } = require('./agent-prompts');
 
 async function callAI(messages, options) {
@@ -389,6 +389,19 @@ function getWindowText(sourceText, existingChars, existingLocs, windowIndex, sta
     const firstLine = windowLines[0]?.trim() || '';
     if (/^(?:глава|chapter|часть|part|пролог|prologue|эпилог|epilogue)/i.test(firstLine)) {
         skipLen = windowLines[0].length + 1;
+        // Also skip the next non-empty line if it's a chapter title (multi-line header)
+        for (let j = 1; j < windowLines.length; j++) {
+            const nextLine = windowLines[j]?.trim();
+            if (!nextLine) {
+                skipLen += (windowLines[j] || '').length + 1;
+                continue;
+            }
+            // Don't skip if next line is another header
+            if (!/^(?:глава|chapter|часть|part|пролог|prologue|эпилог|epilogue)/i.test(nextLine)) {
+                skipLen += (windowLines[j] || '').length + 1;
+            }
+            break;
+        }
     }
 
     const actualStart = startOffset + skipLen;
@@ -443,6 +456,11 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
     const sceneOffset = baseSceneCount || 0;
     let characters = existingChars || [];
     let locations = existingLocs || [];
+
+    // Scene creation gets only the first SCENE_CHUNK_SIZE chars so that
+    // 3 scenes × ~65 words can cover the text verbatim without truncation.
+    // Characters/locations (reconnaissance) still get the full ~4000-char window.
+    const sceneText = text.substring(0, Math.min(SCENE_CHUNK_SIZE, text.length));
 
     // Reconnaissance: extract chars/locs from each ~4000-char window
     // New characters added, existing ones enriched with more detail
@@ -527,7 +545,7 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
         console.log(`[AGENT] Locations: ${existingLocs.length} existing + ${added} new + ${enriched} enriched = ${locations.length} total`);
     }
 
-    const scenes = await stepCreateScenes(sessionId, text, characters, locations, stepIndex, _progress);
+    const scenes = await stepCreateScenes(sessionId, sceneText, characters, locations, stepIndex, _progress);
     if (!scenes || scenes.length === 0) throw new Error('AI returned no scenes');
 
     const windowScenes = scenes.slice(0, WINDOW_SIZE);
@@ -610,6 +628,10 @@ async function bootstrapWithAgent(bookId, progress) {
 
         const extraScenes = result.allScenes.slice(WINDOW_SIZE);
 
+        // Scene-advanced offset: advance by scene chunk, not full recon window
+        const sceneConsumedOffset = windowInfo.windowStartOffset + Math.min(SCENE_CHUNK_SIZE, windowInfo.text.length);
+        const actualRemaining = draft.sourceText.substring(sceneConsumedOffset).trim();
+
         const windowData = {
             window_index: 0,
             chapter_title: windowInfo.chapterTitle,
@@ -617,8 +639,8 @@ async function bootstrapWithAgent(bookId, progress) {
             total_scenes: result.allScenes.length,
             created_scenes: result.scenes.length,
             remaining_scenes: extraScenes,
-            remaining_text: windowInfo.remainingText,
-            currentOffset: windowInfo.currentOffset,
+            remaining_text: actualRemaining,
+            currentOffset: sceneConsumedOffset,
             windowStartOffset: windowInfo.windowStartOffset,
             all_characters: result.characters,
             all_locations: result.locations,
@@ -647,7 +669,7 @@ async function bootstrapWithAgent(bookId, progress) {
             structure: structure,
         });
 
-        const hasMoreText = !!windowInfo.remainingText;
+        const hasMoreText = actualRemaining.length > 0;
         const allDone = extraScenes.length === 0 && !hasMoreText;
 
         _progress({ stage: 'done', message: `✓ Импорт завершён: ${result.scenes.length} сцен, ${result.characters.length} персонажей, ${result.locations.length} локаций` });
@@ -778,6 +800,10 @@ async function bootstrapNextWindow(bookId, progress) {
 
         const extraScenes = result.allScenes.slice(WINDOW_SIZE);
 
+        // Scene-advanced offset: advance by scene chunk, not full recon window
+        const sceneConsumedOffset = windowInfo.windowStartOffset + Math.min(SCENE_CHUNK_SIZE, windowInfo.text.length);
+        const actualRemaining = draft.sourceText.substring(sceneConsumedOffset).trim();
+
         const bookResult = lazyBook.appendToBook(bookId, {
             characters: result.characters,
             locations: result.locations,
@@ -796,14 +822,14 @@ async function bootstrapNextWindow(bookId, progress) {
             total_scenes: result.allScenes.length,
             created_scenes: (windowData?.created_scenes || 0) + result.scenes.length,
             remaining_scenes: extraScenes,
-            remaining_text: windowInfo.remainingText,
-            currentOffset: windowInfo.currentOffset,
+            remaining_text: actualRemaining,
+            currentOffset: sceneConsumedOffset,
             windowStartOffset: windowInfo.windowStartOffset,
             all_characters: result.characters,
             all_locations: result.locations,
         };
 
-        const allDone = extraScenes.length === 0 && !windowInfo.remainingText;
+        const allDone = extraScenes.length === 0 && actualRemaining.length === 0;
         await updateSession(sessionId, {
             window_data: JSON.stringify(updatedWindowData),
             progress_msg: `Окно ${nextWindowIndex + 1}: добавлено ${result.scenes.length} сцен. Осталось: ${extraScenes.length} кэшированных`,

@@ -167,10 +167,17 @@
 ### 4.5 Agent Service (`backend/src/services/agent-service.js`)
 **Ответственность:** 5-шаговый AI-пайплайн (структура извлекается отдельно): персонажи → локации → сцены → units → визуал.
 
+**Ключевое поведение (2026-07-01):**
+- AI создаёт **ровно 3 сцены** на окно (`WINDOW_SIZE=3`)
+- Каждая сцена ≤ ~65 слов (≈20s audio) — AI получает инструкцию в промпте
+- Если AI возвращает больше 3 сцен, лишние отбрасываются (`scenes.slice(0, WINDOW_SIZE)`)
+- Программного расщепления сцен больше нет — AI управляет делением через промпт
+- Промпт сцен в `agent-prompts.js` содержит правило word guideline с возможностью завершить предложение за лимитом
+
 **Входы:** bookId, sourceText.
 **Выходы:** JSON-структура книги в PG (agent_sessions, agent_steps, agent_conversations).
 
-**Зависимости:** ai-service, context-builder, book, postgres.
+**Зависимости:** ai-service, context-builder, book, postgres, agent-prompts.
 
 ### 4.6 TXT Importer (`backend/src/services/txt-importer.js`)
 **Ответственность:** Импорт TXT: декодирование (UTF-8/CP1251), валидация, создание draft, вызов agent-service.
@@ -382,6 +389,11 @@ NEW → DIRTY → PENDING → GENERATING → READY | FAILED | PLACEHOLDER
 
 ### 10.2 GenerateViewModel
 **Ответственность:** Запуск, мониторинг, отмена генерации, polling agent-status, функционал worker toggle.
+
+**VBook progress (2026-07-01):**
+- `totalInWindow` использует реальное количество сцен в окне (отслеживается через `lastSceneWindowMax`)
+- Прогресс показывает 2/2 или 3/3, а не хардкодное 3/3
+- `lastSceneWindowMax` сбрасывается при детекте нового окна или нового VBook импорта
 
 ### 10.3 PlaybackViewModel
 **Ответственность:** Воспроизведение сцен: текущая сцена, список сцен, прогресс, предзагрузка (preloadAhead=3).

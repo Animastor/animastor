@@ -81,6 +81,7 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
     private var typingAnimJob: Job? = null
     private var bookData: BookData? = null
     private var bookDataLoadAttempted = false
+    private var lastVBookStage: VBookStage? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -265,6 +266,16 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
         viewLifecycleOwner.lifecycleScope.launch {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 generateViewModel.uiState.collect { state ->
+                    // ── VBook completed → refresh bookData for position bar ──
+                    val currentStage = state.vbookProgress?.stage
+                    if (currentStage == VBookStage.COMPLETED && lastVBookStage != VBookStage.COMPLETED) {
+                        bookDataLoadAttempted = false
+                        loadBookDataAsync()
+                    }
+                    if (currentStage != null) {
+                        lastVBookStage = currentStage
+                    }
+
                     val msgs = state.importProgressMessages
 
                     // TXT import active → reset chat
@@ -360,6 +371,9 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
                 val scTitle = sc?.scene_title?.takeIf { it.isNotBlank() }
                 val chLabel = if (isSpecial) {
                     chTitle ?: (ch?.type?.replaceFirstChar { it.uppercase() } ?: "")
+                } else if (chTitle != null) {
+                    // chapter_title already contains full "Глава N — Name"
+                    chTitle
                 } else {
                     "${getString(R.string.navigate_chapter)} $realChNum"
                 }
@@ -373,9 +387,8 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
                     if (scTitle != null) "$chLabel / $scLabel — $scTitle / $unitLabel"
                     else "$chLabel / $scLabel / $unitLabel"
                 } else if (chTitle != null && scTitle != null) {
-                    "$chLabel — $chTitle / $scLabel — $scTitle / $unitLabel"
-                } else if (chTitle != null) {
-                    "$chLabel — $chTitle / $scLabel / $unitLabel"
+                    // chTitle already in chLabel, use chLabel directly
+                    "$chLabel / $scLabel — $scTitle / $unitLabel"
                 } else if (scTitle != null) {
                     "$chLabel / $scLabel — $scTitle / $unitLabel"
                 } else {
@@ -499,15 +512,16 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
         val scIdx = bd.sceneIndex(pos.chapterId, pos.sceneId)
         val isSpecial = ch?.type == "cover" || ch?.type == "prologue"
         val chapters = bd.chapters ?: emptyList()
-        val realChNum = chapters.take((chIdx - 1).coerceAtLeast(0)).count { it.type != "cover" && it.type != "prologue" } + 1
-        val chName = if (isSpecial) {
-            ch?.chapter_title?.takeIf { it.isNotBlank() } ?: ch?.type?.replaceFirstChar { it.uppercase() }
-        } else if (chIdx > 0) {
-            val titleSuffix = if (ch?.chapter_title != null) " — ${ch.chapter_title}" else ""
-            "${getString(R.string.navigate_chapter)} $realChNum$titleSuffix"
-        } else {
-            pos.chapterId
-        }
+                val realChNum = chapters.take((chIdx - 1).coerceAtLeast(0)).count { it.type != "cover" && it.type != "prologue" } + 1
+                val chName = if (isSpecial) {
+                    ch?.chapter_title?.takeIf { it.isNotBlank() } ?: ch?.type?.replaceFirstChar { it.uppercase() }
+                } else if (ch?.chapter_title != null) {
+                    ch.chapter_title
+                } else if (chIdx > 0) {
+                    "${getString(R.string.navigate_chapter)} $realChNum"
+                } else {
+                    pos.chapterId
+                }
         val scName = if (scIdx > 0) {
             val titleSuffix = if (sc?.scene_title != null) " — ${sc.scene_title}" else ""
             "${getString(R.string.navigate_scene)} $scIdx$titleSuffix"
@@ -602,6 +616,8 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
                 val realChNum = chapters.take((chIdx - 1).coerceAtLeast(0)).count { it.type != "cover" && it.type != "prologue" } + 1
                 val chapterId = if (isSpecial) {
                     chTitle ?: ch?.type?.replaceFirstChar { it.uppercase() } ?: "?"
+                } else if (chTitle != null) {
+                    chTitle
                 } else if (chIdx > 0) {
                     "${getString(R.string.navigate_chapter)} $realChNum"
                 } else {
@@ -684,12 +700,13 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
                     val realChNum = chapters.take((chIdx - 1).coerceAtLeast(0)).count { it.type != "cover" && it.type != "prologue" } + 1
                     val chName = if (isSpecial) {
                         ch?.chapter_title?.takeIf { it.isNotBlank() } ?: ch?.type?.replaceFirstChar { it.uppercase() }
+                    } else if (ch?.chapter_title != null) {
+                        ch.chapter_title
                     } else if (chIdx > 0) {
-                        val titleSuffix = if (ch?.chapter_title != null) " — ${ch.chapter_title}" else ""
-                        "${getString(R.string.navigate_chapter)} $realChNum$titleSuffix"
-        } else {
-            pos.chapterId
-        }
+                        "${getString(R.string.navigate_chapter)} $realChNum"
+                    } else {
+                        pos.chapterId
+                    }
         val scName = if (scIdx > 0) {
                         val titleSuffix = if (sc?.scene_title != null) " — ${sc.scene_title}" else ""
                         "${getString(R.string.navigate_scene)} $scIdx$titleSuffix"

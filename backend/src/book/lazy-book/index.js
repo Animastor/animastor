@@ -778,13 +778,6 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
     fs.writeFileSync(getCharactersPath(bookDir), JSON.stringify(mergedCharacters, null, 2));
     fs.writeFileSync(getBiblePath(bookDir), JSON.stringify(bible, null, 2));
 
-    const aiScenes = (analysis.scenes || []).slice(0, maxScenes);
-
-    const validScenes = aiScenes.filter(s => s.text && s.text.trim().length > 0 && s.units && s.units.some(u => (u.text || '').trim()));
-    if (validScenes.length === 0) {
-        throw new Error('AI returned no valid scenes — book cannot be created');
-    }
-
     const chDir = getChapterDir(bookDir);
     if (!fs.existsSync(chDir)) fs.mkdirSync(chDir, { recursive: true });
 
@@ -818,9 +811,6 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
         };
     }
 
-    const structuralScenes = [];
-
-    const hasChapterIntro = chapterObj.scenes.some(s => s.type === 'chapter_intro');
     const hasCoverChapter = fs.readdirSync(chDir).filter(f => f.endsWith('.json'))
         .some(f => {
             try {
@@ -848,7 +838,43 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
         }
     }
 
-    if (!hasChapterIntro) {
+    // ── Migration: move old chapter_intro scene → chapter.intro ──
+    const oldIntroIdx = chapterObj.scenes.findIndex(s => s.type === 'chapter_intro');
+    if (oldIntroIdx >= 0 && !chapterObj.intro) {
+        const oldIntro = chapterObj.scenes[oldIntroIdx];
+        chapterObj.intro = {
+            text: oldIntro.audio?.full_text || oldIntro.units?.[0]?.text || '',
+            scene_title: oldIntro.scene_title || '',
+            style: oldIntro.style || 'soviet_book_page',
+        };
+        chapterObj.scenes.splice(oldIntroIdx, 1);
+    }
+
+    // ── Create chapter_intro metadata (programmatic, not a scene) ──
+    // ── Build chapter title with full name (e.g., "Глава 1 — НИКОГДА НЕ РАЗГОВАРИВАЙТЕ...") ──
+    let fullChapterTitle = null;
+    if (structure && structure.chapters && structure.chapters.length > 0) {
+        const chapterInfo = windowConfig.chapterIndex < structure.chapters.length
+            ? structure.chapters[windowConfig.chapterIndex]
+            : null;
+        if (chapterInfo) {
+            const chNum = chapterInfo.number || (windowConfig.chapterIndex + 1);
+            const chTitleRaw = chapterInfo.title || '';
+            if (chTitleRaw && chTitleRaw.length > 0) {
+                fullChapterTitle = `Глава ${chNum} — ${chTitleRaw}`;
+            }
+        }
+    }
+    if (!fullChapterTitle) {
+        fullChapterTitle = chapterTitle || `Глава ${(chapterIndex || 0) + 1}`;
+    }
+    if (chapterObj && !chapterObj.chapter_title || chapterObj.chapter_title === chapterTitle) {
+        chapterObj.chapter_title = fullChapterTitle;
+    }
+
+    // ── Create chapter_intro metadata (programmatic, not a scene) ──
+    if (!chapterObj.intro) {
+        let introData = null;
         if (structure && structure.chapters && structure.chapters.length > 0) {
             const chapterInfo = windowConfig.chapterIndex < structure.chapters.length
                 ? structure.chapters[windowConfig.chapterIndex]
@@ -856,16 +882,62 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
             if (chapterInfo) {
                 const chNum = chapterInfo.number || (windowConfig.chapterIndex + 1);
                 const chTitle = chapterInfo.title || `Глава ${chNum}`;
-                structuralScenes.push(createChapterIntroScene(chTitle, chNum, language));
+                const cleanTitle = chTitle.replace(/^(?:Глава|Chapter)\s*\d+\s*[.:]?\s*/i, '').trim();
+                const sceneText = language === 'ru'
+                    ? `Глава ${chNum}\n${cleanTitle}`
+                    : `Chapter ${chNum}\n${cleanTitle}`;
+                introData = { text: sceneText, scene_title: `Глава ${chNum}`, style: 'soviet_book_page' };
             }
-        } else if (isFirstWindow) {
-            const chNum = 1;
-            structuralScenes.push(createChapterIntroScene(chapterTitle || 'Глава 1', chNum, language));
+        }
+        if (!introData && isFirstWindow) {
+            const chTitle = chapterTitle || 'Глава 1';
+            const cleanTitle = chTitle.replace(/^(?:Глава|Chapter)\s*\d+\s*[.:]?\s*/i, '').trim();
+            const sceneText = language === 'ru' ? `Глава 1\n${cleanTitle}` : `Chapter 1\n${cleanTitle}`;
+            introData = { text: sceneText, scene_title: 'Глава 1', style: 'soviet_book_page' };
+        }
+        if (introData) {
+            chapterObj.intro = introData;
         }
     }
 
-    for (const stScene of structuralScenes) {
-        chapterObj.scenes.push(stScene);
+    // ── Create programmatic chapter_intro scene (prepended to scenes[]) ──
+    const introMeta = chapterObj.intro;
+    if (introMeta && introMeta.text) {
+        const existingIntro = chapterObj.scenes.find(s => s.type === 'chapter_intro');
+        if (!existingIntro) {
+            const introScene = {
+                scene_id: sceneId(),
+                scene_title: introMeta.scene_title || `Глава ${(chapterIndex || 0) + 1}`,
+                type: 'chapter_intro',
+                style: introMeta.style || 'soviet_book_page',
+                participants: [],
+                audio: {
+                    voice: 'narrator',
+                    full_text: introMeta.text,
+                },
+                units: [{
+                    id: unitId(),
+                    type: 'typography',
+                    text: introMeta.text,
+                    participants: [],
+                    visual: {
+                        shot: 'wide',
+                        prompt: `Chapter ${(chapterIndex || 0) + 1} title page typography, book style`,
+                        type: 'typography',
+                        text_render: introMeta.text,
+                        quality: 'high',
+                    },
+                }],
+            };
+            chapterObj.scenes.unshift(introScene);
+        }
+    }
+
+    // ── AI narrative scenes (clean maxScenes, no structural subtraction) ──
+    const aiScenes = (analysis.scenes || []).slice(0, maxScenes);
+    const validScenes = aiScenes.filter(s => s.text && s.text.trim().length > 0 && s.units && s.units.some(u => (u.text || '').trim()));
+    if (validScenes.length === 0 && !chapterObj.intro) {
+        throw new Error('AI returned no valid scenes — book cannot be created');
     }
 
     for (const aiScene of validScenes) {

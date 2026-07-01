@@ -9,6 +9,7 @@ const PROGRESS_STAGES = {
 
 const WINDOW_SIZE = 3;
 const MAX_WINDOW_CHARS = 4000;
+const SCENE_CHUNK_SIZE = 1500;
 const STEP_RETRIES = 3;
 
 const SYSTEM_PROMPTS = {
@@ -129,7 +130,17 @@ Return ONLY valid JSON.`,
 - Scene boundaries: location change, time jump, character entrance/exit, narrative break
 - Each scene.text must contain the COMPLETE VERBATIM original text for that episode
 - Scene texts are used for TTS audio narration — must be verbatim, not summarized
-- Split EVERY logical scene — return at least 1 scene
+- **Split the text into EXACTLY 3 scenes**
+- **Word guideline: ~65 words per scene** (≈20s audio at Russian speech rate). If a sentence ends slightly over ~65 words, that's OK — finish the sentence. Do NOT cut mid-sentence.
+- If a scene at a natural boundary far exceeds ~65 words, choose an earlier natural break point (paragraph end, sentence end). Prefer natural narrative boundaries over equal-length chunks. A shorter scene is better than an overly long one.
+- Scene order must preserve the original narrative sequence.
+- Do NOT use ellipsis (...) or any form of truncation or summarization. Every word from the provided text must appear in exactly one scene, verbatim, without gaps.
+
+## CRITICAL: Do NOT create chapter title / chapter header / typography / transition units
+- Chapter titles, headers, and opening cards are added PROGRAMMATICALLY by the system
+- Do NOT include the chapter name, "Глава N", "Chapter N", or any chapter-level typography in any scene
+- Start scenes directly with the narrative content — no "title card" transitions
+- If the text starts with a chapter heading, IGNORE it and start from the narrative content
 
 ## Known Characters
 %EXISTING_CHARACTERS%
@@ -244,5 +255,5 @@ Return ONLY valid JSON.`,
 };
 
 module.exports = {
-    PROGRESS_STAGES, WINDOW_SIZE, MAX_WINDOW_CHARS, STEP_RETRIES, SYSTEM_PROMPTS,
+    PROGRESS_STAGES, WINDOW_SIZE, MAX_WINDOW_CHARS, SCENE_CHUNK_SIZE, STEP_RETRIES, SYSTEM_PROMPTS,
 };

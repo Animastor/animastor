@@ -4,7 +4,41 @@ All notable changes to Animastor are documented here.
 
 ---
 
-## [Unreleased] — 2026-06-27
+## [Unreleased] — 2026-07-01
+
+### Fixed
+
+- **Chapter title duplication (frontend)** — When `chapter_title` already contains
+  `"Глава 1 — Name"`, frontend no longer prepends another `"Глава 1 — "` prefix.
+  4 methods in AiAssistantFragment.kt (updateContextBar, addContextualPosition,
+  addContextualWelcome, sendMessage), 2 in NavigateFragment.kt (updatePositionBar,
+  rebuildStructure), 1 in EditFragment.kt (updatePositionLabel).
+
+- **chapter_intro scene_title shortened** — Backend lazy-book/index.js:
+  programmatic chapter_intro scene now uses short `"Глава 1"` as scene_title
+  instead of full `"Глава 1 — НИКОГДА НЕ РАЗГОВАРИВАЙТЕ..."`.
+
+### Changed
+
+- **AI prompt: EXACTLY 3 scenes + ~65 word guideline** — agent-prompts.js
+  scenes prompt: `"Split the text into EXACTLY 3 scenes"` with ~65 word limit
+  (≈20s audio at Russian speech rate). Natural boundaries preferred over
+  equal-length chunks. If a sentence ends slightly over ~65 words, finish it
+  — do NOT cut mid-sentence.
+
+- **Progress shows real scene count** — frontend GenerateViewModel.kt:
+  `totalInWindow` tracks actual scene count per window (via `lastSceneWindowMax`)
+  instead of hardcoded `windowSize = 3`. Shows accurate progress like 2/2 or 3/3.
+
+### Removed
+
+- **Programmatic scene splitting** — agent-service.js: removed while-loop that
+  artificially split large scenes by paragraphs. AI now handles scene division
+  via prompt instruction alone.
+
+---
+
+## [2026-06-27]
 
 ### Security
 

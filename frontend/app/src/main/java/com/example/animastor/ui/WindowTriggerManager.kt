@@ -126,26 +126,31 @@ class WindowTriggerManager(
         val units = sc.units ?: return
         if (units.isEmpty()) return
 
+        // ── Count only content scenes (skip structural: chapter_intro, cover) ──
+        val contentScenes = scenes.filter { it.type != "chapter_intro" && it.type != "cover" }
+        val contentIdx = contentScenes.indexOfFirst { it.scene_id == pos.sceneId }
+        if (contentIdx < 0) return
+
         // Condition 1: unit must be among the last 3 of the scene
         val last3Start = if (units.size <= 3) 0 else units.size - 3
         if (idx < last3Start) return
 
         // ── Only trigger on IS_LAST_OF_WINDOW boundary ─────────────
-        // Not on isLastChapterScene alone — that caused infinite
-        // re-triggers during playback (auto-play hits every last scene).
-        val isLastOfWindow = scIdx % WINDOW_SIZE == (WINDOW_SIZE - 1)
+        // Content index is used to correctly identify window boundaries
+        // even when structural scenes (chapter_intro) are present.
+        val isLastOfWindow = contentIdx % WINDOW_SIZE == (WINDOW_SIZE - 1)
         if (!isLastOfWindow) return
+
+        // Dedup by window key (use content index for window calculation)
+        val windowKey = "${pos.chapterId}:${contentIdx / WINDOW_SIZE}"
+        if (triggeredWindows.contains(windowKey)) return
+        triggeredWindows.add(windowKey)
 
         // ── One-shot per unit position within the scene ────────────
         // Avoid re-triggering as auto-play cycles through the last 3 units.
         if (idx == lastCheckedUnitIndex && pos.sceneId == lastCheckedSceneId) return
         lastCheckedUnitIndex = idx
         lastCheckedSceneId = pos.sceneId
-
-        // Dedup by window key
-        val windowKey = "${pos.chapterId}:${scIdx / WINDOW_SIZE}"
-        if (triggeredWindows.contains(windowKey)) return
-        triggeredWindows.add(windowKey)
 
         val unitId = units.getOrNull(idx)?.id
         Log.i(TAG, "triggering next window (ch=${pos.chapterId} sc=$scIdx unit=$idx windowKey=$windowKey)")

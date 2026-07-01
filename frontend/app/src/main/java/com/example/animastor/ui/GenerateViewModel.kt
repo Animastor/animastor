@@ -906,6 +906,9 @@ class GenerateViewModel(
      * Parse [AgentStatusResponse] into structured [VBookProgress] and store in [GenUiState].
      * Extracts stage (ANALYZING / CREATING_SCENES), scene-within-window number,
      * and total scenes from the progress message and response fields.
+     *
+     * Denominator is always WINDOW_SIZE (= 3) so progress shows 1/3 → 2/3 → 3/3
+     * rather than the dynamic (1/1 → 2/2 → 3/3) which always reads as 100%.
      */
     private fun updateVBookProgress(status: com.example.animastor.repository.AgentStatusResponse) {
         val msg = status.progress_msg?.lowercase() ?: ""
@@ -937,16 +940,15 @@ class GenerateViewModel(
         val sceneMatch = Regex("""сцены[\s]*?(\d+)""", RegexOption.IGNORE_CASE).find(status.progress_msg ?: "")
         val globalScene = sceneMatch?.groupValues?.get(1)?.toIntOrNull() ?: 0
 
-        // Window-local scene index: (global - 1) % WINDOW_SIZE + 1 → 0-based
         val windowSize = 3
         val sceneInWindow = if (globalScene > 0) ((globalScene - 1) % windowSize) else 0
-        val totalInWindow = if (globalScene > 0) windowSize else 0
 
         _uiState.update { it.copy(
             vbookProgress = VBookProgress(
                 stage = stage,
                 sceneIndex = sceneInWindow,
-                scenesInWindow = totalInWindow,
+                // Always windowSize (3) so progress reads 1/3 → 2/3 → 3/3
+                scenesInWindow = windowSize,
                 totalScenes = status.total_scenes ?: status.created_scenes,
                 windowIndex = status.window_index ?: 0
             )

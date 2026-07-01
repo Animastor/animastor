@@ -192,6 +192,9 @@ class NavigateFragment : Fragment(R.layout.fragment_navigate) {
             val scTitle = sc?.scene_title?.takeIf { it.isNotBlank() }
             val chLabel = if (isSpecial) {
                 chTitle ?: (ch?.type?.replaceFirstChar { it.uppercase() } ?: "")
+            } else if (chTitle != null) {
+                // chapter_title already contains full "Глава N — Name"
+                chTitle
             } else if (chIdx > 0) {
                 "${getString(R.string.navigate_chapter)} $realChNum"
             } else {
@@ -204,9 +207,8 @@ class NavigateFragment : Fragment(R.layout.fragment_navigate) {
                 if (scTitle != null) "$chLabel / $scLabel — $scTitle / $unitLabel"
                 else "$chLabel / $scLabel / $unitLabel"
             } else if (chTitle != null && scTitle != null) {
-                "$chLabel — $chTitle / $scLabel — $scTitle / $unitLabel"
-            } else if (chTitle != null) {
-                "$chLabel — $chTitle / $scLabel / $unitLabel"
+                // chTitle already in chLabel, use chLabel directly
+                "$chLabel / $scLabel — $scTitle / $unitLabel"
             } else if (scTitle != null) {
                 "$chLabel / $scLabel — $scTitle / $unitLabel"
             } else {
@@ -259,7 +261,8 @@ class NavigateFragment : Fragment(R.layout.fragment_navigate) {
             val chLabel = if (isSpecial) {
                 chTitle ?: (ch.type?.replaceFirstChar { it.uppercase() } ?: "")
             } else if (chTitle != null) {
-                "${getString(R.string.navigate_chapter)} $realChNum — $chTitle"
+                // chapter_title already contains full "Глава N — Name"
+                chTitle
             } else {
                 "${getString(R.string.navigate_chapter)} $realChNum"
             }
