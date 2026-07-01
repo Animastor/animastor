@@ -26,12 +26,14 @@
             <!--
                 .vbook association.
 
-                NOTE ON ICONS: android:icon on an <intent-filter> only sets the
-                icon shown in the system "Open with" chooser. Android has no
-                per-extension icon registry, so the icon a file manager draws in
-                its file list is chosen by the file manager itself (by MIME type)
-                and cannot be overridden by the app. These filters therefore only
-                make the app *open* .vbook files; the list icon is out of scope.
+                NOTE ON ICONS: no android:icon is set on these intent-filters,
+                so the system "Open with" chooser shows the Animastor app icon
+                (@mipmap/ic_launcher) — which is what we want. Setting
+                android:icon here would instead show that drawable in the chooser.
+                Android has no per-extension icon registry, so the icon a file
+                manager draws in its file list is chosen by the manager itself
+                (by MIME type) and cannot be overridden by the app. These filters
+                therefore only make the app *open* .vbook files.
 
                 Matching by filename via pathPattern works on all API levels
                 (minSdk 24). sspSuffix/sspPattern are API 31+ only and act as a
@@ -40,7 +42,6 @@
 
             <!-- Match by .vbook filename (file:// URIs; also content:// on API 31+). -->
             <intent-filter
-                android:icon="@drawable/ic_vbook"
                 android:label="@string/vbook_file">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -57,7 +58,6 @@
 
             <!-- Custom VBook MIME types, if a provider ever exposes them. -->
             <intent-filter
-                android:icon="@drawable/ic_vbook"
                 android:label="@string/vbook_file">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -79,7 +79,6 @@
                 intentionally excluded — a .vbook is never text.
             -->
             <intent-filter
-                android:icon="@drawable/ic_vbook"
                 android:label="@string/vbook_file">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
