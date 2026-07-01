@@ -197,9 +197,6 @@
     <string name="navigate_current_position">Текущее: %1$s / %2$s / %3$s</string>
     <string name="navigate_no_position">Позиция не выбрана</string>
 
-    <!-- VBook File Association -->
-    <string name="vbook_file">Визуальная книга Animastor</string>
-
     <!-- AI Context Bar -->
     <string name="ai_context_bar">%s</string>
     <string name="ai_no_context">Книга не загружена</string>
