@@ -3,7 +3,6 @@ package com.example.animastor.ui
 import android.content.ComponentCallbacks2
 import android.content.Context
 import android.content.Intent
-import android.net.Uri
 import android.content.res.ColorStateList
 import android.os.Bundle
 import android.animation.ObjectAnimator
@@ -24,6 +23,7 @@ import com.example.animastor.databinding.DialogGenerateScopeBinding
 import com.example.animastor.model.BookItem
 import com.example.animastor.network.RetrofitClient
 import com.example.animastor.ui.adapter.BookAdapter
+import com.example.animastor.util.VbookFileUtils
 import java.io.File
 import java.util.Calendar
 import java.util.Locale
@@ -756,9 +756,15 @@ class MainActivity : AppCompatActivity() {
         if (intent?.action != Intent.ACTION_VIEW || intent.data == null) return
 
         val uri = intent.data!!
+        val displayName = getFileName(uri)
+        val mimeType = intent.type ?: contentResolver.getType(uri)
+        Log.i("MainActivity", "VIEW intent: uri=$uri type=$mimeType name=$displayName categories=${intent.categories}")
+
         lifecycleScope.launch {
             try {
-                val tempFile = File(cacheDir, "opened-${System.currentTimeMillis()}.vbook")
+                val isTxtName = displayName?.endsWith(".txt", ignoreCase = true) == true
+                val tempExt = if (isTxtName) ".txt" else ".vbook"
+                val tempFile = File(cacheDir, "opened-${System.currentTimeMillis()}$tempExt")
 
                 contentResolver.openInputStream(uri)?.use { input ->
                     tempFile.outputStream().use { output ->
@@ -769,14 +775,17 @@ class MainActivity : AppCompatActivity() {
                     return@launch
                 }
 
-                if (!isValidVbook(tempFile)) {
+                if (VbookFileUtils.isVbookBundle(tempFile)) {
+                    viewModel.loadBookFromFile(tempFile)
+                    switchToPlayTab()
+                } else if (isTxtName || mimeType?.startsWith("text/") == true) {
+                    viewModel.importTxtFromFile(tempFile)
+                    switchToPlayTab()
+                } else {
                     Toast.makeText(this@MainActivity, R.string.invalid_vbook_format, Toast.LENGTH_SHORT).show()
                     tempFile.delete()
                     return@launch
                 }
-
-                viewModel.loadBookFromFile(tempFile)
-                switchToPlayTab()
             } catch (e: Exception) {
                 Log.w("MainActivity", "Failed to open .vbook from intent: ${e.message}")
                 Toast.makeText(this@MainActivity, "${getString(R.string.upload_failed)}: ${e.message}", Toast.LENGTH_LONG).show()
@@ -784,11 +793,16 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun isValidVbook(file: File): Boolean {
-        return runCatching {
-            val bytes = file.readBytes()
-            bytes.size >= 2 && bytes[0] == 0x50.toByte() && bytes[1] == 0x4B.toByte()
-        }.getOrDefault(false)
+    private fun getFileName(uri: android.net.Uri): String? {
+        val cursor = contentResolver.query(uri, null, null, null, null)
+        return cursor?.use {
+            if (it.moveToFirst()) {
+                val idx = it.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                if (idx >= 0) it.getString(idx) else null
+            } else {
+                null
+            }
+        }
     }
 
     companion object {

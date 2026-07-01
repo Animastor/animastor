@@ -23,39 +23,74 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
-            <!-- .vbook: content:// scheme with path pattern -->
-            <intent-filter>
+            <!--
+                .vbook association.
+
+                NOTE ON ICONS: android:icon on an <intent-filter> only sets the
+                icon shown in the system "Open with" chooser. Android has no
+                per-extension icon registry, so the icon a file manager draws in
+                its file list is chosen by the file manager itself (by MIME type)
+                and cannot be overridden by the app. These filters therefore only
+                make the app *open* .vbook files; the list icon is out of scope.
+
+                Matching by filename via pathPattern works on all API levels
+                (minSdk 24). sspSuffix/sspPattern are API 31+ only and act as a
+                bonus on newer devices; they are silently ignored below 31.
+            -->
+
+            <!-- Match by .vbook filename (file:// URIs; also content:// on API 31+). -->
+            <intent-filter
+                android:icon="@drawable/ic_vbook"
+                android:label="@string/vbook_file">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data
-                    android:scheme="content"
-                    android:host="*"
-                    android:mimeType="*/*"
-                    android:pathPattern=".*\\.vbook" />
+                <category android:name="android.intent.category.OPENABLE" />
+                <!-- file:// filename match, all API levels -->
+                <data android:scheme="file" android:host="*" android:pathPattern=".*\\.vbook" />
+                <data android:scheme="file" android:host="*" android:pathPattern=".*\\..*\\.vbook" />
+                <data android:scheme="file" android:host="*" android:pathPattern=".*\\..*\\..*\\.vbook" />
+                <!-- content:// filename match, API 31+ only (ignored below) -->
+                <data android:scheme="content" android:sspSuffix=".vbook" />
+                <data android:scheme="file" android:sspSuffix=".vbook" />
             </intent-filter>
 
-            <!-- .vbook: file:// scheme with path pattern -->
-            <intent-filter>
+            <!-- Custom VBook MIME types, if a provider ever exposes them. -->
+            <intent-filter
+                android:icon="@drawable/ic_vbook"
+                android:label="@string/vbook_file">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data
-                    android:scheme="file"
-                    android:host="*"
-                    android:mimeType="*/*"
-                    android:pathPattern=".*\\.vbook" />
+                <category android:name="android.intent.category.OPENABLE" />
+                <data android:scheme="content" />
+                <data android:scheme="file" />
+                <data android:mimeType="application/x-vbook" />
+                <data android:mimeType="application/vnd.animastor.vbook" />
+                <data android:mimeType="application/vnd.animastor.vbook+zip" />
             </intent-filter>
 
-            <!-- .vbook: content:// fallback with application/octet-stream -->
-            <intent-filter>
+            <!--
+                Fallback for the common case: file managers report an unknown
+                .vbook (a ZIP container) as a generic binary/zip via content://,
+                with no filename in the URI. Without this the app would not be
+                offered at all from most modern managers. Trade-off: the app also
+                appears in "Open with" for other zip/binary files. text/* is
+                intentionally excluded — a .vbook is never text.
+            -->
+            <intent-filter
+                android:icon="@drawable/ic_vbook"
+                android:label="@string/vbook_file">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data
-                    android:scheme="content"
-                    android:host="*"
-                    android:mimeType="application/octet-stream" />
+                <category android:name="android.intent.category.OPENABLE" />
+                <data android:scheme="content" />
+                <data android:scheme="file" />
+                <data android:mimeType="application/octet-stream" />
+                <data android:mimeType="application/zip" />
+                <data android:mimeType="application/x-zip" />
+                <data android:mimeType="application/x-zip-compressed" />
             </intent-filter>
         </activity>
     </application>

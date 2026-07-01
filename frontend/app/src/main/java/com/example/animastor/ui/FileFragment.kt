@@ -12,6 +12,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.example.animastor.R
 import com.example.animastor.databinding.FragmentFileBinding
+import com.example.animastor.util.VbookFileUtils
 import java.io.File
 import java.io.IOException
 import kotlinx.coroutines.Dispatchers
@@ -43,7 +44,7 @@ class FileFragment : Fragment(R.layout.fragment_file) {
     }
 
     private val saveBookLauncher = registerForActivityResult(
-        ActivityResultContracts.CreateDocument("application/octet-stream")
+        ActivityResultContracts.CreateDocument("application/vnd.animastor.vbook+zip")
     ) { uri ->
         if (uri != null) {
             val bookId = pendingExportBookId ?: return@registerForActivityResult
@@ -87,18 +88,16 @@ class FileFragment : Fragment(R.layout.fragment_file) {
                 tempFile.outputStream().use { output -> input.copyTo(output) }
             }
 
-            if (isTxt) {
+            if (VbookFileUtils.isVbookBundle(tempFile)) {
+                // VBOOK file -> existing pipeline
+                hasSwitchedToPlay = false
+                viewModel.loadBookFromFile(tempFile)
+            } else if (isTxt) {
                 // TXT file -> lazy import pipeline
                 hasSwitchedToPlay = false
                 viewModel.importTxtFromFile(tempFile)
             } else {
-                // VBOOK file -> existing pipeline
-                if (!isValidVbook(tempFile)) {
-                    Toast.makeText(requireContext(), R.string.invalid_vbook_format, Toast.LENGTH_SHORT).show()
-                    return@runCatching
-                }
-                hasSwitchedToPlay = false
-                viewModel.loadBookFromFile(tempFile)
+                Toast.makeText(requireContext(), R.string.invalid_vbook_format, Toast.LENGTH_SHORT).show()
             }
         }.onFailure {
             Toast.makeText(requireContext(), "${getString(R.string.upload_failed)}: ${it.message}", Toast.LENGTH_SHORT).show()
@@ -360,13 +359,6 @@ class FileFragment : Fragment(R.layout.fragment_file) {
     override fun onDestroyView() {
         binding = null
         super.onDestroyView()
-    }
-
-    private fun isValidVbook(file: File): Boolean {
-        return runCatching {
-            val bytes = file.readBytes()
-            bytes.size >= 2 && bytes[0] == 0x50.toByte() && bytes[1] == 0x4B.toByte()
-        }.getOrDefault(false)
     }
 
     private fun getFileName(uri: Uri): String? {
