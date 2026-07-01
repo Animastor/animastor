@@ -36,19 +36,10 @@ async function recoverMissingRedisChunks(ctx, buildId, bookId) {
             created++;
         } catch (chunkErr) {
             console.warn(`[BOOK-RECOVER] Failed to create chunk ${chunkId}: ${chunkErr.message}`);
-        }
-
-        // Also ensure scene is registered in activeScenes for GPU scheduler
-        try {
-            // L5: Set per-asset state first, then derive linear state
-            await state.setAssetState(redis, bookId, s.chapter_id, s.scene_id, 'audio', state.AssetState.PENDING);
-            await state.syncLinearState(redis, bookId, s.chapter_id, s.scene_id, buildId);
-            await activeScenes.addActiveScene(
-                redis, bookId, s.chapter_id, s.scene_id
-            );
-        } catch (regErr) {
-            console.warn(`[BOOK-RECOVER] Failed to register scene ${s.chapter_id}/${s.scene_id}: ${regErr.message}`);
-        }
+        }            // NOTE: Do NOT register the scene for GPU scheduler here.
+            // Registering for GPU would auto-start generation without the user
+            // pressing the "Generate" button. GPU registration (activeScenes.addActiveScene)
+            // must only happen via the explicit /regenerate endpoint triggered by the user.
     }
 
     if (created > 0) {
