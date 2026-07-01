@@ -2,6 +2,8 @@ package com.example.animastor.ui
 
 import android.content.ComponentCallbacks2
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import android.content.res.ColorStateList
 import android.os.Bundle
 import android.animation.ObjectAnimator
@@ -126,6 +128,9 @@ class MainActivity : AppCompatActivity() {
                 .add(R.id.nav_host_container, FileFragment(), "FileFragment")
                 .commit()
         }
+
+        // Handle incoming intent from .vbook file association
+        handleVBookIntent(intent)
 
         binding.settingsButton.setOnClickListener {
             supportFragmentManager.beginTransaction()
@@ -734,6 +739,56 @@ class MainActivity : AppCompatActivity() {
                 barView.setIndicatorColor(accentColor)
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleVBookIntent(intent)
+    }
+
+    /**
+     * Handles incoming VIEW intents from .vbook file associations.
+     * Copies the file from the content URI, validates it, and loads it
+     * into the ViewModel.
+     */
+    private fun handleVBookIntent(intent: Intent?) {
+        if (intent?.action != Intent.ACTION_VIEW || intent.data == null) return
+
+        val uri = intent.data!!
+        lifecycleScope.launch {
+            try {
+                val tempFile = File(cacheDir, "opened-${System.currentTimeMillis()}.vbook")
+
+                contentResolver.openInputStream(uri)?.use { input ->
+                    tempFile.outputStream().use { output ->
+                        input.copyTo(output)
+                    }
+                } ?: run {
+                    Toast.makeText(this@MainActivity, R.string.upload_failed, Toast.LENGTH_SHORT).show()
+                    return@launch
+                }
+
+                if (!isValidVbook(tempFile)) {
+                    Toast.makeText(this@MainActivity, R.string.invalid_vbook_format, Toast.LENGTH_SHORT).show()
+                    tempFile.delete()
+                    return@launch
+                }
+
+                viewModel.loadBookFromFile(tempFile)
+                switchToPlayTab()
+            } catch (e: Exception) {
+                Log.w("MainActivity", "Failed to open .vbook from intent: ${e.message}")
+                Toast.makeText(this@MainActivity, "${getString(R.string.upload_failed)}: ${e.message}", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    private fun isValidVbook(file: File): Boolean {
+        return runCatching {
+            val bytes = file.readBytes()
+            bytes.size >= 2 && bytes[0] == 0x50.toByte() && bytes[1] == 0x4B.toByte()
+        }.getOrDefault(false)
     }
 
     companion object {
