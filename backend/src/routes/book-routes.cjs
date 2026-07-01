@@ -1100,11 +1100,35 @@ module.exports = function(app, redis, deps) {
                                 coverIuReady = await computeIuReady(redis, sceneAssetsRepo, bookId, coverChapterId, coverSceneId, rows.length);
                             } else {
                                 // Fallback: count from book data units
-                                const units = coverScene.units || [];
-                                coverIuTotal = units.length;
-                                if (coverIuTotal > 0) {
-                                    coverIuReady = await computeIuReady(redis, sceneAssetsRepo, bookId, coverChapterId, coverSceneId, units.length);
+                                const allUnits = [...(coverScene.units || [])];
+                                // Add dialogue block units by sequential order
+                                for (const db of (coverScene.dialogue_blocks || [])) {
+                                    if (db.units) allUnits.push(...db.units);
                                 }
+                                coverIuTotal = allUnits.length;
+                                if (coverIuTotal > 0) {
+                                    coverIuReady = await computeIuReady(redis, sceneAssetsRepo, bookId, coverChapterId, coverSceneId, allUnits.length);
+                                }
+                            }
+
+                            // Safety net: if computeIuReady returns 0 but the IU image files
+                            // actually exist on disk, use file count as the ready value.
+                            // This handles the case where the Redis iu-progress counter was
+                            // deleted (e.g. during a rebuild_all that was later cancelled or
+                            // skipped) but the PNGs from a previous generation are still on
+                            // disk. Without this fallback, cover_iu_ready stays at 0 forever,
+                            // showing "Генерация обложки 0/1" indefinitely.
+                            if (coverIuReady < coverIuTotal && buildId) {
+                                try {
+                                    const buildDir = path.join(config.OUTPUT_DIR, buildId);
+                                    if (fs.existsSync(buildDir)) {
+                                        const iuPrefix = `${bookId}_${coverChapterId}_${coverSceneId}_iu`;
+                                        const pngFiles = fs.readdirSync(buildDir).filter(f => f.startsWith(iuPrefix) && f.endsWith('.png'));
+                                        if (pngFiles.length >= coverIuTotal) {
+                                            coverIuReady = coverIuTotal;
+                                        }
+                                    }
+                                } catch (_) {}
                             }
                         }
                     }
@@ -1422,9 +1446,37 @@ module.exports = function(app, redis, deps) {
             let filteredDirty;
 
             if (rebuild_all) {
-                // Full rebuild: mark ALL scenes as dirty regardless of diff
-                log(`[REGENERATE] ${bookId}: full rebuild — marking all ${allScenes.length} scenes as dirty`);
-                const allDirty = allScenes.map(s => ({
+                // Full rebuild: mark ALL scenes that actually need regeneration,
+                // skipping scenes that already have all their images on disk.
+                // Without this check, scenes with existing images get their
+                // iu-progress counter deleted but never re-incremented (GPU
+                // skips regeneration when files exist), causing the frontend
+                // to show "0/1" forever (e.g. cover already generated but
+                // progress stuck at 0/1).
+                const buildDir = path.join(config.OUTPUT_DIR, buildId);
+                // Scan once for all IU PNGs in the build directory
+                let allDiskFiles = [];
+                if (fs.existsSync(buildDir)) {
+                    allDiskFiles = fs.readdirSync(buildDir).filter(f => f.endsWith('.png'));
+                }
+                const needsRebuild = [];
+                const alreadyComplete = [];
+                for (const s of allScenes) {
+                    const iuPrefix = `${bookId}_${s.chapter_id}_${s.scene_id}_iu`;
+                    const pngCount = allDiskFiles.filter(f => f.startsWith(iuPrefix)).length;
+                    const iuCount = (s.units || []).length + ((s.dialogue_blocks || []).reduce((sum, db) => sum + (db.units || []).length, 0));
+                    if (pngCount >= iuCount && iuCount > 0) {
+                        alreadyComplete.push(s);
+                        continue;
+                    }
+                    needsRebuild.push(s);
+                }
+
+                if (alreadyComplete.length > 0) {
+                    log(`[REGENERATE] ${bookId}: full rebuild — ${alreadyComplete.length}/${allScenes.length} scenes already have images, skipping`);
+                }
+
+                const allDirty = needsRebuild.map(s => ({
                     chapter_id: s.chapter_id,
                     scene_id: s.scene_id,
                     reason: 'rebuild',
@@ -1434,6 +1486,8 @@ module.exports = function(app, redis, deps) {
                 filteredDirty = bookDiff.filterDirtyScenesByScope(
                     allDirty, effectiveScope, chapter_id, scene_id, allScenes
                 );
+
+                log(`[REGENERATE] ${bookId}: full rebuild — ${filteredDirty.length} scenes marked dirty`);
             } else if (chapter_id && scene_id) {
                 // PRIMARY PATH: client explicitly specified what to regenerate.
                 // Build dirty entry from request params + book data directly.
@@ -1529,24 +1583,28 @@ module.exports = function(app, redis, deps) {
                 }
             }
 
-            // Check Cover chapter — always generate Cover first if missing images
+            // Check Cover chapter — always generate Cover first if missing images.
+            // Skip if cover is already in filteredDirty (handled by rebuild_all above)
+            // to avoid double-counting and conflicting dirty_layers.
             const coverCh = (loadedBook.chapters || []).find(ch => ch.type === 'cover');
             let coverNeedsGeneration = false;
             if (coverCh && coverCh.scenes && coverCh.scenes.length > 0 && layerCfg.image_enabled !== false) {
                 const coverScene = coverCh.scenes[0];
                 const coverChapterId = coverCh.chapter;
                 const coverSceneId = coverScene.scene_id;
-                const buildDir = path.join(config.OUTPUT_DIR, buildId);
-                let coverHasImages = false;
-                if (fs.existsSync(buildDir)) {
-                    const iuPrefix = `${bookId}_${coverChapterId}_${coverSceneId}_iu`;
-                    const files = fs.readdirSync(buildDir).filter(f => f.startsWith(iuPrefix) && f.endsWith('.png'));
-                    const iuCount = (coverScene.units || []).length;
-                    coverHasImages = files.length >= iuCount && iuCount > 0;
-                }
-                if (!coverHasImages) {
-                    const alreadyDirty = filteredDirty.some(d => d.chapter_id === coverChapterId && d.scene_id === coverSceneId);
-                    if (!alreadyDirty) {
+
+                // Already being rebuilt (e.g. rebuild_all covered it) — skip check
+                const alreadyDirty = filteredDirty.some(d => d.chapter_id === coverChapterId && d.scene_id === coverSceneId);
+                if (!alreadyDirty) {
+                    const buildDir = path.join(config.OUTPUT_DIR, buildId);
+                    let coverHasImages = false;
+                    if (fs.existsSync(buildDir)) {
+                        const iuPrefix = `${bookId}_${coverChapterId}_${coverSceneId}_iu`;
+                        const files = fs.readdirSync(buildDir).filter(f => f.startsWith(iuPrefix) && f.endsWith('.png'));
+                        const iuCount = (coverScene.units || []).length;
+                        coverHasImages = files.length >= iuCount && iuCount > 0;
+                    }
+                    if (!coverHasImages) {
                         const coverLayers = ['audio', 'image'];
                         if (layerCfg.video_enabled !== false) {
                             coverLayers.push('video');
