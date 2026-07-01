@@ -15,55 +15,49 @@
         android:usesCleartextTraffic="true">
         <activity
             android:name=".ui.MainActivity"
-            android:exported="true">
+            android:exported="true"
+            android:label="@string/app_name">
+            <!-- Launcher -->
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
-
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-        </activity>
 
-        <!-- Activity alias for .vbook file association with custom icon -->
-        <activity-alias
-            android:name=".VBookFileActivity"
-            android:exported="true"
-            android:icon="@drawable/ic_vbook"
-            android:label="@string/vbook_file"
-            android:targetActivity=".ui.MainActivity">
-            <!-- Intent filter for content:// URIs with custom MIME type -->
+            <!-- .vbook: content:// scheme with path pattern -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="content" />
-                <data android:mimeType="application/x-vbook" />
+                <data
+                    android:scheme="content"
+                    android:host="*"
+                    android:mimeType="*/*"
+                    android:pathPattern=".*\\.vbook" />
             </intent-filter>
-            <!-- Intent filter for file:// URIs with custom MIME type -->
+
+            <!-- .vbook: file:// scheme with path pattern -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="file" />
-                <data android:mimeType="application/x-vbook" />
+                <data
+                    android:scheme="file"
+                    android:host="*"
+                    android:mimeType="*/*"
+                    android:pathPattern=".*\\.vbook" />
             </intent-filter>
-            <!-- Fallback: application/octet-stream with .vbook path pattern -->
+
+            <!-- .vbook: content:// fallback with application/octet-stream -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="content" />
-                <data android:mimeType="application/octet-stream" />
-                <data android:pathPattern=".*\\.vbook" />
+                <data
+                    android:scheme="content"
+                    android:host="*"
+                    android:mimeType="application/octet-stream" />
             </intent-filter>
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="file" />
-                <data android:mimeType="application/octet-stream" />
-                <data android:pathPattern=".*\\.vbook" />
-            </intent-filter>
-        </activity-alias>
+        </activity>
     </application>
 
 </manifest>
