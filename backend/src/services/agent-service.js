@@ -9,6 +9,7 @@ const {
 const {
     PROGRESS_STAGES, WINDOW_SIZE, MAX_WINDOW_CHARS, SCENE_CHUNK_SIZE, STEP_RETRIES, SYSTEM_PROMPTS,
 } = require('./agent-prompts');
+const sourceCoverage = require('./source-coverage');
 
 async function callAI(messages, options) {
     const model = options?.model || config.OPENROUTER_MODEL || 'qwen/qwen3.5-122b-a10b';
@@ -195,7 +196,7 @@ async function stepExtractLocations(sessionId, text, characters, stepIndex, prog
     }
 }
 
-async function stepCreateScenes(sessionId, text, characters, locations, stepIndex, progress) {
+async function stepCreateScenes(sessionId, text, characters, locations, stepIndex, progress, repairHint) {
     const _progress = progress || (() => {});
     _progress({ stage: 'creating_scenes', message: PROGRESS_STAGES.creating_scenes });
     await updateSession(sessionId, { progress_msg: PROGRESS_STAGES.creating_scenes });
@@ -209,9 +210,13 @@ async function stepCreateScenes(sessionId, text, characters, locations, stepInde
         .replace('%EXISTING_CHARACTERS%', charsContext)
         .replace('%EXISTING_LOCATIONS%', locsContext);
 
+    const repairText = repairHint
+        ? `\n\nPrevious scene split failed source coverage validation.\nReason: ${repairHint.reason || 'unknown'}.\nMissing or problematic source fragment:\n\`\`\`\n${repairHint.gap_preview || ''}\n\`\`\`\nReturn a corrected scene split that covers the provided text from the first narrative word onward without gaps.`
+        : '';
+
     const messages = [
         { role: 'system', content: prompt },
-        { role: 'user', content: `Split this text into scenes:\n\n\`\`\`\n${text}\n\`\`\`` },
+        { role: 'user', content: `Split this text into scenes:\n\n\`\`\`\n${text}\n\`\`\`${repairText}` },
     ];
 
     try {
@@ -342,6 +347,62 @@ function getFallbackVisual(text, characters, scene) {
     return `${charNames} in ${locationHint}: ${preview}... cinematic shot`;
 }
 
+function splitTextEvenlyByParagraphs(text, maxScenes) {
+    const paragraphRe = /\S[\s\S]*?(?=\n\s*\n|$)/g;
+    const paragraphs = [];
+    let match;
+    while ((match = paragraphRe.exec(text || '')) !== null) {
+        const raw = match[0];
+        const start = match.index + (raw.match(/^\s*/)?.[0].length || 0);
+        const trimmed = raw.trim();
+        if (trimmed) {
+            paragraphs.push({
+                start,
+                end: start + trimmed.length,
+            });
+        }
+        if (match.index === paragraphRe.lastIndex) paragraphRe.lastIndex++;
+    }
+
+    if (paragraphs.length === 0) return [];
+    if (paragraphs.length <= maxScenes) {
+        return paragraphs.map(p => text.slice(p.start, p.end));
+    }
+
+    const scenes = [];
+    let current = [];
+    const targetChars = Math.ceil(text.length / maxScenes);
+
+    for (const p of paragraphs) {
+        const currentStart = current[0]?.start ?? p.start;
+        const currentEnd = current[current.length - 1]?.end ?? p.end;
+        const currentLen = currentEnd - currentStart;
+        if (current.length > 0 && scenes.length < maxScenes - 1 && currentLen + (p.end - p.start) > targetChars) {
+            scenes.push(text.slice(currentStart, currentEnd).trim());
+            current = [p];
+        } else {
+            current.push(p);
+        }
+    }
+
+    if (current.length > 0) {
+        scenes.push(text.slice(current[0].start, current[current.length - 1].end).trim());
+    }
+    return scenes;
+}
+
+function buildFallbackScenes(sceneText) {
+    const parts = splitTextEvenlyByParagraphs(sceneText, WINDOW_SIZE);
+    return parts.map((text, i) => ({
+        title: `Scene ${i + 1}`,
+        text,
+        type: 'narration',
+        participants: [],
+        location: null,
+        character_anchors: {},
+    }));
+}
+
 function getWindowText(sourceText, existingChars, existingLocs, windowIndex, startOffset) {
     const chapters = lazyBook.splitIntoChapters(sourceText);
 
@@ -355,10 +416,7 @@ function getWindowText(sourceText, existingChars, existingLocs, windowIndex, sta
                 const chStart = firstChapter.startOffset || 0;
                 const chEnd = firstChapter.endOffset || sourceText.length;
                 const chText = sourceText.substring(chStart, chEnd);
-                const chLines = chText.split('\n');
-                const chFirst = chLines[0]?.trim() || '';
-                const headerLen = /^(?:глава|chapter|часть|part|пролог|prologue|эпилог|epilogue)/i.test(chFirst)
-                    ? chLines[0].length + 1 : 0;
+                const headerLen = sourceCoverage.findNarrativeStartOffset(chText);
                 startOffset = Math.min(chStart + headerLen, sourceText.length);
             } else {
                 startOffset = 0;
@@ -384,25 +442,7 @@ function getWindowText(sourceText, existingChars, existingLocs, windowIndex, sta
     let endPos = Math.min(startOffset + MAX_WINDOW_CHARS, sourceText.length);
     let windowText = sourceText.substring(startOffset, endPos);
 
-    let skipLen = 0;
-    const windowLines = windowText.split('\n');
-    const firstLine = windowLines[0]?.trim() || '';
-    if (/^(?:глава|chapter|часть|part|пролог|prologue|эпилог|epilogue)/i.test(firstLine)) {
-        skipLen = windowLines[0].length + 1;
-        // Also skip the next non-empty line if it's a chapter title (multi-line header)
-        for (let j = 1; j < windowLines.length; j++) {
-            const nextLine = windowLines[j]?.trim();
-            if (!nextLine) {
-                skipLen += (windowLines[j] || '').length + 1;
-                continue;
-            }
-            // Don't skip if next line is another header
-            if (!/^(?:глава|chapter|часть|part|пролог|prologue|эпилог|epilogue)/i.test(nextLine)) {
-                skipLen += (windowLines[j] || '').length + 1;
-            }
-            break;
-        }
-    }
+    const skipLen = sourceCoverage.findNarrativeStartOffset(windowText);
 
     const actualStart = startOffset + skipLen;
     if (skipLen > 0 && actualStart < endPos) {
@@ -451,16 +491,36 @@ function getWindowText(sourceText, existingChars, existingLocs, windowIndex, sta
     };
 }
 
-async function runPipeline(sessionId, text, existingChars, existingLocs, stepIndex, progress, baseSceneCount) {
+async function runPipeline(sessionId, text, existingChars, existingLocs, stepIndex, progress, baseSceneCount, options = {}) {
     const _progress = progress || (() => {});
     const sceneOffset = baseSceneCount || 0;
     let characters = existingChars || [];
     let locations = existingLocs || [];
+    const rawWindowText = options.rawWindowText || text;
+    const sourceOffsetBase = options.sourceOffsetBase || 0;
 
     // Scene creation gets only the first SCENE_CHUNK_SIZE chars so that
     // 3 scenes × ~65 words can cover the text verbatim without truncation.
     // Characters/locations (reconnaissance) still get the full ~4000-char window.
-    const sceneText = text.substring(0, Math.min(SCENE_CHUNK_SIZE, text.length));
+    //
+    // Trim to the last complete sentence/paragraph to avoid mid-word cuts
+    // (e.g., "сиплым г" instead of "сиплым голосом").
+    let sceneText = rawWindowText.substring(0, Math.min(SCENE_CHUNK_SIZE, rawWindowText.length));
+    if (sceneText.length >= SCENE_CHUNK_SIZE && sceneText.length < rawWindowText.length) {
+        // Find last sentence boundary: period, question mark, exclamation, or paragraph break
+        const lastPeriod = Math.max(
+            sceneText.lastIndexOf('.'),
+            sceneText.lastIndexOf('?'),
+            sceneText.lastIndexOf('!')
+        );
+        const lastNewline = sceneText.lastIndexOf('\n\n');
+        const breakAt = Math.max(lastPeriod, lastNewline);
+        // Only break if we find a clean boundary past the halfway point
+        if (breakAt > Math.min(SCENE_CHUNK_SIZE / 2, sceneText.length / 2)) {
+            sceneText = sceneText.substring(0, breakAt + 1).trim();
+        }
+    }
+    const sceneConsumedLength = sceneText.length;
 
     // Reconnaissance: extract chars/locs from each ~4000-char window
     // New characters added, existing ones enriched with more detail
@@ -545,10 +605,47 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
         console.log(`[AGENT] Locations: ${existingLocs.length} existing + ${added} new + ${enriched} enriched = ${locations.length} total`);
     }
 
-    const scenes = await stepCreateScenes(sessionId, sceneText, characters, locations, stepIndex, _progress);
+    let scenes = await stepCreateScenes(sessionId, sceneText, characters, locations, stepIndex, _progress);
     if (!scenes || scenes.length === 0) throw new Error('AI returned no scenes');
 
-    const windowScenes = scenes.slice(0, WINDOW_SIZE);
+    let windowScenes = scenes.slice(0, WINDOW_SIZE);
+    let coverage = sourceCoverage.computeSceneCoverage(sceneText, windowScenes.map(s => s.text || ''), {
+        sourceOffsetBase,
+    });
+    let coverageRetryCount = 0;
+
+    if (!coverage.ok) {
+        console.warn(`[AGENT] scene coverage failed: ${coverage.reason} scene=${coverage.scene_index} gap=${coverage.gap_chars || 0}; retrying scene split`);
+        coverageRetryCount += 1;
+        scenes = await stepCreateScenes(sessionId, sceneText, characters, locations, stepIndex, _progress, coverage);
+        windowScenes = scenes.slice(0, WINDOW_SIZE);
+        coverage = sourceCoverage.computeSceneCoverage(sceneText, windowScenes.map(s => s.text || ''), {
+            sourceOffsetBase,
+        });
+    }
+
+    if (!coverage.ok) {
+        console.warn(`[AGENT] scene coverage retry failed: ${coverage.reason}; using deterministic fallback`);
+        coverageRetryCount += 1;
+        windowScenes = buildFallbackScenes(sceneText);
+        coverage = sourceCoverage.computeSceneCoverage(sceneText, windowScenes.map(s => s.text || ''), {
+            sourceOffsetBase,
+        });
+        if (!coverage.ok) {
+            throw new Error(`Scene coverage failed after fallback: ${coverage.reason}`);
+        }
+    }
+
+    console.log(JSON.stringify({
+        event: 'agent_window_coverage',
+        step_index: stepIndex,
+        planned_start: sourceOffsetBase,
+        planned_end: sourceOffsetBase + sceneText.length,
+        covered_start: coverage.covered_start_offset ?? null,
+        covered_end: coverage.covered_end_offset ?? null,
+        gap_chars: coverage.gap_chars || 0,
+        retry_count: coverageRetryCount,
+    }));
 
     const enrichedScenes = [];
     for (let si = 0; si < windowScenes.length; si++) {
@@ -558,14 +655,47 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
         const units = await stepCreateUnits(sessionId, scene, globalSceneIndex, characters, stepIndex, _progress);
 
         const visualUnits = await stepCreateVisuals(sessionId, scene, units, globalSceneIndex, characters, locations, stepIndex, _progress);
+        const sceneSpan = coverage.scene_spans[si] || null;
+        let annotatedUnits = visualUnits;
+
+        if (sceneSpan) {
+            const unitCoverage = sourceCoverage.computeSceneCoverage(
+                scene.text || '',
+                visualUnits.map(u => u.text || ''),
+                { sourceOffsetBase: sceneSpan.source_start }
+            );
+            if (unitCoverage.ok) {
+                annotatedUnits = visualUnits.map((u, ui) => ({
+                    ...u,
+                    source_start: unitCoverage.scene_spans[ui]?.source_start ?? sceneSpan.source_start,
+                    source_end: unitCoverage.scene_spans[ui]?.source_end ?? sceneSpan.source_end,
+                }));
+            } else {
+                console.warn(`[AGENT] unit coverage failed scene ${globalSceneIndex}: ${unitCoverage.reason}`);
+                annotatedUnits = visualUnits.map(u => ({
+                    ...u,
+                    source_start: sceneSpan.source_start,
+                    source_end: sceneSpan.source_end,
+                }));
+            }
+        }
 
         enrichedScenes.push({
             ...scene,
-            units: visualUnits,
+            source_start: sceneSpan?.source_start ?? null,
+            source_end: sceneSpan?.source_end ?? null,
+            units: annotatedUnits,
         });
     }
 
-    return { characters, locations, scenes: enrichedScenes, allScenes: scenes };
+    return {
+        characters,
+        locations,
+        scenes: enrichedScenes,
+        allScenes: windowScenes,
+        sceneConsumedLength: coverage.next_offset - sourceOffsetBase,
+        coverage,
+    };
 }
 
 async function bootstrapWithAgent(bookId, progress) {
@@ -620,7 +750,10 @@ async function bootstrapWithAgent(bookId, progress) {
             progress_msg: '⟳ Анализирую текст: извлекаю персонажей и локации...',
         });
 
-        const result = await runPipeline(sessionId, windowInfo.text, [], [], 0, _progress, 0);
+        const result = await runPipeline(sessionId, windowInfo.text, [], [], 0, _progress, 0, {
+            rawWindowText: windowInfo.fullChapter,
+            sourceOffsetBase: windowInfo.windowStartOffset,
+        });
 
         if (result.scenes.length === 0) {
             throw new Error('AI returned no scenes — cannot create book');
@@ -628,8 +761,10 @@ async function bootstrapWithAgent(bookId, progress) {
 
         const extraScenes = result.allScenes.slice(WINDOW_SIZE);
 
-        // Scene-advanced offset: advance by scene chunk, not full recon window
-        const sceneConsumedOffset = windowInfo.windowStartOffset + Math.min(SCENE_CHUNK_SIZE, windowInfo.text.length);
+        // Scene-advanced offset: advance by actual scene chunk (bounded at natural
+        // sentence boundary), not full recon window of 4000 chars.
+        const sceneConsumedOffset = result.coverage?.next_offset
+            || (windowInfo.windowStartOffset + (result.sceneConsumedLength || Math.min(SCENE_CHUNK_SIZE, windowInfo.fullChapter.length)));
         const actualRemaining = draft.sourceText.substring(sceneConsumedOffset).trim();
 
         const windowData = {
@@ -642,6 +777,11 @@ async function bootstrapWithAgent(bookId, progress) {
             remaining_text: actualRemaining,
             currentOffset: sceneConsumedOffset,
             windowStartOffset: windowInfo.windowStartOffset,
+            plannedEndOffset: windowInfo.windowStartOffset + Math.min(SCENE_CHUNK_SIZE, windowInfo.fullChapter.length),
+            coveredStartOffset: result.coverage?.covered_start_offset ?? null,
+            coveredEndOffset: result.coverage?.covered_end_offset ?? null,
+            coverageStatus: result.coverage?.ok ? 'ok' : 'failed',
+            coverageGapChars: result.coverage?.gap_chars || 0,
             all_characters: result.characters,
             all_locations: result.locations,
             structure: structure,
@@ -796,12 +936,17 @@ async function bootstrapNextWindow(bookId, progress) {
             parts: windowData.structure.parts,
         } : null;
 
-        const result = await runPipeline(sessionId, windowInfo.text, existingChars, existingLocs, nextWindowIndex, _progress, (windowData?.created_scenes || 0));
+        const result = await runPipeline(sessionId, windowInfo.text, existingChars, existingLocs, nextWindowIndex, _progress, (windowData?.created_scenes || 0), {
+            rawWindowText: windowInfo.fullChapter,
+            sourceOffsetBase: windowInfo.windowStartOffset,
+        });
 
         const extraScenes = result.allScenes.slice(WINDOW_SIZE);
 
-        // Scene-advanced offset: advance by scene chunk, not full recon window
-        const sceneConsumedOffset = windowInfo.windowStartOffset + Math.min(SCENE_CHUNK_SIZE, windowInfo.text.length);
+        // Scene-advanced offset: advance by actual scene chunk (bounded at natural
+        // sentence boundary), not full recon window of 4000 chars.
+        const sceneConsumedOffset = result.coverage?.next_offset
+            || (windowInfo.windowStartOffset + (result.sceneConsumedLength || Math.min(SCENE_CHUNK_SIZE, windowInfo.fullChapter.length)));
         const actualRemaining = draft.sourceText.substring(sceneConsumedOffset).trim();
 
         const bookResult = lazyBook.appendToBook(bookId, {
@@ -825,6 +970,11 @@ async function bootstrapNextWindow(bookId, progress) {
             remaining_text: actualRemaining,
             currentOffset: sceneConsumedOffset,
             windowStartOffset: windowInfo.windowStartOffset,
+            plannedEndOffset: windowInfo.windowStartOffset + Math.min(SCENE_CHUNK_SIZE, windowInfo.fullChapter.length),
+            coveredStartOffset: result.coverage?.covered_start_offset ?? null,
+            coveredEndOffset: result.coverage?.covered_end_offset ?? null,
+            coverageStatus: result.coverage?.ok ? 'ok' : 'failed',
+            coverageGapChars: result.coverage?.gap_chars || 0,
             all_characters: result.characters,
             all_locations: result.locations,
         };

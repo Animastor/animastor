@@ -875,26 +875,47 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
     // ── Create chapter_intro metadata (programmatic, not a scene) ──
     if (!chapterObj.intro) {
         let introData = null;
+
+        // Helper: build intro from a chapter title string (e.g. "Глава 1: НИКОГДА НЕ РАЗГОВАРИВАЙТЕ...")
+        // or fallback to just "Глава N" if no title available.
+        function buildIntroFromTitle(rawTitle, chNum, lang) {
+            const clean = (rawTitle || '').replace(/^(?:Глава|Chapter)\s*\d+\s*[.:]?\s*/i, '').trim();
+            if (clean) {
+                return {
+                    text: lang === 'ru' ? `Глава ${chNum}\n${clean}` : `Chapter ${chNum}\n${clean}`,
+                    scene_title: lang === 'ru' ? `Глава ${chNum}` : `Chapter ${chNum}`,
+                    style: 'soviet_book_page',
+                };
+            }
+            return null;
+        }
+
+        // 1) Try the AI structure first (it has the AI-extracted chapter title)
         if (structure && structure.chapters && structure.chapters.length > 0) {
             const chapterInfo = windowConfig.chapterIndex < structure.chapters.length
                 ? structure.chapters[windowConfig.chapterIndex]
                 : null;
             if (chapterInfo) {
                 const chNum = chapterInfo.number || (windowConfig.chapterIndex + 1);
-                const chTitle = chapterInfo.title || `Глава ${chNum}`;
-                const cleanTitle = chTitle.replace(/^(?:Глава|Chapter)\s*\d+\s*[.:]?\s*/i, '').trim();
-                const sceneText = language === 'ru'
-                    ? `Глава ${chNum}\n${cleanTitle}`
-                    : `Chapter ${chNum}\n${cleanTitle}`;
-                introData = { text: sceneText, scene_title: `Глава ${chNum}`, style: 'soviet_book_page' };
+                const chTitle = chapterInfo.title || '';
+                if (chTitle) {
+                    introData = buildIntroFromTitle(chTitle, chNum, language);
+                }
             }
         }
-        if (!introData && isFirstWindow) {
-            const chTitle = chapterTitle || 'Глава 1';
-            const cleanTitle = chTitle.replace(/^(?:Глава|Chapter)\s*\d+\s*[.:]?\s*/i, '').trim();
-            const sceneText = language === 'ru' ? `Глава 1\n${cleanTitle}` : `Chapter 1\n${cleanTitle}`;
-            introData = { text: sceneText, scene_title: 'Глава 1', style: 'soviet_book_page' };
+
+        // 2) Fallback: use the parser-extracted chapterTitle (from getWindowText / splitIntoChapters)
+        if (!introData) {
+            const chNum = (chapterIndex || 0) + 1;
+            const fallbackTitle = chapterTitle || (language === 'ru' ? `Глава ${chNum}` : `Chapter ${chNum}`);
+            introData = buildIntroFromTitle(fallbackTitle, chNum, language)
+                || {
+                    text: language === 'ru' ? `Глава ${chNum}` : `Chapter ${chNum}`,
+                    scene_title: language === 'ru' ? `Глава ${chNum}` : `Chapter ${chNum}`,
+                    style: 'soviet_book_page',
+                };
         }
+
         if (introData) {
             chapterObj.intro = introData;
         }
@@ -952,6 +973,8 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
                 text: u.text.trim(),
                 participants: u.participants || [],
                 visual: u.visual || undefined,
+                source_start: u.source_start ?? undefined,
+                source_end: u.source_end ?? undefined,
             }));
 
         const cleanUnits = sceneUnits.length > 0 ? sceneUnits : [{
@@ -981,6 +1004,8 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
             participants: allParticipants,
             location: aiScene.location || undefined,
             character_anchors: aiScene.character_anchors || undefined,
+            source_start: aiScene.source_start ?? null,
+            source_end: aiScene.source_end ?? null,
             audio: {
                 voice: 'narrator',
                 full_text: sceneText,

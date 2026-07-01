@@ -130,11 +130,12 @@ Return ONLY valid JSON.`,
 - Scene boundaries: location change, time jump, character entrance/exit, narrative break
 - Each scene.text must contain the COMPLETE VERBATIM original text for that episode
 - Scene texts are used for TTS audio narration — must be verbatim, not summarized
-- **Split the text into EXACTLY 3 scenes**
+- **Split the text into up to 3 scenes**
 - **Word guideline: ~65 words per scene** (≈20s audio at Russian speech rate). If a sentence ends slightly over ~65 words, that's OK — finish the sentence. Do NOT cut mid-sentence.
 - If a scene at a natural boundary far exceeds ~65 words, choose an earlier natural break point (paragraph end, sentence end). Prefer natural narrative boundaries over equal-length chunks. A shorter scene is better than an overly long one.
 - Scene order must preserve the original narrative sequence.
 - Do NOT use ellipsis (...) or any form of truncation or summarization. Every word from the provided text must appear in exactly one scene, verbatim, without gaps.
+- Full source coverage is more important than the 65-word guideline or producing exactly 3 scenes.
 
 ## CRITICAL: Do NOT create chapter title / chapter header / typography / transition units
 - Chapter titles, headers, and opening cards are added PROGRAMMATICALLY by the system
@@ -191,11 +192,11 @@ Return ONLY valid JSON.`,
 ## Rules
 - A unit is ONE complete visual frame — what the viewer sees in ONE shot
 - Defined by a VISUAL EVENT, not by text length
-- "Two people on a bench talking" is ONE unit even if the text is long
-- Do NOT split a single visual scene into fragments by commas, sentences, or character count
+- TWO CRITICAL RULES FOR DIALOGUE: (1) Every character speech turn (each line starting with "—" or a character name) MUST be its OWN separate dialogue unit. (2) A narrative/description paragraph between dialogue lines is also a separate unit. NEVER combine multiple character speech turns into one unit.
+- Example of CORRECT splitting: a scene like "— Дайте нарзану, — попросил Берлиоз.\n\n— Нарзану нету, — ответила женщина.\n\n— Пиво есть? — осведомился Бездомный." MUST produce THREE separate dialogue units, one per speech turn.
 - unit.text MUST be a VERBATIM substring of the scene text
 - If you read all unit.text values in sequence, you should reconstruct the scene
-- Prefer FEWER complete visual frames over many fragments
+- For long narration paragraphs without dialogue, prefer FEWER complete visual frames over many fragments
 - Types: perception (POV narration), narration (omniscient), dialogue (speech), description (visual), action (movement), transition (time/location change), performance (theatrical)
 
 ## Scene text to decompose:

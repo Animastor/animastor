@@ -18,6 +18,7 @@ const registerParseRoutes = require('./book/parse-routes.cjs');
 const { setDeep, findUnitInScene } = require('./book/scene-patch-utils.cjs');
 const { recoverMissingRedisChunks } = require('./book/recover-chunks.cjs');
 const { computeIuReady } = require('./book/iu-progress-utils.cjs');
+const sourceCoverageAudit = require('../services/source-coverage-audit');
 
 module.exports = function(app, redis, deps) {
     const {
@@ -68,6 +69,17 @@ module.exports = function(app, redis, deps) {
             return res.json(bookData);
         } catch (err) {
             console.error('[GET BOOK] Error:', err.message);
+            return res.status(500).json({ error: err.message });
+        }
+    });
+
+    app.get('/api/v1/book/:bookId/source-coverage', async (req, res) => {
+        try {
+            const { bookId } = req.params;
+            const report = sourceCoverageAudit.auditBookCoverage(bookId);
+            return res.json(report);
+        } catch (err) {
+            console.error('[SOURCE-COVERAGE] Error:', err.message);
             return res.status(500).json({ error: err.message });
         }
     });
