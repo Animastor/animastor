@@ -605,7 +605,7 @@ class MainActivity : AppCompatActivity() {
                             if (!backendActive) {
                                 Log.i("MainActivity", "Progress stuck — auto-completing")
                                 viewModel.stopProgressStream()
-                                viewModel.onGenerationComplete()
+                                viewModel.applyGenerationResults()
                                 refreshGenerateButton()
                                 binding.generationProgressContainer.visibility = View.GONE
                                 lastReadyCount = -1

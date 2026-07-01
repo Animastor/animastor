@@ -348,12 +348,20 @@ class GenerateViewModel(
     }
 
     /**
-     * Called by the progress poller when assets-state reports all scenes ready.
-     * Cleans up the regeneration flag so the UI can reflect completion, and
-     * emits [playbackPrepared] with fresh chunk data so the player can resume
-     * with the newly generated content.
+     * Apply whatever generation results are available — refreshes the player
+     * with the latest chunks so the user sees/hears newly generated content
+     * immediately, even if generation only partially completed or was cancelled.
+     *
+     * Called when:
+     *   - All workers complete successfully (DoneRow cycle expires)
+     *   - Generation is cancelled but some content was generated
+     *   - Progress is stuck and deemed complete (backend idle, no progress)
+     *
+     * Fetches fresh chunk metadata and cover image, then emits
+     * [playbackPrepared] so the activity coordinator calls
+     * [PlaybackViewModel.refreshContent] to update the player.
      */
-    fun onGenerationComplete() {
+    fun applyGenerationResults() {
         if (_isRegenerating.value) {
             _isRegenerating.value = false
         }
@@ -389,13 +397,13 @@ class GenerateViewModel(
                 if (cover == null) {
                     for (retry in 1..5) {
                         delay((1000L shl minOf(retry, 3)).coerceAtMost(5000))
-                        Log.i(TAG, "onGenerationComplete: retry $retry loading cover (coverId=$coverId)")
+                        Log.i(TAG, "applyGenerationResults: retry $retry loading cover (coverId=$coverId)")
                         cover = loadCoverBitmap(coverId)
                         if (cover != null) break
                     }
                 }
             }
-            Log.i(TAG, "onGenerationComplete: emitting playbackPrepared (softRefresh) with ${chunkIds.size} chunks cover=${cover != null}")
+            Log.i(TAG, "applyGenerationResults: emitting playbackPrepared (softRefresh) with ${chunkIds.size} chunks cover=${cover != null}")
             _playbackPrepared.tryEmit(PlaybackPreparation(
                 bookId = bookId,
                 buildId = buildId,
@@ -423,6 +431,17 @@ class GenerateViewModel(
             _isRegenerating.value = false
             _activeGeneration.value = null
             _uiState.update { it.copy(phase = PlayerPhase.IDLE, errorMessage = null) }
+
+            // Refresh player with whatever content was generated so far.
+            // Even if some layers failed or the user cancelled mid-generation,
+            // any successfully generated content should be playable immediately
+            // instead of the player staying on stale cache.
+            if (hasAnyProgress()) {
+                Log.i(TAG, "cancelGeneration: content was generated — refreshing player")
+                applyGenerationResults()
+            } else {
+                Log.i(TAG, "cancelGeneration: no content generated — skipping player refresh")
+            }
         }
     }
 
@@ -1223,6 +1242,17 @@ class GenerateViewModel(
     }
 
     /**
+     * Check if any content was generated during the current generation session.
+     * Used to decide whether to refresh the player after cancel or partial failure.
+     * Returns true if any worker type has ever had non-zero progress.
+     */
+    private fun hasAnyProgress(): Boolean {
+        return workerReadyFloor.values.any { it > 0 } ||
+            workerCompletedAt.isNotEmpty() ||
+            _workerPermanentlyDone.isNotEmpty()
+    }
+
+    /**
      * Compute progress total for stuck detection — SUM of all relevant layers.
      */
     fun getProgressTotal(assets: AssetsStateResponse): Int {
@@ -1406,7 +1436,7 @@ class GenerateViewModel(
                     _uiState.update { it.copy(vbookProgress = VBookProgress(stage = VBookStage.IDLE)) }
                 }
                 if (assets != null) {
-                    onGenerationComplete()
+                    applyGenerationResults()
                 }
                 return ProgressPanelState.Hidden
             }
