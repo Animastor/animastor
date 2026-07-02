@@ -109,7 +109,7 @@ function buildProjectContext(bookData, options = {}) {
             lines.push(`- Scene mood: ${scene.mood || 'not set'}`);
             lines.push(`- Scene pacing: ${scene.pacing || 'not set'}`);
             lines.push(`- Units in scene: ${(scene.units || []).length}`);
-            const chars = scene.characters_present || [];
+            const chars = scene.characters_present || scene.participants || [];
             if (chars.length > 0) {
                 lines.push(`- Characters present: ${chars.join(', ')}`);
             }

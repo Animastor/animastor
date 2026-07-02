@@ -157,7 +157,7 @@ Return ONLY valid JSON.`,
       "title": "Scene Title (in original language)",
       "text": "COMPLETE VERBATIM scene text from source",
       "type": "narration|dialogue",
-      "participants": ["character_id_from_known_characters"],
+      "characters_present": ["character_id_from_known_characters"],
       "location": {
         "id": "location_id_from_known_locations",
         "environment": {

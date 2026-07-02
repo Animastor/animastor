@@ -987,7 +987,8 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
         const isDialogue = cleanUnits.some(u => u.type === 'dialogue' || u.type === 'dialectic');
 
         const allParticipants = [];
-        for (const p of (aiScene.characters_present || [])) {
+        const sceneParticipants = aiScene.characters_present || aiScene.participants || [];
+        for (const p of sceneParticipants) {
             if (!allParticipants.includes(p)) allParticipants.push(p);
         }
         for (const u of cleanUnits) {
