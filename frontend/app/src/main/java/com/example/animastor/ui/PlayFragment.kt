@@ -73,6 +73,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         if (playbackViewModel.pendingExternalSeek != null) {
             if (isHidden) return
             Log.i(TAG, "checkPendingExternalSeek: executing seek to ${playbackViewModel.pendingExternalSeek}")
+            pendingLoad = true
             stopAll()
             playbackViewModel.executePendingSeek()
         }
@@ -85,6 +86,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                     if (playbackViewModel.pendingExternalSeek != null) {
                         if (isHidden) return@collect
                         Log.i(TAG, "external seek via state")
+                        pendingLoad = true
                         stopAll()
                         playbackViewModel.executePendingSeek()
                     }
@@ -1085,14 +1087,10 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                         updateLayers()
                         val ap = currentPlayer?.currentPosition ?: 0
                         if (ap > 0) seekTo(ap)
-                        start()
                         if (pendingLoad || isPaused) {
-                            val vp = this
-                            pendingVideoSyncJob?.cancel()
-                            pendingVideoSyncJob = viewLifecycleOwner.lifecycleScope.launch {
-                                delay(50)
-                                try { vp.pause() } catch (_: IllegalStateException) {}
-                            }
+                            Log.i(TAG, "video prepared — pending load, staying paused")
+                        } else {
+                            start()
                         }
                     }
                     setOnCompletionListener {
