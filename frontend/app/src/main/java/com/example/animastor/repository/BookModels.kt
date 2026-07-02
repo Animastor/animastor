@@ -285,6 +285,8 @@ data class AgentStatusResponse(
     val created_scenes: Int? = null,
     val total_scenes: Int? = null,
     val remaining_cached: Int? = null,
+    /** Backend's WINDOW_SIZE — expected scenes per window. Used as denominator for progress display. */
+    val window_size: Int? = null,
 )
 
 data class BootstrapNextWindowResponse(

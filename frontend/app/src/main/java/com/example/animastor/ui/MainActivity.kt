@@ -555,6 +555,11 @@ class MainActivity : AppCompatActivity() {
                 // Poll agent status for VBook windows triggered by WindowTriggerManager
                 val agentProg = viewModel.checkVBookAgentStatus()
                 if (agentProg.stage != VBookStage.IDLE) {
+                    if (!_lastHasVBook) {
+                        viewModel.resetWorkerState()
+                        viewModel.startProgressStream(bookId)
+                        _lastHasVBook = true
+                    }
                     val ps = viewModel.computeWorkers(null, agentProg, viewModel.currentProfile(), labels)
                     applyPanelState(ps)
                     delay(1_500)
@@ -576,7 +581,7 @@ class MainActivity : AppCompatActivity() {
                 Log.i("MainActivity", "New work detected (gen=${activeGen != null} vbook=$hasVBook) — resetting")
                 viewModel.resetWorkerState()
                 lastReadyCount = -1
-                if (activeGen != null) {
+                if (activeGen != null || hasVBook) {
                     viewModel.startProgressStream(bookId)
                 }
             }

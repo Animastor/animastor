@@ -8,6 +8,16 @@ All notable changes to Animastor are documented here.
 
 ### Fixed
 
+- **VBook progress now uses backend window_size** — frontend no longer hardcodes
+  `WINDOW_SIZE=3` or uses the scene index as denominator (causing "1 из 1", "2 из 2",
+  "3 из 3"). The backend now sends `window_size` in both `/agent-status` responses
+  and SSE `ProgressEvent`s. The frontend uses this as the fixed denominator for
+  progress display ("1 из 3", "2 из 3", "3 из 3") and calculates correct percentages
+  (33%, 67%, 100%). When `ready >= window_size`, progress shows 100% instead of
+  being capped at 99%. Removed unused `LAZY_WINDOW_DEFAULT=3` constant from
+  `GenerateViewModel.kt`. Affects: `book-routes.cjs`, `agent-service.js`,
+  `BookModels.kt`, `ProgressStream.kt`, `GenerateViewModel.kt`.
+
 - **Generic scene titles from fallback splitter** (`backend/src/services/agent-service.js`,
   `backend/src/book/lazy-book/index.js`): `buildFallbackScenes()` no longer assigns
   `"Scene N"` titles — instead `extractSceneTitle()` extracts a meaningful title from

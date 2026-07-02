@@ -10,14 +10,14 @@ import kotlinx.coroutines.launch
 /**
  * Global observer of [SharedPositionManager] that automatically triggers
  * the next-window generation when the user navigates to one of the last 3
- * units of the last scene in a window (WINDOW_SIZE = 3 scenes per window).
+ * units of the current book tail scene.
  *
  * Works from any screen — Edit, Navigate, Play.
  *
- * **Important**: Only triggers on explicit `isLastOfWindow` boundaries
- * (every 3rd scene). Does NOT trigger on `isLastChapterScene` alone,
- * which previously caused infinite re-triggering during auto-playback.
- * A cooldown prevents rapid re-triggers.
+ * The backend advances TXT/VBook imports by the scenes it actually created,
+ * not by fixed three-scene chunks. Therefore the frontend treats the last
+ * currently loaded content scene as the generation frontier and lets the
+ * backend decide where the next window starts.
  */
 class WindowTriggerManager(
     private val repository: Repository,
@@ -26,7 +26,6 @@ class WindowTriggerManager(
 
     companion object {
         private const val TAG = "WindowTrigger"
-        private const val WINDOW_SIZE = 3
         private const val COOLDOWN_MS = 60_000L // 1 min between triggers
     }
 
@@ -126,23 +125,27 @@ class WindowTriggerManager(
         val units = sc.units ?: return
         if (units.isEmpty()) return
 
-        // ── Count only content scenes (skip structural: chapter_intro, cover) ──
-        val contentScenes = scenes.filter { it.type != "chapter_intro" && it.type != "cover" }
-        val contentIdx = contentScenes.indexOfFirst { it.scene_id == pos.sceneId }
-        if (contentIdx < 0) return
-
         // Condition 1: unit must be among the last 3 of the scene
         val last3Start = if (units.size <= 3) 0 else units.size - 3
         if (idx < last3Start) return
 
-        // ── Only trigger on IS_LAST_OF_WINDOW boundary ─────────────
-        // Content index is used to correctly identify window boundaries
-        // even when structural scenes (chapter_intro) are present.
-        val isLastOfWindow = contentIdx % WINDOW_SIZE == (WINDOW_SIZE - 1)
-        if (!isLastOfWindow) return
+        // Trigger only at the current generated frontier: the last content
+        // scene across the loaded book JSON. If the backend adds fewer than
+        // 3 scenes in a pass, this still advances naturally from that tail.
+        val contentTail = chapters.asSequence()
+            .flatMap { chapter ->
+                (chapter.scenes ?: emptyList()).asSequence()
+                    .filter { it.type != "chapter_intro" && it.type != "cover" }
+                    .map { scene -> chapter.chapter to scene.scene_id }
+            }
+            .lastOrNull() ?: return
 
-        // Dedup by window key (use content index for window calculation)
-        val windowKey = "${pos.chapterId}:${contentIdx / WINDOW_SIZE}"
+        val isLoadedTail = contentTail.first == pos.chapterId && contentTail.second == pos.sceneId
+        if (!isLoadedTail) return
+
+        // Dedup by generated frontier. When the backend appends scenes, the
+        // tail scene id changes and a future trigger is allowed.
+        val windowKey = "${contentTail.first}:${contentTail.second}"
         if (triggeredWindows.contains(windowKey)) return
         triggeredWindows.add(windowKey)
 
@@ -153,7 +156,7 @@ class WindowTriggerManager(
         lastCheckedSceneId = pos.sceneId
 
         val unitId = units.getOrNull(idx)?.id
-        Log.i(TAG, "triggering next window (ch=${pos.chapterId} sc=$scIdx unit=$idx windowKey=$windowKey)")
+        Log.i(TAG, "triggering next window at generated tail (ch=${pos.chapterId} sc=$scIdx unit=$idx tail=$windowKey)")
 
         try {
             val result = repository.triggerNextWindow(
@@ -164,7 +167,11 @@ class WindowTriggerManager(
                 registerForGpu = true
             )
             Log.i(TAG, "triggerNextWindow: triggered=${result.triggered} queued=${result.queued} all_done=${result.all_done}")
+            if (!result.triggered && !result.queued && !result.all_done && result.error != null) {
+                triggeredWindows.remove(windowKey)
+            }
         } catch (e: Exception) {
+            triggeredWindows.remove(windowKey)
             Log.w(TAG, "triggerNextWindow failed: ${e.message}")
         }
         // Always update cooldown — even on queue/error — to prevent rapid retries

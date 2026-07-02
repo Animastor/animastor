@@ -916,6 +916,7 @@ module.exports = function(app, redis, deps) {
                     session_status: 'running', progress_msg: agentRow.progress_msg || 'Working...',
                     source_type: agentRow.source_type, window_index: windowIndex,
                     created_scenes: createdScenes, total_scenes: totalScenes, remaining_cached: remainingCached,
+                    window_size: config.WINDOW_SIZE,
                 });
             }
 
@@ -940,6 +941,7 @@ module.exports = function(app, redis, deps) {
                     created_scenes: null,
                     total_scenes: null,
                     remaining_cached: null,
+                    window_size: config.WINDOW_SIZE,
                 });
             }
 
@@ -966,10 +968,11 @@ module.exports = function(app, redis, deps) {
                     session_status: agentRow.session_status, progress_msg: agentRow.progress_msg || 'Working...',
                     source_type: agentRow.source_type, window_index: windowIndex,
                     created_scenes: createdScenes, total_scenes: totalScenes, remaining_cached: remainingCached,
+                    window_size: config.WINDOW_SIZE,
                 });
             }
 
-            return res.json({ active: false, message: 'No active agent session' });
+            return res.json({ active: false, message: 'No active agent session', window_size: config.WINDOW_SIZE });
         } catch (err) {
             console.error('[AGENT-STATUS] Error:', err.message);
             return res.status(500).json({ error: err.message });

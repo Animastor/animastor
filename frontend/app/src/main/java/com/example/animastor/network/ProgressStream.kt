@@ -26,8 +26,8 @@ import okhttp3.sse.EventSources
  * For VBook progress:
  * @property type "vbook" for VBook agent pipeline events.
  * @property vbookStage "analyzing", "creating_scenes", "creating_units", "creating_visuals".
- * @property vbookSceneIndex Current scene being processed (1-based).
- * @property vbookTotalScenes Total scenes in the current window.
+ * @property vbookSceneIndex Current scene being processed (1-based, backend-owned).
+ * @property vbookTotalScenes Backend-reported total for the current generated prefix/window.
  */
 data class ProgressEvent(
     val type: String = "",
@@ -38,7 +38,9 @@ data class ProgressEvent(
     // VBook fields (present when type == "vbook")
     val stage: String? = null,
     val scene_index: Int? = null,
-    val total_scenes: Int? = null
+    val total_scenes: Int? = null,
+    /** Backend's WINDOW_SIZE — expected scenes per window. Used as denominator for progress. */
+    val window_size: Int? = null
 ) {
     /** Convenience: true if this is a VBook pipeline event. */
     fun isVBook(): Boolean = type == "vbook"

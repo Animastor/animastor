@@ -48,7 +48,6 @@ class GenerateViewModel(
         private const val INITIAL_WAIT_COUNT = 3
         private const val WINDOW_RETRY_COUNT = 60
         private const val POLL_TIMEOUT_MS = 300_000L
-        private const val LAZY_WINDOW_DEFAULT = 3
         private const val MAX_BACKOFF_MS = 5_000L
         private const val POLL_INTERVAL_MS = 300L
 
@@ -907,9 +906,9 @@ class GenerateViewModel(
      * Extracts stage (ANALYZING / CREATING_SCENES), scene index,
      * and total scenes from the progress message and response fields.
      *
-     * Progress uses actual scene counts from the backend (not a hardcoded window size).
-     * The backend reports scene_index / total_scenes for each window, and we display
-     * that directly so progress shows e.g. 5/8 instead of 2/3.
+     * Uses [window_size] from the backend as the fixed denominator (e.g. "1 из 3", "2 из 3").
+     * This decouples the frontend from hardcoded window-size constants — changing
+     * WINDOW_SIZE on the backend automatically updates progress display.
      */
     private fun updateVBookProgress(status: com.example.animastor.repository.AgentStatusResponse) {
         val msg = status.progress_msg?.lowercase() ?: ""
@@ -941,8 +940,10 @@ class GenerateViewModel(
         val sceneMatch = Regex("""сцен[ыа][\s]*?(\d+)""", RegexOption.IGNORE_CASE).find(status.progress_msg ?: "")
         val globalScene = sceneMatch?.groupValues?.get(1)?.toIntOrNull() ?: 0
 
-        // Use actual total_scenes from backend (NOT hardcoded windowSize = 3)
-        val total = status.total_scenes?.let { maxOf(it, globalScene) } ?: status.created_scenes?.let { maxOf(it, globalScene) } ?: maxOf(globalScene, 1)
+        // Use backend's window_size as the fixed denominator for progress display.
+        // This shows e.g. "1 из 3", "2 из 3", "3 из 3" instead of "1 из 1", "2 из 2".
+        val windowSize = status.window_size ?: 1
+        val total = status.total_scenes?.let { maxOf(it, globalScene) } ?: status.created_scenes?.let { maxOf(it, globalScene) } ?: maxOf(globalScene, windowSize)
 
         // sceneIndex is 0-based internally; computeWorkers adds 1 for display
         val sceneIndex = (globalScene - 1).coerceAtLeast(0).coerceAtMost(total - 1)
@@ -951,8 +952,8 @@ class GenerateViewModel(
             vbookProgress = VBookProgress(
                 stage = stage,
                 sceneIndex = sceneIndex,
-                scenesInWindow = total,
-                totalScenes = total,
+                scenesInWindow = windowSize,  // Fixed window size from backend (e.g. 3)
+                totalScenes = total,          // Actual total (may differ from windowSize)
                 windowIndex = status.window_index ?: 0
             )
         )}
@@ -1222,14 +1223,22 @@ class GenerateViewModel(
                         "creating_scenes", "creating_units", "creating_visuals" -> VBookStage.CREATING_SCENES
                         else -> VBookStage.ANALYZING
                     }
-                    val sceneIdx = event.vbookSceneIndex ?: 0
-                    val totalSc = event.vbookTotalScenes ?: maxOf(sceneIdx, 1)
+                    // Backend scene_index is 1-based and may be global across
+                    // all generated scenes. Keep the internal model 0-based so
+                    // computeWorkers can consistently display ready = index + 1.
+                    val readyFromBackend = (event.vbookSceneIndex ?: 0).coerceAtLeast(0)
+                    // Use window_size as the fixed denominator for display.
+                    // total_scenes from backend is kept as cumulative info.
+                    val windowSize = event.window_size ?: (event.vbookTotalScenes ?: readyFromBackend)
+                    val totalSc = windowSize.coerceAtLeast(1)
+                    val totalScenes = (event.vbookTotalScenes ?: totalSc).coerceAtLeast(readyFromBackend).coerceAtLeast(1)
+                    val sceneIdx = (readyFromBackend - 1).coerceAtLeast(0).coerceAtMost(totalSc - 1)
                     _uiState.update { it.copy(
                         vbookProgress = VBookProgress(
                             stage = stage,
                             sceneIndex = sceneIdx,
-                            scenesInWindow = totalSc,
-                            totalScenes = totalSc,
+                            scenesInWindow = totalSc,        // Fixed window size from backend
+                            totalScenes = totalScenes,       // Cumulative total
                             windowIndex = 0
                         )
                     )}
@@ -1406,7 +1415,8 @@ class GenerateViewModel(
                     VBookStage.CREATING_SCENES -> {
                         ready = vbookProgress.sceneIndex + 1
                         total = vbookProgress.scenesInWindow.coerceAtLeast(1)
-                        pct = (ready * 100 / total).coerceIn(0, 99)
+                        val fullyProgressed = ready >= total
+                        pct = if (fullyProgressed) 100 else (ready * 100 / total).coerceIn(0, 99)
                         countText = labels.vbookScenesFormat(ready, total)
                     }
                     else -> {
@@ -1459,10 +1469,11 @@ class GenerateViewModel(
                 workerCompletedAt.clear()
                 _workerPermanentlyDone.clear()
                 gpuProgressDoneAt = 0L
+                val shouldRefreshPlayback = assets != null || vbookProgress?.stage == VBookStage.COMPLETED
                 if (vbookProgress?.stage == VBookStage.COMPLETED) {
                     _uiState.update { it.copy(vbookProgress = VBookProgress(stage = VBookStage.IDLE)) }
                 }
-                if (assets != null) {
+                if (shouldRefreshPlayback) {
                     applyGenerationResults()
                 }
                 return ProgressPanelState.Hidden
@@ -1567,11 +1578,11 @@ enum class ImportStage(val label: String) {
  */
 data class VBookProgress(
     val stage: VBookStage = VBookStage.IDLE,
-    /** 0-based scene index within the current window (e.g. 0, 1, 2) */
+    /** 0-based index for the latest backend-reported scene progress. */
     val sceneIndex: Int = 0,
-    /** Total scenes in the current window (typically 3) */
+    /** Backend-reported total for the current generation block or known prefix. */
     val scenesInWindow: Int = 0,
-    /** Total scenes found so far across all windows (can grow) */
+    /** Total scenes known so far across generated blocks (can grow). */
     val totalScenes: Int? = null,
     /** Current window index (0-based) */
     val windowIndex: Int = 0
