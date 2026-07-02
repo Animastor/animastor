@@ -8,8 +8,10 @@ const {
 } = require('./agent-session');
 const {
     PROGRESS_STAGES, WINDOW_SIZE, MAX_WINDOW_CHARS, SCENE_CHUNK_SIZE, STEP_RETRIES, SYSTEM_PROMPTS,
+    SCENE_TARGET_SEC, SCENE_MAX_SEC, MAX_SCENES_PER_CHUNK,
 } = require('./agent-prompts');
 const sourceCoverage = require('./source-coverage');
+const { estimateSpeechDurationSec } = require('./placeholder-audio');
 
 async function callAI(messages, options) {
     const model = options?.model || config.OPENROUTER_MODEL || 'qwen/qwen3.5-122b-a10b';
@@ -210,9 +212,16 @@ async function stepCreateScenes(sessionId, text, characters, locations, stepInde
         .replace('%EXISTING_CHARACTERS%', charsContext)
         .replace('%EXISTING_LOCATIONS%', locsContext);
 
-    const repairText = repairHint
-        ? `\n\nPrevious scene split failed source coverage validation.\nReason: ${repairHint.reason || 'unknown'}.\nMissing or problematic source fragment:\n\`\`\`\n${repairHint.gap_preview || ''}\n\`\`\`\nReturn a corrected scene split that covers the provided text from the first narrative word onward without gaps.`
-        : '';
+    let repairText = '';
+    if (repairHint) {
+        if (repairHint.duration_preview) {
+            // Duration repair: coverage was OK but some scenes are too long.
+            repairText = `\n\nThe previous scene split was too long in places.\nReason: ${repairHint.reason || 'duration_exceeded'}.\nThese scenes exceed the ~30s (~95 word) hard limit and must be split into smaller scenes, each ending on a complete sentence and covering ~20s (~65 words):\n${repairHint.duration_preview}\nReturn a corrected split of the SAME text, verbatim and in order, with no gaps or overlaps — just more, shorter scenes where needed.`;
+        } else {
+            // Coverage repair: scenes did not cover the source without gaps.
+            repairText = `\n\nPrevious scene split failed source coverage validation.\nReason: ${repairHint.reason || 'unknown'}.\nMissing or problematic source fragment:\n\`\`\`\n${repairHint.gap_preview || ''}\n\`\`\`\nReturn a corrected scene split that covers the provided text from the first narrative word onward without gaps.`;
+        }
+    }
 
     const messages = [
         { role: 'system', content: prompt },
@@ -391,16 +400,83 @@ function splitTextEvenlyByParagraphs(text, maxScenes) {
     return scenes;
 }
 
+// Split text into sentences, preserving trailing terminal punctuation and any
+// closing quote/bracket. Hard paragraph breaks (\n\n) also end a sentence.
+// Returns verbatim sentence chunks (whitespace between them is dropped but is
+// re-tolerated by coverage, which ignores inter-scene whitespace).
+function splitIntoSentences(text) {
+    const t = String(text || '');
+    const sentences = [];
+    let start = 0;
+    for (let i = 0; i < t.length; i++) {
+        const ch = t[i];
+        const isTerminal = ch === '.' || ch === '!' || ch === '?' || ch === '…';
+        const isHardBreak = ch === '\n' && t[i + 1] === '\n';
+        if (isTerminal) {
+            // Consume any run of terminal punctuation + trailing closing quotes.
+            let j = i + 1;
+            while (j < t.length && /[.!?…"'»”)\]]/.test(t[j])) j++;
+            const chunk = t.slice(start, j).trim();
+            if (chunk) sentences.push(chunk);
+            start = j;
+            i = j - 1;
+        } else if (isHardBreak) {
+            const chunk = t.slice(start, i).trim();
+            if (chunk) sentences.push(chunk);
+            start = i + 1;
+        }
+    }
+    const tail = t.slice(start).trim();
+    if (tail) sentences.push(tail);
+    return sentences;
+}
+
+// Deterministic fallback splitter used only when the LLM split fails source
+// coverage. Groups whole sentences into ~SCENE_TARGET_SEC scenes, never
+// exceeding ~SCENE_MAX_SEC unless a single sentence alone is longer (then it
+// becomes its own scene). Every scene ends on a complete sentence, and the
+// scenes are consecutive verbatim slices → source coverage passes by
+// construction. Falls back to paragraph-even splitting only if no sentence
+// boundaries are found at all.
 function buildFallbackScenes(sceneText) {
-    const parts = splitTextEvenlyByParagraphs(sceneText, WINDOW_SIZE);
-    return parts.map((text, i) => ({
-        title: `Scene ${i + 1}`,
-        text,
-        type: 'narration',
-        participants: [],
-        location: null,
-        character_anchors: {},
-    }));
+    const sentences = splitIntoSentences(sceneText);
+
+    if (sentences.length === 0) {
+        const parts = splitTextEvenlyByParagraphs(sceneText, WINDOW_SIZE);
+        return parts.map((text, i) => ({
+            title: `Scene ${i + 1}`, text, type: 'narration',
+            participants: [], location: null, character_anchors: {},
+        }));
+    }
+
+    const groups = [];
+    let current = [];
+    for (const sentence of sentences) {
+        if (current.length === 0) { current.push(sentence); continue; }
+        const currentDur = estimateSpeechDurationSec(current.join(' '));
+        const withNext = estimateSpeechDurationSec(current.concat(sentence).join(' '));
+        // Close the current scene if it already meets the target, or if adding
+        // the next sentence would push it past the hard max.
+        if (currentDur >= SCENE_TARGET_SEC || withNext > SCENE_MAX_SEC) {
+            groups.push(current);
+            current = [sentence];
+        } else {
+            current.push(sentence);
+        }
+    }
+    if (current.length > 0) groups.push(current);
+
+    return groups.map((g, i) => {
+        const text = g.join(' ');
+        const dur = estimateSpeechDurationSec(text);
+        if (dur > SCENE_MAX_SEC) {
+            console.warn(`[AGENT] fallback scene ${i} is ${dur}s (> ${SCENE_MAX_SEC}s) — single sentence exceeds max, kept whole`);
+        }
+        return {
+            title: `Scene ${i + 1}`, text, type: 'narration',
+            participants: [], location: null, character_anchors: {},
+        };
+    });
 }
 
 function getWindowText(sourceText, existingChars, existingLocs, windowIndex, startOffset) {
@@ -605,35 +681,68 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
         console.log(`[AGENT] Locations: ${existingLocs.length} existing + ${added} new + ${enriched} enriched = ${locations.length} total`);
     }
 
-    let scenes = await stepCreateScenes(sessionId, sceneText, characters, locations, stepIndex, _progress);
+    // ── Scene split with unified validation (coverage = hard, duration = soft) ──
+    // Keep ALL scenes the model returns (capped at MAX_SCENES_PER_CHUNK) — do NOT
+    // slice to a fixed count, so the splitter can emit more, smaller ~20s scenes.
+    const capScenes = (arr) => (arr || []).slice(0, MAX_SCENES_PER_CHUNK);
+
+    // Find scenes longer than the soft max (only meaningful once coverage is OK).
+    const findOversized = (arr) => arr
+        .map((s, i) => ({ i, dur: estimateSpeechDurationSec(s.text || '') }))
+        .filter(o => o.dur > SCENE_MAX_SEC);
+
+    const evaluate = (arr) => {
+        const cov = sourceCoverage.computeSceneCoverage(sceneText, arr.map(s => s.text || ''), { sourceOffsetBase });
+        const oversized = cov.ok ? findOversized(arr) : [];
+        return { cov, oversized };
+    };
+
+    let scenes = capScenes(await stepCreateScenes(sessionId, sceneText, characters, locations, stepIndex, _progress));
     if (!scenes || scenes.length === 0) throw new Error('AI returned no scenes');
 
-    let windowScenes = scenes.slice(0, WINDOW_SIZE);
-    let coverage = sourceCoverage.computeSceneCoverage(sceneText, windowScenes.map(s => s.text || ''), {
-        sourceOffsetBase,
-    });
+    let windowScenes = scenes;
+    let { cov: coverage, oversized } = evaluate(windowScenes);
     let coverageRetryCount = 0;
 
-    if (!coverage.ok) {
-        console.warn(`[AGENT] scene coverage failed: ${coverage.reason} scene=${coverage.scene_index} gap=${coverage.gap_chars || 0}; retrying scene split`);
+    // Single repair retry covering BOTH invariants. Coverage failure takes
+    // priority (correctness); otherwise repair oversized scenes (duration).
+    if (!coverage.ok || oversized.length > 0) {
+        let repairHint;
+        if (!coverage.ok) {
+            console.warn(`[AGENT] scene coverage failed: ${coverage.reason} scene=${coverage.scene_index} gap=${coverage.gap_chars || 0}; retrying scene split`);
+            repairHint = coverage;
+        } else {
+            const preview = oversized
+                .map(o => `- scene ${o.i + 1}: ~${o.dur}s, "${(windowScenes[o.i].text || '').slice(0, 80).replace(/\n/g, ' ')}..."`)
+                .join('\n');
+            console.warn(`[AGENT] ${oversized.length} scene(s) exceed ${SCENE_MAX_SEC}s; retrying scene split for shorter scenes`);
+            repairHint = { reason: 'duration_exceeded', duration_preview: preview };
+        }
         coverageRetryCount += 1;
-        scenes = await stepCreateScenes(sessionId, sceneText, characters, locations, stepIndex, _progress, coverage);
-        windowScenes = scenes.slice(0, WINDOW_SIZE);
-        coverage = sourceCoverage.computeSceneCoverage(sceneText, windowScenes.map(s => s.text || ''), {
-            sourceOffsetBase,
-        });
+        windowScenes = capScenes(await stepCreateScenes(sessionId, sceneText, characters, locations, stepIndex, _progress, repairHint));
+        ({ cov: coverage, oversized } = evaluate(windowScenes));
     }
 
+    // Coverage is the only hard trigger for the deterministic fallback.
     if (!coverage.ok) {
         console.warn(`[AGENT] scene coverage retry failed: ${coverage.reason}; using deterministic fallback`);
         coverageRetryCount += 1;
-        windowScenes = buildFallbackScenes(sceneText);
-        coverage = sourceCoverage.computeSceneCoverage(sceneText, windowScenes.map(s => s.text || ''), {
-            sourceOffsetBase,
-        });
+        windowScenes = capScenes(buildFallbackScenes(sceneText));
+        ({ cov: coverage, oversized } = evaluate(windowScenes));
         if (!coverage.ok) {
             throw new Error(`Scene coverage failed after fallback: ${coverage.reason}`);
         }
+    }
+
+    // Duration is soft: if scenes remain oversized after the retry (coverage OK),
+    // accept them rather than risk a coverage gap. Log for auditing.
+    if (oversized.length > 0) {
+        console.warn(JSON.stringify({
+            event: 'scene_duration_over_max',
+            step_index: stepIndex,
+            max_sec: SCENE_MAX_SEC,
+            oversized: oversized.map(o => ({ scene_index: o.i, est_sec: o.dur })),
+        }));
     }
 
     console.log(JSON.stringify({
@@ -759,7 +868,9 @@ async function bootstrapWithAgent(bookId, progress) {
             throw new Error('AI returned no scenes — cannot create book');
         }
 
-        const extraScenes = result.allScenes.slice(WINDOW_SIZE);
+        // All scenes for this chunk are processed and saved — no cached "extra"
+        // scenes carried to the next window (the offset advances past covered text).
+        const extraScenes = [];
 
         // Scene-advanced offset: advance by actual scene chunk (bounded at natural
         // sentence boundary), not full recon window of 4000 chars.
@@ -805,7 +916,7 @@ async function bootstrapWithAgent(bookId, progress) {
             locations: result.locations,
             scenes: result.scenes,
             chapterTitle: chapterTitle,
-            maxScenes: WINDOW_SIZE,
+            maxScenes: MAX_SCENES_PER_CHUNK,
             structure: structure,
         });
 
@@ -888,6 +999,31 @@ async function bootstrapNextWindow(bookId, progress) {
     // Use windowStartOffset (start of AI-processed text) rather than currentOffset
     // (end of previous window) to avoid matching the previous session itself.
     const windowInfo = getWindowText(draft.sourceText, existingChars, existingLocs, 1, currentOffset);
+
+    // ── Seam diagnostic: verify no VISIBLE (non-whitespace, non-header) source
+    // text is dropped between the previous window's covered end and this
+    // window's narrative start. getWindowText re-applies findNarrativeStartOffset
+    // which should only skip chapter headers / blank lines, never prose.
+    const prevCoveredEnd = windowData?.coveredEndOffset;
+    if (typeof prevCoveredEnd === 'number' && windowInfo.windowStartOffset > prevCoveredEnd) {
+        const seam = draft.sourceText.substring(prevCoveredEnd, windowInfo.windowStartOffset);
+        const seamHeaderStripped = seam
+            .split('\n')
+            .filter(line => !sourceCoverage.looksLikeChapterTitle(line) && !/^\s*(?:глава|chapter|часть|part|пролог|prologue|эпилог|epilogue)/i.test(line))
+            .join('');
+        const droppedVisible = seamHeaderStripped.replace(/\s+/g, '').length;
+        if (droppedVisible > 0) {
+            console.warn(JSON.stringify({
+                event: 'window_seam_visible_text_dropped',
+                book_id: bookId,
+                prev_covered_end: prevCoveredEnd,
+                next_window_start: windowInfo.windowStartOffset,
+                dropped_visible_chars: droppedVisible,
+                seam_preview: seam.slice(0, 200),
+            }));
+        }
+    }
+
     const dedupKey = String(windowInfo.windowStartOffset);
     try {
         const dupCheck = await query(
@@ -941,7 +1077,8 @@ async function bootstrapNextWindow(bookId, progress) {
             sourceOffsetBase: windowInfo.windowStartOffset,
         });
 
-        const extraScenes = result.allScenes.slice(WINDOW_SIZE);
+        // All scenes for this chunk are processed and saved — no cached "extra".
+        const extraScenes = [];
 
         // Scene-advanced offset: advance by actual scene chunk (bounded at natural
         // sentence boundary), not full recon window of 4000 chars.
@@ -953,7 +1090,7 @@ async function bootstrapNextWindow(bookId, progress) {
             characters: result.characters,
             locations: result.locations,
             scenes: result.scenes,
-            maxScenes: WINDOW_SIZE,
+            maxScenes: MAX_SCENES_PER_CHUNK,
             chapterTitle: windowInfo.chapterTitle || `Глава ${nextChapterIndex + 1}`,
             chapterIndex: nextChapterIndex,
             structure: structure,
@@ -1020,4 +1157,8 @@ module.exports = {
     bootstrapNextWindow,
     PROGRESS_STAGES,
     WINDOW_SIZE,
+    // Exported for unit testing
+    splitIntoSentences,
+    buildFallbackScenes,
+    splitTextEvenlyByParagraphs,
 };

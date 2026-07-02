@@ -12,6 +12,18 @@ const MAX_WINDOW_CHARS = 4000;
 const SCENE_CHUNK_SIZE = 1500;
 const STEP_RETRIES = 3;
 
+// Scene duration targets (narration seconds). One scene ≈ SCENE_TARGET_SEC of
+// spoken audio; SCENE_MAX_SEC is a soft ceiling — scenes longer than this after
+// one repair retry are accepted (logged) rather than risking source coverage.
+// At ~0.3s/word (see placeholder-audio.estimateSpeechDurationSec):
+//   SCENE_TARGET_SEC 20s ≈ ~65 words, SCENE_MAX_SEC 30s ≈ ~100 words.
+const SCENE_TARGET_SEC = 20;
+const SCENE_MAX_SEC = 30;
+// Upper bound on scenes produced per SCENE_CHUNK_SIZE chunk (runaway guard).
+// Replaces the previous hard-coded "3 scenes" cap so the splitter can emit
+// more, smaller ~20s scenes instead of a few oversized ones.
+const MAX_SCENES_PER_CHUNK = 8;
+
 const SYSTEM_PROMPTS = {
 
     structure: `You are a literary analysis assistant. Analyze the provided text and extract its structural metadata.
@@ -130,12 +142,32 @@ Return ONLY valid JSON.`,
 - Scene boundaries: location change, time jump, character entrance/exit, narrative break
 - Each scene.text must contain the COMPLETE VERBATIM original text for that episode
 - Scene texts are used for TTS audio narration — must be verbatim, not summarized
-- **Split the text into up to 3 scenes**
-- **Word guideline: ~65 words per scene** (≈20s audio at Russian speech rate). If a sentence ends slightly over ~65 words, that's OK — finish the sentence. Do NOT cut mid-sentence.
-- If a scene at a natural boundary far exceeds ~65 words, choose an earlier natural break point (paragraph end, sentence end). Prefer natural narrative boundaries over equal-length chunks. A shorter scene is better than an overly long one.
 - Scene order must preserve the original narrative sequence.
-- Do NOT use ellipsis (...) or any form of truncation or summarization. Every word from the provided text must appear in exactly one scene, verbatim, without gaps.
-- Full source coverage is more important than the 65-word guideline or producing exactly 3 scenes.
+
+## Scene length algorithm (audio duration — CRITICAL)
+Each scene is narrated aloud. Target ≈20 seconds of narration per scene, which is
+roughly **65 words**. Follow this algorithm:
+1. Read from the start of the remaining text, accumulating whole sentences.
+2. When the accumulated text reaches ~65 words (~20s), CLOSE the scene at the end
+   of the current sentence.
+3. **HARD LIMIT: ~95 words (~30s).** A scene must NEVER exceed this. If adding the
+   next sentence would cross ~95 words, close the scene at the previous sentence end.
+4. **Every scene MUST begin and end on a COMPLETE sentence** — a terminal
+    \`. \`! \`? \`…\`, a closing quote, or the end of a dialogue turn (\`—\` line).
+    NEVER cut in the middle of a sentence.
+5. Produce **as many scenes as needed** to cover the provided text — prefer MORE,
+   SMALLER ~20s scenes over a few long ones. Do NOT merge unrelated material just
+   to fill 65 words; a slightly short scene at a natural boundary is fine.
+6. Do NOT use ellipsis (...), truncation, or summarization. Every word from the
+   provided text must appear in exactly one scene, verbatim, without gaps or overlaps.
+
+Priority when rules conflict: full verbatim coverage + complete-sentence boundaries
+outrank the exact 65-word target.
+
+## Example (length splitting)
+Given a paragraph of ~180 words, do NOT return it as one scene (~54s). Split it into
+THREE ~60-word scenes, each ending on a sentence boundary, together covering the
+paragraph verbatim in order.
 
 ## CRITICAL: Do NOT create chapter title / chapter header / typography / transition units
 - Chapter titles, headers, and opening cards are added PROGRAMMATICALLY by the system
@@ -257,4 +289,5 @@ Return ONLY valid JSON.`,
 
 module.exports = {
     PROGRESS_STAGES, WINDOW_SIZE, MAX_WINDOW_CHARS, SCENE_CHUNK_SIZE, STEP_RETRIES, SYSTEM_PROMPTS,
+    SCENE_TARGET_SEC, SCENE_MAX_SEC, MAX_SCENES_PER_CHUNK,
 };

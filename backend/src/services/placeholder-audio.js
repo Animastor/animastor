@@ -31,6 +31,32 @@ function log(msg) { console.log(`${logPrefix} ${msg}`); }
 function warn(msg) { console.warn(`${logPrefix} ⚠️  ${msg}`); }
 
 // ======================================================
+// SPEECH DURATION HEURISTIC
+// ======================================================
+
+// Narration speech-rate heuristic: ~0.3 seconds of spoken audio per word.
+// 65 words ≈ 19.5s ≈ the ~20s scene target used during book splitting.
+// This is the single source of truth for text → estimated narration time;
+// keep the tokenizer identical wherever a "~N words" guideline is compared
+// against it (see agent-prompts.js scene splitting).
+const SPEECH_SEC_PER_WORD = 0.3;
+const SPEECH_MIN_SEC = 2;
+
+/**
+ * Estimate narration duration (seconds) for an arbitrary text string.
+ * Pure function — no disk/DB access — so it can be called on raw scene
+ * text during book splitting, not only on persisted scenes.
+ *
+ * @param {string} text
+ * @returns {number} estimated seconds (>= SPEECH_MIN_SEC), rounded to 0.1s
+ */
+function estimateSpeechDurationSec(text) {
+    const wordCount = String(text || '').split(/\s+/).filter(Boolean).length;
+    const estimated = Math.max(wordCount * SPEECH_SEC_PER_WORD, SPEECH_MIN_SEC);
+    return Math.round(estimated * 10) / 10;
+}
+
+// ======================================================
 // SCENE ESTIMATED DURATION
 // ======================================================
 
@@ -78,9 +104,9 @@ async function estimateDurationFromSceneText(bookId, chapterId, sceneId) {
 
         const fullText = scene.payload.audio?.full_text || '';
         const wordCount = fullText.split(/\s+/).filter(Boolean).length;
-        const estimated = Math.max(wordCount * 0.3, 2); // ~0.3s per word, min 2s
+        const estimated = estimateSpeechDurationSec(fullText);
         log(`Fallback duration from text: ${bookId}/${chapterId}/${sceneId} = ${estimated.toFixed(1)}s (${wordCount} words)`);
-        return Math.round(estimated * 10) / 10;
+        return estimated;
     } catch (err) {
         warn(`Fallback duration failed for ${bookId}/${chapterId}/${sceneId}: ${err.message}`);
         return 5; // Hard fallback: 5 seconds
@@ -538,6 +564,7 @@ async function recoverMissingPlaceholders(buildId, bookId) {
 // ======================================================
 
 module.exports = {
+    estimateSpeechDurationSec,
     getSceneEstimatedDurationSec,
     estimateDurationFromSceneText,
     hasPlaceholderAudio,
