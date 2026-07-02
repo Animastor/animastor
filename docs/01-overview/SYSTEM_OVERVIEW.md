@@ -53,12 +53,13 @@ Animastor — AI-powered animated storytelling platform. Система прео
 ### Agent Service (AI Pipeline)
 6-шаговый AI-пайплайн анализа текста (шаг 0 + 5 шагов): структура → персонажи → локации → сцены → units → визуальные промпты.
 
-Ключевое поведение (2026-07-01):
-- AI создаёт **ровно 3 сцены** на окно (`WINDOW_SIZE=3`)
-- Каждая сцена ≤ ~65 слов (≈20s audio) — через word guideline в промпте
-- Программного расщепления сцен нет — AI управляет делением через инструкцию
-- Word guideline: если предложение заканчивается немного за лимитом — это OK, предложение завершается
-- Естественные нарративные границы предпочтительнее равных по длине частей
+Ключевое поведение (2026-07-02):
+- Backend берёт от `currentOffset` текстовый буфер 1500 символов.
+- AI создаёт до 3 сцен из начала буфера и может оставить хвост неиспользованным.
+- Backend валидирует дословное непрерывное покрытие созданного префикса.
+- `currentOffset` продвигается по `nextOffset` последней созданной сцены, а не
+  по размеру буфера.
+- Длительность сцены: цель ~20s, soft ceiling ~30s с одним repair retry.
 
 ### GPU Hub (Node.js)
 Центральный диспетчер задач на GPU. Принимает задачи от backend, ставит в Redis-очереди, распределяет по воркерам. Graceful shutdown, requeue при timeout (10 min), heartbeat, per-book queue clear.
@@ -94,7 +95,7 @@ TXT / VBook
          │
          ▼
 ┌─────────────────┐
-│  Agent Service  │  → 6-шаговый AI-анализ (шаг 0 + 5 шагов, окнами по 3 сцены)
+│  Agent Service  │  → 6-шаговый AI-анализ (буфер 1500 символов, до 3 сцен)
 │  (bootstrap)    │  → Извлечение: структура, персонажи, локации,
 └────────┬────────┘    сцены, IU, визуальные промпты
          │
@@ -179,7 +180,7 @@ TXT / VBook
 | Image service | `backend/src/image/image-service.js` | Генерация изображений IU (через connector) |
 | Video service | `backend/src/video/video-service.js` | Видеогенерация (LTX), multi-image |
 | Video merge | `backend/src/video/video-merge.js` | Мерж видео + аудио через ffmpeg |
-| Agent service | `backend/src/services/agent-service.js` | AI-пайплайн (шаг 0 + 5 шагов). Ровно 3 сцены/окно, word guideline ~65 слов |
+| Agent service | `backend/src/services/agent-service.js` | AI-пайплайн (шаг 0 + 5 шагов). Буфер 1500 символов, до 3 сцен, продвижение по `nextOffset` |
 | TXT importer | `backend/src/services/txt-importer.js` | Импорт и парсинг TXT |
 | Window generator | `backend/src/services/window-generator.cjs` | Фоновая оконная генерация |
 | Workflow loader | `backend/src/workflows/workflow-loader.js` | Загрузчик шаблонов ComfyUI + connector loader |

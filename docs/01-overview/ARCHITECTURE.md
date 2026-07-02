@@ -167,12 +167,17 @@
 ### 4.5 Agent Service (`backend/src/services/agent-service.js`)
 **Ответственность:** 5-шаговый AI-пайплайн (структура извлекается отдельно): персонажи → локации → сцены → units → визуал.
 
-**Ключевое поведение (2026-07-01):**
-- AI создаёт **ровно 3 сцены** на окно (`WINDOW_SIZE=3`)
-- Каждая сцена ≤ ~65 слов (≈20s audio) — AI получает инструкцию в промпте
-- Если AI возвращает больше 3 сцен, лишние отбрасываются (`scenes.slice(0, WINDOW_SIZE)`)
-- Программного расщепления сцен больше нет — AI управляет делением через промпт
-- Промпт сцен в `agent-prompts.js` содержит правило word guideline с возможностью завершить предложение за лимитом
+**Ключевое поведение (2026-07-02):**
+- Backend хранит `currentOffset` в `agent_sessions.window_data` и берёт от него
+  текстовый буфер `MAX_WINDOW_CHARS=1500`.
+- AI создаёт **до 3 сцен** (`MAX_SCENES_PER_CHUNK=3`) из начала буфера и может
+  оставить хвост буфера неиспользованным.
+- `computeSceneCoverage()` проверяет, что созданные сцены являются дословным
+  непрерывным префиксом буфера.
+- `resolveSceneProgress()` вычисляет `nextOffset` по окончанию последней
+  созданной сцены; `currentOffset` обновляется именно в эту позицию, а не в
+  конец буфера.
+- Длительность сцены: цель ~20s, soft ceiling ~30s с одним repair retry.
 
 **Входы:** bookId, sourceText.
 **Выходы:** JSON-структура книги в PG (agent_sessions, agent_steps, agent_conversations).
@@ -390,10 +395,18 @@ NEW → DIRTY → PENDING → GENERATING → READY | FAILED | PLACEHOLDER
 ### 10.2 GenerateViewModel
 **Ответственность:** Запуск, мониторинг, отмена генерации, polling agent-status, функционал worker toggle.
 
-**VBook progress (2026-07-01):**
-- `totalInWindow` использует реальное количество сцен в окне (отслеживается через `lastSceneWindowMax`)
-- Прогресс показывает 2/2 или 3/3, а не хардкодное 3/3
-- `lastSceneWindowMax` сбрасывается при детекте нового окна или нового VBook импорта
+**VBook progress (2026-07-02):**
+- SSE `type="vbook"` использует backend-owned 1-based `scene_index`.
+- Backend отдаёт точные счётчики текущего блока:
+  `window_scene_index`, `window_total_scenes`, `window_start_scene`.
+- `window_size` остаётся только fallback/cap для старых событий и не означает
+  границу продвижения по исходному тексту.
+- Frontend нормализует прогресс в 0-based `VBookProgress` и может показывать
+  `0/N`, пока backend ещё только режет сцены.
+- `MainActivity` запускает progress stream и для VBook-only работы; завершение
+  VBook вызывает soft-refresh через `applyGenerationResults()`.
+- `WindowTriggerManager` запускает следующее окно у хвоста уже загруженного
+  контента, а не по каждому фиксированному третьему номеру сцены.
 
 ### 10.3 PlaybackViewModel
 **Ответственность:** Воспроизведение сцен: текущая сцена, список сцен, прогресс, предзагрузка (preloadAhead=3).

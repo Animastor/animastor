@@ -36,6 +36,28 @@ module.exports = function(app, redis, deps) {
     // In-flight TXT trigger guard to prevent concurrent window processing
     const inFlightTriggers = new Set();
 
+    const buildWindowProgressMeta = (createdScenes, totalScenes) => {
+        const toFiniteNumber = (value) => {
+            if (value == null) return null;
+            const num = Number(value);
+            return Number.isFinite(num) ? num : null;
+        };
+        const created = toFiniteNumber(createdScenes);
+        const total = toFiniteNumber(totalScenes);
+        if (created == null || total == null || total <= 0) {
+            return {
+                window_start_scene: null,
+                window_total_scenes: total,
+                window_scene_index: null,
+            };
+        }
+        return {
+            window_start_scene: Math.max(1, created - total + 1),
+            window_total_scenes: total,
+            window_scene_index: null,
+        };
+    };
+
     // ======================================================
     // GET BOOK DATA (used by frontend Editor & Navigator)
     // ======================================================
@@ -910,6 +932,7 @@ module.exports = function(app, redis, deps) {
                         remainingCached = windowData.remaining_scenes ? windowData.remaining_scenes.length : 0;
                     } catch (e) { /* ignore */ }
                 }
+                const windowProgressMeta = buildWindowProgressMeta(createdScenes, totalScenes);
 
                 return res.json({
                     active: true, session_id: agentRow.session_id,
@@ -917,6 +940,7 @@ module.exports = function(app, redis, deps) {
                     source_type: agentRow.source_type, window_index: windowIndex,
                     created_scenes: createdScenes, total_scenes: totalScenes, remaining_cached: remainingCached,
                     window_size: config.WINDOW_SIZE,
+                    ...windowProgressMeta,
                 });
             }
 
@@ -942,6 +966,9 @@ module.exports = function(app, redis, deps) {
                     total_scenes: null,
                     remaining_cached: null,
                     window_size: config.WINDOW_SIZE,
+                    window_start_scene: null,
+                    window_total_scenes: null,
+                    window_scene_index: null,
                 });
             }
 
@@ -962,6 +989,7 @@ module.exports = function(app, redis, deps) {
                         remainingCached = windowData.remaining_scenes ? windowData.remaining_scenes.length : 0;
                     } catch (e) { /* ignore */ }
                 }
+                const windowProgressMeta = buildWindowProgressMeta(createdScenes, totalScenes);
 
                 return res.json({
                     active: agentRow.session_status === 'running', session_id: agentRow.session_id,
@@ -969,10 +997,18 @@ module.exports = function(app, redis, deps) {
                     source_type: agentRow.source_type, window_index: windowIndex,
                     created_scenes: createdScenes, total_scenes: totalScenes, remaining_cached: remainingCached,
                     window_size: config.WINDOW_SIZE,
+                    ...windowProgressMeta,
                 });
             }
 
-            return res.json({ active: false, message: 'No active agent session', window_size: config.WINDOW_SIZE });
+            return res.json({
+                active: false,
+                message: 'No active agent session',
+                window_size: config.WINDOW_SIZE,
+                window_start_scene: null,
+                window_total_scenes: null,
+                window_scene_index: null,
+            });
         } catch (err) {
             console.error('[AGENT-STATUS] Error:', err.message);
             return res.status(500).json({ error: err.message });

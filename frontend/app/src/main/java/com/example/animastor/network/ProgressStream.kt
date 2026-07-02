@@ -27,7 +27,9 @@ import okhttp3.sse.EventSources
  * @property type "vbook" for VBook agent pipeline events.
  * @property vbookStage "analyzing", "creating_scenes", "creating_units", "creating_visuals".
  * @property vbookSceneIndex Current scene being processed (1-based, backend-owned).
- * @property vbookTotalScenes Backend-reported total for the current generated prefix/window.
+ * @property vbookTotalScenes Backend-reported cumulative total after the current block.
+ * @property vbookWindowSceneIndex Current scene inside the generated block (1-based).
+ * @property vbookWindowTotalScenes Actual scene count in the generated block.
  */
 data class ProgressEvent(
     val type: String = "",
@@ -39,8 +41,11 @@ data class ProgressEvent(
     val stage: String? = null,
     val scene_index: Int? = null,
     val total_scenes: Int? = null,
-    /** Backend's WINDOW_SIZE — expected scenes per window. Used as denominator for progress. */
-    val window_size: Int? = null
+    /** Backend scene cap for legacy/fallback progress display; not a source offset boundary. */
+    val window_size: Int? = null,
+    val window_scene_index: Int? = null,
+    val window_total_scenes: Int? = null,
+    val window_start_scene: Int? = null
 ) {
     /** Convenience: true if this is a VBook pipeline event. */
     fun isVBook(): Boolean = type == "vbook"
@@ -53,6 +58,15 @@ data class ProgressEvent(
 
     /** Convenience: total scenes for VBook progress. */
     val vbookTotalScenes: Int? get() = total_scenes
+
+    /** Convenience: current scene number inside the generated VBook block. */
+    val vbookWindowSceneIndex: Int? get() = window_scene_index
+
+    /** Convenience: actual scene count in the generated VBook block. */
+    val vbookWindowTotalScenes: Int? get() = window_total_scenes
+
+    /** Convenience: global 1-based scene number where the generated block starts. */
+    val vbookWindowStartScene: Int? get() = window_start_scene
 }
 
 /**

@@ -2,23 +2,31 @@
 
 ## Context
 
-Current TXT import uses an agent pipeline with a sliding text window:
+Status on 2026-07-02: source skips are fixed by sequential scene progression.
+The text window is now only a token-budget buffer; the book position advances
+by verified generated scene coverage.
 
-- `MAX_WINDOW_CHARS = 4000` — reconnaissance context for characters and locations.
-- `SCENE_CHUNK_SIZE = 1500` — text span passed to scene creation.
-- `WINDOW_SIZE = 3` — target number of scenes per agent call.
+- `MAX_WINDOW_CHARS = SCENE_CHUNK_SIZE = 1500` — text buffer passed to the agent.
+- `MAX_SCENES_PER_CHUNK = 3` — hard cap, not a target.
+- The agent may return fewer than 3 scenes and may leave the buffer tail unused.
+- `currentOffset` advances by `coverage.next_offset` / `lastSceneEndOffset`,
+  not by the planned buffer end.
 
-The current architecture can skip source text because `currentOffset` is advanced by the planned chunk length, not by verified coverage of the source text by generated scenes. The concrete reproduced case is `book_1782899569732_1782899572803`, where text between the end of the fourth scene and the beginning of the fifth scene is missing.
+The concrete reproduced case was `book_1782899569732_1782899572803`, where text
+between the end of the fourth scene and the beginning of the fifth scene was
+missing because `currentOffset` advanced by planned chunk length. The current
+architecture prevents that by computing the next position from the generated
+scene text itself.
 
 ## P0 — Stop Source Text Skips
 
 - [x] Add a coverage validator immediately after `stepCreateScenes()`.
-- [x] Verify that generated `scene.text` values cover the intended source span without non-whitespace gaps.
+- [x] Verify that generated `scene.text` values cover a contiguous source prefix without non-whitespace gaps.
 - [x] Normalize text before coverage comparison:
   - `\r\n` / `\r` -> `\n`
   - `NBSP` -> regular space
   - preserve meaningful punctuation and dialogue dashes
-- [x] Advance `currentOffset` by verified `coveredEndOffset`, not by `sceneConsumedLength`.
+- [x] Advance `currentOffset` by verified `next_offset`, not by planned buffer length.
 - [x] If coverage fails, use deterministic fallback before saving the window.
 - [x] Retry the scene-generation step with explicit feedback describing the missing source fragment.
 - [x] After retry/fallback budget is exhausted, fail the import window loudly instead of silently skipping text.
@@ -41,27 +49,25 @@ The current architecture can skip source text because `currentOffset` is advance
 
 ## P2 — Fix Window Boundaries
 
-- [x] Split agent context into two explicit concepts:
-  - `analysis_window` — larger lookahead for entities and continuity.
-  - `generation_span` — exact source span that must be fully covered by scenes.
-- [x] Build `generation_span` deterministically from source text before calling the agent.
-- [x] Choose span boundaries on sentence, paragraph, or dialogue-turn boundaries.
-- [x] Avoid cutting inside dialogue question/answer pairs.
+- [x] Treat the window as a token-budget buffer, not as a semantic source span.
+- [x] Keep `plannedEndOffset` separate from `coveredEndOffset` / `next_offset`.
+- [x] Let the agent stop after up to 3 scenes without consuming all buffered text.
+- [x] Start the next buffer from verified `next_offset`.
 - [x] Fix first-window chapter header handling so `getWindowText()` starts at narrative text, not at a blank line before `Глава N`.
 - [x] Ensure chapter boundary detection and offsets work correctly with CRLF source files.
 
 ## P3 — Relax Conflicting Prompt Requirements
 
-- [x] Replace "EXACTLY 3 scenes" with "up to 3 scenes covering the provided span fully".
+- [x] Replace "EXACTLY 3 scenes" with "up to 3 scenes from the provided buffer".
 - [x] Treat `WINDOW_SIZE = 3` as a batching limit, not as a semantic requirement.
 - [x] Keep the 65-word guideline as a soft duration target.
-- [x] Prefer full source coverage over scene length when constraints conflict.
+- [x] Prefer verified prefix coverage over scene length when constraints conflict.
 - [x] Move source coverage responsibility out of the prompt and into deterministic validation.
 
 ## P4 — Deterministic Fallback
 
 - [x] If the agent cannot produce valid coverage, create fallback scenes programmatically.
-- [x] Fallback should split by paragraph boundaries.
+- [x] Fallback should split by sentence/paragraph boundaries.
 - [x] Run the agent only for enrichment after fallback:
   - title
   - participants
@@ -102,7 +108,7 @@ The current architecture can skip source text because `currentOffset` is advance
 ## Recommended Implementation Order
 
 1. [x] Implement normalized coverage validator.
-2. [x] Use `coveredEndOffset` for `currentOffset`.
+2. [x] Use verified `next_offset` for `currentOffset`.
 3. [x] Add regression test for the current skipped-dialogue case.
 4. [x] Add `source_start` / `source_end` to scenes.
 5. [x] Refactor window construction into `analysis_window` and `generation_span`.

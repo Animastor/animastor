@@ -58,14 +58,18 @@ TXT / VBook  →  AI-анализ (агент)  →  структура книг
 1. **Импорт** — `POST /api/v1/book/import-txt`. `txt-importer` декодирует буфер (UTF-8/CP1251), `lazy-book.createDraftBook()` создаёт каталог `data/books/<bookId>/` и draft-книгу; источник регистрируется в PG (`book_source`).
 2. **Bootstrap** — `POST /api/v1/book/:id/bootstrap`. Запускается `agent-service.bootstrapWithAgent()`:
    - **Шаг 0** `stepAnalyzeStructure` — из первых ~80 строк извлекаются автор, заголовок, главы (отдельно, до pipeline).
-   - **runPipeline** по окну текста (`WINDOW_SIZE=3` сцены, `MAX_WINDOW_CHARS=4000`):
+   - **runPipeline** по текстовому буферу (`MAX_WINDOW_CHARS=1500`,
+     `MAX_SCENES_PER_CHUNK=3`):
      - Шаг 1 `stepExtractCharacters` → персонажи
      - Шаг 2 `stepExtractLocations` → локации
-     - Шаг 3 `stepCreateScenes` → сцены
+     - Шаг 3 `stepCreateScenes` → до 3 сцен из начала буфера
+     - `resolveSceneProgress` → `nextOffset` по последней созданной сцене
      - Шаг 4 `stepCreateUnits` (per-scene) → визуальные единицы (IU/кадры)
      - Шаг 5 `stepCreateVisuals` (per-scene) → визуальные промпты к кадрам
    - Результаты сохраняются в PG (`agent_sessions`, `agent_steps`, `agent_conversations`, `agent_messages`) и в файлы книги (`chapters/*.json`, `characters.json`, `bible.json`).
-   - Если в тексте остаётся «хвост» → сессия `paused`, следующее окно обрабатывает `bootstrapNextWindow()` (фоновая оконная генерация, `window-generator.cjs`).
+   - Если после `nextOffset` остаётся «хвост» → сессия `paused`, следующее
+     окно обрабатывает `bootstrapNextWindow()` (фоновая оконная генерация,
+     `window-generator.cjs`).
 
 AI-провайдер: единый ключ `OPENROUTER_API_KEY`, базовый URL `AI_API_BASE_URL`. JSON-ответы модели очищаются от CoT (`<think>`/`<reasoning>`) перед парсингом (`ai-service.parseJsonResponse`).
 

@@ -46,7 +46,7 @@ book-routes → txtImporter.bootstrapImportedText(bookId)
     → createSession(bookId, 'txt_import')
       → INSERT INTO agent_sessions (status: running)
     
-    → getWindowText() — первое окно текста (с currentOffset)
+    → getWindowText() — текстовый буфер от currentOffset (~1500 символов)
     
     → Шаг 0: stepAnalyzeStructure(text, bookId)
       → aiService.callAI() → structure { author, title, chapters }
@@ -55,14 +55,16 @@ book-routes → txtImporter.bootstrapImportedText(bookId)
     → runPipeline() — 5 шагов:
       → Шаг 1: stepExtractCharacters() → characters[]
       → Шаг 2: stepExtractLocations() → locations[]
-      → Шаг 3: stepCreateScenes() → scenes[] (WINDOW_SIZE=3)
+      → Шаг 3: stepCreateScenes() → scenes[] (до 3 сцен из начала буфера)
+        → resolveSceneProgress() → nextOffset по последней созданной сцене
       → Шаг 4+5: stepCreateUnits() + stepCreateVisuals() per scene
     
     → lazyBook.createFromAnalysis() — сохранение:
       → characters.json, bible.json, chapters/*.json
       → Cover chapter (createCoverChapter + saveCoverChapter)
     
-    → Если remaining_text → paused (ждут следующего окна)
+    → window_data.currentOffset = nextOffset, а не plannedEndOffset
+    → Если после nextOffset остаётся текст → paused (ждут следующего окна)
     → Если всё → completed
     
   → book-routes получает результат

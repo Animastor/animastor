@@ -41,6 +41,27 @@
 
 ## Реализованные шаги
 
+### VBook progress contract (2026-07-02)
+
+TXT/VBook import progress is separate from GPU asset progress but uses the same
+panel row.
+
+- Backend SSE events with `type="vbook"` expose cumulative 1-based
+  `scene_index` plus current-block metadata: `window_scene_index`,
+  `window_total_scenes`, `window_start_scene`.
+- `/agent-status` returns the same block metadata when it can derive it from
+  `agent_sessions.window_data`.
+- `window_size` is an advisory cap / legacy fallback. It is not a source-text
+  boundary and must not be used to infer where the book import should continue.
+- Android normalizes these fields into `VBookProgress`: `sceneIndex` is 0-based
+  inside the current generated block; `-1` means the agent is preparing scenes
+  but has not started a concrete scene yet.
+- `WindowTriggerManager` triggers the next import window when the user reaches
+  the last units of the currently loaded tail scene. It does not trigger every
+  fixed third scene.
+- On VBook completion the frontend calls `applyGenerationResults()` so newly
+  appended chunks/scenes soft-refresh into playback.
+
 ### ✅ F7. Поля ошибок в модели ответа
 Добавлены `audio_error: Int = 0`, `image_error: Int = 0`, `video_error: Int = 0`
 в `AssetsStateResponse`.

@@ -8,15 +8,12 @@ All notable changes to Animastor are documented here.
 
 ### Fixed
 
-- **VBook progress now uses backend window_size** — frontend no longer hardcodes
-  `WINDOW_SIZE=3` or uses the scene index as denominator (causing "1 из 1", "2 из 2",
-  "3 из 3"). The backend now sends `window_size` in both `/agent-status` responses
-  and SSE `ProgressEvent`s. The frontend uses this as the fixed denominator for
-  progress display ("1 из 3", "2 из 3", "3 из 3") and calculates correct percentages
-  (33%, 67%, 100%). When `ready >= window_size`, progress shows 100% instead of
-  being capped at 99%. Removed unused `LAZY_WINDOW_DEFAULT=3` constant from
-  `GenerateViewModel.kt`. Affects: `book-routes.cjs`, `agent-service.js`,
-  `BookModels.kt`, `ProgressStream.kt`, `GenerateViewModel.kt`.
+- **VBook progress uses actual generated-block counters** — backend SSE events now
+  include `window_scene_index`, `window_total_scenes`, and `window_start_scene`.
+  `/agent-status` exposes the same block metadata when it can be derived from
+  `agent_sessions.window_data`. Android uses those exact counters first and treats
+  `window_size` only as a legacy fallback cap. This fixes incorrect modulo-based
+  progress after a previous block produced fewer than 3 scenes.
 
 - **Generic scene titles from fallback splitter** (`backend/src/services/agent-service.js`,
   `backend/src/book/lazy-book/index.js`): `buildFallbackScenes()` no longer assigns
@@ -34,9 +31,10 @@ All notable changes to Animastor are documented here.
   not only after persistence. Oversized scenes trigger one AI retry with
   duration feedback, then are accepted with a warning to avoid coverage gaps.
 
-- **Hard-coded 3-scene cap removed** — replaced `WINDOW_SIZE` with
-  `MAX_SCENES_PER_CHUNK=8` as the scene count guard. The splitter is no
-  longer forced to produce exactly 3 scenes per window.
+- **Scene coverage no longer forces full-buffer consumption** — the splitter now
+  validates that generated scenes form a contiguous verbatim prefix of the
+  1500-character buffer. Unused buffer tail is left for the next call instead of
+  being skipped by advancing to the planned buffer end.
 
 - **Deterministic fallback is sentence-aware** — `buildFallbackScenes()` now
   uses `splitIntoSentences()` to group whole sentences into ~20s scenes,
@@ -45,14 +43,14 @@ All notable changes to Animastor are documented here.
 
 ### Changed
 
-- **Agent prompt (scenes):** Replaced `"EXACTLY 3 scenes"` with an explicit
-  algorithm: accumulate sentences until ~65 words (~20s), hard limit ~95 words
-  (~30s), produce as many scenes as needed. Complete-sentence boundaries are
-  mandatory.
+- **Agent prompt (scenes):** Replaced `"EXACTLY 3 scenes"` with "up to 3 scenes"
+  over the provided buffer. The prompt keeps the ~20s target and ~30s soft
+  ceiling, but allows the agent to stop before consuming all buffered text.
 
 - **Unified validation in runPipeline:** Coverage (hard) and duration (soft)
-  validated in a single post-AI loop with one repair retry. Previously coverage
-  was validated separately and duration was only checked after persistence.
+  validated in a single post-AI loop with one repair retry. Coverage is checked
+  for the generated prefix; `currentOffset` advances from `next_offset` /
+  last-scene coverage, not from `MAX_WINDOW_CHARS`.
 
 - **Cross-window seam diagnostic:** `bootstrapNextWindow()` logs a warning if
   visible (non-header, non-whitespace) text exists between the previous
@@ -69,7 +67,7 @@ All notable changes to Animastor are documented here.
   breaks. Exported for testing.
 
 - **Constants in agent-prompts.js:** `SCENE_TARGET_SEC=20`, `SCENE_MAX_SEC=30`,
-  `MAX_SCENES_PER_CHUNK=8`.
+  `SCENE_MIN_SEC=5`, `MAX_SCENES_PER_CHUNK=3`.
 
 - **Unit tests** (`tests/scene-split.test.js`, 21 tests) for
   `estimateSpeechDurationSec`, `splitIntoSentences`, and

@@ -771,8 +771,7 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
         }
     };
 
-    // Publish initial progress event with window_size so the frontend knows
-    // the expected scene count per window.
+    // Publish an initial progress event with the scene cap as advisory metadata.
     publishVBook({ stage: 'extracting_chars', scene_index: 0, total_scenes: 0, window_size: WINDOW_SIZE });
 
     // The window is only a token budget buffer. The agent may use any
@@ -969,12 +968,33 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
         const scene = windowScenes[si];
         const globalSceneIndex = sceneOffset + si;
 
-        // Publish per-scene progress with actual scene index and window_size
-        publishVBook({ stage: 'creating_units', scene_index: globalSceneIndex + 1, total_scenes: sceneOffset + windowScenes.length, window_size: WINDOW_SIZE });
+        const windowSceneIndex = si + 1;
+        const windowTotalScenes = windowScenes.length;
+        const windowStartScene = sceneOffset + 1;
+
+        // Publish per-scene progress with both cumulative and current-block
+        // counters. The block can contain fewer than WINDOW_SIZE scenes.
+        publishVBook({
+            stage: 'creating_units',
+            scene_index: globalSceneIndex + 1,
+            total_scenes: sceneOffset + windowTotalScenes,
+            window_size: WINDOW_SIZE,
+            window_scene_index: windowSceneIndex,
+            window_total_scenes: windowTotalScenes,
+            window_start_scene: windowStartScene,
+        });
 
         const units = await stepCreateUnits(sessionId, scene, globalSceneIndex, characters, stepIndex, _progress);
 
-        publishVBook({ stage: 'creating_visuals', scene_index: globalSceneIndex + 1, total_scenes: sceneOffset + windowScenes.length, window_size: WINDOW_SIZE });
+        publishVBook({
+            stage: 'creating_visuals',
+            scene_index: globalSceneIndex + 1,
+            total_scenes: sceneOffset + windowTotalScenes,
+            window_size: WINDOW_SIZE,
+            window_scene_index: windowSceneIndex,
+            window_total_scenes: windowTotalScenes,
+            window_start_scene: windowStartScene,
+        });
 
         const visualUnits = await stepCreateVisuals(sessionId, scene, units, globalSceneIndex, characters, locations, stepIndex, _progress);
         const sceneSpan = coverage.scene_spans[si] || null;
