@@ -4,6 +4,65 @@ All notable changes to Animastor are documented here.
 
 ---
 
+## [Unreleased] — 2026-07-02
+
+### Fixed
+
+- **Backtick syntax error in agent-prompts.js** — unescaped `` `.` `` backtick
+  literals inside a template literal (line 156) caused `SyntaxError`.
+
+- **Scene splitting duration validation** — scenes are now validated against
+  `SCENE_MAX_SEC=30s` (soft) and `SCENE_TARGET_SEC=20s` during the split,
+  not only after persistence. Oversized scenes trigger one AI retry with
+  duration feedback, then are accepted with a warning to avoid coverage gaps.
+
+- **Hard-coded 3-scene cap removed** — replaced `WINDOW_SIZE` with
+  `MAX_SCENES_PER_CHUNK=8` as the scene count guard. The splitter is no
+  longer forced to produce exactly 3 scenes per window.
+
+- **Deterministic fallback is sentence-aware** — `buildFallbackScenes()` now
+  uses `splitIntoSentences()` to group whole sentences into ~20s scenes,
+  falling back to paragraph-even split only when no sentence boundaries exist.
+  The old fallback split by paragraphs regardless.
+
+### Changed
+
+- **Agent prompt (scenes):** Replaced `"EXACTLY 3 scenes"` with an explicit
+  algorithm: accumulate sentences until ~65 words (~20s), hard limit ~95 words
+  (~30s), produce as many scenes as needed. Complete-sentence boundaries are
+  mandatory.
+
+- **Unified validation in runPipeline:** Coverage (hard) and duration (soft)
+  validated in a single post-AI loop with one repair retry. Previously coverage
+  was validated separately and duration was only checked after persistence.
+
+- **Cross-window seam diagnostic:** `bootstrapNextWindow()` logs a warning if
+  visible (non-header, non-whitespace) text exists between the previous
+  window's covered end and the next window's narrative start.
+
+### Added
+
+- **`estimateSpeechDurationSec(text)`** — pure function in
+  `placeholder-audio.js`, 0.3s/word, min 2s. Replaces inline word counting
+  and is usable at scene-split time (no DB access).
+
+- **`splitIntoSentences(text)`** — sentence tokenizer in `agent-service.js`
+  that splits on `. ! ? …` with closing-quote consumption, plus paragraph
+  breaks. Exported for testing.
+
+- **Constants in agent-prompts.js:** `SCENE_TARGET_SEC=20`, `SCENE_MAX_SEC=30`,
+  `MAX_SCENES_PER_CHUNK=8`.
+
+- **Unit tests** (`tests/scene-split.test.js`, 21 tests) for
+  `estimateSpeechDurationSec`, `splitIntoSentences`, and
+  `buildFallbackScenes`.
+
+- **Audit script** (`scripts/audit-scenes.js`) — scans all books on disk,
+  checks scene durations against targets and verifies source coverage
+  continuity per chapter.
+
+---
+
 ## [Unreleased] — 2026-07-01
 
 ### Fixed

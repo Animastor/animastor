@@ -45,8 +45,8 @@ The current architecture can skip source text because `currentOffset` is advance
   - `analysis_window` — larger lookahead for entities and continuity.
   - `generation_span` — exact source span that must be fully covered by scenes.
 - [x] Build `generation_span` deterministically from source text before calling the agent.
-- [ ] Choose span boundaries on sentence, paragraph, or dialogue-turn boundaries.
-- [ ] Avoid cutting inside dialogue question/answer pairs.
+- [x] Choose span boundaries on sentence, paragraph, or dialogue-turn boundaries.
+- [x] Avoid cutting inside dialogue question/answer pairs.
 - [x] Fix first-window chapter header handling so `getWindowText()` starts at narrative text, not at a blank line before `Глава N`.
 - [x] Ensure chapter boundary detection and offsets work correctly with CRLF source files.
 
@@ -62,7 +62,7 @@ The current architecture can skip source text because `currentOffset` is advance
 
 - [x] If the agent cannot produce valid coverage, create fallback scenes programmatically.
 - [x] Fallback should split by paragraph boundaries.
-- [ ] Run the agent only for enrichment after fallback:
+- [x] Run the agent only for enrichment after fallback:
   - title
   - participants
   - location
