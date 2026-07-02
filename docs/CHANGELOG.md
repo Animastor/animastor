@@ -8,6 +8,14 @@ All notable changes to Animastor are documented here.
 
 ### Fixed
 
+- **Generic scene titles from fallback splitter** (`backend/src/services/agent-service.js`,
+  `backend/src/book/lazy-book/index.js`): `buildFallbackScenes()` no longer assigns
+  `"Scene N"` titles — instead `extractSceneTitle()` extracts a meaningful title from
+  the scene text (first sentence, ~8 words max). `createOrAppendScenes()` also detects
+  and replaces generic AI-generated titles like `"Scene 1"` / `"Сцена 2"` with
+  text-extracted titles. This fixes scenes 2–4 in the first VBook window showing
+  placeholder names instead of descriptive Russian titles.
+
 - **Backtick syntax error in agent-prompts.js** — unescaped `` `.` `` backtick
   literals inside a template literal (line 156) caused `SyntaxError`.
 

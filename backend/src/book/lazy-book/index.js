@@ -603,6 +603,64 @@ function fragmentAppearanceForVideo(appearance, charName) {
     return result || `${charName.toLowerCase()} character, distinctive appearance`;
 }
 
+/**
+ * Extract a meaningful scene title from the scene's text content.
+ * Used as a fallback when the AI doesn't provide a proper title.
+ * Takes the first sentence, limits to ~8 words.
+ *
+ * NOTE: Parallel implementation of agent-service.js extractSceneTitle.
+ * Kept separate to avoid circular dependency (lazy-book imports by agent-service).
+ * Keep in sync when modifying.
+ */
+function extractSceneTitle(sceneText, fallbackIndex) {
+    const t = (sceneText || '').trim();
+    if (!t) return `Scene ${fallbackIndex + 1}`;
+
+    let title = t;
+
+    // For dialogue-starting scenes, use the first speech line
+    if (/^[—–\-]/.test(t)) {
+        const newlinePos = t.indexOf('\n');
+        const firstLine = newlinePos > 0 ? t.substring(0, newlinePos) : t;
+        title = firstLine.replace(/^[—–\-\s"]+/, '').replace(/["»]+$/, '').trim();
+    } else {
+        // For narration, take first sentence
+        // Prefer . ! ? over … to avoid mid-sentence ellipsis splits.
+        const dotEnd = t.search(/[.!?](?:\s|$)/);
+        const sentenceEnd = dotEnd >= 0 ? dotEnd : t.search(/…(?:\s|$)/);
+        if (sentenceEnd > 3) {
+            title = t.substring(0, sentenceEnd + 1);
+        }
+        title = title.replace(/^[—–\-\s"]+/, '').replace(/[.!?…]+$/, '').trim();
+    }
+
+    // Limit to ~8 words for a concise title
+    const words = title.split(/\s+/).filter(Boolean);
+    if (words.length > 8) {
+        title = words.slice(0, 8).join(' ');
+        if (title.length < t.length) title += '…';
+    }
+
+    // Capitalise first letter
+    title = title.charAt(0).toUpperCase() + title.slice(1);
+
+    return title || `Scene ${fallbackIndex + 1}`;
+}
+
+/**
+ * Check whether a scene title is generic / auto-generated
+ * (e.g. "Scene 1", "Scene 2") and should be replaced.
+ * NOTE: Parallel implementation of agent-service.js isGenericSceneTitle.
+ * Keep in sync when modifying.
+ */
+function isGenericSceneTitle(title) {
+    if (!title) return true;
+    const trimmed = title.trim();
+    if (trimmed.length < 3) return true;
+    if (/^(Scene|Сцена|Chapter|Глава|Part|Часть)\s*\d*$/i.test(trimmed)) return true;
+    return false;
+}
+
 function extractClothing(appearance) {
     if (!appearance) {
         return {
@@ -999,7 +1057,9 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
 
         chapterObj.scenes.push({
             scene_id: scId,
-            scene_title: aiScene.title || `Scene ${chapterObj.scenes.length + 1}`,
+            scene_title: (aiScene.title && !isGenericSceneTitle(aiScene.title))
+                ? aiScene.title
+                : extractSceneTitle(aiScene.text || '', chapterObj.scenes.length),
             type: isDialogue ? 'dialogue' : 'narration',
             style: 'soviet_book_page',
             participants: allParticipants,

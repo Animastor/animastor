@@ -510,6 +510,69 @@ function splitIntoSentencesWithOffsets(text) {
     return sentences;
 }
 
+/**
+ * Extract a meaningful scene title from the scene's text content.
+ * Used as a fallback when the AI doesn't provide a proper title or when
+ * deterministic fallback splitting is used (buildFallbackScenes).
+ *
+ * Strategy:
+ *   1. Take the first sentence of the scene text
+ *   2. Clean leading dialogue markers / quotes
+ *   3. Limit to ~8 words for a concise, readable title
+ *
+ * @param {string} sceneText - The full text of the scene
+ * @param {number} fallbackIndex - 0-based index used if text is empty
+ * @returns {string} A readable scene title
+ */
+function extractSceneTitle(sceneText, fallbackIndex) {
+    const t = (sceneText || '').trim();
+    if (!t) return `Scene ${fallbackIndex + 1}`;
+
+    let title = t;
+
+    // For dialogue-starting scenes, use the first speech line
+    if (/^[—–\-]/.test(t)) {
+        const newlinePos = t.indexOf('\n');
+        const firstLine = newlinePos > 0 ? t.substring(0, newlinePos) : t;
+        title = firstLine.replace(/^[—–\-\s"]+/, '').replace(/["»]+$/, '').trim();
+    } else {
+        // For narration, take first sentence
+        // Prefer . ! ? over … to avoid mid-sentence ellipsis splits.
+        const dotEnd = t.search(/[.!?](?:\s|$)/);
+        const sentenceEnd = dotEnd >= 0 ? dotEnd : t.search(/…(?:\s|$)/);
+        if (sentenceEnd > 3) {
+            title = t.substring(0, sentenceEnd + 1);
+        }
+        title = title.replace(/^[—–\-\s"]+/, '').replace(/[.!?…]+$/, '').trim();
+    }
+
+    // Limit to ~8 words for a concise title
+    const words = title.split(/\s+/).filter(Boolean);
+    if (words.length > 8) {
+        title = words.slice(0, 8).join(' ');
+        if (title.length < t.length) title += '…';
+    }
+
+    // Capitalise first letter
+    title = title.charAt(0).toUpperCase() + title.slice(1);
+
+    return title || `Scene ${fallbackIndex + 1}`;
+}
+
+/**
+ * Check whether a scene title is generic / auto-generated (e.g. "Scene 1", "Scene 2")
+ * and should be replaced with a proper extracted title.
+ * Also catches empty titles or very short placeholder strings.
+ */
+function isGenericSceneTitle(title) {
+    if (!title) return true;
+    const trimmed = title.trim();
+    if (trimmed.length < 3) return true;
+    // Match patterns like "Scene 1", "Сцена 1", "Scene", "Сцена"
+    if (/^(Scene|Сцена|Chapter|Глава|Part|Часть)\s*\d*$/i.test(trimmed)) return true;
+    return false;
+}
+
 // Deterministic fallback splitter used only when the LLM split fails source
 // coverage. Groups whole sentences into ~SCENE_TARGET_SEC scenes, never
 // exceeding ~SCENE_MAX_SEC unless a single sentence alone is longer (then it
@@ -527,7 +590,7 @@ function buildFallbackScenes(sceneText) {
     if (sentences.length === 0) {
         const parts = splitTextEvenlyByParagraphs(sceneText, WINDOW_SIZE);
         return parts.map((text, i) => ({
-            title: `Scene ${i + 1}`, text, type: 'narration',
+            title: extractSceneTitle(text, i), text, type: 'narration',
             participants: [], location: null, character_anchors: {},
         }));
     }
@@ -560,7 +623,7 @@ function buildFallbackScenes(sceneText) {
             console.warn(`[AGENT] fallback scene ${i} is ${dur}s (> ${SCENE_MAX_SEC}s) — single sentence exceeds max, kept whole`);
         }
         return {
-            title: `Scene ${i + 1}`, text, type: 'narration',
+            title: extractSceneTitle(text, i), text, type: 'narration',
             participants: [], location: null, character_anchors: {},
         };
     });
@@ -1298,4 +1361,6 @@ module.exports = {
     splitIntoSentencesWithOffsets,
     buildFallbackScenes,
     splitTextEvenlyByParagraphs,
+    extractSceneTitle,
+    isGenericSceneTitle,
 };
