@@ -497,8 +497,8 @@ function createFromAnalysis(bookId, analysis, options = {}) {
     const { maxScenes, chapterTitle } = options;
     const structure = options.structure || analysis.structure || null;
     return createOrAppendScenes(bookId, analysis, {
-        maxScenes: maxScenes || 6,
-        chapterTitle: chapterTitle || 'Глава 1',
+        maxScenes: maxScenes ?? analysis.maxScenes ?? 6,
+        chapterTitle: chapterTitle ?? analysis.chapterTitle ?? 'Глава 1',
         chapterIndex: 0,
         isFirstWindow: true,
         structure: structure,
@@ -509,9 +509,9 @@ function appendToBook(bookId, analysis, options = {}) {
     const { chapterTitle, chapterIndex } = options;
     const structure = options.structure || analysis.structure || null;
     return createOrAppendScenes(bookId, analysis, {
-        maxScenes: options.maxScenes || 6,
-        chapterTitle: chapterTitle || `Глава ${(chapterIndex || 0) + 1}`,
-        chapterIndex: chapterIndex || 0,
+        maxScenes: options.maxScenes ?? analysis.maxScenes ?? 6,
+        chapterTitle: chapterTitle ?? analysis.chapterTitle ?? `Глава ${(chapterIndex ?? analysis.chapterIndex ?? 0) + 1}`,
+        chapterIndex: chapterIndex ?? analysis.chapterIndex ?? 0,
         isFirstWindow: false,
         structure: structure,
     });
