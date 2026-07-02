@@ -250,9 +250,14 @@ async function stepCreateScenes(sessionId, text, characters, locations, stepInde
 }
 
 /**
- * Load examples from ai/examples/ and return as a formatted string suitable
- * for inclusion in system prompts. Includes scene_example and import_example
- * as reference for correct scene splitting.
+ * Load ALL examples from ai/examples/ and return as a formatted string
+ * suitable for inclusion in system prompts. Dynamically detects each
+ * example's structure — no hardcoded filenames required.
+ *
+ * Detected structures:
+ *   - Book-like (has .result.chapters[].scenes): shows scene splitting
+ *   - Scene-like (has .scene with .units): shows single scene breakdown
+ *   - Generic: shows a JSON summary
  */
 function formatExamplesForPrompt() {
     try {
@@ -261,31 +266,45 @@ function formatExamplesForPrompt() {
 
         const parts = [];
 
-        // Include import_example if available (shows correct scene→unit decomposition)
-        if (examples.import_example) {
-            const ex = examples.import_example;
-            const scenes = ex?.result?.chapters?.[0]?.scenes || [];
-            if (scenes.length > 0) {
-                parts.push('--- Reference example: correct scene splitting ---');
-                for (const sc of scenes) {
-                    parts.push(`Scene "${sc.title}" (${sc.type}): ${(sc.audio?.full_text || '').length} chars, participants: ${(sc.participants || []).join(', ') || 'none'}`);
+        for (const [name, data] of Object.entries(examples)) {
+            // Book-like structure: { result: { chapters: [{ scenes: [...] }] } }
+            const bookScenes = data?.result?.chapters?.[0]?.scenes;
+            if (Array.isArray(bookScenes) && bookScenes.length > 0) {
+                parts.push(`--- Example: \"${name}\" — book structure ---`);
+                for (const sc of bookScenes) {
+                    const textLen = (sc.text || sc.audio?.full_text || '').length;
+                    const participants = (sc.participants || []).join(', ') || 'none';
+                    parts.push(`  Scene "${sc.title || sc.scene_title || 'untitled'}" (${sc.type || 'unknown'}): ${textLen} chars, participants: ${participants}`);
                 }
-                parts.push(`(Total: ${scenes.length} scenes for this chapter)\n`);
+                parts.push(`  (Total: ${bookScenes.length} scenes for this chapter)\n`);
+                continue;
             }
-        }
 
-        // Include scene_example if available (shows one scene with unit decomposition)
-        if (examples.scene_example) {
-            const ex = examples.scene_example;
-            if (ex?.scene) {
-                parts.push('--- Reference example: single scene structure ---');
-                parts.push(`Scene "${ex.scene.scene_title}" (${ex.scene.type}):`);
-                parts.push(`  Location: ${ex.scene.location?.id || 'none'}`);
-                parts.push(`  Participants: ${(ex.scene.participants || []).join(', ') || 'none'}`);
-                parts.push(`  Text length: ${(ex.scene.audio?.full_text || '').length} chars`);
-                parts.push(`  Units: ${(ex.scene.units || []).length} visual units`);
+            // Scene-like structure: has .scene or .scenes array with units
+            const sceneData = data?.scene || data?.scenes?.[0];
+            if (sceneData && (sceneData.units || sceneData.audio)) {
+                parts.push(`--- Example: \"${name}\" — scene structure ---`);
+                const title = sceneData.scene_title || sceneData.title || 'untitled';
+                parts.push(`  Title: \"${title}\" (${sceneData.type || 'unknown'})`);
+                if (sceneData.location?.id) {
+                    parts.push(`  Location: ${sceneData.location.id}`);
+                }
+                if (sceneData.participants?.length) {
+                    parts.push(`  Participants: ${sceneData.participants.join(', ')}`);
+                }
+                const textLen = (sceneData.text || sceneData.audio?.full_text || '').length;
+                parts.push(`  Text length: ${textLen} chars`);
+                const units = sceneData.units || [];
+                if (units.length > 0) {
+                    parts.push(`  Units: ${units.length} visual units`);
+                }
                 parts.push('');
+                continue;
             }
+
+            // Generic fallback: just mention the file exists
+            const keys = Object.keys(data || {});
+            parts.push(`--- Example: \"${name}\" — ${keys.length > 0 ? `${keys.length} top-level key(s)` : 'empty'} ---`);
         }
 
         return parts.join('\n');

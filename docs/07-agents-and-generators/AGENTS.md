@@ -162,13 +162,16 @@ placeholder-аудио.
 Файлы в `backend/ai/`:
 - `rules/` — 8 markdown-файлов (import_rules, json_schema, general, edit_mode, validation, json_rules, extraction_rules, naming)
 - `skills/` — 8 markdown-файлов (camera_language, composition, continuity, directing, entity_extraction, lighting, prompt_engineering, storyboard)
-- `examples/` — 6 JSON-примеров (book, character, cover, import, location, scene) + демо "Мастер и Маргарита"
+- `examples/` — все `.json` файлы в папке (загружаются динамически, без привязки к именам)
 
 **Использование в промптах:**
 - База знаний загружается через `knowledge-base.js` и `ai-loader.js` (с TTL-кэшем 1 мин)
-- `formatExamplesForPrompt()` в `agent-service.js` загружает `import_example.json` и
-  `scene_example.json` из `backend/ai/examples/` и включает краткое описание примеров
-  в system prompt шага **Create Scenes** (через плейсхолдер `%REFERENCE_EXAMPLES%`)
+- `formatExamplesForPrompt()` в `agent-service.js` загружает **все** файлы из
+  `backend/ai/examples/`, динамически определяет структуру каждого и включает
+  краткое описание в system prompt шага **Create Scenes** (через плейсхолдер
+  `%REFERENCE_EXAMPLES%`). Нет жёстких привязок к именам файлов.
+- `context-builder.js` (`buildExamplesSection()`) загружает все файлы из
+  `ai/examples/` если в MODE_MAPPING не указан конкретный список.
 - `refineDraft()` в `ai-service.js` загружает полные примеры из `ai/examples/`
   и включает их в промпты финальной доработки
 

@@ -59,7 +59,7 @@
             "shot": "close",
             "focus": "character",
             "lip_sync": true,
-            "prompt": "author speaking directly to camera",
+            "prompt": "close-up of author sitting at symbolic_space, author speaking directly to camera",
             "negative": ""
           }
         },
@@ -68,7 +68,7 @@
           "type": "transition",
           "text": "Но горит время — и в его огне вспыхивают странные истории.",
           "visual": {
-            "prompt": "dark abstract fire, symbolic burning time, surreal cinematic transition, glowing embers in darkness",
+            "prompt": "author at symbolic_space, dark abstract fire, symbolic burning time, surreal cinematic transition, glowing embers in darkness",
             "negative": ""
           }
         },
@@ -77,7 +77,7 @@
           "type": "perception",
           "text": "В тёплый вечер, среди спокойной воды и ленивого света, иногда появляется то, чему трудно дать имя.",
           "visual": {
-            "prompt": "warm evening atmosphere over calm water, soft reflections, subtle cinematic realism, mysterious peaceful mood",
+            "prompt": "author at symbolic_space, warm evening atmosphere over calm water, soft reflections, subtle cinematic realism, mysterious peaceful mood",
             "negative": ""
           }
         },
@@ -86,7 +86,7 @@
           "type": "perception",
           "text": "И тогда становится ясно: мир устроен гораздо сложнее, чем кажется.",
           "visual": {
-            "prompt": "subtle surreal tension emerging from darkness, philosophical cinematic atmosphere, quiet unsettling mood",
+            "prompt": "author at symbolic_space, subtle surreal tension emerging from darkness, philosophical cinematic atmosphere, quiet unsettling mood",
             "negative": ""
           }
         }

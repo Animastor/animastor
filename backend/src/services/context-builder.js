@@ -20,12 +20,12 @@ const MODE_MAPPING = {
     edit: {
         rules: ['json_rules', 'edit_mode'],
         skills: [],
-        examples: ['scene_example'],
+        examples: [],  // all examples loaded automatically
     },
     director: {
         rules: [],
         skills: ['composition', 'camera_language', 'lighting', 'directing'],
-        examples: ['scene_example'],
+        examples: [],  // all examples loaded automatically
     },
     extraction: {
         rules: ['extraction_rules'],
@@ -35,7 +35,7 @@ const MODE_MAPPING = {
     import: {
         rules: ['import_rules', 'json_rules'],
         skills: [],
-        examples: ['import_example', 'book_example'],
+        examples: [],  // all examples loaded automatically
     },
     validation: {
         rules: ['json_schema', 'validation'],
@@ -77,12 +77,19 @@ function buildSkillsSection(skills) {
 }
 
 function buildExamplesSection(examples) {
-    if (!examples || examples.length === 0) return '';
+    // If no specific examples requested, load ALL from the examples folder.
+    const names = (examples && examples.length > 0) ? examples : Object.keys(aiLoader.getExamples());
+    if (!names || names.length === 0) return '';
     const parts = ['## Examples'];
-    for (const name of examples) {
+    for (const name of names) {
         const data = aiLoader.getExample(name);
         if (data) {
-            parts.push(`\n### ${name}\n\`\`\`json\n${JSON.stringify(data, null, 2)}\n\`\`\``);
+            // Show a compact summary rather than full JSON to avoid token waste
+            const keys = Object.keys(data);
+            const topFields = keys.slice(0, 5).join(', ');
+            const extra = keys.length > 5 ? ` … and ${keys.length - 5} more` : '';
+            parts.push(`\n### ${name}\n_${keys.length} top-level field(s): ${topFields}${extra}_`);
+            parts.push('\n```json\n' + JSON.stringify(data, null, 2).substring(0, 600) + '\n```');
         }
     }
     return parts.join('\n');

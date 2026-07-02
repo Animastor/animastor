@@ -66,7 +66,7 @@
           "text": "Был жаркий весенний вечер в Москве.",
           "visual": {
             "shot": "wide",
-            "prompt": "warm golden sunset over patriarch_ponds",
+            "prompt": "berlioz sitting on the left, bezdomny sitting on the right at patriarch_ponds, warm golden sunset over patriarch_ponds",
             "negative": ""
           }
         },
@@ -76,7 +76,7 @@
           "text": "Воздух стоял неподвижно, наполненный золотым светом заходящего солнца.",
           "visual": {
             "shot": "environment",
-            "prompt": "still glowing air and sunlight over patriarch_ponds",
+            "prompt": "berlioz sitting on the left, bezdomny sitting on the right at patriarch_ponds, still glowing air and sunlight over patriarch_ponds",
             "negative": ""
           }
         },
@@ -91,7 +91,7 @@
           "visual": {
             "shot": "medium",
             "character_binding": true,
-            "prompt": "berlioz sitting on the left and bezdomny sitting on the right on bench at patriarch_ponds",
+            "prompt": "berlioz sitting on the left, bezdomny sitting on the right at patriarch_ponds",
             "negative": ""
           }
         },
@@ -106,7 +106,7 @@
           "visual": {
             "shot": "medium_close",
             "character_binding": true,
-            "prompt": "calm conversation of berlioz and bezdomny",
+            "prompt": "berlioz sitting on the left, bezdomny sitting on the right at patriarch_ponds, calm conversation of berlioz and bezdomny",
             "negative": ""
           }
         }
@@ -158,7 +158,7 @@
           ],
           "text": "Разговор становился всё более напряжённым.",
           "visual": {
-            "prompt": "tension rising between berlioz and bezdomny",
+            "prompt": "berlioz on the left, bezdomny on the right, woland on the background at patriarch_ponds, tension rising between berlioz and bezdomny",
             "negative": ""
           }
         },
@@ -172,7 +172,7 @@
           "text": "Бездомный говорил с жаром, а Берлиоз отвечал спокойно и уверенно.",
           "visual": {
             "character_binding": true,
-            "prompt": "contrast between emotional bezdomny and calm berlioz",
+            "prompt": "berlioz on the left, bezdomny on the right, woland on the background at patriarch_ponds, contrast between emotional bezdomny and calm berlioz",
             "negative": ""
           }
         },
@@ -181,7 +181,7 @@
           "type": "perception",
           "text": "Солнце уже клонилось к закату, и в воздухе появилась странная прохлада.",
           "visual": {
-            "prompt": "sun lowering over patriarch_ponds, cooler tones emerging",
+            "prompt": "berlioz on the left, bezdomny on the right, woland on the background at patriarch_ponds, sun lowering over patriarch_ponds, cooler tones emerging",
             "negative": ""
           }
         },
@@ -194,7 +194,7 @@
           "text": "В это время неподалёку возник третий человек.",
           "visual": {
             "character_binding": true,
-            "prompt": "distant mysterious figure of woland",
+            "prompt": "berlioz on the left, bezdomny on the right, woland on the background at patriarch_ponds, distant mysterious figure of woland",
             "negative": ""
           }
         }
@@ -240,7 +240,7 @@
           ],
           "text": "Спокойный разговор окончательно перешёл в спор.",
           "visual": {
-            "prompt": "clear emotional transition from calm conversation to conflict between berlioz and bezdomny",
+            "prompt": "berlioz on the left, bezdomny on the right at patriarch_ponds, clear emotional transition from calm conversation to conflict between berlioz and bezdomny",
             "negative": ""
           }
         }
@@ -291,21 +291,7 @@
           "visual": {
             "shot": "close",
             "character_binding": true,
-            "prompt": "bezdomny leaning forward emotionally",
-            "negative": ""
-          }
-        },
-        {
-          "id": "iu-cfe9d34c",
-          "type": "performance",
-          "participants": [
-            "bezdomny"
-          ],
-          "text": "",
-          "visual": {
-            "shot": "detail",
-            "character_binding": true,
-            "prompt": "sharp hand gesture of bezdomny during argument",
+            "prompt": "close-up of bezdomny right sitting at patriarch_ponds, speaking to berlioz, woland, bezdomny leaning forward emotionally",
             "negative": ""
           }
         },
@@ -319,7 +305,7 @@
           "visual": {
             "shot": "close",
             "character_binding": true,
-            "prompt": "calm response of berlioz",
+            "prompt": "close-up of berlioz left sitting at patriarch_ponds, speaking to bezdomny, woland, calm response of berlioz",
             "negative": ""
           }
         },
@@ -333,21 +319,7 @@
           "visual": {
             "shot": "close",
             "character_binding": true,
-            "prompt": "intensified agitation of bezdomny",
-            "negative": ""
-          }
-        },
-        {
-          "id": "iu-32dc7bcd",
-          "type": "performance",
-          "participants": [
-            "berlioz"
-          ],
-          "text": "",
-          "visual": {
-            "shot": "reaction",
-            "character_binding": true,
-            "prompt": "berlioz observing bezdomny calmly",
+            "prompt": "close-up of bezdomny right sitting at patriarch_ponds, speaking to berlioz, woland, intensified agitation of bezdomny",
             "negative": ""
           }
         },
@@ -361,7 +333,7 @@
           "visual": {
             "shot": "close",
             "character_binding": true,
-            "prompt": "controlled intellectual tone of berlioz",
+            "prompt": "close-up of berlioz left sitting at patriarch_ponds, speaking to bezdomny, woland, controlled intellectual tone of berlioz",
             "negative": ""
           }
         },
@@ -375,7 +347,7 @@
           "visual": {
             "shot": "close",
             "character_binding": true,
-            "prompt": "frustration rising in bezdomny",
+            "prompt": "close-up of bezdomny right sitting at patriarch_ponds, speaking to berlioz, woland, frustration rising in bezdomny",
             "negative": ""
           }
         },
@@ -390,21 +362,7 @@
           "visual": {
             "shot": "close",
             "character_binding": true,
-            "prompt": "final calm statement of berlioz while woland watches from background",
-            "negative": ""
-          }
-        },
-        {
-          "id": "iu-c6b3da9b",
-          "type": "performance",
-          "participants": [
-            "woland"
-          ],
-          "text": "",
-          "visual": {
-            "shot": "reaction",
-            "character_binding": true,
-            "prompt": "silent attentive gaze of woland from background",
+            "prompt": "close-up of berlioz left sitting at patriarch_ponds, speaking to bezdomny, woland, final calm statement of berlioz while woland watches from background",
             "negative": ""
           }
         }

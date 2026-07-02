@@ -8,7 +8,9 @@
       "scene_title": "Cover",
       "type": "cover",
       "style": "title_page",
+      "location": null,
       "participants": [],
+      "character_anchors": null,
       "audio": {
         "voice": "narrator",
         "full_text": "Мастер и Маргарита. Михаил Афанасьевич Булгаков."
