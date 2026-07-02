@@ -637,11 +637,24 @@ function getWindowText(sourceText, existingChars, existingLocs, windowIndex, sta
 
 async function runPipeline(sessionId, text, existingChars, existingLocs, stepIndex, progress, baseSceneCount, options = {}) {
     const _progress = progress || (() => {});
+    const { publishProgress, bookId } = options;
     const sceneOffset = baseSceneCount || 0;
     let characters = existingChars || [];
     let locations = existingLocs || [];
     const rawWindowText = options.rawWindowText || text;
     const sourceOffsetBase = options.sourceOffsetBase || 0;
+
+    // Helper to publish VBook progress events to Redis pub/sub (for SSE stream)
+    const publishVBook = (event) => {
+        if (publishProgress && bookId) {
+            try {
+                publishProgress(bookId, { type: 'vbook', ...event });
+            } catch (_) { /* best-effort */ }
+        }
+    };
+
+    // Publish initial progress event
+    publishVBook({ stage: 'extracting_chars', scene_index: 0, total_scenes: 0 });
 
     // Scene creation gets only the first SCENE_CHUNK_SIZE chars so that
     // 3 scenes × ~65 words can cover the text verbatim without truncation.
@@ -665,6 +678,9 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
         }
     }
     const sceneConsumedLength = sceneText.length;
+
+    // Publish event after character extraction
+    publishVBook({ stage: 'analyzing', scene_index: 0, total_scenes: 0 });
 
     // Reconnaissance: extract chars/locs from each ~4000-char window
     // New characters added, existing ones enriched with more detail
@@ -716,6 +732,8 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
         characters = Array.from(mergedMap.values());
         console.log(`[AGENT] Characters: ${existingChars.length} existing + ${added} new + ${enriched} enriched = ${characters.length} total`);
     }
+
+    publishVBook({ stage: 'analyzing', scene_index: 0, total_scenes: 0 });
 
     // Always extract locations from each window, merge with enrichment
     const newLocations = await stepExtractLocations(sessionId, text, characters, stepIndex, _progress);
@@ -769,6 +787,9 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
         const undersized = cov.ok ? findUndersized(arr) : [];
         return { cov, oversized, undersized };
     };
+
+    const totalScenesEstimate = Math.ceil(sceneText.length / 200) || 1; // rough estimate
+    publishVBook({ stage: 'creating_scenes', scene_index: 0, total_scenes: totalScenesEstimate });
 
     let scenes = capScenes(await stepCreateScenes(sessionId, sceneText, characters, locations, stepIndex, _progress));
     if (!scenes || scenes.length === 0) throw new Error('AI returned no scenes');
@@ -846,7 +867,12 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
         const scene = windowScenes[si];
         const globalSceneIndex = sceneOffset + si;
 
+        // Publish per-scene progress with actual scene index
+        publishVBook({ stage: 'creating_units', scene_index: globalSceneIndex + 1, total_scenes: sceneOffset + windowScenes.length });
+
         const units = await stepCreateUnits(sessionId, scene, globalSceneIndex, characters, stepIndex, _progress);
+
+        publishVBook({ stage: 'creating_visuals', scene_index: globalSceneIndex + 1, total_scenes: sceneOffset + windowScenes.length });
 
         const visualUnits = await stepCreateVisuals(sessionId, scene, units, globalSceneIndex, characters, locations, stepIndex, _progress);
         const sceneSpan = coverage.scene_spans[si] || null;
@@ -892,7 +918,9 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
     };
 }
 
-async function bootstrapWithAgent(bookId, progress) {
+// Forward-declare for bootstrapNextWindow (it references the same publish progress pattern)
+
+async function bootstrapWithAgent(bookId, progress, publishProgress) {
     const _progress = progress || (() => {});
     const draft = lazyBook.loadDraftBook(bookId);
     if (!draft || !draft.sourceText) throw new Error(`Book ${bookId} not found`);
@@ -947,6 +975,8 @@ async function bootstrapWithAgent(bookId, progress) {
         const result = await runPipeline(sessionId, windowInfo.text, [], [], 0, _progress, 0, {
             rawWindowText: windowInfo.fullChapter,
             sourceOffsetBase: windowInfo.windowStartOffset,
+            publishProgress,
+            bookId,
         });
 
         if (result.scenes.length === 0) {
@@ -1035,7 +1065,7 @@ async function bootstrapWithAgent(bookId, progress) {
     }
 }
 
-async function bootstrapNextWindow(bookId, progress) {
+async function bootstrapNextWindow(bookId, progress, publishProgress) {
     const _progress = progress || (() => {});
     const draft = lazyBook.loadDraftBook(bookId);
     if (!draft || !draft.sourceText) throw new Error(`Book ${bookId} not found`);
@@ -1160,6 +1190,8 @@ async function bootstrapNextWindow(bookId, progress) {
         const result = await runPipeline(sessionId, windowInfo.text, existingChars, existingLocs, nextWindowIndex, _progress, (windowData?.created_scenes || 0), {
             rawWindowText: windowInfo.fullChapter,
             sourceOffsetBase: windowInfo.windowStartOffset,
+            publishProgress,
+            bookId,
         });
 
         // All scenes for this chunk are processed and saved — no cached "extra".

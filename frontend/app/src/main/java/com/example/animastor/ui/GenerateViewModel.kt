@@ -904,11 +904,12 @@ class GenerateViewModel(
 
     /**
      * Parse [AgentStatusResponse] into structured [VBookProgress] and store in [GenUiState].
-     * Extracts stage (ANALYZING / CREATING_SCENES), scene-within-window number,
+     * Extracts stage (ANALYZING / CREATING_SCENES), scene index,
      * and total scenes from the progress message and response fields.
      *
-     * Denominator is always WINDOW_SIZE (= 3) so progress shows 1/3 → 2/3 → 3/3
-     * rather than the dynamic (1/1 → 2/2 → 3/3) which always reads as 100%.
+     * Progress uses actual scene counts from the backend (not a hardcoded window size).
+     * The backend reports scene_index / total_scenes for each window, and we display
+     * that directly so progress shows e.g. 5/8 instead of 2/3.
      */
     private fun updateVBookProgress(status: com.example.animastor.repository.AgentStatusResponse) {
         val msg = status.progress_msg?.lowercase() ?: ""
@@ -936,20 +937,22 @@ class GenerateViewModel(
             else -> VBookStage.ANALYZING
         }
 
-        // Extract global scene number from "Создаю юниты для сцены 5..."
-        val sceneMatch = Regex("""сцены[\s]*?(\d+)""", RegexOption.IGNORE_CASE).find(status.progress_msg ?: "")
+        // Extract global scene number from "Создаю юниты для сцены 5..." or "создаю юниты для сцены 5..."
+        val sceneMatch = Regex("""сцен[ыа][\s]*?(\d+)""", RegexOption.IGNORE_CASE).find(status.progress_msg ?: "")
         val globalScene = sceneMatch?.groupValues?.get(1)?.toIntOrNull() ?: 0
 
-        val windowSize = 3
-        val sceneInWindow = if (globalScene > 0) ((globalScene - 1) % windowSize) else 0
+        // Use actual total_scenes from backend (NOT hardcoded windowSize = 3)
+        val total = status.total_scenes?.let { maxOf(it, globalScene) } ?: status.created_scenes?.let { maxOf(it, globalScene) } ?: maxOf(globalScene, 1)
+
+        // sceneIndex is 0-based internally; computeWorkers adds 1 for display
+        val sceneIndex = (globalScene - 1).coerceAtLeast(0).coerceAtMost(total - 1)
 
         _uiState.update { it.copy(
             vbookProgress = VBookProgress(
                 stage = stage,
-                sceneIndex = sceneInWindow,
-                // Always windowSize (3) so progress reads 1/3 → 2/3 → 3/3
-                scenesInWindow = windowSize,
-                totalScenes = status.total_scenes ?: status.created_scenes,
+                sceneIndex = sceneIndex,
+                scenesInWindow = total,
+                totalScenes = total,
                 windowIndex = status.window_index ?: 0
             )
         )}
@@ -1207,13 +1210,30 @@ class GenerateViewModel(
     private var gpuProgressDoneAt = 0L
 
     /**
-     * SSE push client for real-time GPU progress.
+     * SSE push client for real-time GPU + VBook progress.
      * Started/stopped by [startProgressStream] / [stopProgressStream].
      */
     private val progressStream: ProgressStream by lazy {
         ProgressStream(viewModelScope).apply {
             onProgressEvent = { event ->
-                if (event.layer == "image" && event.ready != null) {
+                if (event.type == "vbook" || event.isVBook()) {
+                    // VBook progress via SSE — update VBookProgress directly
+                    val stage = when (event.vbookStage) {
+                        "creating_scenes", "creating_units", "creating_visuals" -> VBookStage.CREATING_SCENES
+                        else -> VBookStage.ANALYZING
+                    }
+                    val sceneIdx = event.vbookSceneIndex ?: 0
+                    val totalSc = event.vbookTotalScenes ?: maxOf(sceneIdx, 1)
+                    _uiState.update { it.copy(
+                        vbookProgress = VBookProgress(
+                            stage = stage,
+                            sceneIndex = sceneIdx,
+                            scenesInWindow = totalSc,
+                            totalScenes = totalSc,
+                            windowIndex = 0
+                        )
+                    )}
+                } else if (event.layer == "image" && event.ready != null) {
                     val floor = maxOf(workerReadyFloor["image"] ?: 0, event.ready)
                     workerReadyFloor["image"] = floor
                 }
@@ -1221,8 +1241,13 @@ class GenerateViewModel(
         }
     }
 
-    /** Start the SSE push channel for the given [bookId]. */
+    /** Start the SSE push channel for the given [bookId]. Also starts VBook SSE. */
     fun startProgressStream(bookId: String) {
+        progressStream.start(bookId)
+    }
+
+    /** Start SSE specifically for VBook progress (separate start to allow VBook-only SSE). */
+    fun startVBookProgressStream(bookId: String) {
         progressStream.start(bookId)
     }
 

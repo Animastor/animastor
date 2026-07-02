@@ -16,19 +16,42 @@ import okhttp3.sse.EventSources
 /**
  * SSE push event from the backend progress stream.
  *
- * @property type Always "progress" for progress events.
+ * For GPU progress:
+ * @property type "progress" for GPU events.
  * @property layer "image", "audio", or "video".
  * @property chapterId Chapter the event relates to (nullable).
  * @property sceneId Scene the event relates to (nullable).
  * @property ready New IU counter value for [layer]=="image". Absent for audio/video.
+ *
+ * For VBook progress:
+ * @property type "vbook" for VBook agent pipeline events.
+ * @property vbookStage "analyzing", "creating_scenes", "creating_units", "creating_visuals".
+ * @property vbookSceneIndex Current scene being processed (1-based).
+ * @property vbookTotalScenes Total scenes in the current window.
  */
 data class ProgressEvent(
     val type: String = "",
     val layer: String = "",
     val chapterId: String? = null,
     val sceneId: String? = null,
-    val ready: Int? = null
-)
+    val ready: Int? = null,
+    // VBook fields (present when type == "vbook")
+    val stage: String? = null,
+    val scene_index: Int? = null,
+    val total_scenes: Int? = null
+) {
+    /** Convenience: true if this is a VBook pipeline event. */
+    fun isVBook(): Boolean = type == "vbook"
+
+    /** Convenience: VBook stage name (analyzing, creating_scenes, ...). */
+    val vbookStage: String? get() = stage
+
+    /** Convenience: current scene index for VBook progress. */
+    val vbookSceneIndex: Int? get() = scene_index
+
+    /** Convenience: total scenes for VBook progress. */
+    val vbookTotalScenes: Int? get() = total_scenes
+}
 
 /**
  * SSE client for the GPU progress push channel.
@@ -112,7 +135,7 @@ class ProgressStream(
 
                 try {
                     val event = gson.fromJson(data, ProgressEvent::class.java)
-                    if (event.type == "progress") {
+                    if (event.type == "progress" || event.type == "vbook") {
                         onProgressEvent(event)
                     }
                     // "open" events (type=open) are informational — ignore

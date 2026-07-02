@@ -19,6 +19,7 @@ const { setDeep, findUnitInScene } = require('./book/scene-patch-utils.cjs');
 const { recoverMissingRedisChunks } = require('./book/recover-chunks.cjs');
 const { computeIuReady } = require('./book/iu-progress-utils.cjs');
 const sourceCoverageAudit = require('../services/source-coverage-audit');
+const { publishProgress } = require('../services/progress-pubsub.cjs');
 
 module.exports = function(app, redis, deps) {
     const {
@@ -599,7 +600,13 @@ module.exports = function(app, redis, deps) {
     app.post('/api/v1/book/:bookId/bootstrap', async (req, res) => {
         try {
             const { bookId } = req.params;
-            const result = await txtImporter.bootstrapImportedText(bookId);
+
+            // Create a publishProgress wrapper for the VBook SSE progress stream
+            const publishVBook = (bookId, event) => {
+                publishProgress(redis, bookId, event);
+            };
+
+            const result = await txtImporter.bootstrapImportedText(bookId, null, publishVBook);
 
             try {
                 const scenesCount = result.scenes || 0;
@@ -683,7 +690,10 @@ module.exports = function(app, redis, deps) {
     app.post('/api/v1/book/:bookId/bootstrap-next-window', async (req, res) => {
         try {
             const { bookId } = req.params;
-            const result = await txtImporter.bootstrapNextWindow(bookId);
+            const publishVBook = (bid, event) => {
+                publishProgress(redis, bid, event);
+            };
+            const result = await txtImporter.bootstrapNextWindow(bookId, null, publishVBook);
             log(`[BOOTSTRAP-NEXT] ${bookId}: added ${result.added_scenes} scenes, cached=${result.cached}, all_done=${result.all_done}`);
             return res.json(result);
         } catch (err) {
@@ -763,9 +773,12 @@ module.exports = function(app, redis, deps) {
                 inFlightTriggers.add(bookId);
 
                 log(`[TRIGGER] TXT book ${bookId}: calling bootstrapNextWindow`);
+                const publishVBook = (bid, event) => {
+                    publishProgress(redis, bid, event);
+                };
                 setImmediate(async () => {
                     try {
-                        const nextRes = await txtImporter.bootstrapNextWindow(bookId);
+                        const nextRes = await txtImporter.bootstrapNextWindow(bookId, null, publishVBook);
                         log(`[TRIGGER] TXT window done: added=${nextRes.added_scenes || 0} all_done=${nextRes.all_done}`);
 
                         if (nextRes.chapter) {

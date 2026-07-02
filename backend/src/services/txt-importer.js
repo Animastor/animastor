@@ -147,7 +147,7 @@ async function importAiText(text, title, progressCallback) {
 // BOOTSTRAP INTERNAL — Two-stage pipeline
 // ======================================================
 
-async function bootstrapImportedText(bookId, progress) {
+async function bootstrapImportedText(bookId, progress, publishProgress) {
     const _progress = progress || function(){};
     const fs = require('fs');
     const path = require('path');
@@ -200,9 +200,9 @@ async function bootstrapImportedText(bookId, progress) {
         fs.unlinkSync(biblePath);
     }
 
-    // Use the new agent pipeline
+    // Use the new agent pipeline (pass publishProgress for SSE)
     const agentService = require('./agent-service');
-    const result = await agentService.bootstrapWithAgent(bookId, progress);
+    const result = await agentService.bootstrapWithAgent(bookId, progress, publishProgress);
 
     return {
         ...result,
@@ -214,7 +214,7 @@ async function bootstrapImportedText(bookId, progress) {
 // BOOTSTRAP NEXT WINDOW — process subsequent scene windows
 // ======================================================
 
-async function bootstrapNextWindow(bookId, progress) {
+async function bootstrapNextWindow(bookId, progress, publishProgress) {
     const _progress = progress || (() => {});
 
     const draft = lazyBook.loadDraftBook(bookId);
@@ -223,7 +223,7 @@ async function bootstrapNextWindow(bookId, progress) {
     }
 
     const agentService = require('./agent-service');
-    const result = await agentService.bootstrapNextWindow(bookId, _progress);
+    const result = await agentService.bootstrapNextWindow(bookId, _progress, publishProgress);
 
     return {
         book_id: result.bookId,
