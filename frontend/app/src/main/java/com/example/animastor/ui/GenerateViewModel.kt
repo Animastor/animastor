@@ -945,8 +945,10 @@ class GenerateViewModel(
         val windowSize = status.window_size ?: 1
         val total = status.total_scenes?.let { maxOf(it, globalScene) } ?: status.created_scenes?.let { maxOf(it, globalScene) } ?: maxOf(globalScene, windowSize)
 
-        // sceneIndex is 0-based internally; computeWorkers adds 1 for display
-        val sceneIndex = (globalScene - 1).coerceAtLeast(0).coerceAtMost(total - 1)
+        // sceneIndex is window-relative (0-based, modulo windowSize) so that the second
+        // window shows 1/3, 2/3, 3/3 instead of 4/3, 5/3, 6/3.
+        // computeWorkers adds 1 for display (ready = sceneIndex + 1).
+        val sceneIndex = ((globalScene - 1) % windowSize).coerceAtLeast(0).coerceAtMost(total - 1)
 
         _uiState.update { it.copy(
             vbookProgress = VBookProgress(
@@ -1224,15 +1226,16 @@ class GenerateViewModel(
                         else -> VBookStage.ANALYZING
                     }
                     // Backend scene_index is 1-based and may be global across
-                    // all generated scenes. Keep the internal model 0-based so
-                    // computeWorkers can consistently display ready = index + 1.
+                    // all generated scenes (e.g. 4, 5, 6 for the 2nd window).
+                    // Keep the internal model 0-based and window-relative via
+                    // modulo so computeWorkers displays "1 из 3" not "4 из 3".
                     val readyFromBackend = (event.vbookSceneIndex ?: 0).coerceAtLeast(0)
                     // Use window_size as the fixed denominator for display.
                     // total_scenes from backend is kept as cumulative info.
                     val windowSize = event.window_size ?: (event.vbookTotalScenes ?: readyFromBackend)
                     val totalSc = windowSize.coerceAtLeast(1)
                     val totalScenes = (event.vbookTotalScenes ?: totalSc).coerceAtLeast(readyFromBackend).coerceAtLeast(1)
-                    val sceneIdx = (readyFromBackend - 1).coerceAtLeast(0).coerceAtMost(totalSc - 1)
+                    val sceneIdx = ((readyFromBackend - 1) % totalSc).coerceAtLeast(0).coerceAtMost(totalSc - 1)
                     _uiState.update { it.copy(
                         vbookProgress = VBookProgress(
                             stage = stage,
@@ -1578,7 +1581,7 @@ enum class ImportStage(val label: String) {
  */
 data class VBookProgress(
     val stage: VBookStage = VBookStage.IDLE,
-    /** 0-based index for the latest backend-reported scene progress. */
+    /** 0-based scene index within the current window (window-relative, modulo windowSize). */
     val sceneIndex: Int = 0,
     /** Backend-reported total for the current generation block or known prefix. */
     val scenesInWindow: Int = 0,
