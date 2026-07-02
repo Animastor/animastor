@@ -7,7 +7,7 @@ const {
     createStep, completeStep, failStep,
 } = require('./agent-session');
 const {
-    PROGRESS_STAGES, WINDOW_SIZE, MAX_WINDOW_CHARS, SCENE_CHUNK_SIZE, STEP_RETRIES, SYSTEM_PROMPTS,
+    PROGRESS_STAGES, WINDOW_SIZE, MAX_WINDOW_CHARS, STEP_RETRIES, SYSTEM_PROMPTS,
     SCENE_TARGET_SEC, SCENE_MAX_SEC, SCENE_MIN_SEC, MAX_SCENES_PER_CHUNK,
 } = require('./agent-prompts');
 const sourceCoverage = require('./source-coverage');
@@ -223,10 +223,10 @@ async function stepCreateScenes(sessionId, text, characters, locations, stepInde
     if (repairHint) {
         if (repairHint.duration_preview) {
             // Duration repair: coverage was OK but some scenes are too long.
-            repairText = `\n\nThe previous scene split was too long in places.\nReason: ${repairHint.reason || 'duration_exceeded'}.\nThese scenes exceed the ~30s (~95 word) hard limit and must be split into smaller scenes, each ending on a complete sentence and covering ~20s (~65 words):\n${repairHint.duration_preview}\nReturn a corrected split of the SAME text, verbatim and in order, with no gaps or overlaps — just more, shorter scenes where needed.`;
+            repairText = `\n\nThe previous scene split was too long in places.\nReason: ${repairHint.reason || 'duration_exceeded'}.\nThese scenes exceed the ~30s (~95 word) hard limit and must be split into smaller scenes, each ending on a complete sentence and covering ~20s (~65 words):\n${repairHint.duration_preview}\nReturn a corrected split from the START of the same text, verbatim and in order, with no gaps or overlaps between returned scenes. Return at most 3 scenes and stop after scene 3; unused tail text is allowed.`;
         } else {
             // Coverage repair: scenes did not cover the source without gaps.
-            repairText = `\n\nPrevious scene split failed source coverage validation.\nReason: ${repairHint.reason || 'unknown'}.\nMissing or problematic source fragment:\n\`\`\`\n${repairHint.gap_preview || ''}\n\`\`\`\nReturn a corrected scene split that covers the provided text from the first narrative word onward without gaps.`;
+            repairText = `\n\nPrevious scene split failed source coverage validation.\nReason: ${repairHint.reason || 'unknown'}.\nMissing or problematic source fragment:\n\`\`\`\n${repairHint.gap_preview || ''}\n\`\`\`\nReturn a corrected split that starts at the first narrative word and covers a contiguous prefix of the provided text without gaps. Return at most 3 scenes and stop after scene 3; unused tail text is allowed.`;
         }
     }
 
@@ -717,6 +717,42 @@ function getWindowText(sourceText, existingChars, existingLocs, windowIndex, sta
     };
 }
 
+function resolveSceneProgress(sceneText, scenes, sourceOffsetBase) {
+    const sceneTexts = (scenes || []).map(s => s?.text || '');
+    const coverage = sourceCoverage.computeSceneCoverage(sceneText, sceneTexts, { sourceOffsetBase });
+
+    if (!coverage.ok) {
+        return {
+            coverage,
+            nextOffset: null,
+            progressMethod: 'coverage_failed',
+        };
+    }
+
+    const lastSceneText = sceneTexts[sceneTexts.length - 1] || '';
+    const tailProgress = sourceCoverage.findLastSceneEndOffset(sceneText, lastSceneText, { sourceOffsetBase });
+    const tailMatchesCoverage = tailProgress.ok && tailProgress.source_end === coverage.covered_end_offset;
+    if (tailProgress.ok && !tailMatchesCoverage) {
+        console.warn(JSON.stringify({
+            event: 'last_scene_tail_offset_mismatch',
+            source_offset_base: sourceOffsetBase,
+            coverage_end: coverage.covered_end_offset,
+            tail_end: tailProgress.source_end,
+            tail_method: tailProgress.method,
+        }));
+    }
+
+    return {
+        coverage: {
+            ...coverage,
+            progress_method: tailMatchesCoverage ? `coverage:${tailProgress.method}` : 'coverage',
+            last_scene_end_offset: coverage.covered_end_offset,
+        },
+        nextOffset: coverage.next_offset,
+        progressMethod: tailMatchesCoverage ? `coverage:${tailProgress.method}` : 'coverage',
+    };
+}
+
 async function runPipeline(sessionId, text, existingChars, existingLocs, stepIndex, progress, baseSceneCount, options = {}) {
     const _progress = progress || (() => {});
     const { publishProgress, bookId } = options;
@@ -738,33 +774,14 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
     // Publish initial progress event
     publishVBook({ stage: 'extracting_chars', scene_index: 0, total_scenes: 0 });
 
-    // Scene creation gets only the first SCENE_CHUNK_SIZE chars so that
-    // 3 scenes × ~65 words can cover the text verbatim without truncation.
-    // Characters/locations (reconnaissance) still get the full ~4000-char window.
-    //
-    // Trim to the last complete sentence/paragraph to avoid mid-word cuts
-    // (e.g., "сиплым г" instead of "сиплым голосом").
-    let sceneText = rawWindowText.substring(0, Math.min(SCENE_CHUNK_SIZE, rawWindowText.length));
-    if (sceneText.length >= SCENE_CHUNK_SIZE && sceneText.length < rawWindowText.length) {
-        // Find last sentence boundary: period, question mark, exclamation, or paragraph break
-        const lastPeriod = Math.max(
-            sceneText.lastIndexOf('.'),
-            sceneText.lastIndexOf('?'),
-            sceneText.lastIndexOf('!')
-        );
-        const lastNewline = sceneText.lastIndexOf('\n\n');
-        const breakAt = Math.max(lastPeriod, lastNewline);
-        // Only break if we find a clean boundary past the halfway point
-        if (breakAt > Math.min(SCENE_CHUNK_SIZE / 2, sceneText.length / 2)) {
-            sceneText = sceneText.substring(0, breakAt + 1).trim();
-        }
-    }
-    const sceneConsumedLength = sceneText.length;
+    // The window is only a token budget buffer. The agent may use any
+    // contiguous prefix of it, up to MAX_SCENES_PER_CHUNK scenes.
+    const sceneText = rawWindowText.trimEnd();
 
     // Publish event after character extraction
     publishVBook({ stage: 'analyzing', scene_index: 0, total_scenes: 0 });
 
-    // Reconnaissance: extract chars/locs from each ~4000-char window
+    // Reconnaissance: extract chars/locs from the same bounded window.
     // New characters added, existing ones enriched with more detail
     const newCharacters = await stepExtractCharacters(sessionId, text, stepIndex, _progress);
     if (!newCharacters || newCharacters.length === 0) {
@@ -864,20 +881,20 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
         .filter(o => o.dur < SCENE_MIN_SEC);
 
     const evaluate = (arr) => {
-        const cov = sourceCoverage.computeSceneCoverage(sceneText, arr.map(s => s.text || ''), { sourceOffsetBase });
-        const oversized = cov.ok ? findOversized(arr) : [];
-        const undersized = cov.ok ? findUndersized(arr) : [];
-        return { cov, oversized, undersized };
+        const progressInfo = resolveSceneProgress(sceneText, arr, sourceOffsetBase);
+        const oversized = progressInfo.coverage.ok ? findOversized(arr) : [];
+        const undersized = progressInfo.coverage.ok ? findUndersized(arr) : [];
+        return { progressInfo, cov: progressInfo.coverage, oversized, undersized };
     };
 
-    const totalScenesEstimate = Math.ceil(sceneText.length / 200) || 1; // rough estimate
+    const totalScenesEstimate = Math.min(MAX_SCENES_PER_CHUNK, Math.ceil(sceneText.length / 200) || 1);
     publishVBook({ stage: 'creating_scenes', scene_index: 0, total_scenes: totalScenesEstimate });
 
     let scenes = capScenes(await stepCreateScenes(sessionId, sceneText, characters, locations, stepIndex, _progress));
     if (!scenes || scenes.length === 0) throw new Error('AI returned no scenes');
 
     let windowScenes = scenes;
-    let { cov: coverage, oversized, undersized } = evaluate(windowScenes);
+    let { progressInfo, cov: coverage, oversized, undersized } = evaluate(windowScenes);
     let coverageRetryCount = 0;
 
     // Single repair retry: coverage failure (highest priority) → gap fix;
@@ -898,7 +915,7 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
         }
         coverageRetryCount += 1;
         windowScenes = capScenes(await stepCreateScenes(sessionId, sceneText, characters, locations, stepIndex, _progress, repairHint));
-        ({ cov: coverage, oversized, undersized } = evaluate(windowScenes));
+        ({ progressInfo, cov: coverage, oversized, undersized } = evaluate(windowScenes));
     }
 
     // Coverage is the only hard trigger for the deterministic fallback.
@@ -906,7 +923,7 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
         console.warn(`[AGENT] scene coverage retry failed: ${coverage.reason}; using deterministic fallback`);
         coverageRetryCount += 1;
         windowScenes = capScenes(buildFallbackScenes(sceneText));
-        ({ cov: coverage, oversized, undersized } = evaluate(windowScenes));
+        ({ progressInfo, cov: coverage, oversized, undersized } = evaluate(windowScenes));
         if (!coverage.ok) {
             throw new Error(`Scene coverage failed after fallback: ${coverage.reason}`);
         }
@@ -940,6 +957,8 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
         planned_end: sourceOffsetBase + sceneText.length,
         covered_start: coverage.covered_start_offset ?? null,
         covered_end: coverage.covered_end_offset ?? null,
+        next_offset: progressInfo.nextOffset ?? null,
+        progress_method: progressInfo.progressMethod,
         gap_chars: coverage.gap_chars || 0,
         retry_count: coverageRetryCount,
     }));
@@ -995,7 +1014,8 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
         locations,
         scenes: enrichedScenes,
         allScenes: windowScenes,
-        sceneConsumedLength: coverage.next_offset - sourceOffsetBase,
+        sceneConsumedLength: (progressInfo.nextOffset ?? coverage.next_offset) - sourceOffsetBase,
+        nextOffset: progressInfo.nextOffset ?? coverage.next_offset,
         coverage,
     };
 }
@@ -1069,10 +1089,10 @@ async function bootstrapWithAgent(bookId, progress, publishProgress) {
         // scenes carried to the next window (the offset advances past covered text).
         const extraScenes = [];
 
-        // Scene-advanced offset: advance by actual scene chunk (bounded at natural
-        // sentence boundary), not full recon window of 4000 chars.
-        const sceneConsumedOffset = result.coverage?.next_offset
-            || (windowInfo.windowStartOffset + (result.sceneConsumedLength || Math.min(SCENE_CHUNK_SIZE, windowInfo.fullChapter.length)));
+        const sceneConsumedOffset = result.nextOffset ?? result.coverage?.next_offset;
+        if (!Number.isFinite(sceneConsumedOffset) || sceneConsumedOffset <= windowInfo.windowStartOffset) {
+            throw new Error('Scene progress did not advance from current source position');
+        }
         const actualRemaining = draft.sourceText.substring(sceneConsumedOffset).trim();
 
         const windowData = {
@@ -1085,9 +1105,11 @@ async function bootstrapWithAgent(bookId, progress, publishProgress) {
             remaining_text: actualRemaining,
             currentOffset: sceneConsumedOffset,
             windowStartOffset: windowInfo.windowStartOffset,
-            plannedEndOffset: windowInfo.windowStartOffset + Math.min(SCENE_CHUNK_SIZE, windowInfo.fullChapter.length),
+            plannedEndOffset: windowInfo.currentOffset,
             coveredStartOffset: result.coverage?.covered_start_offset ?? null,
             coveredEndOffset: result.coverage?.covered_end_offset ?? null,
+            lastSceneEndOffset: result.coverage?.last_scene_end_offset ?? null,
+            progressMethod: result.coverage?.progress_method || null,
             coverageStatus: result.coverage?.ok ? 'ok' : 'failed',
             coverageGapChars: result.coverage?.gap_chars || 0,
             all_characters: result.characters,
@@ -1279,10 +1301,10 @@ async function bootstrapNextWindow(bookId, progress, publishProgress) {
         // All scenes for this chunk are processed and saved — no cached "extra".
         const extraScenes = [];
 
-        // Scene-advanced offset: advance by actual scene chunk (bounded at natural
-        // sentence boundary), not full recon window of 4000 chars.
-        const sceneConsumedOffset = result.coverage?.next_offset
-            || (windowInfo.windowStartOffset + (result.sceneConsumedLength || Math.min(SCENE_CHUNK_SIZE, windowInfo.fullChapter.length)));
+        const sceneConsumedOffset = result.nextOffset ?? result.coverage?.next_offset;
+        if (!Number.isFinite(sceneConsumedOffset) || sceneConsumedOffset <= windowInfo.windowStartOffset) {
+            throw new Error('Scene progress did not advance from current source position');
+        }
         const actualRemaining = draft.sourceText.substring(sceneConsumedOffset).trim();
 
         const bookResult = lazyBook.appendToBook(bookId, {
@@ -1306,9 +1328,11 @@ async function bootstrapNextWindow(bookId, progress, publishProgress) {
             remaining_text: actualRemaining,
             currentOffset: sceneConsumedOffset,
             windowStartOffset: windowInfo.windowStartOffset,
-            plannedEndOffset: windowInfo.windowStartOffset + Math.min(SCENE_CHUNK_SIZE, windowInfo.fullChapter.length),
+            plannedEndOffset: windowInfo.currentOffset,
             coveredStartOffset: result.coverage?.covered_start_offset ?? null,
             coveredEndOffset: result.coverage?.covered_end_offset ?? null,
+            lastSceneEndOffset: result.coverage?.last_scene_end_offset ?? null,
+            progressMethod: result.coverage?.progress_method || null,
             coverageStatus: result.coverage?.ok ? 'ok' : 'failed',
             coverageGapChars: result.coverage?.gap_chars || 0,
             all_characters: result.characters,
@@ -1356,6 +1380,11 @@ module.exports = {
     bootstrapNextWindow,
     PROGRESS_STAGES,
     WINDOW_SIZE,
+    MAX_WINDOW_CHARS,
+    SCENE_TARGET_SEC,
+    SCENE_MAX_SEC,
+    SCENE_MIN_SEC,
+    MAX_SCENES_PER_CHUNK,
     // Exported for unit testing
     splitIntoSentences,
     splitIntoSentencesWithOffsets,
@@ -1363,4 +1392,5 @@ module.exports = {
     splitTextEvenlyByParagraphs,
     extractSceneTitle,
     isGenericSceneTitle,
+    resolveSceneProgress,
 };

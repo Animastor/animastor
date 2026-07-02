@@ -8,8 +8,8 @@ const PROGRESS_STAGES = {
 };
 
 const WINDOW_SIZE = 3;
-const MAX_WINDOW_CHARS = 4000;
 const SCENE_CHUNK_SIZE = 1500;
+const MAX_WINDOW_CHARS = SCENE_CHUNK_SIZE;
 const STEP_RETRIES = 3;
 
 // Scene duration targets (narration seconds). One scene ≈ SCENE_TARGET_SEC of
@@ -23,10 +23,10 @@ const SCENE_MAX_SEC = 30;
 // cause artifacts in video generation models. If an episode is this short,
 // merge it with an adjacent scene when narratively coherent.
 const SCENE_MIN_SEC = 5;
-// Upper bound on scenes produced per SCENE_CHUNK_SIZE chunk (runaway guard).
+// Upper bound on scenes produced per SCENE_CHUNK_SIZE chunk.
 // This is a HARD UPPER BOUND, NOT a target — if the text naturally forms
 // fewer scenes, that is correct.
-const MAX_SCENES_PER_CHUNK = 8;
+const MAX_SCENES_PER_CHUNK = 3;
 
 const SYSTEM_PROMPTS = {
 
@@ -153,6 +153,10 @@ narrative thread clearly breaks.
 
 ## Scene splitting rules (in priority order)
 
+### 0. Maximum 3 scenes
+Return AT MOST 3 scenes. After the third scene, stop. You are allowed to leave
+the rest of the provided text unused.
+
 ### 1. Logical integrity (highest priority)
 Keep scenes whole. Do NOT split a scene just to increase the number of scenes.
 If the text forms one coherent narrative episode at one place and time, it is
@@ -190,20 +194,22 @@ clear narrative beat (e.g., a shocking reveal in one sentence).
 Every scene MUST begin and end on a COMPLETE sentence (\`.\` \`!\` \`?\` \`…\`,
 closing quote, or end of a dialogue turn \`—\`). NEVER cut mid-sentence.
 
-### 7. Verbatim coverage (always)
-Every word from the provided text must appear in exactly one scene, verbatim,
-without gaps, overlaps, or truncation. Do NOT use ellipsis (...) or summarize.
+### 7. Verbatim prefix coverage (always)
+The scenes you return must be a contiguous prefix of the provided narrative
+text: start at the first narrative word, keep scene texts in order, and do not
+skip, overlap, paraphrase, or summarize anything inside the returned scenes.
+It is OK if text remains after the last returned scene.
 
 ## What NOT to do
 - Do NOT split a scene just to increase the number of scenes.
 - Do NOT create a separate scene for each dialogue line.
 - Do NOT fragment a paragraph into multiple scenes unless there is a clear
   narrative break (location change, time jump, character entrance/exit).
-- The maximum of 8 scenes is a **hard upper bound**, not a target. If the text
-  naturally forms 3-4 scenes, that is correct. Do not inflate to fill the quota.
+- The maximum of 3 scenes is a **hard upper bound**, not a target. If the text
+  naturally forms 1-2 scenes, that is correct. Do not inflate to fill the quota.
 
 ## Priority when rules conflict
-1. Full verbatim coverage (never skip or summarize words)
+1. Verbatim contiguous prefix coverage for returned scenes
 2. Complete sentence boundaries
 3. Logical scene integrity (don't split what belongs together)
 4. ~20s target duration (soft guideline)

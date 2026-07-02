@@ -3,17 +3,49 @@ const { estimateSpeechDurationSec } = require('../src/services/placeholder-audio
 const {
     splitIntoSentences,
     buildFallbackScenes,
+    resolveSceneProgress,
     MAX_SCENES_PER_CHUNK,
     SCENE_TARGET_SEC,
     SCENE_MAX_SEC,
     SCENE_MIN_SEC,
 } = require('../src/services/agent-service');
-
-// Re-import constants since they're not directly re-exported by agent-service
-const { SCENE_TARGET_SEC: TARGET, SCENE_MAX_SEC: MAX_SEC } = { SCENE_TARGET_SEC: 20, SCENE_MAX_SEC: 30 };
-const { SCENE_MIN_SEC: MIN_SEC } = { SCENE_MIN_SEC: 5 };
+const sourceCoverage = require('../src/services/source-coverage');
 
 describe('Scene Splitting (Phase A.3 revamp)', () => {
+
+    describe('sequential scene-window progress', () => {
+        it('caps generated scenes at three per window', () => {
+            expect(MAX_SCENES_PER_CHUNK).to.equal(3);
+            expect(SCENE_TARGET_SEC).to.equal(20);
+            expect(SCENE_MAX_SEC).to.equal(30);
+            expect(SCENE_MIN_SEC).to.equal(5);
+        });
+
+        it('advances to the end of the last returned scene, not to the end of the buffer', () => {
+            const source = 'First sentence. Second sentence. Third sentence. Fourth sentence. Fifth sentence.';
+            const scenes = [
+                { text: 'First sentence.' },
+                { text: 'Second sentence.' },
+                { text: 'Third sentence.' },
+            ];
+
+            const progress = resolveSceneProgress(source, scenes, 100);
+            expect(progress.coverage.ok).to.equal(true);
+            expect(progress.nextOffset).to.equal(100 + source.indexOf('Fourth sentence.'));
+            expect(progress.coverage.covered_end_offset)
+                .to.equal(100 + source.indexOf('Third sentence.') + 'Third sentence.'.length);
+        });
+
+        it('can find the last scene end by full text or tail fragment', () => {
+            const source = 'Intro text. Processed scene begins here. It ends on this sentence.\n\nUnused tail.';
+            const sceneText = 'Processed scene begins here. It ends on this sentence.';
+
+            const found = sourceCoverage.findLastSceneEndOffset(source, sceneText, { sourceOffsetBase: 10 });
+            expect(found.ok).to.equal(true);
+            expect(found.source_end).to.equal(10 + source.indexOf(sceneText) + sceneText.length);
+            expect(found.next_offset).to.equal(10 + source.indexOf('Unused tail.'));
+        });
+    });
 
     describe('estimateSpeechDurationSec', () => {
         it('returns SPEECH_MIN_SEC for empty/null/whitespace', () => {

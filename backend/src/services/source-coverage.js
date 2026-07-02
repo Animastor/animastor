@@ -129,6 +129,104 @@ function hasVisibleText(text) {
     return (text || '').replace(/\s+/g, '').length > 0;
 }
 
+function uniqueStrings(values) {
+    const seen = new Set();
+    const result = [];
+    for (const value of values) {
+        const text = (value || '').trim();
+        if (!text || seen.has(text)) continue;
+        seen.add(text);
+        result.push(text);
+    }
+    return result;
+}
+
+function getLastSentenceFragment(text) {
+    const t = normalizeTextForCoverage(text).trim();
+    if (!t) return '';
+
+    let end = t.length;
+    while (end > 0 && /\s/.test(t[end - 1])) end--;
+    while (end > 0 && /["'»”)\]]/.test(t[end - 1])) end--;
+
+    let terminal = -1;
+    for (let i = end - 1; i >= 0; i--) {
+        if (/[.!?…]/.test(t[i])) {
+            terminal = i;
+            break;
+        }
+    }
+    if (terminal < 0) return '';
+
+    let start = 0;
+    for (let i = terminal - 1; i >= 0; i--) {
+        if (/[.!?…]/.test(t[i])) {
+            start = i + 1;
+            break;
+        }
+    }
+
+    return t.slice(start).trim();
+}
+
+function buildSceneEndNeedles(sceneText, options = {}) {
+    const t = normalizeTextForCoverage(sceneText).trim();
+    if (!t) return [];
+
+    const minTailChars = options.minTailChars || 100;
+    const maxTailChars = options.maxTailChars || 300;
+    const lastSentence = getLastSentenceFragment(t);
+    const tail = t.length <= maxTailChars
+        ? t
+        : t.slice(-maxTailChars).trimStart();
+
+    const candidates = [];
+    candidates.push(t);
+    if (lastSentence && (lastSentence.length >= minTailChars || t.length <= maxTailChars)) {
+        candidates.push(lastSentence);
+    }
+    candidates.push(tail);
+
+    return uniqueStrings(candidates);
+}
+
+function findLastSceneEndOffset(rawText, sceneText, options = {}) {
+    const sourceOffsetBase = options.sourceOffsetBase || 0;
+    const needles = buildSceneEndNeedles(sceneText, options);
+    const normalizedSource = normalizeTextForCoverage(rawText);
+    const index = buildCoverageIndex(rawText);
+
+    for (const needle of needles) {
+        const normalizedNeedle = normalizeTextForCoverage(needle).trim();
+        if (!normalizedNeedle) continue;
+
+        const pos = normalizedSource.indexOf(normalizedNeedle);
+        if (pos < 0) continue;
+
+        const sourceEnd = sourceOffsetBase + (index.rawEnds[pos + normalizedNeedle.length - 1] ?? rawText.length);
+        const cursor = skipWhitespaceForward(normalizedSource, pos + normalizedNeedle.length);
+        const nextOffset = cursor >= normalizedSource.length
+            ? sourceOffsetBase + rawText.length
+            : sourceOffsetBase + (index.rawStarts[cursor] ?? rawText.length);
+
+        return {
+            ok: true,
+            method: needle === sceneText.trim() ? 'full_scene_text' : 'last_scene_tail',
+            needle,
+            source_end: sourceEnd,
+            next_offset: nextOffset,
+        };
+    }
+
+    return {
+        ok: false,
+        method: 'last_scene_tail',
+        needle: needles[0] || '',
+        source_end: null,
+        next_offset: null,
+    };
+}
+
 function computeSceneCoverage(rawText, sceneTexts, options = {}) {
     const sourceOffsetBase = options.sourceOffsetBase || 0;
     const normalizedSource = normalizeTextForCoverage(rawText);
@@ -223,5 +321,8 @@ module.exports = {
     rawOffsetToNormalizedIndex,
     looksLikeChapterTitle,
     findNarrativeStartOffset,
+    getLastSentenceFragment,
+    buildSceneEndNeedles,
+    findLastSceneEndOffset,
     computeSceneCoverage,
 };
