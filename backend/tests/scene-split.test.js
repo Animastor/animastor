@@ -6,10 +6,12 @@ const {
     MAX_SCENES_PER_CHUNK,
     SCENE_TARGET_SEC,
     SCENE_MAX_SEC,
+    SCENE_MIN_SEC,
 } = require('../src/services/agent-service');
 
 // Re-import constants since they're not directly re-exported by agent-service
 const { SCENE_TARGET_SEC: TARGET, SCENE_MAX_SEC: MAX_SEC } = { SCENE_TARGET_SEC: 20, SCENE_MAX_SEC: 30 };
+const { SCENE_MIN_SEC: MIN_SEC } = { SCENE_MIN_SEC: 5 };
 
 describe('Scene Splitting (Phase A.3 revamp)', () => {
 

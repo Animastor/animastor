@@ -19,9 +19,13 @@ const STEP_RETRIES = 3;
 //   SCENE_TARGET_SEC 20s ≈ ~65 words, SCENE_MAX_SEC 30s ≈ ~100 words.
 const SCENE_TARGET_SEC = 20;
 const SCENE_MAX_SEC = 30;
+// Technical minimum scene length. Scenes shorter than ~5 seconds (~15 words)
+// cause artifacts in video generation models. If an episode is this short,
+// merge it with an adjacent scene when narratively coherent.
+const SCENE_MIN_SEC = 5;
 // Upper bound on scenes produced per SCENE_CHUNK_SIZE chunk (runaway guard).
-// Replaces the previous hard-coded "3 scenes" cap so the splitter can emit
-// more, smaller ~20s scenes instead of a few oversized ones.
+// This is a HARD UPPER BOUND, NOT a target — if the text naturally forms
+// fewer scenes, that is correct.
 const MAX_SCENES_PER_CHUNK = 8;
 
 const SYSTEM_PROMPTS = {
@@ -137,43 +141,81 @@ Return ONLY valid JSON.`,
 
     scenes: `You are a literary analysis assistant. Split the provided text into logical scenes.
 
-## Rules
-- A scene is ONE compact narrative episode with ONE location, ONE continuous time, ONE set of participants
-- Scene boundaries: location change, time jump, character entrance/exit, narrative break
-- Each scene.text must contain the COMPLETE VERBATIM original text for that episode
-- Scene texts are used for TTS audio narration — must be verbatim, not summarized
-- Scene order must preserve the original narrative sequence.
+## Scene definition — CRITICAL
+A scene is ONE compact narrative episode with:
+- ONE location
+- ONE continuous time
+- ONE set of participants engaged in ONE continuous action
 
-## Scene length algorithm (audio duration — CRITICAL)
-Each scene is narrated aloud. Target ≈20 seconds of narration per scene, which is
-roughly **65 words**. Follow this algorithm:
-1. Read from the start of the remaining text, accumulating whole sentences.
-2. When the accumulated text reaches ~65 words (~20s), CLOSE the scene at the end
-   of the current sentence.
-3. **HARD LIMIT: ~95 words (~30s).** A scene must NEVER exceed this. If adding the
-   next sentence would cross ~95 words, close the scene at the previous sentence end.
-4. **Every scene MUST begin and end on a COMPLETE sentence** — a terminal
-    \`. \`! \`? \`…\`, a closing quote, or the end of a dialogue turn (\`—\` line).
-    NEVER cut in the middle of a sentence.
-5. Produce **as many scenes as needed** to cover the provided text — prefer MORE,
-   SMALLER ~20s scenes over a few long ones. Do NOT merge unrelated material just
-   to fill 65 words; a slightly short scene at a natural boundary is fine.
-6. Do NOT use ellipsis (...), truncation, or summarization. Every word from the
-   provided text must appear in exactly one scene, verbatim, without gaps or overlaps.
+As long as the location, time, and action flow do NOT change, keep it as ONE scene.
+Only split when: location changes, time jumps, characters enter/exit, or the
+narrative thread clearly breaks.
 
-Priority when rules conflict: full verbatim coverage + complete-sentence boundaries
-outrank the exact 65-word target.
+## Scene splitting rules (in priority order)
 
-## Example (length splitting)
-Given a paragraph of ~180 words, do NOT return it as one scene (~54s). Split it into
-THREE ~60-word scenes, each ending on a sentence boundary, together covering the
-paragraph verbatim in order.
+### 1. Logical integrity (highest priority)
+Keep scenes whole. Do NOT split a scene just to increase the number of scenes.
+If the text forms one coherent narrative episode at one place and time, it is
+ONE scene regardless of length (up to the ~30s max).
+
+### 2. Dialogue grouping
+Multiple dialogue turns in the SAME conversation at the SAME location form ONE
+scene. Do NOT split each speech turn into its own scene.
+
+Example (CORRECT — one scene):
+\`\`\`
+— Дайте нарзану, — попросил Берлиоз.
+— Нарзану нету, — ответила женщина.
+— Пиво есть? — осведомился Бездомный.
+— Пиво привезут к вечеру, — ответила женщина.
+\`\`\`
+This is ONE dialogue scene, NOT four separate scenes.
+
+### 3. Target duration: ~20 seconds (~65 words)
+Once a scene's text reaches ~65 words, consider closing it at the end of the
+current sentence. This is a soft guideline, not a hard rule. If the narrative
+is naturally continuous, it is fine to go longer (up to the hard max).
+
+### 4. MAXIMUM: ~30 seconds (~95 words)
+A scene must NEVER exceed this. If adding the next sentence would cross ~95
+words, close the scene at the previous sentence end.
+
+### 5. MINIMUM: ~5 seconds (~15 words)
+A scene should rarely be shorter than this. If you have multiple tiny
+fragments at the same location (e.g., single dialogue turns), combine them
+into one scene. Exception: a single dramatic line can stand alone if it is a
+clear narrative beat (e.g., a shocking reveal in one sentence).
+
+### 6. Complete sentences (always)
+Every scene MUST begin and end on a COMPLETE sentence (\`.\` \`!\` \`?\` \`…\`,
+closing quote, or end of a dialogue turn \`—\`). NEVER cut mid-sentence.
+
+### 7. Verbatim coverage (always)
+Every word from the provided text must appear in exactly one scene, verbatim,
+without gaps, overlaps, or truncation. Do NOT use ellipsis (...) or summarize.
+
+## What NOT to do
+- Do NOT split a scene just to increase the number of scenes.
+- Do NOT create a separate scene for each dialogue line.
+- Do NOT fragment a paragraph into multiple scenes unless there is a clear
+  narrative break (location change, time jump, character entrance/exit).
+- The maximum of 8 scenes is a **hard upper bound**, not a target. If the text
+  naturally forms 3-4 scenes, that is correct. Do not inflate to fill the quota.
+
+## Priority when rules conflict
+1. Full verbatim coverage (never skip or summarize words)
+2. Complete sentence boundaries
+3. Logical scene integrity (don't split what belongs together)
+4. ~20s target duration (soft guideline)
 
 ## CRITICAL: Do NOT create chapter title / chapter header / typography / transition units
 - Chapter titles, headers, and opening cards are added PROGRAMMATICALLY by the system
 - Do NOT include the chapter name, "Глава N", "Chapter N", or any chapter-level typography in any scene
 - Start scenes directly with the narrative content — no "title card" transitions
 - If the text starts with a chapter heading, IGNORE it and start from the narrative content
+
+## Reference examples
+%REFERENCE_EXAMPLES%
 
 ## Known Characters
 %EXISTING_CHARACTERS%
@@ -289,5 +331,5 @@ Return ONLY valid JSON.`,
 
 module.exports = {
     PROGRESS_STAGES, WINDOW_SIZE, MAX_WINDOW_CHARS, SCENE_CHUNK_SIZE, STEP_RETRIES, SYSTEM_PROMPTS,
-    SCENE_TARGET_SEC, SCENE_MAX_SEC, MAX_SCENES_PER_CHUNK,
+    SCENE_TARGET_SEC, SCENE_MAX_SEC, SCENE_MIN_SEC, MAX_SCENES_PER_CHUNK,
 };

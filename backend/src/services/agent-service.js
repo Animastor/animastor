@@ -8,7 +8,7 @@ const {
 } = require('./agent-session');
 const {
     PROGRESS_STAGES, WINDOW_SIZE, MAX_WINDOW_CHARS, SCENE_CHUNK_SIZE, STEP_RETRIES, SYSTEM_PROMPTS,
-    SCENE_TARGET_SEC, SCENE_MAX_SEC, MAX_SCENES_PER_CHUNK,
+    SCENE_TARGET_SEC, SCENE_MAX_SEC, SCENE_MIN_SEC, MAX_SCENES_PER_CHUNK,
 } = require('./agent-prompts');
 const sourceCoverage = require('./source-coverage');
 const { estimateSpeechDurationSec } = require('./placeholder-audio');
@@ -208,9 +208,16 @@ async function stepCreateScenes(sessionId, text, characters, locations, stepInde
     const charsContext = (characters || []).map(c => `- ${c.id}: ${c.name}`).join('\n') || 'None';
     const locsContext = (locations || []).map(l => `- ${l.id}: ${l.name} (${l.type || 'unknown'})`).join('\n') || 'None';
 
+    // Include reference examples from knowledge base to guide scene splitting
+    const examplesContext = formatExamplesForPrompt();
+    const examplesSection = examplesContext
+        ? `\n## Reference examples\n${examplesContext}\n`
+        : '';
+
     const prompt = SYSTEM_PROMPTS.scenes
         .replace('%EXISTING_CHARACTERS%', charsContext)
-        .replace('%EXISTING_LOCATIONS%', locsContext);
+        .replace('%EXISTING_LOCATIONS%', locsContext)
+        .replace('%REFERENCE_EXAMPLES%', examplesSection);
 
     let repairText = '';
     if (repairHint) {
@@ -239,6 +246,52 @@ async function stepCreateScenes(sessionId, text, characters, locations, stepInde
     } catch (err) {
         await failStep(step.step_id, err.message);
         throw err;
+    }
+}
+
+/**
+ * Load examples from ai/examples/ and return as a formatted string suitable
+ * for inclusion in system prompts. Includes scene_example and import_example
+ * as reference for correct scene splitting.
+ */
+function formatExamplesForPrompt() {
+    try {
+        const examples = require('./ai-loader').getExamples();
+        if (!examples || Object.keys(examples).length === 0) return '';
+
+        const parts = [];
+
+        // Include import_example if available (shows correct scene→unit decomposition)
+        if (examples.import_example) {
+            const ex = examples.import_example;
+            const scenes = ex?.result?.chapters?.[0]?.scenes || [];
+            if (scenes.length > 0) {
+                parts.push('--- Reference example: correct scene splitting ---');
+                for (const sc of scenes) {
+                    parts.push(`Scene "${sc.title}" (${sc.type}): ${(sc.audio?.full_text || '').length} chars, participants: ${(sc.participants || []).join(', ') || 'none'}`);
+                }
+                parts.push(`(Total: ${scenes.length} scenes for this chapter)\n`);
+            }
+        }
+
+        // Include scene_example if available (shows one scene with unit decomposition)
+        if (examples.scene_example) {
+            const ex = examples.scene_example;
+            if (ex?.scene) {
+                parts.push('--- Reference example: single scene structure ---');
+                parts.push(`Scene "${ex.scene.scene_title}" (${ex.scene.type}):`);
+                parts.push(`  Location: ${ex.scene.location?.id || 'none'}`);
+                parts.push(`  Participants: ${(ex.scene.participants || []).join(', ') || 'none'}`);
+                parts.push(`  Text length: ${(ex.scene.audio?.full_text || '').length} chars`);
+                parts.push(`  Units: ${(ex.scene.units || []).length} visual units`);
+                parts.push('');
+            }
+        }
+
+        return parts.join('\n');
+    } catch (err) {
+        console.warn(`[AGENT] Failed to load examples for prompt: ${err.message}`);
+        return '';
     }
 }
 
@@ -697,8 +750,7 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
     }
 
     // ── Scene split with unified validation (coverage = hard, duration = soft) ──
-    // Keep ALL scenes the model returns (capped at MAX_SCENES_PER_CHUNK) — do NOT
-    // slice to a fixed count, so the splitter can emit more, smaller ~20s scenes.
+    // capScenes is purely a safety guard (hard upper bound, NOT a target).
     const capScenes = (arr) => (arr || []).slice(0, MAX_SCENES_PER_CHUNK);
 
     // Find scenes longer than the soft max (only meaningful once coverage is OK).
@@ -706,21 +758,29 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
         .map((s, i) => ({ i, dur: estimateSpeechDurationSec(s.text || '') }))
         .filter(o => o.dur > SCENE_MAX_SEC);
 
+    // Find scenes shorter than the min threshold (only meaningful once coverage is OK).
+    const findUndersized = (arr) => arr
+        .map((s, i) => ({ i, dur: estimateSpeechDurationSec(s.text || '') }))
+        .filter(o => o.dur < SCENE_MIN_SEC);
+
     const evaluate = (arr) => {
         const cov = sourceCoverage.computeSceneCoverage(sceneText, arr.map(s => s.text || ''), { sourceOffsetBase });
         const oversized = cov.ok ? findOversized(arr) : [];
-        return { cov, oversized };
+        const undersized = cov.ok ? findUndersized(arr) : [];
+        return { cov, oversized, undersized };
     };
 
     let scenes = capScenes(await stepCreateScenes(sessionId, sceneText, characters, locations, stepIndex, _progress));
     if (!scenes || scenes.length === 0) throw new Error('AI returned no scenes');
 
     let windowScenes = scenes;
-    let { cov: coverage, oversized } = evaluate(windowScenes);
+    let { cov: coverage, oversized, undersized } = evaluate(windowScenes);
     let coverageRetryCount = 0;
 
-    // Single repair retry covering BOTH invariants. Coverage failure takes
-    // priority (correctness); otherwise repair oversized scenes (duration).
+    // Single repair retry: coverage failure (highest priority) → gap fix;
+    // oversized scenes → duration-split repair. Undersized scenes are logged
+    // but NOT retried — they are accepted to avoid breaking coverage.
+    // In a future version, undersized scenes could be merged post-hoc.
     if (!coverage.ok || oversized.length > 0) {
         let repairHint;
         if (!coverage.ok) {
@@ -735,7 +795,7 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
         }
         coverageRetryCount += 1;
         windowScenes = capScenes(await stepCreateScenes(sessionId, sceneText, characters, locations, stepIndex, _progress, repairHint));
-        ({ cov: coverage, oversized } = evaluate(windowScenes));
+        ({ cov: coverage, oversized, undersized } = evaluate(windowScenes));
     }
 
     // Coverage is the only hard trigger for the deterministic fallback.
@@ -743,7 +803,7 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
         console.warn(`[AGENT] scene coverage retry failed: ${coverage.reason}; using deterministic fallback`);
         coverageRetryCount += 1;
         windowScenes = capScenes(buildFallbackScenes(sceneText));
-        ({ cov: coverage, oversized } = evaluate(windowScenes));
+        ({ cov: coverage, oversized, undersized } = evaluate(windowScenes));
         if (!coverage.ok) {
             throw new Error(`Scene coverage failed after fallback: ${coverage.reason}`);
         }
@@ -757,6 +817,16 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
             step_index: stepIndex,
             max_sec: SCENE_MAX_SEC,
             oversized: oversized.map(o => ({ scene_index: o.i, est_sec: o.dur })),
+        }));
+    }
+
+    // Log undersized scenes (below MIN_SEC) for monitoring.
+    if (undersized.length > 0) {
+        console.warn(JSON.stringify({
+            event: 'scene_duration_below_min',
+            step_index: stepIndex,
+            min_sec: SCENE_MIN_SEC,
+            undersized: undersized.map(o => ({ scene_index: o.i, est_sec: o.dur })),
         }));
     }
 
