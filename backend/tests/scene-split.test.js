@@ -143,6 +143,20 @@ describe('Scene Splitting (Phase A.3 revamp)', () => {
             expect(wordCount).to.equal(300);
         });
 
+        it('preserves original whitespace including paragraph breaks (\n\n → \n\n, not space)', () => {
+            const text = 'First paragraph sentence one. Second sentence ends here.\n\nSecond paragraph starts. And continues.';
+            const scenes = buildFallbackScenes(text);
+            const reconstructed = scenes.map(s => s.text).join('');
+            expect(reconstructed).to.equal(text);
+        });
+
+        it('preserves original whitespace with irregular spacing', () => {
+            const text = 'Hello.   \n\nWorld.   Fine.';
+            const scenes = buildFallbackScenes(text);
+            const reconstructed = scenes.map(s => s.text).join('');
+            expect(reconstructed).to.equal(text);
+        });
+
         it('falls back to paragraph split when no sentence boundaries exist', () => {
             const text = 'A single unsplittable block of text with no punctuation whatsoever just words ' +
                 Array(200).fill('something').join(' ') + ' at the end';

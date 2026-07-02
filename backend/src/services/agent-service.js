@@ -405,29 +405,36 @@ function splitTextEvenlyByParagraphs(text, maxScenes) {
 // Returns verbatim sentence chunks (whitespace between them is dropped but is
 // re-tolerated by coverage, which ignores inter-scene whitespace).
 function splitIntoSentences(text) {
+    return splitIntoSentencesWithOffsets(text).map(s => s.text);
+}
+
+// Like splitIntoSentences but preserves original character offsets, enabling
+// the caller to reconstruct verbatim slices of the original text.
+// Returns [{ text, start, end }] where start/end are positions in the input.
+function splitIntoSentencesWithOffsets(text) {
     const t = String(text || '');
     const sentences = [];
     let start = 0;
     for (let i = 0; i < t.length; i++) {
         const ch = t[i];
-        const isTerminal = ch === '.' || ch === '!' || ch === '?' || ch === '…';
+        const isTerminal = ch === '.' || ch === '!' || ch === '?' || ch === '\u2026';
         const isHardBreak = ch === '\n' && t[i + 1] === '\n';
         if (isTerminal) {
             // Consume any run of terminal punctuation + trailing closing quotes.
             let j = i + 1;
-            while (j < t.length && /[.!?…"'»”)\]]/.test(t[j])) j++;
-            const chunk = t.slice(start, j).trim();
-            if (chunk) sentences.push(chunk);
+            while (j < t.length && /[.!?\u2026"'»\u201d)\]]/.test(t[j])) j++;
+            const raw = t.slice(start, j);
+            if (raw.trim()) sentences.push({ text: raw.trim(), start, end: j });
             start = j;
             i = j - 1;
         } else if (isHardBreak) {
-            const chunk = t.slice(start, i).trim();
-            if (chunk) sentences.push(chunk);
+            const raw = t.slice(start, i);
+            if (raw.trim()) sentences.push({ text: raw.trim(), start, end: i });
             start = i + 1;
         }
     }
-    const tail = t.slice(start).trim();
-    if (tail) sentences.push(tail);
+    const tail = t.slice(start);
+    if (tail.trim()) sentences.push({ text: tail.trim(), start, end: t.length });
     return sentences;
 }
 
@@ -439,7 +446,11 @@ function splitIntoSentences(text) {
 // construction. Falls back to paragraph-even splitting only if no sentence
 // boundaries are found at all.
 function buildFallbackScenes(sceneText) {
-    const sentences = splitIntoSentences(sceneText);
+    // Use offset-annotated sentences so each scene's text is a verbatim slice
+    // of the original sceneText (preserving all original whitespace between
+    // sentences, including paragraph breaks \n\n). This is required for
+    // source coverage, which does exact substring matching.
+    const sentences = splitIntoSentencesWithOffsets(sceneText);
 
     if (sentences.length === 0) {
         const parts = splitTextEvenlyByParagraphs(sceneText, WINDOW_SIZE);
@@ -451,23 +462,27 @@ function buildFallbackScenes(sceneText) {
 
     const groups = [];
     let current = [];
-    for (const sentence of sentences) {
-        if (current.length === 0) { current.push(sentence); continue; }
-        const currentDur = estimateSpeechDurationSec(current.join(' '));
-        const withNext = estimateSpeechDurationSec(current.concat(sentence).join(' '));
+    for (const s of sentences) {
+        if (current.length === 0) { current.push(s); continue; }
+        const currentDur = estimateSpeechDurationSec(
+            sceneText.slice(current[0].start, current[current.length - 1].end)
+        );
+        const withNext = estimateSpeechDurationSec(
+            sceneText.slice(current[0].start, s.end)
+        );
         // Close the current scene if it already meets the target, or if adding
         // the next sentence would push it past the hard max.
         if (currentDur >= SCENE_TARGET_SEC || withNext > SCENE_MAX_SEC) {
             groups.push(current);
-            current = [sentence];
+            current = [s];
         } else {
-            current.push(sentence);
+            current.push(s);
         }
     }
     if (current.length > 0) groups.push(current);
 
     return groups.map((g, i) => {
-        const text = g.join(' ');
+        const text = sceneText.slice(g[0].start, g[g.length - 1].end);
         const dur = estimateSpeechDurationSec(text);
         if (dur > SCENE_MAX_SEC) {
             console.warn(`[AGENT] fallback scene ${i} is ${dur}s (> ${SCENE_MAX_SEC}s) — single sentence exceeds max, kept whole`);
@@ -1159,6 +1174,7 @@ module.exports = {
     WINDOW_SIZE,
     // Exported for unit testing
     splitIntoSentences,
+    splitIntoSentencesWithOffsets,
     buildFallbackScenes,
     splitTextEvenlyByParagraphs,
 };
