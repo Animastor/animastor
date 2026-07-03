@@ -303,7 +303,7 @@ Return ONLY valid JSON.`,
 
 ## Core philosophy — the unit is a VISUAL IMAGE, not a character
 An Imagination Unit is any picture that forms in the reader's mind — not necessarily one with people in it. It may be a landscape, architecture, an interior, an object, a memory, a dream, an imagined vision, or a symbolic/abstract image. Build the prompt around THE IMAGE. Sometimes that image is made of characters; sometimes it is only the world, or a purely symbolic picture.
-- If the unit HAS participants → name them as concretely as possible (see the character rules below).
+- If the unit HAS participants → identify them by their character_id (see the character rules below).
 - If the unit has NO participants → do NOT invent any. Fully and vividly describe the visual image the viewer should see (the landscape, object, dream, symbol, etc.). Never pad a character-less frame with generic people.
 
 ## The independence principle (most important)
@@ -313,20 +313,20 @@ The image model receives each prompt COMPLETELY INDEPENDENTLY. It knows nothing 
 When the frame contains people, do NOT answer "what is happening?". Answer: "WHO exactly is in the frame, WHERE exactly is each participant, and WHAT exactly is each of them doing right now?". Generic words for people ("they", "people", "men", "the writers", "pedestrians", "crowd") are the single biggest cause of broken continuity between adjacent frames — the fewer vague words and the more concrete named participants and stable anchors, the more stable the sequence. For a character-less frame, answer instead: "WHAT exactly does the viewer see, and in what light and mood?".
 
 ## Character rules (apply ONLY when the unit actually contains people)
-- NEVER use pronouns OR generic collective nouns for participants. The model does not know who "they", "he", "she", "two men", "the writers", or "one person" are — to it each is an unknown new person, so the next frame gets different faces, poses, and framing. Name EVERY known character EVERY time, using the exact id/name from the Scene Context below.
+- NEVER use pronouns OR generic collective nouns for participants. The model does not know who "they", "he", "she", "two men", "the writers", or "one person" are — to it each is an unknown new person, so the next frame gets different faces, poses, and framing. Reference EVERY known character EVERY time by their exact character_id from the Scene Context below.
   WRONG: "two men are sitting on a bench" / "the writers are talking" / "one person turns around" / "they continue the conversation".
-  RIGHT: "berlioz sitting on the left and bezdomny sitting on the right on a bench at patriarch_ponds" / "berlioz looking at bezdomny" / "bezdomny gesturing while speaking to berlioz".
+  RIGHT: "mikhail_alexandrovich_berlioz sitting on the left and ivan_nikolaevich_ponyrev sitting on the right on a bench at patriarch_ponds" / "mikhail_alexandrovich_berlioz looking at ivan_nikolaevich_ponyrev" / "ivan_nikolaevich_ponyrev gesturing while speaking to mikhail_alexandrovich_berlioz".
 - When people ARE present, structure the prompt as four parts:
   1. WHO is in frame — by name.
   2. WHERE they are — the global location name (e.g. "at Patriarch Ponds").
   3. HOW they are arranged relative to each other — sitting/standing, left/right, behind/in front (use the anchors given in Scene Context).
   4. WHAT changed in THIS unit — the new action, gesture, emotion, or lighting shift.
 - Repeat the base composition (parts 1–3) across adjacent units, changing only part 4, so a sequence reads as one continuous scene. Example progression:
-    Unit A: "Berlioz and Ivan Bezdomny are sitting on a bench at Patriarch Ponds."
-    Unit B: "Berlioz and Ivan Bezdomny are sitting on a bench at Patriarch Ponds. Calmly talking."
-    Unit C: "Berlioz and Ivan Bezdomny are sitting on a bench at Patriarch Ponds. Ivan Bezdomny is gesturing while speaking."
+    Unit A: "mikhail_alexandrovich_berlioz and ivan_nikolaevich_ponyrev are sitting on a bench at patriarch_ponds."
+    Unit B: "mikhail_alexandrovich_berlioz and ivan_nikolaevich_ponyrev are sitting on a bench at patriarch_ponds. Calmly talking."
+    Unit C: "mikhail_alexandrovich_berlioz and ivan_nikolaevich_ponyrev are sitting on a bench at patriarch_ponds. ivan_nikolaevich_ponyrev is gesturing while speaking."
   Do NOT write "They are talking" or "They continue the conversation" — the model would build a completely new scene with different people, poses, and framing.
-- Reference characters and locations BY NAME ONLY. Their appearance (passport) and the location description are supplied globally behind the name — do NOT re-describe them. Re-describe a character's appearance ONLY when it deviates from baseline (wounded, wet, changed clothes, dirty). Re-describe the location ONLY when its state changed (fog, rain, broken windows, fire).
+- Reference characters BY character_id and locations BY location_id. Their appearance (passport) and the location description are supplied globally behind the id — do NOT re-describe them. Re-describe a character's appearance ONLY when it deviates from baseline (wounded, wet, changed clothes, dirty). Re-describe the location ONLY when its state changed (fog, rain, broken windows, fire).
 - Background/extras need no global passport, but describe each as a CONCRETE, REPEATABLE anchor, not a vague mass. Avoid "people walking in the park", "crowd", "pedestrians". Prefer "an elderly man reading a newspaper near the path", "a young couple walking along the pond", "a woman feeding pigeons", "two children playing near the water". When the same extras appear in adjacent units, REPEAT their description verbatim so the model keeps them visually continuous.
 
 ## Character-less units (landscape / object / interior / memory / dream / symbol)
@@ -353,7 +353,7 @@ When the frame contains people, do NOT answer "what is happening?". Answer: "WHO
       "type": "unit type",
       "visual": {
         "shot": "wide|medium|close|detail|environment|reaction",
-        "prompt": "Self-contained Imagination Unit: WHO (by name) + WHERE (location name) + HOW arranged + WHAT changed this frame. No pronouns.",
+        "prompt": "Self-contained Imagination Unit: WHO (by character_id) + WHERE (location_id) + HOW arranged + WHAT changed this frame. No pronouns.",
         "character_binding": true
       }
     }

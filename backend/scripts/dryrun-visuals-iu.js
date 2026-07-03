@@ -29,7 +29,7 @@ const units = [
 
 // --- %CONTEXT% builder: byte-for-byte the logic now in stepCreateVisuals ---
 function buildContext(scene, characters) {
-    const locName = scene.location?.id || scene.title || 'the scene location';
+    const locName = scene.location?.id || 'the scene';
     const contextParts = [`Title: ${scene.title || 'Untitled'}`, `Type: ${scene.type || 'narration'}`, `Location (name to use in prompts): ${locName}`, ''];
     contextParts.push('Characters in scene (name them explicitly in every prompt — no pronouns):');
     const anchors = scene.character_anchors || {};
@@ -53,11 +53,11 @@ function buildContext(scene, characters) {
 // --- getFallbackVisual: byte-for-byte the logic now in agent-service ---
 function getFallbackVisual(text, characters, scene) {
     const participants = (scene.participants || []);
-    const named = participants.length
-        ? participants.map(pId => (characters || []).find(c => c.id === pId)?.name || pId).join(' and ')
-        : ((characters || []).map(c => c.name).join(' and '));
-    const who = named || 'the scene';
-    const locName = scene.location?.id || scene.title || 'the scene location';
+    const who = participants.length
+        ? participants.map(pId => (characters || []).find(c => c.id === pId)?.id || pId).join(' and ')
+        : ((characters || []).map(c => c.id).join(' and '));
+    if (!who) return 'the scene at ' + (scene.location?.id || 'the scene') + ', cinematic shot';
+    const locName = scene.location?.id || 'the scene';
     return `${who} at ${locName}, cinematic shot`;
 }
 

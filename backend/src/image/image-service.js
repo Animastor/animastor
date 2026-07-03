@@ -216,14 +216,21 @@ function resolvePassport(c, chapter, scene) {
     }
 }
 
+function isPlaceholder(text) {
+    return /unspecified|not specified|unknown|tbd|to be determined|as described/i.test(text)
+}
+
 function buildCharacterPassport(p) {
-    if (!p) return ""
-    const parts = []
-    if (p.base_appearance) parts.push(p.base_appearance)
-    if (p.detailed_appearance) parts.push(p.detailed_appearance)
-    if (p.clothing_base) parts.push(p.clothing_base)
-    if (p.clothing_details) parts.push(p.clothing_details)
-    return cleanJoin(parts)
+    if (!p) return { appearance: "", clothing: "" }
+    const appearance = [
+        p.base_appearance && !isPlaceholder(p.base_appearance) ? p.base_appearance : null,
+        p.detailed_appearance && !isPlaceholder(p.detailed_appearance) ? p.detailed_appearance : null,
+    ].filter(Boolean).join(" ")
+    const clothing = [
+        p.clothing_base && !isPlaceholder(p.clothing_base) ? p.clothing_base : null,
+        p.clothing_details && !isPlaceholder(p.clothing_details) ? p.clothing_details : null,
+    ].filter(Boolean).join(" ")
+    return { appearance: appearance.trim(), clothing: clothing.trim() }
 }
 
 function resolveState(c, chapter, scene) {
@@ -254,12 +261,18 @@ function buildCharacters(scenePayload, unit, chapter, book) {
     const result = []
     for (const c of chars) {
         const resolvedP = resolvePassport(c, chapter, scenePayload)
-        const passport = buildCharacterPassport(resolvedP)
+        const { appearance, clothing } = buildCharacterPassport(resolvedP)
         const state = resolveState(c, chapter, scenePayload)
-        const parts = []
-        if (passport) parts.push(passport)
+        let desc
+        if (appearance) {
+            desc = appearance
+            if (clothing) desc += ", " + clothing
+        } else {
+            desc = c.name || c.id
+        }
+        const parts = [desc]
         if (state) parts.push(state)
-        result.push(`consistent character appearance: ${cleanJoin(parts)}`)
+        result.push(`${c.id}: ${cleanJoin(parts)}`)
     }
     return result
 }
@@ -270,6 +283,70 @@ function buildShotPrompt(unit) {
         return `${shot.replace(/_/g, " ")} shot`;
     }
     return null;
+}
+
+const CYR_LATIN_MAP = {
+    'А':'A','а':'a','Б':'B','б':'b','В':'V','в':'v','Г':'G','г':'g','Д':'D','д':'d',
+    'Е':'Ye','е':'e','Ё':'Yo','ё':'yo','Ж':'Zh','ж':'zh','З':'Z','з':'z','И':'I','и':'i',
+    'Й':'Y','й':'y','К':'K','к':'k','Л':'L','л':'l','М':'M','м':'m','Н':'N','н':'n',
+    'О':'O','о':'o','П':'P','п':'p','Р':'R','р':'r','С':'S','с':'s','Т':'T','т':'t',
+    'У':'U','у':'u','Ф':'F','ф':'f','Х':'Kh','х':'kh','Ц':'Ts','ц':'ts','Ч':'Ch','ч':'ch',
+    'Ш':'Sh','ш':'sh','Щ':'Shch','щ':'shch','Ъ':'','ъ':'','Ы':'Y','ы':'y','Ь':'','ь':'',
+    'Э':'E','э':'e','Ю':'Yu','ю':'yu','Я':'Ya','я':'ya',
+}
+
+function cyrToLatin(text) {
+    return text.split('').map(ch => CYR_LATIN_MAP[ch] || ch).join('')
+}
+
+function buildCharacterAliases(c) {
+    const aliases = new Set()
+    // last segment of character_id is usually the surname — most common reference
+    const idParts = (c.id || '').split('_')
+    const surname = idParts[idParts.length - 1]
+    if (surname && surname.length >= 3) {
+        aliases.add(surname.charAt(0).toUpperCase() + surname.slice(1))
+    }
+    // parenthesized alias from name, e.g. "Иван Николаевич Понырев (Бездомный)" → "Бездомный"
+    const paren = c.name?.match(/\(([^)]+)\)/)
+    if (paren) {
+        for (const w of paren[1].split(/[\s,]+/).filter(Boolean)) {
+            if (w.length >= 2) {
+                aliases.add(w)
+                const latin = cyrToLatin(w)
+                    .replace(/yy$/i, 'y')
+                    .replace(/yi$/i, 'y')
+                if (latin !== w) aliases.add(latin)
+            }
+        }
+    }
+    // full name words (useful when AI writes in Russian)
+    for (const w of (c.name || '').split(/[\s,()]+/).filter(Boolean)) {
+        if (w.length >= 3) {
+            aliases.add(w)
+            const latin = cyrToLatin(w)
+                .replace(/yy$/i, 'y')
+                .replace(/yi$/i, 'y')
+            if (latin !== w) aliases.add(latin)
+        }
+    }
+    // sort longest first so longer matches take priority
+    return [...aliases].sort((a, b) => b.length - a.length)
+}
+
+function normalizeCharacterRefs(text, characters) {
+    if (!text || !characters?.length) return text
+    let result = text
+    // collect all aliases to avoid id-as-alias collisions
+    for (const c of characters) {
+        const aliases = buildCharacterAliases(c)
+        for (const alias of aliases) {
+            // avoid matching inside underscore-connected identifiers
+            const re = new RegExp('(?<!\\w)' + alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?!\\w)', 'gi')
+            result = result.replace(re, c.id)
+        }
+    }
+    return result
 }
 
 function resolveNegativePrompt(unit, scenePayload) {
@@ -326,7 +403,7 @@ function buildImagePrompt(iuPayload, scenePayload, chapterPayload, bookPayload) 
     const resolvedLocation = resolveSceneLocation(scenePayload)
     const loc = bookPayload?.bible?.locations?.[resolvedLocation.id]
     if (loc?.visual_style) {
-        parts.push(loc.visual_style)
+        parts.push(loc.visual_style.replace(/\s+matching\s+narrative\s+context.*/i, '').trim())
     }
     if (loc?.description) {
         parts.push(loc.description)
@@ -354,8 +431,10 @@ function buildImagePrompt(iuPayload, scenePayload, chapterPayload, bookPayload) 
 
     const directPrompt = iuPayload?.visual?.prompt
     if (directPrompt) {
+        const normalized = normalizeCharacterRefs(directPrompt, bookPayload?.characters)
         debug(`DIRECT PROMPT (IU): ${directPrompt}`)
-        parts.push(directPrompt)
+        debug(`NORMALIZED: ${normalized}`)
+        parts.push(normalized)
     }
 
     if (iuPayload?.visual?.quality) {

@@ -399,9 +399,9 @@ async function stepCreateVisuals(sessionId, scene, units, sceneIndex, characters
 
     const step = await createStep(sessionId, 'create_visual_prompts', stepIndex || 0, sceneIndex);
 
-    const locName = scene.location?.id || scene.title || 'the scene location';
+    const locName = scene.location?.id || 'the scene';
     const contextParts = [`Title: ${scene.title || 'Untitled'}`, `Type: ${scene.type || 'narration'}`, `Location (name to use in prompts): ${locName}`, ''];
-    contextParts.push('Characters in scene (name them explicitly in every prompt — no pronouns):');
+    contextParts.push('Characters in scene (use their character_id in every prompt — no pronouns, no names):');
     const anchors = scene.character_anchors || {};
     let namedCount = 0;
     for (const pId of (scene.participants || [])) {
@@ -471,17 +471,14 @@ async function stepCreateVisuals(sessionId, scene, units, sceneIndex, characters
 }
 
 function getFallbackVisual(text, characters, scene) {
-    // Self-contained Imagination Unit fallback: name every participant explicitly
-    // (no pronouns) and anchor them to the global location. Deliberately omits the
-    // raw text preview, which can carry pronouns and plot the model cannot draw.
     const participants = (scene.participants || []);
-    const named = participants.length
+    const who = participants.length
         ? participants
-              .map(pId => (characters || []).find(c => c.id === pId)?.name || pId)
+              .map(pId => (characters || []).find(c => c.id === pId)?.id || pId)
               .join(' and ')
-        : ((characters || []).map(c => c.name).join(' and '));
-    const who = named || 'the scene';
-    const locName = scene.location?.id || scene.title || 'the scene location';
+        : ((characters || []).map(c => c.id).join(' and '));
+    if (!who) return 'the scene at ' + (scene.location?.id || 'the scene') + ', cinematic shot';
+    const locName = scene.location?.id || 'the scene';
     return `${who} at ${locName}, cinematic shot`;
 }
 
