@@ -131,7 +131,7 @@ Return ONLY valid JSON.`,
       "id": "location_name_snake_case",
       "name": "Location Name (in original language)",
       "type": "indoor|outdoor|abstract",
-      "description": "Brief description"
+      "description": "Brief description including epoch, season, and atmosphere of the location"
     }
   ]
 }
@@ -229,6 +229,18 @@ It is OK if text remains after the last returned scene.
 ## Known Locations
 %EXISTING_LOCATIONS%
 
+## CRITICAL: characters_present MUST contain EVERY character
+- You MUST list EVERY character that appears or is mentioned in this scene's text in \`characters_present\`.
+- This is a HARD REQUIREMENT. These IDs are used by the image generation system to inject character passports (appearance, clothing) into the image prompt.
+- If a character is described in the text — even just named — they MUST be in \`characters_present\`.
+- Use the exact character_id from the Known Characters list above.
+- NEVER leave \`characters_present\` empty if the text mentions any named person.
+
+## CRITICAL: location.id is MANDATORY
+- You MUST set \`location.id\` to one of the Known Locations above.
+- If the scene takes place at a location not in the Known Locations, infer the closest match or use the most specific location_id available.
+- \`location.id\` is REQUIRED — without it, the image generation system cannot inject the location's visual style and description.
+
 ## Output format
 \`\`\`json
 {
@@ -241,7 +253,9 @@ It is OK if text remains after the last returned scene.
       "location": {
         "id": "location_id_from_known_locations",
         "environment": {
-          "time": "time description",
+          "epoch": "historical period, e.g. 1920s Moscow, 19th century, modern day",
+          "time": "time of day description",
+          "season": "season, e.g. late spring, early summer, deep winter",
           "lighting": "lighting description",
           "weather": "weather description",
           "mood": "mood description",
@@ -260,10 +274,11 @@ It is OK if text remains after the last returned scene.
 }
 \`\`\`
 
-IMPORTANT: For each scene, you MUST include:
-  - location.id: one of the Known Locations above
-  - location.environment: atmospheric description of time, lighting, weather, mood, atmosphere
-  - character_anchors: for EVERY participant, specify their position, pose, and orientation in the scene
+IMPORTANT — MANDATORY FIELDS:
+  - characters_present: MUST contain EVERY character_id that appears in the scene. NEVER leave empty if characters are present.
+  - location.id: MUST be set to one of the Known Locations. This is REQUIRED.
+  - location.environment: MUST include epoch, time, season, lighting, weather, mood, atmosphere
+  - character_anchors: for EVERY participant, specify their position, pose, and orientation
 
 Return ONLY valid JSON.`,
 

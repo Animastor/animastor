@@ -179,12 +179,13 @@ function lazyParseNextWindow(bookId, windowSize) {
                 }
             }
 
+            const sceneStyle = units.some(u => u.type === UnitType.TYPOGRAPHY) ? 'soviet_book_page' : undefined;
             chObj.scenes.push({
                 scene_id: sceneId(),
                 scene_title: si === 0 ? chInfo.title : `Scene ${si + 1}`,
                 type: units.some(u => u.type === UnitType.DIALOGUE) && units.filter(u => u.type === UnitType.DIALOGUE).length > units.length / 3
                     ? 'dialogue' : 'narration',
-                style: 'soviet_book_page',
+                style: sceneStyle,
                 participants,
                 audio: { voice: 'narrator', full_text: sceneText },
                 units: units.map(u => ({
@@ -271,12 +272,13 @@ function lazyParseChapter(bookId, chapterIndex) {
             }
         }
 
+        const sceneStyle = units.some(u => u.type === UnitType.TYPOGRAPHY) ? 'soviet_book_page' : undefined;
         chObj.scenes.push({
             scene_id: sceneId(),
             scene_title: `${chObj.scenes.length + 1}`,
             type: units.some(u => u.type === UnitType.DIALOGUE) && units.filter(u => u.type === UnitType.DIALOGUE).length > units.length / 3
                 ? 'dialogue' : 'narration',
-            style: 'soviet_book_page',
+            style: sceneStyle,
             participants,
             audio: { voice: 'narrator', full_text: sceneText },
             units: units.map(u => ({
@@ -1055,13 +1057,20 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
             }
         }
 
+        // style is only relevant for typography scenes (cover, chapter_intro),
+        // NOT for narrative scenes. The buildImagePrompt() function has its own
+        // visual style resolution with proper typography-style filtering.
+        const sceneStyle = aiScene.type === 'chapter_intro' || cleanUnits.some(u => u.type === 'typography')
+            ? 'soviet_book_page'
+            : undefined;
+
         chapterObj.scenes.push({
             scene_id: scId,
             scene_title: (aiScene.title && !isGenericSceneTitle(aiScene.title))
                 ? aiScene.title
                 : extractSceneTitle(aiScene.text || '', chapterObj.scenes.length),
             type: isDialogue ? 'dialogue' : 'narration',
-            style: 'soviet_book_page',
+            style: sceneStyle,
             participants: allParticipants,
             location: aiScene.location || undefined,
             character_anchors: aiScene.character_anchors || undefined,

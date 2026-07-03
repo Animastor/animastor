@@ -95,12 +95,15 @@ Regenerate → POST /api/v1/book/:bookId/regenerate
 ```
 Final Image Prompt =
     [renderMode]              ← scene.visual.render || book.manifest.render.mode
-  + [style]                   ← unit.visual.style || scene.visual.style
+  + [style]                   ← resolveVisualStyle()  (см. ниже)
   + [location_visual_style]   ← bible.locations[locationId].visual_style   ← bible.json
   + [location_description]    ← bible.locations[locationId].description     ← bible.json
+  + [env_epoch]               ← scene.location.environment.epoch
   + [env_time]                ← scene.location.environment.time
+  + [env_season]              ← scene.location.environment.season
   + [env_weather]             ← scene.location.environment.weather
   + [env_mood]                ← scene.location.environment.mood
+  + [env_atmosphere]          ← scene.location.environment.atmosphere
   + [env_lighting]            ← scene.location.environment.lighting
   + [shot_type]               ← unit.visual.shot
   + [character_passport]      ← book.characters[id].passport              ← characters.json
@@ -109,6 +112,27 @@ Final Image Prompt =
   + [quality]                 ← unit.visual.quality || scene.visual.quality
 ```
 
+**`resolveVisualStyle()` — цепочка fallback:**
+```
+unit.visual.style → scene.visual.style → scene.style (если не типографский) → bible.render_rules.style
+```
+Типографские стили (`soviet_book_page`, `book_style`, `typography_only`, `chapter_title`, `cover`) фильтруются — они не должны попадать в нарративные промпты.
+
+**Локация: `resolveLocationFromPrompt()` — fallback если у сцены нет `location.id`:**
+Если `scene.location` отсутствует, но direct prompt упоминает локацию, система
+пытается сопоставить текст промпта с `bible.locations`:
+1. **Exact substring match** — оригинальное поведение
+2. **Word overlap via Cyr→Lat transliteration** — проверяет, какие слова из названия локации
+   встречаются в промпте (с транслитерацией кириллицы)
+3. **Prefix match** — если слово из локации и слово из промпта имеют общий префикс ≥4 символов
+   (например, "patriarch" ↔ "patriarshie" через "patri"), засчитывается 0.5 балла
+4. **Порог совпадения:** 0.25 — достаточно 1 частичного совпадения для 2-словной локации
+
+**Персонажи: `inferCharactersFromPrompt()` — fallback если `participants` пуст:**
+Если `scene.participants` и `unit.participants` пусты (проблема AI-генерации),
+но direct prompt содержит `character_id` (например, `mikhail_alexandrovich_berlioz`),
+система находит этих персонажей в `characters.json` и inject-ит их паспорта.
+
 **Character Passport собирается так (`buildCharacters()` → `resolvePassport()`):**
 
 ```javascript
@@ -116,6 +140,9 @@ const participants = unit?.participants || []
 const chars = participants
     .map(id => book.characters?.find(c => c.id === id))
     .filter(Boolean)
+
+// + fallback: inferCharactersFromPrompt() если participants пуст
+//   (сканирует direct prompt на character_id и inject-ит паспорта)
 
 // Паспорт = слияние трёх уровней:
 // 1) c.passport.*                    — глобальный (characters.json)
@@ -131,13 +158,13 @@ const chars = participants
 
 **Из этого следует:**
 
-1. Единственный способ, которым `characters.json` влияет на Image Prompt — через `unit.participants[]`. Если персонаж не указан в `participants` ни одного юнита сцены, его паспорт **не используется** при генерации изображений.
+1. Единственный способ, которым `characters.json` влияет на Image Prompt — через `unit.participants[]`. Если персонаж не указан в `participants` ни одного юнита сцены, его паспорт **по умолчанию не используется**. **НО** — новый fallback `inferCharactersFromPrompt()` сканирует direct prompt на наличие `character_id` и inject-ит паспорт даже при пустом `participants[]`.
 
-2. Единственный способ, которым `bible.locations` влияет на Image Prompt — через `scene.location.id`. Если у сцены нет `location` или `location.id` не совпадает с ключом в `bible.locations`, данные локации **не используются**.
+2. Единственный способ, которым `bible.locations` влияет на Image Prompt — через `scene.location.id`. Если у сцены нет `location`, **новый fallback** `resolveLocationFromPrompt()` пытается сопоставить текст промпта с bible-локациями через транслитерацию + prefix matching.
 
 3. **Текущая R2/R3 имплементация корректна.**
-   - R2 (`sceneHasCharacter`) проверяет `unit.participants.includes(charId)` — это именно то, что `buildImagePrompt()` использует для поиска паспорта.
-   - R3 проверяет `scene.location.id === locId` — это именно то, что `buildImagePrompt()` использует для поиска описания локации.
+   - R2 (`sceneHasCharacter`) проверяет `unit.participants.includes(charId)` — это именно то, что `buildImagePrompt()` использует для поиска паспорта (основной путь; fallback — `inferCharactersFromPrompt`).
+   - R3 проверяет `scene.location.id === locId` — это именно то, что `buildImagePrompt()` использует для поиска описания локации (основной путь; fallback — `resolveLocationFromPrompt`).
 
 ---
 

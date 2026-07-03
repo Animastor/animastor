@@ -361,6 +361,157 @@ function resolveNegativePrompt(unit, scenePayload) {
         || '';
 }
 
+// Typography-only styles that should NOT be used as visual style for narrative IUs.
+const TYPOGRAPHY_STYLES = new Set(['soviet_book_page', 'book_style', 'typography_only', 'chapter_title', 'cover']);
+
+function isTypographyStyle(style) {
+    if (!style) return false;
+    return TYPOGRAPHY_STYLES.has(style.toLowerCase().replace(/[\s_-]+/g, '_'));
+}
+
+/**
+ * Resolve visual style for a narrative IU.
+ * Priority: IU visual.style → scene visual.style → scene root style (filtered) → bible render_rules style.
+ */
+function resolveVisualStyle(iuPayload, scenePayload, bookPayload) {
+    if (iuPayload?.visual?.style) return iuPayload.visual.style;
+    if (scenePayload?.visual?.style) return scenePayload.visual.style;
+    if (scenePayload?.style && !isTypographyStyle(scenePayload.style)) return scenePayload.style;
+    // Fallback to bible-level render style
+    const renderStyle = bookPayload?.bible?.render_rules?.style;
+    if (renderStyle && !isTypographyStyle(renderStyle)) return renderStyle.replace(/_/g, ' ');
+    return null;
+}
+
+/**
+ * Normalize a string for comparison: lowercase, transliterate Cyrillic to Latin,
+ * replace underscores/hyphens with spaces, strip punctuation.
+ */
+function normalizeForMatch(text) {
+    if (!text) return '';
+    let result = text.toLowerCase().trim();
+    // Cyrillic-to-Latin transliteration (same map as cyrToLatin but reusable)
+    result = result.split('').map(ch => CYR_LATIN_MAP[ch] || ch).join('');
+    // Normalize separators
+    result = result.replace(/[_\-]+/g, ' ');
+    // Strip punctuation except spaces
+    result = result.replace(/[^a-z0-9\s]/g, '');
+    // Collapse multiple spaces
+    result = result.replace(/\s+/g, ' ').trim();
+    return result;
+}
+
+/**
+ * Compute word overlap score between two normalized strings.
+ * Returns fraction of words from the candidate that appear in the source.
+ * Supports partial prefix matching for cross-language cases
+ * (e.g. "patriarch" ≈ "patriarshie" via common prefix "patri" of ≥4 chars).
+ */
+function wordOverlapScore(sourceWords, candidateWords) {
+    if (!candidateWords.length) return 0;
+    let matched = 0;
+    for (const cw of candidateWords) {
+        if (cw.length < 3) continue;
+        // Exact match
+        if (sourceWords.includes(cw)) {
+            matched++;
+        } else if (cw.length >= 4) {
+            // Partial prefix match: any source word shares ≥4 char prefix with candidate
+            const hasPrefix = sourceWords.some(sw =>
+                sw.length >= 4 &&
+                (sw.startsWith(cw.slice(0, 4)) || cw.startsWith(sw.slice(0, 4)))
+            );
+            if (hasPrefix) matched += 0.5;
+        }
+    }
+    return matched / candidateWords.length;
+}
+
+/**
+ * Try to find matching location in bible by scanning the direct prompt text.
+ * Uses multi-strategy matching:
+ *   1. Exact substring match (original behavior)
+ *   2. Word overlap via transliteration (cross-language: "patriarch_ponds" → "Патриаршие пруды")
+ *   3. Word overlap with location description
+ */
+function resolveLocationFromPrompt(directPrompt, bible) {
+    if (!directPrompt || !bible?.locations) return null;
+    const prompt = directPrompt.toLowerCase();
+    const normalizedPrompt = normalizeForMatch(directPrompt);
+    const promptWords = normalizedPrompt.split(/\s+/).filter(Boolean);
+
+    const entries = Object.entries(bible.locations);
+    let bestMatch = null;
+    let bestScore = 0;
+
+    for (const [locId, locData] of entries) {
+        // ── Strategy 1: Exact substring (direct match) ──
+        const namesToCheck = [
+            locId.replace(/_/g, ' ').toLowerCase(),
+            (locData.cinematic_space || '').toLowerCase(),
+            locId.toLowerCase(),
+        ];
+        for (const name of namesToCheck) {
+            if (name && name.length >= 4 && prompt.includes(name)) {
+                // Exact match is the strongest signal — return immediately
+                return { id: locId, data: locData, matchType: 'exact' };
+            }
+        }
+
+        // ── Strategy 2: Word overlap via transliteration ──
+        const candidates = [
+            normalizeForMatch(locId),
+            normalizeForMatch(locData.cinematic_space),
+            normalizeForMatch(locData.description),
+        ];
+        for (const candidate of candidates) {
+            if (!candidate || candidate.length < 3) continue;
+            const candidateWords = candidate.split(/\s+/).filter(Boolean);
+            const score = wordOverlapScore(promptWords, candidateWords);
+            if (score > bestScore) {
+                bestScore = score;
+                bestMatch = { id: locId, data: locData, matchType: 'word_overlap', score };
+            }
+        }
+    }
+
+    // Return best match if above threshold.
+    // Threshold 0.25 accommodates cross-language cases like
+    // "patriarch_ponds" ↔ "Патриаршие пруды" where prefix matching
+    // gives 0.5 per partially-matched word (e.g. patriarshie→patriarch).
+    if (bestMatch && bestScore >= 0.25) {
+        return bestMatch;
+    }
+    return null;
+}
+
+/**
+ * Build character passport strings by scanning the direct prompt for character_ids
+ * when scene/unit participants is empty. This ensures passports are injected
+ * even if the AI failed to populate the participants field.
+ */
+function inferCharactersFromPrompt(directPrompt, book) {
+    if (!directPrompt || !book?.characters?.length) return [];
+    const result = [];
+    const prompt = directPrompt.toLowerCase();
+    for (const c of book.characters) {
+        // Check if character_id appears as a token in the prompt.
+        // We build a regex that matches the character_id (with _ or - separators)
+        // at a word boundary: preceded by whitespace/punctuation/start, followed by same.
+        // Using character classes to avoid escaping complexity.
+        const separators = '[-_]';
+        const idParts = c.id.split(/[_]+/);
+        const pattern = idParts.join(separators);
+        // Build boundaries using simple character classes
+        const boundary = '[\\s.,;!?"\'\\`()\\[\\]{}]';
+        const re = new RegExp('(?:^|' + boundary + ')' + pattern + '(?=$|' + boundary + ')', 'i');
+        if (re.test(prompt)) {
+            result.push(c);
+        }
+    }
+    return result;
+}
+
 function buildImagePrompt(iuPayload, scenePayload, chapterPayload, bookPayload) {
     if (!bookPayload) {
         error("buildImagePrompt: bookPayload is undefined")
@@ -388,32 +539,53 @@ function buildImagePrompt(iuPayload, scenePayload, chapterPayload, bookPayload) 
     }
 
     const parts = []
+    const directPrompt = iuPayload?.visual?.prompt
 
+    // ── Render mode ──
     const renderMode = resolveRenderMode(scenePayload, bookPayload)
     if (renderMode) {
         parts.push(`style ${renderMode.replace(/_/g, " ")}`)
     }
 
-    if (iuPayload?.visual?.style) {
-        parts.push(iuPayload.visual.style)
-    } else if (scenePayload?.visual?.style) {
-        parts.push(scenePayload.visual.style)
+    // ── Visual style (with fallback) ──
+    const visualStyle = resolveVisualStyle(iuPayload, scenePayload, bookPayload)
+    if (visualStyle) {
+        parts.push(visualStyle)
     }
 
+    // ── Location from bible ──
+    // First try explicit scene.location.id, then fallback to prompt-based matching
     const resolvedLocation = resolveSceneLocation(scenePayload)
-    const loc = bookPayload?.bible?.locations?.[resolvedLocation.id]
-    if (loc?.visual_style) {
-        parts.push(loc.visual_style.replace(/\s+matching\s+narrative\s+context.*/i, '').trim())
+    let loc = bookPayload?.bible?.locations?.[resolvedLocation.id]
+    let matchedLocFromPrompt = null
+
+    if (!loc && directPrompt && bookPayload?.bible?.locations) {
+        matchedLocFromPrompt = resolveLocationFromPrompt(directPrompt, bookPayload.bible)
+        if (matchedLocFromPrompt) {
+            loc = matchedLocFromPrompt.data
+            debug(`LOCATION MATCHED FROM PROMPT: ${matchedLocFromPrompt.id}`)
+        }
     }
-    if (loc?.description) {
+
+    if (loc?.visual_style) {
+        const cleaned = loc.visual_style.replace(/\s+matching\s+narrative\s+context.*/i, '').trim()
+        if (cleaned && !isTypographyStyle(cleaned)) {
+            parts.push(cleaned)
+        }
+    }
+    if (loc?.description && loc.description !== loc?.visual_style) {
         parts.push(loc.description)
     }
 
+    // ── Environment (epoch, time, season, weather, mood) ──
     const env = resolvedLocation.environment
+    if (env?.epoch) parts.push(env.epoch)
     if (env?.time) parts.push(env.time)
+    if (env?.season) parts.push(env.season)
     if (env?.weather) parts.push(env.weather)
     if (env?.mood) parts.push(env.mood)
 
+    // ── Lighting ──
     if (iuPayload?.visual?.lighting) {
         parts.push(iuPayload.visual.lighting)
     } else if (scenePayload?.visual?.lighting) {
@@ -422,14 +594,41 @@ function buildImagePrompt(iuPayload, scenePayload, chapterPayload, bookPayload) 
         parts.push(env.lighting)
     }
 
+    // ── Atmosphere ──
+    if (env?.atmosphere) {
+        parts.push(env.atmosphere)
+    }
+
+    // ── Shot ──
     const shotPrompt = buildShotPrompt(iuPayload)
     if (shotPrompt) {
         parts.push(shotPrompt)
     }
 
-    parts.push(...buildCharacters(scenePayload, iuPayload, chapterPayload, bookPayload))
+    // ── Character passports ──
+    // Primary: from scene/unit participants. Fallback: infer from direct prompt.
+    const charParts = buildCharacters(scenePayload, iuPayload, chapterPayload, bookPayload)
+    if (charParts.length === 0 && directPrompt && bookPayload?.characters?.length) {
+        const inferred = inferCharactersFromPrompt(directPrompt, bookPayload)
+        if (inferred.length > 0) {
+            debug(`INFERRED CHARACTERS FROM PROMPT: ${inferred.map(c => c.id).join(', ')}`)
+            for (const c of inferred) {
+                const resolvedP = resolvePassport(c, chapterPayload, scenePayload)
+                const { appearance, clothing } = buildCharacterPassport(resolvedP)
+                let desc
+                if (appearance) {
+                    desc = appearance
+                    if (clothing) desc += ", " + clothing
+                } else {
+                    desc = c.name || c.id
+                }
+                charParts.push(`${c.id}: ${desc}`)
+            }
+        }
+    }
+    parts.push(...charParts)
 
-    const directPrompt = iuPayload?.visual?.prompt
+    // ── Direct prompt (user/AI visual description) ──
     if (directPrompt) {
         const normalized = normalizeCharacterRefs(directPrompt, bookPayload?.characters)
         debug(`DIRECT PROMPT (IU): ${directPrompt}`)
@@ -437,6 +636,7 @@ function buildImagePrompt(iuPayload, scenePayload, chapterPayload, bookPayload) 
         parts.push(normalized)
     }
 
+    // ── Quality ──
     if (iuPayload?.visual?.quality) {
         parts.push(`image quality: ${iuPayload.visual.quality}`)
     } else if (scenePayload?.visual?.quality) {
@@ -797,4 +997,9 @@ module.exports = {
     getImageNodeId,
     WORKFLOW_NAME,
     normalizeCharacterRefs,
+    // Image prompt assembly helpers (exposed for testing)
+    resolveVisualStyle,
+    resolveLocationFromPrompt,
+    inferCharactersFromPrompt,
+    isTypographyStyle,
 };

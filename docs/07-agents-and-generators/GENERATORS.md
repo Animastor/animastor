@@ -42,6 +42,14 @@ async resolveCanonicalSceneImage(outputDir, buildId, bookId, chapterId, sceneId)
 
 **Особенности реализации:**
 - Промпты строятся из: внешность персонажа + локация + IU description
+- **`buildImagePrompt()`** — сборщик финального промпта из нескольких источников:
+  `resolveVisualStyle()`, `resolveLocationFromPrompt()`, `inferCharactersFromPrompt()`
+- **`resolveVisualStyle()`** — цепочка: IU→scene→root style (с фильтром типографики)→bible style
+- **`resolveLocationFromPrompt()`** — если у сцены нет `location.id`, сопоставляет
+  текст direct prompt с `bible.locations` через Cyr→Lat транслитерацию + prefix matching
+- **`inferCharactersFromPrompt()`** — если `participants` пуст, находит `character_id`
+  в direct prompt и inject-ит паспорта из `characters.json`
+- Поддержка `epoch`, `season`, `atmosphere` из `scene.location.environment`
 - Кэширование: если изображение уже существует — пропускается
 - Использует `img-qwen-image` workflow
 - Параллельная отправка нескольких IU через GPU Hub

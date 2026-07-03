@@ -138,14 +138,28 @@ character rules are dropped, because there are no characters to name.
 - **Authoring instruction** — `SYSTEM_PROMPTS.visuals` in
   `backend/src/services/agent-prompts.js`. This is the meta-prompt that tells the LLM how
   to write each `visual.prompt`. The doctrine above is encoded here.
+  - Also `SYSTEM_PROMPTS.scenes` — требует `characters_present` (обязательно для каждого
+    персонажа), `location.id` (обязательно), `environment.epoch` + `environment.season`.
 - **Context fed to the author** — `stepCreateVisuals` in
   `backend/src/services/agent-service.js` builds `%CONTEXT%`, passing each participant's
   name and their `character_anchors` (position/pose/orientation) so the author can write
-  part 3 (arrangement) and repeat it across units.
+  part 3 (arrangement) and repeat it across units. Также передаёт `epoch` и `season`,
+  если они есть в `scene.location.environment`.
 - **Assembler** — `buildImagePrompt()` / `buildCharacters()` in
   `backend/src/image/image-service.js` still auto-injects the character passports and
   location description behind the names. The doctrine's "name only" refers to what the
   *prompt author* writes; the assembler complements it by supplying the appearance the
   name stands for. Keep the two consistent when editing either side.
+  - **Новое:** `resolveVisualStyle()` — цепочка fallback для visual style,
+    с фильтрацией типографских стилей (`soviet_book_page` только для cover/chapter_intro).
+  - **Новое:** `inferCharactersFromPrompt()` — если `participants` пуст,
+    сканирует `visual.prompt` на наличие `character_id` и inject-ит их паспорта.
+  - **Новое:** `resolveLocationFromPrompt()` — если у сцены нет `location`,
+    сопоставляет текст промпта с `bible.locations` через транслитерацию Cyr→Lat
+    и prefix-матчинг (порог 0.25).
+  - **Новое:** поддержка `epoch`, `season`, `atmosphere` из environment.
+- **Scene style fix** — `lazy-book/index.js` больше не проставляет `style: 'soviet_book_page'`
+  на нарративные сцены. Этот стиль остаётся только на типографические сцены
+  (`cover`, `chapter_intro` с юнитами типа `typography`).
 - **Fallback** — `getFallbackVisual` in `agent-service.js` produces a pronoun-free,
   named, location-anchored prompt when the LLM step is unavailable.
