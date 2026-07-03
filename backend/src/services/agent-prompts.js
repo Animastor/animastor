@@ -338,6 +338,14 @@ When the frame contains people, do NOT answer "what is happening?". Answer: "WHO
 - Each unit MUST have a non-empty visual.prompt.
 - Shot types: wide (landscape/group), medium (two people/waist-up), close (face/detail), detail (object/hand), environment (setting focus), reaction (character's emotional response)
 
+## Grounding in unit text (CRITICAL)
+The Imagination Unit represents the picture the reader forms from THIS unit text. The visual prompt MUST be grounded in what the unit text describes:
+- If the unit text mentions a specific character (by name or description) → use their character_id from Scene Context
+- If the unit text describes a location, object, or action → show exactly that
+- NEVER add characters, objects, or locations that are not present in the unit text
+- The reader does not know about other units, other scenes, or the overall plot — only this text fragment. The visual prompt must match ONLY what this text fragment describes.
+- Example: if the unit text says "женщина в будочке ответила" → the prompt must show woman_in_the_booth (or the appropriate character_id), NOT a different character who appears elsewhere in the book
+
 ## Scene Context
 %CONTEXT%
 %EXAMPLES%
