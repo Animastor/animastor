@@ -433,6 +433,39 @@ async function stepCreateVisuals(sessionId, scene, units, sceneIndex, characters
         { role: 'user', content: `Add visual prompts to each unit. Return the same units with visual fields added.\n\n${unitsStr}` },
     ];
 
+    const locationIds = Array.isArray(locations)
+        ? locations.map(l => l.id || l).filter(Boolean)
+        : (locations ? Object.keys(locations) : [])
+    const validIds = new Set([
+        ...(scene.participants || []),
+        ...locationIds,
+        scene.location?.id,
+    ].filter(Boolean))
+
+    const participantIds = scene.participants || []
+    const inventedToParticipant = {}
+
+    function fixInventedCharacterIds(prompt) {
+        if (!prompt) return prompt
+        const invented = [...new Set(
+            (prompt.match(/\b[a-z]+(?:_[a-z]+)+\b/g) || [])
+                .filter(w => !validIds.has(w))
+        )]
+        if (!invented.length) return prompt
+        for (const inv of invented) {
+            if (!inventedToParticipant[inv] && participantIds.length) {
+                const used = new Set(Object.values(inventedToParticipant))
+                const next = participantIds.find(p => !used.has(p))
+                if (next) inventedToParticipant[inv] = next
+            }
+        }
+        let result = prompt
+        for (const [inv, pid] of Object.entries(inventedToParticipant)) {
+            result = result.replace(new RegExp(inv.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), pid)
+        }
+        return result
+    }
+
     try {
         const result = await callAI(messages, { maxTokens: 4096 });
         const visualUnits = result.units || [];
@@ -440,7 +473,8 @@ async function stepCreateVisuals(sessionId, scene, units, sceneIndex, characters
         const merged = units.map((u, i) => {
             const vu = visualUnits[i];
             if (vu && vu.visual) {
-                return { ...u, visual: vu.visual };
+                const fixed = fixInventedCharacterIds(vu.visual.prompt)
+                return { ...u, visual: { ...vu.visual, prompt: fixed || vu.visual.prompt } };
             }
             return {
                 ...u,
