@@ -352,6 +352,45 @@ async function stepCreateUnits(sessionId, scene, sceneIndex, characters, stepInd
     }
 }
 
+/**
+ * Build a compact few-shot block of REAL doctrine-compliant visual prompts, drawn
+ * from ai/examples. Shows the model a sequence of adjacent units where the base
+ * composition (who + where + arrangement) is repeated and only the action changes.
+ * Single source of truth: the examples folder — no hardcoded exemplars to drift.
+ * Returns '' if no suitable multi-unit narration scene with named participants exists.
+ */
+function buildVisualExemplars() {
+    try {
+        const examples = require('./ai-loader').getExamples();
+        if (!examples) return '';
+
+        let best = null; // { participants:[], lines:[{shot,prompt}] }
+        for (const data of Object.values(examples)) {
+            const scenes = data?.scenes || (data?.scene ? [data.scene] : []);
+            for (const sc of scenes) {
+                const parts = sc?.participants || [];
+                if (!parts.length) continue; // want NAMED participants, skip typography/cover
+                const lines = (sc.units || [])
+                    .map(u => u.visual)
+                    .filter(v => v && typeof v.prompt === 'string' && v.prompt.trim())
+                    .map(v => ({ shot: v.shot || 'medium', prompt: v.prompt.trim() }));
+                if (lines.length >= 3 && (!best || lines.length > best.lines.length)) {
+                    best = { participants: parts, lines: lines.slice(0, 4) };
+                }
+            }
+        }
+        if (!best) return '';
+
+        const rows = best.lines
+            .map((l, i) => `  Unit ${i + 1} (${l.shot}): ${l.prompt}`)
+            .join('\n');
+        return `\n## Worked example (real doctrine-compliant sequence — note how the base composition repeats and only the action changes)\nParticipants named every time: ${best.participants.join(', ')}\n${rows}\n`;
+    } catch (err) {
+        console.warn(`[AGENT] Failed to build visual exemplars: ${err.message}`);
+        return '';
+    }
+}
+
 async function stepCreateVisuals(sessionId, scene, units, sceneIndex, characters, locations, stepIndex, progress) {
     const _progress = progress || (() => {});
     const msg = PROGRESS_STAGES.creating_visuals(sceneIndex);
@@ -360,13 +399,22 @@ async function stepCreateVisuals(sessionId, scene, units, sceneIndex, characters
 
     const step = await createStep(sessionId, 'create_visual_prompts', stepIndex || 0, sceneIndex);
 
-    const contextParts = [`Title: ${scene.title || 'Untitled'}`, `Type: ${scene.type || 'narration'}`, ''];
-    contextParts.push('Characters in scene:');
+    const locName = scene.location?.id || scene.title || 'the scene location';
+    const contextParts = [`Title: ${scene.title || 'Untitled'}`, `Type: ${scene.type || 'narration'}`, `Location (name to use in prompts): ${locName}`, ''];
+    contextParts.push('Characters in scene (name them explicitly in every prompt — no pronouns):');
+    const anchors = scene.character_anchors || {};
+    let namedCount = 0;
     for (const pId of (scene.participants || [])) {
         const ch = (characters || []).find(c => c.id === pId);
-        if (ch) contextParts.push(`- ${ch.id}: ${ch.name} — ${ch.description || ''}`);
+        if (!ch) continue;
+        const a = anchors[pId];
+        const arrangement = a
+            ? ` [position: ${a.position || '?'}, pose: ${a.pose || '?'}, orientation: ${a.orientation || '?'}]`
+            : '';
+        contextParts.push(`- ${ch.id}: ${ch.name} — ${ch.description || ''}${arrangement}`);
+        namedCount++;
     }
-    if (scene.participants && scene.participants.length > 0 && contextParts.length <= 3) {
+    if (scene.participants && scene.participants.length > 0 && namedCount === 0) {
         contextParts.push('(unknown characters)');
     }
     const contextStr = contextParts.join('\n');
@@ -377,6 +425,7 @@ async function stepCreateVisuals(sessionId, scene, units, sceneIndex, characters
 
     const prompt = SYSTEM_PROMPTS.visuals
         .replace('%CONTEXT%', contextStr)
+        .replace('%EXAMPLES%', buildVisualExemplars())
         .replace('%UNITS%', unitsStr);
 
     const messages = [
@@ -422,10 +471,18 @@ async function stepCreateVisuals(sessionId, scene, units, sceneIndex, characters
 }
 
 function getFallbackVisual(text, characters, scene) {
-    const charNames = (characters || []).map(c => c.name).join(', ') || 'character';
-    const locationHint = scene.title || 'scene';
-    const preview = (text || '').substring(0, 60).replace(/\n/g, ' ');
-    return `${charNames} in ${locationHint}: ${preview}... cinematic shot`;
+    // Self-contained Imagination Unit fallback: name every participant explicitly
+    // (no pronouns) and anchor them to the global location. Deliberately omits the
+    // raw text preview, which can carry pronouns and plot the model cannot draw.
+    const participants = (scene.participants || []);
+    const named = participants.length
+        ? participants
+              .map(pId => (characters || []).find(c => c.id === pId)?.name || pId)
+              .join(' and ')
+        : ((characters || []).map(c => c.name).join(' and '));
+    const who = named || 'the scene';
+    const locName = scene.location?.id || scene.title || 'the scene location';
+    return `${who} at ${locName}, cinematic shot`;
 }
 
 function splitTextEvenlyByParagraphs(text, maxScenes) {
@@ -1414,4 +1471,5 @@ module.exports = {
     extractSceneTitle,
     isGenericSceneTitle,
     resolveSceneProgress,
+    buildVisualExemplars,
 };

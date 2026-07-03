@@ -1,0 +1,106 @@
+// Dry-run: builds the visuals-step system prompt (%CONTEXT% + rules) for the
+// Patriarch Ponds sample scene, WITHOUT hitting the DB or the LLM. Verifies that
+// the Imagination Unit doctrine + character_anchors reach the model.
+//
+// Run: node backend/scripts/dryrun-visuals-iu.js
+const { SYSTEM_PROMPTS } = require('../src/services/agent-prompts');
+
+// --- The exact sample scene (from backend/ai/examples/ch-319c798a.json) ---
+const scene = {
+    title: 'Вечер на Патриарших',
+    scene_title: 'Вечер на Патриарших',
+    type: 'narration',
+    location: { id: 'patriarch_ponds' },
+    participants: ['berlioz', 'bezdomny'],
+    character_anchors: {
+        berlioz: { position: 'left', pose: 'sitting', orientation: 'right' },
+        bezdomny: { position: 'right', pose: 'sitting', orientation: 'left' },
+    },
+};
+const characters = [
+    { id: 'berlioz', name: 'Mikhail Berlioz', description: 'slim 1930s Moscow editor' },
+    { id: 'bezdomny', name: 'Ivan Bezdomny', description: 'young poet' },
+];
+const units = [
+    { text: 'Был жаркий весенний вечер в Москве.', type: 'perception' },
+    { text: 'На Патриарших прудах на скамейке сидели двое: редактор Берлиоз и поэт Иван Бездомный.', type: 'perception' },
+    { text: 'Они вели разговор о религии.', type: 'dialogue' },
+];
+
+// --- %CONTEXT% builder: byte-for-byte the logic now in stepCreateVisuals ---
+function buildContext(scene, characters) {
+    const locName = scene.location?.id || scene.title || 'the scene location';
+    const contextParts = [`Title: ${scene.title || 'Untitled'}`, `Type: ${scene.type || 'narration'}`, `Location (name to use in prompts): ${locName}`, ''];
+    contextParts.push('Characters in scene (name them explicitly in every prompt — no pronouns):');
+    const anchors = scene.character_anchors || {};
+    let namedCount = 0;
+    for (const pId of (scene.participants || [])) {
+        const ch = (characters || []).find(c => c.id === pId);
+        if (!ch) continue;
+        const a = anchors[pId];
+        const arrangement = a
+            ? ` [position: ${a.position || '?'}, pose: ${a.pose || '?'}, orientation: ${a.orientation || '?'}]`
+            : '';
+        contextParts.push(`- ${ch.id}: ${ch.name} — ${ch.description || ''}${arrangement}`);
+        namedCount++;
+    }
+    if (scene.participants && scene.participants.length > 0 && namedCount === 0) {
+        contextParts.push('(unknown characters)');
+    }
+    return contextParts.join('\n');
+}
+
+// --- getFallbackVisual: byte-for-byte the logic now in agent-service ---
+function getFallbackVisual(text, characters, scene) {
+    const participants = (scene.participants || []);
+    const named = participants.length
+        ? participants.map(pId => (characters || []).find(c => c.id === pId)?.name || pId).join(' and ')
+        : ((characters || []).map(c => c.name).join(' and '));
+    const who = named || 'the scene';
+    const locName = scene.location?.id || scene.title || 'the scene location';
+    return `${who} at ${locName}, cinematic shot`;
+}
+
+// --- Real few-shot exemplar block, built from ai/examples (via the exported fn if
+// the service module loads; otherwise skipped gracefully). ---
+let exemplars = '';
+try {
+    ({ buildVisualExemplars: exemplars } = require('../src/services/agent-service'));
+    exemplars = typeof exemplars === 'function' ? exemplars() : '';
+} catch (e) {
+    console.warn('(note) could not load agent-service for exemplars:', e.message);
+}
+
+const contextStr = buildContext(scene, characters);
+const unitsStr = units.map((u, i) => `Unit ${i + 1}: text="${(u.text || '').substring(0, 200)}", type="${u.type || 'perception'}"`).join('\n');
+const finalPrompt = SYSTEM_PROMPTS.visuals
+    .replace('%CONTEXT%', contextStr)
+    .replace('%EXAMPLES%', exemplars || '')
+    .replace('%UNITS%', unitsStr);
+
+console.log('================ ASSEMBLED SYSTEM PROMPT ================\n');
+console.log(finalPrompt);
+console.log('\n================ FALLBACK PROMPTS (no LLM) ================\n');
+for (const u of units) console.log('•', getFallbackVisual(u.text, characters, scene));
+
+// --- Assertions ---
+console.log('\n================ ASSERTIONS ================');
+const checks = [
+    ['CONTEXT has location name', contextStr.includes('patriarch_ponds')],
+    ['CONTEXT has berlioz anchor', contextStr.includes('position: left, pose: sitting, orientation: right')],
+    ['CONTEXT has bezdomny anchor', contextStr.includes('position: right, pose: sitting, orientation: left')],
+    ['prompt bans generic nouns', finalPrompt.includes('generic collective nouns')],
+    ['prompt has guiding question', finalPrompt.includes('WHO exactly is in the frame')],
+    ['prompt has stable-extras rule', finalPrompt.includes('CONCRETE, REPEATABLE anchor')],
+    ['fallback is pronoun-free & named', getFallbackVisual('', characters, scene) === 'Mikhail Berlioz and Ivan Bezdomny at patriarch_ponds, cinematic shot'],
+    ['few-shot exemplar block injected', /Worked example/.test(finalPrompt)],
+    ['image-first philosophy present', /Core philosophy/.test(finalPrompt) && /no participants/i.test(finalPrompt)],
+    ['character-less unit guidance present', /Character-less units/.test(finalPrompt)],
+    ['character rules scoped to when-people-present', /apply ONLY when the unit actually contains people/i.test(finalPrompt)],
+    ['exemplar block is doctrine-clean (no pronouns/generic nouns)',
+        !exemplars || !/\b(they|two men|the writers|crowd|pedestrians|one person)\b/i.test(exemplars)],
+];
+let ok = true;
+for (const [label, pass] of checks) { console.log(`${pass ? 'PASS' : 'FAIL'}  ${label}`); if (!pass) ok = false; }
+console.log(ok ? '\nALL CHECKS PASSED' : '\nSOME CHECKS FAILED');
+process.exit(ok ? 0 : 1);

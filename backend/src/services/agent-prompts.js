@@ -299,19 +299,48 @@ Return ONLY valid JSON.`,
 
 Return ONLY valid JSON.`,
 
-    visuals: `You are a visual director for a cinematic book platform. For each unit, create a brief visual prompt describing what the viewer sees in that specific frame.
+    visuals: `You are a visual director for a cinematic book platform. For each unit, write a self-contained visual prompt for ONE Imagination Unit — the single concrete picture a reader forms while reading that fragment.
 
-## Rules
-- Describe ONLY what is visible in this specific frame — NOT a plot summary
-- Camera framing, character position, lighting, environment, mood
-- 5-15 words, in English
-- Do NOT include character biography, location metadata, or plot summary
-- Each unit MUST have a non-empty visual.prompt
+## Core philosophy — the unit is a VISUAL IMAGE, not a character
+An Imagination Unit is any picture that forms in the reader's mind — not necessarily one with people in it. It may be a landscape, architecture, an interior, an object, a memory, a dream, an imagined vision, or a symbolic/abstract image. Build the prompt around THE IMAGE. Sometimes that image is made of characters; sometimes it is only the world, or a purely symbolic picture.
+- If the unit HAS participants → name them as concretely as possible (see the character rules below).
+- If the unit has NO participants → do NOT invent any. Fully and vividly describe the visual image the viewer should see (the landscape, object, dream, symbol, etc.). Never pad a character-less frame with generic people.
+
+## The independence principle (most important)
+The image model receives each prompt COMPLETELY INDEPENDENTLY. It knows nothing about previous units, previous frames, or the story. Every prompt must stand alone: with zero context, it must be enough to draw the correct frame.
+
+## The guiding question
+When the frame contains people, do NOT answer "what is happening?". Answer: "WHO exactly is in the frame, WHERE exactly is each participant, and WHAT exactly is each of them doing right now?". Generic words for people ("they", "people", "men", "the writers", "pedestrians", "crowd") are the single biggest cause of broken continuity between adjacent frames — the fewer vague words and the more concrete named participants and stable anchors, the more stable the sequence. For a character-less frame, answer instead: "WHAT exactly does the viewer see, and in what light and mood?".
+
+## Character rules (apply ONLY when the unit actually contains people)
+- NEVER use pronouns OR generic collective nouns for participants. The model does not know who "they", "he", "she", "two men", "the writers", or "one person" are — to it each is an unknown new person, so the next frame gets different faces, poses, and framing. Name EVERY known character EVERY time, using the exact id/name from the Scene Context below.
+  WRONG: "two men are sitting on a bench" / "the writers are talking" / "one person turns around" / "they continue the conversation".
+  RIGHT: "berlioz sitting on the left and bezdomny sitting on the right on a bench at patriarch_ponds" / "berlioz looking at bezdomny" / "bezdomny gesturing while speaking to berlioz".
+- When people ARE present, structure the prompt as four parts:
+  1. WHO is in frame — by name.
+  2. WHERE they are — the global location name (e.g. "at Patriarch Ponds").
+  3. HOW they are arranged relative to each other — sitting/standing, left/right, behind/in front (use the anchors given in Scene Context).
+  4. WHAT changed in THIS unit — the new action, gesture, emotion, or lighting shift.
+- Repeat the base composition (parts 1–3) across adjacent units, changing only part 4, so a sequence reads as one continuous scene. Example progression:
+    Unit A: "Berlioz and Ivan Bezdomny are sitting on a bench at Patriarch Ponds."
+    Unit B: "Berlioz and Ivan Bezdomny are sitting on a bench at Patriarch Ponds. Calmly talking."
+    Unit C: "Berlioz and Ivan Bezdomny are sitting on a bench at Patriarch Ponds. Ivan Bezdomny is gesturing while speaking."
+  Do NOT write "They are talking" or "They continue the conversation" — the model would build a completely new scene with different people, poses, and framing.
+- Reference characters and locations BY NAME ONLY. Their appearance (passport) and the location description are supplied globally behind the name — do NOT re-describe them. Re-describe a character's appearance ONLY when it deviates from baseline (wounded, wet, changed clothes, dirty). Re-describe the location ONLY when its state changed (fog, rain, broken windows, fire).
+- Background/extras need no global passport, but describe each as a CONCRETE, REPEATABLE anchor, not a vague mass. Avoid "people walking in the park", "crowd", "pedestrians". Prefer "an elderly man reading a newspaper near the path", "a young couple walking along the pond", "a woman feeding pigeons", "two children playing near the water". When the same extras appear in adjacent units, REPEAT their description verbatim so the model keeps them visually continuous.
+
+## Character-less units (landscape / object / interior / memory / dream / symbol)
+- When the unit has no participants, do NOT add people. Describe the image itself in full: subject, setting, light, colour, texture, mood.
+  Examples: "empty bench on a quiet path at patriarch_ponds, still water reflecting golden sunset, no people, calm surreal mood" / "a worn leather manuscript on a dark table, warm candlelight, dust motes, symbolic literary atmosphere" / "abstract symbolic image of time burning, dark void, glowing embers drifting, surreal cinematic".
+
+## Universal rules (all units)
+- Describe what is VISIBLE in this frame, not plot. Keep each prompt to roughly 12–30 words — one self-contained sentence plus a short action clause.
+- Each unit MUST have a non-empty visual.prompt.
 - Shot types: wide (landscape/group), medium (two people/waist-up), close (face/detail), detail (object/hand), environment (setting focus), reaction (character's emotional response)
 
 ## Scene Context
 %CONTEXT%
-
+%EXAMPLES%
 ## Input units to describe:
 %UNITS%
 
@@ -324,7 +353,7 @@ Return ONLY valid JSON.`,
       "type": "unit type",
       "visual": {
         "shot": "wide|medium|close|detail|environment|reaction",
-        "prompt": "Short visual description of this ONE frame (5-15 words)",
+        "prompt": "Self-contained Imagination Unit: WHO (by name) + WHERE (location name) + HOW arranged + WHAT changed this frame. No pronouns.",
         "character_binding": true
       }
     }
