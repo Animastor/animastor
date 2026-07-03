@@ -235,8 +235,17 @@ function resolveState(c, chapter, scene) {
 }
 
 function buildCharacters(scenePayload, unit, chapter, book) {
-    const participants = unit?.participants || []
+    // Passports are keyed by character id and injected from the participant id
+    // list. Per prompt-dependency-registry, scene.participants is the source of
+    // truth; unit.participants is almost always empty (units are created with
+    // participants: []). Union both, preferring ids that resolve to a character.
+    const participants = [
+        ...(scenePayload?.participants || []),
+        ...(unit?.participants || []),
+    ]
+    const seen = new Set()
     const chars = participants
+        .filter(id => (seen.has(id) ? false : (seen.add(id), true)))
         .map(id => book.characters?.find(c => c.id === id))
         .filter(Boolean)
     if (!chars.length) {

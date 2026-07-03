@@ -66,9 +66,6 @@
         {
           "id": "iu-8eb1d48a",
           "type": "transition",
-          "participants": [
-            "author"
-          ],
           "text": "Но горит время — и в его огне вспыхивают странные истории.",
           "visual": {
             "prompt": "author at symbolic_space, dark abstract fire, symbolic burning time, surreal cinematic transition, glowing embers in darkness",
@@ -78,9 +75,6 @@
         {
           "id": "iu-64a636c5",
           "type": "perception",
-          "participants": [
-            "author"
-          ],
           "text": "В тёплый вечер, среди спокойной воды и ленивого света, иногда появляется то, чему трудно дать имя.",
           "visual": {
             "prompt": "author at symbolic_space, warm evening atmosphere over calm water, soft reflections, subtle cinematic realism, mysterious peaceful mood",
@@ -90,9 +84,6 @@
         {
           "id": "iu-8a836c12",
           "type": "perception",
-          "participants": [
-            "author"
-          ],
           "text": "И тогда становится ясно: мир устроен гораздо сложнее, чем кажется.",
           "visual": {
             "prompt": "author at symbolic_space, subtle surreal tension emerging from darkness, philosophical cinematic atmosphere, quiet unsettling mood",
