@@ -411,7 +411,8 @@ async function stepCreateVisuals(sessionId, scene, units, sceneIndex, characters
         const arrangement = a
             ? ` [position: ${a.position || '?'}, pose: ${a.pose || '?'}, orientation: ${a.orientation || '?'}]`
             : '';
-        contextParts.push(`- ${ch.id}: ${ch.name} — ${ch.description || ''}${arrangement}`);
+        const passportDesc = [ch.passport?.base_appearance, ch.passport?.detailed_appearance, ch.passport?.clothing_base, ch.passport?.clothing_details].filter(Boolean).join('; ')
+        contextParts.push(`- ${ch.id}: ${ch.name} — ${passportDesc || ch.description || ''}${arrangement}`);
         namedCount++;
     }
     if (scene.participants && scene.participants.length > 0 && namedCount === 0) {
