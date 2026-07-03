@@ -250,16 +250,6 @@ async function stepCreateScenes(sessionId, text, characters, locations, stepInde
     }
 }
 
-/**
- * Load ALL examples from ai/examples/ and return as a formatted string
- * suitable for inclusion in system prompts. Dynamically detects each
- * example's structure — no hardcoded filenames required.
- *
- * Detected structures:
- *   - Book-like (has .result.chapters[].scenes): shows scene splitting
- *   - Scene-like (has .scene with .units): shows single scene breakdown
- *   - Generic: shows a JSON summary
- */
 function formatExamplesForPrompt() {
     try {
         const examples = require('./ai-loader').getExamples();
@@ -268,10 +258,9 @@ function formatExamplesForPrompt() {
         const parts = [];
 
         for (const [name, data] of Object.entries(examples)) {
-            // Book-like structure: { result: { chapters: [{ scenes: [...] }] } }
             const bookScenes = data?.result?.chapters?.[0]?.scenes;
             if (Array.isArray(bookScenes) && bookScenes.length > 0) {
-                parts.push(`--- Example: \"${name}\" — book structure ---`);
+                parts.push(`--- Example: "${name}" — book structure ---`);
                 for (const sc of bookScenes) {
                     const textLen = (sc.text || sc.audio?.full_text || '').length;
                     const participants = (sc.participants || []).join(', ') || 'none';
@@ -281,12 +270,11 @@ function formatExamplesForPrompt() {
                 continue;
             }
 
-            // Scene-like structure: has .scene or .scenes array with units
             const sceneData = data?.scene || data?.scenes?.[0];
             if (sceneData && (sceneData.units || sceneData.audio)) {
-                parts.push(`--- Example: \"${name}\" — scene structure ---`);
+                parts.push(`--- Example: "${name}" — scene structure ---`);
                 const title = sceneData.scene_title || sceneData.title || 'untitled';
-                parts.push(`  Title: \"${title}\" (${sceneData.type || 'unknown'})`);
+                parts.push(`  Title: "${title}" (${sceneData.type || 'unknown'})`);
                 if (sceneData.location?.id) {
                     parts.push(`  Location: ${sceneData.location.id}`);
                 }
@@ -303,9 +291,8 @@ function formatExamplesForPrompt() {
                 continue;
             }
 
-            // Generic fallback: just mention the file exists
             const keys = Object.keys(data || {});
-            parts.push(`--- Example: \"${name}\" — ${keys.length > 0 ? `${keys.length} top-level key(s)` : 'empty'} ---`);
+            parts.push(`--- Example: "${name}" — ${keys.length > 0 ? `${keys.length} top-level key(s)` : 'empty'} ---`);
         }
 
         return parts.join('\n');
@@ -353,24 +340,17 @@ async function stepCreateUnits(sessionId, scene, sceneIndex, characters, stepInd
     }
 }
 
-/**
- * Build a compact few-shot block of REAL doctrine-compliant visual prompts, drawn
- * from ai/examples. Shows the model a sequence of adjacent units where the base
- * composition (who + where + arrangement) is repeated and only the action changes.
- * Single source of truth: the examples folder — no hardcoded exemplars to drift.
- * Returns '' if no suitable multi-unit narration scene with named participants exists.
- */
 function buildVisualExemplars() {
     try {
         const examples = require('./ai-loader').getExamples();
         if (!examples) return '';
 
-        let best = null; // { participants:[], lines:[{shot,prompt}] }
+        let best = null;
         for (const data of Object.values(examples)) {
             const scenes = data?.scenes || (data?.scene ? [data.scene] : []);
             for (const sc of scenes) {
                 const parts = sc?.participants || [];
-                if (!parts.length) continue; // want NAMED participants, skip typography/cover
+                if (!parts.length) continue;
                 const lines = (sc.units || [])
                     .map(u => u.visual)
                     .filter(v => v && typeof v.prompt === 'string' && v.prompt.trim())
@@ -403,7 +383,6 @@ async function stepCreateVisuals(sessionId, scene, units, sceneIndex, characters
     const locName = scene.location?.id || 'the scene';
     const contextParts = [`Title: ${scene.title || 'Untitled'}`, `Type: ${scene.type || 'narration'}`, `Location (name to use in prompts): ${locName}`, ''];
 
-    // Include epoch/period if available in location environment
     const epoch = scene.location?.environment?.epoch;
     if (epoch) {
         contextParts.push(`Epoch/period: ${epoch}`);
@@ -543,17 +522,10 @@ function splitTextEvenlyByParagraphs(text, maxScenes) {
     return scenes;
 }
 
-// Split text into sentences, preserving trailing terminal punctuation and any
-// closing quote/bracket. Hard paragraph breaks (\n\n) also end a sentence.
-// Returns verbatim sentence chunks (whitespace between them is dropped but is
-// re-tolerated by coverage, which ignores inter-scene whitespace).
 function splitIntoSentences(text) {
     return splitIntoSentencesWithOffsets(text).map(s => s.text);
 }
 
-// Like splitIntoSentences but preserves original character offsets, enabling
-// the caller to reconstruct verbatim slices of the original text.
-// Returns [{ text, start, end }] where start/end are positions in the input.
 function splitIntoSentencesWithOffsets(text) {
     const t = String(text || '');
     const sentences = [];
@@ -563,7 +535,6 @@ function splitIntoSentencesWithOffsets(text) {
         const isTerminal = ch === '.' || ch === '!' || ch === '?' || ch === '\u2026';
         const isHardBreak = ch === '\n' && t[i + 1] === '\n';
         if (isTerminal) {
-            // Consume any run of terminal punctuation + trailing closing quotes.
             let j = i + 1;
             while (j < t.length && /[.!?\u2026"'»\u201d)\]]/.test(t[j])) j++;
             const raw = t.slice(start, j);
@@ -581,34 +552,17 @@ function splitIntoSentencesWithOffsets(text) {
     return sentences;
 }
 
-/**
- * Extract a meaningful scene title from the scene's text content.
- * Used as a fallback when the AI doesn't provide a proper title or when
- * deterministic fallback splitting is used (buildFallbackScenes).
- *
- * Strategy:
- *   1. Take the first sentence of the scene text
- *   2. Clean leading dialogue markers / quotes
- *   3. Limit to ~8 words for a concise, readable title
- *
- * @param {string} sceneText - The full text of the scene
- * @param {number} fallbackIndex - 0-based index used if text is empty
- * @returns {string} A readable scene title
- */
 function extractSceneTitle(sceneText, fallbackIndex) {
     const t = (sceneText || '').trim();
     if (!t) return `Scene ${fallbackIndex + 1}`;
 
     let title = t;
 
-    // For dialogue-starting scenes, use the first speech line
     if (/^[—–\-]/.test(t)) {
         const newlinePos = t.indexOf('\n');
         const firstLine = newlinePos > 0 ? t.substring(0, newlinePos) : t;
         title = firstLine.replace(/^[—–\-\s"]+/, '').replace(/["»]+$/, '').trim();
     } else {
-        // For narration, take first sentence
-        // Prefer . ! ? over … to avoid mid-sentence ellipsis splits.
         const dotEnd = t.search(/[.!?](?:\s|$)/);
         const sentenceEnd = dotEnd >= 0 ? dotEnd : t.search(/…(?:\s|$)/);
         if (sentenceEnd > 3) {
@@ -617,45 +571,26 @@ function extractSceneTitle(sceneText, fallbackIndex) {
         title = title.replace(/^[—–\-\s"]+/, '').replace(/[.!?…]+$/, '').trim();
     }
 
-    // Limit to ~8 words for a concise title
     const words = title.split(/\s+/).filter(Boolean);
     if (words.length > 8) {
         title = words.slice(0, 8).join(' ');
         if (title.length < t.length) title += '…';
     }
 
-    // Capitalise first letter
     title = title.charAt(0).toUpperCase() + title.slice(1);
 
     return title || `Scene ${fallbackIndex + 1}`;
 }
 
-/**
- * Check whether a scene title is generic / auto-generated (e.g. "Scene 1", "Scene 2")
- * and should be replaced with a proper extracted title.
- * Also catches empty titles or very short placeholder strings.
- */
 function isGenericSceneTitle(title) {
     if (!title) return true;
     const trimmed = title.trim();
     if (trimmed.length < 3) return true;
-    // Match patterns like "Scene 1", "Сцена 1", "Scene", "Сцена"
     if (/^(Scene|Сцена|Chapter|Глава|Part|Часть)\s*\d*$/i.test(trimmed)) return true;
     return false;
 }
 
-// Deterministic fallback splitter used only when the LLM split fails source
-// coverage. Groups whole sentences into ~SCENE_TARGET_SEC scenes, never
-// exceeding ~SCENE_MAX_SEC unless a single sentence alone is longer (then it
-// becomes its own scene). Every scene ends on a complete sentence, and the
-// scenes are consecutive verbatim slices → source coverage passes by
-// construction. Falls back to paragraph-even splitting only if no sentence
-// boundaries are found at all.
 function buildFallbackScenes(sceneText) {
-    // Use offset-annotated sentences so each scene's text is a verbatim slice
-    // of the original sceneText (preserving all original whitespace between
-    // sentences, including paragraph breaks \n\n). This is required for
-    // source coverage, which does exact substring matching.
     const sentences = splitIntoSentencesWithOffsets(sceneText);
 
     if (sentences.length === 0) {
@@ -676,8 +611,6 @@ function buildFallbackScenes(sceneText) {
         const withNext = estimateSpeechDurationSec(
             sceneText.slice(current[0].start, s.end)
         );
-        // Close the current scene if it already meets the target, or if adding
-        // the next sentence would push it past the hard max.
         if (currentDur >= SCENE_TARGET_SEC || withNext > SCENE_MAX_SEC) {
             groups.push(current);
             current = [s];
@@ -698,6 +631,287 @@ function buildFallbackScenes(sceneText) {
             participants: [], location: null, character_anchors: {},
         };
     });
+}
+
+// ======================================================
+// Coreference Resolution — Agent Steps & Helpers
+// ======================================================
+
+/**
+ * Simple hash for content fingerprinting (not cryptographic).
+ */
+function computeHash(obj) {
+    const str = typeof obj === 'string' ? obj : JSON.stringify(obj);
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+        const ch = str.charCodeAt(i);
+        hash = ((hash << 5) - hash) + ch;
+        hash |= 0;
+    }
+    return Math.abs(hash).toString(16);
+}
+
+/**
+ * Normalize text for alias matching: lowercase, transliterate Cyrillic to Latin,
+ * replace separators with spaces, strip non-alphanumeric.
+ */
+const CYR_LATIN_MAP_FN = {
+    'А':'A','а':'a','Б':'B','б':'b','В':'V','в':'v','Г':'G','г':'g','Д':'D','д':'d',
+    'Е':'Ye','е':'e','Ё':'Yo','ё':'yo','Ж':'Zh','ж':'zh','З':'Z','з':'z','И':'I','и':'i',
+    'Й':'Y','й':'y','К':'K','к':'k','Л':'L','л':'l','М':'M','м':'m','Н':'N','н':'n',
+    'О':'O','о':'o','П':'P','п':'p','Р':'R','р':'r','С':'S','с':'s','Т':'T','т':'t',
+    'У':'U','у':'u','Ф':'F','ф':'f','Х':'Kh','х':'kh','Ц':'Ts','ц':'ts','Ч':'Ch','ч':'ch',
+    'Ш':'Sh','ш':'sh','Щ':'Shch','щ':'shch','Ъ':'','ъ':'','Ы':'Y','ы':'y','Ь':'','ь':'',
+    'Э':'E','э':'e','Ю':'Yu','ю':'yu','Я':'Ya','я':'ya',
+};
+
+function normalizeForMatch(text) {
+    if (!text) return '';
+    let result = text.toLowerCase().trim();
+    result = result.split('').map(ch => CYR_LATIN_MAP_FN[ch] || ch).join('');
+    result = result.replace(/[_\-]+/g, ' ');
+    result = result.replace(/[^a-z0-9\s]/g, '');
+    result = result.replace(/\s+/g, ' ').trim();
+    return result;
+}
+
+/**
+ * Step: Collect Character Candidates (Coarse Pass)
+ * Runs on the analysis window (~4000 chars) to identify which characters
+ * are potentially active and what aliases/roles may refer to them.
+ * Saves results to character_window_candidates table.
+ */
+async function stepCollectCharacterCandidates(sessionId, bookId, {
+    analysisWindowText, analysisWindowStart, analysisWindowEnd,
+    characters, chapterId, windowIndex,
+}) {
+    if (!analysisWindowText || analysisWindowText.length < 10) {
+        console.log(`[COREFERENCE] Skip coarse pass — text too short (${analysisWindowText?.length || 0} chars)`);
+        return { candidate_characters: [], unknown_roles: [], context_notes: '' };
+    }
+
+    const step = await createStep(sessionId, 'collect_character_candidates', windowIndex || 0);
+
+    const charsContext = (characters || [])
+        .map(c => `- ${c.id}: ${c.name} (${c.role || 'unknown'})`)
+        .join('\n') || 'No known characters';
+
+    const prompt = SYSTEM_PROMPTS.collect_candidates;
+
+    const messages = [
+        { role: 'system', content: prompt },
+        { role: 'user', content: `Identify which known characters are potentially active in this text window.\n\n## Known Characters\n${charsContext}\n\n## Text Window\n\`\`\`\n${analysisWindowText}\n\`\`\`` },
+    ];
+
+    try {
+        const result = await callAI(messages, { maxTokens: 4096 });
+        const candidates = result.candidate_characters || [];
+        const unknownRoles = result.unknown_roles || [];
+        const contextNotes = result.context_notes || '';
+
+        // Save to character_window_candidates
+        if (candidates.length > 0) {
+            const runResult = await query(
+                `INSERT INTO character_resolution_runs (book_id, chapter_id, analysis_window_index, run_type,
+                 source_start, source_end, resolver_version, character_registry_hash, source_hash, status)
+                 VALUES ($1, $2, $3, 'coarse_candidates', $4, $5, '1.0.0', $6, $7, 'completed')
+                 RETURNING run_id`,
+                [bookId, chapterId || null, windowIndex || 0,
+                 analysisWindowStart || 0, analysisWindowEnd || 0,
+                 computeHash(characters || []), computeHash(analysisWindowText || '')]
+            );
+            const runId = runResult.rows[0].run_id;
+
+            for (const cand of candidates) {
+                await query(
+                    `INSERT INTO character_window_candidates (run_id, book_id, chapter_id, analysis_window_index,
+                     source_start, source_end, character_id, alias_texts, evidence, confidence)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                     ON CONFLICT (run_id, character_id) DO NOTHING`,
+                    [runId, bookId, chapterId || null, windowIndex || 0,
+                     analysisWindowStart || 0, analysisWindowEnd || 0,
+                     cand.character_id, cand.aliases_seen || [],
+                     cand.evidence || null, cand.confidence || null]
+                );
+            }
+            console.log(`[COREFERENCE] Coarse pass: ${candidates.length} candidates, ${unknownRoles.length} unknown roles`);
+        }
+
+        await logConversation(sessionId, step.step_id, messages, JSON.stringify(result));
+        await completeStep(step.step_id, result);
+
+        return { candidate_characters: candidates, unknown_roles: unknownRoles, context_notes: contextNotes };
+    } catch (err) {
+        await failStep(step.step_id, err.message);
+        console.warn(`[COREFERENCE] Coarse pass FAILED: ${err.message}`);
+        return { candidate_characters: [], unknown_roles: [], context_notes: '' };
+    }
+}
+
+/**
+ * Step: Resolve Character Mentions (Fine Pass)
+ * Runs per generation span (~1500 chars / scene) after create_scenes.
+ * Splits into sentences, resolves each mention to a character_id,
+ * saves to sentence_resolutions + character_mentions tables.
+ */
+async function stepResolveCharacterMentions(sessionId, bookId, {
+    generationSpanText, generationSpanStart, generationSpanEnd,
+    surroundingContext, candidateCharacters, fullCharacters,
+    chapterId, sceneId, windowIndex,
+}) {
+    if (!generationSpanText || generationSpanText.length < 5) {
+        console.log(`[COREFERENCE] Skip fine pass — text too short (${generationSpanText?.length || 0} chars)`);
+        return { sentences: [] };
+    }
+
+    const step = await createStep(sessionId, 'resolve_character_mentions', windowIndex || 0);
+
+    // Build candidate context
+    const candidateStr = (candidateCharacters || [])
+        .map(c => `- ${c.character_id}` + (c.aliases_seen?.length ? ` (aliases: ${c.aliases_seen.join(', ')})` : '') + (c.confidence ? ` [confidence: ${c.confidence}]` : ''))
+        .join('\n') || 'None (use full character list)';
+
+    const knownCharsStr = (fullCharacters || [])
+        .map(c => `- ${c.id}: ${c.name} (${c.role || 'unknown'})`)
+        .join('\n') || 'No known characters';
+
+    const contextStr = surroundingContext ? `\n## Surrounding Context\n${surroundingContext}\n` : '';
+
+    const prompt = SYSTEM_PROMPTS.resolve_mentions
+        .replace('%CANDIDATE_CHARACTERS%', candidateStr)
+        .replace('%KNOWN_CHARACTERS%', knownCharsStr);
+
+    const messages = [
+        { role: 'system', content: prompt },
+        { role: 'user', content: `Resolve character mentions in this text.${contextStr}\n\n## Text to resolve\n\`\`\`\n${generationSpanText}\n\`\`\`` },
+    ];
+
+    try {
+        const result = await callAI(messages, { maxTokens: 8192 });
+        const sentences = result.sentences || [];
+
+        if (sentences.length > 0) {
+            const runResult = await query(
+                `INSERT INTO character_resolution_runs (book_id, chapter_id, analysis_window_index, run_type,
+                 source_start, source_end, generation_start, generation_end,
+                 resolver_version, character_registry_hash, source_hash, status)
+                 VALUES ($1, $2, $3, 'fine_mentions', $4, $5, $6, $7, '1.0.0', $8, $9, 'completed')
+                 RETURNING run_id`,
+                [bookId, chapterId || null, windowIndex || 0,
+                 generationSpanStart || 0, generationSpanEnd || 0,
+                 generationSpanStart || 0, generationSpanEnd || 0,
+                 computeHash(fullCharacters || []), computeHash(generationSpanText || '')]
+            );
+            const runId = runResult.rows[0].run_id;
+
+            let mentionOffset = generationSpanStart || 0;
+
+            for (const sent of sentences) {
+                const sentText = sent.text || '';
+                const sentStart = mentionOffset;
+                const sentEnd = sentStart + sentText.length;
+
+                // Save sentence-level resolution
+                await query(
+                    `INSERT INTO sentence_resolutions (run_id, book_id, chapter_id, scene_id,
+                     sentence_index, source_start, source_end, sentence_text, character_ids, unknown_mentions, resolved_by)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'agent')
+                     ON CONFLICT (run_id, scene_id, sentence_index) DO NOTHING`,
+                    [runId, bookId, chapterId || null, sceneId || '',
+                     sent.index || 0, sentStart, sentEnd, sentText,
+                     sent.characters || [], JSON.stringify(sent.unknown_mentions || [])]
+                );
+
+                // Save mention-level data
+                for (const mention of (sent.mentions || [])) {
+                    const mentionText = mention.text || '';
+                    const mentionStart = sentStart + (sentText.indexOf(mentionText) >= 0 ? sentText.indexOf(mentionText) : 0);
+                    const mentionEnd = mentionStart + mentionText.length;
+
+                    await query(
+                        `INSERT INTO character_mentions (run_id, book_id, chapter_id, scene_id,
+                         sentence_index, source_start, source_end, mention_text, mention_norm,
+                         character_id, mention_type, role, confidence, evidence)
+                         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+                        [runId, bookId, chapterId || null, sceneId || '',
+                         sent.index || 0, mentionStart, mentionEnd, mentionText,
+                         normalizeForMatch(mentionText),
+                         mention.character_id || null,
+                         mention.type || 'unknown',
+                         mention.role || 'unknown',
+                         mention.confidence || null,
+                         mention.evidence || null]
+                    );
+                }
+
+                mentionOffset = sentEnd;
+                const nextRaw = generationSpanText.substring(sentEnd);
+                const gap = nextRaw.match(/^[\s\n]+/);
+                if (gap) mentionOffset += gap[0].length;
+            }
+
+            console.log(`[COREFERENCE] Fine pass: ${sentences.length} sentences resolved for scene ${sceneId}`);
+        }
+
+        await logConversation(sessionId, step.step_id, messages, JSON.stringify(result));
+        await completeStep(step.step_id, result);
+
+        return { sentences };
+    } catch (err) {
+        await failStep(step.step_id, err.message);
+        console.warn(`[COREFERENCE] Fine pass FAILED for scene ${sceneId}: ${err.message}`);
+        return { sentences: [] };
+    }
+}
+
+/**
+ * Assign unit participants by intersecting unit source spans with character_mentions.
+ * This is a lightweight DB query — no AI call needed.
+ */
+async function assignUnitParticipants(bookId, chapterId, sceneId, units) {
+    if (!units || units.length === 0) return {};
+
+    try {
+        // Fetch all mentions for this scene from the latest completed fine run
+        const result = await query(
+            `SELECT cm.character_id, cm.source_start, cm.source_end
+             FROM character_mentions cm
+             JOIN character_resolution_runs crr ON cm.run_id = crr.run_id
+             WHERE cm.book_id = $1 AND cm.chapter_id = $2 AND cm.scene_id = $3
+               AND crr.status = 'completed' AND crr.run_type = 'fine_mentions'
+               AND cm.character_id IS NOT NULL
+             ORDER BY cm.run_id DESC
+             LIMIT 500`,
+            [bookId, chapterId || '', sceneId || '']
+        );
+
+        const mentions = result.rows;
+        if (mentions.length === 0) return {};
+
+        const unitParticipants = {};
+        for (let ui = 0; ui < units.length; ui++) {
+            const u = units[ui];
+            const uStart = u.source_start;
+            const uEnd = u.source_end;
+            if (uStart == null || uEnd == null) continue;
+
+            const chars = new Set();
+            for (const m of mentions) {
+                // Mention overlaps with unit span
+                if (m.source_start < uEnd && m.source_end > uStart) {
+                    if (m.character_id) chars.add(m.character_id);
+                }
+            }
+            if (chars.size > 0) {
+                unitParticipants[ui] = [...chars];
+            }
+        }
+
+        return unitParticipants;
+    } catch (err) {
+        console.warn(`[COREFERENCE] assignUnitParticipants failed: ${err.message}`);
+        return {};
+    }
 }
 
 function getWindowText(sourceText, existingChars, existingLocs, windowIndex, startOffset) {
@@ -771,8 +985,6 @@ function getWindowText(sourceText, existingChars, existingLocs, windowIndex, sta
 
     const chTitle = chapters[chIdx]?.title || null;
 
-    // Inject [ГЛАВА: TITLE] markers for ALL-CAPS chapter headings without
-    // explicit "Глава"/"Chapter" — so the AI always sees chapter boundaries
     const aiText = lazyBook.injectChapterMarkers(windowText.trim());
 
     console.log(`[WINDOW] getWindowText: startOffset=${startOffset}, skipLen=${skipLen}, actualStart=${actualStart}, endPos=${endPos}, newOffset=${newOffset}, chIdx=${chIdx}, chTitle="${chTitle}", textLen=${windowText.trim().length}, sourceLen=${sourceText.length}`);
@@ -833,6 +1045,9 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
     const rawWindowText = options.rawWindowText || text;
     const sourceOffsetBase = options.sourceOffsetBase || 0;
 
+    // Store coarse candidate state for use in fine pass
+    let coarseResult = { candidate_characters: [], unknown_roles: [], context_notes: '' };
+
     // Helper to publish VBook progress events to Redis pub/sub (for SSE stream)
     const publishVBook = (event) => {
         if (publishProgress && bookId) {
@@ -842,18 +1057,13 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
         }
     };
 
-    // Publish an initial progress event with the scene cap as advisory metadata.
     publishVBook({ stage: 'extracting_chars', scene_index: 0, total_scenes: 0, window_size: WINDOW_SIZE });
 
-    // The window is only a token budget buffer. The agent may use any
-    // contiguous prefix of it, up to MAX_SCENES_PER_CHUNK scenes.
     const sceneText = rawWindowText.trimEnd();
 
-    // Publish event after character extraction
     publishVBook({ stage: 'analyzing', scene_index: 0, total_scenes: 0, window_size: WINDOW_SIZE });
 
     // Reconnaissance: extract chars/locs from the same bounded window.
-    // New characters added, existing ones enriched with more detail
     const newCharacters = await stepExtractCharacters(sessionId, text, stepIndex, _progress);
     if (!newCharacters || newCharacters.length === 0) {
         console.warn('[AGENT] No characters extracted from window, keeping existing set');
@@ -866,7 +1076,6 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
         let added = 0;
         for (const ch of newCharacters) {
             if (mergedMap.has(ch.id)) {
-                // Enrich existing character with new info
                 const existing = mergedMap.get(ch.id);
                 const enrichedCh = { ...existing };
                 if (ch.description && ch.description.length > (existing.description || '').length) {
@@ -937,16 +1146,27 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
         console.log(`[AGENT] Locations: ${existingLocs.length} existing + ${added} new + ${enriched} enriched = ${locations.length} total`);
     }
 
+    // ── Coreference Resolution: Coarse candidate pass ──
+    // After characters & locations are established, run a coarse scan to identify
+    // which characters are active and what aliases may appear in the generation span.
+    _progress({ stage: 'collecting_candidates', message: PROGRESS_STAGES.collecting_candidates });
+    await updateSession(sessionId, { progress_msg: PROGRESS_STAGES.collecting_candidates });
+    coarseResult = await stepCollectCharacterCandidates(sessionId, bookId || 'unknown', {
+        analysisWindowText: sceneText,
+        analysisWindowStart: sourceOffsetBase,
+        analysisWindowEnd: sourceOffsetBase + sceneText.length,
+        characters,
+        chapterId: null,
+        windowIndex: stepIndex || 0,
+    });
+
     // ── Scene split with unified validation (coverage = hard, duration = soft) ──
-    // capScenes is purely a safety guard (hard upper bound, NOT a target).
     const capScenes = (arr) => (arr || []).slice(0, MAX_SCENES_PER_CHUNK);
 
-    // Find scenes longer than the soft max (only meaningful once coverage is OK).
     const findOversized = (arr) => arr
         .map((s, i) => ({ i, dur: estimateSpeechDurationSec(s.text || '') }))
         .filter(o => o.dur > SCENE_MAX_SEC);
 
-    // Find scenes shorter than the min threshold (only meaningful once coverage is OK).
     const findUndersized = (arr) => arr
         .map((s, i) => ({ i, dur: estimateSpeechDurationSec(s.text || '') }))
         .filter(o => o.dur < SCENE_MIN_SEC);
@@ -968,10 +1188,6 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
     let { progressInfo, cov: coverage, oversized, undersized } = evaluate(windowScenes);
     let coverageRetryCount = 0;
 
-    // Single repair retry: coverage failure (highest priority) → gap fix;
-    // oversized scenes → duration-split repair. Undersized scenes are logged
-    // but NOT retried — they are accepted to avoid breaking coverage.
-    // In a future version, undersized scenes could be merged post-hoc.
     if (!coverage.ok || oversized.length > 0) {
         let repairHint;
         if (!coverage.ok) {
@@ -989,7 +1205,6 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
         ({ progressInfo, cov: coverage, oversized, undersized } = evaluate(windowScenes));
     }
 
-    // Coverage is the only hard trigger for the deterministic fallback.
     if (!coverage.ok) {
         console.warn(`[AGENT] scene coverage retry failed: ${coverage.reason}; using deterministic fallback`);
         coverageRetryCount += 1;
@@ -1000,8 +1215,6 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
         }
     }
 
-    // Duration is soft: if scenes remain oversized after the retry (coverage OK),
-    // accept them rather than risk a coverage gap. Log for auditing.
     if (oversized.length > 0) {
         console.warn(JSON.stringify({
             event: 'scene_duration_over_max',
@@ -1011,7 +1224,6 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
         }));
     }
 
-    // Log undersized scenes (below MIN_SEC) for monitoring.
     if (undersized.length > 0) {
         console.warn(JSON.stringify({
             event: 'scene_duration_below_min',
@@ -1043,8 +1255,6 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
         const windowTotalScenes = windowScenes.length;
         const windowStartScene = sceneOffset + 1;
 
-        // Publish per-scene progress with both cumulative and current-block
-        // counters. The block can contain fewer than WINDOW_SIZE scenes.
         publishVBook({
             stage: 'creating_units',
             scene_index: globalSceneIndex + 1,
@@ -1055,7 +1265,36 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
             window_start_scene: windowStartScene,
         });
 
+        // ── Coreference Resolution: Fine mention pass per scene ──
+        // Resolve character mentions in this scene's text before creating units.
+        _progress({ stage: 'resolving_mentions', message: PROGRESS_STAGES.resolving_mentions });
+        await updateSession(sessionId, { progress_msg: `${PROGRESS_STAGES.resolving_mentions} (сцена ${globalSceneIndex + 1})` });
+        await stepResolveCharacterMentions(sessionId, bookId || 'unknown', {
+            generationSpanText: scene.text || '',
+            generationSpanStart: scene.source_start || 0,
+            generationSpanEnd: scene.source_end || 0,
+            surroundingContext: '',
+            candidateCharacters: coarseResult.candidate_characters || [],
+            fullCharacters: characters,
+            chapterId: null,
+            sceneId: scene.id || `scene_${globalSceneIndex}`,
+            windowIndex: stepIndex || 0,
+        });
+
         const units = await stepCreateUnits(sessionId, scene, globalSceneIndex, characters, stepIndex, _progress);
+
+        // ── Coreference Resolution: Assign unit participants ──
+        // Intersect unit source spans with resolved mentions to get per-unit character IDs.
+        const unitParticipants = await assignUnitParticipants(
+            bookId || 'unknown',
+            null,
+            scene.id || `scene_${globalSceneIndex}`,
+            units
+        );
+        const unitsWithParticipants = units.map((u, ui) => ({
+            ...u,
+            participants: unitParticipants[ui] || u.participants || [],
+        }));
 
         publishVBook({
             stage: 'creating_visuals',
@@ -1067,7 +1306,7 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
             window_start_scene: windowStartScene,
         });
 
-        const visualUnits = await stepCreateVisuals(sessionId, scene, units, globalSceneIndex, characters, locations, stepIndex, _progress);
+        const visualUnits = await stepCreateVisuals(sessionId, scene, unitsWithParticipants, globalSceneIndex, characters, locations, stepIndex, _progress);
         const sceneSpan = coverage.scene_spans[si] || null;
         let annotatedUnits = visualUnits;
 
@@ -1112,7 +1351,7 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
     };
 }
 
-// Forward-declare for bootstrapNextWindow (it references the same publish progress pattern)
+// Forward-declare for bootstrapNextWindow
 
 async function bootstrapWithAgent(bookId, progress, publishProgress) {
     const _progress = progress || (() => {});
@@ -1177,8 +1416,6 @@ async function bootstrapWithAgent(bookId, progress, publishProgress) {
             throw new Error('AI returned no scenes — cannot create book');
         }
 
-        // All scenes for this chunk are processed and saved — no cached "extra"
-        // scenes carried to the next window (the offset advances past covered text).
         const extraScenes = [];
 
         const sceneConsumedOffset = result.nextOffset ?? result.coverage?.next_offset;
@@ -1266,10 +1503,6 @@ async function bootstrapNextWindow(bookId, progress, publishProgress) {
     const draft = lazyBook.loadDraftBook(bookId);
     if (!draft || !draft.sourceText) throw new Error(`Book ${bookId} not found`);
 
-    // ── Dedup: check if the CURRENT offset has already been processed ──
-    // If there's a recent 'paused' or 'completed' session whose window_data
-    // has the same currentOffset as we'd compute, skip processing to avoid
-    // re-processing the same text window (infinite loop).
     let windowData = null;
     try {
         const prevResult = await query(
@@ -1282,15 +1515,11 @@ async function bootstrapNextWindow(bookId, progress, publishProgress) {
             const prevStatus = prevResult.rows[0].status;
             console.log(`[AGENT] bootstrapNextWindow: prev session status=${prevStatus}, currentOffset=${windowData?.currentOffset}`);
 
-            // If the previous session was 'completed' and had the same
-            // currentOffset remaining_text is empty, then all windows are done.
             if (prevStatus === 'completed') {
                 console.log(`[AGENT] bootstrapNextWindow: previous session completed, all done`);
                 return { session_id: null, cached: false, added_scenes: 0, all_done: true };
             }
 
-            // If previous session is 'paused' with no remaining text and no
-            // remaining scenes, it's also done.
             if (prevStatus === 'paused' &&
                 (!windowData.remaining_text || windowData.remaining_text.length === 0) &&
                 (!windowData.remaining_scenes || windowData.remaining_scenes.length === 0)) {
@@ -1306,15 +1535,8 @@ async function bootstrapNextWindow(bookId, progress, publishProgress) {
     const existingChars = windowData?.all_characters || [];
     const existingLocs = windowData?.all_locations || [];
 
-    // ── Final dedup: if we already have a session for THIS windowStartOffset, skip ──
-    // Use windowStartOffset (start of AI-processed text) rather than currentOffset
-    // (end of previous window) to avoid matching the previous session itself.
     const windowInfo = getWindowText(draft.sourceText, existingChars, existingLocs, 1, currentOffset);
 
-    // ── Seam diagnostic: verify no VISIBLE (non-whitespace, non-header) source
-    // text is dropped between the previous window's covered end and this
-    // window's narrative start. getWindowText re-applies findNarrativeStartOffset
-    // which should only skip chapter headers / blank lines, never prose.
     const prevCoveredEnd = windowData?.coveredEndOffset;
     if (typeof prevCoveredEnd === 'number' && windowInfo.windowStartOffset > prevCoveredEnd) {
         const seam = draft.sourceText.substring(prevCoveredEnd, windowInfo.windowStartOffset);
@@ -1390,7 +1612,6 @@ async function bootstrapNextWindow(bookId, progress, publishProgress) {
             bookId,
         });
 
-        // All scenes for this chunk are processed and saved — no cached "extra".
         const extraScenes = [];
 
         const sceneConsumedOffset = result.nextOffset ?? result.coverage?.next_offset;
@@ -1409,7 +1630,6 @@ async function bootstrapNextWindow(bookId, progress, publishProgress) {
             structure: structure,
         });
 
-        // runPipeline returns already-merged set (chars enriched, new added)
         const updatedWindowData = {
             window_index: nextWindowIndex,
             chapter_title: windowInfo.chapterTitle,
@@ -1486,4 +1706,10 @@ module.exports = {
     isGenericSceneTitle,
     resolveSceneProgress,
     buildVisualExemplars,
+    // Coreference resolution exports
+    stepCollectCharacterCandidates,
+    stepResolveCharacterMentions,
+    assignUnitParticipants,
+    computeHash,
+    normalizeForMatch,
 };

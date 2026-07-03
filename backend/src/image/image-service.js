@@ -242,18 +242,65 @@ function resolveState(c, chapter, scene) {
 }
 
 function buildCharacters(scenePayload, unit, chapter, book) {
-    // Passports are keyed by character id and injected from the participant id
-    // list. Per prompt-dependency-registry, scene.participants is the source of
-    // truth; unit.participants is almost always empty (units are created with
-    // participants: []). Union both, preferring ids that resolve to a character.
-    const participants = [
-        ...(scenePayload?.participants || []),
-        ...(unit?.participants || []),
-    ]
+    // ── Coreference-aware participant resolution ──
+    // Priority:
+    //   1. unit.participants — from assignUnitParticipants (span intersection)
+    //   2. scene.participants — scene-level metadata
+    //   3. Fallback: infer from visual prompt (legacy)
+    //
+    // unit.participants takes precedence because it's the most granular:
+    // each unit gets only the characters that appear in its source text span.
+    let source = 'unit_scene';
+    let participants = [];
+
+    if (unit?.participants?.length) {
+        // Primary: unit-level from coreference resolution
+        participants = unit.participants;
+        source = 'unit_coreference';
+    } else if (scenePayload?.participants?.length) {
+        // Secondary: scene-level participants
+        participants = scenePayload.participants;
+        source = 'scene';
+    } else {
+        // Fallback: infer from visual prompt (legacy)
+        const prompt = unit?.visual?.prompt || scenePayload?.visual?.prompt || '';
+        const inferred = inferCharactersFromPrompt(prompt, book);
+        if (inferred.length > 0) {
+            console.warn(`[COREFERENCE] Fallback inferCharactersFromPrompt for unit/visual prompt — ${inferred.length} chars inferred`);
+            participants = inferred.map(c => c.id);
+            source = 'fallback_infer';
+        }
+    }
+
+    if (participants.length === 0) {
+        return [];
+    }
+
     const seen = new Set()
     const chars = participants
         .filter(id => (seen.has(id) ? false : (seen.add(id), true)))
-        .map(id => book.characters?.find(c => c.id === id))
+        .map(id => {
+            // 1. Exact ID match
+            const exact = book.characters?.find(c => c.id === id);
+            if (exact) return exact;
+            // 2. Fuzzy: try matching via aliases (e.g. "berlilioz" → "berlioz" via name tokens)
+            //    Scan character names for token overlap with the participant ID
+            const idNorm = normalizeForMatch(id);
+            for (const c of (book.characters || [])) {
+                const cNameNorm = normalizeForMatch(c.name || '');
+                if (idNorm && cNameNorm) {
+                    const idTokens = new Set(idNorm.split(/\s+/).filter(Boolean));
+                    const nameTokens = cNameNorm.split(/\s+/).filter(Boolean);
+                    // If any token of the participant ID appears in the character's name or vice versa
+                    if ([...idTokens].some(t => t.length >= 4 && nameTokens.some(nt =>
+                        nt.startsWith(t.slice(0, 4)) || t.startsWith(nt.slice(0, 4))
+                    ))) {
+                        return c;
+                    }
+                }
+            }
+            return null;
+        })
         .filter(Boolean)
     if (!chars.length) {
         return []
@@ -334,14 +381,26 @@ function buildCharacterAliases(c) {
     return [...aliases].sort((a, b) => b.length - a.length)
 }
 
-function normalizeCharacterRefs(text, characters) {
-    if (!text || !characters?.length) return text
+function normalizeCharacterRefs(text, characters, aliasIndex) {
+    if (!text) return text
+
+    // Strategy 1: Use safe alias index (from DB character_aliases, most reliable)
+    if (aliasIndex && typeof aliasIndex === 'object' && Object.keys(aliasIndex).length > 0) {
+        let result = text
+        for (const [alias, charId] of Object.entries(aliasIndex)) {
+            // Only replace word-boundary occurrences
+            const re = new RegExp('(?<!\\w)' + alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?!\\w)', 'gi')
+            result = result.replace(re, charId)
+        }
+        return result
+    }
+
+    // Strategy 2: Build aliases from character data (legacy)
+    if (!characters?.length) return text
     let result = text
-    // collect all aliases to avoid id-as-alias collisions
     for (const c of characters) {
         const aliases = buildCharacterAliases(c)
         for (const alias of aliases) {
-            // avoid matching inside underscore-connected identifiers
             const re = new RegExp('(?<!\\w)' + alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?!\\w)', 'gi')
             result = result.replace(re, c.id)
         }
@@ -489,27 +548,99 @@ function resolveLocationFromPrompt(directPrompt, bible) {
  * Build character passport strings by scanning the direct prompt for character_ids
  * when scene/unit participants is empty. This ensures passports are injected
  * even if the AI failed to populate the participants field.
+ *
+ * Supports:
+ *   — matching by character_id (exact word boundary)
+ *   — matching by character name (Russian) and transliteration (e.g. "женщина" → "zhenshchina")
+ *   — matching partial token parts (e.g. "bezdomny_right" matches "bezdomny")
+ *   — deduplication: if a shorter ID is contained in a longer one, keep only the longer
  */
-function inferCharactersFromPrompt(directPrompt, book) {
+function inferCharactersFromPrompt(directPrompt, book, contextInfo) {
     if (!directPrompt || !book?.characters?.length) return [];
-    const result = [];
-    const prompt = directPrompt.toLowerCase();
+    // Log fallback usage for monitoring
+    console.warn(`[COREFERENCE] inferCharactersFromPrompt fallback used${contextInfo ? ' (' + contextInfo + ')' : ''}`);
+    const matched = [];
+    const promptL = directPrompt.toLowerCase();
+    const normalizedPrompt = normalizeForMatch(directPrompt);
+    const promptTokens = normalizedPrompt.split(/\s+/).filter(Boolean);
+
     for (const c of book.characters) {
-        // Check if character_id appears as a token in the prompt.
-        // We build a regex that matches the character_id (with _ or - separators)
-        // at a word boundary: preceded by whitespace/punctuation/start, followed by same.
-        // Using character classes to avoid escaping complexity.
+        let found = false;
+
+        // ── Strategy 1: match character_id as word-boundary token ──
         const separators = '[-_]';
         const idParts = c.id.split(/[_]+/);
         const pattern = idParts.join(separators);
-        // Build boundaries using simple character classes
         const boundary = '[\\s.,;!?"\'\\`()\\[\\]{}]';
         const re = new RegExp('(?:^|' + boundary + ')' + pattern + '(?=$|' + boundary + ')', 'i');
-        if (re.test(prompt)) {
-            result.push(c);
+        if (re.test(promptL)) found = true;
+
+        // ── Strategy 2: match by character name (Russian) ──
+        if (!found && c.name) {
+            // Check full name against prompt
+            const nameLower = c.name.toLowerCase();
+            const nameNorm = normalizeForMatch(c.name);
+            // Full name as a word boundary token
+            if (nameLower.length >= 3) {
+                const nameRe = new RegExp('(?<!\\w)' + nameLower.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?!\\w)', 'i');
+                if (nameRe.test(promptL)) found = true;
+            }
+            // Check individual words of the name (e.g. "Берлиоз" → matches "berlioz" in prompt)
+            if (!found) {
+                const nameTokens = nameNorm.split(/\s+/).filter(Boolean);
+                for (const nt of nameTokens) {
+                    if (nt.length < 3) continue;
+                    // Exact word match in normalized prompt
+                    if (promptTokens.includes(nt)) { found = true; break; }
+                    // Prefix match (handles transliteration differences: "zhenshchina" ≈ "zhenschina")
+                    if (nt.length >= 4 && promptTokens.some(pt =>
+                        pt.startsWith(nt.slice(0, 4)) || nt.startsWith(pt.slice(0, 4))
+                    )) { found = true; break; }
+                }
+            }
+        }
+
+        // ── Strategy 3: match partial prompt tokens ──
+        // Handles cases like "bezdomny_right" in prompt ↔ character id "bezdomny"
+        if (!found) {
+            const idPartsSet = new Set(c.id.split(/[_]+/).filter(p => p.length >= 3));
+            if (idPartsSet.size > 0) {
+                for (const token of promptTokens) {
+                    const tokenParts = token.split(/[-_]+/);
+                    if (tokenParts.some(tp => idPartsSet.has(tp))) {
+                        found = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (found) {
+            matched.push(c);
         }
     }
-    return result;
+
+    // ── Deduplicate: if a shorter ID's tokens are all contained in a longer ID's tokens,
+    //     the shorter is an alias/duplicate — keep only the longer (more complete passport).
+    //     e.g. "berlioz" is contained in "mikhail_aleksandrovich_berlioz" → keep the latter.
+    const deduped = [];
+    const contained = new Set();
+    for (let i = 0; i < matched.length; i++) {
+        for (let j = 0; j < matched.length; j++) {
+            if (i === j) continue;
+            const aTokens = new Set(matched[i].id.split('_'));
+            const bTokens = new Set(matched[j].id.split('_'));
+            // If b's tokens are all in a's tokens and b is shorter, b is a duplicate
+            if (bTokens.size < aTokens.size && [...bTokens].every(t => aTokens.has(t))) {
+                contained.add(j);
+            }
+        }
+    }
+    for (let i = 0; i < matched.length; i++) {
+        if (!contained.has(i)) deduped.push(matched[i]);
+    }
+
+    return deduped;
 }
 
 function buildImagePrompt(iuPayload, scenePayload, chapterPayload, bookPayload) {
@@ -972,6 +1103,65 @@ async function getOrCreatePreview(bookId, chapterId, sceneId, iuId, buildId) {
     return null;
 }
 
+// ── Generic words that must NOT go into the alias index ──
+const GENERIC_WORDS = new Set([
+    'он', 'она', 'оно', 'они', 'его', 'её', 'их', 'ему', 'ей', 'ним',
+    'мужчина', 'женщина', 'человек', 'люди', 'толпа',
+    'господин', 'госпожа', 'товарищ', 'гражданин',
+    'кто-то', 'некто', 'кто-нибудь', 'все',
+]);
+
+const UNSAFE_MENTION_TYPES = new Set(['pronoun', 'unknown']);
+
+/**
+ * Build a safe alias index from character_mentions rows.
+ * Only includes unambiguous mentions (where alias_norm → exactly one character_id)
+ * and excludes generic words, pronouns, and unknown mentions.
+ *
+ * @param {Array<Object>} characterMentions - Array of mention objects from DB:
+ *   [{ mention_text, mention_norm, character_id, mention_type }]
+ * @returns {Object} { alias_norm: character_id } — only safe (unambiguous) aliases
+ */
+function buildSafeAliasIndex(characterMentions) {
+    if (!Array.isArray(characterMentions) || characterMentions.length === 0) return {};
+
+    const aliasMap = new Map(); // alias_norm → Set<character_id>
+    const collisions = new Set();
+
+    for (const m of characterMentions) {
+        // Skip unsafe mention types
+        if (UNSAFE_MENTION_TYPES.has(m.mention_type)) continue;
+
+        const norm = m.mention_norm || normalizeForMatch(m.mention_text || '');
+        if (!norm || norm.length < 2) continue;
+        if (GENERIC_WORDS.has(norm)) continue;
+        if (!m.character_id) continue;
+
+        const existing = aliasMap.get(norm) || new Set();
+        existing.add(m.character_id);
+        aliasMap.set(norm, existing);
+
+        if (existing.size > 1) {
+            collisions.add(norm);
+        }
+    }
+
+    // Remove all collided aliases
+    for (const alias of collisions) {
+        aliasMap.delete(alias);
+    }
+
+    // Return only unambiguous mappings
+    const result = {};
+    for (const [alias, ids] of aliasMap.entries()) {
+        if (ids.size === 1) {
+            result[alias] = [...ids][0];
+        }
+    }
+
+    return result;
+}
+
 // ======================================================
 // EXPORTS
 // ======================================================
@@ -1002,4 +1192,6 @@ module.exports = {
     resolveLocationFromPrompt,
     inferCharactersFromPrompt,
     isTypographyStyle,
+    // Coreference resolution exports
+    buildSafeAliasIndex,
 };

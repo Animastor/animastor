@@ -10,6 +10,8 @@
 const path = require('path');
 const fs = require('fs');
 
+const { query } = require('../storage/postgres/database');
+
 module.exports = function(redis, config, { log }) {
     const OUTPUT_DIR = config.OUTPUT_DIR;
 
@@ -230,6 +232,50 @@ module.exports = function(redis, config, { log }) {
         return null;
     }
 
+    // ── Cleanup resolution rows for a deleted book ──
+    async function cleanupBookResolutions(bookId) {
+        if (!bookId) {
+            console.warn('⚠️ cleanupBookResolutions: no bookId provided');
+            return { ok: false, reason: 'no_book_id' };
+        }
+        try {
+            const runs = await query(
+                `DELETE FROM character_resolution_runs WHERE book_id = $1 RETURNING run_id`,
+                [bookId]
+            );
+            const count = runs.rowCount || 0;
+            log(`🗑 Cleaned up ${count} resolution run(s) for book ${bookId}`);
+            return { ok: true, deleted_runs: count };
+        } catch (err) {
+            console.error(`❌ Failed to cleanup resolution rows for book ${bookId}:`, err.message);
+            return { ok: false, reason: 'db_error', error: err.message };
+        }
+    }
+
+    // ── Cleanup resolution rows for a deleted scene ──
+    async function cleanupSceneResolutionRows(bookId, chapterId, sceneId) {
+        if (!bookId || !sceneId) {
+            return { ok: false, reason: 'missing_ids' };
+        }
+        try {
+            // Delete character_mentions for this scene
+            const mentions = await query(
+                `DELETE FROM character_mentions WHERE book_id = $1 AND ($2::text IS NULL OR chapter_id = $2) AND scene_id = $3`,
+                [bookId, chapterId || null, sceneId]
+            );
+            // Delete sentence_resolutions for this scene
+            const sentences = await query(
+                `DELETE FROM sentence_resolutions WHERE book_id = $1 AND ($2::text IS NULL OR chapter_id = $2) AND scene_id = $3`,
+                [bookId, chapterId || null, sceneId]
+            );
+            log(`🗑 Cleaned up ${mentions.rowCount || 0} mentions and ${sentences.rowCount || 0} sentence resolutions for scene ${sceneId}`);
+            return { ok: true };
+        } catch (err) {
+            console.error(`❌ Failed to cleanup resolution rows for scene ${sceneId}:`, err.message);
+            return { ok: false, reason: 'db_error', error: err.message };
+        }
+    }
+
     return {
         stats,
         safeBuildPath,
@@ -239,5 +285,7 @@ module.exports = function(redis, config, { log }) {
         cleanupExpiredAudioSceneLocks,
         startCleanupInterval,
         resolveAssetPath,
+        cleanupBookResolutions,
+        cleanupSceneResolutionRows,
     };
 };

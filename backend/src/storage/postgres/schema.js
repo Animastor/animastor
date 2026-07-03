@@ -358,8 +358,9 @@ CREATE TABLE IF NOT EXISTS agent_steps (
     step_id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     session_id      UUID NOT NULL REFERENCES agent_sessions(session_id) ON DELETE CASCADE,
     step_type       TEXT NOT NULL CHECK(step_type IN (
-                        'analyze_characters','analyze_locations','create_scenes',
-                        'create_units','create_visual_prompts'
+                        'analyze_structure','analyze_characters','analyze_locations','create_scenes',
+                        'create_units','create_visual_prompts',
+                        'collect_character_candidates','resolve_character_mentions'
                     )),
     step_index      INTEGER NOT NULL DEFAULT 0,
     scene_index     INTEGER, -- NULL for whole-chapter steps, scene index for per-scene steps
@@ -539,9 +540,10 @@ async function runMigrations() {
         await query(`ALTER TABLE agent_steps ADD CONSTRAINT agent_steps_step_type_check
             CHECK (step_type IN (
                 'analyze_structure','analyze_characters','analyze_locations',
-                'create_scenes','create_units','create_visual_prompts'
+                'create_scenes','create_units','create_visual_prompts',
+                'collect_character_candidates','resolve_character_mentions'
             ))`);
-        console.log('[PG] Updated agent_steps step_type check constraint (added analyze_structure)');
+        console.log('[PG] Updated agent_steps step_type check constraint (added analyze_structure, collect_character_candidates, resolve_character_mentions)');
     } catch (err) {
         if (!err.message.includes('does not exist')) {
             console.error('[PG] Failed to update step_type constraint:', err.message);
@@ -582,6 +584,148 @@ async function runMigrations() {
     } catch (err) {
         if (!err.message.includes('already exists')) {
             console.error('[PG] Failed to add scenes.is_dirty:', err.message);
+        }
+    }
+
+    // ======================================================
+    // Coreference Resolution: 5 tables (P0)
+    // ======================================================
+    // Character resolution pipeline stores:
+    //   character_resolution_runs — versioned run tracking
+    //   character_window_candidates — coarse candidate collection
+    //   sentence_resolutions — sentence-level (for scene metadata)
+    //   character_mentions — mention-level (for unit participants)
+    //   character_aliases — safe alias index built from mentions
+
+    try {
+        await query(`CREATE TABLE IF NOT EXISTS character_resolution_runs (
+            run_id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            book_id                 TEXT NOT NULL,
+            chapter_id              TEXT,
+            analysis_window_index   INTEGER NOT NULL,
+            run_type                TEXT NOT NULL CHECK(run_type IN ('coarse_candidates','fine_mentions')),
+            source_start            INTEGER NOT NULL,
+            source_end              INTEGER NOT NULL,
+            generation_start        INTEGER,
+            generation_end          INTEGER,
+            resolver_version        TEXT NOT NULL,
+            model                   TEXT,
+            character_registry_hash TEXT NOT NULL,
+            source_hash             TEXT NOT NULL,
+            status                  TEXT NOT NULL CHECK(status IN ('running','completed','failed')),
+            error                   TEXT,
+            created_at              BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::bigint),
+            completed_at            BIGINT
+        )`);
+        console.log('[PG] Created character_resolution_runs table');
+    } catch (err) {
+        if (!err.message.includes('already exists')) {
+            console.error('[PG] Failed to create character_resolution_runs:', err.message);
+        }
+    }
+
+    try {
+        await query(`CREATE TABLE IF NOT EXISTS character_window_candidates (
+            id                      BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            run_id                  UUID NOT NULL REFERENCES character_resolution_runs(run_id) ON DELETE CASCADE,
+            book_id                 TEXT NOT NULL,
+            chapter_id              TEXT,
+            analysis_window_index   INTEGER NOT NULL,
+            source_start            INTEGER NOT NULL,
+            source_end              INTEGER NOT NULL,
+            character_id            TEXT NOT NULL,
+            alias_texts             TEXT[] NOT NULL DEFAULT '{}',
+            evidence                TEXT,
+            confidence              REAL,
+            created_at              BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::bigint),
+            UNIQUE(run_id, character_id)
+        )`);
+        await query(`CREATE INDEX IF NOT EXISTS idx_char_candidates_book_window
+            ON character_window_candidates(book_id, analysis_window_index)`);
+        console.log('[PG] Created character_window_candidates table');
+    } catch (err) {
+        if (!err.message.includes('already exists')) {
+            console.error('[PG] Failed to create character_window_candidates:', err.message);
+        }
+    }
+
+    try {
+        await query(`CREATE TABLE IF NOT EXISTS sentence_resolutions (
+            id              BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            run_id          UUID NOT NULL REFERENCES character_resolution_runs(run_id) ON DELETE CASCADE,
+            book_id         TEXT NOT NULL,
+            chapter_id      TEXT,
+            scene_id        TEXT NOT NULL,
+            sentence_index  INTEGER NOT NULL,
+            source_start    INTEGER NOT NULL,
+            source_end      INTEGER NOT NULL,
+            sentence_text   TEXT NOT NULL,
+            character_ids   TEXT[] NOT NULL DEFAULT '{}',
+            unknown_mentions JSONB NOT NULL DEFAULT '[]'::jsonb,
+            resolved_by     TEXT NOT NULL DEFAULT 'agent' CHECK(resolved_by IN ('agent','fallback')),
+            created_at      BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::bigint),
+            UNIQUE(run_id, scene_id, sentence_index)
+        )`);
+        await query(`CREATE INDEX IF NOT EXISTS idx_sentence_resolutions_book_span
+            ON sentence_resolutions(book_id, source_start, source_end)`);
+        console.log('[PG] Created sentence_resolutions table');
+    } catch (err) {
+        if (!err.message.includes('already exists')) {
+            console.error('[PG] Failed to create sentence_resolutions:', err.message);
+        }
+    }
+
+    try {
+        await query(`CREATE TABLE IF NOT EXISTS character_mentions (
+            id              BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            run_id          UUID NOT NULL REFERENCES character_resolution_runs(run_id) ON DELETE CASCADE,
+            book_id         TEXT NOT NULL,
+            chapter_id      TEXT,
+            scene_id        TEXT,
+            sentence_index  INTEGER NOT NULL,
+            source_start    INTEGER NOT NULL,
+            source_end      INTEGER NOT NULL,
+            mention_text    TEXT NOT NULL,
+            mention_norm    TEXT NOT NULL,
+            character_id    TEXT,
+            mention_type    TEXT NOT NULL CHECK(mention_type IN (
+                'name','profession','description','pronoun','nickname','title','unknown'
+            )),
+            role            TEXT CHECK(role IN ('subject','object','possessive','passive','unknown')),
+            confidence      REAL,
+            evidence        TEXT,
+            created_at      BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::bigint)
+        )`);
+        await query(`CREATE INDEX IF NOT EXISTS idx_char_mentions_book_span
+            ON character_mentions(book_id, source_start, source_end)`);
+        await query(`CREATE INDEX IF NOT EXISTS idx_char_mentions_book_char
+            ON character_mentions(book_id, character_id)`);
+        console.log('[PG] Created character_mentions table');
+    } catch (err) {
+        if (!err.message.includes('already exists')) {
+            console.error('[PG] Failed to create character_mentions:', err.message);
+        }
+    }
+
+    try {
+        await query(`CREATE TABLE IF NOT EXISTS character_aliases (
+            book_id         TEXT NOT NULL,
+            alias_norm      TEXT NOT NULL,
+            alias_text      TEXT NOT NULL,
+            character_id    TEXT NOT NULL,
+            source          TEXT NOT NULL CHECK(source IN ('character_name','mention_resolution','manual')),
+            evidence_count  INTEGER NOT NULL DEFAULT 1,
+            is_safe         BOOLEAN NOT NULL DEFAULT FALSE,
+            reason          TEXT,
+            updated_at      BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::bigint),
+            PRIMARY KEY(book_id, alias_norm, character_id)
+        )`);
+        await query(`CREATE INDEX IF NOT EXISTS idx_char_aliases_book
+            ON character_aliases(book_id, alias_norm)`);
+        console.log('[PG] Created character_aliases table');
+    } catch (err) {
+        if (!err.message.includes('already exists')) {
+            console.error('[PG] Failed to create character_aliases:', err.message);
         }
     }
 
