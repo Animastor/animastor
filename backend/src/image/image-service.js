@@ -796,4 +796,5 @@ module.exports = {
     applyImageValue,
     getImageNodeId,
     WORKFLOW_NAME,
+    normalizeCharacterRefs,
 };

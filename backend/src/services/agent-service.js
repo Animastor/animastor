@@ -12,6 +12,7 @@ const {
 } = require('./agent-prompts');
 const sourceCoverage = require('./source-coverage');
 const { estimateSpeechDurationSec } = require('./placeholder-audio');
+const { normalizeCharacterRefs } = require('../image/image-service');
 
 async function callAI(messages, options) {
     const model = options?.model || config.OPENROUTER_MODEL || 'qwen/qwen3.5-122b-a10b';
@@ -445,7 +446,7 @@ async function stepCreateVisuals(sessionId, scene, units, sceneIndex, characters
         const merged = units.map((u, i) => {
             const vu = visualUnits[i];
             if (vu && vu.visual) {
-                return { ...u, visual: vu.visual };
+                return { ...u, visual: { ...vu.visual, prompt: normalizeCharacterRefs(vu.visual.prompt, characters) } };
             }
             return {
                 ...u,
