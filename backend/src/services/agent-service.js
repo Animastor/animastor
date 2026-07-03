@@ -417,10 +417,14 @@ async function stepCreateVisuals(sessionId, scene, units, sceneIndex, characters
     if (scene.participants && scene.participants.length > 0 && namedCount === 0) {
         contextParts.push('(unknown characters)');
     }
+    const sceneFullText = scene.audio?.full_text || scene.text || units.map(u => u.text).filter(Boolean).join(' ')
+    if (sceneFullText) {
+        contextParts.push('', `Full scene text:\n${sceneFullText.substring(0, 1500)}`)
+    }
     const contextStr = contextParts.join('\n');
 
     const unitsStr = units.map((u, i) =>
-        `Unit ${i + 1}: text="${(u.text || '').substring(0, 200)}", type="${u.type || 'perception'}"`
+        `Unit ${i + 1}: text="${(u.text || '').substring(0, 300)}", type="${u.type || 'perception'}"`
     ).join('\n');
 
     const prompt = SYSTEM_PROMPTS.visuals
