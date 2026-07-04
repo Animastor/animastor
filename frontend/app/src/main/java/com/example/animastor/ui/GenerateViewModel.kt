@@ -744,11 +744,13 @@ class GenerateViewModel(
 
                 // Start Bootstrap (creates AI session for first window)
                 val bootstrapRes = _repository.bootstrapBook(bId)
+                syncMsgsWithSSE(msgs)
                 msgs.add("✓ Импорт завершён: ${bootstrapRes.characters} персонажей, ${bootstrapRes.locations} локаций, ${bootstrapRes.scenes} сцен")
                 _uiState.update { it.copy(importProgressMessages = msgs.toList()) }
 
                 // Continue polling for subsequent windows
                 pollAgentProgress(bId, msgs);
+                syncMsgsWithSSE(msgs)
                 msgs.add("💬 Можете задать вопросы или запустить генерацию через кнопку на панели инструментов.")
                 _uiState.update { it.copy(importProgressMessages = msgs.toList()) }
 
@@ -797,6 +799,20 @@ class GenerateViewModel(
                     importProgressMessages = msgs.toList()
                 )}
             }
+        }
+    }
+
+    /**
+     * Sync the local [msgs] list with any SSE-added messages in [GenUiState.importProgressMessages].
+     * SSE events (type="vbook") add messages to importProgressMessages directly from the
+     * ProgressStream callback. The local [msgs] list in importTxtFromFile must stay in sync
+     * so that subsequent _uiState updates don't overwrite SSE messages.
+     */
+    private fun syncMsgsWithSSE(msgs: MutableList<String>) {
+        val existing = _uiState.value.importProgressMessages
+        if (existing.size > msgs.size) {
+            val sseOnly = existing.drop(msgs.size)
+            msgs.addAll(sseOnly)
         }
     }
 
