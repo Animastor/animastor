@@ -15,6 +15,10 @@ const {
     firstMeaningfulChapter, detectLanguage,
     injectChapterMarkers,
 } = require('./parser');
+const {
+    findCanonicalCharacter,
+    isGenericCharacter,
+} = require('../../utils/character-identity');
 
 function createDraftBook(sourceText, sourceType, title) {
     const bookId = generateBookId(title || 'untitled');
@@ -757,8 +761,17 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
     const defaultVoiceEn = 'A mature male voice. Deep, calm, reflective. Native English pronunciation.';
 
     for (const ch of (analysis.characters || [])) {
-        if (existingIds.has(ch.id)) continue;
         const charId = ch.id || ch.name.toLowerCase().replace(/[^a-zа-яё0-9]+/g, '_').replace(/^_|_$/g, '');
+        if (existingIds.has(charId)) continue;
+        if (isGenericCharacter({ ...ch, id: charId })) {
+            console.warn(`[LAZY-BOOK] Skipping generic character without stable context: ${charId}`);
+            continue;
+        }
+        const canonical = findCanonicalCharacter({ ...ch, id: charId }, mergedCharacters);
+        if (canonical) {
+            console.log(`[LAZY-BOOK] Merged character alias ${charId} -> ${canonical.id}`);
+            continue;
+        }
 
         const rawAppearance = ch.appearance || ch.description || null;
 

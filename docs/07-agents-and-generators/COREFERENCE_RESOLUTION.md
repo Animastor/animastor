@@ -229,6 +229,20 @@ function assignUnitParticipants(bookId, chapterId, sceneId, units) {
 - Secondary: `scene.participants` (как fallback для scene-level metadata)
 - Fallback: legacy `inferCharactersFromPrompt()` (логировать, когда сработал)
 
+### Текущие implementation guards
+
+В текущей реализации `unit.participants` уже используется как основной ограничитель для visual prompts:
+
+- visual context включает union `scene.participants` и `unit.participants`, чтобы агент видел паспорта только известных релевантных персонажей;
+- каждый IU передаётся в prompt как `participants=[...]`;
+- passport injection строится по `unit.participants`, а если они пустые — по `scene.participants`;
+- fallback visual больше не добавляет всех персонажей книги, когда participants пустые;
+- text fallback для `assign_unit_participants` не матчит `mention_type='pronoun'`, потому что подстроки вроде "он" / "она" дают false positive;
+- unresolved mentions с `character_id: null` не попадают в participants;
+- ответы fine resolver валидируются по known character ids: неизвестные/выдуманные id сохраняются как `null`, а не как новый персонаж.
+
+Пока source spans у IU появляются позднее visual шага, `assignUnitParticipants()` использует консервативный text fallback по `mention_text`. После переноса span assignment до visual generation этот шаг должен перейти на span intersection, описанный выше.
+
 ---
 
 ## Safe Alias Index

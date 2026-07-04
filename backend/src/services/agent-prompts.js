@@ -78,11 +78,21 @@ Return ONLY valid JSON. If no structure found, return { "author": null, "title":
 Be precise about header_line — this must be the EXACT text of the header as it appears in the source, which will be excluded from narrative content.`,
 
 
-    characters: `You are a literary analysis assistant. Extract ALL named characters from the provided text.
+    characters: `You are a literary analysis assistant. Extract ALL stable characters from the provided text.
 
 ## Rules
 - Identify every named person (first name, full name, or unique title)
+- Also identify unnamed but stable role-only people who speak, act, or recur as a concrete individual
+  (for example: "woman in the booth", "old guard at the gate", "driver of the carriage").
 - Include only real character names from the text, not objects or abstract concepts
+- Do NOT create generic characters from generic nouns alone ("woman", "man", "person", "citizen",
+  "people", "crowd"). If the text only says a generic noun without a concrete distinguishing context,
+  skip it.
+- For unnamed role-only people, the id MUST include the distinguishing context, never just the generic noun.
+  Good: "zhenshchina_v_budochke", "woman_in_the_booth", "old_guard_at_gate".
+  Bad: "woman", "man", "citizen", "person".
+- If a later text window mentions an already known character by surname, nickname, role, or shorter name,
+  return the existing canonical id when it is clear from context instead of creating a new character.
 - Role: protagonist (main POV character), antagonist (opposes protagonist), supporting (significant side character), minor (briefly mentioned)
 
 For each character, provide:
@@ -333,6 +343,9 @@ When the frame contains people, do NOT answer "what is happening?". Answer: "WHO
 - NEVER use pronouns OR generic collective nouns for participants. The model does not know who "they", "he", "she", "two men", "the writers", or "one person" are — to it each is an unknown new person, so the next frame gets different faces, poses, and framing. Reference EVERY known character EVERY time by their exact character_id from the Scene Context below.
   WRONG: "two men are sitting on a bench" / "the writers are talking" / "one person turns around" / "they continue the conversation".
   RIGHT: "mikhail_alexandrovich_berlioz sitting on the left and ivan_nikolaevich_ponyrev sitting on the right on a bench at patriarch_ponds" / "mikhail_alexandrovich_berlioz looking at ivan_nikolaevich_ponyrev" / "ivan_nikolaevich_ponyrev gesturing while speaking to mikhail_alexandrovich_berlioz".
+- Use ONLY character_ids that are listed in Scene Context or in the unit's participants=[...] field.
+  Do NOT invent new snake_case character ids. If the source text mentions an unnamed person who is not
+  listed there, describe them as a concrete extra in natural language instead of creating an id.
 - When people ARE present, structure the prompt as four parts:
   1. WHO is in frame — by name.
   2. WHERE they are — the global location name (e.g. "at Patriarch Ponds").
@@ -357,11 +370,12 @@ When the frame contains people, do NOT answer "what is happening?". Answer: "WHO
 
 ## Grounding in unit text (CRITICAL)
 The Imagination Unit represents the picture the reader forms from THIS unit text. The visual prompt MUST be grounded in what the unit text describes:
-- If the unit text mentions a specific character (by name or description) → use their character_id from Scene Context
+- If the unit text mentions a specific known character (by name or description) → use their character_id from Scene Context or participants=[...].
+- If the unit text mentions an unnamed person who is not in Scene Context / participants=[...] → describe that person as a specific extra; do not invent a character_id.
 - If the unit text describes a location, object, or action → show exactly that
 - NEVER add characters, objects, or locations that are not present in the unit text
 - The reader does not know about other units, other scenes, or the overall plot — only this text fragment. The visual prompt must match ONLY what this text fragment describes.
-- Example: if the unit text says "женщина в будочке ответила" → the prompt must show woman_in_the_booth (or the appropriate character_id), NOT a different character who appears elsewhere in the book
+- Example: if the unit text says "женщина в будочке ответила" and participants=[zhenshchina_v_budochke] → use zhenshchina_v_budochke. If no such participant exists, write "the booth woman" as an extra, not a made-up id.
 
 ## Scene Context
 %CONTEXT%
@@ -393,6 +407,8 @@ Your task is to identify which known characters are POTENTIALLY active in the pr
 and what aliases, roles, or descriptions might refer to them.
 
 ## Rules
+- candidate_characters[].character_id MUST be copied exactly from the Known Characters list
+- Do NOT invent new character ids in candidate_characters
 - This is a BROAD pass — include any character who might appear, even briefly
 - Look for: names, nicknames, professions, titles, descriptions, and clear pronoun antecedents
 - For each character, note what aliases or role descriptions you observed in the text

@@ -722,6 +722,18 @@ class GenerateViewModel(
 
                 _uiState.update { it.copy(importStage = ImportStage.ANALYZING, importProgress = 0.3f) }
 
+                // ── Connect SSE stream BEFORE bootstrapBook ──
+                // bootstrapBook runs the first AI window synchronously (~30-60s).
+                // The backend publishes progress events to Redis during this call.
+                // Without an active SSE connection, those events are lost.
+                // By starting the stream here, the onProgressEvent handler receives
+                // and displays every stage (extracting_chars → creating_scenes → etc.)
+                // as they happen, instead of showing "Анализ..." until the call returns.
+                startProgressStream(bId)
+                _uiState.update { it.copy(
+                    vbookProgress = VBookProgress(stage = VBookStage.ANALYZING)
+                )}
+
                 // Start Bootstrap (creates AI session for first window)
                 val bootstrapRes = _repository.bootstrapBook(bId)
                 msgs.add("✓ Импорт завершён: ${bootstrapRes.characters} персонажей, ${bootstrapRes.locations} локаций, ${bootstrapRes.scenes} сцен")
@@ -830,12 +842,22 @@ class GenerateViewModel(
                     consecutiveInactive++
                     Log.d(TAG, "[POLL] agent inactive (x$consecutiveInactive)")
 
+                    // Even when the agent session is paused/completed (active=false),
+                    // the progress_msg still contains the last stage message.
+                    // Show it in the chat AND update the progress panel so the user
+                    // sees "создаю сцены..." → "создаю юниты..." → COMPLETED
+                    // instead of going directly from "Анализ..." to COMPLETED.
                     if (status.progress_msg != null && status.progress_msg != lastProgressMsg) {
-                        val finalMsg = status.progress_msg
-                        Log.i(TAG, "[POLL] showing final progress msg: \"$finalMsg\"")
-                        msgs.add(finalMsg)
-                        lastProgressMsg = finalMsg
+                        val currentMsg = status.progress_msg
+                        Log.i(TAG, "[POLL] showing progress msg: \"$currentMsg\"")
+                        msgs.add(currentMsg)
+                        lastProgressMsg = currentMsg
                         _uiState.update { it.copy(importProgressMessages = msgs.toList()) }
+                        // Update the panel too — this handles the case where the
+                        // first window completes before the first poll, so progress
+                        // goes: ANALYZING → CREATING_SCENES → COMPLETED gradually
+                        // instead of ANALYZING → COMPLETED instantly.
+                        updateVBookProgress(status)
                     }
 
                     if (consecutiveInactive >= maxInactive) {
@@ -954,6 +976,9 @@ class GenerateViewModel(
             status.window_scene_index != null -> status.window_scene_index
             globalScene > 0 && inferredWindowStart != null -> globalScene - inferredWindowStart + 1
             globalScene > 0 && globalScene <= windowTotal -> globalScene
+            // Subsequent windows: globalScene (e.g. 5) > windowTotal (3).
+            // Compute window-relative index via modulo: (5-1)%3+1 = 2 → scene 2 of 3
+            globalScene > 0 -> ((globalScene - 1) % windowTotal) + 1
             else -> null
         }
 

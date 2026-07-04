@@ -13,6 +13,7 @@ const {
 const sourceCoverage = require('./source-coverage');
 const { estimateSpeechDurationSec } = require('./placeholder-audio');
 const { normalizeCharacterRefs } = require('../image/image-service');
+const { mergeCharacterLists } = require('../utils/character-identity');
 
 async function callAI(messages, options) {
     const model = options?.model || config.OPENROUTER_MODEL || 'qwen/qwen3.5-122b-a10b';
@@ -395,7 +396,13 @@ async function stepCreateVisuals(sessionId, scene, units, sceneIndex, characters
     contextParts.push('Characters in scene (use their character_id in every prompt — no pronouns, no names):');
     const anchors = scene.character_anchors || {};
     let namedCount = 0;
-    for (const pId of (scene.participants || [])) {
+    const sceneParticipantIds = new Set(scene.participants || []);
+    for (const unit of (units || [])) {
+        for (const pId of (unit.participants || [])) {
+            sceneParticipantIds.add(pId);
+        }
+    }
+    for (const pId of sceneParticipantIds) {
         const ch = (characters || []).find(c => c.id === pId);
         if (!ch) continue;
         const a = anchors[pId];
@@ -406,7 +413,7 @@ async function stepCreateVisuals(sessionId, scene, units, sceneIndex, characters
         contextParts.push(`- ${ch.id}: ${ch.name} — ${passportDesc || ch.description || ''}${arrangement}`);
         namedCount++;
     }
-    if (scene.participants && scene.participants.length > 0 && namedCount === 0) {
+    if (sceneParticipantIds.size > 0 && namedCount === 0) {
         contextParts.push('(unknown characters)');
     }
     const sceneFullText = scene.audio?.full_text || scene.text || units.map(u => u.text).filter(Boolean).join(' ')
@@ -416,7 +423,7 @@ async function stepCreateVisuals(sessionId, scene, units, sceneIndex, characters
     const contextStr = contextParts.join('\n');
 
     const unitsStr = units.map((u, i) =>
-        `Unit ${i + 1}: text="${(u.text || '').substring(0, 300)}", type="${u.type || 'perception'}"`
+        `Unit ${i + 1}: text="${(u.text || '').substring(0, 300)}", type="${u.type || 'perception'}", participants=[${(u.participants || []).join(', ')}]`
     ).join('\n');
 
     const prompt = SYSTEM_PROMPTS.visuals
@@ -433,28 +440,31 @@ async function stepCreateVisuals(sessionId, scene, units, sceneIndex, characters
         const result = await callAI(messages, { maxTokens: 4096 });
         const visualUnits = result.units || [];
 
-        // Build character passport strings from scene participants
-        // These are injected AFTER normalizeCharacterRefs to ensure
-        // character_ids appear in the visual prompt even when the AI
-        // describes characters without naming them.
-        const passportParts = [];
-        for (const pId of (scene.participants || [])) {
-            const ch = (characters || []).find(c => c.id === pId);
-            if (!ch) continue;
-            const desc = [ch.passport?.base_appearance, ch.passport?.detailed_appearance,
-                          ch.passport?.clothing_base, ch.passport?.clothing_details]
-                .filter(Boolean).join('; ');
-            passportParts.push(`${ch.id}: ${desc || ch.description || ch.name}`);
-        }
+        const passportPartsFor = (ids) => {
+            const parts = [];
+            for (const pId of (ids || [])) {
+                const ch = (characters || []).find(c => c.id === pId);
+                if (!ch) continue;
+                const desc = [ch.passport?.base_appearance, ch.passport?.detailed_appearance,
+                              ch.passport?.clothing_base, ch.passport?.clothing_details]
+                    .filter(Boolean).join('; ');
+                parts.push(`${ch.id}: ${desc || ch.description || ch.name}`);
+            }
+            return parts;
+        };
 
         const merged = units.map((u, i) => {
             const vu = visualUnits[i];
             if (vu && vu.visual) {
                 let prompt = normalizeCharacterRefs(vu.visual.prompt, characters);
+                const unitParticipantIds = (u.participants && u.participants.length > 0)
+                    ? u.participants
+                    : (scene.participants || []);
+                const passportParts = passportPartsFor(unitParticipantIds);
                 // Inject character passports into the prompt text
-                if (passportParts.length > 0) {
+                if (vu.visual.character_binding !== false && passportParts.length > 0) {
                     // Only inject if NO character_id from scene participants is already in the prompt
-                    const anyCharIdPresent = (scene.participants || []).some(
+                    const anyCharIdPresent = unitParticipantIds.some(
                         pId => pId && (prompt.includes(pId + ':') || prompt.includes(pId))
                     );
                     if (!anyCharIdPresent) {
@@ -467,7 +477,7 @@ async function stepCreateVisuals(sessionId, scene, units, sceneIndex, characters
                 ...u,
                 visual: {
                     shot: u.type === 'dialogue' ? 'medium' : (u.type === 'description' ? 'wide' : 'medium'),
-                    prompt: getFallbackVisual(u.text, characters, scene),
+                    prompt: getFallbackVisual(u.text, characters, { ...scene, participants: u.participants?.length ? u.participants : scene.participants }),
                     character_binding: true,
                 },
             };
@@ -484,7 +494,7 @@ async function stepCreateVisuals(sessionId, scene, units, sceneIndex, characters
             ...u,
             visual: {
                 shot: u.type === 'dialogue' ? 'medium' : 'wide',
-                prompt: getFallbackVisual(u.text, characters, scene),
+                prompt: getFallbackVisual(u.text, characters, { ...scene, participants: u.participants?.length ? u.participants : scene.participants }),
                 character_binding: true,
             },
         }));
@@ -497,10 +507,34 @@ function getFallbackVisual(text, characters, scene) {
         ? participants
               .map(pId => (characters || []).find(c => c.id === pId)?.id || pId)
               .join(' and ')
-        : ((characters || []).map(c => c.id).join(' and '));
+        : '';
     if (!who) return 'the scene at ' + (scene.location?.id || 'the scene') + ', cinematic shot';
     const locName = scene.location?.id || 'the scene';
     return `${who} at ${locName}, cinematic shot`;
+}
+
+function matchMentionsToUnits(mentions, units) {
+    const safeMentions = (mentions || []).filter(m => m.mention_type !== 'pronoun');
+    if (safeMentions.length === 0 || !units || units.length === 0) return {};
+
+    const unitParticipants = {};
+    for (let ui = 0; ui < units.length; ui++) {
+        const uText = (units[ui]?.text || '').toLowerCase();
+        if (!uText) continue;
+
+        const chars = new Set();
+        for (const m of safeMentions) {
+            const mText = (m.mention_text || '').toLowerCase();
+            if (mText && uText.includes(mText) && m.character_id) {
+                chars.add(m.character_id);
+            }
+        }
+        if (chars.size > 0) {
+            unitParticipants[ui] = [...chars];
+        }
+    }
+
+    return unitParticipants;
 }
 
 function splitTextEvenlyByParagraphs(text, maxScenes) {
@@ -805,6 +839,7 @@ async function stepResolveCharacterMentions(sessionId, bookId, {
     const prompt = SYSTEM_PROMPTS.resolve_mentions
         .replace('%CANDIDATE_CHARACTERS%', candidateStr)
         .replace('%KNOWN_CHARACTERS%', knownCharsStr);
+    const knownIds = new Set((fullCharacters || []).map(c => c.id).filter(Boolean));
 
     const messages = [
         { role: 'system', content: prompt },
@@ -835,6 +870,7 @@ async function stepResolveCharacterMentions(sessionId, bookId, {
                 const sentText = sent.text || '';
                 const sentStart = mentionOffset;
                 const sentEnd = sentStart + sentText.length;
+                const resolvedCharacters = (sent.characters || []).filter(id => knownIds.has(id));
 
                 // Save sentence-level resolution
                 await query(
@@ -844,7 +880,7 @@ async function stepResolveCharacterMentions(sessionId, bookId, {
                      ON CONFLICT (run_id, scene_id, sentence_index) DO NOTHING`,
                     [runId, bookId, chapterId || null, sceneId || '',
                      sent.index || 0, sentStart, sentEnd, sentText,
-                     sent.characters || [], JSON.stringify(sent.unknown_mentions || [])]
+                     resolvedCharacters, JSON.stringify(sent.unknown_mentions || [])]
                 );
 
                 // Save mention-level data
@@ -852,6 +888,7 @@ async function stepResolveCharacterMentions(sessionId, bookId, {
                     const mentionText = mention.text || '';
                     const mentionStart = sentStart + (sentText.indexOf(mentionText) >= 0 ? sentText.indexOf(mentionText) : 0);
                     const mentionEnd = mentionStart + mentionText.length;
+                    const mentionCharacterId = knownIds.has(mention.character_id) ? mention.character_id : null;
 
                     await query(
                         `INSERT INTO character_mentions (run_id, book_id, chapter_id, scene_id,
@@ -861,7 +898,7 @@ async function stepResolveCharacterMentions(sessionId, bookId, {
                         [runId, bookId, chapterId || null, sceneId || '',
                          sent.index || 0, mentionStart, mentionEnd, mentionText,
                          normalizeForMatch(mentionText),
-                         mention.character_id || null,
+                         mentionCharacterId,
                          mention.type || 'unknown',
                          mention.role || 'unknown',
                          mention.confidence || null,
@@ -890,11 +927,10 @@ async function stepResolveCharacterMentions(sessionId, bookId, {
 }
 
 /**
- * Assign unit participants by matching mention_text against unit text.
- * Source-span-based matching is unreliable here because units don't yet have
- * source_start/source_end at the point this function is called in the pipeline.
- * Instead, we check whether each resolved mention text appears as a substring
- * of each unit's text. This is simpler and works regardless of pipeline ordering.
+ * Assign unit participants by matching resolved mention_text against unit text.
+ * Source spans are added after visuals today, so this remains a text fallback.
+ * Pronouns are intentionally excluded: matching "он" / "она" as a substring
+ * creates many false positives and should only be used after span alignment.
  */
 async function assignUnitParticipants(bookId, chapterId, sceneId, units) {
     if (!units || units.length === 0) return {};
@@ -902,38 +938,22 @@ async function assignUnitParticipants(bookId, chapterId, sceneId, units) {
     try {
         // Fetch all resolved mentions for this scene from the latest completed fine run
         const result = await query(
-            `SELECT cm.character_id, cm.mention_text
+            `SELECT cm.character_id, cm.mention_text, cm.mention_type
              FROM character_mentions cm
              JOIN character_resolution_runs crr ON cm.run_id = crr.run_id
-             WHERE cm.book_id = $1 AND cm.chapter_id = $2 AND cm.scene_id = $3
+             WHERE cm.book_id = $1
+               AND ($2::text IS NULL OR cm.chapter_id = $2)
+               AND cm.scene_id = $3
                AND crr.status = 'completed' AND crr.run_type = 'fine_mentions'
                AND cm.character_id IS NOT NULL
              ORDER BY cm.run_id DESC
              LIMIT 500`,
-            [bookId, chapterId || '', sceneId || '']
+            [bookId, chapterId || null, sceneId || '']
         );
 
         const mentions = result.rows;
         if (mentions.length === 0) return {};
-
-        const unitParticipants = {};
-        for (let ui = 0; ui < units.length; ui++) {
-            const uText = (units[ui]?.text || '').toLowerCase();
-            if (!uText) continue;
-
-            const chars = new Set();
-            for (const m of mentions) {
-                const mText = (m.mention_text || '').toLowerCase();
-                if (mText && uText.includes(mText) && m.character_id) {
-                    chars.add(m.character_id);
-                }
-            }
-            if (chars.size > 0) {
-                unitParticipants[ui] = [...chars];
-            }
-        }
-
-        return unitParticipants;
+        return matchMentionsToUnits(mentions, units);
     } catch (err) {
         console.warn(`[COREFERENCE] assignUnitParticipants failed: ${err.message}`);
         return {};
@@ -1097,45 +1117,9 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
             ? existingChars
             : [{ id: 'unknown', name: 'Unknown', role: 'minor', description: 'Unidentified character' }];
     } else {
-        const mergedMap = new Map((existingChars || []).map(c => [c.id, c]));
-        let enriched = 0;
-        let added = 0;
-        for (const ch of newCharacters) {
-            if (mergedMap.has(ch.id)) {
-                const existing = mergedMap.get(ch.id);
-                const enrichedCh = { ...existing };
-                if (ch.description && ch.description.length > (existing.description || '').length) {
-                    enrichedCh.description = existing.description
-                        ? existing.description + ' ' + ch.description
-                        : ch.description;
-                }
-                if (ch.appearance && ch.appearance.length > (existing.appearance || '').length) {
-                    enrichedCh.appearance = existing.appearance
-                        ? existing.appearance + ' ' + ch.appearance
-                        : ch.appearance;
-                }
-                if (ch.traits && Array.isArray(ch.traits)) {
-                    const existingTraits = new Set(existing.traits || []);
-                    for (const t of ch.traits) {
-                        if (!existingTraits.has(t)) {
-                            enrichedCh.traits = enrichedCh.traits || [];
-                            enrichedCh.traits.push(t);
-                            existingTraits.add(t);
-                        }
-                    }
-                }
-                if (ch.voice && ch.voice.length > (existing.voice || '').length) {
-                    enrichedCh.voice = ch.voice;
-                }
-                mergedMap.set(ch.id, enrichedCh);
-                enriched++;
-            } else {
-                mergedMap.set(ch.id, ch);
-                added++;
-            }
-        }
-        characters = Array.from(mergedMap.values());
-        console.log(`[AGENT] Characters: ${existingChars.length} existing + ${added} new + ${enriched} enriched = ${characters.length} total`);
+        const mergeResult = mergeCharacterLists(existingChars || [], newCharacters || [], { skipGeneric: true });
+        characters = mergeResult.characters;
+        console.log(`[AGENT] Characters: ${existingChars.length} existing + ${mergeResult.added} new + ${mergeResult.enriched} enriched + ${mergeResult.skippedGeneric} generic skipped = ${characters.length} total`);
     }
 
     publishVBook({ stage: 'analyzing', scene_index: 0, total_scenes: 0, window_size: WINDOW_SIZE });
@@ -1736,6 +1720,8 @@ module.exports = {
     stepCollectCharacterCandidates,
     stepResolveCharacterMentions,
     assignUnitParticipants,
+    matchMentionsToUnits,
+    getFallbackVisual,
     computeHash,
     normalizeForMatch,
 };

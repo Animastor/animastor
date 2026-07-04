@@ -11,41 +11,26 @@
 const { expect } = require('chai');
 const {
     computeHash,
+    getFallbackVisual,
+    matchMentionsToUnits,
     normalizeForMatch,
     splitIntoSentences,
     splitIntoSentencesWithOffsets,
 } = require('../src/services/agent-service');
+const {
+    isGenericCharacter,
+    mergeCharacterLists,
+} = require('../src/utils/character-identity');
 
 // ======================================================
 // assignUnitParticipants — text-based matching
 // ======================================================
 
 describe('Coreference — assignUnitParticipants text matching', () => {
-
-    // Simulates the exact algorithm used by assignUnitParticipants (text-based matching)
-    function simulateMatching(mentions, units) {
-        const unitParticipants = {};
-        for (let ui = 0; ui < units.length; ui++) {
-            const uText = (units[ui]?.text || '').toLowerCase();
-            if (!uText) continue;
-            const chars = new Set();
-            for (const m of mentions) {
-                const mText = (m.mention_text || '').toLowerCase();
-                if (mText && uText.includes(mText) && m.character_id) {
-                    chars.add(m.character_id);
-                }
-            }
-            if (chars.size > 0) {
-                unitParticipants[ui] = [...chars];
-            }
-        }
-        return unitParticipants;
-    }
-
     it('assigns correct characters to unit with direct mentions', () => {
         const units = [{ text: 'На скамейке сидели Берлиоз и Бездомный.' }];
         const m = [{ character_id: 'berlioz', mention_text: 'Берлиоз' }, { character_id: 'ponyrev', mention_text: 'Бездомный' }];
-        const result = simulateMatching(m, units);
+        const result = matchMentionsToUnits(m, units);
         expect(result[0]).to.have.members(['berlioz', 'ponyrev']);
     });
 
@@ -56,14 +41,14 @@ describe('Coreference — assignUnitParticipants text matching', () => {
             { character_id: 'ponyrev', mention_text: 'поэт' },
             { character_id: 'ponyrev', mention_text: 'Иван Николаевич Понырев' },
         ];
-        const result = simulateMatching(m, units);
+        const result = matchMentionsToUnits(m, units);
         expect(result[0]).to.have.members(['berlioz', 'ponyrev']);
     });
 
     it('returns empty for unit with no character mentions', () => {
         const units = [{ text: 'Солнце садилось за Садовое кольцо. Было жарко.' }];
         const m = [{ character_id: 'berlioz', mention_text: 'Берлиоз' }];
-        expect(Object.keys(simulateMatching(m, units))).to.have.lengthOf(0);
+        expect(Object.keys(matchMentionsToUnits(m, units))).to.have.lengthOf(0);
     });
 
     it('handles multiple units with different characters', () => {
@@ -78,7 +63,7 @@ describe('Coreference — assignUnitParticipants text matching', () => {
             { character_id: 'ponyrev', mention_text: 'Бездомный' },
             { character_id: 'ponyrev', mention_text: 'поэт' },
         ];
-        const result = simulateMatching(m, units);
+        const result = matchMentionsToUnits(m, units);
         expect(result[0]).to.have.members(['berlioz', 'woland']);
         expect(result[1]).to.have.members(['ponyrev']);
         expect(result[2]).to.be.undefined;
@@ -87,25 +72,25 @@ describe('Coreference — assignUnitParticipants text matching', () => {
     it('is case insensitive', () => {
         const units = [{ text: 'БЕРЛИОЗ И БЕЗДОМНЫЙ' }];
         const m = [{ character_id: 'berlioz', mention_text: 'Берлиоз' }, { character_id: 'ponyrev', mention_text: 'Бездомный' }];
-        const result = simulateMatching(m, units);
+        const result = matchMentionsToUnits(m, units);
         expect(result[0]).to.have.members(['berlioz', 'ponyrev']);
     });
 
     it('skips unit with empty text', () => {
         const m = [{ character_id: 'berlioz', mention_text: 'Берлиоз' }];
-        const result = simulateMatching(m, [{ text: '' }, { text: 'Берлиоз тут' }]);
+        const result = matchMentionsToUnits(m, [{ text: '' }, { text: 'Берлиоз тут' }]);
         expect(result[0]).to.be.undefined;
         expect(result[1]).to.have.members(['berlioz']);
     });
 
     it('handles empty mentions array', () => {
-        expect(Object.keys(simulateMatching([], [{ text: 'Берлиоз' }]))).to.have.lengthOf(0);
+        expect(Object.keys(matchMentionsToUnits([], [{ text: 'Берлиоз' }]))).to.have.lengthOf(0);
     });
 
     it('handles mention that appears in multiple units', () => {
         const units = [{ text: 'Берлиоз шёл по аллее.' }, { text: 'Берлиоз сел на скамейку.' }];
         const m = [{ character_id: 'berlioz', mention_text: 'Берлиоз' }];
-        const result = simulateMatching(m, units);
+        const result = matchMentionsToUnits(m, units);
         expect(result[0]).to.have.members(['berlioz']);
         expect(result[1]).to.have.members(['berlioz']);
     });
@@ -113,8 +98,48 @@ describe('Coreference — assignUnitParticipants text matching', () => {
     it('deduplicates characters in same unit', () => {
         const units = [{ text: 'Берлиоз сказал Берлиозу, что Берлиоз устал.' }];
         const m = [{ character_id: 'berlioz', mention_text: 'Берлиоз' }];
-        const result = simulateMatching(m, units);
+        const result = matchMentionsToUnits(m, units);
         expect(result[0]).to.deep.equal(['berlioz']);
+    });
+
+    it('does not match pronoun mentions in the text fallback', () => {
+        const units = [{ text: 'Он поднялся и посмотрел на неё.' }];
+        const m = [
+            { character_id: 'berlioz', mention_text: 'Он', mention_type: 'pronoun' },
+            { character_id: 'booth_woman', mention_text: 'неё', mention_type: 'pronoun' },
+        ];
+        expect(matchMentionsToUnits(m, units)).to.deep.equal({});
+    });
+
+    it('does not assign unresolved mentions with null character_id', () => {
+        const units = [{ text: 'Женщина ответила резко.' }];
+        const m = [{ character_id: null, mention_text: 'Женщина', mention_type: 'unknown' }];
+        expect(matchMentionsToUnits(m, units)).to.deep.equal({});
+    });
+});
+
+describe('Coreference — visual fallback participants', () => {
+    const characters = [
+        { id: 'berlioz', name: 'Берлиоз' },
+        { id: 'ponyrev', name: 'Бездомный' },
+    ];
+
+    it('uses unit-level participants when available', () => {
+        const prompt = getFallbackVisual('Берлиоз сел.', characters, {
+            participants: ['berlioz'],
+            location: { id: 'patriarch_ponds' },
+        });
+        expect(prompt).to.equal('berlioz at patriarch_ponds, cinematic shot');
+    });
+
+    it('does not inject all known characters when participants are empty', () => {
+        const prompt = getFallbackVisual('Пустая аллея.', characters, {
+            participants: [],
+            location: { id: 'patriarch_ponds' },
+        });
+        expect(prompt).to.equal('the scene at patriarch_ponds, cinematic shot');
+        expect(prompt).to.not.include('berlioz');
+        expect(prompt).to.not.include('ponyrev');
     });
 });
 
@@ -219,6 +244,44 @@ describe('Coreference — normalizeForMatch', () => {
 
     it('transliterates ц→ts, ч→ch, ш→sh', () => {
         expect(normalizeForMatch('царь чай шум')).to.equal('tsar chay shum');
+    });
+});
+
+// ======================================================
+// character identity merge
+// ======================================================
+
+describe('Coreference — character identity merge', () => {
+    it('merges a short surname id into an existing full canonical character', () => {
+        const existing = [{
+            id: 'mikhail_aleksandrovich_berlioz',
+            name: 'Михаил Александрович Берлиоз',
+            appearance: 'short, bald editor',
+        }];
+        const incoming = [{
+            id: 'berlioz',
+            name: 'Берлиоз',
+            appearance: 'momentary pale tense face',
+        }];
+
+        const result = mergeCharacterLists(existing, incoming);
+        expect(result.characters).to.have.lengthOf(1);
+        expect(result.characters[0].id).to.equal('mikhail_aleksandrovich_berlioz');
+        expect(result.characters[0].appearance).to.equal('short, bald editor');
+        expect(result.enriched).to.equal(1);
+    });
+
+    it('skips generic-only characters but keeps contextual role-only characters', () => {
+        expect(isGenericCharacter({ id: 'woman', name: 'Женщина' })).to.equal(true);
+        expect(isGenericCharacter({ id: 'zhenshchina_v_budochke', name: 'Женщина в будочке' })).to.equal(false);
+
+        const result = mergeCharacterLists([], [
+            { id: 'woman', name: 'Женщина' },
+            { id: 'zhenshchina_v_budochke', name: 'Женщина в будочке' },
+        ]);
+
+        expect(result.characters.map(c => c.id)).to.deep.equal(['zhenshchina_v_budochke']);
+        expect(result.skippedGeneric).to.equal(1);
     });
 });
 
