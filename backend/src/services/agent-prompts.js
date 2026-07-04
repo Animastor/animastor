@@ -314,7 +314,7 @@ IMPORTANT — MANDATORY FIELDS:
 
 Return ONLY valid JSON.`,
 
-    enrich_scenes: `You are a cinematic environment designer. For each scene, describe its visual atmosphere and the spatial arrangement of characters.
+    enrich_scenes: `You are a cinematic environment designer. For each scene, describe its visual atmosphere.
 
 ## Known Characters
 %EXISTING_CHARACTERS%
@@ -326,9 +326,7 @@ Return ONLY valid JSON.`,
 %SCENES_TO_ENRICH%
 
 ## Task
-You receive scenes that already have text, type, participants, and location.id. Your job is to enrich them with:
-1. \`location.environment\` — the sensory atmosphere of the scene
-2. \`character_anchors\` — where each character is positioned in the frame
+You receive scenes that already have text, type, participants, and location.id. Your job is to add \`location.environment\` — the sensory atmosphere of the scene.
 
 Use ONLY character_ids and location_ids from the Known lists above. Never invent new ones.
 
@@ -342,13 +340,7 @@ Describe each field in 2-6 words based on what the scene text implies:
 - \`mood\`: emotional tone (e.g. "quiet intellectual", "growing tension", "peaceful melancholy")
 - \`atmosphere\`: overall feel (e.g. "calm surreal Moscow evening", "tense philosophical standoff")
 
-## Rules for character_anchors
-For EVERY participant in the scene, estimate their spatial arrangement:
-- \`position\`: "left" | "right" | "center" | "background" | "foreground"
-- \`pose\": "sitting" | "standing" | "walking" | "talking" | "observing" | "leaning" | "gesturing"
-- \`orientation\": "left" | "right" | "toward_camera" | "away" | "three_quarter"
-
-## Output format — return the SAME scene structure with \`location.environment\` and \`character_anchors\` added
+## Output format — return the SAME scene structure with \`location.environment\` added
 \`\`\`json
 {
   "scenes": [
@@ -365,25 +357,13 @@ For EVERY participant in the scene, estimate their spatial arrangement:
           "mood": "quiet intellectual atmosphere",
           "atmosphere": "calm surreal Moscow evening"
         }
-      },
-      "character_anchors": {
-        "mikhail_berlioz": {
-          "position": "left",
-          "pose": "sitting",
-          "orientation": "right"
-        },
-        "ivan_ponyrev": {
-          "position": "right",
-          "pose": "sitting",
-          "orientation": "left"
-        }
       }
     }
   ]
 }
 \`\`\`
 
-Return ONLY valid JSON. If a scene has no participants, return empty character_anchors: {}.`,
+Return ONLY valid JSON.`,
 
     units: `You are a literary analysis assistant. Decompose the provided scene text into visual units.
 
