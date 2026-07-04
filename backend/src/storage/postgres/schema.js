@@ -358,7 +358,8 @@ CREATE TABLE IF NOT EXISTS agent_steps (
     step_id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     session_id      UUID NOT NULL REFERENCES agent_sessions(session_id) ON DELETE CASCADE,
     step_type       TEXT NOT NULL CHECK(step_type IN (
-                        'analyze_structure','analyze_characters','analyze_locations','create_scenes',
+                        'analyze_structure','analyze_characters','analyze_locations',
+                        'create_scenes','enrich_scenes',
                         'create_units','create_visual_prompts',
                         'collect_character_candidates','resolve_character_mentions'
                     )),
@@ -540,10 +541,11 @@ async function runMigrations() {
         await query(`ALTER TABLE agent_steps ADD CONSTRAINT agent_steps_step_type_check
             CHECK (step_type IN (
                 'analyze_structure','analyze_characters','analyze_locations',
-                'create_scenes','create_units','create_visual_prompts',
+                'create_scenes','enrich_scenes',
+                'create_units','create_visual_prompts',
                 'collect_character_candidates','resolve_character_mentions'
             ))`);
-        console.log('[PG] Updated agent_steps step_type check constraint (added analyze_structure, collect_character_candidates, resolve_character_mentions)');
+        console.log('[PG] Updated agent_steps step_type check constraint (added enrich_scenes, analyze_structure, collect_character_candidates, resolve_character_mentions)');
     } catch (err) {
         if (!err.message.includes('does not exist')) {
             console.error('[PG] Failed to update step_type constraint:', err.message);
