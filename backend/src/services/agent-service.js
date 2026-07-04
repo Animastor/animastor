@@ -471,6 +471,16 @@ async function stepCreateVisuals(sessionId, scene, units, sceneIndex, characters
                   ch.passport?.clothing_base || ch.passport?.clothing_details);
     }
 
+    function displayName(ch) {
+        let name = ch.name || ch.id || '';
+        // Strip "(not named)" and "(unnamed)" markers — these are AI artifacts
+        // that confuse the visual prompt generator into writing literal "(not named)".
+        name = name.replace(/\s*\(not named\)/gi, '').trim();
+        name = name.replace(/\s*\(unnamed\)/gi, '').trim();
+        name = name.replace(/\s*\(not specified\)/gi, '').trim();
+        return name || ch.id || '(character)';
+    }
+
     let namedCount = 0;
     const sceneParticipantIds = new Set(scene.participants || []);
     for (const unit of (units || [])) {
@@ -495,10 +505,10 @@ async function stepCreateVisuals(sessionId, scene, units, sceneIndex, characters
             if (!ch) continue;
             if (hasPassportAppearance(ch)) {
                 const passportDesc = [ch.passport?.base_appearance, ch.passport?.detailed_appearance, ch.passport?.clothing_base, ch.passport?.clothing_details].filter(Boolean).join('; ');
-                visualChars.push(`- ${ch.id}: ${ch.name} — ${passportDesc || ch.description || ''}`);
+                visualChars.push(`- ${ch.id}: ${displayName(ch)} — ${passportDesc || ch.description || ''}`);
                 namedCount++;
             } else {
-                facelessChars.push(ch.name || ch.id);
+                facelessChars.push(displayName(ch));
             }
         }
         if (visualChars.length > 0) {
@@ -522,7 +532,7 @@ async function stepCreateVisuals(sessionId, scene, units, sceneIndex, characters
             const limit = Math.min(visualChars.length, 5);
             for (let ci = 0; ci < limit; ci++) {
                 const ch = visualChars[ci];
-                contextParts.push(`- ${ch.id}: ${ch.name} — ${ch.passport?.base_appearance || ch.description || ''}`);
+                contextParts.push(`- ${ch.id}: ${displayName(ch)} — ${ch.passport?.base_appearance || ch.description || ''}`);
                 namedCount++;
             }
             if (visualChars.length > 5) {
