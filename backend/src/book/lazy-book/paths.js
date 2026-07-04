@@ -8,6 +8,7 @@ function getSourcePath(bookDir) { return path.join(bookDir, 'source.txt'); }
 function getManifestPath(bookDir) { return path.join(bookDir, 'manifest.json'); }
 function getBookMetaPath(bookDir) { return path.join(bookDir, 'book.json'); }
 function getCharactersPath(bookDir) { return path.join(bookDir, 'characters.json'); }
+function getMentionsPath(bookDir) { return path.join(bookDir, 'mentions.json'); }
 function getBiblePath(bookDir) { return path.join(bookDir, 'bible.json'); }
 function getChapterDir(bookDir) { return path.join(bookDir, 'chapters'); }
 function getChapterPath(bookDir, file) { return path.join(getChapterDir(bookDir), file); }
@@ -29,6 +30,6 @@ function generateBookId(title) {
 
 module.exports = {
     getBooksDir, getBookDir, getSourcePath, getManifestPath, getBookMetaPath,
-    getCharactersPath, getBiblePath, getChapterDir, getChapterPath, getCoverPath,
+    getCharactersPath, getMentionsPath, getBiblePath, getChapterDir, getChapterPath, getCoverPath,
     generateId, chapterId, sceneId, unitId, generateBookId,
 };

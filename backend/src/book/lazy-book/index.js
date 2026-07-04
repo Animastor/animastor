@@ -7,7 +7,7 @@ const {
 } = require('./constants');
 const {
     getBookDir, getSourcePath, getManifestPath, getBookMetaPath,
-    getCharactersPath, getBiblePath, getChapterDir, getChapterPath,
+    getCharactersPath, getMentionsPath, getBiblePath, getChapterDir, getChapterPath,
     generateId, chapterId, sceneId, unitId, generateBookId,
 } = require('./paths');
 const {
@@ -88,6 +88,10 @@ function loadDraftBook(bookId) {
         const charPath = getCharactersPath(bookDir);
         if (fs.existsSync(charPath)) characters = JSON.parse(fs.readFileSync(charPath, 'utf8'));
 
+        let mentions = {};
+        const mPath = getMentionsPath(bookDir);
+        if (fs.existsSync(mPath)) mentions = JSON.parse(fs.readFileSync(mPath, 'utf8'));
+
         let bible = {};
         const bibPath = getBiblePath(bookDir);
         if (fs.existsSync(bibPath)) bible = JSON.parse(fs.readFileSync(bibPath, 'utf8'));
@@ -102,7 +106,7 @@ function loadDraftBook(bookId) {
             }
         }
 
-        return { manifest, book: bookMeta, sourceText, characters, bible, chapters };
+        return { manifest, book: bookMeta, sourceText, characters, mentions, bible, chapters };
     } catch (err) {
         console.error(`[LAZY-BOOK] Failed to load ${bookId}:`, err.message);
         return null;
@@ -336,6 +340,7 @@ function getBookStatus(bookId) {
         totalScenes,
         parsedScenes,
         characterCount: draft.characters.length,
+        mentionsCount: Object.keys(draft.mentions || {}).length,
         locationCount: Object.keys(draft.bible.locations || {}).length,
         sourceSize: draft.manifest.import_meta?.original_size || 0,
         updatedAt: draft.manifest.updated_at,
@@ -848,7 +853,36 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
         },
     };
 
-    fs.writeFileSync(getCharactersPath(bookDir), JSON.stringify(mergedCharacters, null, 2));
+    // Save mentions: merge incoming mentions with existing ones
+    let mergedMentions = {};
+    try {
+        const mPath = getMentionsPath(bookDir);
+        if (fs.existsSync(mPath)) {
+            mergedMentions = JSON.parse(fs.readFileSync(mPath, 'utf8'));
+        }
+    } catch (_) {}
+    if (analysis.mentions && typeof analysis.mentions === 'object') {
+        for (const [alias, charId] of Object.entries(analysis.mentions)) {
+            if (!mergedMentions[alias]) mergedMentions[alias] = charId;
+        }
+    }
+    if (Object.keys(mergedMentions).length > 0) {
+        fs.writeFileSync(getMentionsPath(bookDir), JSON.stringify(mergedMentions, null, 2));
+    }
+
+    // Filter characters: save only those with real passport data
+    const passportChars = mergedCharacters.filter(c => {
+        const p = c.passport || {};
+        const appearanceText = p.base_appearance || p.detailed_appearance || '';
+        const hasRealAppearance = appearanceText.length > 8 &&
+            !/character from the story|period-appropriate|as described in/i.test(appearanceText);
+        return hasRealAppearance;
+    });
+    fs.writeFileSync(getCharactersPath(bookDir), JSON.stringify(passportChars, null, 2));
+    if (passportChars.length < mergedCharacters.length) {
+        console.log(`[LAZY-BOOK] Filtered characters: ${passportChars.length} with passport out of ${mergedCharacters.length} total`);
+    }
+
     fs.writeFileSync(getBiblePath(bookDir), JSON.stringify(bible, null, 2));
 
     const chDir = getChapterDir(bookDir);

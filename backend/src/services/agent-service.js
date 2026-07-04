@@ -162,10 +162,11 @@ async function stepExtractCharacters(sessionId, text, stepIndex, progress) {
     try {
         const result = await callAI(messages, { maxTokens: 4096 });
         const characters = result.characters || [];
+        const mentions = result.mentions || {};
         await logConversation(sessionId, step.step_id, messages, JSON.stringify(result));
-        await completeStep(step.step_id, characters);
-        console.log(`[AGENT] Step 1 (characters): ${characters.length} extracted`);
-        return characters;
+        await completeStep(step.step_id, { characters, mentions });
+        console.log(`[AGENT] Step 1 (characters): ${characters.length} extracted, ${Object.keys(mentions).length} mentions`);
+        return { characters, mentions };
     } catch (err) {
         await failStep(step.step_id, err.message);
         throw err;
@@ -303,7 +304,7 @@ function formatExamplesForPrompt() {
     }
 }
 
-async function stepCreateUnits(sessionId, scene, sceneIndex, characters, stepIndex, progress) {
+async function stepCreateUnits(sessionId, scene, sceneIndex, characters, stepIndex, progress, mentions) {
     const _progress = progress || (() => {});
     const msg = PROGRESS_STAGES.creating_units(sceneIndex);
     _progress({ stage: 'creating_units', message: msg });
@@ -315,9 +316,17 @@ async function stepCreateUnits(sessionId, scene, sceneIndex, characters, stepInd
     const truncatedText = sceneText.length > 3000 ? sceneText.substring(0, 3000) + '...' : sceneText;
     const charsContext = (characters || []).map(c => `- ${c.id}: ${c.name}`).join('\n') || 'None';
 
+    // Add mentions context: role/title → character_id mappings
+    const mentionsContext = (mentions && typeof mentions === 'object' && Object.keys(mentions).length > 0)
+        ? '\n## Role/title → character_id mappings\n' +
+          'When the text refers to a character by role or title (e.g. "редактор", "глава МАССОЛИТ", "прозрачный гражданин"),\n' +
+          'use the mapped character_id below:\n' +
+          Object.entries(mentions).map(([alias, charId]) => `  "${alias}" → ${charId}`).join('\n')
+        : '';
+
     const prompt = SYSTEM_PROMPTS.units
         .replace('%SCENE_TEXT%', truncatedText)
-        .replace('%EXISTING_CHARACTERS%', charsContext);
+        .replace('%EXISTING_CHARACTERS%', charsContext + mentionsContext);
 
     const messages = [
         { role: 'system', content: prompt },
@@ -393,7 +402,6 @@ async function stepCreateVisuals(sessionId, scene, units, sceneIndex, characters
         contextParts.push(`Season: ${season}`);
     }
 
-    contextParts.push('Characters in scene (use their character_id in every prompt — no pronouns, no names):');
     const anchors = scene.character_anchors || {};
     let namedCount = 0;
     const sceneParticipantIds = new Set(scene.participants || []);
@@ -402,19 +410,41 @@ async function stepCreateVisuals(sessionId, scene, units, sceneIndex, characters
             sceneParticipantIds.add(pId);
         }
     }
-    for (const pId of sceneParticipantIds) {
-        const ch = (characters || []).find(c => c.id === pId);
-        if (!ch) continue;
-        const a = anchors[pId];
-        const arrangement = a
-            ? ` [position: ${a.position || '?'}, pose: ${a.pose || '?'}, orientation: ${a.orientation || '?'}]`
-            : '';
-        const passportDesc = [ch.passport?.base_appearance, ch.passport?.detailed_appearance, ch.passport?.clothing_base, ch.passport?.clothing_details].filter(Boolean).join('; ')
-        contextParts.push(`- ${ch.id}: ${ch.name} — ${passportDesc || ch.description || ''}${arrangement}`);
-        namedCount++;
-    }
-    if (sceneParticipantIds.size > 0 && namedCount === 0) {
-        contextParts.push('(unknown characters)');
+    // For chapter_intro scenes (title cards), skip character section entirely.
+    // Title cards should focus on location/atmosphere, not character portraits.
+    if (scene.type === 'chapter_intro') {
+        // no character section for title cards
+    } else if (sceneParticipantIds.size > 0) {
+        // Normal case: participants known from scene or units
+        contextParts.push('Characters in scene (use their character_id in every prompt — no pronouns, no names):');
+        for (const pId of sceneParticipantIds) {
+            const ch = (characters || []).find(c => c.id === pId);
+            if (!ch) continue;
+            const a = anchors[pId];
+            const arrangement = a
+                ? ` [position: ${a.position || '?'}, pose: ${a.pose || '?'}, orientation: ${a.orientation || '?'}]`
+                : '';
+            const passportDesc = [ch.passport?.base_appearance, ch.passport?.detailed_appearance, ch.passport?.clothing_base, ch.passport?.clothing_details].filter(Boolean).join('; ')
+            contextParts.push(`- ${ch.id}: ${ch.name} — ${passportDesc || ch.description || ''}${arrangement}`);
+            namedCount++;
+        }
+        if (namedCount === 0) {
+            contextParts.push('(unknown characters)');
+        }
+    } else if (characters?.length) {
+        // Fallback for narration/dialogue scenes with no participants:
+        // Include a limited set of known characters so the AI can map
+        // textual references (e.g. "two citizens") to character IDs.
+        contextParts.push('Characters likely in scene (use character_id matching the scene text below — verify before using):');
+        const limit = Math.min(characters.length, 5);
+        for (let ci = 0; ci < limit; ci++) {
+            const ch = characters[ci];
+            contextParts.push(`- ${ch.id}: ${ch.name} — ${ch.passport?.base_appearance || ch.description || ''}`);
+            namedCount++;
+        }
+        if (characters.length > 5) {
+            contextParts.push(`  ... and ${characters.length - 5} more characters in this chapter`);
+        }
     }
     const sceneFullText = scene.audio?.full_text || scene.text || units.map(u => u.text).filter(Boolean).join(' ')
     if (sceneFullText) {
@@ -713,7 +743,7 @@ function buildFallbackScenes(sceneText) {
  * The LLM in stepCreateUnits returns participants for each unit.
  * This function validates that the returned character IDs exist in the known characters list.
  */
-function assignUnitParticipants(units, characters) {
+function assignUnitParticipants(units, characters, mentions) {
     if (!units || units.length === 0) return {};
 
     const knownIds = new Set((characters || []).map(c => c.id).filter(Boolean));
@@ -723,11 +753,18 @@ function assignUnitParticipants(units, characters) {
         const participants = units[ui]?.participants || [];
         if (participants.length === 0) continue;
 
-        // Validate: only keep known character IDs from the character registry
-        const valid = participants.filter(id => knownIds.has(id));
-        if (valid.length > 0) {
-            // Deduplicate: Set ensures each character_id appears once
-            result[ui] = [...new Set(valid)];
+        // Resolve each participant: first try direct ID match, then mentions
+        const resolved = [];
+        for (const id of participants) {
+            if (knownIds.has(id)) {
+                resolved.push(id);
+            } else if (mentions && mentions[id]) {
+                // Role/title reference resolved through mentions
+                resolved.push(mentions[id]);
+            }
+        }
+        if (resolved.length > 0) {
+            result[ui] = [...new Set(resolved)];
         }
     }
 
@@ -881,16 +918,24 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
     publishVBook({ stage: 'analyzing', scene_index: 0, total_scenes: 0, window_size: WINDOW_SIZE, message: PROGRESS_STAGES.analyzing_structure });
 
     // Reconnaissance: extract chars/locs from the same bounded window.
-    const newCharacters = await stepExtractCharacters(sessionId, text, stepIndex, _progress);
-    if (!newCharacters || newCharacters.length === 0) {
+    const charResult = await stepExtractCharacters(sessionId, text, stepIndex, _progress);
+    let mentions = options.existingMentions || {};
+    if (!charResult || !charResult.characters || charResult.characters.length === 0) {
         console.warn('[AGENT] No characters extracted from window, keeping existing set');
         characters = existingChars.length > 0
             ? existingChars
             : [{ id: 'unknown', name: 'Unknown', role: 'minor', description: 'Unidentified character' }];
     } else {
+        const newCharacters = charResult.characters;
         const mergeResult = mergeCharacterLists(existingChars || [], newCharacters || [], { skipGeneric: true });
         characters = mergeResult.characters;
-        console.log(`[AGENT] Characters: ${existingChars.length} existing + ${mergeResult.added} new + ${mergeResult.enriched} enriched + ${mergeResult.skippedGeneric} generic skipped = ${characters.length} total`);
+        // Merge mentions across windows
+        if (charResult.mentions && typeof charResult.mentions === 'object') {
+            for (const [alias, charId] of Object.entries(charResult.mentions)) {
+                if (!mentions[alias]) mentions[alias] = charId;
+            }
+        }
+        console.log(`[AGENT] Characters: ${existingChars.length} existing + ${mergeResult.added} new + ${mergeResult.enriched} enriched + ${mergeResult.skippedGeneric} generic skipped = ${characters.length} total, mentions: ${Object.keys(mentions).length}`);
     }
 
     publishVBook({ stage: 'extracting_chars', scene_index: 0, total_scenes: 0, window_size: WINDOW_SIZE, message: PROGRESS_STAGES.extracting_chars });
@@ -1033,12 +1078,12 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
             message: unitMsg,
         });
  
-        const units = await stepCreateUnits(sessionId, scene, globalSceneIndex, characters, stepIndex, _progress);
+        const units = await stepCreateUnits(sessionId, scene, globalSceneIndex, characters, stepIndex, _progress, mentions);
 
         // ── Coreference Resolution: Assign unit participants ──
         // The LLM already returned participants in stepCreateUnits.
         // Validate character IDs exist in the known characters list.
-        const unitParticipants = assignUnitParticipants(units, characters);
+        const unitParticipants = assignUnitParticipants(units, characters, mentions);
         const resolvedUnitParticipants = applyScenePairParticipantFallback(
             units,
             unitParticipants,
@@ -1097,6 +1142,7 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
     return {
         characters,
         locations,
+        mentions,
         scenes: enrichedScenes,
         allScenes: windowScenes,
         sceneConsumedLength: (progressInfo.nextOffset ?? coverage.next_offset) - sourceOffsetBase,
@@ -1197,6 +1243,7 @@ async function bootstrapWithAgent(bookId, progress, publishProgress) {
             coverageGapChars: result.coverage?.gap_chars || 0,
             all_characters: result.characters,
             all_locations: result.locations,
+            all_mentions: result.mentions,
             structure: structure,
         };
 
@@ -1216,6 +1263,7 @@ async function bootstrapWithAgent(bookId, progress, publishProgress) {
         const bookResult = lazyBook.createFromAnalysis(bookId, {
             characters: result.characters,
             locations: result.locations,
+            mentions: result.mentions,
             scenes: result.scenes,
             chapterTitle: chapterTitle,
             maxScenes: MAX_SCENES_PER_CHUNK,
@@ -1364,6 +1412,7 @@ async function bootstrapNextWindow(bookId, progress, publishProgress) {
             sourceOffsetBase: windowInfo.windowStartOffset,
             publishProgress,
             bookId,
+            existingMentions: windowData?.all_mentions || {},
         });
 
         const extraScenes = [];
@@ -1377,6 +1426,7 @@ async function bootstrapNextWindow(bookId, progress, publishProgress) {
         const bookResult = lazyBook.appendToBook(bookId, {
             characters: result.characters,
             locations: result.locations,
+            mentions: result.mentions,
             scenes: result.scenes,
             maxScenes: MAX_SCENES_PER_CHUNK,
             chapterTitle: windowInfo.chapterTitle || `Глава ${nextChapterIndex + 1}`,
@@ -1403,6 +1453,7 @@ async function bootstrapNextWindow(bookId, progress, publishProgress) {
             coverageGapChars: result.coverage?.gap_chars || 0,
             all_characters: result.characters,
             all_locations: result.locations,
+            all_mentions: result.mentions,
         };
 
         const allDone = extraScenes.length === 0 && actualRemaining.length === 0;
