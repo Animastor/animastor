@@ -857,15 +857,16 @@ class GenerateViewModel(
                             else msgs.add(windowInfo)
                         }
                         // Merge with existing SSE-added messages instead of overwriting
-                        val existing = _uiState.value.importProgressMessages
-                        val merged = if (existing.size > msgs.size) {
-                            // SSE added messages that aren't in msgs — merge them
-                            val sseOnly = existing.drop(msgs.size)
-                            msgs.toList() + sseOnly
-                        } else {
-                            msgs.toList()
+                        _uiState.update { state ->
+                            val existing = state.importProgressMessages
+                            val merged = if (existing.size > msgs.size) {
+                                val sseOnly = existing.drop(msgs.size)
+                                msgs.toList() + sseOnly
+                            } else {
+                                msgs.toList()
+                            }
+                            state.copy(importProgressMessages = merged)
                         }
-                        _uiState.update { it.copy(importProgressMessages = merged) }
                     }
 
                     // ── Update structured VBook progress for the GPU-style panel ──
@@ -886,14 +887,16 @@ class GenerateViewModel(
                         msgs.add(currentMsg)
                         lastProgressMsg = currentMsg
                         // Merge with existing SSE-added messages instead of overwriting
-                        val existing = _uiState.value.importProgressMessages
-                        val merged = if (existing.size > msgs.size) {
-                            val sseOnly = existing.drop(msgs.size)
-                            msgs.toList() + sseOnly
-                        } else {
-                            msgs.toList()
+                        _uiState.update { state ->
+                            val existing = state.importProgressMessages
+                            val merged = if (existing.size > msgs.size) {
+                                val sseOnly = existing.drop(msgs.size)
+                                msgs.toList() + sseOnly
+                            } else {
+                                msgs.toList()
+                            }
+                            state.copy(importProgressMessages = merged)
                         }
-                        _uiState.update { it.copy(importProgressMessages = merged) }
                         // Update the panel too — this handles the case where the
                         // first window completes before the first poll, so progress
                         // goes: ANALYZING → CREATING_SCENES → COMPLETED gradually
@@ -1353,11 +1356,13 @@ class GenerateViewModel(
                     )}
                     // ── Also add the message to importProgressMessages for chat display ──
                     if (vbookMsg != null) {
-                        val currentMsgs = _uiState.value.importProgressMessages
-                        if (currentMsgs.isEmpty() || currentMsgs.last() != vbookMsg) {
-                            _uiState.update { it.copy(
-                                importProgressMessages = currentMsgs + vbookMsg
-                            )}
+                        _uiState.update { state ->
+                            val currentMsgs = state.importProgressMessages
+                            if (currentMsgs.isEmpty() || currentMsgs.last() != vbookMsg) {
+                                state.copy(importProgressMessages = currentMsgs + vbookMsg)
+                            } else {
+                                state
+                            }
                         }
                     }
                 } else if (event.layer == "image" && event.ready != null) {
