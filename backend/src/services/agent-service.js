@@ -466,6 +466,11 @@ async function stepCreateVisuals(sessionId, scene, units, sceneIndex, characters
         contextParts.push(`Season: ${season}`);
     }
 
+    function hasPassportAppearance(ch) {
+        return !!(ch.passport?.base_appearance || ch.passport?.detailed_appearance ||
+                  ch.passport?.clothing_base || ch.passport?.clothing_details);
+    }
+
     let namedCount = 0;
     const sceneParticipantIds = new Set(scene.participants || []);
     for (const unit of (units || [])) {
@@ -478,31 +483,55 @@ async function stepCreateVisuals(sessionId, scene, units, sceneIndex, characters
     if (scene.type === 'chapter_intro') {
         // no character section for title cards
     } else if (sceneParticipantIds.size > 0) {
-        // Normal case: participants known from scene or units
-        contextParts.push('Characters in scene (use their character_id in every prompt — no pronouns, no names):');
+        // Normal case: participants known from scene or units.
+        // Only include characters WITH passport appearance data.
+        // Characters without passports (unnamed, generic roles like "woman in booth")
+        // have no visual identity — the AI should describe them from scene context
+        // naturally, not via a meaningless character_id.
+        const visualChars = [];
+        const facelessChars = [];
         for (const pId of sceneParticipantIds) {
             const ch = (characters || []).find(c => c.id === pId);
             if (!ch) continue;
-            const passportDesc = [ch.passport?.base_appearance, ch.passport?.detailed_appearance, ch.passport?.clothing_base, ch.passport?.clothing_details].filter(Boolean).join('; ')
-            contextParts.push(`- ${ch.id}: ${ch.name} — ${passportDesc || ch.description || ''}`);
-            namedCount++;
+            if (hasPassportAppearance(ch)) {
+                const passportDesc = [ch.passport?.base_appearance, ch.passport?.detailed_appearance, ch.passport?.clothing_base, ch.passport?.clothing_details].filter(Boolean).join('; ');
+                visualChars.push(`- ${ch.id}: ${ch.name} — ${passportDesc || ch.description || ''}`);
+                namedCount++;
+            } else {
+                facelessChars.push(ch.name || ch.id);
+            }
         }
-        if (namedCount === 0) {
+        if (visualChars.length > 0) {
+            contextParts.push('Characters in scene (use their character_id in every prompt — no pronouns, no names):');
+            contextParts.push(...visualChars);
+        }
+        if (facelessChars.length > 0) {
+            contextParts.push('Other characters (no passport — describe naturally from scene context, do NOT use character_id):');
+            contextParts.push(`  ${facelessChars.join(', ')}`);
+        }
+        if (namedCount === 0 && facelessChars.length === 0) {
             contextParts.push('(unknown characters)');
         }
     } else if (characters?.length) {
         // Fallback for narration/dialogue scenes with no participants:
         // Include a limited set of known characters so the AI can map
         // textual references (e.g. "two citizens") to character IDs.
-        contextParts.push('Characters likely in scene (use character_id matching the scene text below — verify before using):');
-        const limit = Math.min(characters.length, 5);
-        for (let ci = 0; ci < limit; ci++) {
-            const ch = characters[ci];
-            contextParts.push(`- ${ch.id}: ${ch.name} — ${ch.passport?.base_appearance || ch.description || ''}`);
-            namedCount++;
+        const visualChars = (characters || []).filter(hasPassportAppearance);
+        if (visualChars.length > 0) {
+            contextParts.push('Characters likely in scene (use character_id matching the scene text below — verify before using):');
+            const limit = Math.min(visualChars.length, 5);
+            for (let ci = 0; ci < limit; ci++) {
+                const ch = visualChars[ci];
+                contextParts.push(`- ${ch.id}: ${ch.name} — ${ch.passport?.base_appearance || ch.description || ''}`);
+                namedCount++;
+            }
+            if (visualChars.length > 5) {
+                contextParts.push(`  ... and ${visualChars.length - 5} more characters with passports in this chapter`);
+            }
         }
-        if (characters.length > 5) {
-            contextParts.push(`  ... and ${characters.length - 5} more characters in this chapter`);
+        const facelessCount = characters.length - visualChars.length;
+        if (facelessCount > 0) {
+            contextParts.push(`Other characters in this chapter (no passport — describe from scene context when they appear): ${facelessCount} un-named/generic`);
         }
     }
     const sceneFullText = scene.audio?.full_text || scene.text || units.map(u => u.text).filter(Boolean).join(' ')
@@ -534,10 +563,14 @@ async function stepCreateVisuals(sessionId, scene, units, sceneIndex, characters
             for (const pId of (ids || [])) {
                 const ch = (characters || []).find(c => c.id === pId);
                 if (!ch) continue;
+                // Only include characters that have actual passport appearance data.
+                // Faceless characters (no passport, generic roles) should be
+                // described naturally from scene context, not injected as IDs.
                 const desc = [ch.passport?.base_appearance, ch.passport?.detailed_appearance,
                               ch.passport?.clothing_base, ch.passport?.clothing_details]
                     .filter(Boolean).join('; ');
-                parts.push(`${ch.id}: ${desc || ch.description || ch.name}`);
+                if (!desc) continue;  // skip faceless characters
+                parts.push(`${ch.id}: ${desc}`);
             }
             return parts;
         };
