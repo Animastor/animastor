@@ -346,6 +346,33 @@ function cyrToLatin(text) {
     return text.split('').map(ch => CYR_LATIN_MAP[ch] || ch).join('')
 }
 
+const UNSAFE_CHARACTER_ALIAS_WORDS = new Set([
+    'a', 'an', 'the', 'of', 'in', 'on', 'at', 'to', 'from', 'with', 'and', 'or',
+    'by', 'for', 'near', 'inside', 'left', 'right', 'center',
+    'v', 'vo', 'na', 'u', 'iz', 's', 'so', 'k', 'ko', 'ot', 'pod', 'pri', 'za',
+    'po', 'i',
+    'man', 'woman', 'person', 'people', 'human', 'citizen', 'stranger',
+    'male', 'female', 'boy', 'girl', 'child', 'children', 'crowd',
+    'muzhchina', 'zhenshchina', 'chelovek', 'lyudi', 'grazhdanin',
+    'grazhdanka', 'neznakomets', 'neznakomka', 'malchik', 'devochka',
+    'rebenok', 'tolpa',
+])
+
+function isSafeCharacterAlias(alias) {
+    const norm = cyrToLatin(String(alias || '').toLowerCase())
+        .replace(/[^a-z0-9]+/g, '')
+    return norm.length >= 3 && !UNSAFE_CHARACTER_ALIAS_WORDS.has(norm)
+}
+
+function escapeRegExp(text) {
+    return String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function replaceAliasWithCharacterId(text, alias, characterId) {
+    const re = new RegExp('(?<![\\p{L}\\p{N}_])' + escapeRegExp(alias) + '(?![\\p{L}\\p{N}_])', 'giu')
+    return text.replace(re, characterId)
+}
+
 function buildCharacterAliases(c) {
     const aliases = new Set()
     // last segment of character_id is usually the surname — most common reference
@@ -358,23 +385,23 @@ function buildCharacterAliases(c) {
     const paren = c.name?.match(/\(([^)]+)\)/)
     if (paren) {
         for (const w of paren[1].split(/[\s,]+/).filter(Boolean)) {
-            if (w.length >= 2) {
+            if (isSafeCharacterAlias(w)) {
                 aliases.add(w)
                 const latin = cyrToLatin(w)
                     .replace(/yy$/i, 'y')
                     .replace(/yi$/i, 'y')
-                if (latin !== w) aliases.add(latin)
+                if (latin !== w && isSafeCharacterAlias(latin)) aliases.add(latin)
             }
         }
     }
     // full name words (useful when AI writes in Russian)
     for (const w of (c.name || '').split(/[\s,()]+/).filter(Boolean)) {
-        if (w.length >= 3) {
+        if (isSafeCharacterAlias(w)) {
             aliases.add(w)
             const latin = cyrToLatin(w)
                 .replace(/yy$/i, 'y')
                 .replace(/yi$/i, 'y')
-            if (latin !== w) aliases.add(latin)
+            if (latin !== w && isSafeCharacterAlias(latin)) aliases.add(latin)
         }
     }
     // sort longest first so longer matches take priority
@@ -388,9 +415,8 @@ function normalizeCharacterRefs(text, characters, aliasIndex) {
     if (aliasIndex && typeof aliasIndex === 'object' && Object.keys(aliasIndex).length > 0) {
         let result = text
         for (const [alias, charId] of Object.entries(aliasIndex)) {
-            // Only replace word-boundary occurrences
-            const re = new RegExp('(?<!\\w)' + alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?!\\w)', 'gi')
-            result = result.replace(re, charId)
+            if (!isSafeCharacterAlias(alias)) continue
+            result = replaceAliasWithCharacterId(result, alias, charId)
         }
         return result
     }
@@ -401,8 +427,7 @@ function normalizeCharacterRefs(text, characters, aliasIndex) {
     for (const c of characters) {
         const aliases = buildCharacterAliases(c)
         for (const alias of aliases) {
-            const re = new RegExp('(?<!\\w)' + alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?!\\w)', 'gi')
-            result = result.replace(re, c.id)
+            result = replaceAliasWithCharacterId(result, alias, c.id)
         }
     }
     return result

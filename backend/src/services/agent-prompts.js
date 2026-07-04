@@ -5,8 +5,7 @@ const PROGRESS_STAGES = {
     creating_scenes:     '⟳ Создаю сцены...',
     creating_units:      sc => `⟳ Создаю юниты для сцены ${sc + 1}...`,
     creating_visuals:    sc => `⟳ Создаю visual prompts для сцены ${sc + 1}...`,
-    collecting_candidates: '⟳ Собираю кандидатов персонажей (coarse)...',
-    resolving_mentions:    '⟳ Размечаю упоминания персонажей (fine)...',
+
 };
 
 const WINDOW_SIZE = 3;
@@ -306,6 +305,14 @@ Return ONLY valid JSON.`,
 - For long narration paragraphs without dialogue, prefer FEWER complete visual frames over many fragments
 - Types: perception (POV narration), narration (omniscient), dialogue (speech), description (visual), action (movement), transition (time/location change), performance (theatrical)
 
+## CRITICAL — Participants identification
+For EACH unit, identify which Known Characters appear in that unit's text.
+Set \`participants\` to an array of character_ids from the Known Characters list below.
+- If the unit text mentions a known character by name, role ("редактор"), description ("лысый господин"), or nickname ("Бездомный") — include their character_id.
+- If the unit has NO characters (landscape, object, interior, empty scene) — set participants to [].
+- Use ONLY existing character_ids. Never invent new ones.
+- This is MANDATORY — participants are used by the image generation system to inject character passports.
+
 ## Scene text to decompose:
 %SCENE_TEXT%
 
@@ -318,7 +325,8 @@ Return ONLY valid JSON.`,
   "units": [
     {
       "text": "Verbatim fragment from scene.text — one complete visual frame",
-      "type": "perception|narration|dialogue|description|action|transition|performance"
+      "type": "perception|narration|dialogue|description|action|transition|performance",
+      "participants": ["character_id_from_known_list"]
     }
   ]
 }
@@ -402,99 +410,6 @@ The Imagination Unit represents the picture the reader forms from THIS unit text
 
 Return ONLY valid JSON.`,
 
-    collect_candidates: `You are a literary analysis assistant performing a coarse character candidate scan.
-Your task is to identify which known characters are POTENTIALLY active in the provided text window,
-and what aliases, roles, or descriptions might refer to them.
-
-## Rules
-- candidate_characters[].character_id MUST be copied exactly from the Known Characters list
-- Do NOT invent new character ids in candidate_characters
-- This is a BROAD pass — include any character who might appear, even briefly
-- Look for: names, nicknames, professions, titles, descriptions, and clear pronoun antecedents
-- For each character, note what aliases or role descriptions you observed in the text
-- If you see a role/profession that doesn't clearly map to any known character, mark it as unknown_roles
-- Include context_notes about pronoun resolution — who \"он\" / \"она\" likely refers to
-- This output will be consumed by the fine mention resolver, so be thorough but NOT overly specific
-
-## Inputs
-- Text window (~4000 chars) with surrounding context
-- Known characters (from character registry)
-
-## Output format
-\`\`\`json
-{
-  \"candidate_characters\": [
-    {
-      \"character_id\": \"known_character_id\",
-      \"aliases_seen\": [\"alias_or_role_1\", \"alias_or_role_2\"],
-      \"evidence\": \"why this character was identified as potentially active\",
-      \"confidence\": 0.0-1.0
-    }
-  ],
-  \"unknown_roles\": [\"role_or_profession_that_didn't_match_any_character\"],
-  \"context_notes\": \"Additional context about pronoun resolution, character interactions, or active scene state\"
-}
-\`\`\`
-
-Return ONLY valid JSON.`,
-
-    resolve_mentions: `You are a literary analysis assistant performing fine-grained mention resolution.
-Identify which KNOWN characters are present in each sentence of the provided text and resolve
-every character reference (name, pronoun, profession, nickname, description) to a canonical character_id.
-
-## Rules (strict priority)
-1. Use ONLY character_ids from the Known Characters list (supplied as %KNOWN_CHARACTERS%)
-2. NEVER return \"unknown\" as a character_id — use null for unresolvable mentions
-3. If the same person is referred to by pronoun (\"он\", \"она\", \"ему\", \"его\"),
-   profession (\"редактор\", \"продавщица\"), description (\"лысый господин\"),
-   or nickname (\"Бездомный\") — resolve to their canonical character_id
-4. If a mention could refer to MULTIPLE characters — mark character_id as null
-5. NEVER guess. If identification is uncertain → null
-6. Generic words (\"мужчина\", \"женщина\", \"человек\", \"люди\", \"толпа\")
-   are ONLY resolvable with adjacent context. If the context window
-   (2 sentences before, 2 after) clearly identifies who it is → resolve.
-   Otherwise → null.
-7. Pronouns are resolvable ONLY inside local context with explicit antecedent
-8. Include evidence text for non-name mentions (profession, description, pronoun)
-9. Candidate characters from the coarse pass are available in %CANDIDATE_CHARACTERS%
-
-## Context window
-For each sentence, you receive:
-- 2 sentences BEFORE (or start of text)
-- The CURRENT sentence
-- 2 sentences AFTER (or end of text)
-
-## Candidate Characters (from coarse pass)
-%CANDIDATE_CHARACTERS%
-
-## Known Characters (full registry)
-%KNOWN_CHARACTERS%
-
-## Output format
-\`\`\`json
-{
-  \"sentences\": [
-    {
-      \"index\": 0,
-      \"text\": \"original sentence text\",
-      \"characters\": [\"known_character_id\", \"known_character_id\"],
-      \"mentions\": [
-        {
-          \"text\": \"the exact mention text\",
-          \"character_id\": \"known_character_id\",
-          \"type\": \"name|profession|description|pronoun|nickname|title\",
-          \"role\": \"subject|object|possessive|passive\",
-          \"confidence\": 0.0-1.0,
-          \"evidence\": \"why this resolution was made\"
-        }
-      ],
-      \"unknown_mentions\": [\"word that could not be resolved\"]
-    }
-  ]
-}
-\`\`\`
-
-Return ONLY valid JSON.`,
 };
 
 module.exports = {

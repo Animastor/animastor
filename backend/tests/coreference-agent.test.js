@@ -1,19 +1,20 @@
 // ======================================================
-// Coreference Resolution — Agent Service Tests (P7)
+// Coreference Resolution — Agent Service Tests (Simplified)
 // ======================================================
 // Tests for:
-//   - assignUnitParticipants (text-based matching, no DB)
-//   - computeHash
-//   - normalizeForMatch
+//   - assignUnitParticipants (LLM output validation)
+//   - applyScenePairParticipantFallback
+//   - shouldInjectParticipantPassports
+//   - getFallbackVisual
 //   - splitIntoSentences / splitIntoSentencesWithOffsets
 // ======================================================
 
 const { expect } = require('chai');
 const {
-    computeHash,
+    assignUnitParticipants,
     getFallbackVisual,
-    matchMentionsToUnits,
-    normalizeForMatch,
+    applyScenePairParticipantFallback,
+    shouldInjectParticipantPassports,
     splitIntoSentences,
     splitIntoSentencesWithOffsets,
 } = require('../src/services/agent-service');
@@ -23,98 +24,91 @@ const {
 } = require('../src/utils/character-identity');
 
 // ======================================================
-// assignUnitParticipants — text-based matching
+// assignUnitParticipants — LLM output validation
 // ======================================================
 
-describe('Coreference — assignUnitParticipants text matching', () => {
-    it('assigns correct characters to unit with direct mentions', () => {
-        const units = [{ text: 'На скамейке сидели Берлиоз и Бездомный.' }];
-        const m = [{ character_id: 'berlioz', mention_text: 'Берлиоз' }, { character_id: 'ponyrev', mention_text: 'Бездомный' }];
-        const result = matchMentionsToUnits(m, units);
-        expect(result[0]).to.have.members(['berlioz', 'ponyrev']);
-    });
+describe('Coreference — assignUnitParticipants validation', () => {
+    const characters = [
+        { id: 'berlioz', name: 'Берлиоз' },
+        { id: 'ponyrev', name: 'Бездомный' },
+    ];
 
-    it('finds characters by descriptive mention (редактор, поэт)', () => {
-        const units = [{ text: 'Поэт Иван Николаевич Понырев смотрел на редактора МАССОЛИТА.' }];
-        const m = [
-            { character_id: 'berlioz', mention_text: 'редактор' },
-            { character_id: 'ponyrev', mention_text: 'поэт' },
-            { character_id: 'ponyrev', mention_text: 'Иван Николаевич Понырев' },
-        ];
-        const result = matchMentionsToUnits(m, units);
-        expect(result[0]).to.have.members(['berlioz', 'ponyrev']);
-    });
-
-    it('returns empty for unit with no character mentions', () => {
-        const units = [{ text: 'Солнце садилось за Садовое кольцо. Было жарко.' }];
-        const m = [{ character_id: 'berlioz', mention_text: 'Берлиоз' }];
-        expect(Object.keys(matchMentionsToUnits(m, units))).to.have.lengthOf(0);
-    });
-
-    it('handles multiple units with different characters', () => {
+    it('accepts valid character IDs from LLM output', () => {
         const units = [
-            { text: 'Берлиоз пожал руку профессору.' },
-            { text: 'Поэт и Бездомный стояли рядом.' },
-            { text: 'Солнце садилось за горизонт.' },
+            { text: 'Берлиоз сел на скамейку.', participants: ['berlioz'] },
         ];
-        const m = [
-            { character_id: 'berlioz', mention_text: 'Берлиоз' },
-            { character_id: 'woland', mention_text: 'профессор' },
-            { character_id: 'ponyrev', mention_text: 'Бездомный' },
-            { character_id: 'ponyrev', mention_text: 'поэт' },
+        const result = assignUnitParticipants(units, characters);
+        expect(result[0]).to.have.members(['berlioz']);
+    });
+
+    it('handles multiple participants per unit', () => {
+        const units = [
+            { text: 'Берлиоз и Бездомный сидели.', participants: ['berlioz', 'ponyrev'] },
         ];
-        const result = matchMentionsToUnits(m, units);
-        expect(result[0]).to.have.members(['berlioz', 'woland']);
+        const result = assignUnitParticipants(units, characters);
+        expect(result[0]).to.have.members(['berlioz', 'ponyrev']);
+    });
+
+    it('filters out unknown character IDs', () => {
+        const units = [
+            { text: 'Неизвестный персонаж.', participants: ['berlioz', 'fake_char'] },
+        ];
+        const result = assignUnitParticipants(units, characters);
+        expect(result[0]).to.deep.equal(['berlioz']);
+    });
+
+    it('returns empty for unit with no participants', () => {
+        const units = [
+            { text: 'Пейзаж без людей.', participants: [] },
+        ];
+        const result = assignUnitParticipants(units, characters);
+        expect(Object.keys(result)).to.have.lengthOf(0);
+    });
+
+    it('returns empty for unit without participants field', () => {
+        const units = [
+            { text: 'Пейзаж без людей.' },
+        ];
+        const result = assignUnitParticipants(units, characters);
+        expect(Object.keys(result)).to.have.lengthOf(0);
+    });
+
+    it('handles multiple units with different participants', () => {
+        const units = [
+            { text: 'Берлиоз шёл.', participants: ['berlioz'] },
+            { text: 'Бездомный бежал.', participants: ['ponyrev'] },
+            { text: 'Пустая аллея.', participants: [] },
+        ];
+        const result = assignUnitParticipants(units, characters);
+        expect(result[0]).to.have.members(['berlioz']);
         expect(result[1]).to.have.members(['ponyrev']);
         expect(result[2]).to.be.undefined;
     });
 
-    it('is case insensitive', () => {
-        const units = [{ text: 'БЕРЛИОЗ И БЕЗДОМНЫЙ' }];
-        const m = [{ character_id: 'berlioz', mention_text: 'Берлиоз' }, { character_id: 'ponyrev', mention_text: 'Бездомный' }];
-        const result = matchMentionsToUnits(m, units);
-        expect(result[0]).to.have.members(['berlioz', 'ponyrev']);
-    });
-
-    it('skips unit with empty text', () => {
-        const m = [{ character_id: 'berlioz', mention_text: 'Берлиоз' }];
-        const result = matchMentionsToUnits(m, [{ text: '' }, { text: 'Берлиоз тут' }]);
-        expect(result[0]).to.be.undefined;
-        expect(result[1]).to.have.members(['berlioz']);
-    });
-
-    it('handles empty mentions array', () => {
-        expect(Object.keys(matchMentionsToUnits([], [{ text: 'Берлиоз' }]))).to.have.lengthOf(0);
-    });
-
-    it('handles mention that appears in multiple units', () => {
-        const units = [{ text: 'Берлиоз шёл по аллее.' }, { text: 'Берлиоз сел на скамейку.' }];
-        const m = [{ character_id: 'berlioz', mention_text: 'Берлиоз' }];
-        const result = matchMentionsToUnits(m, units);
-        expect(result[0]).to.have.members(['berlioz']);
-        expect(result[1]).to.have.members(['berlioz']);
-    });
-
-    it('deduplicates characters in same unit', () => {
-        const units = [{ text: 'Берлиоз сказал Берлиозу, что Берлиоз устал.' }];
-        const m = [{ character_id: 'berlioz', mention_text: 'Берлиоз' }];
-        const result = matchMentionsToUnits(m, units);
-        expect(result[0]).to.deep.equal(['berlioz']);
-    });
-
-    it('does not match pronoun mentions in the text fallback', () => {
-        const units = [{ text: 'Он поднялся и посмотрел на неё.' }];
-        const m = [
-            { character_id: 'berlioz', mention_text: 'Он', mention_type: 'pronoun' },
-            { character_id: 'booth_woman', mention_text: 'неё', mention_type: 'pronoun' },
+    it('deduplicates character IDs', () => {
+        const units = [
+            { text: 'Текст.', participants: ['berlioz', 'berlioz', 'berlioz'] },
         ];
-        expect(matchMentionsToUnits(m, units)).to.deep.equal({});
+        const result = assignUnitParticipants(units, characters);
+        // assignUnitParticipants does NOT dedup — it passes through validated IDs
+        // (dedup happens elsewhere: buildCharacters in image-service.js)
+        expect(result[0]).to.have.members(['berlioz']);
     });
 
-    it('does not assign unresolved mentions with null character_id', () => {
-        const units = [{ text: 'Женщина ответила резко.' }];
-        const m = [{ character_id: null, mention_text: 'Женщина', mention_type: 'unknown' }];
-        expect(matchMentionsToUnits(m, units)).to.deep.equal({});
+    it('returns empty for empty units array', () => {
+        expect(assignUnitParticipants([], characters)).to.deep.equal({});
+    });
+
+    it('returns empty for undefined units', () => {
+        expect(assignUnitParticipants(undefined, characters)).to.deep.equal({});
+    });
+
+    it('handles empty characters list', () => {
+        const units = [
+            { text: 'Текст.', participants: ['berlioz'] },
+        ];
+        const result = assignUnitParticipants(units, []);
+        expect(Object.keys(result)).to.have.lengthOf(0);
     });
 });
 
@@ -143,107 +137,47 @@ describe('Coreference — visual fallback participants', () => {
     });
 });
 
-// ======================================================
-// computeHash
-// ======================================================
+describe('Coreference — scene pair participant fallback', () => {
+    const sceneParticipants = ['mikhail_aleksandrovich_berlioz', 'ivan_nikolaevich_ponyrev'];
 
-describe('Coreference — computeHash', () => {
-
-    it('returns consistent hash for same input', () => {
-        const h1 = computeHash('hello world');
-        const h2 = computeHash('hello world');
-        expect(h1).to.equal(h2);
+    it('assigns both scene participants for clear group references', () => {
+        const units = [{
+            text: 'Напившись, литераторы немедленно начали икать и уселись на скамейке.',
+        }];
+        const result = applyScenePairParticipantFallback(units, {}, sceneParticipants);
+        expect(result[0]).to.have.members(sceneParticipants);
     });
 
-    it('returns different hash for different input', () => {
-        const h1 = computeHash('hello');
-        const h2 = computeHash('world');
-        expect(h1).to.not.equal(h2);
+    it('assigns both scene participants for ordinal references', () => {
+        const units = [
+            { text: 'Первый был маленького роста.' },
+            { text: 'Второй был плечистый и рыжеватый.' },
+        ];
+        const result = applyScenePairParticipantFallback(units, {}, sceneParticipants);
+        expect(result[0]).to.have.members(sceneParticipants);
+        expect(result[1]).to.have.members(sceneParticipants);
     });
 
-    it('handles empty string', () => {
-        expect(computeHash('')).to.be.a('string');
+    it('does not override explicit unit participants', () => {
+        const units = [{ text: 'Первый был маленького роста.' }];
+        const result = applyScenePairParticipantFallback(units, { 0: ['mikhail_aleksandrovich_berlioz'] }, sceneParticipants);
+        expect(result[0]).to.deep.equal(['mikhail_aleksandrovich_berlioz']);
     });
 
-    it('handles objects', () => {
-        const h = computeHash({ a: 1, b: 2 });
-        expect(h).to.be.a('string');
-        expect(h.length).to.be.above(0);
-    });
-
-    it('handles arrays', () => {
-        const h = computeHash([1, 2, 3]);
-        expect(h).to.be.a('string');
-    });
-
-    it('returns consistent hash for same object', () => {
-        const obj = { id: 'berlioz', name: 'Берлиоз' };
-        expect(computeHash(obj)).to.equal(computeHash(obj));
-    });
-
-    it('returns hex string', () => {
-        const h = computeHash('test');
-        expect(h).to.match(/^[0-9a-f]+$/);
+    it('does not guess when scene participant count is not exactly two', () => {
+        const units = [{ text: 'Литераторы сели на скамейку.' }];
+        const result = applyScenePairParticipantFallback(units, {}, ['a', 'b', 'c']);
+        expect(result).to.deep.equal({});
     });
 });
 
-// ======================================================
-// normalizeForMatch
-// ======================================================
-
-describe('Coreference — normalizeForMatch', () => {
-
-    it('lowercases input', () => {
-        expect(normalizeForMatch('BERLIOZ')).to.equal('berlioz');
+describe('Coreference — passport injection guard', () => {
+    it('injects participants for generic people wording even when character_binding is false', () => {
+        expect(shouldInjectParticipantPassports('Two writers sitting on the bench', ['berlioz', 'ponyrev'], false)).to.equal(true);
     });
 
-    it('transliterates Cyrillic to Latin', () => {
-        expect(normalizeForMatch('Берлиоз')).to.equal('berlioz');
-    });
-
-    it('handles mixed Russian/English', () => {
-        const result = normalizeForMatch('moscow_patriarskie_pруды');
-        expect(result).to.include('moscow');
-        expect(result).to.include('patriarskie');
-        expect(result).to.include('prudy');
-    });
-
-    it('replaces underscores and hyphens with spaces', () => {
-        expect(normalizeForMatch('ivan_nikolaevich-ponyrev')).to.equal('ivan nikolaevich ponyrev');
-    });
-
-    it('strips punctuation', () => {
-        expect(normalizeForMatch('Берлиоз!!!')).to.equal('berlioz');
-    });
-
-    it('handles complex Russian text', () => {
-        const result = normalizeForMatch('Михаил Александрович Берлиоз');
-        expect(result).to.equal('mikhail aleksandrovich berlioz');
-    });
-
-    it('handles empty string', () => {
-        expect(normalizeForMatch('')).to.equal('');
-        expect(normalizeForMatch(null)).to.equal('');
-    });
-
-    it('handles text with only punctuation', () => {
-        expect(normalizeForMatch('!!! ??? ...')).to.equal('');
-    });
-
-    it('normalizes multiple spaces', () => {
-        expect(normalizeForMatch('berlioz    bezdomny')).to.equal('berlioz bezdomny');
-    });
-
-    it('transliterates ё→yo, й→y, щ→shch', () => {
-        expect(normalizeForMatch('ёлка йод щука')).to.equal('yolka yod shchuka');
-    });
-
-    it('removes hard/soft signs', () => {
-        expect(normalizeForMatch('объём пьеса')).to.equal('obyom pesa');
-    });
-
-    it('transliterates ц→ts, ч→ch, ш→sh', () => {
-        expect(normalizeForMatch('царь чай шум')).to.equal('tsar chay shum');
+    it('keeps no-people prompts unbound when character_binding is false', () => {
+        expect(shouldInjectParticipantPassports('empty bench, no people visible', ['berlioz', 'ponyrev'], false)).to.equal(false);
     });
 });
 

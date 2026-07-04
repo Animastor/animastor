@@ -195,18 +195,29 @@ describe('Coreference — normalizeCharacterRefs', () => {
         expect(normalizeCharacterRefs('test text', [])).to.equal('test text');
     });
 
-    it('replaces word even when followed by Cyrillic due to JS \\w limitation', () => {
-        // Note: JavaScript's \\w only matches [a-zA-Z0-9_], not Cyrillic.
-        // So "Берлиоз" at the start of "Берлиозные" matches because
-        // the lookahead (?!\\w) sees Cyrillic 'н' and treats it as non-word.
+    it('does not replace a character alias inside a longer Cyrillic word', () => {
         const text = 'Берлиозные размышления';
         const result = normalizeCharacterRefs(text, characters);
-        // Due to JS regex limitation, Берлиоз IS replaced but ные stays
-        expect(result).to.include('mikhail_aleksandrovich_berliozные');
+        expect(result).to.equal(text);
     });
 
     it('handles empty characters array', () => {
         expect(normalizeCharacterRefs('Берлиоз', [])).to.equal('Берлиоз');
+    });
+
+    it('does not replace English stopwords from role-only character names', () => {
+        const roleCharacters = [
+            { id: 'zhenshchina_v_budochke', name: 'Woman in the Booth' },
+        ];
+        const text = 'two writers sitting on the bench, facing the pond';
+        const result = normalizeCharacterRefs(text, roleCharacters);
+        expect(result).to.equal(text);
+    });
+
+    it('ignores unsafe aliases from a safe alias index', () => {
+        const aliasIndex = { the: 'zhenshchina_v_budochke', booth: 'zhenshchina_v_budochke' };
+        const result = normalizeCharacterRefs('the booth is closed', [], aliasIndex);
+        expect(result).to.equal('the zhenshchina_v_budochke is closed');
     });
 });
 

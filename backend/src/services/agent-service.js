@@ -456,13 +456,14 @@ async function stepCreateVisuals(sessionId, scene, units, sceneIndex, characters
         const merged = units.map((u, i) => {
             const vu = visualUnits[i];
             if (vu && vu.visual) {
-                let prompt = normalizeCharacterRefs(vu.visual.prompt, characters);
                 const unitParticipantIds = (u.participants && u.participants.length > 0)
                     ? u.participants
                     : (scene.participants || []);
+                const scopedCharacters = (characters || []).filter(c => unitParticipantIds.includes(c.id));
+                let prompt = normalizeCharacterRefs(vu.visual.prompt, scopedCharacters);
                 const passportParts = passportPartsFor(unitParticipantIds);
                 // Inject character passports into the prompt text
-                if (vu.visual.character_binding !== false && passportParts.length > 0) {
+                if (shouldInjectParticipantPassports(prompt, unitParticipantIds, vu.visual.character_binding) && passportParts.length > 0) {
                     // Only inject if NO character_id from scene participants is already in the prompt
                     const anyCharIdPresent = unitParticipantIds.some(
                         pId => pId && (prompt.includes(pId + ':') || prompt.includes(pId))
@@ -513,28 +514,37 @@ function getFallbackVisual(text, characters, scene) {
     return `${who} at ${locName}, cinematic shot`;
 }
 
-function matchMentionsToUnits(mentions, units) {
-    const safeMentions = (mentions || []).filter(m => m.mention_type !== 'pronoun');
-    if (safeMentions.length === 0 || !units || units.length === 0) return {};
+function promptMentionsGenericPeople(prompt) {
+    const value = String(prompt || '');
+    if (/\b(no|without)\s+(people|persons?|men|figures?|characters?|humans?)\b/i.test(value)) {
+        return false;
+    }
+    return /\b(two\s+)?(writers?|men|people|persons?|figures?|citizens?|poets?|editors?)\b/i.test(value);
+}
 
-    const unitParticipants = {};
-    for (let ui = 0; ui < units.length; ui++) {
-        const uText = (units[ui]?.text || '').toLowerCase();
-        if (!uText) continue;
+function shouldInjectParticipantPassports(prompt, participantIds, characterBinding) {
+    if (!participantIds?.length) return false;
+    if (characterBinding !== false) return true;
+    return promptMentionsGenericPeople(prompt);
+}
 
-        const chars = new Set();
-        for (const m of safeMentions) {
-            const mText = (m.mention_text || '').toLowerCase();
-            if (mText && uText.includes(mText) && m.character_id) {
-                chars.add(m.character_id);
-            }
-        }
-        if (chars.size > 0) {
-            unitParticipants[ui] = [...chars];
+function unitTextNeedsScenePairParticipants(text) {
+    const value = String(text || '').toLowerCase();
+    return /(^|[\s—,.;:!?«"(\[])(первый|второй|писател[ьяеию]|литератор[ыаоеив]*|гражданин[аеыу]*)(?=$|[\s—,.;:!?»")\]])/iu.test(value);
+}
+
+function applyScenePairParticipantFallback(units, unitParticipants, sceneParticipants) {
+    const sceneIds = [...new Set(sceneParticipants || [])].filter(Boolean);
+    if (sceneIds.length !== 2) return unitParticipants || {};
+
+    const result = { ...(unitParticipants || {}) };
+    for (let ui = 0; ui < (units || []).length; ui++) {
+        if (result[ui]?.length) continue;
+        if (unitTextNeedsScenePairParticipants(units[ui]?.text)) {
+            result[ui] = sceneIds;
         }
     }
-
-    return unitParticipants;
+    return result;
 }
 
 function splitTextEvenlyByParagraphs(text, maxScenes) {
@@ -692,272 +702,36 @@ function buildFallbackScenes(sceneText) {
     });
 }
 
-// ======================================================
-// Coreference Resolution — Agent Steps & Helpers
-// ======================================================
+/* ======================================================
+ * Coreference Resolution — Simplified
+ * Participants are now returned directly by LLM in stepCreateUnits.
+ * assignUnitParticipants validates character IDs from the LLM response.
+ * ====================================================== */
 
 /**
- * Simple hash for content fingerprinting (not cryptographic).
+ * Assign unit participants by validating character IDs directly from LLM output.
+ * The LLM in stepCreateUnits returns participants for each unit.
+ * This function validates that the returned character IDs exist in the known characters list.
  */
-function computeHash(obj) {
-    const str = typeof obj === 'string' ? obj : JSON.stringify(obj);
-    let hash = 0;
-    for (let i = 0; i < str.length; i++) {
-        const ch = str.charCodeAt(i);
-        hash = ((hash << 5) - hash) + ch;
-        hash |= 0;
-    }
-    return Math.abs(hash).toString(16);
-}
-
-/**
- * Normalize text for alias matching: lowercase, transliterate Cyrillic to Latin,
- * replace separators with spaces, strip non-alphanumeric.
- */
-const CYR_LATIN_MAP_FN = {
-    'А':'A','а':'a','Б':'B','б':'b','В':'V','в':'v','Г':'G','г':'g','Д':'D','д':'d',
-    'Е':'Ye','е':'e','Ё':'Yo','ё':'yo','Ж':'Zh','ж':'zh','З':'Z','з':'z','И':'I','и':'i',
-    'Й':'Y','й':'y','К':'K','к':'k','Л':'L','л':'l','М':'M','м':'m','Н':'N','н':'n',
-    'О':'O','о':'o','П':'P','п':'p','Р':'R','р':'r','С':'S','с':'s','Т':'T','т':'t',
-    'У':'U','у':'u','Ф':'F','ф':'f','Х':'Kh','х':'kh','Ц':'Ts','ц':'ts','Ч':'Ch','ч':'ch',
-    'Ш':'Sh','ш':'sh','Щ':'Shch','щ':'shch','Ъ':'','ъ':'','Ы':'Y','ы':'y','Ь':'','ь':'',
-    'Э':'E','э':'e','Ю':'Yu','ю':'yu','Я':'Ya','я':'ya',
-};
-
-function normalizeForMatch(text) {
-    if (!text) return '';
-    let result = text.toLowerCase().trim();
-    result = result.split('').map(ch => CYR_LATIN_MAP_FN[ch] || ch).join('');
-    result = result.replace(/[_\-]+/g, ' ');
-    result = result.replace(/[^a-z0-9\s]/g, '');
-    result = result.replace(/\s+/g, ' ').trim();
-    return result;
-}
-
-/**
- * Step: Collect Character Candidates (Coarse Pass)
- * Runs on the analysis window (~4000 chars) to identify which characters
- * are potentially active and what aliases/roles may refer to them.
- * Saves results to character_window_candidates table.
- */
-async function stepCollectCharacterCandidates(sessionId, bookId, {
-    analysisWindowText, analysisWindowStart, analysisWindowEnd,
-    characters, chapterId, windowIndex,
-}) {
-    if (!analysisWindowText || analysisWindowText.length < 10) {
-        console.log(`[COREFERENCE] Skip coarse pass — text too short (${analysisWindowText?.length || 0} chars)`);
-        return { candidate_characters: [], unknown_roles: [], context_notes: '' };
-    }
-
-    const step = await createStep(sessionId, 'collect_character_candidates', windowIndex || 0);
-
-    const charsContext = (characters || [])
-        .map(c => `- ${c.id}: ${c.name} (${c.role || 'unknown'})`)
-        .join('\n') || 'No known characters';
-
-    const prompt = SYSTEM_PROMPTS.collect_candidates;
-
-    const messages = [
-        { role: 'system', content: prompt },
-        { role: 'user', content: `Identify which known characters are potentially active in this text window.\n\n## Known Characters\n${charsContext}\n\n## Text Window\n\`\`\`\n${analysisWindowText}\n\`\`\`` },
-    ];
-
-    try {
-        const result = await callAI(messages, { maxTokens: 4096 });
-        const candidates = result.candidate_characters || [];
-        const unknownRoles = result.unknown_roles || [];
-        const contextNotes = result.context_notes || '';
-
-        // Save to character_window_candidates
-        if (candidates.length > 0) {
-            const runResult = await query(
-                `INSERT INTO character_resolution_runs (book_id, chapter_id, analysis_window_index, run_type,
-                 source_start, source_end, resolver_version, character_registry_hash, source_hash, status)
-                 VALUES ($1, $2, $3, 'coarse_candidates', $4, $5, '1.0.0', $6, $7, 'completed')
-                 RETURNING run_id`,
-                [bookId, chapterId || null, windowIndex || 0,
-                 analysisWindowStart || 0, analysisWindowEnd || 0,
-                 computeHash(characters || []), computeHash(analysisWindowText || '')]
-            );
-            const runId = runResult.rows[0].run_id;
-
-            for (const cand of candidates) {
-                await query(
-                    `INSERT INTO character_window_candidates (run_id, book_id, chapter_id, analysis_window_index,
-                     source_start, source_end, character_id, alias_texts, evidence, confidence)
-                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-                     ON CONFLICT (run_id, character_id) DO NOTHING`,
-                    [runId, bookId, chapterId || null, windowIndex || 0,
-                     analysisWindowStart || 0, analysisWindowEnd || 0,
-                     cand.character_id, cand.aliases_seen || [],
-                     cand.evidence || null, cand.confidence || null]
-                );
-            }
-            console.log(`[COREFERENCE] Coarse pass: ${candidates.length} candidates, ${unknownRoles.length} unknown roles`);
-        }
-
-        await logConversation(sessionId, step.step_id, messages, JSON.stringify(result));
-        await completeStep(step.step_id, result);
-
-        return { candidate_characters: candidates, unknown_roles: unknownRoles, context_notes: contextNotes };
-    } catch (err) {
-        await failStep(step.step_id, err.message);
-        console.warn(`[COREFERENCE] Coarse pass FAILED: ${err.message}`);
-        return { candidate_characters: [], unknown_roles: [], context_notes: '' };
-    }
-}
-
-/**
- * Step: Resolve Character Mentions (Fine Pass)
- * Runs per generation span (~1500 chars / scene) after create_scenes.
- * Splits into sentences, resolves each mention to a character_id,
- * saves to sentence_resolutions + character_mentions tables.
- */
-async function stepResolveCharacterMentions(sessionId, bookId, {
-    generationSpanText, generationSpanStart, generationSpanEnd,
-    surroundingContext, candidateCharacters, fullCharacters,
-    chapterId, sceneId, windowIndex,
-}) {
-    if (!generationSpanText || generationSpanText.length < 5) {
-        console.log(`[COREFERENCE] Skip fine pass — text too short (${generationSpanText?.length || 0} chars)`);
-        return { sentences: [] };
-    }
-
-    const step = await createStep(sessionId, 'resolve_character_mentions', windowIndex || 0);
-
-    // Build candidate context
-    const candidateStr = (candidateCharacters || [])
-        .map(c => `- ${c.character_id}` + (c.aliases_seen?.length ? ` (aliases: ${c.aliases_seen.join(', ')})` : '') + (c.confidence ? ` [confidence: ${c.confidence}]` : ''))
-        .join('\n') || 'None (use full character list)';
-
-    const knownCharsStr = (fullCharacters || [])
-        .map(c => `- ${c.id}: ${c.name} (${c.role || 'unknown'})`)
-        .join('\n') || 'No known characters';
-
-    const contextStr = surroundingContext ? `\n## Surrounding Context\n${surroundingContext}\n` : '';
-
-    const prompt = SYSTEM_PROMPTS.resolve_mentions
-        .replace('%CANDIDATE_CHARACTERS%', candidateStr)
-        .replace('%KNOWN_CHARACTERS%', knownCharsStr);
-    const knownIds = new Set((fullCharacters || []).map(c => c.id).filter(Boolean));
-
-    const messages = [
-        { role: 'system', content: prompt },
-        { role: 'user', content: `Resolve character mentions in this text.${contextStr}\n\n## Text to resolve\n\`\`\`\n${generationSpanText}\n\`\`\`` },
-    ];
-
-    try {
-        const result = await callAI(messages, { maxTokens: 8192 });
-        const sentences = result.sentences || [];
-
-        if (sentences.length > 0) {
-            const runResult = await query(
-                `INSERT INTO character_resolution_runs (book_id, chapter_id, analysis_window_index, run_type,
-                 source_start, source_end, generation_start, generation_end,
-                 resolver_version, character_registry_hash, source_hash, status)
-                 VALUES ($1, $2, $3, 'fine_mentions', $4, $5, $6, $7, '1.0.0', $8, $9, 'completed')
-                 RETURNING run_id`,
-                [bookId, chapterId || null, windowIndex || 0,
-                 generationSpanStart || 0, generationSpanEnd || 0,
-                 generationSpanStart || 0, generationSpanEnd || 0,
-                 computeHash(fullCharacters || []), computeHash(generationSpanText || '')]
-            );
-            const runId = runResult.rows[0].run_id;
-
-            let mentionOffset = generationSpanStart || 0;
-
-            for (const sent of sentences) {
-                const sentText = sent.text || '';
-                const sentStart = mentionOffset;
-                const sentEnd = sentStart + sentText.length;
-                const resolvedCharacters = (sent.characters || []).filter(id => knownIds.has(id));
-
-                // Save sentence-level resolution
-                await query(
-                    `INSERT INTO sentence_resolutions (run_id, book_id, chapter_id, scene_id,
-                     sentence_index, source_start, source_end, sentence_text, character_ids, unknown_mentions, resolved_by)
-                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'agent')
-                     ON CONFLICT (run_id, scene_id, sentence_index) DO NOTHING`,
-                    [runId, bookId, chapterId || null, sceneId || '',
-                     sent.index || 0, sentStart, sentEnd, sentText,
-                     resolvedCharacters, JSON.stringify(sent.unknown_mentions || [])]
-                );
-
-                // Save mention-level data
-                for (const mention of (sent.mentions || [])) {
-                    const mentionText = mention.text || '';
-                    const mentionStart = sentStart + (sentText.indexOf(mentionText) >= 0 ? sentText.indexOf(mentionText) : 0);
-                    const mentionEnd = mentionStart + mentionText.length;
-                    const mentionCharacterId = knownIds.has(mention.character_id) ? mention.character_id : null;
-
-                    await query(
-                        `INSERT INTO character_mentions (run_id, book_id, chapter_id, scene_id,
-                         sentence_index, source_start, source_end, mention_text, mention_norm,
-                         character_id, mention_type, role, confidence, evidence)
-                         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
-                        [runId, bookId, chapterId || null, sceneId || '',
-                         sent.index || 0, mentionStart, mentionEnd, mentionText,
-                         normalizeForMatch(mentionText),
-                         mentionCharacterId,
-                         mention.type || 'unknown',
-                         mention.role || 'unknown',
-                         mention.confidence || null,
-                         mention.evidence || null]
-                    );
-                }
-
-                mentionOffset = sentEnd;
-                const nextRaw = generationSpanText.substring(sentEnd);
-                const gap = nextRaw.match(/^[\s\n]+/);
-                if (gap) mentionOffset += gap[0].length;
-            }
-
-            console.log(`[COREFERENCE] Fine pass: ${sentences.length} sentences resolved for scene ${sceneId}`);
-        }
-
-        await logConversation(sessionId, step.step_id, messages, JSON.stringify(result));
-        await completeStep(step.step_id, result);
-
-        return { sentences };
-    } catch (err) {
-        await failStep(step.step_id, err.message);
-        console.warn(`[COREFERENCE] Fine pass FAILED for scene ${sceneId}: ${err.message}`);
-        return { sentences: [] };
-    }
-}
-
-/**
- * Assign unit participants by matching resolved mention_text against unit text.
- * Source spans are added after visuals today, so this remains a text fallback.
- * Pronouns are intentionally excluded: matching "он" / "она" as a substring
- * creates many false positives and should only be used after span alignment.
- */
-async function assignUnitParticipants(bookId, chapterId, sceneId, units) {
+function assignUnitParticipants(units, characters) {
     if (!units || units.length === 0) return {};
 
-    try {
-        // Fetch all resolved mentions for this scene from the latest completed fine run
-        const result = await query(
-            `SELECT cm.character_id, cm.mention_text, cm.mention_type
-             FROM character_mentions cm
-             JOIN character_resolution_runs crr ON cm.run_id = crr.run_id
-             WHERE cm.book_id = $1
-               AND ($2::text IS NULL OR cm.chapter_id = $2)
-               AND cm.scene_id = $3
-               AND crr.status = 'completed' AND crr.run_type = 'fine_mentions'
-               AND cm.character_id IS NOT NULL
-             ORDER BY cm.run_id DESC
-             LIMIT 500`,
-            [bookId, chapterId || null, sceneId || '']
-        );
+    const knownIds = new Set((characters || []).map(c => c.id).filter(Boolean));
+    const result = {};
 
-        const mentions = result.rows;
-        if (mentions.length === 0) return {};
-        return matchMentionsToUnits(mentions, units);
-    } catch (err) {
-        console.warn(`[COREFERENCE] assignUnitParticipants failed: ${err.message}`);
-        return {};
+    for (let ui = 0; ui < units.length; ui++) {
+        const participants = units[ui]?.participants || [];
+        if (participants.length === 0) continue;
+
+        // Validate: only keep known character IDs from the character registry
+        const valid = participants.filter(id => knownIds.has(id));
+        if (valid.length > 0) {
+            // Deduplicate: Set ensures each character_id appears once
+            result[ui] = [...new Set(valid)];
+        }
     }
+
+    return result;
 }
 
 function getWindowText(sourceText, existingChars, existingLocs, windowIndex, startOffset) {
@@ -1091,9 +865,6 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
     const rawWindowText = options.rawWindowText || text;
     const sourceOffsetBase = options.sourceOffsetBase || 0;
 
-    // Store coarse candidate state for use in fine pass
-    let coarseResult = { candidate_characters: [], unknown_roles: [], context_notes: '' };
-
     // Helper to publish VBook progress events to Redis pub/sub (for SSE stream)
     const publishVBook = (event) => {
         if (publishProgress && bookId) {
@@ -1155,20 +926,6 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
         locations = Array.from(mergedMap.values());
         console.log(`[AGENT] Locations: ${existingLocs.length} existing + ${added} new + ${enriched} enriched = ${locations.length} total`);
     }
-
-    // ── Coreference Resolution: Coarse candidate pass ──
-    // After characters & locations are established, run a coarse scan to identify
-    // which characters are active and what aliases may appear in the generation span.
-    _progress({ stage: 'collecting_candidates', message: PROGRESS_STAGES.collecting_candidates });
-    await updateSession(sessionId, { progress_msg: PROGRESS_STAGES.collecting_candidates });
-    coarseResult = await stepCollectCharacterCandidates(sessionId, bookId || 'unknown', {
-        analysisWindowText: sceneText,
-        analysisWindowStart: sourceOffsetBase,
-        analysisWindowEnd: sourceOffsetBase + sceneText.length,
-        characters,
-        chapterId: null,
-        windowIndex: stepIndex || 0,
-    });
 
     // ── Scene split with unified validation (coverage = hard, duration = soft) ──
     const capScenes = (arr) => (arr || []).slice(0, MAX_SCENES_PER_CHUNK);
@@ -1275,35 +1032,20 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
             window_start_scene: windowStartScene,
         });
 
-        // ── Coreference Resolution: Fine mention pass per scene ──
-        // Resolve character mentions in this scene's text before creating units.
-        _progress({ stage: 'resolving_mentions', message: PROGRESS_STAGES.resolving_mentions });
-        await updateSession(sessionId, { progress_msg: `${PROGRESS_STAGES.resolving_mentions} (сцена ${globalSceneIndex + 1})` });
-        await stepResolveCharacterMentions(sessionId, bookId || 'unknown', {
-            generationSpanText: scene.text || '',
-            generationSpanStart: scene.source_start || 0,
-            generationSpanEnd: scene.source_end || 0,
-            surroundingContext: '',
-            candidateCharacters: coarseResult.candidate_characters || [],
-            fullCharacters: characters,
-            chapterId: null,
-            sceneId: scene.id || `scene_${globalSceneIndex}`,
-            windowIndex: stepIndex || 0,
-        });
-
         const units = await stepCreateUnits(sessionId, scene, globalSceneIndex, characters, stepIndex, _progress);
 
         // ── Coreference Resolution: Assign unit participants ──
-        // Intersect unit source spans with resolved mentions to get per-unit character IDs.
-        const unitParticipants = await assignUnitParticipants(
-            bookId || 'unknown',
-            null,
-            scene.id || `scene_${globalSceneIndex}`,
-            units
+        // The LLM already returned participants in stepCreateUnits.
+        // Validate character IDs exist in the known characters list.
+        const unitParticipants = assignUnitParticipants(units, characters);
+        const resolvedUnitParticipants = applyScenePairParticipantFallback(
+            units,
+            unitParticipants,
+            scene.participants || []
         );
         const unitsWithParticipants = units.map((u, ui) => ({
             ...u,
-            participants: unitParticipants[ui] || u.participants || [],
+            participants: resolvedUnitParticipants[ui] || u.participants || [],
         }));
 
         publishVBook({
@@ -1716,12 +1458,11 @@ module.exports = {
     isGenericSceneTitle,
     resolveSceneProgress,
     buildVisualExemplars,
-    // Coreference resolution exports
-    stepCollectCharacterCandidates,
-    stepResolveCharacterMentions,
+    // Coreference resolution exports (simplified)
     assignUnitParticipants,
-    matchMentionsToUnits,
+    applyScenePairParticipantFallback,
+    unitTextNeedsScenePairParticipants,
+    promptMentionsGenericPeople,
+    shouldInjectParticipantPassports,
     getFallbackVisual,
-    computeHash,
-    normalizeForMatch,
 };
