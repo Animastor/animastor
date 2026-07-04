@@ -205,7 +205,7 @@ describe('Scene Splitting (Phase A.3 revamp)', () => {
         it('every scene has required fields', () => {
             const scenes = buildFallbackScenes('Hello world. Goodbye world.');
             for (const s of scenes) {
-                expect(s).to.have.all.keys('title', 'text', 'type', 'participants', 'location', 'character_anchors');
+                expect(s).to.have.all.keys('title', 'text', 'type', 'participants', 'location');
                 expect(s.type).to.equal('narration');
                 expect(Array.isArray(s.participants)).to.be.true;
             }

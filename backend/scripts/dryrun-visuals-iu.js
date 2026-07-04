@@ -1,6 +1,6 @@
 // Dry-run: builds the visuals-step system prompt (%CONTEXT% + rules) for the
 // Patriarch Ponds sample scene, WITHOUT hitting the DB or the LLM. Verifies that
-// the Imagination Unit doctrine + character_anchors reach the model.
+// the Imagination Unit doctrine and character passport data reach the model.
 //
 // Run: node backend/scripts/dryrun-visuals-iu.js
 const { SYSTEM_PROMPTS } = require('../src/services/agent-prompts');
@@ -12,10 +12,6 @@ const scene = {
     type: 'narration',
     location: { id: 'patriarch_ponds' },
     participants: ['berlioz', 'bezdomny'],
-    character_anchors: {
-        berlioz: { position: 'left', pose: 'sitting', orientation: 'right' },
-        bezdomny: { position: 'right', pose: 'sitting', orientation: 'left' },
-    },
 };
 const characters = [
     { id: 'berlioz', name: 'Mikhail Berlioz', description: 'slim 1930s Moscow editor' },
@@ -32,16 +28,11 @@ function buildContext(scene, characters) {
     const locName = scene.location?.id || 'the scene';
     const contextParts = [`Title: ${scene.title || 'Untitled'}`, `Type: ${scene.type || 'narration'}`, `Location (name to use in prompts): ${locName}`, ''];
     contextParts.push('Characters in scene (name them explicitly in every prompt — no pronouns):');
-    const anchors = scene.character_anchors || {};
     let namedCount = 0;
     for (const pId of (scene.participants || [])) {
         const ch = (characters || []).find(c => c.id === pId);
         if (!ch) continue;
-        const a = anchors[pId];
-        const arrangement = a
-            ? ` [position: ${a.position || '?'}, pose: ${a.pose || '?'}, orientation: ${a.orientation || '?'}]`
-            : '';
-        contextParts.push(`- ${ch.id}: ${ch.name} — ${ch.description || ''}${arrangement}`);
+        contextParts.push(`- ${ch.id}: ${ch.name} — ${ch.description || ''}`);
         namedCount++;
     }
     if (scene.participants && scene.participants.length > 0 && namedCount === 0) {
@@ -87,8 +78,8 @@ for (const u of units) console.log('•', getFallbackVisual(u.text, characters, 
 console.log('\n================ ASSERTIONS ================');
 const checks = [
     ['CONTEXT has location name', contextStr.includes('patriarch_ponds')],
-    ['CONTEXT has berlioz anchor', contextStr.includes('position: left, pose: sitting, orientation: right')],
-    ['CONTEXT has bezdomny anchor', contextStr.includes('position: right, pose: sitting, orientation: left')],
+    ['CONTEXT has berlioz', contextStr.includes('berlioz: Mikhail Berlioz')],
+    ['CONTEXT has bezdomny', contextStr.includes('bezdomny: Ivan Bezdomny')],
     ['prompt bans generic nouns', finalPrompt.includes('generic collective nouns')],
     ['prompt has guiding question', finalPrompt.includes('WHO exactly is in the frame')],
     ['prompt has stable-extras rule', finalPrompt.includes('CONCRETE, REPEATABLE anchor')],

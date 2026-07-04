@@ -295,12 +295,9 @@ async function stepEnrichScenes(sessionId, scenes, characters, locations, stepIn
             if (enrichment.location?.environment) {
                 mergedLocation.environment = enrichment.location.environment;
             }
-            const mergedAnchors = enrichment.character_anchors || scene.character_anchors || {};
-
             return {
                 ...scene,
                 location: mergedLocation,
-                character_anchors: mergedAnchors,
             };
         });
 
@@ -470,7 +467,6 @@ async function stepCreateVisuals(sessionId, scene, units, sceneIndex, characters
         contextParts.push(`Season: ${season}`);
     }
 
-    const anchors = scene.character_anchors || {};
     let namedCount = 0;
     const sceneParticipantIds = new Set(scene.participants || []);
     for (const unit of (units || [])) {
@@ -488,12 +484,8 @@ async function stepCreateVisuals(sessionId, scene, units, sceneIndex, characters
         for (const pId of sceneParticipantIds) {
             const ch = (characters || []).find(c => c.id === pId);
             if (!ch) continue;
-            const a = anchors[pId];
-            const arrangement = a
-                ? ` [position: ${a.position || '?'}, pose: ${a.pose || '?'}, orientation: ${a.orientation || '?'}]`
-                : '';
             const passportDesc = [ch.passport?.base_appearance, ch.passport?.detailed_appearance, ch.passport?.clothing_base, ch.passport?.clothing_details].filter(Boolean).join('; ')
-            contextParts.push(`- ${ch.id}: ${ch.name} — ${passportDesc || ch.description || ''}${arrangement}`);
+            contextParts.push(`- ${ch.id}: ${ch.name} — ${passportDesc || ch.description || ''}`);
             namedCount++;
         }
         if (namedCount === 0) {
@@ -764,7 +756,7 @@ function buildFallbackScenes(sceneText) {
         const parts = splitTextEvenlyByParagraphs(sceneText, WINDOW_SIZE);
         return parts.map((text, i) => ({
             title: extractSceneTitle(text, i), text, type: 'narration',
-            participants: [], location: null, character_anchors: {},
+            participants: [], location: null,
         }));
     }
 
@@ -795,7 +787,7 @@ function buildFallbackScenes(sceneText) {
         }
         return {
             title: extractSceneTitle(text, i), text, type: 'narration',
-            participants: [], location: null, character_anchors: {},
+            participants: [], location: null,
         };
     });
 }
@@ -1128,7 +1120,7 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
         retry_count: coverageRetryCount,
     }));
 
-    // ── Scene enrichment (separate pass: add environment + character_anchors) ──
+    // ── Scene enrichment (separate pass: add environment) ──
     windowScenes = await stepEnrichScenes(sessionId, windowScenes, characters, locations, stepIndex, _progress);
 
     const enrichedScenes = [];

@@ -1120,7 +1120,6 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
             style: sceneStyle,
             participants: allParticipants,
             location: aiScene.location || undefined,
-            character_anchors: aiScene.character_anchors || undefined,
             source_start: aiScene.source_start ?? null,
             source_end: aiScene.source_end ?? null,
             audio: {
