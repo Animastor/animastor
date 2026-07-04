@@ -126,7 +126,6 @@ data class Scene(
     val style: String? = null,
     val location: LocationData? = null,
     val participants: List<String>? = null,
-    val character_anchors: Map<String, Any>? = null,
     val audio: AudioConfig? = null,
     val units: List<SceneUnit>? = null
 )

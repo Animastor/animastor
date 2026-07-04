@@ -612,7 +612,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                 0 -> {
                     val ch = chapters.getOrNull(currentChIndex)
                     if (ch != null) buildChapterTitleField(frame, ch)
-                    buildFields(frame, listOf("scene_title", "scene_id", "type", "style", "location.id", "env.time", "env.lighting", "env.weather", "env.mood", "env.atmosphere", "participants", "character_anchors"))
+                    buildFields(frame, listOf("scene_title", "scene_id", "type", "style", "location.id", "env.time", "env.lighting", "env.weather", "env.mood", "env.atmosphere", "participants"))
                 }
                 1 -> buildFields(frame, listOf("voice", "full_text"))
                 2 -> buildUnitFields(frame)
@@ -688,7 +688,6 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
             "env.mood" -> env?.mood ?: ""
             "env.atmosphere" -> env?.atmosphere ?: ""
             "participants" -> sc.participants?.joinToString(", ") ?: ""
-            "character_anchors" -> sc.character_anchors?.entries?.joinToString("\n") { "${it.key}: ${it.value}" } ?: ""
             "voice" -> sc.audio?.voice ?: ""
             "full_text" -> sc.audio?.full_text ?: ""
             else -> ""
@@ -804,14 +803,6 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         }
         s["participants"]?.let { v ->
             modified = modified.copy(participants = if (v.isBlank()) null else v.split(", ").map { it.trim() })
-        }
-        s["character_anchors"]?.let { v ->
-            modified = modified.copy(character_anchors = if (v.isBlank()) null else {
-                v.split("\n").filter { it.contains(":") }.associate {
-                    val parts = it.split(":", limit = 2)
-                    parts[0].trim() to parts[1].trim()
-                }
-            })
         }
         s["voice"]?.let { v ->
             val audio = modified.audio ?: AudioConfig()
