@@ -3,6 +3,7 @@ const PROGRESS_STAGES = {
     extracting_chars:    '⟳ Извлекаю персонажей...',
     extracting_locs:     '⟳ Извлекаю локации...',
     creating_scenes:     '⟳ Создаю сцены...',
+    enriching_scenes:    '⟳ Обогащаю сцены атмосферой...',
     creating_units:      sc => `⟳ Создаю юниты для сцены ${sc + 1}...`,
     creating_visuals:    sc => `⟳ Создаю visual prompts для сцены ${sc + 1}...`,
 
@@ -300,23 +301,7 @@ It is OK if text remains after the last returned scene.
       "type": "narration|dialogue",
       "characters_present": ["character_id_from_known_characters"],
       "location": {
-        "id": "location_id_from_known_locations",
-        "environment": {
-          "epoch": "historical period, e.g. 1920s Moscow, 19th century, modern day",
-          "time": "time of day description",
-          "season": "season, e.g. late spring, early summer, deep winter",
-          "lighting": "lighting description",
-          "weather": "weather description",
-          "mood": "mood description",
-          "atmosphere": "atmosphere description"
-        }
-      },
-      "character_anchors": {
-        "character_id": {
-          "position": "left|right|center|background",
-          "pose": "sitting|standing|walking|etc",
-          "orientation": "left|right|toward_camera|away"
-        }
+        "id": "location_id_from_known_locations"
       }
     }
   ]
@@ -326,10 +311,79 @@ It is OK if text remains after the last returned scene.
 IMPORTANT — MANDATORY FIELDS:
   - characters_present: MUST contain EVERY character_id that appears in the scene. NEVER leave empty if characters are present.
   - location.id: MUST be set to one of the Known Locations. This is REQUIRED.
-  - location.environment: MUST include epoch, time, season, lighting, weather, mood, atmosphere
-  - character_anchors: for EVERY participant, specify their position, pose, and orientation
 
 Return ONLY valid JSON.`,
+
+    enrich_scenes: `You are a cinematic environment designer. For each scene, describe its visual atmosphere and the spatial arrangement of characters.
+
+## Known Characters
+%EXISTING_CHARACTERS%
+
+## Known Locations
+%EXISTING_LOCATIONS%
+
+## Scenes to enrich
+%SCENES_TO_ENRICH%
+
+## Task
+You receive scenes that already have text, type, participants, and location.id. Your job is to enrich them with:
+1. \`location.environment\` — the sensory atmosphere of the scene
+2. \`character_anchors\` — where each character is positioned in the frame
+
+Use ONLY character_ids and location_ids from the Known lists above. Never invent new ones.
+
+## Rules for environment
+Describe each field in 2-6 words based on what the scene text implies:
+- \`epoch\`: historical period (e.g. "1920s Moscow", "19th century", "modern day")
+- \`time\`: time of day (e.g. "hot spring sunset", "early morning", "deep night")
+- \`season\`: season (e.g. "late spring", "early summer", "deep winter")
+- \`lighting\`: light quality (e.g. "golden sunset glow", "dim candlelight", "grey overcast")
+- \`weather\`: weather conditions (e.g. "still warm air", "cold wind", "light rain")
+- \`mood\`: emotional tone (e.g. "quiet intellectual", "growing tension", "peaceful melancholy")
+- \`atmosphere\`: overall feel (e.g. "calm surreal Moscow evening", "tense philosophical standoff")
+
+## Rules for character_anchors
+For EVERY participant in the scene, estimate their spatial arrangement:
+- \`position\`: "left" | "right" | "center" | "background" | "foreground"
+- \`pose\": "sitting" | "standing" | "walking" | "talking" | "observing" | "leaning" | "gesturing"
+- \`orientation\": "left" | "right" | "toward_camera" | "away" | "three_quarter"
+
+## Output format — return the SAME scene structure with \`location.environment\` and \`character_anchors\` added
+\`\`\`json
+{
+  "scenes": [
+    {
+      "scene_index": 0,
+      "location": {
+        "id": "existing_location_id",
+        "environment": {
+          "epoch": "1920s Moscow",
+          "time": "hot spring sunset",
+          "season": "late spring",
+          "lighting": "golden sunset glow",
+          "weather": "still warm air",
+          "mood": "quiet intellectual atmosphere",
+          "atmosphere": "calm surreal Moscow evening"
+        }
+      },
+      "character_anchors": {
+        "mikhail_berlioz": {
+          "position": "left",
+          "pose": "sitting",
+          "orientation": "right"
+        },
+        "ivan_ponyrev": {
+          "position": "right",
+          "pose": "sitting",
+          "orientation": "left"
+        }
+      }
+    }
+  ]
+}
+\`\`\`
+
+Return ONLY valid JSON. If a scene has no participants, return empty character_anchors: {}.`,
 
     units: `You are a literary analysis assistant. Decompose the provided scene text into visual units.
 

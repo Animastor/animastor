@@ -252,6 +252,69 @@ async function stepCreateScenes(sessionId, text, characters, locations, stepInde
     }
 }
 
+async function stepEnrichScenes(sessionId, scenes, characters, locations, stepIndex, progress) {
+    const _progress = progress || (() => {});
+    _progress({ stage: 'enriching_scenes', message: PROGRESS_STAGES.enriching_scenes });
+    await updateSession(sessionId, { progress_msg: PROGRESS_STAGES.enriching_scenes });
+
+    if (!scenes || scenes.length === 0) return scenes;
+
+    const enrichStepIndex = (stepIndex || 0) + 0.5;
+    const step = await createStep(sessionId, 'enrich_scenes', enrichStepIndex);
+
+    const charsContext = (characters || []).map(c => `- ${c.id}: ${c.name}`).join('\n') || 'None';
+    const locsContext = (locations || []).map(l => `- ${l.id}: ${l.name} (${l.type || 'unknown'})`).join('\n') || 'None';
+
+    const scenesStr = scenes.map((s, i) =>
+        `Scene ${i}: title="${s.title || 'Untitled'}", type="${s.type || 'narration'}", ` +
+        `location_id="${s.location?.id || '?'}", ` +
+        `participants=[${(s.characters_present || s.participants || []).join(', ')}], ` +
+        `text="${(s.text || '').substring(0, 500)}..."`
+    ).join('\n');
+
+    const enrichmentPrompt = SYSTEM_PROMPTS.enrich_scenes
+        .replace('%EXISTING_CHARACTERS%', charsContext)
+        .replace('%EXISTING_LOCATIONS%', locsContext)
+        .replace('%SCENES_TO_ENRICH%', scenesStr);
+
+    const messages = [
+        { role: 'system', content: enrichmentPrompt },
+        { role: 'user', content: `Enrich these scenes:\n${scenesStr}` },
+    ];
+
+    try {
+        const result = await callAI(messages, { maxTokens: 4096 });
+        const enrichedList = result.scenes || [];
+
+        // Merge enrichment back into original scenes
+        const enriched = scenes.map((scene, si) => {
+            const enrichment = enrichedList.find(e => e.scene_index === si);
+            if (!enrichment) return scene;
+
+            const mergedLocation = scene.location ? { ...scene.location } : {};
+            if (enrichment.location?.environment) {
+                mergedLocation.environment = enrichment.location.environment;
+            }
+            const mergedAnchors = enrichment.character_anchors || scene.character_anchors || {};
+
+            return {
+                ...scene,
+                location: mergedLocation,
+                character_anchors: mergedAnchors,
+            };
+        });
+
+        await logConversation(sessionId, step.step_id, messages, JSON.stringify(result));
+        await completeStep(step.step_id, enriched);
+        console.log(`[AGENT] Step enrich (scenes ${enrichStepIndex}): ${enriched.length} enriched`);
+        return enriched;
+    } catch (err) {
+        await failStep(step.step_id, `Enrichment failed: ${err.message}`);
+        console.warn(`[AGENT] Scene enrichment failed, continuing with base scenes: ${err.message}`);
+        return scenes;  // Graceful degradation: return un-enriched scenes
+    }
+}
+
 function formatExamplesForPrompt() {
     try {
         const examples = require('./ai-loader').getExamples();
@@ -317,11 +380,16 @@ async function stepCreateUnits(sessionId, scene, sceneIndex, characters, stepInd
     const charsContext = (characters || []).map(c => `- ${c.id}: ${c.name}`).join('\n') || 'None';
 
     // Add mentions context: role/title → character_id mappings
+    // Only show mentions that resolve to characters IN the known characters list
+    const knownIds = new Set((characters || []).map(c => c.id).filter(Boolean));
     const mentionsContext = (mentions && typeof mentions === 'object' && Object.keys(mentions).length > 0)
         ? '\n## Role/title → character_id mappings\n' +
           'When the text refers to a character by role or title (e.g. "редактор", "глава МАССОЛИТ", "прозрачный гражданин"),\n' +
-          'use the mapped character_id below:\n' +
-          Object.entries(mentions).map(([alias, charId]) => `  "${alias}" → ${charId}`).join('\n')
+          'use the mapped character_id below. If a role references an id NOT in the Known Characters list,\n' +
+          'describe the character literarily in natural language instead:\n' +
+          Object.entries(mentions)
+            .filter(([, charId]) => knownIds.has(charId))
+            .map(([alias, charId]) => `  "${alias}" → ${charId}`).join('\n')
         : '';
 
     const prompt = SYSTEM_PROMPTS.units
@@ -758,10 +826,12 @@ function assignUnitParticipants(units, characters, mentions) {
         for (const id of participants) {
             if (knownIds.has(id)) {
                 resolved.push(id);
-            } else if (mentions && mentions[id]) {
-                // Role/title reference resolved through mentions
+            } else if (mentions && mentions[id] && knownIds.has(mentions[id])) {
+                // Role/title reference resolved through mentions — only if target is a known character
                 resolved.push(mentions[id]);
             }
+            // If neither: ID is a literary reference without a passport character,
+            // drop it — the visual prompt should describe this character literarily
         }
         if (resolved.length > 0) {
             result[ui] = [...new Set(resolved)];
@@ -1057,6 +1127,9 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
         gap_chars: coverage.gap_chars || 0,
         retry_count: coverageRetryCount,
     }));
+
+    // ── Scene enrichment (separate pass: add environment + character_anchors) ──
+    windowScenes = await stepEnrichScenes(sessionId, windowScenes, characters, locations, stepIndex, _progress);
 
     const enrichedScenes = [];
     for (let si = 0; si < windowScenes.length; si++) {
