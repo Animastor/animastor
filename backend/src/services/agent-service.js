@@ -433,10 +433,35 @@ async function stepCreateVisuals(sessionId, scene, units, sceneIndex, characters
         const result = await callAI(messages, { maxTokens: 4096 });
         const visualUnits = result.units || [];
 
+        // Build character passport strings from scene participants
+        // These are injected AFTER normalizeCharacterRefs to ensure
+        // character_ids appear in the visual prompt even when the AI
+        // describes characters without naming them.
+        const passportParts = [];
+        for (const pId of (scene.participants || [])) {
+            const ch = (characters || []).find(c => c.id === pId);
+            if (!ch) continue;
+            const desc = [ch.passport?.base_appearance, ch.passport?.detailed_appearance,
+                          ch.passport?.clothing_base, ch.passport?.clothing_details]
+                .filter(Boolean).join('; ');
+            passportParts.push(`${ch.id}: ${desc || ch.description || ch.name}`);
+        }
+
         const merged = units.map((u, i) => {
             const vu = visualUnits[i];
             if (vu && vu.visual) {
-                return { ...u, visual: { ...vu.visual, prompt: normalizeCharacterRefs(vu.visual.prompt, characters) } };
+                let prompt = normalizeCharacterRefs(vu.visual.prompt, characters);
+                // Inject character passports into the prompt text
+                if (passportParts.length > 0) {
+                    // Only inject if NO character_id from scene participants is already in the prompt
+                    const anyCharIdPresent = (scene.participants || []).some(
+                        pId => pId && (prompt.includes(pId + ':') || prompt.includes(pId))
+                    );
+                    if (!anyCharIdPresent) {
+                        prompt = prompt + ', ' + passportParts.join(', ');
+                    }
+                }
+                return { ...u, visual: { ...vu.visual, prompt } };
             }
             return {
                 ...u,
@@ -865,16 +890,19 @@ async function stepResolveCharacterMentions(sessionId, bookId, {
 }
 
 /**
- * Assign unit participants by intersecting unit source spans with character_mentions.
- * This is a lightweight DB query — no AI call needed.
+ * Assign unit participants by matching mention_text against unit text.
+ * Source-span-based matching is unreliable here because units don't yet have
+ * source_start/source_end at the point this function is called in the pipeline.
+ * Instead, we check whether each resolved mention text appears as a substring
+ * of each unit's text. This is simpler and works regardless of pipeline ordering.
  */
 async function assignUnitParticipants(bookId, chapterId, sceneId, units) {
     if (!units || units.length === 0) return {};
 
     try {
-        // Fetch all mentions for this scene from the latest completed fine run
+        // Fetch all resolved mentions for this scene from the latest completed fine run
         const result = await query(
-            `SELECT cm.character_id, cm.source_start, cm.source_end
+            `SELECT cm.character_id, cm.mention_text
              FROM character_mentions cm
              JOIN character_resolution_runs crr ON cm.run_id = crr.run_id
              WHERE cm.book_id = $1 AND cm.chapter_id = $2 AND cm.scene_id = $3
@@ -890,16 +918,14 @@ async function assignUnitParticipants(bookId, chapterId, sceneId, units) {
 
         const unitParticipants = {};
         for (let ui = 0; ui < units.length; ui++) {
-            const u = units[ui];
-            const uStart = u.source_start;
-            const uEnd = u.source_end;
-            if (uStart == null || uEnd == null) continue;
+            const uText = (units[ui]?.text || '').toLowerCase();
+            if (!uText) continue;
 
             const chars = new Set();
             for (const m of mentions) {
-                // Mention overlaps with unit span
-                if (m.source_start < uEnd && m.source_end > uStart) {
-                    if (m.character_id) chars.add(m.character_id);
+                const mText = (m.mention_text || '').toLowerCase();
+                if (mText && uText.includes(mText) && m.character_id) {
+                    chars.add(m.character_id);
                 }
             }
             if (chars.size > 0) {

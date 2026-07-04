@@ -1104,11 +1104,19 @@ async function getOrCreatePreview(bookId, chapterId, sceneId, iuId, buildId) {
 }
 
 // ── Generic words that must NOT go into the alias index ──
+// Both Cyrillic and Latin-normalized forms are included because
+// mention_norm from the DB is Latin transliteration.
 const GENERIC_WORDS = new Set([
+    // Cyrillic
     'он', 'она', 'оно', 'они', 'его', 'её', 'их', 'ему', 'ей', 'ним',
     'мужчина', 'женщина', 'человек', 'люди', 'толпа',
     'господин', 'госпожа', 'товарищ', 'гражданин',
     'кто-то', 'некто', 'кто-нибудь', 'все',
+    // Latin (normalizeForMatch output)
+    'on', 'ona', 'ono', 'oni', 'yego', 'yeyo', 'ikh', 'yemu', 'yey', 'nim',
+    'muzhchina', 'zhenshchina', 'chelovek', 'lyudi', 'tolpa',
+    'gospodin', 'gospozha', 'tovarishch', 'grazhdanin',
+    'kto-to', 'nekto', 'kto-nibud', 'vse',
 ]);
 
 const UNSAFE_MENTION_TYPES = new Set(['pronoun', 'unknown']);
@@ -1194,4 +1202,5 @@ module.exports = {
     isTypographyStyle,
     // Coreference resolution exports
     buildSafeAliasIndex,
+    buildCharacters,
 };

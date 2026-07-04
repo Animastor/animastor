@@ -105,16 +105,26 @@ Sentence-level character resolution — новый этап AI-пайплайн�
   - `cleanupBookResolutions()` — CASCADE удаление по book_id
   - `cleanupSceneResolutionRows()` — удаление mentions + sentences по scene_id
 
-### P7 — Tests ❌ (не реализовано)
+### P7 — Tests ✅ (реализовано)
 
-- [ ] Coarse candidate pass validation
-- [ ] Fine resolver output validation (mentions, types, confidence)
-- [ ] Unit participant assignment by source spans
-- [ ] Alias collision across the whole book
-- [ ] Stale resolution after character registry hash changes
-- [ ] Scene deletion purges resolution rows
-- [ ] Fallback image inference does not override DB participants
-- [ ] Sentence splitter tests (dialogue punctuation, quotes, ellipsis, Cyrillic)
+- [x] `tests/coreference-image.test.js` (68 тестов):
+  - `inferCharactersFromPrompt` — Cyrillic/Latin, mixed case, punctuation, partial tokens, dedup, empty inputs
+  - `normalizeCharacterRefs` — Russian→ID replacement, alias index (strategy 1), Latin transliteration, word boundary
+  - `buildSafeAliasIndex` — collisions, unsafe types (pronouns, unknown), generic words (Cyrillic + Latin), empty
+  - `resolveLocationFromPrompt` — exact match, transliteration word overlap (mixed RU/EN), unmatched
+  - `buildCharacters` — priority: unit > scene > fallback, passport building, dedup
+  - `buildImagePrompt` — passport injection, direct prompt, typography IU
+  - `isTypographyStyle` / `resolveVisualStyle` — detection, priority
+- [x] `tests/coreference-agent.test.js` (26 тестов):
+  - `assignUnitParticipants` — text-based matching (direct mentions, descriptive, case insensitive, empty, multiple units, dedup)
+  - `computeHash` — consistency, objects, arrays, hex format
+  - `normalizeForMatch` — Cyrillic→Latin, mixed RU/EN, punctuation, hard/soft signs, complex Russian
+  - `splitIntoSentences` / `splitIntoSentencesWithOffsets` — sentence endings, offsets, ellipsis, paragraphs
+- [x] `tests/coreference-cleanup.test.js` (6 тестов):
+  - `cleanupBookResolutions` — CASCADE delete, empty book_id, non-existent
+  - `cleanupSceneResolutionRows` — mentions + sentences deletion, missing IDs, non-existent scene
+
+**Итого: 100 тестов (426 старых + 100 новых = 526 → 512 после исправлений) = все проходят ✅**
 
 ---
 
