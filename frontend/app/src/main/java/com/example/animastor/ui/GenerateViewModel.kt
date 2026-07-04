@@ -288,7 +288,15 @@ class GenerateViewModel(
         )
         generationJob?.cancel()
         generationJob = viewModelScope.launch {
-            _uiState.value = GenUiState(phase = PlayerPhase.GENERATING)
+            // Preserve VBook progress and import messages when GPU generation starts
+            // while VBook (AI agent) is still processing text windows.
+            val prevVBook = _uiState.value.vbookProgress
+            val prevImportMsgs = _uiState.value.importProgressMessages
+            _uiState.update { it.copy(
+                phase = PlayerPhase.GENERATING,
+                vbookProgress = prevVBook,
+                importProgressMessages = prevImportMsgs
+            )}
             runCatching {
                 // Pass profile to backend so /regenerate applies it BEFORE
                 // checking cover/images. This eliminates a race condition where
@@ -832,7 +840,16 @@ class GenerateViewModel(
                             if (existingWindowIdx >= 0) msgs[existingWindowIdx] = windowInfo
                             else msgs.add(windowInfo)
                         }
-                        _uiState.update { it.copy(importProgressMessages = msgs.toList()) }
+                        // Merge with existing SSE-added messages instead of overwriting
+                        val existing = _uiState.value.importProgressMessages
+                        val merged = if (existing.size > msgs.size) {
+                            // SSE added messages that aren't in msgs — merge them
+                            val sseOnly = existing.drop(msgs.size)
+                            msgs.toList() + sseOnly
+                        } else {
+                            msgs.toList()
+                        }
+                        _uiState.update { it.copy(importProgressMessages = merged) }
                     }
 
                     // ── Update structured VBook progress for the GPU-style panel ──
@@ -852,7 +869,15 @@ class GenerateViewModel(
                         Log.i(TAG, "[POLL] showing progress msg: \"$currentMsg\"")
                         msgs.add(currentMsg)
                         lastProgressMsg = currentMsg
-                        _uiState.update { it.copy(importProgressMessages = msgs.toList()) }
+                        // Merge with existing SSE-added messages instead of overwriting
+                        val existing = _uiState.value.importProgressMessages
+                        val merged = if (existing.size > msgs.size) {
+                            val sseOnly = existing.drop(msgs.size)
+                            msgs.toList() + sseOnly
+                        } else {
+                            msgs.toList()
+                        }
+                        _uiState.update { it.copy(importProgressMessages = merged) }
                         // Update the panel too — this handles the case where the
                         // first window completes before the first poll, so progress
                         // goes: ANALYZING → CREATING_SCENES → COMPLETED gradually
@@ -861,9 +886,12 @@ class GenerateViewModel(
                     }
 
                     if (consecutiveInactive >= maxInactive) {
-                        if (msgs.isNotEmpty() && msgs.last().startsWith("⟳")) {
-                            msgs[msgs.size - 1] = msgs.last().replace("⟳", "✓")
-                            _uiState.update { it.copy(importProgressMessages = msgs.toList()) }
+                        val finalMsgs = _uiState.value.importProgressMessages
+                        val lastMsg = finalMsgs.lastOrNull()
+                        if (lastMsg != null && lastMsg.startsWith("⟳")) {
+                            val updated = finalMsgs.toMutableList()
+                            updated[updated.size - 1] = lastMsg.replace("⟳", "✓")
+                            _uiState.update { it.copy(importProgressMessages = updated) }
                         }
                         // Mark VBook as completed
                         _uiState.update { it.copy(
@@ -992,13 +1020,16 @@ class GenerateViewModel(
             ?: globalScene.takeIf { it > 0 }
             ?: status.total_scenes
 
+        val messageText = status.progress_msg?.takeIf { it.isNotBlank() }
+
         _uiState.update { it.copy(
             vbookProgress = VBookProgress(
                 stage = stage,
                 sceneIndex = sceneIndex,
                 scenesInWindow = windowTotal,
                 totalScenes = total,
-                windowIndex = status.window_index ?: 0
+                windowIndex = status.window_index ?: 0,
+                message = messageText
             )
         )}
     }
@@ -1293,15 +1324,26 @@ class GenerateViewModel(
                     val totalScenes = (event.vbookTotalScenes ?: readyFromBackend)
                         .coerceAtLeast(readyFromBackend)
                         .coerceAtLeast(1)
+                    val vbookMsg = event.vbookMessage?.takeIf { it.isNotBlank() }
                     _uiState.update { it.copy(
                         vbookProgress = VBookProgress(
                             stage = stage,
                             sceneIndex = sceneIdx,
                             scenesInWindow = windowTotal,
                             totalScenes = totalScenes,
-                            windowIndex = 0
+                            windowIndex = 0,
+                            message = vbookMsg
                         )
                     )}
+                    // ── Also add the message to importProgressMessages for chat display ──
+                    if (vbookMsg != null) {
+                        val currentMsgs = _uiState.value.importProgressMessages
+                        if (currentMsgs.isEmpty() || currentMsgs.last() != vbookMsg) {
+                            _uiState.update { it.copy(
+                                importProgressMessages = currentMsgs + vbookMsg
+                            )}
+                        }
+                    }
                 } else if (event.layer == "image" && event.ready != null) {
                     val floor = maxOf(workerReadyFloor["image"] ?: 0, event.ready)
                     workerReadyFloor["image"] = floor
@@ -1462,7 +1504,10 @@ class GenerateViewModel(
                     workerCompletedAt.remove("vbook")
                 }
             } else {
-                val label = labels.vbookLabel
+                // Use the backend PROGRESS_STAGES message as the label when available,
+                // falling back to the generic vbookLabel for completed workers.
+                val stageMsg = vbookProgress.message?.takeIf { it.isNotBlank() }
+                val label = stageMsg ?: labels.vbookLabel
                 val ready: Int
                 val total: Int
                 val pct: Int
@@ -1470,7 +1515,7 @@ class GenerateViewModel(
                 when (vbookProgress.stage) {
                     VBookStage.ANALYZING -> {
                         ready = 0; total = 1; pct = 0
-                        countText = labels.vbookAnalyzing
+                        countText = if (stageMsg != null) "" else labels.vbookAnalyzing
                     }
                     VBookStage.CREATING_SCENES -> {
                         total = vbookProgress.scenesInWindow.coerceAtLeast(1)
@@ -1645,7 +1690,9 @@ data class VBookProgress(
     /** Total scenes known so far across generated blocks (can grow). */
     val totalScenes: Int? = null,
     /** Current window index (0-based) */
-    val windowIndex: Int = 0
+    val windowIndex: Int = 0,
+    /** Human-readable PROGRESS_STAGES message from the backend, e.g. "⟳ Извлекаю персонажей..." */
+    val message: String? = null
 )
 
 enum class VBookStage {

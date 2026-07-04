@@ -874,11 +874,11 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
         }
     };
 
-    publishVBook({ stage: 'extracting_chars', scene_index: 0, total_scenes: 0, window_size: WINDOW_SIZE });
+    publishVBook({ stage: 'extracting_chars', scene_index: 0, total_scenes: 0, window_size: WINDOW_SIZE, message: PROGRESS_STAGES.extracting_chars });
 
     const sceneText = rawWindowText.trimEnd();
 
-    publishVBook({ stage: 'analyzing', scene_index: 0, total_scenes: 0, window_size: WINDOW_SIZE });
+    publishVBook({ stage: 'analyzing', scene_index: 0, total_scenes: 0, window_size: WINDOW_SIZE, message: PROGRESS_STAGES.analyzing_structure });
 
     // Reconnaissance: extract chars/locs from the same bounded window.
     const newCharacters = await stepExtractCharacters(sessionId, text, stepIndex, _progress);
@@ -893,7 +893,7 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
         console.log(`[AGENT] Characters: ${existingChars.length} existing + ${mergeResult.added} new + ${mergeResult.enriched} enriched + ${mergeResult.skippedGeneric} generic skipped = ${characters.length} total`);
     }
 
-    publishVBook({ stage: 'analyzing', scene_index: 0, total_scenes: 0, window_size: WINDOW_SIZE });
+    publishVBook({ stage: 'extracting_chars', scene_index: 0, total_scenes: 0, window_size: WINDOW_SIZE, message: PROGRESS_STAGES.extracting_chars });
 
     // Always extract locations from each window, merge with enrichment
     const newLocations = await stepExtractLocations(sessionId, text, characters, stepIndex, _progress);
@@ -946,7 +946,7 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
     };
 
     const totalScenesEstimate = Math.min(MAX_SCENES_PER_CHUNK, Math.ceil(sceneText.length / 200) || 1);
-    publishVBook({ stage: 'creating_scenes', scene_index: 0, total_scenes: totalScenesEstimate, window_size: WINDOW_SIZE });
+    publishVBook({ stage: 'creating_scenes', scene_index: 0, total_scenes: totalScenesEstimate, window_size: WINDOW_SIZE, message: PROGRESS_STAGES.creating_scenes });
 
     let scenes = capScenes(await stepCreateScenes(sessionId, sceneText, characters, locations, stepIndex, _progress));
     if (!scenes || scenes.length === 0) throw new Error('AI returned no scenes');
@@ -1021,7 +1021,7 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
         const windowSceneIndex = si + 1;
         const windowTotalScenes = windowScenes.length;
         const windowStartScene = sceneOffset + 1;
-
+        const unitMsg = PROGRESS_STAGES.creating_units(globalSceneIndex);
         publishVBook({
             stage: 'creating_units',
             scene_index: globalSceneIndex + 1,
@@ -1030,8 +1030,9 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
             window_scene_index: windowSceneIndex,
             window_total_scenes: windowTotalScenes,
             window_start_scene: windowStartScene,
+            message: unitMsg,
         });
-
+ 
         const units = await stepCreateUnits(sessionId, scene, globalSceneIndex, characters, stepIndex, _progress);
 
         // ── Coreference Resolution: Assign unit participants ──
@@ -1047,7 +1048,7 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
             ...u,
             participants: resolvedUnitParticipants[ui] || u.participants || [],
         }));
-
+        const visualMsg = PROGRESS_STAGES.creating_visuals(globalSceneIndex);
         publishVBook({
             stage: 'creating_visuals',
             scene_index: globalSceneIndex + 1,
@@ -1056,8 +1057,9 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
             window_scene_index: windowSceneIndex,
             window_total_scenes: windowTotalScenes,
             window_start_scene: windowStartScene,
+            message: visualMsg,
         });
-
+ 
         const visualUnits = await stepCreateVisuals(sessionId, scene, unitsWithParticipants, globalSceneIndex, characters, locations, stepIndex, _progress);
         const sceneSpan = coverage.scene_spans[si] || null;
         let annotatedUnits = visualUnits;

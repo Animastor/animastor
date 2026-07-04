@@ -45,7 +45,9 @@ data class ProgressEvent(
     val window_size: Int? = null,
     val window_scene_index: Int? = null,
     val window_total_scenes: Int? = null,
-    val window_start_scene: Int? = null
+    val window_start_scene: Int? = null,
+    /** Human-readable PROGRESS_STAGES text from backend (e.g. "⟳ Извлекаю персонажей...") */
+    val message: String? = null
 ) {
     /** Convenience: true if this is a VBook pipeline event. */
     fun isVBook(): Boolean = type == "vbook"
@@ -67,6 +69,9 @@ data class ProgressEvent(
 
     /** Convenience: global 1-based scene number where the generated block starts. */
     val vbookWindowStartScene: Int? get() = window_start_scene
+
+    /** Convenience: human-readable PROGRESS_STAGES message text. */
+    val vbookMessage: String? get() = message
 }
 
 /**
