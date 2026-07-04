@@ -259,8 +259,7 @@ async function stepEnrichScenes(sessionId, scenes, characters, locations, stepIn
 
     if (!scenes || scenes.length === 0) return scenes;
 
-    const enrichStepIndex = (stepIndex || 0) + 0.5;
-    const step = await createStep(sessionId, 'enrich_scenes', enrichStepIndex);
+    const step = await createStep(sessionId, 'enrich_scenes', stepIndex || 0);
 
     const charsContext = (characters || []).map(c => `- ${c.id}: ${c.name}`).join('\n') || 'None';
     const locsContext = (locations || []).map(l => `- ${l.id}: ${l.name} (${l.type || 'unknown'})`).join('\n') || 'None';
@@ -303,7 +302,7 @@ async function stepEnrichScenes(sessionId, scenes, characters, locations, stepIn
 
         await logConversation(sessionId, step.step_id, messages, JSON.stringify(result));
         await completeStep(step.step_id, enriched);
-        console.log(`[AGENT] Step enrich (scenes ${enrichStepIndex}): ${enriched.length} enriched`);
+        console.log(`[AGENT] Step enrich (scenes): ${enriched.length} enriched`);
         return enriched;
     } catch (err) {
         await failStep(step.step_id, `Enrichment failed: ${err.message}`);
