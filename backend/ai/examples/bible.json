@@ -1,5 +1,7 @@
 {
   "version": "3.0",
+  "country": "Russia",
+  "epoch": "1920s",
   "render_rules": {
     "style": "cinematic_realism",
     "lighting_default": "natural",

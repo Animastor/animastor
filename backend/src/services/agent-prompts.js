@@ -46,12 +46,14 @@ const SYSTEM_PROMPTS = {
 ## What to identify
 1. author — Full name of the author (in original language). If no clear author found, set null.
 2. title — Full title of the work (in original language). If no clear title found, set null.
-3. has_prologue — true if text contains a prologue section
-4. has_epilogue — true if text contains an epilogue section
-5. parts — Array of structural parts (sections). Each has:
+3. country — Country where the story takes place (e.g., "Russia", "France"). Infer from text context if clear, otherwise null.
+4. epoch — Historical period of the story (e.g., "1920s", "19th century", "modern day"). Infer from text context if clear, otherwise null.
+5. has_prologue — true if text contains a prologue section
+6. has_epilogue — true if text contains an epilogue section
+7. parts — Array of structural parts (sections). Each has:
    - name: the part header text in original language (e.g., "ЧАСТЬ ПЕРВАЯ")
    - order: numeric order (1, 2, 3...)
-6. chapters — Array of chapters/sections in order. Each has:
+8. chapters — Array of chapters/sections in order. Each has:
    - type: "prologue" | "chapter" | "epilogue" | "introduction" | "afterword"
    - number: the chapter number (1, 2, 3...) as integer, or null for prologue/epilogue
    - title: the chapter title text (NOT including the word "Глава" or "Chapter"). Just the title.

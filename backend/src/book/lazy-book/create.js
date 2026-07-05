@@ -167,6 +167,8 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
     const bible = {
         version: '3.0',
         locations,
+        country: structure?.country || null,
+        epoch: structure?.epoch || null,
         render_rules: {
             style: 'cinematic_realism',
             lighting_default: 'natural',

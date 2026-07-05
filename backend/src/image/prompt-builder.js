@@ -256,6 +256,10 @@ function buildImagePrompt(iuPayload, scenePayload, chapterPayload, bookPayload) 
         parts.push(visualStyle);
     }
 
+    // Global bible context (country, epoch)
+    if (bookPayload?.bible?.country) parts.push(bookPayload.bible.country);
+    if (bookPayload?.bible?.epoch) parts.push(bookPayload.bible.epoch);
+
     const resolvedLocation = resolveSceneLocation(scenePayload);
     let loc = bookPayload?.locations?.[resolvedLocation.id];
     let matchedLocFromPrompt = null;

@@ -38,6 +38,8 @@ async function stepAnalyzeStructure(sessionId, sourceText, stepIndex, progress) 
             has_epilogue: !!result.has_epilogue,
             parts: Array.isArray(result.parts) ? result.parts : [],
             chapters: Array.isArray(result.chapters) ? result.chapters : [],
+            country: result.country || null,
+            epoch: result.epoch || null,
         };
 
         await aiCaller.logConversation(sessionId, step.step_id, messages, JSON.stringify(result));
@@ -47,7 +49,7 @@ async function stepAnalyzeStructure(sessionId, sourceText, stepIndex, progress) 
     } catch (err) {
         await failStep(step.step_id, err.message);
         console.error(`[AGENT] Step 0 (structure) FAILED: ${err.message}`);
-        return { author: null, title: null, has_prologue: false, has_epilogue: false, parts: [], chapters: [] };
+        return { author: null, title: null, country: null, epoch: null, has_prologue: false, has_epilogue: false, parts: [], chapters: [] };
     }
 }
 
