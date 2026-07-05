@@ -425,6 +425,31 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
         for (const p of sceneParticipants) {
             if (!allParticipants.includes(p)) allParticipants.push(p);
         }
+
+        // Fallback: infer participants from unit visual prompts (they contain character_ids)
+        if (allParticipants.length === 0 && mergedCharacters.length > 0) {
+            const visualPrompts = (aiScene.units || [])
+                .map(u => u.visual?.prompt || '')
+                .filter(Boolean)
+                .join(' ')
+                .toLowerCase();
+
+            if (visualPrompts.length > 0) {
+                for (const ch of mergedCharacters) {
+                    const chId = (ch.id || '').toLowerCase();
+                    if (!chId || chId.length < 3) continue;
+                    const idPattern = chId.replace(/_/g, '[-_]');
+                    const idRe = new RegExp('(?:^|[\\s.,;!?"\'\\`()\\[\\]{}])' + idPattern + '(?=$|[\\s.,;!?"\'\\`()\\[\\]{}])', 'i');
+                    if (idRe.test(visualPrompts)) {
+                        if (!allParticipants.includes(ch.id)) allParticipants.push(ch.id);
+                    }
+                }
+                if (allParticipants.length > 0) {
+                    console.log(`[LAZY-BOOK] Inferred ${allParticipants.length} participants for scene "${(aiScene.title || '').slice(0, 40)}" from visual prompts`);
+                }
+            }
+        }
+
         // unit.participants removed — participants come from scene-level only
 
         const sceneStyle = aiScene.type === 'chapter_intro' || cleanUnits.some(u => u.type === 'typography')
