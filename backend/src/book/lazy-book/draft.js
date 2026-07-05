@@ -9,7 +9,7 @@ const {
 } = require('./constants');
 const {
     getBookDir, getSourcePath, getManifestPath, getBookMetaPath,
-    getCharactersPath, getMentionsPath, getBiblePath, getLocationsPath, getChapterDir,
+    getCharactersPath, getMentionsPath, getBiblePath, getLocationsPath, getVoicesPath, getChapterDir,
     generateBookId,
 } = require('./paths');
 
@@ -96,6 +96,13 @@ function loadDraftBook(bookId) {
             locations = JSON.parse(fs.readFileSync(locPath, 'utf8'));
         }
 
+        // Load voices from separate file (top-level key)
+        let voices = {};
+        const voPath = getVoicesPath(bookDir);
+        if (fs.existsSync(voPath)) {
+            voices = JSON.parse(fs.readFileSync(voPath, 'utf8'));
+        }
+
         const chapters = [];
         const chDir = getChapterDir(bookDir);
         if (fs.existsSync(chDir)) {
@@ -106,7 +113,7 @@ function loadDraftBook(bookId) {
             }
         }
 
-        return { manifest, book: bookMeta, sourceText, characters, mentions, bible, chapters, locations };
+        return { manifest, book: bookMeta, sourceText, characters, mentions, bible, chapters, locations, voices };
     } catch (err) {
         console.error(`[LAZY-BOOK] Failed to load ${bookId}:`, err.message);
         return null;

@@ -45,10 +45,11 @@ function splitDialogueIntoChunks(text, maxChars = 500) {
 function narratorVoice(scene, book) {
     const voiceId = scene?.audio?.voice || book?.book?.defaults?.narration_voice || "narrator";
     if (voiceId === "narrator") {
-        return book?.bible?.narrator?.voice?.instruction || "";
+        return book?.voices?.narrator?.instruction || book?.bible?.narrator?.voice?.instruction || "";
     }
-    const c = book?.characters?.find(x => x.id === voiceId);
-    return c?.voice?.instruction || "";
+    return book?.voices?.[voiceId]?.instruction
+        || book?.characters?.find(x => x.id === voiceId)?.voice?.instruction
+        || "";
 }
 
 function padShortText(text) {

@@ -5,7 +5,7 @@
 const fs = require('fs');
 const path = require('path');
 const { BookState, SceneStatus } = require('./constants');
-const { getBookDir, getChapterDir, getBookMetaPath, getCharactersPath, getMentionsPath, getBiblePath, getLocationsPath, chapterId, sceneId, unitId } = require('./paths');
+const { getBookDir, getChapterDir, getBookMetaPath, getCharactersPath, getMentionsPath, getBiblePath, getLocationsPath, getVoicesPath, chapterId, sceneId, unitId } = require('./paths');
 const { detectLanguage } = require('./parser');
 const { findCanonicalCharacter, isGenericCharacter } = require('../../utils/character-identity');
 const draft = require('./draft');
@@ -166,7 +166,6 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
 
     const bible = {
         version: '3.0',
-        narrator: { voice: { instruction: narratorVoice } },
         locations,
         render_rules: {
             style: 'cinematic_realism',
@@ -207,9 +206,18 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
     // Save locations to separate file
     fs.writeFileSync(getLocationsPath(bookDir), JSON.stringify(locations, null, 2));
 
-    // Save bible.json without locations
-    const { locations: _bibleLocs, ...bibleWithoutLocations } = bible;
-    fs.writeFileSync(getBiblePath(bookDir), JSON.stringify(bibleWithoutLocations, null, 2));
+    // Save all voices to separate file (narrator + characters)
+    const voices = { narrator: { instruction: narratorVoice } };
+    for (const ch of mergedCharacters) {
+        if (ch.voice?.instruction) {
+            voices[ch.id] = { instruction: ch.voice.instruction };
+        }
+    }
+    fs.writeFileSync(getVoicesPath(bookDir), JSON.stringify(voices, null, 2));
+
+    // Save bible.json without locations and narrator
+    const { locations: _bibleLocs, narrator: _bibleNarrator, ...bibleWithoutExtra } = bible;
+    fs.writeFileSync(getBiblePath(bookDir), JSON.stringify(bibleWithoutExtra, null, 2));
 
     const chDir = getChapterDir(bookDir);
     if (!fs.existsSync(chDir)) fs.mkdirSync(chDir, { recursive: true });

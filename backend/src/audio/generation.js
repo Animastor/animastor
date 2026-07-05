@@ -169,23 +169,23 @@ async function generateSceneAudio(redis, sceneData, loadedBook, buildId, bookId)
             const c1 = chars[0] || {};
             const c2 = chars[1] || {};
 
+            const voiceFor = (id) => loadedBook?.voices?.[id]?.instruction
+                || loadedBook?.characters?.find(x => x.id === id)?.voice?.instruction
+                || "";
+
             if (connector) {
                 const cl = require('../workflows/connector-loader');
-                if (c1?.voice?.instruction) {
-                    cl.setValue(wfAudio, connector, 'character1Voice', c1.voice.instruction);
-                }
-                if (c2?.voice?.instruction) {
-                    cl.setValue(wfAudio, connector, 'character2Voice', c2.voice.instruction);
-                }
+                const v1 = voiceFor(c1?.id);
+                if (v1) cl.setValue(wfAudio, connector, 'character1Voice', v1);
+                const v2 = voiceFor(c2?.id);
+                if (v2) cl.setValue(wfAudio, connector, 'character2Voice', v2);
                 cl.setValue(wfAudio, connector, 'roleName1', c1?.id || "role1");
                 cl.setValue(wfAudio, connector, 'roleName2', c2?.id || "role2");
             } else {
-                if (c1?.voice?.instruction) {
-                    wfAudio["71"].inputs.voice_instruction = c1.voice.instruction;
-                }
-                if (c2?.voice?.instruction) {
-                    wfAudio["80"].inputs.voice_instruction = c2.voice.instruction;
-                }
+                const v1 = voiceFor(c1?.id);
+                if (v1) wfAudio["71"].inputs.voice_instruction = v1;
+                const v2 = voiceFor(c2?.id);
+                if (v2) wfAudio["80"].inputs.voice_instruction = v2;
                 wfAudio["74"].inputs.role_name_1 = c1?.id || "role1";
                 wfAudio["74"].inputs.role_name_2 = c2?.id || "role2";
             }
