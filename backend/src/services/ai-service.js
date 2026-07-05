@@ -7,7 +7,7 @@
 
 const config = require('../config/runtime-config');
 
-const AI_API_BASE_URL = process.env.AI_API_BASE_URL || 'https://integrate.api.nvidia.com/v1';
+const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
 
 // ======================================================
 // LOW-LEVEL AI CALL
@@ -28,17 +28,15 @@ async function callAI(messages, options = {}) {
         'Authorization': `Bearer ${apiKey}`,
     };
 
-    if (AI_API_BASE_URL.includes('openrouter')) {
-        headers['HTTP-Referer'] = 'https://animastor.in';
-        headers['X-Title'] = 'Animastor';
-    }
+    headers['HTTP-Referer'] = 'https://animastor.in';
+    headers['X-Title'] = 'Animastor';
 
     const maxRetries = 3;
     let lastError = null;
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
-            const response = await fetch(`${AI_API_BASE_URL}/chat/completions`, {
+            const response = await fetch(`${OPENROUTER_BASE_URL}/chat/completions`, {
                 method: 'POST',
                 headers,
                 body: JSON.stringify({

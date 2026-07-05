@@ -244,11 +244,17 @@ function buildImagePrompt(iuPayload, scenePayload, chapterPayload, bookPayload) 
         parts.push(visualStyle);
     }
 
-    // Global bible context (country, epoch)
-    if (bookPayload?.bible?.country) parts.push(bookPayload.bible.country);
-    if (bookPayload?.bible?.epoch) parts.push(bookPayload.bible.epoch);
-
     const resolvedLocation = resolveSceneLocation(scenePayload);
+    const env = resolvedLocation.environment;
+
+    // Country: scene environment overrides bible default
+    const effectiveCountry = env?.country || bookPayload?.bible?.country;
+    if (effectiveCountry) parts.push(effectiveCountry);
+
+    // Epoch: scene environment overrides bible default
+    const effectiveEpoch = env?.epoch || bookPayload?.bible?.epoch;
+    if (effectiveEpoch) parts.push(effectiveEpoch);
+
     let loc = bookPayload?.locations?.[resolvedLocation.id];
     let matchedLocFromPrompt = null;
 
@@ -270,8 +276,7 @@ function buildImagePrompt(iuPayload, scenePayload, chapterPayload, bookPayload) 
         parts.push(loc.description);
     }
 
-    const env = resolvedLocation.environment;
-    if (env?.epoch) parts.push(env.epoch);
+    if (env?.time) parts.push(env.time);
     if (env?.time) parts.push(env.time);
     if (env?.season) parts.push(env.season);
     if (env?.weather) parts.push(env.weather);

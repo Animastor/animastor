@@ -6,7 +6,7 @@
 const { estimateSpeechDurationSec } = require('../placeholder-audio');
 const { extractSceneTitle, isGenericSceneTitle } = require('../../utils/scene-title-utils');
 const {
-    WINDOW_SIZE, SCENE_TARGET_SEC, SCENE_MAX_SEC, SCENE_MIN_SEC,
+    MAX_SCENES_PER_CHUNK, SCENE_TARGET_SEC, SCENE_MAX_SEC, SCENE_MIN_SEC,
 } = require('../agent-prompts');
 
 function stripStructureFromText(sourceText, structure) {
@@ -135,7 +135,7 @@ function buildFallbackScenes(sceneText) {
     const sentences = splitIntoSentencesWithOffsets(sceneText);
 
     if (sentences.length === 0) {
-        const parts = splitTextEvenlyByParagraphs(sceneText, WINDOW_SIZE);
+        const parts = splitTextEvenlyByParagraphs(sceneText, MAX_SCENES_PER_CHUNK);
         return parts.map((text, i) => ({
             title: extractSceneTitle(text, i), text, type: 'narration',
             participants: [], location: null,

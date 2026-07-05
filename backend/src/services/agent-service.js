@@ -16,7 +16,7 @@
 
 const { createSession, updateSession, getSession } = require('./agent-session');
 const { loadKnowledgeBase } = require('./knowledge-base');
-const { PROGRESS_STAGES, WINDOW_SIZE, MAX_WINDOW_CHARS, SCENE_TARGET_SEC, SCENE_MAX_SEC, SCENE_MIN_SEC, MAX_SCENES_PER_CHUNK } = require('./agent-prompts');
+const { PROGRESS_STAGES, MAX_WINDOW_CHARS, SCENE_TARGET_SEC, SCENE_MAX_SEC, SCENE_MIN_SEC, MAX_SCENES_PER_CHUNK } = require('./agent-prompts');
 const textUtils = require('./agent/text-utils');
 const visualUtils = require('./agent/visual-utils');
 
@@ -38,7 +38,6 @@ module.exports = {
 
     // Constants (used by txt-importer, book-routes, etc.)
     PROGRESS_STAGES,
-    WINDOW_SIZE,
     MAX_WINDOW_CHARS,
     SCENE_TARGET_SEC,
     SCENE_MAX_SEC,

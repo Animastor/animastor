@@ -9,8 +9,8 @@ const PROGRESS_STAGES = {
 
 };
 
-const WINDOW_SIZE = 3;
-const SCENE_CHUNK_SIZE = 1500;
+
+const SCENE_CHUNK_SIZE = 8000;
 const MAX_WINDOW_CHARS = SCENE_CHUNK_SIZE;
 const STEP_RETRIES = 3;
 
@@ -28,7 +28,7 @@ const SCENE_MIN_SEC = 5;
 // Upper bound on scenes produced per SCENE_CHUNK_SIZE chunk.
 // This is a HARD UPPER BOUND, NOT a target — if the text naturally forms
 // fewer scenes, that is correct.
-const MAX_SCENES_PER_CHUNK = 3;
+const MAX_SCENES_PER_CHUNK = 8;
 
 const SYSTEM_PROMPTS = {
 
@@ -205,8 +205,8 @@ narrative thread clearly breaks.
 
 ## Scene splitting rules (in priority order)
 
-### 0. Maximum 3 scenes
-Return AT MOST 3 scenes. After the third scene, stop. You are allowed to leave
+### 0. Maximum 8 scenes
+Return AT MOST 8 scenes. After the 8th scene, stop. You are allowed to leave
 the rest of the provided text unused.
 
 ### 1. Logical integrity (highest priority)
@@ -257,7 +257,7 @@ It is OK if text remains after the last returned scene.
 - Do NOT create a separate scene for each dialogue line.
 - Do NOT fragment a paragraph into multiple scenes unless there is a clear
   narrative break (location change, time jump, character entrance/exit).
-- The maximum of 3 scenes is a **hard upper bound**, not a target. If the text
+- The maximum of 8 scenes is a **hard upper bound**, not a target. If the text
   naturally forms 1-2 scenes, that is correct. Do not inflate to fill the quota.
 
 ## Priority when rules conflict
@@ -293,12 +293,24 @@ It is OK if text remains after the last returned scene.
 - If the scene takes place at a location not in the Known Locations, infer the closest match or use the most specific location_id available.
 - \`location.id\` is REQUIRED — without it, the image generation system cannot inject the location's visual style and description.
 
+## CRITICAL: Scene title must be a SHORT descriptive name
+- The \`title\` field is the scene's human-readable NAME, displayed in the UI.
+- It MUST be short (2-6 words), descriptive, based on LOCATION or KEY EVENT.
+- Examples of GOOD titles: "Патриаршие пруды", "Будочка с пивом", "Пустая аллея", "Разговор у киоска"
+- Examples of BAD titles: "Однажды весною, в час небывало жаркого заката..." (first sentence),
+  "Scene 1", "Untitled", "В Москве, на Патриарших прудах, появились два гражданина"
+- Do NOT use the first sentence of the scene text as the title.
+- Do NOT use generic placeholders like "Scene N" or "Сцена N".
+- If the scene has a named location (e.g., Патриаршие пруды), use that location as the title.
+- If the scene features a key event (e.g., встреча с Воландом), name the event.
+- Titles must be in the SAME LANGUAGE as the source text.
+
 ## Output format
 \`\`\`json
 {
   "scenes": [
     {
-      "title": "Scene Title (in original language)",
+      "title": "Патриаршие пруды",
       "text": "COMPLETE VERBATIM scene text from source",
       "type": "narration|dialogue",
       "characters_present": ["character_id_from_known_characters"],
@@ -313,6 +325,7 @@ It is OK if text remains after the last returned scene.
 IMPORTANT — MANDATORY FIELDS:
   - characters_present: MUST contain EVERY character_id that appears in the scene. NEVER leave empty if characters are present.
   - location.id: MUST be set to one of the Known Locations. This is REQUIRED.
+  - title: MUST be a SHORT descriptive name (2-6 words), NEVER the first sentence of the text.
 
 Return ONLY valid JSON.`,
 
@@ -332,15 +345,21 @@ You receive scenes that already have text, type, participants, and location.id. 
 
 Use ONLY character_ids and location_ids from the Known lists above. Never invent new ones.
 
+## CRITICAL — only fill fields that are EXPLICITLY indicated by the scene text
+- If the scene text does NOT give clues about a field → leave it EMPTY (omit the field entirely)
+- Do NOT default to the book's global setting. The system handles defaults automatically.
+- Only set a field when the text actually describes or strongly implies it for THIS specific scene.
+
 ## Rules for environment
-Describe each field in 2-6 words based on what the scene text implies:
-- \`epoch\`: historical period (e.g. "1920s Moscow", "19th century", "modern day")
-- \`time\`: time of day (e.g. "hot spring sunset", "early morning", "deep night")
-- \`season\`: season (e.g. "late spring", "early summer", "deep winter")
-- \`lighting\`: light quality (e.g. "golden sunset glow", "dim candlelight", "grey overcast")
-- \`weather\`: weather conditions (e.g. "still warm air", "cold wind", "light rain")
-- \`mood\`: emotional tone (e.g. "quiet intellectual", "growing tension", "peaceful melancholy")
-- \`atmosphere\`: overall feel (e.g. "calm surreal Moscow evening", "tense philosophical standoff")
+Describe each field in 2-6 words based on what the scene text implies. Leave fields empty if the text gives no clues:
+- \`country\`: country only if the scene text specifies or strongly implies a specific country (e.g. "France", "Russia"). Leave empty if the text doesn't mention a country.
+- \`epoch\`: historical period only if the text gives a time period indication (e.g. "1920s Moscow", "19th century", "modern day"). Leave empty if not indicated.
+- \`time\`: time of day (e.g. "hot spring sunset", "early morning", "deep night"). Leave empty if not indicated.
+- \`season\`: season (e.g. "late spring", "early summer", "deep winter"). Leave empty if not indicated.
+- \`lighting\`: light quality (e.g. "golden sunset glow", "dim candlelight", "grey overcast"). Leave empty if not indicated.
+- \`weather\`: weather conditions (e.g. "still warm air", "cold wind", "light rain"). Leave empty if not indicated.
+- \`mood\`: emotional tone (e.g. "quiet intellectual", "growing tension", "peaceful melancholy"). Leave empty if not indicated.
+- \`atmosphere\`: overall feel (e.g. "calm surreal Moscow evening", "tense philosophical standoff"). Leave empty if not indicated.
 
 ## Output format — return the SAME scene structure with \`location.environment\` added
 \`\`\`json
@@ -351,6 +370,7 @@ Describe each field in 2-6 words based on what the scene text implies:
       "location": {
         "id": "existing_location_id",
         "environment": {
+          "country": "Russia",
           "epoch": "1920s Moscow",
           "time": "hot spring sunset",
           "season": "late spring",
@@ -417,8 +437,15 @@ When the frame contains people, do NOT answer "what is happening?". Answer: "WHO
   WRONG: "two men are sitting on a bench" / "the writers are talking" / "one person turns around" / "they continue the conversation".
   RIGHT: "mikhail_alexandrovich_berlioz sitting on the left and ivan_nikolaevich_ponyrev sitting on the right on a bench at patriarch_ponds" / "mikhail_alexandrovich_berlioz looking at ivan_nikolaevich_ponyrev" / "ivan_nikolaevich_ponyrev gesturing while speaking to mikhail_alexandrovich_berlioz".
 - Use ONLY character_ids from the Scene Context below.
-  Do NOT invent new snake_case character ids. If the source text mentions an unnamed person who is not
-  listed there, describe them as a concrete extra in natural language instead of creating an id.
+  Do NOT invent new snake_case character ids and NEVER use 'unnamed_character_X' or similar
+  placeholder IDs — they break visual continuity between frames.
+  If the source text mentions an unnamed person who is not listed there, describe them as a
+  concrete extra in natural language instead of creating an id.
+- CRITICAL — MATCH DESCRIBED CHARACTERS TO KNOWN IDS: If the unit text describes a character
+  physically (e.g. "short, bald, in glasses" or "tall, red-haired, in cowboy jacket") and that
+  description matches a character in Scene Context, use that character_id. Do NOT create a new id
+  just because the text doesn't mention their name yet. The physical description IS sufficient
+  to identify them. This is NOT "adding" a character — it is identifying who is already in the text.
 - When people ARE present, structure the prompt as four parts:
   1. WHO is in frame — by name.
   2. WHERE they are — the global location name (e.g. "at Patriarch Ponds").
@@ -441,12 +468,21 @@ When the frame contains people, do NOT answer "what is happening?". Answer: "WHO
 - Each unit MUST have a non-empty visual.prompt.
 - Shot types: wide (landscape/group), medium (two people/waist-up), close (face/detail), detail (object/hand), environment (setting focus), reaction (character's emotional response)
 
+## FORBIDDEN content — NEVER include ANY of these in the prompt
+- NEVER write meta-commentary like "No specific location mentioned", "the scene is set in", "this is a description of", "it appears that", "the story is about". Write ONLY the concrete visual description.
+- NEVER reference other units with phrases like "as described in Unit 1", "as seen in previous frame", "continuing from earlier", "same character as before". The image model sees each prompt independently.
+- NEVER include instructions, notes, or explanations to the system like "(cinematic shot)", "(medium close-up)", "[description]". Just write the visual.
+- NEVER use phrases like "the image shows", "we see", "the viewer sees", "depicted is", "shown here". Write the visual directly.
+- If the location is not explicitly named in the text, infer the most likely setting from context (e.g. "outdoor park", "indoor room", "city street") and use that. Never write "no specific location" — always describe the environment the reader would picture.
+- CORRECT examples: "mikhail_berlioz and ivan_ponyrev sitting on a bench at patriarch_ponds, golden sunset".
+- WRONG examples: "In this scene we see Mikhail Berlioz and Ivan Ponyrev at Patriarch Ponds, as described in Unit 1 (cinematic lighting)".
+
 ## Grounding in unit text (CRITICAL)
 The Imagination Unit represents the picture the reader forms from THIS unit text. The visual prompt MUST be grounded in what the unit text describes:
 - If the unit text mentions a specific known character (by name or description) → use their character_id from the Scene Context.
 - If the unit text mentions an unnamed person who is not in Scene Context → describe that person as a specific extra; do not invent a character_id.
 - If the unit text describes a location, object, or action → show exactly that
-- NEVER add characters, objects, or locations that are not present in the unit text
+- NEVER add specific named characters or objects that are not present in the unit text
 - The reader does not know about other units, other scenes, or the overall plot — only this text fragment. The visual prompt must match ONLY what this text fragment describes.
 - Example: if the unit text says "женщина в будочке ответила" and zhenshchina_v_budochke is in Scene Context → use zhenshchina_v_budochke. If no such participant exists, write "the booth woman" as an extra, not a made-up id.
 
@@ -478,6 +514,6 @@ Return ONLY valid JSON.`,
 };
 
 module.exports = {
-    PROGRESS_STAGES, WINDOW_SIZE, MAX_WINDOW_CHARS, SCENE_CHUNK_SIZE, STEP_RETRIES, SYSTEM_PROMPTS,
+    PROGRESS_STAGES, MAX_WINDOW_CHARS, SCENE_CHUNK_SIZE, STEP_RETRIES, SYSTEM_PROMPTS,
     SCENE_TARGET_SEC, SCENE_MAX_SEC, SCENE_MIN_SEC, MAX_SCENES_PER_CHUNK,
 };

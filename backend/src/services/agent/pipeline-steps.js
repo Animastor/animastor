@@ -130,9 +130,9 @@ async function stepCreateScenes(sessionId, text, characters, locations, stepInde
     let repairText = '';
     if (repairHint) {
         if (repairHint.duration_preview) {
-            repairText = `\n\nThe previous scene split was too long in places.\nReason: ${repairHint.reason || 'duration_exceeded'}.\nThese scenes exceed the ~30s (~95 word) hard limit and must be split into smaller scenes, each ending on a complete sentence and covering ~20s (~65 words):\n${repairHint.duration_preview}\nReturn a corrected split from the START of the same text, verbatim and in order, with no gaps or overlaps between returned scenes. Return at most 3 scenes and stop after scene 3; unused tail text is allowed.`;
+            repairText = `\n\nThe previous scene split was too long in places.\nReason: ${repairHint.reason || 'duration_exceeded'}.\nThese scenes exceed the ~30s (~95 word) hard limit and must be split into smaller scenes, each ending on a complete sentence and covering ~20s (~65 words):\n${repairHint.duration_preview}\nReturn a corrected split from the START of the same text, verbatim and in order, with no gaps or overlaps between returned scenes. Return at most 8 scenes and stop after scene 8; unused tail text is allowed.`;
         } else {
-            repairText = `\n\nPrevious scene split failed source coverage validation.\nReason: ${repairHint.reason || 'unknown'}.\nMissing or problematic source fragment:\n\`\`\`\n${repairHint.gap_preview || ''}\n\`\`\`\nReturn a corrected split that starts at the first narrative word and covers a contiguous prefix of the provided text without gaps. Return at most 3 scenes and stop after scene 3; unused tail text is allowed.`;
+            repairText = `\n\nPrevious scene split failed source coverage validation.\nReason: ${repairHint.reason || 'unknown'}.\nMissing or problematic source fragment:\n\`\`\`\n${repairHint.gap_preview || ''}\n\`\`\`\nReturn a corrected split that starts at the first narrative word and covers a contiguous prefix of the provided text without gaps. Return at most 8 scenes and stop after scene 8; unused tail text is allowed.`;
         }
     }
 
@@ -262,7 +262,7 @@ async function stepCreateUnits(sessionId, scene, sceneIndex, characters, stepInd
     }
 }
 
-async function stepCreateVisuals(sessionId, scene, units, sceneIndex, characters, locations, stepIndex, progress) {
+async function stepCreateVisuals(sessionId, scene, units, sceneIndex, characters, locations, stepIndex, progress, nextScene) {
     const _progress = progress || (() => {});
     const msg = PROGRESS_STAGES.creating_visuals(sceneIndex);
     _progress({ stage: 'creating_visuals', message: msg });
@@ -343,6 +343,17 @@ async function stepCreateVisuals(sessionId, scene, units, sceneIndex, characters
     if (sceneFullText) {
         contextParts.push('', `Full scene text:\n${sceneFullText.substring(0, 1500)}`);
     }
+
+    // ── Lookahead context: next scene text for character name disambiguation ──
+    if (nextScene && (nextScene.text || nextScene.audio?.full_text)) {
+        const nextText = nextScene.audio?.full_text || nextScene.text || '';
+        contextParts.push('', '## Context from next scene (character name disambiguation)');
+        contextParts.push('The following text appears immediately after the current scene. It may identify by name');
+        contextParts.push('characters who are described but not yet named in the current scene. Use this context');
+        contextParts.push('to resolve them to their correct character_id from the Character list above.');
+        contextParts.push('', `--- next scene text ---\n${nextText.substring(0, 1000)}\n---`);
+    }
+
     const contextStr = contextParts.join('\n');
 
     const unitsStr = units.map((u, i) =>

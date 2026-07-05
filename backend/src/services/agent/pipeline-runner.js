@@ -8,7 +8,7 @@ const sourceCoverage = require('../source-coverage');
 const lazyBook = require('../../book/lazy-book');
 const config = require('../../config/runtime-config');
 const { updateSession, createSession } = require('../agent-session');
-const { PROGRESS_STAGES, WINDOW_SIZE, MAX_WINDOW_CHARS, MAX_SCENES_PER_CHUNK } = require('../agent-prompts');
+const { PROGRESS_STAGES, MAX_WINDOW_CHARS, MAX_SCENES_PER_CHUNK } = require('../agent-prompts');
 const { mergeCharacterLists } = require('../../utils/character-identity');
 const { estimateSpeechDurationSec } = require('../placeholder-audio');
 const pipelineSteps = require('./pipeline-steps');
@@ -156,11 +156,11 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
         }
     };
 
-    publishVBook({ stage: 'extracting_chars', scene_index: 0, total_scenes: 0, window_size: WINDOW_SIZE, message: PROGRESS_STAGES.extracting_chars });
+    publishVBook({ stage: 'extracting_chars', scene_index: 0, total_scenes: 0, window_size: MAX_SCENES_PER_CHUNK, message: PROGRESS_STAGES.extracting_chars });
 
     const sceneText = rawWindowText.trimEnd();
 
-    publishVBook({ stage: 'analyzing', scene_index: 0, total_scenes: 0, window_size: WINDOW_SIZE, message: PROGRESS_STAGES.analyzing_structure });
+    publishVBook({ stage: 'analyzing', scene_index: 0, total_scenes: 0, window_size: MAX_SCENES_PER_CHUNK, message: PROGRESS_STAGES.analyzing_structure });
 
     const charResult = await pipelineSteps.stepExtractCharacters(sessionId, text, stepIndex, _progress);
     let mentions = options.existingMentions || {};
@@ -181,7 +181,7 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
         console.log(`[AGENT] Characters: ${existingChars.length} existing + ${mergeResult.added} new + ${mergeResult.enriched} enriched + ${mergeResult.skippedGeneric} generic skipped = ${characters.length} total, mentions: ${Object.keys(mentions).length}`);
     }
 
-    publishVBook({ stage: 'extracting_chars', scene_index: 0, total_scenes: 0, window_size: WINDOW_SIZE, message: PROGRESS_STAGES.extracting_chars });
+    publishVBook({ stage: 'extracting_chars', scene_index: 0, total_scenes: 0, window_size: MAX_SCENES_PER_CHUNK, message: PROGRESS_STAGES.extracting_chars });
 
     const newLocations = await pipelineSteps.stepExtractLocations(sessionId, text, characters, stepIndex, _progress);
     if (!newLocations || newLocations.length === 0) {
@@ -233,7 +233,7 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
     };
 
     const totalScenesEstimate = Math.min(MAX_SCENES_PER_CHUNK, Math.ceil(sceneText.length / 200) || 1);
-    publishVBook({ stage: 'creating_scenes', scene_index: 0, total_scenes: totalScenesEstimate, window_size: WINDOW_SIZE, message: PROGRESS_STAGES.creating_scenes });
+    publishVBook({ stage: 'creating_scenes', scene_index: 0, total_scenes: totalScenesEstimate, window_size: MAX_SCENES_PER_CHUNK, message: PROGRESS_STAGES.creating_scenes });
 
     let scenes = capScenes(await pipelineSteps.stepCreateScenes(sessionId, sceneText, characters, locations, stepIndex, _progress));
     if (!scenes || scenes.length === 0) throw new Error('AI returned no scenes');
@@ -316,7 +316,7 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
             stage: 'creating_units',
             scene_index: globalSceneIndex + 1,
             total_scenes: sceneOffset + windowTotalScenes,
-            window_size: WINDOW_SIZE,
+            window_size: MAX_SCENES_PER_CHUNK,
             window_scene_index: windowSceneIndex,
             window_total_scenes: windowTotalScenes,
             window_start_scene: windowStartScene,
@@ -333,14 +333,15 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
             stage: 'creating_visuals',
             scene_index: globalSceneIndex + 1,
             total_scenes: sceneOffset + windowTotalScenes,
-            window_size: WINDOW_SIZE,
+            window_size: MAX_SCENES_PER_CHUNK,
             window_scene_index: windowSceneIndex,
             window_total_scenes: windowTotalScenes,
             window_start_scene: windowStartScene,
             message: visualMsg,
         });
 
-        const visualUnits = await pipelineSteps.stepCreateVisuals(sessionId, scene, units, globalSceneIndex, characters, locations, stepIndex, _progress);
+        const nextScene = windowScenes[si + 1] || null;
+        const visualUnits = await pipelineSteps.stepCreateVisuals(sessionId, scene, units, globalSceneIndex, characters, locations, stepIndex, _progress, nextScene);
         const sceneSpan = coverage.scene_spans[si] || null;
         let annotatedUnits = visualUnits;
 
