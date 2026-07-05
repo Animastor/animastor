@@ -4,6 +4,7 @@
 
 const path = require('path');
 const fs = require('fs');
+const sceneAssetsRepo = require('../../storage/postgres/repositories/scene-assets-repo');
 const { computeIuReady } = require('./iu-progress-utils.cjs');
 
 module.exports = function(app, redis, deps) {

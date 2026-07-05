@@ -108,6 +108,7 @@ const windowGenerator = require('./services/window-generator.cjs')({
 });
 
 const iuRepo = require('./storage/postgres/repositories/iu-repo');
+const sceneAssetsRepo = require('./storage/postgres/repositories/scene-assets-repo');
 const { computeWaveform } = require('./services/waveform-service');
 
 const taskHandlerDeps = {
@@ -145,7 +146,7 @@ const routeDeps = {
     cleanBookRedisKeys,
     cleanupService, taskHandler, bookDiff, windowGenerator, chatEngine,
     iuRepo, computeWaveform, journal,
-    wfManager,
+    wfManager, sceneAssetsRepo,
 };
 
 require('./routes/book-routes.cjs')(app, redis, { ...routeDeps, taskHandler, bookDiff, windowGenerator });

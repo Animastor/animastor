@@ -508,7 +508,7 @@ module.exports = function(app, redis, deps) {
             setImmediate(() => {
                 log(`[TRIGGER] ▶️ Running background gen for session=${session.id} (register_for_gpu=${register_for_gpu})`);
                 const bgBuildId = draft?.manifest?.build_id || 'default';
-                windowGenerator.runBackgroundWindowGeneration(bookId, session.id, { registerForGpu, buildId: bgBuildId }).catch(err => {
+                windowGenerator.runBackgroundWindowGeneration(bookId, session.id, { register_for_gpu, buildId: bgBuildId }).catch(err => {
                     console.error(`[TRIGGER] ❌ Background gen crashed: ${err.message}`);
                 });
             });

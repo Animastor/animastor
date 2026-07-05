@@ -243,12 +243,18 @@ module.exports = function(app, redis, deps) {
                     if (!coverHasImages) {
                         const coverLayers = ['audio', 'image'];
                         if (layerCfg.video_enabled !== false) coverLayers.push('video');
+                        const coverUnits = [...(coverScene.units || [])];
+                        for (const db of (coverScene.dialogue_blocks || [])) {
+                            if (db.units) coverUnits.push(...db.units);
+                        }
+                        const coverUnitIds = coverUnits.map(u => String(u.id)).filter(Boolean);
                         filteredDirty.unshift({
                             chapter_id: coverChapterId, scene_id: coverSceneId,
                             reason: 'cover', dirty_layers: coverLayers,
+                            changes: coverUnitIds.length > 0 ? { units: { unit_ids: coverUnitIds } } : null,
                         });
                         coverNeedsGeneration = true;
-                        log(`[REGENERATE] ${bookId}: Cover prepended to dirty scenes (layers=${coverLayers.join(',')})`);
+                        log(`[REGENERATE] ${bookId}: Cover prepended to dirty scenes (units=${coverUnitIds.length})`);
                     }
                 }
             }
