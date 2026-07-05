@@ -70,7 +70,7 @@ function normalizeCharacterRefs(text, characters, aliasIndex) {
  */
 function inferCharactersFromPrompt(directPrompt, book, contextInfo) {
     if (!directPrompt || !book?.characters?.length) return [];
-    helpers.warn(`[COREFERENCE] inferCharactersFromPrompt fallback used${contextInfo ? ' (' + contextInfo + ')' : ''}`);
+    // Primary method: scan visual prompt text for character_ids
     const matched = [];
     const promptL = directPrompt.toLowerCase();
     const normalizedPrompt = helpers.normalizeForMatch(directPrompt);

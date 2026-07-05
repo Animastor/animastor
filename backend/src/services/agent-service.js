@@ -8,7 +8,7 @@
 //   ai-caller.js      - callAI, logConversation
 //   text-utils.js     - stripStructureFromText, splitIntoSentences, buildFallbackScenes, splitTextEvenlyByParagraphs, splitIntoSentencesWithOffsets
 //   scene-title-utils  - extractSceneTitle, isGenericSceneTitle (shared via utils/scene-title-utils.js)
-//   visual-utils.js   - getFallbackVisual, promptMentionsGenericPeople, shouldInjectParticipantPassports, unitTextNeedsScenePairParticipants, applyScenePairParticipantFallback, buildVisualExemplars, formatExamplesForPrompt
+//   visual-utils.js   - getFallbackVisual, buildVisualExemplars, formatExamplesForPrompt
 //   coreference.js    - assignUnitParticipants
 //   pipeline-steps.js - stepAnalyzeStructure, stepExtractCharacters, stepExtractLocations, stepCreateScenes, stepEnrichScenes, stepCreateUnits, stepCreateVisuals
 //   pipeline-runner.js - getWindowText, resolveSceneProgress, runPipeline
@@ -56,8 +56,5 @@ module.exports = {
     // Visual utilities (exported for unit testing)
     buildVisualExemplars: visualUtils.buildVisualExemplars,
     getFallbackVisual: visualUtils.getFallbackVisual,
-    promptMentionsGenericPeople: visualUtils.promptMentionsGenericPeople,
-    shouldInjectParticipantPassports: visualUtils.shouldInjectParticipantPassports,
-
 
 };

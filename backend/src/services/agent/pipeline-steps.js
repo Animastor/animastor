@@ -273,8 +273,6 @@ async function stepCreateVisuals(sessionId, scene, units, sceneIndex, characters
     const locName = scene.location?.id || 'the scene';
     const contextParts = [`Title: ${scene.title || 'Untitled'}`, `Type: ${scene.type || 'narration'}`, `Location (name to use in prompts): ${locName}`, ''];
 
-    const epoch = scene.location?.environment?.epoch;
-    if (epoch) contextParts.push(`Epoch/period: ${epoch}`);
     const season = scene.location?.environment?.season;
     if (season) contextParts.push(`Season: ${season}`);
 

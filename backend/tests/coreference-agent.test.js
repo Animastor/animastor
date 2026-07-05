@@ -2,18 +2,17 @@
 // Coreference Resolution — Agent Service Tests (Simplified)
 // ======================================================
 // Tests for:
-//   - shouldInjectParticipantPassports
 //   - getFallbackVisual
 //   - splitIntoSentences / splitIntoSentencesWithOffsets
 // ======================================================
 // NOTE: unit.participants removed from the system.
-// assignUnitParticipants and applyScenePairParticipantFallback are removed.
+// assignUnitParticipants, applyScenePairParticipantFallback,
+// shouldInjectParticipantPassports, promptMentionsGenericPeople — all removed.
 // Participants are inferred from visual prompt text via inferCharactersFromPrompt.
 
 const { expect } = require('chai');
 const {
     getFallbackVisual,
-    shouldInjectParticipantPassports,
     splitIntoSentences,
     splitIntoSentencesWithOffsets,
 } = require('../src/services/agent-service');
@@ -44,16 +43,6 @@ describe('Coreference — visual fallback participants', () => {
         expect(prompt).to.equal('the scene at patriarch_ponds, cinematic shot');
         expect(prompt).to.not.include('berlioz');
         expect(prompt).to.not.include('ponyrev');
-    });
-});
-
-describe('Coreference — passport injection guard', () => {
-    it('injects participants for generic people wording even when character_binding is false', () => {
-        expect(shouldInjectParticipantPassports('Two writers sitting on the bench', ['berlioz', 'ponyrev'], false)).to.equal(true);
-    });
-
-    it('keeps no-people prompts unbound when character_binding is false', () => {
-        expect(shouldInjectParticipantPassports('empty bench, no people visible', ['berlioz', 'ponyrev'], false)).to.equal(false);
     });
 });
 

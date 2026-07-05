@@ -15,20 +15,6 @@ function getFallbackVisual(text, characters, scene) {
     return `${who} at ${locName}, cinematic shot`;
 }
 
-function promptMentionsGenericPeople(prompt) {
-    const value = String(prompt || '');
-    if (/\b(no|without)\s+(people|persons?|men|figures?|characters?|humans?)\b/i.test(value)) {
-        return false;
-    }
-    return /\b(two\s+)?(writers?|men|people|persons?|figures?|citizens?|poets?|editors?)\b/i.test(value);
-}
-
-function shouldInjectParticipantPassports(prompt, participantIds, characterBinding) {
-    if (!participantIds?.length) return false;
-    if (characterBinding !== false) return true;
-    return promptMentionsGenericPeople(prompt);
-}
-
 function buildVisualExemplars() {
     try {
         const examples = require('../ai-loader').getExamples();
@@ -115,8 +101,6 @@ function formatExamplesForPrompt() {
 
 module.exports = {
     getFallbackVisual,
-    promptMentionsGenericPeople,
-    shouldInjectParticipantPassports,
     buildVisualExemplars,
     formatExamplesForPrompt,
 };
