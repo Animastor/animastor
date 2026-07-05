@@ -243,19 +243,8 @@ function extractPassport(char) {
  */
 function sceneReferencesCharacter(sceneEntry, characterId) {
     if (!sceneEntry) return false;
-    // Check scene-level participants
+    // unit.participants removed — only scene-level participants are used
     if (sceneEntry.participants && sceneEntry.participants.includes(characterId)) return true;
-    // Check unit-level participants
-    const rawScene = sceneEntry.scene;
-    if (!rawScene) return false;
-    for (const u of (rawScene.units || [])) {
-        if (u.participants && u.participants.includes(characterId)) return true;
-    }
-    for (const db of (rawScene.dialogue_blocks || [])) {
-        for (const u of (db.units || [])) {
-            if (u.participants && u.participants.includes(characterId)) return true;
-        }
-    }
     return false;
 }
 
@@ -362,15 +351,8 @@ function computeSceneDirtyLayers(oldScene, newScene) {
                         unitChanges.video = true;
                     }
 
-                    // participants changed → all layers (character voice + appearance)
-                    if (!isEqual(oldU.participants, u.participants)) {
-                        unitChanges.audio = true;
-                        unitChanges.image = true;
-                        unitChanges.video = true;
-                    }
-
                     // Unknown fields — conservative, mark all layers
-                    const knownUnitKeys = new Set(['id', 'type', 'content', 'text', 'visual', 'participants']);
+                    const knownUnitKeys = new Set(['id', 'type', 'content', 'text', 'visual']);
                     for (const key of Object.keys(u)) {
                         if (knownUnitKeys.has(key)) continue;
                         if (!isEqual(oldU[key], u[key])) {

@@ -724,9 +724,6 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
                     }
                     buildString {
                         append("Current position: $chName / $scName — $unitDesc")
-                        if (unit?.participants?.isNotEmpty() == true) {
-                            append(" | Participants: ${unit.participants.joinToString(", ")}")
-                        }
                     }
                 } else {
                     null

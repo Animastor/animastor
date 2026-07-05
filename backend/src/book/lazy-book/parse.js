@@ -65,12 +65,8 @@ function lazyParseNextWindow(bookId, windowSize) {
         for (let si = 0; si < sceneTexts.length; si++) {
             const sceneText = sceneTexts[si];
             const units = splitIntoUnits(sceneText);
+            // unit.participants removed — scenes use scene-level participants only
             const participants = [];
-            for (const u of units) {
-                for (const p of (u.participants || [])) {
-                    if (!participants.includes(p)) participants.push(p);
-                }
-            }
 
             const sceneStyle = units.some(u => u.type === UnitType.TYPOGRAPHY) ? 'soviet_book_page' : undefined;
             chObj.scenes.push({
@@ -85,7 +81,6 @@ function lazyParseNextWindow(bookId, windowSize) {
                     id: unitId(),
                     type: u.type,
                     text: u.text,
-                    participants: u.participants,
                 })),
             });
         }
@@ -158,12 +153,8 @@ function lazyParseChapter(bookId, chapterIndex) {
 
     for (const sceneText of sceneTexts) {
         const units = splitIntoUnits(sceneText);
+        // unit.participants removed — scene-level participants only
         const participants = [];
-        for (const u of units) {
-            for (const p of (u.participants || [])) {
-                if (!participants.includes(p)) participants.push(p);
-            }
-        }
 
         const sceneStyle = units.some(u => u.type === UnitType.TYPOGRAPHY) ? 'soviet_book_page' : undefined;
         chObj.scenes.push({
@@ -178,7 +169,6 @@ function lazyParseChapter(bookId, chapterIndex) {
                 id: unitId(),
                 type: u.type,
                 text: u.text,
-                participants: u.participants,
             })),
         });
     }

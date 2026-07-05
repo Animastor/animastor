@@ -2,18 +2,17 @@
 // Coreference Resolution — Agent Service Tests (Simplified)
 // ======================================================
 // Tests for:
-//   - assignUnitParticipants (LLM output validation)
-//   - applyScenePairParticipantFallback
 //   - shouldInjectParticipantPassports
 //   - getFallbackVisual
 //   - splitIntoSentences / splitIntoSentencesWithOffsets
 // ======================================================
+// NOTE: unit.participants removed from the system.
+// assignUnitParticipants and applyScenePairParticipantFallback are removed.
+// Participants are inferred from visual prompt text via inferCharactersFromPrompt.
 
 const { expect } = require('chai');
 const {
-    assignUnitParticipants,
     getFallbackVisual,
-    applyScenePairParticipantFallback,
     shouldInjectParticipantPassports,
     splitIntoSentences,
     splitIntoSentencesWithOffsets,
@@ -23,102 +22,13 @@ const {
     mergeCharacterLists,
 } = require('../src/utils/character-identity');
 
-// ======================================================
-// assignUnitParticipants — LLM output validation
-// ======================================================
-
-describe('Coreference — assignUnitParticipants validation', () => {
-    const characters = [
-        { id: 'berlioz', name: 'Берлиоз' },
-        { id: 'ponyrev', name: 'Бездомный' },
-    ];
-
-    it('accepts valid character IDs from LLM output', () => {
-        const units = [
-            { text: 'Берлиоз сел на скамейку.', participants: ['berlioz'] },
-        ];
-        const result = assignUnitParticipants(units, characters);
-        expect(result[0]).to.have.members(['berlioz']);
-    });
-
-    it('handles multiple participants per unit', () => {
-        const units = [
-            { text: 'Берлиоз и Бездомный сидели.', participants: ['berlioz', 'ponyrev'] },
-        ];
-        const result = assignUnitParticipants(units, characters);
-        expect(result[0]).to.have.members(['berlioz', 'ponyrev']);
-    });
-
-    it('filters out unknown character IDs', () => {
-        const units = [
-            { text: 'Неизвестный персонаж.', participants: ['berlioz', 'fake_char'] },
-        ];
-        const result = assignUnitParticipants(units, characters);
-        expect(result[0]).to.deep.equal(['berlioz']);
-    });
-
-    it('returns empty for unit with no participants', () => {
-        const units = [
-            { text: 'Пейзаж без людей.', participants: [] },
-        ];
-        const result = assignUnitParticipants(units, characters);
-        expect(Object.keys(result)).to.have.lengthOf(0);
-    });
-
-    it('returns empty for unit without participants field', () => {
-        const units = [
-            { text: 'Пейзаж без людей.' },
-        ];
-        const result = assignUnitParticipants(units, characters);
-        expect(Object.keys(result)).to.have.lengthOf(0);
-    });
-
-    it('handles multiple units with different participants', () => {
-        const units = [
-            { text: 'Берлиоз шёл.', participants: ['berlioz'] },
-            { text: 'Бездомный бежал.', participants: ['ponyrev'] },
-            { text: 'Пустая аллея.', participants: [] },
-        ];
-        const result = assignUnitParticipants(units, characters);
-        expect(result[0]).to.have.members(['berlioz']);
-        expect(result[1]).to.have.members(['ponyrev']);
-        expect(result[2]).to.be.undefined;
-    });
-
-    it('deduplicates character IDs', () => {
-        const units = [
-            { text: 'Текст.', participants: ['berlioz', 'berlioz', 'berlioz'] },
-        ];
-        const result = assignUnitParticipants(units, characters);
-        // assignUnitParticipants does NOT dedup — it passes through validated IDs
-        // (dedup happens elsewhere: buildCharacters in image-service.js)
-        expect(result[0]).to.have.members(['berlioz']);
-    });
-
-    it('returns empty for empty units array', () => {
-        expect(assignUnitParticipants([], characters)).to.deep.equal({});
-    });
-
-    it('returns empty for undefined units', () => {
-        expect(assignUnitParticipants(undefined, characters)).to.deep.equal({});
-    });
-
-    it('handles empty characters list', () => {
-        const units = [
-            { text: 'Текст.', participants: ['berlioz'] },
-        ];
-        const result = assignUnitParticipants(units, []);
-        expect(Object.keys(result)).to.have.lengthOf(0);
-    });
-});
-
 describe('Coreference — visual fallback participants', () => {
     const characters = [
         { id: 'berlioz', name: 'Берлиоз' },
         { id: 'ponyrev', name: 'Бездомный' },
     ];
 
-    it('uses unit-level participants when available', () => {
+    it('uses scene-level participants when available', () => {
         const prompt = getFallbackVisual('Берлиоз сел.', characters, {
             participants: ['berlioz'],
             location: { id: 'patriarch_ponds' },
@@ -134,40 +44,6 @@ describe('Coreference — visual fallback participants', () => {
         expect(prompt).to.equal('the scene at patriarch_ponds, cinematic shot');
         expect(prompt).to.not.include('berlioz');
         expect(prompt).to.not.include('ponyrev');
-    });
-});
-
-describe('Coreference — scene pair participant fallback', () => {
-    const sceneParticipants = ['mikhail_aleksandrovich_berlioz', 'ivan_nikolaevich_ponyrev'];
-
-    it('assigns both scene participants for clear group references', () => {
-        const units = [{
-            text: 'Напившись, литераторы немедленно начали икать и уселись на скамейке.',
-        }];
-        const result = applyScenePairParticipantFallback(units, {}, sceneParticipants);
-        expect(result[0]).to.have.members(sceneParticipants);
-    });
-
-    it('assigns both scene participants for ordinal references', () => {
-        const units = [
-            { text: 'Первый был маленького роста.' },
-            { text: 'Второй был плечистый и рыжеватый.' },
-        ];
-        const result = applyScenePairParticipantFallback(units, {}, sceneParticipants);
-        expect(result[0]).to.have.members(sceneParticipants);
-        expect(result[1]).to.have.members(sceneParticipants);
-    });
-
-    it('does not override explicit unit participants', () => {
-        const units = [{ text: 'Первый был маленького роста.' }];
-        const result = applyScenePairParticipantFallback(units, { 0: ['mikhail_aleksandrovich_berlioz'] }, sceneParticipants);
-        expect(result[0]).to.deep.equal(['mikhail_aleksandrovich_berlioz']);
-    });
-
-    it('does not guess when scene participant count is not exactly two', () => {
-        const units = [{ text: 'Литераторы сели на скамейку.' }];
-        const result = applyScenePairParticipantFallback(units, {}, ['a', 'b', 'c']);
-        expect(result).to.deep.equal({});
     });
 });
 

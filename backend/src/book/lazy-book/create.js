@@ -369,7 +369,6 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
                 scene_title: introMeta.scene_title || `Глава ${(chapterIndex || 0) + 1}`,
                 type: 'chapter_intro',
                 style: introMeta.style || 'soviet_book_page',
-                participants: [],
                 audio: {
                     voice: 'narrator',
                     full_text: introMeta.text,
@@ -378,7 +377,6 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
                     id: unitId(),
                     type: 'typography',
                     text: introMeta.text,
-                    participants: [],
                     visual: {
                         shot: 'wide',
                         prompt: `Chapter ${(chapterIndex || 0) + 1} title page typography, book style`,
@@ -409,7 +407,6 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
                 id: unitId(),
                 type: u.type || 'perception',
                 text: u.text.trim(),
-                participants: u.participants || [],
                 visual: u.visual || undefined,
                 source_start: u.source_start ?? undefined,
                 source_end: u.source_end ?? undefined,
@@ -419,7 +416,6 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
             id: unitId(),
             type: 'perception',
             text: sceneText,
-            participants: [],
         }];
 
         const isDialogue = cleanUnits.some(u => u.type === 'dialogue' || u.type === 'dialectic');
@@ -429,11 +425,7 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
         for (const p of sceneParticipants) {
             if (!allParticipants.includes(p)) allParticipants.push(p);
         }
-        for (const u of cleanUnits) {
-            for (const p of (u.participants || [])) {
-                if (!allParticipants.includes(p)) allParticipants.push(p);
-            }
-        }
+        // unit.participants removed — participants come from scene-level only
 
         const sceneStyle = aiScene.type === 'chapter_intro' || cleanUnits.some(u => u.type === 'typography')
             ? 'soviet_book_page'

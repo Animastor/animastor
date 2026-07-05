@@ -19,7 +19,7 @@ const { loadKnowledgeBase } = require('./knowledge-base');
 const { PROGRESS_STAGES, WINDOW_SIZE, MAX_WINDOW_CHARS, SCENE_TARGET_SEC, SCENE_MAX_SEC, SCENE_MIN_SEC, MAX_SCENES_PER_CHUNK } = require('./agent-prompts');
 const textUtils = require('./agent/text-utils');
 const visualUtils = require('./agent/visual-utils');
-const coreference = require('./agent/coreference');
+
 const bootstrap = require('./agent/bootstrap');
 const { extractSceneTitle, isGenericSceneTitle } = require('../utils/scene-title-utils');
 
@@ -53,15 +53,11 @@ module.exports = {
     extractSceneTitle,
     isGenericSceneTitle,
     resolveSceneProgress: require('./agent/pipeline-runner').resolveSceneProgress,
-
     // Visual utilities (exported for unit testing)
     buildVisualExemplars: visualUtils.buildVisualExemplars,
-
-    // Coreference resolution (exported for unit testing)
-    assignUnitParticipants: coreference.assignUnitParticipants,
-    applyScenePairParticipantFallback: visualUtils.applyScenePairParticipantFallback,
-    unitTextNeedsScenePairParticipants: visualUtils.unitTextNeedsScenePairParticipants,
+    getFallbackVisual: visualUtils.getFallbackVisual,
     promptMentionsGenericPeople: visualUtils.promptMentionsGenericPeople,
     shouldInjectParticipantPassports: visualUtils.shouldInjectParticipantPassports,
-    getFallbackVisual: visualUtils.getFallbackVisual,
+
+
 };

@@ -29,25 +29,6 @@ function shouldInjectParticipantPassports(prompt, participantIds, characterBindi
     return promptMentionsGenericPeople(prompt);
 }
 
-function unitTextNeedsScenePairParticipants(text) {
-    const value = String(text || '').toLowerCase();
-    return /(^|[\s—,.;:!?«"(\[])(первый|второй|писател[ьяеию]|литератор[ыаоеив]*|гражданин[аеыу]*)(?=$|[\s—,.;:!?»")\]])/iu.test(value);
-}
-
-function applyScenePairParticipantFallback(units, unitParticipants, sceneParticipants) {
-    const sceneIds = [...new Set(sceneParticipants || [])].filter(Boolean);
-    if (sceneIds.length !== 2) return unitParticipants || {};
-
-    const result = { ...(unitParticipants || {}) };
-    for (let ui = 0; ui < (units || []).length; ui++) {
-        if (result[ui]?.length) continue;
-        if (unitTextNeedsScenePairParticipants(units[ui]?.text)) {
-            result[ui] = sceneIds;
-        }
-    }
-    return result;
-}
-
 function buildVisualExemplars() {
     try {
         const examples = require('../ai-loader').getExamples();
@@ -136,8 +117,6 @@ module.exports = {
     getFallbackVisual,
     promptMentionsGenericPeople,
     shouldInjectParticipantPassports,
-    unitTextNeedsScenePairParticipants,
-    applyScenePairParticipantFallback,
     buildVisualExemplars,
     formatExamplesForPrompt,
 };

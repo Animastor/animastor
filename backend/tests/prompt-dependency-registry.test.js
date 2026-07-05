@@ -79,33 +79,21 @@ describe('Prompt Dependency Registry', () => {
             expect(registry.sceneReferencesCharacter(scene, 'char-3')).to.be.false;
         });
 
-        it('finds character at unit participants level', () => {
-            const scene = {
-                scene: {
-                    units: [
-                        { participants: ['char-2'] },
-                        { participants: ['char-1'] },
-                    ],
-                },
-            };
-            expect(registry.sceneReferencesCharacter(scene, 'char-1')).to.be.true;
-        });
-
-        it('finds character in dialogue blocks', () => {
-            const scene = {
-                scene: {
-                    dialogue_blocks: [
-                        { units: [{ participants: ['char-3'] }] },
-                    ],
-                },
-            };
-            expect(registry.sceneReferencesCharacter(scene, 'char-3')).to.be.true;
-            expect(registry.sceneReferencesCharacter(scene, 'char-1')).to.be.false;
-        });
-
         it('returns false for scene with no participants data', () => {
             expect(registry.sceneReferencesCharacter({}, 'char-1')).to.be.false;
             expect(registry.sceneReferencesCharacter({ scene: {} }, 'char-1')).to.be.false;
+        });
+
+        it('returns false for unit-level participants (removed — only scene-level used)', () => {
+            const scene = {
+                scene: {
+                    units: [
+                        { text: 'test' },
+                    ],
+                },
+            };
+            // unit-level participants no longer exist
+            expect(registry.sceneReferencesCharacter(scene, 'char-1')).to.be.false;
         });
 
         it('returns false for scene with null/undefined scene entry', () => {

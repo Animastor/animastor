@@ -83,10 +83,6 @@
         {
           "id": "iu-38d6e6ea",
           "type": "perception",
-          "participants": [
-            "berlioz",
-            "bezdomny"
-          ],
           "text": "На Патриарших прудах на скамейке сидели двое: редактор Берлиоз и поэт Иван Бездомный.",
           "visual": {
             "shot": "medium",
@@ -98,10 +94,6 @@
         {
           "id": "iu-f1e661d6",
           "type": "perception",
-          "participants": [
-            "berlioz",
-            "bezdomny"
-          ],
           "text": "Они вели разговор о религии, негромко, но с заметной убеждённостью.",
           "visual": {
             "shot": "medium_close",
@@ -152,10 +144,6 @@
         {
           "id": "iu-a74f9f09",
           "type": "perception",
-          "participants": [
-            "berlioz",
-            "bezdomny"
-          ],
           "text": "Разговор становился всё более напряжённым.",
           "visual": {
             "prompt": "berlioz on the left, bezdomny on the right, woland on the background at patriarch_ponds, tension rising between berlioz and bezdomny",
@@ -165,10 +153,6 @@
         {
           "id": "iu-4c804090",
           "type": "perception",
-          "participants": [
-            "berlioz",
-            "bezdomny"
-          ],
           "text": "Бездомный говорил с жаром, а Берлиоз отвечал спокойно и уверенно.",
           "visual": {
             "character_binding": true,
@@ -188,9 +172,6 @@
         {
           "id": "iu-8e4de386",
           "type": "perception",
-          "participants": [
-            "woland"
-          ],
           "text": "В это время неподалёку возник третий человек.",
           "visual": {
             "character_binding": true,
@@ -234,10 +215,6 @@
         {
           "id": "iu-67a1e2b5",
           "type": "transition",
-          "participants": [
-            "berlioz",
-            "bezdomny"
-          ],
           "text": "Спокойный разговор окончательно перешёл в спор.",
           "visual": {
             "prompt": "berlioz on the left, bezdomny on the right at patriarch_ponds, clear emotional transition from calm conversation to conflict between berlioz and bezdomny",
@@ -284,9 +261,6 @@
         {
           "id": "iu-7858cd7e",
           "type": "dialogue",
-          "participants": [
-            "bezdomny"
-          ],
           "text": "Но ведь Иисуса не существовало!",
           "visual": {
             "shot": "close",
@@ -298,9 +272,6 @@
         {
           "id": "iu-ac4df088",
           "type": "dialogue",
-          "participants": [
-            "berlioz"
-          ],
           "text": "Вы повторяете распространённое заблуждение.",
           "visual": {
             "shot": "close",
@@ -312,9 +283,6 @@
         {
           "id": "iu-fc1e1761",
           "type": "dialogue",
-          "participants": [
-            "bezdomny"
-          ],
           "text": "Это не заблуждение, а очевидный факт!",
           "visual": {
             "shot": "close",
@@ -326,9 +294,6 @@
         {
           "id": "iu-a580b0f5",
           "type": "dialogue",
-          "participants": [
-            "berlioz"
-          ],
           "text": "Факты требуют доказательств, Иван.",
           "visual": {
             "shot": "close",
@@ -340,9 +305,6 @@
         {
           "id": "iu-f9d35fb2",
           "type": "dialogue",
-          "participants": [
-            "bezdomny"
-          ],
           "text": "Да какие ещё доказательства нужны?",
           "visual": {
             "shot": "close",
@@ -354,10 +316,6 @@
         {
           "id": "iu-b409c20f",
           "type": "dialogue",
-          "participants": [
-            "berlioz",
-            "woland"
-          ],
           "text": "История — сложная наука. Нельзя делать выводы сгоряча.",
           "visual": {
             "shot": "close",

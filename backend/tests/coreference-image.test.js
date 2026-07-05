@@ -363,10 +363,10 @@ describe('Coreference — resolveLocationFromPrompt', () => {
 });
 
 // ======================================================
-// buildCharacters — Participant priority
+// buildCharacters — Infer from visual prompt only
 // ======================================================
 
-describe('Coreference — buildCharacters priority', () => {
+describe('Coreference — buildCharacters infer from prompt', () => {
 
     const book = {
         characters: [
@@ -375,46 +375,37 @@ describe('Coreference — buildCharacters priority', () => {
         ],
     };
 
-    it('uses unit.participants when available (priority 1)', () => {
-        const scene = { participants: ['mikhail_aleksandrovich_berlioz', 'ivan_nikolaevich_ponyrev'] };
-        const unit = { participants: ['mikhail_aleksandrovich_berlioz'] };
-        // Should return only berlioz (unit takes priority over scene)
+    it('infers characters from unit.visual.prompt', () => {
+        const scene = { participants: [] };
+        const unit = { visual: { prompt: 'mikhail_aleksandrovich_berlioz sitting on bench' } };
         const result = buildCharacters(scene, unit, {}, book);
+        // Should infer from prompt (scene.participants is NOT used for passports)
         expect(result).to.have.lengthOf(1);
         expect(result[0]).to.include('mikhail_aleksandrovich_berlioz');
     });
 
-    it('falls back to scene.participants when unit participants empty (priority 2)', () => {
-        const scene = { participants: ['mikhail_aleksandrovich_berlioz', 'ivan_nikolaevich_ponyrev'] };
-        const unit = { participants: [] };
+    it('infers from scene.visual.prompt when unit has no visual', () => {
+        const scene = { participants: [], visual: { prompt: 'berlioz and ponyrev walking' } };
+        const unit = { text: 'some text' };
         const result = buildCharacters(scene, unit, {}, book);
         expect(result).to.have.lengthOf(2);
         expect(result[0]).to.include('mikhail_aleksandrovich_berlioz');
         expect(result[1]).to.include('ivan_nikolaevich_ponyrev');
     });
 
-    it('falls back to scene.participants when unit has no participants field', () => {
+    it('returns empty when prompt has no character references', () => {
         const scene = { participants: ['mikhail_aleksandrovich_berlioz'] };
-        const unit = { text: 'test' }; // no .participants field
-        const result = buildCharacters(scene, unit, {}, book);
-        expect(result).to.have.lengthOf(1);
-        expect(result[0]).to.include('mikhail_aleksandrovich_berlioz');
-    });
-
-    it('uses fallback infer when both scene and unit participants are empty', () => {
-        const scene = { participants: [] };
-        const unit = { visual: { prompt: 'berlioz sitting on bench' } };
-        const result = buildCharacters(scene, unit, {}, book);
-        // Should infer from prompt
-        expect(result).to.have.lengthOf(1);
-        expect(result[0]).to.include('mikhail_aleksandrovich_berlioz');
-    });
-
-    it('returns empty array when no characters found', () => {
-        const scene = { participants: ['unknown_character'] };
-        const unit = { participants: [] };
-        const book2 = { characters: [] };
+        const unit = { visual: { prompt: 'golden sunset over the pond, no people' } };
+        const book2 = { characters: book.characters };
+        // scene.participants should NOT be used — only prompt text is scanned
         const result = buildCharacters(scene, unit, {}, book2);
+        expect(result).to.have.lengthOf(0);
+    });
+
+    it('returns empty array when no characters match prompt', () => {
+        const unit = { visual: { prompt: 'empty landscape' } };
+        const book2 = { characters: [] };
+        const result = buildCharacters({}, unit, {}, book2);
         expect(result).to.have.lengthOf(0);
     });
 
@@ -431,21 +422,18 @@ describe('Coreference — buildCharacters priority', () => {
                 },
             }],
         };
-        const scene = { participants: ['berlioz'] };
-        const unit = {};
-        const result = buildCharacters(scene, unit, {}, bookDetailed);
+        const unit = { visual: { prompt: 'berlioz sitting on bench' } };
+        const result = buildCharacters({}, unit, {}, bookDetailed);
         expect(result).to.have.lengthOf(1);
-        // clothing parts are joined with space: "летний серый костюм шляпа пирожком"
         expect(result[0]).to.equal('berlioz: Маленького роста лысый, летний серый костюм шляпа пирожком');
     });
 
-    it('deduplicates character IDs', () => {
-        const scene = { participants: ['berlioz', 'berlioz', 'berlioz'] };
-        const unit = {};
+    it('deduplicates character IDs from prompt', () => {
         const bookDedup = {
             characters: [{ id: 'berlioz', name: 'Берлиоз', passport: {} }],
         };
-        const result = buildCharacters(scene, unit, {}, bookDedup);
+        const unit = { visual: { prompt: 'berlioz berlioz berlioz' } };
+        const result = buildCharacters({}, unit, {}, bookDedup);
         expect(result).to.have.lengthOf(1);
     });
 });
@@ -469,13 +457,13 @@ describe('Coreference — buildImagePrompt passport injection', () => {
         },
     };
 
-    it('injects character passports into prompt via scene participants', () => {
+    it('injects character passports for characters mentioned in visual prompt', () => {
         const unit = {
             type: 'narration',
-            visual: { prompt: 'two figures walking by the pond' },
+            visual: { prompt: 'berlioz and bezdomny walking by the pond' },
         };
         const scene = {
-            participants: ['berlioz', 'bezdomny'],
+            participants: [],
             location: { id: 'moscow_patriarskie', environment: {} },
         };
 
@@ -486,10 +474,10 @@ describe('Coreference — buildImagePrompt passport injection', () => {
         expect(result).to.include('плечистый рыжий');
     });
 
-    it('includes direct prompt text', () => {
+    it('does NOT inject passports for scene.participants not in prompt', () => {
         const unit = {
             type: 'narration',
-            visual: { prompt: 'golden sunset cinematic wide shot' },
+            visual: { prompt: 'empty landscape, no people' },
         };
         const scene = {
             participants: ['berlioz'],
@@ -497,8 +485,22 @@ describe('Coreference — buildImagePrompt passport injection', () => {
         };
 
         const result = buildImagePrompt(unit, scene, {}, bookPayload);
+        // scene.participants is NOT used for passport injection
+        expect(result).to.not.include('маленького роста');
+    });
+
+    it('includes direct prompt text', () => {
+        const unit = {
+            type: 'narration',
+            visual: { prompt: 'golden sunset cinematic wide shot' },
+        };
+        const scene = {
+            participants: [],
+            location: { id: 'moscow_patriarskie', environment: {} },
+        };
+
+        const result = buildImagePrompt(unit, scene, {}, bookPayload);
         expect(result).to.include('golden sunset');
-        expect(result).to.include('berlioz');
     });
 
     it('handles typography IU type without character passports', () => {

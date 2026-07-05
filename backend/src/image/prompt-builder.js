@@ -71,28 +71,16 @@ function resolveState(c, chapter, scene) {
 }
 
 function buildCharacters(scenePayload, unit, chapter, book) {
-    let source = 'unit_scene';
-    let participants = [];
+    // Participants are inferred from visual prompt text ONLY.
+    // scene.participants is metadata for the scene, NOT a source of character passports.
+    // unit.participants has been removed from the system.
+    const prompt = unit?.visual?.prompt || scenePayload?.visual?.prompt || '';
+    const inferred = charUtils.inferCharactersFromPrompt(prompt, book);
 
-    if (unit?.participants?.length) {
-        participants = unit.participants;
-        source = 'unit_coreference';
-    } else if (scenePayload?.participants?.length) {
-        participants = scenePayload.participants;
-        source = 'scene';
-    } else {
-        const prompt = unit?.visual?.prompt || scenePayload?.visual?.prompt || '';
-        const inferred = charUtils.inferCharactersFromPrompt(prompt, book);
-        if (inferred.length > 0) {
-            helpers.warn(`[COREFERENCE] Fallback inferCharactersFromPrompt for unit/visual prompt — ${inferred.length} chars inferred`);
-            participants = inferred.map(c => c.id);
-            source = 'fallback_infer';
-        }
-    }
-
-    if (participants.length === 0) {
+    if (inferred.length === 0) {
         return [];
     }
+    const participants = inferred.map(c => c.id);
 
     const seen = new Set();
     const chars = participants
@@ -307,24 +295,6 @@ function buildImagePrompt(iuPayload, scenePayload, chapterPayload, bookPayload) 
     }
 
     const charParts = buildCharacters(scenePayload, iuPayload, chapterPayload, bookPayload);
-    if (charParts.length === 0 && directPrompt && bookPayload?.characters?.length) {
-        const inferred = charUtils.inferCharactersFromPrompt(directPrompt, bookPayload);
-        if (inferred.length > 0) {
-            helpers.debug(`INFERRED CHARACTERS FROM PROMPT: ${inferred.map(c => c.id).join(', ')}`);
-            for (const c of inferred) {
-                const resolvedP = resolvePassport(c, chapterPayload, scenePayload);
-                const { appearance, clothing } = buildCharacterPassport(resolvedP);
-                let desc;
-                if (appearance) {
-                    desc = appearance;
-                    if (clothing) desc += ", " + clothing;
-                } else {
-                    desc = c.name || c.id;
-                }
-                charParts.push(`${c.id}: ${desc}`);
-            }
-        }
-    }
     parts.push(...charParts);
 
     if (directPrompt) {

@@ -113,6 +113,33 @@ All notable changes to Animastor are documented here.
 
 ---
 
+## [Unreleased] — 2026-07-05
+
+### Removed
+
+- **`unit.participants` from entire system** — LLM no longer generates `participants`
+  for units. `coreference.js` (unit-level validation) and `applyScenePairParticipantFallback`
+  removed. `inferCharactersFromPrompt` promoted from fallback to primary method for
+  character passport injection — passports are now injected ONLY for characters mentioned
+  in the unit's visual prompt text, never from `scene.participants`.
+  
+  Affected files:
+  - `agent-prompts.js` — cleaned units/visuals prompts
+  - `pipeline-steps.js` — removed unit.participants processing
+  - `pipeline-runner.js` — removed coreference resolution step
+  - `coreference.js` — reduced to stub
+  - `visual-utils.js` — removed 2 unused functions
+  - `prompt-builder.js` — `buildCharacters()` now uses `inferCharactersFromPrompt` only
+  - `prompt-dependency-registry.js` — `sceneReferencesCharacter` scene-level only
+  - `video-workflows.js` — removed unit.participants from storyboard
+  - `book/lazy-book/parse.js`, `create.js` — removed unit.participants
+  - `agent-service.js` — cleaned exports
+  - Frontend `AiAssistantFragment.kt` — removed unit.participants display
+  - Examples `ch-*.json` — removed unit-level participants
+  - Tests updated (485 passing, 0 failing)
+
+---
+
 ## [2026-06-27]
 
 ### Security

@@ -107,17 +107,7 @@ function buildVideoPrompt(sceneData, loadedBook, units, iuDurations) {
             if (env.mood) descParts.push(env.mood);
         }
 
-        if (unit.participants?.length) {
-            const chars = unit.participants
-                .filter(id => id !== 'author')
-                .map(id => loadedBook.characters?.find(c => c.id === id))
-                .filter(Boolean);
-            for (const c of chars) {
-                if (c.passport?.video_tokens) {
-                    descParts.push(`${c.name} (${c.passport.video_tokens})`);
-                }
-            }
-        }
+        // unit.participants removed — scene.participants are used at the top level
 
         if (unit.visual?.prompt) {
             descParts.push(unit.visual.prompt);

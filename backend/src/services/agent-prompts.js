@@ -379,14 +379,6 @@ Return ONLY valid JSON.`,
 - For long narration paragraphs without dialogue, prefer FEWER complete visual frames over many fragments
 - Types: perception (POV narration), narration (omniscient), dialogue (speech), description (visual), action (movement), transition (time/location change), performance (theatrical)
 
-## CRITICAL — Participants identification
-For EACH unit, identify which Known Characters appear in that unit's text.
-Set \`participants\` to an array of character_ids from the Known Characters list below.
-- If the unit text mentions a known character by name, role ("редактор"), description ("лысый господин"), or nickname ("Бездомный") — include their character_id.
-- If the unit has NO characters (landscape, object, interior, empty scene) — set participants to [].
-- Use ONLY existing character_ids. Never invent new ones.
-- This is MANDATORY — participants are used by the image generation system to inject character passports.
-
 ## Scene text to decompose:
 %SCENE_TEXT%
 
@@ -399,8 +391,7 @@ Set \`participants\` to an array of character_ids from the Known Characters list
   "units": [
     {
       "text": "Verbatim fragment from scene.text — one complete visual frame",
-      "type": "perception|narration|dialogue|description|action|transition|performance",
-      "participants": ["character_id_from_known_list"]
+      "type": "perception|narration|dialogue|description|action|transition|performance"
     }
   ]
 }
@@ -425,7 +416,7 @@ When the frame contains people, do NOT answer "what is happening?". Answer: "WHO
 - NEVER use pronouns OR generic collective nouns for participants. The model does not know who "they", "he", "she", "two men", "the writers", or "one person" are — to it each is an unknown new person, so the next frame gets different faces, poses, and framing. Reference EVERY known character EVERY time by their exact character_id from the Scene Context below.
   WRONG: "two men are sitting on a bench" / "the writers are talking" / "one person turns around" / "they continue the conversation".
   RIGHT: "mikhail_alexandrovich_berlioz sitting on the left and ivan_nikolaevich_ponyrev sitting on the right on a bench at patriarch_ponds" / "mikhail_alexandrovich_berlioz looking at ivan_nikolaevich_ponyrev" / "ivan_nikolaevich_ponyrev gesturing while speaking to mikhail_alexandrovich_berlioz".
-- Use ONLY character_ids that are listed in Scene Context or in the unit's participants=[...] field.
+- Use ONLY character_ids from the Scene Context below.
   Do NOT invent new snake_case character ids. If the source text mentions an unnamed person who is not
   listed there, describe them as a concrete extra in natural language instead of creating an id.
 - When people ARE present, structure the prompt as four parts:
@@ -452,12 +443,12 @@ When the frame contains people, do NOT answer "what is happening?". Answer: "WHO
 
 ## Grounding in unit text (CRITICAL)
 The Imagination Unit represents the picture the reader forms from THIS unit text. The visual prompt MUST be grounded in what the unit text describes:
-- If the unit text mentions a specific known character (by name or description) → use their character_id from Scene Context or participants=[...].
-- If the unit text mentions an unnamed person who is not in Scene Context / participants=[...] → describe that person as a specific extra; do not invent a character_id.
+- If the unit text mentions a specific known character (by name or description) → use their character_id from the Scene Context.
+- If the unit text mentions an unnamed person who is not in Scene Context → describe that person as a specific extra; do not invent a character_id.
 - If the unit text describes a location, object, or action → show exactly that
 - NEVER add characters, objects, or locations that are not present in the unit text
 - The reader does not know about other units, other scenes, or the overall plot — only this text fragment. The visual prompt must match ONLY what this text fragment describes.
-- Example: if the unit text says "женщина в будочке ответила" and participants=[zhenshchina_v_budochke] → use zhenshchina_v_budochke. If no such participant exists, write "the booth woman" as an extra, not a made-up id.
+- Example: if the unit text says "женщина в будочке ответила" and zhenshchina_v_budochke is in Scene Context → use zhenshchina_v_budochke. If no such participant exists, write "the booth woman" as an extra, not a made-up id.
 
 ## Scene Context
 %CONTEXT%

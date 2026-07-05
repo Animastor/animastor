@@ -325,16 +325,8 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
 
         const units = await pipelineSteps.stepCreateUnits(sessionId, scene, globalSceneIndex, characters, stepIndex, _progress, mentions);
 
-        const unitParticipants = coreference.assignUnitParticipants(units, characters, mentions);
-        const resolvedUnitParticipants = visualUtils.applyScenePairParticipantFallback(
-            units,
-            unitParticipants,
-            scene.participants || []
-        );
-        const unitsWithParticipants = units.map((u, ui) => ({
-            ...u,
-            participants: resolvedUnitParticipants[ui] || u.participants || [],
-        }));
+        // unit.participants removed — participants are inferred from visual prompt
+        // via inferCharactersFromPrompt in prompt-builder.js
 
         const visualMsg = PROGRESS_STAGES.creating_visuals(globalSceneIndex);
         publishVBook({
@@ -348,7 +340,7 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
             message: visualMsg,
         });
 
-        const visualUnits = await pipelineSteps.stepCreateVisuals(sessionId, scene, unitsWithParticipants, globalSceneIndex, characters, locations, stepIndex, _progress);
+        const visualUnits = await pipelineSteps.stepCreateVisuals(sessionId, scene, units, globalSceneIndex, characters, locations, stepIndex, _progress);
         const sceneSpan = coverage.scene_spans[si] || null;
         let annotatedUnits = visualUnits;
 

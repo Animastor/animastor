@@ -293,11 +293,6 @@ async function stepCreateVisuals(sessionId, scene, units, sceneIndex, characters
 
     let namedCount = 0;
     const sceneParticipantIds = new Set(scene.participants || []);
-    for (const unit of (units || [])) {
-        for (const pId of (unit.participants || [])) {
-            sceneParticipantIds.add(pId);
-        }
-    }
 
     if (scene.type === 'chapter_intro') {
         // no character section for title cards
@@ -353,7 +348,7 @@ async function stepCreateVisuals(sessionId, scene, units, sceneIndex, characters
     const contextStr = contextParts.join('\n');
 
     const unitsStr = units.map((u, i) =>
-        `Unit ${i + 1}: text="${(u.text || '').substring(0, 300)}", type="${u.type || 'perception'}", participants=[${(u.participants || []).join(', ')}]`
+        `Unit ${i + 1}: text="${(u.text || '').substring(0, 300)}", type="${u.type || 'perception'}"`
     ).join('\n');
 
     const prompt = SYSTEM_PROMPTS.visuals
@@ -370,44 +365,18 @@ async function stepCreateVisuals(sessionId, scene, units, sceneIndex, characters
         const result = await aiCaller.callAI(messages, { maxTokens: 4096 });
         const visualUnits = result.units || [];
 
-        const passportPartsFor = (ids) => {
-            const parts = [];
-            for (const pId of (ids || [])) {
-                const ch = (characters || []).find(c => c.id === pId);
-                if (!ch) continue;
-                const desc = [ch.passport?.base_appearance, ch.passport?.detailed_appearance,
-                              ch.passport?.clothing_base, ch.passport?.clothing_details]
-                    .filter(Boolean).join('; ');
-                if (!desc) continue;
-                parts.push(`${ch.id}: ${desc}`);
-            }
-            return parts;
-        };
-
         const merged = units.map((u, i) => {
             const vu = visualUnits[i];
             if (vu && vu.visual) {
-                const unitParticipantIds = (u.participants && u.participants.length > 0)
-                    ? u.participants
-                    : (scene.participants || []);
-                const scopedCharacters = (characters || []).filter(c => unitParticipantIds.includes(c.id));
-                let prompt = normalizeCharacterRefs(vu.visual.prompt, scopedCharacters);
-                const passportParts = passportPartsFor(unitParticipantIds);
-                if (visualUtils.shouldInjectParticipantPassports(prompt, unitParticipantIds, vu.visual.character_binding) && passportParts.length > 0) {
-                    const anyCharIdPresent = unitParticipantIds.some(
-                        pId => pId && (prompt.includes(pId + ':') || prompt.includes(pId))
-                    );
-                    if (!anyCharIdPresent) {
-                        prompt = prompt + ', ' + passportParts.join(', ');
-                    }
-                }
+                // Participants are inferred from visual prompt text via inferCharactersFromPrompt
+                let prompt = normalizeCharacterRefs(vu.visual.prompt, characters);
                 return { ...u, visual: { ...vu.visual, prompt } };
             }
             return {
                 ...u,
                 visual: {
                     shot: u.type === 'dialogue' ? 'medium' : (u.type === 'description' ? 'wide' : 'medium'),
-                    prompt: visualUtils.getFallbackVisual(u.text, characters, { ...scene, participants: u.participants?.length ? u.participants : scene.participants }),
+                    prompt: visualUtils.getFallbackVisual(u.text, characters, { ...scene, participants: scene.participants }),
                     character_binding: true,
                 },
             };
@@ -424,7 +393,7 @@ async function stepCreateVisuals(sessionId, scene, units, sceneIndex, characters
             ...u,
             visual: {
                 shot: u.type === 'dialogue' ? 'medium' : 'wide',
-                prompt: visualUtils.getFallbackVisual(u.text, characters, { ...scene, participants: u.participants?.length ? u.participants : scene.participants }),
+                prompt: visualUtils.getFallbackVisual(u.text, characters, { ...scene, participants: scene.participants }),
                 character_binding: true,
             },
         }));
