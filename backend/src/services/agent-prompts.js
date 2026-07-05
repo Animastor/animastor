@@ -345,21 +345,20 @@ You receive scenes that already have text, type, participants, and location.id. 
 
 Use ONLY character_ids and location_ids from the Known lists above. Never invent new ones.
 
-## CRITICAL — only fill fields that are EXPLICITLY indicated by the scene text
-- If the scene text does NOT give clues about a field → leave it EMPTY (omit the field entirely)
-- Do NOT default to the book's global setting. The system handles defaults automatically.
-- Only set a field when the text actually describes or strongly implies it for THIS specific scene.
-
 ## Rules for environment
-Describe each field in 2-6 words based on what the scene text implies. Leave fields empty if the text gives no clues:
-- \`country\`: country only if the scene text specifies or strongly implies a specific country (e.g. "France", "Russia"). Leave empty if the text doesn't mention a country.
-- \`epoch\`: historical period only if the text gives a time period indication (e.g. "1920s Moscow", "19th century", "modern day"). Leave empty if not indicated.
-- \`time\`: time of day (e.g. "hot spring sunset", "early morning", "deep night"). Leave empty if not indicated.
-- \`season\`: season (e.g. "late spring", "early summer", "deep winter"). Leave empty if not indicated.
-- \`lighting\`: light quality (e.g. "golden sunset glow", "dim candlelight", "grey overcast"). Leave empty if not indicated.
-- \`weather\`: weather conditions (e.g. "still warm air", "cold wind", "light rain"). Leave empty if not indicated.
-- \`mood\`: emotional tone (e.g. "quiet intellectual", "growing tension", "peaceful melancholy"). Leave empty if not indicated.
-- \`atmosphere\`: overall feel (e.g. "calm surreal Moscow evening", "tense philosophical standoff"). Leave empty if not indicated.
+Describe each field in 2-6 words based on what the scene text implies.
+
+### Fields to ALWAYS fill in (describe from text):
+- \`time\`: time of day (e.g. "hot spring sunset", "early morning", "deep night")
+- \`season\`: season (e.g. "late spring", "early summer", "deep winter")
+- \`lighting\`: light quality (e.g. "golden sunset glow", "dim candlelight", "grey overcast")
+- \`weather\`: weather conditions (e.g. "still warm air", "cold wind", "light rain")
+- \`mood\`: emotional tone (e.g. "quiet intellectual", "growing tension", "peaceful melancholy")
+- \`atmosphere\`: overall feel (e.g. "calm surreal Moscow evening", "tense philosophical standoff")
+
+### Fields to set ONLY when the text differs from the book's default:
+- \`country\`: set ONLY if this scene's text specifies or implies a country DIFFERENT from the book's primary setting. Leave empty for scenes in the book's default country (the system will use the global default).
+- \`epoch\`: set ONLY if this scene's text gives a time period indication DIFFERENT from the book's default epoch (e.g. flashback to "19th century" in a modern-day book). Leave empty for scenes in the book's default epoch (the system will use the global default).
 
 ## Output format — return the SAME scene structure with \`location.environment\` added
 \`\`\`json
@@ -370,8 +369,6 @@ Describe each field in 2-6 words based on what the scene text implies. Leave fie
       "location": {
         "id": "existing_location_id",
         "environment": {
-          "country": "Russia",
-          "epoch": "1920s Moscow",
           "time": "hot spring sunset",
           "season": "late spring",
           "lighting": "golden sunset glow",
@@ -384,6 +381,8 @@ Describe each field in 2-6 words based on what the scene text implies. Leave fie
   ]
 }
 \`\`\`
+
+Note: \`country\` and \`epoch\` are OMITTED from this example because they should only be set when they differ from the book's default. When they differ, include them in the environment object alongside the other fields.
 
 Return ONLY valid JSON.`,
 
