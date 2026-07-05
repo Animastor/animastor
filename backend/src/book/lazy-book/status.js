@@ -36,7 +36,7 @@ function getBookStatus(bookId) {
         parsedScenes: totalScenes,
         characterCount: d.characters.length,
         mentionsCount: Object.keys(d.mentions || {}).length,
-        locationCount: Object.keys(d.bible.locations || {}).length,
+        locationCount: Object.keys(d.locations || {}).length,
         sourceSize: d.manifest.import_meta?.original_size || 0,
         updatedAt: d.manifest.updated_at,
     };

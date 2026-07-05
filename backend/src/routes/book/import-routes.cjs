@@ -155,7 +155,7 @@ module.exports = function(app, redis, deps) {
                 return res.json({
                     book_id: bookId, state: draft.manifest.state,
                     characters: draft.characters.length,
-                    locations: Object.keys(draft.bible?.locations || {}).length,
+                    locations: Object.keys(draft.locations || {}).length,
                     scenes: draft.chapters.reduce((sum, ch) => sum + (ch.scenes?.length || 0), 0),
                 });
             }

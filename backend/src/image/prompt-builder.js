@@ -171,15 +171,15 @@ function resolveVisualStyle(iuPayload, scenePayload, bookPayload) {
 }
 
 /**
- * Try to find matching location in bible by scanning the direct prompt text.
+ * Try to find matching location by scanning the direct prompt text.
  */
-function resolveLocationFromPrompt(directPrompt, bible) {
-    if (!directPrompt || !bible?.locations) return null;
+function resolveLocationFromPrompt(directPrompt, locations) {
+    if (!directPrompt || !locations) return null;
     const prompt = directPrompt.toLowerCase();
     const normalizedPrompt = helpers.normalizeForMatch(directPrompt);
     const promptWords = normalizedPrompt.split(/\s+/).filter(Boolean);
 
-    const entries = Object.entries(bible.locations);
+    const entries = Object.entries(locations);
     let bestMatch = null;
     let bestScore = 0;
 
@@ -257,11 +257,11 @@ function buildImagePrompt(iuPayload, scenePayload, chapterPayload, bookPayload) 
     }
 
     const resolvedLocation = resolveSceneLocation(scenePayload);
-    let loc = bookPayload?.bible?.locations?.[resolvedLocation.id];
+    let loc = bookPayload?.locations?.[resolvedLocation.id];
     let matchedLocFromPrompt = null;
 
-    if (!loc && directPrompt && bookPayload?.bible?.locations) {
-        matchedLocFromPrompt = resolveLocationFromPrompt(directPrompt, bookPayload.bible);
+    if (!loc && directPrompt && bookPayload?.locations) {
+        matchedLocFromPrompt = resolveLocationFromPrompt(directPrompt, bookPayload.locations);
         if (matchedLocFromPrompt) {
             loc = matchedLocFromPrompt.data;
             helpers.debug(`LOCATION MATCHED FROM PROMPT: ${matchedLocFromPrompt.id}`);

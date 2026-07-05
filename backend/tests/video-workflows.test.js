@@ -133,10 +133,8 @@ describe('buildVideoPrompt', () => {
             { id: 'char_hero', name: 'Hero', passport: { video_tokens: 'hero token description' } },
             { id: 'char_sidekick', name: 'Sidekick', passport: { video_tokens: 'sidekick token' } },
         ],
-        bible: {
-            locations: {
-                'loc_castle': { description: 'an ancient castle' }
-            }
+        locations: {
+            'loc_castle': { description: 'an ancient castle' }
         }
     };
 

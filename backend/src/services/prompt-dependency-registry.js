@@ -204,7 +204,7 @@ const CROSS_FIELDS = [
         key: 'bible.locations',
         layers: ['image', 'video'],
         entitySource: (book) => {
-            const locs = book?.bible?.locations || {};
+            const locs = book?.locations || {};
             return Object.entries(locs).map(([id, data]) => ({ id, ...data }));
         },
         entityId: (loc) => loc.id,

@@ -107,8 +107,9 @@ function buildBookFromBundle(rawFiles) {
         throw new Error("manifest.book_id missing")
     }
 
-    // Bible & characters
+    // Bible, locations & characters
     const bibleKey = findFile("bible.json")
+    const locationsKey = findFile("locations.json")
     const charactersKey = findFile("characters.json")
     let bible = {}
     let characters = []
@@ -117,6 +118,14 @@ function buildBookFromBundle(rawFiles) {
             bible = JSON.parse(files[bibleKey])
         } catch {
             throw new Error("Invalid JSON in bible.json")
+        }
+    }
+    let locations = {};
+    if (locationsKey) {
+        try {
+            locations = JSON.parse(files[locationsKey]);
+        } catch {
+            throw new Error("Invalid JSON in locations.json")
         }
     }
     if (charactersKey) {
@@ -193,7 +202,8 @@ function buildBookFromBundle(rawFiles) {
         book: parsedBook,
         bible,
         characters,
-        chapters
+        chapters,
+        locations
     }
 }
 
@@ -259,7 +269,7 @@ function saveBookBundle(book, files) {
             chaptersOrder.map(cf => cf.split('/').pop())
         );
         const rootBasenames = new Set(
-            ['manifest.json', 'book.json', 'bible.json', 'characters.json']
+            ['manifest.json', 'book.json', 'bible.json', 'locations.json', 'characters.json']
         );
 
         for (const [filePath, content] of Object.entries(files)) {
@@ -319,12 +329,22 @@ function saveBookBundle(book, files) {
         JSON.stringify(bookMeta, null, 2)
     );
 
-    // Save bible.json (optional)
+    // Save bible.json (optional, without locations)
     const biblePath = path.join(bookDir, 'bible.json');
     if (book.bible && Object.keys(book.bible).length > 0) {
-        fs.writeFileSync(biblePath, JSON.stringify(book.bible, null, 2));
+        const { locations: _bibleLocs, ...bibleWithoutLocations } = book.bible;
+        fs.writeFileSync(biblePath, JSON.stringify(bibleWithoutLocations, null, 2));
     } else if (fs.existsSync(biblePath)) {
         fs.unlinkSync(biblePath);
+    }
+
+    // Save locations.json separately
+    const locsPath = path.join(bookDir, 'locations.json');
+    const hasLocations = book.locations && Object.keys(book.locations).length > 0;
+    if (hasLocations) {
+        fs.writeFileSync(locsPath, JSON.stringify(book.locations, null, 2));
+    } else if (fs.existsSync(locsPath)) {
+        fs.unlinkSync(locsPath);
     }
 
     // Save characters.json (optional)
@@ -427,6 +447,13 @@ function loadBookFromDir(bookId, bookDir) {
             bible = JSON.parse(fs.readFileSync(biblePath, 'utf8'));
         }
 
+        // Optional locations.json — load as top-level key
+        let locations = {};
+        const locationsPath = path.join(bookDir, 'locations.json');
+        if (fs.existsSync(locationsPath)) {
+            locations = JSON.parse(fs.readFileSync(locationsPath, 'utf8'));
+        }
+
         // Optional characters.json
         let characters = [];
         const charPath = path.join(bookDir, 'characters.json');
@@ -450,7 +477,7 @@ function loadBookFromDir(bookId, bookDir) {
             }
         }
 
-        return { manifest, book: bookMeta, bible, characters, chapters };
+        return { manifest, book: bookMeta, bible, characters, chapters, locations };
     } catch (err) {
         console.error(`Failed to load book from dir ${bookId}:`, err.message);
         return null;

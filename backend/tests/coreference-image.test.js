@@ -314,23 +314,21 @@ describe('Coreference — buildSafeAliasIndex', () => {
 
 describe('Coreference — resolveLocationFromPrompt', () => {
 
-    const bible = {
-        locations: {
-            moscow_patriarskie_pруды: {
-                cinematic_space: 'Patriarch Ponds in Moscow, a tranquil park with a large pond surrounded by lime trees and old mansions',
-                description: 'Hot spring evening at the ponds, dry stifling heat',
-                visual_style: 'cinematic realism',
-            },
-            pivo_i_vody_booth: {
-                cinematic_space: 'A colorfully painted wooden stall',
-                description: 'Deserted alley near the ponds at sunset',
-            },
+    const locations = {
+        moscow_patriarskie_pруды: {
+            cinematic_space: 'Patriarch Ponds in Moscow, a tranquil park with a large pond surrounded by lime trees and old mansions',
+            description: 'Hot spring evening at the ponds, dry stifling heat',
+            visual_style: 'cinematic realism',
+        },
+        pivo_i_vody_booth: {
+            cinematic_space: 'A colorfully painted wooden stall',
+            description: 'Deserted alley near the ponds at sunset',
         },
     };
 
     it('matches exact location ID substring', () => {
         const prompt = 'scene at moscow_patriarskie_pруды with pond';
-        const result = resolveLocationFromPrompt(prompt, bible);
+        const result = resolveLocationFromPrompt(prompt, locations);
         expect(result).to.not.be.null;
         expect(result.id).to.equal('moscow_patriarskie_pруды');
         expect(result.matchType).to.equal('exact');
@@ -341,7 +339,7 @@ describe('Coreference — resolveLocationFromPrompt', () => {
         // "ponds" matches "pond" in the location's cinematic_space
         // "moscow" matches "Moscow" in the location's cinematic_space
         const prompt = 'moscow patriarch ponds evening scene cinematic';
-        const result = resolveLocationFromPrompt(prompt, bible);
+        const result = resolveLocationFromPrompt(prompt, locations);
         expect(result).to.not.be.null;
         expect(result.id).to.equal('moscow_patriarskie_pруды');
         expect(result.matchType).to.equal('word_overlap');
@@ -349,18 +347,18 @@ describe('Coreference — resolveLocationFromPrompt', () => {
 
     it('returns null for unmatched location', () => {
         const prompt = 'some random place in the middle of nowhere';
-        const result = resolveLocationFromPrompt(prompt, bible);
+        const result = resolveLocationFromPrompt(prompt, locations);
         expect(result).to.be.null;
     });
 
     it('returns null for empty prompt', () => {
-        expect(resolveLocationFromPrompt('', bible)).to.be.null;
-        expect(resolveLocationFromPrompt(null, bible)).to.be.null;
+        expect(resolveLocationFromPrompt('', locations)).to.be.null;
+        expect(resolveLocationFromPrompt(null, locations)).to.be.null;
     });
 
-    it('returns null for empty bible', () => {
+    it('returns null for empty locations', () => {
         expect(resolveLocationFromPrompt('test', null)).to.be.null;
-        expect(resolveLocationFromPrompt('test', { locations: {} })).to.be.null;
+        expect(resolveLocationFromPrompt('test', {})).to.be.null;
     });
 });
 
@@ -463,12 +461,10 @@ describe('Coreference — buildImagePrompt passport injection', () => {
             { id: 'berlioz', name: 'Берлиоз', passport: { base_appearance: 'маленького роста' } },
             { id: 'bezdomny', name: 'Бездомный', passport: { base_appearance: 'плечистый рыжий' } },
         ],
-        bible: {
-            locations: {
-                moscow_patriarskie: {
-                    description: 'Патриаршие пруды',
-                    visual_style: 'realistic',
-                },
+        locations: {
+            moscow_patriarskie: {
+                description: 'Патриаршие пруды',
+                visual_style: 'realistic',
             },
         },
     };

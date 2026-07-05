@@ -300,10 +300,8 @@ describe('Book Diff — Cross-cutting dependencies', () => {
 
     it('detects location changes and marks scenes', () => {
         const oldBook = {
-            bible: {
-                locations: {
-                    forest: { description: 'Dark forest' },
-                },
+            locations: {
+                forest: { description: 'Dark forest' },
             },
             chapters: [{
                 chapter: 'ch-1',
@@ -311,10 +309,8 @@ describe('Book Diff — Cross-cutting dependencies', () => {
             }],
         };
         const newBook = {
-            bible: {
-                locations: {
-                    forest: { description: 'Bright forest' },
-                },
+            locations: {
+                forest: { description: 'Bright forest' },
             },
             chapters: [{
                 chapter: 'ch-1',
@@ -414,7 +410,7 @@ describe('Book Diff — Cross-cutting dependencies', () => {
     it('unchanged book produces no dirty scenes', () => {
         const book = {
             characters: [{ id: 'hero', passport: { base_appearance: 'tall' } }],
-            bible: { locations: { forest: { description: 'Dark' } } },
+            locations: { forest: { description: 'Dark' } },
             chapters: [{
                 chapter: 'ch-1',
                 scenes: [{ scene_id: 'sc-1', participants: ['hero'], location: { id: 'forest' } }],

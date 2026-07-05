@@ -5,7 +5,7 @@
 const fs = require('fs');
 const path = require('path');
 const { BookState, SceneStatus } = require('./constants');
-const { getBookDir, getChapterDir, getBookMetaPath, getCharactersPath, getMentionsPath, getBiblePath, chapterId, sceneId, unitId } = require('./paths');
+const { getBookDir, getChapterDir, getBookMetaPath, getCharactersPath, getMentionsPath, getBiblePath, getLocationsPath, chapterId, sceneId, unitId } = require('./paths');
 const { detectLanguage } = require('./parser');
 const { findCanonicalCharacter, isGenericCharacter } = require('../../utils/character-identity');
 const draft = require('./draft');
@@ -63,7 +63,7 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
     }
 
     let existingCharacters = [];
-    let existingBible = null;
+    let existingLocations = {};
 
     if (!isFirstWindow) {
         try {
@@ -75,12 +75,13 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
             console.warn(`[LAZY-BOOK] Failed to load existing characters: ${e.message}`);
         }
         try {
-            const bibPath = getBiblePath(bookDir);
-            if (fs.existsSync(bibPath)) {
-                existingBible = JSON.parse(fs.readFileSync(bibPath, 'utf8'));
+            // Load existing locations from separate file
+            const locPath = getLocationsPath(bookDir);
+            if (fs.existsSync(locPath)) {
+                existingLocations = JSON.parse(fs.readFileSync(locPath, 'utf8'));
             }
         } catch (e) {
-            console.warn(`[LAZY-BOOK] Failed to load existing bible: ${e.message}`);
+            console.warn(`[LAZY-BOOK] Failed to load existing locations: ${e.message}`);
         }
     }
 
@@ -146,10 +147,7 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
         existingIds.add(charId);
     }
 
-    let locations = {};
-    if (existingBible && existingBible.locations) {
-        locations = { ...existingBible.locations };
-    }
+    let locations = { ...existingLocations };
     for (const loc of (analysis.locations || [])) {
         const locId = loc.id || loc.name.toLowerCase().replace(/[^a-zа-яё0-9]+/g, '_').replace(/^_|_$/g, '');
         if (!locations[locId]) {
@@ -206,7 +204,12 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
         console.log(`[LAZY-BOOK] Filtered characters: ${passportChars.length} with passport out of ${mergedCharacters.length} total`);
     }
 
-    fs.writeFileSync(getBiblePath(bookDir), JSON.stringify(bible, null, 2));
+    // Save locations to separate file
+    fs.writeFileSync(getLocationsPath(bookDir), JSON.stringify(locations, null, 2));
+
+    // Save bible.json without locations
+    const { locations: _bibleLocs, ...bibleWithoutLocations } = bible;
+    fs.writeFileSync(getBiblePath(bookDir), JSON.stringify(bibleWithoutLocations, null, 2));
 
     const chDir = getChapterDir(bookDir);
     if (!fs.existsSync(chDir)) fs.mkdirSync(chDir, { recursive: true });

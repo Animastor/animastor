@@ -299,11 +299,9 @@ describe('Prompt Dependency Registry', () => {
             it('converts locations object to array with id', () => {
                 const field = registry.getCrossFields().find(f => f.key === 'bible.locations');
                 const book = {
-                    bible: {
-                        locations: {
-                            forest: { description: 'A dark forest' },
-                            castle: { description: 'A castle' },
-                        },
+                    locations: {
+                        forest: { description: 'A dark forest' },
+                        castle: { description: 'A castle' },
                     },
                 };
                 const entities = field.entitySource(book);

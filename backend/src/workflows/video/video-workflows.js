@@ -80,7 +80,7 @@ function buildVideoPrompt(sceneData, loadedBook, units, iuDurations) {
     // 2. Location / environment context
     const env = scene.location?.environment || {};
     const locationId = scene.location?.id || '';
-    const loc = loadedBook.bible?.locations?.[locationId];
+    const loc = loadedBook.locations?.[locationId];
 
     // 3. Storyboard per IU
     const storyboardParts = [];
