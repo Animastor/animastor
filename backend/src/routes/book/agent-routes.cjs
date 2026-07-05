@@ -2,6 +2,8 @@
 // Book Agent Status Route
 // ======================================================
 
+const { MAX_SCENES_PER_CHUNK } = require('../../services/agent-prompts');
+
 module.exports = function(app, redis, deps) {
     const {
         config, state, audio, image, video, book, orchestrator, storage,
@@ -70,7 +72,7 @@ module.exports = function(app, redis, deps) {
                     session_status: 'running', progress_msg: agentRow.progress_msg || 'Working...',
                     source_type: agentRow.source_type, window_index: windowIndex,
                     created_scenes: createdScenes, total_scenes: totalScenes, remaining_cached: remainingCached,
-                    window_size: config.WINDOW_SIZE,
+                    window_size: MAX_SCENES_PER_CHUNK,
                     ...windowProgressMeta,
                 });
             }
@@ -112,7 +114,7 @@ module.exports = function(app, redis, deps) {
                     session_status: agentRow.session_status, progress_msg: agentRow.progress_msg || 'Working...',
                     source_type: agentRow.source_type, window_index: windowIndex,
                     created_scenes: createdScenes, total_scenes: totalScenes, remaining_cached: remainingCached,
-                    window_size: config.WINDOW_SIZE,
+                    window_size: MAX_SCENES_PER_CHUNK,
                     ...windowProgressMeta,
                 });
             }
