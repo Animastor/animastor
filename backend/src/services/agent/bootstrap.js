@@ -264,6 +264,8 @@ async function bootstrapNextWindow(bookId, progress, publishProgress) {
             has_prologue: windowData.structure.has_prologue,
             has_epilogue: windowData.structure.has_epilogue,
             parts: windowData.structure.parts,
+            country: windowData.structure.country || null,
+            epoch: windowData.structure.epoch || null,
         } : null;
 
         const result = await pipelineRunner.runPipeline(sessionId, windowInfo.text, existingChars, existingLocs, nextWindowIndex, _progress, (windowData?.created_scenes || 0), {
