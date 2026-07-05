@@ -7,7 +7,7 @@
 
 const config = require('../config/runtime-config');
 
-const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
+const AI_API_BASE_URL = process.env.AI_API_BASE_URL || 'https://api.aicredits.in/v1';
 
 // ======================================================
 // LOW-LEVEL AI CALL
@@ -36,7 +36,7 @@ async function callAI(messages, options = {}) {
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
-            const response = await fetch(`${OPENROUTER_BASE_URL}/chat/completions`, {
+            const response = await fetch(`${AI_API_BASE_URL}/chat/completions`, {
                 method: 'POST',
                 headers,
                 body: JSON.stringify({
