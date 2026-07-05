@@ -262,7 +262,7 @@ async function stepCreateUnits(sessionId, scene, sceneIndex, characters, stepInd
     }
 }
 
-async function stepCreateVisuals(sessionId, scene, units, sceneIndex, characters, locations, stepIndex, progress, nextScene) {
+async function stepCreateVisuals(sessionId, scene, units, sceneIndex, characters, locations, stepIndex, progress, nextScene, mentions) {
     const _progress = progress || (() => {});
     const msg = PROGRESS_STAGES.creating_visuals(sceneIndex);
     _progress({ stage: 'creating_visuals', message: msg });
@@ -354,6 +354,20 @@ async function stepCreateVisuals(sessionId, scene, units, sceneIndex, characters
         contextParts.push('', `--- next scene text ---\n${nextText.substring(0, 1000)}\n---`);
     }
 
+    // ── Role/title → character_id mappings (mentions/aliases) ──
+    const knownIds = new Set((characters || []).map(c => c.id).filter(Boolean));
+    if (mentions && typeof mentions === 'object' && Object.keys(mentions).length > 0) {
+        const mentionLines = Object.entries(mentions)
+            .filter(([, charId]) => knownIds.has(charId))
+            .map(([alias, charId]) => `  "${alias}" → ${charId}`);
+        if (mentionLines.length > 0) {
+            contextParts.push('', '## Alias → character_id mappings');
+            contextParts.push('When the scene text refers to a character by a nickname, role, or epithet, use the mapped character_id below:');
+            contextParts.push(...mentionLines);
+            contextParts.push('Example: if text says "Бездомный" and mapping says "бездомный" → ivan_ponyrev, write "ivan_ponyrev" in the prompt.');
+        }
+    }
+
     const contextStr = contextParts.join('\n');
 
     const unitsStr = units.map((u, i) =>
@@ -378,7 +392,7 @@ async function stepCreateVisuals(sessionId, scene, units, sceneIndex, characters
             const vu = visualUnits[i];
             if (vu && vu.visual) {
                 // Participants are inferred from visual prompt text via inferCharactersFromPrompt
-                let prompt = normalizeCharacterRefs(vu.visual.prompt, characters);
+                let prompt = normalizeCharacterRefs(vu.visual.prompt, characters, mentions);
                 return { ...u, visual: { ...vu.visual, prompt } };
             }
             return {

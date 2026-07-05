@@ -341,7 +341,7 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
         });
 
         const nextScene = windowScenes[si + 1] || null;
-        const visualUnits = await pipelineSteps.stepCreateVisuals(sessionId, scene, units, globalSceneIndex, characters, locations, stepIndex, _progress, nextScene);
+        const visualUnits = await pipelineSteps.stepCreateVisuals(sessionId, scene, units, globalSceneIndex, characters, locations, stepIndex, _progress, nextScene, mentions);
         const sceneSpan = coverage.scene_spans[si] || null;
         let annotatedUnits = visualUnits;
 

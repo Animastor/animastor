@@ -46,8 +46,20 @@ function normalizeCharacterRefs(text, characters, aliasIndex) {
 
     if (aliasIndex && typeof aliasIndex === 'object' && Object.keys(aliasIndex).length > 0) {
         let result = text;
+        // Build extended alias index: original aliases + Latin transliterations of Cyrillic aliases
+        const extended = new Map();
         for (const [alias, charId] of Object.entries(aliasIndex)) {
             if (!helpers.isSafeCharacterAlias(alias)) continue;
+            extended.set(alias.toLowerCase(), charId);
+            // Add Latin transliteration (catches "bezdomny" when alias is "бездомный")
+            const latin = helpers.cyrToLatin(alias.toLowerCase())
+                .replace(/yy$/i, 'y')
+                .replace(/yi$/i, 'y');
+            if (latin !== alias.toLowerCase() && helpers.isSafeCharacterAlias(latin)) {
+                extended.set(latin, charId);
+            }
+        }
+        for (const [alias, charId] of extended) {
             result = replaceAliasWithCharacterId(result, alias, charId);
         }
         return result;
