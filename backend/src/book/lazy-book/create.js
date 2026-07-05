@@ -426,8 +426,10 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
             if (!allParticipants.includes(p)) allParticipants.push(p);
         }
 
-        // Fallback: infer participants from unit visual prompts (they contain character_ids)
-        if (allParticipants.length === 0 && mergedCharacters.length > 0) {
+        // Supplement participants from unit visual prompts (they contain character_ids)
+        // Always run this — the AI may return partial characters_present, and visual
+        // prompts often reference characters the scene-step AI forgot to list.
+        if (mergedCharacters.length > 0) {
             const visualPrompts = (aiScene.units || [])
                 .map(u => u.visual?.prompt || '')
                 .filter(Boolean)
@@ -435,17 +437,26 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
                 .toLowerCase();
 
             if (visualPrompts.length > 0) {
+                const before = allParticipants.length;
                 for (const ch of mergedCharacters) {
                     const chId = (ch.id || '').toLowerCase();
                     if (!chId || chId.length < 3) continue;
-                    const idPattern = chId.replace(/_/g, '[-_]');
-                    const idRe = new RegExp('(?:^|[\\s.,;!?"\'\\`()\\[\\]{}])' + idPattern + '(?=$|[\\s.,;!?"\'\\`()\\[\\]{}])', 'i');
-                    if (idRe.test(visualPrompts)) {
+                    // Token-based matching: split character ID by underscores,
+                    // check if ALL meaningful tokens appear in the visual prompts.
+                    // This handles cases where visual prompts use longer IDs
+                    // (e.g. "mikhail_alexandrovich_berlioz") while characters.json
+                    // has a shorter ID (e.g. "mikhail_berlioz").
+                    // This is safe because character IDs are unique identifiers,
+                    // not common words — false positives are extremely unlikely.
+                    const tokens = chId.split('_').filter(t => t.length >= 3);
+                    if (tokens.length === 0) continue;
+                    const allTokensFound = tokens.every(t => visualPrompts.includes(t));
+                    if (allTokensFound) {
                         if (!allParticipants.includes(ch.id)) allParticipants.push(ch.id);
                     }
                 }
-                if (allParticipants.length > 0) {
-                    console.log(`[LAZY-BOOK] Inferred ${allParticipants.length} participants for scene "${(aiScene.title || '').slice(0, 40)}" from visual prompts`);
+                if (allParticipants.length > before) {
+                    console.log(`[LAZY-BOOK] Visual prompts added ${allParticipants.length - before} more participants for scene "${(aiScene.title || '').slice(0, 40)}"`);
                 }
             }
         }

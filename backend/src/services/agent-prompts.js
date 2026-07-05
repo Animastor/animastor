@@ -293,19 +293,7 @@ It is OK if text remains after the last returned scene.
 - If the scene takes place at a location not in the Known Locations, infer the closest match or use the most specific location_id available.
 - \`location.id\` is REQUIRED — without it, the image generation system cannot inject the location's visual style and description.
 
-## CRITICAL: Scene title must be a SHORT descriptive name
-- The \`title\` field is the scene's human-readable NAME, displayed in the UI.
-- It MUST be short (2-6 words), descriptive, based on LOCATION or KEY EVENT.
-- Examples of GOOD titles: "Патриаршие пруды", "Будочка с пивом", "Пустая аллея", "Разговор у киоска"
-- Examples of BAD titles: "Однажды весною, в час небывало жаркого заката..." (first sentence),
-  "Scene 1", "Untitled", "В Москве, на Патриарших прудах, появились два гражданина"
-- Do NOT use the first sentence of the scene text as the title.
-- Do NOT use generic placeholders like "Scene N" or "Сцена N".
-- If the scene has a named location (e.g., Патриаршие пруды), use that location as the title.
-- If the scene features a key event (e.g., встреча с Воландом), name the event.
-- Titles must be in the SAME LANGUAGE as the source text.
-
-## Output format
+## Output format — ALL fields REQUIRED
 \`\`\`json
 {
   "scenes": [
@@ -322,10 +310,17 @@ It is OK if text remains after the last returned scene.
 }
 \`\`\`
 
-IMPORTANT — MANDATORY FIELDS:
-  - characters_present: MUST contain EVERY character_id that appears in the scene. NEVER leave empty if characters are present.
-  - location.id: MUST be set to one of the Known Locations. This is REQUIRED.
-  - title: MUST be a SHORT descriptive name (2-6 words), NEVER the first sentence of the text.
+### title (REQUIRED — 2-6 words, descriptive, NOT the first sentence)
+Based on location or key event. Examples: "Патриаршие пруды", "Будочка с пивом", "Пустая аллея", "Разговор у киоска".
+NEVER: first sentence of text, "Scene N", "Untitled".
+
+### characters_present (REQUIRED — list EVERY character in scene)
+Use exact character_ids from Known Characters. Never leave empty if characters appear.
+
+### location.id (REQUIRED — use exact id from Known Locations)
+If scene location not in known list, infer the closest match.
+
+REMINDER: Every scene MUST have: title (2-6 words, NOT first sentence), characters_present (all characters in scene), location.id (from Known Locations).
 
 Return ONLY valid JSON.`,
 
@@ -434,12 +429,16 @@ When the frame contains people, do NOT answer "what is happening?". Answer: "WHO
 ## Character rules (apply ONLY when the unit actually contains people)
 - NEVER use pronouns OR generic collective nouns for participants. The model does not know who "they", "he", "she", "two men", "the writers", or "one person" are — to it each is an unknown new person, so the next frame gets different faces, poses, and framing. Reference EVERY known character EVERY time by their exact character_id from the Scene Context below.
   WRONG: "two men are sitting on a bench" / "the writers are talking" / "one person turns around" / "they continue the conversation".
-  RIGHT: "mikhail_alexandrovich_berlioz sitting on the left and ivan_nikolaevich_ponyrev sitting on the right on a bench at patriarch_ponds" / "mikhail_alexandrovich_berlioz looking at ivan_nikolaevich_ponyrev" / "ivan_nikolaevich_ponyrev gesturing while speaking to mikhail_alexandrovich_berlioz".
-- Use ONLY character_ids from the Scene Context below.
-  Do NOT invent new snake_case character ids and NEVER use 'unnamed_character_X' or similar
-  placeholder IDs — they break visual continuity between frames.
-  If the source text mentions an unnamed person who is not listed there, describe them as a
-  concrete extra in natural language instead of creating an id.
+  RIGHT: "mikhail_berlioz sitting on the left and ivan_ponyrev sitting on the right on a bench at patriarch_ponds" / "mikhail_berlioz looking at ivan_ponyrev" / "ivan_ponyrev gesturing while speaking to mikhail_berlioz".
+- Use ONLY the EXACT character_ids from the Scene Context below.
+  This is the CLOSED set of valid IDs. Do NOT add, remove, or modify any character_id.
+  - HARD RULE: Do NOT generate a longer snake_case ID from a character's display name.
+    If the context says character_id is "mikhail_berlioz", write "mikhail_berlioz" —
+    NOT "mikhail_alexandrovich_berlioz" or any other variant.
+  - Do NOT invent new snake_case character ids and NEVER use 'unnamed_character_X'
+    or similar placeholder IDs — they break visual continuity between frames.
+  - If the character is not in the Scene Context, do NOT invent an ID.
+    Describe the scene without an ID — e.g. a location, object, or action shot.
 - CRITICAL — MATCH DESCRIBED CHARACTERS TO KNOWN IDS: If the unit text describes a character
   physically (e.g. "short, bald, in glasses" or "tall, red-haired, in cowboy jacket") and that
   description matches a character in Scene Context, use that character_id. Do NOT create a new id
@@ -451,9 +450,9 @@ When the frame contains people, do NOT answer "what is happening?". Answer: "WHO
   3. HOW they are arranged relative to each other — sitting/standing, left/right, behind/in front (use the anchors given in Scene Context).
   4. WHAT changed in THIS unit — the new action, gesture, emotion, or lighting shift.
 - Repeat the base composition (parts 1–3) across adjacent units, changing only part 4, so a sequence reads as one continuous scene. Example progression:
-    Unit A: "mikhail_alexandrovich_berlioz and ivan_nikolaevich_ponyrev are sitting on a bench at patriarch_ponds."
-    Unit B: "mikhail_alexandrovich_berlioz and ivan_nikolaevich_ponyrev are sitting on a bench at patriarch_ponds. Calmly talking."
-    Unit C: "mikhail_alexandrovich_berlioz and ivan_nikolaevich_ponyrev are sitting on a bench at patriarch_ponds. ivan_nikolaevich_ponyrev is gesturing while speaking."
+    Unit A: "mikhail_berlioz and ivan_ponyrev are sitting on a bench at patriarch_ponds."
+    Unit B: "mikhail_berlioz and ivan_ponyrev are sitting on a bench at patriarch_ponds. Calmly talking."
+    Unit C: "mikhail_berlioz and ivan_ponyrev are sitting on a bench at patriarch_ponds. ivan_ponyrev is gesturing while speaking."
   Do NOT write "They are talking" or "They continue the conversation" — the model would build a completely new scene with different people, poses, and framing.
 - Reference characters BY character_id and locations BY location_id. Their appearance (passport) and the location description are supplied globally behind the id — do NOT re-describe them. Re-describe a character's appearance ONLY when it deviates from baseline (wounded, wet, changed clothes, dirty). Re-describe the location ONLY when its state changed (fog, rain, broken windows, fire).
 - Background/extras need no global passport, but describe each as a CONCRETE, REPEATABLE anchor, not a vague mass. Avoid "people walking in the park", "crowd", "pedestrians". Prefer "an elderly man reading a newspaper near the path", "a young couple walking along the pond", "a woman feeding pigeons", "two children playing near the water". When the same extras appear in adjacent units, REPEAT their description verbatim so the model keeps them visually continuous.
@@ -473,8 +472,8 @@ When the frame contains people, do NOT answer "what is happening?". Answer: "WHO
 - NEVER include instructions, notes, or explanations to the system like "(cinematic shot)", "(medium close-up)", "[description]". Just write the visual.
 - NEVER use phrases like "the image shows", "we see", "the viewer sees", "depicted is", "shown here". Write the visual directly.
 - If the location is not explicitly named in the text, infer the most likely setting from context (e.g. "outdoor park", "indoor room", "city street") and use that. Never write "no specific location" — always describe the environment the reader would picture.
-- CORRECT examples: "mikhail_berlioz and ivan_ponyrev sitting on a bench at patriarch_ponds, golden sunset".
-- WRONG examples: "In this scene we see Mikhail Berlioz and Ivan Ponyrev at Patriarch Ponds, as described in Unit 1 (cinematic lighting)".
+- CORRECT examples: "mikhail_berlioz and ivan_ponyrev sitting on a bench at patriarch_ponds, golden sunset" (uses exact character_ids from context).
+- WRONG examples: "mikhail_alexandrovich_berlioz and ivan_nikolaevich_ponyrev sitting on a bench" (invents new IDs that don't exist in the character list!) or "In this scene we see Mikhail Berlioz and Ivan Ponyrev at Patriarch Ponds, as described in Unit 1 (cinematic lighting)".
 
 ## Grounding in unit text (CRITICAL)
 The Imagination Unit represents the picture the reader forms from THIS unit text. The visual prompt MUST be grounded in what the unit text describes:

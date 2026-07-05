@@ -61,6 +61,67 @@ function normalizeCharacterRefs(text, characters, aliasIndex) {
             result = replaceAliasWithCharacterId(result, alias, c.id);
         }
     }
+
+    // Safety net: replace snake_case tokens that contain a character_id as suffix.
+    // When the AI generates "mikhail_alexandrovich_berlioz" (inventing a new ID from
+    // the display name) instead of using the correct "mikhail_berlioz", this catches it.
+    result = normalizeSnakeCaseSuffix(result, characters);
+
+    return result;
+}
+
+/**
+ * Replace snake_case tokens that contain a character_id as a suffix.
+ * E.g. "mikhail_alexandrovich_berlioz" → "mikhail_berlioz" when character has id "mikhail_berlioz".
+ */
+function normalizeSnakeCaseSuffix(text, characters) {
+    if (!text || !characters?.length) return text;
+
+    // Find all snake_case tokens (words containing underscore)
+    const snakeTokens = new Set();
+    const tokenRe = /[a-zа-яё][a-zа-яё0-9]*_[a-zа-яё0-9_]+/gi;
+    let match;
+    while ((match = tokenRe.exec(text)) !== null) {
+        snakeTokens.add(match[0]);
+    }
+
+    if (snakeTokens.size === 0) return text;
+
+    let result = text;
+
+    for (const c of characters) {
+        if (!c.id) continue;
+        const charId = c.id.toLowerCase();
+        const idParts = charId.split('_');
+        if (idParts.length < 2) continue;
+        const lastPart = idParts[idParts.length - 1];
+        if (lastPart.length < 3) continue;
+
+        for (const token of snakeTokens) {
+            if (token.toLowerCase() === charId) continue; // already correct
+            const tokenParts = token.toLowerCase().split('_');
+            if (tokenParts.length <= idParts.length) continue;
+
+            // Check if the character_id's parts appear in order at the END of the token's parts
+            // AND the last parts match
+            let matchesSuffix = true;
+            const tokenEnd = tokenParts.slice(-idParts.length);
+            for (let i = 0; i < idParts.length; i++) {
+                if (tokenEnd[i] !== idParts[i]) {
+                    matchesSuffix = false;
+                    break;
+                }
+            }
+
+            if (matchesSuffix) {
+                // Verify with word boundary: replace the whole token with character_id
+                const escaped = helpers.escapeRegExp(token);
+                const re = new RegExp('(?<![\\p{L}\\p{N}_])' + escaped + '(?![\\p{L}\\p{N}_])', 'gi');
+                result = result.replace(re, c.id);
+            }
+        }
+    }
+
     return result;
 }
 

@@ -10,7 +10,8 @@
 //   - book/lazy-book/chapter-utils.js
 
 /**
- * Extract a meaningful scene title from the scene's text content.
+ * Extract a scene title fallback from the scene's text content.
+ * Uses first 4 words + "..." for a clean, predictable title.
  * @param {string} sceneText
  * @param {number} fallbackIndex
  * @returns {string}
@@ -19,42 +20,18 @@ function extractSceneTitle(sceneText, fallbackIndex) {
     const t = (sceneText || '').trim();
     if (!t) return `Scene ${fallbackIndex + 1}`;
 
-    let title = t;
+    // Strip leading dashes, quotes, whitespace
+    const clean = t.replace(/^[—–\-\s\"]+/, '').trim();
+    if (!clean) return `Scene ${fallbackIndex + 1}`;
 
-    // Step 1: Try to find a named location in the text — that's the best title
-    // Matches patterns like "на Патриарших прудах", "в Москве", "у подъезда"
-    const locationRe = /(?:на|в|у|под|перед|возле|около|рядом с|между)\s+([А-ЯЁ][^\s,.!?;:]+(?:\s+[А-ЯЁ][^\s,.!?;:]+){0,3})/;
-    const locMatch = t.match(locationRe);
-    if (locMatch && locMatch[1] && locMatch[1].length > 2 && locMatch[1].length < 60) {
-        title = locMatch[1].trim();
+    const words = clean.split(/\s+/).filter(Boolean);
+    const first4 = words.slice(0, 4).join(' ');
+
+    if (words.length <= 4) {
+        return first4.charAt(0).toUpperCase() + first4.slice(1);
     }
 
-    // Step 2: If no location found, try the first noun phrase (subject of the scene)
-    if (title === t) {
-        // Try to extract a short descriptive phrase from the start
-        if (/^[—–\-]/.test(t)) {
-            const newlinePos = t.indexOf('\n');
-            const firstLine = newlinePos > 0 ? t.substring(0, newlinePos) : t;
-            title = firstLine.replace(/^[—–\-\s\"]+/, '').replace(/[\"»]+$/, '').trim();
-        } else {
-            const dotEnd = t.search(/[.!?](?:\s|$)/);
-            const sentenceEnd = dotEnd >= 0 ? dotEnd : t.search(/…(?:\s|$)/);
-            if (sentenceEnd > 3) {
-                title = t.substring(0, sentenceEnd + 1);
-            }
-            title = title.replace(/^[—–\-\s\"]+/, '').replace(/[.!?…]+$/, '').trim();
-        }
-    }
-
-    // Step 3: Trim to at most 6 words (shorter than before for better UX)
-    const words = title.split(/\s+/).filter(Boolean);
-    if (words.length > 6) {
-        title = words.slice(0, 6).join(' ');
-    }
-
-    title = title.charAt(0).toUpperCase() + title.slice(1);
-
-    return title || `Scene ${fallbackIndex + 1}`;
+    return first4.charAt(0).toUpperCase() + first4.slice(1) + '…';
 }
 
 /**
