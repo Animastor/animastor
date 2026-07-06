@@ -304,6 +304,8 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
     // The AI scene split returns characters_present, but downstream steps
     // (stepCreateVisuals, enrich, etc.) expect scene.participants.
     // The AI may also omit location.id — infer from scene text if possible.
+    // Uses stem matching (first N chars of each word) to handle Russian
+    // case declensions: "Патриаршие пруды" vs "на Патриарших прудах".
     windowScenes = windowScenes.map(s => {
         let location = s.location;
         if (!location?.id && locations.length > 0) {
@@ -312,10 +314,11 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
             let bestScore = 0;
             for (const loc of locations) {
                 let score = 0;
-                const name = (loc.name || '').toLowerCase();
-                if (textLower.includes(name)) score += name.length;
-                const id = (loc.id || '').toLowerCase().replace(/_/g, ' ');
-                if (id !== name && textLower.includes(id)) score += id.length;
+                const words = (loc.name || '').toLowerCase().split(/[\s,;:!?()]+/).filter(w => w.length >= 3);
+                for (const word of words) {
+                    const stem = word.substring(0, Math.max(3, word.length - 2));
+                    if (textLower.includes(stem)) score += stem.length;
+                }
                 if (score > bestScore) { bestScore = score; best = loc; }
             }
             location = best ? { id: best.id } : { id: 'unknown' };
