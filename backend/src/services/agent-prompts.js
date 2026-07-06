@@ -271,7 +271,7 @@ It is OK if text remains after the last returned scene.
 - Do NOT include the chapter name, "Глава N", "Chapter N", or any chapter-level typography in scene text
 - Start scenes directly with the narrative content — no "title card" transitions
 - If the text starts with a chapter heading, IGNORE it and start from the narrative content
-- This rule applies ONLY to scene CONTENT — it does NOT affect the scene's `title` field (which is REQUIRED below)
+- This rule applies ONLY to scene CONTENT — it does NOT affect the scene's title field (which is REQUIRED below)
 
 ## Reference examples
 %REFERENCE_EXAMPLES%
