@@ -271,7 +271,7 @@ async function stepCreateVisuals(sessionId, scene, units, sceneIndex, characters
     const step = await createStep(sessionId, 'create_visual_prompts', stepIndex || 0, sceneIndex);
 
     const locName = scene.location?.id || 'the scene';
-    const contextParts = [`Title: ${scene.title || 'Untitled'}`, `Type: ${scene.type || 'narration'}`, `Location (name to use in prompts): ${locName}`, ''];
+    const contextParts = [`Title: ${scene.title || 'Untitled'}`, `Type: ${scene.type || 'narration'}`, `Location: ${locName}`, ''];
 
     const season = scene.location?.environment?.season;
     if (season) contextParts.push(`Season: ${season}`);
@@ -393,6 +393,10 @@ async function stepCreateVisuals(sessionId, scene, units, sceneIndex, characters
             if (vu && vu.visual) {
                 // Participants are inferred from visual prompt text via inferCharactersFromPrompt
                 let prompt = normalizeCharacterRefs(vu.visual.prompt, characters, mentions);
+                // Inject location automatically from scene data (AI no longer writes it)
+                if (locName && locName !== 'the scene') {
+                    prompt = `at ${locName}: ${prompt}`;
+                }
                 return { ...u, visual: { ...vu.visual, prompt } };
             }
             return {
