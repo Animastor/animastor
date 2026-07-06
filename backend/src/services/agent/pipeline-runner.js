@@ -246,6 +246,7 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
         let repairHint;
         if (!coverage.ok) {
             console.warn(`[AGENT] scene coverage failed: ${coverage.reason} scene=${coverage.scene_index} gap=${coverage.gap_chars || 0}; retrying scene split`);
+            if (coverage.gap_preview) console.warn(`[AGENT] coverage gap_preview: ${JSON.stringify(coverage.gap_preview.slice(0, 200))}`);
             repairHint = coverage;
         } else {
             const preview = oversized
