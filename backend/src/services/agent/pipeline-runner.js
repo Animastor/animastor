@@ -300,13 +300,32 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
         retry_count: coverageRetryCount,
     }));
 
-    // ── Normalize characters_present → participants ──
+    // ── Normalize characters_present → participants and location.id ──
     // The AI scene split returns characters_present, but downstream steps
     // (stepCreateVisuals, enrich, etc.) expect scene.participants.
-    windowScenes = windowScenes.map(s => ({
-        ...s,
-        participants: s.participants || s.characters_present || [],
-    }));
+    // The AI may also omit location.id — infer from scene text if possible.
+    windowScenes = windowScenes.map(s => {
+        let location = s.location;
+        if (!location?.id && locations.length > 0) {
+            const textLower = (s.text || '').toLowerCase();
+            let best = null;
+            let bestScore = 0;
+            for (const loc of locations) {
+                let score = 0;
+                const name = (loc.name || '').toLowerCase();
+                if (textLower.includes(name)) score += name.length;
+                const id = (loc.id || '').toLowerCase().replace(/_/g, ' ');
+                if (id !== name && textLower.includes(id)) score += id.length;
+                if (score > bestScore) { bestScore = score; best = loc; }
+            }
+            location = best ? { id: best.id } : { id: 'unknown' };
+        }
+        return {
+            ...s,
+            participants: s.participants || s.characters_present || [],
+            location: location || s.location || { id: 'unknown' },
+        };
+    });
 
     // ── Scene enrichment ──
     windowScenes = await pipelineSteps.stepEnrichScenes(sessionId, windowScenes, characters, locations, stepIndex, _progress);
