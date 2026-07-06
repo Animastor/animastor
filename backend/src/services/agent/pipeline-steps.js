@@ -413,10 +413,6 @@ async function stepCreateVisuals(sessionId, scene, units, sceneIndex, characters
                 // Participants come from scene.participants (set during scene creation).
                 // Character IDs in prompt are normalized via normalizeCharacterRefs.
                 let prompt = normalizeCharacterRefs(vu.visual.prompt, characters, mentions);
-                // Inject human-readable location name, not snake_case ID
-                if (locName && locName !== 'the scene') {
-                    prompt = `at ${locDisplay}: ${prompt}`;
-                }
                 return { ...u, visual: { ...vu.visual, prompt } };
             }
             return {
