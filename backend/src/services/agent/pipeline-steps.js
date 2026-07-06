@@ -147,11 +147,16 @@ async function stepCreateScenes(sessionId, text, characters, locations, stepInde
         if (scenes.length === 0) throw new Error('AI returned no scenes');
 
         const withTitle = scenes.filter(s => s.title).length;
-        const missing = scenes.length - withTitle;
-        if (missing > 0 || withTitle === 0) {
-            console.warn(`[AGENT] Step 3 (scenes): ${scenes.length} created, ${withTitle} with title, ${missing} MISSING title — titles will be extracted from text`);
-        } else {
-            console.log(`[AGENT] Step 3 (scenes): ${scenes.length} created, all with title`);
+        const withLoc = scenes.filter(s => s.location?.id).length;
+        const missingTitle = scenes.length - withTitle;
+        const missingLoc = scenes.length - withLoc;
+        const s0 = scenes[0] || {};
+        console.log(`[AGENT] Step 3 (scenes): ${scenes.length} created, title=${withTitle}/${scenes.length}, location.id=${withLoc}/${scenes.length}, s0.keys=[${Object.keys(s0).join(',')}], s0.title=${JSON.stringify(s0.title)}, s0.location=${JSON.stringify(s0.location)}`);
+        if (missingTitle > 0) {
+            console.warn(`[AGENT] Step 3: ${missingTitle} scenes MISSING title`);
+        }
+        if (missingLoc > 0) {
+            console.warn(`[AGENT] Step 3: ${missingLoc} scenes MISSING location.id`);
         }
 
         await aiCaller.logConversation(sessionId, step.step_id, messages, JSON.stringify(result));
@@ -201,6 +206,9 @@ async function stepEnrichScenes(sessionId, scenes, characters, locations, stepIn
             if (!enrichment) return scene;
 
             const mergedLocation = scene.location ? { ...scene.location } : {};
+            if (enrichment.location?.id && !mergedLocation.id) {
+                mergedLocation.id = enrichment.location.id;
+            }
             if (enrichment.location?.environment) {
                 mergedLocation.environment = enrichment.location.environment;
             }
