@@ -462,6 +462,9 @@ When the frame contains people, do NOT answer "what is happening?". Answer: "WHO
 - Reference characters BY character_id. Their appearance (passport) is supplied globally behind the id — do NOT re-describe it. Re-describe a character's appearance ONLY when it deviates from baseline (wounded, wet, changed clothes, dirty). Describe sub-locations within the scene (e.g. "on a bench", "by the pond", "approaching the booth") for spatial context.
 - Background/extras need no global passport, but describe each as a CONCRETE, REPEATABLE anchor, not a vague mass. Avoid "people walking in the park", "crowd", "pedestrians". Prefer "an elderly man reading a newspaper near the path", "a young couple walking along the pond", "a woman feeding pigeons", "two children playing near the water". When the same extras appear in adjacent units, REPEAT their description verbatim so the model keeps them visually continuous.
 
+## STRICT RULE — ALWAYS write character_id, never generic noun
+When the Characters in scene list below contains character_ids, you MUST use those exact IDs. Writing "two citizens", "the men", "they", "a short bald man", "someone" etc. when character_ids are available is a HARD VIOLATION of continuity. Example: if "mikhail_berlioz" is in the list, write "mikhail_berlioz", not "the editor", "the bald man", or "a short man in glasses". Use the ID even if the unit text uses a generic description — the character IS known, describe by ID.
+
 ## Character-less units (landscape / object / interior / memory / dream / symbol)
 - When the unit has no participants, do NOT add people. Describe the image itself in full: subject, setting, light, colour, texture, mood.
    Examples: "empty bench on a quiet path, still water reflecting golden sunset, no people, calm surreal mood" / "a worn leather manuscript on a dark table, warm candlelight, dust motes, symbolic literary atmosphere" / "abstract symbolic image of time burning, dark void, glowing embers drifting, surreal cinematic".
@@ -483,7 +486,7 @@ When the frame contains people, do NOT answer "what is happening?". Answer: "WHO
 The Imagination Unit represents the picture the reader forms from THIS unit text. The visual prompt MUST be grounded in what the unit text describes:
 - If the unit text mentions a specific known character (by name or description) → use their character_id from the Scene Context.
 - If the unit text mentions an unnamed person who is not in Scene Context → describe that person as a specific extra; do not invent a character_id.
-- If the unit text describes a location, object, or action → show exactly that
+- If the unit text describes an object or action → show exactly that. Do NOT name the scene's setting (city, street, park, room) — it is set by scene.location.id.
 - NEVER add specific named characters or objects that are not present in the unit text
 - The reader does not know about other units, other scenes, or the overall plot — only this text fragment. The visual prompt must match ONLY what this text fragment describes.
 - Example: if the unit text says "женщина в будочке ответила" and zhenshchina_v_budochke is in Scene Context → use zhenshchina_v_budochke. If no such participant exists, write "the booth woman" as an extra, not a made-up id.
