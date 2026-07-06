@@ -469,9 +469,7 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
 
         chapterObj.scenes.push({
             scene_id: scId,
-            scene_title: (aiScene.title && !chapterUtils.isGenericSceneTitle(aiScene.title))
-                ? aiScene.title
-                : chapterUtils.extractSceneTitle(aiScene.text || '', chapterObj.scenes.length),
+            scene_title: aiScene.title || chapterUtils.extractSceneTitle(aiScene.text || '', chapterObj.scenes.length),
             type: isDialogue ? 'dialogue' : 'narration',
             style: sceneStyle,
             participants: allParticipants,

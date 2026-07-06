@@ -13,6 +13,7 @@ const {
     PROGRESS_STAGES, SYSTEM_PROMPTS, MAX_SCENES_PER_CHUNK,
 } = require('../agent-prompts');
 const { normalizeCharacterRefs } = require('../../image/image-service');
+const { extractSceneTitle, isGenericSceneTitle } = require('../../utils/scene-title-utils');
 
 async function stepAnalyzeStructure(sessionId, sourceText, stepIndex, progress) {
     const _progress = progress || (() => {});
@@ -213,15 +214,26 @@ async function stepEnrichScenes(sessionId, scenes, characters, locations, stepIn
             if (enrichment.location?.environment) {
                 mergedLocation.environment = enrichment.location.environment;
             }
+
+            // Scene title from enrichment (AI generates titles; fallback to extractSceneTitle)
+            let mergedTitle = scene.title;
+            if (enrichment.title && !isGenericSceneTitle(enrichment.title)) {
+                mergedTitle = enrichment.title;
+            } else if (!mergedTitle || isGenericSceneTitle(mergedTitle)) {
+                mergedTitle = extractSceneTitle(scene.text || '', si);
+            }
+
             return {
                 ...scene,
+                title: mergedTitle,
                 location: mergedLocation,
             };
         });
 
+        const goodTitles = enriched.filter(s => s.title && !isGenericSceneTitle(s.title)).length;
         await aiCaller.logConversation(sessionId, step.step_id, messages, JSON.stringify(result));
         await completeStep(step.step_id, enriched);
-        console.log(`[AGENT] Step enrich (scenes): ${enriched.length} enriched`);
+        console.log(`[AGENT] Step enrich (scenes): ${enriched.length} enriched, titles=${goodTitles}/${enriched.length}`);
         return enriched;
     } catch (err) {
         await failStep(step.step_id, `Enrichment failed: ${err.message}`);
