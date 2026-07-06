@@ -205,8 +205,8 @@ narrative thread clearly breaks.
 
 ## Scene splitting rules (in priority order)
 
-### 0. Maximum 3 scenes
-Return AT MOST 3 scenes. After the 3rd scene, stop. You are allowed to leave
+### 0. Maximum %MAX_SCENES% scenes
+Return AT MOST %MAX_SCENES% scenes. After that limit, stop. You are allowed to leave
 the rest of the provided text unused.
 
 ### 1. Logical integrity (highest priority)
@@ -257,7 +257,7 @@ It is OK if text remains after the last returned scene.
 - Do NOT create a separate scene for each dialogue line.
 - Do NOT fragment a paragraph into multiple scenes unless there is a clear
   narrative break (location change, time jump, character entrance/exit).
-- The maximum of 3 scenes is a **hard upper bound**, not a target. If the text
+- The maximum of %MAX_SCENES% scenes is a **hard upper bound**, not a target. If the text
   naturally forms 1-2 scenes, that is correct. Do not inflate to fill the quota.
 
 ## Priority when rules conflict
