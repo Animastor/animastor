@@ -301,34 +301,14 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
     }));
 
     // ── Normalize characters_present → participants and location.id ──
-    // The AI scene split returns characters_present, but downstream steps
-    // (stepCreateVisuals, enrich, etc.) expect scene.participants.
-    // The AI may also omit location.id — infer from scene text if possible.
-    // Uses stem matching (first N chars of each word) to handle Russian
-    // case declensions: "Патриаршие пруды" vs "на Патриарших прудах".
-    windowScenes = windowScenes.map(s => {
-        let location = s.location;
-        if (!location?.id && locations.length > 0) {
-            const textLower = (s.text || '').toLowerCase();
-            let best = null;
-            let bestScore = 0;
-            for (const loc of locations) {
-                let score = 0;
-                const words = (loc.name || '').toLowerCase().split(/[\s,;:!?()]+/).filter(w => w.length >= 3);
-                for (const word of words) {
-                    const stem = word.substring(0, Math.max(3, word.length - 2));
-                    if (textLower.includes(stem)) score += stem.length;
-                }
-                if (score > bestScore) { bestScore = score; best = loc; }
-            }
-            location = best ? { id: best.id } : { id: 'unknown' };
-        }
-        return {
-            ...s,
-            participants: s.participants || s.characters_present || [],
-            location: location || s.location || { id: 'unknown' },
-        };
-    });
+    // The AI always receives the Known Locations list and MUST set location.id.
+    // If the AI omits it for any scene, assign 'unknown' as a hard fallback
+    // so downstream steps never see an undefined location.
+    windowScenes = windowScenes.map(s => ({
+        ...s,
+        participants: s.participants || s.characters_present || [],
+        location: s.location?.id ? s.location : { id: 'unknown' },
+    }));
 
     // ── Scene enrichment ──
     windowScenes = await pipelineSteps.stepEnrichScenes(sessionId, windowScenes, characters, locations, stepIndex, _progress);

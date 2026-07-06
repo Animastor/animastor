@@ -288,10 +288,12 @@ It is OK if text remains after the last returned scene.
 - Use the exact character_id from the Known Characters list above.
 - NEVER leave \`characters_present\` empty if the text mentions any named person.
 
-## CRITICAL: location.id is MANDATORY
-- You MUST set \`location.id\` to one of the Known Locations above.
+## CRITICAL: EVERY scene MUST have location.id. ZERO EXCEPTIONS.
+- A scene ALWAYS happens somewhere — in a city, a room, a street, a dream, a void.
+- You MUST identify WHERE for every single scene. Always.
+- Set \`location.id\` to one of the Known Locations above.
 - If the scene takes place at a location not in the Known Locations, infer the closest match or use the most specific location_id available.
-- \`location.id\` is REQUIRED — without it, the image generation system cannot inject the location's visual style and description.
+- \`location.id\` is a HARD REQUIREMENT per scene. Without it the scene is invalid — the image system has no visual environment to render.
 
 ## Output format — ALL fields REQUIRED
 \`\`\`json
@@ -320,7 +322,10 @@ Use exact character_ids from Known Characters. Never leave empty if characters a
 ### location.id (REQUIRED — use exact id from Known Locations)
 If scene location not in known list, infer the closest match.
 
-REMINDER: Every scene MUST have: title (2-6 words, NOT first sentence), characters_present (all characters in scene), location.id (from Known Locations).
+REMINDER — Every scene MUST have ALL three, no exceptions:
+  1. title (2-6 words, NOT first sentence)
+  2. characters_present (all characters present in scene)
+  3. location.id (every scene has a location — there are no locationless scenes)
 
 Return ONLY valid JSON.`,
 
