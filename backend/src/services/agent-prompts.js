@@ -453,13 +453,12 @@ When the frame contains people, do NOT answer "what is happening?". Answer: "WHO
   1. WHO is in frame — by character_id.
   2. HOW they are arranged relative to each other — sitting/standing, left/right, behind/in front (use the anchors given in Scene Context).
   3. WHAT changed in THIS unit — the new action, gesture, emotion, or lighting shift.
-- Do NOT name the scene's location (city, park, room, street) — the location is set by scene.location.id and injected by the system. Describe only relative spatial arrangement and sub-locations (e.g. "on a bench", "by the booth", "near the water").
 - Repeat the base composition (parts 1–2) across adjacent units, changing only part 3, so a sequence reads as one continuous scene. Example progression:
     Unit A: "mikhail_berlioz and ivan_ponyrev are sitting on a bench. Calmly talking."
     Unit B: "mikhail_berlioz and ivan_ponyrev are sitting on a bench. ivan_ponyrev gesturing while speaking."
     Unit C: "mikhail_berlioz looking at ivan_ponyrev, both sitting on a bench."
   Do NOT write "They are talking" or "They continue the conversation" — the model would build a completely new scene with different people, poses, and framing.
-- Reference characters BY character_id. Their appearance (passport) is supplied globally behind the id — do NOT re-describe it. Re-describe a character's appearance ONLY when it deviates from baseline (wounded, wet, changed clothes, dirty). Describe sub-locations within the scene (e.g. "on a bench", "by the pond", "approaching the booth") for spatial context, but do NOT name the scene's main location.
+- Reference characters BY character_id. Their appearance (passport) is supplied globally behind the id — do NOT re-describe it. Re-describe a character's appearance ONLY when it deviates from baseline (wounded, wet, changed clothes, dirty). Describe sub-locations within the scene (e.g. "on a bench", "by the pond", "approaching the booth") for spatial context.
 - Background/extras need no global passport, but describe each as a CONCRETE, REPEATABLE anchor, not a vague mass. Avoid "people walking in the park", "crowd", "pedestrians". Prefer "an elderly man reading a newspaper near the path", "a young couple walking along the pond", "a woman feeding pigeons", "two children playing near the water". When the same extras appear in adjacent units, REPEAT their description verbatim so the model keeps them visually continuous.
 
 ## Character-less units (landscape / object / interior / memory / dream / symbol)
@@ -476,9 +475,8 @@ When the frame contains people, do NOT answer "what is happening?". Answer: "WHO
 - NEVER reference other units with phrases like "as described in Unit 1", "as seen in previous frame", "continuing from earlier", "same character as before". The image model sees each prompt independently.
 - NEVER include instructions, notes, or explanations to the system like "(cinematic shot)", "(medium close-up)", "[description]". Just write the visual.
 - NEVER use phrases like "the image shows", "we see", "the viewer sees", "depicted is", "shown here". Write the visual directly.
-- Never write "no specific location". Describe only what is visible — the specific objects, people, lighting, and spatial arrangement. The environment is set by scene.location.id and should not be named.
 - CORRECT examples: "mikhail_berlioz and ivan_ponyrev sitting on a bench, golden sunset" (uses exact character_ids from context).
-- WRONG examples: "mikhail_alexandrovich_berlioz and ivan_nikolaevich_ponyrev sitting on a bench at patriarch_ponds" (invents new IDs and names the scene location!) or "In this scene we see Mikhail Berlioz and Ivan Ponyrev at Patriarch Ponds, as described in Unit 1 (cinematic lighting)".
+- WRONG examples: "mikhail_alexandrovich_berlioz and ivan_nikolaevich_ponyrev sitting on a bench at patriarch_ponds" (invents new IDs that don't exist in the character list!) or "In this scene we see Mikhail Berlioz and Ivan Ponyrev at Patriarch Ponds, as described in Unit 1 (cinematic lighting)".
 
 ## Grounding in unit text (CRITICAL)
 The Imagination Unit represents the picture the reader forms from THIS unit text. The visual prompt MUST be grounded in what the unit text describes:
