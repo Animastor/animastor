@@ -140,11 +140,12 @@ character rules are dropped, because there are no characters to name.
   to write each `visual.prompt`. The doctrine above is encoded here.
   - Also `SYSTEM_PROMPTS.scenes` — требует `characters_present` (обязательно для каждого
     персонажа), `location.id` (обязательно), `environment.epoch` + `environment.season`.
-- **Context fed to the author** — `stepCreateVisuals` in
-  `backend/src/services/agent-service.js` builds `%CONTEXT%`, passing each participant's
-  name and their `character_anchors` (position/pose/orientation) so the author can write
-  part 3 (arrangement) and repeat it across units. Также передаёт `epoch` и `season`,
-  если они есть в `scene.location.environment`.
+  - AI больше **не пишет `location` в `visual.prompt`** — пишет только `character_id`.
+    Location inject-ится автоматически в buildImagePrompt.
+- **Context fed to the author** — `stepCreateVisuals` builds `%CONTEXT%`, passing each participant's
+  name so the author can write part 3 (arrangement) and repeat it across units.
+  `character_anchors` **удалён** (июль 2026) — позиции пишутся напрямую в prompt.
+  Также передаёт `epoch` и `season`, если они есть в `scene.location.environment`.
 - **Assembler** — `buildImagePrompt()` / `buildCharacters()` in
   `backend/src/image/image-service.js` still auto-injects the character passports and
   location description behind the names. The doctrine's "name only" refers to what the
@@ -152,8 +153,9 @@ character rules are dropped, because there are no characters to name.
   name stands for. Keep the two consistent when editing either side.
   - **Новое:** `resolveVisualStyle()` — цепочка fallback для visual style,
     с фильтрацией типографских стилей (`soviet_book_page` только для cover/chapter_intro).
-  - **Новое:** `inferCharactersFromPrompt()` — если `participants` пуст,
-    сканирует `visual.prompt` на наличие `character_id` и inject-ит их паспорта.
+  - **Новое:** `inferCharactersFromPrompt()` — **единственный метод** определения
+    участников (с июля 2026; `unit.participants` удалён). Сканирует `visual.prompt`
+    на наличие `character_id` и inject-ит их паспорта.
   - **Новое:** `resolveLocationFromPrompt()` — если у сцены нет `location`,
     сопоставляет текст промпта с `bible.locations` через транслитерацию Cyr→Lat
     и prefix-матчинг (порог 0.25).

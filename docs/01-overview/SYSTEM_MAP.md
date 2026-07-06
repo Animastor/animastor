@@ -1,11 +1,15 @@
 # 01. System Map — Animastor
 
 > Карта текущего устройства системы. Только описание «как есть».
-> Дата составления: 2026-06-25. Основано на чтении исходного кода (не только документации).
+> Дата составления: 2026-07-06. Основано на чтении исходного кода (не только документации).
 > Раздел 9 отдельно фиксирует места, где документация расходится с кодом.
 >
 > **Источник:** Оригинальный анализ `docs-claude/01_System_Map.md`.
-> **Статус:** Актуален. Сквозные противоречия с документацией (rate limit, lease TTL, etc.) исправлены в обновлённых версиях `ARCHITECTURE.md`, `DATA_FLOW.md` и др.
+> **Статус:** Актуален по состоянию на 2026-07-06.
+> Обновления:
+> - Agent pipeline: enrichment-шаг добавлен, coreference удалён, unit.participants удалён.
+> - Хранение: locations.json, voices.json, bible.country/epoch.
+> - Книжная структура: agent-service.js разбит на подмодули в `agent/`.
 
 ---
 
@@ -35,7 +39,7 @@ TXT / VBook  →  AI-анализ (агент)  →  структура книг
 |---|---|---|
 | **Backend / API** | `backend/src/backend.cjs` + `routes/*` | Express-сервер, DI всех сервисов, REST API, оркестрация генерации, startup-resume/recovery. |
 | **Orchestration / Runtime** | `backend/src/runtime/*`, `backend/src/orchestration/*` | Tick-планировщик (5s), dispatch-engine (lease/quota), scene-orchestrator + callbacks, scene-window. |
-| **Agent Service (AI-пайплайн)** | `backend/src/services/agent-service.js` | Монолитный 6-шаговый анализ текста (шаг 0 + 5 шагов pipeline). |
+| **Agent Service (AI-пайплайн)** | `backend/src/services/agent-service.js` + `agent/` | Пайплайн разбит на подмодули: bootstrap, pipeline-runner, pipeline-steps, coreference (stub). |
 | **AI-чат** | `backend/src/services/chat-engine.cjs` | Tool-based ассистент (режимы chat/edit/director/import/...). |
 | **Генераторы** | `backend/src/{audio,image,video}/*` | Сборка ComfyUI-workflow и отправка задач на GPU. |
 | **Workflow / Connector слой** | `backend/src/workflows/*`, `services/workflow-manager.js`, `data/workflows/`, `data/connectors/` | Загрузка и адаптация JSON-шаблонов ComfyUI; коннекторы как декларативные описания задач. |
@@ -63,15 +67,18 @@ TXT / VBook  →  AI-анализ (агент)  →  структура книг
      - Шаг 1 `stepExtractCharacters` → персонажи
      - Шаг 2 `stepExtractLocations` → локации
      - Шаг 3 `stepCreateScenes` → до 3 сцен из начала буфера
+     - `stepEnrichScenes` → обогащение сцен (title, location, environment)
      - `resolveSceneProgress` → `nextOffset` по последней созданной сцене
      - Шаг 4 `stepCreateUnits` (per-scene) → визуальные единицы (IU/кадры)
      - Шаг 5 `stepCreateVisuals` (per-scene) → визуальные промпты к кадрам
-   - Результаты сохраняются в PG (`agent_sessions`, `agent_steps`, `agent_conversations`, `agent_messages`) и в файлы книги (`chapters/*.json`, `characters.json`, `bible.json`).
+   - Результаты сохраняются в PG (`agent_sessions`, `agent_steps`, `agent_conversations`, `agent_messages`) и в файлы книги (`chapters/*.json`, `characters.json`, `bible.json`, `locations.json`, `voices.json`).
    - Если после `nextOffset` остаётся «хвост» → сессия `paused`, следующее
      окно обрабатывает `bootstrapNextWindow()` (фоновая оконная генерация,
      `window-generator.cjs`).
 
-AI-провайдер: единый ключ `OPENROUTER_API_KEY`, базовый URL `AI_API_BASE_URL`. JSON-ответы модели очищаются от CoT (`<think>`/`<reasoning>`) перед парсингом (`ai-service.parseJsonResponse`).
+AI-провайдер: конфигурируется через `AI_API_BASE_URL` (по умолчанию — OpenRouter, в docker-compose — aicredits.in).
+Модель по умолчанию: `qwen3-32b`. Единый ключ: `OPENROUTER_API_KEY`.
+JSON-ответы модели очищаются от CoT (`<think>`/`<reasoning>`) перед парсингом (`ai-service.parseJsonResponse`).
 
 ### 3.2 Генерация ассетов (per-asset параллельный диспатч)
 
@@ -126,7 +133,10 @@ Android-плеер (`PlaybackViewModel` + `SceneAudioPlayer` на ExoPlayer/Medi
 
 ### 4.3 Файловая система
 
-- **Книги (multi-file, v2.1):** `data/books/<bookId>/` → `manifest.json`, `book.json`, `bible.json`, `characters.json`, `chapters/<chapterId>.json` (плюс `source.txt` для draft).
+- **Книги (multi-file, v2.2):** `data/books/<bookId>/` → `manifest.json`, `book.json`, `bible.json`, `characters.json`, `locations.json`, `voices.json`, `chapters/<chapterId>.json` (плюс `source.txt` для draft).
+  - `locations.json` — все локации (отдельно от bible)
+  - `voices.json` — все голоса персонажей (отдельно от bible)
+  - `bible.json` — включает `country` и `epoch` для image-промптов
 - **Ассеты:** `data/output/<buildId>/` → `*.mp3`, `*.png`, `*.mp4`.
 - **Шаблоны:** `data/workflows/*.json` (ComfyUI), `data/connectors/conn-*.json` (декларации задач).
 
@@ -198,6 +208,19 @@ Redis выполняет три роли одновременно:
 | 7.6 | Route-файлов **4** | **6**: +connector, +workflow | `routes/` |
 
 > **Примечание:** Эти противоречия исправлены в обновлённых версиях документов (июнь 2026).
+
+### 7.7 Новые изменения (июль 2026)
+
+| # | Факт в коде |
+|---|---|
+| 7.7.1 | Agent pipeline: добавлен шаг `stepEnrichScenes` после создания сцен |
+| 7.7.2 | `unit.participants` удалён из всей системы |
+| 7.7.3 | `coreference.js` — заглушка, шаг удалён из пайплайна |
+| 7.7.4 | `character_anchors` удалён — позиции в visual.prompt |
+| 7.7.5 | agent-service.js разбит на подмодули в `backend/src/services/agent/` |
+| 7.7.6 | Книги хранят `locations.json` и `voices.json` отдельно от bible |
+| 7.7.7 | `bible.json` включает `country` и `epoch` |
+| 7.7.8 | `AI_API_BASE_URL` конфигурируемый (по умолчанию OpenRouter, модель qwen3-32b) |
 
 ---
 

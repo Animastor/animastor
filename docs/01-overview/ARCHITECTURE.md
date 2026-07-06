@@ -164,8 +164,39 @@
 ### 4.4 Video Merge (`backend/src/video/video-merge.js`)
 **Ответственность:** Мерж мультигрупповых видео в сцену, book-level merge, muxing видео+аудио.
 
-### 4.5 Agent Service (`backend/src/services/agent-service.js`)
-**Ответственность:** 5-шаговый AI-пайплайн (структура извлекается отдельно): персонажи → локации → сцены → units → визуал.
+### 4.5 Agent Service (`backend/src/services/agent/`)
+**Ответственность:** AI-пайплайн разбит на подмодули в `backend/src/services/agent/`:
+- `pipeline-steps.js` — 6 шагов (шаг 0 + 5 шагов пайплайна)
+- `pipeline-runner.js` — запуск пайплайна с валидацией
+- `bootstrap.js` — первое окно (`bootstrapWithAgent`)
+- `coreference.js` — сведён к заглушке (удалён из пайплайна)
+- `ai-caller.js` — вызов AI с ретраями
+- `text-utils.js` / `visual-utils.js` — утилиты
+- `agent-prompts.js` — все system prompt'ы (в `services/agent-prompts.js`)
+- `agent-service.js` — barrel-экспорт и window-generation
+
+**Шаги пайплайна (упрощённый, без coreference):**
+```
+Шаг 0: stepAnalyzeStructure       — метаданные книги (отдельно, до pipeline)
+Шаг 1: stepExtractCharacters      — персонажи
+Шаг 2: stepExtractLocations       — локации
+Шаг 3: stepCreateScenes           — сцены (до 3, из буфера ~1500 символов)
+  ↓ Enrichment
+Шаг 4: stepCreateUnits            — IU (визуальные единицы), per-scene
+Шаг 5: stepCreateVisuals          — visual-промпты, per-scene
+```
+
+**Ключевые изменения (июнь–июль 2026):**
+- **Enrichment-шаг отделён от создания сцен** — `stepEnrichScenes()` до-заполняет
+  поля сцены (title, location, participants) из контекста, снижая нагрузку на AI-промпт
+  создания сцен.
+- **`unit.participants` удалён из всей системы** — LLM больше не генерирует
+  participants для IU. `inferCharactersFromPrompt()` — единственный метод
+  определения участников визуала (сканирует `visual.prompt` на character_id).
+- **Coreference resolution удалён из пайплайна** — `coreference.js` сведён к заглушке.
+  Валидация character_id теперь только через `normalizeCharacterRefs()`.
+- **`character_anchors` удалён** — позиции персонажей пишутся напрямую в
+  `visual.prompt`, без отдельного поля.
 
 **Ключевое поведение (2026-07-02):**
 - Backend хранит `currentOffset` в `agent_sessions.window_data` и берёт от него
@@ -183,6 +214,18 @@
 **Выходы:** JSON-структура книги в PG (agent_sessions, agent_steps, agent_conversations).
 
 **Зависимости:** ai-service, context-builder, book, postgres, agent-prompts.
+
+**Хранение книги (multi-file, v2.2):** Помимо `bible.json` и `characters.json`,
+система теперь хранит:
+- `locations.json` — все локации (отдельно от bible, доступ через `book.locations`)
+- `voices.json` — все голоса персонажей (отдельно от bible, доступ через `book.voices`)
+- `bible.json` — теперь включает `country` и `epoch` для инъекции в image-промпты
+
+**AI-провайдер:**
+- Единый ключ: `OPENROUTER_API_KEY`
+- Базовый URL: `AI_API_BASE_URL` (конфигурируемый, по умолчанию OpenRouter)
+- Модель по умолчанию: `qwen3-32b`
+- JSON-ответы очищаются от CoT (`<think>`/`<reasoning>`) перед парсингом
 
 ### 4.6 TXT Importer (`backend/src/services/txt-importer.js`)
 **Ответственность:** Импорт TXT: декодирование (UTF-8/CP1251), валидация, создание draft, вызов agent-service.

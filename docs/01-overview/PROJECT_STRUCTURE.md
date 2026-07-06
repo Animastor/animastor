@@ -1,6 +1,6 @@
 # Project Structure: Animastor
 
-```
+```bash
 /home/sureg/animastor/
 ├── README.md                                    # Документация проекта
 ├── docker-compose.yml                           # Оркестрация сервисов (postgres, redis, backend, gpu-hub, nginx)
@@ -10,277 +10,298 @@
 ├── backend-rebuild.sh                           # Пересборка backend
 ├── front-backend-rebuild.sh                     # Пересборка frontend + backend
 ├── apk-build.sh                                 # Альтернативная сборка APK
-├── workflow.json                                # Workflow JSON (bind mount)
-├── master_margarita_demo.vbook                  # Демо-книга
-├── local.properties                             # Свойства Android SDK
+├── data/
+│   ├── books/                                   # Книги на диске (multi-file format v2.2)
+│   │   └── <bookId>/
+│   │       ├── manifest.json                    #   метаданные
+│   │       ├── book.json                        #   структура (chapters_order)
+│   │       ├── bible.json                       #   библеистика (country, epoch)
+│   │       ├── characters.json                  #   персонажи
+│   │       ├── locations.json                   #   локации (отдельно от bible)
+│   │       ├── voices.json                      #   голоса персонажей (отдельно от bible)
+│   │       └── chapters/
+│   │           ├── ch-cover.json                #   обложка (всегда первая)
+│   │           ├── ch-prologue.json             #   пролог (опционально)
+│   │           ├── ch-00000001.json             #   главы
+│   │           └── ...
+│   ├── output/<buildId>/                        # Сгенерированные файлы (MP3, PNG, MP4)
+│   └── workflows/                               # Шаблоны ComfyUI (.json)
+│       ├── tts-qwen-narrator.json               #   TTS наррация
+│       ├── tts-qwen-dialogue.json               #   TTS диалоги
+│       ├── img-qwen-image.json                  #   Изображения
+│       ├── video-ltx-1p.json                    #   Видео (1 персонаж)
+│       ├── video-ltx-2p.json                    #   Видео (2 персонажа)
+│       ├── video-ltx-3p.json                    #   Видео (3 персонажа)
+│       └── video-ltx-4p.json                    #   Видео (4 персонажа)
+│   └── connectors/                              # Декларативные описания задач
+│       ├── conn-image-generation.json
+│       ├── conn-tts-narration.json
+│       ├── conn-tts-dialogue.json
+│       ├── conn-video-1p.json
+│       ├── conn-video-2p.json
+│       ├── conn-video-3p.json
+│       └── conn-video-4p.json
 │
-├── backend/                                     # Backend-сервер (Node.js/Express)
-│   ├── Dockerfile                               # Контейнеризация backend
-│   ├── package.json                             # Зависимости (express, ioredis, pg, sharp, и др.)
-│   ├── test_cover.js                            # Генерация обложки (тест)
+├── backend/
+│   ├── Dockerfile
+│   ├── package.json
 │   ├── config/
-│   │   └── ai-assistant-profile.md              # Профиль AI-ассистента (системный промпт)
+│   │   └── ai-assistant-profile.md              # Профиль AI-ассистента
 │   ├── ai/                                      # База знаний AI
-│   │   ├── examples/                            # JSON-примеры для few-shot промптинга
-│   │   │   ├── book_example.json                #   Пример структуры книги
-│   │   │   ├── character_example.json           #   Пример персонажа
-│   │   │   ├── cover_example.json               #   Пример обложки
-│   │   │   ├── import_example.json              #   Пример импорта
-│   │   │   ├── location_example.json            #   Пример локации
-│   │   │   └── scene_example.json               #   Пример сцены
-│   │   ├── rules/                               # Правила для AI
-│   │   │   ├── general.md                       #   Общие правила
-│   │   │   ├── import_rules.md                  #   Правила импорта
-│   │   │   ├── json_rules.md                    #   Правила JSON-форматирования
-│   │   │   ├── json_schema.md                   #   JSON Schema
-│   │   │   ├── naming.md                        #   Соглашения именования
-│   │   │   ├── extraction_rules.md              #   Правила извлечения сущностей
-│   │   │   ├── edit_mode.md                     #   Правила редактирования
-│   │   │   └── validation.md                    #   Правила валидации
-│   │   └── skills/                              # Навыки AI (не используются в промптах)
-│   │       ├── camera_language.md               #   Язык камеры
-│   │       ├── composition.md                   #   Композиция кадра
-│   │       ├── continuity.md                    #   Непрерывность
-│   │       ├── directing.md                     #   Режиссура
-│   │       ├── entity_extraction.md             #   Извлечение сущностей
-│   │       ├── lighting.md                      #   Освещение
-│   │       ├── prompt_engineering.md            #   Инженерия промптов
-│   │       └── storyboard.md                    #   Сториборд
+│   │   ├── examples/                            # JSON-примеры для few-shot
+│   │   │   ├── book_example.json
+│   │   │   ├── character_example.json
+│   │   │   ├── cover_example.json
+│   │   │   ├── import_example.json
+│   │   │   ├── location_example.json
+│   │   │   └── scene_example.json
+│   │   ├── rules/                               # Правила (8 md-файлов)
+│   │   └── skills/                              # Навыки (8 md-файлов, не в промптах)
 │   ├── scripts/
-│   │   └── import-iu-json.mjs                   # Сценарий импорта IU JSON
+│   │   ├── audit-scenes.js                      # Аудит длительности/покрытия сцен
+│   │   ├── dryrun-visuals-iu.js                 # Сухой прогон визуалов
+│   │   └── import-iu-json.mjs                   # Импорт IU JSON
 │   ├── src/
 │   │   ├── backend.cjs                          # [ENTRY] Точка входа, DI, монтирование
-│   │   ├── startup-resume.js                    # Возобновление прерванных сессий при старте
-│   │   ├── dependency-graph.js                  # Граф зависимостей (утилита)
-│   │   ├── api/
-│   │   │   └── runtime.js                       # API runtime-статуса
-│   │   ├── audio/
-│   │   │   ├── index.js                         # Экспорт audio-сервиса
-│   │   │   └── audio-service.js                 # TTS-генерация, мерж аудио, padded text trim
-│   │   ├── book/
-│   │   │   ├── index.js                         # [CORE] Загрузка/сохранение книг (v2.1 multi-file)
-│   │   │   └── lazy-book.js                     # [CORE] Ленивая загрузка draft-книги (v2.0)
-│   │   |── config/
+│   │   ├── startup-resume.js                    # Возобновление прерванных сессий
+│   │   ├── dependency-graph.js                  # Граф зависимостей
+│   │   ├── config/
 │   │   │   └── runtime-config.js                # Централизованная конфигурация
-│   │   ├── helpers/
-│   │   │   ├── redis-helpers.cjs                # Хелперы Redis (чанки, восстановление)
-│   │   │   └── utils.cjs                        # Общие утилиты
-│   │   ├── image/
-│   │   │   ├── index.js                         # Экспорт image-сервиса
-│   │   │   └── image-service.js                 # Генерация изображений IU
-│   │   ├── orchestration/
-│   │   │   ├── index.js                         # Экспорт оркестрации
-│   │   │   ├── scene-orchestrator.js            # [CORE] Оркестратор сцен (layer-aware)
-│   │   │   └── event-journal.js                 # Redis event journal (TTL 7 дней)
 │   │   ├── routes/
-│   │   │   ├── book-routes.cjs                  # REST API книг (CRUD, импорт, статус)
-│   │   │   ├── generation-routes.cjs            # REST API генерации
-│   │   │   ├── ai-routes.cjs                    # REST API AI-ассистента
-│   │   │   └── debug-routes.cjs                 # REST API отладки
-│   │   ├── runtime/
-│   │   │   ├── index.js                         # [CORE] Экспорт runtime (v2.0, slim)
-│   │   │   ├── runtime-loop.js                  # Heartbeat tick loop (5s)
-│   │   │   ├── runtime-scheduler.js             # [CORE] Планировщик сцен (per-asset dispatch)
-│   │   │   ├── runtime-persistence.js           # Персистентность runtime
-│   │   │   ├── runtime-metrics.js               # Метрики runtime
-│   │   │   ├── active-scenes-index.js           # Redis-индекс активных сцен
-│   │   │   ├── scene-window.js                  # [CORE] Оконный менеджер генерации (v2.0 scope-aware)
-│   │   │   ├── dispatch-engine.js               # [CORE] Диспетчер (lease/quota/CB)
-│   │   │   ├── lease-manager.js                 # Управление арендой dispatch
-│   │   │   ├── gpu-dispatcher.js                # [CORE] HTTP-клиент GPU Hub
-│   │   │   ├── worker-health.js                 # Мониторинг здоровья воркеров
-│   │   │   ├── reconciliation-engine.js         # Сверка stuck-сцен
-│   │   │   ├── counter-reconciliation.js        # Сверка счетчиков backpressure
-│   │   │   ├── retry-manager.js                 # Менеджер повторных попыток
-│   │   │   ├── retention-manager.js             # Управление удержанием
-│   │   │   ├── failure-taxonomy.js              # Таксономия ошибок
-│   │   │   ├── circuit-breaker.js               # [LIVE] Размыкатель цепи (used by dispatch-engine)
-│   │   │   ├── fairness-engine.js               # [LIVE] Предотвращение голодания (used by dispatch-engine)
-│   │   │   ├── retry-budget-manager.js          # [LIVE] Бюджет повторных попыток (used by dispatch-engine)
-│   │   │   ├── feedback-config.js               # Конфиг адаптивной обратной связи
-│   │   │   └── feedback-recorder.js             # Запись сигналов обратной связи
-│   │   │   # NB: 16 debug-only governance-модулей + dead api/runtime.js удалены 2026-06-27 (D.3/L1, 311f44a):
-│   │   │   #     snapshot/priority/policy-engine/policy-simulator/workload-classifier/cost-estimator/
-│   │   │   #     decision-trace/feedback-engine/governance-{health,metrics,sandbox,stability,validator}/
-│   │   │   #     adaptation-controller/execution-semantics/failure-replay. runtime/: 37 → 21 модуль.
+│   │   │   ├── book/                            # [DECOMPOSED] Маршруты книг
+│   │   │   │   ├── agent-routes.cjs             #   AI-агент (bootstrap, next-window, статус)
+│   │   │   │   ├── chunks-routes.cjs            #   Чанки
+│   │   │   │   ├── core-routes.cjs              #   CRUD книг
+│   │   │   │   ├── generation-routes.cjs        #   Генерация
+│   │   │   │   ├── import-routes.cjs            #   Импорт
+│   │   │   │   └── recovery-routes.cjs          #   Восстановление
+│   │   │   ├── ai-routes.cjs                    # AI-чат
+│   │   │   ├── generation-routes.cjs            # Генерация (общие endpoints)
+│   │   │   ├── debug-routes.cjs                 # Отладка
+│   │   │   ├── connector-routes.cjs             # Коннекторы (13 эндпоинтов)
+│   │   │   └── workflow-routes.cjs              # Workflow (4 эндпоинта)
 │   │   ├── services/
-│   │   │   ├── agent-service.js                 # [CORE] AI-пайплайн (6 шагов)
-│   │   │   ├── ai-loader.js                     # Загрузка базы знаний AI (TTL 1 мин)
-│   │   │   ├── ai-service.js                    # Клиент OpenRouter/Nvidia API (+ refineDraft)
-│   │   │   ├── audio-recovery.cjs               # [CORE] Периодическое восстановление аудио (5s)
-│   │   │   ├── book-diff.cjs                    # Diff книг, dirty scene marking
-│   │   │   ├── book-event-log.js                # [CORE] PostgreSQL журнал событий книги
+│   │   │   ├── agent/                           # [DECOMPOSED] AI-пайплайн
+│   │   │   │   ├── bootstrap.js                 #   Первое окно
+│   │   │   │   ├── pipeline-runner.js           #   Запуск пайплайна
+│   │   │   │   ├── pipeline-steps.js            #   Шаги 0–5
+│   │   │   │   ├── coreference.js               #   Заглушка (удалён из пайплайна)
+│   │   │   │   ├── ai-caller.js                 #   Вызов AI с ретраями
+│   │   │   │   ├── text-utils.js                #   Текстовые утилиты
+│   │   │   │   └── visual-utils.js              #   Утилиты визуалов
+│   │   │   ├── agent-service.js                 # [BARREL] Экспорт + window-generator
+│   │   │   ├── agent-prompts.js                 # System prompt'ы (все шаги)
+│   │   │   ├── ai-service.js                    # Клиент AI API
+│   │   │   ├── ai-loader.js                     # Загрузка базы знаний (TTL 1 мин)
+│   │   │   ├── audio-recovery.cjs               # Recovery аудио (per-scene, on-demand)
+│   │   │   ├── book-diff.cjs                    # Diff книг + dirty scene marking
+│   │   │   ├── book-event-log.js                # PG журнал событий книги
 │   │   │   ├── book-integrity.js                # Проверка целостности (orphan detection)
-│   │   │   ├── book-source.js                   # [CORE] Канонический индекс сцен
-│   │   │   ├── book-sync.js                     # Синхронизация JSON ↔ DB (scene_hash)
-│   │   │   ├── chat-engine.cjs                  # [CORE] AI-чат (tool-based, режимы)
-│   │   │   ├── chat-store.js                    # Хранилище чатов (сессии, топики, поиск)
-│   │   │   ├── cleanup-service.cjs              # [CORE] Периодическая очистка, distributed locks
+│   │   │   ├── book-source.js                   # Канонический индекс сцен
+│   │   │   ├── book-sync.js                     # Синхронизация JSON ↔ DB
+│   │   │   ├── chat-engine.cjs                  # AI-чат (tool-based)
+│   │   │   ├── chat-store.js                    # Хранилище чатов
+│   │   │   ├── cleanup-service.cjs              # Периодическая очистка
 │   │   │   ├── context-builder.js               # Сборка контекста для AI
 │   │   │   ├── encoding-detect.js               # Детекция кодировки
-│   │   │   ├── gen-scope.js                     # [CORE] Область генерации + scopeBounds
-│   │   │   ├── knowledge-base.js                # Загрузка ai/ файлов (не используется в prompts)
-│   │   │   ├── layer-config.js                  # [CORE] Профили генерации (5 профилей)
-│   │   │   ├── placeholder-audio.js             # [CORE] Генерация MP3-заглушек + PG sync
-│   │   │   ├── scene-asset-registry.js          # [CORE] PostgreSQL реестр asset'ов сцены
-│   │   │   ├── task-handler.cjs                 # [CORE] Обработчик callback'ов GPU
-│   │   │   ├── txt-importer.js                  # [CORE] Импорт TXT (v3.0)
-│   │   │   ├── waveform-service.js              # Вычисление waveform
-│   │   │   └── window-generator.cjs             # [CORE] Фоновая оконная генерация
+│   │   │   ├── gen-scope.js                     # Область генерации
+│   │   │   ├── knowledge-base.js                # Загрузка ai/ файлов
+│   │   │   ├── layer-config.js                  # Профили генерации (5)
+│   │   │   ├── placeholder-audio.js             # MP3-заглушки
+│   │   │   ├── prompt-dependency-registry.js    # Реестр зависимостей промптов
+│   │   │   ├── scene-asset-registry.js          # PG реестр asset'ов
+│   │   │   ├── source-coverage.js               # Покрытие исходного текста
+│   │   │   ├── source-coverage-audit.js         # Аудит покрытия
+│   │   │   ├── task-handler.cjs                 # Обработчик callback'ов GPU
+│   │   │   ├── txt-importer.js                  # Импорт TXT
+│   │   │   ├── waveform-service.js              # Waveform
+│   │   │   ├── window-generator.cjs             # Фоновая оконная генерация
+│   │   │   └── workflow-manager.js              # Менеджер workflow
+│   │   ├── audio/                               # [DECOMPOSED] Аудио-подсистема
+│   │   │   ├── index.js
+│   │   │   └── audio-service.js
+│   │   ├── image/                               # [DECOMPOSED] Изображения
+│   │   │   ├── index.js
+│   │   │   ├── image-service.js
+│   │   │   ├── prompt-builder.js                #   Сборка визуальных промптов
+│   │   │   └── iu-processor.js                  #   Обработка IU
+│   │   ├── video/                               # [DECOMPOSED] Видео
+│   │   │   ├── index.js
+│   │   │   ├── video-service.js
+│   │   │   └── video-merge.js
+│   │   ├── book/                                # [DECOMPOSED] Книги
+│   │   │   ├── index.js
+│   │   │   └── lazy-book/
+│   │   │       ├── index.js                     #   [CORE] Загрузка/сохранение
+│   │   │       ├── create.js                    #   Создание книги
+│   │   │       ├── parse.js                     #   Парсинг
+│   │   │       ├── appearance.js                #   Фрагментация описаний внешности
+│   │   │       ├── chapter-utils.js             #   Утилиты глав
+│   │   │       ├── metadata.js                  #   Метаданные
+│   │   │       └── scene-utils.js               #   Утилиты сцен
+│   │   ├── orchestration/
+│   │   │   ├── index.js
+│   │   │   ├── orchestrator.js                  # [CORE] Фасад (11 команд, M5)
+│   │   │   ├── scene-orchestrator.js            # [CORE] Исполнитель (layer-aware)
+│   │   │   ├── scene-callbacks.js               #   Колбэки завершения
+│   │   │   ├── scene-restoration.js             #   Восстановление сцен
+│   │   │   ├── scene-utils.js                   #   Утилиты
+│   │   │   └── event-journal.js                 #   Redis event journal
+│   │   ├── runtime/                             # [SLIM v2.1, 21 модуля]
+│   │   │   ├── index.js                         # [CORE] Экспорт (11 модулей)
+│   │   │   ├── runtime-loop.js                  # Heartbeat (5s)
+│   │   │   ├── runtime-scheduler.js             # [CORE] Планировщик (per-asset)
+│   │   │   ├── dispatch-engine.js               # [CORE] Диспетчер (lease/quota/CB)
+│   │   │   ├── scene-window.js                  # [CORE] Оконный менеджер
+│   │   │   ├── active-scenes-index.js           # Redis-индекс
+│   │   │   ├── lease-manager.js                 # Аренда dispatch
+│   │   │   ├── gpu-dispatcher.js                # HTTP-клиент GPU Hub
+│   │   │   ├── worker-health.js                 # Мониторинг воркеров
+│   │   │   ├── reconciliation-engine.js         # Сверка stuck-сцен
+│   │   │   ├── counter-reconciliation.js        # Сверка backpressure
+│   │   │   ├── retry-manager.js                 # Повторные попытки
+│   │   │   ├── retention-manager.js             # Удержание
+│   │   │   ├── failure-taxonomy.js              # Таксономия ошибок
+│   │   │   ├── circuit-breaker.js               # [LIVE] Размыкатель цепи
+│   │   │   ├── fairness-engine.js               # [LIVE] Анти-голодание
+│   │   │   ├── retry-budget-manager.js          # [LIVE] Бюджет ретраев
+│   │   │   ├── feedback-config.js               # Конфиг обратной связи
+│   │   │   └── feedback-recorder.js             # Запись обратной связи
+│   │   │   # NB: 16 dead governance-модулей удалены 2026-06-27 (D.3/L1, 311f44a)
 │   │   ├── state/
-│   │   │   ├── index.js                         # Экспорт состояния
-│   │   │   └── scene-state.js                   # [CORE] Dual state model (v2.0)
+│   │   │   ├── index.js
+│   │   │   └── scene-state.js                   # [CORE] Dual state model
 │   │   ├── storage/
-│   │   │   ├── index.js                         # Экспорт хранилища
-│   │   │   ├── asset-registry.js                # Устаревший Redis-реестр asset'ов
+│   │   │   ├── index.js
+│   │   │   ├── asset-registry.js                # Redis-реестр (legacy)
 │   │   │   ├── filesystem-store.js              # Файловое хранилище
-│   │   │   ├── manifest.js                      # Манифест файлов
+│   │   │   ├── manifest.js                      # Манифест
 │   │   │   └── postgres/
-│   │   │       ├── database.js                  # Подключение к PG
-│   │   │       ├── index.js                     # Экспорт PG
+│   │   │       ├── database.js                  # Подключение
 │   │   │       ├── schema.js                    # DDL (25+ таблиц)
 │   │   │       └── repositories/
-│   │   │           ├── index.js                 # Экспорт репозиториев
-│   │   │           ├── book-repo.js             # Репозиторий книг
-│   │   │           ├── book-source-repo.js      # Репозиторий источников
-│   │   │           ├── cache-repo.js            # Репозиторий кэша
-│   │   │           ├── chat-repo.js             # Репозиторий чатов
-│   │   │           ├── chat-session-repo.js     # Репозиторий сессий чатов
-│   │   │           ├── events-repo.js           # Репозиторий событий
-│   │   │           ├── gen-session-repo.js      # Репозиторий сессий генерации
-│   │   │           ├── iu-repo.js               # Репозиторий IU
-│   │   │           ├── scene-assets-repo.js     # Репозиторий asset'ов сцены
-│   │   │           └── task-repo.js             # Репозиторий задач
+│   │   │           ├── book-repo.js
+│   │   │           ├── book-source-repo.js
+│   │   │           ├── cache-repo.js
+│   │   │           ├── chat-repo.js
+│   │   │           ├── chat-session-repo.js
+│   │   │           ├── events-repo.js
+│   │   │           ├── gen-session-repo.js
+│   │   │           ├── iu-repo.js
+│   │   │           ├── scene-assets-repo.js
+│   │   │           └── task-repo.js
 │   │   ├── utils/
-│   │   │   └── scene-hash.js                    # Хэширование сцен
-│   │   └── video/
-│   │       ├── index.js                         # Экспорт video-сервиса
-│   │       ├── video-service.js                 # Видеогенерация (LTX)
-│   │       └── video-merge.js                   # Мерж видео + аудио
+│   │   │   ├── scene-title-utils.js             # Утилиты заголовков сцен
+│   │   │   ├── scene-hash.js                    # Хэширование сцен
+│   │   │   ├── character-identity.js            # Идентификация персонажей
+│   │   │   └── string-utils.js                  # Строковые утилиты
+│   │   └── workflows/
+│   │       ├── index.js
+│   │       ├── workflow-loader.js               # Загрузка JSON-шаблонов
+│   │       ├── connector-loader.js              # Загрузка коннекторов
+│   │       └── entity-schema.js                 # Схема сущностей
 │   └── tests/
-│       ├── asset-state.test.js                  # Тесты состояния asset'ов
-│       ├── book-event-log.test.js               # Тесты лога событий
-│       ├── book-integrity.test.js               # Тесты целостности
-│       ├── book-source.test.js                  # Тесты источника книги
-│       ├── book-sync.test.js                    # Тесты синхронизации
-│       ├── chat-store.test.js                   # Тесты хранилища чатов
-│       ├── gen-scope.test.js                    # Тесты области генерации
-│       ├── layer-config.test.js                 # Тесты конфигурации слоёв
-│       ├── scene-asset-registry.test.js         # Тесты реестра asset'ов
-│       ├── scene-hash.test.js                   # Тесты хэширования
-│       ├── scene-state.test.js                  # Тесты состояния сцены
-│       ├── scope-filter.test.js                 # Тесты фильтрации области
-│       ├── scope-slide.test.js                  # Тесты слайда области
-│       └── video-workflows.test.js              # Тесты video workflow
+│       ├── asset-state.test.js
+│       ├── book-diff-unit.test.js
+│       ├── book-event-log.test.js
+│       ├── book-integrity.test.js
+│       ├── book-source.test.js
+│       ├── book-sync.test.js
+│       ├── chat-store.test.js
+│       ├── coreference-agent.test.js
+│       ├── coreference-cleanup.test.js
+│       ├── coreference-image.test.js
+│       ├── gen-scope.test.js
+│       ├── happy-path.test.js                   # 30+ тестов на lifecycle
+│       ├── iu-progress-utils.test.js
+│       ├── layer-config.test.js
+│       ├── prompt-dependency-registry.test.js
+│       ├── scene-asset-registry.test.js
+│       ├── scene-hash.test.js
+│       ├── scene-patch-utils.test.js
+│       ├── scene-split.test.js                  # 21 тест на длительность/покрытие
+│       ├── scene-state.test.js
+│       ├── scope-filter.test.js
+│       ├── scope-slide.test.js
+│       ├── video-workflows.test.js
+│       └── book-diff-unit.test.js               # (485 тестов всего, 0 failing)
 │
-├── frontend/                                    # Android-приложение (Kotlin/Gradle)
-│   ├── build.gradle.kts                         # Корневой билд
-│   ├── settings.gradle.kts                      # Настройки Gradle
-│   ├── gradle.properties                        # Свойства Gradle
-│   ├── gradlew                                  # Gradle wrapper
-│   ├── docker-compose.yml                       # Docker для сборки
-│   ├── build-apk.sh                             # Сборка APK
-│   └── app/
-│       ├── build.gradle.kts                     # Билд приложения (compileSdk=35, minSdk=24, targetSdk=35)
-│       ├── proguard-rules.pro                   # ProGuard
-│       └── src/main/
-│           ├── AndroidManifest.xml              # Манифест Android
-│           ├── java/com/example/animastor/
-│           │   ├── model/BookItem.kt            # Модель книги
-│           │   ├── network/RetrofitClient.kt    # HTTP-клиент (Retrofit, OkHttp logging)
-│           │   ├── repository/
-│           │   │   ├── BackendApi.kt            # [CORE] Определение API-методов
-│           │   │   ├── Repository.kt            # Слой репозитория (LruCache 50MB + SimpleDiskCache 256MB)
-│           │   │   ├── BookModels.kt            # Модели данных книги
-│           │   │   ├── AiChatModels.kt          # Модели AI-чата
-│           │   │   ├── ChatSessionModels.kt     # Модели сессий чата
-│           │   │   ├── ChunkListResponse.kt     # Ответ списка чанков
-│           │   │   ├── ChunkResponse.kt         # Ответ чанка
-│           │   │   ├── DiffModels.kt            # Модели diff
-│           │   │   ├── GenerateResponse.kt      # Ответ генерации
-│           │   │   ├── LayerConfig.kt           # Конфигурация слоёв
-│           │   │   ├── LoadVbookResponse.kt     # Ответ загрузки vbook
-│           │   │   ├── ReorderModels.kt         # Модели реордера
-│           │   │   ├── SlideWindowResponse.kt   # Ответ слайд-окна
-│           │   │   ├── StoryboardResponse.kt    # Ответ сториборда
-│           │   │   ├── TimelineModels.kt        # Модели таймлайна
-│           │   │   └── WorkerCounts.kt          # Счетчики воркеров
-│           │   └── ui/
-│           │       ├── MainActivity.kt          # [ENTRY] Single-activity
-│           │       ├── PlayFragment.kt          # Фрагмент плеера
-│           │       ├── EditFragment.kt          # Фрагмент редактора
-│           │       ├── LibraryFragment.kt       # Фрагмент библиотеки
-│           │       ├── FileFragment.kt          # Фрагмент файлов
-│           │       ├── NavigateFragment.kt      # Фрагмент навигации
-│           │       ├── SettingsFragment.kt      # Фрагмент настроек
-│           │       ├── AiAssistantFragment.kt   # Фрагмент AI-ассистента
-│           │       ├── GenerateViewModel.kt     # [CORE] VM генерации
-│           │       ├── PlaybackViewModel.kt     # [CORE] VM плеера (preloadAhead=3)
-│           │       ├── AssistantMode.kt         # Режимы ассистента
-│           │       ├── ChatAdapter.kt           # Адаптер чата
-│           │       ├── ChatHistoryManager.kt    # Менеджер истории чата
-│           │       ├── ChatMessage.kt           # Модель сообщения чата
-│           │       ├── ChatTopic.kt             # Тема чата
-│           │       ├── PositionManager.kt       # Менеджер позиции
-│           │       ├── SharedPositionManager.kt  # Глобальное состояние позиции
-│           │       ├── WindowTriggerManager.kt   # [CORE] Глобальный триггер окон генерации
-│           │       ├── SceneAudioPlayer.kt      # [CORE] Плеер аудио (ExoPlayer/Media3)
-│           │       ├── WaveformView.kt          # Waveform View
-│           │       └── adapter/BookAdapter.kt   # Адаптер списка книг
-│           └── res/                             # Ресурсы Android (layouts, drawables, values, strings)
-│               ├── layout/                      #   fragment_play, fragment_edit, fragment_library и др.
-│               ├── drawable/                    #   Иконки (ic_play, ic_pause, и др.)
-│               ├── values/                      #   strings.xml, colors.xml, themes.xml
-│               └── values-ru/                   #   Русская локализация strings.xml
-│
-├── worker/                                      # GPU-воркеры (ESM modules)
-│   ├── start-video.sh                           # Запуск video-воркера
-│   ├── start-worker.sh                          # Запуск worker
-│   ├── mc.sh                                    # Миграция/конфигурация
-│   ├── bootstrap-video.sh                       # Bootstrap video-воркера
-│   ├── bootstrap-light.sh                       # Bootstrap (light)
-│   ├── fix-nodes-audio.sh                       # Фикс audio nodes
-│   ├── fix-nodes-image.sh                       # Фикс image nodes
+├── worker/                                      # GPU-воркеры (ESM)
 │   ├── worker/
-│   │   ├── package.json                         # Зависимости (node-fetch)
-│   │   └── worker.js                            # [CORE] GPU-воркер ComfyUI (ESM, multi-image)
-│   └── image/worker/
-│       ├── package.json                         # Зависимости image-воркера
-│       └── package-lock.json
+│   │   ├── package.json
+│   │   └── worker.js                            # [CORE] Polling → ComfyUI → result
+│   ├── start-video.sh
+│   ├── start-worker.sh
+│   ├── mc.sh
+│   ├── bootstrap-video.sh
+│   ├── bootstrap-light.sh
+│   ├── fix-nodes-audio.sh
+│   └── fix-nodes-image.sh
 │
-├── gpu-hub/                                     # Центральный диспетчер GPU
-│   ├── package.json                             # Зависимости (express, ioredis, cors)
-│   ├── Dockerfile                               # Контейнеризация
-│   ├── server.js                                # [ENTRY] Сервер GPU Hub
-│   └── gpu-hub.js                               # [CORE] Логика диспетчера (requeue, heartbeat)
+├── gpu-hub/
+│   ├── package.json
+│   ├── Dockerfile
+│   ├── server.js                                # [ENTRY]
+│   └── gpu-hub.js                               # [CORE] Очереди, requeue, heartbeat
 │
-├── proxy/                                       # Обратный прокси
-│   ├── docker-compose.yml                       # Docker для nginx
-│   └── conf/default.conf                        # Конфигурация nginx
+├── proxy/
+│   ├── docker-compose.yml
+│   └── conf/default.conf
 │
-├── site/                                        # Статическая landing page
-│   └── index.html                               # HTML-страница
+├── site/
+│   └── index.html                               # Landing page
 │
-├── data/                                        # Данные (runtime)
-│   ├── books/                                   # Книги на диске (multi-file format)
-│   ├── output/                                  # Сгенерированные файлы (MP3, PNG, MP4)
-│   └── workflows/                               # Шаблоны ComfyUI (.json)
+├── docs/                                        # Документация
+│   ├── 01-overview/
+│   │   ├── SYSTEM_OVERVIEW.md
+│   │   ├── SYSTEM_MAP.md
+│   │   ├── ARCHITECTURE.md
+│   │   ├── DATA_FLOW.md
+│   │   └── PROJECT_STRUCTURE.md
+│   ├── 02-orchestration/
+│   │   ├── ORCHESTRATOR_LIFECYCLE.md
+│   │   ├── ORCHESTRATOR_FACADE_PR.md
+│   │   ├── M5_COMPETING_WRITERS.md
+│   │   ├── REGENERATION_SYSTEM.md
+│   │   └── STATE_WRITERS_MAP.md
+│   ├── 03-audit/
+│   │   ├── ARCHITECTURAL_AUDIT.md
+│   │   ├── ARCHITECTURAL_AUDIT_TODO.md
+│   │   ├── ARCHITECTURAL_DEBT.md
+│   │   ├── CONFLICTING_SUBSYSTEMS.md
+│   │   ├── DEPENDENCY_ANALYSIS.md
+│   │   ├── DOCUMENTATION_AUDIT.md
+│   │   └── PLAYER_AUDIT.md
+│   ├── 04-planning/
+│   │   ├── ROADMAP_6M.md
+│   │   ├── WORKFLOW_ROADMAP.md
+│   │   └── MIGRATION_PLAN.md
+│   ├── 05-frontend/
+│   │   ├── PROGRESS_HANDOFF.md
+│   │   └── PLAYER_STATE.md
+│   ├── 06-workflows/
+│   │   ├── CONNECTOR_ARCHITECTURE.md
+│   │   ├── CONNECTORS.md
+│   │   ├── WORKFLOW_ARCHITECTURE.md
+│   │   ├── WORKFLOW_ASSISTANT_VISION.md
+│   │   └── WORKFLOWS.md
+│   ├── 07-agents-and-generators/
+│   │   ├── AGENTS.md
+│   │   ├── COREFERENCE_RESOLUTION.md
+│   │   ├── COREFERENCE_ARCHITECTURE_REVIEW.md
+│   │   ├── COREFERENCE_TODO.md
+│   │   ├── GENERATORS.md
+│   │   ├── IMAGINATION_UNIT.md
+│   │   ├── IMAGINATION_UNIT_VERIFICATION.md
+│   │   └── VBOOK_GENERATION_COVERAGE_TODO.md
+│   ├── 99-archive/                              # Устаревшие документы
+│   ├── architectural-essence.md
+│   └── CHANGELOG.md
 │
-├── docs/                                        # Документация (актуализируется по коммитам)
-│   ├── SYSTEM_OVERVIEW.md                       # Обзор системы
-│   ├── PROJECT_STRUCTURE.md                     # Структура проекта
-│   ├── ARCHITECTURE.md                          # Архитектура
-│   ├── ARCHITECTURAL_DEBT.md                    # Технический долг
-│   ├── ARCHITECTURE_REVIEW.md                   # Architecture review
-│   ├── DATA_FLOW.md                             # Потоки данных
-│   ├── CONNECTORS.md                            # Интеграции
-│   ├── GENERATORS.md                            # Генераторы
-│   ├── AGENTS.md                                # AI-агенты (6 шагов)
-│   ├── WORKFLOWS.md                             # Workflow система
-│   ├── DEPENDENCY_ANALYSIS.md                   # Анализ зависимостей
-│   ├── LLM_AUDIT_CONTEXT.md                     # Контекст для аудита LLM
-│   ├── PLAYER_AUDIT.md                          # Аудит плеера
-│   └── architectural-essence.md                 # Архитектурная эссенция
+├── docs/                                        # Документация (flat, legacy)
+│   ├── README.md
+│   ├── CHANGELOG.md
+│   └── architectural-essence.md
 │
-└── backups/                                     # Бекапы (.tar.gz)
+└── backups/                                     # .tar.gz архивы
 ```
