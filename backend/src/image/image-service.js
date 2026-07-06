@@ -8,7 +8,7 @@
 //   helpers.js         - log, warn, error, debug, getOutputPath, cleanJoin, normalization utilities
 //   connector-utils.js - getImageNodeId, applyImageValue, WORKFLOW_NAME
 //   registry.js        - saveIURegistry, getIURegistry, probeIUImage, resolveCanonicalSceneImage, collectSceneUnits
-//   character-utils.js - normalizeCharacterRefs, inferCharactersFromPrompt, buildCharacterAliases, buildSafeAliasIndex
+//   character-utils.js - normalizeCharacterRefs, buildCharacterAliases, buildSafeAliasIndex
 //   prompt-builder.js  - buildImagePrompt, buildIUImageWorkflow, generateIUImageWorkflow, resolveVisualStyle, resolveLocationFromPrompt, buildCharacters
 //   iu-processor.js    - processSingleIU, generateSceneIUImages, saveIUMetadata, getSceneDuration
 //   preview.js         - getOrCreatePreview, getImageMetadata
@@ -59,6 +59,5 @@ module.exports = {
 
     // character-utils (normalizeCharacterRefs is imported by agent-service.js)
     normalizeCharacterRefs: charUtils.normalizeCharacterRefs,
-    inferCharactersFromPrompt: charUtils.inferCharactersFromPrompt,
     buildSafeAliasIndex: charUtils.buildSafeAliasIndex,
 };

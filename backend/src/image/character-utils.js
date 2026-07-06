@@ -138,84 +138,6 @@ function normalizeSnakeCaseSuffix(text, characters) {
 }
 
 /**
- * Build character passport strings by scanning the direct prompt for character_ids
- * when scene/unit participants is empty.
- */
-function inferCharactersFromPrompt(directPrompt, book, contextInfo) {
-    if (!directPrompt || !book?.characters?.length) return [];
-    // Primary method: scan visual prompt text for character_ids
-    const matched = [];
-    const promptL = directPrompt.toLowerCase();
-    const normalizedPrompt = helpers.normalizeForMatch(directPrompt);
-    const promptTokens = normalizedPrompt.split(/\s+/).filter(Boolean);
-
-    for (const c of book.characters) {
-        let found = false;
-
-        const separators = '[-_]';
-        const idParts = c.id.split(/[_]+/);
-        const pattern = idParts.join(separators);
-        const boundary = '[\\s.,;!?"\'\\`()\\[\\]{}]';
-        const re = new RegExp('(?:^|' + boundary + ')' + pattern + '(?=$|' + boundary + ')', 'i');
-        if (re.test(promptL)) found = true;
-
-        if (!found && c.name) {
-            const nameLower = c.name.toLowerCase();
-            const nameNorm = helpers.normalizeForMatch(c.name);
-            if (nameLower.length >= 3) {
-                const nameRe = new RegExp('(?<!\\w)' + nameLower.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?!\\w)', 'i');
-                if (nameRe.test(promptL)) found = true;
-            }
-            if (!found) {
-                const nameTokens = nameNorm.split(/\s+/).filter(Boolean);
-                for (const nt of nameTokens) {
-                    if (nt.length < 3) continue;
-                    if (promptTokens.includes(nt)) { found = true; break; }
-                    if (nt.length >= 4 && promptTokens.some(pt =>
-                        pt.startsWith(nt.slice(0, 4)) || nt.startsWith(pt.slice(0, 4))
-                    )) { found = true; break; }
-                }
-            }
-        }
-
-        if (!found) {
-            const idPartsSet = new Set(c.id.split(/[_]+/).filter(p => p.length >= 3));
-            if (idPartsSet.size > 0) {
-                for (const token of promptTokens) {
-                    const tokenParts = token.split(/[-_]+/);
-                    if (tokenParts.some(tp => idPartsSet.has(tp))) {
-                        found = true;
-                        break;
-                    }
-                }
-            }
-        }
-
-        if (found) {
-            matched.push(c);
-        }
-    }
-
-    const deduped = [];
-    const contained = new Set();
-    for (let i = 0; i < matched.length; i++) {
-        for (let j = 0; j < matched.length; j++) {
-            if (i === j) continue;
-            const aTokens = new Set(matched[i].id.split('_'));
-            const bTokens = new Set(matched[j].id.split('_'));
-            if (bTokens.size < aTokens.size && [...bTokens].every(t => aTokens.has(t))) {
-                contained.add(j);
-            }
-        }
-    }
-    for (let i = 0; i < matched.length; i++) {
-        if (!contained.has(i)) deduped.push(matched[i]);
-    }
-
-    return deduped;
-}
-
-/**
  * Build a safe alias index from character_mentions rows.
  */
 function buildSafeAliasIndex(characterMentions) {
@@ -258,6 +180,6 @@ module.exports = {
     replaceAliasWithCharacterId,
     buildCharacterAliases,
     normalizeCharacterRefs,
-    inferCharactersFromPrompt,
+
     buildSafeAliasIndex,
 };

@@ -325,8 +325,8 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
 
         const units = await pipelineSteps.stepCreateUnits(sessionId, scene, globalSceneIndex, characters, stepIndex, _progress, mentions);
 
-        // unit.participants removed — participants are inferred from visual prompt
-        // via inferCharactersFromPrompt in prompt-builder.js
+        // unit.participants removed — participants come from scene.participants
+        // (authoritative source set during scene creation)
 
         const visualMsg = PROGRESS_STAGES.creating_visuals(globalSceneIndex);
         publishVBook({

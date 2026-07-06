@@ -391,7 +391,8 @@ async function stepCreateVisuals(sessionId, scene, units, sceneIndex, characters
         const merged = units.map((u, i) => {
             const vu = visualUnits[i];
             if (vu && vu.visual) {
-                // Participants are inferred from visual prompt text via inferCharactersFromPrompt
+                // Participants come from scene.participants (set during scene creation).
+                // Character IDs in prompt are normalized via normalizeCharacterRefs.
                 let prompt = normalizeCharacterRefs(vu.visual.prompt, characters, mentions);
                 // Inject location automatically from scene data (AI no longer writes it)
                 if (locName && locName !== 'the scene') {

@@ -71,19 +71,16 @@ function resolveState(c, chapter, scene) {
 }
 
 function buildCharacters(scenePayload, unit, chapter, book) {
-    // Participants are inferred from visual prompt text ONLY.
-    // scene.participants is metadata for the scene, NOT a source of character passports.
-    // unit.participants has been removed from the system.
-    const prompt = unit?.visual?.prompt || scenePayload?.visual?.prompt || '';
-    const inferred = charUtils.inferCharactersFromPrompt(prompt, book);
-
-    if (inferred.length === 0) {
+    // Participants come DIRECTLY from scene.participants (set during scene creation).
+    // The visual prompt text contains character_ids from the AI, but those IDs were
+    // also sourced from scene.participants — so we use the authoritative source directly.
+    const participantIds = scenePayload?.participants || [];
+    if (!participantIds.length) {
         return [];
     }
-    const participants = inferred.map(c => c.id);
 
     const seen = new Set();
-    const chars = participants
+    const chars = participantIds
         .filter(id => (seen.has(id) ? false : (seen.add(id), true)))
         .map(id => {
             const exact = book.characters?.find(c => c.id === id);

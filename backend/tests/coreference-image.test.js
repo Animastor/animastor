@@ -2,18 +2,15 @@
 // Coreference Resolution — Image Service Tests (P7)
 // ======================================================
 // Tests for:
-//   - normalizeForMatch    — Cyrillic→Latin, punctuation, mixed case
-//   - inferCharactersFromPrompt — regex fallback matching
 //   - normalizeCharacterRefs   — alias-based character ID injection
 //   - buildSafeAliasIndex      — collision/unsafe/generic filtering
 //   - resolveLocationFromPrompt — cross-language location matching
-//   - buildCharacters           — participant priority (unit > scene > fallback)
+//   - buildCharacters           — participants from scene.participants
 // ======================================================
 
 const { expect } = require('chai');
 const {
     normalizeCharacterRefs,
-    inferCharactersFromPrompt,
     resolveLocationFromPrompt,
     buildSafeAliasIndex,
     buildCharacters,
@@ -21,134 +18,6 @@ const {
     isTypographyStyle,
     resolveVisualStyle,
 } = require('../src/image/image-service');
-
-// ======================================================
-// Helper: normalizeForMatch is not exported, so we test
-// via inferCharactersFromPrompt which uses it internally
-// ======================================================
-
-describe('Coreference — normalizeForMatch (tested via inferCharactersFromPrompt)', () => {
-
-    it('matches Cyrillic name "Берлиоз" in Latin prompt', () => {
-        const book = {
-            characters: [
-                { id: 'mikhail_aleksandrovich_berlioz', name: 'Михаил Александрович Берлиоз' },
-            ],
-        };
-        const prompt = 'berlioz was walking in the park';
-        const result = inferCharactersFromPrompt(prompt, book);
-        expect(result).to.have.lengthOf(1);
-        expect(result[0].id).to.equal('mikhail_aleksandrovich_berlioz');
-    });
-
-    it('matches Russian name in Cyrillic prompt', () => {
-        const book = {
-            characters: [
-                { id: 'mikhail_aleksandrovich_berlioz', name: 'Михаил Александрович Берлиоз' },
-            ],
-        };
-        const prompt = 'Берлиоз шёл по парку';
-        const result = inferCharactersFromPrompt(prompt, book);
-        expect(result).to.have.lengthOf(1);
-        expect(result[0].id).to.equal('mikhail_aleksandrovich_berlioz');
-    });
-
-    it('matches mixed Russian/English location ID parts in prompt', () => {
-        const book = {
-            characters: [
-                { id: 'mikhail_aleksandrovich_berlioz', name: 'Михаил Александрович Берлиоз' },
-                { id: 'ivan_nikolaevich_ponyrev', name: 'Иван Николаевич Понырев' },
-            ],
-        };
-        const prompt = 'moscow_patriarskie_pруды at late spring, two figures on path';
-        // No character names in prompt — result should be empty
-        const result = inferCharactersFromPrompt(prompt, book);
-        expect(result).to.have.lengthOf(0);
-    });
-
-    it('normalizes mixed case and punctuation', () => {
-        const book = {
-            characters: [
-                { id: 'berlioz', name: 'Берлиоз' },
-            ],
-        };
-        const prompt = 'БЕРЛИОЗ!!!';
-        const result = inferCharactersFromPrompt(prompt, book);
-        expect(result).to.have.lengthOf(1);
-        expect(result[0].id).to.equal('berlioz');
-    });
-
-    it('matches partial token parts (bezdomny_right → bezdomny)', () => {
-        const book = {
-            characters: [
-                { id: 'bezdomny', name: 'Бездомный' },
-            ],
-        };
-        const prompt = 'bezdomny_right';
-        const result = inferCharactersFromPrompt(prompt, book);
-        expect(result).to.have.lengthOf(1);
-        expect(result[0].id).to.equal('bezdomny');
-    });
-
-    it('deduplicates shorter IDs contained in longer ones', () => {
-        const book = {
-            characters: [
-                { id: 'berlioz', name: 'Берлиоз' },
-                { id: 'mikhail_aleksandrovich_berlioz', name: 'Михаил Александрович Берлиоз' },
-            ],
-        };
-        const prompt = 'berlioz is here';
-        const result = inferCharactersFromPrompt(prompt, book);
-        // Should keep only the longer ID (mikhail_aleksandrovich_berlioz)
-        expect(result).to.have.lengthOf(1);
-        expect(result[0].id).to.equal('mikhail_aleksandrovich_berlioz');
-    });
-
-    it('returns empty for empty prompt', () => {
-        const book = {
-            characters: [
-                { id: 'berlioz', name: 'Берлиоз' },
-            ],
-        };
-        expect(inferCharactersFromPrompt('', book)).to.have.lengthOf(0);
-        expect(inferCharactersFromPrompt(null, book)).to.have.lengthOf(0);
-    });
-
-    it('returns empty for no characters', () => {
-        const book = { characters: [] };
-        expect(inferCharactersFromPrompt('berlioz', book)).to.have.lengthOf(0);
-    });
-
-    it('matches nickname in parentheses like "Иван (Бездомный)"', () => {
-        const book = {
-            characters: [
-                { id: 'ivan_nikolaevich_ponyrev', name: 'Иван Николаевич Понырев (Бездомный)' },
-            ],
-        };
-        const prompt = 'на скамейке сидел бездомный';
-        const result = inferCharactersFromPrompt(prompt, book);
-        expect(result).to.have.lengthOf(1);
-        expect(result[0].id).to.equal('ivan_nikolaevich_ponyrev');
-    });
-});
-
-// ======================================================
-// inferCharactersFromPrompt — Fallback warning
-// ======================================================
-
-describe('Coreference — inferCharactersFromPrompt fallback', () => {
-
-    it('logs warning on fallback usage', () => {
-        const book = {
-            characters: [
-                { id: 'berlioz', name: 'Берлиоз' },
-            ],
-        };
-        // Should log: "[COREFERENCE] inferCharactersFromPrompt fallback used"
-        const result = inferCharactersFromPrompt('berlioz', book, 'unit_test');
-        expect(result).to.have.lengthOf(1);
-    });
-});
 
 // ======================================================
 // normalizeCharacterRefs
@@ -363,10 +232,10 @@ describe('Coreference — resolveLocationFromPrompt', () => {
 });
 
 // ======================================================
-// buildCharacters — Infer from visual prompt only
+// buildCharacters — from scene.participants
 // ======================================================
 
-describe('Coreference — buildCharacters infer from prompt', () => {
+describe('Coreference — buildCharacters from scene.participants', () => {
 
     const book = {
         characters: [
@@ -375,17 +244,16 @@ describe('Coreference — buildCharacters infer from prompt', () => {
         ],
     };
 
-    it('infers characters from unit.visual.prompt', () => {
-        const scene = { participants: [] };
+    it('builds passports from scene.participants', () => {
+        const scene = { participants: ['mikhail_aleksandrovich_berlioz'] };
         const unit = { visual: { prompt: 'mikhail_aleksandrovich_berlioz sitting on bench' } };
         const result = buildCharacters(scene, unit, {}, book);
-        // Should infer from prompt (scene.participants is NOT used for passports)
         expect(result).to.have.lengthOf(1);
         expect(result[0]).to.include('mikhail_aleksandrovich_berlioz');
     });
 
-    it('infers from scene.visual.prompt when unit has no visual', () => {
-        const scene = { participants: [], visual: { prompt: 'berlioz and ponyrev walking' } };
+    it('returns multiple when scene.participants has multiple', () => {
+        const scene = { participants: ['mikhail_aleksandrovich_berlioz', 'ivan_nikolaevich_ponyrev'] };
         const unit = { text: 'some text' };
         const result = buildCharacters(scene, unit, {}, book);
         expect(result).to.have.lengthOf(2);
@@ -393,19 +261,16 @@ describe('Coreference — buildCharacters infer from prompt', () => {
         expect(result[1]).to.include('ivan_nikolaevich_ponyrev');
     });
 
-    it('returns empty when prompt has no character references', () => {
-        const scene = { participants: ['mikhail_aleksandrovich_berlioz'] };
+    it('returns empty when scene.participants is empty', () => {
+        const scene = { participants: [] };
         const unit = { visual: { prompt: 'golden sunset over the pond, no people' } };
-        const book2 = { characters: book.characters };
-        // scene.participants should NOT be used — only prompt text is scanned
-        const result = buildCharacters(scene, unit, {}, book2);
+        const result = buildCharacters(scene, unit, {}, book);
+        // scene.participants is the authoritative source, not prompt text
         expect(result).to.have.lengthOf(0);
     });
 
-    it('returns empty array when no characters match prompt', () => {
-        const unit = { visual: { prompt: 'empty landscape' } };
-        const book2 = { characters: [] };
-        const result = buildCharacters({}, unit, {}, book2);
+    it('returns empty for no participants', () => {
+        const result = buildCharacters({}, { visual: { prompt: 'empty landscape' } }, {}, book);
         expect(result).to.have.lengthOf(0);
     });
 
@@ -422,18 +287,19 @@ describe('Coreference — buildCharacters infer from prompt', () => {
                 },
             }],
         };
+        const scene = { participants: ['berlioz'] };
         const unit = { visual: { prompt: 'berlioz sitting on bench' } };
-        const result = buildCharacters({}, unit, {}, bookDetailed);
+        const result = buildCharacters(scene, unit, {}, bookDetailed);
         expect(result).to.have.lengthOf(1);
         expect(result[0]).to.equal('berlioz: Маленького роста лысый, летний серый костюм шляпа пирожком');
     });
 
-    it('deduplicates character IDs from prompt', () => {
+    it('deduplicates participant IDs', () => {
         const bookDedup = {
             characters: [{ id: 'berlioz', name: 'Берлиоз', passport: {} }],
         };
-        const unit = { visual: { prompt: 'berlioz berlioz berlioz' } };
-        const result = buildCharacters({}, unit, {}, bookDedup);
+        const scene = { participants: ['berlioz', 'berlioz', 'berlioz'] };
+        const result = buildCharacters(scene, {}, {}, bookDedup);
         expect(result).to.have.lengthOf(1);
     });
 });
@@ -457,13 +323,13 @@ describe('Coreference — buildImagePrompt passport injection', () => {
         },
     };
 
-    it('injects character passports for characters mentioned in visual prompt', () => {
+    it('injects character passports for participants', () => {
         const unit = {
             type: 'narration',
             visual: { prompt: 'berlioz and bezdomny walking by the pond' },
         };
         const scene = {
-            participants: [],
+            participants: ['berlioz', 'bezdomny'],
             location: { id: 'moscow_patriarskie', environment: {} },
         };
 
@@ -474,18 +340,18 @@ describe('Coreference — buildImagePrompt passport injection', () => {
         expect(result).to.include('плечистый рыжий');
     });
 
-    it('does NOT inject passports for scene.participants not in prompt', () => {
+    it('does NOT inject passports when scene.participants is empty', () => {
         const unit = {
             type: 'narration',
-            visual: { prompt: 'empty landscape, no people' },
+            visual: { prompt: 'berlioz and bezdomny walking' },
         };
         const scene = {
-            participants: ['berlioz'],
+            participants: [],
             location: { id: 'moscow_patriarskie', environment: {} },
         };
 
         const result = buildImagePrompt(unit, scene, {}, bookPayload);
-        // scene.participants is NOT used for passport injection
+        // scene.participants is the authoritative source — empty = no passports
         expect(result).to.not.include('маленького роста');
     });
 
