@@ -449,22 +449,22 @@ When the frame contains people, do NOT answer "what is happening?". Answer: "WHO
   description matches a character in Scene Context, use that character_id. Do NOT create a new id
   just because the text doesn't mention their name yet. The physical description IS sufficient
   to identify them. This is NOT "adding" a character — it is identifying who is already in the text.
-- When people ARE present, structure the prompt as four parts:
-  1. WHO is in frame — by name.
-  2. WHERE they are — the scene's main location is injected automatically from scene data into every prompt. Describe relative arrangement (left/right, behind/in front) using the anchors given in Scene Context, and sub-locations within the scene when they shift (e.g. "on a bench", "by the pond", "approaching the booth").
-  3. HOW they are arranged relative to each other — sitting/standing, left/right, behind/in front (use the anchors given in Scene Context).
-  4. WHAT changed in THIS unit — the new action, gesture, emotion, or lighting shift.
-- Repeat the base composition (parts 1–3) across adjacent units, changing only part 4, so a sequence reads as one continuous scene. Example progression:
+- When people ARE present, structure the prompt as three parts:
+  1. WHO is in frame — by character_id.
+  2. HOW they are arranged relative to each other — sitting/standing, left/right, behind/in front (use the anchors given in Scene Context).
+  3. WHAT changed in THIS unit — the new action, gesture, emotion, or lighting shift.
+- Do NOT name the scene's location (city, park, room, street) — the location is set by scene.location.id and injected by the system. Describe only relative spatial arrangement and sub-locations (e.g. "on a bench", "by the booth", "near the water").
+- Repeat the base composition (parts 1–2) across adjacent units, changing only part 3, so a sequence reads as one continuous scene. Example progression:
     Unit A: "mikhail_berlioz and ivan_ponyrev are sitting on a bench. Calmly talking."
     Unit B: "mikhail_berlioz and ivan_ponyrev are sitting on a bench. ivan_ponyrev gesturing while speaking."
     Unit C: "mikhail_berlioz looking at ivan_ponyrev, both sitting on a bench."
   Do NOT write "They are talking" or "They continue the conversation" — the model would build a completely new scene with different people, poses, and framing.
-- Reference characters BY character_id. The scene's MAIN location ID is injected automatically from scene data into every prompt. Describe sub-locations within the scene (e.g. "on a bench", "by the pond", "approaching the booth") for spatial context. Their appearance (passport) is supplied globally behind the id — do NOT re-describe it. Re-describe a character's appearance ONLY when it deviates from baseline (wounded, wet, changed clothes, dirty).
+- Reference characters BY character_id. Their appearance (passport) is supplied globally behind the id — do NOT re-describe it. Re-describe a character's appearance ONLY when it deviates from baseline (wounded, wet, changed clothes, dirty). Describe sub-locations within the scene (e.g. "on a bench", "by the pond", "approaching the booth") for spatial context, but do NOT name the scene's main location.
 - Background/extras need no global passport, but describe each as a CONCRETE, REPEATABLE anchor, not a vague mass. Avoid "people walking in the park", "crowd", "pedestrians". Prefer "an elderly man reading a newspaper near the path", "a young couple walking along the pond", "a woman feeding pigeons", "two children playing near the water". When the same extras appear in adjacent units, REPEAT their description verbatim so the model keeps them visually continuous.
 
 ## Character-less units (landscape / object / interior / memory / dream / symbol)
 - When the unit has no participants, do NOT add people. Describe the image itself in full: subject, setting, light, colour, texture, mood.
-  Examples: "empty bench on a quiet path, still water reflecting golden sunset, no people, calm surreal mood" (location injected automatically) / "a worn leather manuscript on a dark table, warm candlelight, dust motes, symbolic literary atmosphere" / "abstract symbolic image of time burning, dark void, glowing embers drifting, surreal cinematic".
+   Examples: "empty bench on a quiet path, still water reflecting golden sunset, no people, calm surreal mood" / "a worn leather manuscript on a dark table, warm candlelight, dust motes, symbolic literary atmosphere" / "abstract symbolic image of time burning, dark void, glowing embers drifting, surreal cinematic".
 
 ## Universal rules (all units)
 - Describe what is VISIBLE in this frame, not plot. Keep each prompt to roughly 12–30 words — one self-contained sentence plus a short action clause.
@@ -476,9 +476,9 @@ When the frame contains people, do NOT answer "what is happening?". Answer: "WHO
 - NEVER reference other units with phrases like "as described in Unit 1", "as seen in previous frame", "continuing from earlier", "same character as before". The image model sees each prompt independently.
 - NEVER include instructions, notes, or explanations to the system like "(cinematic shot)", "(medium close-up)", "[description]". Just write the visual.
 - NEVER use phrases like "the image shows", "we see", "the viewer sees", "depicted is", "shown here". Write the visual directly.
-- If the location is not explicitly named in the text, infer the most likely setting from context (e.g. "outdoor park", "indoor room", "city street") and use that. Never write "no specific location" — always describe the environment the reader would picture.
-- CORRECT examples: "mikhail_berlioz and ivan_ponyrev sitting on a bench, golden sunset" (uses exact character_ids from context; main location is injected automatically).
-- WRONG examples: "mikhail_alexandrovich_berlioz and ivan_nikolaevich_ponyrev sitting on a bench at patriarch_ponds" (invents new IDs that don't exist in the character list!) or "In this scene we see Mikhail Berlioz and Ivan Ponyrev at Patriarch Ponds, as described in Unit 1 (cinematic lighting)".
+- Never write "no specific location". Describe only what is visible — the specific objects, people, lighting, and spatial arrangement. The environment is set by scene.location.id and should not be named.
+- CORRECT examples: "mikhail_berlioz and ivan_ponyrev sitting on a bench, golden sunset" (uses exact character_ids from context).
+- WRONG examples: "mikhail_alexandrovich_berlioz and ivan_nikolaevich_ponyrev sitting on a bench at patriarch_ponds" (invents new IDs and names the scene location!) or "In this scene we see Mikhail Berlioz and Ivan Ponyrev at Patriarch Ponds, as described in Unit 1 (cinematic lighting)".
 
 ## Grounding in unit text (CRITICAL)
 The Imagination Unit represents the picture the reader forms from THIS unit text. The visual prompt MUST be grounded in what the unit text describes:
@@ -504,7 +504,7 @@ The Imagination Unit represents the picture the reader forms from THIS unit text
       "type": "unit type",
       "visual": {
         "shot": "wide|medium|close|detail|environment|reaction",
-        "prompt": "Self-contained Imagination Unit: WHO (by character_id) + how arranged + what changed in this frame. Location is injected automatically. No pronouns.",
+        "prompt": "Self-contained Imagination Unit: WHO (by character_id) + how arranged + what changed in this frame. No pronouns.",
         "character_binding": true
       }
     }
