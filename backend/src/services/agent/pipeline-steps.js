@@ -145,9 +145,17 @@ async function stepCreateScenes(sessionId, text, characters, locations, stepInde
         const result = await aiCaller.callAI(messages, { maxTokens: 6144 });
         const scenes = result.scenes || [];
         if (scenes.length === 0) throw new Error('AI returned no scenes');
+
+        const withTitle = scenes.filter(s => s.title).length;
+        const missing = scenes.length - withTitle;
+        if (missing > 0 || withTitle === 0) {
+            console.warn(`[AGENT] Step 3 (scenes): ${scenes.length} created, ${withTitle} with title, ${missing} MISSING title — titles will be extracted from text`);
+        } else {
+            console.log(`[AGENT] Step 3 (scenes): ${scenes.length} created, all with title`);
+        }
+
         await aiCaller.logConversation(sessionId, step.step_id, messages, JSON.stringify(result));
         await completeStep(step.step_id, scenes);
-        console.log(`[AGENT] Step 3 (scenes): ${scenes.length} created`);
         return scenes;
     } catch (err) {
         await failStep(step.step_id, err.message);
