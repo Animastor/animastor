@@ -278,7 +278,8 @@ async function stepCreateVisuals(sessionId, scene, units, sceneIndex, characters
 
     function hasPassportAppearance(ch) {
         return !!(ch.passport?.base_appearance || ch.passport?.detailed_appearance ||
-                  ch.passport?.clothing_base || ch.passport?.clothing_details);
+                  ch.passport?.clothing_base || ch.passport?.clothing_details ||
+                  ch.appearance);
     }
 
     function displayName(ch) {
@@ -301,7 +302,7 @@ async function stepCreateVisuals(sessionId, scene, units, sceneIndex, characters
             const ch = (characters || []).find(c => c.id === pId);
             if (!ch) continue;
             if (hasPassportAppearance(ch)) {
-                const passportDesc = [ch.passport?.base_appearance, ch.passport?.detailed_appearance, ch.passport?.clothing_base, ch.passport?.clothing_details].filter(Boolean).join('; ');
+                const passportDesc = [ch.passport?.base_appearance, ch.passport?.detailed_appearance, ch.passport?.clothing_base, ch.passport?.clothing_details, ch.appearance].filter(Boolean).join('; ');
                 visualChars.push(`- ${ch.id}: ${displayName(ch)} — ${passportDesc || ch.description || ''}`);
                 namedCount++;
             } else {
@@ -326,7 +327,7 @@ async function stepCreateVisuals(sessionId, scene, units, sceneIndex, characters
             const limit = Math.min(visualChars.length, 5);
             for (let ci = 0; ci < limit; ci++) {
                 const ch = visualChars[ci];
-                contextParts.push(`- ${ch.id}: ${displayName(ch)} — ${ch.passport?.base_appearance || ch.description || ''}`);
+                contextParts.push(`- ${ch.id}: ${displayName(ch)} — ${ch.passport?.base_appearance || ch.appearance || ch.description || ''}`);
                 namedCount++;
             }
             if (visualChars.length > 5) {

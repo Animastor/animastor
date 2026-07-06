@@ -300,6 +300,14 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
         retry_count: coverageRetryCount,
     }));
 
+    // ── Normalize characters_present → participants ──
+    // The AI scene split returns characters_present, but downstream steps
+    // (stepCreateVisuals, enrich, etc.) expect scene.participants.
+    windowScenes = windowScenes.map(s => ({
+        ...s,
+        participants: s.participants || s.characters_present || [],
+    }));
+
     // ── Scene enrichment ──
     windowScenes = await pipelineSteps.stepEnrichScenes(sessionId, windowScenes, characters, locations, stepIndex, _progress);
 
