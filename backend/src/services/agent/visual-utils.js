@@ -3,15 +3,15 @@
 // ======================================================
 // Visual prompt helpers: exemplars, fallback visuals, passport injection logic.
 
-function getFallbackVisual(text, characters, scene) {
+function getFallbackVisual(text, characters, scene, locDisplay) {
     const participants = (scene.participants || []);
     const who = participants.length
         ? participants
               .map(pId => (characters || []).find(c => c.id === pId)?.id || pId)
               .join(' and ')
         : '';
-    if (!who) return 'the scene at ' + (scene.location?.id || 'the scene') + ', cinematic shot';
-    const locName = scene.location?.id || 'the scene';
+    const locName = locDisplay || scene.location?.id?.replace(/_/g, ' ') || 'the scene';
+    if (!who) return `the scene at ${locName}, cinematic shot`;
     return `${who} at ${locName}, cinematic shot`;
 }
 

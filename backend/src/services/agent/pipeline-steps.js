@@ -287,6 +287,8 @@ async function stepCreateVisuals(sessionId, scene, units, sceneIndex, characters
     const step = await createStep(sessionId, 'create_visual_prompts', stepIndex || 0, sceneIndex);
 
     const locName = scene.location?.id || 'the scene';
+    const locObj = (locations || []).find(l => l.id === locName);
+    const locDisplay = locObj?.name || locName.replace(/_/g, ' ');
     const contextParts = [`Title: ${scene.title || 'Untitled'}`, `Type: ${scene.type || 'narration'}`, `Location: ${locName}`, ''];
 
     const season = scene.location?.environment?.season;
@@ -411,9 +413,9 @@ async function stepCreateVisuals(sessionId, scene, units, sceneIndex, characters
                 // Participants come from scene.participants (set during scene creation).
                 // Character IDs in prompt are normalized via normalizeCharacterRefs.
                 let prompt = normalizeCharacterRefs(vu.visual.prompt, characters, mentions);
-                // Inject location automatically from scene data (AI no longer writes it)
+                // Inject human-readable location name, not snake_case ID
                 if (locName && locName !== 'the scene') {
-                    prompt = `at ${locName}: ${prompt}`;
+                    prompt = `at ${locDisplay}: ${prompt}`;
                 }
                 return { ...u, visual: { ...vu.visual, prompt } };
             }
@@ -421,7 +423,7 @@ async function stepCreateVisuals(sessionId, scene, units, sceneIndex, characters
                 ...u,
                 visual: {
                     shot: u.type === 'dialogue' ? 'medium' : (u.type === 'description' ? 'wide' : 'medium'),
-                    prompt: visualUtils.getFallbackVisual(u.text, characters, { ...scene, participants: scene.participants }),
+                    prompt: visualUtils.getFallbackVisual(u.text, characters, { ...scene, participants: scene.participants }, locDisplay),
                     character_binding: true,
                 },
             };
@@ -438,7 +440,7 @@ async function stepCreateVisuals(sessionId, scene, units, sceneIndex, characters
             ...u,
             visual: {
                 shot: u.type === 'dialogue' ? 'medium' : 'wide',
-                prompt: visualUtils.getFallbackVisual(u.text, characters, { ...scene, participants: scene.participants }),
+                prompt: visualUtils.getFallbackVisual(u.text, characters, { ...scene, participants: scene.participants }, locDisplay),
                 character_binding: true,
             },
         }));
