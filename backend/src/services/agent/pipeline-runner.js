@@ -300,14 +300,12 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
         retry_count: coverageRetryCount,
     }));
 
-    // ── Normalize characters_present → participants and location.id ──
-    // The AI always receives the Known Locations list and MUST set location.id.
-    // If the AI omits it for any scene, assign 'unknown' as a hard fallback
-    // so downstream steps never see an undefined location.
+    // ── Normalize characters_present → participants ──
+    // The AI scene split returns characters_present, but downstream steps
+    // (stepCreateVisuals, enrich, etc.) expect scene.participants.
     windowScenes = windowScenes.map(s => ({
         ...s,
         participants: s.participants || s.characters_present || [],
-        location: s.location?.id ? s.location : { id: 'unknown' },
     }));
 
     // ── Scene enrichment ──
