@@ -94,10 +94,7 @@ class GenerateViewModel(
     var buildId: String = ""
         private set
 
-    /** Flag: true after the first VBook window (bootstrap) completes.
-     *  SSE handler checks this to avoid pushing detailed progress to chat
-     *  for subsequent windows while pollAgentProgress is still running. */
-    private var _firstWindowDone = false
+    @Volatile private var _firstWindowDone = false
 
     // ── Global window trigger (observes SharedPositionManager) ───
     val windowTriggerManager: WindowTriggerManager = WindowTriggerManager(_repository, viewModelScope)
@@ -737,28 +734,46 @@ class GenerateViewModel(
 
                 _firstWindowDone = false // reset for new import
 
-                // ── Connect SSE stream BEFORE bootstrapBook ──
-                // bootstrapBook runs the first AI window synchronously (~30-60s).
-                // The backend publishes progress events to Redis during this call.
-                // Without an active SSE connection, those events are lost.
-                // By starting the stream here, the onProgressEvent handler receives
-                // and displays every stage (extracting_chars → creating_scenes → etc.)
-                // as they happen, instead of showing "Анализ..." until the call returns.
+                // ── Start SSE stream (for GPU panel) ──
                 startProgressStream(bId)
                 _uiState.update { it.copy(
                     vbookProgress = VBookProgress(stage = VBookStage.ANALYZING)
                 )}
 
+                // ── Poll agent-status DURING bootstrap to capture intermediate stages ──
+                // The pipeline updates progress_msg in DB on each stage change
+                // (extracting_chars, creating_scenes, etc.). We poll every 2s to catch them.
+                val pollDuringBootstrap = viewModelScope.launch {
+                    var lastSeen = ""
+                    while (true) {
+                        val st = runCatching { _repository.getAgentStatus(bId) }.getOrNull()
+                        if (st?.progress_msg != null && st.progress_msg != lastSeen) {
+                            msgs.add(st.progress_msg)
+                            _uiState.update { it.copy(importProgressMessages = msgs.toList()) }
+                            lastSeen = st.progress_msg
+                        }
+                        delay(2000)
+                    }
+                }
+
                 // Start Bootstrap (creates AI session for first window)
                 val bootstrapRes = _repository.bootstrapBook(bId)
-                _firstWindowDone = true // after this, SSE won't push detailed msgs to chat
-                syncMsgsWithSSE(msgs)
+                pollDuringBootstrap.cancel()
+
+                // Direct poll after bootstrap to get final state
+                val finalStatus = runCatching { _repository.getAgentStatus(bId) }.getOrNull()
+                var afterBootstrapMsg = ""
+                if (finalStatus?.progress_msg != null) {
+                    afterBootstrapMsg = finalStatus.progress_msg
+                    msgs.add(afterBootstrapMsg)
+                    _uiState.update { it.copy(importProgressMessages = msgs.toList()) }
+                }
+
                 msgs.add("✓ Импорт завершён: ${bootstrapRes.characters} персонажей, ${bootstrapRes.locations} локаций, ${bootstrapRes.scenes} сцен")
                 _uiState.update { it.copy(importProgressMessages = msgs.toList()) }
 
-                // Continue polling for subsequent windows
-                pollAgentProgress(bId, msgs);
-                syncMsgsWithSSE(msgs)
+                // Poll for subsequent windows — same msgs.add + copy(toList) pattern
+                pollAgentProgress(bId, msgs, afterBootstrapMsg);
                 msgs.add("💬 Можете задать вопросы или запустить генерацию через кнопку на панели инструментов.")
                 _uiState.update { it.copy(importProgressMessages = msgs.toList()) }
 
@@ -810,19 +825,7 @@ class GenerateViewModel(
         }
     }
 
-    /**
-     * Sync the local [msgs] list with any SSE-added messages in [GenUiState.importProgressMessages].
-     * SSE events (type="vbook") add messages to importProgressMessages directly from the
-     * ProgressStream callback. The local [msgs] list in importTxtFromFile must stay in sync
-     * so that subsequent _uiState updates don't overwrite SSE messages.
-     */
-    private fun syncMsgsWithSSE(msgs: MutableList<String>) {
-        val existing = _uiState.value.importProgressMessages
-        if (existing.size > msgs.size) {
-            val sseOnly = existing.drop(msgs.size)
-            msgs.addAll(sseOnly)
-        }
-    }
+
 
     /**
      * Poll /agent-status until the agent session becomes inactive (completed/failed).
@@ -830,8 +833,8 @@ class GenerateViewModel(
      * Also updates [vbookProgress] in [GenUiState] with structured data for the GPU-style panel.
      * @return true if the session was still active, false if no session was found
      */
-    private suspend fun pollAgentProgress(bId: String, msgs: MutableList<String>): Boolean {
-        var lastProgressMsg = ""
+    private suspend fun pollAgentProgress(bId: String, msgs: MutableList<String>, initialLastMsg: String = ""): Boolean {
+        var lastProgressMsg = initialLastMsg
         var consecutiveInactive = 0
         val maxInactive = 3
         val maxPollTimeMs = 10 * 60 * 1000L // 10 min safety timeout
@@ -851,42 +854,16 @@ class GenerateViewModel(
                     consecutiveInactive = 0
                     val currentMsg = status.progress_msg
                     if (currentMsg != lastProgressMsg) {
-                        // ── Chat: only minimal window summary for windows after the first ──
-                        // The first window (bootstrap) already showed detailed progress
-                        // via SSE messages. Subsequent windows show only the "📦 Окно N..."
-                        // summary so the chat stays usable.
-                        if (lastProgressMsg.isNotEmpty() && msgs.isNotEmpty() && msgs.last().startsWith("⟳")) {
-                            msgs[msgs.size - 1] = msgs.last().replace("⟳", "✓")
-                        }
-                        // Don't add the detailed "⟳ Извлекаю персонажей..." messages
-                        // for windows after the first — only update the window summary.
-                        lastProgressMsg = currentMsg
-
-                        if (status.window_index != null && status.created_scenes != null) {
-                            val windowInfo = "📦 Окно ${status.window_index + 1}: ${status.created_scenes} сцен" +
-                                if (status.total_scenes != null) " (всего найдено: ${status.total_scenes})" else ""
-                            val existingWindowIdx = msgs.indexOfLast { it.startsWith("📦") }
-                            if (existingWindowIdx >= 0) {
-                                // Update existing summary in place
-                                msgs[existingWindowIdx] = windowInfo
-                            } else {
-                                msgs.add(windowInfo)
-                            }
-                        }
-                        // Merge with existing SSE-added messages instead of overwriting
+                        // Append to existing importProgressMessages (preserve any SSE messages)
                         _uiState.update { state ->
-                            val existing = state.importProgressMessages
-                            val merged = if (existing.size > msgs.size) {
-                                val sseOnly = existing.drop(msgs.size)
-                                msgs.toList() + sseOnly
-                            } else {
-                                msgs.toList()
-                            }
-                            state.copy(importProgressMessages = merged)
+                            state.copy(importProgressMessages = state.importProgressMessages + currentMsg)
                         }
+                        // Keep msgs in sync for when control returns to importTxtFromFile
+                        msgs.add(currentMsg)
+                        lastProgressMsg = currentMsg
                     }
 
-                    // ── Update structured VBook progress for the GPU-style panel ──
+                    // Update GPU panel
                     updateVBookProgress(status)
 
                 } else {
@@ -896,26 +873,15 @@ class GenerateViewModel(
                     // Even when the agent session is paused/completed (active=false),
                     // the progress_msg still contains the last stage message.
                     // Update the panel so the user sees progress transitions.
-                    // Only minimal window summary goes to chat; detailed "⟳" msgs are skipped.
                     if (status.progress_msg != null && status.progress_msg != lastProgressMsg) {
                         val currentMsg = status.progress_msg
-                        Log.i(TAG, "[POLL] showing progress msg: \"$currentMsg\"")
-                        lastProgressMsg = currentMsg
-                        // Merge with existing SSE-added messages instead of overwriting
+                        // Append to existing importProgressMessages (preserve any SSE messages)
                         _uiState.update { state ->
-                            val existing = state.importProgressMessages
-                            val merged = if (existing.size > msgs.size) {
-                                val sseOnly = existing.drop(msgs.size)
-                                msgs.toList() + sseOnly
-                            } else {
-                                msgs.toList()
-                            }
-                            state.copy(importProgressMessages = merged)
+                            state.copy(importProgressMessages = state.importProgressMessages + currentMsg)
                         }
-                        // Update the panel too — this handles the case where the
-                        // first window completes before the first poll, so progress
-                        // goes: ANALYZING → CREATING_SCENES → COMPLETED gradually
-                        // instead of ANALYZING → COMPLETED instantly.
+                        msgs.add(currentMsg)
+                        lastProgressMsg = currentMsg
+                        // Update GPU panel
                         updateVBookProgress(status)
                     }
 
@@ -1370,18 +1336,8 @@ class GenerateViewModel(
                             message = vbookMsg
                         )
                     )}
-                    // ── Only push SSE messages to chat during the FIRST window (bootstrap) ──
-                    // After _firstWindowDone is set, pollAgentProgress handles the summary.
-                    if (vbookMsg != null && !_firstWindowDone) {
-                        _uiState.update { state ->
-                            val currentMsgs = state.importProgressMessages
-                            if (currentMsgs.isEmpty() || currentMsgs.last() != vbookMsg) {
-                                state.copy(importProgressMessages = currentMsgs + vbookMsg)
-                            } else {
-                                state
-                            }
-                        }
-                    }
+                    // SSE only updates GPU panel. Chat messages come from pollAgentProgress
+                    // using the same msgs.add + copy(toList) pattern as status messages.
                 } else if (event.layer == "image" && event.ready != null) {
                     val floor = maxOf(workerReadyFloor["image"] ?: 0, event.ready)
                     workerReadyFloor["image"] = floor
