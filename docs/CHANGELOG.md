@@ -4,6 +4,54 @@ All notable changes to Animastor are documented here.
 
 ---
 
+## [Unreleased] — 2026-07-07
+
+### Changed
+
+- **Scene title generation moved to enrichment step** (`backend/src/services/agent/pipeline-steps.js`):
+  `stepEnrichScenes()` теперь отвечает за генерацию заголовков сцен (title).
+  Убран конфликт между chapter-title и scene-title в промпте создания сцен.
+
+- **Locations prompt — запрет создания локаций из персонажей** (`agent-prompts.js`):
+  Добавлено явное правило: "Do NOT create locations for characters, people, groups,
+  or their actions/descriptions". Запрещены лишние поля (visual_style, cinematic_space,
+  default_mood) в locations prompt.
+
+- **Visual prompt — AI больше не пишет location** (`agent-prompts.js`):
+  Из guiding question убран `WHERE`. AI пишет только `character_id`; location
+  inject-ится автоматически в `buildImagePrompt`.
+
+- **Generic nouns — строгое правило** (`agent-prompts.js`):
+  Добавлено: "STRICT RULE — ALWAYS write character_id, never generic noun".
+  Если в Characters in scene есть character_id, AI обязан использовать exact ID,
+  а не generic nouns ("the editor", "the bald man").
+
+- **Визуальный промпт — запрет location в grounding** (`agent-prompts.js`):
+  Grounding rule: "Do NOT name the scene's setting (city, street, park, room) —
+  it is set by scene.location.id."
+
+- **Hardcoded 3 заменён на MAX_SCENES_PER_CHUNK** (`pipeline-steps.js`):
+  В repair-текстах возврата "at most 3" заменено на `at most ${MAX_SCENES_PER_CHUNK}`
+  и "stop after scene 3" → "stop after scene ${MAX_SCENES_PER_CHUNK}".
+
+### Fixed
+
+- **Progress messages in chat** (`agent-routes.cjs`):
+  `pollDuringBootstrap` теперь захватывает промежуточные стадии прогресса.
+  Исправлен дубликат через `initialLastMsg`.
+
+- **VBook progress messages in chat** (`agent-service.js`, `window-generator.cjs`):
+  Первое окно показывает детальные стадии; последующие окна — минимальный summary.
+
+- **Coverage comparison — нормализация кавычек/тире/пробелов** (`source-coverage.js`):
+  Нормализует `\r\n`→`\n`, NBSP→space, кавычки и тире перед сравнением coverage.
+  Добавлен `gap_preview` для отладки.
+
+- **Debug `gap_preview` log removed** (`source-coverage.js`):
+  Убран избыточный debug-лог.
+
+---
+
 ## [Unreleased] — 2026-07-02
 
 ### Fixed

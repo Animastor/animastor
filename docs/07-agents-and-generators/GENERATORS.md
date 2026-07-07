@@ -47,8 +47,9 @@ async resolveCanonicalSceneImage(outputDir, buildId, bookId, chapterId, sceneId)
 - **`resolveVisualStyle()`** — цепочка: IU→scene→root style (с фильтром типографики)→bible style
 - **`resolveLocationFromPrompt()`** — если у сцены нет `location.id`, сопоставляет
   текст direct prompt с `bible.locations` через Cyr→Lat транслитерацию + prefix matching
-- **`inferCharactersFromPrompt()`** — если `participants` пуст, находит `character_id`
-  в direct prompt и inject-ит паспорта из `characters.json`
+- **`inferCharactersFromPrompt()`** — **первичный механизм** определения участников
+  кадра (с июля 2026; `unit.participants` удалён). Сканирует `visual.prompt` на
+  `character_id` и inject-ит паспорта из `characters.json`.
 - Поддержка `epoch`, `season`, `atmosphere` из `scene.location.environment`
 - Кэширование: если изображение уже существует — пропускается
 - Использует `img-qwen-image` workflow

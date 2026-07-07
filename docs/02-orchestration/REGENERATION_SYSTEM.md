@@ -128,26 +128,26 @@ unit.visual.style → scene.visual.style → scene.style (если не типо
    (например, "patriarch" ↔ "patriarshie" через "patri"), засчитывается 0.5 балла
 4. **Порог совпадения:** 0.25 — достаточно 1 частичного совпадения для 2-словной локации
 
-**Персонажи: `inferCharactersFromPrompt()` — fallback если `participants` пуст:**
-Если `scene.participants` и `unit.participants` пусты (проблема AI-генерации),
-но direct prompt содержит `character_id` (например, `mikhail_alexandrovich_berlioz`),
-система находит этих персонажей в `characters.json` и inject-ит их паспорта.
+**Персонажи: `inferCharactersFromPrompt()` — первичный механизм (с июля 2026):**
+`unit.participants` удалён из всей системы. Единственный метод определения
+участников — `inferCharactersFromPrompt()`, который сканирует `visual.prompt`
+на наличие `character_id` (например, `mikhail_alexandrovich_berlioz`) и inject-ит
+паспорта из `characters.json`.
 
 **Character Passport собирается так (`buildCharacters()` → `resolvePassport()`):**
 
 ```javascript
-const participants = unit?.participants || []
-const chars = participants
-    .map(id => book.characters?.find(c => c.id === id))
-    .filter(Boolean)
+// unit.participants удалён (июль 2026).
+// Единственный механизм: inferCharactersFromPrompt() сканирует visual.prompt
+// на character_id и inject-ит паспорта.
 
-// + fallback: inferCharactersFromPrompt() если participants пуст
-//   (сканирует direct prompt на character_id и inject-ит паспорта)
+const foundChars = inferCharactersFromPrompt(unit.visual.prompt, book.characters);
+const chars = foundChars.filter(Boolean);
 
 // Паспорт = слияние трёх уровней:
 // 1) c.passport.*                    — глобальный (characters.json)
 // 2) chapter.character[c.id].*       — переопределение в главе
-// 3) scene.visual.character[c.id].*  — переопределение в сцене
+// 3) scene.visual.character[c.id].*  — переопределение в сцене (если есть)
 //
 // Поля: base_appearance, detailed_appearance,
 //       clothing_base, clothing_details
@@ -158,12 +158,12 @@ const chars = participants
 
 **Из этого следует:**
 
-1. Единственный способ, которым `characters.json` влияет на Image Prompt — через `unit.participants[]`. Если персонаж не указан в `participants` ни одного юнита сцены, его паспорт **по умолчанию не используется**. **НО** — новый fallback `inferCharactersFromPrompt()` сканирует direct prompt на наличие `character_id` и inject-ит паспорт даже при пустом `participants[]`.
+1. **Единственный способ**, которым `characters.json` влияет на Image Prompt — через `inferCharactersFromPrompt()`, сканирующий `visual.prompt` на `character_id` и inject-ит паспорт. `unit.participants` удалён.
 
 2. Единственный способ, которым `bible.locations` влияет на Image Prompt — через `scene.location.id`. Если у сцены нет `location`, **новый fallback** `resolveLocationFromPrompt()` пытается сопоставить текст промпта с bible-локациями через транслитерацию + prefix matching.
 
 3. **Текущая R2/R3 имплементация корректна.**
-   - R2 (`sceneHasCharacter`) проверяет `unit.participants.includes(charId)` — это именно то, что `buildImagePrompt()` использует для поиска паспорта (основной путь; fallback — `inferCharactersFromPrompt`).
+   - R2 (`sceneHasCharacter`) проверяет `visual.prompt` на наличие `character_id` через `inferCharactersFromPrompt` — это именно то, что `buildImagePrompt()` использует для поиска паспорта (основной и единственный путь).
    - R3 проверяет `scene.location.id === locId` — это именно то, что `buildImagePrompt()` использует для поиска описания локации (основной путь; fallback — `resolveLocationFromPrompt`).
 
 ---
@@ -182,7 +182,8 @@ const IMAGE_PROMPT_SOURCES = {
   'unit.visual.shot':                { scope: 'unit',    layer: 'image' },
   'unit.visual.lighting':            { scope: 'unit',    layer: 'image' },
   'unit.visual.quality':             { scope: 'unit',    layer: 'image' },
-  'unit.participants[]':             { scope: 'unit',    layer: 'image' },  // → character passport
+  // unit.participants[] удалён (июль 2026) — character passport inject-ится
+  // через inferCharactersFromPrompt(), сканирующий visual.prompt на character_id
 
   'scene.visual.style':              { scope: 'scene',   layer: 'image' },
   'scene.visual.lighting':           { scope: 'scene',   layer: 'image' },
