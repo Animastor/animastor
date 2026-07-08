@@ -687,6 +687,7 @@ class GenerateViewModel(
             try {
                 val status = _repository.getAgentStatus(bId)
                 if (status.active && status.progress_msg != null) {
+                    // Agent actively running with a message — reset inactivity counter
                     consecutiveInactive = 0
                     val currentMsg = status.progress_msg
                     if (currentMsg != lastProgressMsg) {
@@ -697,7 +698,8 @@ class GenerateViewModel(
                         lastProgressMsg = currentMsg
                     }
                     updateVBookProgress(status)
-                } else {
+                } else if (!status.active) {
+                    // Agent truly inactive — count consecutively, transition to COMPLETED
                     consecutiveInactive++
                     if (status.progress_msg != null && status.progress_msg != lastProgressMsg) {
                         val currentMsg = status.progress_msg
@@ -713,6 +715,9 @@ class GenerateViewModel(
                             vbookProgress = VBookProgress(stage = VBookStage.COMPLETED)
                         )}
                     }
+                } else {
+                    // active=true but progress_msg=null — agent between steps, don't count as inactive
+                    consecutiveInactive = 0
                 }
             } catch (e: Exception) {
                 consecutiveInactive++
@@ -746,7 +751,7 @@ class GenerateViewModel(
             if (status.active && status.progress_msg != null) {
                 // ── Update the GPU-style progress panel (no chat messages for subsequent windows) ──
                 updateVBookProgress(status)
-            } else {
+            } else if (!status.active) {
                 val current = _uiState.value.vbookProgress
                 if (current != null) {
                     when (current.stage) {
@@ -761,6 +766,7 @@ class GenerateViewModel(
                     }
                 }
             }
+            // active=true but progress_msg=null → agent between steps, keep current VBookProgress
             _uiState.value.vbookProgress ?: VBookProgress(stage = VBookStage.IDLE)
         } catch (_: Exception) {
             _uiState.value.vbookProgress ?: VBookProgress(stage = VBookStage.IDLE)
