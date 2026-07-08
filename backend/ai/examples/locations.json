@@ -1,14 +1,10 @@
 {
   "symbolic_space": {
     "description": "abstract symbolic literary cinematic space",
-    "visual_style": "minimalist philosophical darkness, soft surreal atmosphere, quiet literary cinematic realism",
-    "cinematic_space": "abstract literary cinematic environment, soft darkness, subtle reflections, symbolic cinematic void",
-    "default_mood": "quiet philosophical reflection"
+    "cinematic_space": "abstract literary cinematic environment, soft darkness, subtle reflections, symbolic cinematic void"
   },
   "patriarch_ponds": {
     "description": "Patriarch Ponds, Moscow, 1930s",
-    "visual_style": "spring atmosphere, calm water, slight surreal tension",
-    "cinematic_space": "quiet Moscow park near pond, benches, trees, reflective water, warm evening openness",
-    "default_mood": "subtle philosophical surrealism"
+    "cinematic_space": "quiet Moscow park near pond, benches, trees, reflective water, warm evening openness"
   }
 }

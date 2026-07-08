@@ -291,6 +291,82 @@ async function stepCreateUnits(sessionId, scene, sceneIndex, characters, stepInd
     }
 }
 
+async function stepReconcilePassports(sessionId, allVisualUnits, characters, stepIndex, progress) {
+    const _progress = progress || (() => {});
+    _progress({ stage: 'passport_reconciliation', message: PROGRESS_STAGES.passport_reconciliation });
+    await updateSession(sessionId, { progress_msg: PROGRESS_STAGES.passport_reconciliation });
+
+    if (!allVisualUnits || allVisualUnits.length === 0) {
+        console.log(`[AGENT] Step passport (reconciliation): skipped — no units`);
+        return allVisualUnits || [];
+    }
+
+    const step = await createStep(sessionId, 'reconcile_passports', stepIndex || 0);
+
+    // Build passport context: only characters that have actual passport data
+    const charsWithPassport = (characters || []).filter(c =>
+        c.passport?.base_appearance || c.passport?.detailed_appearance ||
+        c.passport?.clothing_base || c.passport?.clothing_details
+    );
+    const charsContext = charsWithPassport.map(c => {
+        const p = c.passport || {};
+        return `- ${c.id}: ${c.name || c.id}\n` +
+            `  base_appearance: ${p.base_appearance || '(none)'}\n` +
+            `  detailed_appearance: ${(p.detailed_appearance || '').substring(0, 200) || '(none)'}\n` +
+            `  clothing_base: ${p.clothing_base || '(none)'}\n` +
+            `  clothing_details: ${(p.clothing_details || '').substring(0, 200) || '(none)'}`;
+    }).join('\n') || 'None';
+
+    const unitsStr = allVisualUnits.map((u, i) =>
+        `Unit ${i}: scene_index=${u.sceneIndex}, unit_index=${u.unitIndex}, scene_title="${u.sceneTitle || ''}", ` +
+        `type="${u.type || 'unknown'}", shot="${u.visual?.shot || 'unknown'}", ` +
+        `prompt="${(u.visual?.prompt || '').substring(0, 300)}"`
+    ).join('\n');
+
+    const prompt = SYSTEM_PROMPTS.passport_reconciliation
+        .replace('%CHARACTERS%', charsContext)
+        .replace('%UNITS%', unitsStr);
+
+    const messages = [
+        { role: 'system', content: prompt },
+        { role: 'user', content: `Reconcile these ${allVisualUnits.length} visual units against character passports:\n\n${unitsStr}` },
+    ];
+
+    try {
+        const result = await aiCaller.callAI(messages, { maxTokens: 4096 });
+        const reconciled = result.units || [];
+
+        // Merge AI results back, preserving original fields and only updating visual.prompt
+        const merged = allVisualUnits.map((original, i) => {
+            const rec = reconciled.find(r => r.scene_index === original.sceneIndex && r.unit_index === original.unitIndex);
+            if (rec && rec.visual?.prompt) {
+                const mergedVisual = {
+                    ...original.visual,
+                    shot: rec.visual.shot || original.visual.shot,
+                    prompt: rec.visual.prompt || original.visual.prompt,
+                };
+                return { ...original, visual: mergedVisual };
+            }
+            return original;
+        });
+
+        await aiCaller.logConversation(sessionId, step.step_id, messages, JSON.stringify(result));
+        await completeStep(step.step_id, { units: merged.length });
+
+        const changedCount = merged.filter((m, i) => {
+            const orig = allVisualUnits[i];
+            return m.visual?.prompt !== orig.visual?.prompt;
+        }).length;
+        console.log(`[AGENT] Step passport (reconciliation): ${merged.length} units, ${changedCount} deduped`);
+
+        return merged;
+    } catch (err) {
+        await failStep(step.step_id, `Passport reconciliation failed: ${err.message}`);
+        console.warn(`[AGENT] Step passport (reconciliation) FAILED, keeping original units: ${err.message}`);
+        return allVisualUnits;
+    }
+}
+
 async function stepPolishStoryboard(sessionId, allVisualUnits, characters, locations, stepIndex, progress) {
     const _progress = progress || (() => {});
     _progress({ stage: 'polishing_storyboard', message: PROGRESS_STAGES.polishing_storyboard });
@@ -543,4 +619,5 @@ module.exports = {
     stepCreateUnits,
     stepCreateVisuals,
     stepPolishStoryboard,
+    stepReconcilePassports,
 };

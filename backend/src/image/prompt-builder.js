@@ -40,12 +40,15 @@ function resolveField(field, globalP, chapterP, sceneP) {
 function resolvePassport(c, chapter, scene) {
     const globalP = c.passport || {};
     const chapterP = chapter?.character?.[c.id] || {};
-    const sceneP = scene.visual?.character?.[c.id] || {};
+    const sceneV = scene?.visual?.character?.[c.id] || {};
+    // scene.passport[characterId] — прямое переопределение паспорта на уровне сцены.
+    // Любое поле, заданное здесь, ПОЛНОСТЬЮ замещает соответствующее глобальное поле.
+    const sceneOverride = scene?.passport?.[c.id] || {};
     return {
-        base_appearance: resolveField("base_appearance", globalP, chapterP, sceneP),
-        detailed_appearance: resolveField("detailed_appearance", globalP, chapterP, sceneP),
-        clothing_base: resolveField("clothing_base", globalP, chapterP, sceneP),
-        clothing_details: resolveField("clothing_details", globalP, chapterP, sceneP),
+        base_appearance: sceneOverride.base_appearance ?? resolveField("base_appearance", globalP, chapterP, sceneV),
+        detailed_appearance: sceneOverride.detailed_appearance ?? resolveField("detailed_appearance", globalP, chapterP, sceneV),
+        clothing_base: sceneOverride.clothing_base ?? resolveField("clothing_base", globalP, chapterP, sceneV),
+        clothing_details: sceneOverride.clothing_details ?? resolveField("clothing_details", globalP, chapterP, sceneV),
     };
 }
 

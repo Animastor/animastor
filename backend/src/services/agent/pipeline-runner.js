@@ -383,9 +383,40 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
         });
     }
 
+    // ── Passport reconciliation pass ──
+    // Before storyboard polish: remove semantically duplicate descriptions
+    // that conflict with automatically-injected character passports.
+    if (enrichedScenes.length > 0) {
+        const allVisualUnits = enrichedScenes.flatMap((scene, si) =>
+            (scene.units || []).map((unit, ui) => ({
+                sceneIndex: si,
+                unitIndex: ui,
+                sceneTitle: scene.title || '',
+                sceneText: scene.text || '',
+                text: unit.text,
+                type: unit.type,
+                visual: unit.visual || {},
+            }))
+        );
+
+        if (allVisualUnits.length >= 1) {
+            const reconciled = await pipelineSteps.stepReconcilePassports(sessionId, allVisualUnits, characters, stepIndex, _progress);
+
+            // Map results back into enrichedScenes
+            for (const rec of reconciled) {
+                const scene = enrichedScenes[rec.sceneIndex];
+                if (scene && scene.units[rec.unitIndex]) {
+                    const unit = scene.units[rec.unitIndex];
+                    if (unit.visual) {
+                        if (rec.visual?.prompt) unit.visual.prompt = rec.visual.prompt;
+                    }
+                }
+            }
+        }
+    }
+
     // ── Storyboard polish pass ──
-    // After all scenes have their visual units generated, do a cross-scene
-    // continuity correction pass (Storyboard Supervisor).
+    // After passport reconciliation, do a cross-scene continuity correction.
     if (enrichedScenes.length > 0) {
         const allVisualUnits = enrichedScenes.flatMap((scene, si) =>
             (scene.units || []).map((unit, ui) => ({

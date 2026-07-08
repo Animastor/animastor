@@ -8,9 +8,6 @@
       "clothing_base": "dark classic 1930s suit, formal intellectual style",
       "clothing_details": "dark suit, white shirt, narrow tie, neat and minimal appearance",
       "video_tokens": "thin middle-aged man, dark hair combed back, pale skin, wearing dark suit and tie"
-    },
-    "voice": {
-      "instruction": "A mature Russian male voice. Deep, calm, reflective, slightly melancholic. Slow literary narration, soft authority, philosophical tone. Native Russian pronunciation."
     }
   },
   {
@@ -22,9 +19,6 @@
       "clothing_base": "light summer suit, 1930s Moscow intellectual style",
       "clothing_details": "light summer suit, neat shirt, loosened tie, top button unbuttoned, slightly relaxed appearance due to heat",
       "video_tokens": "middle-aged man, slim build, dark hair combed back, clean-shaven, wearing light suit with loosened tie"
-    },
-    "voice": {
-      "instruction": "A mature Russian male voice. Medium-low pitch, confident and controlled. Calm, rational, intellectually sharp."
     }
   },
   {
@@ -36,9 +30,6 @@
       "clothing_base": "careless casual Soviet clothing, simple and practical style, slightly rough appearance",
       "clothing_details": "loose shirt, slightly wrinkled, open collar due to heat, informal look, mildly disordered appearance reflecting emotional agitation",
       "video_tokens": "young man, strong build, short messy dark hair, expressive face, wearing loose open-collar shirt"
-    },
-    "voice": {
-      "instruction": "A young Russian male voice. Energetic, fast, emotionally charged, sometimes unstable, speaking with conviction but lacking full control."
     }
   },
   {
@@ -50,9 +41,6 @@
       "clothing_base": "elegant dark foreign suit, refined aristocratic 1930s European style",
       "clothing_details": "expensive black suit perfectly tailored, dark waistcoat, white shirt, black tie, polished shoes, subtle silver cane with dark handle, immaculate appearance despite summer heat",
       "video_tokens": "tall elegant man, pale face, dark slightly greying hair, heterochromia eyes, thin ironic smile, wearing black aristocratic suit"
-    },
-    "voice": {
-      "instruction": "A mature male voice with subtle foreign accent. Calm, deep, hypnotic, ironic and composed. Speaks slowly with absolute confidence and hidden menace. Sophisticated intellectual tone."
     }
   }
 ]
