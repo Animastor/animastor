@@ -146,13 +146,13 @@ module.exports = function(app, redis, deps) {
                 // Legacy path: frontend sent fully assembled prompt
                 systemPrompt = system;
             } else {
-                // F6 path: assemble from structured fields on the server
+                // F6 path: assemble from structured fields on the server.
+                // buildChatSystemPrompt resolves chapterId from sceneId internally.
                 systemPrompt = chatEngine.buildChatSystemPrompt({
                     mode: mode || session.mode || 'conversation',
                     topic: topic_id || session.topic_id || 'book',
                     lang: req.body?.lang || 'auto',
                     bookData,
-                    chapterId: req.body?.scene_id ? bookData?.chapters?.find(c => c.scenes?.some(s => s.scene_id === req.body.scene_id))?.chapter : null,
                     sceneId: req.body?.scene_id || null,
                     unitIndex: req.body?.unit_index ?? null,
                 });

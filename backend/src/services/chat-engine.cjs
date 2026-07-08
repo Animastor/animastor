@@ -45,10 +45,15 @@ module.exports = function(config) {
 
         // Resolve position context from book data
         let positionContext = '';
-        if (bookData && chapterId) {
+        if (bookData) {
             try {
                 const chapters = bookData.chapters || [];
-                const ch = chapters.find(c => c.chapter === chapterId);
+                // If chapterId is not provided, find the chapter that contains sceneId
+                const resolvedChapterId = chapterId || (sceneId
+                    ? chapters.find(c => c.scenes?.some(s => s.scene_id === sceneId))?.chapter
+                    : null);
+                if (!resolvedChapterId) return positionContext;
+                const ch = chapters.find(c => c.chapter === resolvedChapterId);
                 const isSpecial = ch?.type === 'cover' || ch?.type === 'prologue';
                 const chTitle = ch?.chapter_title || '';
                 let chName = chapterId;
