@@ -846,13 +846,9 @@ class PlaybackViewModel(
                 coroutineScope {
                     storyboard.ius.map { iu ->
                         async {
-                            val durationMs = when {
-                                iu.start_ms != null && iu.end_ms != null -> {
-                                    val real = iu.end_ms - iu.start_ms
-                                    if (real > 0) real else fallbackDurationMs(iu.estimated_duration_sec)
-                                }
-                                else -> fallbackDurationMs(iu.estimated_duration_sec)
-                            }
+                            // Duration is computed server-side (duration_ms). Fall back to
+                            // 2000ms only if an older backend omits the field.
+                            val durationMs = iu.duration_ms ?: 2000L
                             val iuText = iu.text
                             runCatching {
                                 Log.d(TAG, "fetching IU image: ${iu.unit_id} (dur=$durationMs ms) bldId=$bldId")
@@ -902,15 +898,6 @@ class PlaybackViewModel(
         // Last attempt — let it throw
         return block()
     }
-
-    /** Fallback duration when backend provides 0 / null. */
-    private fun fallbackDurationMs(estimatedSec: Double?): Long {
-        if (estimatedSec != null && estimatedSec > 0) {
-            return (estimatedSec * 1000).toLong()
-        }
-        return 2000L
-    }
-
 
 }
 

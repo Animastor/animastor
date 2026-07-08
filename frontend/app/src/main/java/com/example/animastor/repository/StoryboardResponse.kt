@@ -18,5 +18,7 @@ data class IuItem(
     val estimated_duration_sec: Double?,
     val audio_file: String?,
     val start_ms: Long? = null,
-    val end_ms: Long? = null
+    val end_ms: Long? = null,
+    // Server-computed playback duration (interval → estimate → 2000ms default).
+    val duration_ms: Long? = null
 )

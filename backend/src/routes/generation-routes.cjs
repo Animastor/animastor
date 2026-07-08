@@ -385,6 +385,20 @@ module.exports = function(app, redis, deps) {
                 console.warn('[STORYBOARD] DB timing merge failed:', dbErr.message);
             }
 
+            // Server-computed playback duration per IU so clients never re-derive it.
+            // Rule: real interval (end-start) if positive, else estimated_duration_sec,
+            // else a 2000ms default. Mirrors the former client fallbackDurationMs().
+            for (const iu of ius) {
+                const real = (iu.start_ms != null && iu.end_ms != null) ? (iu.end_ms - iu.start_ms) : 0;
+                if (real > 0) {
+                    iu.duration_ms = real;
+                } else if (iu.estimated_duration_sec && iu.estimated_duration_sec > 0) {
+                    iu.duration_ms = Math.round(iu.estimated_duration_sec * 1000);
+                } else {
+                    iu.duration_ms = 2000;
+                }
+            }
+
             res.json({ chunk_id: id, book_id, chapter_id, scene_id, build_id, scene_type: c.scene_type || 'narration', ius });
         } catch (err) {
             res.status(500).json({ error: err.message });
