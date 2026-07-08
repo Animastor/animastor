@@ -31,13 +31,12 @@ module.exports = function(app, redis, deps) {
             const bookData = book.loadBook(bookId);
             if (!bookData) return res.status(404).json({ error: 'Book not found' });
 
-            // F7: Always fill chapter_title from chapter.intro.text if missing.
-            // This was previously done client-side via enrichTitles()/enrichTitles()
-            // which parsed the intro text with heuristic delimiters.
+            // ── Enrich chapters (F5+F7): fill missing chapter_title + compute display indices ──
             if (bookData.chapters && Array.isArray(bookData.chapters)) {
+                let displayNum = 0;
                 for (const ch of bookData.chapters) {
+                    // F7: Fill chapter_title from chapter.intro.text if missing.
                     if (!ch.chapter_title && ch.intro && ch.intro.text) {
-                        // Extract title from intro text like "Глава 1 — Название"
                         const separators = [' — ', ' – ', '. ', '! ', '? '];
                         for (const sep of separators) {
                             const idx = ch.intro.text.indexOf(sep);
@@ -50,6 +49,17 @@ module.exports = function(app, redis, deps) {
                                 }
                             }
                         }
+                    }
+                    // F5: Compute display_number (1-based, excludes cover/prologue).
+                    if (ch.type !== 'cover' && ch.type !== 'prologue') {
+                        displayNum++;
+                        ch.display_number = displayNum;
+                    }
+                    // F5: Compute display_index for each scene (1-based within chapter).
+                    if (ch.scenes && Array.isArray(ch.scenes)) {
+                        ch.scenes.forEach((sc, idx) => {
+                            sc.display_index = idx + 1;
+                        });
                     }
                 }
             }

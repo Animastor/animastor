@@ -363,7 +363,6 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
             val scIdx = bookData?.sceneIndex(pos.chapterId, pos.sceneId) ?: 0
             val isSpecial = ch?.type == "cover" || ch?.type == "prologue"
             val chapters = bookData?.chapters ?: emptyList()
-            val realChNum = chapters.take((chIdx - 1).coerceAtLeast(0)).count { it.type != "cover" && it.type != "prologue" } + 1
             if (chIdx >= 0) {
                 val uIdx = bookData?.unitIndex(pos.chapterId, pos.sceneId, pos.unitIndex) ?: 0
                 val chTitle = ch?.chapter_title?.takeIf { it.isNotBlank() }
@@ -371,10 +370,11 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
                 val chLabel = if (isSpecial) {
                     chTitle ?: (ch?.type?.replaceFirstChar { it.uppercase() } ?: "")
                 } else if (chTitle != null) {
-                    // chapter_title already contains full "Глава N — Name"
                     chTitle
+                } else if (ch?.display_number != null) {
+                    "${getString(R.string.navigate_chapter)} ${ch.display_number}"
                 } else {
-                    "${getString(R.string.navigate_chapter)} $realChNum"
+                    ""
                 }
                 val scLabel = if (scIdx > 0) "${getString(R.string.navigate_scene)} $scIdx" else ""
                 val unitLabel = if (uIdx > 0) "${getString(R.string.navigate_unit)} $uIdx" else ""
@@ -511,13 +511,12 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
         val scIdx = bd.sceneIndex(pos.chapterId, pos.sceneId)
         val isSpecial = ch?.type == "cover" || ch?.type == "prologue"
         val chapters = bd.chapters ?: emptyList()
-                val realChNum = chapters.take((chIdx - 1).coerceAtLeast(0)).count { it.type != "cover" && it.type != "prologue" } + 1
                 val chName = if (isSpecial) {
                     ch?.chapter_title?.takeIf { it.isNotBlank() } ?: ch?.type?.replaceFirstChar { it.uppercase() }
                 } else if (ch?.chapter_title != null) {
                     ch.chapter_title
-                } else if (chIdx > 0) {
-                    "${getString(R.string.navigate_chapter)} $realChNum"
+                } else if (ch?.display_number != null) {
+                    "${getString(R.string.navigate_chapter)} ${ch.display_number}"
                 } else {
                     pos.chapterId
                 }
@@ -612,13 +611,12 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
                 val isSpecial = ch?.type == "cover" || ch?.type == "prologue"
                 val chTitle = ch?.chapter_title?.takeIf { it.isNotBlank() }
                 val chapters = bookData.chapters ?: emptyList()
-                val realChNum = chapters.take((chIdx - 1).coerceAtLeast(0)).count { it.type != "cover" && it.type != "prologue" } + 1
                 val chapterId = if (isSpecial) {
                     chTitle ?: ch?.type?.replaceFirstChar { it.uppercase() } ?: "?"
                 } else if (chTitle != null) {
                     chTitle
-                } else if (chIdx > 0) {
-                    "${getString(R.string.navigate_chapter)} $realChNum"
+                } else if (ch?.display_number != null) {
+                    "${getString(R.string.navigate_chapter)} ${ch.display_number}"
                 } else {
                     pos.chapterId ?: "?"
                 }
@@ -696,13 +694,12 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
                     val scIdx = bookForPos?.sceneIndex(pos.chapterId, pos.sceneId) ?: 0
                     val isSpecial = ch?.type == "cover" || ch?.type == "prologue"
                     val chapters = bookForPos?.chapters ?: emptyList()
-                    val realChNum = chapters.take((chIdx - 1).coerceAtLeast(0)).count { it.type != "cover" && it.type != "prologue" } + 1
                     val chName = if (isSpecial) {
                         ch?.chapter_title?.takeIf { it.isNotBlank() } ?: ch?.type?.replaceFirstChar { it.uppercase() }
                     } else if (ch?.chapter_title != null) {
                         ch.chapter_title
-                    } else if (chIdx > 0) {
-                        "${getString(R.string.navigate_chapter)} $realChNum"
+                    } else if (ch?.display_number != null) {
+                        "${getString(R.string.navigate_chapter)} ${ch.display_number}"
                     } else {
                         pos.chapterId
                     }

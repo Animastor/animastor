@@ -110,7 +110,9 @@ data class Chapter(
     val type: String? = null,
     val scenes: List<Scene>? = null,
     /** Programmatic chapter intro metadata (not a narrative scene) */
-    val intro: ChapterIntro? = null
+    val intro: ChapterIntro? = null,
+    /** Server-computed display number (1-based, excludes cover/prologue). */
+    val display_number: Int? = null
 )
 
 data class ChapterIntro(
@@ -127,7 +129,9 @@ data class Scene(
     val location: LocationData? = null,
     val participants: List<String>? = null,
     val audio: AudioConfig? = null,
-    val units: List<SceneUnit>? = null
+    val units: List<SceneUnit>? = null,
+    /** Server-computed display index (1-based within chapter). */
+    val display_index: Int? = null
 )
 
 

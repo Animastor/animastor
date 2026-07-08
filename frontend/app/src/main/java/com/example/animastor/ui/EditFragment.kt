@@ -243,14 +243,12 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         val isSpecial = ch?.type == "cover" || ch?.type == "prologue"
         val chTitle = ch?.chapter_title?.takeIf { it.isNotBlank() }
         val scTitle = sc?.scene_title?.takeIf { it.isNotBlank() }
-        val realChNum = chapters.take(currentChIndex).count { it.type != "cover" && it.type != "prologue" } + 1
         val chLabel = if (isSpecial) {
             chTitle ?: (ch?.type?.replaceFirstChar { it.uppercase() } ?: "—")
         } else if (chTitle != null) {
-            // chapter_title already contains full "Глава N — Name"
             chTitle
-        } else if (ch != null) {
-            "${getString(R.string.navigate_chapter)} $realChNum"
+        } else if (ch?.display_number != null) {
+            "${getString(R.string.navigate_chapter)} ${ch.display_number}"
         } else "—"
         val scLabel = if (sc != null) "${getString(R.string.navigate_scene)} ${currentScIndex + 1}" else "—"
         val unitLabel = if (totalUnits > 0) "${getString(R.string.navigate_unit)} ${pos.unitIndex + 1}" else pos.formatUnitLabel()
