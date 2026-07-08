@@ -16,7 +16,7 @@
 | 1 | **F1** — профиль генерации на сервере | ✅ Готово | server-owned generation profile |
 | 2 | **F13** — `duration_ms` для IU на сервере | ✅ Готово | server-computed IU duration_ms |
 | 3 | **F9** — `cover_chunk_id` + `chunk_positions` в chunks | ✅ Готово | F9: server cover_chunk_id + chunk_positions |
-| 4 | **F7** — `chapter_title` всегда с сервера | ⏳ Не начато | — |
+| 4 | **F7** — `chapter_title` всегда с сервера | ✅ Готово | F7: server chapter_title enrichment |
 | 5 | **F5** — `display_number`/`display_index` в модели книги | ⏳ Не начато | — |
 
 **Примечание по F1:** в ходе работы выяснилось, что маршруты
@@ -30,7 +30,13 @@
 поля вместо N индивидуальных `getChunkStoryboard` вызовов. Убраны 6 N+1 паттернов
 в `GenerateViewModel.kt`. Добавлены `ChunkPosition` и поля в `ChunkListResponse.kt`.
 
-**Следующий шаг:** F7 (см. раздел 4, Волна 1).
+**Примечание по F7:** бэкенд в `GET /api/v1/book/:bookId` теперь сам заполняет
+`chapter_title` из `chapter.intro.text`, если заголовок отсутствует, используя ту же
+эвристику с разделителями `—, –, ., !, ?`. Фронтенд больше не вызывает
+`enrichTitles()` / `extractChapterTitleFromIntro()` — весь код удалён из
+`BookModels.kt`, `NavigateFragment.kt`, `AiAssistantFragment.kt`.
+
+**Следующий шаг:** F5 (см. раздел 4, Волна 1).
 
 ---
 

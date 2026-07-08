@@ -22,7 +22,7 @@ import com.example.animastor.repository.BookData
 import com.example.animastor.repository.chapterIndex
 import com.example.animastor.repository.sceneIndex
 import com.example.animastor.repository.unitIndex
-import com.example.animastor.repository.enrichTitles
+
 import com.example.animastor.repository.Chapter
 import com.example.animastor.repository.ReorderChapter
 import com.example.animastor.repository.Scene
@@ -231,7 +231,7 @@ class NavigateFragment : Fragment(R.layout.fragment_navigate) {
         binding?.emptyState?.visibility = View.GONE
         lifecycleScope.launch {
             try {
-                bookData = viewModel.repository.getBook(bookId).enrichTitles()
+                bookData = viewModel.repository.getBook(bookId)
                 rebuildStructure()
                 updatePositionBar(SharedPositionManager.current.value)
             } catch (_: Exception) {

@@ -130,19 +130,7 @@ data class Scene(
     val units: List<SceneUnit>? = null
 )
 
-fun extractChapterTitleFromIntro(intro: ChapterIntro?): String? {
-    val text = intro?.text ?: return null
-    // Try to split on em-dash or period+space, take the second part as title
-    val separators = listOf(" — ", " – ", ". ", "! ", "? ")
-    for (sep in separators) {
-        val idx = text.indexOf(sep)
-        if (idx > 0 && idx < text.length - sep.length) {
-            val candidate = text.substring(idx + sep.length).trim().removeSuffix(".").removeSuffix("!").removeSuffix("?").trim()
-            if (candidate.isNotBlank()) return candidate
-        }
-    }
-    return null
-}
+
 
 // ======================================================
 // Lazy Book Models (TXT import)
@@ -402,35 +390,7 @@ data class GenerationStateResponse(
     val remaining: Int = 0
 )
 
-fun BookData.enrichTitles(): BookData {
-    val enriched = chapters?.map { ch ->
-        if (ch.chapter_title != null) {
-            // Already has a title
-            ch
-        } else {
-            // Extract from chapter.intro metadata (new format, programmatic)
-            val extractedTitle = extractChapterTitleFromIntro(ch.intro)
-            // Fallback: old format — look for chapter_intro scene in scenes[]
-            val fallbackTitle = if (extractedTitle == null) {
-                val introScene = ch.scenes?.firstOrNull { it.type == "chapter_intro" }
-                val text = introScene?.audio?.full_text ?: introScene?.units?.firstOrNull()?.text
-                text?.let { t ->
-                    val separators = listOf(" — ", " – ", ". ", "! ", "? ")
-                    for (sep in separators) {
-                        val idx = t.indexOf(sep)
-                        if (idx > 0 && idx < t.length - sep.length) {
-                            val candidate = t.substring(idx + sep.length).trim().removeSuffix(".").removeSuffix("!").removeSuffix("?").trim()
-                            if (candidate.isNotBlank()) return@let candidate
-                        }
-                    }
-                    null
-                }
-            } else null
-            ch.copy(chapter_title = extractedTitle ?: fallbackTitle)
-        }
-    }
-    return if (enriched != null) copy(chapters = enriched) else this
-}
+
 
 data class LocationData(
     val id: String? = null,

@@ -31,7 +31,6 @@ import com.example.animastor.repository.ChatSessionApi
 import com.example.animastor.repository.chapterIndex
 import com.example.animastor.repository.sceneIndex
 import com.example.animastor.repository.unitIndex
-import com.example.animastor.repository.enrichTitles
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.color.MaterialColors
 import kotlinx.coroutines.Job
@@ -345,7 +344,7 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
         val bookId = generateViewModel.bookId.takeIf { it.isNotBlank() } ?: return
         bookDataLoadAttempted = true
         lifecycleScope.launch {
-            bookData = runCatching { generateViewModel.repository.getBook(bookId).enrichTitles() }.getOrNull()
+            bookData = runCatching { generateViewModel.repository.getBook(bookId) }.getOrNull()
             updateContextBar(SharedPositionManager.current.value)
         }
     }
@@ -505,7 +504,7 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
         if (pos.chapterId == null) return
         val bid = generateViewModel.bookId.takeIf { it.isNotBlank() }
             ?: argBookId?.takeIf { it.isNotBlank() } ?: return
-        val bd = runCatching { generateViewModel.repository.getBook(bid).enrichTitles() }.getOrNull() ?: return
+        val bd = runCatching { generateViewModel.repository.getBook(bid) }.getOrNull() ?: return
         val ch = bd.chapters?.firstOrNull { it.chapter == pos.chapterId }
         val sc = ch?.scenes?.firstOrNull { it.scene_id == pos.sceneId }
         val chIdx = bd.chapterIndex(pos.chapterId)
@@ -603,7 +602,7 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
         welcomeJob = lifecycleScope.launch {
             try {
                 val rawBook = generateViewModel.repository.getBook(bookId)
-                val bookData = rawBook.enrichTitles()
+                val bookData = rawBook
                 val title = bookData.book?.title ?: bookData.manifest?.book_id ?: bookId
                 val pos = SharedPositionManager.current.value
                 val chIdx = bookData.chapterIndex(pos.chapterId)
@@ -689,7 +688,7 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
                     val bookForPos = bookData ?: runCatching {
                         val bid = generateViewModel.bookId.takeIf { it.isNotBlank() }
                             ?: argBookId?.takeIf { it.isNotBlank() }
-                        if (bid != null) generateViewModel.repository.getBook(bid).enrichTitles() else null
+                        if (bid != null) generateViewModel.repository.getBook(bid) else null
                     }.getOrNull()
                     val ch = bookForPos?.chapters?.firstOrNull { it.chapter == pos.chapterId }
                     val sc = ch?.scenes?.firstOrNull { it.scene_id == pos.sceneId }

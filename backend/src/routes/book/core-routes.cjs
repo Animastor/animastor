@@ -31,6 +31,29 @@ module.exports = function(app, redis, deps) {
             const bookData = book.loadBook(bookId);
             if (!bookData) return res.status(404).json({ error: 'Book not found' });
 
+            // F7: Always fill chapter_title from chapter.intro.text if missing.
+            // This was previously done client-side via enrichTitles()/enrichTitles()
+            // which parsed the intro text with heuristic delimiters.
+            if (bookData.chapters && Array.isArray(bookData.chapters)) {
+                for (const ch of bookData.chapters) {
+                    if (!ch.chapter_title && ch.intro && ch.intro.text) {
+                        // Extract title from intro text like "Глава 1 — Название"
+                        const separators = [' — ', ' – ', '. ', '! ', '? '];
+                        for (const sep of separators) {
+                            const idx = ch.intro.text.indexOf(sep);
+                            if (idx > 0 && idx < ch.intro.text.length - sep.length) {
+                                const candidate = ch.intro.text.substring(idx + sep.length).trim()
+                                    .replace(/\.$/, '').replace(/!$/, '').replace(/\?$/, '').trim();
+                                if (candidate) {
+                                    ch.chapter_title = candidate;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             const buildId = bookData?.manifest?.build_id || 'default';
             try {
                 const phResult = await placeholderAudio.recoverMissingPlaceholders(buildId, bookId);
