@@ -17,7 +17,8 @@
 | 2 | **F13** — `duration_ms` для IU на сервере | ✅ Готово | server-computed IU duration_ms |
 | 3 | **F9** — `cover_chunk_id` + `chunk_positions` в chunks | ✅ Готово | F9: server cover_chunk_id + chunk_positions |
 | 4 | **F7** — `chapter_title` всегда с сервера | ✅ Готово | F7: server chapter_title enrichment |
-| 5 | **F5** — `display_number`/`display_index` в модели книги | ⏳ Не начато | — |
+| 5 | **F5** — `display_number`/`display_index` в модели книги | ✅ Готово | F5: server display_number + display_index |
+| 6 | **F3** — нормализация SSE vbook (числовые поля) | ✅ Готово | F3: server-driven vbook progress |
 
 **Примечание по F1:** в ходе работы выяснилось, что маршруты
 `GET/PUT /api/v1/book/:bookId/layer-config` были **задокументированы, но не
@@ -36,7 +37,20 @@
 `enrichTitles()` / `extractChapterTitleFromIntro()` — весь код удалён из
 `BookModels.kt`, `NavigateFragment.kt`, `AiAssistantFragment.kt`.
 
-**Следующий шаг:** F5 (см. раздел 4, Волна 1).
+**Волна 1 завершена (5/5).** Все «дешёвые дубли» перенесены на сервер:
+профиль генерации (F1), длительность IU (F13), cover+chunks (F9),
+chapter_title (F7), display_number/display_index (F5).
+
+**Волна 2 начата:** F3 — нормализация SSE vbook.
+
+**Примечание по F3:** SSE-обработчик `vbook` и `updateVBookProgress()` упрощены.
+Убран регэксп-парсинг русского текста (`Regex("""сцен[ыа][\s]*?(\d+)""")`) и модульная
+арифметика (`((globalScene - 1) % windowTotal) + 1`) для инференса номера сцены.
+Оба пути теперь используют серверные поля `window_scene_index`/`window_total_scenes`/
+`window_start_scene`/`scene_index` напрямую. Для polling-пути (agent-status, где
+`window_scene_index === null`) индекс вычисляется как `created_scenes - window_start_scene + 1`.
+Убрано ~30 строк хрупкого кода. Все серверные поля уже поставляются из `pipeline-runner.js`
+и `agent-routes.cjs` — бэкенд не требует изменений.
 
 ---
 

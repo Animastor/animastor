@@ -904,16 +904,15 @@ class GenerateViewModel(
 
     /**
      * Parse [AgentStatusResponse] into structured [VBookProgress] and store in [GenUiState].
-     * Extracts stage (ANALYZING / CREATING_SCENES), scene index,
-     * and total scenes from the progress message and response fields.
+     * Uses server-provided window counters directly — no regex-based Russian text parsing.
      *
      * Stage is determined by [status.step_type] — a language-independent machine label
      * from the backend (e.g. "create_scenes", "polish_storyboard").
-     * Falls back to message content matching only when step_type is absent.
      *
-     * Exact block counters come from the backend when available. [window_size]
-     * is only a legacy fallback cap; the frontend must not infer source progress
-     * from fixed 3-scene windows.
+     * window_scene_index is always null from agent-status endpoint (set null by
+     * buildWindowProgressMeta), so window-relative index is computed from
+     * cumulative created_scenes and window_start_scene when both are available.
+     * Early stages (extracting_chars, analyzing) have no counters → cyclic display.
      */
     private fun updateVBookProgress(status: com.example.animastor.repository.AgentStatusResponse) {
         val stage = when (status.step_type) {
@@ -925,39 +924,21 @@ class GenerateViewModel(
                 VBookStage.ANALYZING
         }
 
-        // Extract global scene number from "Создаю юниты для сцены 5..." or "создаю юниты для сцены 5..."
-        val sceneMatch = Regex("""сцен[ыа][\s]*?(\d+)""", RegexOption.IGNORE_CASE).find(status.progress_msg ?: "")
-        val globalScene = sceneMatch?.groupValues?.get(1)?.toIntOrNull() ?: 0
+        val windowTotal = (status.window_total_scenes ?: status.window_size ?: 1).coerceAtLeast(1)
 
-        val windowTotal = (status.window_total_scenes
-            ?: status.total_scenes
-            ?: status.window_size
-            ?: 1).coerceAtLeast(1)
-        val inferredWindowStart = when {
-            status.window_start_scene != null -> status.window_start_scene
-            status.created_scenes != null && status.total_scenes != null ->
-                (status.created_scenes - status.total_scenes + 1).coerceAtLeast(1)
-            else -> null
-        }
+        // Compute window-relative scene index from cumulative created_scenes and
+        // window_start_scene. window_scene_index is always null from this endpoint.
         val windowSceneIndex = when {
             status.window_scene_index != null -> status.window_scene_index
-            globalScene > 0 && inferredWindowStart != null -> globalScene - inferredWindowStart + 1
-            globalScene > 0 && globalScene <= windowTotal -> globalScene
-            // Subsequent windows: globalScene (e.g. 5) > windowTotal (3).
-            // Compute window-relative index via modulo: (5-1)%3+1 = 2 → scene 2 of 3
-            globalScene > 0 -> ((globalScene - 1) % windowTotal) + 1
+            status.created_scenes != null && status.window_start_scene != null ->
+                (status.created_scenes - status.window_start_scene + 1).coerceAtLeast(1)
             else -> null
         }
 
-        // 0-based for internal UI state; -1 means the backend is preparing scenes
-        // but has not emitted progress for a concrete scene yet.
         val sceneIndex = windowSceneIndex
             ?.let { (it - 1).coerceIn(0, windowTotal - 1) }
             ?: -1
-        val total = status.created_scenes
-            ?.let { maxOf(it, globalScene) }
-            ?: globalScene.takeIf { it > 0 }
-            ?: status.total_scenes
+        val total = status.created_scenes ?: status.total_scenes
 
         val messageText = status.progress_msg?.takeIf { it.isNotBlank() }
 
@@ -1232,32 +1213,15 @@ class GenerateViewModel(
                         "creating_scenes", "creating_units", "creating_visuals" -> VBookStage.CREATING_SCENES
                         else -> VBookStage.ANALYZING
                     }
-                    // Backend scene_index is 1-based and may be global across
-                    // all generated scenes. Prefer exact current-block counters
-                    // when present; window_size is only a legacy fallback cap.
-                    val readyFromBackend = (event.vbookSceneIndex ?: 0).coerceAtLeast(0)
-                    val windowStartScene = event.vbookWindowStartScene
-                    val windowTotal = (event.vbookWindowTotalScenes
-                        ?: windowStartScene?.let { start ->
-                            event.vbookTotalScenes?.let { total -> total - start + 1 }
-                        }
-                        ?: event.window_size
-                        ?: event.vbookTotalScenes
-                        ?: readyFromBackend.takeIf { it > 0 }
-                        ?: 1).coerceAtLeast(1)
-                    val windowSceneIndex = when {
-                        event.vbookWindowSceneIndex != null -> event.vbookWindowSceneIndex
-                        readyFromBackend > 0 && windowStartScene != null ->
-                            readyFromBackend - windowStartScene + 1
-                        readyFromBackend > 0 && readyFromBackend <= windowTotal -> readyFromBackend
-                        else -> null
-                    }
-                    val sceneIdx = windowSceneIndex
+                    // Use server-provided fields directly. The backend sends
+                    // window_scene_index for scene-level progress and all window
+                    // counters. Early stages (extracting_chars, analyzing) have
+                    // null window_* fields → sceneIndex=-1 (cyclic/indeterminate).
+                    val windowTotal = (event.vbookWindowTotalScenes ?: event.window_size ?: 1).coerceAtLeast(1)
+                    val sceneIdx = event.vbookWindowSceneIndex
                         ?.let { (it - 1).coerceIn(0, windowTotal - 1) }
                         ?: -1
-                    val totalScenes = (event.vbookTotalScenes ?: readyFromBackend)
-                        .coerceAtLeast(readyFromBackend)
-                        .coerceAtLeast(1)
+                    val totalScenes = (event.vbookTotalScenes ?: event.vbookSceneIndex ?: 1).coerceAtLeast(1)
                     val vbookMsg = event.vbookMessage?.takeIf { it.isNotBlank() }
                     _uiState.update { it.copy(
                         vbookProgress = VBookProgress(
