@@ -45,14 +45,17 @@ class WorkflowManagerFragment : Fragment(R.layout.fragment_workflow_manager) {
             }
         }
 
-        // Observe audio workflows
+        // Observe audio workflows (active count server-computed per F12)
         lifecycleScope.launch {
-            viewModel.audioWorkflows.collectLatest { list ->
-                val active = list.count { it.status == "compatible" || it.status == "registered" }
+            viewModel.audioActiveCount.collectLatest { active ->
                 b.audioCount.text = if (active == 1)
                     getString(R.string.workflow_manager_active, active)
                 else
                     getString(R.string.workflow_manager_active_plural, active)
+            }
+        }
+        lifecycleScope.launch {
+            viewModel.audioWorkflows.collectLatest { list ->
                 b.audioSubtitle.text = if (list.isNotEmpty())
                     list.first().label
                 else
@@ -60,14 +63,17 @@ class WorkflowManagerFragment : Fragment(R.layout.fragment_workflow_manager) {
             }
         }
 
-        // Observe image workflows
+        // Observe image workflows (active count server-computed per F12)
         lifecycleScope.launch {
-            viewModel.imageWorkflows.collectLatest { list ->
-                val active = list.count { it.status == "compatible" || it.status == "registered" }
+            viewModel.imageActiveCount.collectLatest { active ->
                 b.imageCount.text = if (active == 1)
                     getString(R.string.workflow_manager_active, active)
                 else
                     getString(R.string.workflow_manager_active_plural, active)
+            }
+        }
+        lifecycleScope.launch {
+            viewModel.imageWorkflows.collectLatest { list ->
                 b.imageSubtitle.text = if (list.isNotEmpty())
                     list.first().label
                 else
@@ -75,14 +81,17 @@ class WorkflowManagerFragment : Fragment(R.layout.fragment_workflow_manager) {
             }
         }
 
-        // Observe video workflows
+        // Observe video workflows (active count server-computed per F12)
         lifecycleScope.launch {
-            viewModel.videoWorkflows.collectLatest { list ->
-                val active = list.count { it.status == "compatible" || it.status == "registered" }
+            viewModel.videoActiveCount.collectLatest { active ->
                 b.videoCount.text = if (active == 1)
                     getString(R.string.workflow_manager_active, active)
                 else
                     getString(R.string.workflow_manager_active_plural, active)
+            }
+        }
+        lifecycleScope.launch {
+            viewModel.videoWorkflows.collectLatest { list ->
                 b.videoSubtitle.text = if (list.isNotEmpty())
                     list.first().label
                 else

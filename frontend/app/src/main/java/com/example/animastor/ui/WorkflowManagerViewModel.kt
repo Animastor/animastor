@@ -28,6 +28,14 @@ class WorkflowManagerViewModel : ViewModel() {
     private val _videoWorkflows = MutableStateFlow<List<ConnectorSummary>>(emptyList())
     val videoWorkflows: StateFlow<List<ConnectorSummary>> = _videoWorkflows
 
+    // F12: server-computed active counts — no client-side re-counting
+    private val _audioActiveCount = MutableStateFlow(0)
+    val audioActiveCount: StateFlow<Int> = _audioActiveCount
+    private val _imageActiveCount = MutableStateFlow(0)
+    val imageActiveCount: StateFlow<Int> = _imageActiveCount
+    private val _videoActiveCount = MutableStateFlow(0)
+    val videoActiveCount: StateFlow<Int> = _videoActiveCount
+
     private val _loading = MutableStateFlow(false)
     val loading: StateFlow<Boolean> = _loading
 
@@ -54,6 +62,9 @@ class WorkflowManagerViewModel : ViewModel() {
                 _audioWorkflows.value = grouped.audio
                 _imageWorkflows.value = grouped.image
                 _videoWorkflows.value = grouped.video
+                _audioActiveCount.value = grouped.audio_active_count
+                _imageActiveCount.value = grouped.image_active_count
+                _videoActiveCount.value = grouped.video_active_count
 
                 // Also load flat list for details lookup
                 val response = api.getConnectors()

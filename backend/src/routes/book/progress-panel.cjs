@@ -182,7 +182,7 @@ module.exports = function(app, redis, deps) {
                     type: 'cover',
                     ready: coverIuReady,
                     total: coverIuTotal,
-                    percent: covDone ? 100 : (coverIuReady * 100 / coverIuTotal),
+                    percent: Math.round(covDone ? 100 : (coverIuReady * 100 / coverIuTotal)),
                     done: covDone,
                     visible: true,
                     indeterminate: false,
@@ -196,7 +196,7 @@ module.exports = function(app, redis, deps) {
                     type: 'audio',
                     ready: audioReadyReal,
                     total: scopeTotal,
-                    percent: audioDone ? 100 : (audioReadyReal * 100 / scopeTotal),
+                    percent: Math.round(audioDone ? 100 : (audioReadyReal * 100 / scopeTotal)),
                     done: audioDone,
                     visible: true,
                     indeterminate: false,
@@ -204,7 +204,7 @@ module.exports = function(app, redis, deps) {
             }
 
             // Image worker
-            if (layers.image && scopeTotal > 0 && (useIu || true)) {
+            if (layers.image && scopeTotal > 0) {
                 const imgTotal = useIu ? scopeIuTotal : scopeTotal;
                 const imgReady = useIu ? scopeIuReady : imageReady;
                 const imgDone = imgReady >= imgTotal && imgTotal > 0;
@@ -212,7 +212,7 @@ module.exports = function(app, redis, deps) {
                     type: 'image',
                     ready: imgReady,
                     total: imgTotal,
-                    percent: imgDone ? 100 : (imgReady * 100 / Math.max(1, imgTotal)),
+                    percent: Math.round(imgDone ? 100 : (imgReady * 100 / Math.max(1, imgTotal))),
                     done: imgDone,
                     visible: true,
                     indeterminate: useIu && imgTotal === 0,
@@ -226,7 +226,7 @@ module.exports = function(app, redis, deps) {
                     type: 'video',
                     ready: videoReady,
                     total: scopeTotal,
-                    percent: videoDone ? 100 : (videoReady * 100 / scopeTotal),
+                    percent: Math.round(videoDone ? 100 : (videoReady * 100 / scopeTotal)),
                     done: videoDone,
                     visible: true,
                     indeterminate: false,
