@@ -1514,9 +1514,10 @@ class GenerateViewModel(
                         indeterminate = true
                     }
                     VBookStage.CREATING_SCENES -> {
-                        ready = (vbookProgress.sceneIndex + 1).coerceAtLeast(1)
-                        total = (vbookProgress.totalScenes ?: vbookProgress.scenesInWindow).coerceAtLeast(1)
-                        pct = (ready * 100 / total).coerceIn(0, 99)
+                        total = vbookProgress.scenesInWindow.coerceAtLeast(1)
+                        ready = (vbookProgress.sceneIndex + 1).coerceIn(0, total)
+                        val fullyProgressed = ready >= total
+                        pct = if (fullyProgressed) 100 else (ready * 100 / total).coerceIn(0, 99)
                         countText = labels.vbookScenesFormat(ready, total)
                         indeterminate = false
                     }
