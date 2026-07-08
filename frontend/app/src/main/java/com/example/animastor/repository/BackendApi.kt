@@ -7,21 +7,8 @@ import retrofit2.http.*
 interface BackendApi {
 
     @Multipart
-    @POST("/api/v1/generate")
-    suspend fun generate(
-        @Part file: MultipartBody.Part,
-        @Part("image_enabled") imageEnabled: Boolean? = null
-    ): GenerateResponse
-
-    @Multipart
-    @POST("/api/v1/book/load-vbook")
-    suspend fun loadVbook(
-        @Part file: MultipartBody.Part
-    ): LoadVbookResponse
-
-    @Multipart
     @POST("/api/v1/book/import")
-    suspend fun importBook(
+    suspend fun importBook
         @Part file: MultipartBody.Part
     ): ImportResponse
 
@@ -270,12 +257,6 @@ interface BackendApi {
     // TXT Import / Lazy Book Endpoints
     // ======================================================
 
-    @Multipart
-    @POST("/api/v1/book/import-txt")
-    suspend fun importTxt(
-        @Part file: MultipartBody.Part
-    ): ImportTxtResponse
-
     @POST("/api/v1/book/{bookId}/bootstrap")
     suspend fun bootstrapBook(
         @Path("bookId") bookId: String
@@ -295,11 +276,6 @@ interface BackendApi {
     suspend fun resumeBootstrap(
         @Path("bookId") bookId: String
     ): ResumeBootstrapResponse
-
-    @POST("/api/v1/book/import-text")
-    suspend fun importText(
-        @Body request: ImportTextRequest
-    ): ImportTxtResponse
 
     @GET("/api/v1/book/{bookId}/status")
     suspend fun getBookStatus(

@@ -19,56 +19,6 @@ class Repository(
     private val chunkCache = LruCache<String, ChunkResponse>(500)
     private val diskCache: SimpleDiskCache? = diskCache
 
-    suspend fun generate(file: File, imageEnabled: Boolean = true): GenerateResponse {
-        Log.i("Repo", "generate: ${file.name} img=$imageEnabled")
-        val requestFile = file.asRequestBody()
-        val multipart = MultipartBody.Part.createFormData("file", file.name, requestFile)
-        return try {
-            val response = api.generate(multipart, imageEnabled)
-            if (response.chunk_ids.isEmpty()) {
-                Log.w("Repo", "generate: empty chunk_ids")
-                throw RuntimeException("No chunks returned")
-            }
-            Log.i("Repo", "generate OK: book=${response.book_id} build=${response.build_id} chunks=${response.chunk_ids.size}")
-            response
-        } catch (e: HttpException) {
-            val errorBody = try { e.response()?.errorBody()?.string() } catch (_: Exception) { null }
-            val backendMsg = if (errorBody != null) {
-                try { JSONObject(errorBody).optString("error", e.message()) } catch (_: Exception) { e.message() }
-            } else {
-                e.message()
-            }
-            Log.w("Repo", "generate FAILED (${e.code()}): $backendMsg")
-            throw IOException(backendMsg ?: "Generate failed (${e.code()})")
-        }
-    }
-
-    /**
-     * Load a vbook file on the backend WITHOUT auto-starting the generation
-     * pipeline. The endpoint parses the bundle, saves the book to disk (or
-     * keeps the existing edited version), and returns metadata. The client
-     * must explicitly call /regenerate later to start generation.
-     */
-    suspend fun loadVbook(file: File): LoadVbookResponse {
-        Log.i("Repo", "loadVbook: ${file.name}")
-        val requestFile = file.asRequestBody()
-        val multipart = MultipartBody.Part.createFormData("file", file.name, requestFile)
-        return try {
-            val response = api.loadVbook(multipart)
-            Log.i("Repo", "loadVbook OK: book=${response.book_id} build=${response.build_id} chapters=${response.chapter_count} scenes=${response.scene_count} existing=${response.was_existing}")
-            response
-        } catch (e: HttpException) {
-            val errorBody = try { e.response()?.errorBody()?.string() } catch (_: Exception) { null }
-            val backendMsg = if (errorBody != null) {
-                try { JSONObject(errorBody).optString("error", e.message()) } catch (_: Exception) { e.message() }
-            } else {
-                e.message()
-            }
-            Log.w("Repo", "loadVbook FAILED (${e.code()}): $backendMsg")
-            throw IOException(backendMsg ?: "Load vbook failed (${e.code()})")
-        }
-    }
-
     /**
      * Get chunk metadata. Caches by chunk ID AND build ID so that when
      * a new generation completes (new buildId), the stale placeholder
@@ -500,26 +450,6 @@ class Repository(
         }
     }
 
-    suspend fun importTxt(file: File): ImportTxtResponse {
-        Log.i("Repo", "importTxt: ${file.name}")
-        val requestFile = file.asRequestBody()
-        val multipart = MultipartBody.Part.createFormData("file", file.name, requestFile)
-        return try {
-            val response = api.importTxt(multipart)
-            Log.i("Repo", "importTxt OK: book=${response.book_id} state=${response.state}")
-            response
-        } catch (e: HttpException) {
-            val errorBody = try { e.response()?.errorBody()?.string() } catch (_: Exception) { null }
-            val backendMsg = if (errorBody != null) {
-                try { JSONObject(errorBody).optString("error", e.message()) } catch (_: Exception) { e.message() }
-            } else {
-                e.message()
-            }
-            Log.w("Repo", "importTxt FAILED (${e.code()}): $backendMsg")
-            throw IOException(backendMsg ?: "Import TXT failed (${e.code()})")
-        }
-    }
-
     suspend fun bootstrapBook(bookId: String): BootstrapResponse {
         Log.i("Repo", "bootstrapBook: $bookId")
         return try {
@@ -562,24 +492,6 @@ class Repository(
             }
             Log.w("Repo", "bootstrapNextWindow FAILED (${e.code()}): $backendMsg")
             throw IOException(backendMsg ?: "Bootstrap next window failed (${e.code()})")
-        }
-    }
-
-    suspend fun importText(text: String, title: String? = null): ImportTxtResponse {
-        Log.i("Repo", "importText: text=${text.length} chars title=$title")
-        return try {
-            val response = api.importText(ImportTextRequest(text = text, title = title))
-            Log.i("Repo", "importText OK: book=${response.book_id}")
-            response
-        } catch (e: HttpException) {
-            val errorBody = try { e.response()?.errorBody()?.string() } catch (_: Exception) { null }
-            val backendMsg = if (errorBody != null) {
-                try { JSONObject(errorBody).optString("error", e.message()) } catch (_: Exception) { e.message() }
-            } else {
-                e.message()
-            }
-            Log.w("Repo", "importText FAILED (${e.code()}): $backendMsg")
-            throw IOException(backendMsg ?: "Import text failed (${e.code()})")
         }
     }
 

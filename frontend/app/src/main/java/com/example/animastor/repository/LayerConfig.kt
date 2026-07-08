@@ -67,11 +67,6 @@ data class RegenerateScope(
 // TXT Import / Lazy Book Request Models
 // ======================================================
 
-data class ImportTextRequest(
-    val text: String,
-    val title: String? = null
-)
-
 data class LazyParseRequest(
     val windowSize: Int? = null
 )
