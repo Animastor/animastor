@@ -153,9 +153,7 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
         if (!locations[locId]) {
             locations[locId] = {
                 description: loc.description || `${loc.name} — location from the source text`,
-                visual_style: 'natural cinematic style matching narrative context',
                 cinematic_space: loc.name,
-                default_mood: 'neutral narrative mood',
             };
         }
     }
@@ -199,6 +197,10 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
         const hasRealAppearance = appearanceText.length > 8 &&
             !/character from the story|period-appropriate|as described in/i.test(appearanceText);
         return hasRealAppearance;
+    }).map(c => {
+        // Strip voice — voices live in voices.json only
+        const { voice, ...charWithoutVoice } = c;
+        return charWithoutVoice;
     });
     fs.writeFileSync(getCharactersPath(bookDir), JSON.stringify(passportChars, null, 2));
     if (passportChars.length < mergedCharacters.length) {
