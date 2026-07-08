@@ -14,7 +14,7 @@ const pipelineSteps = require('./pipeline-steps');
 const pipelineRunner = require('./pipeline-runner');
 const textUtils = require('./text-utils');
 
-async function bootstrapWithAgent(bookId, progress, publishProgress) {
+async function bootstrapWithAgent(bookId, progress, publishProgress, redis) {
     const _progress = progress || (() => {});
     const draft = lazyBook.loadDraftBook(bookId);
     if (!draft || !draft.sourceText) throw new Error(`Book ${bookId} not found`);
@@ -70,6 +70,7 @@ async function bootstrapWithAgent(bookId, progress, publishProgress) {
             sourceOffsetBase: windowInfo.windowStartOffset,
             publishProgress,
             bookId,
+            redis,
         });
 
         if (result.scenes.length === 0) {
@@ -164,7 +165,7 @@ async function bootstrapWithAgent(bookId, progress, publishProgress) {
     }
 }
 
-async function bootstrapNextWindow(bookId, progress, publishProgress) {
+async function bootstrapNextWindow(bookId, progress, publishProgress, redis) {
     const _progress = progress || (() => {});
     const draft = lazyBook.loadDraftBook(bookId);
     if (!draft || !draft.sourceText) throw new Error(`Book ${bookId} not found`);
@@ -277,6 +278,7 @@ async function bootstrapNextWindow(bookId, progress, publishProgress) {
             sourceOffsetBase: windowInfo.windowStartOffset,
             publishProgress,
             bookId,
+            redis,
             existingMentions: windowData?.all_mentions || {},
         });
 

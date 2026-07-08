@@ -16,7 +16,7 @@ module.exports = function(app, redis, deps) {
     } = deps;
     const { log, pad, collectScenes, buildSegments } = utils;
 
-    const buildWindowProgressMeta = (createdScenes, totalScenes) => {
+    const buildWindowProgressMeta = (createdScenes, totalScenes, vbookSceneIdx) => {
         const toFiniteNumber = (value) => {
             if (value == null) return null;
             const num = Number(value);
@@ -24,13 +24,30 @@ module.exports = function(app, redis, deps) {
         };
         const created = toFiniteNumber(createdScenes);
         const total = toFiniteNumber(totalScenes);
+        // Prefer live scene index from Redis (set per-scene by pipeline-runner).
+        // Fall back to computed value from cumulative counters.
+        if (vbookSceneIdx != null) {
+            const idx = parseInt(vbookSceneIdx, 10);
+            if (Number.isFinite(idx) && idx > 0) {
+                const totalVal = toFiniteNumber(total);
+                // When total is null (window_data not yet saved), return null
+                // so the frontend falls back to window_size (MAX_SCENES_PER_CHUNK).
+                return {
+                    window_start_scene: totalVal != null ? Math.max(1, (toFiniteNumber(created) || 0) - totalVal + 1) : null,
+                    window_total_scenes: totalVal,
+                    window_scene_index: idx,
+                };
+            }
+        }
         if (created == null || total == null || total <= 0) {
             return { window_start_scene: null, window_total_scenes: total, window_scene_index: null };
         }
+        const windowTotal = Math.max(1, total);
+        const windowStart = Math.max(1, created - windowTotal + 1);
         return {
-            window_start_scene: Math.max(1, created - total + 1),
-            window_total_scenes: total,
-            window_scene_index: null,
+            window_start_scene: windowStart,
+            window_total_scenes: windowTotal,
+            window_scene_index: created - windowStart + 1,
         };
     };
 
@@ -91,7 +108,8 @@ module.exports = function(app, redis, deps) {
                         remainingCached = windowData.remaining_scenes ? windowData.remaining_scenes.length : 0;
                     } catch (e) { /* ignore */ }
                 }
-                const windowProgressMeta = buildWindowProgressMeta(createdScenes, totalScenes);
+                const vbookSceneIdx = await redis.get(`animastor:vbook-scene-idx:${bookId}`);
+                const windowProgressMeta = buildWindowProgressMeta(createdScenes, totalScenes, vbookSceneIdx);
 
                 return res.json(baseResponse({
                     active: true, session_id: agentRow.session_id,
@@ -131,7 +149,8 @@ module.exports = function(app, redis, deps) {
                         remainingCached = windowData.remaining_scenes ? windowData.remaining_scenes.length : 0;
                     } catch (e) { /* ignore */ }
                 }
-                const windowProgressMeta = buildWindowProgressMeta(createdScenes, totalScenes);
+                const vbookSceneIdx = await redis.get(`animastor:vbook-scene-idx:${bookId}`);
+                const windowProgressMeta = buildWindowProgressMeta(createdScenes, totalScenes, vbookSceneIdx);
                 return res.json(baseResponse({
                     active: agentRow.session_status === 'running', session_id: agentRow.session_id,
                     session_status: agentRow.session_status, progress_msg: agentRow.progress_msg || 'Working...',

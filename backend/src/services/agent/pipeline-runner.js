@@ -141,7 +141,7 @@ function resolveSceneProgress(sceneText, scenes, sourceOffsetBase) {
 
 async function runPipeline(sessionId, text, existingChars, existingLocs, stepIndex, progress, baseSceneCount, options = {}) {
     const _progress = progress || (() => {});
-    const { publishProgress, bookId } = options;
+    const { publishProgress, bookId, redis: redisClient } = options;
     const sceneOffset = baseSceneCount || 0;
     let characters = existingChars || [];
     let locations = existingLocs || [];
@@ -153,6 +153,19 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
             try {
                 publishProgress(bookId, { type: 'vbook', ...event });
             } catch (_) { /* best-effort */ }
+        }
+        // Persist current window_scene_index in Redis so the agent-status
+        // endpoint can return it (instead of always returning null).
+        // The frontend poller reads agent-status every 1.5s — this ensures
+        // the scene counter advances even if SSE events are delayed/lost.
+        if (event.window_scene_index != null && redisClient && bookId) {
+            try {
+                redisClient.set(
+                    `animastor:vbook-scene-idx:${bookId}`,
+                    String(event.window_scene_index),
+                    'EX', 3600
+                ).catch(() => {});
+            } catch (_) {}
         }
     };
 

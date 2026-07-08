@@ -460,7 +460,7 @@ function detectFileFormat(buf) {
         try {
             const { bookId } = req.params;
             const publishVBook = (bid, event) => { publishProgress(redis, bid, event); };
-            const result = await txtImporter.bootstrapImportedText(bookId, null, publishVBook);
+            const result = await txtImporter.bootstrapImportedText(bookId, null, publishVBook, redis);
 
             try {
                 const scenesCount = result.scenes || 0;
@@ -537,7 +537,7 @@ function detectFileFormat(buf) {
         try {
             const { bookId } = req.params;
             const publishVBook = (bid, event) => { publishProgress(redis, bid, event); };
-            const result = await txtImporter.bootstrapNextWindow(bookId, null, publishVBook);
+            const result = await txtImporter.bootstrapNextWindow(bookId, null, publishVBook, redis);
             log(`[BOOTSTRAP-NEXT] ${bookId}: added ${result.added_scenes} scenes, cached=${result.cached}, all_done=${result.all_done}`);
             return res.json(result);
         } catch (err) {
@@ -666,7 +666,7 @@ function detectFileFormat(buf) {
                 const publishVBook = (bid, event) => { publishProgress(redis, bid, event); };
                 setImmediate(async () => {
                     try {
-                        const nextRes = await txtImporter.bootstrapNextWindow(bookId, null, publishVBook);
+                        const nextRes = await txtImporter.bootstrapNextWindow(bookId, null, publishVBook, redis);
                         log(`[TRIGGER] TXT window done: added=${nextRes.added_scenes || 0} all_done=${nextRes.all_done}`);
 
                         if (nextRes.chapter) {
