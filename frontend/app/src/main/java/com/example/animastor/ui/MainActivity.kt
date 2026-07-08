@@ -597,20 +597,24 @@ class MainActivity : AppCompatActivity() {
                     val panelState = viewModel.computeWorkers(panel, if (hasVBook) vbookProg else null, labels)
                     applyPanelState(panelState)
 
-                    // Detect stuck progress (only when panel shows workers)
+                    // Detect stuck progress (only when panel shows workers).
+                    // Primary completion signal comes from the server-pushed
+                    // generation_complete SSE event. This is a short emergency
+                    // fallback (30s) for rare cases where the SSE event is lost
+                    // due to connection drop.
                     if (panelState is ProgressPanelState.Workers) {
                         val progressTotal = panel.overall_percent
                         val anyLayerIncomplete = panel.any_incomplete
                         if (progressTotal != lastReadyCount) {
                             lastReadyCount = progressTotal
                             lastReadyChangeAt = System.currentTimeMillis()
-                        } else if (!lastPollFailed && anyLayerIncomplete && System.currentTimeMillis() - lastReadyChangeAt > STUCK_TIMEOUT_MS) {
+                        } else if (!lastPollFailed && anyLayerIncomplete && System.currentTimeMillis() - lastReadyChangeAt > STUCK_FALLBACK_MS) {
                             val backendActive = runCatching {
                                 val counts = RetrofitClient.api.getWorkerCounts()
                                 counts.active_scenes > 0
                             }.getOrDefault(false)
                             if (!backendActive) {
-                                Log.i("MainActivity", "Progress stuck — auto-completing")
+                                Log.i("MainActivity", "Fallback stuck detection — auto-completing")
                                 viewModel.stopProgressStream()
                                 viewModel.applyGenerationResults()
                                 refreshGenerateButton()
@@ -651,7 +655,8 @@ class MainActivity : AppCompatActivity() {
     /** Exponential backoff for poller errors (1.5s → 3s → 6s cap), reset on success */
     private var pollerBackoffMs = 1_500L
 
-    private val STUCK_TIMEOUT_MS = 120_000L
+    /** Emergency fallback: if server-pushed generation_complete is lost (30s). */
+    private val STUCK_FALLBACK_MS = 30_000L
 
     // Detect new-generation transitions so we can clear completion tracking.
     private var _lastActiveGeneration: GenerateViewModel.ActiveGeneration? = null

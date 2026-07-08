@@ -365,6 +365,11 @@ async function handleVideoCompleted(redis, bookId, chapterId, sceneId, buildId) 
             log(`SCENE-COMPLETE auto-slide: started=${slide.started} remaining=${slide.remaining}`);
         } else if (slide && slide.remaining === 0 && slide.started === 0) {
             log(`SCENE-COMPLETE auto-slide: scope fully complete`);
+            // F11: Push terminal event so the frontend can stop polling immediately
+            // instead of relying on a 120s stuck heuristic.
+            try {
+                await publishProgress(redis, bookId, { type: 'generation_complete' });
+            } catch (_) {}
         }
     } catch (e) {
         warn(`SCENE-COMPLETE auto-slide failed: ${e.message}`);
@@ -398,6 +403,9 @@ async function completeSceneWithoutVideo(redis, loadedBook, bookId, chapterId, s
         const slide = await sceneWindow.trySlideWindowOnComplete(redis, bookId, loadedBook, buildId);
         if (slide && slide.started > 0) {
             log(`SCENE-COMPLETE auto-slide: started=${slide.started} remaining=${slide.remaining}`);
+        } else if (slide && slide.remaining === 0 && slide.started === 0) {
+            log(`SCENE-COMPLETE auto-slide (no-video): scope fully complete`);
+            try { await publishProgress(redis, bookId, { type: 'generation_complete' }); } catch (_) {}
         }
     } catch (e) {
         warn(`SCENE-COMPLETE auto-slide failed: ${e.message}`);
@@ -423,6 +431,9 @@ async function completeSceneWithoutImage(redis, loadedBook, bookId, chapterId, s
         const slide = await sceneWindow.trySlideWindowOnComplete(redis, bookId, loadedBook, buildId);
         if (slide && slide.started > 0) {
             log(`SCENE-COMPLETE auto-slide: started=${slide.started} remaining=${slide.remaining}`);
+        } else if (slide && slide.remaining === 0 && slide.started === 0) {
+            log(`SCENE-COMPLETE auto-slide (no-image): scope fully complete`);
+            try { await publishProgress(redis, bookId, { type: 'generation_complete' }); } catch (_) {}
         }
     } catch (e) {
         warn(`SCENE-COMPLETE auto-slide failed: ${e.message}`);

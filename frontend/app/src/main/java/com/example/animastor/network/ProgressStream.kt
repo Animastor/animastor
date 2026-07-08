@@ -156,7 +156,7 @@ class ProgressStream(
 
                 try {
                     val event = gson.fromJson(data, ProgressEvent::class.java)
-                    if (event.type == "progress" || event.type == "vbook") {
+                    if (event.type == "progress" || event.type == "vbook" || event.type == "generation_complete") {
                         onProgressEvent(event)
                     }
                     // "open" events (type=open) are informational — ignore

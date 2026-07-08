@@ -1235,6 +1235,13 @@ class GenerateViewModel(
                     )}
                     // SSE only updates GPU panel. Chat messages come from pollAgentProgress
                     // using the same msgs.add + copy(toList) pattern as status messages.
+                } else if (event.type == "generation_complete") {
+                    // F11: Server-pushed terminal event — stop progress stream
+                    // and trigger playback refresh immediately, replacing the
+                    // 120s stuck heuristic that was on the client.
+                    Log.i(TAG, "SSE generation_complete received — applying results")
+                    stopProgressStream()
+                    applyGenerationResults()
                 } else if (event.layer == "image" && event.ready != null) {
                     val floor = maxOf(workerReadyFloor["image"] ?: 0, event.ready)
                     workerReadyFloor["image"] = floor
