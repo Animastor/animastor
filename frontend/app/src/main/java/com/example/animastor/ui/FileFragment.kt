@@ -74,7 +74,8 @@ class FileFragment : Fragment(R.layout.fragment_file) {
     private val openDocumentLauncher = registerForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri ->
-        if (uri == null) return@registerForActivityResult            runCatching {
+        if (uri == null) return@registerForActivityResult
+        runCatching {
             val tempFile = File(
                 requireContext().cacheDir,
                 "import-${System.currentTimeMillis()}"

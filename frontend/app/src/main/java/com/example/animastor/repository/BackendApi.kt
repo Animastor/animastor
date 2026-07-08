@@ -8,7 +8,7 @@ interface BackendApi {
 
     @Multipart
     @POST("/api/v1/book/import")
-    suspend fun importBook
+    suspend fun importBook(
         @Part file: MultipartBody.Part
     ): ImportResponse
 
