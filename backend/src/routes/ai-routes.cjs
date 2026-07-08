@@ -136,8 +136,27 @@ module.exports = function(app, redis, deps) {
             const sessionMode = mode || session.mode || 'chat';
             const tools = chatEngine.getToolsForMode(sessionMode, bookId, isLocked);
 
-            // Build system prompt: use frontend-provided `system` as base, append book context
-            let systemPrompt = system || chatEngine.loadSystemPrompt();
+            // Build system prompt:
+            // - If `system` is explicitly provided (legacy clients), use it as base
+            // - Otherwise, build from structured fields (mode, topic, lang, position)
+            //   via chatEngine.buildChatSystemPrompt() — this replaces the client-side
+            //   system prompt assembly in AiAssistantFragment.sendMessage().
+            let systemPrompt;
+            if (system) {
+                // Legacy path: frontend sent fully assembled prompt
+                systemPrompt = system;
+            } else {
+                // F6 path: assemble from structured fields on the server
+                systemPrompt = chatEngine.buildChatSystemPrompt({
+                    mode: mode || session.mode || 'conversation',
+                    topic: topic_id || session.topic_id || 'book',
+                    lang: req.body?.lang || 'auto',
+                    bookData,
+                    chapterId: req.body?.scene_id ? bookData?.chapters?.find(c => c.scenes?.some(s => s.scene_id === req.body.scene_id))?.chapter : null,
+                    sceneId: req.body?.scene_id || null,
+                    unitIndex: req.body?.unit_index ?? null,
+                });
+            }
             const bookContext = chatEngine.buildBookContext(bookData);
             if (bookContext) systemPrompt += '\n\n' + bookContext;
 

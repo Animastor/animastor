@@ -14,7 +14,121 @@ module.exports = function(config) {
     const AI_PROFILE_PATH = process.env.AI_PROFILE_PATH || '/data/ai-assistant-profile.md';
     const AI_API_BASE_URL = process.env.AI_API_BASE_URL || 'https://integrate.api.nvidia.com/v1';
 
-    // ── System prompt ─────────────────────────────────
+    // ── Mode-specific system prompts ──────────────────
+    const MODE_PROMPTS = {
+        conversation: 'You are a creative assistant in Conversational mode. Answer questions, discuss ideas, explain concepts, and brainstorm. Do NOT make any changes to the book — this is a read-only discussion.',
+        import: 'You are an Import specialist. Convert arbitrary text into Animastor book structure. Analyze the text and automatically determine chapters, scenes, and units. If a book is already open, decide whether the text is a new chapter, continuation of current chapter, or extension of current scene. If no book is open, create a new book with manifest, metadata, chapters, scenes, and units. The user must NOT manually mark chapters/scenes/units — determine the structure from content. Always produce a valid Animastor book JSON.',
+        edit: 'You are an Editor. You can modify scenes, characters, locations, objects, and book structure. Use the `edit_book` tool to apply changes. Always confirm changes with the user before applying.',
+        director: 'You are a Film Director. Advise on camera angles, composition, lighting, mood, and atmosphere for scenes. You can write into storyboard_elements for the current scene. Think visually and cinematically.',
+        extraction: 'You are an Extraction specialist. Extract structured entities from the text such as characters, objects, locations, and key terms.',
+        validation: 'You are a Validation specialist. Check book JSON for correctness, completeness, and integrity. Verify required fields, cross-references, scene links, and data consistency. Return a list of violations with severity levels.',
+    };
+
+    // ── Topic-specific system prompts ─────────────────
+    const TOPIC_PROMPTS = {
+        book: 'You are a creative assistant helping with a visual book project. Answer questions about the book, its plot, characters, and structure.',
+        scene: 'You are a scene editor assistant. Help refine the current scene: visuals, audio, pacing, and dialogue. Use the current position context (chapter/scene/unit) when relevant.',
+        characters: 'You are a character development assistant. Help design, refine, and track characters for the visual book.',
+        script: 'You are a scriptwriting assistant. Help with plot structure, narrative flow, scene transitions, and story arc.',
+    };
+
+    /**
+     * Build a system prompt from structured fields (mode, topic, language, position).
+     * Replaces the client-side system prompt assembly in AiAssistantFragment.
+     */
+    function buildChatSystemPrompt({ mode, topic, lang, bookData, chapterId, sceneId, unitIndex }) {
+        const appName = 'Animastor';
+        const modeKey = mode || 'conversation';
+        const topicKey = topic || 'book';
+        const modePrompt = MODE_PROMPTS[modeKey] || MODE_PROMPTS.conversation;
+        const topicPrompt = TOPIC_PROMPTS[topicKey] || TOPIC_PROMPTS.book;
+
+        // Resolve position context from book data
+        let positionContext = '';
+        if (bookData && chapterId) {
+            try {
+                const chapters = bookData.chapters || [];
+                const ch = chapters.find(c => c.chapter === chapterId);
+                const isSpecial = ch?.type === 'cover' || ch?.type === 'prologue';
+                const chTitle = ch?.chapter_title || '';
+                let chName = chapterId;
+                if (isSpecial) {
+                    chName = chTitle || ch?.type || chapterId;
+                } else if (chTitle) {
+                    chName = chTitle;
+                } else if (ch?.display_number != null) {
+                    chName = `Chapter ${ch.display_number}`;
+                }
+
+                let scName = '';
+                let unitDesc = '';
+                if (sceneId) {
+                    const scenes = ch?.scenes || [];
+                    const sc = scenes.find(s => s.scene_id === sceneId);
+                    const scIdx = scenes.indexOf(sc) + 1;
+                    if (scIdx > 0) {
+                        const titleSuffix = sc?.scene_title ? ` — ${sc.scene_title}` : '';
+                        scName = `Scene ${scIdx}${titleSuffix}`;
+                    }
+                    if (unitIndex != null && unitIndex >= 0) {
+                        const units = sc?.units || [];
+                        const unit = units[unitIndex];
+                        if (unit) {
+                            const typeLabel = unit.type ? unit.type.charAt(0).toUpperCase() + unit.type.slice(1) : 'Unit';
+                            const textSnippet = unit.text ? unit.text.slice(0, 60).replace(/[\n\r]/g, ' ') : '';
+                            unitDesc = textSnippet ? `${typeLabel} — "${textSnippet}"` : `${typeLabel} ${unitIndex + 1}`;
+                        } else {
+                            unitDesc = `Unit ${unitIndex + 1}`;
+                        }
+                    }
+                }
+
+                const parts = [`Current position: ${chName}`];
+                if (scName) parts.push(scName);
+                if (unitDesc) parts.push(unitDesc);
+                positionContext = parts.join(' / ');
+            } catch (_) {
+                // Silent fallback — position context is optional
+            }
+        }
+
+        // Language instruction
+        let langInstruction = '';
+        switch (lang) {
+            case 'ru':
+                langInstruction = '\n\nIMPORTANT: Always reply in Russian. Use Russian for all responses regardless of the user\'s language.';
+                break;
+            case 'en':
+                langInstruction = '';
+                break;
+            case 'auto':
+            default:
+                langInstruction = '\n\nIMPORTANT: Always reply in the user\'s language. If they write in Russian, reply in Russian. If they write in English, reply in English.';
+                break;
+        }
+
+        const parts = [
+            `Your name is ${appName}.`,
+            '',
+            `Mode: ${modeKey.charAt(0).toUpperCase() + modeKey.slice(1)}`,
+            modePrompt,
+            '',
+            `Topic: ${topicKey.charAt(0).toUpperCase() + topicKey.slice(1)}`,
+            topicPrompt,
+        ];
+        if (positionContext) {
+            parts.push('');
+            parts.push(`Current context: ${positionContext}`);
+        }
+        if (langInstruction) {
+            parts.push('');
+            parts.push(langInstruction.trim());
+        }
+
+        return parts.join('\n');
+    }
+
+    // ── System prompt (fallback for legacy clients) ────
     function loadSystemPrompt() {
         try {
             if (fs.existsSync(AI_PROFILE_PATH)) {
@@ -325,6 +439,7 @@ module.exports = function(config) {
         AI_PROFILE_PATH,
         AI_API_BASE_URL,
         loadSystemPrompt,
+        buildChatSystemPrompt,
         buildBookContext,
         getToolsForMode,
         parseAIResponse,

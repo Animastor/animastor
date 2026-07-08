@@ -724,31 +724,20 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
                 } else {
                     null
                 }
-                val topic = ChatTopic.getById(currentTopicId)
-                val mode = currentMode
                 val bid = generateViewModel.bookId.takeIf { it.isNotBlank() }
                     ?: argBookId?.takeIf { it.isNotBlank() }
-                val appName = getString(R.string.app_name)
                 val lang = requireContext().getSharedPreferences("animastor_settings", 0)
                     .getString("language", "auto")
 
-                val langInstruction = when (lang) {
-                    "ru" -> "\n\nIMPORTANT: Always reply in Russian. Use Russian for all responses regardless of the user's language."
-                    "en" -> ""
-                    "auto" -> "\n\nIMPORTANT: Always reply in the user's language. If they write in Russian, reply in Russian. If they write in English, reply in English."
-                    else -> "\n\nIMPORTANT: Always reply in the user's language. If they write in Russian, reply in Russian. If they write in English, reply in English."
-                }
-
-                val fullSystemPrompt = "Your name is $appName.\n\nMode: ${mode.englishTitle}\n${mode.systemPrompt}\n\nTopic: ${topic.englishTitle}\n${topic.systemPrompt}\n\n${
-                    if (resolvedPosition != null) "Current context: $resolvedPosition" else ""
-                }$langInstruction".trim()
+                // F6: system prompt is assembled server-side by chatEngine.buildChatSystemPrompt()
+                // from mode, topic, lang, scene_id. Frontend sends structured fields only.
                 val response = generateViewModel.repository.chatWithAiFull(
                     AiChatRequest(
                         apiMessages.toList(),
                         bookId = bid,
                         lang = lang,
-                        system = fullSystemPrompt,
                         mode = currentMode.id,
+                        topicId = currentTopicId,
                         sceneId = pos.sceneId,
                         characterId = null,
                         sessionId = sessionAtSend

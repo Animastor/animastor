@@ -2,37 +2,37 @@ package com.example.animastor.ui
 
 import com.example.animastor.R
 
+/**
+ * AI chat topics.
+ * systemPrompt removed in F6 — now assembled server-side by chatEngine.buildChatSystemPrompt().
+ * The frontend only keeps display properties (titles) for the UI chips.
+ */
 data class ChatTopic(
     val id: String,
     val titleRes: Int,
-    val englishTitle: String,
-    val systemPrompt: String
+    val englishTitle: String
 ) {
     companion object {
         val ALL = listOf(
             ChatTopic(
                 id = "book",
                 titleRes = R.string.ai_topic_book,
-                englishTitle = "Book",
-                systemPrompt = "You are a creative assistant helping with a visual book project. Answer questions about the book, its plot, characters, and structure."
+                englishTitle = "Book"
             ),
             ChatTopic(
                 id = "scene",
                 titleRes = R.string.ai_topic_scene,
-                englishTitle = "Scene",
-                systemPrompt = "You are a scene editor assistant. Help refine the current scene: visuals, audio, pacing, and dialogue. Use the current position context (chapter/scene/unit) when relevant."
+                englishTitle = "Scene"
             ),
             ChatTopic(
                 id = "characters",
                 titleRes = R.string.ai_topic_characters,
-                englishTitle = "Characters",
-                systemPrompt = "You are a character development assistant. Help design, refine, and track characters for the visual book."
+                englishTitle = "Characters"
             ),
             ChatTopic(
                 id = "script",
                 titleRes = R.string.ai_topic_script,
-                englishTitle = "Script",
-                systemPrompt = "You are a scriptwriting assistant. Help with plot structure, narrative flow, scene transitions, and story arc."
+                englishTitle = "Script"
             )
         )
 
