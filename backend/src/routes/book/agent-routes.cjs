@@ -51,7 +51,32 @@ module.exports = function(app, redis, deps) {
             `, [bookId]);
 
             const agentRow = agentResult.rows[0];
-            console.log('[AGENT-STATUS-DEBUG] bookId=' + bookId + ' agentRow=', JSON.stringify(agentRow || { noRow: true }));
+
+            // Fetch current step_type from the latest agent_steps row
+            let stepType = null;
+            if (agentRow) {
+                try {
+                    const stepsResult = await storage.postgres.query(`
+                        SELECT step_type FROM agent_steps
+                        WHERE session_id = $1 AND status = 'running'
+                        ORDER BY created_at DESC
+                        LIMIT 1
+                    `, [agentRow.session_id]);
+                    if (stepsResult.rows.length > 0) {
+                        stepType = stepsResult.rows[0].step_type;
+                    }
+                } catch (e) { /* best-effort */ }
+            }
+
+            const baseResponse = (extra) => ({
+                active: false, session_id: null, session_status: null,
+                progress_msg: 'Idle', source_type: null, window_index: null,
+                created_scenes: null, total_scenes: null, remaining_cached: null,
+                window_size: MAX_SCENES_PER_CHUNK,
+                window_start_scene: null, window_total_scenes: null, window_scene_index: null,
+                step_type: stepType,
+                ...extra,
+            });
 
             if (agentRow && agentRow.session_status === 'running') {
                 let windowData = null;
@@ -68,16 +93,13 @@ module.exports = function(app, redis, deps) {
                 }
                 const windowProgressMeta = buildWindowProgressMeta(createdScenes, totalScenes);
 
-                const response = {
+                return res.json(baseResponse({
                     active: true, session_id: agentRow.session_id,
                     session_status: 'running', progress_msg: agentRow.progress_msg || 'Working...',
                     source_type: agentRow.source_type, window_index: windowIndex,
                     created_scenes: createdScenes, total_scenes: totalScenes, remaining_cached: remainingCached,
-                    window_size: MAX_SCENES_PER_CHUNK,
                     ...windowProgressMeta,
-                };
-                console.log('[AGENT-STATUS-DEBUG] running response:', JSON.stringify(response));
-                return res.json(response);
+                }));
             }
 
             const genResult = await storage.postgres.query(`
@@ -90,16 +112,12 @@ module.exports = function(app, redis, deps) {
 
             const genRow = genResult.rows[0];
             if (genRow) {
-                const response = {
+                return res.json(baseResponse({
                     active: true, session_id: genRow.id, session_status: genRow.status,
                     progress_msg: genRow.progress_msg || 'Processing...',
                     source_type: 'window_generator', window_index: genRow.window_index,
-                    created_scenes: null, total_scenes: null, remaining_cached: null,
                     window_size: config.WINDOW_SIZE,
-                    window_start_scene: null, window_total_scenes: null, window_scene_index: null,
-                };
-                console.log('[AGENT-STATUS-DEBUG] gen response:', JSON.stringify(response));
-                return res.json(response);
+                }));
             }
 
             if (agentRow) {
@@ -114,24 +132,16 @@ module.exports = function(app, redis, deps) {
                     } catch (e) { /* ignore */ }
                 }
                 const windowProgressMeta = buildWindowProgressMeta(createdScenes, totalScenes);
-                const response = {
+                return res.json(baseResponse({
                     active: agentRow.session_status === 'running', session_id: agentRow.session_id,
                     session_status: agentRow.session_status, progress_msg: agentRow.progress_msg || 'Working...',
                     source_type: agentRow.source_type, window_index: windowIndex,
                     created_scenes: createdScenes, total_scenes: totalScenes, remaining_cached: remainingCached,
-                    window_size: MAX_SCENES_PER_CHUNK,
                     ...windowProgressMeta,
-                };
-                console.log('[AGENT-STATUS-DEBUG] paused/completed response:', JSON.stringify(response));
-                return res.json(response);
+                }));
             }
 
-            console.log('[AGENT-STATUS-DEBUG] no session found for bookId=' + bookId);
-            return res.json({
-                active: false, message: 'No active agent session',
-                window_size: config.WINDOW_SIZE,
-                window_start_scene: null, window_total_scenes: null, window_scene_index: null,
-            });
+            return res.json(baseResponse({ message: 'No active agent session' }));
         } catch (err) {
             console.error('[AGENT-STATUS] Error:', err.message);
             return res.status(500).json({ error: err.message });

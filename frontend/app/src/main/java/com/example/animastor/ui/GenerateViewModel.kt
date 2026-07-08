@@ -957,40 +957,22 @@ class GenerateViewModel(
      * Extracts stage (ANALYZING / CREATING_SCENES), scene index,
      * and total scenes from the progress message and response fields.
      *
+     * Stage is determined by [status.step_type] — a language-independent machine label
+     * from the backend (e.g. "create_scenes", "polish_storyboard").
+     * Falls back to message content matching only when step_type is absent.
+     *
      * Exact block counters come from the backend when available. [window_size]
      * is only a legacy fallback cap; the frontend must not infer source progress
      * from fixed 3-scene windows.
      */
     private fun updateVBookProgress(status: com.example.animastor.repository.AgentStatusResponse) {
-        val msg = status.progress_msg?.lowercase() ?: ""
-
-        // Determine stage from message content
-        val stage = when {
-            msg.contains("анализ") ||
-            msg.contains("analyzing") ||
-            msg.contains("extracting") ||
-            msg.contains("character") ||
-            msg.contains("location") ||
-            msg.contains("structure") ||
-            msg.contains("персонаж") ||
-            msg.contains("локац") ||
-            msg.contains("согласовыв") ||
-            msg.contains("сториборд") ||
-            msg.contains("полировк") ||
-            msg.contains("storyboard") ||
-            msg.contains("паспорт") ||
-            msg.contains("сверк") -> VBookStage.ANALYZING
-
-            msg.contains("сцен") ||
-            msg.contains("создаю юниты") ||
-            msg.contains("окно") ||
-            msg.contains("scene") ||
-            msg.contains("unit") ||
-            msg.contains("юнит") ||
-            msg.contains("визуал") ||
-            msg.contains("visual") -> VBookStage.CREATING_SCENES
-
-            else -> VBookStage.ANALYZING
+        val stage = when (status.step_type) {
+            // Scene-creation steps — show scene counter (x/y)
+            "create_scenes", "create_units", "create_visual_prompts" ->
+                VBookStage.CREATING_SCENES
+            // All other steps (analysis, enrichment, post-processing) — cyclic
+            else ->
+                VBookStage.ANALYZING
         }
 
         // Extract global scene number from "Создаю юниты для сцены 5..." or "создаю юниты для сцены 5..."

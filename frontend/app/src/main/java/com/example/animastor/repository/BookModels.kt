@@ -289,6 +289,9 @@ data class AgentStatusResponse(
     val window_start_scene: Int? = null,
     val window_total_scenes: Int? = null,
     val window_scene_index: Int? = null,
+    /** Machine-readable step type from agent_steps (e.g. "create_scenes", "polish_storyboard").
+     * Language-independent — used by the frontend to decide cyclic vs scene-counter progress. */
+    val step_type: String? = null,
 )
 
 data class BootstrapNextWindowResponse(
