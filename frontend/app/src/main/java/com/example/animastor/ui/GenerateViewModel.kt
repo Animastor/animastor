@@ -1506,21 +1506,27 @@ class GenerateViewModel(
                 val total: Int
                 val pct: Int
                 val countText: String
+                val indeterminate: Boolean
                 when (vbookProgress.stage) {
                     VBookStage.ANALYZING -> {
                         ready = 0; total = 1; pct = 0
                         countText = ""
+                        indeterminate = true
                     }
                     VBookStage.CREATING_SCENES -> {
-                        ready = 0; total = 1; pct = 0
-                        countText = ""
+                        ready = (vbookProgress.sceneIndex + 1).coerceAtLeast(1)
+                        total = (vbookProgress.totalScenes ?: vbookProgress.scenesInWindow).coerceAtLeast(1)
+                        pct = (ready * 100 / total).coerceIn(0, 99)
+                        countText = labels.vbookScenesFormat(ready, total)
+                        indeterminate = false
                     }
                     else -> {
                         ready = 0; total = 1; pct = 0
                         countText = ""
+                        indeterminate = true
                     }
                 }
-                workers.add(WorkerUi("vbook", label, ready, total, pct, done = false, countText = countText, indeterminate = true))
+                workers.add(WorkerUi("vbook", label, ready, total, pct, done = false, countText = countText, indeterminate = indeterminate))
             }
         }
 
