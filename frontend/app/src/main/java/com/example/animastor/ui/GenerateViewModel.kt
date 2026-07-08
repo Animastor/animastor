@@ -1509,21 +1509,18 @@ class GenerateViewModel(
                 when (vbookProgress.stage) {
                     VBookStage.ANALYZING -> {
                         ready = 0; total = 1; pct = 0
-                        countText = if (stageMsg != null) "" else labels.vbookAnalyzing
+                        countText = ""
                     }
                     VBookStage.CREATING_SCENES -> {
-                        total = vbookProgress.scenesInWindow.coerceAtLeast(1)
-                        ready = (vbookProgress.sceneIndex + 1).coerceIn(0, total)
-                        val fullyProgressed = ready >= total
-                        pct = if (fullyProgressed) 100 else (ready * 100 / total).coerceIn(0, 99)
-                        countText = labels.vbookScenesFormat(ready, total)
+                        ready = 0; total = 1; pct = 0
+                        countText = ""
                     }
                     else -> {
                         ready = 0; total = 1; pct = 0
                         countText = ""
                     }
                 }
-                workers.add(WorkerUi("vbook", label, ready, total, pct, done = false, countText = countText))
+                workers.add(WorkerUi("vbook", label, ready, total, pct, done = false, countText = countText, indeterminate = true))
             }
         }
 
@@ -1596,7 +1593,9 @@ data class WorkerUi(
     val total: Int,
     val percent: Int,
     val done: Boolean,
-    val countText: String? = null
+    val countText: String? = null,
+    /** Show cyclic/indeterminate progress bar (spinner). Hides x/y count and z%. */
+    val indeterminate: Boolean = false
 )
 
 /**

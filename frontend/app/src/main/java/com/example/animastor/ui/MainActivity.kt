@@ -724,13 +724,26 @@ class MainActivity : AppCompatActivity() {
             val pctView = row.findViewById<TextView>(R.id.workerPercent)
             val barView = row.findViewById<com.google.android.material.progressindicator.LinearProgressIndicator>(R.id.workerProgressBar)
 
-            if (worker.done) {
+            if (worker.indeterminate) {
+                // Cyclic/indeterminate progress — no count, no percentage
+                nameView.text = worker.label
+                nameView.setTextColor(textColor)
+                countView.text = ""
+                countView.visibility = View.GONE
+                pctView.text = ""
+                pctView.visibility = View.GONE
+                barView.isIndeterminate = true
+                barView.setIndicatorColor(accentColor)
+            } else if (worker.done) {
                 nameView.text = getString(R.string.generation_done) + " — " + worker.label
                 nameView.setTextColor(greenColor)
                 countView.text = worker.countText ?: "${worker.ready}/${worker.total}"
                 countView.setTextColor(greenColor)
+                countView.visibility = View.VISIBLE
                 pctView.text = "100%"
                 pctView.setTextColor(greenColor)
+                pctView.visibility = View.VISIBLE
+                barView.isIndeterminate = false
                 barView.setProgressCompat(100, true)
                 barView.setIndicatorColor(greenColor)
             } else {
@@ -738,8 +751,11 @@ class MainActivity : AppCompatActivity() {
                 nameView.setTextColor(textColor)
                 countView.text = worker.countText ?: "${worker.ready}/${worker.total}"
                 countView.setTextColor(mutedColor)
+                countView.visibility = View.VISIBLE
                 pctView.text = "${worker.percent}%"
                 pctView.setTextColor(accentColor)
+                pctView.visibility = View.VISIBLE
+                barView.isIndeterminate = false
                 barView.setProgressCompat(worker.percent, true)
                 barView.setIndicatorColor(accentColor)
             }
