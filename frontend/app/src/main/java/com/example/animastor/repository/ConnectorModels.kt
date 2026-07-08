@@ -160,11 +160,19 @@ data class ConnectorParameterValues(
 
 // ======================================================
 
+/**
+ * Grouped connectors response.
+ * active_count fields are server-computed (F12) — count of connectors
+ * with status "compatible" or "registered" per type.
+ */
 data class ConnectorGroupedResponse(
     val audio: List<ConnectorSummary> = emptyList(),
     val image: List<ConnectorSummary> = emptyList(),
     val video: List<ConnectorSummary> = emptyList(),
-    val unknown: List<ConnectorSummary> = emptyList()
+    val unknown: List<ConnectorSummary> = emptyList(),
+    val audio_active_count: Int = 0,
+    val image_active_count: Int = 0,
+    val video_active_count: Int = 0
 )
 
 // ======================================================

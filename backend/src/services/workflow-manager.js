@@ -337,7 +337,7 @@ function getConnectorsGrouped() {
     const result = {};
 
     for (const [type, conns] of Object.entries(grouped)) {
-        result[type] = conns.map(c => {
+        const items = conns.map(c => {
             const wfName = c.workflow;
             let status = 'unknown';
             if (workflows[wfName]) {
@@ -356,6 +356,9 @@ function getConnectorsGrouped() {
                 enabled: connectorLoader.isConnectorEnabled(connName)
             };
         });
+        // F12: server-computed active count (compatible + registered)
+        result[type] = items;
+        result[`${type}_active_count`] = items.filter(c => c.status === 'compatible' || c.status === 'registered').length;
     }
     return result;
 }

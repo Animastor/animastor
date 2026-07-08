@@ -49,7 +49,7 @@ class WorkflowManagerViewModel : ViewModel() {
             _loading.value = true
             _error.value = null
             try {
-                // Try grouped endpoint first
+                // F12: grouped endpoint is primary — no flat fallback needed
                 val grouped = api.getConnectorsGrouped()
                 _audioWorkflows.value = grouped.audio
                 _imageWorkflows.value = grouped.image
@@ -60,16 +60,6 @@ class WorkflowManagerViewModel : ViewModel() {
                 _allConnectors.value = response.connectors
             } catch (e: Exception) {
                 _error.value = e.message ?: "Failed to load connectors"
-                // Fallback: try flat list
-                try {
-                    val response = api.getConnectors()
-                    _allConnectors.value = response.connectors
-                    _audioWorkflows.value = response.connectors.filter { it.type == "audio" }
-                    _imageWorkflows.value = response.connectors.filter { it.type == "image" }
-                    _videoWorkflows.value = response.connectors.filter { it.type == "video" }
-                } catch (e2: Exception) {
-                    _error.value = e2.message ?: "Failed to load connectors"
-                }
             } finally {
                 _loading.value = false
             }
