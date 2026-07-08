@@ -304,17 +304,26 @@ async function stepReconcilePassports(sessionId, allVisualUnits, characters, ste
     const step = await createStep(sessionId, 'reconcile_passports', stepIndex || 0);
 
     // Build passport context: only characters that have actual passport data
+    // Characters from the agent pipeline have `appearance` field (not passport.*),
+    // while characters loaded from characters.json have `passport.*`. Handle both.
     const charsWithPassport = (characters || []).filter(c =>
         c.passport?.base_appearance || c.passport?.detailed_appearance ||
-        c.passport?.clothing_base || c.passport?.clothing_details
+        c.passport?.clothing_base || c.passport?.clothing_details ||
+        c.appearance
     );
     const charsContext = charsWithPassport.map(c => {
         const p = c.passport || {};
+        // Agent-pipeline characters have `appearance` (not passport.*).
+        // Map to passport-like fields so the reconciliation AI can compare.
+        const baseAppearance = p.base_appearance || c.appearance || c.description || '(none)';
+        const detailedAppearance = p.detailed_appearance || c.appearance || '(none)';
+        const clothingBase = p.clothing_base || '(none)';
+        const clothingDetails = p.clothing_details || '(none)';
         return `- ${c.id}: ${c.name || c.id}\n` +
-            `  base_appearance: ${p.base_appearance || '(none)'}\n` +
-            `  detailed_appearance: ${(p.detailed_appearance || '').substring(0, 200) || '(none)'}\n` +
-            `  clothing_base: ${p.clothing_base || '(none)'}\n` +
-            `  clothing_details: ${(p.clothing_details || '').substring(0, 200) || '(none)'}`;
+            `  base_appearance: ${baseAppearance}\n` +
+            `  detailed_appearance: ${detailedAppearance.substring(0, 200)}\n` +
+            `  clothing_base: ${clothingBase}\n` +
+            `  clothing_details: ${clothingDetails.substring(0, 200)}`;
     }).join('\n') || 'None';
 
     const unitsStr = allVisualUnits.map((u, i) =>
