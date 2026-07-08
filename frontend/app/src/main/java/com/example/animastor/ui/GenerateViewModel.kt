@@ -787,8 +787,10 @@ class GenerateViewModel(
      */
     private fun updateVBookProgress(status: com.example.animastor.repository.AgentStatusResponse) {
         val stage = when (status.step_type) {
-            // Scene-creation steps — show scene counter (x/y)
-            "create_scenes", "create_units", "create_visual_prompts" ->
+            // Scene-unit steps — show scene counter (x/y).
+            // "create_scenes" is excluded because AI hasn't determined
+            // the exact scene count yet — the counter would be unreliable.
+            "create_units", "create_visual_prompts" ->
                 VBookStage.CREATING_SCENES
             // All other steps (analysis, enrichment, post-processing) — cyclic
             else ->
@@ -990,7 +992,9 @@ class GenerateViewModel(
                 if (event.type == "vbook" || event.isVBook()) {
                     // VBook progress via SSE — update VBookProgress directly
                     val stage = when (event.vbookStage) {
-                        "creating_scenes", "creating_units", "creating_visuals" -> VBookStage.CREATING_SCENES
+                        // Only show scene counter on unit-stage SSE events.
+                        // "creating_scenes" has no window_scene_index yet.
+                        "creating_units", "creating_visuals" -> VBookStage.CREATING_SCENES
                         else -> VBookStage.ANALYZING
                     }
                     // Use server-provided fields directly. The backend sends
