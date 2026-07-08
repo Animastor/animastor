@@ -32,7 +32,7 @@ describe('Coreference — visual fallback participants', () => {
             participants: ['berlioz'],
             location: { id: 'patriarch_ponds' },
         });
-        expect(prompt).to.equal('berlioz at patriarch_ponds, cinematic shot');
+        expect(prompt).to.equal('berlioz at patriarch ponds, cinematic shot');
     });
 
     it('does not inject all known characters when participants are empty', () => {
@@ -40,7 +40,7 @@ describe('Coreference — visual fallback participants', () => {
             participants: [],
             location: { id: 'patriarch_ponds' },
         });
-        expect(prompt).to.equal('the scene at patriarch_ponds, cinematic shot');
+        expect(prompt).to.equal('the scene at patriarch ponds, cinematic shot');
         expect(prompt).to.not.include('berlioz');
         expect(prompt).to.not.include('ponyrev');
     });

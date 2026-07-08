@@ -15,7 +15,7 @@
 |---|---|---|---|
 | 1 | **F1** — профиль генерации на сервере | ✅ Готово | server-owned generation profile |
 | 2 | **F13** — `duration_ms` для IU на сервере | ✅ Готово | server-computed IU duration_ms |
-| 3 | **F9** — `cover_chunk_id` + `chunk_positions` в chunks | ⏳ Не начато | — |
+| 3 | **F9** — `cover_chunk_id` + `chunk_positions` в chunks | ✅ Готово | F9: server cover_chunk_id + chunk_positions |
 | 4 | **F7** — `chapter_title` всегда с сервера | ⏳ Не начато | — |
 | 5 | **F5** — `display_number`/`display_index` в модели книги | ⏳ Не начато | — |
 
@@ -25,7 +25,12 @@
 работал на своей копии `computeProfile()`. Маршруты реализованы, профиль теперь
 приходит с сервера (`resolveProfile`), клиентский дубль удалён.
 
-**Следующий шаг:** F9 (см. раздел 4, Волна 1).
+**Примечание по F9:** бэкенд теперь возвращает `cover_chunk_id` и `chunk_positions`
+в `GET /api/v1/book/:bookId/chunks` за один batch-запрос. Фронтенд использует эти
+поля вместо N индивидуальных `getChunkStoryboard` вызовов. Убраны 6 N+1 паттернов
+в `GenerateViewModel.kt`. Добавлены `ChunkPosition` и поля в `ChunkListResponse.kt`.
+
+**Следующий шаг:** F7 (см. раздел 4, Волна 1).
 
 ---
 

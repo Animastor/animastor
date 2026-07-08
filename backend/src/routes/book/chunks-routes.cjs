@@ -25,7 +25,40 @@ module.exports = function(app, redis, deps) {
     app.get('/api/v1/book/:bookId/chunks', async (req, res) => {
         const allIds = await getAllChunks(req.params.bookId);
         const windowStatus = await getBookWindowStatus(req.params.bookId);
-        res.json({ chunk_ids: allIds, total: allIds.length, ...windowStatus });
+
+        // Build chunk_positions map + find cover_chunk_id in one pass so the
+        // client never needs N individual getChunkStoryboard calls (F9 audit).
+        let coverChunkId = null;
+        const chunkPositions = {};
+        if (allIds.length > 0) {
+            try {
+                const keys = allIds.map(id => `animastor:chunk:${id}`);
+                const raw = await redis.mget(keys);
+                for (let i = 0; i < allIds.length; i++) {
+                    if (!raw[i]) continue;
+                    try {
+                        const c = JSON.parse(raw[i]);
+                        chunkPositions[allIds[i]] = {
+                            chapter_id: c.chapter_id || null,
+                            scene_id: c.scene_id || null,
+                        };
+                        if (c.scene_type === 'cover') {
+                            coverChunkId = allIds[i];
+                        }
+                    } catch (_) {}
+                }
+            } catch (err) {
+                console.warn('[CHUNKS] Failed to load chunk metadata:', err.message);
+            }
+        }
+
+        res.json({
+            chunk_ids: allIds,
+            total: allIds.length,
+            cover_chunk_id: coverChunkId,
+            chunk_positions: chunkPositions,
+            ...windowStatus
+        });
     });
 
     // ======================================================

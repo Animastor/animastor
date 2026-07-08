@@ -368,18 +368,10 @@ class GenerateViewModel(
             val chunkIds = allChunks?.chunk_ids?.toList() ?: return@launch
             if (chunkIds.isEmpty()) return@launch
 
-            val positions = mutableMapOf<String, Pair<String?, String?>>()
-            var coverChunkId: String? = null
-            for (cid in chunkIds) {
-                runCatching {
-                    _repository.getChunkStoryboard(cid).let { sb ->
-                        positions[cid] = Pair(sb.chapter_id, sb.scene_id)
-                        if (sb.scene_type == "cover") {
-                            coverChunkId = cid
-                        }
-                    }
-                }
-            }
+            val positions = allChunks.chunk_positions?.mapValues { (_, pos) ->
+                Pair(pos?.chapter_id, pos?.scene_id)
+            } ?: emptyMap()
+            val coverChunkId = allChunks.cover_chunk_id
             var cover: Bitmap? = null
             val coverId = coverChunkId ?: chunkIds.firstOrNull()
             if (coverId != null && imageEnabled) {
@@ -459,20 +451,11 @@ class GenerateViewModel(
                 runCatching { _repository.snapshotBook(bookId) }
 
                 val chunkIds = res.chunk_ids.toList()
-                val positions = mutableMapOf<String, Pair<String?, String?>>()
-                var coverChunkId: String? = null
-                for (cid in chunkIds) {
-                    runCatching {
-                        _repository.getChunkStoryboard(cid).let { sb ->
-                            positions[cid] = Pair(sb.chapter_id, sb.scene_id)
-                            if (sb.scene_type == "cover") {
-                                coverChunkId = cid
-                            }
-                        }
-                    }.onFailure { e ->
-                        Log.w(TAG, "failed to get storyboard for $cid: ${e.message}")
-                    }
-                }
+                val allChunksPositions = runCatching { _repository.getAllChunks(bookId) }.getOrNull()
+                val positions = allChunksPositions?.chunk_positions?.mapValues { (_, pos) ->
+                    Pair(pos?.chapter_id, pos?.scene_id)
+                } ?: emptyMap()
+                val coverChunkId = allChunksPositions?.cover_chunk_id
 
                 val firstPos = chunkIds.firstOrNull()?.let { positions[it] }
                 if (firstPos != null) {
@@ -543,18 +526,10 @@ class GenerateViewModel(
 
                 val allChunks = runCatching { _repository.getAllChunks(bookId) }.getOrElse { ChunkListResponse(emptyList()) }
                 val chunkIds = allChunks.chunk_ids.toList()
-                val positions = mutableMapOf<String, Pair<String?, String?>>()
-                var coverChunkId: String? = null
-                for (cid in chunkIds) {
-                    runCatching {
-                        _repository.getChunkStoryboard(cid).let { sb ->
-                            positions[cid] = Pair(sb.chapter_id, sb.scene_id)
-                            if (sb.scene_type == "cover") {
-                                coverChunkId = cid
-                            }
-                        }
-                    }
-                }
+                val positions = allChunks.chunk_positions?.mapValues { (_, pos) ->
+                    Pair(pos?.chapter_id, pos?.scene_id)
+                } ?: emptyMap()
+                val coverChunkId = allChunks.cover_chunk_id
                 Log.i(TAG, "loadBookFromFile: chunks=${chunkIds.size} positions=${positions.size}")
 
                 val firstPos = chunkIds.firstOrNull()?.let { positions[it] }
@@ -676,14 +651,9 @@ class GenerateViewModel(
                     // Load all chunks and prepare playback
                     val allChunks = runCatching { _repository.getAllChunks(bId) }.getOrNull()
                     val chunkIds = allChunks?.chunk_ids?.toList() ?: emptyList()
-                    val positions = mutableMapOf<String, Pair<String?, String?>>()
-                    for (cid in chunkIds) {
-                        runCatching {
-                            _repository.getChunkStoryboard(cid).let { sb ->
-                                positions[cid] = Pair(sb.chapter_id, sb.scene_id)
-                            }
-                        }
-                    }
+                    val positions = allChunks?.chunk_positions?.mapValues { (_, pos) ->
+                        Pair(pos?.chapter_id, pos?.scene_id)
+                    } ?: emptyMap()
                     val firstPos = chunkIds.firstOrNull()?.let { positions[it] }
                     if (firstPos != null) {
                         SharedPositionManager.navigateTo(chapterId = firstPos.first, sceneId = firstPos.second, unitIndex = 0)
@@ -765,14 +735,9 @@ class GenerateViewModel(
                 // Load all chunks
                 val allChunks = runCatching { _repository.getAllChunks(bId) }.getOrNull()
                 val chunkIds = allChunks?.chunk_ids?.toList() ?: emptyList()
-                val positions = mutableMapOf<String, Pair<String?, String?>>()
-                for (cid in chunkIds) {
-                    runCatching {
-                        _repository.getChunkStoryboard(cid).let { sb ->
-                            positions[cid] = Pair(sb.chapter_id, sb.scene_id)
-                        }
-                    }
-                }
+                val positions = allChunks?.chunk_positions?.mapValues { (_, pos) ->
+                    Pair(pos?.chapter_id, pos?.scene_id)
+                } ?: emptyMap()
                 val firstPos = chunkIds.firstOrNull()?.let { positions[it] }
                 if (firstPos != null) {
                     SharedPositionManager.navigateTo(chapterId = firstPos.first, sceneId = firstPos.second, unitIndex = 0)
@@ -1045,14 +1010,9 @@ class GenerateViewModel(
                 _repository.bootstrapBook(bId)
                 val allChunks = runCatching { _repository.getAllChunks(bId) }.getOrNull()
                 val chunkIds = allChunks?.chunk_ids?.toList() ?: emptyList()
-                val positions = mutableMapOf<String, Pair<String?, String?>>()
-                for (cid in chunkIds) {
-                    runCatching {
-                        _repository.getChunkStoryboard(cid).let { sb ->
-                            positions[cid] = Pair(sb.chapter_id, sb.scene_id)
-                        }
-                    }
-                }
+                val positions = allChunks?.chunk_positions?.mapValues { (_, pos) ->
+                    Pair(pos?.chapter_id, pos?.scene_id)
+                } ?: emptyMap()
                 val firstPos = chunkIds.firstOrNull()?.let { positions[it] }
                 if (firstPos != null) {
                     SharedPositionManager.navigateTo(chapterId = firstPos.first, sceneId = firstPos.second, unitIndex = 0)
