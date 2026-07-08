@@ -973,16 +973,22 @@ class GenerateViewModel(
             msg.contains("location") ||
             msg.contains("structure") ||
             msg.contains("персонаж") ||
-            msg.contains("локац") -> VBookStage.ANALYZING
+            msg.contains("локац") ||
+            msg.contains("согласовыв") ||
+            msg.contains("сториборд") ||
+            msg.contains("полировк") ||
+            msg.contains("storyboard") ||
+            msg.contains("паспорт") ||
+            msg.contains("сверк") -> VBookStage.ANALYZING
 
             msg.contains("сцен") ||
             msg.contains("создаю юниты") ||
             msg.contains("окно") ||
             msg.contains("scene") ||
             msg.contains("unit") ||
-            msg.contains("visual") ||
             msg.contains("юнит") ||
-            msg.contains("визуал") -> VBookStage.CREATING_SCENES
+            msg.contains("визуал") ||
+            msg.contains("visual") -> VBookStage.CREATING_SCENES
 
             else -> VBookStage.ANALYZING
         }
