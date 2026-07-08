@@ -37,6 +37,9 @@ module.exports = function(app, redis, deps) {
     // Agent status route
     require('./book/agent-routes.cjs')(app, redis, deps);
 
+    // Progress panel route (pre-computed worker list)
+    require('./book/progress-panel.cjs')(app, redis, deps);
+
     // Recovery routes
     require('./book/recovery-routes.cjs')(app, redis, deps);
 

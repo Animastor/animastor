@@ -1282,54 +1282,34 @@ class GenerateViewModel(
     }
 
     /**
-     * Compute progress total for stuck detection — SUM of all relevant layers.
-     */
-    fun getProgressTotal(assets: AssetsStateResponse): Int {
-        val imageReady = if (assets.scope_iu_total > 0) assets.scope_iu_ready else assets.scope_image_ready
-        return assets.scope_audio_ready_real +
-            imageReady +
-            assets.scope_video_ready +
-            assets.cover_iu_ready
-    }
-
-    /**
-     * Check if any layer is still incomplete (for stuck detection).
-     */
-    fun getAnyLayerIncomplete(assets: AssetsStateResponse): Boolean {
-        val imageReady = if (assets.scope_iu_total > 0) assets.scope_iu_ready else assets.scope_image_ready
-        val imageTotal = if (assets.scope_iu_total > 0) assets.scope_iu_total else assets.scope_total
-        return assets.scope_audio_ready_real < assets.scope_total ||
-            imageReady < imageTotal ||
-            assets.scope_video_ready < assets.scope_total ||
-            assets.cover_iu_ready < assets.cover_iu_total
-    }
-
-    /**
-     * Compute the worker progress panel state from current assets/VBook data.
-     *
-     * @return [ProgressPanelState.Workers] with active/completed workers,
-     *         [ProgressPanelState.DoneRow] when all workers are done (10s display),
-     *         or [ProgressPanelState.Hidden] when the panel should be hidden.
+     * Build the progress panel state from server-computed worker list + local VBook.
+     * Server provides ready/total/percent/done/visible for each GPU worker.
+     * Client keeps: 10s "Done" row timing, monotonic floor, VBook progress rendering.
      */
     fun computeWorkers(
-        assets: AssetsStateResponse?,
+        panel: com.example.animastor.repository.ProgressPanelResponse?,
         vbookProgress: VBookProgress?,
-        profile: String,
         labels: WorkerLabels
     ): ProgressPanelState {
         val now = System.currentTimeMillis()
-
-        // ── Build worker list ──
         val workers = mutableListOf<WorkerUi>()
 
-        fun add(type: String, label: String, ready: Int, total: Int, doneFlag: Boolean = false, countText: String? = null) {
-            if (total <= 0) return
+        fun addFromServer(
+            type: String,
+            label: String,
+            serverReady: Int,
+            serverTotal: Int,
+            serverDone: Boolean,
+            serverPct: Int,
+            serverIndeterminate: Boolean,
+            countText: String? = null
+        ) {
+            if (serverTotal <= 0) return
             if (type in _workerPermanentlyDone) return
-            // Monotonic floor: never show progress decreasing
-            val r = maxOf(ready, workerReadyFloor[type] ?: 0)
+            // Monotonic floor (client UI policy)
+            val r = maxOf(serverReady, workerReadyFloor[type] ?: 0)
             workerReadyFloor[type] = r
-            // Done by explicit backend flag, or fallback heuristic
-            val done = doneFlag || (r >= total && r > 0)
+            val done = serverDone || (r >= serverTotal && r > 0)
             if (done) {
                 if (!workerCompletedAt.containsKey(type)) {
                     workerCompletedAt[type] = now
@@ -1341,52 +1321,28 @@ class GenerateViewModel(
                     return
                 }
             }
-            val pct = if (done) 100 else (r * 100 / total).coerceIn(0, 99)
-            workers.add(WorkerUi(type, label, r, total, pct, done, countText))
+            val pct = if (done) 100 else serverPct.coerceIn(0, 99)
+            workers.add(WorkerUi(type, label, r, serverTotal, pct, done, countText = countText, indeterminate = serverIndeterminate))
         }
 
-        // ── GPU workers (from assets) ──
-        if (assets != null) {
-            val total = assets.scope_total
-
-            // Cover
-            if (assets.cover_iu_total > 0) {
-                if (assets.cover_iu_ready < assets.cover_iu_total) {
-                    _coverEverIncomplete = true
-                    val coverDone = assets.cover_iu_ready >= assets.cover_iu_total && assets.cover_iu_total > 0
-                    add("cover", labels.cover, assets.cover_iu_ready, assets.cover_iu_total, doneFlag = coverDone)
-                } else if (_coverEverIncomplete) {
-                    val coverDone = assets.cover_iu_ready >= assets.cover_iu_total && assets.cover_iu_total > 0
-                    add("cover", labels.cover, assets.cover_iu_ready, assets.cover_iu_total, doneFlag = coverDone)
+        // ── GPU workers (from server progress-panel) ──
+        if (panel != null) {
+            for (sw in panel.workers) {
+                if (!sw.visible) continue
+                val label = when (sw.type) {
+                    "cover" -> labels.cover
+                    "audio" -> labels.audio
+                    "image" -> labels.image
+                    "video" -> labels.video
+                    else -> sw.type
                 }
-            }
-
-            if (total > 0) {
-                val audioNeeded = profile == "audio_only" || profile == "storyboard" || profile == "full"
-                if (audioNeeded) {
-                    add("audio", labels.audio, assets.scope_audio_ready_real, total, doneFlag = assets.scope_all_audio_ready)
-                }
-
-                val imageNeeded = profile == "image_only" || profile == "storyboard" || profile == "full"
-                if (imageNeeded) {
-                    val useIu = assets.scope_iu_total > 0
-                    val imageDone = if (useIu) assets.scope_iu_ready >= assets.scope_iu_total else assets.scope_all_image_ready
-                    add("image", labels.image,
-                        if (useIu) assets.scope_iu_ready else assets.scope_image_ready,
-                        if (useIu) assets.scope_iu_total else total,
-                        doneFlag = imageDone)
-                }
-
-                if (profile == "full" || profile == "video_only") {
-                    add("video", labels.video, assets.scope_video_ready, total, doneFlag = assets.scope_all_video_ready)
-                }
+                addFromServer(sw.type, label, sw.ready, sw.total, sw.done, sw.percent, sw.indeterminate)
             }
         }
 
-        // ── VBook worker ──
+        // ── VBook worker (local state) ──
         if (vbookProgress != null && vbookProgress.stage != VBookStage.IDLE) {
             if (vbookProgress.stage == VBookStage.COMPLETED) {
-                // VBook done — show green "Done" for 10s
                 val completedAt = workerCompletedAt.getOrPut("vbook") { now }
                 if (now - completedAt < COMPLETED_WORKER_DISPLAY_MS && "vbook" !in _workerPermanentlyDone) {
                     workers.add(WorkerUi("vbook", labels.vbookLabel, 1, 1, 100, done = true))
@@ -1395,40 +1351,31 @@ class GenerateViewModel(
                     workerCompletedAt.remove("vbook")
                 }
             } else {
-                // Use the backend PROGRESS_STAGES message as the label when available,
-                // falling back to the generic vbookLabel for completed workers.
                 val stageMsg = vbookProgress.message?.takeIf { it.isNotBlank() }
                 val label = stageMsg ?: labels.vbookLabel
-                val ready: Int
-                val total: Int
-                val pct: Int
-                val countText: String
-                val indeterminate: Boolean
+                val ready: Int; val totalVBook: Int; val pctVBook: Int; val countText: String; val indeterminate: Boolean
                 when (vbookProgress.stage) {
                     VBookStage.ANALYZING -> {
-                        ready = 0; total = 1; pct = 0
-                        countText = ""
-                        indeterminate = true
+                        ready = 0; totalVBook = 1; pctVBook = 0
+                        countText = ""; indeterminate = true
                     }
                     VBookStage.CREATING_SCENES -> {
-                        total = vbookProgress.scenesInWindow.coerceAtLeast(1)
-                        ready = (vbookProgress.sceneIndex + 1).coerceIn(0, total)
-                        val fullyProgressed = ready >= total
-                        pct = if (fullyProgressed) 100 else (ready * 100 / total).coerceIn(0, 99)
-                        countText = labels.vbookScenesFormat(ready, total)
+                        totalVBook = vbookProgress.scenesInWindow.coerceAtLeast(1)
+                        ready = (vbookProgress.sceneIndex + 1).coerceIn(0, totalVBook)
+                        pctVBook = if (ready >= totalVBook) 100 else (ready * 100 / totalVBook).coerceIn(0, 99)
+                        countText = labels.vbookScenesFormat(ready, totalVBook)
                         indeterminate = false
                     }
                     else -> {
-                        ready = 0; total = 1; pct = 0
-                        countText = ""
-                        indeterminate = true
+                        ready = 0; totalVBook = 1; pctVBook = 0
+                        countText = ""; indeterminate = true
                     }
                 }
-                workers.add(WorkerUi("vbook", label, ready, total, pct, done = false, countText = countText, indeterminate = indeterminate))
+                workers.add(WorkerUi("vbook", label, ready, totalVBook, pctVBook, done = false, countText = countText, indeterminate = indeterminate))
             }
         }
 
-        // ── Recently completed workers ──
+        // ── Recently completed workers (still within 10s display window) ──
         val activeTypes = workers.map { it.type }.toSet()
         val staleTypes = mutableListOf<String>()
         for ((type, completedAt) in workerCompletedAt) {
@@ -1440,10 +1387,8 @@ class GenerateViewModel(
             }
             if (type in activeTypes) continue
             val label = when (type) {
-                "cover" -> labels.cover
-                "audio" -> labels.audio
-                "image" -> labels.image
-                "video" -> labels.video
+                "cover" -> labels.cover; "audio" -> labels.audio
+                "image" -> labels.image; "video" -> labels.video
                 "vbook" -> labels.vbookLabel
                 else -> labels.generationDone
             }
@@ -1453,27 +1398,23 @@ class GenerateViewModel(
 
         // ── Decide panel state ──
         if (workers.isEmpty()) {
-            // Nothing ever started — panel should stay hidden.
-            // This prevents infinite flickering when polling with null assets/VBook.
             if (gpuProgressDoneAt == 0L && workerCompletedAt.isEmpty() && _workerPermanentlyDone.isEmpty()) {
                 return ProgressPanelState.Hidden
             }
-            // All done — show single green row for 10s
             if (gpuProgressDoneAt == 0L) gpuProgressDoneAt = now
             val elapsed = now - gpuProgressDoneAt
             if (elapsed < COMPLETED_WORKER_DISPLAY_MS) {
                 return ProgressPanelState.DoneRow
             } else {
-                // Done row display cycle complete — trigger completion callbacks
                 stopProgressStream()
                 workerCompletedAt.clear()
                 _workerPermanentlyDone.clear()
                 gpuProgressDoneAt = 0L
-                val shouldRefreshPlayback = assets != null || vbookProgress?.stage == VBookStage.COMPLETED
+                val shouldRefresh = panel != null || vbookProgress?.stage == VBookStage.COMPLETED
                 if (vbookProgress?.stage == VBookStage.COMPLETED) {
                     _uiState.update { it.copy(vbookProgress = VBookProgress(stage = VBookStage.IDLE)) }
                 }
-                if (shouldRefreshPlayback) {
+                if (shouldRefresh) {
                     applyGenerationResults()
                 }
                 return ProgressPanelState.Hidden

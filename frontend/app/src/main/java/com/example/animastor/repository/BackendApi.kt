@@ -306,6 +306,14 @@ interface BackendApi {
         @Body request: TriggerNextWindowRequest
     ): TriggerNextWindowResponse
 
+    @GET("/api/v1/book/{bookId}/progress-panel")
+    suspend fun getProgressPanel(
+        @Path("bookId") bookId: String,
+        @Query("scope") scope: String? = null,
+        @Query("chapter_id") chapterId: String? = null,
+        @Query("scene_id") sceneId: String? = null
+    ): ProgressPanelResponse
+
     @GET("/api/v1/book/{bookId}/generation-state")
     suspend fun getGenerationState(
         @Path("bookId") bookId: String

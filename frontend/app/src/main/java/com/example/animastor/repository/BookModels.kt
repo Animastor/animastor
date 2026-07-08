@@ -361,6 +361,28 @@ data class PreliminaryObject(
 )
 
 // ======================================================
+// Progress Panel Models (server-computed worker list, F2)
+// ======================================================
+
+data class ProgressPanelResponse(
+    val book_id: String = "",
+    val profile: String? = null,
+    val workers: List<ProgressWorker> = emptyList(),
+    val overall_percent: Int = 0,
+    val any_incomplete: Boolean = false
+)
+
+data class ProgressWorker(
+    val type: String = "",
+    val ready: Int = 0,
+    val total: Int = 0,
+    val percent: Int = 0,
+    val done: Boolean = false,
+    val visible: Boolean = true,
+    val indeterminate: Boolean = false
+)
+
+// ======================================================
 // Window Generation Models
 // ======================================================
 

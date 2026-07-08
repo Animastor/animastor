@@ -541,18 +541,15 @@ class MainActivity : AppCompatActivity() {
             val hasActiveWork = activeGen != null || hasVBook
 
             if (!hasActiveWork) {
-                // Delegate done-row display and VBook window polling to VM
-                val panelState = viewModel.computeWorkers(null, vbookProg, viewModel.currentProfile(), labels)
+                val panelState = viewModel.computeWorkers(null, vbookProg, labels)
                 if (panelState is ProgressPanelState.DoneRow || panelState is ProgressPanelState.Workers) {
                     applyPanelState(panelState)
                     delay(1_500)
                     continue
                 }
-                // Panel was Hidden (done row expired) — cleanup done by VM
                 if (panelState is ProgressPanelState.Hidden && binding.generationProgressContainer.visibility != View.GONE) {
                     binding.generationProgressContainer.visibility = View.GONE
                 }
-                // Poll agent status for VBook windows triggered by WindowTriggerManager
                 val agentProg = viewModel.checkVBookAgentStatus()
                 if (agentProg.stage != VBookStage.IDLE) {
                     if (!_lastHasVBook) {
@@ -560,7 +557,7 @@ class MainActivity : AppCompatActivity() {
                         viewModel.startProgressStream(bookId)
                         _lastHasVBook = true
                     }
-                    val ps = viewModel.computeWorkers(null, agentProg, viewModel.currentProfile(), labels)
+                    val ps = viewModel.computeWorkers(null, agentProg, labels)
                     applyPanelState(ps)
                     delay(1_500)
                     continue
@@ -588,22 +585,22 @@ class MainActivity : AppCompatActivity() {
             _lastActiveGeneration = activeGen
             _lastHasVBook = hasVBook
 
-            // ── Poll GPU assets (if GPU gen active) or just show VBook ──
+            // ── Poll progress panel (if GPU gen active) or just show VBook ──
             if (activeGen != null) {
                 try {
-                    val assets = viewModel.repository.getAssetsState(
+                    val panel = viewModel.repository.getProgressPanel(
                         bookId = bookId,
                         scope = activeGen.scope,
                         chapterId = activeGen.chapterId,
                         sceneId = activeGen.sceneId
                     )
-                    val panelState = viewModel.computeWorkers(assets, if (hasVBook) vbookProg else null, viewModel.currentProfile(), labels)
+                    val panelState = viewModel.computeWorkers(panel, if (hasVBook) vbookProg else null, labels)
                     applyPanelState(panelState)
 
                     // Detect stuck progress (only when panel shows workers)
                     if (panelState is ProgressPanelState.Workers) {
-                        val progressTotal = viewModel.getProgressTotal(assets)
-                        val anyLayerIncomplete = viewModel.getAnyLayerIncomplete(assets)
+                        val progressTotal = panel.overall_percent
+                        val anyLayerIncomplete = panel.any_incomplete
                         if (progressTotal != lastReadyCount) {
                             lastReadyCount = progressTotal
                             lastReadyChangeAt = System.currentTimeMillis()
@@ -623,25 +620,21 @@ class MainActivity : AppCompatActivity() {
                         }
                     }
 
-                    // Reset backoff + failure flag on successful poll
                     lastPollFailed = false
                     pollerBackoffMs = 1_500L
                 } catch (e: Exception) {
                     Log.w("MainActivity", "GPU progress poll failed: ${e.message}")
                     lastPollFailed = true
-                    // Exponential backoff on errors (1.5s → 3s → 6s cap)
                     pollerBackoffMs = (pollerBackoffMs * 2).coerceAtMost(6_000L)
-                    // Still show VBook if available
                     if (hasVBook) {
-                        val ps = viewModel.computeWorkers(null, vbookProg, viewModel.currentProfile(), labels)
+                        val ps = viewModel.computeWorkers(null, vbookProg, labels)
                         applyPanelState(ps)
                     }
                 }
             } else if (hasVBook) {
-                // VBook only (no GPU gen) — poll agent status and show progress
                 val updated = viewModel.checkVBookAgentStatus()
                 val vbookToShow = if (updated.stage != VBookStage.IDLE) updated else vbookProg
-                val ps = viewModel.computeWorkers(null, vbookToShow, viewModel.currentProfile(), labels)
+                val ps = viewModel.computeWorkers(null, vbookToShow, labels)
                 applyPanelState(ps)
             }
 

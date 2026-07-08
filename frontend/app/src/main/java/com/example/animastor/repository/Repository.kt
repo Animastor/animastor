@@ -429,6 +429,16 @@ class Repository(
         return api.slideWindow(bookId)
     }
 
+    suspend fun getProgressPanel(
+        bookId: String,
+        scope: String? = null,
+        chapterId: String? = null,
+        sceneId: String? = null
+    ): ProgressPanelResponse {
+        Log.d("Repo", "getProgressPanel: $bookId scope=$scope chapter=$chapterId scene=$sceneId")
+        return api.getProgressPanel(bookId, scope, chapterId, sceneId)
+    }
+
     suspend fun cancelGeneration(bookId: String) {
         Log.i("Repo", "cancelGeneration: $bookId")
         api.cancelGeneration(bookId)
