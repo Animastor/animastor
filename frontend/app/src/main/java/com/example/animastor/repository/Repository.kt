@@ -621,13 +621,14 @@ class Repository(
     // Window Generation (trigger + state)
     // ======================================================
 
-    suspend fun triggerNextWindow(bookId: String, chapterId: String? = null, sceneId: String? = null, unitId: String? = null, registerForGpu: Boolean? = null): TriggerNextWindowResponse {
-        Log.i("Repo", "triggerNextWindow: $bookId ch=$chapterId sc=$sceneId register_for_gpu=$registerForGpu")
+    suspend fun triggerNextWindow(bookId: String, chapterId: String? = null, sceneId: String? = null, unitId: String? = null, unitIndex: Int? = null, registerForGpu: Boolean? = null): TriggerNextWindowResponse {
+        Log.i("Repo", "triggerNextWindow: $bookId ch=$chapterId sc=$sceneId unitIdx=$unitIndex register_for_gpu=$registerForGpu")
         return try {
             val response = api.triggerNextWindow(bookId, TriggerNextWindowRequest(
                 chapter_id = chapterId,
                 scene_id = sceneId,
                 unit_id = unitId,
+                unit_index = unitIndex,
                 register_for_gpu = registerForGpu,
             ))
             Log.i("Repo", "triggerNextWindow: triggered=${response.triggered} queued=${response.queued} window=${response.window_index} all_done=${response.all_done}")

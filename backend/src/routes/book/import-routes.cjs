@@ -361,9 +361,9 @@ module.exports = function(app, redis, deps) {
     app.post('/api/v1/book/:bookId/trigger-next-window', async (req, res) => {
         try {
             const { bookId } = req.params;
-            const { chapter_id, scene_id, unit_id, register_for_gpu = true } = req.body || {};
+            const { chapter_id, scene_id, unit_index, register_for_gpu = true } = req.body || {};
 
-            log(`[TRIGGER] next-window called for ${bookId} (params: chapter_id=${chapter_id} scene_id=${scene_id})`);
+            log(`[TRIGGER] next-window called for ${bookId} (ch=${chapter_id} sc=${scene_id} unit=${unit_index})`);
 
             if (!bookId) return res.status(400).json({ error: 'bookId required' });
 
@@ -379,20 +379,70 @@ module.exports = function(app, redis, deps) {
                 return res.status(400).json({ error: 'Book not ready for next window, state: ' + draft.manifest.state });
             }
 
+            // ── Server-side trigger decision logic (replaces client-side WindowTriggerManager) ──
+            let targetScene, targetUnits;
             if (chapter_id && scene_id) {
                 const chapters = draft?.chapters || [];
-                if (chapters.length > 0) {
-                    let found = false;
-                    for (const ch of chapters) {
-                        if (ch.chapter === chapter_id) {
-                            for (const sc of (ch.scenes || [])) {
-                                if (sc.scene_id === scene_id) { found = true; break; }
+                let found = false;
+                for (const ch of chapters) {
+                    if (ch.chapter === chapter_id) {
+                        for (const sc of (ch.scenes || [])) {
+                            if (sc.scene_id === scene_id) {
+                                found = true;
+                                targetScene = sc;
+                                targetUnits = sc.units || [];
+                                break;
                             }
-                            if (!found) log(`[TRIGGER] ⚠️ scene ${scene_id} not in chapter ${chapter_id}, continuing anyway`);
-                            break;
+                        }
+                        if (!found) log(`[TRIGGER] ⚠️ scene ${scene_id} not in chapter ${chapter_id}, continuing anyway`);
+                        break;
+                    }
+                }
+
+                if (found) {
+                    // 1. Content tail check: is this the last non-cover, non-intro scene?
+                    const allContentScenes = [];
+                    for (const ch of chapters) {
+                        for (const sc of (ch.scenes || [])) {
+                            if (sc.type !== 'cover' && sc.type !== 'chapter_intro') {
+                                allContentScenes.push({ chapter: ch.chapter, sceneId: sc.scene_id });
+                            }
                         }
                     }
-                    if (found) log(`[TRIGGER] ✅ chapter ${chapter_id}/scene ${scene_id} validated`);
+                    const contentTail = allContentScenes[allContentScenes.length - 1];
+                    if (!contentTail || contentTail.chapter !== chapter_id || contentTail.sceneId !== scene_id) {
+                        log(`[TRIGGER] ❌ not at content tail`);
+                        return res.json({ triggered: false, reason: 'not_at_content_tail' });
+                    }
+
+                    // 2. Last-3 units check
+                    if (targetUnits.length > 3 && unit_index != null && unit_index >= 0) {
+                        const last3Start = targetUnits.length - 3;
+                        if (unit_index < last3Start) {
+                            log(`[TRIGGER] ❌ unit ${unit_index} not in last 3 of ${targetUnits.length} units`);
+                            return res.json({ triggered: false, reason: 'not_last_units', unit_index, last3_start: last3Start });
+                        }
+                    }
+
+                    // 3. Cooldown check (60s in Redis)
+                    const cooldownKey = `trigger_cooldown:${bookId}`;
+                    const lastTrigger = await redis.get(cooldownKey);
+                    if (lastTrigger) {
+                        const elapsed = Date.now() - parseInt(lastTrigger, 10);
+                        if (elapsed < 60000) {
+                            log(`[TRIGGER] ⏳ cooldown: ${Math.round(elapsed / 1000)}s`);
+                            return res.json({ triggered: false, reason: 'cooldown', remaining_ms: 60000 - elapsed });
+                        }
+                    }
+
+                    // 4. Dedup check: has this frontier already triggered?
+                    const dedupKey = `trigger_dedup:${bookId}`;
+                    const windowKey = `${chapter_id}:${scene_id}`;
+                    const alreadyTriggered = await redis.sismember(dedupKey, windowKey);
+                    if (alreadyTriggered) {
+                        log(`[TRIGGER] 🔁 already triggered for frontier ${windowKey}`);
+                        return res.json({ triggered: false, reason: 'already_triggered' });
+                    }
                 }
             }
 
@@ -471,6 +521,14 @@ module.exports = function(app, redis, deps) {
                     }
                 });
 
+                // Record trigger dedup + cooldown
+                const wKey = `${req.body?.chapter_id || ''}:${req.body?.scene_id || ''}`;
+                if (wKey !== ':') {
+                    await redis.sadd(`trigger_dedup:${bookId}`, wKey);
+                    await redis.expire(`trigger_dedup:${bookId}`, 86400);
+                }
+                await redis.set(`trigger_cooldown:${bookId}`, Date.now().toString());
+
                 return res.json({ triggered: true, source: 'txt_import', session_id: agentSession.session_id });
             }
 
@@ -512,6 +570,14 @@ module.exports = function(app, redis, deps) {
                     console.error(`[TRIGGER] ❌ Background gen crashed: ${err.message}`);
                 });
             });
+
+            // Record trigger dedup + cooldown
+            const wKey2 = `${req.body?.chapter_id || ''}:${req.body?.scene_id || ''}`;
+            if (wKey2 !== ':') {
+                await redis.sadd(`trigger_dedup:${bookId}`, wKey2);
+                await redis.expire(`trigger_dedup:${bookId}`, 86400);
+            }
+            await redis.set(`trigger_cooldown:${bookId}`, Date.now().toString());
 
             log(`[TRIGGER] ✅ started background window ${nextWindowIndex}, session=${session.id} (from PG ${lastWindow})`);
             return res.json({ triggered: true, session_id: session.id, window_index: nextWindowIndex });

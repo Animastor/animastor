@@ -390,6 +390,7 @@ data class TriggerNextWindowRequest(
     val chapter_id: String? = null,
     val scene_id: String? = null,
     val unit_id: String? = null,
+    val unit_index: Int? = null,
     val register_for_gpu: Boolean? = null
 )
 
@@ -399,6 +400,7 @@ data class TriggerNextWindowResponse(
     val session_id: String? = null,
     val window_index: Int? = null,
     val all_done: Boolean = false,
+    val reason: String? = null,
     val error: String? = null
 )
 
