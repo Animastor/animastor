@@ -4,6 +4,51 @@ All notable changes to Animastor are documented here.
 
 ---
 
+## [Unreleased] — 2026-07-08
+
+### Added
+
+- **Storyboard Polish — continuity correction step** (`backend/src/services/agent-prompts.js`,
+  `backend/src/services/agent/pipeline-steps.js`, `backend/src/services/agent/pipeline-runner.js`):
+  Новый этап постобработки визуальных юнитов. После генерации всех IU для окна вызывается
+  `stepPolishStoryboard` — AI в роли Storyboard Supervisor согласовывает последовательность
+  кадров: правило 180°, прогрессия крупности планов, непрерывность позиционирования
+  персонажей, отсутствие телепортаций. Меняет только `visual.prompt` и `visual.shot`.
+
+- **Passport Reconciliation — Сверка паспортов** (`backend/src/services/agent-prompts.js`,
+  `backend/src/services/agent/pipeline-steps.js`, `backend/src/services/agent/pipeline-runner.js`):
+  Новый этап перед Storyboard Polish. AI удаляет семантические дубликаты описаний из
+  `visual.prompt`, которые конфликтуют с автоматически инжектимыми паспортами персонажей
+  (base_appearance, clothing_base и т.д.). Убирает «две шляпы» — повторяющиеся признаки.
+  Step type `reconcile_passports` добавлен в check constraint БД.
+
+- **scene.passport override mechanism** (`backend/src/image/prompt-builder.js`):
+  `resolvePassport` теперь проверяет `scene?.passport?.[c.id]` с наивысшим приоритетом.
+  Позволяет переопределить поля глобального паспорта (clothing_base, appearance и т.д.)
+  на уровне конкретной сцены — для смены одежды, ранений, временных изменений.
+
+### Changed
+
+- **MAX_WINDOW_CHARS теперь вычисляется из MAX_SCENES_PER_CHUNK** (`agent-prompts.js`):
+  `MAX_WINDOW_CHARS = 100 + MAX_SCENES_PER_CHUNK × 1300` вместо хардкода 4000.
+  При изменении количества сцен на окно символьный бюджет подстраивается автоматически.
+
+- **VBook progress — циклический индикатор** (`frontend/.../GenerateViewModel.kt`,
+  `frontend/.../MainActivity.kt`): `WorkerUi.indeterminate` для VBook-этапов (ANALYZING,
+  CREATING_SCENES). Скрывает x/y и z%, показывает циклический spinner.
+
+- **locations.json больше не содержит visual_style и default_mood** (`lazy-book/create.js`):
+  Убраны поля-пустышки, которые не несли смысловой нагрузки. `cinematic_space` оставлен
+  (используется для fuzzy-матчинга в prompt-builder.js).
+
+### Removed
+
+- **voice из characters.json** (`ai/examples/characters.json`, `lazy-book/create.js`):
+  Поле `voice` удалено из character-объектов при записи в `characters.json`.
+  Голоса хранятся только в `voices.json`.
+
+---
+
 ## [Unreleased] — 2026-07-07
 
 ### Changed
