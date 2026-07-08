@@ -679,51 +679,7 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
         lifecycleScope.launch {
             try {
                     val pos = SharedPositionManager.current.value
-                    val iuLabel = if (pos.unitId != null) pos.unitId else if (pos.unitIndex > 0) "${getString(R.string.navigate_unit)} ${pos.unitIndex + 1}" else ""
-
-                // Resolve hex IDs to human-readable names
-                val resolvedPosition = if (pos.chapterId != null) {
-                    val bookForPos = bookData ?: runCatching {
-                        val bid = generateViewModel.bookId.takeIf { it.isNotBlank() }
-                            ?: argBookId?.takeIf { it.isNotBlank() }
-                        if (bid != null) generateViewModel.repository.getBook(bid) else null
-                    }.getOrNull()
-                    val ch = bookForPos?.chapters?.firstOrNull { it.chapter == pos.chapterId }
-                    val sc = ch?.scenes?.firstOrNull { it.scene_id == pos.sceneId }
-                    val chIdx = bookForPos?.chapterIndex(pos.chapterId) ?: 0
-                    val scIdx = bookForPos?.sceneIndex(pos.chapterId, pos.sceneId) ?: 0
-                    val isSpecial = ch?.type == "cover" || ch?.type == "prologue"
-                    val chapters = bookForPos?.chapters ?: emptyList()
-                    val chName = if (isSpecial) {
-                        ch?.chapter_title?.takeIf { it.isNotBlank() } ?: ch?.type?.replaceFirstChar { it.uppercase() }
-                    } else if (ch?.chapter_title != null) {
-                        ch.chapter_title
-                    } else if (ch?.display_number != null) {
-                        "${getString(R.string.navigate_chapter)} ${ch.display_number}"
-                    } else {
-                        pos.chapterId
-                    }
-        val scName = if (scIdx > 0) {
-                        val titleSuffix = if (sc?.scene_title != null) " — ${sc.scene_title}" else ""
-                        "${getString(R.string.navigate_scene)} $scIdx$titleSuffix"
-                    } else {
-                        pos.sceneId ?: "?"
-                    }
-                    // Resolve unit to human-readable description
-                    val unit = sc?.units?.firstOrNull { it.id == pos.unitId }
-                    val unitDesc = if (unit != null) {
-                        val typeLabel = unit.type?.replaceFirstChar { it.uppercase() } ?: "Unit"
-                        val textSnippet = unit.text?.take(80)?.let { t -> if (t.isNotBlank()) " — \"$t\"" else "" } ?: ""
-                        "$typeLabel$textSnippet"
-                    } else {
-                        iuLabel
-                    }
-                    buildString {
-                        append("Current position: $chName / $scName — $unitDesc")
-                    }
-                } else {
-                    null
-                }
+                // F6: position resolution moved to server-side buildChatSystemPrompt
                 val bid = generateViewModel.bookId.takeIf { it.isNotBlank() }
                     ?: argBookId?.takeIf { it.isNotBlank() }
                 val lang = requireContext().getSharedPreferences("animastor_settings", 0)

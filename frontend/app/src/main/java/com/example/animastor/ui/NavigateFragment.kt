@@ -182,8 +182,7 @@ class NavigateFragment : Fragment(R.layout.fragment_navigate) {
         if (pos.chapterId != null) {
             val ch = bookData?.chapters?.firstOrNull { it.chapter == pos.chapterId }
             val sc = ch?.scenes?.firstOrNull { it.scene_id == pos.sceneId }
-            val chIdx = bookData?.chapterIndex(pos.chapterId) ?: 0
-            val chapters = bookData?.chapters ?: emptyList()
+
             val isSpecial = ch?.type == "cover" || ch?.type == "prologue"
             val scIdx = bookData?.sceneIndex(pos.chapterId, pos.sceneId) ?: 0
             val uIdx = bookData?.unitIndex(pos.chapterId, pos.sceneId, pos.unitIndex) ?: 0
