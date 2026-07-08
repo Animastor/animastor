@@ -800,9 +800,14 @@ class GenerateViewModel(
             else -> null
         }
 
+        // Preserve existing sceneIndex from SSE when agent-status can't provide one.
+        // The agent-status endpoint always returns window_scene_index=null, so we
+        // rely on the fallback computation. If that also fails (e.g. window_data
+        // not yet saved), keep the SSE-set value rather than resetting to -1.
+        val fallbackIdx = _uiState.value.vbookProgress?.sceneIndex ?: -1
         val sceneIndex = windowSceneIndex
             ?.let { (it - 1).coerceIn(0, windowTotal - 1) }
-            ?: -1
+            ?: if (fallbackIdx >= 0) fallbackIdx else -1
         val total = status.created_scenes ?: status.total_scenes
 
         val messageText = status.progress_msg?.takeIf { it.isNotBlank() }
