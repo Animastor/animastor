@@ -11,7 +11,6 @@ const PROGRESS_STAGES = {
 };
 
 
-const MAX_WINDOW_CHARS = 4000;
 const STEP_RETRIES = 3;
 
 // Scene duration targets (narration seconds). One scene ≈ SCENE_TARGET_SEC of
@@ -29,6 +28,12 @@ const SCENE_MIN_SEC = 5;
 // This is a HARD UPPER BOUND, NOT a target — if the text naturally forms
 // fewer scenes, that is correct.
 const MAX_SCENES_PER_CHUNK = 3;
+
+// Window size = overhead + scenes × per-scene budget.
+// This ensures text density stays constant when MAX_SCENES_PER_CHUNK changes.
+const CHARS_PER_SCENE = 1300;
+const WINDOW_OVERHEAD = 100;
+const MAX_WINDOW_CHARS = WINDOW_OVERHEAD + MAX_SCENES_PER_CHUNK * CHARS_PER_SCENE;
 
 const SYSTEM_PROMPTS = {
 
