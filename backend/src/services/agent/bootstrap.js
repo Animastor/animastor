@@ -142,6 +142,10 @@ async function bootstrapWithAgent(bookId, progress, publishProgress) {
                 : `⟳ Окно 1: ${result.scenes.length} сцен. Обрабатываю следующие окна...`,
         });
 
+        if (allDone && publishProgress) {
+            try { publishProgress(bookId, { type: 'import_complete' }); } catch (_) {}
+        }
+
         return {
             ...bookResult,
             session_id: sessionId,
@@ -326,6 +330,11 @@ async function bootstrapNextWindow(bookId, progress, publishProgress) {
 
         if (allDone) {
             lazyBook.updateBookState(bookId, lazyBook.BookState.ACTIVE);
+            // F10: Push import_complete terminal event so the frontend can stop
+            // polling immediately instead of waiting for 3 consecutive inactive polls.
+            if (publishProgress) {
+                try { publishProgress(bookId, { type: 'import_complete' }); } catch (_) {}
+            }
         }
 
         _progress({ stage: 'done', message: `✓ Окно ${nextWindowIndex + 1}: ${result.scenes.length} сцен. Всего: ${updatedWindowData.created_scenes}` });

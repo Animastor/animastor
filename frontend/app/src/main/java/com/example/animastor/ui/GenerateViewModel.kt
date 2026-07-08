@@ -96,6 +96,9 @@ class GenerateViewModel(
 
     @Volatile private var _firstWindowDone = false
 
+    /** Set true when SSE import_complete event arrives (F10). */
+    @Volatile private var _importCompleteReceived = false
+
     // ── Global window trigger (observes SharedPositionManager) ───
     val windowTriggerManager: WindowTriggerManager = WindowTriggerManager(_repository, viewModelScope)
 
@@ -590,6 +593,7 @@ class GenerateViewModel(
         _dirtySummary.value = null
         _dirtyScenes.value = emptyList()
         _isRegenerating.value = false
+        _importCompleteReceived = false // F10: reset SSE flag for new import
 
         generationJob = viewModelScope.launch {
             val msgs = mutableListOf<String>()
@@ -779,71 +783,60 @@ class GenerateViewModel(
 
     /**
      * Poll /agent-status until the agent session becomes inactive (completed/failed).
-     * Updates [msgs] with progress messages from the agent.
-     * Also updates [vbookProgress] in [GenUiState] with structured data for the GPU-style panel.
+     * Updates [msgs] with progress messages. Updates [vbookProgress] for GPU panel.
+     *
+     * Exits early when [importCompleteReceived] is set by the SSE import_complete event (F10).
+     * Primary completion signal is the SSE event — polling is a fallback.
+     *
      * @return true if the session was still active, false if no session was found
      */
     private suspend fun pollAgentProgress(bId: String, msgs: MutableList<String>, initialLastMsg: String = ""): Boolean {
         var lastProgressMsg = initialLastMsg
         var consecutiveInactive = 0
-        val maxInactive = 3
-        val maxPollTimeMs = 10 * 60 * 1000L // 10 min safety timeout
+        val maxInactive = 2
+        val maxPollTimeMs = 5 * 60 * 1000L // 5 min safety timeout
         val startTime = System.currentTimeMillis()
 
         while (consecutiveInactive < maxInactive) {
+            if (_importCompleteReceived) {
+                Log.i(TAG, "[POLL] import_complete SSE received — exiting early")
+                // Backend reported all windows done via SSE, but we still need
+                // to mark VBook as completed since poller owns that transition.
+                _uiState.update { it.copy(
+                    vbookProgress = VBookProgress(stage = VBookStage.COMPLETED)
+                )}
+                break
+            }
             if (System.currentTimeMillis() - startTime > maxPollTimeMs) {
                 Log.w(TAG, "[POLL] safety timeout reached (${maxPollTimeMs}ms), exiting poll loop")
                 break
             }
-            if (consecutiveInactive > 0 || lastProgressMsg.isNotEmpty()) {
-                delay(2000)
-            }
+            delay(2000)
             try {
                 val status = _repository.getAgentStatus(bId)
                 if (status.active && status.progress_msg != null) {
                     consecutiveInactive = 0
                     val currentMsg = status.progress_msg
                     if (currentMsg != lastProgressMsg) {
-                        // Append to existing importProgressMessages (preserve any SSE messages)
                         _uiState.update { state ->
                             state.copy(importProgressMessages = state.importProgressMessages + currentMsg)
                         }
-                        // Keep msgs in sync for when control returns to importTxtFromFile
                         msgs.add(currentMsg)
                         lastProgressMsg = currentMsg
                     }
-
-                    // Update GPU panel
                     updateVBookProgress(status)
-
                 } else {
                     consecutiveInactive++
-                    Log.d(TAG, "[POLL] agent inactive (x$consecutiveInactive)")
-
-                    // Even when the agent session is paused/completed (active=false),
-                    // the progress_msg still contains the last stage message.
-                    // Update the panel so the user sees progress transitions.
                     if (status.progress_msg != null && status.progress_msg != lastProgressMsg) {
                         val currentMsg = status.progress_msg
-                        // Append to existing importProgressMessages (preserve any SSE messages)
                         _uiState.update { state ->
                             state.copy(importProgressMessages = state.importProgressMessages + currentMsg)
                         }
                         msgs.add(currentMsg)
                         lastProgressMsg = currentMsg
-                        // Update GPU panel
                         updateVBookProgress(status)
                     }
-
                     if (consecutiveInactive >= maxInactive) {
-                        val finalMsgs = _uiState.value.importProgressMessages
-                        val lastMsg = finalMsgs.lastOrNull()
-                        if (lastMsg != null && lastMsg.startsWith("⟳")) {
-                            val updated = finalMsgs.toMutableList()
-                            updated[updated.size - 1] = lastMsg.replace("⟳", "✓")
-                            _uiState.update { it.copy(importProgressMessages = updated) }
-                        }
-                        // Mark VBook as completed
                         _uiState.update { it.copy(
                             vbookProgress = VBookProgress(stage = VBookStage.COMPLETED)
                         )}
@@ -1242,6 +1235,13 @@ class GenerateViewModel(
                     Log.i(TAG, "SSE generation_complete received — applying results")
                     stopProgressStream()
                     applyGenerationResults()
+                } else if (event.type == "import_complete") {
+                    // F10: Server-pushed terminal event — all agent windows
+                    // processed. The pollAgentProgress loop will exit on next
+                    // check when it sees consecutiveInactive >= maxInactive.
+                    // Set a flag so the next poll iteration finishes quickly.
+                    Log.i(TAG, "SSE import_complete received — stopping agent poll")
+                    _importCompleteReceived = true
                 } else if (event.layer == "image" && event.ready != null) {
                     val floor = maxOf(workerReadyFloor["image"] ?: 0, event.ready)
                     workerReadyFloor["image"] = floor

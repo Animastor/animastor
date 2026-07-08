@@ -20,6 +20,7 @@
 | 5 | **F5** — `display_number`/`display_index` в модели книги | ✅ Готово | F5: server display_number + display_index |
 | 6 | **F3** — нормализация SSE vbook (числовые поля) | ✅ Готово | F3: server-driven vbook progress |
 | 7 | **F2** — серверный агрегатор прогресс-панели | ✅ Готово | F2: server progress-panel endpoint |
+| 8 | **F11** — терминальные события `generation_complete/stalled` | ✅ Готово | F11: server-pushed generation_complete SSE |
 
 **Примечание по F1:** в ходе работы выяснилось, что маршруты
 `GET/PUT /api/v1/book/:bookId/layer-config` были **задокументированы, но не
