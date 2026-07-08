@@ -23,7 +23,6 @@ import com.example.animastor.databinding.DialogGenerateScopeBinding
 import com.example.animastor.model.BookItem
 import com.example.animastor.network.RetrofitClient
 import com.example.animastor.ui.adapter.BookAdapter
-import com.example.animastor.util.VbookFileUtils
 import java.io.File
 import java.util.Calendar
 import java.util.Locale
@@ -781,9 +780,7 @@ class MainActivity : AppCompatActivity() {
 
         lifecycleScope.launch {
             try {
-                val isTxtName = displayName?.endsWith(".txt", ignoreCase = true) == true
-                val tempExt = if (isTxtName) ".txt" else ".vbook"
-                val tempFile = File(cacheDir, "opened-${System.currentTimeMillis()}$tempExt")
+                val tempFile = File(cacheDir, "opened-${System.currentTimeMillis()}")
 
                 contentResolver.openInputStream(uri)?.use { input ->
                     tempFile.outputStream().use { output ->
@@ -794,17 +791,8 @@ class MainActivity : AppCompatActivity() {
                     return@launch
                 }
 
-                if (VbookFileUtils.isVbookBundle(tempFile)) {
-                    viewModel.loadBookFromFile(tempFile)
-                    switchToPlayTab()
-                } else if (isTxtName || mimeType?.startsWith("text/") == true) {
-                    viewModel.importTxtFromFile(tempFile)
-                    switchToPlayTab()
-                } else {
-                    Toast.makeText(this@MainActivity, R.string.invalid_vbook_format, Toast.LENGTH_SHORT).show()
-                    tempFile.delete()
-                    return@launch
-                }
+                viewModel.importBookFromFile(tempFile)
+                switchToPlayTab()
             } catch (e: Exception) {
                 Log.w("MainActivity", "Failed to open .vbook from intent: ${e.message}")
                 Toast.makeText(this@MainActivity, "${getString(R.string.upload_failed)}: ${e.message}", Toast.LENGTH_LONG).show()

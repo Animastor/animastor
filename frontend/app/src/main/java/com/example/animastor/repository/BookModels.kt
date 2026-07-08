@@ -301,6 +301,22 @@ data class BootstrapNextWindowResponse(
     val chapters: List<LazyParseChapterItem>? = null
 )
 
+// ======================================================
+// Unified Import Response (F14)
+// ======================================================
+
+data class ImportResponse(
+    val book_id: String,
+    val format: String = "",  // "vbook" or "txt"
+    val build_id: String? = null,
+    val title: String? = null,
+    val state: String? = null,
+    val chapter_count: Int = 0,
+    val scene_count: Int = 0,
+    val was_existing: Boolean = false,
+    val dedup: Boolean = false
+)
+
 data class ResumeBootstrapResponse(
     val book_id: String? = null,
     val state: String? = null,

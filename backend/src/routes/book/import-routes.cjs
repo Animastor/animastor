@@ -40,9 +40,200 @@ module.exports = function(app, redis, deps) {
         };
     };
 
-    // ======================================================
-    // LOAD VBOOK
-    // ======================================================
+// ======================================================
+// UNIFIED IMPORT — server-side format detection
+// ======================================================
+app.post('/api/v1/book/import', multer().single('file'), async (req, res) => {
+    try {
+        if (!req.file) return res.status(400).json({ error: 'file missing' });
+
+        const buf = req.file.buffer;
+        const format = detectFileFormat(buf);
+
+        if (format === 'vbook') {
+            // ── VBOOK path — same logic as /load-vbook ──
+            const files = book.extractBookBundle(buf);
+            log('[UNIFIED-IMPORT] vbook bundle loaded:', Object.keys(files));
+
+            const bookData = book.buildBookFromBundle(files);
+            const bookId = bookData.manifest.book_id;
+            const buildId = bookData.manifest.build_id || 'default';
+
+            const existingBook = book.loadBook(bookId);
+            let loadedBook;
+            if (existingBook) {
+                log(`[UNIFIED-IMPORT] Book ${bookId} already exists — keeping existing (edited) version`);
+                loadedBook = existingBook;
+
+                const existingScenes = book.collectScenes(existingBook);
+                const chunks = await getAllChunks(bookId);
+                if (chunks.length === 0) {
+                    log(`[UNIFIED-IMPORT] No chunks in Redis — attempting recovery from disk for ${existingScenes.length} scenes`);
+                    const recovered = await recoverChunksFromDisk(bookId, buildId, existingScenes);
+                    if (recovered.length > 0) {
+                        log(`[UNIFIED-IMPORT] Recovered ${recovered.length}/${existingScenes.length} chunks from disk for ${bookId}`);
+                        await redis.set(config.BOOK_SCENE_TOTAL(bookId), existingScenes.length);
+                        await redis.set(config.BOOK_SCENE_NEXT(bookId), recovered.length);
+                    } else {
+                        log(`[UNIFIED-IMPORT] No files on disk for ${bookId} — generation needed`);
+                    }
+                } else {
+                    log(`[UNIFIED-IMPORT] Found ${chunks.length} chunks in Redis for ${bookId}`);
+                }
+            } else {
+                await book.resetBook(bookId);
+                book.saveBookBundle(bookData, files);
+                loadedBook = book.loadBook(bookId);
+                log(`[UNIFIED-IMPORT] Loaded book from disk: ${bookId}, chapters: ${loadedBook?.chapters?.length}`);
+            }
+
+            const scenes = book.collectScenes(loadedBook || bookData);
+            const chapterCount = loadedBook?.chapters?.length || bookData.chapters?.length || 0;
+            const sceneCount = scenes.length;
+            const title = bookData.manifest?.title || loadedBook?.manifest?.title || bookId;
+
+            log(`[UNIFIED-IMPORT] ${bookId}: ${chapterCount} chapters, ${sceneCount} scenes`);
+
+            const existingChunksAfterLoad = await getAllChunks(bookId);
+            if (existingChunksAfterLoad.length === 0) {
+                log(`[UNIFIED-IMPORT] Creating chunks + placeholder audio for ${scenes.length} scenes...`);
+                for (const s of scenes) {
+                    const chunkId = `${bookId}_${s.chapter_id}_${s.scene_id}_0001`;
+                    try {
+                        await saveChunk(chunkId, {
+                            build_id: buildId, book_id: bookId, scene_order: s.scene_order || 0,
+                            chapter_id: s.chapter_id, scene_id: s.scene_id, chunk_index: '0001',
+                            expected_chunk_count: 1, scene_type: s.scene_type || 'narration',
+                            audio: true, audio_status: 'placeholder', image: false, video: false,
+                            video_status: 'pending', padded_text: false,
+                        });
+                    } catch (chunkErr) {
+                        console.warn(`[UNIFIED-IMPORT] Failed to create chunk ${chunkId}: ${chunkErr.message}`);
+                    }
+                }
+                const phScenes = scenes.map(s => ({ chapter_id: s.chapter_id, scene_id: s.scene_id }));
+                const phResult = await placeholderAudio.ensureAllPlaceholderAudio(buildId, bookId, phScenes);
+                log(`[UNIFIED-IMPORT] Placeholder audio: ${phResult.created} created, ${phResult.skipped} skipped`);
+                try {
+                    await redis.set(config.BOOK_SCENE_TOTAL(bookId), scenes.length);
+                    await redis.set(config.BOOK_SCENE_NEXT(bookId), scenes.length);
+                } catch (idxErr) {
+                    console.warn(`[UNIFIED-IMPORT] Failed to set scene index: ${idxErr.message}`);
+                }
+            } else {
+                log(`[UNIFIED-IMPORT] ${existingChunksAfterLoad.length} chunks exist — async placeholder generation`);
+                setImmediate(async () => {
+                    try {
+                        const phScenes = scenes.map(s => ({ chapter_id: s.chapter_id, scene_id: s.scene_id }));
+                        const phResult = await placeholderAudio.ensureAllPlaceholderAudio(buildId, bookId, phScenes);
+                        log(`[UNIFIED-IMPORT] Placeholder audio: ${phResult.created} created, ${phResult.skipped} skipped`);
+                    } catch (phErr) {
+                        console.warn(`[UNIFIED-IMPORT] Placeholder audio generation failed: ${phErr.message}`);
+                    }
+                });
+            }
+
+            return res.json({
+                format: 'vbook',
+                book_id: bookId, build_id: buildId, title,
+                chapter_count: chapterCount, scene_count: sceneCount,
+                was_existing: !!existingBook,
+            });
+        } else {
+            // ── TXT path — same logic as /import-txt ──
+            const crypto = require('crypto');
+            const fileHash = crypto.createHash('sha256').update(buf).digest('hex');
+
+            const decoded = txtImporter.decodeTxtBuffer(buf);
+            if (decoded.error) return res.status(400).json({ error: decoded.error });
+
+            const sourceText = decoded.text;
+            const title = path.basename(req.file.originalname, '.txt');
+
+            let existingBookId = null;
+            try {
+                const candidates = await bookSourceRepo.findCandidateBySize(buf.length);
+                if (candidates && candidates.length > 0) {
+                    const existing = await bookSourceRepo.findByHash(fileHash);
+                    if (existing) {
+                        const existingStatus = lazyBook.getBookStatus(existing.book_id);
+                        if (existingStatus && existingStatus.state) {
+                            const completionStatus = await genSessionRepo.getBookCompletionStatus(existing.book_id);
+                            if (completionStatus !== 'completed') {
+                                existingBookId = existing.book_id;
+                            } else {
+                                await bookSourceRepo.deleteByBookId(existing.book_id);
+                                log(`[UNIFIED-IMPORT] DEDUP: completed book ${existing.book_id} — cleaning up for new import`);
+                            }
+                        } else {
+                            await bookSourceRepo.deleteByBookId(existing.book_id);
+                            log(`[UNIFIED-IMPORT] DEDUP: book ${existing.book_id} not on disk — cleaning up reference`);
+                        }
+                    }
+                }
+            } catch (pgErr) {
+                console.warn(`[UNIFIED-IMPORT] PG dedup check failed (non-fatal): ${pgErr.message}`);
+            }
+
+            if (existingBookId) {
+                log(`[UNIFIED-IMPORT] DEDUP: returning existing book ${existingBookId} for hash ${fileHash}`);
+                return res.json({
+                    format: 'txt',
+                    book_id: existingBookId, title, state: lazyBook.BookState.RAW_IMPORTED, dedup: true,
+                });
+            }
+
+            const draft = lazyBook.createDraftBook(sourceText, lazyBook.SourceType.TXT, title);
+            const bookDir = lazyBook.getBookDir(draft.bookId);
+            const mp = lazyBook.getManifestPath(bookDir);
+            const m = JSON.parse(fs.readFileSync(mp, 'utf8'));
+            m.import_meta.original_filename = req.file.originalname;
+            fs.writeFileSync(mp, JSON.stringify(m, null, 2));
+
+            try {
+                await bookSourceRepo.registerSource(fileHash, req.file.originalname, buf.length, draft.bookId, 'txt');
+                log(`[UNIFIED-IMPORT] Registered source: ${fileHash} → ${draft.bookId}`);
+            } catch (pgErr) {
+                console.warn(`[UNIFIED-IMPORT] Failed to register source (non-fatal): ${pgErr.message}`);
+            }
+
+            log(`[UNIFIED-IMPORT] RAW_IMPORTED: ${draft.bookId} (${Buffer.byteLength(sourceText, 'utf8')} bytes)`);
+            return res.json({
+                format: 'txt',
+                book_id: draft.bookId, title, state: lazyBook.BookState.RAW_IMPORTED,
+            });
+        }
+    } catch (err) {
+        console.error('UNIFIED-IMPORT ERROR:', err);
+        return res.status(400).json({ error: err.message || 'unknown error' });
+    }
+});
+
+/**
+ * Detect file format from buffer: 'vbook' if it's a valid ZIP containing
+ * manifest.json and book.json, otherwise 'txt'.
+ */
+function detectFileFormat(buf) {
+    // Check ZIP magic bytes (PK\x03\x04)
+    if (buf.length < 4 || buf[0] !== 0x50 || buf[1] !== 0x4B || buf[2] !== 0x03 || buf[3] !== 0x04) {
+        return 'txt';
+    }
+
+    try {
+        // Use extractBookBundle to attempt reading as vbook — it will throw if invalid
+        const files = book.extractBookBundle(buf);
+        if (files && files['manifest.json'] && files['book.json']) {
+            return 'vbook';
+        }
+        return 'txt';
+    } catch (e) {
+        return 'txt';
+    }
+}
+
+// ======================================================
+// LOAD VBOOK
+// ======================================================
     app.post('/api/v1/book/load-vbook', multer().single('file'), async (req, res) => {
         try {
             if (!req.file) return res.status(400).json({ error: 'file missing' });

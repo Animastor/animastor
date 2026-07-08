@@ -585,6 +585,231 @@ class GenerateViewModel(
     //  TXT IMPORT
     // ═══════════════════════════════════════════════════════════════
 
+    // ═══════════════════════════════════════════════════════════════
+    //  UNIFIED IMPORT (F14) — server-side format detection
+    // ═══════════════════════════════════════════════════════════════
+
+    fun importBookFromFile(file: File) {
+        Log.i(TAG, "importBookFromFile: ${file.name}")
+        generationJob?.cancel()
+        hasUnsavedChanges = false
+        _activeGeneration.value = null
+        _dirtySummary.value = null
+        _dirtyScenes.value = emptyList()
+        _isRegenerating.value = false
+        _importCompleteReceived = false
+
+        generationJob = viewModelScope.launch {
+            try {
+                _uiState.update { it.copy(phase = PlayerPhase.LOADING_BOOK, errorMessage = null) }
+
+                val importRes = _repository.importBook(file)
+                val bId = importRes.book_id
+                persistBookId(bId)
+
+                when (importRes.format) {
+                    "vbook" -> {
+                        // ── VBOOK path — same flow as loadBookFromFile ──
+                        persistBuildId(importRes.build_id ?: "")
+                        runCatching { _repository.snapshotBook(bId) }
+
+                        val allChunks = runCatching { _repository.getAllChunks(bId) }.getOrElse { ChunkListResponse(emptyList()) }
+                        val chunkIds = allChunks.chunk_ids.toList()
+                        val positions = allChunks.chunk_positions?.mapValues { (_, pos) ->
+                            Pair(pos?.chapter_id, pos?.scene_id)
+                        } ?: emptyMap()
+                        val coverChunkId = allChunks.cover_chunk_id
+
+                        val firstPos = chunkIds.firstOrNull()?.let { positions[it] }
+                        if (firstPos != null) {
+                            SharedPositionManager.navigateTo(chapterId = firstPos.first, sceneId = firstPos.second, unitIndex = 0)
+                        } else {
+                            runCatching {
+                                val bookData = _repository.getBook(bId)
+                                val firstChapter = bookData.chapters?.firstOrNull()
+                                val firstScene = firstChapter?.scenes?.firstOrNull()
+                                SharedPositionManager.navigateTo(chapterId = firstChapter?.chapter, sceneId = firstScene?.scene_id, unitIndex = 0)
+                            }.onFailure { e ->
+                                Log.w(TAG, "position fallback failed: ${e.message}")
+                                SharedPositionManager.navigateTo(chapterId = null, sceneId = null)
+                            }
+                        }
+
+                        _uiState.update {
+                            it.copy(
+                                phase = PlayerPhase.DOWNLOADING,
+                                chunkIds = emptyList(),
+                                previewImage = null,
+                                coverImage = null,
+                                errorMessage = null
+                            )
+                        }
+
+                        val coverId = coverChunkId ?: chunkIds.firstOrNull()
+                        val cover = if (coverId != null && imageEnabled) loadCoverBitmap(coverId) else null
+
+                        _playbackPrepared.tryEmit(PlaybackPreparation(
+                            bookId = bId,
+                            buildId = buildId,
+                            chunkIds = chunkIds,
+                            coverImage = cover,
+                            chunkPositions = positions
+                        ))
+
+                        _uiState.update { it.copy(phase = if (chunkIds.isNotEmpty()) PlayerPhase.SCENE_READY else PlayerPhase.IDLE) }
+                    }
+                    "txt" -> {
+                        // ── TXT path — same flow as importTxtFromFile ──
+                        persistBuildId("default")
+                        val msgs = mutableListOf<String>()
+
+                        _uiState.update { it.copy(
+                            phase = PlayerPhase.IMPORTING_TXT,
+                            importStage = ImportStage.VALIDATING,
+                            importProgress = 0.1f,
+                            importProgressMessages = emptyList()
+                        )}
+
+                        msgs.add("✓ Файл выбран")
+                        msgs.add("✓ TXT прочитан")
+                        msgs.add("✓ Кодировка определена")
+                        msgs.add("✓ Структура VBook создана")
+                        _uiState.update { it.copy(importProgress = 0.2f, importProgressMessages = msgs.toList()) }
+
+                        _uiState.update { it.copy(importStage = ImportStage.ANALYZING, importProgress = 0.3f) }
+
+                        _firstWindowDone = false
+                        startProgressStream(bId)
+                        _uiState.update { it.copy(
+                            vbookProgress = VBookProgress(stage = VBookStage.ANALYZING)
+                        )}
+
+                        // Handle dedup
+                        if (importRes.dedup) {
+                            msgs.add("✓ Книга уже существует — проверяем состояние...")
+                            _uiState.update { it.copy(importProgressMessages = msgs.toList()) }
+
+                            val bookStatus = runCatching { _repository.getLazyBookStatus(bId) }.getOrNull()
+                            val isComplete = bookStatus?.let { bs ->
+                                bs.state != null &&
+                                (bs.state == "BOOTSTRAPPED" || bs.state == "ACTIVE") &&
+                                bs.parsedChapters > 0
+                            } ?: false
+
+                            if (!isComplete) {
+                                msgs.add("⟳ Книга недостроена — возобновляем импорт...")
+                                _uiState.update { it.copy(importProgressMessages = msgs.toList()) }
+                                val resumeRes = _repository.resumeBootstrap(bId)
+                                if (resumeRes.state != "BOOTSTRAPPED" && resumeRes.state != "ACTIVE") {
+                                    pollAgentProgress(bId, msgs)
+                                } else {
+                                    msgs.add("✓ Книга уже была полностью обработана")
+                                }
+                                msgs.add("💬 Импорт восстановлен. Можете задать вопросы или запустить генерацию.")
+                            } else {
+                                val bs = bookStatus!!
+                                msgs.add("✓ Книга уже готова (${bs.parsedChapters} глав, ${bs.parsedScenes} сцен)")
+                            }
+
+                            val allChunks = runCatching { _repository.getAllChunks(bId) }.getOrNull()
+                            val chunkIds = allChunks?.chunk_ids?.toList() ?: emptyList()
+                            val positions = allChunks?.chunk_positions?.mapValues { (_, pos) ->
+                                Pair(pos?.chapter_id, pos?.scene_id)
+                            } ?: emptyMap()
+                            val firstPos = chunkIds.firstOrNull()?.let { positions[it] }
+                            if (firstPos != null) {
+                                SharedPositionManager.navigateTo(chapterId = firstPos.first, sceneId = firstPos.second, unitIndex = 0)
+                            }
+
+                            _playbackPrepared.tryEmit(PlaybackPreparation(
+                                bookId = bId,
+                                buildId = buildId,
+                                chunkIds = chunkIds,
+                                chunkPositions = positions
+                            ))
+
+                            msgs.add("✓ Загружено ${chunkIds.size} сцен")
+                            _uiState.update { it.copy(
+                                importProgressMessages = msgs.toList(),
+                                importStage = ImportStage.DONE,
+                                importProgress = 1f,
+                                phase = if (chunkIds.isNotEmpty()) PlayerPhase.SCENE_READY else PlayerPhase.IDLE,
+                                chunkIds = chunkIds,
+                            )}
+                            return@launch
+                        }
+
+                        // New import — bootstrap and poll
+                        val pollDuringBootstrap = viewModelScope.launch {
+                            var lastSeen = ""
+                            while (true) {
+                                val st = runCatching { _repository.getAgentStatus(bId) }.getOrNull()
+                                if (st?.progress_msg != null && st.progress_msg != lastSeen) {
+                                    msgs.add(st.progress_msg)
+                                    _uiState.update { it.copy(importProgressMessages = msgs.toList()) }
+                                    lastSeen = st.progress_msg
+                                }
+                                delay(2000)
+                            }
+                        }
+
+                        val bootstrapRes = _repository.bootstrapBook(bId)
+                        pollDuringBootstrap.cancel()
+
+                        val finalStatus = runCatching { _repository.getAgentStatus(bId) }.getOrNull()
+                        var afterBootstrapMsg = ""
+                        if (finalStatus?.progress_msg != null) {
+                            afterBootstrapMsg = finalStatus.progress_msg
+                            msgs.add(afterBootstrapMsg)
+                            _uiState.update { it.copy(importProgressMessages = msgs.toList()) }
+                        }
+
+                        msgs.add("✓ Импорт завершён: ${bootstrapRes.characters} персонажей, ${bootstrapRes.locations} локаций, ${bootstrapRes.scenes} сцен")
+                        _uiState.update { it.copy(importProgressMessages = msgs.toList()) }
+
+                        pollAgentProgress(bId, msgs, afterBootstrapMsg)
+                        msgs.add("💬 Можете задать вопросы или запустить генерацию через кнопку на панели инструментов.")
+                        _uiState.update { it.copy(importProgressMessages = msgs.toList()) }
+
+                        val allChunks = runCatching { _repository.getAllChunks(bId) }.getOrNull()
+                        val chunkIds = allChunks?.chunk_ids?.toList() ?: emptyList()
+                        val positions = allChunks?.chunk_positions?.mapValues { (_, pos) ->
+                            Pair(pos?.chapter_id, pos?.scene_id)
+                        } ?: emptyMap()
+                        val firstPos = chunkIds.firstOrNull()?.let { positions[it] }
+                        if (firstPos != null) {
+                            SharedPositionManager.navigateTo(chapterId = firstPos.first, sceneId = firstPos.second, unitIndex = 0)
+                        } else {
+                            SharedPositionManager.navigateTo(chapterId = null, sceneId = null)
+                        }
+
+                        _playbackPrepared.tryEmit(PlaybackPreparation(
+                            bookId = bId,
+                            buildId = buildId,
+                            chunkIds = chunkIds,
+                            chunkPositions = positions
+                        ))
+
+                        _uiState.update { it.copy(
+                            importStage = ImportStage.DONE,
+                            importProgress = 1f,
+                            phase = PlayerPhase.SCENE_READY,
+                            chunkIds = chunkIds,
+                        )}
+                        Log.i(TAG, "importBookFromFile (txt): ready with ${chunkIds.size} chunks")
+                    }
+                    else -> {
+                        throw java.io.IOException("Unknown file format: ${importRes.format}")
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "importBookFromFile failed: ${e.message}", e)
+                val msg = if (e is java.io.IOException && e.message != null) e.message!! else "Import failed: ${e.message}"
+                _uiState.update { it.copy(phase = PlayerPhase.IDLE, errorMessage = msg) }
+            }
+        }
+    }
+
     fun importTxtFromFile(file: File) {
         Log.i(TAG, "importTxtFromFile: ${file.name}")
         generationJob?.cancel()

@@ -19,6 +19,12 @@ interface BackendApi {
         @Part file: MultipartBody.Part
     ): LoadVbookResponse
 
+    @Multipart
+    @POST("/api/v1/book/import")
+    suspend fun importBook(
+        @Part file: MultipartBody.Part
+    ): ImportResponse
+
     @GET("/api/v1/chunk/{id}")
     suspend fun getChunk(
         @Path("id") id: String

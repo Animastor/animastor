@@ -12,7 +12,6 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.example.animastor.R
 import com.example.animastor.databinding.FragmentFileBinding
-import com.example.animastor.util.VbookFileUtils
 import java.io.File
 import java.io.IOException
 import kotlinx.coroutines.Dispatchers
@@ -75,30 +74,17 @@ class FileFragment : Fragment(R.layout.fragment_file) {
     private val openDocumentLauncher = registerForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri ->
-        if (uri == null) return@registerForActivityResult
-        runCatching {
-            val fileName = getFileName(uri) ?: "book-${System.currentTimeMillis()}.vbook"
-            val isTxt = fileName.endsWith(".txt", ignoreCase = true)
-            val ext = if (isTxt) ".txt" else ".vbook"
+        if (uri == null) return@registerForActivityResult            runCatching {
             val tempFile = File(
                 requireContext().cacheDir,
-                "book-${System.currentTimeMillis()}$ext"
+                "import-${System.currentTimeMillis()}"
             )
             requireContext().contentResolver.openInputStream(uri)?.use { input ->
                 tempFile.outputStream().use { output -> input.copyTo(output) }
             }
 
-            if (VbookFileUtils.isVbookBundle(tempFile)) {
-                // VBOOK file -> existing pipeline
-                hasSwitchedToPlay = false
-                viewModel.loadBookFromFile(tempFile)
-            } else if (isTxt) {
-                // TXT file -> lazy import pipeline
-                hasSwitchedToPlay = false
-                viewModel.importTxtFromFile(tempFile)
-            } else {
-                Toast.makeText(requireContext(), R.string.invalid_vbook_format, Toast.LENGTH_SHORT).show()
-            }
+            hasSwitchedToPlay = false
+            viewModel.importBookFromFile(tempFile)
         }.onFailure {
             Toast.makeText(requireContext(), "${getString(R.string.upload_failed)}: ${it.message}", Toast.LENGTH_SHORT).show()
         }

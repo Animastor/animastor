@@ -480,6 +480,26 @@ class Repository(
     // TXT Import / Lazy Book Methods
     // ======================================================
 
+    suspend fun importBook(file: File): ImportResponse {
+        Log.i("Repo", "importBook: ${file.name}")
+        val requestFile = file.asRequestBody()
+        val multipart = MultipartBody.Part.createFormData("file", file.name, requestFile)
+        return try {
+            val response = api.importBook(multipart)
+            Log.i("Repo", "importBook OK: book=${response.book_id} format=${response.format}")
+            response
+        } catch (e: HttpException) {
+            val errorBody = try { e.response()?.errorBody()?.string() } catch (_: Exception) { null }
+            val backendMsg = if (errorBody != null) {
+                try { JSONObject(errorBody).optString("error", e.message()) } catch (_: Exception) { e.message() }
+            } else {
+                e.message()
+            }
+            Log.w("Repo", "importBook FAILED (${e.code()}): $backendMsg")
+            throw IOException(backendMsg ?: "Import failed (${e.code()})")
+        }
+    }
+
     suspend fun importTxt(file: File): ImportTxtResponse {
         Log.i("Repo", "importTxt: ${file.name}")
         val requestFile = file.asRequestBody()
