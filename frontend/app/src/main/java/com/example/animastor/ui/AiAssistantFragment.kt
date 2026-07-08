@@ -359,11 +359,8 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
         if (pos.chapterId != null && bookData != null) {
             val ch = bookData?.chapters?.firstOrNull { it.chapter == pos.chapterId }
             val sc = ch?.scenes?.firstOrNull { it.scene_id == pos.sceneId }
-            val chIdx = bookData?.chapterIndex(pos.chapterId) ?: 0
             val scIdx = bookData?.sceneIndex(pos.chapterId, pos.sceneId) ?: 0
             val isSpecial = ch?.type == "cover" || ch?.type == "prologue"
-            val chapters = bookData?.chapters ?: emptyList()
-            if (chIdx >= 0) {
                 val uIdx = bookData?.unitIndex(pos.chapterId, pos.sceneId, pos.unitIndex) ?: 0
                 val chTitle = ch?.chapter_title?.takeIf { it.isNotBlank() }
                 val scTitle = sc?.scene_title?.takeIf { it.isNotBlank() }
@@ -395,7 +392,6 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
                 }
                 positionLabel()?.text = fullLabel
                 return
-            }
         }
         positionLabel()?.text = getString(R.string.navigate_no_position)
     }
@@ -507,10 +503,8 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
         val bd = runCatching { generateViewModel.repository.getBook(bid) }.getOrNull() ?: return
         val ch = bd.chapters?.firstOrNull { it.chapter == pos.chapterId }
         val sc = ch?.scenes?.firstOrNull { it.scene_id == pos.sceneId }
-        val chIdx = bd.chapterIndex(pos.chapterId)
         val scIdx = bd.sceneIndex(pos.chapterId, pos.sceneId)
         val isSpecial = ch?.type == "cover" || ch?.type == "prologue"
-        val chapters = bd.chapters ?: emptyList()
                 val chName = if (isSpecial) {
                     ch?.chapter_title?.takeIf { it.isNotBlank() } ?: ch?.type?.replaceFirstChar { it.uppercase() }
                 } else if (ch?.chapter_title != null) {
@@ -604,13 +598,11 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
                 val bookData = rawBook
                 val title = bookData.book?.title ?: bookData.manifest?.book_id ?: bookId
                 val pos = SharedPositionManager.current.value
-                val chIdx = bookData.chapterIndex(pos.chapterId)
                 val scIdx = bookData.sceneIndex(pos.chapterId, pos.sceneId)
                 val uIdx = bookData.unitIndex(pos.chapterId, pos.sceneId, pos.unitIndex)
                 val ch = bookData.chapters?.firstOrNull { it.chapter == pos.chapterId }
                 val isSpecial = ch?.type == "cover" || ch?.type == "prologue"
                 val chTitle = ch?.chapter_title?.takeIf { it.isNotBlank() }
-                val chapters = bookData.chapters ?: emptyList()
                 val chapterId = if (isSpecial) {
                     chTitle ?: ch?.type?.replaceFirstChar { it.uppercase() } ?: "?"
                 } else if (chTitle != null) {
