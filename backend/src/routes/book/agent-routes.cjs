@@ -70,7 +70,7 @@ module.exports = function(app, redis, deps) {
 
             const baseResponse = (extra) => ({
                 active: false, session_id: null, session_status: null,
-                progress_msg: 'Idle', source_type: null, window_index: null,
+                progress_msg: null, source_type: null, window_index: null,
                 created_scenes: null, total_scenes: null, remaining_cached: null,
                 window_size: MAX_SCENES_PER_CHUNK,
                 window_start_scene: null, window_total_scenes: null, window_scene_index: null,
