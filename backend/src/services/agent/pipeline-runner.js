@@ -383,6 +383,41 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
         });
     }
 
+    // ── Storyboard polish pass ──
+    // After all scenes have their visual units generated, do a cross-scene
+    // continuity correction pass (Storyboard Supervisor).
+    if (enrichedScenes.length > 0) {
+        const allVisualUnits = enrichedScenes.flatMap((scene, si) =>
+            (scene.units || []).map((unit, ui) => ({
+                sceneIndex: si,
+                unitIndex: ui,
+                sceneTitle: scene.title || '',
+                sceneText: scene.text || '',
+                text: unit.text,
+                type: unit.type,
+                visual: unit.visual || {},
+            }))
+        );
+
+        if (allVisualUnits.length >= 2) {
+            const polished = await pipelineSteps.stepPolishStoryboard(sessionId, allVisualUnits, characters, locations, stepIndex, _progress);
+
+            // Map results back into enrichedScenes
+            for (const pu of polished) {
+                const scene = enrichedScenes[pu.sceneIndex];
+                if (scene && scene.units[pu.unitIndex]) {
+                    const unit = scene.units[pu.unitIndex];
+                    if (unit.visual) {
+                        if (pu.visual?.shot) unit.visual.shot = pu.visual.shot;
+                        if (pu.visual?.prompt) unit.visual.prompt = pu.visual.prompt;
+                    }
+                }
+            }
+        } else {
+            console.log(`[AGENT] Storyboard polish skipped: ${allVisualUnits.length} unit(s) in window (need >= 2)`);
+        }
+    }
+
     return {
         characters,
         locations,

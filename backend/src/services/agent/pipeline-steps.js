@@ -291,6 +291,84 @@ async function stepCreateUnits(sessionId, scene, sceneIndex, characters, stepInd
     }
 }
 
+async function stepPolishStoryboard(sessionId, allVisualUnits, characters, locations, stepIndex, progress) {
+    const _progress = progress || (() => {});
+    _progress({ stage: 'polishing_storyboard', message: PROGRESS_STAGES.polishing_storyboard });
+    await updateSession(sessionId, { progress_msg: PROGRESS_STAGES.polishing_storyboard });
+
+    if (!allVisualUnits || allVisualUnits.length < 2) {
+        console.log(`[AGENT] Step 6 (storyboard polish): skipped — ${allVisualUnits?.length || 0} unit(s), need >= 2`);
+        return allVisualUnits || [];
+    }
+
+    const step = await createStep(sessionId, 'polish_storyboard', stepIndex || 0);
+
+    const charsContext = (characters || []).map(c => `- ${c.id}: ${c.name} (${c.role || 'unknown'})`).join('\n') || 'None';
+    const locsContext = (locations || []).map(l => `- ${l.id}: ${l.name} (${l.type || 'unknown'})`).join('\n') || 'None';
+
+    // Build scene context: unique scenes with full text for plot understanding
+    const seenScenes = new Set();
+    const scenesParts = [];
+    for (const u of allVisualUnits) {
+        const key = `${u.sceneIndex}:${u.sceneTitle}`;
+        if (!seenScenes.has(key) && u.sceneText) {
+            seenScenes.add(key);
+            const truncated = u.sceneText.length > 1200 ? u.sceneText.substring(0, 1200) + '...' : u.sceneText;
+            scenesParts.push(`--- Scene ${u.sceneIndex}: "${u.sceneTitle || 'Untitled'}" ---\n${truncated}\n`);
+        }
+    }
+    const scenesStr = scenesParts.join('\n');
+
+    const unitsStr = allVisualUnits.map((u, i) =>
+        `Unit ${i}: scene_index=${u.sceneIndex}, unit_index=${u.unitIndex}, scene_title="${u.sceneTitle || ''}", type="${u.type || 'unknown'}", shot="${u.visual?.shot || 'unknown'}", prompt="${(u.visual?.prompt || '').substring(0, 200)}"`
+    ).join('\n');
+
+    const prompt = SYSTEM_PROMPTS.storyboard_polish
+        .replace('%CHARACTERS%', charsContext)
+        .replace('%LOCATIONS%', locsContext)
+        .replace('%SCENES%', scenesStr || '(no scene text available)')
+        .replace('%UNITS%', unitsStr);
+
+    const messages = [
+        { role: 'system', content: prompt },
+        { role: 'user', content: `Review and polish these ${allVisualUnits.length} visual units for storyboard continuity:\n\n${unitsStr}` },
+    ];
+
+    try {
+        const result = await aiCaller.callAI(messages, { maxTokens: 4096 });
+        const polishedUnits = result.units || [];
+
+        // Merge AI results back, preserving original fields and only updating visual
+        const merged = allVisualUnits.map((original, i) => {
+            const polished = polishedUnits.find(p => p.scene_index === original.sceneIndex && p.unit_index === original.unitIndex);
+            if (polished && polished.visual) {
+                const mergedVisual = {
+                    ...original.visual,
+                    shot: polished.visual.shot || original.visual.shot,
+                    prompt: polished.visual.prompt || original.visual.prompt,
+                };
+                return { ...original, visual: mergedVisual };
+            }
+            return original;
+        });
+
+        await aiCaller.logConversation(sessionId, step.step_id, messages, JSON.stringify(result));
+        await completeStep(step.step_id, { units: merged.length });
+
+        const changedCount = merged.filter((m, i) => {
+            const orig = allVisualUnits[i];
+            return m.visual?.prompt !== orig.visual?.prompt || m.visual?.shot !== orig.visual?.shot;
+        }).length;
+        console.log(`[AGENT] Step 6 (storyboard polish): ${merged.length} units reviewed, ${changedCount} modified`);
+
+        return merged;
+    } catch (err) {
+        await failStep(step.step_id, `Storyboard polish failed: ${err.message}`);
+        console.warn(`[AGENT] Step 6 (storyboard polish) FAILED, keeping original units: ${err.message}`);
+        return allVisualUnits;
+    }
+}
+
 async function stepCreateVisuals(sessionId, scene, units, sceneIndex, characters, locations, stepIndex, progress, nextScene, mentions) {
     const _progress = progress || (() => {});
     const msg = PROGRESS_STAGES.creating_visuals(sceneIndex);
@@ -464,4 +542,5 @@ module.exports = {
     stepEnrichScenes,
     stepCreateUnits,
     stepCreateVisuals,
+    stepPolishStoryboard,
 };
