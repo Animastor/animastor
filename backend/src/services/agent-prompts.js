@@ -10,8 +10,7 @@ const PROGRESS_STAGES = {
 };
 
 
-const SCENE_CHUNK_SIZE = 8000;
-const MAX_WINDOW_CHARS = SCENE_CHUNK_SIZE;
+const MAX_WINDOW_CHARS = 4000;
 const STEP_RETRIES = 3;
 
 // Scene duration targets (narration seconds). One scene ≈ SCENE_TARGET_SEC of
@@ -25,7 +24,7 @@ const SCENE_MAX_SEC = 30;
 // cause artifacts in video generation models. If an episode is this short,
 // merge it with an adjacent scene when narratively coherent.
 const SCENE_MIN_SEC = 5;
-// Upper bound on scenes produced per SCENE_CHUNK_SIZE chunk.
+// Upper bound on scenes produced per window.
 // This is a HARD UPPER BOUND, NOT a target — if the text naturally forms
 // fewer scenes, that is correct.
 const MAX_SCENES_PER_CHUNK = 3;
@@ -527,6 +526,6 @@ Return ONLY valid JSON.`,
 };
 
 module.exports = {
-    PROGRESS_STAGES, MAX_WINDOW_CHARS, SCENE_CHUNK_SIZE, STEP_RETRIES, SYSTEM_PROMPTS,
+    PROGRESS_STAGES, MAX_WINDOW_CHARS, STEP_RETRIES, SYSTEM_PROMPTS,
     SCENE_TARGET_SEC, SCENE_MAX_SEC, SCENE_MIN_SEC, MAX_SCENES_PER_CHUNK,
 };
