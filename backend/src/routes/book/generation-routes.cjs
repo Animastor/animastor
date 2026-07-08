@@ -46,6 +46,52 @@ module.exports = function(app, redis, deps) {
     });
 
     // ======================================================
+    // LAYER CONFIG (read / write) — canonical generation profile
+    //
+    // The `profile` field is computed server-side (resolveProfile) so clients
+    // never re-derive it from the audio/image/video toggles. Clients send only
+    // the toggles; the server owns the 8-state profile mapping.
+    // ======================================================
+    app.get('/api/v1/book/:bookId/layer-config', async (req, res) => {
+        try {
+            const { bookId } = req.params;
+            const cfg = await layerConfig.get(redis, bookId);
+            res.json({
+                book_id: bookId,
+                audio_enabled: cfg.audio_enabled,
+                image_enabled: cfg.image_enabled,
+                video_enabled: cfg.video_enabled,
+                profile: layerConfig.resolveProfile(cfg),
+            });
+        } catch (err) {
+            console.error('[LAYER-CONFIG] GET error:', err.message);
+            res.status(500).json({ error: err.message });
+        }
+    });
+
+    app.put('/api/v1/book/:bookId/layer-config', async (req, res) => {
+        try {
+            const { bookId } = req.params;
+            const { audio_enabled, image_enabled, video_enabled } = req.body || {};
+            const cfg = await layerConfig.set(redis, bookId, {
+                audio_enabled, image_enabled, video_enabled,
+            });
+            const profile = layerConfig.resolveProfile(cfg);
+            log(`[LAYER-CONFIG] book=${bookId} → a=${cfg.audio_enabled} i=${cfg.image_enabled} v=${cfg.video_enabled} profile=${profile}`);
+            res.json({
+                book_id: bookId,
+                audio_enabled: cfg.audio_enabled,
+                image_enabled: cfg.image_enabled,
+                video_enabled: cfg.video_enabled,
+                profile,
+            });
+        } catch (err) {
+            console.error('[LAYER-CONFIG] PUT error:', err.message);
+            res.status(500).json({ error: err.message });
+        }
+    });
+
+    // ======================================================
     // CANCEL GENERATION
     // ======================================================
     app.post('/api/v1/book/:bookId/cancel-generation', async (req, res) => {
