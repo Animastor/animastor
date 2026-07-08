@@ -836,10 +836,6 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         return modified
     }
 
-    companion object {
-        private val UNIT_ONLY_KEYS = setOf("id", "type", "text", "visual.prompt", "visual.negative")
-    }
-
     private fun saveToBackend() {
         try {
             val bd = bookData
@@ -874,28 +870,26 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
             val pos = SharedPositionManager.current.value
             val sceneUnits = sc.units
             val hasUnit = sceneUnits != null && pos.unitIndex < sceneUnits.size
-            val onlyUnitFields = hasUnit && fieldValues.keys.all { it in UNIT_ONLY_KEYS || it == "chapter_title" }
 
             setSaveLoading(true)
 
             lifecycleScope.launch {
                 try {
-                    val modifiedScene = applyFieldValues(sc, fieldValues)
                     val patchBody = mutableMapOf<String, Any?>()
                     val chapterTitleValue = fieldValues["chapter_title"]?.takeIf { it.isNotBlank() }
 
-                    if (onlyUnitFields && hasUnit && sceneUnits != null) {
-                        // Mode A: send only the changed unit fields
-                        val currentUnit = sceneUnits[pos.unitIndex]
-                        for ((key, value) in fieldValues) {
-                            if (key in UNIT_ONLY_KEYS) {
-                                patchBody[key] = value
-                            }
-                        }
-                        patchBody["unit_id"] = currentUnit.id
-                    } else {
-                        // Mode B: send full modified scene
-                        patchBody["scene"] = modifiedScene
+                    // F8: send flat fields map — server merges via setDeep()
+                    // The server handles:
+                    //   - unit_id + fields → apply to unit
+                    //   - fields only → apply to scene (with env.* → location.environment.* mapping)
+                    //   - participants string → array
+                    //   - empty string → null
+                    // Exclude chapter_title from fields (sent separately below).
+                    val sendFields = fieldValues - "chapter_title"
+                    patchBody["fields"] = sendFields
+
+                    if (hasUnit && sceneUnits != null) {
+                        patchBody["unit_id"] = sceneUnits[pos.unitIndex].id
                     }
 
                     if (chapterTitleValue != null) {
@@ -904,7 +898,8 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
 
                     viewModel.repository.patchScene(bookId, chapterId, sceneId, patchBody)
 
-                    // Apply changes locally for UI consistency
+                    // Apply changes locally for UI consistency (optimistic update)
+                    val modifiedScene = applyFieldValues(sc, fieldValues)
                     val modifiedChapters = chapters.toMutableList()
                     val modifiedCh = if (chapterTitleValue != null || fieldValues.containsKey("chapter_title"))
                         ch.copy(chapter_title = chapterTitleValue) else ch

@@ -221,10 +221,10 @@ module.exports = function(app, redis, deps) {
     app.patch('/api/v1/book/:bookId/scene/:chapterId/:sceneId', async (req, res) => {
         try {
             const { bookId, chapterId, sceneId } = req.params;
-            const { scene: incomingScene, unit_id, chapter_title } = req.body;
+            const { scene: incomingScene, unit_id, chapter_title, fields } = req.body;
 
-            if (!incomingScene && !unit_id) {
-                return res.status(400).json({ error: 'Provide either "scene" (full replace) or "unit_id" with fields (targeted patch)' });
+            if (!incomingScene && !unit_id && !fields) {
+                return res.status(400).json({ error: 'Provide "scene", "unit_id", or "fields"' });
             }
 
             const oldBook = book.loadBook(bookId);
@@ -253,14 +253,39 @@ module.exports = function(app, redis, deps) {
                 return res.status(404).json({ error: 'Scene not found in book' });
             }
 
-            if (unit_id) {
+            if (fields) {
+                // F8: flat dotted-path fields — server merges using setDeep().
+                // The frontend sends { fields: { "key": "value", ... } } where keys
+                // can be dotted paths like "location.id", "env.time", "visual.prompt".
+                if (unit_id) {
+                    const unit = findUnitInScene(targetScene, unit_id);
+                    if (!unit) {
+                        return res.status(404).json({ error: `Unit ${unit_id} not found in scene` });
+                    }
+                    for (const [key, value] of Object.entries(fields)) {
+                        setDeep(unit, key, value === '' ? null : value);
+                    }
+                    log(`[PATCH BOOK] ${bookId}/${chapterId}/${sceneId}/${unit_id}: fields=${Object.keys(fields).join(', ')}`);
+                } else {
+                    for (const [key, value] of Object.entries(fields)) {
+                        // scene_title → scene_title, location.id → location.id, env.time → location.environment.time
+                        const resolvedKey = key.startsWith('env.') ? 'location.environment.' + key.slice(4) : key;
+                        setDeep(targetScene, resolvedKey, value === '' ? null : value);
+                        // Special handling for participants (comma-separated string → array)
+                        if (key === 'participants' && typeof value === 'string') {
+                            setDeep(targetScene, 'participants', value ? value.split(', ').map(s => s.trim()) : null);
+                        }
+                    }
+                    log(`[PATCH BOOK] ${bookId}/${chapterId}/${sceneId}: fields=${Object.keys(fields).join(', ')}`);
+                }
+            } else if (unit_id) {
                 const unit = findUnitInScene(targetScene, unit_id);
                 if (!unit) {
                     return res.status(404).json({ error: `Unit ${unit_id} not found in scene` });
                 }
                 const unitFields = {};
                 for (const [key, value] of Object.entries(req.body)) {
-                    if (key === 'unit_id' || key === 'chapter_title' || key === 'scene') continue;
+                    if (key === 'unit_id' || key === 'chapter_title' || key === 'scene' || key === 'fields') continue;
                     unitFields[key] = value;
                 }
                 if (Object.keys(unitFields).length === 0) {
