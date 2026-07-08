@@ -473,7 +473,7 @@ When the frame contains people, do NOT answer "what is happening?". Answer: "WHO
     Unit B: "mikhail_berlioz and ivan_ponyrev are sitting on a bench. ivan_ponyrev gesturing while speaking."
     Unit C: "mikhail_berlioz looking at ivan_ponyrev, both sitting on a bench."
   Do NOT write "They are talking" or "They continue the conversation" — the model would build a completely new scene with different people, poses, and framing.
-- Reference characters BY character_id. Their appearance (passport) is supplied globally behind the id — do NOT re-describe it. Re-describe a character's appearance ONLY when it deviates from baseline (wounded, wet, changed clothes, dirty). Describe sub-locations within the scene (e.g. "on a bench", "by the pond", "approaching the booth") for spatial context.
+- Reference characters BY character_id. Their appearance (passport) is supplied globally behind the id — do NOT re-describe it. Never add parenthetical descriptions after a character_id like "mikhail_berlioz (short, round glasses)" — the id alone is sufficient. Re-describe a character's appearance ONLY when it deviates from baseline (wounded, wet, changed clothes, dirty). Describe sub-locations within the scene (e.g. "on a bench", "by the pond", "approaching the booth") for spatial context.
 - Background/extras need no global passport, but describe each as a CONCRETE, REPEATABLE anchor, not a vague mass. Avoid "people walking in the park", "crowd", "pedestrians". Prefer "an elderly man reading a newspaper near the path", "a young couple walking along the pond", "a woman feeding pigeons", "two children playing near the water". When the same extras appear in adjacent units, REPEAT their description verbatim so the model keeps them visually continuous.
 
 ## STRICT RULE — ALWAYS write character_id, never generic noun
@@ -557,6 +557,7 @@ Consider ALL the following Visual Units as sequential keyframes of ONE film (a s
 ### 5. Self-contained prompts (must still hold)
 - Each visual.prompt must remain a SELF-CONTAINED Imagination Unit prompt — the image model sees each independently.
 - Keep using exact character_ids from the context (no pronouns, no generic nouns when IDs are available).
+- NEVER reference other units or frames: forbidden phrases include "from previous shot", "from previous frame", "as seen earlier", "continuing from previous", "same position as before", "as before", "as shown in the previous unit". Each prompt must describe its frame using ONLY the information in ITS OWN unit text.
 
 ## STRICT RULES — what you may NOT change
 - Do NOT change unit.text, unit.type, or unit.character_binding
@@ -628,6 +629,7 @@ For each IU, compare the visual.prompt against the passports of the characters t
 - Do NOT change position, pose, gaze, action, or temporary descriptions — only remove what's redundant with the passport.
 - Do NOT add new descriptions — only remove.
 - Do NOT change unit.text, unit.type, or unit.character_binding.
+- Pay special attention to parenthetical descriptions like "mikhail_berlioz (small, round glasses)". If these describe appearance/clothing/accessories already covered by the passport, REMOVE the parenthetical content entirely. Keep only the character_id.
 
 ## Known Characters (passports)
 %CHARACTERS%

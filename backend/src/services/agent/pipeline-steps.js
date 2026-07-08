@@ -496,8 +496,11 @@ async function stepCreateVisuals(sessionId, scene, units, sceneIndex, characters
             const ch = (characters || []).find(c => c.id === pId);
             if (!ch) continue;
             if (hasPassportAppearance(ch)) {
-                const passportDesc = [ch.passport?.base_appearance, ch.passport?.detailed_appearance, ch.passport?.clothing_base, ch.passport?.clothing_details, ch.appearance].filter(Boolean).join('; ');
-                visualChars.push(`- ${ch.id}: ${displayName(ch)} — ${passportDesc || ch.description || ''}`);
+                // NOTE: passport descriptions intentionally NOT included here.
+                // The passport is injected LATER by prompt-builder.js, so the AI
+                // must NOT see or re-describe it. Only character_id and name are
+                // shown to identify who is in the scene — nothing about appearance.
+                visualChars.push(`- ${ch.id}: ${displayName(ch)}`);
                 namedCount++;
             } else {
                 facelessChars.push(displayName(ch));
@@ -521,7 +524,9 @@ async function stepCreateVisuals(sessionId, scene, units, sceneIndex, characters
             const limit = Math.min(visualChars.length, 5);
             for (let ci = 0; ci < limit; ci++) {
                 const ch = visualChars[ci];
-                contextParts.push(`- ${ch.id}: ${displayName(ch)} — ${ch.passport?.base_appearance || ch.appearance || ch.description || ''}`);
+                // NOTE: no passport description — only character_id and name.
+                // Passport is injected later by the system, not by the AI.
+                contextParts.push(`- ${ch.id}: ${displayName(ch)}`);
                 namedCount++;
             }
             if (visualChars.length > 5) {
