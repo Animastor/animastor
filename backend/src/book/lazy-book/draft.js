@@ -18,9 +18,11 @@ function createDraftBook(sourceText, sourceType, title) {
     const bookDir = getBookDir(bookId);
     fs.mkdirSync(bookDir, { recursive: true });
 
+    const buildId = `build_${bookId}`;
     const manifest = {
         vbook_version: '3.1',
         book_id: bookId,
+        build_id: buildId,
         source: sourceType,
         state: BookState.RAW_IMPORTED,
         created_at: new Date().toISOString(),

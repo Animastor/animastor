@@ -19,6 +19,20 @@ All notable changes to Animastor are documented here.
   - Решает проблему: «реальные IU имеют больший тайминг, чем расчётные; при ручной правке 3 юнитов остальные
     сдвигаются и не помещаются полностью».
 
+- **build_id теперь всегда записывается в манифест при создании книги**
+  (`backend/src/book/lazy-book/draft.js`):
+  - `createDraftBook()` теперь добавляет `build_id: build_<bookId>` в манифест.
+  - Раньше манифест не содержал build_id, и все роуты фоллбечились на `'default'`,
+    из-за чего IU создавались под build_id='default' вместо реального билда.
+  - Все 473 теста проходят.
+
+### Chore
+
+- **Очистка БД, Redis и диска** — удалены все остатки старых книг:
+  - PostgreSQL: TRUNCATE всех 30 таблиц (данные, схема сохранена)
+  - Redis: FLUSHALL
+  - /data/books/ и /data/output/ очищены
+
 ## [Unreleased] — 2026-07-08
 
 ### Added
