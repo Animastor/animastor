@@ -4,6 +4,21 @@ All notable changes to Animastor are documented here.
 
 ---
 
+## [Unreleased] — 2026-07-09
+
+### Fixed
+
+- **IU timings теперь рассчитываются от реальной длительности аудио, а не от плэйсхолдера**
+  (`backend/src/image/iu-processor.js`, `backend/src/orchestration/scene-callbacks.js`):
+  - `getSceneDuration()` — новый приоритет: mp3-файл → scene_assets (ready) → image_units (stale) → scene_assets (placeholder).
+    Раньше первым был `image_units.scene_duration_sec` (устаревшее значение от плэйсхолдера), из-за чего IU тайминги
+    (start_ms/end_ms) были пропорциональны плэйсхолдеру (~0.3s/word), а не реальному TTS-аудио.
+  - `handleAudioCompleted()` — при приходе реального аудио пересчитывает все IU тайминги пропорционально новой
+    длительности, если Δ > 1s. Обновляет `scene_duration_sec`, `estimated_duration_sec`, `start_ms`, `end_ms`.
+  - Все 473 теста проходят.
+  - Решает проблему: «реальные IU имеют больший тайминг, чем расчётные; при ручной правке 3 юнитов остальные
+    сдвигаются и не помещаются полностью».
+
 ## [Unreleased] — 2026-07-08
 
 ### Added

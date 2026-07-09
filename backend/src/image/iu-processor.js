@@ -38,6 +38,29 @@ async function saveIUMetadata(buildId, bookId, chapterId, sceneId, unit, sceneDu
 }
 
 async function getSceneDuration(buildId, bookId, chapterId, sceneId) {
+    // Priority 1: Real audio file on disk (GROUND TRUTH)
+    const audioPath = helpers.getOutputPath(buildId, `${bookId}_${chapterId}_${sceneId}.mp3`);
+    if (fs.existsSync(audioPath)) {
+        try {
+            const mm = require('music-metadata');
+            const metadata = await mm.parseFile(audioPath);
+            if (metadata.format.duration > 0) return metadata.format.duration;
+        } catch {}
+    }
+
+    // Priority 2: scene_assets with status='ready' (real audio registered in DB)
+    try {
+        const { query } = require('../storage/postgres/database');
+        const result = await query(`
+            SELECT duration_sec FROM scene_assets
+            WHERE book_id = $1 AND chapter_id = $2 AND scene_id = $3
+              AND asset_type = 'audio' AND build_id = $4 AND status = 'ready'
+            LIMIT 1
+        `, [bookId, chapterId, sceneId, buildId]);
+        if (result.rows.length > 0 && result.rows[0].duration_sec > 0) return result.rows[0].duration_sec;
+    } catch {}
+
+    // Priority 3: image_units.scene_duration_sec (may be stale placeholder-based value)
     try {
         const { query } = require('../storage/postgres/database');
         const result = await query(`
@@ -48,21 +71,13 @@ async function getSceneDuration(buildId, bookId, chapterId, sceneId) {
         if (result.rows.length > 0 && result.rows[0].scene_duration_sec > 0) return result.rows[0].scene_duration_sec;
     } catch {}
 
-    const audioPath = helpers.getOutputPath(buildId, `${bookId}_${chapterId}_${sceneId}.mp3`);
-    if (fs.existsSync(audioPath)) {
-        try {
-            const mm = require('music-metadata');
-            const metadata = await mm.parseFile(audioPath);
-            if (metadata.format.duration > 0) return metadata.format.duration;
-        } catch {}
-    }
-
+    // Priority 4: scene_assets with status='placeholder' (original word-count estimate)
     try {
         const { query } = require('../storage/postgres/database');
         const result = await query(`
             SELECT duration_sec FROM scene_assets
             WHERE book_id = $1 AND chapter_id = $2 AND scene_id = $3
-              AND asset_type = 'audio' AND build_id = $4 AND status IN ('placeholder', 'ready')
+              AND asset_type = 'audio' AND build_id = $4 AND status = 'placeholder'
             LIMIT 1
         `, [bookId, chapterId, sceneId, buildId]);
         if (result.rows.length > 0 && result.rows[0].duration_sec > 0) return result.rows[0].duration_sec;

@@ -10,6 +10,7 @@ const dispatchEngine = require('../runtime/dispatch-engine');
 const book = require('../book');
 const placeholderAudio = require('../services/placeholder-audio');
 const sceneAssetsRepo = require('../storage/postgres/repositories/scene-assets-repo');
+const iuRepo = require('../storage/postgres/repositories/iu-repo');
 const { publishProgress } = require('../services/progress-pubsub.cjs');
 const { log, warn, error, logEvent } = require('./scene-utils');
 
@@ -93,12 +94,12 @@ async function handleAudioCompleted(redis, bookId, chapterId, sceneId, buildId) 
         warn(`Failed to register audio asset: ${err.message}`);
     }
 
+    let realDuration = 0;
     try {
         const audioPath = storage.filesystem.getSceneAudioPath(
             process.env.OUTPUT_DIR || '/data/output', buildId, bookId, chapterId, sceneId
         );
         const mm = require('music-metadata');
-        let realDuration = 0;
         try {
             const metadata = await mm.parseFile(audioPath);
             realDuration = metadata.format.duration || 0;
@@ -108,6 +109,54 @@ async function handleAudioCompleted(redis, bookId, chapterId, sceneId, buildId) 
         );
     } catch (err) {
         warn(`Failed to replace placeholder audio: ${err.message}`);
+    }
+
+    // ── IU TIMING RECALCULATION ──
+    // When real audio arrives, its duration likely differs from the placeholder-based
+    // scene_duration_sec in image_units. Recalculate all IU timings proportionally
+    // so start_ms/end_ms match the actual audio length.
+    // Skip recalculation if duration difference is <= 1s (no significant change).
+    if (realDuration > 0) {
+        try {
+            const units = await iuRepo.getImageUnitsForScene(buildId, bookId, chapterId, sceneId);
+            if (units && units.length > 0) {
+                const oldSceneDur = units[0].scene_duration_sec || 0;
+                const diff = Math.abs(realDuration - oldSceneDur);
+                if (diff > 1.0) {
+                    const durLabel = oldSceneDur > 0
+                        ? `${oldSceneDur.toFixed(2)}s → ${realDuration.toFixed(2)}s (Δ=${diff.toFixed(2)}s)`
+                        : `first-time calculation (${realDuration.toFixed(2)}s)`;
+                    log(`[IU-RECALC] ${bookId}/${chapterId}/${sceneId}: ${durLabel}, recalculating ${units.length} IU timings`);
+                    const totalTextLen = units.reduce((s, u) => s + (u.text_length || 0), 0);
+                    let cursorMs = 0;
+                    const sceneDurationMs = Math.round(realDuration * 1000);
+                    for (const u of units) {
+                        const proportion = totalTextLen > 0 ? (u.text_length || 0) / totalTextLen : 1 / units.length;
+                        const durMs = Math.max(200, Math.round(realDuration * proportion * 1000));
+                        const startMs = cursorMs;
+                        let endMs = cursorMs + durMs;
+                        if (endMs > sceneDurationMs) endMs = sceneDurationMs;
+                        cursorMs = endMs;
+                        await iuRepo.upsertImageUnit(buildId, bookId, chapterId, sceneId, u.unit_id, {
+                            scene_order: u.scene_order || 0,
+                            text: u.text,
+                            text_length: u.text_length || 0,
+                            text_proportion: parseFloat(proportion.toFixed(6)),
+                            scene_duration_sec: realDuration,
+                            estimated_duration_sec: parseFloat((realDuration * proportion).toFixed(3)),
+                            scene_audio_file: u.scene_audio_file || `${bookId}_${chapterId}_${sceneId}.mp3`,
+                            start_ms: startMs,
+                            end_ms: endMs,
+                        });
+                    }
+                    log(`[IU-RECALC] ✓ ${bookId}/${chapterId}/${sceneId}: ${units.length} IU timings updated to ${realDuration.toFixed(2)}s total`);
+                } else {
+                    log(`[IU-RECALC] ${bookId}/${chapterId}/${sceneId}: duration unchanged (${realDuration.toFixed(2)}s ≈ ${oldSceneDur.toFixed(2)}s), skipping`);
+                }
+            }
+        } catch (err) {
+            warn(`[IU-RECALC] Failed to recalculate IU timings: ${err.message}`);
+        }
     }
 
     // M5: setAssetState(READY) moved to orchestrator.completeStage
