@@ -177,9 +177,14 @@ app.post('/api/v1/book/import', multer().single('file'), async (req, res) => {
 
             if (existingBookId) {
                 log(`[UNIFIED-IMPORT] DEDUP: returning existing book ${existingBookId} for hash ${fileHash}`);
+                let existingBuildId = null;
+                try {
+                    const em = JSON.parse(fs.readFileSync(lazyBook.getManifestPath(lazyBook.getBookDir(existingBookId)), 'utf8'));
+                    existingBuildId = em.build_id || null;
+                } catch (_) {}
                 return res.json({
                     format: 'txt',
-                    book_id: existingBookId, title, state: lazyBook.BookState.RAW_IMPORTED, dedup: true,
+                    book_id: existingBookId, build_id: existingBuildId, title, state: lazyBook.BookState.RAW_IMPORTED, dedup: true,
                 });
             }
 
@@ -200,7 +205,7 @@ app.post('/api/v1/book/import', multer().single('file'), async (req, res) => {
             log(`[UNIFIED-IMPORT] RAW_IMPORTED: ${draft.bookId} (${Buffer.byteLength(sourceText, 'utf8')} bytes)`);
             return res.json({
                 format: 'txt',
-                book_id: draft.bookId, title, state: lazyBook.BookState.RAW_IMPORTED,
+                book_id: draft.bookId, build_id: m.build_id, title, state: lazyBook.BookState.RAW_IMPORTED,
             });
         }
     } catch (err) {
@@ -426,8 +431,13 @@ function detectFileFormat(buf) {
 
             if (existingBookId) {
                 log(`[IMPORT-TXT] DEDUP: returning existing book ${existingBookId} for hash ${fileHash}`);
+                let existingBuildId = null;
+                try {
+                    const em = JSON.parse(fs.readFileSync(lazyBook.getManifestPath(lazyBook.getBookDir(existingBookId)), 'utf8'));
+                    existingBuildId = em.build_id || null;
+                } catch (_) {}
                 return res.json({
-                    book_id: existingBookId, title, state: lazyBook.BookState.RAW_IMPORTED, dedup: true,
+                    book_id: existingBookId, build_id: existingBuildId, title, state: lazyBook.BookState.RAW_IMPORTED, dedup: true,
                 });
             }
 
@@ -446,7 +456,7 @@ function detectFileFormat(buf) {
             }
 
             log(`[IMPORT-TXT] RAW_IMPORTED: ${draft.bookId} (${Buffer.byteLength(sourceText, 'utf8')} bytes)`);
-            return res.json({ book_id: draft.bookId, title, state: lazyBook.BookState.RAW_IMPORTED });
+            return res.json({ book_id: draft.bookId, build_id: m.build_id, title, state: lazyBook.BookState.RAW_IMPORTED });
         } catch (err) {
             console.error('IMPORT-TXT ERROR:', err);
             return res.status(400).json({ error: err.message || 'unknown error' });

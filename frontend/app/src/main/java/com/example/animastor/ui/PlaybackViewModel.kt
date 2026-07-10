@@ -840,6 +840,8 @@ class PlaybackViewModel(
             val chId = (storyboard.chapter_id?.takeIf { it.isNotBlank() } ?: currentChapterId) ?: ""
             val scId = (storyboard.scene_id?.takeIf { it.isNotBlank() } ?: currentSceneId) ?: ""
             val bkId = storyboard.book_id?.takeIf { it.isNotBlank() } ?: bookId
+            // Backend resolves build_id from manifest.json and always returns it here;
+            // the local buildId is only a defensive fallback and should never be needed.
             val bldId = storyboard.build_id.ifBlank { buildId }
             if (storyboard.ius.isNotEmpty() && bldId.isNotBlank() && chId.isNotBlank()) {
                 Log.i(TAG, "fetching ${storyboard.ius.size} IU images in parallel for chunk $id")

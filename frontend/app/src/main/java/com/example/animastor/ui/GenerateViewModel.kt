@@ -503,7 +503,9 @@ class GenerateViewModel(
                     }
                     "txt" -> {
                         // ── TXT path ──
-                        persistBuildId("default")
+                        // build_id is owned by the backend (resolved from manifest.json).
+                        // The thin client just stores whatever the import response carries.
+                        persistBuildId(importRes.build_id ?: "")
                         val msgs = mutableListOf<String>()
 
                         _uiState.update { it.copy(
