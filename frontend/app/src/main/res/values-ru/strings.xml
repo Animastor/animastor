@@ -76,7 +76,7 @@
     <string name="edit_scene">Сцена</string>
     <string name="edit_audio">Аудио</string>
     <string name="edit_units">Модули</string>
-    <string name="edit_units_tab">Модули</string>
+    <string name="edit_units_tab">Модуль</string>
     <string name="edit_save">Сохранить</string>
     <string name="edit_saving">Сохранение…</string>
     <string name="edit_loading">Загрузка…</string>
