@@ -24,6 +24,30 @@ module.exports = function(app, redis, deps) {
     const OUTPUT_DIR = config.OUTPUT_DIR;
 
     // ======================================================
+    // BUILD ID RESOLUTION
+    // ======================================================
+    // Frontend doesn't always know the real buildId (e.g. TXT import hardcodes "default").
+    // Resolve the effective buildId from the book manifest on disk.
+    function getEffectiveBuildId(bookId, requestedBuildId, logFn) {
+        const _log = logFn || (() => {});
+        // "default" or empty means the frontend doesn't know the real buildId.
+        // Look it up from the book manifest on disk.
+        if (!requestedBuildId || requestedBuildId === 'default') {
+            try {
+                const loadedBook = book.loadBook(bookId);
+                if (loadedBook && loadedBook.manifest && loadedBook.manifest.build_id) {
+                    const manifestBuildId = loadedBook.manifest.build_id;
+                    if (manifestBuildId !== requestedBuildId) {
+                        _log(`buildId resolved: "${requestedBuildId || '(empty)'}" → "${manifestBuildId}" for ${bookId}`);
+                    }
+                    return manifestBuildId;
+                }
+            } catch (_) {}
+        }
+        return requestedBuildId || 'default';
+    }
+
+    // ======================================================
     // GENERATE (legacy full-book endpoint)
     // ======================================================
     app.post('/api/v1/generate', multer().single('file'), async (req, res) => {
@@ -616,8 +640,8 @@ module.exports = function(app, redis, deps) {
     app.get('/api/v1/scene/:bookId/:chapterId/:sceneId/audio', async (req, res) => {
         try {
             const { bookId, chapterId, sceneId } = req.params;
-            const buildId = req.query.build_id;
-            if (!buildId) return res.status(400).json({ error: 'build_id query param required' });
+            const buildId = getEffectiveBuildId(bookId, req.query.build_id, log);
+            if (!req.query.build_id) return res.status(400).json({ error: 'build_id query param required' });
             const audioPath = path.join(OUTPUT_DIR, buildId, `${bookId}_${chapterId}_${sceneId}.mp3`);
             if (!fs.existsSync(audioPath)) return res.status(404).json({ error: 'audio not ready' });
             res.setHeader('Content-Type', 'audio/mpeg');
@@ -634,8 +658,8 @@ module.exports = function(app, redis, deps) {
     app.get('/api/v1/scene/:bookId/:chapterId/:sceneId/waveform', async (req, res) => {
         try {
             const { bookId, chapterId, sceneId } = req.params;
-            const buildId = req.query.build_id;
-            if (!buildId) return res.status(400).json({ error: 'build_id query param required' });
+            const buildId = getEffectiveBuildId(bookId, req.query.build_id, log);
+            if (!req.query.build_id) return res.status(400).json({ error: 'build_id query param required' });
             const audioPath = path.join(OUTPUT_DIR, buildId, `${bookId}_${chapterId}_${sceneId}.mp3`);
             if (!fs.existsSync(audioPath)) return res.status(404).json({ error: 'audio not ready' });
             const peaks = await computeWaveform(audioPath);
@@ -652,8 +676,8 @@ module.exports = function(app, redis, deps) {
     app.get('/api/v1/scene/:bookId/:chapterId/:sceneId/timings', async (req, res) => {
         try {
             const { bookId, chapterId, sceneId } = req.params;
-            const buildId = req.query.build_id;
-            if (!buildId) return res.status(400).json({ error: 'build_id query param required' });
+            const buildId = getEffectiveBuildId(bookId, req.query.build_id, log);
+            if (!req.query.build_id) return res.status(400).json({ error: 'build_id query param required' });
 
             let ius = [];
             try {
@@ -760,8 +784,9 @@ module.exports = function(app, redis, deps) {
     app.put('/api/v1/scene/:bookId/:chapterId/:sceneId/timings', async (req, res) => {
         try {
             const { bookId, chapterId, sceneId } = req.params;
-            const { build_id, units } = req.body || {};
-            if (!build_id) return res.status(400).json({ error: 'build_id required' });
+            const { build_id: rawBuildId, units } = req.body || {};
+            const build_id = getEffectiveBuildId(bookId, rawBuildId, log);
+            if (!rawBuildId) return res.status(400).json({ error: 'build_id required' });
             if (!units || !Array.isArray(units)) return res.status(400).json({ error: 'units array required' });
 
             const rows = await iuRepo.getImageUnitsForScene(build_id, bookId, chapterId, sceneId);
