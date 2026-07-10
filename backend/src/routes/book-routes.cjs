@@ -28,6 +28,9 @@ module.exports = function(app, redis, deps) {
     // Import and bootstrap routes
     require('./book/import-routes.cjs')(app, redis, deps);
 
+    // Export / download routes (vbook, storyboard, audio, video)
+    require('./book/export-routes.cjs')(app, redis, deps);
+
     // Regeneration and generation control routes
     require('./book/generation-routes.cjs')(app, redis, deps);
 
