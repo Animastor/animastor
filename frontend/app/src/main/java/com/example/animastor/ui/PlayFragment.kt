@@ -988,6 +988,9 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
             b.subtitleText.visibility = View.GONE
             if (b.coverImage.drawable != null) {
                 b.coverImage.visibility = View.VISIBLE
+            } else {
+                // No cover available — fall back to theater curtains
+                showCurtains()
             }
             anchorFullscreenToImage()
         } catch (e: Exception) {
