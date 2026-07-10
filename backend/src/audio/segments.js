@@ -4,7 +4,7 @@
 
 const helpers = require('./helpers');
 
-function splitTextIntoChunks(text, maxChars = 500) {
+function splitTextIntoChunks(text, maxChars = 250) {
     if (!text?.trim()) return [];
     const sentences = text.match(/[^.!?]+[.!?]+/g) || [text];
     const chunks = [];
@@ -22,7 +22,7 @@ function splitTextIntoChunks(text, maxChars = 500) {
     return chunks;
 }
 
-function splitDialogueIntoChunks(text, maxChars = 500) {
+function splitDialogueIntoChunks(text, maxChars = 250) {
     if (!text?.trim()) return [];
     text = text.replace(/\r/g, "").trim();
     const lines = text.match(/[a-z0-9_]+:\s.*?(?=\n[a-z0-9_]+:|$)/gis) || [text];

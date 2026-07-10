@@ -206,64 +206,75 @@ module.exports = function(redis, config, deps) {
             return;
         }
 
-        // Check if scene audio is already ready
-        const sceneAudioReady = await audio.isSceneAudioReady(build_id, book_id, chapter_id, scene_id);
-        if (sceneAudioReady) {
-            // Check if the existing audio is a placeholder — if so, don't skip merge
-            try {
-                const hasReal = await placeholderAudio.hasRealAudio(book_id, chapter_id, scene_id, build_id);
-                if (hasReal) {
-                    // Before delegating, trim canonical if this scene uses padded text
-                    if (chunk.padded_text) {
-                        const canonPath = path.join(buildDir, `${book_id}_${chapter_id}_${scene_id}.mp3`);
-                        if (fs.existsSync(canonPath)) {
-                            try {
-                                await audio.trimPaddedSceneAudio(canonPath);
-                            } catch (trimErr) {
-                                console.warn(`⚠️ Trim of existing canonical failed: ${trimErr.message}`);
-                            }
-                        }
-                    }
-                    log(`🎵 Scene audio already ready (real): ${book_id}/${chapter_id}/${scene_id} — delegating to orchestrator`);
-                    await orchestrator.completeStage(redis, book_id, chapter_id, scene_id, 'audio', build_id);
-                    return;
-                }
-                log(`🎵 Scene audio is placeholder — proceeding with merge: ${book_id}/${chapter_id}/${scene_id}`);
-            } catch (err) {
-                console.warn(`⚠️ Failed to check audio realness in triggerAudioMerge: ${err.message}`);
-                // Conservative: if we can't check, assume placeholder and merge
-                log(`🎵 Assuming placeholder — proceeding with merge: ${book_id}/${chapter_id}/${scene_id}`);
-            }
-        }
-
-        // Check if all expected chunks exist
         const expectedCount = parseInt(expected_chunk_count || '1', 10);
-        const actualCount = parseInt(chunk_index || '1', 10);
 
-        if (actualCount < expectedCount) {
-            log(`⏳ Audio merge: ${actualCount}/${expectedCount} chunks ready for ${book_id}/${chapter_id}/${scene_id} — waiting for more`);
-            return;
-        }
-
-        // All chunks ready — merge them
-        log(`🎵 Merging ${actualCount} audio chunks for ${book_id}/${chapter_id}/${scene_id}`);
-
-        // Generate chunk file paths
-        let allChunksExist = true;
+        // Build all expected chunk paths and check which exist
         const chunkPaths = [];
+        let allChunksExist = true;
+        let missingChunks = 0;
         for (let i = 1; i <= expectedCount; i++) {
             const chunkPath = path.join(buildDir, `${book_id}_${chapter_id}_${scene_id}_${pad(i)}.mp3`);
             chunkPaths.push(chunkPath);
             if (!fs.existsSync(chunkPath)) {
                 allChunksExist = false;
-                log(`⚠️ Missing chunk: ${chunkPath}`);
+                missingChunks++;
+                log(`⚠️ Missing chunk ${i}: ${chunkPath}`);
             }
         }
 
         if (!allChunksExist) {
-            console.warn(`⚠️ Not all audio chunks exist for ${book_id}/${chapter_id}/${scene_id} — cannot merge`);
+            // ⛔ Check if merged scene audio already exists on disk.
+            // After a successful merge, buildSceneAudio deletes all chunk files.
+            // In that case, no retry is needed — the scene audio is complete.
+            const mergedAudioPath = path.join(buildDir, `${book_id}_${chapter_id}_${scene_id}.mp3`);
+            if (fs.existsSync(mergedAudioPath)) {
+                log(`🎵 Merged audio already exists for ${book_id}/${chapter_id}/${scene_id} — chunks were cleaned up, skipping retry`);
+                return;
+            }
+
+            // ── RETRY LOGIC: chunks may still be generating ──
+            const readyCount = expectedCount - missingChunks;
+            log(`⏳ Audio merge: ${readyCount}/${expectedCount} chunks ready for ${book_id}/${chapter_id}/${scene_id} — scheduling retry in 15s`);
+
+            // Use a Redis-based TTL marker to avoid piling up retries
+            const retryKey = `animastor:audio-merge-retry:${book_id}:${chapter_id}:${scene_id}`;
+            // Track retry count to cap at MAX_RETRIES
+            const retryCountKey = `${retryKey}:count`;
+            const MAX_RETRIES = 5;
+            const attemptStr = await redis.get(retryCountKey);
+            const attempt = attemptStr ? parseInt(attemptStr, 10) : 0;
+            if (attempt >= MAX_RETRIES) {
+                console.warn(`⚠️ Max retries (${MAX_RETRIES}) reached for ${book_id}/${chapter_id}/${scene_id} — giving up merge`);
+                return;
+            }
+
+            const scheduled = await redis.set(retryKey, '1', 'NX', 'EX', 30);
+            if (scheduled) {
+                await redis.set(retryCountKey, String(attempt + 1), 'EX', 180);
+                setTimeout(async () => {
+                    try {
+                        await redis.del(retryKey).catch(() => {});
+                        // Re-fetch the chunk to get updated metadata, then retry
+                        const currentChunkId = `${book_id}_${chapter_id}_${scene_id}_${String(chunk_index).padStart(4, '0')}`;
+                        const refreshed = await deps.getChunk(currentChunkId);
+                        if (refreshed) {
+                            log(`🔄 Merge retry (${attempt + 1}/${MAX_RETRIES}): ${book_id}/${chapter_id}/${scene_id}`);
+                            await triggerAudioMerge(refreshed);
+                        }
+                    } catch (e) {
+                        console.warn(`⚠️ Merge retry failed for ${book_id}/${chapter_id}/${scene_id}: ${e.message}`);
+                    }
+                    // NOTE: retryCountKey is NOT deleted here — it expires via TTL (180s).
+                    // Deleting it would break max-retries tracking across retry cycles.
+                }, 15000);
+            } else {
+                log(`⏳ Merge retry already scheduled for ${book_id}/${chapter_id}/${scene_id}`);
+            }
             return;
         }
+
+        // All chunks exist on disk — proceed with merge
+        log(`🎵 Merging ${expectedCount} audio chunks for ${book_id}/${chapter_id}/${scene_id}`);
 
         try {
             // First check if padded audio trimming is needed (short text duplication removal)
