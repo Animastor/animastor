@@ -39,6 +39,12 @@ class WindowTriggerManager(
      */
     fun start(bookId: String) {
         if (bookId.isBlank()) return
+        // Cancel the previous collection job BEFORE starting a new one.
+        // Without this, two jobs run in parallel sharing the same throttle
+        // state (lastApiCallTime, etc.), causing the new job to be permanently
+        // throttled by the stale job's API calls with the wrong bookId.
+        collectionJob?.cancel()
+        collectionJob = null
         resetState()
         collectionJob = scope.launch {
             SharedPositionManager.current.collectLatest { pos ->
