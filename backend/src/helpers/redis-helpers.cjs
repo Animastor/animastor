@@ -61,9 +61,34 @@ module.exports = function(redis) {
             const raw = await redis.mget(keys);
             const pairs = ids.map((id, i) => {
                 const data = raw[i] ? JSON.parse(raw[i]) : {};
-                return { id, scene_order: data.scene_order || 0, chunk_index: data.chunk_index || '0001' };
+                return { id, chapter_id: data.chapter_id || '', scene_id: data.scene_id || '', chunk_index: data.chunk_index || '0001' };
             });
-            pairs.sort((a, b) => a.scene_order - b.scene_order || a.chunk_index.localeCompare(b.chunk_index));
+
+            // Derive global scene order from the book structure so that chunks
+            // are returned in correct playback order even if the stored
+            // per-chapter scene_order conflicts across chapters (e.g. cover
+            // scene_order=1 vs chapter_intro scene_order=0).
+            let sceneIndexMap = null;
+            try {
+                const book = require('../book');
+                const bookData = book.loadBook(bookId);
+                if (bookData) {
+                    const allScenes = book.collectScenes(bookData);
+                    sceneIndexMap = new Map();
+                    allScenes.forEach((s, idx) => {
+                        sceneIndexMap.set(`${s.chapter_id}:${s.scene_id}`, idx);
+                    });
+                }
+            } catch (_) {}
+
+            pairs.sort((a, b) => {
+                const aOrder = sceneIndexMap ? (sceneIndexMap.get(`${a.chapter_id}:${a.scene_id}`) ?? a.chunk_index) : a.chunk_index;
+                const bOrder = sceneIndexMap ? (sceneIndexMap.get(`${b.chapter_id}:${b.scene_id}`) ?? b.chunk_index) : b.chunk_index;
+                if (typeof aOrder === 'number' && typeof bOrder === 'number') {
+                    return aOrder - bOrder;
+                }
+                return String(aOrder).localeCompare(String(bOrder));
+            });
             return pairs.map(p => p.id);
         } catch (e) {
             log('getAllChunks sort failed, falling back:', e.message);
