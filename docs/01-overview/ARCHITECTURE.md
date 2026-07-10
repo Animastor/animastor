@@ -35,6 +35,10 @@
 ### 2.2 Generation Routes (`backend/src/routes/generation-routes.cjs`)
 **Ответственность:** Запуск/отмена генерации, gen-scope, layer-config, worker counts, прогресс.
 
+**GPU Hub cleanup (июль 2026):** Добавлена `clearGpuHubQueues()` — централизованная очистка stale-задач из Redis GPU hub (dedup-ключи, очереди, running, result-кэш). Поддерживает опциональный sceneFilter для точечной очистки. Используется в regenerate и cancel-generation.
+
+**См. также:** `docs/02-orchestration/GPU_HUB_CLEANUP.md`
+
 ### 2.3 AI Routes (`backend/src/routes/ai-routes.cjs`)
 **Ответственность:** AI-чат ассистент, загрузка book в AI-контекст, управление сессиями чата.
 
@@ -76,6 +80,8 @@
 
 **Ответственность:** Tick-based (5s) планировщик. **Чистая функция решения** — `shouldScheduleAssets()` только читает per-asset состояния и layer-config, ничего не пишет (Д.2). Version-stale reset — явный пред-проход в `attemptDispatch()` через `detectVersionStale()` + `markVersionStaleDirty()`.
 
+**Scene-specific active index cleanup (июль 2026):** Добавлена `removeScenesFromActiveIndex()` — удаляет только указанные сцены из `animastor:active-scenes` (через SREM), а не все сцены книги. Используется в regenerate для точечной очистки dirty-сцен.
+
 **Входы:** Redis (active scenes set), heartbeat воркеров.
 **Выходы:** Вызовы `dispatchEngine.dispatchStage()`.
 
@@ -92,6 +98,7 @@
 - **Idempotent completion (C4):** `markDispatchCompleted` защищён `SET NX` по ключу `animastor:dispatch-completed:*`. Повторный колбэк безвреден.
 - **Д.1 (C1):** Единственный владелец release квоты — `markDispatchCompleted`. Из scene-callbacks releaseQuota убран.
 - **Force dispatch:** Поддержка `force=true` — очистка существующего lease + quota + metadata перед повторным dispatch.
+- **Scene-specific cleanup (июль 2026):** Добавлена `clearLeasesForScenes()` — batch DELETE lease/meta/completed ключей для указанных сцен (без SCAN, по известным ключам). Используется в regenerate для точечной очистки dirty-сцен.
 
 **Зависимости:** Redis, lease-manager, runtime-config, counter-reconciliation, runtime-metrics, **circuit-breaker (LIVE)**, **retry-budget-manager (LIVE)**, **fairness-engine (LIVE)**.
 **Удалены из core:** policy-engine, workload-classifier, cost-estimator (мёртвый код, Phase 6).
@@ -100,6 +107,8 @@
 **Использует:** orchestrator.dispatchStage().
 
 **Lease TTL (актуальные):** audio 15min, image 20min, video 30min.
+
+**Экспорт:** `clearLeasesForScenes`, `clearAllLeasesForBook`, `getQuotaStatus`, `LEASE_TTLS`, `QUOTAS`, `SCHEDULER_TICK_LOCK`, `SCHEDULER_TICK_LOCK_TTL`.
 
 ### 3.3 Scene Orchestrator (`backend/src/orchestration/scene-orchestrator.js`)
 
@@ -277,6 +286,22 @@
 
 ### 4.20 Cleanup Service (`backend/src/services/cleanup-service.cjs`)
 **Ответственность:** Управление жизненным циклом сборок, распределённые блокировки очистки, периодическая очистка stale audio scene locks.
+
+### 4.21 GPU Hub Cleanup (`backend/src/routes/book/generation-routes.cjs`)
+**Ответственность:** Очистка stale-задач GPU Hub при регенерации/отмене.
+
+**Функция `clearGpuHubQueues(redis, bookId, sceneFilter?)`:**
+- Очищает dedup-ключи `animastor:job:*` и `animastor:result-processed:*`
+- Фильтрует очереди `animastor:queue:audio|image|video`
+- Удаляет running-задачи из `animastor:running`
+- Очищает кэш результатов `animastor:result:*`
+- sceneFilter позволяет чистить только задачи для конкретных сцен (не трогая параллельные генерации)
+
+**Связанные функции:**
+- `removeScenesFromActiveIndex()` в `runtime-scheduler.js` — scene-specific удаление из active index
+- `clearLeasesForScenes()` в `dispatch-engine.js` — scene-specific удаление dispatch leases
+
+Подробнее: `docs/02-orchestration/GPU_HUB_CLEANUP.md`
 
 ### 4.21 Audio Recovery (`backend/src/services/audio-recovery.cjs`)
 **Ответственность:** Периодическое (5s) сканирование Redis для восстановления потерянных audio/image результатов.

@@ -4,6 +4,77 @@ All notable changes to Animastor are documented here.
 
 ---
 
+## [Unreleased] — 2026-07-10
+
+### Added
+
+- **Book export/download backend endpoints** (`backend/src/routes/book/export-routes.cjs`):
+  - `GET /api/v1/book/:bookId/export` — упаковка книги в ZIP: book JSON, audio, images, video.
+  - `GET /api/v1/book/:bookId/download` — скачивание book.json напрямую.
+  - Коммит: `d2d3a75`
+
+- **Cinema-styled layer toggle chips for player controls** (`frontend/app/.../fragment_play.xml`,
+  `frontend/app/.../layer_chip_*.xml`):
+  - Переключатели слоёв (audio, image, video) в стиле cinema-панели.
+  - Коммит: `6ae65a3`
+
+### Fixed
+
+- **Regenerate cleanup — только dirty-сцены** (`backend/src/routes/book/generation-routes.cjs`,
+  `backend/src/runtime/runtime-scheduler.js`, `backend/src/runtime/dispatch-engine.js`):
+  - `removeScenesFromActiveIndex()` — удаляет из active index только указанные сцены (SREM).
+  - `clearLeasesForScenes()` — batch DELETE lease/meta/completed ключей для указанных сцен.
+  - `clearGpuHubQueues()` — централизованная очистка GPU hub очередей и dedup-ключей.
+  - Ранее `clearBookFromActiveIndex()` и `clearAllLeasesForBook()` удаляли **все** сцены книги,
+    убивая параллельную генерацию других сцен в той же книге. Теперь очистка точечная.
+  - Счётчики quota больше не сбрасываются при регенерации (force-dispatch сам корректирует).
+  - Коммит: `89fb6c4`
+  - См. также: `docs/02-orchestration/GPU_HUB_CLEANUP.md`
+
+- **TTS chunk size reduced to 250 chars** (`backend/src/audio/audio-service.js`,
+  `backend/src/audio/chunks.js`):
+  - Уменьшен размер TTS-чанков с 500 до 250 символов для предотвращения
+    обрезания (truncation) моделью Qwen.
+  - Исправлен race condition при мерже аудио — добавлен retry-цикл.
+  - Коммит: `c042a7b`
+
+- **build_id now resolved from book manifest.json** (`backend/src/routes/generation-routes.cjs`,
+  `backend/src/routes/debug-routes.cjs`):
+  - Все read-эндпоинты (waveform, timings, audio) теперь читают build_id из
+    `manifest.json` книги через `getEffectiveBuildId()` вместо хардкода `'default'`.
+  - Коммиты: `1fbd0c8`, `c9f7df5`
+
+- **AI <think> reasoning blocks stripped on backend** (`backend/src/routes/ai-routes.cjs`,
+  `backend/src/helpers/utils.cjs`):
+  - Теперь stripping происходит на бэкенде, а не на фронтенде, чтобы <think>-блоки
+    не попадали в историю чата вообще.
+  - Коммиты: `48a1954`, `c2f37e4`
+
+- **Hardcoded Russian UI strings replaced with English** (`frontend/.../GenerateViewModel.kt`,
+  `frontend/.../MainActivity.kt`):
+  - Заменены хардкодные русские строки на английские в GenerateViewModel и MainActivity.
+  - Изменён лейбл таба редактирования с множественного "Units/Модули" на единственное
+    "Unit/Модуль".
+  - Коммиты: `951c980`, `8b626fa`
+
+### Documentation
+
+- **GPU_HUB_CLEANUP.md** (`docs/02-orchestration/GPU_HUB_CLEANUP.md`):
+  - Новая документация по очистке stale-задач GPU Hub при регенерации.
+  - Описаны все 5 шагов очистки: dedup-ключи, очереди, running, result-кэш.
+  - Описаны scene-specific функции `removeScenesFromActiveIndex` и `clearLeasesForScenes`.
+  - Полный протокол регенерации и cancel-generation.
+
+- **REGENERATION_SYSTEM.md updated** (`docs/02-orchestration/REGENERATION_SYSTEM.md`):
+  - Добавлен раздел про scene-specific очистку.
+  - Обновлён протокол POST /regenerate с новыми шагами 8–10.
+  - Обновлён Redis Key Space.
+  - Исправлен pre-existing issue в шаге очистки.
+
+- **ARCHITECTURE.md updated** (`docs/01-overview/ARCHITECTURE.md`):
+  - Упомянуты новые функции в Runtime Scheduler, Dispatch Engine, Generation Routes.
+  - Ссылка на GPU_HUB_CLEANUP.md.
+
 ## [Unreleased] — 2026-07-09
 
 ### Fixed

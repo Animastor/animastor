@@ -1,7 +1,7 @@
 # Regeneration System: Animastor
 
 > Система частичной/полной перегенерации контента после редактирования vbook.
-> Последнее обновление: июнь 2026
+> Последнее обновление: июль 2026
 
 ---
 
@@ -17,6 +17,10 @@ Regenerate → POST /api/v1/book/:bookId/regenerate
    filterDirtyScenesByScope(scope)
          ↓
    Cover check → prepend if needed
+         ↓
+   removeScenesFromActiveIndex()    ← Только dirty-сцены (июль 2026)
+   clearLeasesForScenes()           ← Только dirty-сцены (июль 2026)
+   clearGpuHubQueues()              ← Только dirty-сцены (июль 2026)
          ↓
    markDirtyScenes()
      ├── Reset Redis chunks (pending)
@@ -330,17 +334,26 @@ const IMAGE_PROMPT_SOURCES = {
 
 ### 4.2 Backend: POST /regenerate
 
-**Файл:** `book-routes.cjs:1482`
+**Файл:** `generation-routes.cjs` (ранее `book-routes.cjs`)
 
-1. Очистка состояния (cancel flag, leases)
+1. Блокировка регенерации (`animastor:regenerate-lock`, SET NX EX 300)
 2. Применение scope (`genScope.setScope()`)
 3. Применение profile (`bookDiff.applyProfileToLayerConfig()`)
-4. Сбор всех сцен
+4. Сбор всех сцен (`collectAllScenes()`)
 5. **Diff** (`bookDiff.computeBookDiff(existingBook, loadedBook)`)
-6. Фильтрация по scope
+6. Фильтрация dirty-сцен по scope → `filteredDirty`
 7. Cover check
-8. **Mark dirty** (`bookDiff.markDirtyScenes()`)
-9. **Restore valid content** (`restoreChunkStatusForScene()`)
+8. **Очистка только dirty-сцен:**
+   - `removeScenesFromActiveIndex(redis, bookId, filteredDirty)` — удаление из active index
+   - `clearLeasesForScenes(redis, bookId, filteredDirty)` — удаление dispatch-лизингов
+   - `clearGpuHubQueues(redis, bookId, filteredDirty)` — удаление stale-задач из GPU hub
+9. Сброс счётчиков активных задач (`redis.del('animastor:runtime:active-*')`) — **только для полного регена (scope=WHOLE_BOOK)**
+10. Установка force-dispatch флага (`animastor:force-dispatch`, EX 120)
+11. **Mark dirty** (`bookDiff.markDirtyScenes()`)
+12. **Restore valid content** (`restoreChunkStatusForScene()`)
+13. Добавление dirty-сцен в active index
+
+> **⚠️ Pre-existing issue (исправлено июль 2026):** Ранее `clearBookFromActiveIndex()` и `clearAllLeasesForBook()` удаляли **все** сцены книги, убивая параллельную генерацию других сцен. Теперь очистка точечная — только dirty-сцены.
 
 ### 4.3 Scene Diff (book-diff.cjs) — v1 (с ошибками)
 
@@ -522,12 +535,15 @@ animastor:book-scenes:<bookId>:window-start
 animastor:generation:cancel:<bookId>
 animastor:dispatch-lease:<bookId>:<...>
 animastor:dispatch-meta:<bookId>:<...>
-animastor:runtime:active-audio
-animastor:runtime:active-image
-animastor:runtime:active-video
-animastor:concurrent-audio
-animastor:concurrent-image
-animastor:concurrent-video
+animastor:dispatch-completed:<bookId>:<...>
+
+# Quota counters (backpressure)
+animastor:runtime:active-audio              # Counter — активные аудио-задачи
+animastor:runtime:active-image              # Counter — активные image-задачи
+animastor:runtime:active-video              # Counter — активные video-задачи
+animastor:concurrent-audio                  # Counter — параллельные аудио-задачи
+animastor:concurrent-image                  # Counter — параллельные image-задачи
+animastor:concurrent-video                  # Counter — параллельные video-задачи
 
 # Per-unit progress (Redis counter — не filesystem PNG count)
 animastor:iu-progress:<bookId>:<ch>:<sc>:image   # Счётчик подтверждённых GPU-завершений IU (INCR, TTL=14400s).
@@ -535,13 +551,21 @@ animastor:iu-progress:<bookId>:<ch>:<sc>:image   # Счётчик подтвер
                                                   # чтобы stale PNG от предыдущей генерации не искажали прогресс.
 
 # Per-unit regeneration (GPU dedup + in-flight)
-animastor:job:<job_id>                     # GPU hub dedup key (SET NX EX 3600) — очищается перед dispatch dirty unit
+animastor:job:<job_id>                     # GPU hub dedup key (SET NX EX 3600) — очищается при регенарации dirty-unit
+animastor:result-processed:<job_id>:<build> # GPU hub result dedup (SET NX EX 3600) — очищается при регенарации
 animastor:iu-in-flight:<imageIUId>         # Redis marker (EX 1200) — предотвращает duplicate dispatch на след. tick
+
+# Regenerate lock
+animastor:regenerate-lock:<bookId>         # SET NX EX 300 — предотвращает параллельные регенерации
+
+# Force dispatch (после регенерации)
+animastor:force-dispatch:<bookId>          # EX 120 — scheduler форсирует dispatch dirty-сцен
 
 # GPU hub heartbeat (shared Redis)
 animastor:worker:heartbeat:<type>:<id>     # Текущий job_id (обновляется каждые 10с для running задач)
-animastor:running                          # Running tasks (hset)
-animastor:queue:<type>                     # Очереди GPU hub (image/audio/video)
+animastor:running                          # Running tasks (hset) — очищается при регенерации
+animastor:queue:<type>                     # Очереди GPU hub (image/audio/video) — очищается при регенерации
+animastor:result:<build_id>:<bookId>:<...> # Кэш результатов GPU hub — очищается при регенерации
 ```
 
 ---
@@ -550,17 +574,19 @@ animastor:queue:<type>                     # Очереди GPU hub (image/audio
 
 | Файл | Размер | Роль |
 |---|---|---|
-| `backend/src/routes/book-routes.cjs` | ~1800 строк | POST /regenerate |
+| `backend/src/routes/book/generation-routes.cjs` | ~500 строк | POST /regenerate, cancel, clearGpuHubQueues |
 | `backend/src/services/book-diff.cjs` | ~360 строк | Diff, mark dirty |
 | `backend/src/services/book-sync.js` | ~200 строк | Hash-based sync |
 | `backend/src/services/gen-scope.js` | ~130 строк | Scope management |
 | `backend/src/services/layer-config.js` | ~120 строк | Profile management |
-| **`backend/src/dependency-graph.js`** | ~80 строк | **⚠️ Содержит ошибку: audio→['audio','video']** |
-| `backend/src/utils/scene-hash.js` | ~120 строк | SHA256 fingerprint |
-| `backend/src/runtime/scene-window.js` | ~680 строк | Window slide |
+| `backend/src/services/book-diff.cjs` | ~500 строк | Book diff + dependency resolution |
 | `backend/src/state/scene-state.js` | ~250 строк | FSM + per-asset |
-| `backend/src/runtime/runtime-scheduler.js` | ~300 строк | Tick dispatch |
+| `backend/src/runtime/runtime-scheduler.js` | ~320 строк | Tick dispatch, removeScenesFromActiveIndex |
+| `backend/src/runtime/dispatch-engine.js` | ~960 строк | Lease, quota, clearLeasesForScenes |
+| `backend/src/runtime/scene-window.js` | ~680 строк | Window slide |
+| `backend/src/utils/scene-hash.js` | ~120 строк | SHA256 fingerprint |
 | `backend/src/video/video-service.js` | ~200 строк | Видео БЕЗ аудио |
 | `backend/src/video/video-merge.js` | ~190 строк | Mux Video+Audio (экспорт) |
 | `frontend/.../EditFragment.kt` | ~900 строк | Editor |
 | `frontend/.../GenerateViewModel.kt` | ~900 строк | Regeneration |
+| `docs/02-orchestration/GPU_HUB_CLEANUP.md` | — | Документация GPU hub cleanup |
