@@ -513,10 +513,10 @@ class GenerateViewModel(
                             importProgressMessages = emptyList()
                         )}
 
-                        msgs.add("✓ Файл выбран")
-                        msgs.add("✓ TXT прочитан")
-                        msgs.add("✓ Кодировка определена")
-                        msgs.add("✓ Структура VBook создана")
+                        msgs.add("✓ File selected")
+                        msgs.add("✓ TXT read")
+                        msgs.add("✓ Encoding detected")
+                        msgs.add("✓ VBook structure created")
                         _uiState.update { it.copy(importProgress = 0.2f, importProgressMessages = msgs.toList()) }
 
                         _uiState.update { it.copy(importStage = ImportStage.ANALYZING, importProgress = 0.3f) }
@@ -529,7 +529,7 @@ class GenerateViewModel(
 
                         // Handle dedup
                         if (importRes.dedup) {
-                            msgs.add("✓ Книга уже существует — проверяем состояние...")
+                            msgs.add("✓ Book already exists — checking state...")
                             _uiState.update { it.copy(importProgressMessages = msgs.toList()) }
 
                             val bookStatus = runCatching { _repository.getLazyBookStatus(bId) }.getOrNull()
@@ -540,18 +540,18 @@ class GenerateViewModel(
                             } ?: false
 
                             if (!isComplete) {
-                                msgs.add("⟳ Книга недостроена — возобновляем импорт...")
+                                msgs.add("⟳ Book incomplete — resuming import...")
                                 _uiState.update { it.copy(importProgressMessages = msgs.toList()) }
                                 val resumeRes = _repository.resumeBootstrap(bId)
                                 if (resumeRes.state != "BOOTSTRAPPED" && resumeRes.state != "ACTIVE") {
                                     pollAgentProgress(bId, msgs)
                                 } else {
-                                    msgs.add("✓ Книга уже была полностью обработана")
+                                    msgs.add("✓ Book was already fully processed")
                                 }
-                                msgs.add("💬 Импорт восстановлен. Можете задать вопросы или запустить генерацию.")
+                                msgs.add("💬 Import resumed. You can ask questions or start generation.")
                             } else {
                                 val bs = bookStatus!!
-                                msgs.add("✓ Книга уже готова (${bs.parsedChapters} глав, ${bs.parsedScenes} сцен)")
+                                msgs.add("✓ Book ready (${bs.parsedChapters} chapters, ${bs.parsedScenes} scenes)")
                             }
 
                             val allChunks = runCatching { _repository.getAllChunks(bId) }.getOrNull()
@@ -571,7 +571,7 @@ class GenerateViewModel(
                                 chunkPositions = positions
                             ))
 
-                            msgs.add("✓ Загружено ${chunkIds.size} сцен")
+                            msgs.add("✓ Loaded ${chunkIds.size} scenes")
                             _uiState.update { it.copy(
                                 importProgressMessages = msgs.toList(),
                                 importStage = ImportStage.DONE,
@@ -607,11 +607,11 @@ class GenerateViewModel(
                             _uiState.update { it.copy(importProgressMessages = msgs.toList()) }
                         }
 
-                        msgs.add("✓ Импорт завершён: ${bootstrapRes.characters} персонажей, ${bootstrapRes.locations} локаций, ${bootstrapRes.scenes} сцен")
+                        msgs.add("✓ Import complete: ${bootstrapRes.characters} characters, ${bootstrapRes.locations} locations, ${bootstrapRes.scenes} scenes")
                         _uiState.update { it.copy(importProgressMessages = msgs.toList()) }
 
                         pollAgentProgress(bId, msgs, afterBootstrapMsg)
-                        msgs.add("💬 Можете задать вопросы или запустить генерацию через кнопку на панели инструментов.")
+                        msgs.add("💬 You can ask questions or start generation using the toolbar button.")
                         _uiState.update { it.copy(importProgressMessages = msgs.toList()) }
 
                         val allChunks = runCatching { _repository.getAllChunks(bId) }.getOrNull()

@@ -519,7 +519,7 @@ class MainActivity : AppCompatActivity() {
             image = getString(R.string.progress_label_image),
             video = getString(R.string.progress_label_video),
             generationDone = getString(R.string.generation_done),
-            vbookLabel = "VBook, сцены",
+            vbookLabel = "VBook, scenes",
             vbookAnalyzing = getString(R.string.progress_vbook_analyzing),
             vbookScenesFormat = { ready, total -> getString(R.string.progress_vbook_scenes, ready, total) }
         )
