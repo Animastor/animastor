@@ -159,7 +159,7 @@
 
             <com.google.android.material.chip.Chip
                 android:id="@+id/layerAudio"
-                style="@style/Widget.Animastor.Chip"
+                style="@style/Widget.Animastor.Chip.Layer"
                 android:layout_width="48dp"
                 android:layout_height="48dp"
                 android:layout_marginEnd="8dp"
@@ -172,7 +172,7 @@
 
             <com.google.android.material.chip.Chip
                 android:id="@+id/layerImage"
-                style="@style/Widget.Animastor.Chip"
+                style="@style/Widget.Animastor.Chip.Layer"
                 android:layout_width="48dp"
                 android:layout_height="48dp"
                 android:layout_marginEnd="8dp"
@@ -185,7 +185,7 @@
 
             <com.google.android.material.chip.Chip
                 android:id="@+id/layerVideo"
-                style="@style/Widget.Animastor.Chip"
+                style="@style/Widget.Animastor.Chip.Layer"
                 android:layout_width="48dp"
                 android:layout_height="48dp"
                 android:layout_marginEnd="8dp"
@@ -198,7 +198,7 @@
 
             <com.google.android.material.chip.Chip
                 android:id="@+id/layerSubtitles"
-                style="@style/Widget.Animastor.Chip"
+                style="@style/Widget.Animastor.Chip.Layer"
                 android:layout_width="48dp"
                 android:layout_height="48dp"
                 android:checked="true"

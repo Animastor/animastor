@@ -241,6 +241,16 @@
         <item name="elevation">0dp</item>
     </style>
 
+    <!-- Layer Chip — cinema console toggle for player layer controls
+         Uses gold accent when active, dark muted when inactive.
+         Deliberately DIFFERENT from Worker chips: no error colors. -->
+    <style name="Widget.Animastor.Chip.Layer" parent="Widget.Animastor.Chip">
+        <item name="chipBackgroundColor">@color/layer_chip_bg</item>
+        <item name="chipStrokeColor">@color/layer_chip_stroke</item>
+        <item name="chipStrokeWidth">1.5dp</item>
+        <item name="chipIconTint">@color/layer_chip_icon</item>
+        <item name="android:stateListAnimator">@null</item>
+    </style>
 
 
     <!-- TabLayout -->
