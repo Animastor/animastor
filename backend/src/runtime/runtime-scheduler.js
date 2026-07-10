@@ -149,6 +149,27 @@ async function clearBookFromActiveIndex(redis, bookId) {
 }
 
 /**
+ * Remove specific scenes from the active index.
+ * Used by regenerate to only remove dirty scenes, preserving other scenes'
+ * active index entries so the scheduler continues processing them.
+ *
+ * @param {Array<{chapter_id:string,scene_id:string}>} scenes - scenes to remove
+ */
+async function removeScenesFromActiveIndex(redis, bookId, scenes) {
+    if (!scenes || scenes.length === 0) return 0;
+    let removed = 0;
+    for (const s of scenes) {
+        const sceneKey = `${bookId}:${s.chapter_id}:${s.scene_id}`;
+        const result = await redis.srem(ACTIVE_SCENES_KEY, sceneKey);
+        if (result > 0) removed++;
+    }
+    if (removed > 0) {
+        log(`REMOVED: removed ${removed} specific scenes from active index for book ${bookId}`);
+    }
+    return removed;
+}
+
+/**
  * Parse scene key to extract bookId, chapterId, sceneId.
  */
 function parseSceneKey(sceneKey) {
@@ -554,6 +575,7 @@ module.exports = {
     addSceneToActiveIndex,
     removeSceneFromActiveIndex,
     clearBookFromActiveIndex,
+    removeScenesFromActiveIndex,
     getActiveSceneKeys,
     parseSceneKey,
 

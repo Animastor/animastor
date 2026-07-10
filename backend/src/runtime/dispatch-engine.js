@@ -727,6 +727,35 @@ async function clearAllLeasesForBook(redis, bookId) {
     return { deleted };
 }
 
+/**
+ * Clear leases, metadata, and completion markers for specific scenes.
+ * Used by regenerate to only clear dirty scenes' leases, preserving other
+ * scenes so they continue generating without interruption.
+ *
+ * @param {Array<{chapter_id:string,scene_id:string}>} scenes - scenes to clear
+ */
+async function clearLeasesForScenes(redis, bookId, scenes) {
+    if (!scenes || scenes.length === 0) return { deleted: 0 };
+    const stages = ['audio', 'image', 'video'];
+    const keysToDelete = [];
+    for (const s of scenes) {
+        for (const stage of stages) {
+            keysToDelete.push(
+                getLeaseKey(bookId, s.chapter_id, s.scene_id, stage),
+                getDispatchMetaKey(bookId, s.chapter_id, s.scene_id, stage),
+                getDispatchCompletedKey(bookId, s.chapter_id, s.scene_id, stage)
+            );
+        }
+    }
+    // Delete all keys in a single batch call — ioredis unpacks array as variadic args
+    await redis.del(...keysToDelete);
+    const deleted = keysToDelete.length;
+    if (deleted > 0) {
+        log(`CLEAR_SCENE_LEASES: ${bookId} — ${deleted} keys deleted for ${scenes.length} scene(s)`);
+    }
+    return { deleted };
+}
+
 // ======================================================
 // METRICS
 // ======================================================
@@ -924,6 +953,7 @@ module.exports = {
 
     // Recovery
     clearAllLeasesForBook,
+    clearLeasesForScenes,
 
     // Runtime metrics
     getRuntimeMetrics,
