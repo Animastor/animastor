@@ -206,7 +206,9 @@ module.exports = function(app, redis, deps) {
 
             const aiResponse = await response.json();
             const aiMessage = aiResponse.choices?.[0]?.message;
-            const replyText = aiMessage?.content || '';
+            let replyText = aiMessage?.content || '';
+            // Strip AI chain-of-thought reasoning blocks — internal, not for the UI
+            replyText = replyText.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
             const toolCalls = aiMessage?.tool_calls || [];
 
             // Handle tool calls
@@ -358,8 +360,12 @@ module.exports = function(app, redis, deps) {
                         const parsed = JSON.parse(data);
                         const delta = parsed.choices?.[0]?.delta;
                         if (delta?.content) {
-                            fullContent += delta.content;
-                            res.write(`data: ${JSON.stringify({ type: 'content', content: delta.content })}\n\n`);
+                            // Strip AI chain-of-thought reasoning blocks from streamed chunks
+                            const cleaned = delta.content.replace(/<think>[\s\S]*?<\/think>/g, '');
+                            if (cleaned) {
+                                fullContent += cleaned;
+                                res.write(`data: ${JSON.stringify({ type: 'content', content: cleaned })}\n\n`);
+                            }
                         }
                         if (delta?.tool_calls) {
                             for (const tc of delta.tool_calls) {
@@ -575,7 +581,7 @@ module.exports = function(app, redis, deps) {
                 }
             }
 
-            res.json({ reply: replyText, patches_applied: patches.length, book_updated: !!patchedBook });
+            res.json({ reply: parsed.reply, patches_applied: patches.length, book_updated: !!patchedBook });
         } catch (err) {
             console.error('[AI PROMPT] Error:', err.message);
             res.status(500).json({ error: err.message });

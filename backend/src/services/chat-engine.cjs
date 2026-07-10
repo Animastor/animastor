@@ -310,6 +310,9 @@ module.exports = function(config) {
     function parseAIResponse(text) {
         if (!text) return { reply: '', patches: [] };
 
+        // Strip AI chain-of-thought reasoning blocks — not meant for the UI
+        text = text.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+
         const patches = [];
         const regex = /```patches\n([\s\S]*?)```/g;
         let match;

@@ -13,9 +13,6 @@ data class ChatMessage(
         if (isTyping) return
         var processed = text
 
-        // Strip AI thinking blocks (<think>...</think>) — internal reasoning not meant for UI
-        processed = processed.replace(Regex("<think>.*?</think>", RegexOption.DOT_MATCHES_ALL), "")
-
         // Escape HTML entities first
         processed = processed.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
