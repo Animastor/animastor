@@ -44,6 +44,7 @@ class NavigateFragment : Fragment(R.layout.fragment_navigate) {
     private var bookData: BookData? = null
     private val expandedScenes = mutableSetOf<String>()
     private var lastPositionKey: String? = null
+    private var isLoading = false
     private val adapter = BookStructureAdapter(
         onClick = { item ->
             when (item) {
@@ -159,6 +160,7 @@ class NavigateFragment : Fragment(R.layout.fragment_navigate) {
         touchHelper.attachToRecyclerView(binding?.structureList)
 
         observePosition()
+        observeGenerationCompletion()
         loadBook()
     }
 
@@ -217,22 +219,50 @@ class NavigateFragment : Fragment(R.layout.fragment_navigate) {
         }
     }
 
+    private fun observeGenerationCompletion() {
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.playbackPrepared.collect { prep ->
+                    // Reload book structure when new content is available.
+                    // The isLoading guard prevents redundant fetches:
+                    //   - Replay emission (replay=1) arrives while loadBook() from
+                    //     onViewCreated is still running → isLoading=true → skip
+                    //   - First real emission with no prior replay → isLoading=false → fetch
+                    //   - Subsequent generation completions → isLoading=false → fetch
+                    if (viewModel.bookId.isNotBlank() && viewModel.bookId == prep.bookId) {
+                        loadBook()
+                    }
+                }
+            }
+        }
+    }
+
     private fun loadBook() {
         val bookId = viewModel.bookId.takeIf { it.isNotBlank() }
         if (bookId == null) {
             bookData = null
             adapter.submitList(emptyList())
             binding?.emptyState?.visibility = View.VISIBLE
+            binding?.loadingIndicator?.visibility = View.GONE
             return
         }
+        if (isLoading) return
+        isLoading = true
         binding?.emptyState?.visibility = View.GONE
+        binding?.loadingIndicator?.visibility = View.VISIBLE
         lifecycleScope.launch {
             try {
                 bookData = viewModel.repository.getBook(bookId)
                 rebuildStructure()
                 updatePositionBar(SharedPositionManager.current.value)
-            } catch (_: Exception) {
-                binding?.emptyState?.visibility = View.VISIBLE
+                binding?.loadingIndicator?.visibility = View.GONE
+            } catch (e: Exception) {
+                binding?.loadingIndicator?.visibility = View.GONE
+                if (bookData == null) {
+                    binding?.emptyState?.visibility = View.VISIBLE
+                }
+            } finally {
+                isLoading = false
             }
         }
     }
