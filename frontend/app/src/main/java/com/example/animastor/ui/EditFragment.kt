@@ -168,14 +168,14 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
     }
 
     private fun loadBookAndAutoPosition() {
-        setSaveLoading(true)
+        setSaveLoading(busy = true, isSaving = false)
         lifecycleScope.launch {
             try {
                 val bd = viewModel.repository.getBook(viewModel.bookId)
                 val chs = bd.chapters ?: emptyList()
                 val firstCh = chs.firstOrNull()
                 val firstSc = firstCh?.scenes?.firstOrNull()
-                setSaveLoading(false)
+                setSaveLoading(busy = false)
                 if (firstCh != null && firstSc != null) {
                     SharedPositionManager.navigateTo(
                         chapterId = firstCh.chapter,
@@ -186,7 +186,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                     )
                 }
             } catch (_: Exception) {
-                setSaveLoading(false)
+                setSaveLoading(busy = false)
                 saveButtonSetError(getString(R.string.edit_load_failed))
             }
         }
@@ -202,14 +202,14 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
             binding?.contentFrame?.removeAllViews()
             return
         }
-        setSaveLoading(true)
+        setSaveLoading(busy = true, isSaving = false)
         lifecycleScope.launch {
             try {
                 bookData = viewModel.repository.getBook(viewModel.bookId)
                 chapters = bookData?.chapters ?: emptyList()
                 viewModel.snapshotCurrentBook()
             } catch (_: Exception) {
-                setSaveLoading(false)
+                setSaveLoading(busy = false)
                 saveButtonSetError(getString(R.string.edit_load_failed))
                 return@launch
             }
@@ -224,7 +224,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                 fieldValues.clear()
             }
 
-            setSaveLoading(false)
+            setSaveLoading(busy = false)
             updateCarousel()
             updatePositionLabel()
             rebuildContent(binding?.propertyTabs?.selectedTabPosition ?: 0)
@@ -924,11 +924,20 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         }
     }
 
-    private fun setSaveLoading(loading: Boolean) {
+    /**
+     * Toggle the save button between loading/saving and idle states.
+     * @param busy true when an operation is in progress, false when idle
+     * @param isSaving true if the operation is saving, false if it's loading
+     */
+    private fun setSaveLoading(busy: Boolean, isSaving: Boolean = true) {
         binding?.saveButton?.apply {
-            text = if (loading) getString(R.string.edit_saving) else getString(R.string.edit_save)
-            isEnabled = !loading
-            alpha = if (loading) 0.5f else 1.0f
+            text = when {
+                busy && isSaving -> getString(R.string.edit_saving)
+                busy && !isSaving -> getString(R.string.edit_loading)
+                else -> getString(R.string.edit_save)
+            }
+            isEnabled = !busy
+            alpha = if (busy) 0.5f else 1.0f
         }
     }
 
