@@ -8,6 +8,15 @@ All notable changes to Animastor are documented here.
 
 ### Fixed
 
+- **Cache clear теперь удаляет все PG-таблицы книги** (`backend/src/routes/book/cache-routes.cjs`):
+  - `DELETE /api/v1/book/:bookId/cache` теперь удаляет все 13 PG-таблиц для книги (аналогично `DELETE /book`),
+    включая `scene_assets`, `book_events`, `book_source`, `chat_messages`, `agent_sessions` и другие.
+  - Ранее не удалялась таблица `scene_assets`, из-за чего после очистки кэша в PG оставался
+    `status='ready'`, блокируя создание placeholder-аудио через `recoverMissingPlaceholders()`.
+  - Это вызывало цепочку: Audio not ready → плеер играет одну сцену по кругу → Navigator крашится.
+
+### Fixed
+
 - **Audio merge — `expected_chunk_count` not updated for existing chunks** (`backend/src/audio/generation.js`):
   - `generateSceneAudio()` now always updates `expected_chunk_count` when refreshing existing chunk metadata.
     During import, chunk `_0001` was created with `expected_chunk_count: 1`, but `buildSegments()` may produce

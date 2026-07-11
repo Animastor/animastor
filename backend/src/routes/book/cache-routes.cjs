@@ -70,12 +70,21 @@ module.exports = function registerCacheRoutes(app, ctx) {
             // Clean up ALL Redis keys for this book using the comprehensive helper
             await cleanBookRedisKeys(redis, bookId);
 
-            // Clean up PostgreSQL
+            // Clean up PostgreSQL — same set of tables as DELETE /book (core-routes.cjs)
             try {
                 await storage.postgres.query('DELETE FROM scene_assets_cache WHERE book_id = $1', [bookId]);
                 await storage.postgres.query('DELETE FROM scene_assets_state WHERE book_id = $1', [bookId]);
                 await storage.postgres.query('DELETE FROM scene_images WHERE book_id = $1', [bookId]);
                 await storage.postgres.query('DELETE FROM scene_videos WHERE book_id = $1', [bookId]);
+                await storage.postgres.query('DELETE FROM scene_assets WHERE book_id = $1', [bookId]);
+                await storage.postgres.query('DELETE FROM book_snapshots WHERE book_id = $1', [bookId]);
+                await storage.postgres.query('DELETE FROM book_events WHERE book_id = $1', [bookId]);
+                await storage.postgres.query('DELETE FROM cache_entries WHERE book_id = $1', [bookId]);
+                await storage.postgres.query('DELETE FROM book_source WHERE book_id = $1', [bookId]);
+                await storage.postgres.query('DELETE FROM chat_messages WHERE book_id = $1', [bookId]);
+                await storage.postgres.query('DELETE FROM chat_sessions WHERE book_id = $1', [bookId]);
+                await storage.postgres.query('DELETE FROM agent_sessions WHERE book_id = $1', [bookId]);
+                await storage.postgres.query('DELETE FROM book_generation_sessions WHERE book_id = $1', [bookId]);
             } catch (dbErr) {
                 console.warn('[CACHE] DB cleanup failed:', dbErr.message);
             }
