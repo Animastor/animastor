@@ -86,41 +86,27 @@ module.exports = function(app, redis, deps) {
                 });
             }
 
-            // ── 3. Count unique scenes for consistent progress display ──
-            // The TTS pipeline may create multiple chunks per scene (_0001, _0002, _0003).
-            // ALL workers (audio, image, video, VBook) should use the same denominator
-            // (scene count) so the user never sees a jarring 0/5 → 0/9 transition.
-            const uniqueScenesSet = new Set();
-            for (const cid of filteredIds) {
-                const chunk = chunkById.get(cid);
-                if (chunk?.chapter_id && chunk?.scene_id) {
-                    uniqueScenesSet.add(`${chunk.chapter_id}:${chunk.scene_id}`);
-                }
-            }
-            const scopeTotal = uniqueScenesSet.size || filteredIds.length;
-
-            // Count readiness per scene (a scene is "ready" when at least one chunk has status=ready)
-            const sceneAudioReady = new Set();
-            const sceneAudioRealReady = new Set();
-            const sceneImageReady = new Set();
-            const sceneVideoReady = new Set();
+            // ── 3. Count ready chunks per layer ──
+            // Each worker shows honest progress based on its own work units:
+            //   - Audio: TTS segments (chunks). Long scenes split into _0001.._0003
+            //     count as separate work items — user sees real TTS progress.
+            //   - Image: IU images (individual image generation tasks).
+            //   - Video: scenes (one video per scene).
+            // Each worker has its own total — this is fine, they are separate rows.
+            let audioReady = 0, audioReadyReal = 0, imageReady = 0, videoReady = 0;
 
             for (const cid of filteredIds) {
                 const chunk = chunkById.get(cid);
                 if (!chunk) continue;
-                const sceneKey = `${chunk.chapter_id || ''}:${chunk.scene_id || ''}`;
                 if (chunk.audio_status === 'ready' || chunk.audio_status === 'placeholder') {
-                    sceneAudioReady.add(sceneKey);
-                    if (chunk.audio_status === 'ready') sceneAudioRealReady.add(sceneKey);
+                    audioReady++;
+                    if (chunk.audio_status === 'ready') audioReadyReal++;
                 }
-                if (chunk.image_status === 'ready') sceneImageReady.add(sceneKey);
-                if (chunk.video_status === 'ready') sceneVideoReady.add(sceneKey);
+                if (chunk.image_status === 'ready') imageReady++;
+                if (chunk.video_status === 'ready') videoReady++;
             }
 
-            const audioReady = sceneAudioReady.size;
-            const audioReadyReal = sceneAudioRealReady.size;
-            const imageReady = sceneImageReady.size;
-            const videoReady = sceneVideoReady.size;
+            const scopeTotal = filteredIds.length;
 
             // ── 4. IU counts (for image worker) ──
             let scopeIuTotal = 0, scopeIuReady = 0, coverIuTotal = 0, coverIuReady = 0;
