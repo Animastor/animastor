@@ -400,23 +400,47 @@ module.exports = function(app, redis, deps) {
             await redis.del('animastor:runtime:active-video');
             await cleanBookRedisKeys(redis, bookId);
 
-            try {
-                await storage.postgres.query('DELETE FROM scene_assets_cache WHERE book_id = $1', [bookId]);
-                await storage.postgres.query('DELETE FROM scene_assets_state WHERE book_id = $1', [bookId]);
-                await storage.postgres.query('DELETE FROM scene_images WHERE book_id = $1', [bookId]);
-                await storage.postgres.query('DELETE FROM scene_videos WHERE book_id = $1', [bookId]);
-                await storage.postgres.query('DELETE FROM scene_assets WHERE book_id = $1', [bookId]);
-                await storage.postgres.query('DELETE FROM book_snapshots WHERE book_id = $1', [bookId]);
-                await storage.postgres.query('DELETE FROM book_events WHERE book_id = $1', [bookId]);
-                await storage.postgres.query('DELETE FROM cache_entries WHERE book_id = $1', [bookId]);
-                await storage.postgres.query('DELETE FROM book_source WHERE book_id = $1', [bookId]);
-                await storage.postgres.query('DELETE FROM chat_messages WHERE book_id = $1', [bookId]);
-                await storage.postgres.query('DELETE FROM chat_sessions WHERE book_id = $1', [bookId]);
-                await storage.postgres.query('DELETE FROM agent_sessions WHERE book_id = $1', [bookId]);
-                await storage.postgres.query('DELETE FROM book_generation_sessions WHERE book_id = $1', [bookId]);
-                await storage.postgres.query('DELETE FROM books WHERE book_id = $1', [bookId]);
-            } catch (dbErr) {
-                console.warn('[DELETE-BOOK] DB cleanup error:', dbErr.message);
+            // ── Clean ALL PG tables — each with individual try/catch so one
+            //    failure (e.g. table doesn't exist in an older schema) doesn't
+            //    block cleanup of the remaining tables.
+            const pgTables = [
+                // Per-layer & asset tables (book_id as plain TEXT, no FK)
+                'image_units',
+                'scenes',
+                'asset_states',
+                'asset_dependencies',
+                'generation_tasks',
+                'reconciliation_events',
+                'output_manifests',
+                'cache_entries',
+                'book_source',
+                'chat_messages',
+                'chat_sessions',
+                'agent_sessions',
+                'book_generation_sessions',
+                'ai_chat_sessions',
+                'book_events',
+                'scene_assets',
+                // Coreference resolution tables
+                'character_resolution_runs',
+                'character_window_candidates',
+                'sentence_resolutions',
+                'character_mentions',
+                'character_aliases',
+                // Tables with FK to books — delete before books
+                'storyboard_elements',
+                'audio_layers',
+                'book_snapshots',
+                // books LAST (may have FK cascades)
+                'books',
+            ];
+            for (const table of pgTables) {
+                try {
+                    await storage.postgres.query(`DELETE FROM ${table} WHERE book_id = $1`, [bookId]);
+                } catch (tblErr) {
+                    // Table may not exist in older schemas — non-fatal
+                    console.warn(`[DELETE-BOOK] DB cleanup: ${table}: ${tblErr.message}`);
+                }
             }
 
             try {

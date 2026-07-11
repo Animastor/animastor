@@ -70,23 +70,42 @@ module.exports = function registerCacheRoutes(app, ctx) {
             // Clean up ALL Redis keys for this book using the comprehensive helper
             await cleanBookRedisKeys(redis, bookId);
 
-            // Clean up PostgreSQL — same set of tables as DELETE /book (core-routes.cjs)
-            try {
-                await storage.postgres.query('DELETE FROM scene_assets_cache WHERE book_id = $1', [bookId]);
-                await storage.postgres.query('DELETE FROM scene_assets_state WHERE book_id = $1', [bookId]);
-                await storage.postgres.query('DELETE FROM scene_images WHERE book_id = $1', [bookId]);
-                await storage.postgres.query('DELETE FROM scene_videos WHERE book_id = $1', [bookId]);
-                await storage.postgres.query('DELETE FROM scene_assets WHERE book_id = $1', [bookId]);
-                await storage.postgres.query('DELETE FROM book_snapshots WHERE book_id = $1', [bookId]);
-                await storage.postgres.query('DELETE FROM book_events WHERE book_id = $1', [bookId]);
-                await storage.postgres.query('DELETE FROM cache_entries WHERE book_id = $1', [bookId]);
-                await storage.postgres.query('DELETE FROM book_source WHERE book_id = $1', [bookId]);
-                await storage.postgres.query('DELETE FROM chat_messages WHERE book_id = $1', [bookId]);
-                await storage.postgres.query('DELETE FROM chat_sessions WHERE book_id = $1', [bookId]);
-                await storage.postgres.query('DELETE FROM agent_sessions WHERE book_id = $1', [bookId]);
-                await storage.postgres.query('DELETE FROM book_generation_sessions WHERE book_id = $1', [bookId]);
-            } catch (dbErr) {
-                console.warn('[CACHE] DB cleanup failed:', dbErr.message);
+            // ── Clean PG tables — each with individual try/catch so one
+            //    failure doesn't block the rest. Same table list as DELETE /book
+            //    minus 'books' (cache clear preserves the book record).
+            const pgTables = [
+                'image_units',
+                'scenes',
+                'asset_states',
+                'asset_dependencies',
+                'generation_tasks',
+                'reconciliation_events',
+                'output_manifests',
+                'cache_entries',
+                'book_source',
+                'chat_messages',
+                'chat_sessions',
+                'agent_sessions',
+                'book_generation_sessions',
+                'ai_chat_sessions',
+                'book_events',
+                'scene_assets',
+                'character_resolution_runs',
+                'character_window_candidates',
+                'sentence_resolutions',
+                'character_mentions',
+                'character_aliases',
+                'storyboard_elements',
+                'audio_layers',
+                'book_snapshots',
+                // NOTE: 'books' is NOT deleted on cache clear
+            ];
+            for (const table of pgTables) {
+                try {
+                    await storage.postgres.query(`DELETE FROM ${table} WHERE book_id = $1`, [bookId]);
+                } catch (tblErr) {
+                    console.warn(`[CACHE] DB cleanup: ${table}: ${tblErr.message}`);
+                }
             }
 
             // Clear gpu-hub queue

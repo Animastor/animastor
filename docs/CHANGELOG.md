@@ -8,6 +8,26 @@ All notable changes to Animastor are documented here.
 
 ### Fixed
 
+- **DELETE book и DELETE cache — полная очистка всех PG таблиц**
+  (`backend/src/routes/book/core-routes.cjs`, `backend/src/routes/book/cache-routes.cjs`):
+  - **Было:** один try/catch на 14 DELETE запросов. Если одна таблица не существовала
+    (например, `scene_assets_state` — реальное имя `asset_states`), SQL ошибка прерывала
+    весь блок, и **ни одна PG таблица не очищалась**.
+  - **Стало:** каждый DELETE обёрнут в индивидуальный try/catch. Несуществующие таблицы
+    просто логируют warning и не блокируют остальные.
+  - Удалены несуществующие таблицы: `scene_assets_cache`, `scene_assets_state`
+    (реальная: `asset_states`), `scene_images`, `scene_videos`.
+  - Добавлены реальные пропущенные таблицы (25 шт.): `image_units`, `scenes`,
+    `asset_states`, `asset_dependencies`, `generation_tasks`, `reconciliation_events`,
+    `output_manifests`, `storyboard_elements`, `audio_layers`, `ai_chat_sessions`,
+    `character_resolution_runs`, `character_window_candidates`, `sentence_resolutions`,
+    `character_mentions`, `character_aliases` и другие.
+  - `books` удаляется **последним** (его FK каскады на `book_snapshots`,
+    `storyboard_elements`, `audio_layers`).
+  - `agent_sessions` удаляется явно → каскад на `agent_steps`, `agent_conversations`,
+    `agent_messages`.
+  - `DELETE /cache` теперь тоже чистит все 24 таблицы (без `books` — книга сохраняется).
+
 - **Cache clear теперь удаляет все PG-таблицы книги** (`backend/src/routes/book/cache-routes.cjs`):
   - `DELETE /api/v1/book/:bookId/cache` теперь удаляет все 13 PG-таблиц для книги (аналогично `DELETE /book`),
     включая `scene_assets`, `book_events`, `book_source`, `chat_messages`, `agent_sessions` и другие.
