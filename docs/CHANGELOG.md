@@ -8,18 +8,25 @@ All notable changes to Animastor are documented here.
 
 ### Fixed
 
-- **Плеер падал в IDLE после повторного открытия .txt с прогрессом**
-  (`frontend/.../GenerateViewModel.kt`):
-  - **Проблема:** после повторного открытия уже импортированной .txt книги `vbookProgress`
-    оставался в `COMPLETED`. `computeWorkers()` показывал DoneRow на 10 секунд, а после
-    истечения таймера вызывал `applyGenerationResults()` с `softRefresh=true`. Если плеер
-    уже играл — `refreshContent()` сбрасывал фазу в `SCENE_READY`, и плеер падал в IDLE.
-  - **Корень:** `shouldRefresh` в `computeWorkers()` проверял `vbookProgress?.stage == VBookStage.COMPLETED`,
-    что вызывало рефреш плеера даже при отсутствии новых GPU-данных.
+- **Два прогресс-бара после повторного открытия .txt** (`frontend/.../GenerateViewModel.kt`):
+  - **Проблема:** при повторном открытии уже импортированной .txt книги показывалось два
+    прогресс-бара по 10 секунд каждый: первый «100/100 100%» (VBook COMPLETED), второй
+    «100%» зелёный (generic DoneRow). Если плеер уже играл — после завершения цикла
+    `applyGenerationResults()` сбрасывал плеер в IDLE.
+  - **Причина 1 — Race condition:** в dedup-пути `vbookProgress = ANALYZING` ставился
+    *до* проверки `if (importRes.dedup)`. Распараллеленный поллер успевал увидеть ANALYZING,
+    вызвать `checkVBookAgentStatus()` → агент неактивен → перевести в COMPLETED → VBook
+    DoneRow на 10 секунд.
+  - **Причина 2 — Stale worker state:** `_workerPermanentlyDone` и `workerCompletedAt`
+    хранили данные от предыдущей сессии (если процесс Android жив). При вызове
+    `computeWorkers(null, IDLE, ...)` workers пуст, но `_workerPermanentlyDone` не пуст →
+    generic DoneRow ещё на 10 секунд.
   - **Фикс 1:** `shouldRefresh = panel != null` — рефреш только при наличии GPU-данных.
-    VBook COMPLETED сам по себе не требует рефреша (сцены уже загружены при импорте).
-  - **Фикс 2:** в пути dedup-импорта (`importBookFromFile` при `importRes.dedup == true`)
-    сразу устанавливается `vbookProgress = IDLE`, минуя COMPLETED цикл.
+  - **Фикс 2:** `resetWorkerState()` + `vbookProgress = IDLE` в начале `importBookFromFile()`
+    — чистит stale tracking данные при любом импорте.
+  - **Фикс 3:** `vbookProgress = ANALYZING` и `startProgressStream()` перенесены в
+    non-dedup ветку (после `return@launch` в dedup). Для dedup vbookProgress никогда
+    не становится ANALYZING → поллер не может перевести в COMPLETED.
 
 - **Сториборд возвращал пустые IU после DELETE /cache** (`backend/src/routes/generation-routes.cjs`):
   - **Корень:** в scene-based `/api/v1/scene/:bookId/:chapterId/:sceneId/storyboard` fallback на

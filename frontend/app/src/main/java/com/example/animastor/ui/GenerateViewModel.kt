@@ -439,6 +439,10 @@ class GenerateViewModel(
 
     fun importBookFromFile(file: File) {
         Log.i(TAG, "importBookFromFile: ${file.name}")
+        // Сброс worker tracking и vbook прогресса от предыдущей сессии,
+        // чтобы избежать двух прогресс-баров при повторном открытии.
+        resetWorkerState()
+        _uiState.update { it.copy(vbookProgress = VBookProgress(stage = VBookStage.IDLE)) }
         generationJob?.cancel()
         hasUnsavedChanges = false
         _activeGeneration.value = null
@@ -531,12 +535,6 @@ class GenerateViewModel(
 
                         _uiState.update { it.copy(importStage = ImportStage.ANALYZING, importProgress = 0.3f) }
 
-                        _firstWindowDone = false
-                        startProgressStream(bId)
-                        _uiState.update { it.copy(
-                            vbookProgress = VBookProgress(stage = VBookStage.ANALYZING)
-                        )}
-
                         // Handle dedup
                         if (importRes.dedup) {
                             msgs.add("✓ Book already exists — checking state...")
@@ -602,6 +600,13 @@ class GenerateViewModel(
                             )}
                             return@launch
                         }
+
+                        // New import — start VBook progress tracking
+                        _firstWindowDone = false
+                        startProgressStream(bId)
+                        _uiState.update { it.copy(
+                            vbookProgress = VBookProgress(stage = VBookStage.ANALYZING)
+                        )}
 
                         // New import — bootstrap and poll
                         val pollDuringBootstrap = viewModelScope.launch {
