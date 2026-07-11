@@ -15,7 +15,21 @@ All notable changes to Animastor are documented here.
     `status='ready'`, блокируя создание placeholder-аудио через `recoverMissingPlaceholders()`.
   - Это вызывало цепочку: Audio not ready → плеер играет одну сцену по кругу → Navigator крашится.
 
-### Fixed
+- **Плеер больше не зависает на одной сцене после перегенерации** (`frontend/.../PlaybackViewModel.kt`,
+  `frontend/.../PlayFragment.kt`):
+  - **`playNext()`** — при достижении конца очереди чанков теперь сбрасывает `currentIndex = 0` вместо
+    того, чтобы оставлять index за границами массива. После этого пользователь может нажать Play
+    и начать воспроизведение с начала.
+  - **Play button handler** — добавлена проверка `currentChunkIndex >= chunkQueueSize`: если индекс
+    вышел за границы очереди, вызывается `playSceneQueue()` (рестарт с начала) вместо
+    `resumeFromCurrentScene()` (который пытался играть с невалидного индекса и сразу возвращал
+    SCENE_READY, ничего не играя).
+  - **`fetchSceneData()`** — если `audio_ready = true` но загрузка аудио вернула пустой массив,
+    теперь выбрасывается исключение (с ретраем через `retryWithBackoff`), а не передаётся пустое
+    аудио в `handleSilentChunk()`, который вызывал бесконечный цикл IU-изображений одной сцены.
+    Ранее: скачанное пустое аудио → `handleSilentChunk` → `startSilentIuCycling` →
+    `(currentIuIndex + 1) % ius.size` → вечное прокручивание IU одной сцены без вызова
+    `onAudioCompleted()`. Теперь: пустое аудио при `audio_ready=true` → Exception → retry.
 
 - **Audio merge — `expected_chunk_count` not updated for existing chunks** (`backend/src/audio/generation.js`):
   - `generateSceneAudio()` now always updates `expected_chunk_count` when refreshing existing chunk metadata.

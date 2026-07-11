@@ -212,9 +212,13 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                     playbackViewModel.resumeFromCurrentScene()
                 }
                 phase == PlayerPhase.SCENE_READY -> {
-                    // If there's an existing position (content refresh after generation),
-                    // resume from current scene instead of resetting to the beginning.
-                    if (playbackViewModel.currentChunkIndex > 0) {
+                    // If queue has ended (index out of bounds), restart from beginning.
+                    // Otherwise, if there's an existing position (content refresh after
+                    // generation), resume from current scene instead of resetting.
+                    if (playbackViewModel.currentChunkIndex >= playbackViewModel.chunkQueueSize) {
+                        Log.i(TAG, "playButton: SCENE_READY — queue exhausted, restarting from beginning")
+                        playbackViewModel.playSceneQueue()
+                    } else if (playbackViewModel.currentChunkIndex > 0) {
                         Log.i(TAG, "playButton: SCENE_READY — resuming from index ${playbackViewModel.currentChunkIndex}")
                         playbackViewModel.resumeFromCurrentScene()
                     } else {

@@ -647,7 +647,8 @@ class PlaybackViewModel(
     private fun playNext() {
         Log.d(TAG, "playNext: index=$currentIndex queueSize=${chunkQueue.size}")
         if (currentIndex >= chunkQueue.size) {
-            Log.i(TAG, "playNext: end of queue → SCENE_READY")
+            Log.i(TAG, "playNext: end of queue → SCENE_READY (resetting index to 0 for replay)")
+            currentIndex = 0
             _uiState.update { it.copy(phase = PlayerPhase.SCENE_READY) }
             return
         }
@@ -807,7 +808,7 @@ class PlaybackViewModel(
         }
 
         val audioDeferred = async {
-            runCatching {
+            val audioBytes = runCatching {
                 _repository.getChunkAudio(id, buildId).also {
                     Log.i(TAG, "audio fetched for $id: ${it.size} bytes")
                 }
@@ -815,6 +816,13 @@ class PlaybackViewModel(
                 Log.w(TAG, "audio_ready=true but fetch failed for $id: ${e.message}")
                 byteArrayOf()
             }
+            // If audio_ready=true but download returned empty (stale/wrong file),
+            // throw instead of silently looping via handleSilentChunk.
+            // The caller's retryWithBackoff will retry with exponential backoff.
+            if (chunk.audio_ready == true && audioBytes.isEmpty()) {
+                throw Exception("Audio file empty despite audio_ready=true for $id")
+            }
+            audioBytes
         }
         val videoDeferred = async {
             if (chunk.video_ready == true) {
