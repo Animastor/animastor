@@ -33,6 +33,12 @@ class SimpleDiskCache(
         return file
     }
 
+    fun remove(key: String, type: String): Boolean {
+        val dir = dirs[type] ?: File(cacheDir, type)
+        val file = File(dir, sanitize(key))
+        return if (file.exists()) file.delete() else false
+    }
+
     fun evictAll() {
         for (dir in dirs.values) {
             dir.listFiles()?.forEach { it.delete() }

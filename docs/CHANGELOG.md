@@ -8,6 +8,24 @@ All notable changes to Animastor are documented here.
 
 ### Added
 
+- **Android cache invalidation on placeholder→ready transition**
+  (`backend/src/routes/generation-routes.cjs`,
+  `frontend/.../repository/ChunkResponse.kt`,
+  `frontend/.../repository/Repository.kt`,
+  `frontend/.../util/SimpleDiskCache.kt`):
+  - **Backend**: `audio_status` добавлен в `/api/v1/chunk/:id` response. Позволяет Android
+    отличать `placeholder` (тишина) от `ready` (реальное TTS-аудио).
+  - **Android ChunkResponse**: добавлено поле `audio_status: String?`.
+  - **Android SimpleDiskCache**: добавлен метод `remove(key, type)`.
+  - **Android Repository.getChunk()**:
+    - Metadata с `audio_status='placeholder'` **не кешируется** (нестабильна — заменится
+      при генерации реального аудио).
+    - При детекте перехода `placeholder→ready` инвалидируется audio cache (in-memory + disk)
+      для chunk audio и scene audio. Следующий вызов `getChunkAudio()`/`getSceneAudio()`
+      пойдёт в сеть и скачает свежее реальное аудио вместо кешированной тишины.
+  - В паре с фиксом `expected_chunk_count` в `startScene()` решает проблему:
+    «после генерации в локальном кеше остались плэйсхолдеры, аудио не обновилось».
+
 - **Scene duration validation loop with targeted retries**
   (`backend/src/services/agent/pipeline-runner.js`,
   `backend/src/services/agent/pipeline-steps.js`,

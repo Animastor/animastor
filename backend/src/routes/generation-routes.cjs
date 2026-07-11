@@ -281,6 +281,7 @@ module.exports = function(app, redis, deps) {
             res.json({
                 status: allReady ? 'ready' : 'processing', image_ready: imageReady,
                 audio_ready: audioReady, video_ready: videoReady,
+                audio_status: c.audio_status || 'pending',
                 video_status: c.video_status || 'pending',
                 scene_type: c.scene_type || 'narration',
                 scene_id: c.scene_id,

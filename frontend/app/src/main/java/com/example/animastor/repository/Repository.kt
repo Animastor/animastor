@@ -24,16 +24,49 @@ class Repository(
      * a new generation completes (new buildId), the stale placeholder
      * metadata is not served from cache — the app will re-fetch and
      * discover audio_ready=true, avoiding silent playback.
+     *
+     * If audio_status transitions from 'placeholder' to 'ready', the
+     * audio cache (in-memory + disk) is invalidated so getChunkAudio /
+     * getSceneAudio fetch the real TTS audio instead of stale silence.
      */
     suspend fun getChunk(id: String, buildId: String = ""): ChunkResponse {
         val cacheKey = "${id}_${buildId}"
-        chunkCache.get(cacheKey)?.let {
+        val cached = chunkCache.get(cacheKey)
+        
+        // Try cache first, but ensure we don't serve stale placeholder metadata
+        // during active generation (audio_status='placeholder' means real TTS
+        // hasn't arrived yet — poll backend for the real status).
+        if (cached != null && cached.audio_status != "placeholder") {
             Log.d("Repo", "getChunk $id: mem HIT")
-            return it
+            return cached
         }
+        
         val result = api.getChunk(id)
-        chunkCache.put(cacheKey, result)
-        Log.d("Repo", "getChunk $id: audio=${result.audio_ready} img=${result.image_ready} video=${result.video_ready}")
+        
+        // Only cache if status is stable (not placeholder)
+        if (result.audio_status != "placeholder") {
+            chunkCache.put(cacheKey, result)
+        }
+        
+        // Detect placeholder→ready transition and invalidate audio cache
+        if (result.audio_status == "ready" && cached?.audio_status == "placeholder") {
+            // Invalidate chunk audio cache (used by PlaybackViewModel.fetchSceneData)
+            val audioMemKey = "audio_${id}_${buildId}"
+            cache.remove(audioMemKey)
+            val diskKey = "${buildId}_$id"
+            diskCache?.remove(diskKey, "audio")
+            // Invalidate scene audio cache (used by EditFragment)
+            val bookId = id.substringBeforeLast('_').substringBeforeLast('_').substringBeforeLast('_')
+            result.chapter_id?.let { ch ->
+                result.scene_id?.let { sc ->
+                    val sceneKey = "sceneaudio_${bookId}_${ch}_${sc}_${buildId}"
+                    cache.remove(sceneKey)
+                }
+            }
+            Log.i("Repo", "getChunk $id: audio placeholder→ready, cleared audio cache")
+        }
+        
+        Log.d("Repo", "getChunk $id: audio=${result.audio_ready}(${result.audio_status}) img=${result.image_ready} video=${result.video_ready}")
         return result
     }
 

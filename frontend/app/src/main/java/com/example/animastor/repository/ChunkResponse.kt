@@ -5,6 +5,7 @@ data class ChunkResponse(
     val image_ready: Boolean,
     val audio_ready: Boolean,
     val video_ready: Boolean,
+    val audio_status: String? = null,
     val video_status: String?,
     val scene_type: String? = null,
     val scene_id: String? = null,
