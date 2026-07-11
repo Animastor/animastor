@@ -73,6 +73,23 @@ async function generateSceneAudio(redis, sceneData, loadedBook, buildId, bookId)
             helpers.warn(`Failed to check audio status: ${err.message}`);
             isReady = false;
         }
+
+        // 🔧 FIX: Also check Redis asset state. If audio is PENDING (e.g. marked
+        // dirty for regeneration), regenerate even though the file exists on disk.
+        // Without this check, Dirty regeneration gets stuck because the old merged
+        // audio file on disk makes isSceneAudioReady() return true.
+        if (isReady) {
+            try {
+                const state = require('../state');
+                const assetStates = await state.getAssetStates(redis, bookId, chapterId, sceneId);
+                if (assetStates && assetStates.audio === 'pending') {
+                    helpers.log(`Audio state is PENDING in Redis — will regenerate: ${bookId}/${chapterId}/${sceneId}`);
+                    isReady = false;
+                }
+            } catch (err) {
+                helpers.warn(`Failed to check Redis asset state: ${err.message}`);
+            }
+        }
     }
     if (isReady) {
         helpers.log(`Audio already ready, no generation needed: ${bookId}/${chapterId}/${sceneId}`);
@@ -85,6 +102,8 @@ async function generateSceneAudio(redis, sceneData, loadedBook, buildId, bookId)
                 const segment = segList[i];
                 const existing = JSON.parse(existingChunk);
                 existing.padded_text = segment.padded || false;
+                // 🔧 FIX: Update expected_chunk_count for existing chunks too
+                existing.expected_chunk_count = expectedChunkCount;
                 if (existing.audio_status !== 'ready') {
                     existing.audio = true;
                     existing.audio_status = 'ready';
@@ -125,6 +144,14 @@ async function generateSceneAudio(redis, sceneData, loadedBook, buildId, bookId)
             const segment = segList[i];
             const existing = JSON.parse(existingChunk);
             existing.padded_text = segment.padded || false;
+            // 🔧 FIX: Always update expected_chunk_count for existing chunks too.
+            // During initial generation the import creates _0001 with count=1, but
+            // buildSegments may produce more segments. Without this update, chunk
+            // _0001 retains expected_chunk_count=1, causing triggerAudioMerge to
+            // merge prematurely instead of waiting for all chunks to arrive.
+            existing.expected_chunk_count = expectedChunkCount;
+            existing.audio = chunkFileExists;
+            existing.audio_status = chunkFileExists ? 'ready' : 'pending';
             await redis.set(chunkKey, JSON.stringify(existing));
         } else {
             const segment = segList[i];

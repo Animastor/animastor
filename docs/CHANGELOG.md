@@ -4,6 +4,30 @@ All notable changes to Animastor are documented here.
 
 ---
 
+## [Unreleased] — 2026-07-11
+
+### Fixed
+
+- **Audio merge — `expected_chunk_count` not updated for existing chunks** (`backend/src/audio/generation.js`):
+  - `generateSceneAudio()` now always updates `expected_chunk_count` when refreshing existing chunk metadata.
+    During import, chunk `_0001` was created with `expected_chunk_count: 1`, but `buildSegments()` may produce
+    more segments. Without this update, `_0001` retained `expected_chunk_count=1`, causing `triggerAudioMerge`
+    to merge prematurely (single chunk) instead of waiting for all chunks to arrive.
+  - Added Redis asset state check in the `isReady` path: if audio state is `PENDING` (marked dirty for
+    regeneration), `generateSceneAudio()` now regenerates even if the merged audio file exists on disk.
+    Previously, Dirty regeneration was stuck because the old merged file made `isSceneAudioReady()` return true.
+  - Both code paths (isReady and not-isReady) now consistently set `existing.expected_chunk_count`.
+
+- **Audio merge retry exhaustion — re-dispatch missing chunks** (`backend/src/services/task-handler.cjs`):
+  - When `triggerAudioMerge` exhausts `MAX_RETRIES=5`, it no longer silently gives up. Instead:
+    1. Identifies which chunk indices are missing from disk.
+    2. Clears GPU hub dedup keys (`animastor:job:`, `animastor:result-processed:`) for missing chunks.
+    3. Resets missing chunk metadata to `audio: false, audio_status: 'pending'`.
+    4. Clears dispatch lease, metadata, and completion markers for audio stage.
+    5. Resets asset state to `PENDING` so the scheduler re-dispatches audio on the next tick.
+  - On re-dispatch, `generateSceneAudio()` skips existing chunks on disk (cache hit) and only sends
+    the missing chunks to ComfyUI, avoiding redundant TTS generation for already-completed segments.
+
 ## [Unreleased] — 2026-07-10
 
 ### Added

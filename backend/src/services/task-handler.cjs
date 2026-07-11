@@ -244,7 +244,58 @@ module.exports = function(redis, config, deps) {
             const attemptStr = await redis.get(retryCountKey);
             const attempt = attemptStr ? parseInt(attemptStr, 10) : 0;
             if (attempt >= MAX_RETRIES) {
-                console.warn(`⚠️ Max retries (${MAX_RETRIES}) reached for ${book_id}/${chapter_id}/${scene_id} — giving up merge`);
+                // ── RETRY EXHAUSTED: Re-dispatch missing chunks to ComfyUI ──
+                // Identify which chunks never arrived
+                const missingIndices = [];
+                for (let i = 1; i <= expectedCount; i++) {
+                    const chunkPath = path.join(buildDir, `${book_id}_${chapter_id}_${scene_id}_${pad(i)}.mp3`);
+                    if (!fs.existsSync(chunkPath)) {
+                        missingIndices.push(i);
+                    }
+                }
+                console.warn(`⚠️ Max retries (${MAX_RETRIES}) reached for ${book_id}/${chapter_id}/${scene_id} — re-dispatching ${missingIndices.length} missing chunk(s): ${missingIndices.join(', ')}`);
+
+                // Clear GPU hub dedup + reset metadata for missing chunks
+                for (const idx of missingIndices) {
+                    const chunkId = `${book_id}_${chapter_id}_${scene_id}_${pad(idx)}`;
+                    const jobKey = `animastor:job:${chunkId}:audio`;
+                    await redis.del(jobKey).catch(() => {});
+                    const resultProcessedKey = `animastor:result-processed:${chunkId}:audio`;
+                    await redis.del(resultProcessedKey).catch(() => {});
+
+                    // Reset chunk metadata to pending so generateSceneAudio re-sends it
+                    const chunkKey = `animastor:chunk:${chunkId}`;
+                    const raw = await redis.get(chunkKey);
+                    if (raw) {
+                        try {
+                            const ch = JSON.parse(raw);
+                            ch.audio = false;
+                            ch.audio_status = 'pending';
+                            await redis.set(chunkKey, JSON.stringify(ch));
+                        } catch (e) {}
+                    }
+                }
+
+                // Clear dispatch lease + metadata + completion marker so scheduler
+                // can re-dispatch without hitting duplicate protection
+                const leaseKey = `animastor:dispatch-lease:${book_id}:${chapter_id}:${scene_id}:audio`;
+                const metaKey = `animastor:dispatch-meta:${book_id}:${chapter_id}:${scene_id}:audio`;
+                const completedKey = `animastor:dispatch-completed:${book_id}:${chapter_id}:${scene_id}:audio`;
+                await redis.del(leaseKey).catch(() => {});
+                await redis.del(metaKey).catch(() => {});
+                await redis.del(completedKey).catch(() => {});
+
+                // Reset retry tracking so the next dispatch cycle starts fresh
+                await redis.del(retryKey).catch(() => {});
+                await redis.del(retryCountKey).catch(() => {});
+
+                // Reset asset state to PENDING so scheduler picks up the scene
+                try {
+                    await state.setAssetState(redis, book_id, chapter_id, scene_id, 'audio', state.AssetState.PENDING);
+                    log(`🔁 Audio re-dispatch queued for ${book_id}/${chapter_id}/${scene_id} — missing ${missingIndices.length} chunk(s) will be re-submitted on next scheduler tick`);
+                } catch (stateErr) {
+                    console.error(`❌ Failed to reset asset state for re-dispatch: ${stateErr.message}`);
+                }
                 return;
             }
 
