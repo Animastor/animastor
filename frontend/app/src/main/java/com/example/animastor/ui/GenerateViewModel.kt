@@ -541,17 +541,15 @@ class GenerateViewModel(
                             _uiState.update { it.copy(importProgressMessages = msgs.toList()) }
 
                             val bookStatus = runCatching { _repository.getLazyBookStatus(bId) }.getOrNull()
-                            val isComplete = bookStatus?.let { bs ->
-                                bs.state != null &&
-                                (bs.state == "BOOTSTRAPPED" || bs.state == "ACTIVE") &&
-                                bs.parsedChapters > 0
-                            } ?: false
+                            // N4: readiness is decided by the server (BookStatus.ready), not
+                            // by matching state strings + a parsedChapters threshold here.
+                            val isComplete = bookStatus?.ready ?: false
 
                             if (!isComplete) {
                                 msgs.add("⟳ Book incomplete — resuming import...")
                                 _uiState.update { it.copy(importProgressMessages = msgs.toList()) }
                                 val resumeRes = _repository.resumeBootstrap(bId)
-                                if (resumeRes.state != "BOOTSTRAPPED" && resumeRes.state != "ACTIVE") {
+                                if (!resumeRes.ready) {
                                     pollAgentProgress(bId, msgs)
                                 } else {
                                     msgs.add("✓ Book was already fully processed")

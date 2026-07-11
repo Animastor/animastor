@@ -348,8 +348,9 @@ function detectFileFormat(buf) {
                  draft.manifest.state === lazyBook.BookState.ACTIVE) &&
                 draft.chapters.length > 0) {
                 log(`[RESUME-BOOTSTRAP] ${bookId}: already ${draft.manifest.state}, returning status`);
+                // N4: server decides readiness so the client doesn't match state strings.
                 return res.json({
-                    book_id: bookId, state: draft.manifest.state,
+                    book_id: bookId, state: draft.manifest.state, ready: true,
                     characters: draft.characters.length,
                     locations: Object.keys(draft.locations || {}).length,
                     scenes: draft.chapters.reduce((sum, ch) => sum + (ch.scenes?.length || 0), 0),
@@ -368,7 +369,7 @@ function detectFileFormat(buf) {
                 const session = activeSessions.rows[0];
                 log(`[RESUME-BOOTSTRAP] ${bookId}: active session ${session.session_id} (${session.status})`);
                 return res.json({
-                    book_id: bookId, state: 'resuming',
+                    book_id: bookId, state: 'resuming', ready: false,
                     session_id: session.session_id, session_status: session.status,
                     progress_msg: session.progress_msg || 'Resuming...',
                 });
@@ -376,8 +377,10 @@ function detectFileFormat(buf) {
 
             log(`[RESUME-BOOTSTRAP] ${bookId}: no active session, re-bootstrapping...`);
             const result = await txtImporter.bootstrapImportedText(bookId);
+            const resultReady = (result.state === lazyBook.BookState.BOOTSTRAPPED ||
+                                 result.state === lazyBook.BookState.ACTIVE);
             return res.json({
-                book_id: result.bookId, state: result.state,
+                book_id: result.bookId, state: result.state, ready: resultReady,
                 title: result.title, author: result.author,
                 characters: result.characters, locations: result.locations,
                 scenes: result.scenes,

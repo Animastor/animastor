@@ -172,7 +172,9 @@ data class BookStatus(
     val characterCount: Int = 0,
     val locationCount: Int = 0,
     val sourceSize: Int = 0,
-    val updatedAt: String? = null
+    val updatedAt: String? = null,
+    /** Server-decided readiness (bootstrapped/active with parsed content). */
+    val ready: Boolean = false
 )
 
 data class TextIndexChapter(
@@ -322,6 +324,8 @@ data class ImportResponse(
 data class ResumeBootstrapResponse(
     val book_id: String? = null,
     val state: String? = null,
+    /** Server-decided readiness; client no longer matches state strings. */
+    val ready: Boolean = false,
     val title: String? = null,
     val author: String? = null,
     val characters: Int = 0,

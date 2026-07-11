@@ -35,9 +35,15 @@ module.exports = function registerStatusRoutes(app, ctx) {
             const status = lazyBook.getBookStatus(bookId);
             if (!status) return res.status(404).json({ error: 'Book not found' });
 
+            // N4: server decides "ready" (bootstrapped/active with parsed content)
+            // so the client doesn't match state strings + a parsedChapters threshold.
+            const ready = (status.state === lazyBook.BookState.BOOTSTRAPPED ||
+                           status.state === lazyBook.BookState.ACTIVE) &&
+                          (status.parsedChapters || 0) > 0;
+
             const genState = await genSessionRepo.getGenerationState(bookId);
             return res.json({
-                ...status, generation_status: genState.status,
+                ...status, ready, generation_status: genState.status,
                 last_window_index: genState.last_window_index,
                 generation_error: genState.error,
                 active_generation: genState.active_status,
