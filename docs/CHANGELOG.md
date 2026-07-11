@@ -45,6 +45,22 @@ All notable changes to Animastor are documented here.
   - `duration_retry_count` добавлен в лог `agent_window_coverage`.
   - Все 473 теста проходят.
 
+### Changed
+
+- **Playback queue и TTS pipeline развязаны** (`backend/src/routes/book/chunks-routes.cjs`,
+  `backend/src/audio/generation.js`, `backend/src/services/task-handler.cjs`,
+  `backend/src/helpers/redis-helpers.cjs`):
+  - **Проблема:** `getAllChunks()` возвращал сегменты TTS-пайплайна (`_0002`, `_0003`) как
+    отдельные треки для плеера. Длинные сцены (сплит на 3 части по 250 символов) игрались
+    3 раза подряд, так как все чанки одной сцены вели к одному merged-аудиофайлу.
+  - **Архитектура:** `animastor:chunks:` — внутренний сет для пайплайна (может содержать
+    любое количество entry). `/api/v1/book/:bookId/chunks` — дедуплицирует ответ по
+    `(chapter_id, scene_id)`, возвращая ровно 1 entry на сцену для плеера.
+  - `progress-panel` использует `getAllChunks()` напрямую (все entry), показывая
+    гранулярный прогресс 0/9, 1/9... по реальным сегментам TTS.
+  - `getAllChunks()` улучшен: вторичная сортировка по `chunk_index` для одинаковых сцен.
+  - **Результат:** плеер играет 5 сцен по JSON-порядку, прогресс показывает 0/9 → 9/9.
+
 ### Fixed
 
 - **DELETE book и DELETE cache — полная очистка всех PG таблиц**

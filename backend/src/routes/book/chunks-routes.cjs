@@ -20,7 +20,7 @@ module.exports = function(app, redis, deps) {
     const { log, pad, collectScenes, buildSegments } = utils;
 
     // ======================================================
-    // BOOK CHUNKS
+    // BOOK CHUNKS (playback queue)
     // ======================================================
     app.get('/api/v1/book/:bookId/chunks', async (req, res) => {
         const allIds = await getAllChunks(req.params.bookId);
@@ -30,14 +30,31 @@ module.exports = function(app, redis, deps) {
         // client never needs N individual getChunkStoryboard calls (F9 audit).
         let coverChunkId = null;
         const chunkPositions = {};
+
+        // Deduplicate: the playback queue needs exactly one entry per scene.
+        // TTS pipeline may create multiple chunks per scene (_0001, _0002, _0003)
+        // for long text segments — they all serve the same merged audio file.
+        // Keep only the first chunk (lowest chunk_index) per (chapter_id, scene_id).
+        const dedupedIds = [];
+        const seenScenes = new Set();
+
         if (allIds.length > 0) {
             try {
                 const keys = allIds.map(id => `animastor:chunk:${id}`);
                 const raw = await redis.mget(keys);
                 for (let i = 0; i < allIds.length; i++) {
-                    if (!raw[i]) continue;
+                    if (!raw[i]) {
+                        // Chunk without metadata — keep it (defensive)
+                        if (!seenScenes.has('__unknown__')) {
+                            seenScenes.add('__unknown__');
+                            dedupedIds.push(allIds[i]);
+                        }
+                        continue;
+                    }
                     try {
                         const c = JSON.parse(raw[i]);
+                        const sceneKey = `${c.chapter_id || ''}:${c.scene_id || ''}`;
+
                         chunkPositions[allIds[i]] = {
                             chapter_id: c.chapter_id || null,
                             scene_id: c.scene_id || null,
@@ -45,16 +62,24 @@ module.exports = function(app, redis, deps) {
                         if (c.scene_type === 'cover') {
                             coverChunkId = allIds[i];
                         }
+
+                        // Only add to deduped list if this scene hasn't been seen yet
+                        if (!seenScenes.has(sceneKey)) {
+                            seenScenes.add(sceneKey);
+                            dedupedIds.push(allIds[i]);
+                        }
                     } catch (_) {}
                 }
             } catch (err) {
                 console.warn('[CHUNKS] Failed to load chunk metadata:', err.message);
+                // Fallback: return all IDs (no dedup)
+                dedupedIds.push(...allIds);
             }
         }
 
         res.json({
-            chunk_ids: allIds,
-            total: allIds.length,
+            chunk_ids: dedupedIds,
+            total: dedupedIds.length,
             cover_chunk_id: coverChunkId,
             chunk_positions: chunkPositions,
             ...windowStatus

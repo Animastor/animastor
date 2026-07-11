@@ -82,12 +82,20 @@ module.exports = function(redis) {
             } catch (_) {}
 
             pairs.sort((a, b) => {
-                const aOrder = sceneIndexMap ? (sceneIndexMap.get(`${a.chapter_id}:${a.scene_id}`) ?? a.chunk_index) : a.chunk_index;
-                const bOrder = sceneIndexMap ? (sceneIndexMap.get(`${b.chapter_id}:${b.scene_id}`) ?? b.chunk_index) : b.chunk_index;
-                if (typeof aOrder === 'number' && typeof bOrder === 'number') {
-                    return aOrder - bOrder;
+                const aSceneIdx = sceneIndexMap ? (sceneIndexMap.get(`${a.chapter_id}:${a.scene_id}`) ?? null) : null;
+                const bSceneIdx = sceneIndexMap ? (sceneIndexMap.get(`${b.chapter_id}:${b.scene_id}`) ?? null) : null;
+
+                // Primary sort by scene index (from book structure)
+                if (aSceneIdx !== null && bSceneIdx !== null) {
+                    if (aSceneIdx !== bSceneIdx) return aSceneIdx - bSceneIdx;
+                    // Same scene — secondary sort by chunk_index (defensive)
+                    return String(a.chunk_index || '0000').localeCompare(String(b.chunk_index || '0000'));
                 }
-                return String(aOrder).localeCompare(String(bOrder));
+
+                // Fallback when sceneIndexMap is missing: sort by chunk_index
+                const aChunk = String(a.chunk_index || '0000');
+                const bChunk = String(b.chunk_index || '0000');
+                return aChunk.localeCompare(bChunk);
             });
             return pairs.map(p => p.id);
         } catch (e) {
