@@ -8,6 +8,19 @@ All notable changes to Animastor are documented here.
 
 ### Fixed
 
+- **Плеер падал в IDLE после повторного открытия .txt с прогрессом**
+  (`frontend/.../GenerateViewModel.kt`):
+  - **Проблема:** после повторного открытия уже импортированной .txt книги `vbookProgress`
+    оставался в `COMPLETED`. `computeWorkers()` показывал DoneRow на 10 секунд, а после
+    истечения таймера вызывал `applyGenerationResults()` с `softRefresh=true`. Если плеер
+    уже играл — `refreshContent()` сбрасывал фазу в `SCENE_READY`, и плеер падал в IDLE.
+  - **Корень:** `shouldRefresh` в `computeWorkers()` проверял `vbookProgress?.stage == VBookStage.COMPLETED`,
+    что вызывало рефреш плеера даже при отсутствии новых GPU-данных.
+  - **Фикс 1:** `shouldRefresh = panel != null` — рефреш только при наличии GPU-данных.
+    VBook COMPLETED сам по себе не требует рефреша (сцены уже загружены при импорте).
+  - **Фикс 2:** в пути dedup-импорта (`importBookFromFile` при `importRes.dedup == true`)
+    сразу устанавливается `vbookProgress = IDLE`, минуя COMPLETED цикл.
+
 - **Сториборд возвращал пустые IU после DELETE /cache** (`backend/src/routes/generation-routes.cjs`):
   - **Корень:** в scene-based `/api/v1/scene/:bookId/:chapterId/:sceneId/storyboard` fallback на
     книжный JSON использовал shorthand `scene_id` в `ius.push({...})`, но такой переменной нет —

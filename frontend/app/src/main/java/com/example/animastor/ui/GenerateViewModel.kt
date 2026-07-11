@@ -597,6 +597,7 @@ class GenerateViewModel(
                                 importProgressMessages = msgs.toList(),
                                 importStage = ImportStage.DONE,
                                 importProgress = 1f,
+                                vbookProgress = VBookProgress(stage = VBookStage.IDLE),
                                 phase = if (scenesFromDedup.isNotEmpty()) PlayerPhase.SCENE_READY else PlayerPhase.IDLE,
                             )}
                             return@launch
@@ -1239,7 +1240,7 @@ class GenerateViewModel(
                 workerCompletedAt.clear()
                 _workerPermanentlyDone.clear()
                 gpuProgressDoneAt = 0L
-                val shouldRefresh = panel != null || vbookProgress?.stage == VBookStage.COMPLETED
+                val shouldRefresh = panel != null
                 if (vbookProgress?.stage == VBookStage.COMPLETED) {
                     _uiState.update { it.copy(vbookProgress = VBookProgress(stage = VBookStage.IDLE)) }
                 }
