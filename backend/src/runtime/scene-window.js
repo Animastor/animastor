@@ -716,6 +716,13 @@ async function startScene(redis, s, buildId, bookId) {
             data.video = false;
             data.video_status = 'pending';
             data.build_id = buildId;
+            // 🔧 FIX: Always update expected_chunk_count for existing chunks too.
+            // The import creates chunk _0001 with expected_chunk_count=1, but
+            // buildSegments may produce more segments (e.g. 9). Without this
+            // update, chunk _0001 retains expected_chunk_count=1, causing
+            // triggerAudioMerge to merge prematurely (with only 1 chunk)
+            // instead of waiting for all chunks to arrive.
+            data.expected_chunk_count = expectedChunkCount;
             data.padded_text = segments[i]?.padded || false;
             await redis.set(chunkKey, JSON.stringify(data));
         } else {

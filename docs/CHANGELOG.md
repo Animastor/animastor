@@ -110,6 +110,26 @@ All notable changes to Animastor are documented here.
   - On re-dispatch, `generateSceneAudio()` skips existing chunks on disk (cache hit) and only sends
     the missing chunks to ComfyUI, avoiding redundant TTS generation for already-completed segments.
 
+- **DELETE /cache больше не удаляет book_source и chat-историю**
+  (`backend/src/routes/book/cache-routes.cjs`):
+  - Из списка PG-таблиц, очищаемых при DELETE /cache, убраны `book_source`, `book_snapshots`,
+    `chat_messages`, `chat_sessions`, `book_events`. Эти таблицы содержат идентификационные
+    данные книги (book_source для dedup), историю чатов пользователя и логи событий —
+    они не являются сгенерированным кешем.
+  - При повторном импорте того же `.txt` файла dedup теперь срабатывает корректно:
+    находит существующую книгу в `book_source` и не запускает генерацию vbook заново.
+
+- **«Удалить Сториборд» больше не закрывает книгу**
+  (`frontend/.../SettingsFragment.kt`):
+  - **Было:** кнопка «Удалить Сториборд с сервера» (`clearCacheButton`) вызывала
+    `viewModel.clearBookCache()`, который обнулял `bookId` → Navigator показывал
+    «Книга не загружена».
+  - **Стало:** кнопка вызывает `viewModel.repository.clearBookCache(bookId)` напрямую,
+    что очищает только сгенерированные ассеты на сервере (DELETE /cache), но **не закрывает
+    книгу**. Navigator продолжает показывать структуру книги (главы, сцены).
+  - `playbackViewModel.closeBook()` — сбрасывает плеер (аудио/видео/состояние).
+  - `viewModel.resetWorkerState()` — сбрасывает tracking генерации.
+
 ## [Unreleased] — 2026-07-10
 
 ### Added

@@ -84,8 +84,34 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
                 .setTitle(R.string.settings_cache_clear)
                 .setView(cacheBinding.root)
                 .setPositiveButton(android.R.string.ok) { _, _ ->
-                    viewModel.clearBookCache()
-                    Toast.makeText(requireContext(), R.string.settings_cache_cleared, Toast.LENGTH_SHORT).show()
+                    val bookId = viewModel.bookId
+                    lifecycleScope.launch {
+                        runCatching {
+                            // Clear only generated assets (chunks, images, audio, video)
+                            // while preserving the book structure (chapters, scenes, source).
+                            // This keeps the vBook intact — only the generated
+                            // storyboard content is removed.
+                            viewModel.repository.clearBookCache(bookId)
+                            viewModel.repository.clearCache()
+                            // Delete local temp cache files (chunk MP3, video, scene audio)
+                            val cacheDir = requireContext().cacheDir
+                            cacheDir.listFiles()?.forEach { file ->
+                                if (file.name.startsWith("chunk-") || file.name.startsWith("video-") || file.name.startsWith("scene_audio-")) {
+                                    file.delete()
+                                }
+                            }
+                            // Clear playback state so the player shows empty state.
+                            // Do NOT close the book — the vBook structure is still
+                            // intact and the Navigator should keep displaying it.
+                            playbackViewModel.closeBook()
+                            // Reset any in-progress generation tracking
+                            viewModel.resetWorkerState()
+                        }.onSuccess {
+                            Toast.makeText(requireContext(), R.string.settings_cache_cleared, Toast.LENGTH_SHORT).show()
+                        }.onFailure { e ->
+                            Toast.makeText(requireContext(), "Error: ${e.message}", Toast.LENGTH_LONG).show()
+                        }
+                    }
                 }
                 .setNegativeButton(android.R.string.cancel, null)
                 .show()
