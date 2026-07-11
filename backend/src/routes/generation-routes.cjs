@@ -677,28 +677,19 @@ module.exports = function(app, redis, deps) {
                 try {
                     const b = book.loadBook(bookId);
                     if (b) {
-                        for (const ch of b.chapters || []) {
-                            if (ch.chapter !== chapterId) continue;
-                            for (const sc of ch.scenes || []) {
-                                if (sc.scene_id !== sceneId) continue;
-                                let order = 0;
-                                for (const u of sc.units || []) {
-                                    ius.push({ unit_id: u.id, scene_id, text: u.text, text_proportion: 0, estimated_duration_sec: 0, audio_file: null, start_ms: null, end_ms: null, _order: order });
-                                    order++;
-                                }
-                                for (const db of sc.dialogue_blocks || []) {
-                                    for (const u of db.units || []) {
-                                        ius.push({ unit_id: u.id, scene_id, text: u.text, text_proportion: 0, estimated_duration_sec: 0, audio_file: null, start_ms: null, end_ms: null, _order: order });
-                                        order++;
-                                    }
-                                }
-                                const totalTextLen = ius.reduce((s, i) => s + (i.text || '').length, 0);
-                                ius.sort((a, b) => a._order - b._order);
-                                for (const iu of ius) {
-                                    iu.text_proportion = totalTextLen > 0 ? (iu.text || '').length / totalTextLen : 1;
-                                    delete iu._order;
-                                }
-                                break;
+                        const sceneData = book.findSceneRuntimeData(b, chapterId, sceneId);
+                        if (sceneData && sceneData.payload) {
+                            const sceneUnits = book.collectSceneUnits(sceneData.payload);
+                            let order = 0;
+                            for (const u of sceneUnits) {
+                                ius.push({ unit_id: u.id, scene_id: sceneId, text: u.text, text_proportion: 0, estimated_duration_sec: 0, audio_file: null, start_ms: null, end_ms: null, _order: order });
+                                order++;
+                            }
+                            const totalTextLen = ius.reduce((s, i) => s + (i.text || '').length, 0);
+                            ius.sort((a, b) => a._order - b._order);
+                            for (const iu of ius) {
+                                iu.text_proportion = totalTextLen > 0 ? (iu.text || '').length / totalTextLen : 1;
+                                delete iu._order;
                             }
                         }
                     }
@@ -847,7 +838,7 @@ module.exports = function(app, redis, deps) {
                         if (ch.chapter !== chapterId) continue;
                         for (const sc of ch.scenes || []) {
                             if (sc.scene_id === sceneId) {
-                                sceneType = sc.scene_type || 'narration';
+                                sceneType = sc.type || sc.scene_type || 'narration';
                                 break;
                             }
                         }

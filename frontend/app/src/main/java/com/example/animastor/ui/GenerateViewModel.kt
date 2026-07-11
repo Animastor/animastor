@@ -378,7 +378,7 @@ class GenerateViewModel(
             // Load cover image for first scene
             var cover: Bitmap? = null
             val coverRef = if (coverChapterId != null) {
-                SceneRef(coverChapterId!!, coverSceneId!!, "cover")
+                SceneRef(coverChapterId, coverSceneId!!, "cover")
             } else scenes.first()
             if (imageEnabled) {
                 cover = loadCoverBitmap(coverRef.chapterId, coverRef.sceneId)

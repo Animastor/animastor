@@ -6,6 +6,19 @@ All notable changes to Animastor are documented here.
 
 ## [Unreleased] — 2026-07-11
 
+### Fixed
+
+- **Сториборд возвращал пустые IU после DELETE /cache** (`backend/src/routes/generation-routes.cjs`):
+  - **Корень:** в scene-based `/api/v1/scene/:bookId/:chapterId/:sceneId/storyboard` fallback на
+    книжный JSON использовал shorthand `scene_id` в `ius.push({...})`, но такой переменной нет —
+    параметр роута называется `sceneId` (camelCase). `ReferenceError` ловился внутренним catch,
+    `ius` оставался пустым → API возвращал `ius: []`.
+  - **Фикс:** `scene_id` → `scene_id: sceneId` (explicit key-value). Fallback теперь переписан на
+    `book.findSceneRuntimeData()` + `book.collectSceneUnits()`.
+  - **Дополнительно:** scene status endpoint читал `sc.scene_type` → исправлено на `sc.type || sc.scene_type`
+    (в book.json поле называется `type`, не `scene_type`). Cover сцены теперь корректно возвращают
+    `scene_type: "cover"` вместо `"narration"`.
+
 ### Removed
 
 - **Mёртвый код старой chunk-архитектуры** — полная зачистка (`frontend/.../GenerateViewModel.kt`,
