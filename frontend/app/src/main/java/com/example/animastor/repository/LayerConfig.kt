@@ -21,6 +21,29 @@ data class LayerConfigUpdate(
     val profile: String? = null
 )
 
+/**
+ * Scene readiness status — returns audio/video/image ready flags for a scene.
+ */
+data class SceneStatusResponse(
+    val book_id: String? = null,
+    val chapter_id: String? = null,
+    val scene_id: String? = null,
+    val build_id: String? = null,
+    val scene_type: String? = null,
+    val audio_ready: Boolean = false,
+    val video_ready: Boolean = false,
+    val image_ready: Boolean = false
+)
+
+/**
+ * Reference to a scene in the book — used by PlaybackViewModel for scene-based playback.
+ */
+data class SceneRef(
+    val chapterId: String,
+    val sceneId: String,
+    val sceneType: String? = null
+)
+
 data class AssetsStateResponse(
     val book_id: String? = null,
     val scope: String? = null,

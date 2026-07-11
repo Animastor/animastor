@@ -10,6 +10,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.CreationExtras
 import com.example.animastor.network.RetrofitClient
 import com.example.animastor.repository.Repository
+import com.example.animastor.repository.SceneRef
 import com.example.animastor.util.MediaDecoder
 import com.example.animastor.util.SimpleDiskCache
 import kotlinx.coroutines.Dispatchers
@@ -74,21 +75,27 @@ class PlaybackViewModel(
     // Signals to the fragment that a new chunk has been emitted
     val preloadCompleted: MutableSharedFlow<String> = MutableSharedFlow(extraBufferCapacity = 16)
 
-    // ── Book / chunk metadata (set externally via preparePlayback) ─
+    // ── Book / scene metadata (set externally via preparePlayback) ─
 
     var bookId: String = ""
         private set
     var buildId: String = ""
         private set
 
-    private var chunkQueue = mutableListOf<String>()
+    /**
+     * Scene queue: each entry is a "chapterId:sceneId" key.
+     * The player iterates scenes from book JSON — not TTS chunks.
+     * TTS pipeline manages its own data internally; the player
+     * just tries to fetch audio/video for each scene and uses
+     * placeholder if not ready.
+     */
+    private var sceneQueue = mutableListOf<String>()
     private var currentIndex = 0
-    private val chunkPositions = mutableMapOf<String, Pair<String?, String?>>()
 
-    var currentChapterId: String? = null
-        private set
-    var currentSceneId: String? = null
-        private set
+    val currentChapterId: String?
+        get() = sceneQueue.getOrNull(currentIndex)?.substringBefore(':')
+    val currentSceneId: String?
+        get() = sceneQueue.getOrNull(currentIndex)?.substringAfter(':')
     var currentUnitIndex: Int = 0
         set(value) {
             if (value >= 0) {
@@ -96,7 +103,7 @@ class PlaybackViewModel(
             }
         }
 
-    // ── Chunk data buffers ────────────────────────────────────────
+    // ── Scene data buffers ────────────────────────────────────────
 
     var currentIuSequence: List<IuImageItem>? = null
     var pendingChunkAudio: ByteArray? = null
@@ -152,40 +159,39 @@ class PlaybackViewModel(
     }
 
     /**
-     * Start playback from the beginning.
-     */
-    /**
      * Start playback from the beginning, or refresh content for the same book.
      *
+     * Accepts scenes from book JSON order — the player iterates scenes, not TTS chunks.
+     * TTS pipeline is decoupled: player tries to fetch audio/video per scene,
+     * uses placeholder if not ready.
+     *
      * When called for content refresh (same [bookId]), the current scene position
-     * ([currentIndex]) is preserved so the user doesn't reset to the beginning.
+     * ([currentIndex]) is preserved.
      */
     fun preparePlayback(
         bookId: String,
         buildId: String,
-        chunkIds: List<String>,
-        chunkPositions: Map<String, Pair<String?, String?>>
+        scenes: List<SceneRef>
     ) {
-        Log.i(TAG, "preparePlayback: book=$bookId build=$buildId chunks=${chunkIds.size}")
+        val sceneKeys = scenes.map { "${it.chapterId}:${it.sceneId}" }
+        Log.i(TAG, "preparePlayback: book=$bookId build=$buildId scenes=${scenes.size}")
         val prevBookId = this.bookId
         val prevBuildId = this.buildId
-        val savedIndex = if (currentIndex in chunkIds.indices) currentIndex else 0
+        val savedIndex = if (currentIndex in sceneKeys.indices) currentIndex else 0
 
         preloadCache.clear()
         this.bookId = bookId
         this.buildId = buildId
-        chunkQueue.clear()
-        chunkQueue.addAll(chunkIds)
-        this.chunkPositions.clear()
-        this.chunkPositions.putAll(chunkPositions)
+        sceneQueue.clear()
+        sceneQueue.addAll(sceneKeys)
 
-        // Preserve position during content refresh (same book, same chunks)
-        if (prevBookId == bookId && savedIndex in chunkIds.indices) {
+        // Preserve position during content refresh
+        if (prevBookId == bookId && savedIndex in sceneKeys.indices) {
             currentIndex = savedIndex
             Log.i(TAG, "preparePlayback: preserved position at index $currentIndex")
         } else {
             currentIndex = 0
-            Log.i(TAG, "preparePlayback: reset position to 0 (new book or different chunks)")
+            Log.i(TAG, "preparePlayback: reset position to 0 (new book or different scenes)")
         }
 
         if (prevBuildId != buildId || prevBookId != bookId) {
@@ -194,11 +200,11 @@ class PlaybackViewModel(
         } else {
             Log.i(TAG, "preparePlayback: same generation, keeping cache")
         }
-        if (chunkIds.isNotEmpty()) {
-            Log.i(TAG, "preparePlayback → SCENE_READY (${chunkIds.size} chunks, index=$currentIndex)")
+        if (sceneKeys.isNotEmpty()) {
+            Log.i(TAG, "preparePlayback → SCENE_READY (${sceneKeys.size} scenes, index=$currentIndex)")
             _uiState.update { it.copy(phase = PlayerPhase.SCENE_READY) }
         } else {
-            Log.w(TAG, "preparePlayback → IDLE (no chunks)")
+            Log.w(TAG, "preparePlayback → IDLE (no scenes)")
             _uiState.update { it.copy(phase = PlayerPhase.IDLE) }
         }
     }
@@ -218,26 +224,24 @@ class PlaybackViewModel(
     fun refreshContent(
         bookId: String,
         buildId: String,
-        chunkIds: List<String>,
-        chunkPositions: Map<String, Pair<String?, String?>>
+        scenes: List<SceneRef>
     ) {
-        Log.i(TAG, "refreshContent: book=$bookId build=$buildId chunks=${chunkIds.size}")
+        val sceneKeys = scenes.map { "${it.chapterId}:${it.sceneId}" }
+        Log.i(TAG, "refreshContent: book=$bookId build=$buildId scenes=${scenes.size}")
 
         val prevBuildId = this.buildId
 
-        // Preserve position relative to chunk IDs (not index), because the queue
+        // Preserve position relative to scene keys (not index), because the queue
         // is rebuilt and a scene may have been added/removed during regeneration.
-        val currentChunkId = chunkQueue.getOrNull(currentIndex)
-        val newIndex = if (currentChunkId != null) chunkIds.indexOf(currentChunkId) else -1
+        val currentSceneKey = sceneQueue.getOrNull(currentIndex)
+        val newIndex = if (currentSceneKey != null) sceneKeys.indexOf(currentSceneKey) else -1
 
         preloadCache.clear()
         preloadJobs.clear()
         this.bookId = bookId
         this.buildId = buildId
-        chunkQueue.clear()
-        chunkQueue.addAll(chunkIds)
-        this.chunkPositions.clear()
-        this.chunkPositions.putAll(chunkPositions)
+        sceneQueue.clear()
+        sceneQueue.addAll(sceneKeys)
         if (newIndex >= 0) {
             currentIndex = newIndex
         } else {
@@ -245,7 +249,7 @@ class PlaybackViewModel(
         }
 
         val currentPhase = _uiState.value.phase
-        Log.i(TAG, "refreshContent: phase=$currentPhase index=$currentIndex (mapped $currentChunkId → $newIndex)")
+        Log.i(TAG, "refreshContent: phase=$currentPhase index=$currentIndex (mapped $currentSceneKey → $newIndex)")
 
         // After regeneration the buildId typically does NOT change (the backend
         // updates content in-place). Always clear the repository cache so that
@@ -351,11 +355,11 @@ class PlaybackViewModel(
 
     /**
      * Handle a null player returned by createPlayer.
-     * The chunk already emitted PLAYING but no player exists — reset to
+     * The scene already emitted PLAYING but no player exists — reset to
      * SCENE_READY so the button shows Play and the user can retry.
      */
-    fun handleNullPlayer(chunkId: String) {
-        Log.w(TAG, "handleNullPlayer: no player for $chunkId — resetting to SCENE_READY")
+    fun handleNullPlayer(sceneKey: String) {
+        Log.w(TAG, "handleNullPlayer: no player for $sceneKey — resetting to SCENE_READY")
         _uiState.update { it.copy(phase = PlayerPhase.SCENE_READY, errorMessage = "Audio playback failed: file corrupted") }
     }
 
@@ -364,11 +368,11 @@ class PlaybackViewModel(
     // ═══════════════════════════════════════════════════════════════
 
     fun playSceneQueue() {
-        if (chunkQueue.isEmpty()) {
+        if (sceneQueue.isEmpty()) {
             Log.w(TAG, "playSceneQueue: empty queue")
             return
         }
-        Log.i(TAG, "playSceneQueue: ${chunkQueue.size} chunks")
+        Log.i(TAG, "playSceneQueue: ${sceneQueue.size} scenes")
         // Reset error state and IU sequence before starting
         _uiState.update { it.copy(errorMessage = null, missingIuPosition = null) }
         currentIuSequence = null
@@ -382,7 +386,7 @@ class PlaybackViewModel(
 
     fun resumeFromCurrentScene() {
         needsRotationResume = false
-        if (chunkQueue.isEmpty()) {
+        if (sceneQueue.isEmpty()) {
             Log.w(TAG, "resumeFromCurrentScene: empty queue")
             return
         }
@@ -418,16 +422,19 @@ class PlaybackViewModel(
         playNext()
     }
 
-    fun getCurrentChunkId(): String? {
-        return chunkQueue.getOrNull(currentIndex)
+    fun getCurrentSceneKey(): String? {
+        return sceneQueue.getOrNull(currentIndex)
     }
 
+    /** @deprecated Use [getCurrentSceneKey] instead. */
+    fun getCurrentChunkId(): String? = getCurrentSceneKey()
+
     val currentChunkIndex: Int get() = currentIndex
-    val chunkQueueSize: Int get() = chunkQueue.size
+    val chunkQueueSize: Int get() = sceneQueue.size
 
     fun getPreloadedScene(index: Int): PreloadedScene? {
-        if (index < 0 || index >= chunkQueue.size) return null
-        val key = "${buildId}_${chunkQueue[index]}"
+        if (index < 0 || index >= sceneQueue.size) return null
+        val key = "${buildId}_${sceneQueue[index]}"
         return preloadCache[key]
     }
 
@@ -438,83 +445,52 @@ class PlaybackViewModel(
     // ── External navigation (from Navigate/Edit fragments) ───────
 
     fun seekToPosition(chapterId: String, sceneId: String, unitIndex: Int, unitId: String? = null) {
-        val chunkId = chunkPositions.entries.firstOrNull {
-            it.value.first == chapterId && it.value.second == sceneId
-        }?.key
-        if (chunkId == null || !chunkQueue.contains(chunkId)) {
-            Log.w(TAG, "seekToPosition: chunk not found for $chapterId/$sceneId — trying refresh from backend")
-            // Try to refresh chunk list from backend before showing missing overlay
+        val sceneKey = "${chapterId}:${sceneId}"
+        val idx = sceneQueue.indexOf(sceneKey)
+        if (idx < 0) {
+            Log.w(TAG, "seekToPosition: scene $sceneKey not found — trying refresh from backend")
             if (bookId.isBlank()) {
-                Log.w(TAG, "seekToPosition: bookId is blank — can't refresh, showing overlay")
-                val pos = ActivePosition(
-                    chapterId = chapterId,
-                    sceneId = sceneId,
-                    unitId = unitId,
-                    chunkId = null,
-                    unitIndex = unitIndex
-                )
+                val pos = ActivePosition(chapterId, sceneId, unitId, null, unitIndex)
                 _uiState.update { it.copy(missingIuPosition = pos) }
                 pendingExternalSeek = null
                 return
             }
+            // Refresh scene queue from book JSON
             viewModelScope.launch {
-                val fresh = runCatching { _repository.getAllChunks(bookId) }.getOrNull()
-                if (fresh != null) {
-                    var found = false
-                    for (cid in fresh.chunk_ids) {
-                        if (!chunkQueue.contains(cid)) {
-                            chunkQueue.add(cid)
-                            // Also try to get position for this new chunk
-                            runCatching {
-                                val sb = _repository.getChunkStoryboard(cid)
-                                chunkPositions[cid] = Pair(sb.chapter_id, sb.scene_id)
-                            }
-                        }
-                        // Check if the target chunk is now available
-                        if (!found) {
-                            val refreshChunkId = chunkPositions.entries.firstOrNull {
-                                it.value.first == chapterId && it.value.second == sceneId
-                            }?.key
-                            if (refreshChunkId != null && chunkQueue.contains(refreshChunkId)) {
-                                found = true
-                                Log.i(TAG, "seekToPosition: found after refresh — $refreshChunkId")
-                                _uiState.update { it.copy(missingIuPosition = null) }
-                                pendingExternalSeek = ActivePosition(chapterId, sceneId, unitId, refreshChunkId, unitIndex)
-                                // If PlayFragment is visible, execute immediately
-                                // pendingExternalSeek will be picked up by the fragment
-                            }
+                val bookData = runCatching { _repository.getBook(bookId) }.getOrNull()
+                if (bookData != null) {
+                    val allScenes = mutableListOf<SceneRef>()
+                    for (ch in bookData.chapters.orEmpty()) {
+                        for (sc in ch.scenes.orEmpty()) {
+                            allScenes.add(SceneRef(ch.chapter, sc.scene_id, sc.scene_type))
                         }
                     }
-                    if (!found) {
-                        Log.w(TAG, "seekToPosition: still not found after refresh — showing missing overlay")
-                        val pos = ActivePosition(
-                            chapterId = chapterId,
-                            sceneId = sceneId,
-                            unitId = unitId,
-                            chunkId = chunkId,
-                            unitIndex = unitIndex
-                        )
-                        _uiState.update { it.copy(missingIuPosition = pos) }
+                    val allKeys = allScenes.map { "${it.chapterId}:${it.sceneId}" }
+                    val newIdx = allKeys.indexOf(sceneKey)
+                    if (newIdx >= 0) {
+                        // Update queue with all scenes
+                        sceneQueue.clear()
+                        sceneQueue.addAll(allKeys)
+                        currentIndex = newIdx
+                        _uiState.update { it.copy(missingIuPosition = null) }
+                        pendingExternalSeek = ActivePosition(chapterId, sceneId, unitId, null, unitIndex)
+                        Log.i(TAG, "seekToPosition: found $sceneKey at index $newIdx after refresh")
+                    } else {
+                        Log.w(TAG, "seekToPosition: still not found after refresh")
+                        _uiState.update { it.copy(missingIuPosition = ActivePosition(chapterId, sceneId, unitId, null, unitIndex)) }
                         pendingExternalSeek = null
                     }
                 } else {
-                    Log.w(TAG, "seekToPosition: refresh failed — showing missing overlay")
-                    val pos = ActivePosition(
-                        chapterId = chapterId,
-                        sceneId = sceneId,
-                        unitId = unitId,
-                        chunkId = chunkId,
-                        unitIndex = unitIndex
-                    )
-                    _uiState.update { it.copy(missingIuPosition = pos) }
+                    _uiState.update { it.copy(missingIuPosition = ActivePosition(chapterId, sceneId, unitId, null, unitIndex)) }
                     pendingExternalSeek = null
                 }
             }
             return
         }
-        Log.i(TAG, "seekToPosition: $chapterId/$sceneId unit=$unitIndex chunk=$chunkId")
+        Log.i(TAG, "seekToPosition: $chapterId/$sceneId unit=$unitIndex index=$idx")
         _uiState.update { it.copy(missingIuPosition = null) }
-        pendingExternalSeek = ActivePosition(chapterId, sceneId, unitId, chunkId, unitIndex)
+        pendingExternalSeek = ActivePosition(chapterId, sceneId, unitId, null, unitIndex)
+        currentIndex = idx
     }
 
     fun clearMissingIu() {
@@ -528,53 +504,54 @@ class PlaybackViewModel(
      */
     fun ensureInitialized(targetBookId: String, targetBuildId: String) {
         if (bookId.isNotBlank() && bookId == targetBookId) {
-            Log.i(TAG, "ensureInitialized: already initialized for $targetBookId (${chunkQueue.size} chunks)")
+            Log.i(TAG, "ensureInitialized: already initialized for $targetBookId (${sceneQueue.size} scenes)")
             return
         }
-        Log.i(TAG, "ensureInitialized: need init for $targetBookId build=$targetBuildId (current bookId='$bookId')")
+        Log.i(TAG, "ensureInitialized: need init for $targetBookId build=$targetBuildId")
         viewModelScope.launch {
-            val allChunks = runCatching { _repository.getAllChunks(targetBookId) }.getOrNull()
-            val chunkIds = allChunks?.chunk_ids?.toList() ?: emptyList()
-            val positions = mutableMapOf<String, Pair<String?, String?>>()
-            var coverChunkId: String? = null
-            for (cid in chunkIds) {
-                runCatching {
-                    _repository.getChunkStoryboard(cid).let { sb ->
-                        positions[cid] = Pair(sb.chapter_id, sb.scene_id)
-                        if (sb.scene_type == "cover") {
-                            coverChunkId = cid
-                        }
+            val scenes = mutableListOf<SceneRef>()
+            var coverScene: SceneRef? = null
+
+            // Build scene list from book JSON (the canonical source of truth)
+            val bookData = runCatching { _repository.getBook(targetBookId) }.getOrNull()
+            if (bookData != null) {
+                for (ch in bookData.chapters.orEmpty()) {
+                    for (sc in ch.scenes.orEmpty()) {
+                        val sr = SceneRef(ch.chapter, sc.scene_id, sc.scene_type)
+                        if (sc.scene_type == "cover") coverScene = sr
+                        scenes.add(sr)
                     }
                 }
             }
-            Log.i(TAG, "ensureInitialized: fetched ${chunkIds.size} chunks, ${positions.size} positions")
-            preparePlayback(targetBookId, targetBuildId, chunkIds, positions)
-            val coverId = coverChunkId ?: chunkIds.firstOrNull()
-            if (coverId != null) {
-                loadCoverIntoState(coverId)
+
+            Log.i(TAG, "ensureInitialized: built ${scenes.size} scenes from book JSON")
+            preparePlayback(targetBookId, targetBuildId, scenes)
+
+            // Load cover from first scene
+            val firstScene = coverScene ?: scenes.firstOrNull()
+            if (firstScene != null) {
+                loadCoverIntoState(firstScene.chapterId, firstScene.sceneId)
             }
         }
     }
 
-    private suspend fun loadCoverIntoState(coverId: String) {
+    private suspend fun loadCoverIntoState(chapterId: String, sceneId: String) {
         val bitmap = runCatching {
-            val sb = _repository.getChunkStoryboard(coverId)
+            val sb = _repository.getSceneStoryboard(bookId, chapterId, sceneId, buildId)
             if (sb.ius.isNotEmpty()) {
                 val iu = sb.ius.first()
                 val imgBytes = _repository.getIuImage(
-                    sb.book_id ?: bookId,
-                    sb.chapter_id ?: "",
-                    sb.scene_id ?: "",
+                    bookId,
+                    chapterId,
+                    sceneId,
                     iu.unit_id,
-                    sb.build_id
+                    sb.build_id.ifBlank { buildId }
                 )
                 MediaDecoder.decodeBitmap(imgBytes)
             } else null
         }.getOrElse {
-            runCatching {
-                val imgBytes = _repository.getChunkImage(coverId, buildId)
-                withContext(Dispatchers.Default) { MediaDecoder.decodeBitmap(imgBytes) }
-            }.getOrNull()
+            Log.w(TAG, "loadCoverIntoState: failed to load cover for $chapterId/$sceneId")
+            null
         }
         if (bitmap != null) {
             setCoverImage(bitmap)
@@ -585,16 +562,14 @@ class PlaybackViewModel(
         val seek = pendingExternalSeek ?: return
         pendingExternalSeek = null
 
-        val idx = chunkQueue.indexOf(seek.chunkId)
-        if (idx < 0) {
-            Log.w(TAG, "executePendingSeek: chunk ${seek.chunkId} not found, falling back")
+        if (currentIndex >= sceneQueue.size) {
+            Log.w(TAG, "executePendingSeek: currentIndex out of bounds, falling back")
             playSceneQueue()
             return
         }
 
         _uiState.update { it.copy(missingIuPosition = null) }
         isExecutingExternalSeek = true
-        currentIndex = idx
         currentUnitIndex = seek.unitIndex
         SharedPositionManager.navigateTo(seek)
         _uiState.update { it.copy(phase = PlayerPhase.DOWNLOADING) }
@@ -609,13 +584,10 @@ class PlaybackViewModel(
     // ── State reset ──────────────────────────────────────────────
 
     fun clearPlaybackState() {
-        chunkPositions.clear()
         preloadCache.clear()
         preloadJobs.clear()
-        chunkQueue.clear()
+        sceneQueue.clear()
         currentIndex = 0
-        currentChapterId = null
-        currentSceneId = null
         currentUnitIndex = 0
         currentIuSequence = null
         pendingChunkAudio = null
@@ -645,39 +617,34 @@ class PlaybackViewModel(
     // ═══════════════════════════════════════════════════════════════
 
     private fun playNext() {
-        Log.d(TAG, "playNext: index=$currentIndex queueSize=${chunkQueue.size}")
-        if (currentIndex >= chunkQueue.size) {
+        Log.d(TAG, "playNext: index=$currentIndex queueSize=${sceneQueue.size}")
+        if (currentIndex >= sceneQueue.size) {
             Log.i(TAG, "playNext: end of queue → SCENE_READY (resetting index to 0 for replay)")
             currentIndex = 0
             _uiState.update { it.copy(phase = PlayerPhase.SCENE_READY) }
             return
         }
 
-        val id = chunkQueue[currentIndex]
-        Log.i(TAG, "playNext: loading chunk[$currentIndex]=$id")
-
-        val pos = chunkPositions[id]
-        currentChapterId = pos?.first
-        currentSceneId = pos?.second
+        val sceneKey = sceneQueue[currentIndex]
+        val chId = sceneKey.substringBefore(':')
+        val scId = sceneKey.substringAfter(':')
+        Log.i(TAG, "playNext: loading scene[$currentIndex]=$sceneKey")
 
         if (!isExecutingExternalSeek) {
             currentUnitIndex = 0
             SharedPositionManager.navigateTo(
-                chapterId = pos?.first,
-                sceneId = pos?.second,
+                chapterId = chId,
+                sceneId = scId,
                 unitId = null,
-                chunkId = id,
+                chunkId = sceneKey,
                 unitIndex = 0
             )
         }
         isExecutingExternalSeek = false
 
-        val cached = preloadCache.remove("${buildId}_$id")
+        val cached = preloadCache.remove("${buildId}_$sceneKey")
         if (cached != null) {
-            Log.i(TAG, "playNext: using preloaded data for $id")
-            val chunkPos = chunkPositions[id]
-            currentChapterId = chunkPos?.first
-            currentSceneId = chunkPos?.second
+            Log.i(TAG, "playNext: using preloaded data for $sceneKey")
             emitChunk(cached.audioBytes, cached.videoBytes, cached.iuSequence)
             preloadAhead()
             return
@@ -686,47 +653,30 @@ class PlaybackViewModel(
         viewModelScope.launch {
             _uiState.update { it.copy(phase = PlayerPhase.DOWNLOADING) }
 
-            preloadJobs[id]?.join()
+            preloadJobs[sceneKey]?.join()
 
-            val cachedAfter = preloadCache.remove("${buildId}_$id")
+            val cachedAfter = preloadCache.remove("${buildId}_$sceneKey")
             if (cachedAfter != null) {
-                // Verify freshness: check if audio_ready changed since preload
-                val freshChunk = runCatching { _repository.getChunk(id, buildId) }.getOrNull()
-                if (freshChunk != null && freshChunk.audio_ready && cachedAfter.audioBytes.isEmpty()) {
-                    Log.i(TAG, "playNext: audio appeared since preload for $id — refetching")
-                    val freshAudio = runCatching { _repository.getChunkAudio(id, buildId) }.getOrElse { byteArrayOf() }
-                    Log.i(TAG, "playNext: preload completed for $id (refreshed audio)")
-                    val preloadPos = chunkPositions[id]
-                    currentChapterId = preloadPos?.first
-                    currentSceneId = preloadPos?.second
-                    emitChunk(freshAudio, cachedAfter.videoBytes, cachedAfter.iuSequence)
-                } else {
-                    Log.i(TAG, "playNext: preload completed for $id")
-                    val preloadPos = chunkPositions[id]
-                    currentChapterId = preloadPos?.first
-                    currentSceneId = preloadPos?.second
-                    emitChunk(cachedAfter.audioBytes, cachedAfter.videoBytes, cachedAfter.iuSequence)
-                }
+                Log.i(TAG, "playNext: preload completed for $sceneKey")
+                emitChunk(cachedAfter.audioBytes, cachedAfter.videoBytes, cachedAfter.iuSequence)
                 preloadAhead()
                 return@launch
             }
 
             val sceneData = runCatching {
                 retryWithBackoff(maxRetries = 3, initialDelayMs = 1000, maxDelayMs = 5000) {
-                    fetchSceneData(id)
+                    fetchSceneData(sceneKey)
                 }
             }.getOrElse { err ->
-                val msg = "Scene $id: ${err.message} (${err::class.simpleName})"
-                Log.e(TAG, "playNext: failed to load $id after retries — $msg", err)
+                val msg = "Scene $sceneKey: ${err.message} (${err::class.simpleName})"
+                Log.e(TAG, "playNext: failed to load $sceneKey after retries — $msg", err)
                 Log.w(TAG, "playNext: → SCENE_READY (error)")
                 _uiState.update { it.copy(phase = PlayerPhase.SCENE_READY, errorMessage = msg) }
                 return@launch
             }
 
-            Log.i(TAG, "delivering chunk for $id")
+            Log.i(TAG, "delivering scene $sceneKey")
             _uiState.update { it.copy(previewImage = null) }
-            currentChapterId = pos?.first
-            currentSceneId = pos?.second
             emitChunk(sceneData.audioBytes, sceneData.videoBytes, sceneData.iuSequence)
             preloadAhead()
         }
@@ -752,10 +702,10 @@ class PlaybackViewModel(
         preloadJob?.cancel()
 
         val job = viewModelScope.launch {
-            // Collect all scenes to preload
+            // Collect all scenes to preload (by scene key)
             val scenesToPreload = (start..PRELOAD_AHEAD).mapNotNull { offset ->
                 val idx = currentIndex + offset
-                if (idx < chunkQueue.size) chunkQueue[idx] else null
+                if (idx < sceneQueue.size) sceneQueue[idx] else null
             }.filter { !preloadCache.containsKey("${currentBldId}_$it") }
 
             if (scenesToPreload.isEmpty()) return@launch
@@ -764,18 +714,18 @@ class PlaybackViewModel(
 
             // Launch all fetchSceneData calls in parallel
             coroutineScope {
-                scenesToPreload.map { id ->
+                scenesToPreload.map { sceneKey ->
                     async {
-                        id to runCatching { fetchSceneData(id) }.getOrNull()
+                        sceneKey to runCatching { fetchSceneData(sceneKey) }.getOrNull()
                     }
                 }.forEach { deferred ->
-                    val (id, data) = deferred.await()
+                    val (sceneKey, data) = deferred.await()
                     if (data != null) {
-                        preloadCache["${currentBldId}_$id"] = data
-                        preloadCompleted.tryEmit(id)
-                        Log.i(TAG, "preloaded scene: $id — ${data.iuSequence.size} IUs (build=$currentBldId)")
+                        preloadCache["${currentBldId}_$sceneKey"] = data
+                        preloadCompleted.tryEmit(sceneKey)
+                        Log.i(TAG, "preloaded scene: $sceneKey — ${data.iuSequence.size} IUs (build=$currentBldId)")
                     } else {
-                        Log.w(TAG, "preload failed for scene: $id — will load on demand")
+                        Log.w(TAG, "preload failed for scene: $sceneKey — will load on demand")
                     }
                 }
             }
@@ -784,54 +734,52 @@ class PlaybackViewModel(
         preloadJob = job
 
         preloadJobs.clear()
-        val firstId = chunkQueue.getOrNull(currentIndex + start)
-        if (firstId != null && !preloadCache.containsKey("${currentBldId}_$firstId")) {
-            preloadJobs[firstId] = job
+        val firstSceneKey = sceneQueue.getOrNull(currentIndex + start)
+        if (firstSceneKey != null && !preloadCache.containsKey("${currentBldId}_$firstSceneKey")) {
+            preloadJobs[firstSceneKey] = job
         }
     }
 
-    private suspend fun fetchSceneData(id: String): PreloadedScene = coroutineScope {
-        Log.d(TAG, "fetchSceneData: $id")
+    private suspend fun fetchSceneData(sceneKey: String): PreloadedScene = coroutineScope {
+        val chId = sceneKey.substringBefore(':')
+        val scId = sceneKey.substringAfter(':')
+        Log.d(TAG, "fetchSceneData: $sceneKey")
 
-        val chunk = runCatching { _repository.getChunk(id, buildId) }.getOrElse { err ->
-            Log.w(TAG, "fetchSceneData: chunk $id not found in Redis: ${err.message}")
-            null
-        }
-        Log.i(TAG, "fetchSceneData: chunk $id audio_ready=${chunk?.audio_ready} image_ready=${chunk?.image_ready} video_ready=${chunk?.video_ready}")
+        // Check scene status from backend — scene-based endpoint, no chunk dependency
+        val status = runCatching {
+            _repository.getSceneStatus(bookId, chId, scId, buildId)
+        }.getOrNull()
 
-        // If chunk is unavailable or audio isn't ready yet (e.g. the backend just
-        // finished generation but the audio file isn't fully written), throw so the
-        // caller's retryWithBackoff mechanism retries with exponential backoff.
-        // Without this, we'd emit empty audio → PLAYING with no MediaPlayer → stuck.
-        if (chunk == null || chunk.audio_ready != true) {
-            throw Exception("Audio not ready for $id (ready=${chunk?.audio_ready})")
+        // If audio isn't ready yet, throw so retryWithBackoff retries
+        if (status == null || !status.audio_ready) {
+            // Don't throw immediately on first attempt — the scene might be legitimately
+            // not ready (still generating). The retry loop handles backoff.
+            if (status == null) {
+                Log.w(TAG, "fetchSceneData: status check failed for $sceneKey — will retry")
+            } else {
+                Log.w(TAG, "fetchSceneData: audio not ready for $sceneKey (ready=${status.audio_ready}) — will retry")
+            }
+            throw Exception("Audio not ready for $sceneKey")
         }
 
         val audioDeferred = async {
-            val audioBytes = runCatching {
-                _repository.getChunkAudio(id, buildId).also {
-                    Log.i(TAG, "audio fetched for $id: ${it.size} bytes")
+            runCatching {
+                _repository.getSceneAudio(bookId, chId, scId, buildId).also {
+                    Log.i(TAG, "audio fetched for $sceneKey: ${it.size} bytes")
                 }
             }.getOrElse { e ->
-                Log.w(TAG, "audio_ready=true but fetch failed for $id: ${e.message}")
+                Log.w(TAG, "audio not ready yet for $sceneKey: ${e.message}")
                 byteArrayOf()
             }
-            // If audio_ready=true but download returned empty (stale/wrong file),
-            // throw instead of silently looping via handleSilentChunk.
-            // The caller's retryWithBackoff will retry with exponential backoff.
-            if (chunk.audio_ready == true && audioBytes.isEmpty()) {
-                throw Exception("Audio file empty despite audio_ready=true for $id")
-            }
-            audioBytes
         }
         val videoDeferred = async {
-            if (chunk.video_ready == true) {
-                runCatching { _repository.getChunkVideo(id, buildId) }.getOrNull().also {
+            if (status.video_ready) {
+                runCatching { _repository.getSceneVideo(bookId, chId, scId, buildId) }.getOrNull().also {
                     Log.d(TAG, if (it != null) "video fetched: ${it.size} bytes" else "video null")
                 }
             } else null
         }
-        val iuDeferred = async { fetchIuSequence(id) }
+        val iuDeferred = async { fetchIuSequence(chId, scId) }
 
         val audio = audioDeferred.await()
         val videoBytes = videoDeferred.await()
@@ -840,46 +788,30 @@ class PlaybackViewModel(
         PreloadedScene(audio, videoBytes, iuSequence)
     }
 
-    private suspend fun fetchIuSequence(id: String): List<IuImageItem> {
+    private suspend fun fetchIuSequence(chapterId: String, sceneId: String): List<IuImageItem> {
         return runCatching {
-            val storyboard = _repository.getChunkStoryboard(id)
-            chunkPositions[id] = Pair(storyboard.chapter_id, storyboard.scene_id)
-            Log.i(TAG, "[UNITS] chunk=$id storyboard: ${storyboard.ius.size} IUs, build_id=${storyboard.build_id}")
-            val chId = (storyboard.chapter_id?.takeIf { it.isNotBlank() } ?: currentChapterId) ?: ""
-            val scId = (storyboard.scene_id?.takeIf { it.isNotBlank() } ?: currentSceneId) ?: ""
-            val bkId = storyboard.book_id?.takeIf { it.isNotBlank() } ?: bookId
-            // Backend resolves build_id from manifest.json and always returns it here;
-            // the local buildId is only a defensive fallback and should never be needed.
-            val bldId = storyboard.build_id.ifBlank { buildId }
-            if (storyboard.ius.isNotEmpty() && bldId.isNotBlank() && chId.isNotBlank()) {
-                Log.i(TAG, "fetching ${storyboard.ius.size} IU images in parallel for chunk $id")
+            val storyboard = _repository.getSceneStoryboard(bookId, chapterId, sceneId, buildId)
+            Log.i(TAG, "[UNITS] scene $chapterId/$sceneId storyboard: ${storyboard.ius.size} IUs")
+            if (storyboard.ius.isNotEmpty()) {
                 coroutineScope {
                     storyboard.ius.map { iu ->
                         async {
-                            // Duration is computed server-side (duration_ms). Fall back to
-                            // 2000ms only if an older backend omits the field.
                             val durationMs = iu.duration_ms ?: 2000L
                             val iuText = iu.text
                             runCatching {
-                                Log.d(TAG, "fetching IU image: ${iu.unit_id} (dur=$durationMs ms) bldId=$bldId")
-                                val imgBytes = _repository.getIuImage(bkId, chId, scId, iu.unit_id, bldId)
+                                Log.d(TAG, "fetching IU image: ${iu.unit_id} (dur=$durationMs ms)")
+                                val imgBytes = _repository.getIuImage(bookId, chapterId, sceneId, iu.unit_id, buildId)
                                 val bmp = withContext(Dispatchers.Default) { MediaDecoder.decodeBitmap(imgBytes) }
                                 IuImageItem(bmp, durationMs, iu.unit_id, iuText, IuStatus.READY)
                             }.getOrNull() ?: run {
                                 Log.w(TAG, "IU image NOT GENERATED: ${iu.unit_id} — using placeholder")
-                                IuImageItem(
-                                    bitmap = null,
-                                    durationMs = durationMs,
-                                    unitId = iu.unit_id,
-                                    text = iuText,
-                                    status = IuStatus.NOT_GENERATED
-                                )
+                                IuImageItem(null, durationMs, iu.unit_id, iuText, IuStatus.NOT_GENERATED)
                             }
                         }
                     }.awaitAll()
                 }
             } else {
-                Log.w(TAG, "storyboard empty or missing IDs: ius=${storyboard.ius.size} bldId=$bldId chId=$chId")
+                Log.w(TAG, "storyboard empty: chapterId=$chapterId sceneId=$sceneId")
                 emptyList()
             }
         }.getOrDefault(emptyList()).also {

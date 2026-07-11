@@ -229,6 +229,40 @@ interface BackendApi {
         @Query("build_id") buildId: String
     ): ResponseBody
 
+    @GET("/api/v1/scene/{bookId}/{chapterId}/{sceneId}/storyboard")
+    suspend fun getSceneStoryboard(
+        @Path("bookId") bookId: String,
+        @Path("chapterId") chapterId: String,
+        @Path("sceneId") sceneId: String,
+        @Query("build_id") buildId: String
+    ): StoryboardResponse
+
+    @Streaming
+    @GET("/api/v1/scene/{bookId}/{chapterId}/{sceneId}/video")
+    suspend fun getSceneVideo(
+        @Path("bookId") bookId: String,
+        @Path("chapterId") chapterId: String,
+        @Path("sceneId") sceneId: String,
+        @Query("build_id") buildId: String
+    ): ResponseBody
+
+    @Streaming
+    @GET("/api/v1/scene/{bookId}/{chapterId}/{sceneId}/image")
+    suspend fun getSceneImage(
+        @Path("bookId") bookId: String,
+        @Path("chapterId") chapterId: String,
+        @Path("sceneId") sceneId: String,
+        @Query("build_id") buildId: String
+    ): ResponseBody
+
+    @GET("/api/v1/scene/{bookId}/{chapterId}/{sceneId}/status")
+    suspend fun getSceneStatus(
+        @Path("bookId") bookId: String,
+        @Path("chapterId") chapterId: String,
+        @Path("sceneId") sceneId: String,
+        @Query("build_id") buildId: String
+    ): SceneStatusResponse
+
     @GET("/api/v1/scene/{bookId}/{chapterId}/{sceneId}/waveform")
     suspend fun getSceneWaveform(
         @Path("bookId") bookId: String,

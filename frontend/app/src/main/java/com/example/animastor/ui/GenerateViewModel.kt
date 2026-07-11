@@ -19,6 +19,7 @@ import com.example.animastor.repository.LayerConfigUpdate
 import com.example.animastor.repository.ReorderChapter
 import com.example.animastor.repository.Repository
 import com.example.animastor.repository.ChunkListResponse
+import com.example.animastor.repository.SceneRef
 import com.example.animastor.util.MediaDecoder
 import com.example.animastor.util.SimpleDiskCache
 import java.io.File
@@ -62,15 +63,14 @@ class GenerateViewModel(
     // ── Shared playback data — consumed by MainActivity → PlaybackViewModel ─
 
     /**
-     * Emitted when new chunks are ready for playback.
+     * Emitted when new scenes are ready for playback (from book JSON order).
      * The activity coordinator observes this and calls [PlaybackViewModel.preparePlayback].
      */
     data class PlaybackPreparation(
         val bookId: String,
         val buildId: String,
-        val chunkIds: List<String>,
+        val scenes: List<SceneRef>,
         val coverImage: Bitmap? = null,
-        val chunkPositions: Map<String, Pair<String?, String?>> = emptyMap(),
         val softRefresh: Boolean = false
     )
 
@@ -340,17 +340,15 @@ class GenerateViewModel(
 
     /**
      * Apply whatever generation results are available — refreshes the player
-     * with the latest chunks so the user sees/hears newly generated content
-     * immediately, even if generation only partially completed or was cancelled.
+     * with the latest scenes so the user hears newly generated content.
+     *
+     * Builds scene list from book JSON (the canonical source of truth),
+     * not from chunk metadata. TTS pipeline is decoupled from playback.
      *
      * Called when:
      *   - All workers complete successfully (DoneRow cycle expires)
      *   - Generation is cancelled but some content was generated
      *   - Progress is stuck and deemed complete (backend idle, no progress)
-     *
-     * Fetches fresh chunk metadata and cover image, then emits
-     * [playbackPrepared] so the activity coordinator calls
-     * [PlaybackViewModel.refreshContent] to update the player.
      */
     fun applyGenerationResults() {
         if (_isRegenerating.value) {
@@ -358,41 +356,49 @@ class GenerateViewModel(
         }
         _activeGeneration.value = null
 
-        // Refresh playback data — generation is now truly complete, so chunk
-        // metadata (audio_ready, image_ready, etc.) reflects the fresh state.
         viewModelScope.launch {
-            val allChunks = runCatching { _repository.getAllChunks(bookId) }.getOrNull()
-            val chunkIds = allChunks?.chunk_ids?.toList() ?: return@launch
-            if (chunkIds.isEmpty()) return@launch
+            // Build scene list from book JSON
+            val scenes = mutableListOf<SceneRef>()
+            var coverChapterId: String? = null
+            var coverSceneId: String? = null
+            val bookData = runCatching { _repository.getBook(bookId) }.getOrNull()
+            if (bookData != null) {
+                for (ch in bookData.chapters.orEmpty()) {
+                    for (sc in ch.scenes.orEmpty()) {
+                        val sr = SceneRef(ch.chapter, sc.scene_id, sc.scene_type)
+                        if (sc.scene_type == "cover") {
+                            coverChapterId = ch.chapter
+                            coverSceneId = sc.scene_id
+                        }
+                        scenes.add(sr)
+                    }
+                }
+            }
+            if (scenes.isEmpty()) return@launch
 
-            val positions = allChunks.chunk_positions?.mapValues { (_, pos) ->
-                Pair(pos?.chapter_id, pos?.scene_id)
-            } ?: emptyMap()
-            val coverChunkId = allChunks.cover_chunk_id
+            // Load cover image for first scene
             var cover: Bitmap? = null
-            val coverId = coverChunkId ?: chunkIds.firstOrNull()
-            if (coverId != null && imageEnabled) {
-                cover = loadCoverBitmap(coverId)
-                // Retry with exponential backoff — the backend may have just
-                // finished generation and the image file might not be readable
-                // immediately. Without retry, cover stays null → setCoverImage
-                // is never called → curtains remain visible as fallback.
+            val coverRef = if (coverChapterId != null) {
+                SceneRef(coverChapterId!!, coverSceneId!!, "cover")
+            } else scenes.first()
+            if (imageEnabled) {
+                cover = loadCoverBitmap(coverRef.chapterId, coverRef.sceneId)
                 if (cover == null) {
                     for (retry in 1..5) {
                         delay((1000L shl minOf(retry, 3)).coerceAtMost(5000))
-                        Log.i(TAG, "applyGenerationResults: retry $retry loading cover (coverId=$coverId)")
-                        cover = loadCoverBitmap(coverId)
+                        Log.i(TAG, "applyGenerationResults: retry $retry loading cover")
+                        cover = loadCoverBitmap(coverRef.chapterId, coverRef.sceneId)
                         if (cover != null) break
                     }
                 }
             }
-            Log.i(TAG, "applyGenerationResults: emitting playbackPrepared (softRefresh) with ${chunkIds.size} chunks cover=${cover != null}")
+
+            Log.i(TAG, "applyGenerationResults: emitting playbackPrepared (softRefresh) with ${scenes.size} scenes cover=${cover != null}")
             _playbackPrepared.tryEmit(PlaybackPreparation(
                 bookId = bookId,
                 buildId = buildId,
-                chunkIds = chunkIds,
+                scenes = scenes,
                 coverImage = cover,
-                chunkPositions = positions,
                 softRefresh = true
             ))
         }
@@ -456,26 +462,29 @@ class GenerateViewModel(
                         persistBuildId(importRes.build_id ?: "")
                         runCatching { _repository.snapshotBook(bId) }
 
-                        val allChunks = runCatching { _repository.getAllChunks(bId) }.getOrElse { ChunkListResponse(emptyList()) }
-                        val chunkIds = allChunks.chunk_ids.toList()
-                        val positions = allChunks.chunk_positions?.mapValues { (_, pos) ->
-                            Pair(pos?.chapter_id, pos?.scene_id)
-                        } ?: emptyMap()
-                        val coverChunkId = allChunks.cover_chunk_id
-
-                        val firstPos = chunkIds.firstOrNull()?.let { positions[it] }
-                        if (firstPos != null) {
-                            SharedPositionManager.navigateTo(chapterId = firstPos.first, sceneId = firstPos.second, unitIndex = 0)
-                        } else {
-                            runCatching {
-                                val bookData = _repository.getBook(bId)
-                                val firstChapter = bookData.chapters?.firstOrNull()
-                                val firstScene = firstChapter?.scenes?.firstOrNull()
-                                SharedPositionManager.navigateTo(chapterId = firstChapter?.chapter, sceneId = firstScene?.scene_id, unitIndex = 0)
-                            }.onFailure { e ->
-                                Log.w(TAG, "position fallback failed: ${e.message}")
-                                SharedPositionManager.navigateTo(chapterId = null, sceneId = null)
+                        // Build scene list from book JSON
+                        val bookData = runCatching { _repository.getBook(bId) }.getOrNull()
+                        val scenes = mutableListOf<SceneRef>()
+                        var coverScene: SceneRef? = null
+                        if (bookData != null) {
+                            for (ch in bookData.chapters.orEmpty()) {
+                                for (sc in ch.scenes.orEmpty()) {
+                                    val sr = SceneRef(ch.chapter, sc.scene_id, sc.scene_type)
+                                    if (sc.scene_type == "cover") coverScene = sr
+                                    scenes.add(sr)
+                                }
                             }
+                        }
+
+                        val firstScene = coverScene ?: scenes.firstOrNull()
+                        if (firstScene != null) {
+                            SharedPositionManager.navigateTo(
+                                chapterId = firstScene.chapterId,
+                                sceneId = firstScene.sceneId,
+                                unitIndex = 0
+                            )
+                        } else {
+                            SharedPositionManager.navigateTo(chapterId = null, sceneId = null)
                         }
 
                         _uiState.update {
@@ -488,18 +497,19 @@ class GenerateViewModel(
                             )
                         }
 
-                        val coverId = coverChunkId ?: chunkIds.firstOrNull()
-                        val cover = if (coverId != null && imageEnabled) loadCoverBitmap(coverId) else null
+                        val coverRef = coverScene ?: scenes.firstOrNull()
+                        val cover = if (coverRef != null && imageEnabled) {
+                            loadCoverBitmap(coverRef.chapterId, coverRef.sceneId)
+                        } else null
 
                         _playbackPrepared.tryEmit(PlaybackPreparation(
                             bookId = bId,
                             buildId = buildId,
-                            chunkIds = chunkIds,
-                            coverImage = cover,
-                            chunkPositions = positions
+                            scenes = scenes,
+                            coverImage = cover
                         ))
 
-                        _uiState.update { it.copy(phase = if (chunkIds.isNotEmpty()) PlayerPhase.SCENE_READY else PlayerPhase.IDLE) }
+                        _uiState.update { it.copy(phase = if (scenes.isNotEmpty()) PlayerPhase.SCENE_READY else PlayerPhase.IDLE) }
                     }
                     "txt" -> {
                         // ── TXT path ──
@@ -566,14 +576,24 @@ class GenerateViewModel(
                                 SharedPositionManager.navigateTo(chapterId = firstPos.first, sceneId = firstPos.second, unitIndex = 0)
                             }
 
+                            // Build scene list from book JSON
+                            val bookDataForScenes = runCatching { _repository.getBook(bId) }.getOrNull()
+                            val scenesFromDedup = mutableListOf<SceneRef>()
+                            if (bookDataForScenes != null) {
+                                for (ch in bookDataForScenes.chapters.orEmpty()) {
+                                    for (sc in ch.scenes.orEmpty()) {
+                                        scenesFromDedup.add(SceneRef(ch.chapter, sc.scene_id, sc.scene_type))
+                                    }
+                                }
+                            }
+
                             _playbackPrepared.tryEmit(PlaybackPreparation(
                                 bookId = bId,
                                 buildId = buildId,
-                                chunkIds = chunkIds,
-                                chunkPositions = positions
+                                scenes = scenesFromDedup
                             ))
 
-                            msgs.add("✓ Loaded ${chunkIds.size} scenes")
+                            msgs.add("✓ Loaded ${scenesFromDedup.size} scenes")
                             _uiState.update { it.copy(
                                 importProgressMessages = msgs.toList(),
                                 importStage = ImportStage.DONE,
@@ -628,20 +648,32 @@ class GenerateViewModel(
                             SharedPositionManager.navigateTo(chapterId = null, sceneId = null)
                         }
 
+                        val scenesFromTxt = if (allChunks != null) {
+                            val bookForScenes = runCatching { _repository.getBook(bId) }.getOrNull()
+                            val sc = mutableListOf<SceneRef>()
+                            if (bookForScenes != null) {
+                                for (ch in bookForScenes.chapters.orEmpty()) {
+                                    for (scn in ch.scenes.orEmpty()) {
+                                        sc.add(SceneRef(ch.chapter, scn.scene_id, scn.scene_type))
+                                    }
+                                }
+                            }
+                            sc
+                        } else emptyList()
+
                         _playbackPrepared.tryEmit(PlaybackPreparation(
                             bookId = bId,
                             buildId = buildId,
-                            chunkIds = chunkIds,
-                            chunkPositions = positions
+                            scenes = scenesFromTxt
                         ))
 
                         _uiState.update { it.copy(
                             importStage = ImportStage.DONE,
                             importProgress = 1f,
-                            phase = PlayerPhase.SCENE_READY,
-                            chunkIds = chunkIds,
+                            phase = if (scenesFromTxt.isNotEmpty()) PlayerPhase.SCENE_READY else PlayerPhase.IDLE,
+                            chunkIds = emptyList(),
                         )}
-                        Log.i(TAG, "importBookFromFile (txt): ready with ${chunkIds.size} chunks")
+                        Log.i(TAG, "importBookFromFile (txt): ready with ${scenesFromTxt.size} scenes")
                     }
                     else -> {
                         throw java.io.IOException("Unknown file format: ${importRes.format}")
@@ -941,25 +973,23 @@ class GenerateViewModel(
         _exportProgress.value = progress
     }
 
-    private suspend fun loadCoverBitmap(coverId: String): Bitmap? {
+    private suspend fun loadCoverBitmap(chapterId: String, sceneId: String): Bitmap? {
         return runCatching {
-            val sb = _repository.getChunkStoryboard(coverId)
+            val sb = _repository.getSceneStoryboard(bookId, chapterId, sceneId, buildId)
             if (sb.ius.isNotEmpty()) {
                 val iu = sb.ius.first()
                 val imgBytes = _repository.getIuImage(
-                    sb.book_id ?: bookId,
-                    sb.chapter_id ?: "",
-                    sb.scene_id ?: "",
+                    bookId,
+                    chapterId,
+                    sceneId,
                     iu.unit_id,
-                    sb.build_id
+                    buildId
                 )
                 MediaDecoder.decodeBitmap(imgBytes)
             } else null
         }.getOrElse {
-            runCatching {
-                val imgBytes = _repository.getChunkImage(coverId)
-                MediaDecoder.decodeBitmap(imgBytes)
-            }.getOrNull()
+            Log.w(TAG, "loadCoverBitmap: failed for $chapterId/$sceneId")
+            null
         }
     }
 

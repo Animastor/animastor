@@ -649,6 +649,223 @@ module.exports = function(app, redis, deps) {
     });
 
     // ======================================================
+    // SCENE STORYBOARD (scene-based, not chunk-based)
+    // ======================================================
+    app.get('/api/v1/scene/:bookId/:chapterId/:sceneId/storyboard', async (req, res) => {
+        try {
+            const { bookId, chapterId, sceneId } = req.params;
+            const buildId = getEffectiveBuildId(bookId, req.query.build_id, log);
+            const dir = path.join(OUTPUT_DIR, buildId);
+
+            let ius = [];
+            try {
+                const pgRows = await iuRepo.getImageUnitsForScene(buildId, bookId, chapterId, sceneId);
+                if (pgRows && pgRows.length > 0) {
+                    ius = pgRows.map(r => ({
+                        unit_id: r.unit_id, scene_id: r.scene_id, text: r.text,
+                        text_proportion: r.text_proportion, estimated_duration_sec: r.estimated_duration_sec,
+                        audio_file: r.scene_audio_file,
+                        start_ms: r.start_ms != null && (Number(r.start_ms) || 0) > 0 ? Number(r.start_ms) : null,
+                        end_ms: r.end_ms != null && (Number(r.end_ms) || 0) > 0 ? Number(r.end_ms) : null,
+                    }));
+                }
+            } catch (dbErr) {
+                console.warn('[SCENE STORYBOARD] PG read failed, falling back to book data:', dbErr.message);
+            }
+
+            if (ius.length === 0) {
+                try {
+                    const b = book.loadBook(bookId);
+                    if (b) {
+                        for (const ch of b.chapters || []) {
+                            if (ch.chapter !== chapterId) continue;
+                            for (const sc of ch.scenes || []) {
+                                if (sc.scene_id !== sceneId) continue;
+                                let order = 0;
+                                for (const u of sc.units || []) {
+                                    ius.push({ unit_id: u.id, scene_id, text: u.text, text_proportion: 0, estimated_duration_sec: 0, audio_file: null, start_ms: null, end_ms: null, _order: order });
+                                    order++;
+                                }
+                                for (const db of sc.dialogue_blocks || []) {
+                                    for (const u of db.units || []) {
+                                        ius.push({ unit_id: u.id, scene_id, text: u.text, text_proportion: 0, estimated_duration_sec: 0, audio_file: null, start_ms: null, end_ms: null, _order: order });
+                                        order++;
+                                    }
+                                }
+                                const totalTextLen = ius.reduce((s, i) => s + (i.text || '').length, 0);
+                                ius.sort((a, b) => a._order - b._order);
+                                for (const iu of ius) {
+                                    iu.text_proportion = totalTextLen > 0 ? (iu.text || '').length / totalTextLen : 1;
+                                    delete iu._order;
+                                }
+                                break;
+                            }
+                        }
+                    }
+                } catch (bookErr) {
+                    console.warn('[SCENE STORYBOARD] Book data fallback failed:', bookErr.message);
+                }
+            }
+
+            const needsDuration = ius.every(iu => !iu.estimated_duration_sec || iu.estimated_duration_sec === 0);
+            if (needsDuration && ius.length > 0) {
+                const sceneDuration = await image.getSceneDuration(buildId, bookId, chapterId, sceneId);
+                if (sceneDuration > 0) {
+                    for (const iu of ius) {
+                        iu.estimated_duration_sec = parseFloat((sceneDuration * (iu.text_proportion || 0)).toFixed(3));
+                    }
+                }
+                const sceneDurationMs = Math.round(sceneDuration * 1000);
+                let cursorMs = 0;
+                for (const iu of ius) {
+                    const durMs = Math.max(200, Math.round((iu.estimated_duration_sec || 1) * 1000));
+                    iu._start_ms = cursorMs;
+                    let endMs = cursorMs + durMs;
+                    if (sceneDurationMs > 0 && endMs > sceneDurationMs) endMs = sceneDurationMs;
+                    iu._end_ms = endMs;
+                    cursorMs = endMs;
+                }
+                for (const [idx, iu] of ius.entries()) {
+                    try {
+                        await iuRepo.upsertImageUnit(buildId, bookId, chapterId, sceneId, iu.unit_id, {
+                            scene_order: idx, text: iu.text, text_length: (iu.text || '').length,
+                            text_proportion: iu.text_proportion || 0, scene_duration_sec: sceneDuration || 0,
+                            estimated_duration_sec: iu.estimated_duration_sec || 0,
+                            scene_audio_file: `${bookId}_${chapterId}_${sceneId}.mp3`,
+                            start_ms: iu._start_ms != null ? iu._start_ms : null,
+                            end_ms: iu._end_ms != null ? iu._end_ms : null,
+                        });
+                    } catch (pgErr) {
+                        console.warn('[SCENE STORYBOARD] Failed to persist IU to PG:', pgErr.message);
+                    }
+                }
+            }
+
+            try {
+                const pgRows = await iuRepo.getImageUnitsForScene(buildId, bookId, chapterId, sceneId);
+                if (pgRows && pgRows.length > 0) {
+                    const pgMap = {};
+                    for (const r of pgRows) {
+                        if ((r.start_ms || 0) > 0 || (r.end_ms || 0) > 0) pgMap[r.unit_id] = r;
+                    }
+                    for (const iu of ius) {
+                        const pg = pgMap[iu.unit_id];
+                        if (pg) { iu.start_ms = pg.start_ms; iu.end_ms = pg.end_ms; }
+                    }
+                }
+            } catch (dbErr) {
+                console.warn('[SCENE STORYBOARD] DB timing merge failed:', dbErr.message);
+            }
+
+            for (const iu of ius) {
+                const real = (iu.start_ms != null && iu.end_ms != null) ? (iu.end_ms - iu.start_ms) : 0;
+                if (real > 0) {
+                    iu.duration_ms = real;
+                } else if (iu.estimated_duration_sec && iu.estimated_duration_sec > 0) {
+                    iu.duration_ms = Math.round(iu.estimated_duration_sec * 1000);
+                } else {
+                    iu.duration_ms = 2000;
+                }
+            }
+
+            res.json({ book_id: bookId, chapter_id: chapterId, scene_id: sceneId, build_id: buildId, ius });
+        } catch (err) {
+            res.status(500).json({ error: err.message });
+        }
+    });
+
+    // ======================================================
+    // SCENE VIDEO (scene-based, not chunk-based)
+    // ======================================================
+    app.get('/api/v1/scene/:bookId/:chapterId/:sceneId/video', async (req, res) => {
+        try {
+            const { bookId, chapterId, sceneId } = req.params;
+            const buildId = getEffectiveBuildId(bookId, req.query.build_id, log);
+            const dir = path.join(OUTPUT_DIR, buildId);
+            if (!fs.existsSync(dir)) return res.status(404).json({ error: 'build directory not found' });
+            const prefix = `${bookId}_${chapterId}_${sceneId}`;
+            const files = fs.readdirSync(dir).filter(f => f.startsWith(prefix) && f.endsWith('.mp4'));
+            if (!files.length) return res.status(404).json({ error: 'video not ready' });
+            const filePath = path.join(dir, files[0]);
+            res.setHeader('Content-Type', 'video/mp4');
+            fs.createReadStream(filePath).pipe(res);
+        } catch (err) {
+            res.status(500).json({ error: err.message });
+        }
+    });
+
+    // ======================================================
+    // SCENE IMAGE (scene-based, not chunk-based)
+    // ======================================================
+    app.get('/api/v1/scene/:bookId/:chapterId/:sceneId/image', async (req, res) => {
+        try {
+            const { bookId, chapterId, sceneId } = req.params;
+            const buildId = getEffectiveBuildId(bookId, req.query.build_id, log);
+            const dir = path.join(OUTPUT_DIR, buildId);
+            if (!fs.existsSync(dir)) return res.status(404).json({ error: 'build directory not found' });
+            const files = fs.readdirSync(dir).filter(f => f.startsWith(`${bookId}_${chapterId}_${sceneId}`) && f.endsWith('.png'));
+            if (!files.length) return res.status(404).json({ error: 'no image files' });
+            const filePath = path.join(dir, files[0]);
+            res.setHeader('Content-Type', 'image/png');
+            fs.createReadStream(filePath).pipe(res);
+        } catch (err) {
+            res.status(500).json({ error: err.message });
+        }
+    });
+
+    // ======================================================
+    // SCENE STATUS (ready/placeholder for audio/video)
+    // ======================================================
+    app.get('/api/v1/scene/:bookId/:chapterId/:sceneId/status', async (req, res) => {
+        try {
+            const { bookId, chapterId, sceneId } = req.params;
+            const buildId = getEffectiveBuildId(bookId, req.query.build_id, log);
+            const buildDir = path.join(OUTPUT_DIR, buildId);
+            const audioPath = path.join(buildDir, `${bookId}_${chapterId}_${sceneId}.mp3`);
+            const videoPath = path.join(buildDir, `${bookId}_${chapterId}_${sceneId}.mp4`);
+            const imagePath = path.join(buildDir, `${bookId}_${chapterId}_${sceneId}.png`);
+
+            const audioReady = fs.existsSync(audioPath);
+            const videoReady = fs.existsSync(videoPath);
+
+            // Image readiness: check for either the scene .png file or IU images
+            let imageReady = fs.existsSync(imagePath);
+            if (!imageReady && fs.existsSync(buildDir)) {
+                const iuPrefix = `${bookId}_${chapterId}_${sceneId}_iu`;
+                try {
+                    const dirFiles = fs.readdirSync(buildDir);
+                    imageReady = dirFiles.some(f => f.startsWith(iuPrefix) && f.endsWith('.png'));
+                } catch {}
+            }
+
+            // Scene type from book JSON
+            let sceneType = 'narration';
+            try {
+                const b = book.loadBook(bookId);
+                if (b) {
+                    for (const ch of b.chapters || []) {
+                        if (ch.chapter !== chapterId) continue;
+                        for (const sc of ch.scenes || []) {
+                            if (sc.scene_id === sceneId) {
+                                sceneType = sc.scene_type || 'narration';
+                                break;
+                            }
+                        }
+                    }
+                }
+            } catch {}
+
+            res.json({
+                book_id: bookId, chapter_id: chapterId, scene_id: sceneId,
+                build_id: buildId, scene_type: sceneType,
+                audio_ready: audioReady, video_ready: videoReady, image_ready: imageReady,
+            });
+        } catch (err) {
+            res.status(500).json({ error: err.message });
+        }
+    });
+
+    // ======================================================
     // SCENE WAVEFORM
     // ======================================================
     app.get('/api/v1/scene/:bookId/:chapterId/:sceneId/waveform', async (req, res) => {

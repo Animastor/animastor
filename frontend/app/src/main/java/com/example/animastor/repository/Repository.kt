@@ -427,6 +427,38 @@ class Repository(
         api.cancelGeneration(bookId)
     }
 
+    suspend fun getSceneStoryboard(bookId: String, chapterId: String, sceneId: String, buildId: String): StoryboardResponse {
+        val cacheKey = "scene_sb_${bookId}_${chapterId}_${sceneId}_${buildId}"
+        storyboardCache.get(cacheKey)?.let {
+            Log.d("Repo", "getSceneStoryboard: mem HIT")
+            return it
+        }
+        Log.d("Repo", "getSceneStoryboard: $bookId/$chapterId/$sceneId")
+        val result = api.getSceneStoryboard(bookId, chapterId, sceneId, buildId)
+        storyboardCache.put(cacheKey, result)
+        return result
+    }
+
+    suspend fun getSceneVideo(bookId: String, chapterId: String, sceneId: String, buildId: String): ByteArray {
+        val cacheKey = "scenevid_${bookId}_${chapterId}_${sceneId}_${buildId}"
+        cache.get(cacheKey)?.let { return it }
+        val dk = "scenevid/${buildId}/${bookId}_${chapterId}_${sceneId}"
+        diskCache?.getFile(dk, "video")?.let { f ->
+            val bytes = f.readBytes()
+            cache.put(cacheKey, bytes)
+            return bytes
+        }
+        val body = api.getSceneVideo(bookId, chapterId, sceneId, buildId)
+        val bytes = body.bytes()
+        cache.put(cacheKey, bytes)
+        diskCache?.put(dk, "video", bytes, "mp4")
+        return bytes
+    }
+
+    suspend fun getSceneStatus(bookId: String, chapterId: String, sceneId: String, buildId: String): SceneStatusResponse {
+        return api.getSceneStatus(bookId, chapterId, sceneId, buildId)
+    }
+
     suspend fun getSceneAudio(bookId: String, chapterId: String, sceneId: String, buildId: String): ByteArray {
         val cacheKey = "sceneaudio_${bookId}_${chapterId}_${sceneId}_${buildId}"
         cache.get(cacheKey)?.let { return it }

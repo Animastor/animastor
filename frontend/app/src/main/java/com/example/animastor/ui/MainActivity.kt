@@ -284,23 +284,18 @@ class MainActivity : AppCompatActivity() {
     private fun setupPlaybackCoordination() {
         lifecycleScope.launch {
             viewModel.playbackPrepared.collect { prep ->
-                Log.i("MainActivity", "playbackPrepared: book=${prep.bookId} chunks=${prep.chunkIds.size} cover=${prep.coverImage != null} soft=${prep.softRefresh}")
+                Log.i("MainActivity", "playbackPrepared: book=${prep.bookId} scenes=${prep.scenes.size} cover=${prep.coverImage != null} soft=${prep.softRefresh}")
                 if (prep.softRefresh) {
-                    // Regeneration completed while player may be active — use
-                    // soft refresh that preserves the current phase/position.
                     playbackViewModel.refreshContent(
                         bookId = prep.bookId,
                         buildId = prep.buildId,
-                        chunkIds = prep.chunkIds,
-                        chunkPositions = prep.chunkPositions
+                        scenes = prep.scenes
                     )
                 } else {
-                    // Initial load or new book — full reset to SCENE_READY.
                     playbackViewModel.preparePlayback(
                         bookId = prep.bookId,
                         buildId = prep.buildId,
-                        chunkIds = prep.chunkIds,
-                        chunkPositions = prep.chunkPositions
+                        scenes = prep.scenes
                     )
                 }
                 if (prep.coverImage != null) {
