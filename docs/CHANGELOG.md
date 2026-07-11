@@ -6,6 +6,27 @@ All notable changes to Animastor are documented here.
 
 ## [Unreleased] — 2026-07-11
 
+### Added
+
+- **Scene duration validation loop with targeted retries**
+  (`backend/src/services/agent/pipeline-runner.js`,
+  `backend/src/services/agent/pipeline-steps.js`,
+  `backend/src/services/agent-prompts.js`):
+  - **Программная валидация длительности** — после сплита сцен каждая сцена проверяется
+    через `estimateSpeechDurationSec()` (существующий single source of truth, ~0.3s/word).
+    Если estimated duration превышает `SCENE_MAX_SEC=30s`, запускается targeted retry.
+  - **Цикл до 3 retry** (`MAX_DURATION_RETRIES=3`) — каждая попытка даёт агенту конкретную
+    обратную связь: точная длительность каждой too-long сцены, hard limit, и опция
+    (A) SHORTEN — сократить, или (B) SPLIT — разделить на две+ сцены.
+  - **Retry exhaustion** — после исчерпания всех попыток логируется `console.error`
+    с деталями, а не молчаливое принятие. Бесконечный цикл исключён.
+  - **Усилен base prompt** — в начало промпта сцен добавлен заметный баннер
+    `⚠️ DURATION LIMITS — HARD REQUIREMENTS` с hard limit 30s и target 20s.
+  - **Исправлен баг** — в `pipeline-steps.js` не были импортированы `SCENE_TARGET_SEC`
+    и `SCENE_MAX_SEC` (ReferenceError при duration retry).
+  - `duration_retry_count` добавлен в лог `agent_window_coverage`.
+  - Все 473 теста проходят.
+
 ### Fixed
 
 - **DELETE book и DELETE cache — полная очистка всех PG таблиц**

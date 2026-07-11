@@ -212,6 +212,14 @@ As long as the location, time, and action flow do NOT change, keep it as ONE sce
 Only split when: location changes, time jumps, characters enter/exit, or the
 narrative thread clearly breaks.
 
+## ⚠️ DURATION LIMITS — HARD REQUIREMENTS
+- **Absolute maximum per scene: ${SCENE_MAX_SEC} seconds** (~${Math.round(SCENE_MAX_SEC / 0.3)} words).
+  This is a HARD LIMIT. Every individual scene MUST be short enough to fit.
+- **Preferred / target duration: ~${SCENE_TARGET_SEC} seconds** (~${Math.round(SCENE_TARGET_SEC / 0.3)} words).
+  Aim for this; the hard limit is a ceiling, not a goal.
+- If a scene would exceed ${SCENE_MAX_SEC}s, it MUST be split into two or more
+  shorter scenes, or shortened by keeping only essential narration.
+
 ## Scene splitting rules (in priority order)
 
 ### 0. Maximum %MAX_SCENES% scenes
