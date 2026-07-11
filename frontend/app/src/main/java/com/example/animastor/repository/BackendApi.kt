@@ -17,11 +17,6 @@ interface BackendApi {
         @Path("id") id: String
     ): ChunkResponse
 
-    @GET("/api/v1/book/{bookId}/chunks")
-    suspend fun getAllChunks(
-        @Path("bookId") bookId: String
-    ): ChunkListResponse
-
     @Streaming
     @GET("/api/v1/chunk/{id}/audio")
     suspend fun getChunkAudio(

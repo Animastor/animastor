@@ -31,7 +31,7 @@ import java.io.File
 
 /**
  * ViewModel for the media player subsystem.
- * Handles ONLY playback logic: chunk queue management, preloading, IU cycling,
+ * Handles ONLY playback logic: scene queue management, preloading, IU cycling,
  * position tracking, and UI state for the player.
  *
  * Designed to be independent of content generation — receives prepared data
@@ -72,7 +72,7 @@ class PlaybackViewModel(
     private val _uiState = MutableStateFlow(PlaybackUiState())
     val uiState: StateFlow<PlaybackUiState> = _uiState.asStateFlow()
 
-    // Signals to the fragment that a new chunk has been emitted
+    // Signals to the fragment that a new preload has been completed
     val preloadCompleted: MutableSharedFlow<String> = MutableSharedFlow(extraBufferCapacity = 16)
 
     // ── Book / scene metadata (set externally via preparePlayback) ─
@@ -106,11 +106,11 @@ class PlaybackViewModel(
     // ── Scene data buffers ────────────────────────────────────────
 
     var currentIuSequence: List<IuImageItem>? = null
-    var pendingChunkAudio: ByteArray? = null
-    var pendingChunkVideo: ByteArray? = null
-    var pendingChunkIuSequence: List<IuImageItem>? = null
-    var lastProcessedChunkSequence: Long = 0
-    private var chunkSeqCounter = 0L
+    var pendingSceneAudio: ByteArray? = null
+    var pendingSceneVideo: ByteArray? = null
+    var pendingSceneIuSequence: List<IuImageItem>? = null
+    var lastProcessedSceneSequence: Long = 0
+    private var sceneSeqCounter = 0L
 
     // ── Rotation / navigation state ───────────────────────────────
 
@@ -214,7 +214,7 @@ class PlaybackViewModel(
      *
      * Unlike [preparePlayback], this preserves the current playback phase and
      * position when the player is PAUSED or PLAYING — it only updates the backing
-     * data (chunk IDs, positions) and sets [needsContentRefresh] so the next
+     * data (scene keys, positions) and sets [needsContentRefresh] so the next
      * [resumePlayback] call will re-fetch the current scene's audio/image instead
      * of resuming the stale [MediaPlayer].
      *
@@ -253,8 +253,8 @@ class PlaybackViewModel(
 
         // After regeneration the buildId typically does NOT change (the backend
         // updates content in-place). Always clear the repository cache so that
-        // getChunkAudio / getChunkImage hit the network and return newly generated
-        // content instead of stale placeholder files from the old generation.
+        // getSceneAudio / getSceneStoryboard hit the network and return newly
+        // generated content instead of stale placeholder files from the old generation.
         Log.i(TAG, "refreshContent: clearing cache (build=$buildId, prevBuild=$prevBuildId)")
         _repository.clearCache()
 
@@ -264,9 +264,9 @@ class PlaybackViewModel(
             // The MediaPlayer will be released by the fragment's onTrackEnd or
             // switchToNextPlayer when the stale track ends.
             needsContentRefresh = true
-            pendingChunkAudio = null
-            pendingChunkVideo = null
-            pendingChunkIuSequence = null
+            pendingSceneAudio = null
+            pendingSceneVideo = null
+            pendingSceneIuSequence = null
             Log.i(TAG, "refreshContent: player PLAYING — proactively reloading current scene (index=$currentIndex)")
             // Trigger immediate reload: the next fragment tick will see
             // the state change to SCENE_READY (via stale player detection),
@@ -279,13 +279,13 @@ class PlaybackViewModel(
             // re-fetch the current scene instead of resuming the old MediaPlayer.
             needsContentRefresh = true
             // Clear stale pending data so the fragment doesn't try to use it
-            pendingChunkAudio = null
-            pendingChunkVideo = null
-            pendingChunkIuSequence = null
+            pendingSceneAudio = null
+            pendingSceneVideo = null
+            pendingSceneIuSequence = null
             Log.i(TAG, "refreshContent: player PAUSED — marked needsContentRefresh")
             return
         }
-        if (chunkIds.isNotEmpty()) {
+        if (sceneKeys.isNotEmpty()) {
             _uiState.update { it.copy(phase = PlayerPhase.SCENE_READY) }
         } else {
             _uiState.update { it.copy(phase = PlayerPhase.IDLE) }
@@ -377,7 +377,7 @@ class PlaybackViewModel(
         _uiState.update { it.copy(errorMessage = null, missingIuPosition = null) }
         currentIuSequence = null
         currentUnitIndex = 0
-        lastProcessedChunkSequence = 0
+        lastProcessedSceneSequence = 0
         currentIndex = 0
         preloadJobs.clear()
         preloadAhead(includeCurrent = true)
@@ -426,11 +426,8 @@ class PlaybackViewModel(
         return sceneQueue.getOrNull(currentIndex)
     }
 
-    /** @deprecated Use [getCurrentSceneKey] instead. */
-    fun getCurrentChunkId(): String? = getCurrentSceneKey()
-
-    val currentChunkIndex: Int get() = currentIndex
-    val chunkQueueSize: Int get() = sceneQueue.size
+    val currentSceneIndex: Int get() = currentIndex
+    val sceneQueueSize: Int get() = sceneQueue.size
 
     fun getPreloadedScene(index: Int): PreloadedScene? {
         if (index < 0 || index >= sceneQueue.size) return null
@@ -462,7 +459,7 @@ class PlaybackViewModel(
                     val allScenes = mutableListOf<SceneRef>()
                     for (ch in bookData.chapters.orEmpty()) {
                         for (sc in ch.scenes.orEmpty()) {
-                            allScenes.add(SceneRef(ch.chapter, sc.scene_id, sc.scene_type))
+                            allScenes.add(SceneRef(ch.chapter, sc.scene_id, sc.type))
                         }
                     }
                     val allKeys = allScenes.map { "${it.chapterId}:${it.sceneId}" }
@@ -517,8 +514,8 @@ class PlaybackViewModel(
             if (bookData != null) {
                 for (ch in bookData.chapters.orEmpty()) {
                     for (sc in ch.scenes.orEmpty()) {
-                        val sr = SceneRef(ch.chapter, sc.scene_id, sc.scene_type)
-                        if (sc.scene_type == "cover") coverScene = sr
+                        val sr = SceneRef(ch.chapter, sc.scene_id, sc.type)
+                        if (sc.type == "cover") coverScene = sr
                         scenes.add(sr)
                     }
                 }
@@ -535,15 +532,17 @@ class PlaybackViewModel(
         }
     }
 
-    private suspend fun loadCoverIntoState(chapterId: String, sceneId: String) {
+    private suspend fun loadCoverIntoState(chapterId: String?, sceneId: String?) {
+        val chId = chapterId ?: return
+        val scId = sceneId ?: return
         val bitmap = runCatching {
-            val sb = _repository.getSceneStoryboard(bookId, chapterId, sceneId, buildId)
+            val sb = _repository.getSceneStoryboard(bookId, chId, scId, buildId)
             if (sb.ius.isNotEmpty()) {
                 val iu = sb.ius.first()
                 val imgBytes = _repository.getIuImage(
                     bookId,
-                    chapterId,
-                    sceneId,
+                    chId,
+                    scId,
                     iu.unit_id,
                     sb.build_id.ifBlank { buildId }
                 )
@@ -590,10 +589,10 @@ class PlaybackViewModel(
         currentIndex = 0
         currentUnitIndex = 0
         currentIuSequence = null
-        pendingChunkAudio = null
-        pendingChunkVideo = null
-        pendingChunkIuSequence = null
-        lastProcessedChunkSequence = 0
+        pendingSceneAudio = null
+        pendingSceneVideo = null
+        pendingSceneIuSequence = null
+        lastProcessedSceneSequence = 0
         needsRotationResume = false
         pendingExternalSeek = null
         _uiState.update {
@@ -645,7 +644,7 @@ class PlaybackViewModel(
         val cached = preloadCache.remove("${buildId}_$sceneKey")
         if (cached != null) {
             Log.i(TAG, "playNext: using preloaded data for $sceneKey")
-            emitChunk(cached.audioBytes, cached.videoBytes, cached.iuSequence)
+            emitScene(cached.audioBytes, cached.videoBytes, cached.iuSequence)
             preloadAhead()
             return
         }
@@ -658,7 +657,7 @@ class PlaybackViewModel(
             val cachedAfter = preloadCache.remove("${buildId}_$sceneKey")
             if (cachedAfter != null) {
                 Log.i(TAG, "playNext: preload completed for $sceneKey")
-                emitChunk(cachedAfter.audioBytes, cachedAfter.videoBytes, cachedAfter.iuSequence)
+                emitScene(cachedAfter.audioBytes, cachedAfter.videoBytes, cachedAfter.iuSequence)
                 preloadAhead()
                 return@launch
             }
@@ -677,17 +676,17 @@ class PlaybackViewModel(
 
             Log.i(TAG, "delivering scene $sceneKey")
             _uiState.update { it.copy(previewImage = null) }
-            emitChunk(sceneData.audioBytes, sceneData.videoBytes, sceneData.iuSequence)
+            emitScene(sceneData.audioBytes, sceneData.videoBytes, sceneData.iuSequence)
             preloadAhead()
         }
     }
 
-    private fun emitChunk(audio: ByteArray, video: ByteArray?, iuSequence: List<IuImageItem>?) {
-        val seq = ++chunkSeqCounter
-        Log.i(TAG, "emitChunk #$seq: audio=${audio.size}B ius=${iuSequence?.size ?: 0} → PLAYING")
-        pendingChunkAudio = audio
-        pendingChunkVideo = video
-        pendingChunkIuSequence = iuSequence
+    private fun emitScene(audio: ByteArray, video: ByteArray?, iuSequence: List<IuImageItem>?) {
+        val seq = ++sceneSeqCounter
+        Log.i(TAG, "emitScene #$seq: audio=${audio.size}B ius=${iuSequence?.size ?: 0} → PLAYING")
+        pendingSceneAudio = audio
+        pendingSceneVideo = video
+        pendingSceneIuSequence = iuSequence
         _uiState.update { it.copy(phase = PlayerPhase.PLAYING, chunkSequence = seq) }
     }
 

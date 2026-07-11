@@ -39,8 +39,8 @@ data class SceneStatusResponse(
  * Reference to a scene in the book — used by PlaybackViewModel for scene-based playback.
  */
 data class SceneRef(
-    val chapterId: String,
-    val sceneId: String,
+    val chapterId: String?,
+    val sceneId: String?,
     val sceneType: String? = null
 )
 

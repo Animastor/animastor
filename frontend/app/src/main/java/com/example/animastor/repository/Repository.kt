@@ -70,11 +70,6 @@ class Repository(
         return result
     }
 
-    suspend fun getAllChunks(bookId: String): ChunkListResponse {
-        Log.d("Repo", "getAllChunks: $bookId")
-        return api.getAllChunks(bookId)
-    }
-
     suspend fun getChunkAudio(id: String, buildId: String = ""): ByteArray {
         val cacheKey = "audio_${id}_${buildId}"
         cache.get(cacheKey)?.let { Log.d("Repo", "getChunkAudio $id: mem HIT"); return it }

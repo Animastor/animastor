@@ -18,7 +18,6 @@ import com.example.animastor.repository.ImportTxtResponse
 import com.example.animastor.repository.LayerConfigUpdate
 import com.example.animastor.repository.ReorderChapter
 import com.example.animastor.repository.Repository
-import com.example.animastor.repository.ChunkListResponse
 import com.example.animastor.repository.SceneRef
 import com.example.animastor.util.MediaDecoder
 import com.example.animastor.util.SimpleDiskCache
@@ -365,8 +364,8 @@ class GenerateViewModel(
             if (bookData != null) {
                 for (ch in bookData.chapters.orEmpty()) {
                     for (sc in ch.scenes.orEmpty()) {
-                        val sr = SceneRef(ch.chapter, sc.scene_id, sc.scene_type)
-                        if (sc.scene_type == "cover") {
+                        val sr = SceneRef(ch.chapter, sc.scene_id, sc.type)
+                        if (sc.type == "cover") {
                             coverChapterId = ch.chapter
                             coverSceneId = sc.scene_id
                         }
@@ -469,8 +468,8 @@ class GenerateViewModel(
                         if (bookData != null) {
                             for (ch in bookData.chapters.orEmpty()) {
                                 for (sc in ch.scenes.orEmpty()) {
-                                    val sr = SceneRef(ch.chapter, sc.scene_id, sc.scene_type)
-                                    if (sc.scene_type == "cover") coverScene = sr
+                                    val sr = SceneRef(ch.chapter, sc.scene_id, sc.type)
+                                    if (sc.type == "cover") coverScene = sr
                                     scenes.add(sr)
                                 }
                             }
@@ -490,7 +489,6 @@ class GenerateViewModel(
                         _uiState.update {
                             it.copy(
                                 phase = PlayerPhase.DOWNLOADING,
-                                chunkIds = emptyList(),
                                 previewImage = null,
                                 coverImage = null,
                                 errorMessage = null
@@ -566,25 +564,26 @@ class GenerateViewModel(
                                 msgs.add("✓ Book ready (${bs.parsedChapters} chapters, ${bs.parsedScenes} scenes)")
                             }
 
-                            val allChunks = runCatching { _repository.getAllChunks(bId) }.getOrNull()
-                            val chunkIds = allChunks?.chunk_ids?.toList() ?: emptyList()
-                            val positions = allChunks?.chunk_positions?.mapValues { (_, pos) ->
-                                Pair(pos?.chapter_id, pos?.scene_id)
-                            } ?: emptyMap()
-                            val firstPos = chunkIds.firstOrNull()?.let { positions[it] }
-                            if (firstPos != null) {
-                                SharedPositionManager.navigateTo(chapterId = firstPos.first, sceneId = firstPos.second, unitIndex = 0)
-                            }
-
-                            // Build scene list from book JSON
-                            val bookDataForScenes = runCatching { _repository.getBook(bId) }.getOrNull()
+                            // Build scene list from book JSON for navigation
+                            val bookForNav = runCatching { _repository.getBook(bId) }.getOrNull()
                             val scenesFromDedup = mutableListOf<SceneRef>()
-                            if (bookDataForScenes != null) {
-                                for (ch in bookDataForScenes.chapters.orEmpty()) {
+                            if (bookForNav != null) {
+                                for (ch in bookForNav.chapters.orEmpty()) {
                                     for (sc in ch.scenes.orEmpty()) {
-                                        scenesFromDedup.add(SceneRef(ch.chapter, sc.scene_id, sc.scene_type))
+                                        scenesFromDedup.add(SceneRef(ch.chapter, sc.scene_id, sc.type))
                                     }
                                 }
+                            }
+
+                            // Navigate to first scene from book JSON
+                            val firstChapter = bookForNav?.chapters?.firstOrNull()
+                            val firstScene = firstChapter?.scenes?.firstOrNull()
+                            if (firstChapter != null && firstScene != null) {
+                                SharedPositionManager.navigateTo(
+                                    chapterId = firstChapter.chapter,
+                                    sceneId = firstScene.scene_id,
+                                    unitIndex = 0
+                                )
                             }
 
                             _playbackPrepared.tryEmit(PlaybackPreparation(
@@ -598,8 +597,7 @@ class GenerateViewModel(
                                 importProgressMessages = msgs.toList(),
                                 importStage = ImportStage.DONE,
                                 importProgress = 1f,
-                                phase = if (chunkIds.isNotEmpty()) PlayerPhase.SCENE_READY else PlayerPhase.IDLE,
-                                chunkIds = chunkIds,
+                                phase = if (scenesFromDedup.isNotEmpty()) PlayerPhase.SCENE_READY else PlayerPhase.IDLE,
                             )}
                             return@launch
                         }
@@ -636,30 +634,31 @@ class GenerateViewModel(
                         msgs.add("💬 You can ask questions or start generation using the toolbar button.")
                         _uiState.update { it.copy(importProgressMessages = msgs.toList()) }
 
-                        val allChunks = runCatching { _repository.getAllChunks(bId) }.getOrNull()
-                        val chunkIds = allChunks?.chunk_ids?.toList() ?: emptyList()
-                        val positions = allChunks?.chunk_positions?.mapValues { (_, pos) ->
-                            Pair(pos?.chapter_id, pos?.scene_id)
-                        } ?: emptyMap()
-                        val firstPos = chunkIds.firstOrNull()?.let { positions[it] }
-                        if (firstPos != null) {
-                            SharedPositionManager.navigateTo(chapterId = firstPos.first, sceneId = firstPos.second, unitIndex = 0)
-                        } else {
-                            SharedPositionManager.navigateTo(chapterId = null, sceneId = null)
-                        }
-
-                        val scenesFromTxt = if (allChunks != null) {
-                            val bookForScenes = runCatching { _repository.getBook(bId) }.getOrNull()
+                        // Build scene list from book JSON for navigation
+                        val scenesFromTxt = runCatching {
+                            val bookForScenes = _repository.getBook(bId)
                             val sc = mutableListOf<SceneRef>()
-                            if (bookForScenes != null) {
-                                for (ch in bookForScenes.chapters.orEmpty()) {
-                                    for (scn in ch.scenes.orEmpty()) {
-                                        sc.add(SceneRef(ch.chapter, scn.scene_id, scn.scene_type))
-                                    }
+                            for (ch in bookForScenes.chapters.orEmpty()) {
+                                for (scn in ch.scenes.orEmpty()) {
+                                    sc.add(SceneRef(ch.chapter, scn.scene_id, scn.type))
                                 }
                             }
                             sc
-                        } else emptyList()
+                        }.getOrDefault(emptyList())
+
+                        // Navigate to first scene from book JSON
+                        val bookForNav = runCatching { _repository.getBook(bId) }.getOrNull()
+                        val firstChapter = bookForNav?.chapters?.firstOrNull()
+                        val firstScene = firstChapter?.scenes?.firstOrNull()
+                        if (firstChapter != null && firstScene != null) {
+                            SharedPositionManager.navigateTo(
+                                chapterId = firstChapter.chapter,
+                                sceneId = firstScene.scene_id,
+                                unitIndex = 0
+                            )
+                        } else {
+                            SharedPositionManager.navigateTo(chapterId = null, sceneId = null)
+                        }
 
                         _playbackPrepared.tryEmit(PlaybackPreparation(
                             bookId = bId,
@@ -671,7 +670,6 @@ class GenerateViewModel(
                             importStage = ImportStage.DONE,
                             importProgress = 1f,
                             phase = if (scenesFromTxt.isNotEmpty()) PlayerPhase.SCENE_READY else PlayerPhase.IDLE,
-                            chunkIds = emptyList(),
                         )}
                         Log.i(TAG, "importBookFromFile (txt): ready with ${scenesFromTxt.size} scenes")
                     }
@@ -935,7 +933,6 @@ class GenerateViewModel(
                 buildId = ""
                 _uiState.update { it.copy(
                     phase = PlayerPhase.IDLE,
-                    chunkIds = emptyList(),
                     previewImage = null,
                     coverImage = null,
                     errorMessage = null
@@ -973,15 +970,17 @@ class GenerateViewModel(
         _exportProgress.value = progress
     }
 
-    private suspend fun loadCoverBitmap(chapterId: String, sceneId: String): Bitmap? {
+    private suspend fun loadCoverBitmap(chapterId: String?, sceneId: String?): Bitmap? {
+        val chId = chapterId ?: return null
+        val scId = sceneId ?: return null
         return runCatching {
-            val sb = _repository.getSceneStoryboard(bookId, chapterId, sceneId, buildId)
+            val sb = _repository.getSceneStoryboard(bookId, chId, scId, buildId)
             if (sb.ius.isNotEmpty()) {
                 val iu = sb.ius.first()
                 val imgBytes = _repository.getIuImage(
                     bookId,
-                    chapterId,
-                    sceneId,
+                    chId,
+                    scId,
                     iu.unit_id,
                     buildId
                 )
@@ -1304,7 +1303,6 @@ data class WorkerLabels(
 
 data class GenUiState(
     val phase: PlayerPhase = PlayerPhase.IDLE,
-    val chunkIds: List<String> = emptyList(),
     val previewImage: Bitmap? = null,
     val coverImage: Bitmap? = null,
     val errorMessage: String? = null,

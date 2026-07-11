@@ -6,6 +6,30 @@ All notable changes to Animastor are documented here.
 
 ## [Unreleased] — 2026-07-11
 
+### Removed
+
+- **Mёртвый код старой chunk-архитектуры** — полная зачистка (`frontend/.../GenerateViewModel.kt`,
+  `frontend/.../PlaybackViewModel.kt`, `frontend/.../PlayFragment.kt`,
+  `frontend/.../Repository.kt`, `frontend/.../BackendApi.kt`,
+  `frontend/.../ChunkListResponse.kt`):
+  - **`ChunkListResponse.kt`** (включая `ChunkPosition`) — удалён целиком. Больше не используется
+    ни одним компонентом.
+  - **`Repository.getAllChunks()` и `BackendApi.getAllChunks()`** — удалены. Фронт больше не ходит
+    на `/api/v1/book/:id/chunks` за навигацией. Навигация строится из book JSON.
+  - **`GenUiState.chunkIds`** — удалён из data class. Ни один UI-компонент не читал это поле;
+    все `_uiState.update { it.copy(chunkIds = ...) }` убраны.
+  - **`PlaybackViewModel.getCurrentChunkId()`** — удалён deprecated alias. Все вызовы заменены на
+    `getCurrentSceneKey()`.
+  - **`PlaybackViewModel.currentChunkIndex`** → переименован в `currentSceneIndex`.
+  - **`PlaybackViewModel.chunkQueueSize`** → переименован в `sceneQueueSize`.
+  - **Внутренние переменные** `pendingChunkAudio/Video/IuSequence` → `pendingScene*`,
+    `chunkSeqCounter` → `sceneSeqCounter`, `lastProcessedChunkSequence` → `lastProcessedSceneSequence`.
+  - **`emitChunk()`** → переименован в `emitScene()`.
+  - **`importBookFromFile`** — оба пути (vbook dedup + txt new import) больше не вызывают
+    `getAllChunks()` для навигации. Навигация строится из book JSON напрямую.
+  - Бэкенд (`getAllChunks` в `redis-helpers.cjs` и 40+ references) **не тронут** — это внутренняя
+    инфраструктура TTS пайплайна, прогресс-панели, кеша и восстановления.
+
 ### Added
 
 - **Android cache invalidation on placeholder→ready transition**

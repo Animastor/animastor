@@ -182,7 +182,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
 
         playbackViewModel.clearMissingIu()
 
-        if (playbackViewModel.chunkQueueSize > 0) {
+        if (playbackViewModel.sceneQueueSize > 0) {
             binding?.playButton?.isEnabled = true
             binding?.playButton?.alpha = 1.0f
         }
@@ -208,25 +208,25 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                     resumePlayback()
                 }
                 phase == PlayerPhase.SCENE_READY && playbackViewModel.needsRotationResume -> {
-                    Log.i(TAG, "playButton: rotation resume from index ${playbackViewModel.currentChunkIndex}")
+                    Log.i(TAG, "playButton: rotation resume from index ${playbackViewModel.currentSceneIndex}")
                     playbackViewModel.resumeFromCurrentScene()
                 }
                 phase == PlayerPhase.SCENE_READY -> {
                     // If queue has ended (index out of bounds), restart from beginning.
                     // Otherwise, if there's an existing position (content refresh after
                     // generation), resume from current scene instead of resetting.
-                    if (playbackViewModel.currentChunkIndex >= playbackViewModel.chunkQueueSize) {
+                    if (playbackViewModel.currentSceneIndex >= playbackViewModel.sceneQueueSize) {
                         Log.i(TAG, "playButton: SCENE_READY — queue exhausted, restarting from beginning")
                         playbackViewModel.playSceneQueue()
-                    } else if (playbackViewModel.currentChunkIndex > 0) {
-                        Log.i(TAG, "playButton: SCENE_READY — resuming from index ${playbackViewModel.currentChunkIndex}")
+                    } else if (playbackViewModel.currentSceneIndex > 0) {
+                        Log.i(TAG, "playButton: SCENE_READY — resuming from index ${playbackViewModel.currentSceneIndex}")
                         playbackViewModel.resumeFromCurrentScene()
                     } else {
                         playbackViewModel.playSceneQueue()
                     }
                 }
-                phase == PlayerPhase.IDLE && playbackViewModel.chunkQueueSize > 0 -> {
-                    Log.i(TAG, "playButton: IDLE with ${playbackViewModel.chunkQueueSize} chunks — starting playback")
+                phase == PlayerPhase.IDLE && playbackViewModel.sceneQueueSize > 0 -> {
+                    Log.i(TAG, "playButton: IDLE with ${playbackViewModel.sceneQueueSize} chunks — starting playback")
                     playbackViewModel.playSceneQueue()
                 }
                 else -> Log.w(TAG, "playButton: no matching action for phase=$phase")
@@ -386,7 +386,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                         Log.d(TAG, "state: phase=${state.phase} img=${state.previewImage != null} cover=${state.coverImage != null} player=$currentPlayer")
 
                         // Update play button state BEFORE any early returns
-                        val hasChunks = playbackViewModel.chunkQueueSize > 0
+                        val hasChunks = playbackViewModel.sceneQueueSize > 0
                         val buttonEnabled = state.phase == PlayerPhase.SCENE_READY || state.phase == PlayerPhase.PLAYING || hasChunks
                         b.playButton.isEnabled = buttonEnabled
                         b.playButton.alpha = if (buttonEnabled) 1.0f else 0.4f
@@ -401,7 +401,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
 
                         // Skip rotation recovery when no MediaPlayer available (e.g. silent scenes)
                         if (state.phase == PlayerPhase.PLAYING && currentPlayer == null
-                            && state.chunkSequence <= playbackViewModel.lastProcessedChunkSequence) {
+                            && state.chunkSequence <= playbackViewModel.lastProcessedSceneSequence) {
                             Log.w(TAG, "rotation recovery: PLAYING with no player (chunk already processed) -> SCENE_READY")
                             playbackViewModel.rotationRecovery()
                             return@collect
@@ -451,12 +451,12 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                             b.fullscreenButton.visibility = View.GONE
                         }
 
-                        if (state.phase == PlayerPhase.PLAYING && state.chunkSequence > playbackViewModel.lastProcessedChunkSequence) {
-                            playbackViewModel.lastProcessedChunkSequence = state.chunkSequence
-                            val audio = playbackViewModel.pendingChunkAudio
-                            val ius = playbackViewModel.pendingChunkIuSequence
+                        if (state.phase == PlayerPhase.PLAYING && state.chunkSequence > playbackViewModel.lastProcessedSceneSequence) {
+                            playbackViewModel.lastProcessedSceneSequence = state.chunkSequence
+                            val audio = playbackViewModel.pendingSceneAudio
+                            val ius = playbackViewModel.pendingSceneIuSequence
                             if (audio != null && audio.isNotEmpty()) {
-                                handleChunk(audio, playbackViewModel.pendingChunkVideo, playbackViewModel.pendingChunkIuSequence)
+                                handleChunk(audio, playbackViewModel.pendingSceneVideo, playbackViewModel.pendingSceneIuSequence)
                             } else if (ius != null && ius.isNotEmpty()) {
                                 Log.i(TAG, "no audio — starting timer-based IU cycling")
                                 handleSilentChunk(ius)
@@ -608,7 +608,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                 // Player creation failed (corrupted or empty file).
                 // Reset the phase so the UI shows a Play button and the user can retry.
                 Log.w(TAG, "handleChunk: createPlayer returned null — resetting to SCENE_READY")
-                playbackViewModel.handleNullPlayer(playbackViewModel.getCurrentChunkId() ?: "unknown")
+                playbackViewModel.handleNullPlayer(playbackViewModel.getCurrentSceneKey() ?: "unknown")
                 return
             }
             currentPlayer?.setOnCompletionListener { onTrackEnd() }
@@ -718,7 +718,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                     chapterId = playbackViewModel.currentChapterId,
                     sceneId = playbackViewModel.currentSceneId,
                     unitId = ius[nextIdx].unitId,
-                    chunkId = playbackViewModel.getCurrentChunkId(),
+                    chunkId = playbackViewModel.getCurrentSceneKey(),
                     unitIndex = nextIdx
                 )
                 if (isAdded) anchorFullscreenToImage()
@@ -919,7 +919,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                         chapterId = playbackViewModel.currentChapterId,
                         sceneId = playbackViewModel.currentSceneId,
                         unitId = ius[idx].unitId,
-                        chunkId = playbackViewModel.getCurrentChunkId(),
+                        chunkId = playbackViewModel.getCurrentSceneKey(),
                         unitIndex = idx
                     )
                 }
@@ -1056,7 +1056,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
     }
 
     private fun writeTemp(bytes: ByteArray): File {
-        val chunkId = playbackViewModel.getCurrentChunkId()
+        val chunkId = playbackViewModel.getCurrentSceneKey()
         if (chunkId != null) {
             val cached = repository.cacheAudioFile(chunkId, bytes)
             if (cached != null) return cached
@@ -1071,7 +1071,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
             videoPlayer?.release()
             videoPlayer = null
             currentVideoFile?.delete()
-            val chunkId = playbackViewModel.getCurrentChunkId()
+            val chunkId = playbackViewModel.getCurrentSceneKey()
             val file = if (chunkId != null) {
                 repository.cacheVideoFile(chunkId, bytes)
                     ?: File(requireContext().cacheDir, "video-${System.currentTimeMillis()}.mp4").also { it.writeBytes(bytes) }
