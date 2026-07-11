@@ -1142,39 +1142,22 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         b.timelineWaveform.clearPlaybackPosition()
     }
 
+    // N2: local drag PREVIEW only. Moves the dragged unit and keeps the previous
+    // boundary contiguous so the handle tracks the finger smoothly. The full cascade
+    // (shift downstream units, enforce min gap, clamp to scene duration) is the
+    // server's job — it recalculates authoritatively in PUT /timings on release
+    // (see saveTimings), and the returned units overwrite this preview. We no longer
+    // re-derive that business logic on the client.
     private fun handleRangeChange(startMs: Long, endMs: Long) {
         val td = timingData ?: return
         val pos = SharedPositionManager.current.value
         val updated = td.units.toMutableList()
         if (pos.unitIndex in updated.indices) {
-            val oldUnit = updated[pos.unitIndex]
-            val deltaEnd = endMs - oldUnit.end_ms
-
             updated[pos.unitIndex] = updated[pos.unitIndex].copy(start_ms = startMs, end_ms = endMs)
-
             if (pos.unitIndex > 0) {
                 val prev = updated[pos.unitIndex - 1]
                 updated[pos.unitIndex - 1] = prev.copy(end_ms = startMs)
             }
-
-            if (deltaEnd != 0L) {
-                for (i in pos.unitIndex + 1 until updated.size) {
-                    val u = updated[i]
-                    val newStart = u.start_ms + deltaEnd
-                    val newEnd = (u.end_ms + deltaEnd).coerceAtMost(audioDurationMs)
-                    updated[i] = u.copy(start_ms = newStart.coerceAtLeast(0), end_ms = newEnd)
-                }
-            }
-
-            // Clamp the last unit's end to audio duration
-            val lastIdx = updated.size - 1
-            if (lastIdx >= 0) {
-                val last = updated[lastIdx]
-                if (last.end_ms > audioDurationMs) {
-                    updated[lastIdx] = last.copy(end_ms = audioDurationMs)
-                }
-            }
-
             timingData = td.copy(units = updated)
         }
     }
