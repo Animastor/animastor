@@ -765,20 +765,16 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
     private fun showIuMissingPlaceholder() {
         val b = binding ?: return
         try {
-            // Show Cover as fallback when no scene image is available
+            b.resultImage.setImageBitmap(null)
+            b.resultImage.visibility = View.INVISIBLE
+            b.placeholderText.visibility = View.INVISIBLE
+            // Show cover as background fallback + "Не сгенерировано" overlay on top
             val cover = playbackViewModel.uiState.value.coverImage
             if (cover != null) {
-                b.resultImage.setImageBitmap(null)
-                b.resultImage.visibility = View.INVISIBLE
                 b.coverImage.setImageBitmap(cover)
                 b.coverImage.visibility = View.VISIBLE
-                b.iuMissingOverlay.visibility = View.GONE
-            } else {
-                b.resultImage.setImageBitmap(null)
-                b.resultImage.visibility = View.INVISIBLE
-                b.placeholderText.visibility = View.INVISIBLE
-                b.iuMissingOverlay.visibility = View.VISIBLE
             }
+            b.iuMissingOverlay.visibility = View.VISIBLE
             anchorFullscreenToImage()
         } catch (e: Exception) {
             Log.w(TAG, "showIuMissingPlaceholder failed: ${e.message}")
@@ -804,6 +800,12 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
             b.resultImage.setImageBitmap(null)
             b.resultImage.visibility = View.INVISIBLE
             b.placeholderText.visibility = View.INVISIBLE
+            // Show cover as background fallback + overlay on top
+            val cover = playbackViewModel.uiState.value.coverImage
+            if (cover != null) {
+                b.coverImage.setImageBitmap(cover)
+                b.coverImage.visibility = View.VISIBLE
+            }
             b.iuMissingOverlay.visibility = View.VISIBLE
             anchorFullscreenToImage()
             b.statusText.text = getString(R.string.iu_not_generated)

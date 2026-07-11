@@ -65,45 +65,22 @@
             android:visibility="visible" />
 
         <!-- IU not-generated overlay: shown when the selected IU / scene is not generated yet -->
-        <LinearLayout
+        <TextView
             android:id="@+id/iuMissingOverlay"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_gravity="center"
-            android:orientation="vertical"
             android:gravity="center"
-            android:padding="20dp"
+            android:paddingHorizontal="24dp"
+            android:paddingVertical="16dp"
             android:background="@color/cinema_missing_bg"
-            android:visibility="gone">
-
-            <ImageView
-                android:layout_width="48dp"
-                android:layout_height="48dp"
-                android:src="@drawable/ic_image_off"
-                android:tint="@color/cinema_text_disabled"
-                android:contentDescription="@null" />
-
-            <TextView
-                android:id="@+id/iuMissingLabel"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="10dp"
-                android:text="@string/iu_not_generated"
-                android:textColor="@color/cinema_text_primary"
-                android:textSize="14sp"
-                android:fontFamily="sans-serif-medium"
-                android:textAllCaps="true"
-                android:letterSpacing="0.08" />
-
-            <TextView
-                android:id="@+id/iuMissingSub"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
-                android:text="@string/iu_status_label"
-                android:textColor="@color/cinema_text_disabled"
-                android:textSize="11sp" />
-        </LinearLayout>
+            android:visibility="gone"
+            android:text="@string/iu_not_generated"
+            android:textColor="@color/cinema_text_primary"
+            android:textSize="14sp"
+            android:fontFamily="sans-serif-medium"
+            android:textAllCaps="true"
+            android:letterSpacing="0.08" />
 
         <!-- Subtitle Layer — current unit text overlay -->
         <TextView
