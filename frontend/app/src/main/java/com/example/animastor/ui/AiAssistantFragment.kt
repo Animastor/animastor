@@ -28,8 +28,6 @@ import com.example.animastor.repository.AiChatRequest
 import com.example.animastor.repository.AiMessage
 import com.example.animastor.repository.BookData
 import com.example.animastor.repository.ChatSessionApi
-import com.example.animastor.repository.chapterIndex
-import com.example.animastor.repository.sceneIndex
 import com.example.animastor.repository.unitIndex
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.color.MaterialColors
@@ -359,8 +357,8 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
         if (pos.chapterId != null && bookData != null) {
             val ch = bookData?.chapters?.firstOrNull { it.chapter == pos.chapterId }
             val sc = ch?.scenes?.firstOrNull { it.scene_id == pos.sceneId }
-            val scIdx = bookData?.sceneIndex(pos.chapterId, pos.sceneId) ?: 0
-            val isSpecial = ch?.type == "cover" || ch?.type == "prologue"
+            val scIdx = sc?.display_index ?: 0
+            val isSpecial = ch?.is_special == true
                 val uIdx = bookData?.unitIndex(pos.chapterId, pos.sceneId, pos.unitIndex) ?: 0
                 val chTitle = ch?.chapter_title?.takeIf { it.isNotBlank() }
                 val scTitle = sc?.scene_title?.takeIf { it.isNotBlank() }
@@ -503,8 +501,8 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
         val bd = runCatching { generateViewModel.repository.getBook(bid) }.getOrNull() ?: return
         val ch = bd.chapters?.firstOrNull { it.chapter == pos.chapterId }
         val sc = ch?.scenes?.firstOrNull { it.scene_id == pos.sceneId }
-        val scIdx = bd.sceneIndex(pos.chapterId, pos.sceneId)
-        val isSpecial = ch?.type == "cover" || ch?.type == "prologue"
+        val scIdx = sc?.display_index ?: 0
+        val isSpecial = ch?.is_special == true
                 val chName = if (isSpecial) {
                     ch?.chapter_title?.takeIf { it.isNotBlank() } ?: ch?.type?.replaceFirstChar { it.uppercase() }
                 } else if (ch?.chapter_title != null) {
@@ -598,10 +596,11 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
                 val bookData = rawBook
                 val title = bookData.book?.title ?: bookData.manifest?.book_id ?: bookId
                 val pos = SharedPositionManager.current.value
-                val scIdx = bookData.sceneIndex(pos.chapterId, pos.sceneId)
-                val uIdx = bookData.unitIndex(pos.chapterId, pos.sceneId, pos.unitIndex)
                 val ch = bookData.chapters?.firstOrNull { it.chapter == pos.chapterId }
-                val isSpecial = ch?.type == "cover" || ch?.type == "prologue"
+                val sc = ch?.scenes?.firstOrNull { it.scene_id == pos.sceneId }
+                val scIdx = sc?.display_index ?: 0
+                val uIdx = bookData.unitIndex(pos.chapterId, pos.sceneId, pos.unitIndex)
+                val isSpecial = ch?.is_special == true
                 val chTitle = ch?.chapter_title?.takeIf { it.isNotBlank() }
                 val chapterId = if (isSpecial) {
                     chTitle ?: ch?.type?.replaceFirstChar { it.uppercase() } ?: "?"

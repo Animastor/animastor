@@ -240,7 +240,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         val ch = chapters.getOrNull(currentChIndex)
         val sc = currentScene()
         val totalUnits = sc?.units?.size ?: 0
-        val isSpecial = ch?.type == "cover" || ch?.type == "prologue"
+        val isSpecial = ch?.is_special == true
         val chTitle = ch?.chapter_title?.takeIf { it.isNotBlank() }
         val scTitle = sc?.scene_title?.takeIf { it.isNotBlank() }
         val chLabel = if (isSpecial) {
@@ -250,7 +250,8 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         } else if (ch?.display_number != null) {
             "${getString(R.string.navigate_chapter)} ${ch.display_number}"
         } else "—"
-        val scLabel = if (sc != null) "${getString(R.string.navigate_scene)} ${currentScIndex + 1}" else "—"
+        val scNum = sc?.display_index ?: (currentScIndex + 1)
+        val scLabel = if (sc != null) "${getString(R.string.navigate_scene)} $scNum" else "—"
         val unitLabel = if (totalUnits > 0) "${getString(R.string.navigate_unit)} ${pos.unitIndex + 1}" else pos.formatUnitLabel()
         val fullLabel = if (isSpecial) {
             if (scTitle != null) "$chLabel / $scLabel — $scTitle / $unitLabel"

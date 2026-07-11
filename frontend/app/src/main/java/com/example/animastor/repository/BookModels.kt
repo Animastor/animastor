@@ -112,7 +112,9 @@ data class Chapter(
     /** Programmatic chapter intro metadata (not a narrative scene) */
     val intro: ChapterIntro? = null,
     /** Server-computed display number (1-based, excludes cover/prologue). */
-    val display_number: Int? = null
+    val display_number: Int? = null,
+    /** Server-decided: cover/prologue chapters are labelled by type, not "Chapter N". */
+    val is_special: Boolean = false
 )
 
 data class ChapterIntro(
@@ -493,24 +495,14 @@ data class CoverData(
     val units: List<SceneUnit>? = null
 )
 
-fun BookData.chapterIndex(chapterId: String?): Int {
-    if (chapterId == null) return 0
-    chapters?.forEachIndexed { i, ch ->
-        if (ch.chapter == chapterId) return i + 1
-    }
-    return 0
-}
-
-fun BookData.sceneIndex(chapterId: String?, sceneId: String?): Int {
+// N3: chapterIndex()/sceneIndex() removed — the scene's 1-based number now comes
+// from the server-computed Scene.display_index. This reads that field instead of
+// re-deriving it by iterating the book on the client.
+fun BookData.sceneDisplayIndex(chapterId: String?, sceneId: String?): Int {
     if (chapterId == null || sceneId == null) return 0
-    chapters?.forEach { ch ->
-        if (ch.chapter == chapterId) {
-            ch.scenes?.forEachIndexed { i, sc ->
-                if (sc.scene_id == sceneId) return i + 1
-            }
-        }
-    }
-    return 0
+    val ch = chapters?.firstOrNull { it.chapter == chapterId } ?: return 0
+    val sc = ch.scenes?.firstOrNull { it.scene_id == sceneId } ?: return 0
+    return sc.display_index ?: 0
 }
 
 fun BookData.unitIndex(chapterId: String?, sceneId: String?, unitOffset: Int): Int {

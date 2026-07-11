@@ -50,8 +50,12 @@ module.exports = function(app, redis, deps) {
                             }
                         }
                     }
+                    // F5/N3: "special" chapters (cover/prologue) are not numbered and
+                    // are labelled by type instead of "Chapter N". This business rule
+                    // lives on the server; the client renders is_special, not the type.
+                    ch.is_special = (ch.type === 'cover' || ch.type === 'prologue');
                     // F5: Compute display_number (1-based, excludes cover/prologue).
-                    if (ch.type !== 'cover' && ch.type !== 'prologue') {
+                    if (!ch.is_special) {
                         displayNum++;
                         ch.display_number = displayNum;
                     }

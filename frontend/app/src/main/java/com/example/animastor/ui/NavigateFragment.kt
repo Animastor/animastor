@@ -19,8 +19,6 @@ import androidx.recyclerview.widget.RecyclerView
 import com.example.animastor.R
 import com.example.animastor.databinding.FragmentNavigateBinding
 import com.example.animastor.repository.BookData
-import com.example.animastor.repository.chapterIndex
-import com.example.animastor.repository.sceneIndex
 import com.example.animastor.repository.unitIndex
 
 import com.example.animastor.repository.Chapter
@@ -185,8 +183,8 @@ class NavigateFragment : Fragment(R.layout.fragment_navigate) {
             val ch = bookData?.chapters?.firstOrNull { it.chapter == pos.chapterId }
             val sc = ch?.scenes?.firstOrNull { it.scene_id == pos.sceneId }
 
-            val isSpecial = ch?.type == "cover" || ch?.type == "prologue"
-            val scIdx = bookData?.sceneIndex(pos.chapterId, pos.sceneId) ?: 0
+            val isSpecial = ch?.is_special == true
+            val scIdx = sc?.display_index ?: 0
             val uIdx = bookData?.unitIndex(pos.chapterId, pos.sceneId, pos.unitIndex) ?: 0
             val chTitle = ch?.chapter_title?.takeIf { it.isNotBlank() }
             val scTitle = sc?.scene_title?.takeIf { it.isNotBlank() }
@@ -283,7 +281,7 @@ class NavigateFragment : Fragment(R.layout.fragment_navigate) {
 
         for ((chIdx, ch) in chapters.withIndex()) {
             val chTitle = ch.chapter_title?.take(60)?.replace('\n', ' ')?.trim()
-            val isSpecial = ch.type == "cover" || ch.type == "prologue"
+            val isSpecial = ch.is_special
             val chLabel = if (isSpecial) {
                 chTitle ?: (ch.type?.replaceFirstChar { it.uppercase() } ?: "")
             } else if (chTitle != null) {
@@ -306,8 +304,9 @@ class NavigateFragment : Fragment(R.layout.fragment_navigate) {
                 val scenes = ch.scenes ?: emptyList()
                 for ((scIdx, sc) in scenes.withIndex()) {
                     val scTitle = sc.scene_title?.take(60)?.replace('\n', ' ')?.trim()
-                    val scLabel = if (scTitle != null) "${getString(R.string.navigate_scene)} ${scIdx + 1} — $scTitle"
-                        else "${getString(R.string.navigate_scene)} ${scIdx + 1}"
+                    val scNum = sc.display_index ?: (scIdx + 1)
+                    val scLabel = if (scTitle != null) "${getString(R.string.navigate_scene)} $scNum — $scTitle"
+                        else "${getString(R.string.navigate_scene)} $scNum"
                     val isCurrentScene = ch.chapter == pos.chapterId && sc.scene_id == pos.sceneId
                     val scItem = StructureItem.SceneItem(
                         id = sc.scene_id ?: "sc$scIdx",
