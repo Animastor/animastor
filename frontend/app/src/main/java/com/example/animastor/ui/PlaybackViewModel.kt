@@ -795,7 +795,14 @@ class PlaybackViewModel(
                 coroutineScope {
                     storyboard.ius.map { iu ->
                         async {
-                            val durationMs = iu.duration_ms ?: 2000L
+                            // N1: duration_ms is server-computed (interval → estimate → default);
+                            // the client no longer re-derives it. If the server ever omits it
+                            // (contract violation), log and use a minimal floor rather than a
+                            // silent magic default that hides the missing field.
+                            val durationMs = iu.duration_ms ?: run {
+                                Log.w(TAG, "IU ${iu.unit_id} missing server duration_ms — using floor")
+                                200L
+                            }
                             val iuText = iu.text
                             runCatching {
                                 Log.d(TAG, "fetching IU image: ${iu.unit_id} (dur=$durationMs ms)")
