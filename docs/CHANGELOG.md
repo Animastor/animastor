@@ -19,6 +19,16 @@ All notable changes to Animastor are documented here.
     (в book.json поле называется `type`, не `scene_type`). Cover сцены теперь корректно возвращают
     `scene_type: "cover"` вместо `"narration"`.
 
+- **Сториборд игнорировал PG-строки с null text после DELETE /cache** (`backend/src/routes/generation-routes.cjs`):
+  - **Проблема:** после очистки кеша у сцены `sc-4bb4f750` в PG остались 3 строки с `text: null`
+    (созданные старым кодом `scene_id` → ReferenceError, который не дал записать текст).
+    Сториборд читал PG первой → находил 3 строки → возвращал `ius: [{text: null}, ...]`.
+    Fallback на книжный JSON не вызывался, так как `pgRows.length > 0`.
+  - **Фикс:** PG-строки используются только если `pgRows.some(r => r.text != null && r.text !== '')`.
+    Если все строки имеют null/пустой текст — фоллбэк на book JSON, где есть реальные тексты юнитов.
+  - `sc-9806baf1` работал потому что у него PG-строки имели реальный текст (has_text: true),
+    а `sc-4bb4f750` — нет (has_text: false).
+
 ### Removed
 
 - **Mёртвый код старой chunk-архитектуры** — полная зачистка (`frontend/.../GenerateViewModel.kt`,

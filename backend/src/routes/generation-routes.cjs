@@ -660,7 +660,9 @@ module.exports = function(app, redis, deps) {
             let ius = [];
             try {
                 const pgRows = await iuRepo.getImageUnitsForScene(buildId, bookId, chapterId, sceneId);
-                if (pgRows && pgRows.length > 0) {
+                // Only use PG rows if they have text — stale rows with null/empty text
+                // (e.g. after DELETE /cache) should fall back to book JSON which has the real text.
+                if (pgRows && pgRows.length > 0 && pgRows.some(r => r.text != null && r.text !== '')) {
                     ius = pgRows.map(r => ({
                         unit_id: r.unit_id, scene_id: r.scene_id, text: r.text,
                         text_proportion: r.text_proportion, estimated_duration_sec: r.estimated_duration_sec,
