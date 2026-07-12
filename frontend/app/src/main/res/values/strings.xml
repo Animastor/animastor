@@ -241,9 +241,10 @@
     <string name="ai_context_changed">Now analyzing: %1$s / %2$s / Unit %3$d</string>
 
     <!-- Edit Unit Section Labels -->
-    <string name="edit_section_audio">Audio Section</string>
-    <string name="edit_section_image">Image Section</string>
-    <string name="edit_section_video">Video Section</string>
+    <string name="edit_section_unit">Unit</string>
+    <string name="edit_section_audio">Audio</string>
+    <string name="edit_section_image">Image</string>
+    <string name="edit_section_video">Video</string>
 
     <!-- Edit Unit Carousel -->
     <string name="edit_unit_label">Unit %1$d/%2$d</string>

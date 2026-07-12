@@ -611,7 +611,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                 0 -> {
                     val ch = chapters.getOrNull(currentChIndex)
                     if (ch != null) buildChapterTitleField(frame, ch)
-                    buildFields(frame, listOf("scene_title", "scene_id", "type", "style", "location.id", "env.time", "env.lighting", "env.weather", "env.mood", "env.atmosphere", "participants"))
+                    buildSceneFields(frame)
                 }
                 1 -> buildFields(frame, listOf("voice", "full_text"))
                 2 -> buildUnitFields(frame)
@@ -639,6 +639,22 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
             orientation = LinearLayout.VERTICAL
             setPadding(0, 0, 0, 8)
         }
+
+        // Unit metadata section
+        val metaSectionLabel = TextView(ctx).apply {
+            text = getString(R.string.edit_section_unit)
+            textSize = 14f
+            setPadding(0, 16, 0, 4)
+        }
+        ll.addView(metaSectionLabel)
+        // id and type are read-only system fields
+        ll.addView(readOnlyCard(ctx, "id", u.id ?: ""))
+        ll.addView(readOnlyCard(ctx, "type", u.type ?: ""))
+        // text is editable
+        val textKey = "text"
+        val textVal = u.text ?: ""
+        if (!fieldValues.containsKey(textKey)) fieldValues[textKey] = textVal
+        ll.addView(inputCard(ctx, textKey, fieldValues[textKey] ?: textVal, textVal.length > 80))
 
         // Audio section
         val audioSectionLabel = TextView(ctx).apply {
@@ -679,6 +695,26 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
             ll.addView(inputCard(ctx, key, fieldValues[key] ?: v, (fieldValues[key]?.length ?: 0) > 80))
         }
 
+        parent.addView(ll)
+    }
+
+    private fun buildSceneFields(parent: ViewGroup) {
+        val ctx = parent.context
+        val sc = currentScene() ?: return
+        val ll = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, 0, 0, 8)
+        }
+        // scene_id is read-only
+        ll.addView(readOnlyCard(ctx, "scene_id", sc.scene_id ?: ""))
+        // Editable scene fields
+        val editableKeys = listOf("scene_title", "type", "style", "location.id", "env.time", "env.lighting", "env.weather", "env.mood", "env.atmosphere", "participants")
+        val sceneValues = editableKeys.associateWith { key -> readField(sc, key) }
+        editableKeys.forEach { key ->
+            val v = sceneValues[key] ?: ""
+            if (!fieldValues.containsKey(key)) fieldValues[key] = v
+            ll.addView(inputCard(ctx, key, fieldValues[key] ?: v, (fieldValues[key]?.length ?: 0) > 80))
+        }
         parent.addView(ll)
     }
 
@@ -728,6 +764,9 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
 
     private fun readUnitField(u: SceneUnit, key: String): String {
         return when (key) {
+            "id" -> u.id ?: ""
+            "type" -> u.type ?: ""
+            "text" -> u.text ?: ""
             "audio.speaker" -> u.audio?.speaker ?: ""
             "audio.text" -> u.audio?.text ?: ""
             "image.shot" -> u.image?.shot ?: ""
@@ -751,6 +790,35 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         binding?.errorText?.apply {
             text = message
             visibility = View.VISIBLE
+        }
+    }
+
+    private fun readOnlyCard(ctx: Context, label: String, value: String): View {
+        val tv = TextView(ctx).apply {
+            text = value
+            textSize = 14f
+            setPadding(16, 12, 16, 12)
+            setTextColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorOnSurface))
+        }
+        val labelTv = TextView(ctx).apply {
+            text = label
+            textSize = 12f
+            setPadding(16, 12, 16, 0)
+            setTextColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorOnSurfaceVariant))
+        }
+        val ll = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(labelTv)
+            addView(tv)
+        }
+        return MaterialCardView(ctx).apply {
+            layoutParams = ViewGroup.MarginLayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).also { it.setMargins(0, 0, 0, 8) }
+            radius = 12f
+            cardElevation = 1f
+            addView(ll)
         }
     }
 
@@ -853,6 +921,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
             var mu = u
             if (s.containsKey("id")) mu = mu.copy(id = s["id"]?.ifEmpty { null })
             if (s.containsKey("type")) mu = mu.copy(type = s["type"]?.ifEmpty { null })
+            if (s.containsKey("text")) mu = mu.copy(text = s["text"]?.ifEmpty { null })
             // Audio section
             if (s.containsKey("audio.speaker") || s.containsKey("audio.text")) {
                 val speaker = s["audio.speaker"]?.ifEmpty { null }
