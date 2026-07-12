@@ -794,20 +794,29 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
     }
 
     private fun readOnlyCard(ctx: Context, label: String, value: String): View {
-        val tv = TextView(ctx).apply {
-            text = value
-            textSize = 14f
-            setPadding(16, 12, 16, 12)
-            setTextColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorOnSurface))
-        }
         val labelTv = TextView(ctx).apply {
             text = label
             textSize = 12f
-            setPadding(16, 12, 16, 0)
             setTextColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorOnSurfaceVariant))
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+        }
+        val tv = TextView(ctx).apply {
+            text = value
+            textSize = 14f
+            setTextIsSelectable(true)
+            setTextColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorOnSurface))
+            layoutParams = LinearLayout.LayoutParams(
+                0,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                1f
+            )
         }
         val ll = LinearLayout(ctx).apply {
-            orientation = LinearLayout.VERTICAL
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(16, 8, 16, 8)
             addView(labelTv)
             addView(tv)
         }
