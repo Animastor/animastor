@@ -8,6 +8,23 @@ All notable changes to Animastor are documented here.
 
 ### Added
 
+- **Диалоговые TTS: программная сборка скрипта из units**
+  (`backend/src/services/agent-prompts.js`, `backend/src/services/agent/pipeline-steps.js`,
+  `backend/src/book/lazy-book/create.js`):
+  - `SYSTEM_PROMPTS.units`: добавлено поле `speaker` для dialogue-юнитов. AI указывает character_id
+    говорящего для каждой диалоговой реплики. Инструкция: `speaker` обязателен для type=dialogue,
+    для остальных типов не указывается.
+  - `create.js`: для диалоговых сцен `audio.full_text` собирается программно как скрипт
+    `"berlioz: текст\nbezdomny: текст"` из units с `type: 'dialogue'` и `speaker`.
+    `audio.voice` устанавливается в `'dialogue'` (вместо `'narrator'`).
+  - Fallback: если dialogue-сцена не имеет units с speaker — `console.warn` + narrator voice.
+  - `buildSegments()` / `splitDialogueIntoChunks()` уже работают с форматом `speaker: текст`
+    (парсинг по regex `[a-z0-9_]+:\s.*`).
+  - Все 473 теста проходят.
+
+- **TODO doc** (`docs/07-agents-and-generators/DIALOGUE_TTS_PIPELINE.md`):
+  - Документ-план с архитектурой, списком изменений и тестирования.
+
 - **Выделенный AI-шаг генерации голосов персонажей** (`backend/src/services/agent-prompts.js`,
   `backend/src/services/agent/pipeline-steps.js`, `backend/src/services/agent/pipeline-runner.js`):
   - Добавлен `stepGenerateVoices()` — отдельный шаг в AI pipeline, вызываемый после character extraction

@@ -281,6 +281,12 @@ async function stepCreateUnits(sessionId, scene, sceneIndex, characters, stepInd
         if (units.length === 0) {
             units.push({ text: sceneText, type: scene.type === 'dialogue' ? 'dialogue' : 'narration' });
         }
+        // Log speaker presence for dialogue units
+        const dialogueUnits = units.filter(u => u.type === 'dialogue');
+        const withSpeaker = dialogueUnits.filter(u => u.speaker);
+        if (dialogueUnits.length > 0) {
+            console.log(`[AGENT] Step 4 (units scene ${sceneIndex}): ${dialogueUnits.length} dialogue units, ${withSpeaker.length} with speaker`);
+        }
         await aiCaller.logConversation(sessionId, step.step_id, messages, JSON.stringify(result));
         await completeStep(step.step_id, units);
         console.log(`[AGENT] Step 4 (units scene ${sceneIndex}): ${units.length} units`);

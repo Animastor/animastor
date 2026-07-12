@@ -434,11 +434,18 @@ Return ONLY valid JSON.`,
   "units": [
     {
       "text": "Verbatim fragment from scene.text — one complete visual frame",
-      "type": "perception|narration|dialogue|description|action|transition|performance"
+      "type": "perception|narration|dialogue|description|action|transition|performance",
+      "speaker": "character_id_of_speaker (REQUIRED for type=dialogue, OMIT for other types)"
     }
   ]
 }
 \`\`\`
+
+## Important: speaker field for dialogue units
+- For ALL units with type="dialogue", you MUST supply the \`speaker\` field with the exact character_id of who is speaking.
+- Use only character_ids from the Known Characters list above.
+- Example: If Berlioz says "Дайте нарзану", write \`{ "text": "Дайте нарзану", "type": "dialogue", "speaker": "berlioz" }\`.
+- For narration, perception, description, action, transition, or any non-dialogue type, do NOT include the speaker field.
 
 Return ONLY valid JSON.`,
 

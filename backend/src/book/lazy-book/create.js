@@ -469,6 +469,36 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
             ? 'soviet_book_page'
             : undefined;
 
+        // Build audio config based on scene type.
+        // For dialogue scenes: build TTS script from dialogue units with speaker IDs.
+        // The script format "speaker: text" is parsed by buildSegments() → splitDialogueIntoChunks().
+        // For narration scenes: use raw scene text with narrator voice.
+        let audioConfig;
+        if (isDialogue) {
+            const dialogueUnits = cleanUnits.filter(u => u.type === 'dialogue' && u.speaker);
+            if (dialogueUnits.length > 0) {
+                const scriptLines = dialogueUnits.map(u => `${u.speaker}: ${u.text}`);
+                audioConfig = {
+                    voice: 'dialogue',
+                    full_text: scriptLines.join('\n'),
+                };
+                if (dialogueUnits.length < cleanUnits.filter(u => u.type === 'dialogue').length) {
+                    console.warn(`[LAZY-BOOK] Scene "${aiScene.title}": ${cleanUnits.filter(u => u.type === 'dialogue').length - dialogueUnits.length} dialogue units missing speaker — skipped from TTS script`);
+                }
+            } else {
+                console.warn(`[LAZY-BOOK] Scene "${aiScene.title}" marked as dialogue but has no units with speaker — falling back to narrator voice`);
+                audioConfig = {
+                    voice: 'narrator',
+                    full_text: sceneText,
+                };
+            }
+        } else {
+            audioConfig = {
+                voice: 'narrator',
+                full_text: sceneText,
+            };
+        }
+
         chapterObj.scenes.push({
             scene_id: scId,
             scene_title: aiScene.title || chapterUtils.extractSceneTitle(aiScene.text || '', chapterObj.scenes.length),
@@ -478,10 +508,7 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
             location: aiScene.location || undefined,
             source_start: aiScene.source_start ?? null,
             source_end: aiScene.source_end ?? null,
-            audio: {
-                voice: 'narrator',
-                full_text: sceneText,
-            },
+            audio: audioConfig,
             units: cleanUnits,
         });
     }
