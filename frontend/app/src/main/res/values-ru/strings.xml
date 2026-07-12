@@ -78,9 +78,12 @@
     <string name="edit_units">Модули</string>
     <string name="edit_units_tab">Модуль</string>
     <string name="edit_section_unit">Модуль</string>
+    <string name="edit_section_id">Идентификаторы</string>
     <string name="edit_section_audio">Аудио</string>
     <string name="edit_section_image">Изображение</string>
     <string name="edit_section_video">Видео</string>
+    <string name="edit_field_chapter_id">ID главы</string>
+    <string name="edit_field_scene_id">ID сцены</string>
     <string name="edit_save">Сохранить</string>
     <string name="edit_saving">Сохранение…</string>
     <string name="edit_loading">Загрузка…</string>

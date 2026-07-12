@@ -705,8 +705,20 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
             orientation = LinearLayout.VERTICAL
             setPadding(0, 0, 0, 8)
         }
-        // scene_id is read-only
-        ll.addView(readOnlyCard(ctx, "scene_id", sc.scene_id ?: ""))
+
+        // ID section — chapter id + scene id, read-only
+        val idSectionLabel = TextView(ctx).apply {
+            text = getString(R.string.edit_section_id)
+            textSize = 14f
+            setPadding(0, 0, 0, 4)
+        }
+        ll.addView(idSectionLabel)
+        val ch = chapters.getOrNull(currentChIndex)
+        ch?.chapter?.let { chapterId ->
+            ll.addView(readOnlyCard(ctx, getString(R.string.edit_field_chapter_id), chapterId))
+        }
+        ll.addView(readOnlyCard(ctx, getString(R.string.edit_field_scene_id), sc.scene_id ?: "—"))
+
         // Editable scene fields
         val editableKeys = listOf("scene_title", "type", "style", "location.id", "env.time", "env.lighting", "env.weather", "env.mood", "env.atmosphere", "participants")
         val sceneValues = editableKeys.associateWith { key -> readField(sc, key) }
