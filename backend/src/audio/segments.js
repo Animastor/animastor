@@ -83,16 +83,7 @@ function buildSegments(runtimeEntry) {
             .map(u => `${u.speaker}: ${u.text}`);
 
         if (dialogueLines.length === 0) {
-            // Fallback: try parsing audio.full_text as script (for backward compat)
-            const fullText = runtimeEntry.payload?.audio?.full_text || "";
-            const chunks = splitDialogueIntoChunks(fullText);
-            if (chunks.length > 0) {
-                return chunks.map((text, i) => ({
-                    segment_id: String(i + 1).padStart(4, "0"),
-                    segment_type: "dialogue",
-                    text
-                }));
-            }
+            helpers.warn('buildSegments: dialogue scene has no units with speaker — no TTS segments generated');
             return [];
         }
 

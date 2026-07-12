@@ -40,6 +40,13 @@ All notable changes to Animastor are documented here.
     отдельным шагом. Теперь character extraction отвечает только за: id, name, role, description, appearance, traits.
   - Single responsibility: character extraction → извлечение персонажей; voice generation → создание голосов.
 
+### Removed
+
+- **Fallback в `buildSegments()` для старых vbook** (`backend/src/audio/segments.js`):
+  Убран мёртвый код, который парсил `audio.full_text` как TTS-скрипт при отсутствии `units[].speaker`.
+  Теперь если dialogue-сцена не имеет юнитов со speaker — возвращается `[]` с warning в логах.
+  Старых vbook с форматом скрипта в `full_text` не существует.
+
 ### Fixed
 
 - **Два прогресс-бара после повторного открытия .txt** (`frontend/.../GenerateViewModel.kt`):

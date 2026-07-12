@@ -1,80 +1,73 @@
-# Dialogue TTS Pipeline — TODO
+# Dialogue TTS Pipeline
 
 ## Цель
 
 Автоматическая генерация многоголосой озвучки диалогов через TTS.  
-Сейчас все сцены (`narration` и `dialogue`) озвучиваются одним голосом диктора (`voice: 'narrator'`).  
-Нужно: диалоговые сцены получают скриптовый `full_text` вида `"speaker: реплика"` и маршрутятся в dialogue TTS workflow (многоголосый Qwen3).
+Диалоговые сцены получают `voice='dialogue'` и маршрутятся в многоголосый Qwen3-TTS workflow.
 
-## Архитектура
+## Pipeline (реальный порядок)
 
 ```
-AI pipeline → units[{ type: 'dialogue', speaker, text }]
-                           ↓
-                    create.js
-                  /           \
-     narration scene          dialogue scene
-      voice='narrator'         voice='dialogue'
-      full_text=sceneText      full_text=buildScript(units)
-                                           ↓
-                              buildSegments() → парсит "speaker: текст"
-                                           ↓
-                              tts-qwen-dialogue workflow
-                              (RoleBank + AdvancedDialogue Engine)
+AI Pipeline (runPipeline):
+1. stepAnalyzeStructure          — структура (bootstrap)
+2. stepExtractCharacters         — персонажи без voice (single responsibility)
+3. stepGenerateVoices            — голоса для диалоговых персонажей
+   ↑ LLM только что извлекла персонажей — контекст свежий, полный текст в памяти
+4. stepExtractLocations          — локации
+5. stepCreateScenes + enrich     — сцены
+6. stepCreateUnits               — юниты со speaker: { type: "dialogue", speaker: "berlioz", text: "..." }
+7. stepCreateVisuals             — visual prompts
+8. stepReconcilePassports        — чистка промптов
+9. stepPolishStoryboard          — continuity
+
+         ↓
+create.js (сохранение в JSON):
+  narration scene →  voice='narrator',  full_text=литературный текст
+  dialogue scene  →  voice='dialogue', full_text=литературный текст (с «—»)
+  (скрипт speaker:текст НЕ сохраняется, строится при генерации)
+
+         ↓
+generateSceneAudio() → buildSegments():
+  dialogue:  собирает units[].speaker + units[].text в скрипт, чанкует
+  narration: берёт audio.full_text, чанкует по предложениям
+
+         ↓
+ComfyUI / GPU Hub:
+  dialogue  → tts-qwen-dialogue (Role Bank: character1 + character2)
+  narration → tts-qwen-narrator (один голос)
 ```
 
-## Изменения
+## Ключевые архитектурные решения
 
-### 1. `SYSTEM_PROMPTS.units` (`agent-prompts.js`)
-Добавить поле `speaker` в формат dialogue-юнитов.
+### `audio.full_text` = литературный текст, не скрипт
+- `full_text` хранит оригинальный текст с «—» (читабелен для человека)
+- Скрипт `speaker: текст` строится **только в `buildSegments()`** из `units[].speaker`
+- Единый источник истины: `units[]`, а не дублирование в `full_text`
+- Редактирование units → скрипт перестраивается автоматически
 
-**Текущий формат:**
-```
-{ "text": "...", "type": "dialogue" }
-```
+### `stepGenerateVoices` — шаг №3 (после characters, до scenes)
+- LLM только что извлекла персонажей — контекст свежий
+- Полный текст ещё не разбит на сцены — лучший анализ диалоговых реплик
+- Созданные голоса потом доступны всем downstream-шагам
 
-**Новый формат:**
-```
-{ "text": "...", "type": "dialogue", "speaker": "berlioz" }
-```
-
-Промпт: добавить описание поля `speaker` и правило — для dialogue-юнита обязательно указывать character_id говорящего.
-
-### 2. `stepCreateUnits()` (`pipeline-steps.js`)
-AI уже возвращает `result.units` с полями. Нужно убедиться, что поле `speaker` не теряется при сохранении.  
-Текущий код сохраняет `{ text, type }` — добавить `speaker` в destructuring.
-
-### 3. `create.js` (`backend/src/book/lazy-book/create.js`)
-При создании сцены:
-- Если `isDialogue` (обнаружен dialogue-юнит) → собрать `audio.full_text` как скрипт:
+### Narrator — программно, не AI
+- Добавляется в `create.js` всегда первым:
   ```js
-  const scriptLines = cleanUnits
-    .filter(u => u.type === 'dialogue' && u.speaker)
-    .map(u => `${u.speaker}: ${u.text}`);
-  scene.audio = {
-    voice: 'dialogue',
-    full_text: scriptLines.join('\n')
-  };
+  const voices = { narrator: { instruction: narratorVoice } };
   ```
-- Если НЕ dialogue → текущее поведение: `voice: 'narrator'`, `full_text: sceneText`
+- Ни один AI-промпт не создаёт narrator
 
-### 4. `buildSegments()` (`backend/src/audio/segments.js`)
-**Не менять.** Уже работает с форматом `"speaker: текст"` через `splitDialogueIntoChunks()`.
+### `buildSegments()` — без fallback
+- Строит TTS-скрипт ТОЛЬКО из `units[].speaker`
+- Fallback удалён (нет старых vbook с другим форматом)
+- Если dialogue-сцена не имеет units со speaker → `[]` (логируется warning)
 
-## TODO List
+## Статус
 
-- [ ] 1. Создать TODO doc (этот файл)
-- [ ] 2. Добавить `speaker` в `SYSTEM_PROMPTS.units` в `agent-prompts.js`
-- [ ] 3. Обновить `stepCreateUnits()` — сохранять `speaker` из AI
-- [ ] 4. Обновить `create.js` — сборка скрипта для dialogue-сцен
-- [ ] 5. Проверить `buildSegments()` — тест на формате `speaker: текст`
-- [ ] 6. Прогнать тесты (473 шт.)
-- [ ] 7. Code review
-
-## Тестирование
-
-После изменений:
-1. Импортировать `.txt` с диалогами (например, отрывок «Мастера и Маргариты»)
-2. Проверить `voices.json` — есть голоса персонажей
-3. Проверить chapter JSON — dialogue-сцена имеет `audio.voice: 'dialogue'` и `audio.full_text` в формате `"berlioz: текст"`
-4. Проверить что `buildSegments()` корректно парсит скрипт
+- [x] `speaker` добавлен в `SYSTEM_PROMPTS.units`
+- [x] `stepCreateUnits()` сохраняет `speaker` из AI
+- [x] `create.js` — литературный `full_text`, `voice='dialogue'`
+- [x] `buildSegments()` — сборка скрипта из `units[].speaker`, fallback удалён
+- [x] `stepGenerateVoices` — на позиции 3 (после characters)
+- [x] Примеры (`ai/examples/`) согласованы
+- [x] 473 теста проходят
