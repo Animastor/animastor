@@ -5,7 +5,7 @@
 // location extraction, scene creation, enrichment, unit creation, visual creation.
 
 const aiCaller = require('./ai-caller');
-const visualUtils = require('./visual-utils');
+const imageUtils = require('./image-utils');
 const {
     createStep, completeStep, failStep, updateSession,
 } = require('../agent-session');
@@ -119,7 +119,7 @@ async function stepCreateScenes(sessionId, text, characters, locations, stepInde
     const charsContext = (characters || []).map(c => `- ${c.id}: ${c.name}`).join('\n') || 'None';
     const locsContext = (locations || []).map(l => `- ${l.id}: ${l.name} (${l.type || 'unknown'})`).join('\n') || 'None';
 
-    const examplesContext = visualUtils.formatExamplesForPrompt();
+    const examplesContext = imageUtils.formatExamplesForPrompt();
     const examplesSection = examplesContext
         ? `\n## Reference examples\n${examplesContext}\n`
         : '';
@@ -282,22 +282,10 @@ async function stepCreateUnits(sessionId, scene, sceneIndex, characters, stepInd
                 fallbackUnit.audio = { text: sceneText };
             }
             units.push(fallbackUnit);
-        } else {
-            // AI now writes audio section directly; also ensure legacy text/speaker for backward compat
-            for (const u of units) {
-                if (u.audio?.speaker && u.audio?.text) {
-                    u.speaker = u.audio.speaker;
-                    u.text = u.audio.text;
-                } else if (u.type === 'dialogue' && u.speaker && u.text) {
-                    u.audio = { speaker: u.speaker, text: u.text };
-                } else if (u.type === 'dialogue' && u.text) {
-                    u.audio = { text: u.text };
-                }
-            }
         }
         // Log speaker presence for dialogue units
         const dialogueUnits = units.filter(u => u.type === 'dialogue');
-        const withSpeaker = dialogueUnits.filter(u => u.audio?.speaker || u.speaker);
+        const withSpeaker = dialogueUnits.filter(u => u.audio?.speaker);
         if (dialogueUnits.length > 0) {
             console.log(`[AGENT] Step 4 (units scene ${sceneIndex}): ${dialogueUnits.length} dialogue units, ${withSpeaker.length} with audio.speaker`);
         }
@@ -425,8 +413,8 @@ async function stepReconcilePassports(sessionId, allVisualUnits, characters, ste
 
     const unitsStr = allVisualUnits.map((u, i) =>
         `Unit ${i}: scene_index=${u.sceneIndex}, unit_index=${u.unitIndex}, scene_title="${u.sceneTitle || ''}", ` +
-        `type="${u.type || 'unknown'}", shot="${u.image?.shot || u.visual?.shot || 'unknown'}", ` +
-        `prompt="${(u.image?.prompt || u.visual?.prompt || '').substring(0, 300)}"`
+        `type="${u.type || 'unknown'}", shot="${u.image?.shot || 'unknown'}", ` +
+        `prompt="${(u.image?.prompt || '').substring(0, 300)}"`
     ).join('\n');
 
     const prompt = SYSTEM_PROMPTS.passport_reconciliation
@@ -445,21 +433,15 @@ async function stepReconcilePassports(sessionId, allVisualUnits, characters, ste
         // Merge AI results back, preserving original fields and only updating visual.prompt
         const merged = allVisualUnits.map((original, i) => {
             const rec = reconciled.find(r => r.scene_index === original.sceneIndex && r.unit_index === original.unitIndex);
-            if (rec && rec.visual?.prompt) {
-                const mergedPrompt = rec.visual.prompt || original.visual?.prompt;
-                const mergedVisual = {
-                    ...original.visual,
-                    shot: rec.visual.shot || original.visual.shot,
-                    prompt: mergedPrompt,
-                };
+            if (rec && rec.image?.prompt) {
+                const mergedPrompt = rec.image.prompt || original.image?.prompt;
                 return {
                     ...original,
-                    visual: mergedVisual,
                     image: {
-                        shot: rec.visual.shot || original.image?.shot || original.visual?.shot,
+                        shot: rec.image.shot || original.image?.shot || 'wide',
                         prompt: mergedPrompt,
-                        style: rec.visual?.style || original.image?.style || original.visual?.style,
-                        negative: rec.visual?.negative || original.image?.negative || original.visual?.negative,
+                        style: rec.image?.style || original.image?.style,
+                        negative: rec.image?.negative || original.image?.negative,
                     },
                     video: {
                         action: mergedPrompt,
@@ -474,7 +456,7 @@ async function stepReconcilePassports(sessionId, allVisualUnits, characters, ste
 
         const changedCount = merged.filter((m, i) => {
             const orig = allVisualUnits[i];
-            return m.visual?.prompt !== orig.visual?.prompt;
+            return m.image?.prompt !== orig.image?.prompt;
         }).length;
         console.log(`[AGENT] Step passport (reconciliation): ${merged.length} units, ${changedCount} deduped`);
 
@@ -515,7 +497,7 @@ async function stepPolishStoryboard(sessionId, allVisualUnits, characters, locat
     const scenesStr = scenesParts.join('\n');
 
     const unitsStr = allVisualUnits.map((u, i) =>
-        `Unit ${i}: scene_index=${u.sceneIndex}, unit_index=${u.unitIndex}, scene_title="${u.sceneTitle || ''}", type="${u.type || 'unknown'}", shot="${u.image?.shot || u.visual?.shot || 'unknown'}", prompt="${(u.image?.prompt || u.visual?.prompt || '').substring(0, 200)}"`
+        `Unit ${i}: scene_index=${u.sceneIndex}, unit_index=${u.unitIndex}, scene_title="${u.sceneTitle || ''}", type="${u.type || 'unknown'}", shot="${u.image?.shot || 'unknown'}", prompt="${(u.image?.prompt || '').substring(0, 200)}"`
     ).join('\n');
 
     const prompt = SYSTEM_PROMPTS.storyboard_polish
@@ -536,21 +518,15 @@ async function stepPolishStoryboard(sessionId, allVisualUnits, characters, locat
         // Merge AI results back, preserving original fields and only updating visual
         const merged = allVisualUnits.map((original, i) => {
             const polished = polishedUnits.find(p => p.scene_index === original.sceneIndex && p.unit_index === original.unitIndex);
-            if (polished && polished.visual) {
-                const mergedPrompt = polished.visual.prompt || original.visual?.prompt;
-                const mergedVisual = {
-                    ...original.visual,
-                    shot: polished.visual.shot || original.visual.shot,
-                    prompt: mergedPrompt,
-                };
+            if (polished && polished.image?.prompt) {
+                const mergedPrompt = polished.image.prompt || original.image?.prompt;
                 return {
                     ...original,
-                    visual: mergedVisual,
                     image: {
-                        shot: polished.visual.shot || original.image?.shot || original.visual?.shot,
+                        shot: polished.image.shot || original.image?.shot || 'wide',
                         prompt: mergedPrompt,
-                        style: polished.visual?.style || original.image?.style || original.visual?.style,
-                        negative: polished.visual?.negative || original.image?.negative || original.visual?.negative,
+                        style: polished.image?.style || original.image?.style,
+                        negative: polished.image?.negative || original.image?.negative,
                     },
                     video: {
                         action: mergedPrompt,
@@ -565,7 +541,7 @@ async function stepPolishStoryboard(sessionId, allVisualUnits, characters, locat
 
         const changedCount = merged.filter((m, i) => {
             const orig = allVisualUnits[i];
-            return m.visual?.prompt !== orig.visual?.prompt || m.visual?.shot !== orig.visual?.shot;
+            return m.image?.prompt !== orig.image?.prompt || m.image?.shot !== orig.image?.shot;
         }).length;
         console.log(`[AGENT] Step 6 (storyboard polish): ${merged.length} units reviewed, ${changedCount} modified`);
 
@@ -699,7 +675,7 @@ async function stepCreateVisuals(sessionId, scene, units, sceneIndex, characters
 
     const prompt = SYSTEM_PROMPTS.visuals
         .replace('%CONTEXT%', contextStr)
-        .replace('%EXAMPLES%', visualUtils.buildVisualExemplars())
+        .replace('%EXAMPLES%', imageUtils.buildImageExemplars())
         .replace('%UNITS%', unitsStr);
 
     const messages = [
@@ -713,22 +689,13 @@ async function stepCreateVisuals(sessionId, scene, units, sceneIndex, characters
 
         const merged = units.map((u, i) => {
             const vu = visualUnits[i];
-            // Read from image/video (new format), fallback to visual (legacy)
-            const imageSection = vu?.image || vu?.visual;
+            // Read from image/video
+            const imageSection = vu?.image;
             if (vu && imageSection) {
                 // Participants come from scene.participants (set during scene creation).
                 // Character IDs in prompt are normalized via normalizeCharacterRefs.
                 let prompt = normalizeCharacterRefs(imageSection.prompt, characters, mentions);
-                const action = vu.video?.action || prompt;
-                const result = { ...u };
-                // Preserve legacy visual field for backward compat
-                result.visual = {
-                    shot: imageSection.shot || (u.type === 'dialogue' ? 'medium' : 'wide'),
-                    prompt,
-                    style: imageSection?.style,
-                    negative: imageSection?.negative,
-                };
-                // Canonical fields
+                const action = vu.video?.action || prompt;                    const result = { ...u };
                 result.image = {
                     shot: imageSection.shot || (u.type === 'dialogue' ? 'medium' : 'wide'),
                     prompt,
@@ -739,15 +706,9 @@ async function stepCreateVisuals(sessionId, scene, units, sceneIndex, characters
                     action,
                 };
                 return result;
-            }
-            const fallbackPrompt = visualUtils.getFallbackVisual(u.text, characters, { ...scene, participants: scene.participants }, locDisplay);
-            return {
+            }            const fallbackPrompt = imageUtils.getFallbackImage(u.text, characters, { ...scene, participants: scene.participants }, locDisplay);
+                return {
                 ...u,
-                visual: {
-                    shot: u.type === 'dialogue' ? 'medium' : (u.type === 'description' ? 'wide' : 'medium'),
-                    prompt: fallbackPrompt,
-                    character_binding: true,
-                },
                 image: {
                     shot: u.type === 'dialogue' ? 'medium' : 'wide',
                     prompt: fallbackPrompt,
@@ -766,14 +727,9 @@ async function stepCreateVisuals(sessionId, scene, units, sceneIndex, characters
         await failStep(step.step_id, `AI failed, using fallback: ${err.message}`);
         console.warn(`[AGENT] Step 5 (scene ${sceneIndex}) failed, using fallback: ${err.message}`);
         return units.map((u) => {
-            const fallbackPrompt = visualUtils.getFallbackVisual(u.text, characters, { ...scene, participants: scene.participants }, locDisplay);
+            const fallbackPrompt = imageUtils.getFallbackImage(u.text, characters, { ...scene, participants: scene.participants }, locDisplay);
             return {
                 ...u,
-                visual: {
-                    shot: u.type === 'dialogue' ? 'medium' : 'wide',
-                    prompt: fallbackPrompt,
-                    character_binding: true,
-                },
                 image: {
                     shot: u.type === 'dialogue' ? 'medium' : 'wide',
                     prompt: fallbackPrompt,

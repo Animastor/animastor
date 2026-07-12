@@ -242,7 +242,6 @@
 
     <!-- Edit Unit Section Labels -->
     <string name="edit_section_audio">Audio Section</string>
-    <string name="edit_section_visual">Visual Section (legacy)</string>
     <string name="edit_section_image">Image Section</string>
     <string name="edit_section_video">Video Section</string>
 

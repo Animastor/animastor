@@ -41,8 +41,8 @@ function buildContext(scene, characters) {
     return contextParts.join('\n');
 }
 
-// --- getFallbackVisual: byte-for-byte the logic now in agent-service ---
-function getFallbackVisual(text, characters, scene) {
+// --- getFallbackImage: byte-for-byte the logic now in agent-service ---
+function getFallbackImage(text, characters, scene) {
     const participants = (scene.participants || []);
     const who = participants.length
         ? participants.map(pId => (characters || []).find(c => c.id === pId)?.id || pId).join(' and ')
@@ -56,7 +56,7 @@ function getFallbackVisual(text, characters, scene) {
 // the service module loads; otherwise skipped gracefully). ---
 let exemplars = '';
 try {
-    ({ buildVisualExemplars: exemplars } = require('../src/services/agent-service'));
+    ({ buildImageExemplars: exemplars } = require('../src/services/agent-service'));
     exemplars = typeof exemplars === 'function' ? exemplars() : '';
 } catch (e) {
     console.warn('(note) could not load agent-service for exemplars:', e.message);
@@ -72,7 +72,7 @@ const finalPrompt = SYSTEM_PROMPTS.visuals
 console.log('================ ASSEMBLED SYSTEM PROMPT ================\n');
 console.log(finalPrompt);
 console.log('\n================ FALLBACK PROMPTS (no LLM) ================\n');
-for (const u of units) console.log('•', getFallbackVisual(u.text, characters, scene));
+for (const u of units) console.log('•', getFallbackImage(u.text, characters, scene));
 
 // --- Assertions ---
 console.log('\n================ ASSERTIONS ================');
@@ -83,7 +83,7 @@ const checks = [
     ['prompt bans generic nouns', finalPrompt.includes('generic collective nouns')],
     ['prompt has guiding question', finalPrompt.includes('WHO exactly is in the frame')],
     ['prompt has stable-extras rule', finalPrompt.includes('CONCRETE, REPEATABLE anchor')],
-    ['fallback is pronoun-free & named', getFallbackVisual('', characters, scene) === 'berlioz and bezdomny at patriarch_ponds, cinematic shot'],
+    ['fallback is pronoun-free & named', getFallbackImage('', characters, scene) === 'berlioz and bezdomny at patriarch_ponds, cinematic shot'],
     ['few-shot exemplar block injected', /Worked example/.test(finalPrompt)],
     ['image-first philosophy present', /Core philosophy/.test(finalPrompt) && /no participants/i.test(finalPrompt)],
     ['character-less unit guidance present', /Character-less units/.test(finalPrompt)],

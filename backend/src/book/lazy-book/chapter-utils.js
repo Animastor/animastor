@@ -32,12 +32,9 @@ function createChapterIntroScene(chapterTitle, chapterNumber, language) {
             type: 'typography',
             text: sceneText,
             participants: [],
-            visual: {
+            image: {
                 shot: 'wide',
                 prompt: `Chapter ${chapterNumber} title page typography, book style, ${cleanTitle}`,
-                type: 'typography',
-                text_render: sceneText,
-                quality: 'high',
             },
         }],
     };
@@ -73,12 +70,9 @@ function createCoverChapter(title, author, language) {
                 type: 'typography',
                 text: sceneText,
                 participants: [],
-                visual: {
+                image: {
                     shot: 'wide',
                     prompt: `Book cover: ${displayTitle}${displayAuthor ? ` by ${displayAuthor}` : ''}, typography, elegant design`,
-                    type: 'typography',
-                    text_render: sceneText,
-                    quality: 'high',
                 },
             }],
         }],

@@ -488,25 +488,9 @@ data class SceneUnit(
     val type: String? = null,
     val text: String? = null,
     val participants: List<String>? = null,
-    val visual: VisualConfig? = null,
     val audio: AudioSection? = null,
     val image: ImageSection? = null,
     val video: VideoSection? = null
-)
-
-@JsonAdapter(VisualConfigAdapter::class)
-data class VisualConfig(
-    val prompt: String? = null,
-    val negative: String? = null,
-    val quality: String? = null,
-    val shot: String? = null,
-    val focus: String? = null,
-    val lip_sync: Boolean? = null,
-    val character_binding: Boolean? = null,
-    val text_render: Boolean? = null,
-    val style: String? = null,
-    val lighting: String? = null,
-    val variation: String? = null
 )
 
 // ======================================================
@@ -547,25 +531,3 @@ fun BookData.unitIndex(chapterId: String?, sceneId: String?, unitOffset: Int): I
     return 0
 }
 
-class VisualConfigAdapter : JsonDeserializer<VisualConfig> {
-    override fun deserialize(json: JsonElement, typeOfT: Type, context: JsonDeserializationContext): VisualConfig {
-        val obj = json.asJsonObject
-        return VisualConfig(
-            prompt = obj.primitive("prompt"),
-            negative = obj.primitive("negative"),
-            quality = obj.primitive("quality"),
-            shot = obj.primitive("shot"),
-            focus = obj.primitive("focus"),
-            lip_sync = obj.bool("lip_sync"),
-            character_binding = obj.bool("character_binding"),
-            text_render = obj.bool("text_render"),
-            style = obj.primitive("style"),
-            lighting = obj.primitive("lighting"),
-            variation = obj.primitive("variation")
-        )
-    }
-    private fun JsonObject.primitive(key: String): String? =
-        get(key)?.takeIf { it is JsonPrimitive }?.asString
-    private fun JsonObject.bool(key: String): Boolean? =
-        get(key)?.takeIf { it is JsonPrimitive }?.asBoolean
-}

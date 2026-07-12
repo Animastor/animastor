@@ -77,7 +77,7 @@ const SCENE_FIELDS = [
 
     // ── Scene-level visual style ──────────────────
     // scene.visual.style is used as a global style fallback
-    // for all units when unit.visual.style is not set
+    // for all units when unit.image.style is not set
     {
         key: 'scene.visual.style',
         layers: ['image', 'video'],

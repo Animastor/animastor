@@ -14,7 +14,6 @@ const { estimateSpeechDurationSec } = require('../placeholder-audio');
 const pipelineSteps = require('./pipeline-steps');
 const textUtils = require('./text-utils');
 const coreference = require('./coreference');
-const visualUtils = require('./visual-utils');
 const { SCENE_TARGET_SEC, SCENE_MAX_SEC, SCENE_MIN_SEC } = require('../agent-prompts');
 
 function getWindowText(sourceText, existingChars, existingLocs, windowIndex, startOffset) {
@@ -467,7 +466,7 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
                 sceneText: scene.text || '',
                 text: unit.text,
                 type: unit.type,
-                visual: unit.visual || {},
+                image: unit.image || {},
             }))
         );
 
@@ -479,26 +478,16 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
                 const scene = enrichedScenes[rec.sceneIndex];
                 if (scene && scene.units[rec.unitIndex]) {
                     const unit = scene.units[rec.unitIndex];
-                    if (unit.visual) {
-                        if (rec.visual?.prompt) unit.visual.prompt = rec.visual.prompt;
-                    }
-                    // Also update image section from reconciliation result
+                    // Update image section from reconciliation result
                     if (rec.image?.prompt) {
                         unit.image = unit.image || {};
                         unit.image.prompt = rec.image.prompt;
                         if (rec.image?.shot) unit.image.shot = rec.image.shot;
-                    } else if (rec.visual?.prompt && !unit.image) {
-                        unit.image = {
-                            shot: rec.visual.shot || unit.visual?.shot,
-                            prompt: rec.visual.prompt || unit.visual?.prompt,
-                        };
                     }
-                    // Also update video section
+                    // Update video section from reconciliation result
                     if (rec.video?.action) {
                         unit.video = unit.video || {};
                         unit.video.action = rec.video.action;
-                    } else if (rec.visual?.prompt && !unit.video) {
-                        unit.video = { action: rec.visual.prompt };
                     }
                 }
             }
@@ -516,7 +505,7 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
                 sceneText: scene.text || '',
                 text: unit.text,
                 type: unit.type,
-                visual: unit.visual || {},
+                image: unit.image || {},
             }))
         );
 
@@ -528,27 +517,16 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
                 const scene = enrichedScenes[pu.sceneIndex];
                 if (scene && scene.units[pu.unitIndex]) {
                     const unit = scene.units[pu.unitIndex];
-                    if (unit.visual) {
-                        if (pu.visual?.shot) unit.visual.shot = pu.visual.shot;
-                        if (pu.visual?.prompt) unit.visual.prompt = pu.visual.prompt;
-                    }
-                    // Also update image section
+                    // Update image section from polish result
                     if (pu.image?.prompt) {
                         unit.image = unit.image || {};
                         unit.image.prompt = pu.image.prompt;
                         if (pu.image?.shot) unit.image.shot = pu.image.shot;
-                    } else if (pu.visual?.prompt && !unit.image) {
-                        unit.image = {
-                            shot: pu.visual.shot || unit.visual?.shot,
-                            prompt: pu.visual.prompt || unit.visual?.prompt,
-                        };
                     }
-                    // Also update video section
+                    // Update video section from polish result
                     if (pu.video?.action) {
                         unit.video = unit.video || {};
                         unit.video.action = pu.video.action;
-                    } else if (pu.visual?.prompt && !unit.video) {
-                        unit.video = { action: pu.visual.prompt };
                     }
                 }
             }

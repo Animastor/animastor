@@ -1,9 +1,9 @@
 // ======================================================
-// Agent Visual Utilities
+// Agent Image Utilities
 // ======================================================
-// Visual prompt helpers: exemplars, fallback visuals, passport injection logic.
+// Image prompt helpers: exemplars, fallback images, passport injection logic.
 
-function getFallbackVisual(text, characters, scene, locDisplay) {
+function getFallbackImage(text, characters, scene, locDisplay) {
     const participants = (scene.participants || []);
     const who = participants.length
         ? participants
@@ -15,7 +15,7 @@ function getFallbackVisual(text, characters, scene, locDisplay) {
     return `${who} at ${locName}, cinematic shot`;
 }
 
-function buildVisualExemplars() {
+function buildImageExemplars() {
     try {
         const examples = require('../ai-loader').getExamples();
         if (!examples) return '';
@@ -27,7 +27,7 @@ function buildVisualExemplars() {
                 const parts = sc?.participants || [];
                 if (!parts.length) continue;
                 const lines = (sc.units || [])
-                    .map(u => u.visual)
+                    .map(u => u.image)
                     .filter(v => v && typeof v.prompt === 'string' && v.prompt.trim())
                     .map(v => ({ shot: v.shot || 'medium', prompt: v.prompt.trim() }));
                 if (lines.length >= 3 && (!best || lines.length > best.lines.length)) {
@@ -42,7 +42,7 @@ function buildVisualExemplars() {
             .join('\n');
         return `\n## Worked example (real doctrine-compliant sequence — note how the base composition repeats and only the action changes)\nParticipants named every time: ${best.participants.join(', ')}\n${rows}\n`;
     } catch (err) {
-        console.warn(`[AGENT] Failed to build visual exemplars: ${err.message}`);
+        console.warn(`[AGENT] Failed to build image exemplars: ${err.message}`);
         return '';
     }
 }
@@ -100,7 +100,7 @@ function formatExamplesForPrompt() {
 }
 
 module.exports = {
-    getFallbackVisual,
-    buildVisualExemplars,
+    getFallbackImage,
+    buildImageExemplars,
     formatExamplesForPrompt,
 };

@@ -44,15 +44,7 @@ function canonicalizeUnit(unit) {
     const keys = Object.keys(unit).sort();
     for (const k of keys) {
         if (EXCLUDED_UNIT_KEYS.has(k)) continue;
-        if (k === 'visual' && unit.visual && typeof unit.visual === 'object') {
-            const v = {};
-            for (const vk of Object.keys(unit.visual).sort()) {
-                v[vk] = unit.visual[vk];
-            }
-            out.visual = v;
-        } else {
-            out[k] = unit[k];
-        }
+        out[k] = unit[k];
     }
     return out;
 }

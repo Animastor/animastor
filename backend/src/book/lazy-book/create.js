@@ -379,12 +379,9 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
                     id: unitId(),
                     type: 'typography',
                     text: introMeta.text,
-                    visual: {
+                    image: {
                         shot: 'wide',
                         prompt: `Chapter ${(chapterIndex || 0) + 1} title page typography, book style`,
-                        type: 'typography',
-                        text_render: introMeta.text,
-                        quality: 'high',
                     },
                 }],
             };
@@ -409,9 +406,7 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
                 id: unitId(),
                 type: u.type || 'perception',
                 text: u.text.trim(),
-                speaker: u.speaker || undefined,
                 audio: u.audio || undefined,
-                visual: u.visual || undefined,
                 image: u.image || undefined,
                 video: u.video || undefined,
                 source_start: u.source_start ?? undefined,
@@ -437,7 +432,7 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
         // prompts often reference characters the scene-step AI forgot to list.
         if (mergedCharacters.length > 0) {
             const visualPrompts = (aiScene.units || [])
-                .map(u => u.visual?.prompt || '')
+                .map(u => u.image?.prompt || '')
                 .filter(Boolean)
                 .join(' ')
                 .toLowerCase();
@@ -478,14 +473,14 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
         // The TTS script (speaker:text) is built at generation time by buildSegments()
         // from units that have type='dialogue' and speaker field.
         // For narration scenes: voice='narrator', full_text=raw scene text.
-        const hasDialogueWithSpeaker = isDialogue && cleanUnits.some(u => u.type === 'dialogue' && u.speaker);
+        const hasDialogueWithSpeaker = isDialogue && cleanUnits.some(u => u.type === 'dialogue' && u.audio?.speaker);
         if (hasDialogueWithSpeaker) {
             audioConfig = {
                 voice: 'dialogue',
                 full_text: sceneText,
             };
             const dialogueCount = cleanUnits.filter(u => u.type === 'dialogue').length;
-            const withSpeakerCount = cleanUnits.filter(u => u.type === 'dialogue' && u.speaker).length;
+            const withSpeakerCount = cleanUnits.filter(u => u.type === 'dialogue' && u.audio?.speaker).length;
             if (withSpeakerCount < dialogueCount) {
                 console.warn(`[LAZY-BOOK] Scene "${aiScene.title}": ${dialogueCount - withSpeakerCount}/${dialogueCount} dialogue units missing speaker`);
             }

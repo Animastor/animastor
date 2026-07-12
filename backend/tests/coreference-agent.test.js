@@ -2,7 +2,7 @@
 // Coreference Resolution — Agent Service Tests (Simplified)
 // ======================================================
 // Tests for:
-//   - getFallbackVisual
+//   - getFallbackImage
 //   - splitIntoSentences / splitIntoSentencesWithOffsets
 // ======================================================
 // NOTE: unit.participants removed from the system.
@@ -12,7 +12,7 @@
 
 const { expect } = require('chai');
 const {
-    getFallbackVisual,
+    getFallbackImage,
     splitIntoSentences,
     splitIntoSentencesWithOffsets,
 } = require('../src/services/agent-service');
@@ -28,7 +28,7 @@ describe('Coreference — visual fallback participants', () => {
     ];
 
     it('uses scene-level participants when available', () => {
-        const prompt = getFallbackVisual('Берлиоз сел.', characters, {
+        const prompt = getFallbackImage('Берлиоз сел.', characters, {
             participants: ['berlioz'],
             location: { id: 'patriarch_ponds' },
         });
@@ -36,7 +36,7 @@ describe('Coreference — visual fallback participants', () => {
     });
 
     it('does not inject all known characters when participants are empty', () => {
-        const prompt = getFallbackVisual('Пустая аллея.', characters, {
+        const prompt = getFallbackImage('Пустая аллея.', characters, {
             participants: [],
             location: { id: 'patriarch_ponds' },
         });

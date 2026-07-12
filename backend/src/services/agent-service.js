@@ -8,7 +8,7 @@
 //   ai-caller.js      - callAI, logConversation
 //   text-utils.js     - stripStructureFromText, splitIntoSentences, buildFallbackScenes, splitTextEvenlyByParagraphs, splitIntoSentencesWithOffsets
 //   scene-title-utils  - extractSceneTitle, isGenericSceneTitle (shared via utils/scene-title-utils.js)
-//   visual-utils.js   - getFallbackVisual, buildVisualExemplars, formatExamplesForPrompt
+//   image-utils.js    - getFallbackImage, buildImageExemplars, formatExamplesForPrompt
 //   coreference.js    - assignUnitParticipants
 //   pipeline-steps.js - stepAnalyzeStructure, stepExtractCharacters, stepExtractLocations, stepCreateScenes, stepEnrichScenes, stepCreateUnits, stepCreateVisuals
 //   pipeline-runner.js - getWindowText, resolveSceneProgress, runPipeline
@@ -18,7 +18,7 @@ const { createSession, updateSession, getSession } = require('./agent-session');
 const { loadKnowledgeBase } = require('./knowledge-base');
 const { PROGRESS_STAGES, MAX_WINDOW_CHARS, SCENE_TARGET_SEC, SCENE_MAX_SEC, SCENE_MIN_SEC, MAX_SCENES_PER_CHUNK } = require('./agent-prompts');
 const textUtils = require('./agent/text-utils');
-const visualUtils = require('./agent/visual-utils');
+const imageUtils = require('./agent/image-utils');
 
 const bootstrap = require('./agent/bootstrap');
 const { extractSceneTitle, isGenericSceneTitle } = require('../utils/scene-title-utils');
@@ -53,7 +53,7 @@ module.exports = {
     isGenericSceneTitle,
     resolveSceneProgress: require('./agent/pipeline-runner').resolveSceneProgress,
     // Visual utilities (exported for unit testing)
-    buildVisualExemplars: visualUtils.buildVisualExemplars,
-    getFallbackVisual: visualUtils.getFallbackVisual,
+    buildImageExemplars: imageUtils.buildImageExemplars,
+    getFallbackImage: imageUtils.getFallbackImage,
 
 };

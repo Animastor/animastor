@@ -221,15 +221,15 @@ Critical rules for units:
 
 When in doubt, prefer FEWER units that are complete visual frames over many small fragments that break a single scene.
 
-### Level 3: Visual Prompt (unit.visual.prompt)
-The visual prompt describes what is visible in THIS SPECIFIC FRAME — and ONLY this frame.
+### Level 3: Image Prompt (unit.image.prompt)
+The image prompt describes what is visible in THIS SPECIFIC FRAME — and ONLY this frame.
 
 - It answers: "What should the image show right now?"
 - It is NOT a plot summary or narration — be concrete and visual
 - It describes camera framing, character position, lighting, environment, mood
 - Typically 5-15 words in English (or in the text's original language)
 - This is what an image generator uses to draw ONE frame
-- Each unit MUST have a visual.prompt — it is REQUIRED
+- Each unit MUST have an image.prompt — it is REQUIRED
 - IMPORTANT: Do NOT include character biography, location descriptions, or other entity metadata in the prompt. The system will inject character passports, location data, and narrative context separately. Focus exclusively on the visual composition of this specific frame.
 - Example of what NOT to do: "a tall mysterious man in a gray suit, protagonist of the story, who was described earlier as having dark hair" — wrong, because character metadata is system-provided
 - Instead: "tall man in gray suit holding a hat, looking at his companion, dim street lighting, rain" — focus on visible elements
@@ -259,7 +259,7 @@ This is ONE visual frame, not three.
 - Each scene must be a COMPACT EPISODE (one location, one time, one set of participants, one sequential event)
 - Each scene.text must contain the COMPLETE verbatim original text of that episode
 - Decompose each scene's text into units based on VISUAL EVENTS, not text metrics
-- Each unit must have a visual.prompt describing the image frame
+- Each unit must have an image.prompt describing the image frame
 - Read all unit.text values back: they should reconstruct the scene, not summarize it
 
 ### Characters and Locations (SECONDARY PRIORITY)
@@ -282,7 +282,7 @@ Your primary goal is producing scenes and units that can immediately be used for
 Before outputting your response, you MUST verify:
 1. Every scene has non-empty "text" (verbatim from source)
 2. Every unit has "text" that appears VERBATIM in its parent scene.text (globally unique substring match is fine)
-3. Every unit has a **non-empty** "visual.prompt" describing the image frame
+3. Every unit has a **non-empty** "image.prompt" describing the image frame
 4. Re-read all unit.text values in order — if they don't reconstruct the scene, you are summarizing instead of extracting. Fix it.
 5. No unit splits a visual event by text length, commas, or arbitrary boundaries
 6. Characters are real character names from the text (not "Далее", "Кстати", "Тут", "Но", "На" + name fragments)
@@ -321,10 +321,9 @@ ${examplesBlock}
           {
             "text": "Verbatim fragment from scene.text. One COMPLETE visual frame. NOT split by text length. Taken word-for-word from the scene's full text.",
             "type": "perception|narration|dialogue|description|action|transition|performance",
-            "visual": {
+            "image": {
               "shot": "wide|medium|close|detail|environment|reaction",
-              "prompt": "REQUIRED. Short visual description of this ONE frame (5-15 words). Focus on what is visible in the image. Do NOT include character bios, location metadata, or plot summary — the system injects those separately.",
-              "character_binding": true
+              "prompt": "REQUIRED. Short visual description of this ONE frame (5-15 words). Focus on what is visible in the image. Do NOT include character bios, location metadata, or plot summary — the system injects those separately."
             }
           }
         ]
@@ -333,7 +332,7 @@ ${examplesBlock}
   }
 }
 \`\`\`
-IMPORTANT: scenes must be compact episodes (one location/time/participants). Unit.text is a COMPLETE visual frame, not a text-length fragment. Each unit MUST have visual.prompt. When in doubt, prefer FEWER complete visual frames over many fragments. Scenes over entity count: quality scenes and units are the primary goal.`;
+IMPORTANT: scenes must be compact episodes (one location/time/participants). Unit.text is a COMPLETE visual frame, not a text-length fragment. Each unit MUST have image.prompt. When in doubt, prefer FEWER complete visual frames over many fragments. Scenes over entity count: quality scenes and units are the primary goal.`;
 
     const userPrompt = `Analyze the following text and return a structured analysis.
 
@@ -342,14 +341,14 @@ IMPORTANT: scenes must be compact episodes (one location/time/participants). Uni
 ${chapterText}
 \`\`\`
 
-Return the JSON analysis with characters, locations, and scenes. Identify every natural scene boundary in the text — do not create artificial scene counts. Every scene.text must contain the FULL original verbatim text from the source above for that scene segment. Every unit.text must be a VERBATIM fragment (sentence) taken word-for-word from scene.text — do NOT rewrite, summarize, or paraphrase the text. Each unit must include a visual.prompt describing the image frame.
+Return the JSON analysis with characters, locations, and scenes. Identify every natural scene boundary in the text — do not create artificial scene counts. Every scene.text must contain the FULL original verbatim text from the source above for that scene segment. Every unit.text must be a VERBATIM fragment (sentence) taken word-for-word from scene.text — do NOT rewrite, summarize, or paraphrase the text. Each unit must include an image.prompt describing the image frame.
 
 ## Self-Verification (REQUIRED before returning)
 Before returning your response, verify EVERY requirement below. If ANY requirement is violated, fix it before outputting:
 
 1. Every scene in the "scenes" array has non-empty "text" (verbatim from source)
 2. Every unit in every scene has "text" that is a VERBATIM substring of its parent scene.text
-3. Every unit has "visual.prompt" (a short image description, 5-15 words)
+3. Every unit has "image.prompt" (a short image description, 5-15 words)
 4. Reading all unit.text values in order reconstructs the scene — not a summary or retelling
 5. Units are split by VISUAL EVENTS, not by text length, sentences, or commas
 6. Characters array is not empty (extract real names from the text)
@@ -359,7 +358,7 @@ Before returning your response, verify EVERY requirement below. If ANY requireme
 If any check fails, correct the output before returning it. Return ONLY the final valid JSON.`;
 
     console.log(`[AI-SERVICE] System prompt: ${systemPrompt.length} chars, User prompt: ${userPrompt.length} chars, Total: ${(systemPrompt.length + userPrompt.length)} chars`);
-    console.log(`[AI-SERVICE] Examples included: ${examplesBlock.includes('scene.text')}, ${examplesBlock.includes('unit.text')}, ${examplesBlock.includes('visual.prompt')}`);
+    console.log(`[AI-SERVICE] Examples included: ${examplesBlock.includes('scene.text')}, ${examplesBlock.includes('unit.text')}, ${examplesBlock.includes('image.prompt')}`);
 
     let lastError = null;
     for (let attempt = 0; attempt < 3; attempt++) {
@@ -403,8 +402,8 @@ function validateAnalysis(analysis, chapterText) {
             if (!u.text || !u.text.trim()) {
                 errors.push(`Scene ${si + 1}, Unit ${ui + 1}: text is empty`);
             }
-            if (!u.visual || !u.visual.prompt || !u.visual.prompt.trim()) {
-                errors.push(`Scene ${si + 1}, Unit ${ui + 1}: visual.prompt is missing or empty`);
+            if (!u.image || !u.image.prompt || !u.image.prompt.trim()) {
+                errors.push(`Scene ${si + 1}, Unit ${ui + 1}: image.prompt is missing or empty`);
             }
             if (u.text && s.text && !s.text.includes(u.text.trim())) {
                 // Unit text matches chapter text but not scene boundaries →
