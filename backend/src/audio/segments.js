@@ -75,8 +75,29 @@ function buildSegments(runtimeEntry) {
         }));
     }
     if (runtimeEntry.runtime_type === "scene" && runtimeEntry.scene_type === "dialogue") {
-        const fullText = runtimeEntry.payload?.audio?.full_text || "";
-        const chunks = splitDialogueIntoChunks(fullText);
+        // Build TTS script from units with speaker field.
+        // units[].speaker is the character_id, units[].text is the dialogue line.
+        const units = runtimeEntry.payload?.units || [];
+        const dialogueLines = units
+            .filter(u => u.type === 'dialogue' && u.speaker && u.text)
+            .map(u => `${u.speaker}: ${u.text}`);
+
+        if (dialogueLines.length === 0) {
+            // Fallback: try parsing audio.full_text as script (for backward compat)
+            const fullText = runtimeEntry.payload?.audio?.full_text || "";
+            const chunks = splitDialogueIntoChunks(fullText);
+            if (chunks.length > 0) {
+                return chunks.map((text, i) => ({
+                    segment_id: String(i + 1).padStart(4, "0"),
+                    segment_type: "dialogue",
+                    text
+                }));
+            }
+            return [];
+        }
+
+        const script = dialogueLines.join('\n');
+        const chunks = splitDialogueIntoChunks(script);
         return chunks.map((text, i) => ({
             segment_id: String(i + 1).padStart(4, "0"),
             segment_type: "dialogue",

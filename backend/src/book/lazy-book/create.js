@@ -470,28 +470,27 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
             : undefined;
 
         // Build audio config based on scene type.
-        // For dialogue scenes: build TTS script from dialogue units with speaker IDs.
-        // The script format "speaker: text" is parsed by buildSegments() → splitDialogueIntoChunks().
-        // For narration scenes: use raw scene text with narrator voice.
-        let audioConfig;
-        if (isDialogue) {
-            const dialogueUnits = cleanUnits.filter(u => u.type === 'dialogue' && u.speaker);
-            if (dialogueUnits.length > 0) {
-                const scriptLines = dialogueUnits.map(u => `${u.speaker}: ${u.text}`);
-                audioConfig = {
-                    voice: 'dialogue',
-                    full_text: scriptLines.join('\n'),
-                };
-                if (dialogueUnits.length < cleanUnits.filter(u => u.type === 'dialogue').length) {
-                    console.warn(`[LAZY-BOOK] Scene "${aiScene.title}": ${cleanUnits.filter(u => u.type === 'dialogue').length - dialogueUnits.length} dialogue units missing speaker — skipped from TTS script`);
-                }
-            } else {
-                console.warn(`[LAZY-BOOK] Scene "${aiScene.title}" marked as dialogue but has no units with speaker — falling back to narrator voice`);
-                audioConfig = {
-                    voice: 'narrator',
-                    full_text: sceneText,
-                };
+        // For dialogue scenes: voice='dialogue', full_text=original literary text (with —).
+        // The TTS script (speaker:text) is built at generation time by buildSegments()
+        // from units that have type='dialogue' and speaker field.
+        // For narration scenes: voice='narrator', full_text=raw scene text.
+        const hasDialogueWithSpeaker = isDialogue && cleanUnits.some(u => u.type === 'dialogue' && u.speaker);
+        if (hasDialogueWithSpeaker) {
+            audioConfig = {
+                voice: 'dialogue',
+                full_text: sceneText,
+            };
+            const dialogueCount = cleanUnits.filter(u => u.type === 'dialogue').length;
+            const withSpeakerCount = cleanUnits.filter(u => u.type === 'dialogue' && u.speaker).length;
+            if (withSpeakerCount < dialogueCount) {
+                console.warn(`[LAZY-BOOK] Scene "${aiScene.title}": ${dialogueCount - withSpeakerCount}/${dialogueCount} dialogue units missing speaker`);
             }
+        } else if (isDialogue) {
+            console.warn(`[LAZY-BOOK] Scene "${aiScene.title}" marked as dialogue but has no units with speaker — falling back to narrator voice`);
+            audioConfig = {
+                voice: 'narrator',
+                full_text: sceneText,
+            };
         } else {
             audioConfig = {
                 voice: 'narrator',
