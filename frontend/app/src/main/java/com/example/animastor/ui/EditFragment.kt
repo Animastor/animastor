@@ -608,11 +608,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
             val frame = binding?.contentFrame ?: return
             frame.removeAllViews()
             when (tab) {
-                0 -> {
-                    val ch = chapters.getOrNull(currentChIndex)
-                    if (ch != null) buildChapterTitleField(frame, ch)
-                    buildSceneFields(frame)
-                }
+                0 -> buildSceneFields(frame)
                 1 -> buildFields(frame, listOf("voice", "full_text"))
                 2 -> buildUnitFields(frame)
             }
@@ -701,21 +697,20 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
     private fun buildSceneFields(parent: ViewGroup) {
         val ctx = parent.context
         val sc = currentScene() ?: return
+        val ch = chapters.getOrNull(currentChIndex)
         val ll = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(0, 0, 0, 8)
         }
 
-        // ID section — chapter id + scene id, read-only
-        val idSectionLabel = TextView(ctx).apply {
-            text = getString(R.string.edit_section_id)
-            textSize = 14f
-            setPadding(0, 0, 0, 4)
+        // JSON order: chapter → chapter_title → scene_id → ...
+        ll.addView(readOnlyCard(ctx, "chapter", ch?.chapter ?: "—"))
+        if (ch != null) {
+            val chTitleKey = "chapter_title"
+            if (!fieldValues.containsKey(chTitleKey)) fieldValues[chTitleKey] = ch.chapter_title ?: ""
+            ll.addView(inputCard(ctx, chTitleKey, fieldValues[chTitleKey] ?: "", false))
         }
-        ll.addView(idSectionLabel)
-        val ch = chapters.getOrNull(currentChIndex)
-        ll.addView(idReadOnlyCard(ctx, "chapter", ch?.chapter ?: "—"))
-        ll.addView(idReadOnlyCard(ctx, "scene_id", sc.scene_id ?: "—"))
+        ll.addView(readOnlyCard(ctx, "scene_id", sc.scene_id ?: "—"))
 
         // Editable scene fields
         val editableKeys = listOf("scene_title", "type", "style", "location.id", "env.time", "env.lighting", "env.weather", "env.mood", "env.atmosphere", "participants")
@@ -742,14 +737,6 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
             ll.addView(inputCard(ctx, key, fieldValues[key] ?: v, (fieldValues[key]?.length ?: 0) > 80))
         }
         parent.addView(ll)
-    }
-
-    private fun buildChapterTitleField(parent: ViewGroup, ch: Chapter) {
-        val ctx = parent.context
-        val label = "chapter_title"
-        if (!fieldValues.containsKey(label)) fieldValues[label] = ch.chapter_title ?: ""
-        val card = inputCard(ctx, label, fieldValues[label] ?: "", false)
-        parent.addView(card)
     }
 
     private fun readField(sc: Scene, key: String): String {
@@ -800,35 +787,6 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         binding?.errorText?.apply {
             text = message
             visibility = View.VISIBLE
-        }
-    }
-
-    /** ID read-only card with explicit label — always visible, no floating hint. */
-    private fun idReadOnlyCard(ctx: Context, label: String, value: String): View {
-        val ll = LinearLayout(ctx).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(16, 12, 16, 12)
-        }
-        val labelTv = TextView(ctx).apply {
-            text = label
-            textSize = 12f
-            setTextColor(MaterialColors.getColor(ctx, com.google.android.material.R.attr.colorOnSurfaceVariant, 0))
-        }
-        ll.addView(labelTv)
-        val valueTv = TextView(ctx).apply {
-            text = value
-            textSize = 14f
-            setTextIsSelectable(true)
-        }
-        ll.addView(valueTv)
-        return MaterialCardView(ctx).apply {
-            layoutParams = ViewGroup.MarginLayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            ).also { it.setMargins(0, 0, 0, 8) }
-            radius = 12f
-            cardElevation = 2f
-            addView(ll)
         }
     }
 
