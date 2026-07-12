@@ -867,7 +867,6 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
     private fun applyFieldValues(scene: Scene, values: Map<String, String>): Scene {
         val s = values
         var modified = scene
-        s["scene_id"]?.let { modified = modified.copy(scene_id = it.ifEmpty { null }) }
         s["scene_title"]?.let { modified = modified.copy(scene_title = it.ifEmpty { null }) }
         s["type"]?.let { modified = modified.copy(type = it.ifEmpty { null }) }
         s["style"]?.let { modified = modified.copy(style = it.ifEmpty { null }) }
@@ -919,8 +918,6 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
             val modifiedUnits = sceneUnits.toMutableList()
             val u = sceneUnits[pos.unitIndex]
             var mu = u
-            if (s.containsKey("id")) mu = mu.copy(id = s["id"]?.ifEmpty { null })
-            if (s.containsKey("type")) mu = mu.copy(type = s["type"]?.ifEmpty { null })
             if (s.containsKey("text")) mu = mu.copy(text = s["text"]?.ifEmpty { null })
             // Audio section
             if (s.containsKey("audio.speaker") || s.containsKey("audio.text")) {
