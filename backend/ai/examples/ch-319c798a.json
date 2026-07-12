@@ -16,12 +16,6 @@
           "id": "iu-6de2005f",
           "type": "typography",
           "text": "Глава первая. Патриаршие пруды.",
-          "visual": {
-            "prompt": "full frame soviet literary title page, vertical composition, slightly aged paper texture, minimalist book design, elegant centered cyrillic typography, quiet literary atmosphere, centered chapter title in russian: \"Глава первая. Патриаршие пруды\"",
-            "quality": "sharp typography, clean composition, detailed paper texture",
-            "text_render": true,
-            "negative": ""
-          },
           "image": {
             "prompt": "full frame soviet literary title page, vertical composition, slightly aged paper texture, minimalist book design, elegant centered cyrillic typography, quiet literary atmosphere",
             "quality": "sharp typography, clean composition, detailed paper texture"
@@ -68,11 +62,6 @@
           "id": "iu-27550fca",
           "type": "perception",
           "text": "Был жаркий весенний вечер в Москве.",
-          "visual": {
-            "shot": "wide",
-            "prompt": "berlioz sitting on the left, bezdomny sitting on the right, warm golden sunset",
-            "negative": ""
-          },
           "audio": {
             "text": "Был жаркий весенний вечер в Москве."
           },
@@ -88,11 +77,6 @@
           "id": "iu-f353a633",
           "type": "perception",
           "text": "Воздух стоял неподвижно, наполненный золотым светом заходящего солнца.",
-          "visual": {
-            "shot": "environment",
-            "prompt": "berlioz sitting on the left, bezdomny sitting on the right, still glowing air and sunlight",
-            "negative": ""
-          },
           "audio": {
             "text": "Воздух стоял неподвижно, наполненный золотым светом заходящего солнца."
           },
@@ -108,12 +92,6 @@
           "id": "iu-38d6e6ea",
           "type": "perception",
           "text": "На Патриарших прудах на скамейке сидели двое: редактор Берлиоз и поэт Иван Бездомный.",
-          "visual": {
-            "shot": "medium",
-            "character_binding": true,
-            "prompt": "berlioz sitting on the left, bezdomny sitting on the right",
-            "negative": ""
-          },
           "audio": {
             "text": "На Патриарших прудах на скамейке сидели двое: редактор Берлиоз и поэт Иван Бездомный."
           },
@@ -130,12 +108,6 @@
           "id": "iu-f1e661d6",
           "type": "perception",
           "text": "Они вели разговор о религии, негромко, но с заметной убеждённостью.",
-          "visual": {
-            "shot": "medium_close",
-            "character_binding": true,
-            "prompt": "berlioz sitting on the left, bezdomny sitting on the right, calm conversation of berlioz and bezdomny",
-            "negative": ""
-          },
           "audio": {
             "text": "Они вели разговор о религии, негромко, но с заметной убеждённостью."
           },
@@ -191,10 +163,6 @@
           "id": "iu-a74f9f09",
           "type": "perception",
           "text": "Разговор становился всё более напряжённым.",
-          "visual": {
-            "prompt": "berlioz on the left, bezdomny on the right, woland on the background, tension rising between berlioz and bezdomny",
-            "negative": ""
-          },
           "audio": {
             "text": "Разговор становился всё более напряжённым."
           },
@@ -209,11 +177,6 @@
           "id": "iu-4c804090",
           "type": "perception",
           "text": "Бездомный говорил с жаром, а Берлиоз отвечал спокойно и уверенно.",
-          "visual": {
-            "character_binding": true,
-            "prompt": "berlioz on the left, bezdomny on the right, woland on the background, contrast between emotional bezdomny and calm berlioz",
-            "negative": ""
-          },
           "audio": {
             "text": "Бездомный говорил с жаром, а Берлиоз отвечал спокойно и уверенно."
           },
@@ -229,10 +192,6 @@
           "id": "iu-009bd7b9",
           "type": "perception",
           "text": "Солнце уже клонилось к закату, и в воздухе появилась странная прохлада.",
-          "visual": {
-            "prompt": "berlioz on the left, bezdomny on the right, woland on the background, sun lowering, cooler tones emerging",
-            "negative": ""
-          },
           "audio": {
             "text": "Солнце уже клонилось к закату, и в воздухе появилась странная прохлада."
           },
@@ -247,11 +206,6 @@
           "id": "iu-8e4de386",
           "type": "perception",
           "text": "В это время неподалёку возник третий человек.",
-          "visual": {
-            "character_binding": true,
-            "prompt": "berlioz on the left, bezdomny on the right, woland on the background, distant mysterious figure of woland",
-            "negative": ""
-          },
           "audio": {
             "text": "В это время неподалёку возник третий человек."
           },
@@ -300,10 +254,6 @@
           "id": "iu-67a1e2b5",
           "type": "transition",
           "text": "Спокойный разговор окончательно перешёл в спор.",
-          "visual": {
-            "prompt": "berlioz on the left, bezdomny on the right, clear emotional transition from calm conversation to conflict between berlioz and bezdomny",
-            "negative": ""
-          },
           "audio": {
             "text": "Спокойный разговор окончательно перешёл в спор."
           },
@@ -356,12 +306,6 @@
           "type": "dialogue",
           "speaker": "bezdomny",
           "text": "Но ведь Иисуса не существовало!",
-          "visual": {
-            "shot": "close",
-            "character_binding": true,
-            "prompt": "close-up of bezdomny right sitting, speaking to berlioz, woland, bezdomny leaning forward emotionally",
-            "negative": ""
-          },
           "audio": {
             "speaker": "bezdomny",
             "text": "Но ведь Иисуса не существовало!"
@@ -380,12 +324,6 @@
           "type": "dialogue",
           "speaker": "berlioz",
           "text": "Вы повторяете распространённое заблуждение.",
-          "visual": {
-            "shot": "close",
-            "character_binding": true,
-            "prompt": "close-up of berlioz left sitting, speaking to bezdomny, woland, calm response of berlioz",
-            "negative": ""
-          },
           "audio": {
             "speaker": "berlioz",
             "text": "Вы повторяете распространённое заблуждение."
@@ -404,12 +342,6 @@
           "type": "dialogue",
           "speaker": "bezdomny",
           "text": "Это не заблуждение, а очевидный факт!",
-          "visual": {
-            "shot": "close",
-            "character_binding": true,
-            "prompt": "close-up of bezdomny right sitting, speaking to berlioz, woland, intensified agitation of bezdomny",
-            "negative": ""
-          },
           "audio": {
             "speaker": "bezdomny",
             "text": "Это не заблуждение, а очевидный факт!"
@@ -428,12 +360,6 @@
           "type": "dialogue",
           "speaker": "berlioz",
           "text": "Факты требуют доказательств, Иван.",
-          "visual": {
-            "shot": "close",
-            "character_binding": true,
-            "prompt": "close-up of berlioz left sitting, speaking to bezdomny, woland, controlled intellectual tone of berlioz",
-            "negative": ""
-          },
           "audio": {
             "speaker": "berlioz",
             "text": "Факты требуют доказательств, Иван."
@@ -452,12 +378,6 @@
           "type": "dialogue",
           "speaker": "bezdomny",
           "text": "Да какие ещё доказательства нужны?",
-          "visual": {
-            "shot": "close",
-            "character_binding": true,
-            "prompt": "close-up of bezdomny right sitting, speaking to berlioz, woland, frustration rising in bezdomny",
-            "negative": ""
-          },
           "audio": {
             "speaker": "bezdomny",
             "text": "Да какие ещё доказательства нужны?"
@@ -476,12 +396,6 @@
           "type": "dialogue",
           "speaker": "berlioz",
           "text": "История — сложная наука. Нельзя делать выводы сгоряча.",
-          "visual": {
-            "shot": "close",
-            "character_binding": true,
-            "prompt": "close-up of berlioz left sitting, speaking to bezdomny, woland, final calm statement of berlioz while woland watches from background",
-            "negative": ""
-          },
           "audio": {
             "speaker": "berlioz",
             "text": "История — сложная наука. Нельзя делать выводы сгоряча."
