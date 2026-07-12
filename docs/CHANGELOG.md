@@ -6,6 +6,27 @@ All notable changes to Animastor are documented here.
 
 ## [Unreleased] — 2026-07-12
 
+### Fixed
+
+- **Гибридные сцены (narration + dialogue в одной scene) — narration юниты больше не игнорируются**
+  (`backend/src/audio/segments.js`):
+  - **Проблема:** `buildSegments()` для dialogue-сцен фильтровал только `type === 'dialogue'` юниты.
+    Если AI создавал гибридную сцену с narration + dialogue юнитами (например, пейзажное описание,
+    затем диалог), narration юниты бесшумно отбрасывались. Диалог генерировался, нарратив терялся →
+    рассинхрон аудио с визуальным рядом.
+  - **Фикс:** dialogue-ветка `buildSegments()` теперь итерируется по ВСЕМ юнитам сцены в порядке
+    следования. Каждый юнит становится отдельным TTS-сегментом:
+      - `type === 'dialogue'` → `segment_type: "dialogue"` → TTS workflow с character voices
+      - `type === 'narration' | perception | description | action | transition | performance`
+        → `segment_type: "narration"` → Narrator TTS workflow (голос диктора)
+      - `type === 'typography'` → skip (не озвучивается)
+  - Паддинг коротких narration-текстов (`padShortText`) и чанкинг длинных (`splitTextIntoChunks`)
+    работают стандартно для narration-сегментов в гибридной сцене.
+  - Вся audio генерация (`generateSceneAudio()`) уже поддерживает миксы — каждый сегмент
+    проверяется по `segment.segment_type` и маршрутится на правильный TTS workflow.
+    Изменение только в `buildSegments()`, остальной пайплайн не тронут.
+  - 473/473 тестов проходят.
+
 ### Added
 
 - **Диалоговые TTS: литературный `full_text`, TTS-скрипт из `units[].speaker`**

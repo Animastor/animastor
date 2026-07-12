@@ -58,16 +58,21 @@ ComfyUI / GPU Hub:
 - Ни один AI-промпт не создаёт narrator
 
 ### `buildSegments()` — без fallback
-- Строит TTS-скрипт ТОЛЬКО из `units[].speaker`
-- Fallback удалён (нет старых vbook с другим форматом)
-- Если dialogue-сцена не имеет units со speaker → `[]` (логируется warning)
+- Строит TTS-скрипт из `units[].speaker`
+- **Гибридные сцены:** dialogue-ветка `buildSegments()` итерируется по ВСЕМ юнитам:
+  - `dialogue` юниты → `segment_type: "dialogue"` (character voice)
+  - `narration/perception/description/action/transition/performance` → `segment_type: "narration"` (narrator voice)
+  - `typography` → skip
+  - Порядок сегментов = порядок юнитов в сцене
+- Короткие narration-тексты (< 40 символов) паддятся (дублируются для минимальной длительности TTS)
+- Если сцена не имеет валидных юнитов → `[]` (логируется warning)
 
 ## Статус
 
 - [x] `speaker` добавлен в `SYSTEM_PROMPTS.units`
 - [x] `stepCreateUnits()` сохраняет `speaker` из AI
 - [x] `create.js` — литературный `full_text`, `voice='dialogue'`
-- [x] `buildSegments()` — сборка скрипта из `units[].speaker`, fallback удалён
+- [x] `buildSegments()` — hybrid: narration + dialogue юниты в одной сцене
 - [x] `stepGenerateVoices` — на позиции 3 (после characters)
 - [x] Примеры (`ai/examples/`) согласованы
 - [x] 473 теста проходят

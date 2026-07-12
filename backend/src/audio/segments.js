@@ -75,30 +75,58 @@ function buildSegments(runtimeEntry) {
         }));
     }
     if (runtimeEntry.runtime_type === "scene" && runtimeEntry.scene_type === "dialogue") {
-        // Build TTS script from units with audio.speaker field.
+        // Build TTS segments from ALL units in order, preserving interleaving.
+        //   dialogue units → dialogue TTS (character voice)
+        //   narration/perception/description/action/transition units → narration TTS (narrator voice)
+        //   typography units → skipped (chapter intro screens, no spoken audio)
         // units[].audio.speaker is the character_id, units[].audio.text is the dialogue line.
         const units = runtimeEntry.payload?.units || [];
-        const dialogueLines = units
-            .filter(u => u.type === 'dialogue')
-            .map(u => {
-                const speaker = u.audio?.speaker;
-                const text = u.audio?.text;
-                return speaker && text ? `${speaker}: ${text}` : null;
-            })
-            .filter(Boolean);
+        const segments = [];
+        let segmentIdx = 0;
 
-        if (dialogueLines.length === 0) {
-            helpers.warn('buildSegments: dialogue scene has no units with speaker — no TTS segments generated');
+        for (const unit of units) {
+            if (unit.type === 'typography') continue;
+
+            if (unit.type === 'dialogue') {
+                const speaker = unit.audio?.speaker;
+                const text = unit.audio?.text;
+                if (!speaker || !text) continue;
+
+                segmentIdx++;
+                segments.push({
+                    segment_id: String(segmentIdx).padStart(4, "0"),
+                    segment_type: "dialogue",
+                    text: `${speaker}: ${text}`,
+                });
+            } else {
+                // narration, perception, description, action, transition, performance — all read by narrator
+                const rawText = unit.text || '';
+                if (!rawText.trim()) continue;
+
+                const isPadded = rawText.length < 40;
+                const fullText = isPadded ? padShortText(rawText) : rawText;
+                if (isPadded) {
+                    helpers.log(`📐 buildSegments (hybrid): short narration text (${rawText.length} chars) → padded mode ON for "${rawText}"`);
+                }
+                const chunks = splitTextIntoChunks(fullText);
+                for (const chunk of chunks) {
+                    segmentIdx++;
+                    segments.push({
+                        segment_id: String(segmentIdx).padStart(4, "0"),
+                        segment_type: "narration",
+                        text: chunk,
+                        padded: isPadded,
+                    });
+                }
+            }
+        }
+
+        if (segments.length === 0) {
+            helpers.warn('buildSegments: dialogue scene has no valid units — no TTS segments generated');
             return [];
         }
 
-        const script = dialogueLines.join('\n');
-        const chunks = splitDialogueIntoChunks(script);
-        return chunks.map((text, i) => ({
-            segment_id: String(i + 1).padStart(4, "0"),
-            segment_type: "dialogue",
-            text
-        }));
+        return segments;
     }
     return [];
 }
