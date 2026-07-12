@@ -714,8 +714,8 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         }
         ll.addView(idSectionLabel)
         val ch = chapters.getOrNull(currentChIndex)
-        ll.addView(readOnlyCard(ctx, "chapter", ch?.chapter ?: "—"))
-        ll.addView(readOnlyCard(ctx, "scene_id", sc.scene_id ?: "—"))
+        ll.addView(idReadOnlyCard(ctx, "chapter", ch?.chapter ?: "—"))
+        ll.addView(idReadOnlyCard(ctx, "scene_id", sc.scene_id ?: "—"))
 
         // Editable scene fields
         val editableKeys = listOf("scene_title", "type", "style", "location.id", "env.time", "env.lighting", "env.weather", "env.mood", "env.atmosphere", "participants")
@@ -803,6 +803,35 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         }
     }
 
+    /** ID read-only card with explicit label — always visible, no floating hint. */
+    private fun idReadOnlyCard(ctx: Context, label: String, value: String): View {
+        val ll = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(16, 12, 16, 12)
+        }
+        val labelTv = TextView(ctx).apply {
+            text = label
+            textSize = 12f
+            setTextColor(MaterialColors.getColor(ctx, com.google.android.material.R.attr.colorOnSurfaceVariant, 0))
+        }
+        ll.addView(labelTv)
+        val valueTv = TextView(ctx).apply {
+            text = value
+            textSize = 14f
+            setTextIsSelectable(true)
+        }
+        ll.addView(valueTv)
+        return MaterialCardView(ctx).apply {
+            layoutParams = ViewGroup.MarginLayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).also { it.setMargins(0, 0, 0, 8) }
+            radius = 12f
+            cardElevation = 2f
+            addView(ll)
+        }
+    }
+
     private fun readOnlyCard(ctx: Context, label: String, value: String): View {
         val til = TextInputLayout(ctx).apply {
             hint = label
@@ -814,8 +843,8 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
             textSize = 14f
             setPadding(12, 10, 12, 10)
             setTextIsSelectable(true)
-            keyListener = null
             isLongClickable = true
+            showSoftInputOnFocus = false
         }
         til.addView(et)
         return MaterialCardView(ctx).apply {
