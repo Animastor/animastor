@@ -794,40 +794,29 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
     }
 
     private fun readOnlyCard(ctx: Context, label: String, value: String): View {
-        val labelTv = TextView(ctx).apply {
-            text = label
-            textSize = 12f
-            setTextColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorOnSurfaceVariant))
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            )
+        val til = TextInputLayout(ctx).apply {
+            hint = label
+            isHintEnabled = true
+            boxBackgroundMode = TextInputLayout.BOX_BACKGROUND_OUTLINE
         }
-        val tv = TextView(ctx).apply {
-            text = value
+        val et = TextInputEditText(ctx).apply {
+            setText(value)
             textSize = 14f
+            setPadding(12, 10, 12, 10)
             setTextIsSelectable(true)
-            setTextColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorOnSurface))
-            layoutParams = LinearLayout.LayoutParams(
-                0,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                1f
-            )
+            isFocusable = false
+            isClickable = false
+            isLongClickable = true
         }
-        val ll = LinearLayout(ctx).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(16, 8, 16, 8)
-            addView(labelTv)
-            addView(tv)
-        }
+        til.addView(et)
         return MaterialCardView(ctx).apply {
             layoutParams = ViewGroup.MarginLayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
             ).also { it.setMargins(0, 0, 0, 8) }
             radius = 12f
-            cardElevation = 1f
-            addView(ll)
+            cardElevation = 2f
+            addView(til)
         }
     }
 
