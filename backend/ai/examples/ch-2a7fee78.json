@@ -25,6 +25,10 @@
             "quality": "highly detailed, sharp typography, clean composition",
             "text_render": true,
             "negative": ""
+          },
+          "image": {
+            "prompt": "full frame soviet book cover design, vertical composition, minimalist dark soviet aesthetic, elegant typography, cinematic mood",
+            "quality": "highly detailed, sharp typography, clean composition"
           }
         }
       ]

@@ -22,6 +22,10 @@
             "quality": "highly detailed, sharp typography, clean composition",
             "text_render": true,
             "negative": ""
+          },
+          "image": {
+            "prompt": "full frame cinematic title page, vertical composition, dark minimalist soviet literary aesthetic, elegant typography",
+            "quality": "highly detailed, sharp typography, clean composition"
           }
         }
       ]
@@ -58,6 +62,16 @@
             "lip_sync": true,
             "prompt": "close-up of author sitting, author speaking directly to camera",
             "negative": ""
+          },
+          "audio": {
+            "text": "Рукописи не горят."
+          },
+          "image": {
+            "shot": "close",
+            "prompt": "close-up of author sitting, facing camera, intimate framing"
+          },
+          "video": {
+            "action": "author speaking with subtle hand gesture, lip movement"
           }
         },
         {
@@ -67,6 +81,15 @@
           "visual": {
             "prompt": "author, dark abstract fire, symbolic burning time, surreal cinematic transition, glowing embers in darkness",
             "negative": ""
+          },
+          "audio": {
+            "text": "Но горит время — и в его огне вспыхивают странные истории."
+          },
+          "image": {
+            "prompt": "author, dark abstract fire, symbolic burning time, surreal cinematic transition, glowing embers in darkness"
+          },
+          "video": {
+            "action": "slow abstract flame movement, embers drifting upward in darkness"
           }
         },
         {
@@ -76,6 +99,15 @@
           "visual": {
             "prompt": "author, warm evening atmosphere over calm water, soft reflections, subtle cinematic realism, mysterious peaceful mood",
             "negative": ""
+          },
+          "audio": {
+            "text": "В тёплый вечер, среди спокойной воды и ленивого света, иногда появляется то, чему трудно дать имя."
+          },
+          "image": {
+            "prompt": "warm evening atmosphere over calm water, soft reflections, mysterious peaceful mood"
+          },
+          "video": {
+            "action": "gentle water ripples, soft reflections shifting on the surface"
           }
         },
         {
@@ -85,6 +117,15 @@
           "visual": {
             "prompt": "author, subtle surreal tension emerging from darkness, philosophical cinematic atmosphere, quiet unsettling mood",
             "negative": ""
+          },
+          "audio": {
+            "text": "И тогда становится ясно: мир устроен гораздо сложнее, чем кажется."
+          },
+          "image": {
+            "prompt": "subtle surreal tension emerging from darkness, philosophical cinematic atmosphere, quiet unsettling mood"
+          },
+          "video": {
+            "action": "darkness slowly deepening, subtle shadows moving, unsettling atmospheric shift"
           }
         }
       ]
