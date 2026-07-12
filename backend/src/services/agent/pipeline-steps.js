@@ -279,13 +279,26 @@ async function stepCreateUnits(sessionId, scene, sceneIndex, characters, stepInd
         const result = await aiCaller.callAI(messages, { maxTokens: 4096 });
         const units = result.units || [];
         if (units.length === 0) {
-            units.push({ text: sceneText, type: scene.type === 'dialogue' ? 'dialogue' : 'narration' });
+            const fallbackUnit = { text: sceneText, type: scene.type === 'dialogue' ? 'dialogue' : 'narration' };
+            if (fallbackUnit.type === 'dialogue') {
+                fallbackUnit.audio = { text: sceneText };
+            }
+            units.push(fallbackUnit);
+        } else {
+            // Add audio section to each dialogue unit (dual-write with text/speaker)
+            for (const u of units) {
+                if (u.type === 'dialogue' && u.speaker && u.text) {
+                    u.audio = { speaker: u.speaker, text: u.text };
+                } else if (u.type === 'dialogue' && u.text) {
+                    u.audio = { text: u.text };
+                }
+            }
         }
         // Log speaker presence for dialogue units
         const dialogueUnits = units.filter(u => u.type === 'dialogue');
-        const withSpeaker = dialogueUnits.filter(u => u.speaker);
+        const withSpeaker = dialogueUnits.filter(u => u.audio?.speaker || u.speaker);
         if (dialogueUnits.length > 0) {
-            console.log(`[AGENT] Step 4 (units scene ${sceneIndex}): ${dialogueUnits.length} dialogue units, ${withSpeaker.length} with speaker`);
+            console.log(`[AGENT] Step 4 (units scene ${sceneIndex}): ${dialogueUnits.length} dialogue units, ${withSpeaker.length} with audio.speaker`);
         }
         await aiCaller.logConversation(sessionId, step.step_id, messages, JSON.stringify(result));
         await completeStep(step.step_id, units);

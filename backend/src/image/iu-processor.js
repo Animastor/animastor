@@ -16,7 +16,7 @@ const { applyImageValue } = require('./connector-utils');
 const { collectSceneUnits } = require('./registry');
 
 async function saveIUMetadata(buildId, bookId, chapterId, sceneId, unit, sceneDuration, fullText, sceneOrder) {
-    const iuText = unit.text || '';
+    const iuText = unit.audio?.text || '';
     const proportion = fullText.length > 0 ? iuText.length / fullText.length : 0;
     const iuDuration = sceneDuration * proportion;
 

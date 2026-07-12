@@ -409,6 +409,8 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
                 id: unitId(),
                 type: u.type || 'perception',
                 text: u.text.trim(),
+                speaker: u.speaker || undefined,
+                audio: u.audio || undefined,
                 visual: u.visual || undefined,
                 source_start: u.source_start ?? undefined,
                 source_end: u.source_end ?? undefined,

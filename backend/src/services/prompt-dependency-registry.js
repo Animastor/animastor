@@ -335,8 +335,8 @@ function computeSceneDirtyLayers(oldScene, newScene) {
 
                     changedUnitIds.push(String(u.id));
 
-                    // content / text changed → audio only
-                    if (!isEqual(oldU.content, u.content) || !isEqual(oldU.text, u.text)) {
+                    // content / text / audio changed → audio only
+                    if (!isEqual(oldU.content, u.content) || !isEqual(oldU.text, u.text) || !isEqual(oldU.audio, u.audio)) {
                         unitChanges.audio = true;
                     }
 

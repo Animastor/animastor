@@ -75,12 +75,17 @@ function buildSegments(runtimeEntry) {
         }));
     }
     if (runtimeEntry.runtime_type === "scene" && runtimeEntry.scene_type === "dialogue") {
-        // Build TTS script from units with speaker field.
-        // units[].speaker is the character_id, units[].text is the dialogue line.
+        // Build TTS script from units with audio.speaker field.
+        // units[].audio.speaker is the character_id, units[].audio.text is the dialogue line.
         const units = runtimeEntry.payload?.units || [];
         const dialogueLines = units
-            .filter(u => u.type === 'dialogue' && u.speaker && u.text)
-            .map(u => `${u.speaker}: ${u.text}`);
+            .filter(u => u.type === 'dialogue')
+            .map(u => {
+                const speaker = u.audio?.speaker;
+                const text = u.audio?.text;
+                return speaker && text ? `${speaker}: ${text}` : null;
+            })
+            .filter(Boolean);
 
         if (dialogueLines.length === 0) {
             helpers.warn('buildSegments: dialogue scene has no units with speaker — no TTS segments generated');
