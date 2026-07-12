@@ -2,7 +2,7 @@
 
 > **Дата:** 2026-07-12
 > **Основание:** ChatGPT sketch + полный аудит текущей архитектуры
-> **Статус:** Phase 1 (Audio) ✅ | Phase 2 (Image) ✅ | Phase 3 (Video) ✅ | **Phase 4 (Frontend) ✅**
+> **Статус:** Phase 1 (Audio) ✅ | Phase 2 (Image) ✅ | Phase 3 (Video) ✅ | Phase 4 (Frontend) ✅ | **Phase 5 (Cleanup) ✅**
 
 ---
 
@@ -162,6 +162,7 @@ prompt-dependency-registry
 | 2026-07-12 | `32c2bc9` | **Phase 2: Image** — `unit.image` field |
 | 2026-07-12 | HEAD | **Phase 3: Video** — `unit.video` field + derived speaker |
 | 2026-07-12 | HEAD | **Phase 4: Frontend** — `AudioSection`/`ImageSection`/`VideoSection` дата-классы, EditFragment UI |
+| 2026-07-12 | HEAD | **Phase 5: Cleanup** — убраны `visual.*`, `text`, `speaker` фоллбэки; завершён dual-write `image.style`/`image.negative` |
 
 ---
 
@@ -172,14 +173,17 @@ prompt-dependency-registry
 - [x] `EditFragment.kt` — UI для модального редактирования: readUnitField/buildUnitFields/applyFieldValues
 - [x] `strings.xml` — строковые ресурсы для секций (Audio/Visual/Image/Video)
 
-### Фаза 5: Чистка legacy
-- [ ] `unit.text` → удалить (audio.text)
-- [ ] `unit.speaker` → удалить (audio.speaker)
-- [ ] `unit.visual` → удалить (image + video)
+### Фаза 5: Чистка legacy ✅
+- [x] `prompt-builder.js` — `resolveImageField()` читает только `image.*`; `resolveVisualStyle` без `visual.style`; `resolveNegativePrompt` без unit-level legacy
+- [x] `video-workflows.js` — `buildVideoPrompt()` без `visual.*` фоллбэков; `resolveNegativePrompt` без `visual.*`
+- [x] `prompt-dependency-registry.js` — убраны `oldU.text/content/visual`; `knownUnitKeys = ['id', 'type', 'audio', 'image', 'video']`
+- [x] `pipeline-steps.js` — завершён dual-write: добавлены `image.style`/`image.negative` во все проходы (stepCreateVisuals, reconciliation, polish)
+- [x] Тесты обновлены: `coreference-image.test.js`, `video-workflows.test.js`
 
 ### Фаза 6: Agent prompts
 - [ ] Обновить system prompt visuals — AI пишет image / video вместо visual
 - [ ] Обновить dryrun-visuals-iu.js
+- [ ] Обновить log/debug строки, ссылающиеся на `visual.*`
 
 ---
 

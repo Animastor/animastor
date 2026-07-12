@@ -335,8 +335,8 @@ function computeSceneDirtyLayers(oldScene, newScene) {
 
                     changedUnitIds.push(String(u.id));
 
-                    // content / text / audio changed → audio only
-                    if (!isEqual(oldU.content, u.content) || !isEqual(oldU.text, u.text) || !isEqual(oldU.audio, u.audio)) {
+                    // audio changed → audio only
+                    if (!isEqual(oldU.audio, u.audio)) {
                         unitChanges.audio = true;
                     }
 
@@ -345,8 +345,8 @@ function computeSceneDirtyLayers(oldScene, newScene) {
                         unitChanges.audio = true;
                     }
 
-                    // visual or image changed → image + video (video depends on images)
-                    if (!isEqual(oldU.visual, u.visual) || !isEqual(oldU.image, u.image)) {
+                    // image changed → image + video (video depends on images)
+                    if (!isEqual(oldU.image, u.image)) {
                         unitChanges.image = true;
                         unitChanges.video = true;
                     }
@@ -357,7 +357,7 @@ function computeSceneDirtyLayers(oldScene, newScene) {
                     }
 
                     // Unknown fields — conservative, mark all layers
-                    const knownUnitKeys = new Set(['id', 'type', 'content', 'text', 'visual', 'audio', 'image', 'video']);
+                    const knownUnitKeys = new Set(['id', 'type', 'audio', 'image', 'video']);
                     for (const key of Object.keys(u)) {
                         if (knownUnitKeys.has(key)) continue;
                         if (!isEqual(oldU[key], u[key])) {

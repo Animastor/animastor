@@ -326,7 +326,7 @@ describe('Coreference — buildImagePrompt passport injection', () => {
     it('injects character passports for participants', () => {
         const unit = {
             type: 'narration',
-            visual: { prompt: 'berlioz and bezdomny walking by the pond' },
+            image: { prompt: 'berlioz and bezdomny walking by the pond' },
         };
         const scene = {
             participants: ['berlioz', 'bezdomny'],
@@ -343,7 +343,7 @@ describe('Coreference — buildImagePrompt passport injection', () => {
     it('does NOT inject passports when scene.participants is empty', () => {
         const unit = {
             type: 'narration',
-            visual: { prompt: 'berlioz and bezdomny walking' },
+            image: { prompt: 'berlioz and bezdomny walking' },
         };
         const scene = {
             participants: [],
@@ -358,7 +358,7 @@ describe('Coreference — buildImagePrompt passport injection', () => {
     it('includes direct prompt text', () => {
         const unit = {
             type: 'narration',
-            visual: { prompt: 'golden sunset cinematic wide shot' },
+            image: { prompt: 'golden sunset cinematic wide shot' },
         };
         const scene = {
             participants: [],
@@ -372,7 +372,7 @@ describe('Coreference — buildImagePrompt passport injection', () => {
     it('handles typography IU type without character passports', () => {
         const unit = {
             type: 'typography',
-            visual: { prompt: 'Chapter 1' },
+            image: { prompt: 'Chapter 1' },
         };
         const scene = { participants: [] };
 
@@ -395,7 +395,7 @@ describe('Coreference — visual helpers', () => {
     });
 
     it('resolves visual style with correct priority', () => {
-        const iu = { visual: { style: 'iu_style' } };
+        const iu = { image: { style: 'iu_style' } };
         const scene = { visual: { style: 'scene_style' }, style: 'root_style' };
         expect(resolveVisualStyle(iu, scene, {})).to.equal('iu_style');
     });

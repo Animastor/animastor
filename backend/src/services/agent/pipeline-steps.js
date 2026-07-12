@@ -457,6 +457,8 @@ async function stepReconcilePassports(sessionId, allVisualUnits, characters, ste
                     image: {
                         shot: rec.visual.shot || original.image?.shot || original.visual?.shot,
                         prompt: mergedPrompt,
+                        style: rec.visual?.style || original.image?.style || original.visual?.style,
+                        negative: rec.visual?.negative || original.image?.negative || original.visual?.negative,
                     },
                     video: {
                         action: mergedPrompt,
@@ -546,6 +548,8 @@ async function stepPolishStoryboard(sessionId, allVisualUnits, characters, locat
                     image: {
                         shot: polished.visual.shot || original.image?.shot || original.visual?.shot,
                         prompt: mergedPrompt,
+                        style: polished.visual?.style || original.image?.style || original.visual?.style,
+                        negative: polished.visual?.negative || original.image?.negative || original.visual?.negative,
                     },
                     video: {
                         action: mergedPrompt,
@@ -717,6 +721,8 @@ async function stepCreateVisuals(sessionId, scene, units, sceneIndex, characters
                 result.image = {
                     shot: vu.visual.shot || (u.type === 'dialogue' ? 'medium' : 'wide'),
                     prompt,
+                    style: vu.visual?.style,
+                    negative: vu.visual?.negative,
                 };
                 result.video = {
                     action: prompt,
@@ -756,6 +762,10 @@ async function stepCreateVisuals(sessionId, scene, units, sceneIndex, characters
                     shot: u.type === 'dialogue' ? 'medium' : 'wide',
                     prompt: fallbackPrompt,
                     character_binding: true,
+                },
+                image: {
+                    shot: u.type === 'dialogue' ? 'medium' : 'wide',
+                    prompt: fallbackPrompt,
                 },
                 video: {
                     action: fallbackPrompt,

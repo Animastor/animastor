@@ -127,7 +127,7 @@ function buildCharacters(scenePayload, unit, chapter, book) {
 }
 
 function resolveImageField(unit, field) {
-    return unit?.image?.[field] ?? unit?.visual?.[field];
+    return unit?.image?.[field];
 }
 
 function buildShotPrompt(unit) {
@@ -140,8 +140,6 @@ function buildShotPrompt(unit) {
 
 function resolveNegativePrompt(unit, scenePayload) {
     return resolveImageField(unit, 'negative')
-        || unit?.negative
-        || unit?.negative_prompt
         || scenePayload?.negative
         || scenePayload?.visual?.negative
         || scenePayload?.negative_prompt
@@ -153,7 +151,7 @@ function resolveNegativePrompt(unit, scenePayload) {
  * Resolve visual style for a narrative IU.
  */
 function resolveVisualStyle(iuPayload, scenePayload, bookPayload) {
-    if (iuPayload?.image?.style || iuPayload?.visual?.style) return iuPayload.image?.style || iuPayload.visual.style;
+    if (iuPayload?.image?.style) return iuPayload.image.style;
     if (scenePayload?.visual?.style) return scenePayload.visual.style;
     if (scenePayload?.style && !helpers.isTypographyStyle(scenePayload.style)) return scenePayload.style;
     const renderStyle = bookPayload?.bible?.render_rules?.style;

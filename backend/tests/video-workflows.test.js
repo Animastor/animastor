@@ -141,12 +141,12 @@ describe('buildVideoPrompt', () => {
     const units = [
         {
             id: 'u1',
-            visual: { shot: 'wide', prompt: 'Hero stands at the gate' },
+            image: { shot: 'wide', prompt: 'Hero stands at the gate' },
             participants: ['char_hero']
         },
         {
             id: 'u2',
-            visual: { shot: 'medium', prompt: 'Sidekick approaches from behind' },
+            image: { shot: 'medium', prompt: 'Sidekick approaches from behind' },
             participants: ['char_hero', 'char_sidekick']
         }
     ];
@@ -190,7 +190,7 @@ describe('buildVideoPrompt', () => {
         expect(prompt).not.to.include('Hero:');
     });
 
-    it('uses visual.prompt as the IU visual text', () => {
+    it('uses image.prompt as the IU visual text', () => {
         const prompt = wf.buildVideoPrompt(sceneData, loadedBook, units, [3, 4]);
         expect(prompt).to.include('Hero stands at the gate');
         expect(prompt).to.include('Sidekick approaches from behind');
@@ -202,8 +202,8 @@ describe('buildVideoNegativePrompt', () => {
         const result = wf.buildVideoNegativePrompt(
             { scene: { visual: {} } },
             [
-                { id: 'iu-a8d4f90c', visual: { negative: 'extra fingers' } },
-                { id: 'iu-6ab2e1e0', visual: { negative: 'warped face' } }
+                { id: 'iu-a8d4f90c', image: { negative: 'extra fingers' } },
+                { id: 'iu-6ab2e1e0', image: { negative: 'warped face' } }
             ]
         );
 

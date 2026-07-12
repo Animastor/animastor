@@ -95,10 +95,10 @@ function buildVideoPrompt(sceneData, loadedBook, units, iuDurations) {
 
         const descParts = [];
 
-        // Prefer image section, fallback to visual (legacy)
-        const shot = unit.image?.shot || unit.visual?.shot;
-        const prompt = unit.image?.prompt || unit.visual?.prompt;
-        // Video-specific action (temporal change) — prefer video.action, fallback to prompt
+        // Image section (canonical) — shot, prompt from image section
+        const shot = unit.image?.shot;
+        const prompt = unit.image?.prompt;
+        // Video-specific action (temporal change) — prefer video.action, fallback to image prompt
         const action = unit.video?.action || prompt;
 
         if (shot) {
@@ -142,10 +142,9 @@ function buildVideoPrompt(sceneData, loadedBook, units, iuDurations) {
 }
 
 function resolveNegativePrompt(unit, scene) {
-    return unit?.visual?.negative
+    return unit?.image?.negative
         || unit?.negative
         || unit?.negative_prompt
-        || unit?.visual?.negative_prompt
         || scene?.negative
         || scene?.visual?.negative
         || scene?.negative_prompt
