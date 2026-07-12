@@ -804,8 +804,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
             textSize = 14f
             setPadding(12, 10, 12, 10)
             setTextIsSelectable(true)
-            isFocusable = false
-            isClickable = false
+            keyListener = null
             isLongClickable = true
         }
         til.addView(et)
