@@ -4,7 +4,28 @@ All notable changes to Animastor are documented here.
 
 ---
 
-## [Unreleased] — 2026-07-11
+## [Unreleased] — 2026-07-12
+
+### Added
+
+- **Выделенный AI-шаг генерации голосов персонажей** (`backend/src/services/agent-prompts.js`,
+  `backend/src/services/agent/pipeline-steps.js`, `backend/src/services/agent/pipeline-runner.js`):
+  - Добавлен `stepGenerateVoices()` — отдельный шаг в AI pipeline, вызываемый после character extraction
+    и перед scene creation.
+  - Новый системный промпт `voice_generation` с цепочкой приоритетов: explicit voice description →
+    inference из appearance (возраст, пол, телосложение, конституция) → role/traits → default profile.
+  - Голоса генерируются ТОЛЬКО для персонажей, у которых есть диалоговые реплики в тексте.
+  - Narrator добавляется программно (не AI), стандартный шаблонный профиль.
+  - В последующих окнах (subsequent windows) голоса НЕ перезаписываются — voice drift исключён.
+  - При failure шага голоса не теряются (keep existing).
+  - Все 473 теста проходят.
+
+### Changed
+
+- **Character extraction промпт очищен от voice-логики** (`backend/src/services/agent-prompts.js`):
+  - Удалено поле `voice` из character extraction — это был dead code, так как voice уже перезаписывался
+    отдельным шагом. Теперь character extraction отвечает только за: id, name, role, description, appearance, traits.
+  - Single responsibility: character extraction → извлечение персонажей; voice generation → создание голосов.
 
 ### Fixed
 

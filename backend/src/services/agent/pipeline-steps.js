@@ -292,6 +292,82 @@ async function stepCreateUnits(sessionId, scene, sceneIndex, characters, stepInd
     }
 }
 
+async function stepGenerateVoices(sessionId, text, characters, stepIndex, progress) {
+    const _progress = progress || (() => {});
+    _progress({ stage: 'voice_generation', message: PROGRESS_STAGES.voice_generation });
+    await updateSession(sessionId, { progress_msg: PROGRESS_STAGES.voice_generation });
+
+    const viableChars = (characters || []).filter(c => c.id && c.name);
+    if (viableChars.length === 0) {
+        console.log('[AGENT] Step voice_generation: skipped — no characters to generate voices for');
+        return { voices: {} };
+    }
+
+    // Check if all characters already have meaningful voice descriptions (more than just defaults)
+    // We consider a voice "meaningful" if it's longer than ~30 chars and not a generic fallback.
+    const charsWithoutVoice = viableChars.filter(c => {
+        const v = c.voice || '';
+        // Consider a voice missing if: empty, very short, or matches known generic patterns
+        return !v || v.length < 20 || /character voice|natural intonation|matching/i.test(v);
+    });
+
+    if (charsWithoutVoice.length === 0 && viableChars.every(c => c.voice && c.voice.length >= 30)) {
+        console.log('[AGENT] Step voice_generation: skipped — all characters already have meaningful voice descriptions');
+        return { voices: {} };
+    }
+
+    const step = await createStep(sessionId, 'generate_voices', stepIndex || 0);
+
+    const charsContext = viableChars.map(c =>
+        `- ${c.id}: ${c.name}\n` +
+        `  role: ${c.role || 'unknown'}\n` +
+        `  description: ${(c.description || '').substring(0, 300)}\n` +
+        `  appearance: ${(c.appearance || c.passport?.base_appearance || c.passport?.detailed_appearance || '').substring(0, 400)}\n` +
+        `  traits: ${(c.traits || []).slice(0, 5).join(', ') || 'none'}\n` +
+        `  current_voice: ${c.voice || '(none)'}`
+    ).join('\n');
+
+    // Use full text (up to 8000 chars) for dialogue analysis
+    const truncatedText = (text || '').length > 8000
+        ? (text || '').substring(0, 8000) + '...'
+        : (text || '');
+
+    const prompt = SYSTEM_PROMPTS.voice_generation
+        .replace('%CHARACTERS%', charsContext)
+        .replace('%TEXT%', truncatedText);
+
+    const messages = [
+        { role: 'system', content: prompt },
+        { role: 'user', content: `Analyze the source text and generate voice descriptions for characters who have DIALOGUE LINES (speech). Skip characters who only appear in narration and never speak. Do NOT generate narrator voice.\n\nCharacters:\n${charsContext}\n\nSource text for analysis:\n${truncatedText}` },
+    ];
+
+    try {
+        const result = await aiCaller.callAI(messages, { maxTokens: 4096 });
+        const voices = result.voices || {};
+
+        // Update character voice fields ONLY for characters who needed them.
+        // Characters that already had good voices are NOT overwritten —
+        // this prevents voice drift across pipeline windows.
+        const updateTargets = charsWithoutVoice.length > 0
+            ? charsWithoutVoice
+            : viableChars;
+        for (const ch of updateTargets) {
+            if (voices[ch.id]?.instruction) {
+                ch.voice = voices[ch.id].instruction;
+            }
+        }
+
+        await aiCaller.logConversation(sessionId, step.step_id, messages, JSON.stringify(result));
+        await completeStep(step.step_id, { voices: Object.keys(voices).length });
+        console.log(`[AGENT] Step voice_generation: ${Object.keys(voices).length}/${viableChars.length} characters got voice descriptions`);
+        return { voices };
+    } catch (err) {
+        await failStep(step.step_id, err.message);
+        console.warn(`[AGENT] Step voice_generation FAILED: ${err.message} — keeping existing character voices`);
+        return { voices: {} };
+    }
+}
+
 async function stepReconcilePassports(sessionId, allVisualUnits, characters, stepIndex, progress) {
     const _progress = progress || (() => {});
     _progress({ stage: 'passport_reconciliation', message: PROGRESS_STAGES.passport_reconciliation });
@@ -635,4 +711,5 @@ module.exports = {
     stepCreateVisuals,
     stepPolishStoryboard,
     stepReconcilePassports,
+    stepGenerateVoices,
 };

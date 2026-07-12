@@ -194,6 +194,20 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
         console.log(`[AGENT] Characters: ${existingChars.length} existing + ${mergeResult.added} new + ${mergeResult.enriched} enriched + ${mergeResult.skippedGeneric} generic skipped = ${characters.length} total, mentions: ${Object.keys(mentions).length}`);
     }
 
+    // ── Dedicated voice generation step ──
+    // Generate rich voice descriptions for characters using the current window text
+    // for dialogue style analysis. Overrides weak/generic voices from character
+    // extraction with focused, vivid voice descriptions.
+    // In subsequent windows, skips characters that already have meaningful voices
+    // and only generates for newly discovered characters.
+    if (characters.length > 0) {
+        const voiceResult = await pipelineSteps.stepGenerateVoices(sessionId, text, characters, stepIndex, _progress);
+        if (voiceResult && voiceResult.voices) {
+            const voiced = Object.keys(voiceResult.voices).length;
+            console.log(`[AGENT] Voice generation: ${voiced} characters got voice descriptions`);
+        }
+    }
+
     publishVBook({ stage: 'extracting_chars', scene_index: 0, total_scenes: 0, window_size: MAX_SCENES_PER_CHUNK, message: PROGRESS_STAGES.extracting_chars });
 
     const newLocations = await pipelineSteps.stepExtractLocations(sessionId, text, characters, stepIndex, _progress);

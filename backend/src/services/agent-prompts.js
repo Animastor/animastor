@@ -8,6 +8,7 @@ const PROGRESS_STAGES = {
     creating_visuals:    sc => `⟳ Создаю visual prompts для сцены ${sc + 1}...`,
     polishing_storyboard: '⟳ Согласовываю визуальный ряд сториборда...',
     passport_reconciliation: '⟳ Сверяю описания с паспортами персонажей...',
+    voice_generation: '⟳ Подбираю голоса для персонажей...',
 
 };
 
@@ -140,8 +141,9 @@ For each character, provide:
 - description: 1-2 sentences about WHO this character is (role, personality, position)
 - appearance: DETAILED physical appearance — age, face, hair, eyes, build, expression, clothing style. This is CRITICAL — must be vivid visual description like an author wrote it, 2-4 sentences.
 - traits: array of 3-5 personality traits
-- voice: short description of how this character speaks (tone, pace, emotion)
 - Role: protagonist (main POV character), antagonist (opposes protagonist), supporting (significant side character), minor (briefly mentioned)
+
+Note: Voice descriptions are NOT part of this step. They are generated separately by a dedicated voice casting step.
 
 ## Output format
 \`\`\`json
@@ -153,8 +155,7 @@ For each character, provide:
       "role": "protagonist|antagonist|supporting|minor",
       "description": "Brief who-they-are description",
       "appearance": "Detailed physical appearance description. Age, face, hair, eyes, build, expression. Vivid visual description.",
-      "traits": ["trait1", "trait2", "trait3"],
-      "voice": "Short voice description — tone, pace, emotion"
+      "traits": ["trait1", "trait2", "trait3"]
     }
   ],
   "mentions": {
@@ -415,7 +416,7 @@ Return ONLY valid JSON.`,
 - A unit is ONE complete visual frame — what the viewer sees in ONE shot
 - Defined by a VISUAL EVENT, not by text length
 - TWO CRITICAL RULES FOR DIALOGUE: (1) Every character speech turn (each line starting with "—" or a character name) MUST be its OWN separate dialogue unit. (2) A narrative/description paragraph between dialogue lines is also a separate unit. NEVER combine multiple character speech turns into one unit.
-- Example of CORRECT splitting: a scene like "— Дайте нарзану, — попросил Берлиоз.\n\n— Нарзану нету, — ответила женщина.\n\n— Пиво есть? — осведомился Бездомный." MUST produce THREE separate dialogue units, one per speech turn.
+- Example of CORRECT splitting: a scene like "— Дайте нарзану, — попросил Берлиоз.\\n\\n— Нарзану нету, — ответила женщина.\\n\\n— Пиво есть? — осведомился Бездомный." MUST produce THREE separate dialogue units, one per speech turn.
 - unit.text MUST be a VERBATIM substring of the scene text
 - If you read all unit.text values in sequence, you should reconstruct the scene
 - For long narration paragraphs without dialogue, prefer FEWER complete visual frames over many fragments
@@ -607,6 +608,68 @@ Consider ALL the following Visual Units as sequential keyframes of ONE film (a s
 }
 \`\`\`Return ONLY valid JSON. Do NOT add or remove units. Return exactly the same number of units as received.
 `,
+
+    voice_generation: `You are a voice casting director. Your task is to generate voice descriptions for characters who PARTICIPATE IN DIALOGUE in the source text.
+
+## IMPORTANT — Scope
+- Generate voices ONLY for characters who actually SPEAK (have dialogue lines) in the text.
+- Characters who only appear in narration or are mentioned but never speak should NOT receive a voice profile.
+- Do NOT generate a voice for "narrator" / "narrator" — the narrator voice is added programmatically by the system.
+- Each character should receive AT MOST one voice description.
+
+## Priority chain for voice construction
+Use the following chain, from highest to lowest priority:
+
+1. EXPLICIT voice description in source text: If the text directly describes how a character speaks (e.g. "he said in a deep voice", "her shrill voice cut through"), use that as the primary source.
+
+2. Inferred from character appearance/passport: If no explicit voice description exists, infer the voice from the character's physical description (appearance). Consider:
+   - Gender and approximate age → typical voice range (e.g. young male → tenor, elderly female → lower, weathered)
+   - Body build and constitution: large/ broad-shouldered → fuller, more resonant voice; thin/ frail → lighter, thinner voice; muscular/ athletic → energetic, firm voice
+   - Facial features: strong jaw, broad face → can suggest a more grounded voice; delicate features → can suggest a lighter quality
+   - General impression: authoritative figure → steady, commanding voice; nervous/ timid character → hesitant, softer voice
+
+3. Conservative inference from role and traits: Use the character's narrative role and personality traits to fill in remaining voice details (tone, pace, emotional quality).
+
+4. Final default profile: If nothing else is available, use a language-appropriate default voice profile that fits the character's age group and gender as described.
+
+## Characters
+%CHARACTERS%
+
+## Source text (for dialogue analysis)
+%TEXT%
+
+## Instructions
+- For each character identified as a dialogue participant, write a voice description (1-3 sentences).
+- Focus on: tone, pitch, pace, emotion, accent, speech patterns.
+- Use the character's appearance (age, build, face, impression) as the PRIMARY basis for voice inference when no explicit voice is described.
+- Use dialogue lines from the source text to identify speech patterns, vocabulary, and emotional range.
+- Voice descriptions must be in ENGLISH (they feed into an English-only TTS model).
+- For Russian texts, include "Native Russian pronunciation" in the description.
+- For English texts, include "Native English pronunciation" in the description.
+- Make each voice description DISTINCT — no two characters should sound alike.
+- Be vivid and specific. Avoid generic phrases like "A character voice", "natural intonation", or "matching the character".
+
+## Examples of good voice descriptions
+- "Deep, resonant baritone, slow and deliberate like flowing honey. Slightly sarcastic edge in dialogue. Native Russian pronunciation."
+- "High-pitched and nervous, words tumbling out in a rush. Often trails off at the end of sentences. Native English pronunciation."
+- "Warm, motherly alto with a gentle, reassuring tone. Speaks softly but with quiet authority. Native Russian pronunciation."
+- "Sharp, clipped, impatient. Every word precise and cutting. Professional demeanor, slightly condescending. Native English pronunciation."
+
+## Output format
+\`\`\`json
+{
+  "voices": {
+    "character_id_1": {
+      "instruction": "Voice description for character 1"
+    },
+    "character_id_2": {
+      "instruction": "Voice description for character 2"
+    }
+  }
+}
+\`\`\`
+
+Return ONLY valid JSON. Include ONLY characters who have dialogue. Do NOT include narrator.`,
 
     passport_reconciliation: `You are a Character Continuity Supervisor. Your job is to remove semantically duplicated descriptions from visual prompts before they reach the image model.
 

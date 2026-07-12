@@ -31,7 +31,8 @@
 bootstrapWithAgent():
   Шаг 0: stepAnalyzeStructure() — отдельно, до runPipeline()
   runPipeline():
-    Шаг 1: stepExtractCharacters()  — персонажи
+    Шаг 1: stepExtractCharacters()  — персонажи (без голосов)
+    Шаг 1b: stepGenerateVoices()    — голоса персонажей (выделенный шаг)
     Шаг 2: stepExtractLocations()   — локации
     Шаг 3: stepCreateScenes()       — сцены (до 3, из буфера 1500 символов)
     stepEnrichScenes()              — обогащение сцен (title, location, env)
@@ -39,9 +40,7 @@ bootstrapWithAgent():
     Шаг 5: stepCreateVisuals()      — промпты, per-scene
 ```
 
-**Важно:** `runPipeline()` состоит из 5 шагов + enrichment. Шаг 0 (`analyze_structure`)
-выполняется отдельно до `runPipeline()` — он извлекает автора, название и главы
-из первых ~80 строк текста.
+**Важно:** `runPipeline()` состоит из 5 шагов + enrichment + voice generation.
 
 **Удалено из пайплайна:**
 - `stepResolveCoreferences` — coreference-резолюция удалена из пайплайна (июль 2026)
@@ -65,13 +64,13 @@ bootstrapWithAgent():
 
 ### Шаг 1: Extract Characters
 
-**Назначение:** Извлечение всех именованных персонажей с описаниями, внешностью, чертами характера, голосом.
+**Назначение:** Извлечение всех именованных персонажей с описаниями, внешностью и чертами характера.
 
-**Зона ответственности:** Распознавание и характеристика персонажей.
+**Зона ответственности:** Распознавание и характеристика персонажей. Голоса НЕ являются частью этого шага — они генерируются отдельным выделенным шагом `stepGenerateVoices()`.
 
 **Инструменты:** `aiService.callAI()` с system prompt `SYSTEM_PROMPTS.characters` (требует appearance на английском для LTX).
 
-**Формат выхода:** `{ characters: [{ id, name, description, appearance, traits, voice }] }`
+**Формат выхода:** `{ characters: [{ id, name, description, appearance, traits }] }`
 
 ### Шаг 2: Extract Locations
 
