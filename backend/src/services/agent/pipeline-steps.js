@@ -450,7 +450,14 @@ async function stepReconcilePassports(sessionId, allVisualUnits, characters, ste
                     shot: rec.visual.shot || original.visual.shot,
                     prompt: rec.visual.prompt || original.visual.prompt,
                 };
-                return { ...original, visual: mergedVisual };
+                return {
+                    ...original,
+                    visual: mergedVisual,
+                    image: {
+                        shot: rec.visual.shot || original.image?.shot || original.visual?.shot,
+                        prompt: rec.visual.prompt || original.image?.prompt || original.visual?.prompt,
+                    },
+                };
             }
             return original;
         });
@@ -528,7 +535,14 @@ async function stepPolishStoryboard(sessionId, allVisualUnits, characters, locat
                     shot: polished.visual.shot || original.visual.shot,
                     prompt: polished.visual.prompt || original.visual.prompt,
                 };
-                return { ...original, visual: mergedVisual };
+                return {
+                    ...original,
+                    visual: mergedVisual,
+                    image: {
+                        shot: polished.visual.shot || original.image?.shot || original.visual?.shot,
+                        prompt: polished.visual.prompt || original.image?.prompt || original.visual?.prompt,
+                    },
+                };
             }
             return original;
         });
@@ -690,14 +704,25 @@ async function stepCreateVisuals(sessionId, scene, units, sceneIndex, characters
                 // Participants come from scene.participants (set during scene creation).
                 // Character IDs in prompt are normalized via normalizeCharacterRefs.
                 let prompt = normalizeCharacterRefs(vu.visual.prompt, characters, mentions);
-                return { ...u, visual: { ...vu.visual, prompt } };
+                const result = { ...u, visual: { ...vu.visual, prompt } };
+                // Dual-write: also set image section for the new modal format
+                result.image = {
+                    shot: vu.visual.shot || (u.type === 'dialogue' ? 'medium' : 'wide'),
+                    prompt,
+                };
+                return result;
             }
+            const fallbackPrompt = visualUtils.getFallbackVisual(u.text, characters, { ...scene, participants: scene.participants }, locDisplay);
             return {
                 ...u,
                 visual: {
                     shot: u.type === 'dialogue' ? 'medium' : (u.type === 'description' ? 'wide' : 'medium'),
-                    prompt: visualUtils.getFallbackVisual(u.text, characters, { ...scene, participants: scene.participants }, locDisplay),
+                    prompt: fallbackPrompt,
                     character_binding: true,
+                },
+                image: {
+                    shot: u.type === 'dialogue' ? 'medium' : 'wide',
+                    prompt: fallbackPrompt,
                 },
             };
         });

@@ -345,8 +345,8 @@ function computeSceneDirtyLayers(oldScene, newScene) {
                         unitChanges.audio = true;
                     }
 
-                    // visual changed → image + video (video depends on images)
-                    if (!isEqual(oldU.visual, u.visual)) {
+                    // visual or image changed → image + video (video depends on images)
+                    if (!isEqual(oldU.visual, u.visual) || !isEqual(oldU.image, u.image)) {
                         unitChanges.image = true;
                         unitChanges.video = true;
                     }

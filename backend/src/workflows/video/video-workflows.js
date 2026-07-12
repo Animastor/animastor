@@ -95,8 +95,12 @@ function buildVideoPrompt(sceneData, loadedBook, units, iuDurations) {
 
         const descParts = [];
 
-        if (unit.visual?.shot) {
-            descParts.push(`${unit.visual.shot.replace(/_/g, ' ')} shot`);
+        // Prefer image section, fallback to visual (legacy)
+        const shot = unit.image?.shot || unit.visual?.shot;
+        const prompt = unit.image?.prompt || unit.visual?.prompt;
+
+        if (shot) {
+            descParts.push(`${shot.replace(/_/g, ' ')} shot`);
         }
 
         if (i === 0) {
@@ -107,10 +111,8 @@ function buildVideoPrompt(sceneData, loadedBook, units, iuDurations) {
             if (env.mood) descParts.push(env.mood);
         }
 
-        // unit.participants removed — scene.participants are used at the top level
-
-        if (unit.visual?.prompt) {
-            descParts.push(unit.visual.prompt);
+        if (prompt) {
+            descParts.push(prompt);
         }
 
         const line = `${startSec.toFixed(1)}–${endSec.toFixed(1)}s: ${descParts.join('. ')}`;

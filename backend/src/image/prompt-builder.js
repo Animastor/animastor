@@ -126,8 +126,12 @@ function buildCharacters(scenePayload, unit, chapter, book) {
     return result;
 }
 
+function resolveImageField(unit, field) {
+    return unit?.image?.[field] ?? unit?.visual?.[field];
+}
+
 function buildShotPrompt(unit) {
-    const shot = unit?.visual?.shot;
+    const shot = resolveImageField(unit, 'shot');
     if (shot) {
         return `${shot.replace(/_/g, " ")} shot`;
     }
@@ -135,10 +139,9 @@ function buildShotPrompt(unit) {
 }
 
 function resolveNegativePrompt(unit, scenePayload) {
-    return unit?.visual?.negative
+    return resolveImageField(unit, 'negative')
         || unit?.negative
         || unit?.negative_prompt
-        || unit?.visual?.negative_prompt
         || scenePayload?.negative
         || scenePayload?.visual?.negative
         || scenePayload?.negative_prompt
@@ -150,7 +153,7 @@ function resolveNegativePrompt(unit, scenePayload) {
  * Resolve visual style for a narrative IU.
  */
 function resolveVisualStyle(iuPayload, scenePayload, bookPayload) {
-    if (iuPayload?.visual?.style) return iuPayload.visual.style;
+    if (iuPayload?.image?.style || iuPayload?.visual?.style) return iuPayload.image?.style || iuPayload.visual.style;
     if (scenePayload?.visual?.style) return scenePayload.visual.style;
     if (scenePayload?.style && !helpers.isTypographyStyle(scenePayload.style)) return scenePayload.style;
     const renderStyle = bookPayload?.bible?.render_rules?.style;
@@ -217,12 +220,12 @@ function buildImagePrompt(iuPayload, scenePayload, chapterPayload, bookPayload) 
         if (renderMode) {
             parts.push(`style ${renderMode.replace(/_/g, " ")}`);
         }
-        const directPrompt = iuPayload?.visual?.prompt;
+        const directPrompt = resolveImageField(iuPayload, 'prompt');
         if (directPrompt) {
             parts.push(directPrompt);
         }
-        if (iuPayload?.visual?.quality) {
-            parts.push(`image quality: ${iuPayload.visual.quality}`);
+        if (resolveImageField(iuPayload, 'quality')) {
+            parts.push(`image quality: ${resolveImageField(iuPayload, 'quality')}`);
         } else {
             parts.push("image quality: highly detailed, sharp typography, clean composition, professional typesetting");
         }
@@ -232,7 +235,7 @@ function buildImagePrompt(iuPayload, scenePayload, chapterPayload, bookPayload) 
     }
 
     const parts = [];
-    const directPrompt = iuPayload?.visual?.prompt;
+    const directPrompt = resolveImageField(iuPayload, 'prompt');
 
     const renderMode = resolveRenderMode(scenePayload, bookPayload);
     if (renderMode) {
@@ -282,8 +285,8 @@ function buildImagePrompt(iuPayload, scenePayload, chapterPayload, bookPayload) 
     if (env?.weather) parts.push(env.weather);
     if (env?.mood) parts.push(env.mood);
 
-    if (iuPayload?.visual?.lighting) {
-        parts.push(iuPayload.visual.lighting);
+    if (resolveImageField(iuPayload, 'lighting')) {
+        parts.push(resolveImageField(iuPayload, 'lighting'));
     } else if (scenePayload?.visual?.lighting) {
         parts.push(scenePayload.visual.lighting);
     } else if (env?.lighting) {
@@ -309,8 +312,8 @@ function buildImagePrompt(iuPayload, scenePayload, chapterPayload, bookPayload) 
         parts.push(normalized);
     }
 
-    if (iuPayload?.visual?.quality) {
-        parts.push(`image quality: ${iuPayload.visual.quality}`);
+    if (resolveImageField(iuPayload, 'quality')) {
+        parts.push(`image quality: ${resolveImageField(iuPayload, 'quality')}`);
     } else if (scenePayload?.visual?.quality) {
         parts.push(`image quality: ${scenePayload.visual.quality}`);
     } else {

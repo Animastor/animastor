@@ -2,7 +2,7 @@
 
 > **Дата:** 2026-07-12
 > **Основание:** ChatGPT sketch + полный аудит текущей архитектуры
-> **Статус:** Phase 1 (Audio) ✅ — реализовано
+> **Статус:** Phase 1 (Audio) ✅ | Phase 2 (Image) ✅
 
 ---
 
@@ -50,12 +50,15 @@ interface ImaginationUnit {
     speaker?: string;
   };
 
-  // ─── Phase 2: Image — в разработке ─────────────
+  // ─── Phase 2: Image ✅ ──────────────────────────
   image?: {
-    shot?: "wide" | "medium" | "close" | "detail";
+    shot?: "wide" | "medium" | "close" | "detail" | "environment" | "reaction";
     prompt: string;
     negative?: string;
     character_binding?: boolean;
+    style?: string;
+    lighting?: string;
+    quality?: string;
   };
 
   // ─── Phase 3: Video — запланировано ────────────
@@ -78,66 +81,66 @@ interface ImaginationUnit {
 
 ---
 
-## 3. Phase 1: Audio — реализация
+## 3. Phase 1: Audio — реализовано
 
 ### 3.1 Что сделано
 
 | Файл | Изменение |
 |---|---|
-| `backend/src/audio/segments.js` | `buildSegments()` читает только `audio.speaker` / `audio.text` — без фоллбэков |
+| `backend/src/audio/segments.js` | `buildSegments()` читает только `audio.speaker` / `audio.text` |
 | `backend/src/services/agent/pipeline-steps.js` | `stepCreateUnits()` пишет `audio: { speaker, text }` dual-write |
 | `backend/src/book/lazy-book/create.js` | Исправлен баг: `speaker` и `audio` сохраняются в JSON |
 | `backend/src/image/iu-processor.js` | Длительность IU из `audio.text` |
 | `backend/src/services/prompt-dependency-registry.js` | Отслеживает `u.audio` для dirty-детекции |
-
-### 3.2 Архитектура data flow
-
-```
-AI pipeline (stepCreateUnits)
-  → unit.audio = { speaker, text }  // dual-write
-  → create.js сохраняет audio в JSON
-  → buildSegments() читает только audio.*
-  → iu-processor берёт длительность из audio.text
-  → prompt-dependency-registry отслеживает изменения audio
-```
-
-### 3.3 Ключевые решения
-
-- **Без фоллбэков** — старых vbook-книг нет, всё в разработке
-- **Dual-write** — `unit.audio` + существующие `unit.text`/`unit.speaker` (для обратной совместимости в других подсистемах)
-- **`scene-hash.js`** — `audio` уже в хеше через generic-ветку, изменений не требуется
-- **All 473 тестов проходят**
+| `backend/src/services/agent/pipeline-runner.js` | `audio` поле через reconciliation/polish проходы |
 
 ---
 
-## 4. План миграции
+## 4. Phase 2: Image — реализовано
 
-### Фаза 0: Подготовка
-- [x] Добавить Character.video_tokens в passport (уже есть в create.js)
-- [ ] Создать IU schema version в manifest
-- [ ] Создать функцию migrateUnit() для однократной миграции
+### 4.1 Что сделано
 
-### Фаза 1: Backend data model ← (IU.AUDIO DONE)
-- [x] `audio/segments.js` — чтение из audio.*
-- [x] `pipeline-steps.js` — dual-write audio
-- [x] `create.js` — сохранение audio в JSON
-- [x] `iu-processor.js` — длительность из audio.text
-- [x] `prompt-dependency-registry.js` — dirty-детекция audio
-- [ ] `scene-hash.js` — проверено, не требуется
-- [ ] `book/index.js` — валидация новых полей
-- [ ] `lazy-book/parse.js` — парсинг IU
+| Файл | Изменение |
+|---|---|
+| `backend/src/image/prompt-builder.js` | `resolveImageField()` читает `image.*` с fallback `visual.*` |
+| `backend/src/services/agent/pipeline-steps.js` | `stepCreateVisuals()` dual-write `image: { shot, prompt }` |
+| `backend/src/services/agent/pipeline-steps.js` | Reconciliation & polish обновляют `image.prompt` |
+| `backend/src/services/agent/pipeline-runner.js` | Обратное mapping reconciliation/polish → `unit.image` |
+| `backend/src/book/lazy-book/create.js` | Сохраняет `image` поле в JSON |
+| `backend/src/workflows/video/video-workflows.js` | Читает `image.*` с fallback `visual.*` |
+| `backend/src/services/prompt-dependency-registry.js` | Отслеживает `u.image` для dirty-детекции |
 
-### Фаза 2: Image (следующий шаг)
-- [ ] `image/prompt-builder.js` — читать `image.prompt`, `image.shot`, `image.negative`
-- [ ] `workflows/video/video-workflows.js` — читать `image.prompt` + `video.action`
-- [ ] `pipeline-steps.js` — AI пишет в `image`, а не в `visual`
-- [ ] Agent prompts — обновить инструкции для AI
-- [ ] `pipeline-runner.js` — обработка image/video структуры
+### 4.2 Архитектура data flow
 
-### Фаза 3: Video
-- [ ] `video-workflows.js` — `video.action` для описания движения
-- [ ] `prompt-dependency-registry.js` — добавить `video.action`, `video.negative`
-- [ ] `dependency-graph.js` — video → только video, не image
+```
+AI pipeline (stepCreateVisuals)
+  → unit.image = { shot, prompt }     // dual-write с visual
+  → reconciliation/polish обновляют image.prompt
+  → create.js сохраняет image в JSON
+  → buildImagePrompt() читает image.* (fallback visual.*)
+  → buildVideoPrompt() читает image.* (fallback visual.*)
+  → prompt-dependency-registry отслеживает image
+```
+
+---
+
+## 5. Changelog
+
+| Date | Commit | Description |
+|---|---|---|
+| 2026-07-12 | `d5d59a4` | **Phase 1: Audio** — `unit.audio` field for dialogue TTS |
+| 2026-07-12 | HEAD | **Phase 2: Image** — `unit.image` field, dual-write with visual |
+
+---
+
+## 6. План следующих фаз
+
+### Фаза 3: Video (следующий шаг)
+- [ ] `video-workflows.js` — добавить `video.action` для описания движения
+- [ ] `pipeline-steps.js` — AI пишет `video.action` 
+- [ ] Agent prompts — обновить output format
+- [ ] `prompt-dependency-registry.js` — `video.action` dirty-детекция
+- [ ] `dependency-graph.js` — video → только video (не image)
 
 ### Фаза 4: Frontend
 - [ ] `BookModels.kt` — SceneUnit: audio/image/video поля
@@ -145,48 +148,39 @@ AI pipeline (stepCreateUnits)
 - [ ] `VisualConfigAdapter` — новый десериализатор
 
 ### Фаза 5: Чистка legacy
-- [ ] `unit.text` → удалить (перенесено в audio)
-- [ ] `unit.speaker` → удалить (перенесено в audio.speaker)
-- [ ] `unit.visual` → удалить (перенесено в image + video)
+- [ ] `unit.text` → удалить (audio.text)
+- [ ] `unit.speaker` → удалить (audio.speaker)
+- [ ] `unit.visual` → удалить (image + video)
 
 ---
 
-## 5. Ключевые файлы для изменений
+## 7. Ключевые файлы
 
 ### Backend Core:
 - `backend/src/book/index.js` — валидация IU
-- `backend/src/book/lazy-book/create.js` — создание IU ✅
-- `backend/src/book/lazy-book/parse.js` — парсинг IU
-
-### Prompt Assembly:
-- `backend/src/image/prompt-builder.js` — image.prompt
-- `backend/src/image/iu-processor.js` — audio.text для длительности ✅
-- `backend/src/workflows/video/video-workflows.js` — image.prompt + video.action
+- `backend/src/book/lazy-book/create.js` ✅
+- `backend/src/image/prompt-builder.js` ✅
+- `backend/src/image/iu-processor.js` ✅
 
 ### Agent Pipeline:
 - `backend/src/services/agent-prompts.js` — system prompts
-- `backend/src/services/agent/pipeline-steps.js` — image/video поля ✅ (audio)
-- `backend/src/services/agent/pipeline-runner.js` — обработка структуры
+- `backend/src/services/agent/pipeline-steps.js` ✅
+- `backend/src/services/agent/pipeline-runner.js` ✅
 - `backend/src/services/ai-service.js` — инструкции
 
 ### Dependencies:
-- `backend/src/services/prompt-dependency-registry.js` ✅ (audio)
+- `backend/src/services/prompt-dependency-registry.js` ✅
 - `backend/src/dependency-graph.js` — video chain
 
 ### Audio:
 - `backend/src/audio/segments.js` ✅
 
+### Video:
+- `backend/src/workflows/video/video-workflows.js` ✅
+
+### Storage:
+- `backend/src/storage/postgres/repositories/iu-repo.js`
+
 ### Frontend:
 - `frontend/.../BookModels.kt` — SceneUnit + VisualConfig
 - `frontend/.../EditFragment.kt` — редактирование
-- `frontend/.../AiAssistantFragment.kt` — отображение
-
----
-
-## 6. Риски и решения
-
-| Риск | Решение |
-|---|---|
-| AI-агент продолжит писать в `visual` | Pipeline-runner пост-обработка: `visual` → `image` + `video` |
-| Video workflow использует `visual.prompt` | После Фазы 2: `image.prompt` + `video.action` + derived speaker |
-| Character video tokens — новое понятие | Уже в passport'е в create.js через fragmentAppearanceForVideo() |
