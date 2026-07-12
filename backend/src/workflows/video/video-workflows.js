@@ -98,6 +98,8 @@ function buildVideoPrompt(sceneData, loadedBook, units, iuDurations) {
         // Prefer image section, fallback to visual (legacy)
         const shot = unit.image?.shot || unit.visual?.shot;
         const prompt = unit.image?.prompt || unit.visual?.prompt;
+        // Video-specific action (temporal change) — prefer video.action, fallback to prompt
+        const action = unit.video?.action || prompt;
 
         if (shot) {
             descParts.push(`${shot.replace(/_/g, ' ')} shot`);
@@ -111,7 +113,13 @@ function buildVideoPrompt(sceneData, loadedBook, units, iuDurations) {
             if (env.mood) descParts.push(env.mood);
         }
 
-        if (prompt) {
+        if (action) {
+            descParts.push(action);
+            // Derived active speaker: if dialogue unit has audio.speaker, add speaking behaviour
+            if (unit.type === 'dialogue' && unit.audio?.speaker) {
+                descParts.push(`${unit.audio.speaker} speaking with lip movement`);
+            }
+        } else if (prompt) {
             descParts.push(prompt);
         }
 

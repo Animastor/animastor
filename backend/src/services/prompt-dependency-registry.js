@@ -351,8 +351,13 @@ function computeSceneDirtyLayers(oldScene, newScene) {
                         unitChanges.video = true;
                     }
 
+                    // video.action changed → video only (no image regen needed)
+                    if (!isEqual(oldU.video, u.video)) {
+                        unitChanges.video = true;
+                    }
+
                     // Unknown fields — conservative, mark all layers
-                    const knownUnitKeys = new Set(['id', 'type', 'content', 'text', 'visual']);
+                    const knownUnitKeys = new Set(['id', 'type', 'content', 'text', 'visual', 'audio', 'image', 'video']);
                     for (const key of Object.keys(u)) {
                         if (knownUnitKeys.has(key)) continue;
                         if (!isEqual(oldU[key], u[key])) {

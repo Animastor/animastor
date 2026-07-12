@@ -413,6 +413,7 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
                 audio: u.audio || undefined,
                 visual: u.visual || undefined,
                 image: u.image || undefined,
+                video: u.video || undefined,
                 source_start: u.source_start ?? undefined,
                 source_end: u.source_end ?? undefined,
             }));

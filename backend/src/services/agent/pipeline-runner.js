@@ -488,11 +488,17 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
                         unit.image.prompt = rec.image.prompt;
                         if (rec.image?.shot) unit.image.shot = rec.image.shot;
                     } else if (rec.visual?.prompt && !unit.image) {
-                        // If no image section yet, create it from visual
                         unit.image = {
                             shot: rec.visual.shot || unit.visual?.shot,
                             prompt: rec.visual.prompt || unit.visual?.prompt,
                         };
+                    }
+                    // Also update video section
+                    if (rec.video?.action) {
+                        unit.video = unit.video || {};
+                        unit.video.action = rec.video.action;
+                    } else if (rec.visual?.prompt && !unit.video) {
+                        unit.video = { action: rec.visual.prompt };
                     }
                 }
             }
@@ -536,6 +542,13 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
                             shot: pu.visual.shot || unit.visual?.shot,
                             prompt: pu.visual.prompt || unit.visual?.prompt,
                         };
+                    }
+                    // Also update video section
+                    if (pu.video?.action) {
+                        unit.video = unit.video || {};
+                        unit.video.action = pu.video.action;
+                    } else if (pu.visual?.prompt && !unit.video) {
+                        unit.video = { action: pu.visual.prompt };
                     }
                 }
             }

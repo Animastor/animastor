@@ -445,17 +445,21 @@ async function stepReconcilePassports(sessionId, allVisualUnits, characters, ste
         const merged = allVisualUnits.map((original, i) => {
             const rec = reconciled.find(r => r.scene_index === original.sceneIndex && r.unit_index === original.unitIndex);
             if (rec && rec.visual?.prompt) {
+                const mergedPrompt = rec.visual.prompt || original.visual?.prompt;
                 const mergedVisual = {
                     ...original.visual,
                     shot: rec.visual.shot || original.visual.shot,
-                    prompt: rec.visual.prompt || original.visual.prompt,
+                    prompt: mergedPrompt,
                 };
                 return {
                     ...original,
                     visual: mergedVisual,
                     image: {
                         shot: rec.visual.shot || original.image?.shot || original.visual?.shot,
-                        prompt: rec.visual.prompt || original.image?.prompt || original.visual?.prompt,
+                        prompt: mergedPrompt,
+                    },
+                    video: {
+                        action: mergedPrompt,
                     },
                 };
             }
@@ -530,17 +534,21 @@ async function stepPolishStoryboard(sessionId, allVisualUnits, characters, locat
         const merged = allVisualUnits.map((original, i) => {
             const polished = polishedUnits.find(p => p.scene_index === original.sceneIndex && p.unit_index === original.unitIndex);
             if (polished && polished.visual) {
+                const mergedPrompt = polished.visual.prompt || original.visual?.prompt;
                 const mergedVisual = {
                     ...original.visual,
                     shot: polished.visual.shot || original.visual.shot,
-                    prompt: polished.visual.prompt || original.visual.prompt,
+                    prompt: mergedPrompt,
                 };
                 return {
                     ...original,
                     visual: mergedVisual,
                     image: {
                         shot: polished.visual.shot || original.image?.shot || original.visual?.shot,
-                        prompt: polished.visual.prompt || original.image?.prompt || original.visual?.prompt,
+                        prompt: mergedPrompt,
+                    },
+                    video: {
+                        action: mergedPrompt,
                     },
                 };
             }
@@ -705,10 +713,13 @@ async function stepCreateVisuals(sessionId, scene, units, sceneIndex, characters
                 // Character IDs in prompt are normalized via normalizeCharacterRefs.
                 let prompt = normalizeCharacterRefs(vu.visual.prompt, characters, mentions);
                 const result = { ...u, visual: { ...vu.visual, prompt } };
-                // Dual-write: also set image section for the new modal format
+                // Dual-write: image + video sections for the new modal format
                 result.image = {
                     shot: vu.visual.shot || (u.type === 'dialogue' ? 'medium' : 'wide'),
                     prompt,
+                };
+                result.video = {
+                    action: prompt,
                 };
                 return result;
             }
@@ -724,6 +735,9 @@ async function stepCreateVisuals(sessionId, scene, units, sceneIndex, characters
                     shot: u.type === 'dialogue' ? 'medium' : 'wide',
                     prompt: fallbackPrompt,
                 },
+                video: {
+                    action: fallbackPrompt,
+                },
             };
         });
 
@@ -734,14 +748,20 @@ async function stepCreateVisuals(sessionId, scene, units, sceneIndex, characters
     } catch (err) {
         await failStep(step.step_id, `AI failed, using fallback: ${err.message}`);
         console.warn(`[AGENT] Step 5 (scene ${sceneIndex}) failed, using fallback: ${err.message}`);
-        return units.map((u) => ({
-            ...u,
-            visual: {
-                shot: u.type === 'dialogue' ? 'medium' : 'wide',
-                prompt: visualUtils.getFallbackVisual(u.text, characters, { ...scene, participants: scene.participants }, locDisplay),
-                character_binding: true,
-            },
-        }));
+        return units.map((u) => {
+            const fallbackPrompt = visualUtils.getFallbackVisual(u.text, characters, { ...scene, participants: scene.participants }, locDisplay);
+            return {
+                ...u,
+                visual: {
+                    shot: u.type === 'dialogue' ? 'medium' : 'wide',
+                    prompt: fallbackPrompt,
+                    character_binding: true,
+                },
+                video: {
+                    action: fallbackPrompt,
+                },
+            };
+        });
     }
 }
 
