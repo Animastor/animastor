@@ -273,9 +273,7 @@ async function stepCreateUnits(sessionId, scene, sceneIndex, characters, stepInd
     const messages = [
         { role: 'system', content: prompt },
         { role: 'user', content: `Decompose this scene into visual units:\n\n\`\`\`\n${truncatedText}\n\`\`\`` },
-    ];
-
-    try {
+    ];        try {
         const result = await aiCaller.callAI(messages, { maxTokens: 4096 });
         const units = result.units || [];
         if (units.length === 0) {
@@ -285,9 +283,12 @@ async function stepCreateUnits(sessionId, scene, sceneIndex, characters, stepInd
             }
             units.push(fallbackUnit);
         } else {
-            // Add audio section to each dialogue unit (dual-write with text/speaker)
+            // AI now writes audio section directly; also ensure legacy text/speaker for backward compat
             for (const u of units) {
-                if (u.type === 'dialogue' && u.speaker && u.text) {
+                if (u.audio?.speaker && u.audio?.text) {
+                    u.speaker = u.audio.speaker;
+                    u.text = u.audio.text;
+                } else if (u.type === 'dialogue' && u.speaker && u.text) {
                     u.audio = { speaker: u.speaker, text: u.text };
                 } else if (u.type === 'dialogue' && u.text) {
                     u.audio = { text: u.text };
@@ -424,8 +425,8 @@ async function stepReconcilePassports(sessionId, allVisualUnits, characters, ste
 
     const unitsStr = allVisualUnits.map((u, i) =>
         `Unit ${i}: scene_index=${u.sceneIndex}, unit_index=${u.unitIndex}, scene_title="${u.sceneTitle || ''}", ` +
-        `type="${u.type || 'unknown'}", shot="${u.visual?.shot || 'unknown'}", ` +
-        `prompt="${(u.visual?.prompt || '').substring(0, 300)}"`
+        `type="${u.type || 'unknown'}", shot="${u.image?.shot || u.visual?.shot || 'unknown'}", ` +
+        `prompt="${(u.image?.prompt || u.visual?.prompt || '').substring(0, 300)}"`
     ).join('\n');
 
     const prompt = SYSTEM_PROMPTS.passport_reconciliation
@@ -514,7 +515,7 @@ async function stepPolishStoryboard(sessionId, allVisualUnits, characters, locat
     const scenesStr = scenesParts.join('\n');
 
     const unitsStr = allVisualUnits.map((u, i) =>
-        `Unit ${i}: scene_index=${u.sceneIndex}, unit_index=${u.unitIndex}, scene_title="${u.sceneTitle || ''}", type="${u.type || 'unknown'}", shot="${u.visual?.shot || 'unknown'}", prompt="${(u.visual?.prompt || '').substring(0, 200)}"`
+        `Unit ${i}: scene_index=${u.sceneIndex}, unit_index=${u.unitIndex}, scene_title="${u.sceneTitle || ''}", type="${u.type || 'unknown'}", shot="${u.image?.shot || u.visual?.shot || 'unknown'}", prompt="${(u.image?.prompt || u.visual?.prompt || '').substring(0, 200)}"`
     ).join('\n');
 
     const prompt = SYSTEM_PROMPTS.storyboard_polish
@@ -712,20 +713,30 @@ async function stepCreateVisuals(sessionId, scene, units, sceneIndex, characters
 
         const merged = units.map((u, i) => {
             const vu = visualUnits[i];
-            if (vu && vu.visual) {
+            // Read from image/video (new format), fallback to visual (legacy)
+            const imageSection = vu?.image || vu?.visual;
+            if (vu && imageSection) {
                 // Participants come from scene.participants (set during scene creation).
                 // Character IDs in prompt are normalized via normalizeCharacterRefs.
-                let prompt = normalizeCharacterRefs(vu.visual.prompt, characters, mentions);
-                const result = { ...u, visual: { ...vu.visual, prompt } };
-                // Dual-write: image + video sections for the new modal format
-                result.image = {
-                    shot: vu.visual.shot || (u.type === 'dialogue' ? 'medium' : 'wide'),
+                let prompt = normalizeCharacterRefs(imageSection.prompt, characters, mentions);
+                const action = vu.video?.action || prompt;
+                const result = { ...u };
+                // Preserve legacy visual field for backward compat
+                result.visual = {
+                    shot: imageSection.shot || (u.type === 'dialogue' ? 'medium' : 'wide'),
                     prompt,
-                    style: vu.visual?.style,
-                    negative: vu.visual?.negative,
+                    style: imageSection?.style,
+                    negative: imageSection?.negative,
+                };
+                // Canonical fields
+                result.image = {
+                    shot: imageSection.shot || (u.type === 'dialogue' ? 'medium' : 'wide'),
+                    prompt,
+                    style: imageSection?.style,
+                    negative: imageSection?.negative,
                 };
                 result.video = {
-                    action: prompt,
+                    action,
                 };
                 return result;
             }

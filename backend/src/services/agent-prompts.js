@@ -435,17 +435,20 @@ Return ONLY valid JSON.`,
     {
       "text": "Verbatim fragment from scene.text — one complete visual frame",
       "type": "perception|narration|dialogue|description|action|transition|performance",
-      "speaker": "character_id_of_speaker (REQUIRED for type=dialogue, OMIT for other types)"
+      "audio": {
+        "text": "Verbatim dialogue text (one speech turn)",
+        "speaker": "character_id_of_speaker (REQUIRED for type=dialogue)"
+      }
     }
   ]
 }
 \`\`\`
 
-## Important: speaker field for dialogue units
-- For ALL units with type="dialogue", you MUST supply the \`speaker\` field with the exact character_id of who is speaking.
+## Important: audio.speaker field for dialogue units
+- For ALL units with type="dialogue", you MUST supply the \`audio.speaker\` field with the exact character_id of who is speaking, and the \`audio.text\` field with the dialogue line text.
 - Use only character_ids from the Known Characters list above.
-- Example: If Berlioz says "Дайте нарзану", write \`{ "text": "Дайте нарзану", "type": "dialogue", "speaker": "berlioz" }\`.
-- For narration, perception, description, action, transition, or any non-dialogue type, do NOT include the speaker field.
+- Example: If Berlioz says "Дайте нарзану", write \`{ "text": "Дайте нарзану", "type": "dialogue", "audio": { "text": "Дайте нарзану", "speaker": "berlioz" } }\`.
+- For narration, perception, description, action, transition, or any non-dialogue type, do NOT include the audio field.
 
 Return ONLY valid JSON.`,
 
@@ -501,7 +504,7 @@ When the Characters in scene list below contains character_ids, you MUST use tho
 
 ## Universal rules (all units)
 - Describe what is VISIBLE in this frame, not plot. Keep each prompt to roughly 12–30 words — one self-contained sentence plus a short action clause.
-- Each unit MUST have a non-empty visual.prompt.
+- Each unit MUST have non-empty image.prompt and video.action.
 - Shot types: wide (landscape/group), medium (two people/waist-up), close (face/detail), detail (object/hand), environment (setting focus), reaction (character's emotional response)
 
 ## FORBIDDEN content — NEVER include ANY of these in the prompt
@@ -532,17 +535,23 @@ The Imagination Unit represents the picture the reader forms from THIS unit text
 {
   "units": [
     {
-      "text": "original unit text",
+      "text": "original unit text (verbatim)",
       "type": "unit type",
-      "visual": {
+      "image": {
         "shot": "wide|medium|close|detail|environment|reaction",
-        "prompt": "Self-contained Imagination Unit: WHO (by character_id) + how arranged + what changed in this frame. No pronouns.",
-        "character_binding": true
+        "prompt": "Self-contained static composition: WHO (by character_id) + how arranged. No pronouns. NO temporal change — only what is visible in ONE still frame.",
+        "style": "visual style if different from scene default",
+        "negative": "things to avoid in this frame"
+      },
+      "video": {
+        "action": "Temporal change in this unit: gestures, movement, camera motion, lighting shift, or dialogue delivery. What CHANGES during this unit compared to a static image."
       }
     }
   ]
 }
 \`\`\`
+
+IMPORTANT: image.prompt describes the STATIC composition (who is where, how arranged). video.action describes DYNAMIC change (gestures, movement, what happens during the unit). For dialogue units, the video action will be combined with the derived speaker automatically — just describe the movement.
 
 Return ONLY valid JSON.`,
 
@@ -571,20 +580,20 @@ Consider ALL the following Visual Units as sequential keyframes of ONE film (a s
 - Background elements (extras, scenery) should not arbitrarily appear/disappear between adjacent frames.
 
 ### 5. Self-contained prompts (must still hold)
-- Each visual.prompt must remain a SELF-CONTAINED Imagination Unit prompt — the image model sees each independently.
+- Each image.prompt must remain a SELF-CONTAINED Imagination Unit prompt — the image model sees each independently.
 - Keep using exact character_ids from the context (no pronouns, no generic nouns when IDs are available).
 - NEVER reference other units or frames: forbidden phrases include "from previous shot", "from previous frame", "as seen earlier", "continuing from previous", "same position as before", "as before", "as shown in the previous unit". Each prompt must describe its frame using ONLY the information in ITS OWN unit text.
 
 ## STRICT RULES — what you may NOT change
-- Do NOT change unit.text, unit.type, or unit.character_binding
+- Do NOT change unit.text, unit.type, or unit.image
 - Do NOT change the plot, add new events, or introduce characters not present in the unit text
 - Do NOT add new units or remove existing ones
 - Do NOT change character_ids — use ONLY the IDs provided in the Known Characters section below
 - Do NOT re-describe character appearance from passports — that is handled globally
 
 ## What you MAY change
-- visual.prompt: rephrase for continuity, fix positioning, adjust shot size, smooth transitions
-- visual.shot: adjust shot type if it creates a jarring transition or is clearly wrong for the content
+- image.prompt: rephrase for continuity, fix positioning, adjust shot size, smooth transitions
+- image.shot: adjust shot type if it creates a jarring transition or is clearly wrong for the content
 
 ## Known Characters
 %CHARACTERS%
@@ -593,7 +602,7 @@ Consider ALL the following Visual Units as sequential keyframes of ONE film (a s
 %LOCATIONS%
 
 ## Scene texts (контекст сюжета)
-Тексты сцен даны для понимания происходящего. Можешь использовать их для дополнения и корректировки visual.prompt: добавлять детали из текста сцены, уточнять действия персонажей, атмосферу, жесты, взгляды. Но не переписывай prompt полностью — сохраняй основную композицию, character_id и базовое описание кадра.
+Тексты сцен даны для понимания происходящего. Можешь использовать их для дополнения и корректировки image.prompt: добавлять детали из текста сцены, уточнять действия персонажей, атмосферу, жесты, взгляды. Но не переписывай prompt полностью — сохраняй основную композицию, character_id и базовое описание кадра.
 %SCENES%
 
 ## Input units to polish
@@ -606,7 +615,7 @@ Consider ALL the following Visual Units as sequential keyframes of ONE film (a s
     {
       "scene_index": 0,
       "unit_index": 0,
-      "visual": {
+      "image": {
         "shot": "wide|medium|close|detail|environment|reaction",
         "prompt": "Corrected self-contained Imagination Unit prompt"
       }
@@ -681,10 +690,10 @@ Return ONLY valid JSON. Include ONLY characters who have dialogue. Do NOT includ
     passport_reconciliation: `You are a Character Continuity Supervisor. Your job is to remove semantically duplicated descriptions from visual prompts before they reach the image model.
 
 ## How it works
-Each IU has a visual.prompt written by the scene director. Separately, each character has a PASSPORT — their permanent appearance (face, build, clothing, accessories). The passport is AUTOMATICALLY injected into the final image prompt by the system. This means: if the visual.prompt describes something that is ALREADY in the passport, the image model sees it twice — causing visual conflicts (e.g. two hats, two coats, duplicated accessories).
+Each IU has an image.prompt written by the scene director. Separately, each character has a PASSPORT — their permanent appearance (face, build, clothing, accessories). The passport is AUTOMATICALLY injected into the final image prompt by the system. This means: if the image.prompt describes something that is ALREADY in the passport, the image model sees it twice — causing visual conflicts (e.g. two hats, two coats, duplicated accessories).
 
 ## Your task
-For each IU, compare the visual.prompt against the passports of the characters that appear in it. Remove any descriptions that semantically duplicate passport data. Keep ONLY what is unique to THIS frame:
+For each IU, compare the image.prompt against the passports of the characters that appear in it. Remove any descriptions that semantically duplicate passport data. Keep ONLY what is unique to THIS frame:
 
 ### REMOVE (semantic duplicates of passport)
 - Physical appearance: face, build, age, hair, eyes — already in passport.base_appearance / detailed_appearance
@@ -702,11 +711,11 @@ For each IU, compare the visual.prompt against the passports of the characters t
 - New objects not in passport: holding a newspaper, carrying a bag, etc.
 
 ## Critical rules
-- This is SEMANTIC comparison, not text matching. "Wearing a dark suit" in visual.prompt should be removed if passport says "dark suit". "Holding his hat" should be kept ONLY IF the passport says he wears a hat AND this is a deliberate action of removing/holding it (a temporary change). If the passport says nothing about a hat, "holding his hat" is NEW information — keep it.
+- This is SEMANTIC comparison, not text matching. "Wearing a dark suit" in image.prompt should be removed if passport says "dark suit". "Holding his hat" should be kept ONLY IF the passport says he wears a hat AND this is a deliberate action of removing/holding it (a temporary change). If the passport says nothing about a hat, "holding his hat" is NEW information — keep it.
 - The passport has FOUR fields: base_appearance (face, build, age), detailed_appearance (more detail), clothing_base, clothing_details (attire, accessories). Consider ALL four when checking for duplicates.
 - Do NOT change position, pose, gaze, action, or temporary descriptions — only remove what's redundant with the passport.
 - Do NOT add new descriptions — only remove.
-- Do NOT change unit.text, unit.type, or unit.character_binding.
+- Do NOT change unit.text, unit.type, or unit.image.
 - Pay special attention to parenthetical descriptions like "mikhail_berlioz (small, round glasses)". If these describe appearance/clothing/accessories already covered by the passport, REMOVE the parenthetical content entirely. Keep only the character_id.
 
 ## Known Characters (passports)
@@ -722,7 +731,7 @@ For each IU, compare the visual.prompt against the passports of the characters t
     {
       "scene_index": 0,
       "unit_index": 0,
-      "visual": {
+      "image": {
         "shot": "shot type (unchanged)",
         "prompt": "Cleaned prompt — frame-specific descriptions only"
       }

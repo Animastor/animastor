@@ -2,7 +2,7 @@
 
 > **Дата:** 2026-07-12
 > **Основание:** ChatGPT sketch + полный аудит текущей архитектуры
-> **Статус:** Phase 1 (Audio) ✅ | Phase 2 (Image) ✅ | Phase 3 (Video) ✅ | Phase 4 (Frontend) ✅ | **Phase 5 (Cleanup) ✅**
+> **Статус:** Phase 1 (Audio) ✅ | Phase 2 (Image) ✅ | Phase 3 (Video) ✅ | Phase 4 (Frontend) ✅ | Phase 5 (Cleanup) ✅ | **Phase 6 (Agent prompts) ✅**
 
 ---
 
@@ -121,28 +121,28 @@ interface ImaginationUnit {
 
 ---
 
-## 6. Architecture Data Flow (текущее состояние)
+## 6. Architecture Data Flow (финальное состояние)
 
 ```
 AI pipeline (stepCreateUnits)
-  → unit.audio = { speaker, text }     // текст + кто говорит
-  → unit.text (legacy, будет удалён)
+  → unit.audio = { speaker, text }     // канонический источник TTS
+  → unit.text (legacy fallback через stepCreateUnits)
 
 AI pipeline (stepCreateVisuals)
-  → unit.visual = { shot, prompt }     // legacy
-  → unit.image = { shot, prompt }      // статическая композиция
-  → unit.video = { action }            // изменение во времени
+  → unit.visual (legacy fallback)
+  → unit.image = { shot, prompt, style, negative }   // статическая композиция
+  → unit.video = { action }                          // изменение во времени
 
 buildSegments()
   → читает unit.audio.speaker + unit.audio.text
   → строит TTS script
 
 buildImagePrompt()
-  → читает unit.image.* || unit.visual.*
+  → читает unit.image.* только
   → собирает финальный image prompt
 
 buildVideoPrompt()
-  → читает unit.video.action || unit.image.prompt || unit.visual.prompt
+  → читает unit.video.action || unit.image.prompt
   → добавляет derived speaker: "X speaking with lip movement"
   → собирает storyboard для LTX
 
@@ -163,6 +163,7 @@ prompt-dependency-registry
 | 2026-07-12 | HEAD | **Phase 3: Video** — `unit.video` field + derived speaker |
 | 2026-07-12 | HEAD | **Phase 4: Frontend** — `AudioSection`/`ImageSection`/`VideoSection` дата-классы, EditFragment UI |
 | 2026-07-12 | HEAD | **Phase 5: Cleanup** — убраны `visual.*`, `text`, `speaker` фоллбэки; завершён dual-write `image.style`/`image.negative` |
+| 2026-07-12 | HEAD | **Phase 6: Agent prompts** — AI пишет `image`/`video`/`audio` напрямую |
 
 ---
 
@@ -180,10 +181,13 @@ prompt-dependency-registry
 - [x] `pipeline-steps.js` — завершён dual-write: добавлены `image.style`/`image.negative` во все проходы (stepCreateVisuals, reconciliation, polish)
 - [x] Тесты обновлены: `coreference-image.test.js`, `video-workflows.test.js`
 
-### Фаза 6: Agent prompts
-- [ ] Обновить system prompt visuals — AI пишет image / video вместо visual
-- [ ] Обновить dryrun-visuals-iu.js
-- [ ] Обновить log/debug строки, ссылающиеся на `visual.*`
+### Фаза 6: Agent prompts ✅
+- [x] `SYSTEM_PROMPTS.visuals` — AI пишет `image` + `video` вместо `visual`
+- [x] `SYSTEM_PROMPTS.units` — AI пишет `audio.speaker`/`audio.text` вместо `text`/`speaker`
+- [x] `passport_reconciliation`, `storyboard_polish` — output format `image` вместо `visual`
+- [x] `stepCreateVisuals` — читает `image`/`video` из AI (fallback `visual`)
+- [x] `stepCreateUnits` — читает `audio` из AI (fallback `text`/`speaker`)
+- [x] `dryrun-visuals-iu.js` — обновлён под `image`/`video` формат
 
 ---
 
