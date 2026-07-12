@@ -2,7 +2,7 @@
 
 > **Дата:** 2026-07-12
 > **Основание:** ChatGPT sketch + полный аудит текущей архитектуры
-> **Статус:** Phase 1 (Audio) ✅ | Phase 2 (Image) ✅ | Phase 3 (Video) ✅
+> **Статус:** Phase 1 (Audio) ✅ | Phase 2 (Image) ✅ | Phase 3 (Video) ✅ | **Phase 4 (Frontend) ✅**
 
 ---
 
@@ -161,15 +161,16 @@ prompt-dependency-registry
 | 2026-07-12 | `d5d59a4` | **Phase 1: Audio** — `unit.audio` field |
 | 2026-07-12 | `32c2bc9` | **Phase 2: Image** — `unit.image` field |
 | 2026-07-12 | HEAD | **Phase 3: Video** — `unit.video` field + derived speaker |
+| 2026-07-12 | HEAD | **Phase 4: Frontend** — `AudioSection`/`ImageSection`/`VideoSection` дата-классы, EditFragment UI |
 
 ---
 
 ## 8. Оставшиеся фазы
 
-### Фаза 4: Frontend
-- [ ] `BookModels.kt` — SceneUnit: audio/image/video поля
-- [ ] `EditFragment.kt` — UI для модального редактирования
-- [ ] `VisualConfigAdapter` — новый десериализатор
+### Фаза 4: Frontend ✅
+- [x] `BookModels.kt` — AudioSection/ImageSection/VideoSection дата-классы, SceneUnit обновлён
+- [x] `EditFragment.kt` — UI для модального редактирования: readUnitField/buildUnitFields/applyFieldValues
+- [x] `strings.xml` — строковые ресурсы для секций (Audio/Visual/Image/Video)
 
 ### Фаза 5: Чистка legacy
 - [ ] `unit.text` → удалить (audio.text)

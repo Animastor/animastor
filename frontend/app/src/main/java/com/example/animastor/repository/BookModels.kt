@@ -460,12 +460,38 @@ data class AudioConfig(
     val full_text: String? = null
 )
 
+// ======================================================
+// Modal Section Models (Audio / Image / Video)
+// ======================================================
+
+data class AudioSection(
+    val speaker: String? = null,
+    val text: String? = null
+)
+
+data class ImageSection(
+    val shot: String? = null,
+    val prompt: String? = null,
+    val negative: String? = null,
+    val quality: String? = null,
+    val style: String? = null,
+    val lighting: String? = null,
+    val character_binding: Boolean? = null
+)
+
+data class VideoSection(
+    val action: String? = null
+)
+
 data class SceneUnit(
     val id: String? = null,
     val type: String? = null,
     val text: String? = null,
     val participants: List<String>? = null,
-    val visual: VisualConfig? = null
+    val visual: VisualConfig? = null,
+    val audio: AudioSection? = null,
+    val image: ImageSection? = null,
+    val video: VideoSection? = null
 )
 
 @JsonAdapter(VisualConfigAdapter::class)

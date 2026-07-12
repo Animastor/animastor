@@ -77,6 +77,10 @@
     <string name="edit_audio">Аудио</string>
     <string name="edit_units">Модули</string>
     <string name="edit_units_tab">Модуль</string>
+    <string name="edit_section_audio">Аудио</string>
+    <string name="edit_section_visual">Визуал (legacy)</string>
+    <string name="edit_section_image">Изображение</string>
+    <string name="edit_section_video">Видео</string>
     <string name="edit_save">Сохранить</string>
     <string name="edit_saving">Сохранение…</string>
     <string name="edit_loading">Загрузка…</string>

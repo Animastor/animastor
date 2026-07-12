@@ -640,7 +640,64 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
             setPadding(0, 0, 0, 8)
         }
 
-        listOf("id", "type", "text", "visual.prompt", "visual.negative").forEach { key ->
+        // Legacy fields
+        listOf("id", "type", "text").forEach { key ->
+            val v = readUnitField(u, key)
+            if (!fieldValues.containsKey(key)) fieldValues[key] = v
+            ll.addView(inputCard(ctx, key, fieldValues[key] ?: v, (key == "text" && (fieldValues[key]?.length ?: 0) > 80)))
+        }
+
+        // Audio section
+        val audioSectionLabel = TextView(ctx).apply {
+            text = getString(R.string.edit_section_audio)
+            textSize = 16f
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            setPadding(0, 16, 0, 4)
+        }
+        ll.addView(audioSectionLabel)
+        listOf("audio.speaker", "audio.text").forEach { key ->
+            val v = readUnitField(u, key)
+            if (!fieldValues.containsKey(key)) fieldValues[key] = v
+            ll.addView(inputCard(ctx, key, fieldValues[key] ?: v, (key == "audio.text" && (fieldValues[key]?.length ?: 0) > 80)))
+        }
+
+        // Visual section (legacy)
+        val visualSectionLabel = TextView(ctx).apply {
+            text = getString(R.string.edit_section_visual)
+            textSize = 16f
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            setPadding(0, 16, 0, 4)
+        }
+        ll.addView(visualSectionLabel)
+        listOf("visual.shot", "visual.prompt", "visual.negative", "visual.style").forEach { key ->
+            val v = readUnitField(u, key)
+            if (!fieldValues.containsKey(key)) fieldValues[key] = v
+            ll.addView(inputCard(ctx, key, fieldValues[key] ?: v, (key == "visual.prompt" && (fieldValues[key]?.length ?: 0) > 80)))
+        }
+
+        // Image section (canonical)
+        val imageSectionLabel = TextView(ctx).apply {
+            text = getString(R.string.edit_section_image)
+            textSize = 16f
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            setPadding(0, 16, 0, 4)
+        }
+        ll.addView(imageSectionLabel)
+        listOf("image.shot", "image.prompt", "image.negative").forEach { key ->
+            val v = readUnitField(u, key)
+            if (!fieldValues.containsKey(key)) fieldValues[key] = v
+            ll.addView(inputCard(ctx, key, fieldValues[key] ?: v, (key == "image.prompt" && (fieldValues[key]?.length ?: 0) > 80)))
+        }
+
+        // Video section
+        val videoSectionLabel = TextView(ctx).apply {
+            text = getString(R.string.edit_section_video)
+            textSize = 16f
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            setPadding(0, 16, 0, 4)
+        }
+        ll.addView(videoSectionLabel)
+        listOf("video.action").forEach { key ->
             val v = readUnitField(u, key)
             if (!fieldValues.containsKey(key)) fieldValues[key] = v
             ll.addView(inputCard(ctx, key, fieldValues[key] ?: v, (fieldValues[key]?.length ?: 0) > 80))
@@ -700,6 +757,14 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
             "text" -> u.text ?: ""
             "visual.prompt" -> u.visual?.prompt ?: ""
             "visual.negative" -> u.visual?.negative ?: ""
+            "visual.shot" -> u.visual?.shot ?: ""
+            "visual.style" -> u.visual?.style ?: ""
+            "audio.speaker" -> u.audio?.speaker ?: ""
+            "audio.text" -> u.audio?.text ?: ""
+            "image.shot" -> u.image?.shot ?: ""
+            "image.prompt" -> u.image?.prompt ?: ""
+            "image.negative" -> u.image?.negative ?: ""
+            "video.action" -> u.video?.action ?: ""
             else -> ""
         }
     }
@@ -810,8 +875,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         s["full_text"]?.let { v ->
             val audio = modified.audio ?: AudioConfig()
             modified = modified.copy(audio = audio.copy(full_text = v.ifEmpty { null }))
-        }
-        // Unit-level fields
+        }            // Unit-level fields
         val sceneUnits = modified.units
         val pos = SharedPositionManager.current.value
         if (sceneUnits != null && pos.unitIndex < sceneUnits.size) {
@@ -821,6 +885,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
             if (s.containsKey("id")) mu = mu.copy(id = s["id"]?.ifEmpty { null })
             if (s.containsKey("type")) mu = mu.copy(type = s["type"]?.ifEmpty { null })
             if (s.containsKey("text")) mu = mu.copy(text = s["text"]?.ifEmpty { null })
+            // Legacy visual fields
             if (s.containsKey("visual.prompt")) {
                 val v = s["visual.prompt"]?.ifEmpty { null }
                 val vis = mu.visual ?: VisualConfig()
@@ -830,6 +895,41 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                 val v = s["visual.negative"]?.ifEmpty { null }
                 val vis = mu.visual ?: VisualConfig()
                 mu = mu.copy(visual = vis.copy(negative = v))
+            }
+            if (s.containsKey("visual.shot")) {
+                val v = s["visual.shot"]?.ifEmpty { null }
+                val vis = mu.visual ?: VisualConfig()
+                mu = mu.copy(visual = vis.copy(shot = v))
+            }
+            if (s.containsKey("visual.style")) {
+                val v = s["visual.style"]?.ifEmpty { null }
+                val vis = mu.visual ?: VisualConfig()
+                mu = mu.copy(visual = vis.copy(style = v))
+            }
+            // Audio section
+            if (s.containsKey("audio.speaker") || s.containsKey("audio.text")) {
+                val speaker = s["audio.speaker"]?.ifEmpty { null }
+                val text = s["audio.text"]?.ifEmpty { null }
+                mu = mu.copy(audio = AudioSection(speaker = speaker, text = text))
+            }
+            // Image section — preserve non-UI fields (quality, style, lighting, character_binding)
+            if (s.containsKey("image.shot") || s.containsKey("image.prompt") || s.containsKey("image.negative")) {
+                val existing = mu.image
+                val shot = s["image.shot"]?.ifEmpty { mu.image?.shot }
+                val prompt = s["image.prompt"]?.ifEmpty { null }
+                val negative = s["image.negative"]?.ifEmpty { null }
+                mu = mu.copy(image = ImageSection(
+                    shot = shot, prompt = prompt, negative = negative,
+                    quality = existing?.quality,
+                    style = existing?.style,
+                    lighting = existing?.lighting,
+                    character_binding = existing?.character_binding
+                ))
+            }
+            // Video section
+            if (s.containsKey("video.action")) {
+                val action = s["video.action"]?.ifEmpty { null }
+                mu = mu.copy(video = VideoSection(action = action))
             }
             modifiedUnits[pos.unitIndex] = mu
             modified = modified.copy(units = modifiedUnits.toList())
