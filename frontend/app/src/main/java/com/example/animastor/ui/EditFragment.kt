@@ -714,9 +714,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         }
         ll.addView(idSectionLabel)
         val ch = chapters.getOrNull(currentChIndex)
-        ch?.chapter?.let { chapterId ->
-            ll.addView(readOnlyCard(ctx, "chapter", chapterId))
-        }
+        ll.addView(readOnlyCard(ctx, "chapter", ch?.chapter ?: "—"))
         ll.addView(readOnlyCard(ctx, "scene_id", sc.scene_id ?: "—"))
 
         // Editable scene fields
