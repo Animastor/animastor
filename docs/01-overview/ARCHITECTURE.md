@@ -180,7 +180,7 @@
 - `bootstrap.js` — первое окно (`bootstrapWithAgent`)
 - `coreference.js` — сведён к заглушке (удалён из пайплайна)
 - `ai-caller.js` — вызов AI с ретраями
-- `text-utils.js` / `visual-utils.js` — утилиты
+- `text-utils.js` / `image-utils.js` — утилиты
 - `agent-prompts.js` — все system prompt'ы (в `services/agent-prompts.js`)
 - `agent-service.js` — barrel-экспорт и window-generation
 

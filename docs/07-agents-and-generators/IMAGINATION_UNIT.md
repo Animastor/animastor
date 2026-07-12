@@ -1,4 +1,4 @@
-# Imagination Unit (iu) — the `visual.prompt` doctrine
+# Imagination Unit (iu) — the `image.prompt` doctrine
 
 ## What an Imagination Unit is
 
@@ -6,7 +6,7 @@ An **Imagination Unit (IU)** is *not* a chunk of book text. It is one **elementa
 of the reader's imagination** — the single concrete visual picture that forms in a
 reader's head as they read a fragment.
 
-The image prompt (`unit.visual.prompt`) must therefore describe **the visual scene**,
+The image prompt (`unit.image.prompt`) must therefore describe **the visual scene**,
 not the text. It describes the picture the model should draw.
 
 ## Core philosophy — the system is built around the IMAGE, not the character
@@ -41,7 +41,7 @@ The image-generation model receives **each request completely independently**. I
 nothing about previous units, previous frames, or the story so far. Every request is, for
 the model, the first request it has ever seen.
 
-Consequence: **every `visual.prompt` must be self-contained.** With zero context, the
+Consequence: **every `image.prompt` must be self-contained.** With zero context, the
 prompt alone must be enough to draw the correct frame.
 
 ## The most important rule (when people are present) — never use pronouns or generic nouns
@@ -133,14 +133,12 @@ full: subject, setting, light, colour, texture, mood.
 The independence, self-containment, and location-by-name rules still apply — only the
 character rules are dropped, because there are no characters to name.
 
-## Where this lives in the code
-
-- **Authoring instruction** — `SYSTEM_PROMPTS.visuals` in
+## Where this lives in the code  - **Authoring instruction** — `SYSTEM_PROMPTS.visuals` in
   `backend/src/services/agent-prompts.js`. This is the meta-prompt that tells the LLM how
-  to write each `visual.prompt`. The doctrine above is encoded here.
+  to write each `image.prompt`. The doctrine above is encoded here.
   - Also `SYSTEM_PROMPTS.scenes` — требует `characters_present` (обязательно для каждого
     персонажа), `location.id` (обязательно), `environment.epoch` + `environment.season`.
-  - AI больше **не пишет `location` в `visual.prompt`** — пишет только `character_id`.
+  -  AI больше **не пишет `location` в `image.prompt`** — пишет только `character_id`.
     Location inject-ится автоматически в buildImagePrompt.
 - **Context fed to the author** — `stepCreateVisuals` builds `%CONTEXT%`, passing each participant's
   name so the author can write part 3 (arrangement) and repeat it across units.
@@ -154,7 +152,7 @@ character rules are dropped, because there are no characters to name.
   - **Новое:** `resolveVisualStyle()` — цепочка fallback для visual style,
     с фильтрацией типографских стилей (`soviet_book_page` только для cover/chapter_intro).
   - **Новое:** `inferCharactersFromPrompt()` — **единственный метод** определения
-    участников (с июля 2026; `unit.participants` удалён). Сканирует `visual.prompt`
+    участников (с июля 2026; `unit.participants` удалён). Сканирует `image.prompt`
     на наличие `character_id` и inject-ит их паспорта.
   - **Новое:** `resolveLocationFromPrompt()` — если у сцены нет `location`,
     сопоставляет текст промпта с `bible.locations` через транслитерацию Cyr→Lat
@@ -163,5 +161,5 @@ character rules are dropped, because there are no characters to name.
 - **Scene style fix** — `lazy-book/index.js` больше не проставляет `style: 'soviet_book_page'`
   на нарративные сцены. Этот стиль остаётся только на типографические сцены
   (`cover`, `chapter_intro` с юнитами типа `typography`).
-- **Fallback** — `getFallbackVisual` in `agent-service.js` produces a pronoun-free,
+- **Fallback** — `getFallbackImage` in `agent-service.js` produces a pronoun-free,
   named, location-anchored prompt when the LLM step is unavailable.

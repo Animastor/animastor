@@ -2,7 +2,7 @@
 
 > **Дата:** 2026-07-12
 > **Основание:** ChatGPT sketch + полный аудит текущей архитектуры
-> **Статус:** Phase 1 (Audio) ✅ | Phase 2 (Image) ✅ | Phase 3 (Video) ✅ | Phase 4 (Frontend) ✅ | Phase 5 (Cleanup) ✅ | **Phase 6 (Agent prompts) ✅**
+> **Статус:** Phase 1 (Audio) ✅ | Phase 2 (Image) ✅ | Phase 3 (Video) ✅ | Phase 4 (Frontend) ✅ | Phase 5 (Cleanup) ✅ | Phase 6 (Agent prompts) ✅ | Phase 7 (Visual removal) ✅
 
 ---
 
@@ -16,14 +16,24 @@
   "type": "perception",
   "text": "content...",
   "speaker": "bezdomny",
-  "visual": {
-    "shot": "medium",
-    "character_binding": true,
-    "prompt": "description...",
-    "negative": ""
-  }
+  "visual": { "shot": "medium", "prompt": "...", "negative": "" }
 }
 ```
+
+### 1.3 Финальная структура IU (после рефакторинга)
+
+```json
+{
+  "id": "iu-38d6e6ea",
+  "type": "perception",
+  "text": "content...",
+  "audio": { "speaker": "bezdomny", "text": "..." },
+  "image": { "shot": "medium", "prompt": "...", "negative": "" },
+  "video": { "action": "..." }
+}
+```
+
+Поля `visual`, `speaker` (top-level) — **удалены** из всей системы.
 
 ### 1.2 Ключевые проблемы (решены)
 
@@ -126,10 +136,8 @@ interface ImaginationUnit {
 ```
 AI pipeline (stepCreateUnits)
   → unit.audio = { speaker, text }     // канонический источник TTS
-  → unit.text (legacy fallback через stepCreateUnits)
 
 AI pipeline (stepCreateVisuals)
-  → unit.visual (legacy fallback)
   → unit.image = { shot, prompt, style, negative }   // статическая композиция
   → unit.video = { action }                          // изменение во времени
 
@@ -138,7 +146,7 @@ buildSegments()
   → строит TTS script
 
 buildImagePrompt()
-  → читает unit.image.* только
+  → читает unit.image.*
   → собирает финальный image prompt
 
 buildVideoPrompt()
@@ -160,10 +168,12 @@ prompt-dependency-registry
 |---|---|---|
 | 2026-07-12 | `d5d59a4` | **Phase 1: Audio** — `unit.audio` field |
 | 2026-07-12 | `32c2bc9` | **Phase 2: Image** — `unit.image` field |
-| 2026-07-12 | HEAD | **Phase 3: Video** — `unit.video` field + derived speaker |
-| 2026-07-12 | HEAD | **Phase 4: Frontend** — `AudioSection`/`ImageSection`/`VideoSection` дата-классы, EditFragment UI |
-| 2026-07-12 | HEAD | **Phase 5: Cleanup** — убраны `visual.*`, `text`, `speaker` фоллбэки; завершён dual-write `image.style`/`image.negative` |
-| 2026-07-12 | HEAD | **Phase 6: Agent prompts** — AI пишет `image`/`video`/`audio` напрямую |
+| 2026-07-12 | `9f9f571` | **Phase 3: Video** — `unit.video` field + derived speaker |
+| 2026-07-12 | `6cc78fd` | **AI Examples** — updated for new format |
+| 2026-07-12 | `dd4237d` | **Phase 4: Frontend** — AudioSection/ImageSection/VideoSection дата-классы, EditFragment UI |
+| 2026-07-12 | `0e836b0` | **Phase 5: Cleanup** — убраны legacy фоллбэки visual.*/text/speaker |
+| 2026-07-12 | `2473e83` | **Phase 6: Agent prompts** — AI пишет image/video/audio напрямую |
+| 2026-07-12 | `b919a06` | **Phase 7: Visual removal** — `visual` поле удалено из всего кода и JSON |
 
 ---
 
@@ -176,18 +186,30 @@ prompt-dependency-registry
 
 ### Фаза 5: Чистка legacy ✅
 - [x] `prompt-builder.js` — `resolveImageField()` читает только `image.*`; `resolveVisualStyle` без `visual.style`; `resolveNegativePrompt` без unit-level legacy
-- [x] `video-workflows.js` — `buildVideoPrompt()` без `visual.*` фоллбэков; `resolveNegativePrompt` без `visual.*`
+- [x] `video-workflows.js` — `buildVideoPrompt()` без `visual.*` фоллбэков
 - [x] `prompt-dependency-registry.js` — убраны `oldU.text/content/visual`; `knownUnitKeys = ['id', 'type', 'audio', 'image', 'video']`
-- [x] `pipeline-steps.js` — завершён dual-write: добавлены `image.style`/`image.negative` во все проходы (stepCreateVisuals, reconciliation, polish)
-- [x] Тесты обновлены: `coreference-image.test.js`, `video-workflows.test.js`
+- [x] `pipeline-steps.js` — завершён dual-write: добавлены `image.style`/`image.negative` во все проходы
+- [x] Тесты: `coreference-image.test.js`, `video-workflows.test.js`
 
 ### Фаза 6: Agent prompts ✅
 - [x] `SYSTEM_PROMPTS.visuals` — AI пишет `image` + `video` вместо `visual`
 - [x] `SYSTEM_PROMPTS.units` — AI пишет `audio.speaker`/`audio.text` вместо `text`/`speaker`
 - [x] `passport_reconciliation`, `storyboard_polish` — output format `image` вместо `visual`
-- [x] `stepCreateVisuals` — читает `image`/`video` из AI (fallback `visual`)
-- [x] `stepCreateUnits` — читает `audio` из AI (fallback `text`/`speaker`)
+- [x] `stepCreateVisuals` — читает `image`/`video` из AI
+- [x] `stepCreateUnits` — читает `audio` из AI
 - [x] `dryrun-visuals-iu.js` — обновлён под `image`/`video` формат
+
+### Фаза 7: Полное удаление visual ✅
+- [x] `visual` поле удалено из `pipeline-steps.js` (stepCreateVisuals, reconciliation, polish)
+- [x] `visual` поле удалено из `pipeline-runner.js` (reconciliation/polish mapping)
+- [x] `visual` поле удалено из `chapter-utils.js` (chapter_intro, cover scenes)
+- [x] `visual` поле удалено из `create.js` (unit serialization)
+- [x] `visual` → `image` в `ai-service.js` (system prompt + validation)
+- [x] `visual` special handling удалено из `scene-hash.js`
+- [x] `visual-utils.js` → `image-utils.js` (rename + функции переименованы)
+- [x] Мёртвый код удалён: dual-write `speaker/text↔audio`, unused imports, `u.speaker` checks
+- [x] `visual` удалён из `ai/examples/*.json` (3 файла, 22 вхождения)
+- [x] `VisualConfig`, `VisualConfigAdapter`, `SceneUnit.visual` удалены из `BookModels.kt` (Android)
 
 ---
 
@@ -203,6 +225,7 @@ prompt-dependency-registry
 - `backend/src/services/agent-prompts.js`
 - `backend/src/services/agent/pipeline-steps.js`
 - `backend/src/services/agent/pipeline-runner.js`
+- `backend/src/services/agent/image-utils.js`
 - `backend/src/services/ai-service.js`
 
 ### Dependencies:
