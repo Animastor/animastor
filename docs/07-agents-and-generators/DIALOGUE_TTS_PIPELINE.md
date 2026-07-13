@@ -57,13 +57,28 @@ ComfyUI / GPU Hub:
   ```
 - Ни один AI-промпт не создаёт narrator
 
-### `buildSegments()` — без fallback
+### `buildSegments()` — hybrid + embedded narration + fallback
 - Строит TTS-скрипт из `units[].speaker`
 - **Гибридные сцены:** dialogue-ветка `buildSegments()` итерируется по ВСЕМ юнитам:
   - `dialogue` юниты → `segment_type: "dialogue"` (character voice)
   - `narration/perception/description/action/transition/performance` → `segment_type: "narration"` (narrator voice)
   - `typography` → skip
   - Порядок сегментов = порядок юнитов в сцене
+
+- **Гибридные диалоговые юниты (embedded narration):** Если AI создал ОДИН `dialogue` unit, где `unit.text` содержит не только реплику, но и авторскую атрибуцию (Pattern A: «— Диалог, — сказал он.» или Pattern B: «Он сказал: — Диалог.»), `extractNarrationFromDialogueUnit()` извлекает нарратив и создаёт ДВА сегмента:
+
+  | Pattern | Порядок | Пример |
+  |---------|---------|--------|
+  | A (post) | `[dialogue] → [narration]` | «— Нарзану нету, — ответила женщина.» → персонаж, затем диктор |
+  | B (pre) | `[narration] → [dialogue]` | «Женщина ответила: — Нарзану нету.» → диктор, затем персонаж |
+  | Both | `[narration] → [dialogue] → [narration]` | «Он подошёл: — Привет, — сказал он.» |
+
+  Пунктуация (запятые, тире) сохраняется — она несёт просодическую информацию и влияет на расчёт таймингов.
+
+- **Fallback (word-boundary guard):** Если `audio.text` совпадает внутри другого слова (substring collision, напр. «да» внутри «дала»), или `indexOf` не находит совпадения (AI inconsistency), или `audio.text` состоит только из opener-символов — `extractNarrationFromDialogueUnit()` возвращает `null`. Весь `unit.text` целиком уходит диктору (narration-сегмент). Безопаснее, чем персонаж скажет не тот текст.
+
+- **Мультиязычность:** Нормализация opener-маркеров (`—`, `"`, `«`, `„`, `'`) покрывает 🇷🇺 русский, 🇬🇧 английский, 🇫🇷 французский, 🇩🇪 немецкий, 🇪🇸 испанский и другие.
+
 - Короткие narration-тексты (< 40 символов) паддятся (дублируются для минимальной длительности TTS)
 - Если сцена не имеет валидных юнитов → `[]` (логируется warning)
 
@@ -75,4 +90,9 @@ ComfyUI / GPU Hub:
 - [x] `buildSegments()` — hybrid: narration + dialogue юниты в одной сцене
 - [x] `stepGenerateVoices` — на позиции 3 (после characters)
 - [x] Примеры (`ai/examples/`) согласованы
+- [x] `extractNarrationFromDialogueUnit()` — embedded narration из dialogue unit (Pattern A + B)
+- [x] Word-boundary guard + fallback (crooked unit.text → narrator)
+- [x] `{pre, post}` — корректный порядок сегментов для pre/post-паттернов
+- [x] Пунктуация сохранена (просодия + тайминги)
+- [x] Мультиязычная нормализация opener-маркеров
 - [x] 473 теста проходят
