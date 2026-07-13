@@ -60,6 +60,40 @@ async function generateSceneAudio(redis, sceneData, loadedBook, buildId, bookId)
     const segList = segments.buildSegments(sceneData);
     const expectedChunkCount = segList.length;
 
+    // 🧹 Stale cache invalidation: if cached chunks on disk have a different
+    // count than the new segment list, delete them all. This prevents old
+    // chunk files from being used at wrong positions when buildSegments()
+    // changes the segment structure (e.g. adding hybrid narration segments).
+    const existingChunks = chunks.findExistingSceneChunks(bookId, chapterId, sceneId, buildId);
+    if (existingChunks.length > 0 && existingChunks.length !== expectedChunkCount) {
+        helpers.log(`🧹 Stale chunk cache: ${existingChunks.length} on disk, ${expectedChunkCount} expected — invalidating`);
+        for (const chunkIdx of existingChunks) {
+            const filePath = chunks.getChunkAudioPath(buildId, bookId, chapterId, sceneId, chunkIdx);
+            try {
+                if (fs.existsSync(filePath)) {
+                    fs.unlinkSync(filePath);
+                    helpers.log(`  🗑 Deleted stale chunk file: ${filePath}`);
+                }
+            } catch (e) {
+                helpers.warn(`  ⚠️ Failed to delete stale chunk ${filePath}: ${e.message}`);
+            }
+            const chunkId = chunks.makeChunkId(chapterId, sceneId, chunkIdx, bookId);
+            const chunkKey = `animastor:chunk:${chunkId}`;
+            await redis.del(chunkKey);
+            await redis.srem(`animastor:chunks:${bookId}`, chunkId);
+        }
+        // Also delete the merged scene audio if it exists — it contains stale data
+        const mergedPath = helpers.getOutputPath(buildId, `${bookId}_${chapterId}_${sceneId}.mp3`);
+        if (fs.existsSync(mergedPath)) {
+            try {
+                fs.unlinkSync(mergedPath);
+                helpers.log(`  🗑 Deleted stale merged scene audio: ${mergedPath}`);
+            } catch (e) {
+                helpers.warn(`  ⚠️ Failed to delete stale merged audio: ${e.message}`);
+            }
+        }
+    }
+
     let isReady = await validation.isSceneAudioReady(buildId, bookId, chapterId, sceneId);
     if (isReady) {
         try {
