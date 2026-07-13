@@ -213,16 +213,20 @@ function buildSegments(runtimeEntry) {
 
                 // Pre-narration BEFORE dialogue
                 // Pattern B: "Narration: — DIALOGUE." → narrator sets up, character speaks
-                // No padding — the text is part of a normal-length scene; TTS handles
-                // short text fine, and padShortText + trimPaddedSceneAudio would cut
-                // into the first copy of a short phrase, creating truncated audio.
+                // Pad if short (< 40 chars): Qwen-TTS produces garbage for <3s audio.
+                // trimPaddedSceneAudio later removes the duplicate per-chunk.
                 if (extractResult && extractResult.pre) {
+                    const isPadded = extractResult.pre.length < 40;
+                    const fullNarration = isPadded ? padShortText(extractResult.pre) : extractResult.pre;
+                    if (isPadded) {
+                        helpers.log(`📐 buildSegments (hybrid unit): short embedded narration (pre ${extractResult.pre.length} chars) → padded mode ON for "${extractResult.pre}"`);
+                    }
                     segmentIdx++;
                     segments.push({
                         segment_id: String(segmentIdx).padStart(4, "0"),
                         segment_type: "narration",
-                        text: extractResult.pre,
-                        padded: false,
+                        text: fullNarration,
+                        padded: isPadded,
                     });
                 }
 
@@ -236,14 +240,19 @@ function buildSegments(runtimeEntry) {
 
                 // Post-narration AFTER dialogue
                 // Pattern A: "— DIALOGUE, — narration." → character speaks, narrator describes
-                // Same reasoning as pre-narration: no padding needed.
+                // Same padding reasoning as pre-narration.
                 if (extractResult && extractResult.post) {
+                    const isPadded = extractResult.post.length < 40;
+                    const fullNarration = isPadded ? padShortText(extractResult.post) : extractResult.post;
+                    if (isPadded) {
+                        helpers.log(`📐 buildSegments (hybrid unit): short embedded narration (post ${extractResult.post.length} chars) → padded mode ON for "${extractResult.post}"`);
+                    }
                     segmentIdx++;
                     segments.push({
                         segment_id: String(segmentIdx).padStart(4, "0"),
                         segment_type: "narration",
-                        text: extractResult.post,
-                        padded: false,
+                        text: fullNarration,
+                        padded: isPadded,
                     });
                 }
             } else {
