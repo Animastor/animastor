@@ -177,16 +177,52 @@ async function generateSceneAudio(redis, sceneData, loadedBook, buildId, bookId)
         if (existingChunk) {
             const segment = segList[i];
             const existing = JSON.parse(existingChunk);
-            existing.padded_text = segment.padded || false;
-            // 🔧 FIX: Always update expected_chunk_count for existing chunks too.
-            // During initial generation the import creates _0001 with count=1, but
-            // buildSegments may produce more segments. Without this update, chunk
-            // _0001 retains expected_chunk_count=1, causing triggerAudioMerge to
-            // merge prematurely instead of waiting for all chunks to arrive.
-            existing.expected_chunk_count = expectedChunkCount;
-            existing.audio = chunkFileExists;
-            existing.audio_status = chunkFileExists ? 'ready' : 'pending';
-            await redis.set(chunkKey, JSON.stringify(existing));
+            // 🧹 Stale padded_text flag: if the old chunk's padded_text differs
+            // from what we'd generate now, this chunk is stale even if count
+            // matches (e.g. cover scene sc-12a6ff03 with same count=1 but
+            // missing padded_text: true). Delete file + Redis metadata so the
+            // normal path below regenerates it fresh.
+            const expectPadded = segment.padded || false;
+            if (existing.padded_text !== expectPadded) {
+                helpers.log(`🧹 Stale padded_text flag for ${id}: was ${existing.padded_text}, expected ${expectPadded} — deleting stale cache`);
+                if (fs.existsSync(chunkFilePath)) {
+                    try { fs.unlinkSync(chunkFilePath); } catch (e) {}
+                }
+                await redis.del(chunkKey);
+                await redis.srem(`animastor:chunks:${bookId}`, id);
+                // Create fresh pending metadata — TTS callback needs this to exist
+                const fresh = {
+                    build_id: buildId,
+                    book_id: bookId,
+                    chapter_id: chapterId,
+                    scene_id: sceneId,
+                    chunk_index: String(chunkIndex).padStart(4, '0'),
+                    expected_chunk_count: expectedChunkCount,
+                    scene_type: sceneData.scene_type,
+                    audio: false,
+                    audio_status: 'pending',
+                    padded_text: expectPadded
+                };
+                await redis.set(chunkKey, JSON.stringify(fresh));
+                await redis.sadd(`animastor:chunks:${bookId}`, id);
+                // Fall through to TTS submission below
+            } else {
+                existing.padded_text = expectPadded;
+                // 🔧 FIX: Always update expected_chunk_count for existing chunks too.
+                // During initial generation the import creates _0001 with count=1, but
+                // buildSegments may produce more segments. Without this update, chunk
+                // _0001 retains expected_chunk_count=1, causing triggerAudioMerge to
+                // merge prematurely instead of waiting for all chunks to arrive.
+                existing.expected_chunk_count = expectedChunkCount;
+                existing.audio = chunkFileExists;
+                existing.audio_status = chunkFileExists ? 'ready' : 'pending';
+                await redis.set(chunkKey, JSON.stringify(existing));
+
+                if (chunkFileExists) {
+                    helpers.log(`AUDIO CHUNK CACHE HIT (disk): ${id}`);
+                    continue;
+                }
+            }
         } else {
             const segment = segList[i];
             const chunkData = {
@@ -203,11 +239,11 @@ async function generateSceneAudio(redis, sceneData, loadedBook, buildId, bookId)
             };
             await redis.set(chunkKey, JSON.stringify(chunkData));
             await redis.sadd(`animastor:chunks:${bookId}`, id);
-        }
 
-        if (chunkFileExists) {
-            helpers.log(`AUDIO CHUNK CACHE HIT (disk): ${id}`);
-            continue;
+            if (chunkFileExists) {
+                helpers.log(`AUDIO CHUNK CACHE HIT (disk): ${id}`);
+                continue;
+            }
         }
 
         const segment = segList[i];
