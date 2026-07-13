@@ -4,9 +4,59 @@ All notable changes to Animastor are documented here.
 
 ---
 
-## [Unreleased] — 2026-07-12
+## [Unreleased] — 2026-07-13
 
 ### Fixed
+
+- **Audio merge — per-chunk `padded_text` больше не обрезает все чанки**
+  (`backend/src/services/task-handler.cjs`):
+  - **Проблема:** `triggerAudioMerge()` проверял `chunk.padded_text` на **одном** чанке
+    (последнем прилетевшем). Если последний чанк (например, пост-нарратив с коротким текстом)
+    имел `padded_text=true`, `trimPaddedSceneAudio()` обрезала **все** чанки (narration +
+    dialogue), отрезая ~45% каждого. Диалоговые чанки теряли вторую половину содержания.
+  - **Корень:** при гибридной сцене (9 сегментов: нарратив + 7 диалогов + пост-нарратив)
+    чанк 9 прилетает последним → `chunk.padded_text === true` → цикл режет все 9.
+  - **Фикс:** `padded_text` проверяется для каждого чанка индивидуально через
+    `deps.getChunk()`. Только чанки с реальным паддингом (< 40 символов, продублированный
+    текст) получают trim. Обычные нарратив и диалоги остаются нетронутыми.
+  - `generateSceneAudio` в `generation.js` и логика stale cache не затронуты.
+
+- **Placeholder merged audio блокировал multi-chunk merge**
+  (`backend/src/audio/generation.js`):
+  - **Проблема:** после «Удалить Сториборд» + reopen + GENERATE, `recoverMissingPlaceholders()`
+    создавал placeholder MP3 на диске. `generateSceneAudio()` обнаруживал placeholder и
+    запускал TTS для 9 сегментов, но старый placeholder-файл не удалялся. Каждый прибывающий
+    чанк вызывал `triggerAudioMerge()`, который видел `fs.existsSync(merged.mp3) → true`
+    (старый placeholder) и выходил без merge. Multi-chunk merge никогда не стартовал.
+  - **Фикс:** при обнаружении placeholder (`asset.status === 'placeholder'`) `generateSceneAudio()`
+    удаляет старый merged placeholder-файл перед отправкой TTS. `triggerAudioMerge()` больше
+    не находит его и нормально ждёт все чанки.
+
+- **Per-chunk stale `padded_text` detection**
+  (`backend/src/audio/generation.js`):
+  - **Проблема:** cover-сцена sc-12a6ff03 с `expected_chunk_count=1` не перегенерировалась
+    после изменения паддинга, потому что count-based stale check не срабатывал (count не
+    изменился). Старый чанк с `padded_text=false` оставался, новый паддинг не применялся.
+  - **Фикс:** в цикле обработки существующих чанков добавлена проверка
+    `existing.padded_text !== expectPadded`. При несовпадении флага: удаление файла + Redis
+    метаданных + создание свежих метаданных с `audio_status:'pending'`, затем fall-through
+    к TTS. Все 522 теста проходят.
+
+### Added
+
+- **Тесты на паддинг и гибридные сегменты**
+  (`backend/tests/audio-segments.test.js`, 49 тестов):
+  - `padShortText` — граничные условия (< 40, ≥ 40, пунктуация).
+  - `extractNarrationFromDialogueUnit` — Pattern A (post), Pattern B (pre), оба,
+    pure dialogue, null, word-boundary guard (substring collision), мультиязык.
+  - `buildSegments` narration — паддинг короткого текста, cover, chapter_intro.
+  - `buildSegments` dialogue — гибрид pre/post/оба, fallback для substring collision,
+    interleaving, typography skip, пустые юниты, паддинг short embedded narration.
+  - `narratorVoice` — voices.narrator, bible fallback, voice override.
+
+### Fixed
+
+- **Гибридные сцены (narration + dialogue в одной scene) — narration юниты больше не игнорируются**
 
 - **Гибридные сцены (narration + dialogue в одной scene) — narration юниты больше не игнорируются**
   (`backend/src/audio/segments.js`):
