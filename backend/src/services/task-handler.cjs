@@ -328,16 +328,21 @@ module.exports = function(redis, config, deps) {
         log(`🎵 Merging ${expectedCount} audio chunks for ${book_id}/${chapter_id}/${scene_id}`);
 
         try {
-            // First check if padded audio trimming is needed (short text duplication removal)
-            if (chunk.padded_text) {
-                log(`✂️ Padded text detected — trimming duplicated audio for ${book_id}/${chapter_id}/${scene_id}`);
-                for (let i = 0; i < chunkPaths.length; i++) {
-                    try {
+            // Trim only chunks that have padded_text set (short text duplication removal).
+            // Check padded_text per-chunk, not from the triggering chunk alone — a single
+            // post-narration chunk with padded_text=true should not cause ALL chunks
+            // (narration + dialogue) to be trimmed in half.
+            for (let i = 0; i < chunkPaths.length; i++) {
+                const currentChunkId = `${book_id}_${chapter_id}_${scene_id}_${pad(i + 1)}`;
+                try {
+                    const currentMeta = await deps.getChunk(currentChunkId);
+                    if (currentMeta && currentMeta.padded_text) {
+                        log(`✂️ Padded chunk ${i + 1}/${chunkPaths.length}: trimming ${path.basename(chunkPaths[i])}`);
                         await audio.trimPaddedSceneAudio(chunkPaths[i]);
                         log(`✅ Trimmed padded chunk ${i + 1}/${chunkPaths.length}: ${path.basename(chunkPaths[i])}`);
-                    } catch (trimErr) {
-                        console.warn(`⚠️ Trim failed for ${chunkPaths[i]}: ${trimErr.message}`);
                     }
+                } catch (metaErr) {
+                    console.warn(`⚠️ Failed to check padded_text for chunk ${currentChunkId}: ${metaErr.message}`);
                 }
             }
 
