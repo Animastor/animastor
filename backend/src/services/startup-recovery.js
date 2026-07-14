@@ -106,6 +106,18 @@ async function recoverAll(redis, deps) {
         result.errors.push(`session_resume: ${err.message}`);
     }
 
+    // ── Step 6: Recover audio-orch states ──
+    try {
+        const recovered = await recoverAudioOrchStates(redis, deps);
+        if (recovered > 0) {
+            log(`Step 6 complete: ${recovered} audio-orch states recovered`);
+        }
+        result.recovered += recovered;
+    } catch (err) {
+        warn(`Step 6 failed (audio-orch recovery): ${err.message}`);
+        result.errors.push(`audio_orch_recovery: ${err.message}`);
+    }
+
     const elapsed = Date.now() - startTime;
     log(`Startup recovery complete in ${elapsed}ms: ${result.recovered} items recovered, ` +
         `${result.version_outdated} version stale, ${result.errors.length} errors`);
@@ -306,9 +318,121 @@ async function checkVersionStaleness(redis, deps) {
     return outdatedCount;
 }
 
+// ======================================================
+// STEP 6: Recover audio-orch states after restart
+// ======================================================
+
+/**
+ * Scan all `animastor:audio-orch:*` Redis keys and recover the state
+ * machine after a backend restart. Non-terminal phases are set to FAILED
+ * so the scheduler re-dispatches them on the next tick.
+ *
+ * Recovery logic per phase:
+ *   GENERATING / WAITING_CHUNKS → FAILED (scheduler re-dispatches)
+ *   MERGING → check merged file on disk:
+ *     - exists → DONE
+ *     - missing → FAILED
+ *   PLACEHOLDER_READY → leave as is (scheduler will dispatch)
+ *   DONE / FAILED → leave as is (already terminal)
+ *
+ * @param {Object} redis
+ * @param {Object} deps
+ * @returns {Promise<number>} Count of recovered states
+ */
+async function recoverAudioOrchStates(redis, deps) {
+    const fs = require('fs');
+    const path = require('path');
+    const OUTPUT_DIR = deps.config?.OUTPUT_DIR || '/data/output';
+
+    let audioOrch;
+    try {
+        audioOrch = require('./audio-orchestrator');
+    } catch (err) {
+        warn(`audio-orchestrator module not available: ${err.message}`);
+        return 0;
+    }
+
+    const allStates = await audioOrch.scanAllStates(redis);
+    if (allStates.length === 0) {
+        return 0;
+    }
+
+    log(`[AUDIO-ORCH] Found ${allStates.length} audio-orch states to recover`);
+
+    let recovered = 0;
+    const recoveryDirs = new Set();
+
+    for (const entry of allStates) {
+        const { bookId, chapterId, sceneId, state: orchState } = entry;
+        const phase = orchState.phase;
+        const buildId = orchState.build_id || 'default';
+        const buildDir = path.join(OUTPUT_DIR, buildId);
+        const mergedPath = path.join(buildDir, `${bookId}_${chapterId}_${sceneId}.mp3`);
+
+        switch (phase) {
+            case 'GENERATING':
+            case 'WAITING_CHUNKS': {
+                // Non-terminal: set to FAILED so scheduler re-dispatches
+                // Any chunks already on disk will be cache hits in generateSceneAudio.
+                log(`[AUDIO-ORCH] Recover ${bookId}/${chapterId}/${sceneId}: ${phase} → FAILED (restart)`);
+                await audioOrch.setFailed(redis, bookId, chapterId, sceneId, 'restart_recovery');
+                // Also reset asset state to PENDING so scheduler picks it up
+                try {
+                    if (deps.state && deps.state.setAssetState) {
+                        await deps.state.setAssetState(redis, bookId, chapterId, sceneId,
+                            'audio', deps.state.AssetState.PENDING);
+                    }
+                } catch (_) {}
+                recovered++;
+                break;
+            }
+            case 'MERGING': {
+                // Check if merged file exists on disk
+                if (fs.existsSync(mergedPath)) {
+                    log(`[AUDIO-ORCH] Recover ${bookId}/${chapterId}/${sceneId}: MERGING → DONE (merged file found)`);
+                    await audioOrch.setDone(redis, bookId, chapterId, sceneId);
+                } else {
+                    log(`[AUDIO-ORCH] Recover ${bookId}/${chapterId}/${sceneId}: MERGING → FAILED (no merged file)`);
+                    await audioOrch.setFailed(redis, bookId, chapterId, sceneId, 'restart_merge_missing');
+                    try {
+                        if (deps.state && deps.state.setAssetState) {
+                            await deps.state.setAssetState(redis, bookId, chapterId, sceneId,
+                                'audio', deps.state.AssetState.PENDING);
+                        }
+                    } catch (_) {}
+                }
+                recovered++;
+                break;
+            }
+            case 'PLACEHOLDER_READY':
+                // Leave as is — scheduler will dispatch on next tick
+                log(`[AUDIO-ORCH] Recover ${bookId}/${chapterId}/${sceneId}: PLACEHOLDER_READY — preserving`);
+                // Ensure the scene is in the active index
+                try {
+                    const activeScenesIndex = require('../runtime/active-scenes-index');
+                    await activeScenesIndex.addActiveScene(redis, bookId, chapterId, sceneId);
+                } catch (_) {}
+                break;
+            case 'DONE':
+            case 'FAILED':
+                // Terminal — leave as is
+                log(`[AUDIO-ORCH] Recover ${bookId}/${chapterId}/${sceneId}: ${phase} — terminal, preserving`);
+                break;
+            default:
+                log(`[AUDIO-ORCH] Recover ${bookId}/${chapterId}/${sceneId}: unknown phase ${phase} — deleting`);
+                await audioOrch.deleteState(redis, bookId, chapterId, sceneId);
+                break;
+        }
+    }
+
+    log(`[AUDIO-ORCH] Recovery complete: ${recovered} non-terminal states handled, ${allStates.length} total`);
+    return recovered;
+}
+
 module.exports = {
     recoverAll,
     recoverIuImagesFromDisk,
     reconcileMissingSceneState,
     checkVersionStaleness,
+    recoverAudioOrchStates,
 };

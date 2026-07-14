@@ -765,37 +765,39 @@ async function startScene(redis, s, buildId, bookId) {
     const addResult = await activeScenes.addActiveScene(redis, bookId, chapterId, sceneId);
     log(`Scene queued: ${bookId}/${chapterId}/${sceneId}`);
 
-    // Generate placeholder audio for this scene (fire-and-forget, non-blocking)
     // Only when audio is enabled — if disabled, we already set chunks as ready above
     if (audioDisabled) return addResult.added;
 
-    // Generate placeholder audio for this scene (fire-and-forget, non-blocking)
-    setImmediate(async () => {
-        try {
-            const buildEffective = buildId || 'default';
-            const result = await placeholderAudio.ensurePlaceholderAudio(buildEffective, bookId, chapterId, sceneId);
-            if (result.created) {
-                log(`Placeholder audio created for ${bookId}/${chapterId}/${sceneId} (${result.durationSec.toFixed(1)}s)`);
-                // Update chunk metadata — audio_status = 'placeholder' (not 'ready')
-                // This preserves timing for the frontend while signaling that real
-                // TTS still needs to be generated.
-                for (let i = 0; i < expectedChunkCount; i++) {
-                    const chunkIndex = i + 1;
-                    const chunkId = audio.makeChunkId(chapterId, sceneId, chunkIndex, bookId);
-                    const chunkKey = `animastor:chunk:${chunkId}`;
-                    const chunk = await redis.get(chunkKey);
-                    if (chunk) {
-                        const data = JSON.parse(chunk);
-                        data.audio = true;
-                        data.audio_status = 'placeholder';
-                        await redis.set(chunkKey, JSON.stringify(data));
-                    }
-                }
-            }
-        } catch (err) {
-            warn(`Placeholder audio failed for ${bookId}/${chapterId}/${sceneId}: ${err.message}`);
+    // Placeholder audio: создаётся синхронно (await), ДО того как сцена попадает в scheduler.
+    // Задержка ~2s (ffmpeg silence generation) — не критична, но устраняет race condition
+    // между setImmediate и generateSceneAudio (placeholder re-created после удаления).
+    try {
+        const buildEffective = buildId || 'default';
+        const phResult = await placeholderAudio.ensurePlaceholderAudio(buildEffective, bookId, chapterId, sceneId);
+        if (phResult.created) {
+            log(`Placeholder audio created for ${bookId}/${chapterId}/${sceneId} (${phResult.durationSec.toFixed(1)}s)`);
         }
-    });
+
+        // Update chunk metadata — audio_status = 'placeholder' (not 'ready')
+        for (let i = 0; i < expectedChunkCount; i++) {
+            const chunkIndex = i + 1;
+            const chunkId = audio.makeChunkId(chapterId, sceneId, chunkIndex, bookId);
+            const chunkKey = `animastor:chunk:${chunkId}`;
+            const chunk = await redis.get(chunkKey);
+            if (chunk) {
+                const data = JSON.parse(chunk);
+                data.audio = true;
+                data.audio_status = 'placeholder';
+                await redis.set(chunkKey, JSON.stringify(data));
+            }
+        }
+
+        // 🔧 AUDIO-ORCH: Установить phase = PLACEHOLDER_READY — единственный арбитр состояния
+        const audioOrch = require('../services/audio-orchestrator');
+        await audioOrch.initPlaceholderReady(redis, bookId, chapterId, sceneId, buildEffective, expectedChunkCount);
+    } catch (err) {
+        warn(`Placeholder audio failed for ${bookId}/${chapterId}/${sceneId}: ${err.message}`);
+    }
 
     return addResult.added;
 }

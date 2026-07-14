@@ -206,7 +206,26 @@ module.exports = function(redis, config, deps) {
             return;
         }
 
-        const expectedCount = parseInt(expected_chunk_count || '1', 10);
+        // 🔧 AUDIO-ORCH: Читаем phase — единственный источник решения
+        const audioOrch = require('./audio-orchestrator');
+        const orchState = await audioOrch.getState(redis, book_id, chapter_id, scene_id);
+
+        if (!orchState || orchState.phase === audioOrch.PHASES.DONE) {
+            log(`🎵 Audio already done for ${book_id}/${chapter_id}/${scene_id} — skipping retry`);
+            return;
+        }
+
+        if (orchState.phase === audioOrch.PHASES.MERGING) {
+            log(`🔀 Merge in progress for ${book_id}/${chapter_id}/${scene_id} — waiting`);
+            return;
+        }
+
+        if (orchState.phase !== audioOrch.PHASES.WAITING_CHUNKS) {
+            log(`⏳ Audio phase is ${orchState.phase} — not ready for merge, skipping`);
+            return;
+        }
+
+        const expectedCount = parseInt(expected_chunk_count || orchState.expected_count || '1', 10);
 
         // Build all expected chunk paths and check which exist
         const chunkPaths = [];
@@ -223,37 +242,6 @@ module.exports = function(redis, config, deps) {
         }
 
         if (!allChunksExist) {
-            // ⛔ Check if merged scene audio already exists on disk.
-            // After a successful merge, buildSceneAudio deletes all chunk files.
-            // In that case, no retry is needed — the scene audio is complete.
-            // BUT: verify the merged audio is real (not a placeholder). The async
-            // setImmediate in startScene() may create a NEW placeholder after
-            // generateSceneAudio deletes the old one, causing triggerAudioMerge
-            // to exit early while TTS chunks are still arriving.
-            const mergedAudioPath = path.join(buildDir, `${book_id}_${chapter_id}_${scene_id}.mp3`);
-            if (fs.existsSync(mergedAudioPath)) {
-                // Fast heuristic: real TTS is > 32KB for any scene
-                let isReal = false;
-                try {
-                    const st = fs.statSync(mergedAudioPath);
-                    if (st.size > 32768) {
-                        isReal = true;
-                    } else {
-                        // Small file — verify via PG that it's not a placeholder
-                        const hasReal = await placeholderAudio.hasRealAudio(book_id, chapter_id, scene_id, build_id);
-                        isReal = hasReal;
-                    }
-                } catch (_) {
-                    // If stat or PG fails, assume real (safe default)
-                    isReal = true;
-                }
-                if (isReal) {
-                    log(`🎵 Merged audio already exists for ${book_id}/${chapter_id}/${scene_id} — chunks were cleaned up, skipping retry`);
-                    return;
-                }
-                log(`⚠️ Merged audio is a placeholder — waiting for real TTS chunks`);
-            }
-
             // ── RETRY LOGIC: chunks may still be generating ──
             const readyCount = expectedCount - missingChunks;
             log(`⏳ Audio merge: ${readyCount}/${expectedCount} chunks ready for ${book_id}/${chapter_id}/${scene_id} — scheduling retry in 15s`);
@@ -266,7 +254,7 @@ module.exports = function(redis, config, deps) {
             const attemptStr = await redis.get(retryCountKey);
             const attempt = attemptStr ? parseInt(attemptStr, 10) : 0;
             if (attempt >= MAX_RETRIES) {
-                // ── RETRY EXHAUSTED: Re-dispatch missing chunks to ComfyUI ──
+                // ── RETRY EXHAUSTED: Mark FAILED so scheduler re-dispatches ──
                 // Identify which chunks never arrived
                 const missingIndices = [];
                 for (let i = 1; i <= expectedCount; i++) {
@@ -275,7 +263,11 @@ module.exports = function(redis, config, deps) {
                         missingIndices.push(i);
                     }
                 }
-                console.warn(`⚠️ Max retries (${MAX_RETRIES}) reached for ${book_id}/${chapter_id}/${scene_id} — re-dispatching ${missingIndices.length} missing chunk(s): ${missingIndices.join(', ')}`);
+                console.warn(`⚠️ Max retries (${MAX_RETRIES}) reached for ${book_id}/${chapter_id}/${scene_id} — ${missingIndices.length} missing chunk(s): ${missingIndices.join(', ')}`);
+
+                // 🔧 AUDIO-ORCH: Set FAILED phase — scheduler re-dispatch will transition to GENERATING
+                await audioOrch.setFailed(redis, book_id, chapter_id, scene_id, 
+                    `max_retries_exceeded:${missingIndices.length}_missing`);
 
                 // Clear GPU hub dedup + reset metadata for missing chunks
                 for (const idx of missingIndices) {
@@ -314,7 +306,7 @@ module.exports = function(redis, config, deps) {
                 // Reset asset state to PENDING so scheduler picks up the scene
                 try {
                     await state.setAssetState(redis, book_id, chapter_id, scene_id, 'audio', state.AssetState.PENDING);
-                    log(`🔁 Audio re-dispatch queued for ${book_id}/${chapter_id}/${scene_id} — missing ${missingIndices.length} chunk(s) will be re-submitted on next scheduler tick`);
+                    log(`🔁 Audio FAILED for ${book_id}/${chapter_id}/${scene_id} — scheduler will re-dispatch on next tick`);
                 } catch (stateErr) {
                     console.error(`❌ Failed to reset asset state for re-dispatch: ${stateErr.message}`);
                 }
@@ -346,7 +338,10 @@ module.exports = function(redis, config, deps) {
             return;
         }
 
-        // All chunks exist on disk — proceed with merge
+        // All chunks exist on disk — set MERGING phase and proceed with merge
+        await audioOrch.setMerging(redis, book_id, chapter_id, scene_id);
+        log(`🔀 AUDIO_ORCH: ${book_id}/${chapter_id}/${scene_id} → MERGING`);
+
         log(`🎵 Merging ${expectedCount} audio chunks for ${book_id}/${chapter_id}/${scene_id}`);
 
         try {
@@ -379,17 +374,26 @@ module.exports = function(redis, config, deps) {
                     log(`🎵 Single chunk fallback — copied to scene audio: ${outputPath}`);
                 } else {
                     // Not all chunks or fallback didn't apply — don't mark stage complete.
-                    // The retry loop above handles re-dispatch for missing chunks.
-                    log(`⚠️ Merge produced no output for ${book_id}/${chapter_id}/${scene_id} — waiting for retry`);
+                    // Set FAILED phase so scheduler re-dispatches.
+                    await audioOrch.setFailed(redis, book_id, chapter_id, scene_id, 'merge_failed_no_output');
+                    log(`⚠️ Merge produced no output for ${book_id}/${chapter_id}/${scene_id} — set FAILED`);
                     return;
                 }
             }
+
+            // 🔧 AUDIO-ORCH: Только после успешного merge → DONE + completeStage
+            await audioOrch.setDone(redis, book_id, chapter_id, scene_id);
+            log(`🎵 AUDIO_ORCH: ${book_id}/${chapter_id}/${scene_id} → DONE — calling completeStage`);
 
             await orchestrator.completeStage(redis, book_id, chapter_id, scene_id, 'audio', build_id);
 
             log(`🎵 Audio merge complete for ${book_id}/${chapter_id}/${scene_id}`);
         } catch (err) {
             console.error(`❌ Audio merge failed for ${book_id}/${chapter_id}/${scene_id}:`, err.message);
+            // Set FAILED so scheduler can re-dispatch
+            try {
+                await audioOrch.setFailed(redis, book_id, chapter_id, scene_id, `merge_error:${err.message}`);
+            } catch (_) {}
         }
     }
 

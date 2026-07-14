@@ -51,11 +51,45 @@ async function executeAudioDispatch(redis, scene, loadedBook, buildId) {
     // M5 Шаг 3: syncLinearState в beginStage, не здесь
     await state.setAssetState(redis, bookId, chapterId, sceneId, 'audio', state.AssetState.GENERATING);
 
+    // 🔧 AUDIO-ORCH: Transition PLACEHOLDER_READY → GENERATING
+    const audioOrch = require('../services/audio-orchestrator');
+    const transResult = await audioOrch.setGenerating(redis, bookId, chapterId, sceneId);
+    if (!transResult.success) {
+        warn(`AUDIO_ORCH: cannot set GENERATING for ${bookId}/${chapterId}/${sceneId}: ${transResult.reason}`);
+        return;
+    }
+
+    // 🧹 Delete placeholder merged audio file so triggerAudioMerge
+    // doesn't exit early when it sees a merged file before all chunks arrive.
+    const fs = require('fs');
+    const path = require('path');
+    const OUTPUT_DIR = process.env.OUTPUT_DIR || '/data/output';
+    const mergedPath = path.join(OUTPUT_DIR, buildId, `${bookId}_${chapterId}_${sceneId}.mp3`);
+    if (fs.existsSync(mergedPath)) {
+        try {
+            fs.unlinkSync(mergedPath);
+            log(`  🗑 Deleted placeholder merged audio before TTS: ${mergedPath}`);
+        } catch (e) {
+            warn(`  ⚠️ Failed to delete placeholder merged audio: ${e.message}`);
+        }
+    }
+
     // Fallback to disk load when runtime doesn't pass loadedBook
     const bookData = loadedBook || book.loadBook(bookId);
     const sceneData = book.findSceneRuntimeData(bookData, chapterId, sceneId);
     if (sceneData) {
-        await audio.generateSceneAudio(redis, sceneData, bookData, buildId, bookId);
+        const result = await audio.generateSceneAudio(redis, sceneData, bookData, buildId, bookId);
+
+        if (result && result.generated) {
+            // TTS был отправлен — transition to WAITING_CHUNKS
+            await audioOrch.setWaitingChunks(redis, bookId, chapterId, sceneId);
+            log(`AUDIO_ORCH: ${bookId}/${chapterId}/${sceneId} → WAITING_CHUNKS (expected=${result.expectedChunkCount})`);
+        } else if (result && result.reason === 'already_ready') {
+            // Аудио уже готово — transition directly to DONE
+            await audioOrch.setDone(redis, bookId, chapterId, sceneId);
+            log(`AUDIO_ORCH: ${bookId}/${chapterId}/${sceneId} → DONE (already ready)`);
+        }
+
         log(`AUDIO_DISPATCHED: ${bookId}/${chapterId}/${sceneId}`);
     } else {
         warn(`AUDIO_DISPATCH: sceneData not found for ${bookId}/${chapterId}/${sceneId}`);
