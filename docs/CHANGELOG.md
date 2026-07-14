@@ -4,9 +4,27 @@ All notable changes to Animastor are documented here.
 
 ---
 
-## [Unreleased] — 2026-07-13
+## [Unreleased] — 2026-07-14
 
 ### Fixed
+
+- **Placeholder re-created after deletion — race condition в `startScene()`**
+  (`backend/src/services/task-handler.cjs`):
+  - **Проблема:** `startScene()` в `scene-window.js` запускает `ensurePlaceholderAudio()` через
+    `setImmediate()` (fire-and-forget, non-blocking). Если `generateSceneAudio()` успевает удалить
+    старый placeholder и отправить TTS до того, как `setImmediate` callback отработает, callback
+    **создаёт новый placeholder MP3 уже после удаления**. Прибывающие TTS-чанки вызывают
+    `triggerAudioMerge()`, который видит `fs.existsSync(merged.mp3) → true` (новый placeholder)
+    и выходит ранним return, думая что merge уже выполнен. `completeStage()` вызывается в любом
+    случае — аудио сцены помечается как готовое, но на диске остаётся 2-секундная тишина.
+  - **Фикс 1 — placeholder detection в early-return:** при `fs.existsSync(mergedAudioPath)`
+    проверяется, является ли файл реальным аудио (heuristic: размер > 32KB, если меньше —
+    проверка PG через `placeholderAudio.hasRealAudio()`). Если это placeholder — continue
+    к retry-логике, не exit early.
+  - **Фикс 2 — completeStage только при успешном merge:** раньше `completeStage()` вызывался
+    всегда, даже если `mergeSceneAudioChunks()` вернул null и fallback не применился. Теперь
+    при неудачном merge функция возвращается без вызова `completeStage`, оставляя сцену
+    в PENDING для retry/передиспатча.
 
 - **Audio merge — per-chunk `padded_text` больше не обрезает все чанки**
   (`backend/src/services/task-handler.cjs`):

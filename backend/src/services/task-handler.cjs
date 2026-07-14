@@ -226,10 +226,32 @@ module.exports = function(redis, config, deps) {
             // ⛔ Check if merged scene audio already exists on disk.
             // After a successful merge, buildSceneAudio deletes all chunk files.
             // In that case, no retry is needed — the scene audio is complete.
+            // BUT: verify the merged audio is real (not a placeholder). The async
+            // setImmediate in startScene() may create a NEW placeholder after
+            // generateSceneAudio deletes the old one, causing triggerAudioMerge
+            // to exit early while TTS chunks are still arriving.
             const mergedAudioPath = path.join(buildDir, `${book_id}_${chapter_id}_${scene_id}.mp3`);
             if (fs.existsSync(mergedAudioPath)) {
-                log(`🎵 Merged audio already exists for ${book_id}/${chapter_id}/${scene_id} — chunks were cleaned up, skipping retry`);
-                return;
+                // Fast heuristic: real TTS is > 32KB for any scene
+                let isReal = false;
+                try {
+                    const st = fs.statSync(mergedAudioPath);
+                    if (st.size > 32768) {
+                        isReal = true;
+                    } else {
+                        // Small file — verify via PG that it's not a placeholder
+                        const hasReal = await placeholderAudio.hasRealAudio(book_id, chapter_id, scene_id, build_id);
+                        isReal = hasReal;
+                    }
+                } catch (_) {
+                    // If stat or PG fails, assume real (safe default)
+                    isReal = true;
+                }
+                if (isReal) {
+                    log(`🎵 Merged audio already exists for ${book_id}/${chapter_id}/${scene_id} — chunks were cleaned up, skipping retry`);
+                    return;
+                }
+                log(`⚠️ Merged audio is a placeholder — waiting for real TTS chunks`);
             }
 
             // ── RETRY LOGIC: chunks may still be generating ──
@@ -355,6 +377,11 @@ module.exports = function(redis, config, deps) {
                 if (chunkPaths.length === 1 && fs.existsSync(chunkPaths[0]) && !fs.existsSync(outputPath)) {
                     fs.copyFileSync(chunkPaths[0], outputPath);
                     log(`🎵 Single chunk fallback — copied to scene audio: ${outputPath}`);
+                } else {
+                    // Not all chunks or fallback didn't apply — don't mark stage complete.
+                    // The retry loop above handles re-dispatch for missing chunks.
+                    log(`⚠️ Merge produced no output for ${book_id}/${chapter_id}/${scene_id} — waiting for retry`);
+                    return;
                 }
             }
 
