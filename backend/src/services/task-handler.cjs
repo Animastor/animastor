@@ -208,10 +208,8 @@ module.exports = function(redis, config, deps) {
         }
 
         // 🔧 AUDIO-ORCH: Читаем phase — единственный источник решения
-        const orchStart = Date.now();
         const audioOrch = require('./audio-orchestrator');
         const orchState = await audioOrch.getState(redis, book_id, chapter_id, scene_id);
-        const orchMs = Date.now() - orchStart;
 
         if (!orchState || orchState.phase === audioOrch.PHASES.DONE) {
             log(`🎵 Audio already done for ${book_id}/${chapter_id}/${scene_id} — skipping retry (${Date.now() - dbgStart}ms)`);
@@ -261,7 +259,6 @@ module.exports = function(redis, config, deps) {
         const chunkPaths = [];
         let allChunksExist = true;
         let missingChunks = 0;
-        const chunkCheckStart = Date.now();
         for (let i = 1; i <= expectedCount; i++) {
             const chunkPath = path.join(buildDir, `${book_id}_${chapter_id}_${scene_id}_${pad(i)}.mp3`);
             chunkPaths.push(chunkPath);
@@ -271,7 +268,6 @@ module.exports = function(redis, config, deps) {
                 log(`⚠️ Missing chunk ${i}: ${chunkPath}`);
             }
         }
-        const chunkCheckMs = Date.now() - chunkCheckStart;
 
         if (!allChunksExist) {
             // ── RETRY LOGIC: chunks may still be generating ──
@@ -363,7 +359,6 @@ module.exports = function(redis, config, deps) {
         }
 
         // All chunks exist on disk — set MERGING phase and proceed with merge
-        const mergePhaseStart = Date.now();
         await audioOrch.setMerging(redis, book_id, chapter_id, scene_id);
         log(`🔀 AUDIO_ORCH: ${book_id}/${chapter_id}/${scene_id} → MERGING`);
 
@@ -371,7 +366,6 @@ module.exports = function(redis, config, deps) {
 
         try {
             // Trim only chunks that have padded_text set
-            const trimStart = Date.now();
             let trimmedCount = 0;
             for (let i = 0; i < chunkPaths.length; i++) {
                 const currentChunkId = `${book_id}_${chapter_id}_${scene_id}_${pad(i + 1)}`;
@@ -386,12 +380,9 @@ module.exports = function(redis, config, deps) {
                     console.warn(`⚠️ Failed to check padded_text for chunk ${currentChunkId}: ${metaErr.message}`);
                 }
             }
-            const trimMs = Date.now() - trimStart;
 
             // Merge chunks into canonical audio using mergeSceneAudioChunks
-            const mergeStart = Date.now();
             const mergeResult = await audio.mergeSceneAudioChunks(redis, book_id, chapter_id, scene_id, build_id, expectedCount);
-            const mergeMs = Date.now() - mergeStart;
 
             if (!mergeResult) {
                 const outputPath = path.join(buildDir, `${book_id}_${chapter_id}_${scene_id}.mp3`);
@@ -400,29 +391,15 @@ module.exports = function(redis, config, deps) {
                     log(`🎵 Single chunk fallback — copied to scene audio: ${outputPath}`);
                 } else {
                     await audioOrch.setFailed(redis, book_id, chapter_id, scene_id, 'merge_failed_no_output');
-                    const totalMs = Date.now() - dbgStart;
-                    log(`[MERGE:DBG] ${book_id}/${chapter_id}/${scene_id}: FAILED no_output ` +
-                        `orch=${orchMs}ms chunk_check=${chunkCheckMs}ms ` +
-                        `trim=${trimMs}ms merge=${mergeMs}ms total=${totalMs}ms`);
                     return;
                 }
             }
 
             // 🔧 AUDIO-ORCH: Только после успешного merge → DONE + completeStage
-            const doneStart = Date.now();
             await audioOrch.setDone(redis, book_id, chapter_id, scene_id);
-            const doneMs = Date.now() - doneStart;
 
-            const completeStart = Date.now();
             await orchestrator.completeStage(redis, book_id, chapter_id, scene_id, 'audio', build_id);
-            const completeMs = Date.now() - completeStart;
 
-            const totalMs = Date.now() - dbgStart;
-            log(`[MERGE:DBG] ${book_id}/${chapter_id}/${scene_id}: SUCCESS ` +
-                `expected=${expectedCount} ready=${expectedCount} ` +
-                `orch=${orchMs}ms chunk_check=${chunkCheckMs}ms ` +
-                `trim=${trimMs}ms(${trimmedCount}) merge=${mergeMs}ms ` +
-                `done=${doneMs}ms complete=${completeMs}ms total=${totalMs}ms`);
             log(`🎵 Audio merge complete for ${book_id}/${chapter_id}/${scene_id}`);
         } catch (err) {
             console.error(`❌ Audio merge failed for ${book_id}/${chapter_id}/${scene_id} after ${Date.now() - dbgStart}ms:`, err.message);

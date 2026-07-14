@@ -54,9 +54,6 @@ function estimateSpeechDurationSec(text) {
     const wordCount = String(text || '').split(/\s+/).filter(Boolean).length;
     const estimated = Math.max(wordCount * SPEECH_SEC_PER_WORD, SPEECH_MIN_SEC);
     const rounded = Math.round(estimated * 10) / 10;
-    if (rounded < 3.0 && wordCount > 0) {
-        log(`[DUR:DBG] Short text: ${wordCount}w → ~${rounded}s (< 3s threshold), text="${String(text).substring(0, 50)}"`);
-    }
     return rounded;
 }
 

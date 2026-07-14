@@ -49,7 +49,6 @@ async function executeAudioDispatch(redis, scene, loadedBook, buildId) {
     });
 
     // §5.1: Set per-asset state to generating so callbacks can validate correctly
-    const stateStart = Date.now();
     await state.setAssetState(redis, bookId, chapterId, sceneId, 'audio', state.AssetState.GENERATING);
 
     // Fallback to disk load when runtime doesn't pass loadedBook
@@ -58,9 +57,7 @@ async function executeAudioDispatch(redis, scene, loadedBook, buildId) {
 
     // 🔧 AUDIO-ORCH: Transition PLACEHOLDER_READY → GENERATING
     const audioOrch = require('../services/audio-orchestrator');
-    const orchStart = Date.now();
     let transResult = await audioOrch.setGenerating(redis, bookId, chapterId, sceneId);
-    let orchMs = Date.now() - orchStart;
 
     // 🔧 FIX: Если стейт не существует (no_state), инициализируем PLACEHOLDER_READY
     // и повторяем переход. Это происходит когда сцена была восстановлена (recovery)
@@ -72,7 +69,6 @@ async function executeAudioDispatch(redis, scene, loadedBook, buildId) {
         log(`  🔧 AUDIO_ORCH: initialized PLACEHOLDER_READY with ${segList.length} expected segments for ${bookId}/${chapterId}/${sceneId}`);
         // Retry the transition
         transResult = await audioOrch.setGenerating(redis, bookId, chapterId, sceneId);
-        orchMs = Date.now() - orchStart;
     }
 
     if (!transResult.success) {
@@ -86,11 +82,9 @@ async function executeAudioDispatch(redis, scene, loadedBook, buildId) {
     const path = require('path');
     const OUTPUT_DIR = process.env.OUTPUT_DIR || '/data/output';
     const mergedPath = path.join(OUTPUT_DIR, buildId, `${bookId}_${chapterId}_${sceneId}.mp3`);
-    let deletedPlaceholder = false;
     if (fs.existsSync(mergedPath)) {
         try {
             fs.unlinkSync(mergedPath);
-            deletedPlaceholder = true;
             log(`  🗑 Deleted placeholder merged audio before TTS: ${mergedPath}`);
         } catch (e) {
             warn(`  ⚠️ Failed to delete placeholder merged audio: ${e.message}`);
@@ -98,29 +92,12 @@ async function executeAudioDispatch(redis, scene, loadedBook, buildId) {
     }
 
     if (sceneData) {
-        const genStart = Date.now();
         const result = await audio.generateSceneAudio(redis, sceneData, bookData, buildId, bookId);
-        const genMs = Date.now() - genStart;
 
         if (result && result.generated) {
-            const waitStart = Date.now();
             await audioOrch.setWaitingChunks(redis, bookId, chapterId, sceneId);
-            const waitMs = Date.now() - waitStart;
-            const totalMs = Date.now() - dbgStart;
-            log(`[DISPATCH:DBG] ${bookId}/${chapterId}/${sceneId}: ` +
-                `state=${Date.now() - stateStart}ms orch=${orchMs}ms ` +
-                `gen=${genMs}ms wait=${waitMs}ms total=${totalMs}ms ` +
-                `expected=${result.expectedChunkCount} placeholder_deleted=${deletedPlaceholder}`);
         } else if (result && result.reason === 'already_ready') {
-            const doneStart = Date.now();
             await audioOrch.setDone(redis, bookId, chapterId, sceneId);
-            const totalMs = Date.now() - dbgStart;
-            log(`[DISPATCH:DBG] ${bookId}/${chapterId}/${sceneId}: ` +
-                `ALREADY_READY state=${Date.now() - stateStart}ms ` +
-                `gen=${genMs}ms done=${Date.now() - doneStart}ms total=${totalMs}ms`);
-        } else {
-            log(`[DISPATCH:DBG] ${bookId}/${chapterId}/${sceneId}: ` +
-                `result=${JSON.stringify(result)} total=${Date.now() - dbgStart}ms`);
         }
 
         log(`AUDIO_DISPATCHED: ${bookId}/${chapterId}/${sceneId}`);

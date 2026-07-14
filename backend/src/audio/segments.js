@@ -3,7 +3,6 @@
 // ======================================================
 
 const helpers = require('./helpers');
-const { estimateSpeechDurationSec } = require('../services/placeholder-audio');
 
 function splitTextIntoChunks(text, maxChars = 250) {
     if (!text?.trim()) return [];
@@ -55,8 +54,6 @@ function narratorVoice(scene, book) {
 
 function padShortText(text) {
     if (text.length >= 40) return text;
-    const estDur = estimateSpeechDurationSec(text);
-    helpers.log(`[PAD:DBG] Short text: ${text.length}ch, ~${estDur.toFixed(1)}s (< 3s) — duplicating: "${text.substring(0, 30)}${text.length > 30 ? '..' : ''}" → "${text} ${text}"`);
     return text + " " + text;
 }
 

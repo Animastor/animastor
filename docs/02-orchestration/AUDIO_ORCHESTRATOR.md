@@ -97,6 +97,7 @@ NEW ──→ PLACEHOLDER_READY ──→ GENERATING             │
 | `MERGING → DONE` | `triggerAudioMerge` | После успешного merge |
 | `WAITING_CHUNKS → FAILED` | `triggerAudioMerge` | После MAX_RETRIES |
 | `FAILED → GENERATING` | scheduler re-dispatch | На следующем scheduler tick |
+| `FAILED → WAITING_CHUNKS` | `triggerAudioMerge` (recovery) | Когда все чанки пришли после FAILED (late chunk race) |
 
 > **Важно:** `chunks_received` в Redis-ключе — информационное поле. Решение "все ли чанки готовы"
 > принимается на основе **проверки FS** (список .mp3 файлов на диске), а не счётчика.
