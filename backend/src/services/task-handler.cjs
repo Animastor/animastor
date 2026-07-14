@@ -375,7 +375,7 @@ module.exports = function(redis, config, deps) {
                     await audioOrch.setFailed(redis, book_id, chapter_id, scene_id, 'merge_failed_no_output');
                     const totalMs = Date.now() - dbgStart;
                     log(`[MERGE:DBG] ${book_id}/${chapter_id}/${scene_id}: FAILED no_output ` +
-                        `orch=${orchMs}ms chunk_check=${chunkCheck}ms ` +
+                        `orch=${orchMs}ms chunk_check=${chunkCheckMs}ms ` +
                         `trim=${trimMs}ms merge=${mergeMs}ms total=${totalMs}ms`);
                     return;
                 }
@@ -393,7 +393,7 @@ module.exports = function(redis, config, deps) {
             const totalMs = Date.now() - dbgStart;
             log(`[MERGE:DBG] ${book_id}/${chapter_id}/${scene_id}: SUCCESS ` +
                 `expected=${expectedCount} ready=${expectedCount} ` +
-                `orch=${orchMs}ms chunk_check=${chunkCheck}ms ` +
+                `orch=${orchMs}ms chunk_check=${chunkCheckMs}ms ` +
                 `trim=${trimMs}ms(${trimmedCount}) merge=${mergeMs}ms ` +
                 `done=${doneMs}ms complete=${completeMs}ms total=${totalMs}ms`);
             log(`🎵 Audio merge complete for ${book_id}/${chapter_id}/${scene_id}`);
