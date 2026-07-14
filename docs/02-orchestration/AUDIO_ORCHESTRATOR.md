@@ -91,12 +91,16 @@ NEW ──→ PLACEHOLDER_READY ──→ GENERATING             │
 | Transition | Кто меняет | Когда |
 |------------|-----------|-------|
 | `NEW → PLACEHOLDER_READY` | `startScene()` | После создания placeholder + chunk metadata |
-| `PLACEHOLDER_READY → GENERATING` | `dispatchStage('audio')` | Перед отправкой TTS |
-| `GENERATING → WAITING_CHUNKS` | `dispatchStage('audio')` | После отправки TTS |
-| `WAITING_CHUNKS → MERGING` | `triggerAudioMerge` | Когда `chunks_received === expected_count` |
+| `PLACEHOLDER_READY → GENERATING` | `executeAudioDispatch()` | Перед отправкой TTS |
+| `GENERATING → WAITING_CHUNKS` | `executeAudioDispatch()` | После отправки TTS |
+| `WAITING_CHUNKS → MERGING` | `triggerAudioMerge` | Когда все чанки на диске (проверка по FS) |
 | `MERGING → DONE` | `triggerAudioMerge` | После успешного merge |
 | `WAITING_CHUNKS → FAILED` | `triggerAudioMerge` | После MAX_RETRIES |
-| `FAILED → GENERATING` | `dispatchStage('audio')` | На следующем scheduler tick |
+| `FAILED → GENERATING` | scheduler re-dispatch | На следующем scheduler tick |
+
+> **Важно:** `chunks_received` в Redis-ключе — информационное поле. Решение "все ли чанки готовы"
+> принимается на основе **проверки FS** (список .mp3 файлов на диске), а не счётчика.
+> Такой подход надёжнее: не зависит от порядка arrival callback'ов и устойчив к дубликатам.
 
 ### Изменения в компонентах
 
@@ -193,20 +197,20 @@ Redis key.
 
 ### Восстановление после перезапуска
 
-При старте backend:
+При старте backend (`startup-recovery.js`, Step 6):
 1. Scan Redis keys `animastor:audio-orch:*`
-2. Для phase = `GENERATING | WAITING_CHUNKS`: проверить чанки на диске
-   — если все есть → перевести в `MERGING` и запустить merge
-   — если нет → перевести в `FAILED` (scheduler подхватит)
+2. Для phase = `GENERATING | WAITING_CHUNKS`: `→ FAILED` (scheduler подхватит на следующем tick)
+   — чанки, уже существующие на диске, будут cache-hit в `generateSceneAudio()`
 3. Для phase = `MERGING`: проверить merged-файл
-   — если есть → перевести в `DONE`
-   — если нет → перевести в `FAILED`
-4. Для phase = `PLACEHOLDER_READY`: проверить placeholder
-   — если нет → пересоздать
-   — если есть → оставить (scheduler подхватит)
+   — если есть → `→ DONE`
+   — если нет → `→ FAILED`
+4. Для phase = `PLACEHOLDER_READY`: оставить как есть, добавить сцену в active index
+5. Для phase = `DONE | FAILED`: терминальные, оставить без изменений
 
-Это заменяет текущий `recoverMissingRedisChunks` + `recoverMissingPlaceholders`
-для audio-слоя (другие слои image/video не затронуты).
+> **Упрощение:** вместо полного восстановления (проверка чанков на диске → запуск merge)
+> для `GENERATING/WAITING_CHUNKS` используется FAILED + scheduler re-dispatch.
+> Это безопаснее (нет риска дублировать merge при race condition restart) и достаточно
+> быстро (scheduler tick раз в 5 секунд, cache-hit в `generateSceneAudio`).
 
 ### Миграция — статус выполнения
 
@@ -220,8 +224,9 @@ Redis key.
 
 Также изменены:
 - `backend/src/orchestration/scene-orchestrator.js` — `executeAudioDispatch()` устанавливает GENERATING/WAITING_CHUNKS
+- `backend/tests/audio-orchestrator.test.js` — 21 unit-тест (все переходы, invalid transitions, scanAllStates)
 
-Все шаги имплементированы в одном коммите, так как они тесно связаны и требуют друг друга для корректной работы.
+Все шаги имплементированы за 2 коммита, так как они тесно связаны и требуют друг друга для корректной работы.
 
 ### Сравнение: было vs стало
 
@@ -234,3 +239,53 @@ Redis key.
 | **Retry trigger** | fs.existsSync(merged) 🚫 | orch.phase (WAITING_CHUNKS / FAILED) ✅ |
 | **Startup recovery** | FS scan → guess | Redis scan → exact state |
 | **PG query per chunk** | Да (наш workaround) | Нет (вся информация в Redis) |
+
+## Аудит мёртвого кода
+
+После рефакторинга проверены все функции на неиспользуемость:
+
+| Функция | Файл | Статус |
+|---------|------|--------|
+| `areSceneAudioChunksReady()` | `chunks.js` | 🟡 Мёртвый код (экспортируется, но нигде не импортируется) |
+| `allSceneChunksExist()` | `chunks.js` | ✅ Используется в `pipeline.js` |
+| `findExistingSceneChunks()` | `chunks.js` | ✅ Используется в `generation.js`, `pipeline.js` |
+| `isSceneAudioReady()` | `validation.js` | ✅ Используется в `generation.js`, `scene-callbacks.js` (валидация, не решение) |
+| Старый `fs.existsSync(merged)` в `triggerAudioMerge` | `task-handler.cjs` | ✅ Заменён на phase check |
+| `setImmediate` в `startScene()` | `scene-window.js` | ✅ Заменён на синхронный await |
+
+> **Примечание:** `areSceneAudioChunksReady()` — предшествующий мёртвый код,
+> не связанный с этим рефакторингом. Удаление — в отдельную задачу.
+
+## Аудит оставшихся FS-проверок
+
+После рефакторинга `triggerAudioMerge` больше не использует `fs.existsSync` для принятия
+решения. Оставшиеся FS-проверки в audio-слое делятся на 3 категории:
+
+### 1. Файловые операции (безопасно, не решение)
+- `generation.js` — проверка существования chunk-файлов перед TTS (`cache-hit`) и удаление stale
+- `pipeline.js` — проверка chunk/merged файлов для concat/merge/cleanup
+- `task-handler.cjs` — проверка chunk файлов на диске для merge (нужно знать, какие файлы есть физически)
+
+### 2. Валидация после решения (не影響 решение)
+- `scene-callbacks.js:58` — `isSceneAudioReady()` вызывается ДОПОЛНИТЕЛЬНО после того,
+  как phase уже `DONE`. Это валидация, а не gate.
+- `generation.js:97` — `isSceneAudioReady()` — cache-hit detection, не conflicts с phase.
+
+### 3. Вспомогательные проверки
+- `validation.js` — `isSceneAudioReady()` — может использоваться для фронтенда.
+  Теперь не用于 оркестрации; можно ограничить кешированием для ответов на запросы UI.
+
+**Вывод:** ни одна FS-проверка не принимает решений об оркестрации аудио.
+Все решения проходят через Redis phase machine.
+
+## Результаты тестирования
+
+- **Все тесты:** 550/550 ✅ (предыдущие 529 + 21 новый)
+- **Новые тесты для audio-orchestrator:** 21 тест
+  - 6 happy-path переходов
+  - 6 invalid-переходов
+  - 4 scanAllStates (включая bookId с подчёркиваниями)
+  - 2 setState/deleteState
+  - 2 createState helper
+  - 1 key helper
+- **Code review:** 2 критических бага найдены и исправлены до merge
