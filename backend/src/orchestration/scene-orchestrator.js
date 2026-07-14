@@ -52,11 +52,29 @@ async function executeAudioDispatch(redis, scene, loadedBook, buildId) {
     const stateStart = Date.now();
     await state.setAssetState(redis, bookId, chapterId, sceneId, 'audio', state.AssetState.GENERATING);
 
+    // Fallback to disk load when runtime doesn't pass loadedBook
+    const bookData = loadedBook || book.loadBook(bookId);
+    const sceneData = book.findSceneRuntimeData(bookData, chapterId, sceneId);
+
     // 🔧 AUDIO-ORCH: Transition PLACEHOLDER_READY → GENERATING
     const audioOrch = require('../services/audio-orchestrator');
     const orchStart = Date.now();
-    const transResult = await audioOrch.setGenerating(redis, bookId, chapterId, sceneId);
-    const orchMs = Date.now() - orchStart;
+    let transResult = await audioOrch.setGenerating(redis, bookId, chapterId, sceneId);
+    let orchMs = Date.now() - orchStart;
+
+    // 🔧 FIX: Если стейт не существует (no_state), инициализируем PLACEHOLDER_READY
+    // и повторяем переход. Это происходит когда сцена была восстановлена (recovery)
+    // без вызова startScene(), но scheduler всё равно диспатчит аудио.
+    if (!transResult.success && transResult.reason === 'no_state' && sceneData) {
+        log(`  🔧 AUDIO_ORCH: state missing for ${bookId}/${chapterId}/${sceneId} — initializing PLACEHOLDER_READY first`);
+        const segList = require('../audio/segments').buildSegments(sceneData);
+        await audioOrch.initPlaceholderReady(redis, bookId, chapterId, sceneId, buildId, segList.length);
+        log(`  🔧 AUDIO_ORCH: initialized PLACEHOLDER_READY with ${segList.length} expected segments for ${bookId}/${chapterId}/${sceneId}`);
+        // Retry the transition
+        transResult = await audioOrch.setGenerating(redis, bookId, chapterId, sceneId);
+        orchMs = Date.now() - orchStart;
+    }
+
     if (!transResult.success) {
         warn(`AUDIO_ORCH: cannot set GENERATING for ${bookId}/${chapterId}/${sceneId}: ${transResult.reason} (${Date.now() - dbgStart}ms)`);
         return;
@@ -79,9 +97,6 @@ async function executeAudioDispatch(redis, scene, loadedBook, buildId) {
         }
     }
 
-    // Fallback to disk load when runtime doesn't pass loadedBook
-    const bookData = loadedBook || book.loadBook(bookId);
-    const sceneData = book.findSceneRuntimeData(bookData, chapterId, sceneId);
     if (sceneData) {
         const genStart = Date.now();
         const result = await audio.generateSceneAudio(redis, sceneData, bookData, buildId, bookId);

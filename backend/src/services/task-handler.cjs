@@ -223,7 +223,34 @@ module.exports = function(redis, config, deps) {
             return;
         }
 
-        if (orchState.phase !== audioOrch.PHASES.WAITING_CHUNKS) {
+        if (orchState.phase === audioOrch.PHASES.FAILED) {
+            // 🔧 RECOVERY: Phase is FAILED but a late chunk arrived.
+            // This happens when the last chunk arrives after MAX_RETRIES.
+            // Check if ALL chunks are now present — if so, recover by
+            // transitioning to WAITING_CHUNKS and proceeding with merge.
+            const recoveryExpectedCount = parseInt(expected_chunk_count || orchState.expected_count || '1', 10);
+            let allPresent = true;
+            for (let i = 1; i <= expectedCount; i++) {
+                const chunkPath = path.join(buildDir, `${book_id}_${chapter_id}_${scene_id}_${pad(i)}.mp3`);
+                if (!fs.existsSync(chunkPath)) {
+                    allPresent = false;
+                    break;
+                }
+            }
+            if (allPresent) {
+                log(`🔧 RECOVERY: All ${recoveryExpectedCount} chunks present despite FAILED for ${book_id}/${chapter_id}/${scene_id} — resuming merge`);
+                // FAILED → WAITING_CHUNKS (now a valid transition in VALID_TRANSITIONS)
+                const transResult = await audioOrch.transitionState(redis, book_id, chapter_id, scene_id, audioOrch.PHASES.WAITING_CHUNKS);
+                if (!transResult.success) {
+                    log(`⚠️ RECOVERY: transition FAILED→WAITING_CHUNKS failed: ${transResult.reason} (${Date.now() - dbgStart}ms)`);
+                    return;
+                }
+                // Fall through to merge logic below
+            } else {
+                log(`⏳ Audio phase is FAILED (${book_id}/${chapter_id}/${scene_id}) but not all chunks present yet — waiting for scheduler re-dispatch (${Date.now() - dbgStart}ms)`);
+                return;
+            }
+        } else if (orchState.phase !== audioOrch.PHASES.WAITING_CHUNKS) {
             log(`⏳ Audio phase is ${orchState.phase} — not ready for merge, skipping (${Date.now() - dbgStart}ms)`);
             return;
         }
