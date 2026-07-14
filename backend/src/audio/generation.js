@@ -17,12 +17,17 @@ const WORKFLOW_DIALOGUE = 'tts-qwen-dialogue';
 
 async function trimPaddedSceneAudio(filePath) {
     const basename = path.basename(filePath);
-    helpers.log(`✂️ trimPaddedSceneAudio: trimming ${basename}`);
+    const dbgStart = Date.now();
 
     const duration = await ffmpeg.probeDuration(filePath);
     if (!duration || duration < 0.5) {
-        helpers.log(`⚠️ trimPaddedSceneAudio: duration=${duration}s too short for ${basename}, skipping`);
+        helpers.log(`[TRIM:DBG] ${basename}: duration=${duration}s < 0.5s — skipping (${Date.now() - dbgStart}ms)`);
         return;
+    }
+
+    // Log if this is a short chunk (< 3s) being trimmed
+    if (duration < 3.0) {
+        helpers.log(`[TRIM:DBG] ${basename}: SHORT AUDIO ${duration.toFixed(2)}s (< 3s) — trimming padded copy`);
     }
 
     const quietest = await ffmpeg.findQuietestPoint(filePath, 0.40, 0.60);
@@ -30,19 +35,19 @@ async function trimPaddedSceneAudio(filePath) {
     const safetyMargin = 0.10;
     cutTime = Math.min(cutTime + safetyMargin, duration * 0.55);
     const method = (quietest > 0.3) ? `quietest@${quietest.toFixed(2)}s+${(safetyMargin*1000).toFixed(0)}ms` : 'half-duration';
-    helpers.log(`✂️ trimPaddedSceneAudio: total=${duration.toFixed(2)}s, ${method} cut at ${cutTime.toFixed(2)}s for ${basename}`);
 
     const tempPath = filePath + '.trim.mp3';
     const ok = await ffmpeg.cutFirstHalf(filePath, tempPath, cutTime);
     if (ok) {
         try {
             fs.renameSync(tempPath, filePath);
-            helpers.log(`✅ trimPaddedSceneAudio: trimmed ${basename} → kept first ${cutTime.toFixed(1)}s`);
+            const trimmedMs = Date.now() - dbgStart;
+            helpers.log(`[TRIM:DBG] ${basename}: ${duration.toFixed(2)}s → ${cutTime.toFixed(2)}s kept (${method}) ${trimmedMs}ms`);
         } catch (e) {
-            helpers.log(`⚠️ trimPaddedSceneAudio: rename failed for ${basename}: ${e.message}`);
+            helpers.log(`[TRIM:DBG] ${basename}: rename failed: ${e.message} (${Date.now() - dbgStart}ms)`);
         }
     } else {
-        helpers.log(`⚠️ trimPaddedSceneAudio: ffmpeg cut failed for ${basename}, file unchanged`);
+        helpers.log(`[TRIM:DBG] ${basename}: ffmpeg cut failed, file unchanged (${Date.now() - dbgStart}ms)`);
     }
 }
 
@@ -318,8 +323,10 @@ async function generateSceneAudio(redis, sceneData, loadedBook, buildId, bookId)
             }
         }
 
+        const wordCount = segment.text.split(/\s+/).filter(Boolean).length;
+        const estDur = Math.max(wordCount * 0.3, 2.0);
+        helpers.log(`[TTS:DBG] ${id}: ${segment.segment_type} ${wordCount}w ~${estDur.toFixed(1)}s padded=${segment.padded} — submitted to GPU`);
         await gpu.send(`${id}:audio`, wfAudio, "audio", buildId);
-        helpers.log(`Audio TTS submitted: ${id} (${segment.segment_type})`);
     }
 
     await redis.del(sceneLockKey);

@@ -52,9 +52,15 @@ function narratorVoice(scene, book) {
         || "";
 }
 
+function _estimatedDurationSec(text) {
+    const words = String(text || '').split(/\s+/).filter(Boolean).length;
+    return Math.max(words * 0.3, 2.0);
+}
+
 function padShortText(text) {
     if (text.length >= 40) return text;
-    helpers.log(`📐 Short text detected (${text.length} chars) — duplicating: "${text}" → "${text} ${text}"`);
+    const estDur = _estimatedDurationSec(text);
+    helpers.log(`[PAD:DBG] Short text: ${text.length}ch, ~${estDur.toFixed(1)}s (< 3s) — duplicating: "${text.substring(0, 30)}${text.length > 30 ? '..' : ''}" → "${text} ${text}"`);
     return text + " " + text;
 }
 
