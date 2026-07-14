@@ -44,6 +44,27 @@ const VALID_TRANSITIONS = {
     [PHASES.DONE]: [], // terminal
 };
 
+// ======================================================
+// DEBUG HELPERS — временные метки для трассировки
+// ======================================================
+
+/** @returns {string} ISO timestamp с микросекундами */
+function ts() {
+    const now = new Date();
+    return now.toISOString().replace('T', ' ').replace('Z', '') +
+        '.' + String(now.getMilliseconds()).padStart(3, '0');
+}
+
+/** Лог с временной меткой */
+function debugLog(ctx, bookId, chapterId, sceneId, msg, extra = '') {
+    console.log(`[AUDIO-ORCH:DBG] [${ts()}] [${ctx}] ${bookId}/${chapterId}/${sceneId}: ${msg}${extra ? ' | ' + extra : ''}`);
+}
+
+/** Время выполнения (ms) с момента start */
+function elapsedMs(start) {
+    return Date.now() - start;
+}
+
 /**
  * Build the Redis key for a scene's audio-orch state.
  */
@@ -69,22 +90,32 @@ function createState(buildId, expectedCount) {
  * Returns null if no state exists (phase = NEW).
  */
 async function getState(redis, bookId, chapterId, sceneId) {
+    const start = Date.now();
     const raw = await redis.get(key(bookId, chapterId, sceneId));
-    return raw ? JSON.parse(raw) : null;
+    const result = raw ? JSON.parse(raw) : null;
+    debugLog('getState', bookId, chapterId, sceneId,
+        result ? `phase=${result.phase}` : 'null',
+        `redis_ms=${elapsedMs(start)}`);
+    return result;
 }
 
 /**
  * Set (overwrite) the audio-orch state in Redis.
  */
 async function setState(redis, bookId, chapterId, sceneId, state) {
+    const start = Date.now();
     await redis.set(key(bookId, chapterId, sceneId), JSON.stringify(state));
+    debugLog('setState', bookId, chapterId, sceneId,
+        `phase=${state.phase}`, `redis_ms=${elapsedMs(start)}`);
 }
 
 /**
  * Delete the audio-orch state from Redis.
  */
 async function deleteState(redis, bookId, chapterId, sceneId) {
+    const start = Date.now();
     await redis.del(key(bookId, chapterId, sceneId));
+    debugLog('deleteState', bookId, chapterId, sceneId, 'deleted', `redis_ms=${elapsedMs(start)}`);
 }
 
 /**
@@ -93,15 +124,19 @@ async function deleteState(redis, bookId, chapterId, sceneId) {
  * Returns { success: true, state } or { success: false, reason }.
  */
 async function transitionState(redis, bookId, chapterId, sceneId, newPhase, additionalFields = {}) {
+    const opStart = Date.now();
     const current = await getState(redis, bookId, chapterId, sceneId);
     if (!current) {
+        debugLog('transitionState', bookId, chapterId, sceneId,
+            `FAIL no_state → ${newPhase}`, `total_ms=${elapsedMs(opStart)}`);
         return { success: false, reason: 'no_state' };
     }
 
     const allowed = VALID_TRANSITIONS[current.phase] || [];
     if (current.phase !== newPhase && !allowed.includes(newPhase)) {
-        const logPrefix = '[AUDIO-ORCH]';
-        console.warn(`${logPrefix} ⚠️ Invalid transition: ${current.phase} → ${newPhase} for ${bookId}/${chapterId}/${sceneId}`);
+        debugLog('transitionState', bookId, chapterId, sceneId,
+            `INVALID ${current.phase} → ${newPhase}`, `total_ms=${elapsedMs(opStart)}`);
+        console.warn(`[AUDIO-ORCH] ⚠️ Invalid transition: ${current.phase} → ${newPhase} for ${bookId}/${chapterId}/${sceneId}`);
         return { success: false, reason: 'invalid_transition', from: current.phase, to: newPhase };
     }
 
@@ -109,8 +144,9 @@ async function transitionState(redis, bookId, chapterId, sceneId, newPhase, addi
     Object.assign(current, additionalFields);
     await setState(redis, bookId, chapterId, sceneId, current);
 
-    const logPrefix = '[AUDIO-ORCH]';
-    console.log(`${logPrefix} ${bookId}/${chapterId}/${sceneId}: ${current.phase}`);
+    debugLog('transitionState', bookId, chapterId, sceneId,
+        `${current.phase}`, `total_ms=${elapsedMs(opStart)}`);
+    console.log(`[AUDIO-ORCH] ${bookId}/${chapterId}/${sceneId}: ${current.phase}`);
     return { success: true, state: current };
 }
 
@@ -119,10 +155,13 @@ async function transitionState(redis, bookId, chapterId, sceneId, newPhase, addi
  * Called from startScene() after placeholder creation.
  */
 async function initPlaceholderReady(redis, bookId, chapterId, sceneId, buildId, expectedCount) {
+    const start = Date.now();
     const state = createState(buildId, expectedCount);
     await setState(redis, bookId, chapterId, sceneId, state);
-    const logPrefix = '[AUDIO-ORCH]';
-    console.log(`${logPrefix} ${bookId}/${chapterId}/${sceneId}: ${PHASES.PLACEHOLDER_READY} (expected=${expectedCount}, build=${buildId})`);
+    debugLog('initPlaceholderReady', bookId, chapterId, sceneId,
+        `PLACEHOLDER_READY expected=${expectedCount} build=${buildId}`,
+        `total_ms=${elapsedMs(start)}`);
+    console.log(`[AUDIO-ORCH] ${bookId}/${chapterId}/${sceneId}: ${PHASES.PLACEHOLDER_READY} (expected=${expectedCount}, build=${buildId})`);
     return state;
 }
 
@@ -131,7 +170,12 @@ async function initPlaceholderReady(redis, bookId, chapterId, sceneId, buildId, 
  * Called from executeAudioDispatch() before TTS dispatch.
  */
 async function setGenerating(redis, bookId, chapterId, sceneId) {
-    return await transitionState(redis, bookId, chapterId, sceneId, PHASES.GENERATING);
+    const start = Date.now();
+    const result = await transitionState(redis, bookId, chapterId, sceneId, PHASES.GENERATING);
+    debugLog('setGenerating', bookId, chapterId, sceneId,
+        result.success ? 'GENERATING' : `FAIL:${result.reason}`,
+        `total_ms=${elapsedMs(start)}`);
+    return result;
 }
 
 /**
@@ -139,7 +183,12 @@ async function setGenerating(redis, bookId, chapterId, sceneId) {
  * Called from executeAudioDispatch() after TTS dispatch.
  */
 async function setWaitingChunks(redis, bookId, chapterId, sceneId) {
-    return await transitionState(redis, bookId, chapterId, sceneId, PHASES.WAITING_CHUNKS);
+    const start = Date.now();
+    const result = await transitionState(redis, bookId, chapterId, sceneId, PHASES.WAITING_CHUNKS);
+    debugLog('setWaitingChunks', bookId, chapterId, sceneId,
+        result.success ? 'WAITING_CHUNKS' : `FAIL:${result.reason}`,
+        `total_ms=${elapsedMs(start)}`);
+    return result;
 }
 
 /**
@@ -147,7 +196,12 @@ async function setWaitingChunks(redis, bookId, chapterId, sceneId) {
  * Called from triggerAudioMerge() when all chunks are ready.
  */
 async function setMerging(redis, bookId, chapterId, sceneId) {
-    return await transitionState(redis, bookId, chapterId, sceneId, PHASES.MERGING);
+    const start = Date.now();
+    const result = await transitionState(redis, bookId, chapterId, sceneId, PHASES.MERGING);
+    debugLog('setMerging', bookId, chapterId, sceneId,
+        result.success ? 'MERGING' : `FAIL:${result.reason}`,
+        `total_ms=${elapsedMs(start)}`);
+    return result;
 }
 
 /**
@@ -155,7 +209,12 @@ async function setMerging(redis, bookId, chapterId, sceneId) {
  * Called from triggerAudioMerge() after successful merge.
  */
 async function setDone(redis, bookId, chapterId, sceneId) {
-    return await transitionState(redis, bookId, chapterId, sceneId, PHASES.DONE);
+    const start = Date.now();
+    const result = await transitionState(redis, bookId, chapterId, sceneId, PHASES.DONE);
+    debugLog('setDone', bookId, chapterId, sceneId,
+        result.success ? 'DONE' : `FAIL:${result.reason}`,
+        `total_ms=${elapsedMs(start)}`);
+    return result;
 }
 
 /**
@@ -163,13 +222,19 @@ async function setDone(redis, bookId, chapterId, sceneId) {
  * Called from triggerAudioMerge() after MAX_RETRIES.
  */
 async function setFailed(redis, bookId, chapterId, sceneId, reason) {
-    return await transitionState(redis, bookId, chapterId, sceneId, PHASES.FAILED, { fail_reason: reason, failed_at: Date.now() });
+    const start = Date.now();
+    const result = await transitionState(redis, bookId, chapterId, sceneId, PHASES.FAILED, { fail_reason: reason, failed_at: Date.now() });
+    debugLog('setFailed', bookId, chapterId, sceneId,
+        result.success ? `FAILED reason=${reason}` : `FAIL:${result.reason}`,
+        `total_ms=${elapsedMs(start)}`);
+    return result;
 }
 
 /**
  * Scan all audio-orch keys (for startup recovery).
  */
 async function scanAllStates(redis) {
+    const start = Date.now();
     const keys = [];
     let cursor = '0';
     do {
@@ -205,6 +270,9 @@ async function scanAllStates(redis) {
             }
         }
     }
+
+    debugLog('scanAllStates', '*', '*', '*',
+        `found=${results.length}`, `total_ms=${elapsedMs(start)}`);
     return results;
 }
 

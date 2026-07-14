@@ -40,6 +40,7 @@ async function executeAudioDispatch(redis, scene, loadedBook, buildId) {
     const bookId = scene.book_id;
     const chapterId = scene.chapter_id;
     const sceneId = scene.scene_id;
+    const dbgStart = Date.now();
 
     log(`AUDIO_DISPATCH: ${bookId}/${chapterId}/${sceneId}`);
 
@@ -48,14 +49,16 @@ async function executeAudioDispatch(redis, scene, loadedBook, buildId) {
     });
 
     // §5.1: Set per-asset state to generating so callbacks can validate correctly
-    // M5 Шаг 3: syncLinearState в beginStage, не здесь
+    const stateStart = Date.now();
     await state.setAssetState(redis, bookId, chapterId, sceneId, 'audio', state.AssetState.GENERATING);
 
     // 🔧 AUDIO-ORCH: Transition PLACEHOLDER_READY → GENERATING
     const audioOrch = require('../services/audio-orchestrator');
+    const orchStart = Date.now();
     const transResult = await audioOrch.setGenerating(redis, bookId, chapterId, sceneId);
+    const orchMs = Date.now() - orchStart;
     if (!transResult.success) {
-        warn(`AUDIO_ORCH: cannot set GENERATING for ${bookId}/${chapterId}/${sceneId}: ${transResult.reason}`);
+        warn(`AUDIO_ORCH: cannot set GENERATING for ${bookId}/${chapterId}/${sceneId}: ${transResult.reason} (${Date.now() - dbgStart}ms)`);
         return;
     }
 
@@ -65,9 +68,11 @@ async function executeAudioDispatch(redis, scene, loadedBook, buildId) {
     const path = require('path');
     const OUTPUT_DIR = process.env.OUTPUT_DIR || '/data/output';
     const mergedPath = path.join(OUTPUT_DIR, buildId, `${bookId}_${chapterId}_${sceneId}.mp3`);
+    let deletedPlaceholder = false;
     if (fs.existsSync(mergedPath)) {
         try {
             fs.unlinkSync(mergedPath);
+            deletedPlaceholder = true;
             log(`  🗑 Deleted placeholder merged audio before TTS: ${mergedPath}`);
         } catch (e) {
             warn(`  ⚠️ Failed to delete placeholder merged audio: ${e.message}`);
@@ -78,21 +83,34 @@ async function executeAudioDispatch(redis, scene, loadedBook, buildId) {
     const bookData = loadedBook || book.loadBook(bookId);
     const sceneData = book.findSceneRuntimeData(bookData, chapterId, sceneId);
     if (sceneData) {
+        const genStart = Date.now();
         const result = await audio.generateSceneAudio(redis, sceneData, bookData, buildId, bookId);
+        const genMs = Date.now() - genStart;
 
         if (result && result.generated) {
-            // TTS был отправлен — transition to WAITING_CHUNKS
+            const waitStart = Date.now();
             await audioOrch.setWaitingChunks(redis, bookId, chapterId, sceneId);
-            log(`AUDIO_ORCH: ${bookId}/${chapterId}/${sceneId} → WAITING_CHUNKS (expected=${result.expectedChunkCount})`);
+            const waitMs = Date.now() - waitStart;
+            const totalMs = Date.now() - dbgStart;
+            log(`[DISPATCH:DBG] ${bookId}/${chapterId}/${sceneId}: ` +
+                `state=${Date.now() - stateStart}ms orch=${orchMs}ms ` +
+                `gen=${genMs}ms wait=${waitMs}ms total=${totalMs}ms ` +
+                `expected=${result.expectedChunkCount} placeholder_deleted=${deletedPlaceholder}`);
         } else if (result && result.reason === 'already_ready') {
-            // Аудио уже готово — transition directly to DONE
+            const doneStart = Date.now();
             await audioOrch.setDone(redis, bookId, chapterId, sceneId);
-            log(`AUDIO_ORCH: ${bookId}/${chapterId}/${sceneId} → DONE (already ready)`);
+            const totalMs = Date.now() - dbgStart;
+            log(`[DISPATCH:DBG] ${bookId}/${chapterId}/${sceneId}: ` +
+                `ALREADY_READY state=${Date.now() - stateStart}ms ` +
+                `gen=${genMs}ms done=${Date.now() - doneStart}ms total=${totalMs}ms`);
+        } else {
+            log(`[DISPATCH:DBG] ${bookId}/${chapterId}/${sceneId}: ` +
+                `result=${JSON.stringify(result)} total=${Date.now() - dbgStart}ms`);
         }
 
         log(`AUDIO_DISPATCHED: ${bookId}/${chapterId}/${sceneId}`);
     } else {
-        warn(`AUDIO_DISPATCH: sceneData not found for ${bookId}/${chapterId}/${sceneId}`);
+        warn(`AUDIO_DISPATCH: sceneData not found for ${bookId}/${chapterId}/${sceneId} after ${Date.now() - dbgStart}ms`);
     }
 }
 

@@ -349,6 +349,8 @@ module.exports = function(redis) {
                 `animastor:scene-video:${bookId}:*`,
                 // Scene window counters
                 `animastor:book-scenes:${bookId}:*`,
+                // Audio orchestrator state machine (NEW)
+                `animastor:audio-orch:${bookId}:*`,
                 // Audio locks
                 `animastor:audio-scene-lock:${bookId}:*`,
                 `animastor:audio-scene-failsafe:*:${bookId}:*`,

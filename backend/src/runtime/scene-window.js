@@ -768,17 +768,23 @@ async function startScene(redis, s, buildId, bookId) {
     // Only when audio is enabled — if disabled, we already set chunks as ready above
     if (audioDisabled) return addResult.added;
 
+    const dbgStart = Date.now();
     // Placeholder audio: создаётся синхронно (await), ДО того как сцена попадает в scheduler.
     // Задержка ~2s (ffmpeg silence generation) — не критична, но устраняет race condition
     // между setImmediate и generateSceneAudio (placeholder re-created после удаления).
     try {
         const buildEffective = buildId || 'default';
+        const phStart = Date.now();
         const phResult = await placeholderAudio.ensurePlaceholderAudio(buildEffective, bookId, chapterId, sceneId);
+        const phMs = Date.now() - phStart;
         if (phResult.created) {
-            log(`Placeholder audio created for ${bookId}/${chapterId}/${sceneId} (${phResult.durationSec.toFixed(1)}s)`);
+            log(`Placeholder audio created for ${bookId}/${chapterId}/${sceneId} (${phResult.durationSec.toFixed(1)}s) in ${phMs}ms`);
+        } else {
+            log(`Placeholder audio reused for ${bookId}/${chapterId}/${sceneId} (${phResult.reason}) in ${phMs}ms`);
         }
 
         // Update chunk metadata — audio_status = 'placeholder' (not 'ready')
+        const chunkStart = Date.now();
         for (let i = 0; i < expectedChunkCount; i++) {
             const chunkIndex = i + 1;
             const chunkId = audio.makeChunkId(chapterId, sceneId, chunkIndex, bookId);
@@ -791,12 +797,20 @@ async function startScene(redis, s, buildId, bookId) {
                 await redis.set(chunkKey, JSON.stringify(data));
             }
         }
+        const chunkMs = Date.now() - chunkStart;
 
         // 🔧 AUDIO-ORCH: Установить phase = PLACEHOLDER_READY — единственный арбитр состояния
+        const orchStart = Date.now();
         const audioOrch = require('../services/audio-orchestrator');
         await audioOrch.initPlaceholderReady(redis, bookId, chapterId, sceneId, buildEffective, expectedChunkCount);
+        const orchMs = Date.now() - orchStart;
+
+        const totalMs = Date.now() - dbgStart;
+        log(`[WINDOW:DBG] startScene placeholder ${bookId}/${chapterId}/${sceneId}: ` +
+            `ph=${phMs}ms chunk=${chunkMs}ms orch=${orchMs}ms total=${totalMs}ms ` +
+            `expected=${expectedChunkCount}`);
     } catch (err) {
-        warn(`Placeholder audio failed for ${bookId}/${chapterId}/${sceneId}: ${err.message}`);
+        warn(`Placeholder audio failed for ${bookId}/${chapterId}/${sceneId} after ${Date.now() - dbgStart}ms: ${err.message}`);
     }
 
     return addResult.added;
