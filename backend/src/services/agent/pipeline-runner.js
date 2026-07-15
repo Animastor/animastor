@@ -35,7 +35,13 @@ function getWindowText(sourceText, existingChars, existingLocs, windowIndex, sta
                 startOffset = 0;
             }
         } else {
-            startOffset = 0;
+            // Если для window > 0 не передали startOffset — это баг в вызывающем коде.
+            // Никогда не падаем в 0 (это приведёт к повторной обработке начала книги).
+            // Вместо этого бросаем исключение.
+            throw new Error(
+                `getWindowText: startOffset is required for windowIndex=${windowIndex}. ` +
+                `Passing undefined/null would default to 0 and re-process the beginning of the book.`
+            );
         }
     }
 
@@ -52,6 +58,14 @@ function getWindowText(sourceText, existingChars, existingLocs, windowIndex, sta
         };
     }
 
+    // Guard: для window > 0 проверяем, что startOffset не подозрительно мал
+    if (windowIndex > 0 && startOffset < 100) {
+        throw new Error(
+            `getWindowText: windowIndex=${windowIndex} with startOffset=${startOffset} is suspiciously low. ` +
+            `This would re-process the beginning of the book instead of continuing from offset=${startOffset}.`
+        );
+    }
+
     let endPos = Math.min(startOffset + MAX_WINDOW_CHARS, sourceText.length);
     let windowText = sourceText.substring(startOffset, endPos);
 
@@ -60,6 +74,14 @@ function getWindowText(sourceText, existingChars, existingLocs, windowIndex, sta
     const actualStart = startOffset + skipLen;
     if (skipLen > 0 && actualStart < endPos) {
         windowText = sourceText.substring(actualStart, endPos);
+    }
+
+    // Guard: actualStart должен быть рядом с startOffset (не больше чем на заголовок)
+    if (windowIndex > 0 && actualStart < startOffset - 50) {
+        throw new Error(
+            `getWindowText: computed actualStart=${actualStart} << startOffset=${startOffset} ` +
+            `for windowIndex=${windowIndex}. Pipeline would walk backwards.`
+        );
     }
 
     if (endPos < sourceText.length && (endPos - actualStart) >= MAX_WINDOW_CHARS) {

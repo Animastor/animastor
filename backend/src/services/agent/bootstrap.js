@@ -5,6 +5,7 @@
 // Handles the first window (bootstrapWithAgent) and subsequent windows (bootstrapNextWindow).
 
 const fs = require('fs');
+const path = require('path');
 const lazyBook = require('../../book/lazy-book');
 const config = require('../../config/runtime-config');
 const sourceCoverage = require('../source-coverage');
@@ -165,6 +166,49 @@ async function bootstrapWithAgent(bookId, progress, publishProgress, redis) {
     }
 }
 
+// ======================================================
+// LAST SOURCE END — строго из сохранённых файлов книги на диске
+// ======================================================
+// Единственный source of truth: последний source_end в файлах глав.
+// Это страхует от потери windowData в БД между окнами.
+
+function getLastSourceEnd(bookId) {
+    const bookDir = lazyBook.getBookDir(bookId);
+    const bookMetaPath = lazyBook.getBookMetaPath(bookDir);
+    if (!fs.existsSync(bookMetaPath)) return null;
+
+    let bookMeta;
+    try {
+        bookMeta = JSON.parse(fs.readFileSync(bookMetaPath, 'utf8'));
+    } catch (e) {
+        return null;
+    }
+
+    const chOrder = bookMeta.structure?.chapters_order || [];
+    if (chOrder.length === 0) return null;
+
+    const chDir = lazyBook.getChapterDir(bookDir);
+    let lastSourceEnd = null;
+
+    for (const chFile of chOrder) {
+        const chPath = path.join(chDir, chFile.split('/').pop());
+        if (!fs.existsSync(chPath)) continue;
+        try {
+            const chapter = JSON.parse(fs.readFileSync(chPath, 'utf8'));
+            if (!chapter.scenes) continue;
+            for (const scene of chapter.scenes) {
+                if (typeof scene.source_end === 'number' && scene.source_end > 0) {
+                    if (lastSourceEnd === null || scene.source_end > lastSourceEnd) {
+                        lastSourceEnd = scene.source_end;
+                    }
+                }
+            }
+        } catch (_) { /* skip corrupted chapter */ }
+    }
+
+    return lastSourceEnd;
+}
+
 async function bootstrapNextWindow(bookId, progress, publishProgress, redis) {
     const _progress = progress || (() => {});
     const draft = lazyBook.loadDraftBook(bookId);
@@ -199,11 +243,55 @@ async function bootstrapNextWindow(bookId, progress, publishProgress, redis) {
         console.warn(`[AGENT] bootstrapNextWindow: failed to look up previous window_data: ${lookupErr.message}`);
     }
 
-    const currentOffset = windowData?.currentOffset || 0;
+    // ── Определяем offset из двух источников ──
+    // 1. lastSourceEnd из файлов на диске (приоритет — истина)
+    // 2. windowData.currentOffset из БД сессии (резерв)
+    // Никогда не падаем в 0!
+    const lastSourceEnd = getLastSourceEnd(bookId);
+    const dbOffset = (typeof windowData?.currentOffset === 'number' && windowData.currentOffset > 0)
+        ? windowData.currentOffset
+        : null;
+
+    // Если есть расхождение между диском и БД, выбираем БОЛЬШИЙ offset —
+    // безопаснее перепрыгнуть вперёд, чем назад.
+    let currentOffset;
+    if (lastSourceEnd !== null && dbOffset !== null) {
+        currentOffset = Math.max(lastSourceEnd, dbOffset);
+        if (lastSourceEnd !== dbOffset) {
+            console.warn(`[AGENT] bootstrapNextWindow: offset mismatch — disk=${lastSourceEnd}, db=${dbOffset}, using=${currentOffset}`);
+        }
+    } else if (lastSourceEnd !== null) {
+        currentOffset = lastSourceEnd;
+    } else if (dbOffset !== null) {
+        currentOffset = dbOffset;
+    } else {
+        throw new Error(
+            `bootstrapNextWindow: cannot determine next window offset for book ${bookId}. ` +
+            `No scenes saved on disk and no window_data in DB. ` +
+            `Was the first window bootstrap completed successfully?`
+        );
+    }
+
+    if (currentOffset <= 0) {
+        throw new Error(
+            `bootstrapNextWindow: invalid currentOffset=${currentOffset} for book ${bookId}. ` +
+            `Agent would start from the beginning of the book. Aborting to prevent duplicate scenes.`
+        );
+    }
+
     const existingChars = windowData?.all_characters || [];
     const existingLocs = windowData?.all_locations || [];
 
     const windowInfo = pipelineRunner.getWindowText(draft.sourceText, existingChars, existingLocs, 1, currentOffset);
+
+    // Guard: windowStartOffset должен быть >= currentOffset (минимум)
+    // Если он значительно меньше — агент пошёл назад, abort.
+    if (windowInfo.windowStartOffset < currentOffset - 50) {
+        throw new Error(
+            `bootstrapNextWindow: windowStartOffset (${windowInfo.windowStartOffset}) << currentOffset (${currentOffset}). ` +
+            `Pipeline would walk backwards. Aborting to prevent duplicate scenes.`
+        );
+    }
 
     const prevCoveredEnd = windowData?.coveredEndOffset;
     if (typeof prevCoveredEnd === 'number' && windowInfo.windowStartOffset > prevCoveredEnd) {
@@ -288,6 +376,17 @@ async function bootstrapNextWindow(bookId, progress, publishProgress, redis) {
         if (!Number.isFinite(sceneConsumedOffset) || sceneConsumedOffset <= windowInfo.windowStartOffset) {
             throw new Error('Scene progress did not advance from current source position');
         }
+
+        // Дополнительная проверка: sceneConsumedOffset должен быть >= lastSourceEnd
+        // (строго не даёт пойти назад относительно сохранённых данных)
+        const currentLastSourceEnd = getLastSourceEnd(bookId);
+        if (currentLastSourceEnd !== null && sceneConsumedOffset < currentLastSourceEnd) {
+            throw new Error(
+                `Scene progress went backwards: nextOffset=${sceneConsumedOffset} < lastSourceEnd=${currentLastSourceEnd}. ` +
+                `This would create duplicate scenes. Aborting.`
+            );
+        }
+
         const actualRemaining = draft.sourceText.substring(sceneConsumedOffset).trim();
 
         const bookResult = lazyBook.appendToBook(bookId, {

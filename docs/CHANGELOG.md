@@ -4,9 +4,30 @@ All notable changes to Animastor are documented here.
 
 ---
 
-## [Unreleased] — 2026-07-14
+## [Unreleased] — 2026-07-15
 
 ### Fixed
+
+- **Agent bootstrap: агент больше не начинает сборку с offset 0 после потери windowData**
+  (`backend/src/services/agent/bootstrap.js`, `backend/src/services/agent/pipeline-runner.js`):
+  - **Проблема:** `bootstrapNextWindow()` использовал `windowData?.currentOffset || 0` для определения
+    стартовой позиции следующего окна. Если `windowData` терялся (сброс сессии в БД, перезапись,
+    race condition), `|| 0` бесшумно падал в offset 0 → агент начинал обработку с самого начала
+    книги, создавая полные дубликаты уже существующих сцен с `source_start` от 0.
+    Конкретный случай: сцена `sc-3e27f84a` в `ch-20df51b4.json` получила `source_start: 3318`,
+    но реальный текст на этом offset — середина другого абзаца, не тот диалог, который в сцене.
+    Сцены 7-9 — полные дубликаты сцен 0-3 с `source_start: 0, 631, 1242`.
+  - **Фикс 1 — `getLastSourceEnd(bookId)`:** Новая функция читает `source_end` последней сцены
+    из файлов глав на диске (единственный source of truth). Offset определяется по приоритету:
+    диск > windowData из БД > throw. Никогда не падает в 0.
+  - **Фикс 2 — guard против walk backwards:** Три проверки:
+    (а) `windowStartOffset < currentOffset - 50` → throw (шаг назад),
+    (б) `sceneConsumedOffset < lastSourceEnd` после pipeline → throw (повторная обработка),
+    (в) `currentOffset <= 0` → throw (защита от fallback в 0).
+  - **Фикс 3 — `getWindowText()` для window>0:** Если `startOffset` не передан → throw
+    (раньше молча падал в 0). Добавлены guard: `startOffset < 100` для window>0,
+    `computedActualStart << startOffset` — всё throw с описанием проблемы.
+  - Все 550 тестов проходят.
 
 - **Placeholder re-created after deletion — race condition в `startScene()`**
   (`backend/src/services/task-handler.cjs`):
