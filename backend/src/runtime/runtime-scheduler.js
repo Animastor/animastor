@@ -358,6 +358,8 @@ async function tick(redis, loadedBooks = {}) {
 
     // Cache force-dispatch flags per book to avoid redundant Redis calls
     const forceCache = new Map();
+    // Cache loaded books per tick to avoid redundant disk reads
+    const bookCache = new Map();
 
     for (const sceneKey of activeKeys) {
         const parsed = parseSceneKey(sceneKey);
@@ -378,8 +380,24 @@ async function tick(redis, loadedBooks = {}) {
             forceCache.set(bookId, force);
         }
 
+        // Resolve loaded book from cache or load it
+        let sceneLoadedBook = loadedBooks[bookId];
+        if (!sceneLoadedBook) {
+            if (bookCache.has(bookId)) {
+                sceneLoadedBook = bookCache.get(bookId);
+            } else {
+                try {
+                    const bookModule = require('../book');
+                    sceneLoadedBook = bookModule.loadBook(bookId);
+                    bookCache.set(bookId, sceneLoadedBook);
+                } catch (_) {
+                    sceneLoadedBook = null;
+                }
+            }
+        }
+
         try {
-            const result = await attemptDispatch(redis, bookId, chapterId, sceneId, loadedBooks[bookId], force);
+            const result = await attemptDispatch(redis, bookId, chapterId, sceneId, sceneLoadedBook, force);
             summary.processed++;
 
             if (result.completed) {
@@ -460,8 +478,8 @@ async function getMetrics(redis) {
 async function attemptDispatch(redis, bookId, chapterId, sceneId, loadedBook, force = false) {
     const sceneKey = `${bookId}:${chapterId}:${sceneId}`;
 
-    // T8: scene-state removed — build_id from manifest or default
-    const buildId = null;
+    // Resolve build_id from manifest (passed from tick with book cache) or null
+    const buildId = loadedBook?.manifest?.build_id || null;
 
     // Д.2: Version-stale pre-pass — detect (pure read) then reset (explicit write)
     // BEFORE planning, so a stale 'ready' scene is re-dispatched in the SAME tick.
