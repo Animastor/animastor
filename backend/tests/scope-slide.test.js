@@ -467,7 +467,9 @@ describe('scene cache-skip (content on disk)', () => {
         expect(r1.started).to.equal(3);
         // T8: проверяем per-asset state вместо scene-state (больше не пишем linear)
         const assetKey = 'animastor:asset-state:book-1:ch-1:s-1';
-        const assetState = JSON.parse(redis.store.get(assetKey));
+        const assetRaw = await redis.get(assetKey);
+        expect(assetRaw).to.not.be.null;
+        const assetState = JSON.parse(assetRaw);
         expect(assetState.audio).to.equal('pending');
     });
 

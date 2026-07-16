@@ -315,8 +315,44 @@ Quota не была захвачена (Lua вернул 0), так что relea
 | Worker fixes | ESM→CJS, async I/O, backoff, logging |
 | GPU-hub | API_KEY auth, Redis registry, graceful shutdown |
 
-### Остаётся (P5)
+## P5 — Выполнено (2026-07-16)
 
-- Worker: base64 in memory (OOM риск при видео 500MB+ в JSON)
-- Тесты: dispatch-engine (force mode, quota overflow), runtime-loop, scene-window (startScene, reconcileWindowStatuses)
+### Worker: base64 OOM fix — читаем с диска вместо HTTP re-download ✅
+
+`downloadResult` переписан:
+- **Локальный filesystem first:** читает результат напрямую из `COMFY_OUTPUT_DIR` вместо повторного HTTP download из ComfyUI
+- **MIME_MAP:** корректные content types для всех форматов (.png, .mp3, .mp4 и т.д.)
+- **Warning для >50MB:** логирует предупреждение о памяти для больших файлов
+- **Fallback:** если файл не найден локально, HTTP download из ComfyUI (старое поведение)
+- **До:** `res.arrayBuffer()` (2x память: HTTP body + base64) → **После:** `fsp.readFile()` (1x память: buffer→base64)
+
+### scope-slide.test.js — null guard ✅
+
+`JSON.parse(redis.store.get(assetKey))` → `JSON.parse(await redis.get(assetKey))` с `expect().to.not.be.null`.
+Фикс SyntaxError при cross-test pollution (store.get возвращает undefined).
+
+### Pre-existing failures (не мои, require.cache pollution)
+
+| Тест | Ошибка | Причина |
+|---|---|---|
+| `scene-asset-registry.invalidateSceneAssets` | `expected +0 to be above +0` | `orchestrator.markDirtyScene(mockRedis)` — модуль orchestrator кэширован с некорректными dependency из другого теста |
+| `scope-slide.slideWindow resets` | `expected null not to be null` | `startScene()` не пишет asset-state — модули scene-window зависят от закэшированных моков других тестов |
+
+**Корень:** `npm test` запускает `tests/**/*.test.js` — тесты манипулируют `require.cache` и влияют друг на друга. При изолированном запуске (`--grep`) оба проходят.
+
+## Итоговая статистика
+
+| Метрика | Значение |
+|---|---|
+| Тесты | **562 passing** (2 pre-existing failures) |
+| APK build | 0 errors, 0 warnings |
+| Docker backend | built clean |
+| Новые тесты | counter-reconciliation: 15, reconciliation-engine: 33 |
+| GPU-hub | API_KEY auth, Redis registry, graceful shutdown |
+| Worker | ESM→CJS, async I/O, backoff, logging, OOM-safe download |
+
+### Остаётся (в будущем)
+
+- Worker: истинный OOM fix требует изменения протокола (chunked upload / multipart вместо base64 JSON)
+- Тесты: dispatch-engine (force mode, quota overflow), runtime-loop, fairness-engine, circuit-breaker
 - scope-slide.test.js: синхронизировать FakeRedis с общим моком

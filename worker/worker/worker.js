@@ -348,20 +348,51 @@ async function waitResult(prompt_id, workflow) {
 }
 
 // ======================================================
-// DOWNLOAD RESULT
+// DOWNLOAD RESULT (OOM-safe: читаем с диска, не через HTTP re-download)
 // ======================================================
+// ComfyUI уже сохранил результат на диск в COMFY_OUTPUT_DIR.
+// Вместо повторного HTTP download (который держит 2x файл в памяти:
+// arrayBuffer + base64), читаем локально.
+// Для файлов > 50MB логируем предупреждение — они всё равно будут
+// загружены в память как base64 (protocol limitation).
+
+const MIME_MAP = {
+  '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp',
+  '.mp3': 'audio/mp3', '.wav': 'audio/wav', '.ogg': 'audio/ogg', '.flac': 'audio/flac',
+  '.mp4': 'video/mp4', '.webm': 'video/webm', '.avi': 'video/avi', '.mov': 'video/quicktime',
+};
 
 async function downloadResult(result) {
   if (result.type === "audio_base64") {
     return `data:audio/mp3;base64,${result.data}`;
   }
 
-  let f = result.meta;
-  let subfolder = f.subfolder || "";
-  if (subfolder.includes("/")) subfolder = subfolder.split("/")[0];
+  const f = result.meta;
+  const filename = f.filename;
+  const subfolder = f.subfolder || "";
+  const ext = path.extname(filename).toLowerCase();
+  const mime = MIME_MAP[ext] || 'application/octet-stream';
+
+  // ── Try local filesystem first (OOM-safe, no HTTP overhead) ──
+  const localPath = path.resolve(COMFY_OUTPUT_DIR, subfolder, filename);
+  try {
+    const stat = await fsp.stat(localPath).catch(() => null);
+    if (stat && stat.isFile() && stat.size > 0) {
+      if (stat.size > 50 * 1024 * 1024) {
+        log("warn", `Large file (${(stat.size / 1024 / 1024).toFixed(1)}MB) — base64 will use significant memory: ${filename}`);
+      }
+      const buffer = await fsp.readFile(localPath);
+      return `data:${mime};base64,${buffer.toString('base64')}`;
+    }
+  } catch (_) {}
+
+  // ── Fallback: HTTP download from ComfyUI ──
+  log("info", `Falling back to HTTP download for ${filename}`);
+  let sf = subfolder;
+  if (sf.includes("/")) sf = sf.split("/")[0];
 
   const url = comfyUrl(
-    `/view?filename=${encodeURIComponent(f.filename)}&subfolder=${encodeURIComponent(subfolder)}&type=output`
+    `/view?filename=${encodeURIComponent(filename)}&subfolder=${encodeURIComponent(sf)}&type=output`
   );
 
   const res = await fetchTimeout(url);
@@ -370,11 +401,7 @@ async function downloadResult(result) {
   const buffer = await res.arrayBuffer();
   const raw = Buffer.from(buffer).toString("base64");
 
-  if (result.type === "image") return `data:image/png;base64,${raw}`;
-  if (result.type === "audio") return `data:audio/mp3;base64,${raw}`;
-  if (result.type === "video") return `data:video/mp4;base64,${raw}`;
-
-  throw new Error("Unknown result type: " + result.type);
+  return `data:${mime};base64,${raw}`;
 }
 
 // ======================================================
