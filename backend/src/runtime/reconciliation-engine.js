@@ -385,8 +385,6 @@ async function checkStaleLocks(redis, bookId, chapterId, sceneId) {
 // DISPATCH LEASE CHECKS
 // ======================================================
 
-const dispatchEngine = require('./dispatch-engine');
-
 /**
  * Check for stale dispatch leases.
  */
