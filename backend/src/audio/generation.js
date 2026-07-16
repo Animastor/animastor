@@ -5,6 +5,7 @@
 const fs = require('fs');
 const path = require('path');
 const gpu = require('../runtime/gpu-dispatcher');
+const jobSchema = require('../runtime/job-schema');
 const wfLoader = require('../workflows/workflow-loader');
 const helpers = require('./helpers');
 const validation = require('./validation');
@@ -315,7 +316,7 @@ async function generateSceneAudio(redis, sceneData, loadedBook, buildId, bookId)
             }
         }
 
-        await gpu.send(`${id}:audio`, wfAudio, "audio", buildId);
+        await gpu.send(jobSchema.buildJobId(id, 'audio'), wfAudio, "audio", buildId);
     }
 
     await redis.del(sceneLockKey);

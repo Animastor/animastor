@@ -425,12 +425,17 @@ async function workerLoop() {
 
     log("info", `Task ${task.job_id}`)
 
+    // SYNC: backend/src/runtime/job-schema.js (PROTOCOL_VERSION, форматы job_id)
+    if (task.protocol_version && task.protocol_version !== 1) {
+      log("warn", `Protocol version mismatch: got ${task.protocol_version}, worker expects 1`)
+    }
+
     try {
 
       if (task.assets?.images) {
         // Multi-image: { unitId: base64, ... }
         // filename = scenePrefix_unitId.png where scenePrefix = job_id stripped of suffix
-        const [jobBase] = task.job_id.split(/:(image|audio|video)$/)
+        const [jobBase] = task.job_id.split(/:(iu_image|image|audio|video)$/)
         const scenePrefix = jobBase.replace(/_g\d+$/, '')
         for (const [unitId, base64] of Object.entries(task.assets.images)) {
           const filename = `${scenePrefix}_${unitId}.png`
@@ -442,7 +447,7 @@ async function workerLoop() {
         }
       } else if (task.assets?.image) {
 
-        const [baseId] = task.job_id.split(/:(image|audio|video)$/) 
+        const [baseId] = task.job_id.split(/:(iu_image|image|audio|video)$/)
         const filename = `${baseId}.png`
 
         const { path: filePath, expectedSize } =

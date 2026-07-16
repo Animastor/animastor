@@ -1041,7 +1041,9 @@ module.exports = function(app, redis, deps) {
             const { job_id, result_base64, build_id } = req.body || {};
             if (!job_id || !result_base64) return res.status(400).json({ error: 'job_id and result_base64 required' });
 
-            // Н.1: Dedup — skip if already processed for this (job_id, build_id)
+            // Н.1: Dedup — skip if already processed for this (job_id, build_id).
+            // Это АВТОРИТЕТНЫЙ dedup результатов (T2 консолидации); ключ
+            // animastor:job:* на gpu-hub — лишь best-effort защита очереди.
             const dedupKey = `animastor:result-processed:${job_id}:${build_id || 'nobuild'}`;
             const alreadyProcessed = await redis.set(dedupKey, '1', 'NX', 'EX', 3600);
             if (!alreadyProcessed) {

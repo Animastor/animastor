@@ -9,6 +9,7 @@ const path = require('path');
 const fs = require('fs');
 const wfBuilder = require('../workflows/video/video-workflows');
 const gpu = require('../runtime/gpu-dispatcher');
+const jobSchema = require('../runtime/job-schema');
 
 const OUTPUT_DIR = config.OUTPUT_DIR;
 const FPS = 24;
@@ -114,7 +115,7 @@ async function generateVideoAnimation(sceneData, loadedBook, buildId, workflows)
         }
 
         jobSpecs.push({
-            job_id: `${jobId}:video`,
+            job_id: jobSchema.buildJobId(jobId, 'video'),
             params: wfGroup.workflow,
             job_type: 'video',
             assets: { images },

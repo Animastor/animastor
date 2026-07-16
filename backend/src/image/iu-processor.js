@@ -8,6 +8,7 @@ const path = require('path');
 const fs = require('fs');
 const config = require('../config/runtime-config');
 const gpu = require('../runtime/gpu-dispatcher');
+const jobSchema = require('../runtime/job-schema');
 const wfLoader = require('../workflows/workflow-loader');
 const helpers = require('./helpers');
 const promptBuilder = require('./prompt-builder');
@@ -189,7 +190,7 @@ async function processSingleIU(redis, unit, uIdx, sceneData, loadedBook, buildId
     }
 
     await registry.saveIURegistry(redis, imageIUId, buildId);
-    await gpu.send(`${imageIUId}:iu_image`, wfImg, 'image', buildId);
+    await gpu.send(jobSchema.buildJobId(imageIUId, 'iu_image'), wfImg, 'image', buildId);
 
     try {
         await redis.del(`animastor:result-processed:${imageIUId}:iu_image:${buildId}`);

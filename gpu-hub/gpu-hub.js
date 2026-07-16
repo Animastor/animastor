@@ -139,11 +139,16 @@ app.post("/beacon", async (req, res) => {
 
 app.post("/task", async (req, res) => {
 
-  const { job_id, params, job_type, assets, build_id } = req.body
+  const { job_id, params, job_type, assets, build_id, protocol_version } = req.body
 
   const type = job_type || "image"
 
   console.log("📥 Task:", job_id, type, "build:", build_id)
+
+  // SYNC: backend/src/runtime/job-schema.js (PROTOCOL_VERSION)
+  if (protocol_version && protocol_version !== 1) {
+    console.warn(`⚠️ Protocol version mismatch: got ${protocol_version}, hub expects 1 — check backend/gpu-hub versions`)
+  }
 
   if (assets?.image) {
     console.log(
@@ -152,6 +157,11 @@ app.post("/task", async (req, res) => {
       "KB"
     )
   }
+  // BEST-EFFORT dedup: защищает только очередь hub'а от двойного enqueue.
+  // Авторитетный dedup результатов — на backend
+  // (animastor:result-processed:{job_id}:{build_id}, generation-routes).
+  // Этот ключ НЕ гарантия и не должен блокировать легитимный retry —
+  // backend чистит его перед принудительным re-dispatch.
   const isNew = await redis.set(
   `animastor:job:${job_id}`,
   1,
@@ -172,7 +182,8 @@ if (!isNew) {
       params,
       job_type: type,
       assets: assets || null,
-      build_id: build_id || null
+      build_id: build_id || null,
+      protocol_version: protocol_version || 1
     })
   )
 
@@ -265,6 +276,8 @@ app.post("/task/result", async (req, res) => {
   // job_id format: "bookId_chapterId_sceneId_chunkIndex:type"
   // bookId can contain underscores, but chapterId/sceneId/chunkIndex cannot.
   // Split by ':' first to remove type suffix, then parse from the end.
+  // SYNC: backend/src/runtime/job-schema.js — упрощённая копия parseJobId;
+  // при изменении формата job_id обновить оба места.
   const resultKeyParts = job_id.split(':');
   const resultType = resultKeyParts.length > 1 ? resultKeyParts.pop() : 'audio';
   const resultBaseId = resultKeyParts.join(':');

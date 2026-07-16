@@ -10,10 +10,11 @@
 const path = require('path');
 const fs = require('fs');
 const { publishProgress } = require('./progress-pubsub.cjs');
+const jobSchema = require('../runtime/job-schema');
 
 module.exports = function(redis, config, deps) {
     const { audio, image, video, state, book, orchestrator, activeScenes, placeholderAudio, cleanupService, utils, bookDiff } = deps;
-    const { log, pad, parseChunkId, collectScenes, findSceneRuntimeData } = utils;
+    const { log, pad, collectScenes, findSceneRuntimeData } = utils;
     const { resolveAssetPath } = cleanupService;
     const OUTPUT_DIR = config.OUTPUT_DIR;
     const {
@@ -27,10 +28,8 @@ module.exports = function(redis, config, deps) {
     async function handleTaskResult(job_id, result_base64, build_id) {
         log('🎬 Handling task result:', job_id, 'build:', build_id);
 
-        // Parse job_id to extract identifiers
-        const parts = job_id.split(':');
-        const assetType = parts.pop(); // 'audio', 'image', or 'video'
-        const baseId = parts.join(':');
+        // Единый разбор job_id (runtime/job-schema.js)
+        const parsed = jobSchema.parseJobId(job_id);
 
         // Resolve asset path
         const asset = resolveAssetPath(job_id, build_id);
@@ -58,16 +57,11 @@ module.exports = function(redis, config, deps) {
         // Route by asset type
         switch (asset.type) {
             case 'iu_image': {
-                // Extract identifiers from baseId
-                const baseParts = baseId.split('_');
-                if (baseParts.length < 4) {
+                if (!parsed || parsed.kind !== 'iu_image') {
                     console.warn('⚠️ Invalid IU image job_id format:', job_id);
                     break;
                 }
-                const iuId = baseParts.pop();
-                const sceneId = baseParts.pop();
-                const chapterId = baseParts.pop();
-                const bookId = baseParts.join('_');
+                const { iuId, sceneId, chapterId, bookId } = parsed;
 
                 // Register IU in Redis
                 try {
@@ -112,27 +106,18 @@ module.exports = function(redis, config, deps) {
                 } catch (err) {
                     console.error('❌ Failed to check IU completion:', err.message);
                     // If PG is down, try to trigger completion anyway
-                    const baseParts2 = baseId.split('_');
-                    if (baseParts2.length >= 4) {
-                        const iuId2 = baseParts2.pop();
-                        const sceneId2 = baseParts2.pop();
-                        const chapterId2 = baseParts2.pop();
-                        const bookId2 = baseParts2.join('_');
-                        log('⚠️ Falling back to trigger image completed despite PG error');
-                        await orchestrator.completeStage(redis, bookId2, chapterId2, sceneId2, 'image', build_id);
-                    }
+                    log('⚠️ Falling back to trigger image completed despite PG error');
+                    await orchestrator.completeStage(redis, bookId, chapterId, sceneId, 'image', build_id);
                 }
                 break;
             }
 
             case 'audio_chunk': {
-                // Parse chunk identifiers
-                const chunkId = baseId;
-                const parsed = parseChunkId(chunkId);
-                if (!parsed) {
+                if (!parsed || parsed.kind !== 'audio_chunk') {
                     console.warn('⚠️ Invalid chunk ID in job_id:', job_id);
                     break;
                 }
+                const chunkId = parsed.assetId;
                 const { bookId, chapterId, sceneId, chunkIndex } = parsed;
 
                 // Update chunk metadata in Redis
@@ -164,31 +149,21 @@ module.exports = function(redis, config, deps) {
             }
 
             case 'scene_video': {
-                const baseParts3 = baseId.split('_');
-                if (baseParts3.length < 3) {
+                if (!parsed || parsed.kind !== 'scene_video') {
                     console.warn('⚠️ Invalid video job_id format:', job_id);
                     break;
                 }
-                const sceneId3 = baseParts3.pop();
-                const chapterId3 = baseParts3.pop();
-                const bookId3 = baseParts3.join('_');
-                await orchestrator.completeStage(redis, bookId3, chapterId3, sceneId3, 'video', build_id);
+                await orchestrator.completeStage(redis, parsed.bookId, parsed.chapterId, parsed.sceneId, 'video', build_id);
                 break;
             }
 
             case 'scene_image': {
-                const baseParts4 = baseId.split('_');
-                if (baseParts4.length < 3) {
+                if (!parsed || parsed.kind !== 'scene_image') {
                     console.warn('⚠️ Invalid scene image job_id format:', job_id);
                     break;
                 }
-                // Legacy scene_image: job_id = bookId_chapterId_sceneId:image
-                // Parse from the end: sceneId is last, chapterId is second-to-last
-                const sceneId4 = baseParts4[baseParts4.length - 1];
-                const chapterId4 = baseParts4[baseParts4.length - 2];
-                const bookId4 = baseParts4.slice(0, -2).join('_');
-                log(`⚠️ SCENE_IMAGE (legacy) callback: ${bookId4}/${chapterId4}/${sceneId4}`);
-                await orchestrator.completeStage(redis, bookId4, chapterId4, sceneId4, 'image', build_id);
+                log(`⚠️ SCENE_IMAGE (legacy) callback: ${parsed.bookId}/${parsed.chapterId}/${parsed.sceneId}`);
+                await orchestrator.completeStage(redis, parsed.bookId, parsed.chapterId, parsed.sceneId, 'image', build_id);
                 break;
             }
 

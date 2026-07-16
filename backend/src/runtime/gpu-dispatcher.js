@@ -1,4 +1,5 @@
 const config = require('../config/runtime-config');
+const { PROTOCOL_VERSION } = require('./job-schema');
 
 const logPrefix = '[GPU]';
 function log(msg) { console.log(`${logPrefix} ${msg}`); }
@@ -23,6 +24,7 @@ async function sendUnified(taskSpec) {
     if (!taskSpec.build_id) {
         taskSpec.build_id = "default";
     }
+    taskSpec.protocol_version = PROTOCOL_VERSION;
 
     let lastError;
     for (let attempt = 0; attempt < 3; attempt++) {
