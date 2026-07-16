@@ -464,7 +464,8 @@ async function dispatchStage(redis, bookId, chapterId, sceneId, stage, loadedBoo
     const quota = await acquireQuota(redis, stage);
     if (!quota.acquired) {
         log(`BACKPRESSURE_DELAY: ${bookId}/${chapterId}/${sceneId}:${stage} (active=${quota.current}/${quota.max})`);
-        await releaseQuota(redis, stage);
+        // B5: НЕ вызывать releaseQuota — квота не была захвачена (Lua скрипт вернул 0, INCR не было).
+        // releaseQuota здесь декрементировал бы счётчик ниже нуля → дрифт активных счётчиков.
         await logDispatchEvent(redis, bookId, chapterId, sceneId, 'BACKPRESSURE_DELAY', stage, {
             current: quota.current,
             max: quota.max

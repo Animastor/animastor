@@ -530,7 +530,14 @@ async function reconcileWindowStatuses(redis, bookId, buildId) {
     const buildDir = path.join(OUTPUT_DIR, buildId);
     if (!fs.existsSync(buildDir)) return { reconciled: 0 };
 
-    const chunkKeys = await redis.keys(`animastor:chunk:${bookId}_*`);
+    // B7: SCAN вместо keys() — не блокируем Redis на больших датасетах
+    const chunkKeys = [];
+    let cursor = '0';
+    do {
+        const [nextCursor, keys] = await redis.scan(cursor, 'MATCH', `animastor:chunk:${bookId}_*`, 'COUNT', 200);
+        cursor = nextCursor;
+        chunkKeys.push(...keys);
+    } while (cursor !== '0');
     let reconciled = 0;
 
     // Track which scenes we've already checked (avoid duplicate PG queries)

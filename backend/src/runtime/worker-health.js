@@ -32,7 +32,14 @@ async function reportHeartbeat(redis, type, workerId, currentJobId = null) {
  */
 async function getAliveCount(redis, type) {
     const pattern = config.WORKER_HEARTBEAT_TYPE_PATTERN(type);
-    const keys = await redis.keys(pattern);
+    // B7: SCAN вместо keys() — не блокируем Redis
+    const keys = [];
+    let cursor = '0';
+    do {
+        const [nextCursor, batch] = await redis.scan(cursor, 'MATCH', pattern, 'COUNT', 200);
+        cursor = nextCursor;
+        keys.push(...batch);
+    } while (cursor !== '0');
     let alive = 0;
     const now = Date.now();
     const maxAge = config.WORKER_HEARTBEAT_TTL * 1000;
@@ -68,7 +75,14 @@ async function getStatus(redis) {
  */
 async function getBusyCount(redis, type) {
     const pattern = config.WORKER_HEARTBEAT_TYPE_PATTERN(type);
-    const keys = await redis.keys(pattern);
+    // B7: SCAN вместо keys() — не блокируем Redis
+    const keys = [];
+    let cursor = '0';
+    do {
+        const [nextCursor, batch] = await redis.scan(cursor, 'MATCH', pattern, 'COUNT', 200);
+        cursor = nextCursor;
+        keys.push(...batch);
+    } while (cursor !== '0');
     let busy = 0;
     const now = Date.now();
     const maxAge = config.WORKER_HEARTBEAT_TTL * 1000;

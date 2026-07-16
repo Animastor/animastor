@@ -336,7 +336,7 @@ async function clearRetryThrottle(redis, bookId) {
 async function isStarving(redis, bookId, chapterId, sceneId) {
     // Scene-state removed — starvation check via asset states
     const assetStates = require('../state');
-    const states = await assetStates.getAssetStates(require('ioredis').default || redis, bookId, chapterId, sceneId).catch(() => null);
+    const states = await assetStates.getAssetStates(redis, bookId, chapterId, sceneId).catch(() => null);
 
     if (!states) {
         return { starving: false, reason: 'no_state' };
