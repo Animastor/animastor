@@ -303,27 +303,17 @@ async function cleanupExpiredSnapshots(redis, maxAgeMs = SNAPSHOT_MAX_AGE_MS) {
         const keys = result[1];
 
         for (const key of keys) {
+            scannedCount++;
             const ttl = await redis.ttl(key);
             if (ttl === -2) {
                 // Key doesn't exist
                 continue;
             }
 
-            // Calculate age from TTL
-            // TTL is seconds, convert to ms and subtract from 5 minutes
-            const ageMs = (maxAgeMs / 1000 - ttl) * 1000;
-
-            if (ageMs > maxAgeMs) {
-                // Already expired - the key might have been auto-deleted by Redis
-                // but let's double-check
-                const exists = await redis.exists(key);
-                if (!exists) {
-                    deletedCount++;
-                    log(`SNAPSHOT_EXPIRED: ${key} (auto-deleted)`);
-                }
-            } else if (ttl === -1) {
-                // Key has no TTL set - set one
-                await redis.expire(key, maxAgeMs / 1000);
+            if (ttl === -1) {
+                // Key has no TTL set — snapshot lifecycle relies on TTL, so enforce it
+                await redis.expire(key, Math.ceil(maxAgeMs / 1000));
+                deletedCount++; // scheduled for expiry
             }
         }
     } while (cursor !== 0 && scannedCount < 10000);
@@ -417,7 +407,7 @@ async function getStuckScenes(redis) {
  */
 async function clearStuckScenes(redis) {
     const key = 'animastor:runtime:stuck-scenes';
-    const count = await redis.llen(key); // Suggest using scard since it's a set
+    const count = await redis.scard(key);
     await redis.del(key);
     return { cleared: true, count };
 }
@@ -565,13 +555,13 @@ module.exports = {
 
     // Recovery
     getRecoveryHistory,
+    getStuckScenes,
     clearStuckScenes,
 
     // Status
     getRetentionStatus,
 
     // Patterns
-    getSceneStatePattern,
     getEventJournalPattern,
     getDispatchLeasePattern,
     getDispatchMetadataPattern,

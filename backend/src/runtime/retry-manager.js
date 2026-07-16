@@ -339,8 +339,12 @@ async function getRetryMetrics(redis) {
     const historyKey = getRetryEventKey();
     const totalHistory = await redis.zcard(historyKey);
 
-    // Get most recent retries
+    // Get most recent retries (WITHSCORES → [member, score, ...] pairs)
     const recentRetries = await redis.zrange(historyKey, -10, -1, 'WITHSCORES');
+    const history = [];
+    for (let i = 0; i < recentRetries.length; i += 2) {
+        history.push({ event: recentRetries[i], timestamp: parseInt(recentRetries[i + 1], 10) });
+    }
 
     return {
         totalRetries,

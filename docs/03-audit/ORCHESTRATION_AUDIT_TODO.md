@@ -188,3 +188,35 @@ Quota не была захвачена (Lua вернул 0), так что relea
 - T7: Аудио-машина внутрь оркестра (R2/K1) ✅
 - T8: Linear state удалён (R7/K7) ✅
 - SceneState enum, syncLinearState, deriveLinearState — удалены ✅
+
+---
+
+## Повторная проверка 2026-07-16 (второй проход)
+
+Все B1–B9 перепроверены по коду — **подтверждены как исправленные**. Найдена и исправлена новая партия багов (Б10–Б18):
+
+### 🔴 P0
+
+- **Б10** `counter-reconciliation.js` — `correctCounterWithLua` был no-op: ioredis сериализует `null`-аргумент в `""`, которая truthy в Lua → guard `expected and current and ...` всегда срабатывал и SET пропускался. Коррекция дрифта счётчиков НИКОГДА не работала (кроме случая отсутствующего ключа). Guard удалён. ✅
+- **Б11** `retention-manager.js` — exports ссылался на несуществующую `getSceneStatePattern` → `require()` модуля падал (весь фасад `runtime.retentionManager`). Убран из exports; заодно добавлен `getStuckScenes`. ✅
+- **Б12** `runtime-persistence.js` — `generateSnapshot` вызывал несуществующие `runtimeMetrics.getActiveScenes/getActiveScenesCount` и `leaseManager.getAllActiveLeases` (не экспортируется) → снапшоты падали. Заменено на `active-scenes-index` + локальный `getAllActiveLeases`. ✅
+- **Б13** `retry-manager.js:350` — `getRetryMetrics` возвращал необъявленную `history` → ReferenceError. Теперь парсит пары WITHSCORES. ✅
+
+### 🟡 P1
+
+- **Б14** `fairness-engine.js:456` — `scard('animastor:dispatch-lease:*')` — SCARD не разворачивает glob (читал литеральный ключ, всегда 0/WRONGTYPE). Заменён на SCAN-подсчёт. ✅
+- **Б15** `fairness-engine.js:355` — `FAIRNESS_CONFIG.starvationThreshold` → `starvationThresholdMinutes` (typo, всегда undefined). ✅
+- **Б16** `runtime-persistence.js` — 11 вызовов `redis.keys()` → `scanKeys()` (SCAN); плюс `'EX', snapshotTtlMs` передавал МИЛЛИСЕКУНДЫ как секунды (TTL 24ч превращался в ~1000 дней) → `SNAPSHOT_TTL_SEC`. ✅
+
+### 🟢 P2
+
+- **Б17** `reconciliation-engine.js` — глобальный audio drift-check выполнялся внутри `reconcileScene` (per-scene) → O(scenes) дублей `counter_drift` в отчёте. Вынесен в `reconcileAll` (один раз, все 3 стадии — раньше проверялся только audio); `applyFix` читает `fix.stage` (раньше `scene.stage`, всегда undefined). Guard `parts.length >= 4` → `>= 5` (читался `parts[4]`). ✅
+- **Б18** `retry-budget-manager.js:277` — `getGlobalBudgetOverview`: 5 промисов в `Promise.all`, 4 переменных в destructure + повторные redis.get. Переписан. Также: `cleanupExpiredSnapshots` (retention) — мёртвая инвертированная age-логика упрощена; `fairness-engine.js:313` — дробный TTL в `expire` → `Math.ceil`. ✅
+
+Тесты: **518 passing** после всех правок.
+
+### Остаётся (P3, без изменений)
+
+- Тесты: reconciliation-engine (1400+ строк без тестов), counter-reconciliation (Б10 не был бы пропущен)
+- Консолидация FakeRedis
+- Worker: OOM (base64), writeFileSync, ESM/CJS mix

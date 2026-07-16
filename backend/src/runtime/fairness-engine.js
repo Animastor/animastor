@@ -310,7 +310,7 @@ async function recordRetryThrottle(redis, bookId) {
     await redis.zremrangebyscore(key, 0, windowStart);
 
     // Setexpiry
-    await redis.expire(key, FAIRNESS_CONFIG.retryThrottleWindowMs / 1000 + 1);
+    await redis.expire(key, Math.ceil(FAIRNESS_CONFIG.retryThrottleWindowMs / 1000) + 1);
 
     log(`RETRY_THROTTLE_RECORD: ${bookId} (count: ${await redis.zcard(key)})`);
 
@@ -352,7 +352,7 @@ async function isStarving(redis, bookId, chapterId, sceneId) {
     return {
         starving: false,
         ageMinutes: 0,
-        thresholdMinutes: FAIRNESS_CONFIG.starvationThreshold,
+        thresholdMinutes: FAIRNESS_CONFIG.starvationThresholdMinutes,
         state: 'pending_or_ready'
     };
 }
@@ -453,7 +453,14 @@ async function getRebalanceStats(redis) {
  */
 async function isRuntimeCongested(redis) {
     const activeScenes = await redis.scard('animastor:active-scenes');
-    const activeLeases = await redis.scard('animastor:dispatch-lease:*');
+    // SCARD doesn't expand globs — count lease keys via SCAN
+    let activeLeases = 0;
+    let cursor = 0;
+    do {
+        const result = await redis.scan(cursor, 'MATCH', 'animastor:dispatch-lease:*', 'COUNT', 200);
+        cursor = parseInt(result[0], 10);
+        activeLeases += result[1].length;
+    } while (cursor !== 0 && activeLeases < 10000);
     const retryCount = await redis.get('animastor:runtime:retry:count');
 
     const quotaStatus = {

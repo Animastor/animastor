@@ -521,20 +521,6 @@ async function reconcileScene(redis, bookId, chapterId, sceneId) {
             }
         }
 
-        // Check counter reconciliation (drift between leases and counters)
-        const driftCheck = await counterReconciliation.getCounterWithDriftCheck(redis, 'audio');
-        if (driftCheck && !driftCheck.correct) {
-            const counterDriftIssue = {
-                scene: { bookId, chapterId, sceneId },
-                stage: 'audio',
-                drift: driftCheck.drift,
-                leaseCount: driftCheck.leaseCount,
-                counterValue: driftCheck.counterValue,
-                issue: 'counter_drift'
-            };
-            report.inconsistentScenes.push(counterDriftIssue);
-        }
-
         // Check stale dispatch leases
         const staleLeases = await checkStaleDispatchLeases(redis, bookId, chapterId, sceneId);
         if (staleLeases) {
@@ -639,6 +625,7 @@ function getFixRecommendations(inconsistentScenes) {
             case 'counter_drift':
                 return {
                     scene,
+                    stage: item.stage,
                     action: 'RECONCILE_COUNTER_DRIFT',
                     reason: `Counter drift: ${item.drift} (leases=${item.leaseCount}, counter=${item.counterValue})`,
                     safeToExecute: true
@@ -790,11 +777,11 @@ async function applyFix(redis, fix) {
 
             case 'RECONCILE_COUNTER_DRIFT': {
                 // Get the current lease count and fix counter
-                const stage = scene.stage || 'audio';
+                const stage = fix.stage || 'audio';
                 const leaseCount = await counterReconciliation.countActiveLeasesByStage(redis, stage);
-                
+
                 await counterReconciliation.correctCounterWithLua(redis, stage, leaseCount);
-                
+
                 return { success: true, action, scene, details: `counter corrected to ${leaseCount}` };
             }
 
@@ -877,7 +864,7 @@ async function reconcileBook(redis, bookId) {
 
         for (const key of keys) {
             const parts = key.split(':');
-            if (parts.length >= 4) {
+            if (parts.length >= 5) {
                 const chapterId = parts[3];
                 const sceneId = parts[4];
 
@@ -919,7 +906,7 @@ async function reconcileAll(redis) {
 
         for (const key of keys) {
             const parts = key.split(':');
-            if (parts.length >= 4) {
+            if (parts.length >= 5) {
                 const bookId = parts[2];
                 const chapterId = parts[3];
                 const sceneId = parts[4];
@@ -936,6 +923,21 @@ async function reconcileAll(redis) {
             }
         }
     } while (cursor !== 0);
+
+    // Check counter drift once globally (leases vs counters are system-wide, not per-scene)
+    for (const stage of ['audio', 'image', 'video']) {
+        const driftCheck = await counterReconciliation.getCounterWithDriftCheck(redis, stage);
+        if (driftCheck && !driftCheck.correct) {
+            report.inconsistentScenes.push({
+                scene: { bookId: '*', chapterId: '*', sceneId: '*' },
+                stage,
+                drift: driftCheck.drift,
+                leaseCount: driftCheck.leaseCount,
+                counterValue: driftCheck.counterValue,
+                issue: 'counter_drift'
+            });
+        }
+    }
 
     log(`Full reconciliation complete: ${scanned} scenes scanned, ${report.inconsistentScenes.length} inconsistencies found`);
 

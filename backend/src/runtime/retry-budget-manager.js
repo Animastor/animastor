@@ -274,7 +274,7 @@ async function getSceneBudgets(redis, bookId, chapterId, sceneId) {
  * Get global budget overview.
  */
 async function getGlobalBudgetOverview(redis) {
-    const [global, audioType, imgType, vidType] = await Promise.all([
+    const [global, transient, permanent, infrastructure, orchestration] = await Promise.all([
         getGlobalBudget(redis),
         getFailureTypeBudget(redis, 'transient'),
         getFailureTypeBudget(redis, 'permanent'),
@@ -285,22 +285,10 @@ async function getGlobalBudgetOverview(redis) {
     return {
         global,
         byType: {
-            transient: {
-                current: parseInt((await redis.get(getFailureTypeBudgetKey('transient')) || FAILURE_TYPE_LIMITS.transient.toString()), 10),
-                max: FAILURE_TYPE_LIMITS.transient
-            },
-            permanent: {
-                current: parseInt((await redis.get(getFailureTypeBudgetKey('permanent')) || FAILURE_TYPE_LIMITS.permanent.toString()), 10),
-                max: FAILURE_TYPE_LIMITS.permanent
-            },
-            infrastructure: {
-                current: parseInt((await redis.get(getFailureTypeBudgetKey('infrastructure')) || FAILURE_TYPE_LIMITS.infrastructure.toString()), 10),
-                max: FAILURE_TYPE_LIMITS.infrastructure
-            },
-            orchestration: {
-                current: parseInt((await redis.get(getFailureTypeBudgetKey('orchestration')) || FAILURE_TYPE_LIMITS.orchestration.toString()), 10),
-                max: FAILURE_TYPE_LIMITS.orchestration
-            }
+            transient: { current: transient.current, max: transient.max },
+            permanent: { current: permanent.current, max: permanent.max },
+            infrastructure: { current: infrastructure.current, max: infrastructure.max },
+            orchestration: { current: orchestration.current, max: orchestration.max }
         }
     };
 }

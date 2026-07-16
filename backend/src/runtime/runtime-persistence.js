@@ -6,8 +6,8 @@
 // Provides recovery mechanism on startup.
 
 const state = require('../state');
-const leaseManager = require('./lease-manager');
 const runtimeMetrics = require('./runtime-metrics');
+const activeScenesIndex = require('./active-scenes-index');
 const circuitBreaker = require('./circuit-breaker');
 const fairness = require('./fairness-engine');
 const journal = require('../orchestration/event-journal');
@@ -61,6 +61,23 @@ const RUNTIME_DISPATCH_KEY = `${PERSISTENCE_PREFIX}:dispatch`;
 const RUNTIME_RETRY_KEY = `${PERSISTENCE_PREFIX}:retry`;
 const RUNTIME_PRIORITY_KEY = `${PERSISTENCE_PREFIX}:priority`;
 
+// TTL in seconds for Redis EX option
+const SNAPSHOT_TTL_SEC = Math.ceil(PERSISTENCE_CONFIG.snapshotTtlMs / 1000);
+
+/**
+ * Collect all keys matching a pattern via SCAN (non-blocking, unlike KEYS).
+ */
+async function scanKeys(redis, pattern, limit = 10000) {
+    const keys = [];
+    let cursor = 0;
+    do {
+        const result = await redis.scan(cursor, 'MATCH', pattern, 'COUNT', 200);
+        cursor = parseInt(result[0], 10);
+        keys.push(...result[1]);
+    } while (cursor !== 0 && keys.length < limit);
+    return keys;
+}
+
 // ======================================================
 // RUNTIME STATE TYPES
 // ======================================================
@@ -89,11 +106,11 @@ async function generateSnapshot(redis) {
     const timestamp = Date.now();
 
     // Get all active scenes
-    const activeScenes = await runtimeMetrics.getActiveScenes(redis);
-    const activeCount = await runtimeMetrics.getActiveScenesCount(redis);
+    const activeScenes = await activeScenesIndex.getActiveScenesDetail(redis);
+    const activeCount = await activeScenesIndex.getActiveCount(redis);
 
     // Get active leases
-    const leases = await leaseManager.getAllActiveLeases(redis);
+    const leases = await getAllActiveLeases(redis);
 
     // Get dispatch metadata
     const dispatches = await getDispatchMetadata(redis);
@@ -143,10 +160,10 @@ async function generateSnapshot(redis) {
  */
 async function storeSnapshot(redis, snapshot) {
     const key = `${RUNTIME_SNAPSHOT_KEY}:${Date.now()}`;
-    await redis.set(key, JSON.stringify(snapshot), 'EX', PERSISTENCE_CONFIG.snapshotTtlMs);
+    await redis.set(key, JSON.stringify(snapshot), 'EX', SNAPSHOT_TTL_SEC);
 
     // Maintain snapshot rotation
-    const keys = await redis.keys(`${RUNTIME_SNAPSHOT_KEY}:*`);
+    const keys = await scanKeys(redis, `${RUNTIME_SNAPSHOT_KEY}:*`);
     if (keys.length > PERSISTENCE_CONFIG.maxSnapshots) {
         keys.sort(); // Sort by timestamp
         const toDelete = keys.slice(0, keys.length - PERSISTENCE_CONFIG.maxSnapshots);
@@ -161,7 +178,7 @@ async function storeSnapshot(redis, snapshot) {
  * Get latest snapshot.
  */
 async function getLatestSnapshot(redis) {
-    const keys = await redis.keys(`${RUNTIME_SNAPSHOT_KEY}:*`);
+    const keys = await scanKeys(redis, `${RUNTIME_SNAPSHOT_KEY}:*`);
     if (keys.length === 0) return null;
 
     keys.sort();
@@ -195,10 +212,10 @@ async function createCheckpoint(redis) {
 
     // Store with timestamp suffix for rotation
     const key = `${RUNTIME_CHECKPOINT_KEY}:${timestamp}`;
-    await redis.set(key, JSON.stringify(checkpoint), 'EX', PERSISTENCE_CONFIG.snapshotTtlMs);
+    await redis.set(key, JSON.stringify(checkpoint), 'EX', SNAPSHOT_TTL_SEC);
 
     // Rotate checkpoints
-    const keys = await redis.keys(`${RUNTIME_CHECKPOINT_KEY}:*`);
+    const keys = await scanKeys(redis, `${RUNTIME_CHECKPOINT_KEY}:*`);
     if (keys.length > PERSISTENCE_CONFIG.checkpointHistory) {
         keys.sort();
         const toDelete = keys.slice(0, keys.length - PERSISTENCE_CONFIG.checkpointHistory);
@@ -212,7 +229,7 @@ async function createCheckpoint(redis) {
  * Get latest checkpoint.
  */
 async function getLatestCheckpoint(redis) {
-    const keys = await redis.keys(`${RUNTIME_CHECKPOINT_KEY}:*`);
+    const keys = await scanKeys(redis, `${RUNTIME_CHECKPOINT_KEY}:*`);
     if (keys.length === 0) return null;
 
     keys.sort();
@@ -248,7 +265,7 @@ async function storeSceneRecoveryState(redis, bookId, chapterId, sceneId, state)
     await redis.set(key, JSON.stringify({
         ...state,
         storedAt: Date.now()
-    }), 'EX', PERSISTENCE_CONFIG.snapshotTtlMs);
+    }), 'EX', SNAPSHOT_TTL_SEC);
 }
 
 /**
@@ -280,7 +297,7 @@ async function storeRuntimeMetrics(redis, metrics) {
     await redis.set(key, JSON.stringify({
         ...metrics,
         storedAt: Date.now()
-    }), 'EX', PERSISTENCE_CONFIG.snapshotTtlMs);
+    }), 'EX', SNAPSHOT_TTL_SEC);
 }
 
 // ======================================================
@@ -315,7 +332,7 @@ async function storeRuntimeCounters(redis, counters) {
     const pipeline = redis.pipeline();
 
     Object.entries(counters).forEach(([key, value]) => {
-        pipeline.set(key, value.toString(), 'EX', PERSISTENCE_CONFIG.snapshotTtlMs);
+        pipeline.set(key, value.toString(), 'EX', SNAPSHOT_TTL_SEC);
     });
 
     await pipeline.exec();
@@ -343,7 +360,7 @@ async function restoreRuntimeCounters(redis, counters) {
  */
 async function getAllActiveLeases(redis) {
     const leases = [];
-    const leaseKeys = await redis.keys('animastor:dispatch-lease:*');
+    const leaseKeys = await scanKeys(redis, 'animastor:dispatch-lease:*');
 
     for (const key of leaseKeys) {
         const token = await redis.get(key);
@@ -375,7 +392,7 @@ async function storeActiveLeases(redis, leases) {
         pipeline.set(key, JSON.stringify({
             ...lease,
             storedAt: Date.now()
-        }), 'EX', PERSISTENCE_CONFIG.snapshotTtlMs);
+        }), 'EX', SNAPSHOT_TTL_SEC);
     });
 
     await pipeline.exec();
@@ -390,7 +407,7 @@ async function storeActiveLeases(redis, leases) {
  */
 async function getDispatchMetadata(redis) {
     const dispatches = [];
-    const metaKeys = await redis.keys('animastor:dispatch-meta:*');
+    const metaKeys = await scanKeys(redis, 'animastor:dispatch-meta:*');
 
     for (const key of metaKeys) {
         const raw = await redis.get(key);
@@ -426,7 +443,7 @@ async function storeDispatchMetadata(redis, dispatches) {
         pipeline.set(key, JSON.stringify({
             ...d,
             storedAt: Date.now()
-        }), 'EX', PERSISTENCE_CONFIG.snapshotTtlMs);
+        }), 'EX', SNAPSHOT_TTL_SEC);
     });
 
     await pipeline.exec();
@@ -441,7 +458,7 @@ async function storeDispatchMetadata(redis, dispatches) {
  */
 async function getRetryState(redis) {
     const scenes = [];
-    const retryKeys = await redis.keys('animastor:runtime:retry:*:count');
+    const retryKeys = await scanKeys(redis, 'animastor:runtime:retry:*:count');
 
     for (const key of retryKeys) {
         const count = parseInt(await redis.get(key) || '0', 10);
@@ -471,7 +488,7 @@ async function storeRetryState(redis, retryState) {
         pipeline.set(key, JSON.stringify({
             ...s,
             storedAt: Date.now()
-        }), 'EX', PERSISTENCE_CONFIG.snapshotTtlMs);
+        }), 'EX', SNAPSHOT_TTL_SEC);
     });
 
     await pipeline.exec();
@@ -516,7 +533,7 @@ async function storePriorityQueue(redis, priorityData) {
         pipeline.set(key, JSON.stringify({
             ...q,
             storedAt: Date.now()
-        }), 'EX', PERSISTENCE_CONFIG.snapshotTtlMs);
+        }), 'EX', SNAPSHOT_TTL_SEC);
     });
 
     await pipeline.exec();
@@ -549,8 +566,9 @@ async function initiateRecovery(redis) {
     }
 
     // Set recovery marker
-    await redis.set(staleRecoveryKey, recoveryStart.toString(), 'EX', PERSISTENCE_CONFIG.recoveryTimeoutMs);
-    await redis.set(`${RUNTIME_RECOVERY_KEY}:current`, recoveryId, 'EX', PERSISTENCE_CONFIG.recoveryTimeoutMs);
+    const recoveryTtlSec = Math.ceil(PERSISTENCE_CONFIG.recoveryTimeoutMs / 1000);
+    await redis.set(staleRecoveryKey, recoveryStart.toString(), 'EX', recoveryTtlSec);
+    await redis.set(`${RUNTIME_RECOVERY_KEY}:current`, recoveryId, 'EX', recoveryTtlSec);
 
     // Reset active scenes index
     await redis.del('animastor:active-scenes');
@@ -690,7 +708,7 @@ async function finalizeRecovery(redis, recoveryId) {
  */
 async function verifyRecovery(redis) {
     const activeScenes = await redis.scard('animastor:active-scenes');
-    const leases = await redis.keys('animastor:dispatch-lease:*');
+    const leases = await scanKeys(redis, 'animastor:dispatch-lease:*');
 
     return {
         activeSceneCount: activeScenes,
@@ -749,8 +767,8 @@ async function restoreFromSnapshot(redis) {
  * Get persistence status.
  */
 async function getPersistenceStatus(redis) {
-    const snapshots = await redis.keys(`${RUNTIME_SNAPSHOT_KEY}:*`);
-    const checkpoints = await redis.keys(`${RUNTIME_CHECKPOINT_KEY}:*`);
+    const snapshots = await scanKeys(redis, `${RUNTIME_SNAPSHOT_KEY}:*`);
+    const checkpoints = await scanKeys(redis, `${RUNTIME_CHECKPOINT_KEY}:*`);
 
     const latestSnapshot = await getLatestSnapshot(redis);
     const latestCheckpoint = await getLatestCheckpoint(redis);

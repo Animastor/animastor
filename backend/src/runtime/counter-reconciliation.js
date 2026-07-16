@@ -86,23 +86,20 @@ async function correctCounterWithLua(redis, stage, targetValue) {
     const key = getCounterKey(stage);
     const target = String(targetValue);
 
+    // NOTE: no "expected" guard here — ioredis serializes null args to ""
+    // which is truthy in Lua, so a guard would always fire and skip the SET.
     const luaScript = `
         local key = KEYS[1]
-        local expected = ARGV[1]  -- Optional: expected current value
-        local newval = ARGV[2]
+        local newval = ARGV[1]
 
         local current = redis.call('GET', key)
-
-        if expected and current and current ~= expected then
-            return {tostring(false), 'drift', current, newval}
-        end
 
         redis.call('SET', key, newval)
 
         return {tostring(true), 'corrected', current, newval}
     `;
 
-    const result = await redis.eval(luaScript, 1, key, null, target);
+    const result = await redis.eval(luaScript, 1, key, target);
 
     return {
         success: result[0] === 'true',
