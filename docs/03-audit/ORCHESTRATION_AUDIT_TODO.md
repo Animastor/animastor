@@ -166,10 +166,15 @@ Quota не была захвачена (Lua вернул 0), так что relea
 ## Остаётся (P3 — Cleanup, не баги)
 
 - P3 → Тесты: reconciliation-engine (1468 строк без тестов)
-- P3 → Консолидация FakeRedis (6+ копий в тестовых файлах)
-- P3 → Coverage reporting (nyc/c8)
-- P3 → Удалить мёртвый код (coreference-cleanup.test.js, retention-manager.js, runtime-persistence.js)
-- P3 → GPU-hub / Worker проблемы (hardcoded URL, OOM, ESM/CJS mix, и т.д.)
+- P3 → Консолидация FakeRedis (5 из 6 файлов всё ещё определяют свой FakeRedis, есть общий `tests/mocks/redis-mock.js`)
+- P3 → Worker: OOM (base64 in memory), fs.writeFileSync блокирует event loop, ESM/CJS mix
+
+## Выполнено (Cleanup, эту сессию)
+
+- ✅ `coreference-cleanup.test.js` удалён (пустой файл)
+- ✅ `retention-manager.js`: unreachable return убран
+- ✅ `gpu-hub/gpu-hub.js`: hardcoded Redis URL → `process.env.REDIS_URL || "redis://animastor-redis:6379"`
+- ✅ Coverage reporting: `nyc` в devDependencies, `test:coverage` скрипт в `package.json`
 
 ## Не вошло (уже исправлено T1–T8)
 
