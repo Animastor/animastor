@@ -113,10 +113,13 @@ async function checkOrphanImageState(redis, bookId, chapterId, sceneId) {
         return null;
     }
 
+    // Note: build_id is read from manifest, not from scene-state (which no longer exists after T8).
+    // Default is used here as the orphan-check is advisory/diagnostic only.
+    const buildId = 'default';
     const imageModule = require('../image');
     const imageInfo = imageModule.resolveCanonicalSceneImage(
         '/data/output',
-        (sceneState && sceneState.build_id) || 'default',
+        buildId,
         bookId,
         chapterId,
         sceneId,
@@ -670,20 +673,22 @@ async function applyFix(redis, fix) {
             case 'MOVE_TO_PENDING': {
                 // Mark all per-asset states as DIRTY for redispatch
                 // M5: Route through orchestrator.markDirtyScene instead of direct state.setAssetState
-                // M5 Шаг 3: syncLinearState уже внутри markDirtyScene
                 const orchestrator = require('../orchestration/orchestrator');
                 await orchestrator.markDirtyScene(redis, scene.bookId, scene.chapterId, scene.sceneId);
 
                 // Remove from active index to avoid immediate re-scheduling
                 await runtimeScheduler.removeSceneFromActiveIndex(redis, scene.bookId, scene.chapterId, scene.sceneId);
 
+                // Extract previous state from fix reason (format: "Stuck in <state> for <n> minutes")
+                const fromState = fix.reason?.match(/Stuck in (\w+)/)?.[1] || 'unknown';
+
                 // Log to journal
                 await journal.appendSceneEvent(redis, scene.bookId, scene.chapterId, scene.sceneId,
-                    'AUTO_RECOVER', pendingState,
-                    { fromState: current?.state, recoveredBy: 'reconciliation-engine' }
+                    'AUTO_RECOVER', 'DIRTY',
+                    { fromState, recoveredBy: 'reconciliation-engine' }
                 );
 
-                return { success: true, action, scene, details: `moved to ${pendingState} + assets DIRTY` };
+                return { success: true, action, scene, details: 'moved to DIRTY + assets DIRTY' };
             }
 
             case 'RELEASE_STALE_LOCKS': {
