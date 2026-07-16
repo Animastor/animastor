@@ -124,6 +124,43 @@
 
 **Статус: ВЫПОЛНЕНО**
 
+---
+
+## ✅ T8. Убрать linear state (R7 / Д.2, закрывает К7) — M
+
+**Статус: ВЫПОЛНЕНО**
+
+### Writer migration
+
+- ✅ `state/scene-state.js`: `syncLinearState` → no-op (возвращает derived state без записи в Redis)
+- ✅ `orchestration/orchestrator.js`: удалены 11 вызовов `syncLinearState` из всех команд фасада (`beginStage`, `completeStage`, `failStage`, `markDirtyScene`, `setScenePending`, `setSceneGenerating`, `setSceneAllReady`, `setScenePlaceholder`, `completeStageWithoutVideo`, `completeStageWithoutImage`)
+- ✅ `services/book-diff.cjs`: удалены 2 вызова `syncLinearState`
+- ✅ `orchestration/scene-restoration.js`: удалён 1 вызов
+- ✅ `services/window-generator.cjs`: удалён 1 вызов
+- ✅ `runtime/runtime-persistence.js`: удалён 1 вызов (в `recoverActiveScenes`)
+- ✅ `routes/debug-routes.cjs`: удалён 1 вызов
+
+### Reader migration
+
+- ✅ `runtime/reconciliation-engine.js`: 4 orphan-check функции (`checkOrphanVideoState`, `checkOrphanImageState`, `checkOrphanAudioState`, `checkPartialBuilds`) переведены с `getSceneState()` на `getAssetStates()`
+- ✅ `orchestration/scene-callbacks.js`: удалён мёртвый `getSceneState()` в `handleImageCompleted`
+- ✅ `orchestration/scene-orchestrator.js`: `dispatchStage` проверяет `getAssetStates()` вместо `getSceneState()` для определения новой сцены
+- ✅ `runtime/scene-window.js`:
+  - удалён мёртвый блок `if (!result.success)` (результат `setScenePending` больше не возвращает linear state)
+  - `isWindowComplete` переведена на `getAssetStates()` вместо чтения `scene-state:*` поля `state`
+- ✅ `runtime/runtime-scheduler.js`: `attemptDispatch` больше не возвращает `'no_state'` при отсутствии `scene-state:*` ключа — терпимо использует `null` как `build_id` fallback
+- ✅ `runtime/active-scenes-index.js`: `isGenerating`, `isPending`, `isTerminal` переведены на `getAssetStates()`
+
+### Tests
+
+- ✅ `tests/scope-slide.test.js`: исправлен на проверку `asset-state:*` вместо `scene-state:*`. Добавлен `getAssetStates` stub с fallback на scene-state. Добавлен `makeSceneReady()` helper (устанавливает оба ключа: scene-state + asset-state).
+- ✅ 574 теста проходят
+
+**Не вошедшее в T8 (мигрировать постепенно, диагностические/совместимость):**
+- `fairness-engine.js`, `book-diff.cjs`, `redis-helpers.cjs`, `generation-routes.cjs`, `debug-routes.cjs`, `runtime-metrics.js` — читают `scene-state:*` для диагностики и совместимости, не влияют на корректность диспетчеризации
+- Окончательное удаление `deriveLinearState()`, `syncLinearState()`, `SceneState` enum — после полного прекращения использования
+- Удаление ключей `animastor:scene-state:*` — будут удалены через TTL (перестали писаться с T8)
+
 ### 7.1 Перенос merge-оркестрации (основной шаг)
 
 - ✅ `services/audio-orchestrator.js`: добавлены `completeChunk()` и `completeMerge()`:

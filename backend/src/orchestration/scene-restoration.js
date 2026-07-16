@@ -27,12 +27,7 @@ async function restoreSceneChunkStatus(redis, buildId, bookId, chapterId, sceneI
         // (файлы, которые уже есть на диске).
         await sceneWindow.restoreChunkStatusForScene(redis, buildId, bookId, chapterId, sceneId);
 
-        // НЕ выставляем VIDEO_READY — сцена остаётся в active-scenes,
-        // и шедулер запустит перегенерацию всех слоёв.
-        // Per-asset state остаётся PENDING (как установлено Lua-скриптом markDirtyScenes).
-        // syncLinearState сам выведет корректное составное состояние.
-        await state.syncLinearState(redis, bookId, chapterId, sceneId, buildId);
-
+        // T8: syncLinearState удалён — per-asset state единственный source of truth
         log(`[RESTORE-PARTIAL] ${bookId}/${chapterId}/${sceneId}: chunks restored from disk (audio=${fileStatus.audio.exists}, image=${fileStatus.image.exists}), keeping pending for regeneration`);
         return { restored: true, reason: 'partial_restore' };
     }

@@ -383,7 +383,7 @@ module.exports = function(app, redis, deps) {
                 image: state.AssetState.READY,
                 video: state.AssetState.DIRTY
             });
-            await state.syncLinearState(redis, book_id, chapter_id, scene_id);
+            // T8: syncLinearState удалён
 
             // Clean up stale Redis state
             const lockKey = `animastor:video-lock:${book_id}:${chapter_id}:${scene_id}`;

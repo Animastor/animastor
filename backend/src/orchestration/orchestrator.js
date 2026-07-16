@@ -49,11 +49,8 @@ async function beginStage(redis, scene, loadedBook, buildId, stage) {
     const bookId = scene.book_id;
     const chapterId = scene.chapter_id;
     const sceneId = scene.scene_id;
+    // T8: syncLinearState удалён — per-asset state единственный source of truth
     const result = await dispatchEngine.dispatchStage(redis, bookId, chapterId, sceneId, stage, loadedBook, buildId);
-    // M5 Шаг 3: syncLinearState — автоматически после dispatchStage (который выставляет PENDING/GENERATING).
-    // dispatchStage вызывает scene-orchestrator.dispatchStage → executeAudio/Image/VideoDispatch,
-    // которые больше не вызывают syncLinearState сами — это делает beginStage.
-    await state.syncLinearState(redis, bookId, chapterId, sceneId);
     return result;
 }
 
@@ -115,13 +112,12 @@ async function completeStage(redis, bookId, chapterId, sceneId, stage, buildId) 
             warn(`[VERSION-GATE] PG query failed for ${bookId}/${chapterId}/${sceneId}: ${pgErr.message} — allowing READY`);
         }
 
+        // T8: syncLinearState удалён — per-asset state единственный source of truth
         if (shouldWriteReady) {
             await state.setAssetState(redis, bookId, chapterId, sceneId, stage, state.AssetState.READY);
-            await state.syncLinearState(redis, bookId, chapterId, sceneId, buildId);
         } else {
             log(`[VERSION-GATE] ${bookId}/${chapterId}/${sceneId}: ${stage} stale — DIRTY instead of READY`);
             await state.setAssetState(redis, bookId, chapterId, sceneId, stage, state.AssetState.DIRTY);
-            await state.syncLinearState(redis, bookId, chapterId, sceneId, buildId);
         }
     } finally {
         // Always release lease+quota even if the callback throws — single owner
@@ -181,12 +177,11 @@ async function failStage(redis, bookId, chapterId, sceneId, stage, buildId, reas
         await journal.appendSceneEvent(redis, bookId, chapterId, sceneId,
             eventType, state.AssetState.FAILED, { stage, reason, buildId }).catch(() => {});
 
+        // T8: syncLinearState удалён — per-asset state единственный source of truth
         if (redispatch) {
-            // FAILED → PENDING: планировщик передиспатчит на следующем тике.
             await state.setAssetState(redis, bookId, chapterId, sceneId, stage, state.AssetState.PENDING);
             log(`[FAIL-STAGE] ${bookId}/${chapterId}/${sceneId}: ${stage} → PENDING (re-dispatch queued)`);
         }
-        await state.syncLinearState(redis, bookId, chapterId, sceneId, buildId);
         return { failed: true, reason, redispatch };
     } finally {
         // Как в completeStage: единый владелец release (C1), идемпотентно (Д.1).
@@ -213,8 +208,8 @@ async function markDirtyScene(redis, bookId, chapterId, sceneId, assets = ['audi
     for (const asset of assets) {
         await state.setAssetState(redis, bookId, chapterId, sceneId, asset, state.AssetState.DIRTY);
     }
-    // M5: syncLinearState — автоматически после setAssetState (Шаг 3 prep)
-    await state.syncLinearState(redis, bookId, chapterId, sceneId);
+
+    // T8: syncLinearState удалён — per-asset state единственный source of truth
 
     // T5: PG side-effect — запись stale статуса (graceful failure)
     try {
@@ -229,19 +224,18 @@ async function markDirtyScene(redis, bookId, chapterId, sceneId, assets = ['audi
 }
 
 // ── setScenePending ──────────────────────────────────
-// Set an asset to PENDING and sync linear state.
+// Set an asset to PENDING.
 // Used by scene-window when starting a scene.
-// M5: Единственный владелец перехода в PENDING.
+// T8: syncLinearState удалён — per-asset state единственный source of truth.
 async function setScenePending(redis, bookId, chapterId, sceneId, asset, buildId = null) {
     const state = require('../state');
     await state.setAssetState(redis, bookId, chapterId, sceneId, asset, state.AssetState.PENDING);
-    return await state.syncLinearState(redis, bookId, chapterId, sceneId, buildId);
 }
 
 // ── setSceneAllReady ─────────────────────────────────
-// Set all three assets to READY and sync linear state.
+// Set all three assets to READY.
 // Used by scene-window when valid content found on disk (cache hit).
-// M5: Единственный владелец перехода в READY для cache-попаданий.
+// T8: syncLinearState удалён — per-asset state единственный source of truth.
 async function setSceneAllReady(redis, bookId, chapterId, sceneId, buildId = null) {
     const state = require('../state');
     await state.setAssetStates(redis, bookId, chapterId, sceneId, {
@@ -249,27 +243,22 @@ async function setSceneAllReady(redis, bookId, chapterId, sceneId, buildId = nul
         image: state.AssetState.READY,
         video: state.AssetState.READY,
     });
-    return await state.syncLinearState(redis, bookId, chapterId, sceneId, buildId);
 }
 
 // ── setSceneGenerating ──────────────────────────────
-// Set an asset to GENERATING and sync linear state.
-// Used by executeAudioDispatch when TTS/image/video dispatch begins.
-// T7: Единственный владелец перехода в GENERATING для audio.
+// Set an asset to GENERATING.
+// T7+T8: syncLinearState удалён — per-asset state единственный source of truth.
 async function setSceneGenerating(redis, bookId, chapterId, sceneId, asset, buildId = null) {
     const state = require('../state');
     await state.setAssetState(redis, bookId, chapterId, sceneId, asset, state.AssetState.GENERATING);
-    return await state.syncLinearState(redis, bookId, chapterId, sceneId, buildId);
 }
 
 // ── setScenePlaceholder ──────────────────────────────
-// Set audio to PLACEHOLDER and sync linear state.
-// Used by scene-window when audio is disabled by layer config.
-// M5: Единственный владелец перехода в PLACEHOLDER.
+// Set audio to PLACEHOLDER.
+// T8: syncLinearState удалён — per-asset state единственный source of truth.
 async function setScenePlaceholder(redis, bookId, chapterId, sceneId, buildId = null) {
     const state = require('../state');
     await state.setAssetState(redis, bookId, chapterId, sceneId, 'audio', state.AssetState.PLACEHOLDER);
-    return await state.syncLinearState(redis, bookId, chapterId, sceneId, buildId);
 }
 
 // ── completeStageWithoutVideo ────────────────────────
@@ -280,7 +269,6 @@ async function completeStageWithoutVideo(redis, loadedBook, bookId, chapterId, s
     const state = require('../state');
     const callbacks = require('./scene-callbacks');
     await state.setAssetState(redis, bookId, chapterId, sceneId, 'video', state.AssetState.READY);
-    await state.syncLinearState(redis, bookId, chapterId, sceneId, buildId);
     await callbacks.completeSceneWithoutVideo(redis, loadedBook, bookId, chapterId, sceneId, buildId);
 }
 
@@ -291,7 +279,6 @@ async function completeStageWithoutImage(redis, loadedBook, bookId, chapterId, s
     const state = require('../state');
     const callbacks = require('./scene-callbacks');
     await state.setAssetState(redis, bookId, chapterId, sceneId, 'image', state.AssetState.READY);
-    await state.syncLinearState(redis, bookId, chapterId, sceneId, buildId);
     await callbacks.completeSceneWithoutImage(redis, loadedBook, bookId, chapterId, sceneId, buildId);
 }
 

@@ -67,6 +67,15 @@ function makeStartedState(chapterId, sceneId) {
     return JSON.stringify({ state: 'video_ready', build_id: 'b1' });
 }
 
+// T8: isWindowComplete checks asset-state, not scene-state.
+// This helper sets both for tests that verify window completeness.
+function makeSceneReady(redis, bookId, chapterId, sceneId) {
+    redis.store.set(`animastor:scene-state:${bookId}:${chapterId}:${sceneId}`,
+        JSON.stringify({ state: 'video_ready', build_id: 'b1' }));
+    redis.store.set(`animastor:asset-state:${bookId}:${chapterId}:${sceneId}`,
+        JSON.stringify({ audio: 'ready', image: 'ready', video: 'ready' }));
+}
+
 function loadSceneWindowWithStubs({ redis, startedStateByScene = new Set(), addActiveSceneResult = true, collectScenes = allScenes }) {
     const cwd = path.resolve(__dirname, '..');
     const bookPath = path.join(cwd, 'src/book/index.js');
@@ -126,6 +135,39 @@ function loadSceneWindowWithStubs({ redis, startedStateByScene = new Set(), addA
                 r.store.set(key, JSON.stringify(obj));
             } else {
                 r.store.set(key, JSON.stringify({ [asset]: status }));
+            }
+            return { audio: 'new', image: 'new', video: 'new' };
+        },
+        getAssetStates: async (r, bId, chId, scId) => {
+            const key = `animastor:asset-state:${bId}:${chId}:${scId}`;
+            const existing = r.store.get(key);
+            if (existing && typeof existing === 'string') {
+                try {
+                    const obj = JSON.parse(existing);
+                    if (typeof obj === 'object' && !Array.isArray(obj)) {
+                        return {
+                            audio: obj.audio || 'new',
+                            image: obj.image || 'new',
+                            video: obj.video || 'new'
+                        };
+                    }
+                } catch {}
+            }
+            // Fallback: derive from linear scene-state (same as real getAssetStates)
+            const sceneKey = `animastor:scene-state:${bId}:${chId}:${scId}`;
+            const sceneRaw = r.store.get(sceneKey);
+            if (sceneRaw) {
+                try {
+                    const linear = JSON.parse(sceneRaw);
+                    const s = linear.state;
+                    if (s === 'video_ready') return { audio: 'ready', image: 'ready', video: 'ready' };
+                    if (s === 'failed') return { audio: 'failed', image: 'failed', video: 'failed' };
+                    if (s === 'audio_pending' || s === 'audio_generating') return { audio: s === 'audio_generating' ? 'generating' : 'pending', image: 'new', video: 'new' };
+                    if (s === 'audio_ready') return { audio: 'ready', image: 'new', video: 'new' };
+                    if (s === 'image_pending' || s === 'image_generating') return { audio: 'ready', image: s === 'image_generating' ? 'generating' : 'pending', video: 'new' };
+                    if (s === 'image_ready') return { audio: 'ready', image: 'ready', video: 'new' };
+                    if (s === 'video_pending' || s === 'video_generating') return { audio: 'ready', image: 'ready', video: s === 'video_generating' ? 'generating' : 'pending' };
+                } catch {}
             }
             return { audio: 'new', image: 'new', video: 'new' };
         },
@@ -266,9 +308,9 @@ describe('scope-aware slideWindow', () => {
         await sw.setWindowBounds(redis, 'book-1', { scope: 'current_scene', chapter_id: 'ch-1', scene_id: 's-2' }, allScenes);
         // Simulate slide started that 1 scene
         await sw.slideWindow(redis, 'book-1', null, 'b1');
-        // Mark ONLY ch-1/s-2 as video_ready; ch-1/s-1 is not in scope but is video_ready
-        redis.store.set('animastor:scene-state:book-1:ch-1:s-1', makeStartedState());
-        redis.store.set('animastor:scene-state:book-1:ch-1:s-2', makeStartedState());
+        // Mark ONLY ch-1/s-2 as ready; ch-1/s-1 is not in scope but is ready
+        makeSceneReady(redis, 'book-1', 'ch-1', 's-1');
+        makeSceneReady(redis, 'book-1', 'ch-1', 's-2');
         const ok = await sw.isWindowComplete(redis, 'book-1');
         expect(ok).to.be.true;
     });
@@ -277,8 +319,8 @@ describe('scope-aware slideWindow', () => {
         const sw = loadSceneWindowWithStubs({ redis });
         await sw.setWindowBounds(redis, 'book-1', { scope: 'current_scene', chapter_id: 'ch-1', scene_id: 's-2' }, allScenes);
         await sw.slideWindow(redis, 'book-1', null, 'b1');
-        // ch-1/s-2 has state but not in final form
-        redis.store.set('animastor:scene-state:book-1:ch-1:s-2', JSON.stringify({ state: 'audio_pending', build_id: 'b1' }));
+        // ch-1/s-2 is still audio_pending (was set by startScene), keep as-is
+        // Don't set anything — isWindowComplete should return false
         const ok = await sw.isWindowComplete(redis, 'book-1');
         expect(ok).to.be.false;
     });
@@ -289,10 +331,10 @@ describe('scope-aware slideWindow', () => {
         // Start first window (3 scenes)
         const r1 = await sw.slideWindow(redis, 'book-1', null, 'b1');
         expect(r1.started).to.equal(3);
-        // Mark all started scenes as video_ready
+        // T8: Mark all started scenes as ready via per-asset state
         for (let i = 0; i < 3; i++) {
             const s = allScenes[i];
-            redis.store.set(`animastor:scene-state:book-1:${s.chapter_id}:${s.scene_id}`, makeStartedState());
+            makeSceneReady(redis, 'book-1', s.chapter_id, s.scene_id);
         }
         // Try slide — should start next batch
         const r2 = await sw.trySlideWindowOnComplete(redis, 'book-1', null, 'b1');
@@ -304,7 +346,7 @@ describe('scope-aware slideWindow', () => {
         const sw = loadSceneWindowWithStubs({ redis });
         await sw.setWindowBounds(redis, 'book-1', { scope: 'whole_book' }, allScenes);
         await sw.slideWindow(redis, 'book-1', null, 'b1');
-        // Don't mark any as ready
+        // Don't mark any as ready (asset-states are still 'pending' from startScene)
         const r = await sw.trySlideWindowOnComplete(redis, 'book-1', null, 'b1');
         expect(r.started).to.equal(0);
         expect(r.reason).to.equal('window_incomplete');
@@ -314,7 +356,7 @@ describe('scope-aware slideWindow', () => {
         const sw = loadSceneWindowWithStubs({ redis });
         await sw.setWindowBounds(redis, 'book-1', { scope: 'current_scene', chapter_id: 'ch-1', scene_id: 's-2' }, allScenes);
         await sw.slideWindow(redis, 'book-1', null, 'b1');
-        redis.store.set('animastor:scene-state:book-1:ch-1:s-2', makeStartedState());
+        makeSceneReady(redis, 'book-1', 'ch-1', 's-2');
         const r = await sw.trySlideWindowOnComplete(redis, 'book-1', null, 'b1');
         expect(r.started).to.equal(0);
         expect(r.remaining).to.equal(0);
@@ -364,9 +406,9 @@ describe('cancel-generation flag', () => {
         // We do this by starting 1 scene, then setting cancel, then calling slideWindow again
         const r1 = await sw.slideWindow(redis, 'book-1', null, 'b1');
         expect(r1.started).to.equal(3);
-        // Mark the 3 started scenes as complete
+        // T8: Mark the 3 started scenes as complete via per-asset state
         for (let i = 0; i < 3; i++) {
-            redis.store.set(`animastor:scene-state:book-1:${allScenes[i].chapter_id}:${allScenes[i].scene_id}`, makeStartedState());
+            makeSceneReady(redis, 'book-1', allScenes[i].chapter_id, allScenes[i].scene_id);
         }
         await sw.setCancelFlag(redis, 'book-1');
         const r2 = await sw.trySlideWindowOnComplete(redis, 'book-1', null, 'b1');
@@ -378,9 +420,9 @@ describe('cancel-generation flag', () => {
         const sw = loadSceneWindowWithStubs({ redis });
         await sw.setWindowBounds(redis, 'book-1', { scope: 'whole_book' }, allScenes);
         await sw.slideWindow(redis, 'book-1', null, 'b1');
-        // Mark all as ready
+        // T8: Mark all as ready via per-asset state
         for (let i = 0; i < 3; i++) {
-            redis.store.set(`animastor:scene-state:book-1:${allScenes[i].chapter_id}:${allScenes[i].scene_id}`, makeStartedState());
+            makeSceneReady(redis, 'book-1', allScenes[i].chapter_id, allScenes[i].scene_id);
         }
         await sw.setCancelFlag(redis, 'book-1');
         const r = await sw.trySlideWindowOnComplete(redis, 'book-1', null, 'b1');
@@ -444,10 +486,10 @@ describe('scene cache-skip (content on disk)', () => {
         const r1 = await sw.slideWindow(redis, 'book-1', null, 'b1');
         // Scene is reset+restarted + 2 more to fill the window = 3 total
         expect(r1.started).to.equal(3);
-        // ch-1/s-1 should now have a fresh state
-        const state = JSON.parse(redis.store.get(stateKey));
-        expect(state.state).to.equal('audio_pending');
-        expect(state.build_id).to.equal('b1');
+        // T8: проверяем per-asset state вместо scene-state (больше не пишем linear)
+        const assetKey = 'animastor:asset-state:book-1:ch-1:s-1';
+        const assetState = JSON.parse(redis.store.get(assetKey));
+        expect(assetState.audio).to.equal('pending');
     });
 
     it('slideWindow skips terminal state scene regardless of disk content', async () => {

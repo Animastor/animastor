@@ -103,47 +103,49 @@ async function findScenesByState(redis, targetState) {
 }
 
 /**
- * Check if scene is currently generating (audio, image, or video).
+ * T8: Check if scene is currently generating (audio, image, or video).
+ * Uses per-asset states as source of truth.
  */
 async function isGenerating(redis, bookId, chapterId, sceneId) {
-    const stateKey = `${state.SCENE_STATE_KEY_PREFIX}:${bookId}:${chapterId}:${sceneId}`;
-    const stateRaw = await redis.get(stateKey);
-    
-    if (!stateRaw) return false;
-    
-    const stateData = JSON.parse(stateRaw);
-    return stateData.state.includes('_generating');
+    const assetStates = await state.getAssetStates(redis, bookId, chapterId, sceneId);
+    if (!assetStates) return false;
+    return assetStates.audio === state.AssetState.GENERATING ||
+           assetStates.image === state.AssetState.GENERATING ||
+           assetStates.video === state.AssetState.GENERATING;
 }
 
 /**
- * Check if scene is in pending state (waiting to start).
+ * T8: Check if scene is in pending state (waiting to start).
+ * Uses per-asset states as source of truth.
  */
 async function isPending(redis, bookId, chapterId, sceneId) {
-    const stateKey = `${state.SCENE_STATE_KEY_PREFIX}:${bookId}:${chapterId}:${sceneId}`;
-    const stateRaw = await redis.get(stateKey);
-    
-    if (!stateRaw) return false;
-    
-    const stateData = JSON.parse(stateRaw);
-    const stateName = stateData.state;
-    return stateName === state.SceneState.AUDIO_PENDING ||
-           stateName === state.SceneState.IMAGE_PENDING ||
-           stateName === state.SceneState.VIDEO_PENDING;
+    const assetStates = await state.getAssetStates(redis, bookId, chapterId, sceneId);
+    if (!assetStates) return false;
+    return assetStates.audio === state.AssetState.PENDING ||
+           assetStates.image === state.AssetState.PENDING ||
+           assetStates.video === state.AssetState.PENDING;
 }
 
 /**
- * Check if scene is in terminal state (complete or failed).
+ * T8: Check if scene is in terminal state (complete or failed).
+ * Uses per-asset states as source of truth.
  */
 async function isTerminal(redis, bookId, chapterId, sceneId) {
-    const stateKey = `${state.SCENE_STATE_KEY_PREFIX}:${bookId}:${chapterId}:${sceneId}`;
-    const stateRaw = await redis.get(stateKey);
-    
-    if (!stateRaw) return false;
-    
-    const stateData = JSON.parse(stateRaw);
-    const stateName = stateData.state;
-    return stateName === state.SceneState.VIDEO_READY ||
-           stateName === state.SceneState.FAILED;
+    const assetStates = await state.getAssetStates(redis, bookId, chapterId, sceneId);
+    if (!assetStates) return false;
+    // Terminal: all enabled assets are READY, PLACEHOLDER, or FAILED
+    const allAssetsFinished = (
+        (assetStates.audio === state.AssetState.READY ||
+         assetStates.audio === state.AssetState.PLACEHOLDER ||
+         assetStates.audio === state.AssetState.FAILED) &&
+        (assetStates.image === state.AssetState.READY ||
+         assetStates.image === state.AssetState.PLACEHOLDER ||
+         assetStates.image === state.AssetState.FAILED) &&
+        (assetStates.video === state.AssetState.READY ||
+         assetStates.video === state.AssetState.PLACEHOLDER ||
+         assetStates.video === state.AssetState.FAILED)
+    );
+    return allAssetsFinished;
 }
 
 // ======================================================

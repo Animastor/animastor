@@ -389,12 +389,7 @@ module.exports = function(redis, config, deps) {
                     resetAudio, resetImage, resetVideo);
             }
 
-            // Sync linear FSM state from per-asset states (FSM-valid),
-            // passing buildId so it's preserved in the scene state for
-            // the dispatch engine to use when progressing to next stage.
-            // Without buildId, image/video dispatch fails with null path.
-            await state.syncLinearState(redis, bookId, chapter_id, scene_id, buildId);
-
+            // T8: syncLinearState удалён — per-asset state единственный source of truth
             log(`📋 Dirty scene marked: ${bookId}/${chapter_id}/${scene_id}`);
             marked++;
         }
@@ -463,10 +458,7 @@ module.exports = function(redis, config, deps) {
             await state.setAssetStates(redis, bookId, chapterId, sceneId, assetUpdates);
         }
 
-        // Sync linear FSM from per-asset states instead of force-setting scene state.
-        // Pass buildId so scene state preserves it for dispatch engine.
-        await state.syncLinearState(redis, bookId, chapterId, sceneId, buildId);
-
+        // T8: syncLinearState удалён
         await activeScenes.addActiveScene(redis, bookId, chapterId, sceneId);
     }
 

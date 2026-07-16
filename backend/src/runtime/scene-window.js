@@ -386,38 +386,29 @@ async function isWindowComplete(redis, bookId) {
 
     for (let i = windowStart; i < nextIdx && i < scenes.length; i++) {
         const s = scenes[i];
-        const sceneStateKey = `${state.SCENE_STATE_KEY_PREFIX}:${bookId}:${s.chapter_id}:${s.scene_id}`;
-        const raw = await redis.get(sceneStateKey);
-        if (!raw) {
-            log(`Window incomplete: ${s.chapter_id}/${s.scene_id} has no state`);
+        // T8: используем per-asset state вместо scene-state
+        const assetStates = await state.getAssetStates(redis, bookId, s.chapter_id, s.scene_id);
+        if (!assetStates) {
+            log(`Window incomplete: ${s.chapter_id}/${s.scene_id} has no asset states`);
             return false;
         }
-        const data = JSON.parse(raw);
-        const st = data.state;
 
-        const audioOk = st === state.SceneState.AUDIO_READY ||
-                        st === state.SceneState.IMAGE_PENDING ||
-                        st === state.SceneState.IMAGE_GENERATING ||
-                        st === state.SceneState.IMAGE_READY ||
-                        st === state.SceneState.VIDEO_PENDING ||
-                        st === state.SceneState.VIDEO_GENERATING ||
-                        st === state.SceneState.VIDEO_READY;
+        const audioOk = assetStates.audio === state.AssetState.READY ||
+                        assetStates.audio === state.AssetState.PLACEHOLDER;
 
         // If images are disabled by layer config, skip image readiness check
         const imageOk = !imageEnabled ||
-                        st === state.SceneState.IMAGE_READY ||
-                        st === state.SceneState.VIDEO_PENDING ||
-                        st === state.SceneState.VIDEO_GENERATING ||
-                        st === state.SceneState.VIDEO_READY;
+                        assetStates.image === state.AssetState.READY ||
+                        assetStates.image === state.AssetState.PLACEHOLDER;
 
         // If video is disabled by layer config, skip video readiness check
         let videoOk = true;
         if (hasVideo && videoEnabled) {
-            videoOk = st === state.SceneState.VIDEO_READY;
+            videoOk = assetStates.video === state.AssetState.READY;
         }
 
         if (!audioOk || !imageOk || !videoOk) {
-            log(`Window incomplete: ${s.chapter_id}/${s.scene_id} audio=${audioOk} image=${imageOk} video=${videoOk} (state=${st})`);
+            log(`Window incomplete: ${s.chapter_id}/${s.scene_id} audio=${audioOk} image=${imageOk} video=${videoOk}`);
             return false;
         }
     }
@@ -649,43 +640,11 @@ async function startScene(redis, s, buildId, bookId) {
         }
     }
 
-    // M5: Facade owns PENDING + syncLinearState
-    let resultState;
+    // T8: setScenePending через фасад — always succeeds (per-asset state write)
     if (audioDisabled) {
-        resultState = await orchestrator.setScenePending(redis, bookId, chapterId, sceneId, 'image');
+        await orchestrator.setScenePending(redis, bookId, chapterId, sceneId, 'image');
     } else {
-        resultState = await orchestrator.setScenePending(redis, bookId, chapterId, sceneId, 'audio');
-    }
-    const result = { success: true, oldState: 'unknown', newState: resultState, reason: 'derived' };
-
-    if (!result.success) {
-        if (result.reason === 'invalid_transition' || result.reason === 'lock_held') {
-            log(`Force-resetting stale scene state: ${bookId}/${chapterId}/${sceneId} (${result.oldState})`);
-            const stateKey = `${state.SCENE_STATE_KEY_PREFIX}:${bookId}:${chapterId}:${sceneId}`;
-            await redis.del(stateKey);
-            const iuCleanPrefix = `animastor:iu:${bookId}_${chapterId}_${sceneId}_*`;
-            let iuCursor = '0';
-            do {
-                const scan = await redis.scan(iuCursor, 'MATCH', iuCleanPrefix, 'COUNT', 200);
-                iuCursor = scan[0];
-                if (scan[1].length) await redis.del(scan[1]);
-            } while (iuCursor !== '0');
-            // M5: Facade owns PENDING + syncLinearState (force-reset retry)
-            let retryState;
-            if (audioDisabled) {
-                retryState = await orchestrator.setScenePending(redis, bookId, chapterId, sceneId, 'image');
-            } else {
-                retryState = await orchestrator.setScenePending(redis, bookId, chapterId, sceneId, 'audio');
-            }
-            const retry = { success: true, oldState: 'unknown', newState: retryState, reason: 'derived' };
-            if (!retry.success) {
-                warn(`Failed to start scene after force-reset ${bookId}/${chapterId}/${sceneId}: ${retry.reason}`);
-                return false;
-            }
-        } else {
-            warn(`Failed to start scene ${bookId}/${chapterId}/${sceneId}: ${result.reason}`);
-            return false;
-        }
+        await orchestrator.setScenePending(redis, bookId, chapterId, sceneId, 'audio');
     }
 
     // M5: Facade owns PLACEHOLDER + syncLinearState

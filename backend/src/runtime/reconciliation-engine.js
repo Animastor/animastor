@@ -72,15 +72,19 @@ class ReconciliationReport {
 
 /**
  * Check for VIDEO_READY state but no video file.
+ * T8: использует per-asset state (video=ready) вместо линейного.
  */
 async function checkOrphanVideoState(redis, bookId, chapterId, sceneId) {
-    const sceneState = await state.getSceneState(redis, bookId, chapterId, sceneId);
+    const assetStates = await state.getAssetStates(redis, bookId, chapterId, sceneId);
+    const isVideoReady = assetStates && assetStates.video &&
+        (assetStates.video === state.AssetState.READY || assetStates.video === state.AssetState.PLACEHOLDER);
 
-    if (!sceneState || sceneState.state !== state.SceneState.VIDEO_READY) {
+    if (!isVideoReady) {
         return null;
     }
 
-    const buildId = sceneState.build_id;
+    const sceneState = await state.getSceneState(redis, bookId, chapterId, sceneId);
+    const buildId = (sceneState && sceneState.build_id) || 'default';
     const videoPath = `/data/output/${buildId}/${bookId}_${chapterId}_${sceneId}.mp4`;
 
     try {
@@ -99,18 +103,22 @@ async function checkOrphanVideoState(redis, bookId, chapterId, sceneId) {
 
 /**
  * Check for IMAGE_READY state but no image file.
+ * T8: использует per-asset state (image=ready) вместо линейного.
  */
 async function checkOrphanImageState(redis, bookId, chapterId, sceneId) {
-    const sceneState = await state.getSceneState(redis, bookId, chapterId, sceneId);
+    const assetStates = await state.getAssetStates(redis, bookId, chapterId, sceneId);
+    const isImageReady = assetStates && assetStates.image &&
+        (assetStates.image === state.AssetState.READY || assetStates.image === state.AssetState.PLACEHOLDER);
 
-    if (!sceneState || sceneState.state !== state.SceneState.IMAGE_READY) {
+    if (!isImageReady) {
         return null;
     }
 
+    const sceneState = await state.getSceneState(redis, bookId, chapterId, sceneId);
     const imageModule = require('../image');
     const imageInfo = imageModule.resolveCanonicalSceneImage(
         '/data/output',
-        sceneState.build_id,
+        (sceneState && sceneState.build_id) || 'default',
         bookId,
         chapterId,
         sceneId,
@@ -131,33 +139,25 @@ async function checkOrphanImageState(redis, bookId, chapterId, sceneId) {
 
 /**
  * Check for AUDIO_READY state but no audio file.
+ * T8: использует per-asset state (audio=ready) вместо линейного.
  */
 async function checkOrphanAudioState(redis, bookId, chapterId, sceneId) {
-    const sceneState = await state.getSceneState(redis, bookId, chapterId, sceneId);
+    const assetStates = await state.getAssetStates(redis, bookId, chapterId, sceneId);
+    const isAudioReady = assetStates && assetStates.audio &&
+        (assetStates.audio === state.AssetState.READY || assetStates.audio === state.AssetState.PLACEHOLDER);
 
-    if (!sceneState || sceneState.state !== state.SceneState.AUDIO_READY) {
+    if (!isAudioReady) {
         return null;
     }
 
-    // Guard: build_id must be present to check audio file
-    if (!sceneState.build_id) {
-        // Scene is in AUDIO_READY but has no build_id — this is an inconsistency
-        // that should be flagged but not crash. Return a warning rather than an
-        // orphan state so the auto-fix engine can address it.
-        return {
-            type: 'orphan_audio_state',
-            scene: { bookId, chapterId, sceneId },
-            state: state.SceneState.AUDIO_READY,
-            missingFile: 'build_id_missing',
-            recommendation: 'regenerate_audio'
-        };
-    }
+    // Get build_id from scene state (stale is OK for read-only diagnostic)
+    const sceneState = await state.getSceneState(redis, bookId, chapterId, sceneId);
+    const buildId = (sceneState && sceneState.build_id) || 'default';
 
     const audioModule = require('../audio');
-    const storage = require('../storage');
     const audioPath = storage.filesystem.getSceneAudioPath(
         config.OUTPUT_DIR,
-        sceneState.build_id,
+        buildId,
         bookId,
         chapterId,
         sceneId
@@ -238,19 +238,16 @@ async function checkOrphanAssets(redis, bookId, chapterId, sceneId) {
 
 /**
  * Check for partially built scenes.
+ * T8: использует per-asset state вместо линейного.
  */
 async function checkPartialBuilds(redis, bookId, chapterId, sceneId) {
-    const sceneState = await state.getSceneState(redis, bookId, chapterId, sceneId);
-
-    if (!sceneState) {
-        return null;
-    }
-
-    const stateName = sceneState.state;
+    const assetStates = await state.getAssetStates(redis, bookId, chapterId, sceneId);
     const assets = await storage.registry.getSceneAssetsRedis(redis, bookId, chapterId, sceneId);
 
-    // AUDIO_READY but no image asset
-    if (stateName === state.SceneState.AUDIO_READY && !assets?.image) {
+    // Audio READY/PLACEHOLDER but no image asset
+    const audioReady = assetStates && assetStates.audio &&
+        (assetStates.audio === state.AssetState.READY || assetStates.audio === state.AssetState.PLACEHOLDER);
+    if (audioReady && !assets?.image) {
         return {
             type: 'partial_audio_only',
             scene: { bookId, chapterId, sceneId },
@@ -260,8 +257,10 @@ async function checkPartialBuilds(redis, bookId, chapterId, sceneId) {
         };
     }
 
-    // IMAGE_READY but no video asset
-    if (stateName === state.SceneState.IMAGE_READY && !assets?.video) {
+    // Image READY but no video asset
+    const imageReady = assetStates && assetStates.image &&
+        (assetStates.image === state.AssetState.READY || assetStates.image === state.AssetState.PLACEHOLDER);
+    if (imageReady && !assets?.video) {
         return {
             type: 'partial_image_video_missing',
             scene: { bookId, chapterId, sceneId },

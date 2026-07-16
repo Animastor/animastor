@@ -589,10 +589,9 @@ async function recoverActiveScenes(redis, snapshot) {
     let recovered = 0;
 
     for (const scene of snapshot.activeScenes) {
-        // L6: Derive per-asset from linear state snapshot, then sync
+        // T8: syncLinearState удалён — per-asset state единственный source of truth
         const perAsset = state.deriveAssetStatesFromLinear({ state: scene.state });
         await state.setAssetStates(redis, scene.bookId, scene.chapterId, scene.sceneId, perAsset);
-        await state.syncLinearState(redis, scene.bookId, scene.chapterId, scene.sceneId, scene.buildId);
         recovered++;
 
         // Re-add to active index

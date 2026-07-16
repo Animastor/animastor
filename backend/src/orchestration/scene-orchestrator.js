@@ -175,9 +175,15 @@ async function dispatchStage(redis, scene, loadedBook, buildId, overrideStage) {
 
     log(`DISPATCH: ${bookId}/${chapterId}/${sceneId} (stage=${overrideStage})`);
 
-    const currentState = await state.getSceneState(redis, bookId, chapterId, sceneId);
-    if (!currentState) {
-        log(`NEW SCENE: ${bookId}/${chapterId}/${sceneId}`);
+    // T8: проверяем asset-state вместо scene-state (per-asset — source of truth)
+    const assetStates = await state.getAssetStates(redis, bookId, chapterId, sceneId);
+    const isNewScene = !assetStates || (
+        assetStates.audio === state.AssetState.NEW &&
+        assetStates.image === state.AssetState.NEW &&
+        assetStates.video === state.AssetState.NEW
+    );
+    if (isNewScene) {
+        log(`NEW SCENE: ${bookId}/${chapterId}/${sceneId} (asset-state)`);
         await startScene(redis, scene, loadedBook, buildId);
     }
 

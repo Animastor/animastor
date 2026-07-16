@@ -175,8 +175,6 @@ async function handleAudioCompleted(redis, bookId, chapterId, sceneId, buildId) 
 async function handleImageCompleted(redis, bookId, chapterId, sceneId, buildId) {
     log(`IMAGE_CALLBACK: ${bookId}/${chapterId}/${sceneId}`);
 
-    const currentState = await state.getSceneState(redis, bookId, chapterId, sceneId);
-
     const sceneImage = image.resolveCanonicalSceneImage(
         '/data/output', buildId, bookId, chapterId, sceneId
     );

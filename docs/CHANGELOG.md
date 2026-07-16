@@ -24,6 +24,20 @@ All notable changes to Animastor are documented here.
   - `AUDIO_ORCHESTRATOR.md` обновлён с инвариантами и документацией completeChunk.
   - 574 теста проходят.
 
+- **T8: Убрать linear state (R7 / К7)**
+  (`backend/src/state/scene-state.js`, `backend/src/runtime/scene-window.js`,
+  `backend/src/runtime/runtime-scheduler.js`, `backend/src/runtime/active-scenes-index.js`):
+  - `syncLinearState` → no-op (возвращает derived state без записи в Redis).
+  - Удалены 11 вызовов `syncLinearState` из orchestrator.js.
+  - Удалены вызовы из book-diff, scene-restoration, window-generator, runtime-persistence, debug-routes.
+  - reconciliation-engine.js: 4 orphan-check функции переведены на `getAssetStates()`.
+  - scene-callbacks.js, scene-orchestrator.js: удалены/мигрированы чтения `getSceneState()`.
+  - scene-window.js: `isWindowComplete` переведена на `getAssetStates()` (вместо чтения linear state поля).
+  - runtime-scheduler.js: `attemptDispatch` больше не падает с `'no_state'` при отсутствии scene-state ключа.
+  - active-scenes-index.js: `isGenerating/isPending/isTerminal` переведены на `getAssetStates()`.
+  - tests/scope-slide.test.js: исправлен на проверку asset-state + добавлен `makeSceneReady()` helper.
+  - 574 теста проходят.
+
 - **T6: Единый reconciliation-контур (R4/К4)**
   (`backend/src/runtime/reconciliation-engine.js`, `backend/src/backend.cjs`,
   `backend/src/services/startup-recovery.js`, `backend/src/services/cleanup-service.cjs`):

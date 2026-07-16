@@ -188,26 +188,22 @@ async function transitionSceneState(redis, bookId, chapterId, sceneId, newState)
  * @returns {Promise<string>} The derived linear state
  */
 /**
- * Sync the linear FSM state from per-asset states.
- * PRESERVES build_id from the current state so the scheduler can
- * pass it to dispatch-engine when progressing to the next stage.
- * Without this, syncLinearState would reset build_id to null,
- * causing image/video dispatch to fail with "buildId is null".
+ * T8: syncLinearState — больше не пишет scene-state:*.
+ * per-asset state (animastor:asset-state:*) — единственный source of truth.
+ * Функция сохранена для обратной совместимости (возвращает derived state),
+ * но Redis write удалён. Все читатели должны использовать getAssetStates().
  *
  * @param {RedisClient} redis
  * @param {string} bookId
  * @param {string} chapterId
  * @param {string} sceneId
- * @param {string|null} [overrideBuildId] — optional build_id to store (overrides existing)
- * @returns {Promise<string>} The derived linear state
+ * @param {string|null} [overrideBuildId] — ignored (T8: no-op)
+ * @returns {Promise<string>} The derived linear state (in-memory only)
  */
 async function syncLinearState(redis, bookId, chapterId, sceneId, overrideBuildId = null) {
     const assetStates = await getAssetStates(redis, bookId, chapterId, sceneId);
     const linearState = deriveLinearState(assetStates);
-
-    const buildId = overrideBuildId || await getSceneBuildId(redis, bookId, chapterId, sceneId);
-    await setSceneStateWithBuildId(redis, bookId, chapterId, sceneId, linearState, buildId);
-    log(`SYNC LINEAR: ${bookId}/${chapterId}/${sceneId} -> ${linearState} (build_id=${buildId}, assets=${JSON.stringify(assetStates)})`);
+    log(`SYNC LINEAR (no-op): ${bookId}/${chapterId}/${sceneId} -> ${linearState}`);
     return linearState;
 }
 
