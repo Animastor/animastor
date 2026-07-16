@@ -95,7 +95,11 @@ describe('Scene Asset Registry (Phase A.4)', () => {
         await sceneAssetRegistry.deleteSceneAssets(bookId, ch, sc);
     });
 
-    it('invalidateSceneAssets marks all asset types stale', async () => {
+    it('invalidateSceneAssets marks all asset types stale via facade', async () => {
+        // T5: invalidateSceneAssets теперь требует redis (через orchestrator.markDirtyScene)
+        const { createMockRedis } = require('./mocks/redis-mock');
+        const mockRedis = createMockRedis();
+
         await sceneAssetRegistry.registerSceneAudio(testBookId, testChapterId, testSceneId, {
             canonicalPath: '/tmp/i1.mp3', duration: 1, buildId: 'b-inv',
         });
@@ -104,7 +108,7 @@ describe('Scene Asset Registry (Phase A.4)', () => {
         });
         const stale = await sceneAssetRegistry.getStaleAssets(testBookId);
         const beforeCount = stale.length;
-        await sceneAssetRegistry.invalidateSceneAssets(testBookId, testChapterId, testSceneId);
+        await sceneAssetRegistry.invalidateSceneAssets(mockRedis, testBookId, testChapterId, testSceneId);
         const after = await sceneAssetRegistry.getStaleAssets(testBookId);
         expect(after.length).to.be.greaterThan(beforeCount);
     });

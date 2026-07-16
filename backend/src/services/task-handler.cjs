@@ -273,11 +273,11 @@ module.exports = function(redis, config, deps) {
                 }
                 console.warn(`⚠️ Max retries (${MAX_RETRIES}) reached for ${book_id}/${chapter_id}/${scene_id} — ${missingIndices.length} missing (${Date.now() - dbgStart}ms)`);
 
-                // 🔧 AUDIO-ORCH: Set FAILED phase
+                // 🔧 AUDIO-ORCH: Set FAILED phase — отдельная машина фаз, failStage её не трогает
                 await audioOrch.setFailed(redis, book_id, chapter_id, scene_id, 
                     `max_retries_exceeded:${missingIndices.length}_missing`);
 
-                // Clear GPU hub dedup + reset metadata for missing chunks
+                // Clear GPU hub dedup + reset metadata for missing chunks (merge-specific cleanup)
                 for (const idx of missingIndices) {
                     const chunkId = `${book_id}_${chapter_id}_${scene_id}_${pad(idx)}`;
                     const jobKey = `animastor:job:${chunkId}:audio`;
@@ -297,22 +297,17 @@ module.exports = function(redis, config, deps) {
                     }
                 }
 
-                // Clear dispatch lease + metadata + completion marker
-                const leaseKey = `animastor:dispatch-lease:${book_id}:${chapter_id}:${scene_id}:audio`;
-                const metaKey = `animastor:dispatch-meta:${book_id}:${chapter_id}:${scene_id}:audio`;
-                const completedKey = `animastor:dispatch-completed:${book_id}:${chapter_id}:${scene_id}:audio`;
-                await redis.del(leaseKey).catch(() => {});
-                await redis.del(metaKey).catch(() => {});
-                await redis.del(completedKey).catch(() => {});
-
                 await redis.del(retryKey).catch(() => {});
                 await redis.del(retryCountKey).catch(() => {});
 
+                // T5: orchestrator.failStage — единая команда: FAILED→PENDING + markDispatchCompleted
+                // + journal event. Заменяет ручной state.setAssetState(PENDING) + очистку lease.
                 try {
-                    await state.setAssetState(redis, book_id, chapter_id, scene_id, 'audio', state.AssetState.PENDING);
-                    log(`🔁 Audio FAILED for ${book_id}/${chapter_id}/${scene_id} — scheduler will re-dispatch on next tick`);
-                } catch (stateErr) {
-                    console.error(`❌ Failed to reset asset state for re-dispatch: ${stateErr.message}`);
+                    await orchestrator.failStage(redis, book_id, chapter_id, scene_id, 'audio', build_id,
+                        `max_retries_exceeded:${missingIndices.length}_missing`);
+                    log(`🔁 Audio FAILED→PENDING via failStage for ${book_id}/${chapter_id}/${scene_id}`);
+                } catch (fsErr) {
+                    console.error(`❌ failStage failed for ${book_id}/${chapter_id}/${scene_id}: ${fsErr.message}`);
                 }
                 return;
             }

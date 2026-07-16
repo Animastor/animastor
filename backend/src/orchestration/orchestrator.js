@@ -204,13 +204,28 @@ async function failStage(redis, bookId, chapterId, sceneId, stage, buildId, reas
 // В отличие от markDirty (который регенерирует сцену через bookDiff),
 // этот метод просто маркирует assets как DIRTY, оставляя активный индекс
 // scheduler'у. Разница: markDirty → for regeneration, markDirtyScene → for recovery.
-async function markDirtyScene(redis, bookId, chapterId, sceneId, assets = ['audio', 'image', 'video']) {
+//
+// T5: PG side-effect — синхронно пишет scene_assets.status='stale' для каждого ассета.
+// Это зеркалит то, как completeStage пишет status='ready'. Если PG недоступен —
+// только warning в лог, Redis write не откатывается.
+async function markDirtyScene(redis, bookId, chapterId, sceneId, assets = ['audio', 'image', 'video'], buildId = null) {
     const state = require('../state');
     for (const asset of assets) {
         await state.setAssetState(redis, bookId, chapterId, sceneId, asset, state.AssetState.DIRTY);
     }
     // M5: syncLinearState — автоматически после setAssetState (Шаг 3 prep)
     await state.syncLinearState(redis, bookId, chapterId, sceneId);
+
+    // T5: PG side-effect — запись stale статуса (graceful failure)
+    try {
+        const sceneAssetsRepo = require('../storage/postgres/repositories/scene-assets-repo');
+        for (const asset of assets) {
+            await sceneAssetsRepo.markStale(bookId, chapterId, sceneId, asset, buildId);
+        }
+    } catch (pgErr) {
+        const { log, warn } = require('./scene-utils');
+        warn(`markDirtyScene: PG stale write failed for ${bookId}/${chapterId}/${sceneId}: ${pgErr.message}`);
+    }
 }
 
 // ── setScenePending ──────────────────────────────────

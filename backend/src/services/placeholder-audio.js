@@ -433,22 +433,21 @@ async function replacePlaceholderWithRealAudio(bookId, chapterId, sceneId, build
 
 /**
  * Mark placeholder audio as stale for scenes that changed.
- * Part of the dirty system integration.
+ * T5: через фасад orchestrator.markDirtyScene (Redis + PG синхронно).
  *
+ * @param {object} redis
  * @param {string} bookId
  * @param {string} chapterId
  * @param {string} sceneId
  * @param {string} buildId
  * @returns {Promise<boolean>}
  */
-async function markPlaceholderStale(bookId, chapterId, sceneId, buildId) {
+async function markPlaceholderStale(redis, bookId, chapterId, sceneId, buildId) {
     try {
-        const affected = await sceneAssetsRepo.markStale(bookId, chapterId, sceneId, 'audio', buildId);
-        const marked = affected > 0;
-        if (marked) {
-            log(`Placeholder marked stale: ${bookId}/${chapterId}/${sceneId}`);
-        }
-        return marked;
+        const orchestrator = require('../orchestration/orchestrator');
+        await orchestrator.markDirtyScene(redis, bookId, chapterId, sceneId, ['audio'], buildId);
+        log(`Placeholder marked stale via facade: ${bookId}/${chapterId}/${sceneId}`);
+        return true;
     } catch (err) {
         warn(`Failed to mark placeholder stale: ${err.message}`);
         return false;

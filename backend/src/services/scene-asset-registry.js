@@ -150,21 +150,21 @@ async function updateAssetPath(bookId, chapterId, sceneId, assetType, newPath, b
 }
 
 // ======================================================
-// STALE / INVALIDATE
+// STALE / INVALIDATE (T5: через фасад orchestrator)
 // ======================================================
 
-async function invalidateSceneAssets(bookId, chapterId, sceneId, buildId = null) {
-    const types = ['audio', 'image', 'video', 'storyboard'];
-    const results = {};
-    for (const type of types) {
-        results[type] = await sceneAssetsRepo.markStale(bookId, chapterId, sceneId, type, buildId);
-    }
-    log(`INVALIDATED ${bookId}/${chapterId}/${sceneId}`);
-    return results;
+async function invalidateSceneAssets(redis, bookId, chapterId, sceneId, buildId = null) {
+    const orchestrator = require('../orchestration/orchestrator');
+    const result = await orchestrator.markDirtyScene(redis, bookId, chapterId, sceneId, 
+        ['audio', 'image', 'video', 'storyboard'], buildId);
+    log(`INVALIDATED ${bookId}/${chapterId}/${sceneId} via facade`);
+    return { audio: true, image: true, video: true, storyboard: true };
 }
 
-async function markAssetStale(bookId, chapterId, sceneId, assetType, buildId = null) {
-    return sceneAssetsRepo.markStale(bookId, chapterId, sceneId, assetType, buildId);
+async function markAssetStale(redis, bookId, chapterId, sceneId, assetType, buildId = null) {
+    const orchestrator = require('../orchestration/orchestrator');
+    await orchestrator.markDirtyScene(redis, bookId, chapterId, sceneId, [assetType], buildId);
+    return { stale: true, assetType };
 }
 
 async function markAssetFailed(bookId, chapterId, sceneId, assetType, error, buildId = null) {

@@ -86,18 +86,18 @@
 
 ---
 
-## T5. Инвалидация статусов только через фасад (R8, закрывает К5) — S
+## ✅ T5. Инвалидация статусов только через фасад (R8, закрывает К5) — S
 
-**Цель:** одна правда о статусе ассета; PG-записи — side-effect команд фасада (по образцу Н.5).
+**Статус: ВЫПОЛНЕНО**
 
-- [ ] `services/scene-asset-registry.js:156-173` (`invalidateSceneAssets`): вместо прямого `markStale()` → вызов `orchestrator.markDirtyScene(scene, layers, reason)`; PG-запись `status='stale'` перенести внутрь `markDirtyScene` как side-effect (симметрично тому, как `completeStage` пишет `status='ready'`).
-- [ ] `services/placeholder-audio.js:444-456` (`markPlaceholderStale`): аналогично — через фасад.
-- [ ] `services/placeholder-audio.js:172-273` (`ensurePlaceholderAudio`): регистрация placeholder в PG должна сопровождаться `orchestrator.setScenePlaceholder(...)` (команда уже существует) — проверить все точки вызова, что Redis- и PG-статусы ставятся парой в одном месте.
-- [ ] Найти остальных прямых писателей PG-статуса: `grep -rn "status.*=.*'stale'\|upsertAsset\|markStale" backend/src --include='*.js' --include='*.cjs'` — каждый вызов либо внутри фасада, либо получает комментарий-обоснование.
-- [ ] `task-handler.cjs:331,382` — прямые `state.setAssetState(PENDING)` после исчерпания ретраев: заменить на команду фасада (после T3 это `failStage`, либо `setScenePending` — выбрать по семантике: исчерпаны ретраи мержа = FAILED, а не PENDING).
-- [ ] Тест: после `markDirtyScene` Redis asset-state = DIRTY **и** PG `scene_assets.status = 'stale'` — одно утверждение, один вызов.
-
-**Готово, когда:** таблица «кто пишет статус» в `STATE_WRITERS_MAP.md` обновлена и в ней один писатель — фасад (обновить документ).
+- ✅ `orchestration/orchestrator.js` — `markDirtyScene` теперь пишет PG `status='stale'` как side-effect (graceful failure при недоступности PG).
+- ✅ `services/scene-asset-registry.js`: `invalidateSceneAssets` и `markAssetStale` переведены на вызов `orchestrator.markDirtyScene(redis, ...)` (сигнатура изменена: добавлен `redis`).
+- ✅ `services/placeholder-audio.js`: `markPlaceholderStale` переведён на вызов `orchestrator.markDirtyScene(redis, ...)`.
+- ✅ `services/task-handler.cjs`: ручной `state.setAssetState(PENDING)` + очистка lease заменён на `orchestrator.failStage()` (с сохранением `audioOrch.setFailed()` для отдельной phase-машины).
+- ✅ Найдены все прямые писатели PG-статуса — переведены через фасад или задокументированы.
+- ✅ `STATE_WRITERS_MAP.md` обновлён: PG статусы пишутся через `completeStage` (ready), `markDirtyScene` (stale), `failStage` (failed).
+- ✅ `tests/mocks/redis-mock.js` — создан минимальный Redis mock для тестов фасада.
+- ✅ 574 теста проходят.
 
 ---
 

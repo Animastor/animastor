@@ -13,7 +13,11 @@
    `setSceneState` / `setSceneStateWithBuildId` → `animastor:scene-state:<scene>`.
 3. **Chunk-статусы** (disk-derived прогресс): `audio_status` / `image_status`
    в `animastor:chunk:*` — пишутся по наличию файла на диске (M3-поверхность).
-4. **PG `scene_assets.status`** — пишется только через `markReady` (Н.5) из колбэков.
+4. **PG `scene_assets.status`** — пишется:
+   - `'ready'` — через `completeStage` (Н.5) из колбэков;
+   - `'stale'` — через `markDirtyScene` (T5) как side-effect фасада;
+   - `'failed'` — через `failStage` (T3);
+   - `'placeholder'` — через `ensurePlaceholderAudio` (прямой PG write, особый кейс).
 
 ## 1. Per-asset writers (`setAssetState` / `setAssetStates`)
 

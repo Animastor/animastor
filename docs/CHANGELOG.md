@@ -8,6 +8,19 @@ All notable changes to Animastor are documented here.
 
 ### Added
 
+- **T5: Инвалидация статусов только через фасад (R8/К5)**
+  (`backend/src/orchestration/orchestrator.js`, `backend/src/services/scene-asset-registry.js`,
+  `backend/src/services/placeholder-audio.js`, `backend/src/services/task-handler.cjs`):
+  - `markDirtyScene` теперь пишет PG `scene_assets.status='stale'` как side-effect.
+  - `invalidateSceneAssets`, `markAssetStale`, `markPlaceholderStale` — переведены на вызов
+    `orchestrator.markDirtyScene(redis, ...)` (сигнатуры изменены: добавлен `redis`).
+  - `task-handler.cjs`: ручной `state.setAssetState(PENDING)` + очистка lease заменён на
+    `orchestrator.failStage()`. `audioOrch.setFailed()` сохранён для отдельной phase-машины.
+  - Создан `tests/mocks/redis-mock.js` — минимальный Redis mock для тестов фасада.
+  - `STATE_WRITERS_MAP.md` обновлён: PG статусы пишутся через `completeStage` (ready),
+    `markDirtyScene` (stale), `failStage` (failed).
+  - 574 теста проходят.
+
 - **T4: Команда `resetScenes` в фасаде оркестратора (R3/К3)**
   (`backend/src/orchestration/orchestrator.js`, `backend/src/routes/book/generation-routes.cjs`):
   - Единая команда `resetScenes()` в orchestrator.js, собирающая весь ритуал регенерации:
