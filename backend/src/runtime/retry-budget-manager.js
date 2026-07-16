@@ -424,16 +424,11 @@ async function consumeRetryBudget(redis, bookId, chapterId, sceneId, stage, fail
  * Refill all budgets (called periodically).
  */
 async function refillBudgets(redis) {
-    const stageKeys = [];
     const typeKeys = [];
 
-    // refill scene budgets
-    const stages = Object.keys(PER_SCENE_LIMITS);
-    for (const stage of stages) {
-        const pattern = `${getSceneStageBudgetKey('*', '*', '*', stage)}`;
-        const key = getSceneStageBudgetKey('*', '*', '*', stage);
-        stageKeys.push(key);
-    }
+    // B6: Scene budgets не refill-ятся отдельно — у них TTL 300s, истекают сами.
+    // Ранее был мёртвый код с getSceneStageBudgetKey('*', ...), который не совпадал
+    // с реальными ключами (конкретные bookId/chapterId/sceneId). Удалён.
 
     // Refill type budgets
     const typeValues = Object.keys(FAILURE_TYPE_LIMITS);
@@ -455,7 +450,7 @@ async function refillBudgets(redis) {
     log(`BUDGET_REFILLED: global=${BUDGET_REFILL_RATE.perMinute}, types=${typeValues.length}`);
 
     return {
-        sceneBudgetsRefilled: stageKeys.length,
+        sceneBudgetsRefilled: 0, // B6: scene budgets refill удалён — истекают по TTL
         typeBudgetsRefilled: typeValues.length,
         globalBudgetRefilled: BUDGET_REFILL_RATE.perMinute
     };

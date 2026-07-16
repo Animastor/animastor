@@ -196,22 +196,14 @@ async function recordFailure(redis, service) {
 async function recordSuccess(redis, service) {
     const failureKey = getCircuitFailureKey(service);
 
-    // If circuit is open, move to half-open on success
+    // B8: recordSuccess НЕ переключает OPEN → HALF_OPEN.
+    // Этот переход делает только tryRecover с проверкой recoveryTimeout.
+    // Если circuit OPEN — успех не должен пробивать защиту.
     const currentState = await getCircuitState(redis, service);
     if (currentState === CircuitState.OPEN) {
-        const halfOpenKey = getCircuitHalfOpenKey(service);
-        const halfOpenCount = await redis.incr(halfOpenKey);
-        await redis.expire(halfOpenKey, Math.ceil(CIRCUIT_CONFIG.recoveryTimeoutMs / 1000));
-
-        if (halfOpenCount <= CIRCUIT_CONFIG.halfOpenMaxRequests) {
-            await setCircuitState(redis, service, CircuitState.HALF_OPEN);
-            log(`CIRCUIT_HALF_OPEN: ${service} (test request ${halfOpenCount}/${CIRCUIT_CONFIG.halfOpenMaxRequests})`);
-            return { success: true, state: CircuitState.HALF_OPEN, testRequest: true, halfOpenCount };
-        }
-
-        // Too many test requests, reset to open
-        await redis.set(halfOpenKey, '0');
-        return { success: false, state: CircuitState.OPEN, testRequest: true };
+        // Circuit is open — success calls should not happen through normal flow
+        // But if they do (e.g., test request passed the guard), just log and return
+        return { success: false, state: CircuitState.OPEN, reason: 'circuit_open' };
     }
 
     // Reset failure count if circuit is closed
