@@ -86,47 +86,5 @@ describe('AssetState (v2.0.0 per-asset model)', () => {
         });
     });
 
-    describe('deriveAssetStatesFromLinear (backward compat)', () => {
-        it('null state -> all NEW', () => {
-            const result = sceneState.deriveAssetStatesFromLinear(null);
-            expect(result).to.deep.equal({ audio: 'new', image: 'new', video: 'new' });
-        });
-
-        it('VIDEO_READY -> all READY', () => {
-            const result = sceneState.deriveAssetStatesFromLinear({ state: 'video_ready' });
-            expect(result).to.deep.equal({ audio: 'ready', image: 'ready', video: 'ready' });
-        });
-
-        it('AUDIO_PENDING -> audio=PENDING, rest=NEW', () => {
-            const result = sceneState.deriveAssetStatesFromLinear({ state: 'audio_pending' });
-            expect(result).to.deep.equal({ audio: 'pending', image: 'new', video: 'new' });
-        });
-
-        it('AUDIO_GENERATING -> audio=GENERATING, rest=NEW', () => {
-            const result = sceneState.deriveAssetStatesFromLinear({ state: 'audio_generating' });
-            expect(result).to.deep.equal({ audio: 'generating', image: 'new', video: 'new' });
-        });
-
-        it('IMAGE_PENDING -> audio=READY, image=PENDING, video=NEW', () => {
-            const result = sceneState.deriveAssetStatesFromLinear({ state: 'image_pending' });
-            expect(result).to.deep.equal({ audio: 'ready', image: 'pending', video: 'new' });
-        });
-
-        it('IMAGE_READY -> audio=READY, image=READY, video=NEW', () => {
-            const result = sceneState.deriveAssetStatesFromLinear({ state: 'image_ready' });
-            expect(result).to.deep.equal({ audio: 'ready', image: 'ready', video: 'new' });
-        });
-
-        it('VIDEO_PENDING -> audio=READY, image=READY, video=PENDING', () => {
-            const result = sceneState.deriveAssetStatesFromLinear({ state: 'video_pending' });
-            expect(result).to.deep.equal({ audio: 'ready', image: 'ready', video: 'pending' });
-        });
-
-        it('VIDEO_GENERATING -> audio=READY, image=READY, video=GENERATING', () => {
-            const result = sceneState.deriveAssetStatesFromLinear({ state: 'video_generating' });
-            expect(result).to.deep.equal({ audio: 'ready', image: 'ready', video: 'generating' });
-        });
-    });
-
-    // deriveLinearState removed in v2.2.0 — per-asset state is canonical
+    // deriveAssetStatesFromLinear removed in v3.0.0 — per-asset state is canonical
 });

@@ -2,9 +2,6 @@
 // ANIMASTOR BACKEND — AI CHAT ROUTES
 // ======================================================
 // All /api/v1/ai/* endpoints.
-//
-// Usage:
-//   require('./routes/ai-routes.cjs')(app, redis, deps);
 
 const fs = require('fs');
 

@@ -3,9 +3,6 @@
 // ======================================================
 // Pure utility functions extracted from backend.cjs.
 // These have NO dependency on `redis`, `app`, or backend.cjs internal state.
-//
-// Usage:
-//   const { log, pad, parseChunkId } = require('./helpers/utils.cjs');
 
 const path = require('path');
 

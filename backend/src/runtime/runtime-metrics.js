@@ -235,34 +235,10 @@ async function getCounter(redis, key) {
 }
 
 /**
- * Get scenes in a specific stage.
+ * Get scenes in a specific stage (stub — scene-state removed).
  */
 async function getScenesInStage(redis, stage) {
-    const pattern = 'animastor:scene-state:*';
-    let cursor = 0;
-    let count = 0;
-
-    do {
-        const result = await redis.scan(cursor, 'MATCH', pattern, 'COUNT', 500);
-        cursor = parseInt(result[0], 10);
-        const keys = result[1];
-
-        for (const key of keys) {
-            const raw = await redis.get(key);
-            if (raw) {
-                try {
-                    const data = JSON.parse(raw);
-                    if (data.state === stage) {
-                        count++;
-                    }
-                } catch (e) {
-                    // Skip invalid entries
-                }
-            }
-        }
-    } while (cursor !== 0 && count < 10000);
-
-    return count;
+    return 0;
 }
 
 /**

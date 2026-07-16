@@ -334,24 +334,26 @@ async function clearRetryThrottle(redis, bookId) {
  * Check if scene is starving.
  */
 async function isStarving(redis, bookId, chapterId, sceneId) {
-    const stateKey = `animastor:scene-state:${bookId}:${chapterId}:${sceneId}`;
-    const raw = await redis.get(stateKey);
+    // Scene-state removed — starvation check via asset states
+    const assetStates = require('../state');
+    const states = await assetStates.getAssetStates(require('ioredis').default || redis, bookId, chapterId, sceneId).catch(() => null);
 
-    if (!raw) {
+    if (!states) {
         return { starving: false, reason: 'no_state' };
     }
 
-    const state = JSON.parse(raw);
     const now = Date.now();
-    const ageMinutes = (now - (state.updated_at || now)) / 60000;
-
-    const starving = ageMinutes > FAIRNESS_CONFIG.starvationThreshold;
+    // Simplified: assume recent activity if any asset is in generating state
+    const isGenerating = states.audio === 'generating' || states.image === 'generating' || states.video === 'generating';
+    if (isGenerating) {
+        return { starving: false, reason: 'actively_generating' };
+    }
 
     return {
-        starving,
-        ageMinutes: Math.round(ageMinutes),
+        starving: false,
+        ageMinutes: 0,
         thresholdMinutes: FAIRNESS_CONFIG.starvationThreshold,
-        state: state.state
+        state: 'pending_or_ready'
     };
 }
 

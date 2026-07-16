@@ -4,9 +4,6 @@
 // /api/v1/connectors/* endpoints.
 //
 // Connector Registry API for Workflow Manager UI.
-//
-// Usage:
-//   require('./routes/connector-routes.cjs')(app, redis, deps);
 
 module.exports = function(app, redis, deps) {
     const { wfManager } = deps;

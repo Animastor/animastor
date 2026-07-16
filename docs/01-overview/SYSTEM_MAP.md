@@ -127,7 +127,7 @@ Android-плеер (`PlaybackViewModel` + `SceneAudioPlayer` на ExoPlayer/Medi
 
 ~30+ семейств ключей под префиксом `animastor:`. Основные:
 - Очереди GPU: `animastor:queue:{audio|image|video}`, `animastor:running`, `animastor:result:*`, дедуп `animastor:job:*`.
-- Состояние сцен: `animastor:scene-state:*` (linear, производное), `animastor:asset-state:*` (per-asset, канон, HASH), `animastor:iu-progress:*`, `animastor:chunk:*`, `animastor:chunks:*`.
+- Состояние сцен: `animastor:asset-state:*` (per-asset, канон, HASH), `animastor:iu-progress:*`, `animastor:chunk:*`, `animastor:chunks:*`.
 - Диспатч/координация: `animastor:dispatch-lease:*`, `animastor:dispatch-completed:*`, `animastor:runtime:*`, `animastor:*-lock:*`, `animastor:worker:heartbeat:*`.
 - Конфиг/scope: `animastor:layer-config:*`, `animastor:gen-scope:*`, `animastor:active-scenes`.
 
@@ -226,20 +226,14 @@ Redis выполняет три роли одновременно:
 
 ## 8. Особенности текущего устройства
 
-### 8.1 Per-asset state — единый source of truth (T8, июль 2026)
+### 8.1 Per-asset state — единственный source of truth (T8 + Dead code cleanup, июль 2026)
 
-**Линейное состояние (`SceneState` / `animastor:scene-state:*`) объявлено deprecated.**
-`syncLinearState` — no-op (возвращает derived state, не пишет в Redis).
-Ключи `animastor:scene-state:*` больше не создаются/обновляются;
-существующие получат TTL 7 дней при старте бэкенда и будут удалены автоматически.
+**Линейное состояние (`SceneState` / `animastor:scene-state:*`) полностью удалено.**
+`getSceneState()`, `setSceneState()`, `transitionSceneState()`, `SCENE_STATE_KEY_PREFIX` — удалены.
+Ключи `animastor:scene-state:*` больше не пишутся и не читаются.
 
 Per-asset состояния (`animastor:asset-state:*`, HSET с полями `audio`/`image`/`video`) —
-единственный runtime source of truth. Все критически важные читатели мигрированы:
-- `isWindowComplete` — проверяет per-asset
-- `attemptDispatch` — не падает при отсутствии scene-state
-- `isGenerating/isPending/isTerminal` — проверяют per-asset
-- orphan-проверки reconciliation — проверяют per-asset
-- `dispatchStage` — определение новой сцены по per-asset
+единственный runtime source of truth.
 
 ### 8.2 Orchestrator-фасад (T3–T7, июнь–июль 2026)
 

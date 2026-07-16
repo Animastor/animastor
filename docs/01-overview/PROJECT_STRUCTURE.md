@@ -96,13 +96,10 @@
 │   │   │   ├── audio-recovery.cjs               # Recovery аудио (per-scene, on-demand)
 │   │   │   ├── book-diff.cjs                    # Diff книг + dirty scene marking
 │   │   │   ├── book-event-log.js                # PG журнал событий книги
-│   │   │   ├── book-integrity.js                # Проверка целостности (orphan detection)
 │   │   │   ├── book-source.js                   # Канонический индекс сцен
 │   │   │   ├── book-sync.js                     # Синхронизация JSON ↔ DB
 │   │   │   ├── chat-engine.cjs                  # AI-чат (tool-based)
-│   │   │   ├── chat-store.js                    # Хранилище чатов
 │   │   │   ├── cleanup-service.cjs              # Периодическая очистка
-│   │   │   ├── context-builder.js               # Сборка контекста для AI
 │   │   │   ├── encoding-detect.js               # Детекция кодировки
 │   │   │   ├── gen-scope.js                     # Область генерации
 │   │   │   ├── knowledge-base.js                # Загрузка ai/ файлов
@@ -165,8 +162,7 @@
 │   │   │   ├── circuit-breaker.js               # [LIVE] Размыкатель цепи
 │   │   │   ├── fairness-engine.js               # [LIVE] Анти-голодание
 │   │   │   ├── retry-budget-manager.js          # [LIVE] Бюджет ретраев
-│   │   │   ├── feedback-config.js               # Конфиг обратной связи
-│   │   │   └── feedback-recorder.js             # Запись обратной связи
+
 │   │   │   # NB: 16 dead governance-модулей удалены 2026-06-27 (D.3/L1, 311f44a)
 │   │   ├── state/
 │   │   │   ├── index.js
@@ -204,10 +200,8 @@
 │       ├── asset-state.test.js
 │       ├── book-diff-unit.test.js
 │       ├── book-event-log.test.js
-│       ├── book-integrity.test.js
 │       ├── book-source.test.js
 │       ├── book-sync.test.js
-│       ├── chat-store.test.js
 │       ├── coreference-agent.test.js
 │       ├── coreference-cleanup.test.js
 │       ├── coreference-image.test.js

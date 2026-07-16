@@ -460,11 +460,8 @@ async function getMetrics(redis) {
 async function attemptDispatch(redis, bookId, chapterId, sceneId, loadedBook, force = false) {
     const sceneKey = `${bookId}:${chapterId}:${sceneId}`;
 
-    // T8: scene-state key больше не пишется (syncLinearState — no-op).
-    // Для старых сцен key существует, для новых — нет.
-    // build_id не критичен (fallback 'default' или null — диспетчер читает manifest).
-    const currentStateRaw = await redis.get(`${state.SCENE_STATE_KEY_PREFIX}:${bookId}:${chapterId}:${sceneId}`);
-    const buildId = currentStateRaw ? (JSON.parse(currentStateRaw).build_id || null) : null;
+    // T8: scene-state removed — build_id from manifest or default
+    const buildId = null;
 
     // Д.2: Version-stale pre-pass — detect (pure read) then reset (explicit write)
     // BEFORE planning, so a stale 'ready' scene is re-dispatched in the SAME tick.
@@ -589,7 +586,6 @@ module.exports = {
     AssetState: state.AssetState,
     STATE_TO_STAGE,
     STAGE_TO_STATE,
-    SCENE_STATE_KEY_PREFIX: state.SCENE_STATE_KEY_PREFIX,
 
     // Phase 11: Runtime initialization
     initializeRuntime

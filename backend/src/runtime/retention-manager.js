@@ -56,13 +56,6 @@ const LEASE_HISTORY_MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours
 // ======================================================
 
 /**
- * Get scene state key pattern.
- */
-function getSceneStatePattern() {
-    return 'animastor:scene-state:*';
-}
-
-/**
  * Get event journal key pattern.
  */
 function getEventJournalPattern() {
@@ -394,24 +387,8 @@ async function cleanupActiveScenesIndex(redis) {
     let removedCount = 0;
     let verifiedCount = 0;
 
-    // Get all scenes in active index
-    const members = await redis.smembers(activeKey);
-
-    for (const member of members) {
-        verifiedCount++;
-        const sceneData = JSON.parse(member);
-
-        // Check if scene state still exists
-        const stateKey = `animastor:scene-state:${sceneData.bookId}:${sceneData.chapterId}:${sceneData.sceneId}`;
-        const exists = await redis.exists(stateKey);
-
-        if (!exists) {
-            // Scene no longer exists, remove from active index
-            await redis.srem(activeKey, member);
-            removedCount++;
-            log(`ACTIVE_SCENES_CLEANUP: Removed ${sceneData.bookId}/${sceneData.chapterId}/${sceneData.sceneId} (no state)`);
-        }
-    }
+    // Scene-state cleanup removed — active scenes are managed by the scheduler
+    return { verifiedCount: 0, removedCount: 0 };
 
     return { verifiedCount, removedCount };
 }

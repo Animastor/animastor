@@ -83,8 +83,7 @@ async function checkOrphanVideoState(redis, bookId, chapterId, sceneId) {
         return null;
     }
 
-    const sceneState = await state.getSceneState(redis, bookId, chapterId, sceneId);
-    const buildId = (sceneState && sceneState.build_id) || 'default';
+    const buildId = 'default';
     const videoPath = `/data/output/${buildId}/${bookId}_${chapterId}_${sceneId}.mp4`;
 
     try {
@@ -114,7 +113,6 @@ async function checkOrphanImageState(redis, bookId, chapterId, sceneId) {
         return null;
     }
 
-    const sceneState = await state.getSceneState(redis, bookId, chapterId, sceneId);
     const imageModule = require('../image');
     const imageInfo = imageModule.resolveCanonicalSceneImage(
         '/data/output',
@@ -151,10 +149,8 @@ async function checkOrphanAudioState(redis, bookId, chapterId, sceneId) {
     }
 
     // Get build_id from scene state (stale is OK for read-only diagnostic)
-    const sceneState = await state.getSceneState(redis, bookId, chapterId, sceneId);
-    const buildId = (sceneState && sceneState.build_id) || 'default';
+    const buildId = 'default';
 
-    const audioModule = require('../audio');
     const audioPath = storage.filesystem.getSceneAudioPath(
         config.OUTPUT_DIR,
         buildId,
@@ -674,15 +670,6 @@ async function applyFix(redis, fix) {
     try {
         switch (action) {
             case 'MOVE_TO_PENDING': {
-                const current = await state.getSceneState(redis, scene.bookId, scene.chapterId, scene.sceneId);
-
-                // Derive pending state from current linear state (heuristic)
-                const s = current?.state || '';
-                const pendingState = s.includes('audio') ? 'audio_pending'
-                    : s.includes('image') ? 'image_pending'
-                    : s.includes('video') ? 'video_pending'
-                    : 'audio_pending';
-
                 // Mark all per-asset states as DIRTY for redispatch
                 // M5: Route through orchestrator.markDirtyScene instead of direct state.setAssetState
                 // M5 Шаг 3: syncLinearState уже внутри markDirtyScene
@@ -735,32 +722,19 @@ async function applyFix(redis, fix) {
                     await redis.del(metaKey);
                 }
 
-                // Move to pending state
-                const current = await state.getSceneState(redis, scene.bookId, scene.chapterId, scene.sceneId);
-                if (current) {
-                    const s = current.state || '';
-                    const pendingState = s.includes('audio') ? 'audio_pending'
-                        : s.includes('image') ? 'image_pending'
-                        : s.includes('video') ? 'video_pending'
-                        : 'audio_pending';
+                // Mark per-asset states as DIRTY for redispatch
+                // M5: Route through orchestrator.markDirtyScene instead of direct state.setAssetState
+                // M5 Шаг 3: syncLinearState уже внутри markDirtyScene
+                const orchestrator = require('../orchestration/orchestrator');
+                await orchestrator.markDirtyScene(redis, scene.bookId, scene.chapterId, scene.sceneId);
 
-                    // Mark per-asset states as DIRTY for redispatch
-                    // M5: Route through orchestrator.markDirtyScene instead of direct state.setAssetState
-                    // M5 Шаг 3: syncLinearState уже внутри markDirtyScene
-                    const orchestrator = require('../orchestration/orchestrator');
-                    await orchestrator.markDirtyScene(redis, scene.bookId, scene.chapterId, scene.sceneId);
-
-                    // Add back to active index
-                    await runtimeScheduler.addSceneToActiveIndex(redis, scene.bookId, scene.chapterId, scene.sceneId);
-                }
+                // Add back to active index
+                await runtimeScheduler.addSceneToActiveIndex(redis, scene.bookId, scene.chapterId, scene.sceneId);
 
                 return { success: removedCount > 0, action, scene, details: `released ${removedCount} stale leases` };
             }
 
             case 'REGENERATE_MISSING_ASSET': {
-                // Mark as pending for regeneration
-                const current = await state.getSceneState(redis, scene.bookId, scene.chapterId, scene.sceneId);
-
                 // Derive asset type from action reason or issue field
                 const reasons = (fix.reason + ' ' + (fix.issue || '')).toLowerCase();
                 const pendingState =

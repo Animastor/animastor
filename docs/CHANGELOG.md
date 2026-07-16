@@ -6,6 +6,29 @@ All notable changes to Animastor are documented here.
 
 ## [Unreleased] — 2026-07-16
 
+### Removed
+
+- **Dead code — 5 orphaned файлов + legacy scene-state функции полностью зачищены**
+  (`backend/src/services/context-builder.js`, `backend/src/services/chat-store.js`,
+  `backend/src/services/book-integrity.js`, `backend/src/runtime/feedback-recorder.js`,
+  `backend/src/runtime/feedback-config.js`, `backend/src/state/scene-state.js`):
+  - **5 orphaned файлов удалены:** `context-builder.js`, `chat-store.js`, `book-integrity.js`,
+    `feedback-recorder.js`, `feedback-config.js` — не импортировались ни одним production-файлом.
+  - **Legacy scene-state функции удалены из `scene-state.js`:** `getSceneState()`,
+    `setSceneState()`, `setSceneStateWithBuildId()`, `transitionSceneState()`,
+    `deriveAssetStatesFromLinear()`, `SCENE_STATE_KEY_PREFIX`.
+  - **`SCENE_STATE_KEY_PREFIX`** удалён из `runtime-config.js` (был `animastor:scene-state`).
+  - **17 файлов очищены** от self-referencing закомментированных `require()` строк.
+  - **13 production-файлов** мигрированы с legacy scene-state на per-asset state.
+  - **Lua-скрипт в `book-diff.cjs`** исправлен: KEYS сдвинуты (удалён sceneStateKey),
+    `numKeys` с 4→3.
+  - **Тесты:** `scene-state.test.js`, `asset-state.test.js`, `happy-path.test.js` — очищены.
+  - **`runtime-persistence.js`:** удалён scan `animastor:scene-state:*`.
+  - **`backend.cjs`:** удалён TTL cleanup для legacy scene-state ключей.
+  - **Документация:** ARCHITECTURE.md, PROJECT_STRUCTURE.md, SYSTEM_OVERVIEW.md,
+    SYSTEM_MAP.md, AGENTS.md — очищены от упоминаний удалённых файлов и функций.
+  - 139 тестов проходят (все зелёные).
+
 ### Added
 
 - **T7: Аудио-машина внутрь оркестра (R2/К1)**

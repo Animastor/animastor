@@ -2,8 +2,6 @@
 // ANIMASTOR BACKEND — REDIS CACHE HELPERS
 // ======================================================
 // Redis chunk metadata helpers extracted from backend.cjs.
-// Usage:
-//   const { saveChunk, getChunk, getAllChunks } = require('./helpers/redis-helpers.cjs')(redis);
 
 const path = require('path');
 const fs = require('fs');
@@ -114,15 +112,10 @@ module.exports = function(redis) {
         let readyScenes = 0;
 
         for (const s of scenes) {
-            const raw = await redis.get(`${state.SCENE_STATE_KEY_PREFIX}:${bookId}:${s.chapter_id}:${s.scene_id}`);
-            if (!raw) continue;
             try {
-                const data = JSON.parse(raw);
-                const st = data.state;
-                if (st === 'image_ready' ||
-                    st === 'video_pending' ||
-                    st === 'video_generating' ||
-                    st === 'video_ready') {
+                const assetStates = await state.getAssetStates(redis, bookId, s.chapter_id, s.scene_id);
+                if (assetStates.video === state.AssetState.READY ||
+                    (assetStates.image === state.AssetState.READY && assetStates.audio === state.AssetState.READY)) {
                     readyScenes++;
                 }
             } catch (_) {}
@@ -181,10 +174,8 @@ module.exports = function(redis) {
 
             const chunkId = `${bookId}_${chapterId}_${sceneId}_0001`;
 
-            const sceneStateKey = `${state.SCENE_STATE_KEY_PREFIX}:${bookId}:${chapterId}:${sceneId}`;
             try {
-                await redis.del(sceneStateKey);
-                // L5: Set per-asset to all READY (files exist on disk), then derive VIDEO_READY
+                // L5: Set per-asset to all READY (files exist on disk)
                 await state.setAssetStates(redis, bookId, chapterId, sceneId, {
                     audio: state.AssetState.READY,
                     image: state.AssetState.READY,

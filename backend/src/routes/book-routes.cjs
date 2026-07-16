@@ -4,9 +4,6 @@
 // All /api/v1/book/* endpoints.
 // Split into sub-route modules for maintainability.
 //
-// Usage:
-//   require('./routes/book-routes.cjs')(app, redis, deps);
-//
 // Sub-modules (routes/book/):
 //   core-routes.cjs      - GET/PUT/PATCH book, DELETE, source-coverage, cover
 //   import-routes.cjs    - load-vbook, import-txt, bootstrap, resume-bootstrap, bootstrap-next-window, trigger-next-window

@@ -181,26 +181,6 @@ async function createCheckpoint(redis) {
     const timestamp = Date.now();
 
     const scenes = [];
-    const sceneKeys = await redis.keys('animastor:scene-state:*');
-
-    for (const key of sceneKeys) {
-        const raw = await redis.get(key);
-        if (raw) {
-            try {
-                const sceneState = JSON.parse(raw);
-                scenes.push({
-                    bookId: sceneState.bookId,
-                    chapterId: sceneState.chapterId,
-                    sceneId: sceneState.sceneId,
-                    state: sceneState.state,
-                    stage: sceneState.stage,
-                    updatedAt: sceneState.updatedAt
-                });
-            } catch (e) {
-                // Skip invalid entries
-            }
-        }
-    }
 
     const checkpoint = {
         type: RuntimeStateType.CHECKPOINT,
@@ -590,7 +570,7 @@ async function recoverActiveScenes(redis, snapshot) {
 
     for (const scene of snapshot.activeScenes) {
         // T8: syncLinearState удалён — per-asset state единственный source of truth
-        const perAsset = state.deriveAssetStatesFromLinear({ state: scene.state });
+        const perAsset = { audio: 'new', image: 'new', video: 'new' };
         await state.setAssetStates(redis, scene.bookId, scene.chapterId, scene.sceneId, perAsset);
         recovered++;
 
@@ -710,12 +690,11 @@ async function finalizeRecovery(redis, recoveryId) {
  */
 async function verifyRecovery(redis) {
     const activeScenes = await redis.scard('animastor:active-scenes');
-    const sceneKeys = await redis.keys('animastor:scene-state:*');
     const leases = await redis.keys('animastor:dispatch-lease:*');
 
     return {
         activeSceneCount: activeScenes,
-        sceneStateCount: sceneKeys.length,
+        sceneStateCount: 0,
         activeLeaseCount: leases.length,
         recoveryMarkers: await redis.get(`${RUNTIME_RECOVERY_KEY}:current`)
     };

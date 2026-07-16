@@ -167,13 +167,12 @@
 **Текущее состояние:**
 - ✅ `ai-loader.js` — загружает examples с TTL-кэшем (1 мин), используется:
   - `visual-utils.js` — `getExamples()` для `formatExamplesForPrompt()` и `buildVisualExemplars()`
-  - `context-builder.js` — `buildExamplesSection()` для AI-чата
 - ✅ `knowledge-base.js` — загружается через `agent-service.js` для future use
 - ❌ `rules/` и `skills/` из `backend/ai/` не используются в промптах основного пайплайна
 
 **Причина возникновения:** База знаний частично используется (examples), частично — резерв для будущих улучшений.
 
-**Затрагиваемые компоненты:** agent-service.js, ai-loader.js, knowledge-base.js, visual-utils.js, context-builder.js
+**Затрагиваемые компоненты:** agent-service.js, ai-loader.js, knowledge-base.js, visual-utils.js
 
 ---
 

@@ -224,7 +224,7 @@ LLM отвечает только за смысловое разбиение п�
   `backend/ai/examples/`, динамически определяет структуру каждого и включает
   краткое описание в system prompt шага **Create Scenes** (через плейсхолдер
   `%REFERENCE_EXAMPLES%`). Нет жёстких привязок к именам файлов.
-- `context-builder.js` (`buildExamplesSection()`) загружает все файлы из
+- `ai-loader.js` загружает все файлы из
   `ai/examples/` если в MODE_MAPPING не указан конкретный список.
 - `refineDraft()` в `ai-service.js` загружает полные примеры из `ai/examples/`
   и включает их в промпты финальной доработки

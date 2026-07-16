@@ -4,9 +4,6 @@
 // Background window generation — processes the next window
 // of scenes from the source text, creates chunks, registers
 // scenes for GPU processing, and reports progress.
-//
-// Usage:
-//   const windowGen = require('./services/window-generator.cjs')({ redis, txtImporter, genSessionRepo, state, activeScenes, placeholderAudio, saveChunk, config });
 
 const { log } = require('../helpers/utils.cjs');
 

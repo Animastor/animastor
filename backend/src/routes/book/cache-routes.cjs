@@ -1,7 +1,6 @@
 // Book cache inspection + teardown routes.
 //
 // Split out of book-routes.cjs (Architectural Debt #3, sub-registrar pattern).
-//   require('./book/cache-routes.cjs')(app, ctx);
 //
 // ctx fields used here:
 //   { redis, config, storage, path, fs, getAllChunks, getChunk, cleanBookRedisKeys, log }

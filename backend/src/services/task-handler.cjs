@@ -3,9 +3,6 @@
 // ======================================================
 // GPU task result handling, audio merge, and book snapshot
 // management.
-//
-// Usage:
-//   const taskHandler = require('./services/task-handler.cjs')(redis, config, deps);
 
 const path = require('path');
 const fs = require('fs');

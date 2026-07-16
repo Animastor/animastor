@@ -195,9 +195,7 @@ TXT / VBook
 | Book diff | `backend/src/services/book-diff.cjs` | Diff книг, dirty scene marking (через orchestrator.markDirty) |
 | Book source | `backend/src/services/book-source.js` | Канонический индекс сцен из Book JSON |
 | Book sync | `backend/src/services/book-sync.js` | Синхронизация JSON ↔ DB через scene_hash |
-| Book integrity | `backend/src/services/book-integrity.js` | Проверка целостности (orphan detection) |
 | Book event log | `backend/src/services/book-event-log.js` | PostgreSQL журнал событий книги (30+ типов) |
-| Chat store | `backend/src/services/chat-store.js` | Хранилище чатов (сессии, топики, поиск) |
 | Chat engine | `backend/src/services/chat-engine.cjs` | AI-чат (tool-based, режимы) |
 | Cleanup service | `backend/src/services/cleanup-service.cjs` | Периодическая очистка, distributed locks |
 | Audio recovery | `backend/src/services/audio-recovery.cjs` | Периодическое восстановление результатов GPU |

@@ -4,9 +4,6 @@
 // AI chat engine — system prompts, book context building,
 // mode-specific tool definitions, AI response parsing,
 // and JSON patch application.
-//
-// Usage:
-//   const chatEngine = require('./services/chat-engine.cjs')(config);
 
 const fs = require('fs');
 

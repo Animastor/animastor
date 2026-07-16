@@ -3,9 +3,6 @@
 // ======================================================
 // Build lifecycle management, distributed cleanup locks,
 // and periodic stale lock cleanup.
-//
-// Usage:
-//   const cleanup = require('./services/cleanup-service.cjs')(redis, config, { log });
 
 const path = require('path');
 const fs = require('fs');

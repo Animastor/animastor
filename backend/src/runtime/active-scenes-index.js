@@ -9,11 +9,6 @@ const state = require('../state');
 const ACTIVE_SCENES_KEY = 'animastor:active-scenes';
 
 /**
- * Get state key prefix.
- */
-const SCENE_STATE_KEY_PREFIX = state.SCENE_STATE_KEY_PREFIX;
-
-/**
  * Check if a scene is in the active index.
  */
 async function isActive(redis, bookId, chapterId, sceneId) {
@@ -79,15 +74,14 @@ async function getActiveScenesDetail(redis) {
         const parsed = parseSceneKey(key);
         if (!parsed) continue;
 
-        const stateKey = `${runtimeScheduler.SCENE_STATE_KEY_PREFIX}:${parsed.bookId}:${parsed.chapterId}:${parsed.sceneId}`;
-        const stateRaw = await redis.get(stateKey);
-        const stateData = stateRaw ? JSON.parse(stateRaw) : null;
+        const assetStates = await state.getAssetStates(redis, parsed.bookId, parsed.chapterId, parsed.sceneId);
 
         scenes.push({
             ...parsed,
-            currentState: stateData?.state || 'unknown',
-            updatedAt: stateData?.updated_at || null,
-            buildId: stateData?.build_id || null
+            currentState: 'active',
+            updatedAt: null,
+            buildId: null,
+            assetStates
         });
     }
 

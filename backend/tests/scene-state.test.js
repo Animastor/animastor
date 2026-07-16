@@ -44,42 +44,4 @@ describe('AssetState (per-asset) — source of truth', () => {
 });
 
 // deriveLinearState removed in v2.2.0 — per-asset state is canonical
-
-describe('deriveAssetStatesFromLinear (fallback)', () => {
-    it('null state -> all NEW', () => {
-        const result = sceneState.deriveAssetStatesFromLinear(null);
-        expect(result).to.deep.equal({ audio: 'new', image: 'new', video: 'new' });
-    });
-
-    it('NEW -> all NEW', () => {
-        const result = sceneState.deriveAssetStatesFromLinear({ state: 'new' });
-        expect(result).to.deep.equal({ audio: 'new', image: 'new', video: 'new' });
-    });
-
-    it('AUDIO_GENERATING -> audio generating', () => {
-        const result = sceneState.deriveAssetStatesFromLinear({ state: 'audio_generating' });
-        expect(result.audio).to.equal('generating');
-        expect(result.image).to.equal('new');
-        expect(result.video).to.equal('new');
-    });
-
-    it('VIDEO_READY -> all ready', () => {
-        const result = sceneState.deriveAssetStatesFromLinear({ state: 'video_ready' });
-        expect(result).to.deep.equal({ audio: 'ready', image: 'ready', video: 'ready' });
-    });
-});
-
-describe('transitionSceneState (simplified direct write)', () => {
-    it('returns success always (no validation)', async () => {
-        // Calls setSceneStateWithBuildId internally — no validation logic
-        // This test verifies the export exists and returns the expected shape
-        expect(sceneState.transitionSceneState).to.be.a('function');
-    });
-
-    it('getSceneState and setSceneState exist', () => {
-        expect(sceneState.getSceneState).to.be.a('function');
-        expect(sceneState.setSceneState).to.be.a('function');
-        expect(sceneState.setSceneStateWithBuildId).to.be.a('function');
-        // syncLinearState removed in v2.2.0
-    });
-});
+// deriveAssetStatesFromLinear, transitionSceneState, getSceneState, setSceneState removed in v3.0.0

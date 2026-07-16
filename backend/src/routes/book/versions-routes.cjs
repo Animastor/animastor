@@ -4,8 +4,6 @@
 // sub-registrar pattern: the parent builds a `ctx` of shared dependencies once
 // and hands it to each route group. Behavior is identical to the inline version.
 //
-//   require('./book/versions-routes.cjs')(app, ctx);
-//
 // ctx fields used here: { storage, sceneAssetsRepo, log }
 
 module.exports = function registerVersionRoutes(app, ctx) {

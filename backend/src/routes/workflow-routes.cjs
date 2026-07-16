@@ -4,9 +4,6 @@
 // /api/v1/workflows/* endpoints.
 //
 // Workflow status API for Workflow Manager UI.
-//
-// Usage:
-//   require('./routes/workflow-routes.cjs')(app, redis, deps);
 
 module.exports = function(app, redis, deps) {
     const { wfManager } = deps;

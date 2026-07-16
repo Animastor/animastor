@@ -3,9 +3,6 @@
 // ======================================================
 // Periodically scans Redis for pending audio/image results
 // and recovers them to disk.
-//
-// Usage:
-//   const audioRecovery = require('./services/audio-recovery.cjs')(redis, config, deps);
 
 const path = require('path');
 const fs = require('fs');

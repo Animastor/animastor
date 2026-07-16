@@ -194,11 +194,6 @@ module.exports = function(app, redis, deps) {
                 } catch (phErr) {
                     log(`Placeholder audio check failed for ${req.params.id}: ${phErr.message} — keeping chunk as-is`);
                     if (c.chapter_id && c.scene_id) {
-                        const stateKey = `animastor:scene-state:${c.book_id}:${c.chapter_id}:${c.scene_id}`;
-                        await redis.set(stateKey, JSON.stringify({
-                            state: 'audio_pending', updated_at: Date.now(),
-                            build_id: c.build_id || 'default', error: null,
-                        }));
                         const jobKey = `animastor:job:${c.book_id}_${c.chapter_id}_${c.scene_id}_0001:audio`;
                         await redis.del(jobKey);
                         await activeScenes.addActiveScene(redis, c.book_id, c.chapter_id, c.scene_id);
@@ -212,18 +207,6 @@ module.exports = function(app, redis, deps) {
                 c.audio = true;
                 c.audio_status = 'ready';
                 await redis.set(`animastor:chunk:${req.params.id}`, JSON.stringify(c));
-                if (c.chapter_id && c.scene_id) {
-                    const stateKey = `animastor:scene-state:${c.book_id}:${c.chapter_id}:${c.scene_id}`;
-                    const raw = await redis.get(stateKey);
-                    if (raw) {
-                        const st = JSON.parse(raw);
-                        if (st.state !== 'image_ready' && st.state !== 'video_ready') {
-                            st.state = 'audio_ready';
-                            st.updated_at = Date.now();
-                            await redis.set(stateKey, JSON.stringify(st));
-                        }
-                    }
-                }
             }
 
             // Auto-redispatch for image
@@ -239,11 +222,6 @@ module.exports = function(app, redis, deps) {
                     c.image = false;
                     await redis.set(`animastor:chunk:${req.params.id}`, JSON.stringify(c));
                     if (c.chapter_id && c.scene_id) {
-                        const stateKey = `animastor:scene-state:${c.book_id}:${c.chapter_id}:${c.scene_id}`;
-                        await redis.set(stateKey, JSON.stringify({
-                            state: 'image_pending', updated_at: Date.now(),
-                            build_id: c.build_id || 'default', error: null,
-                        }));
                         const jobKey = `animastor:job:${c.book_id}_${c.chapter_id}_${c.scene_id}_0002:image`;
                         await redis.del(jobKey);
                         await activeScenes.addActiveScene(redis, c.book_id, c.chapter_id, c.scene_id);
@@ -254,17 +232,16 @@ module.exports = function(app, redis, deps) {
             const audioReady = !!(c.audio || fs.existsSync(audioPath));
             let imageReady = !!c.image;
             if (!imageReady && c.chapter_id && c.scene_id) {
-                const stateKey = `animastor:scene-state:${c.book_id}:${c.chapter_id}:${c.scene_id}`;
-                const stateRaw = await redis.get(stateKey);
-                if (stateRaw) {
-                    const st = JSON.parse(stateRaw);
-                    if (st.state === 'image_ready' || st.state === 'video_pending' ||
-                        st.state === 'video_generating' || st.state === 'video_ready') {
+                // Check per-asset state for image readiness
+                try {
+                    const assetStates = await state.getAssetStates(redis, c.book_id, c.chapter_id, c.scene_id);
+                    if (assetStates.image === state.AssetState.READY || assetStates.image === state.AssetState.PLACEHOLDER) {
                         imageReady = true;
                         c.image = true;
                         await redis.set(`animastor:chunk:${req.params.id}`, JSON.stringify(c));
                     }
-                } else {
+                } catch (_) {}
+                if (!imageReady) {
                     imageReady = fs.existsSync(imagePath);
                     if (!imageReady) {
                         const iuPrefix = `${c.book_id}_${c.chapter_id}_${c.scene_id}_iu`;

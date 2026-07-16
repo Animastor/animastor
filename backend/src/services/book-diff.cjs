@@ -3,9 +3,6 @@
 // ======================================================
 // Scene comparison, diff computation, dirty scene marking,
 // and profile/layer configuration.
-//
-// Usage:
-//   const bookDiff = require('./services/book-diff.cjs')(redis, config, deps);
 
 const fs = require('fs');
 const path = require('path');
@@ -220,7 +217,7 @@ module.exports = function(redis, config, deps) {
     const RESET_SCENE_LUA = `
         local args = cjson.decode(ARGV[1])
         local prefix = 'animastor:chunk:' .. args.bookId .. '_' .. args.chapterId .. '_' .. args.sceneId .. '_'
-        local chunkSetKey = KEYS[4]
+        local chunkSetKey = KEYS[3]
         local cursor = '0'
         local created = false
 
@@ -283,9 +280,9 @@ module.exports = function(redis, config, deps) {
         -- Reads current asset states via HGETALL (same format as JS code),
         -- validates the path to 'pending' exists for each dirty layer,
         -- then writes atomically via HSET. Must NOT use SET/GET here —
-        -- the JS code (scene-state.js) uses HSET/HGETALL and would throw
+        -- per-asset states use HSET/HGETALL and would throw
         -- WRONGTYPE on a string-typed key, losing the new asset states.
-        local existingFields = redis.call('HGETALL', KEYS[2])
+        local existingFields = redis.call('HGETALL', KEYS[1])
         local assetData = {}
         for i = 1, #existingFields, 2 do
             assetData[existingFields[i]] = existingFields[i + 1]
@@ -307,16 +304,13 @@ module.exports = function(redis, config, deps) {
         if args.resetImage then assetData['image'] = transitionToPending(assetData['image'] or 'new') end
         if args.resetVideo then assetData['video'] = transitionToPending(assetData['video'] or 'new') end
         -- Write via HSET to maintain hash type compatibility with JS code
-        redis.call('DEL', KEYS[2])
+        redis.call('DEL', KEYS[1])
         for k, v in pairs(assetData) do
-            redis.call('HSET', KEYS[2], k, v)
+            redis.call('HSET', KEYS[1], k, v)
         end
 
         -- PHASE 4: Add to active scenes
-        redis.call('SADD', KEYS[3], args.bookId .. ':' .. args.chapterId .. ':' .. args.sceneId)
-
-        -- Scene state (KEYS[1]) is NOT set here.
-        -- syncLinearState() derives it from per-asset states after this script returns.
+        redis.call('SADD', KEYS[2], args.bookId .. ':' .. args.chapterId .. ':' .. args.sceneId)
 
         return { marked = true }
     `;
@@ -352,7 +346,6 @@ module.exports = function(redis, config, deps) {
             }
 
             // Build Redis keys for this scene
-            const sceneStateKey = `${state.SCENE_STATE_KEY_PREFIX}:${bookId}:${chapter_id}:${scene_id}`;
             const assetStateKey = `${state.ASSET_STATE_KEY_PREFIX}:${bookId}:${chapter_id}:${scene_id}`;
             const activeScenesKey = 'animastor:active-scenes';
             const chunksSetKey = `animastor:chunks:${bookId}`;
@@ -371,15 +364,13 @@ module.exports = function(redis, config, deps) {
             });
 
             // Execute atomic scene reset via Lua
-            // KEYS[1] (sceneStateKey) — unused by Lua; linear state is synced after
             try {
                 await redis.eval(
                     RESET_SCENE_LUA,
-                    4,  // numKeys
-                    sceneStateKey,    // KEYS[1] (unused by Lua, kept for key slot consistency)
-                    assetStateKey,    // KEYS[2]
-                    activeScenesKey,  // KEYS[3]
-                    chunksSetKey,     // KEYS[4]
+                    3,  // numKeys
+                    assetStateKey,    // KEYS[1]
+                    activeScenesKey,  // KEYS[2]
+                    chunksSetKey,     // KEYS[3]
                     luaArgs           // ARGV[1]
                 );
             } catch (luaErr) {

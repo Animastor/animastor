@@ -6,7 +6,6 @@
 
 /**
  * @typedef {{ 
- *   SCENE_STATE_KEY_PREFIX: string, 
  *   SCENE_TRANSITION_LOCK_PREFIX: string, 
  *   DISPATCH_LEASE_PREFIX: string, 
  *   DISPATCH_META_PREFIX: string, 
@@ -72,8 +71,7 @@ const LAZY_WINDOW_SIZE = 3; // default scenes per window
 // REDIS KEYS
 // ======================================================
 const REDIS = {
-    // Scene state
-    SCENE_STATE_KEY_PREFIX: 'animastor:scene-state',
+    // Scene transition lock
     SCENE_TRANSITION_LOCK_PREFIX: 'animastor:scene-transition-lock',
     
     // Dispatch leases
@@ -219,6 +217,5 @@ module.exports = {
 };
 
 // Backwards compatibility aliases
-module.exports.SCENE_STATE_KEY_PREFIX = REDIS.SCENE_STATE_KEY_PREFIX;
 module.exports.SCENE_TRANSITION_LOCK_PREFIX = REDIS.SCENE_TRANSITION_LOCK_PREFIX;
 module.exports.SCENE_TRANSITION_LOCK_TTL = 15; // 15 seconds

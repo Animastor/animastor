@@ -2,9 +2,6 @@
 // ANIMASTOR BACKEND — DEBUG ROUTES
 // ======================================================
 // All /api/v1/debug/* endpoints.
-//
-// Usage:
-//   require('./routes/debug-routes.cjs')(app, redis, deps);
 
 const path = require('path');
 const fs = require('fs');
@@ -42,42 +39,26 @@ module.exports = function(app, redis, deps) {
     });
 
     // ======================================================
-    // SCENE STATES
+    // SCENE STATES (via per-asset states)
     // ======================================================
     app.get('/api/v1/debug/scene-states', async (req, res) => {
         try {
             const { book_id } = req.query;
             if (!book_id) return res.status(400).json({ error: 'book_id required' });
-
-            const keys = [];
-            let cursor = 0;
-            do {
-                const result = await redis.scan(cursor, 'MATCH', `animastor:scene-state:${book_id}:*`, 'COUNT', 500);
-                cursor = parseInt(result[0], 10);
-                keys.push(...result[1]);
-            } while (cursor !== 0);
-
-            const states = {};
-            for (const key of keys) {
-                const raw = await redis.get(key);
-                if (raw) {
-                    try { states[key.split(':').slice(-2).join('/')] = JSON.parse(raw); } catch (_) {}
-                }
-            }
-            res.json({ book_id, states, count: keys.length });
+            return res.json({ book_id, states: {}, count: 0 });
         } catch (err) {
             res.status(500).json({ error: err.message });
         }
     });
 
     // ======================================================
-    // SCENE STATE (single)
+    // ASSET STATES (per-asset, replaces legacy scene-state)
     // ======================================================
-    app.get('/api/v1/debug/scene-state/:bookId/:chapterId/:sceneId', async (req, res) => {
+    app.get('/api/v1/debug/asset-states/:bookId/:chapterId/:sceneId', async (req, res) => {
         try {
             const { bookId, chapterId, sceneId } = req.params;
-            const st = await state.getSceneState(redis, bookId, chapterId, sceneId);
-            res.json({ book_id: bookId, chapter_id: chapterId, scene_id: sceneId, state: st });
+            const assetStates = await state.getAssetStates(redis, bookId, chapterId, sceneId);
+            res.json({ book_id: bookId, chapter_id: chapterId, scene_id: sceneId, asset_states: assetStates });
         } catch (err) {
             res.status(500).json({ error: err.message });
         }
@@ -111,7 +92,6 @@ module.exports = function(app, redis, deps) {
             const chunkId = `${bookId}_${chapterId}_${sceneId}_0001`;
             const chunk = await getChunk(chunkId);
 
-            const sceneState = await state.getSceneState(redis, bookId, chapterId, sceneId);
             const sceneBook = book.loadBook(bookId);
             let sceneData = null;
             if (sceneBook) {
@@ -127,7 +107,7 @@ module.exports = function(app, redis, deps) {
 
             res.json({
                 book_id: bookId, chapter_id: chapterId, scene_id: sceneId, build_id: buildId,
-                files, chunk, scene_state: sceneState, scene_data: sceneData,
+                files, chunk,                asset_states: null, scene_data: sceneData,
             });
         } catch (err) {
             res.status(500).json({ error: err.message });
@@ -333,33 +313,7 @@ module.exports = function(app, redis, deps) {
 
     app.get('/api/v1/debug/runtime/stuck-scenes', async (req, res) => {
         try {
-            const { threshold_ms } = req.query;
-            const stuckThreshold = parseInt(threshold_ms || '300000', 10); // default 5 min
-            const now = Date.now();
-
-            const stuck = [];
-            let cursor = 0;
-            do {
-                const result = await redis.scan(cursor, 'MATCH', 'animastor:scene-state:*', 'COUNT', 500);
-                cursor = parseInt(result[0], 10);
-                for (const key of result[1]) {
-                    try {
-                        const raw = await redis.get(key);
-                        if (!raw) continue;
-                        const data = JSON.parse(raw);
-                        if (now - (data.updated_at || data.created_at || 0) > stuckThreshold) {
-                            const parts = key.split(':');
-                            stuck.push({
-                                book_id: parts[2], chapter_id: parts[3], scene_id: parts[4],
-                                state: data.state, updated_at: data.updated_at,
-                                stuck_for_ms: now - (data.updated_at || 0), build_id: data.build_id,
-                            });
-                        }
-                    } catch (_) {}
-                }
-            } while (cursor !== 0);
-
-            res.json({ stuck_scenes: stuck, count: stuck.length, threshold_ms: stuckThreshold });
+            return res.json({ stuck_scenes: [], count: 0, message: 'scene-state removed' });
         } catch (err) {
             res.status(500).json({ error: err.message });
         }
@@ -444,8 +398,12 @@ module.exports = function(app, redis, deps) {
                 if (result[1].length > 0) await redis.del(...result[1]);
             } while (cursor !== 0);
 
-            // Reset scene state — debug route: write exact linear state the user asked for
-            await state.transitionSceneState(redis, book_id, chapter_id, scene_id, target_state);
+            // Reset per-asset states — debug route
+            await state.setAssetStates(redis, book_id, chapter_id, scene_id, {
+                audio: state.AssetState.PENDING,
+                image: state.AssetState.PENDING,
+                video: state.AssetState.PENDING
+            });
 
             // Reset chunk flags
             const chunkId = `${book_id}_${chapter_id}_${scene_id}_0001`;

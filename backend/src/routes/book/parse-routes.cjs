@@ -1,7 +1,6 @@
 // Book parse / source / snapshot routes (non-upload text ingestion).
 //
 // Split out of book-routes.cjs (Architectural Debt #3, sub-registrar pattern).
-//   require('./book/parse-routes.cjs')(app, ctx);
 //
 // ctx fields used here:
 //   { config, txtImporter, lazyBook, placeholderAudio, taskHandler, log }

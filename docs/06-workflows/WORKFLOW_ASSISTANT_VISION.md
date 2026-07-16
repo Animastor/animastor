@@ -202,7 +202,7 @@ Assistant: [calls diagnose_workflow]
 | Existing Component | How It's Used |
 |-------------------|---------------|
 | `chat-engine.cjs` | Tool-based chat architecture, system prompts |
-| `context-builder.js` | Building workflow context for prompts |
+| `ai-loader.js` | Loading examples for workflow prompts |
 | `ai-service.js` | AI model calls (OpenRouter/Nvidia) |
 | `entity-schema.js` | Ground-truth for entity types |
 | `connector-loader.js` | Validation and compatibility logic |

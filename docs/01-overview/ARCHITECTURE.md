@@ -160,7 +160,7 @@
 **Входы:** sceneData, loadedBook, buildId, bookId.
 **Выходы:** PNG-файлы, вызовы gpu.send().
 
-**Зависимости:** gpu-dispatcher, workflow-loader, image-workflows, context-builder.
+**Зависимости:** gpu-dispatcher, workflow-loader, image-workflows.
 
 ### 4.3 Video Service (`backend/src/video/video-service.js`)
 **Ответственность:** Генерация видео через LTX-модели (multi-image), чтение изображений для GPU assets.
@@ -222,13 +222,13 @@
 **Входы:** bookId, sourceText.
 **Выходы:** JSON-структура книги в PG (agent_sessions, agent_steps, agent_conversations).
 
-**Зависимости:** ai-service, context-builder, book, postgres, agent-prompts.
+**Зависимости:** ai-service, book, postgres, agent-prompts.
 
 **Хранение книги (multi-file, v2.2):** Помимо `bible.json` и `characters.json`,
 система теперь хранит:
 - `locations.json` — все локации (отдельно от bible, доступ через `book.locations`)
 - `voices.json` — все голоса персонажей (отдельно от bible, доступ через `book.voices`)
-- `bible.json` — теперь включает `country` и `epoch` для инъекции в image-промпты
+- `bible.json` — включает `country` и `epoch` для инъекции в image-промпты
 
 **AI-провайдер:**
 - Единый ключ: `OPENROUTER_API_KEY`
@@ -248,46 +248,37 @@
 ### 4.8 AI Service (`backend/src/services/ai-service.js`)
 **Ответственность:** Клиент внешнего AI API (OpenRouter + Nvidia). Вызов с ретраями и парсинг JSON. Единый ключ: `OPENROUTER_API_KEY`. Включает функцию `refineDraft()` с загрузкой примеров из `ai/examples/`.
 
-### 4.9 Context Builder (`backend/src/services/context-builder.js`)
-**Ответственность:** Сборка контекста для AI из книги (персонажи, локации, сцены).
-
-### 4.10 Task Handler (`backend/src/services/task-handler.cjs`)
+### 4.9 Task Handler (`backend/src/services/task-handler.cjs`)
 **Ответственность:** Обработка callback'ов от GPU Hub. Поддерживает IU image completion с проверкой PG, аудио-мерж с padded text trimming, video dispatch.
 
 **Входы:** HTTP POST / callback от GPU Hub.
 **Выходы:** Вызовы orchestrator.handleAudioCompleted / handleImageCompleted / handleVideoCompleted.
 
-### 4.11 Chat Engine (`backend/src/services/chat-engine.cjs`)
+### 4.10 Chat Engine (`backend/src/services/chat-engine.cjs`)
 **Ответственность:** AI-чат для ассистента. Управление историей диалога. Поддерживает режимы (chat, edit, director, import, analyze, validate) с tool-based архитектурой (edit_book, write_storyboard, import_book, extract_entities, validate_book).
 
-### 4.12 Gen Scope (`backend/src/services/gen-scope.js`)
+### 4.11 Gen Scope (`backend/src/services/gen-scope.js`)
 **Ответственность:** Персистентность области генерации (whole_book / current_chapter / current_scene / from_current_scene).
 
-### 4.13 Layer Config (`backend/src/services/layer-config.js`)
+### 4.12 Layer Config (`backend/src/services/layer-config.js`)
 **Ответственность:** Профили генерации per-book (AUDIO_ONLY, IMAGE_ONLY, VIDEO_ONLY, STORYBOARD, FULL).
 
-### 4.14 Scene Asset Registry (`backend/src/services/scene-asset-registry.js`)
+### 4.13 Scene Asset Registry (`backend/src/services/scene-asset-registry.js`)
 **Ответственность:** PostgreSQL-реестр asset'ов сцены (audio/image/video/storyboard). Замена Redis-реестра.
 
-### 4.15 Book Event Log (`backend/src/services/book-event-log.js`)
+### 4.14 Book Event Log (`backend/src/services/book-event-log.js`)
 **Ответственность:** PostgreSQL-журнал событий книги (замена Redis event journal). 30+ типов событий.
 
-### 4.16 Book Source (`backend/src/services/book-source.js`)
+### 4.15 Book Source (`backend/src/services/book-source.js`)
 **Ответственность:** Канонический индекс сцен из Book JSON. Валидация существования сцен, fingerprinting.
 
-### 4.17 Book Sync (`backend/src/services/book-sync.js`)
+### 4.16 Book Sync (`backend/src/services/book-sync.js`)
 **Ответственность:** Синхронизация Book JSON с производным состоянием БД. Обнаружение добавленных/изменённых/удалённых сцен через scene_hash.
 
-### 4.18 Book Integrity (`backend/src/services/book-integrity.js`)
-**Ответственность:** Проверка целостности: обнаружение orphan-записей в таблицах, привязанных к сценам.
-
-### 4.19 Chat Store (`backend/src/services/chat-store.js`)
-**Ответственность:** Полноценное хранилище чатов с поддержкой сессий, топиков, поиска.
-
-### 4.20 Cleanup Service (`backend/src/services/cleanup-service.cjs`)
+### 4.17 Cleanup Service (`backend/src/services/cleanup-service.cjs`)
 **Ответственность:** Управление жизненным циклом сборок, распределённые блокировки очистки, периодическая очистка stale audio scene locks.
 
-### 4.21 GPU Hub Cleanup (`backend/src/routes/book/generation-routes.cjs`)
+### 4.18 GPU Hub Cleanup (`backend/src/routes/book/generation-routes.cjs`)
 **Ответственность:** Очистка stale-задач GPU Hub при регенерации/отмене.
 
 **Функция `clearGpuHubQueues(redis, bookId, sceneFilter?)`:**
@@ -303,25 +294,25 @@
 
 Подробнее: `docs/02-orchestration/GPU_HUB_CLEANUP.md`
 
-### 4.21 Audio Recovery (`backend/src/services/audio-recovery.cjs`)
+### 4.19 Audio Recovery (`backend/src/services/audio-recovery.cjs`)
 **Ответственность:** Периодическое (5s) сканирование Redis для восстановления потерянных audio/image результатов.
 
-### 4.22 Placeholder Audio (`backend/src/services/placeholder-audio.js`)
+### 4.20 Placeholder Audio (`backend/src/services/placeholder-audio.js`)
 **Ответственность:** Генерация MP3-тишины для тайминга, замена placeholder → real audio при завершении TTS.
 
-### 4.23 Waveform Service (`backend/src/services/waveform-service.js`)
+### 4.21 Waveform Service (`backend/src/services/waveform-service.js`)
 **Ответственность:** Вычисление waveform для плеера.
 
-### 4.24 AI Loader (`backend/src/services/ai-loader.js`)
+### 4.22 AI Loader (`backend/src/services/ai-loader.js`)
 **Ответственность:** Загрузка базы знаний AI с TTL-кэшированием (1 минута).
 
-### 4.25 Knowledge Base (`backend/src/services/knowledge-base.js`)
+### 4.23 Knowledge Base (`backend/src/services/knowledge-base.js`)
 **Ответственность:** Загрузка примеров/rules/skills из `backend/ai/`. **Важно:** Загружается, но НЕ включается в промпты agent-service (мёртвый код).
 
-### 4.26 Startup Resume (`backend/src/startup-resume.js`)
+### 4.24 Startup Resume (`backend/src/startup-resume.js`)
 **Ответственность:** Возобновление прерванных сессий генерации при старте сервера.
 
-### 4.27 Book Diff (`backend/src/services/book-diff.cjs`)
+### 4.25 Book Diff (`backend/src/services/book-diff.cjs`)
 **Ответственность:** Сравнение сцен, вычисление diff, пометка dirty-сцен, применение profiles к layer config.
 
 ---
@@ -336,7 +327,7 @@ NEW → DIRTY → PENDING → GENERATING → READY | FAILED | PLACEHOLDER
 
 **Ключевое изменение (v2.1.0):** Per-asset состояния — канонический источник истины. Линейная FSM **удалена**.
 
-**T8 (июль 2026):** `SceneState` enum, `syncLinearState()`, `deriveLinearState()` — удалены. `SceneState` больше не экспортируется; все state.SceneState.* константы заменены на inline-строки. Ключи `animastor:scene-state:*` больше не пишутся; существующие получают TTL 7 дней при старте бэкенда. Читатели, которым нужен linear state (legacy), используют `getSceneState()` (сохранён).
+**T8 + Dead code cleanup (июль 2026):** `SceneState` enum, `syncLinearState()`, `deriveLinearState()`, `getSceneState()`, `setSceneState()`, `transitionSceneState()` — удалены. Ключи `animastor:scene-state:*` больше не пишутся; TTL cleanup удалён из backend.cjs. Все потребители мигрированы на per-asset `getAssetStates()`.
 
 ---
 
@@ -366,7 +357,6 @@ NEW → DIRTY → PENDING → GENERATING → READY | FAILED | PLACEHOLDER
 
 **Ключевые структуры:**
 - `animastor:asset-state:<bookId>:<ch>:<sc>` — HASH с полями audio/image/video
-- `animastor:scene-state:<bookId>:<ch>:<sc>` — JSON { state, build_id, updated_at }
 - `animastor:dispatch-lease:*` — SET NX EX (15/20/30 min)
 - `animastor:dispatch-completed:*` — SET NX EX (idempotency marker)
 - `animastor:runtime:active-{audio,image,video}` — counter (backpressure quota)
@@ -550,7 +540,7 @@ NEW → DIRTY → PENDING → GENERATING → READY | FAILED | PLACEHOLDER
 │  └────────────────────────────────────────────────────────┘                │
 │                                                                           │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────────┐                │
-│  │  Context     │  │  AI Service  │  │  Chat Engine     │                │
+│  │  AI Service │  │  Chat Engine │  │  (tool-based)   │                │
 │  │  Builder     │  │(OpenRouter/  │  │  (tool-based)    │                │
 │  │              │  │  Nvidia)     │  │                   │                │
 │  └──────────────┘  └──────────────┘  └──────────────────┘                │
@@ -558,14 +548,14 @@ NEW → DIRTY → PENDING → GENERATING → READY | FAILED | PLACEHOLDER
 │  │  Gen Scope   │  │  Layer Config│  │  Placeholder     │                │
 │  │              │  │  (profiles)  │  │  Audio           │                │
 │  ├──────────────┤  ├──────────────┤  ├──────────────────┤                │
-│  │  Book Source │  │  Book Sync   │  │  Book Integrity  │                │
-│  │  (canonical  │  │  (scene hash │  │  (orphan detect) │                │
-│  │   scene idx) │  │  reconcile)  │  │                   │                │
+│  │  Book Source │  │  Book Sync   │  │  Book Event    │                │
+│  │  (canonical  │  │  (scene hash │  │  Log (PG)      │                │
+│  │   scene idx) │  │  reconcile)  │  │                │                │
 │  └──────────────┘  └──────────────┘  └──────────────────┘                │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────────┐                │
-│  │  Chat Store  │  │  Book Event  │  │  Cleanup/Audio   │                │
-│  │  (sessions,  │  │  Log (PG)    │  │  Recovery        │                │
-│  │   topics)    │  │              │  │  (periodic)      │                │
+│  │  Gen Scope   │  │  Layer Config│  │  Cleanup/Audio   │                │
+│  │              │  │  (profiles)  │  │  Recovery        │                │
+│  │              │  │              │  │  (periodic)      │                │
 │  └──────────────┘  └──────────────┘  └──────────────────┘                │
 └───────────────────────────────────────────────────────────────────────────┘
          │
@@ -650,7 +640,6 @@ NEW → DIRTY → PENDING → GENERATING → READY | FAILED | PLACEHOLDER
 **Ключевые правила:**
 - Audio, Image диспатчатся **НЕЗАВИСИМО** (параллельно)
 - Video требует `image=READY` для старта (функциональная зависимость — видео собирается из IU-картинок)
-- `transitionSceneState` — прямой `setSceneStateWithBuildId` (сохранён для legacy-писателей, только `scene-state:*` ключ)
-- `SceneState` enum, `syncLinearState`, `deriveLinearState` — **удалены** (T8, июль 2026). Per-asset — единственный source of truth.
+- `SceneState` enum, `syncLinearState`, `deriveLinearState`, `getSceneState`, `setSceneState`, `transitionSceneState` — **удалены** (T8 + dead code cleanup, июль 2026). Per-asset — единственный source of truth.
 - **Per-asset state хранится как Redis HASH** (`animastor:asset-state:<scene>`) для атомарного HSET/HGETALL — устранён RMW race между GET+merge+SET
 - **Version gate** — `completeStage` проверяет PG-версию перед READY: stale GPU callback → DIRTY, не READY (M5 Шаг 5)

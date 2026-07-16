@@ -476,40 +476,36 @@ async function slideWindow(redis, bookId, loadedBook, buildId) {
             continue;
         }
 
-        const sceneKey = `${state.SCENE_STATE_KEY_PREFIX}:${bookId}:${scene.chapter_id}:${scene.scene_id}`;
-        const raw = await redis.get(sceneKey);
+        // T8: scene-state removed — use per-asset states
+        const assetStates = await state.getAssetStates(redis, bookId, scene.chapter_id, scene.scene_id);
+        const allReady = assetStates.audio === state.AssetState.READY &&
+                         assetStates.image === state.AssetState.READY &&
+                         assetStates.video === state.AssetState.READY;
+        const allFailed = assetStates.audio === state.AssetState.FAILED &&
+                          assetStates.image === state.AssetState.FAILED &&
+                          assetStates.video === state.AssetState.FAILED;
 
-        if (raw) {
-            const data = JSON.parse(raw);
-            const st = data.state;
-
-            if (_isTerminalState(st)) {
-                // Scene is already in a terminal state (VIDEO_READY or FAILED)
-                log(`Scene ${scene.chapter_id}/${scene.scene_id} already ${st}, window slot skipped`);
-                nextIdx++;
-                started++;
-                continue;
-            }
-
-            // Scene has non-terminal state. Check cache advisory for valid content.
-            const buildIdForCheck = data.build_id || buildId;
-            const cacheInfo = await checkSceneContentCache(redis, buildIdForCheck, bookId, scene.chapter_id, scene.scene_id);
-            if (cacheInfo.valid) {
-                log(`Scene ${scene.chapter_id}/${scene.scene_id} has valid content (state=${st}), promoting to video_ready`);
-                // M5: Facade owns READY + syncLinearState
-                await orchestrator.setSceneAllReady(redis, bookId, scene.chapter_id, scene.scene_id, buildIdForCheck);
-                await restoreChunkStatusForScene(redis, buildIdForCheck, bookId, scene.chapter_id, scene.scene_id);
-                nextIdx++;
-                started++;
-                continue;
-            }
-
-            // No valid content — reset state and restart
-            log(`Scene ${scene.chapter_id}/${scene.scene_id} has stale state ${st}, resetting for restart`);
-            await redis.del(sceneKey);
-            const scheduler = require('../runtime/runtime-scheduler');
-            await scheduler.removeSceneFromActiveIndex(redis, bookId, scene.chapter_id, scene.scene_id);
+        if (allReady || allFailed) {
+            log(`Scene ${scene.chapter_id}/${scene.scene_id} already in terminal state, window slot skipped`);
+            nextIdx++;
+            started++;
+            continue;
         }
+
+        // Check cache advisory for valid content.
+        const cacheInfo = await checkSceneContentCache(redis, buildId, bookId, scene.chapter_id, scene.scene_id);
+        if (cacheInfo.valid) {
+            log(`Scene ${scene.chapter_id}/${scene.scene_id} has valid content, promoting`);
+            await orchestrator.setSceneAllReady(redis, bookId, scene.chapter_id, scene.scene_id, buildId);
+            await restoreChunkStatusForScene(redis, buildId, bookId, scene.chapter_id, scene.scene_id);
+            nextIdx++;
+            started++;
+            continue;
+        }
+
+        // No valid content — remove from active index for restart
+        const scheduler = require('../runtime/runtime-scheduler');
+        await scheduler.removeSceneFromActiveIndex(redis, bookId, scene.chapter_id, scene.scene_id);
 
         const didStart = await startScene(redis, scene, buildId, bookId);
         if (didStart) {
@@ -652,7 +648,8 @@ async function startScene(redis, s, buildId, bookId) {
         await orchestrator.setScenePlaceholder(redis, bookId, chapterId, sceneId);
     }
 
-    const stateKey = `${state.SCENE_STATE_KEY_PREFIX}:${bookId}:${chapterId}:${sceneId}`;
+    // T8: scene-state removed — build_id derived from manifest
+    const stateKey = `animastor:chunk:${bookId}_${chapterId}_${sceneId}_0001`;
     const raw = await redis.get(stateKey);
     if (raw) {
         const data = JSON.parse(raw);

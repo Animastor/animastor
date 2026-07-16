@@ -1,7 +1,6 @@
 // Book status / state read-only routes.
 //
 // Split out of book-routes.cjs (Architectural Debt #3, sub-registrar pattern).
-//   require('./book/status-routes.cjs')(app, ctx);
 //
 // ctx fields used here: { genSessionRepo, lazyBook, txtImporter }
 
