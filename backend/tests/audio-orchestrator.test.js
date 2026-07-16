@@ -9,43 +9,10 @@
 const { expect } = require('chai');
 
 // ======================================================
-// In-memory FakeRedis for testing
-// ======================================================
-class FakeRedis {
-    constructor() {
-        this.store = new Map();
-    }
-
-    async get(k) {
-        const v = this.store.get(k);
-        if (v === undefined || v === null) return null;
-        return v;
-    }
-
-    async set(k, v) {
-        this.store.set(k, v);
-        return 'OK';
-    }
-
-    async del(k) {
-        return this.store.delete(k) ? 1 : 0;
-    }
-
-    async scan(cursor, ...args) {
-        let pattern = null;
-        for (let i = 0; i < args.length; i++) {
-            if (args[i] === 'MATCH') pattern = args[i + 1];
-        }
-        if (!pattern) return ['0', []];
-        const regex = new RegExp('^' + pattern.replace(/\*/g, '.*') + '$');
-        const matched = [...this.store.keys()].filter(k => regex.test(k));
-        return ['0', matched];
-    }
-}
-
-// ======================================================
 // Module under test
 // ======================================================
+const { createMockRedis } = require('./mocks/redis-mock');
+
 const audioOrch = require('../src/services/audio-orchestrator');
 
 const BOOK_ID = 'test-book';
@@ -58,7 +25,7 @@ describe('Audio Orchestrator — Phase Machine', () => {
     let redis;
 
     beforeEach(() => {
-        redis = new FakeRedis();
+        redis = createMockRedis();
     });
 
     // ── initPlaceholderReady ──────────────────────────

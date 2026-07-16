@@ -1,18 +1,6 @@
 const { expect } = require('chai');
 const genScope = require('../src/services/gen-scope');
-
-class FakeRedis {
-    constructor() {
-        this.store = new Map();
-    }
-    async get(k) { return this.store.has(k) ? this.store.get(k) : null; }
-    async set(k, v) { this.store.set(k, v); return 'OK'; }
-    async del(k) { this.store.delete(k); return 1; }
-    async keys(pattern) {
-        const regex = new RegExp('^' + pattern.replace(/\*/g, '.*') + '$');
-        return [...this.store.keys()].filter(k => regex.test(k));
-    }
-}
+const { createMockRedis } = require('./mocks/redis-mock');
 
 const allScenes = [
     { chapter_id: 'ch-1', scene_id: 's-1' },
@@ -25,7 +13,7 @@ const allScenes = [
 
 describe('gen-scope service', () => {
     let redis;
-    beforeEach(() => { redis = new FakeRedis(); });
+    beforeEach(() => { redis = createMockRedis(); });
 
     it('setScope + getScope round-trip', async () => {
         await genScope.setScope(redis, 'book-1', 'current_scene', 'ch-1', 's-2');

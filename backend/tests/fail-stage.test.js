@@ -8,68 +8,7 @@
 const { expect } = require('chai');
 const orchestrator = require('../src/orchestration/orchestrator');
 const state = require('../src/state');
-
-class FakeRedis {
-    constructor() {
-        this.store = new Map();
-        this.lists = new Map();
-    }
-    async get(k) {
-        const v = this.store.get(k);
-        return v === undefined ? null : v;
-    }
-    async set(k, v, ...args) {
-        if (args.includes('NX') && this.store.has(k)) return null;
-        this.store.set(k, v);
-        return 'OK';
-    }
-    async del(...keys) {
-        let n = 0;
-        for (const k of keys) if (this.store.delete(k)) n++;
-        return n;
-    }
-    async incr(k) {
-        const v = (parseInt(this.store.get(k), 10) || 0) + 1;
-        this.store.set(k, String(v));
-        return v;
-    }
-    async decr(k) {
-        const v = (parseInt(this.store.get(k), 10) || 0) - 1;
-        this.store.set(k, String(v));
-        return v;
-    }
-    async expire() { return 1; }
-    async exists(k) { return this.store.has(k) ? 1 : 0; }
-    async hset(k, field, value) {
-        let h = this.store.get(k);
-        if (!h || typeof h !== 'object') { h = {}; this.store.set(k, h); }
-        if (typeof field === 'object') { Object.assign(h, field); return Object.keys(field).length; }
-        h[field] = value;
-        return 1;
-    }
-    async hget(k, f) {
-        const h = this.store.get(k);
-        return h && typeof h === 'object' ? (h[f] ?? null) : null;
-    }
-    async hgetall(k) {
-        const h = this.store.get(k);
-        return h && typeof h === 'object' ? h : null;
-    }
-    async rpush(k, ...items) {
-        const l = this.lists.get(k) || [];
-        l.push(...items);
-        this.lists.set(k, l);
-        return l.length;
-    }
-    async lrange(k, s, e) {
-        const l = this.lists.get(k) || [];
-        return e === -1 ? l.slice(s) : l.slice(s, e + 1);
-    }
-    async eval() { return 1; }
-    async scan() { return ['0', []]; }
-    async keys() { return []; }
-    async zrem() { return 0; }
-}
+const { createMockRedis } = require('./mocks/redis-mock');
 
 const B = 'test_book', C = 'ch-1', S = 'sc-1';
 
@@ -84,7 +23,7 @@ async function getStage(redis, stage) {
 
 describe('orchestrator.failStage (T3)', () => {
     let redis;
-    beforeEach(() => { redis = new FakeRedis(); });
+    beforeEach(() => { redis = createMockRedis(); });
 
     it('GENERATING → FAILED → PENDING (redispatch по умолчанию)', async () => {
         await setStage(redis, 'audio', state.AssetState.GENERATING);

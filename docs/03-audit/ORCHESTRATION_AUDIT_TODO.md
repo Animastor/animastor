@@ -232,8 +232,55 @@ Quota не была захвачена (Lua вернул 0), так что relea
 - Docker backend: **animastor-backend:latest собран без ошибок**
 - Тесты: **518 passing**
 
-### Остаётся (P3, без изменений)
+## P3 — Cleanup выполнено (2026-07-16)
 
-- Тесты: reconciliation-engine (1400+ строк без тестов), counter-reconciliation (Б10 не был бы пропущен)
-- Консолидация FakeRedis
-- Worker: OOM (base64), writeFileSync, ESM/CJS mix
+### Консолидация FakeRedis ✅
+
+3 из 5 тестов переведены на общий `tests/mocks/redis-mock.js`:
+- `gen-scope.test.js` ✅
+- `audio-orchestrator.test.js` ✅
+- `fail-stage.test.js` ✅
+- `happy-path.test.js` и `scope-slide.test.js` оставлены (FakeRedis слишком специфичен).
+
+Общий мок расширен:
+- `scan()` — реальная фильтрация ключей по glob (было: всегда возвращал `['0', []]`)
+- `lrange()` — корректная обработка `stop=-1` (slice to end)
+- `eval()` — возвращает массив `['true', 'corrected', old, new]` (имитация Lua)
+- `zrem()` — добавлен
+
+### Тесты для counter-reconciliation ✅
+
+Новый `tests/counter-reconciliation.test.js` (15 тестов):
+- `correctCounterWithLua` — коррекция дрифта, отсутствующий ключ, Б10-регрессия
+- `getCounterWithDriftCheck` — детекция дрифта
+- `reconcileCounters` — полный цикл: все 3 стадии
+- `countActiveLeasesByStage`, `getCurrentCounter`, `manualCounterCorrection`
+
+### Worker Fixes (worker/worker/worker.js) ✅
+
+- **ESM→CJS:** `import` → `require()`, убран top-level `await import("node-fetch")` (Node 20+ global fetch)
+- **`writeFileSync`→async:** `fsp.writeFile`, `fsp.mkdir`, `fsp.readdir` вместо sync аналогов
+- **Empty catch → logging:** все `catch {}` теперь логируют ошибку
+- **Exponential backoff:**
+  - `waitForComfyUI`: 1s→2s→4s→...→30s cap (было: 3s без backoff)
+  - `waitResult`: 500ms→1s→2s→4s→8s cap на ошибках поллинга (было: всегда 1.5s)
+  - `workerLoop` idle: 2s→4s→8s→...→15s cap (было: всегда 2s)
+- `nvidia-smi` beacon: теперь логирует ошибки (было: silent catch)
+- `main().catch()`: обработчик uncaught ошибок + `process.exit(1)`
+
+### Остаётся (P4)
+
+- Тесты: reconciliation-engine (1400+ строк без тестов)
+- Worker: base64 in memory (OOM риск), gpu-hub авторизация
+- GPU-hub: in-memory регистрация (потеря при масштабировании)
+
+## Итоговая статистика
+
+| Метрика | Значение |
+|---|---|
+| Тесты | **531 passing** |
+| APK build | 0 errors, 0 warnings |
+| Docker backend | built clean |
+| FakeRedis консолидация | 3/5 файлов → общий мок |
+| Новые тесты | counter-reconciliation: 15 тестов |
+| Worker fixes | ESM→CJS, async I/O, backoff, logging |
