@@ -90,18 +90,7 @@ function loadSceneWindowWithStubs({ redis, startedStateByScene = new Set(), addA
         SCENE_STATE_KEY_PREFIX: 'animastor:scene-state',
         ASSET_STATE_KEY_PREFIX: 'animastor:asset-state',
         ASSETS: ['audio', 'image', 'video'],
-        SceneState: {
-            AUDIO_PENDING: 'audio_pending',
-            AUDIO_GENERATING: 'audio_generating',
-            AUDIO_READY: 'audio_ready',
-            IMAGE_PENDING: 'image_pending',
-            IMAGE_GENERATING: 'image_generating',
-            IMAGE_READY: 'image_ready',
-            VIDEO_PENDING: 'video_pending',
-            VIDEO_GENERATING: 'video_generating',
-            VIDEO_READY: 'video_ready',
-            FAILED: 'failed',
-        },
+        // SceneState removed in v2.2.0 — use inline strings
         AssetState: {
             NEW: 'new',
             DIRTY: 'dirty',
@@ -186,17 +175,7 @@ function loadSceneWindowWithStubs({ redis, startedStateByScene = new Set(), addA
             }
             return { ...updates };
         },
-        syncLinearState: async (r, bId, chId, scId, overrideBuildId) => {
-            // Derive minimal linear state for tests
-            let linearState = 'audio_pending';
-            const key = `animastor:scene-state:${bId}:${chId}:${scId}`;
-            const raw = await r.get(key);
-            const buildId = overrideBuildId || (raw ? JSON.parse(raw).build_id : 'b1');
-            const existing = raw ? JSON.parse(raw).state : null;
-            if (existing === 'video_ready') linearState = 'video_ready';
-            await r.set(key, JSON.stringify({ state: linearState, build_id: buildId }));
-            return linearState;
-        },
+        // syncLinearState removed in v2.2.0 — per-asset state is canonical
     };
     require.cache[statePath] = { exports: stateStub, id: statePath, loaded: true, filename: statePath, children: [], paths: [] };
 

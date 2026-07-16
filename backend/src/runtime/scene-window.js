@@ -101,7 +101,7 @@ async function setWindowBounds(redis, bookId, scopeInfo, allScenes) {
  * Check if a scene state is a terminal ready state (content complete).
  */
 function _isTerminalState(st) {
-    return st === state.SceneState.VIDEO_READY || st === state.SceneState.FAILED;
+    return st === 'video_ready' || st === 'failed';
 }
 
 /**
@@ -495,7 +495,7 @@ async function slideWindow(redis, bookId, loadedBook, buildId) {
             const buildIdForCheck = data.build_id || buildId;
             const cacheInfo = await checkSceneContentCache(redis, buildIdForCheck, bookId, scene.chapter_id, scene.scene_id);
             if (cacheInfo.valid) {
-                log(`Scene ${scene.chapter_id}/${scene.scene_id} has valid content (state=${st}), promoting to ${state.SceneState.VIDEO_READY}`);
+                log(`Scene ${scene.chapter_id}/${scene.scene_id} has valid content (state=${st}), promoting to video_ready`);
                 // M5: Facade owns READY + syncLinearState
                 await orchestrator.setSceneAllReady(redis, bookId, scene.chapter_id, scene.scene_id, buildIdForCheck);
                 await restoreChunkStatusForScene(redis, buildIdForCheck, bookId, scene.chapter_id, scene.scene_id);

@@ -24,7 +24,7 @@ async function startScene(redis, scene, loadedBook, buildId) {
 
     log(`START SCENE: ${bookId}/${chapterId}/${sceneId}`);
 
-    await logEvent(redis, scene, 'SCENE_STARTED', state.SceneState.AUDIO_PENDING, {
+    await logEvent(redis, scene, 'SCENE_STARTED', 'audio_pending', {
         buildId, bookId, chapterId, sceneId
     });
 
@@ -44,7 +44,7 @@ async function executeAudioDispatch(redis, scene, loadedBook, buildId) {
 
     log(`AUDIO_DISPATCH: ${bookId}/${chapterId}/${sceneId}`);
 
-    await logEvent(redis, scene, 'AUDIO_DISPATCHED', state.SceneState.AUDIO_GENERATING, {
+    await logEvent(redis, scene, 'AUDIO_DISPATCHED', 'audio_generating', {
         buildId, dispatchType: 'orchestrator'
     });
 
@@ -99,7 +99,7 @@ async function executeImageDispatch(redis, scene, loadedBook, buildId) {
 
     log(`IMAGE_DISPATCH: ${bookId}/${chapterId}/${sceneId}`);
 
-    await logEvent(redis, scene, 'IMAGE_DISPATCHED', state.SceneState.IMAGE_GENERATING, {
+    await logEvent(redis, scene, 'IMAGE_DISPATCHED', 'image_generating', {
         buildId, dispatchType: 'orchestrator'
     });
 
@@ -141,7 +141,7 @@ async function executeVideoDispatch(redis, scene, loadedBook, buildId) {
 
     log(`VIDEO_DISPATCH: ${bookId}/${chapterId}/${sceneId}`);
 
-    await logEvent(redis, scene, 'VIDEO_DISPATCHED', state.SceneState.VIDEO_GENERATING, {
+    await logEvent(redis, scene, 'VIDEO_DISPATCHED', 'video_generating', {
         buildId, dispatchType: 'orchestrator'
     });
 

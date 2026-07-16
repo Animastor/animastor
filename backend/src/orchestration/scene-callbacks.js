@@ -60,7 +60,7 @@ async function handleAudioCompleted(redis, bookId, chapterId, sceneId, buildId) 
     if (!isReady) {
         error(`Audio not ready after completion: ${bookId}/${chapterId}/${sceneId}`);
         const scene = { book_id: bookId, chapter_id: chapterId, scene_id: sceneId };
-        await logEvent(redis, scene, 'AUDIO_FAILED', state.SceneState.AUDIO_READY, {
+        await logEvent(redis, scene, 'AUDIO_FAILED', 'audio_ready', {
             reason: 'not_ready_validation'
         });
         log(`🔻 AUDIO callback: audio not ready: ${bookId}/${chapterId}/${sceneId}`);
@@ -68,7 +68,7 @@ async function handleAudioCompleted(redis, bookId, chapterId, sceneId, buildId) 
     }
 
     const scene = { book_id: bookId, chapter_id: chapterId, scene_id: sceneId };
-    await logEvent(redis, scene, 'AUDIO_COMPLETED', state.SceneState.AUDIO_READY, {
+    await logEvent(redis, scene, 'AUDIO_COMPLETED', 'audio_ready', {
         buildId
     });
 
@@ -201,7 +201,7 @@ async function handleImageCompleted(redis, bookId, chapterId, sceneId, buildId) 
     if (!sceneImage) {
         error(`Scene image not found after completion: ${bookId}/${chapterId}/${sceneId}`);
         const scene = { book_id: bookId, chapter_id: chapterId, scene_id: sceneId };
-        await logEvent(redis, scene, 'IMAGE_FAILED', state.SceneState.IMAGE_GENERATING, {
+        await logEvent(redis, scene, 'IMAGE_FAILED', 'image_generating', {
             reason: 'not_found'
         });
         log(`🔻 IMAGE callback: image not found: ${bookId}/${chapterId}/${sceneId}`);
@@ -235,7 +235,7 @@ async function handleImageCompleted(redis, bookId, chapterId, sceneId, buildId) 
     }
 
     const scene = { book_id: bookId, chapter_id: chapterId, scene_id: sceneId };
-    await logEvent(redis, scene, 'IMAGE_COMPLETED', state.SceneState.IMAGE_READY, {
+    await logEvent(redis, scene, 'IMAGE_COMPLETED', 'image_ready', {
         buildId,
         path: sceneImage
     });
@@ -345,7 +345,7 @@ async function handleVideoCompleted(redis, bookId, chapterId, sceneId, buildId) 
     if (!valid) {
         error(`Video not valid after completion: ${bookId}/${chapterId}/${sceneId}`);
         const scene = { book_id: bookId, chapter_id: chapterId, scene_id: sceneId };
-        await logEvent(redis, scene, 'VIDEO_FAILED', state.SceneState.VIDEO_GENERATING, {
+        await logEvent(redis, scene, 'VIDEO_FAILED', 'video_generating', {
             reason: 'invalid'
         });
         log(`🔻 VIDEO callback: video invalid: ${bookId}/${chapterId}/${sceneId}`);
@@ -379,7 +379,7 @@ async function handleVideoCompleted(redis, bookId, chapterId, sceneId, buildId) 
     }
 
     const scene = { book_id: bookId, chapter_id: chapterId, scene_id: sceneId };
-    await logEvent(redis, scene, 'VIDEO_COMPLETED', state.SceneState.VIDEO_READY, {
+    await logEvent(redis, scene, 'VIDEO_COMPLETED', 'video_ready', {
         buildId,
         path: videoPath,
         duration: duration || 0

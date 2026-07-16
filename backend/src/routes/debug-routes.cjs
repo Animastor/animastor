@@ -428,7 +428,7 @@ module.exports = function(app, redis, deps) {
             }
 
             // Validate target state
-            const validStates = Object.values(state.SceneState);
+            const validStates = ['new','audio_pending','audio_generating','audio_ready','image_pending','image_generating','image_ready','video_pending','video_generating','video_ready','failed'];
             if (!validStates.includes(target_state)) {
                 return res.status(400).json({ error: `Invalid state. Valid: ${validStates.join(', ')}` });
             }
@@ -452,13 +452,13 @@ module.exports = function(app, redis, deps) {
             const chunk = await getChunk(chunkId);
             if (chunk) {
                 const updates = { build_id: build_id || chunk.build_id || 'default' };
-                if (target_state === state.SceneState.AUDIO_PENDING || target_state === state.SceneState.RAW) {
+                if (target_state === 'audio_pending' || target_state === 'raw') {
                     updates.audio = false; updates.audio_status = 'pending';
                 }
-                if (target_state === state.SceneState.IMAGE_PENDING || target_state === state.SceneState.AUDIO_PENDING || target_state === state.SceneState.RAW) {
+                if (target_state === 'image_pending' || target_state === 'audio_pending' || target_state === 'raw') {
                     updates.image = false;
                 }
-                if (target_state === state.SceneState.VIDEO_PENDING || target_state === state.SceneState.RAW) {
+                if (target_state === 'video_pending' || target_state === 'raw') {
                     updates.video = false; updates.video_status = 'pending';
                 }
                 await saveChunk(chunkId, { ...chunk, ...updates });

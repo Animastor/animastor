@@ -107,15 +107,15 @@ async function removeSceneFromActiveIndex(redis, bookId, chapterId, sceneId) {
 
 // Re-export SceneState for convenience
 const STATE_TO_STAGE = {
-    [state.SceneState.AUDIO_PENDING]: 'audio',
-    [state.SceneState.IMAGE_PENDING]: 'image',
-    [state.SceneState.VIDEO_PENDING]: 'video'
+    'audio_pending': 'audio',
+    'image_pending': 'image',
+    'video_pending': 'video'
 };
 
 const STAGE_TO_STATE = {
-    audio: state.SceneState.AUDIO_PENDING,
-    image: state.SceneState.IMAGE_PENDING,
-    video: state.SceneState.VIDEO_PENDING
+    audio: 'audio_pending',
+    image: 'image_pending',
+    video: 'video_pending'
 };
 
 // ======================================================
@@ -586,7 +586,6 @@ module.exports = {
     getMetrics,
 
     // Re-exports
-    SceneState: state.SceneState,
     AssetState: state.AssetState,
     STATE_TO_STAGE,
     STAGE_TO_STATE,

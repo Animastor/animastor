@@ -38,6 +38,23 @@ All notable changes to Animastor are documented here.
   - tests/scope-slide.test.js: исправлен на проверку asset-state + добавлен `makeSceneReady()` helper.
   - 574 теста проходят.
 
+### Removed
+
+- **SceneState enum, syncLinearState, deriveLinearState — полная зачистка**
+  (`backend/src/state/scene-state.js`, 10 production-файлов, 4 тестовых файла):
+  - `SceneState` enum (20 констант: `AUDIO_PENDING`, `VIDEO_READY`, `FAILED` и т.д.) удалён.
+  - `syncLinearState()` — больше не существует (был no-op с T8).
+  - `deriveLinearState()` — больше не экспортируется (логика fallback встроена в `getAssetStates`).
+  - `getSceneBuildId()` — удалён (build_id читается из manifest).
+  - 10 production-файлов: `state.SceneState.*` → inline-строки ('audio_pending', 'video_ready' и т.д.).
+  - runtime-config.js: удалена stale JSDoc typedef `SceneStateValue`.
+  - runtime-scheduler.js: удалён deprecated `SceneState: null` из exports.
+  - Тесты: scene-state.test.js, asset-state.test.js, scope-slide.test.js, book-diff-unit.test.js,
+    happy-path.test.js — очищены от syncLinearState и SceneState.
+  - Frontend: `SceneStatusResponse` уже использует per-asset поля `audio_ready`/`video_ready`/`image_ready`,
+    бэкендовый `/api/v1/scene/.../status` определяет готовность по файлам — изменений не требуется.
+  - 551 тест проходит.
+
 - **T6: Единый reconciliation-контур (R4/К4)**
   (`backend/src/runtime/reconciliation-engine.js`, `backend/src/backend.cjs`,
   `backend/src/services/startup-recovery.js`, `backend/src/services/cleanup-service.cjs`):

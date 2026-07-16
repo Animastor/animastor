@@ -94,7 +94,7 @@ async function checkOrphanVideoState(redis, bookId, chapterId, sceneId) {
         return {
             type: 'orphan_video_state',
             scene: { bookId, chapterId, sceneId },
-            state: state.SceneState.VIDEO_READY,
+            state: 'video_ready',
             missingFile: videoPath,
             recommendation: 'regenerate_video'
         };
@@ -128,7 +128,7 @@ async function checkOrphanImageState(redis, bookId, chapterId, sceneId) {
         return {
             type: 'orphan_image_state',
             scene: { bookId, chapterId, sceneId },
-            state: state.SceneState.IMAGE_READY,
+            state: 'image_ready',
             missingFile: 'image_not_found',
             recommendation: 'regenerate_image'
         };
@@ -170,7 +170,7 @@ async function checkOrphanAudioState(redis, bookId, chapterId, sceneId) {
         return {
             type: 'orphan_audio_state',
             scene: { bookId, chapterId, sceneId },
-            state: state.SceneState.AUDIO_READY,
+            state: 'audio_ready',
             missingFile: audioPath,
             recommendation: 'regenerate_audio'
         };
@@ -678,10 +678,10 @@ async function applyFix(redis, fix) {
 
                 // Derive pending state from current linear state (heuristic)
                 const s = current?.state || '';
-                const pendingState = s.includes('audio') ? state.SceneState.AUDIO_PENDING
-                    : s.includes('image') ? state.SceneState.IMAGE_PENDING
-                    : s.includes('video') ? state.SceneState.VIDEO_PENDING
-                    : state.SceneState.AUDIO_PENDING;
+                const pendingState = s.includes('audio') ? 'audio_pending'
+                    : s.includes('image') ? 'image_pending'
+                    : s.includes('video') ? 'video_pending'
+                    : 'audio_pending';
 
                 // Mark all per-asset states as DIRTY for redispatch
                 // M5: Route through orchestrator.markDirtyScene instead of direct state.setAssetState
@@ -739,10 +739,10 @@ async function applyFix(redis, fix) {
                 const current = await state.getSceneState(redis, scene.bookId, scene.chapterId, scene.sceneId);
                 if (current) {
                     const s = current.state || '';
-                    const pendingState = s.includes('audio') ? state.SceneState.AUDIO_PENDING
-                        : s.includes('image') ? state.SceneState.IMAGE_PENDING
-                        : s.includes('video') ? state.SceneState.VIDEO_PENDING
-                        : state.SceneState.AUDIO_PENDING;
+                    const pendingState = s.includes('audio') ? 'audio_pending'
+                        : s.includes('image') ? 'image_pending'
+                        : s.includes('video') ? 'video_pending'
+                        : 'audio_pending';
 
                     // Mark per-asset states as DIRTY for redispatch
                     // M5: Route through orchestrator.markDirtyScene instead of direct state.setAssetState
@@ -765,11 +765,11 @@ async function applyFix(redis, fix) {
                 const reasons = (fix.reason + ' ' + (fix.issue || '')).toLowerCase();
                 const pendingState =
                     reasons.includes('audio') || reasons.includes('tts')
-                        ? state.SceneState.AUDIO_PENDING
+                        ? 'audio_pending'
                         : reasons.includes('video')
-                        ? state.SceneState.VIDEO_PENDING
+                        ? 'video_pending'
                         : reasons.includes('image') || reasons.includes('iu')
-                        ? state.SceneState.IMAGE_PENDING
+                        ? 'image_pending'
                         : null;
 
                 if (!pendingState) {
@@ -778,9 +778,9 @@ async function applyFix(redis, fix) {
 
                 // M5 Шаг 4: Route through orchestrator.setScenePending (which includes syncLinearState)
                 const orchestrator = require('../orchestration/orchestrator');
-                const assetType = pendingState === state.SceneState.AUDIO_PENDING ? 'audio'
-                    : pendingState === state.SceneState.IMAGE_PENDING ? 'image'
-                    : pendingState === state.SceneState.VIDEO_PENDING ? 'video'
+                const assetType = pendingState === 'audio_pending' ? 'audio'
+                    : pendingState === 'image_pending' ? 'image'
+                    : pendingState === 'video_pending' ? 'video'
                     : null;
                 if (assetType) {
                     await orchestrator.setScenePending(redis, scene.bookId, scene.chapterId, scene.sceneId, assetType);

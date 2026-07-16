@@ -4,6 +4,8 @@ const path = require('path');
 // Stub deps for the book-diff factory
 function createBookDiff(overrides = {}) {
     const state = {
+        // SceneState removed in v2.2.0
+        // kept minimal for backward compat in this test
         SceneState: {
             NEW: 'new',
             AUDIO_PENDING: 'audio_pending',
@@ -28,7 +30,7 @@ function createBookDiff(overrides = {}) {
         },
         SCENE_STATE_KEY_PREFIX: 'animastor:scene-state',
         ASSET_STATE_KEY_PREFIX: 'animastor:asset-state',
-        syncLinearState: async () => 'audio_pending',
+        // syncLinearState removed in v2.2.0
         setAssetState: async () => {},
         setAssetStates: async () => {},
         getAssetStates: async () => ({ audio: 'new', image: 'new', video: 'new' }),

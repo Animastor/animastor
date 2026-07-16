@@ -1,23 +1,7 @@
 const { expect } = require('chai');
 const sceneState = require('../src/state/scene-state');
 
-describe('SceneState constants', () => {
-    it('has all 11 states defined', () => {
-        const expected = [
-            'NEW', 'AUDIO_PENDING', 'AUDIO_GENERATING', 'AUDIO_READY',
-            'IMAGE_PENDING', 'IMAGE_GENERATING', 'IMAGE_READY',
-            'VIDEO_PENDING', 'VIDEO_GENERATING', 'VIDEO_READY', 'FAILED',
-        ];
-        const actual = Object.keys(sceneState.SceneState);
-        expect(actual).to.have.members(expected);
-    });
-
-    it('SceneState constants are backward-compatible strings', () => {
-        expect(sceneState.SceneState.AUDIO_PENDING).to.equal('audio_pending');
-        expect(sceneState.SceneState.VIDEO_READY).to.equal('video_ready');
-        expect(sceneState.SceneState.FAILED).to.equal('failed');
-    });
-});
+// SceneState enum removed in v2.2.0 — inline strings used instead
 
 describe('AssetState (per-asset) — source of truth', () => {
     it('has all states defined', () => {
@@ -59,57 +43,7 @@ describe('AssetState (per-asset) — source of truth', () => {
     });
 });
 
-describe('deriveLinearState (backward compat)', () => {
-    it('all NEW -> SceneState.NEW', () => {
-        const result = sceneState.deriveLinearState({ audio: 'new', image: 'new', video: 'new' });
-        expect(result).to.equal(sceneState.SceneState.NEW);
-    });
-
-    it('audio pending -> AUDIO_PENDING', () => {
-        const result = sceneState.deriveLinearState({ audio: 'pending', image: 'new', video: 'new' });
-        expect(result).to.equal(sceneState.SceneState.AUDIO_PENDING);
-    });
-
-    it('audio generating -> AUDIO_GENERATING', () => {
-        const result = sceneState.deriveLinearState({ audio: 'generating', image: 'new', video: 'new' });
-        expect(result).to.equal(sceneState.SceneState.AUDIO_GENERATING);
-    });
-
-    it('image pending -> IMAGE_PENDING (audio is ready)', () => {
-        const result = sceneState.deriveLinearState({ audio: 'ready', image: 'pending', video: 'new' });
-        expect(result).to.equal(sceneState.SceneState.IMAGE_PENDING);
-    });
-
-    it('image generating -> IMAGE_GENERATING', () => {
-        const result = sceneState.deriveLinearState({ audio: 'ready', image: 'generating', video: 'new' });
-        expect(result).to.equal(sceneState.SceneState.IMAGE_GENERATING);
-    });
-
-    it('all ready -> VIDEO_READY', () => {
-        const result = sceneState.deriveLinearState({ audio: 'ready', image: 'ready', video: 'ready' });
-        expect(result).to.equal(sceneState.SceneState.VIDEO_READY);
-    });
-
-    it('any failed -> FAILED', () => {
-        const result = sceneState.deriveLinearState({ audio: 'failed', image: 'ready', video: 'ready' });
-        expect(result).to.equal(sceneState.SceneState.FAILED);
-    });
-
-    it('audio placeholder allows progression to image', () => {
-        const result = sceneState.deriveLinearState({ audio: 'placeholder', image: 'new', video: 'new' });
-        expect(result).to.equal(sceneState.SceneState.AUDIO_READY);
-    });
-
-    it('audio placeholder + image ready -> IMAGE_READY', () => {
-        const result = sceneState.deriveLinearState({ audio: 'placeholder', image: 'ready', video: 'new' });
-        expect(result).to.equal(sceneState.SceneState.IMAGE_READY);
-    });
-
-    it('audio ready + video generating -> VIDEO_GENERATING', () => {
-        const result = sceneState.deriveLinearState({ audio: 'ready', image: 'ready', video: 'generating' });
-        expect(result).to.equal(sceneState.SceneState.VIDEO_GENERATING);
-    });
-});
+// deriveLinearState removed in v2.2.0 — per-asset state is canonical
 
 describe('deriveAssetStatesFromLinear (fallback)', () => {
     it('null state -> all NEW', () => {
@@ -146,6 +80,6 @@ describe('transitionSceneState (simplified direct write)', () => {
         expect(sceneState.getSceneState).to.be.a('function');
         expect(sceneState.setSceneState).to.be.a('function');
         expect(sceneState.setSceneStateWithBuildId).to.be.a('function');
-        expect(sceneState.syncLinearState).to.be.a('function');
+        // syncLinearState removed in v2.2.0
     });
 });

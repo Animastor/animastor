@@ -119,10 +119,10 @@ module.exports = function(redis) {
             try {
                 const data = JSON.parse(raw);
                 const st = data.state;
-                if (st === state.SceneState.IMAGE_READY ||
-                    st === state.SceneState.VIDEO_PENDING ||
-                    st === state.SceneState.VIDEO_GENERATING ||
-                    st === state.SceneState.VIDEO_READY) {
+                if (st === 'image_ready' ||
+                    st === 'video_pending' ||
+                    st === 'video_generating' ||
+                    st === 'video_ready') {
                     readyScenes++;
                 }
             } catch (_) {}
@@ -190,7 +190,7 @@ module.exports = function(redis) {
                     image: state.AssetState.READY,
                     video: state.AssetState.READY
                 });
-                await state.syncLinearState(redis, bookId, chapterId, sceneId, buildId);
+                // T8: syncLinearState удалён
             } catch (err) {
                 console.warn('Recovery: failed to reset scene state for', chapterId + '/' + sceneId + ':', err.message);
             }

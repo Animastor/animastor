@@ -1,19 +1,18 @@
 // ======================================================
-// Scene State - v2.1.0
+// Scene State - v2.2.0
 // ======================================================
-// Per-asset states are the CANONICAL source of truth.
-// Linear state (SceneState) is a DERIVED projection kept
-// for backward compatibility with Redis consumers.
+// Per-asset states (animastor:asset-state:*) are the ONLY
+// source of truth. SceneState/linear state has been removed.
 //
-// All NEW code should use per-asset functions (AssetState).
-// The linear state transition validation has been REMOVED
-// because parallel dispatch requires independent asset states.
+// getSceneState/setSceneState/transitionSceneState are kept
+// for backward compatibility with debug routes — they write
+// directly to Redis keys but are NOT lifecycle authorities.
 
 const config = require('../config/runtime-config');
 const SCENE_STATE_KEY_PREFIX = config.REDIS.SCENE_STATE_KEY_PREFIX;
 
 // ======================================================
-// ASSET STATE — NEW per-asset model
+// ASSET STATE — canonical per-asset model
 // ======================================================
 
 const ASSET_STATE_KEY_PREFIX = 'animastor:asset-state';
@@ -29,26 +28,6 @@ const AssetState = {
     FAILED: 'failed',
     PLACEHOLDER: 'placeholder'
 };
-
-
-
-/** @type {{ [name: string]: SceneStateValue }} */
-const SceneState = {
-    NEW: 'new',
-    AUDIO_PENDING: 'audio_pending',
-    AUDIO_GENERATING: 'audio_generating',
-    AUDIO_READY: 'audio_ready',
-    IMAGE_PENDING: 'image_pending',
-    IMAGE_GENERATING: 'image_generating',
-    IMAGE_READY: 'image_ready',
-    VIDEO_PENDING: 'video_pending',
-    VIDEO_GENERATING: 'video_generating',
-    VIDEO_READY: 'video_ready',
-    FAILED: 'failed'
-};
-
-
-
 
 // ======================================================
 // LOGGING HELPERS
@@ -67,19 +46,17 @@ function error(msg) {
     console.error(`${logPrefix} ❌ ${msg}`);
 }
 
-
-
 // ======================================================
-// STATE QUERY HELPERS
+// STATE QUERY HELPERS (legacy scene-state keys — debug only)
 // ======================================================
 
 /**
- * Get scene state from Redis.
+ * Get scene state from Redis (legacy scene-state key).
  * @param {RedisClient} redis
  * @param {string} bookId
  * @param {string} chapterId
  * @param {string} sceneId
- * @returns {Promise<SceneStateData|null>}
+ * @returns {Promise<object|null>}
  */
 async function getSceneState(redis, bookId, chapterId, sceneId) {
     const key = `${SCENE_STATE_KEY_PREFIX}:${bookId}:${chapterId}:${sceneId}`;
@@ -89,15 +66,14 @@ async function getSceneState(redis, bookId, chapterId, sceneId) {
 }
 
 /**
- * Set scene state in Redis (overwrites existing state).
- * NOT recommended for lifecycle transitions - use atomicTransitionSceneState() instead.
+ * Set scene state in Redis (legacy scene-state key).
  * @param {RedisClient} redis
  * @param {string} bookId
  * @param {string} chapterId
  * @param {string} sceneId
- * @param {SceneStateValue} state
+ * @param {string} state
  * @param {string|null} [error]
- * @returns {Promise<SceneStateData>}
+ * @returns {Promise<object>}
  */
 async function setSceneState(redis, bookId, chapterId, sceneId, state, error = null) {
     const key = `${SCENE_STATE_KEY_PREFIX}:${bookId}:${chapterId}:${sceneId}`;
@@ -124,87 +100,17 @@ async function setSceneStateWithBuildId(redis, bookId, chapterId, sceneId, state
 }
 
 /**
- * Read current build_id from scene state, preserving it across transitions.
- * Prevents resetting build_id to null when syncing linear state.
- * @param {RedisClient} redis
- * @param {string} bookId
- * @param {string} chapterId
- * @param {string} sceneId
- * @returns {Promise<string|null>}
- */
-async function getSceneBuildId(redis, bookId, chapterId, sceneId) {
-    const key = `${SCENE_STATE_KEY_PREFIX}:${bookId}:${chapterId}:${sceneId}`;
-    const currentRaw = await redis.get(key);
-    if (currentRaw) {
-        try {
-            const current = JSON.parse(currentRaw);
-            return current.build_id || null;
-        } catch (_) {}
-    }
-    return null;
-}
-
-// ======================================================
-// DIRECT STATE WRITE (replaces validated transitionSceneState)
-// ======================================================
-
-/**
- * Direct state write — no validation, no locks, no FSM checks.
- * Simply writes the new state to Redis with updated_at.
- * This is the replacement for the removed transitionSceneState.
- *
- * Per-asset states (not linear state) are the source of truth.
- * Linear state is kept for backward compatibility only.
+ * Direct state write — legacy scene-state key.
+ * Per-asset states are the source of truth.
  */
 async function transitionSceneState(redis, bookId, chapterId, sceneId, newState) {
     const currentState = await getSceneState(redis, bookId, chapterId, sceneId);
-    const oldState = currentState?.state || SceneState.NEW;
+    const oldState = currentState?.state || 'new';
 
     await setSceneStateWithBuildId(redis, bookId, chapterId, sceneId, newState, currentState?.build_id || null);
 
     log(`⚡ SCENE STATE: ${bookId}/${chapterId}/${sceneId}: ${oldState} -> ${newState} (direct write)`);
     return { success: true, oldState, newState, reason: 'direct_write' };
-}
-
-
-
-// ======================================================
-// LINEAR STATE SYNC (derived from per-asset)
-// ======================================================
-
-/**
- * Sync the linear FSM state from per-asset states.
- * Derives the composite linear state from all three asset states
- * and writes it directly (bypassing FSM validation).
- * This keeps the linear state in sync for backward compatibility
- * while allowing independent asset-level transitions.
- *
- * Call this after every setAssetState() call.
- *
- * @param {RedisClient} redis
- * @param {string} bookId
- * @param {string} chapterId
- * @param {string} sceneId
- * @returns {Promise<string>} The derived linear state
- */
-/**
- * T8: syncLinearState — больше не пишет scene-state:*.
- * per-asset state (animastor:asset-state:*) — единственный source of truth.
- * Функция сохранена для обратной совместимости (возвращает derived state),
- * но Redis write удалён. Все читатели должны использовать getAssetStates().
- *
- * @param {RedisClient} redis
- * @param {string} bookId
- * @param {string} chapterId
- * @param {string} sceneId
- * @param {string|null} [overrideBuildId] — ignored (T8: no-op)
- * @returns {Promise<string>} The derived linear state (in-memory only)
- */
-async function syncLinearState(redis, bookId, chapterId, sceneId, overrideBuildId = null) {
-    const assetStates = await getAssetStates(redis, bookId, chapterId, sceneId);
-    const linearState = deriveLinearState(assetStates);
-    log(`SYNC LINEAR (no-op): ${bookId}/${chapterId}/${sceneId} -> ${linearState}`);
-    return linearState;
 }
 
 // ======================================================
@@ -213,14 +119,13 @@ async function syncLinearState(redis, bookId, chapterId, sceneId, overrideBuildI
 
 /**
  * Per-asset transition validation map.
- * Each asset type defines its own allowed transitions.
  */
 const AssetTransitions = {
     [AssetState.NEW]: [AssetState.DIRTY, AssetState.PENDING, AssetState.PLACEHOLDER],
     [AssetState.DIRTY]: [AssetState.PENDING, AssetState.PLACEHOLDER],
     [AssetState.PENDING]: [AssetState.GENERATING, AssetState.FAILED],
     [AssetState.GENERATING]: [AssetState.READY, AssetState.FAILED, AssetState.DIRTY],
-    [AssetState.READY]: [AssetState.DIRTY],  // dirty is the only valid transition from ready
+    [AssetState.READY]: [AssetState.DIRTY],
     [AssetState.FAILED]: [AssetState.PENDING, AssetState.DIRTY],
     [AssetState.PLACEHOLDER]: [AssetState.DIRTY, AssetState.GENERATING]
 };
@@ -245,9 +150,8 @@ function validateAssetTransition(fromState, toState) {
 /**
  * Get all per-asset states for a scene.
  * Returns { audio: 'ready', image: 'ready', video: 'ready' }
- * If no asset states exist, returns defaults based on linear state.
  *
- * Uses HGETALL for atomic read — no race with concurrent HSET writes.
+ * Uses HGETALL for atomic read.
  *
  * @param {RedisClient} redis
  * @param {string} bookId
@@ -262,14 +166,10 @@ async function getAssetStates(redis, bookId, chapterId, sceneId) {
     try {
         raw = await redis.hgetall(key);
     } catch (e) {
-        // Key exists but is not a hash (old JSON format from before Н.6) — delete it
-        // so the next setAssetState writes a clean hash. Without this, every read of
-        // a stale key throws WRONGTYPE and we silently fall back to linear forever.
-        warn(`Asset state key ${key} not a hash — deleting stale key, falling back to linear: ${e.message}`);
+        warn(`Asset state key ${key} not a hash — deleting stale key: ${e.message}`);
         await redis.del(key).catch(() => {});
     }
 
-    // hgetall returns {} for a missing key — only treat as authoritative when it has fields.
     if (raw && typeof raw === 'object' && !Array.isArray(raw) && Object.keys(raw).length > 0) {
         return {
             audio: raw.audio || AssetState.NEW,
@@ -278,16 +178,14 @@ async function getAssetStates(redis, bookId, chapterId, sceneId) {
         };
     }
 
-    // Fallback: derive from linear state (backward compat for missing keys or old JSON format)
+    // Fallback: derive from legacy scene-state
     const linearState = await getSceneState(redis, bookId, chapterId, sceneId);
     return deriveAssetStatesFromLinear(linearState);
 }
 
 /**
- * Derive asset states from linear FSM state.
- * Used as fallback when no per-asset state exists yet.
- *
- * @param {SceneStateData|null} linearState
+ * Derive asset states from legacy scene-state (fallback).
+ * @param {object|null} linearState
  * @returns {{audio: string, image: string, video: string}}
  */
 function deriveAssetStatesFromLinear(linearState) {
@@ -297,93 +195,37 @@ function deriveAssetStatesFromLinear(linearState) {
 
     const s = linearState.state;
 
-    // Terminal states
-    if (s === SceneState.FAILED) {
+    if (s === 'failed') {
         return { audio: AssetState.FAILED, image: AssetState.FAILED, video: AssetState.FAILED };
     }
-    if (s === SceneState.VIDEO_READY) {
+    if (s === 'video_ready') {
         return { audio: AssetState.READY, image: AssetState.READY, video: AssetState.READY };
     }
-
-    // Pipeline progression
-    if (s === SceneState.NEW) {
+    if (s === 'new') {
         return { audio: AssetState.NEW, image: AssetState.NEW, video: AssetState.NEW };
     }
-    if (s === SceneState.AUDIO_PENDING || s === SceneState.AUDIO_GENERATING) {
-        return { audio: s === SceneState.AUDIO_GENERATING ? AssetState.GENERATING : AssetState.PENDING, image: AssetState.NEW, video: AssetState.NEW };
+    if (s === 'audio_pending' || s === 'audio_generating') {
+        return { audio: s === 'audio_generating' ? AssetState.GENERATING : AssetState.PENDING, image: AssetState.NEW, video: AssetState.NEW };
     }
-    if (s === SceneState.AUDIO_READY) {
+    if (s === 'audio_ready') {
         return { audio: AssetState.READY, image: AssetState.NEW, video: AssetState.NEW };
     }
-    if (s === SceneState.IMAGE_PENDING || s === SceneState.IMAGE_GENERATING) {
-        return { audio: AssetState.READY, image: s === SceneState.IMAGE_GENERATING ? AssetState.GENERATING : AssetState.PENDING, video: AssetState.NEW };
+    if (s === 'image_pending' || s === 'image_generating') {
+        return { audio: AssetState.READY, image: s === 'image_generating' ? AssetState.GENERATING : AssetState.PENDING, video: AssetState.NEW };
     }
-    if (s === SceneState.IMAGE_READY) {
+    if (s === 'image_ready') {
         return { audio: AssetState.READY, image: AssetState.READY, video: AssetState.NEW };
     }
-    if (s === SceneState.VIDEO_PENDING || s === SceneState.VIDEO_GENERATING) {
-        return { audio: AssetState.READY, image: AssetState.READY, video: s === SceneState.VIDEO_GENERATING ? AssetState.GENERATING : AssetState.PENDING };
+    if (s === 'video_pending' || s === 'video_generating') {
+        return { audio: AssetState.READY, image: AssetState.READY, video: s === 'video_generating' ? AssetState.GENERATING : AssetState.PENDING };
     }
 
     return { audio: AssetState.NEW, image: AssetState.NEW, video: AssetState.NEW };
 }
 
 /**
- * Derive linear FSM state from per-asset states.
- * This is the reverse mapping: per-asset → linear state.
- * Used for backward compatibility.
- *
- * @param {{audio: string, image: string, video: string}} assetStates
- * @returns {string} Linear SceneState value
- */
-function deriveLinearState(assetStates) {
-    const { audio, image, video } = assetStates;
-
-    // If any asset is failed, overall state is FAILED
-    if (audio === AssetState.FAILED || image === AssetState.FAILED || video === AssetState.FAILED) {
-        return SceneState.FAILED;
-    }
-
-    // If all ready → VIDEO_READY
-    if (audio === AssetState.READY && image === AssetState.READY && video === AssetState.READY) {
-        return SceneState.VIDEO_READY;
-    }
-
-    // Follow linear pipeline order: audio → image → video
-    // Return the EARLIEST asset that needs processing
-
-    // Audio stage
-    if (audio === AssetState.DIRTY) return SceneState.AUDIO_PENDING;
-    if (audio === AssetState.PENDING) return SceneState.AUDIO_PENDING;
-    if (audio === AssetState.GENERATING) return SceneState.AUDIO_GENERATING;
-    if (audio === AssetState.NEW && image === AssetState.NEW && video === AssetState.NEW) return SceneState.NEW;
-
-    // Audio placeholder — allow progression to image
-    if (audio === AssetState.PLACEHOLDER) {
-        if (image === AssetState.NEW) return SceneState.AUDIO_READY;
-        if (image === AssetState.PENDING || image === AssetState.DIRTY) return SceneState.IMAGE_PENDING;
-        if (image === AssetState.GENERATING) return SceneState.IMAGE_GENERATING;
-        if (image === AssetState.READY) return SceneState.IMAGE_READY;
-    }
-
-    // Image stage (audio is either READY or FAILED at this point)
-    if (image === AssetState.DIRTY) return SceneState.IMAGE_PENDING;
-    if (image === AssetState.PENDING) return SceneState.IMAGE_PENDING;
-    if (image === AssetState.GENERATING) return SceneState.IMAGE_GENERATING;
-
-    // Video stage (audio and image are both READY at this point)
-    if (video === AssetState.DIRTY) return SceneState.VIDEO_PENDING;
-    if (video === AssetState.PENDING) return SceneState.VIDEO_PENDING;
-    if (video === AssetState.GENERATING) return SceneState.VIDEO_GENERATING;
-    if (video === AssetState.NEW) return SceneState.VIDEO_PENDING;
-
-    // All assets READY
-    return SceneState.VIDEO_READY;
-}
-
-/**
  * Set a single asset's state in the per-asset store.
- * Uses HSET for atomic per-field update — no RMW race.
+ * Uses HSET for atomic per-field update.
  *
  * @param {RedisClient} redis
  * @param {string} bookId
@@ -400,7 +242,6 @@ async function setAssetState(redis, bookId, chapterId, sceneId, asset, status) {
     }
 
     const key = `${ASSET_STATE_KEY_PREFIX}:${bookId}:${chapterId}:${sceneId}`;
-    // Н.6: Atomic HSET — no GET+merge+SET race
     await redis.hset(key, asset, status);
     log(`ASSET STATE: ${bookId}/${chapterId}/${sceneId} ${asset}: -> ${status}`);
     return await getAssetStates(redis, bookId, chapterId, sceneId);
@@ -418,41 +259,31 @@ async function setAssetState(redis, bookId, chapterId, sceneId, asset, status) {
  */
 async function setAssetStates(redis, bookId, chapterId, sceneId, updates) {
     const key = `${ASSET_STATE_KEY_PREFIX}:${bookId}:${chapterId}:${sceneId}`;
-    // Н.6: Atomic HSET with multiple fields — no GET+merge+SET race
     await redis.hset(key, updates);
     log(`ASSET STATES: ${bookId}/${chapterId}/${sceneId} -> ${JSON.stringify(updates)}`);
     return await getAssetStates(redis, bookId, chapterId, sceneId);
 }
-
-
 
 // ======================================================
 // EXPORTS
 // ======================================================
 
 module.exports = {
-    SceneState,
     SCENE_STATE_KEY_PREFIX,
 
-    // Asset state (new)
+    // Asset state (canonical)
     AssetState,
     ASSET_STATE_KEY_PREFIX,
     ASSETS,
     getAssetStates,
     setAssetState,
     setAssetStates,
-    deriveLinearState,
     deriveAssetStatesFromLinear,
     validateAssetTransition,
 
-    // State query
+    // Legacy scene-state (debug/compat only)
     getSceneState,
     setSceneState,
     setSceneStateWithBuildId,
-
-    // Direct state write (replaces validated transitions)
     transitionSceneState,
-
-    // Linear state sync (derives from per-asset)
-    syncLinearState
 };

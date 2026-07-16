@@ -740,7 +740,7 @@ describe('Happy Path: State — Per-Asset Operations', () => {
     it('getAssetStates falls back to linear state when per-asset hash is missing', async () => {
         // Only linear state exists (e.g. legacy scene, or before any per-asset write).
         // The empty hgetall hash must NOT shadow the linear-derived state.
-        await sceneState.setSceneState(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, sceneState.SceneState.AUDIO_READY);
+        await sceneState.setSceneState(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, 'audio_ready');
 
         const states = await sceneState.getAssetStates(redis, BOOK_ID, CHAPTER_ID, SCENE_ID);
         // AUDIO_READY → audio ready, image/video new (derived from linear)
@@ -1062,7 +1062,6 @@ describe('Happy Path: Scene Callbacks (with mocks)', () => {
 
         // Simulate what completeStage does after the handler:
         await sceneState.setAssetState(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, 'audio', 'ready');
-        await sceneState.syncLinearState(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, BUILD_ID);
 
         const statesAfter = await sceneState.getAssetStates(redis, BOOK_ID, CHAPTER_ID, SCENE_ID);
         expect(statesAfter.audio).to.equal('ready');
@@ -1161,7 +1160,6 @@ describe('Happy Path: Scene Callbacks (with mocks)', () => {
 
         // Simulate what completeStage does after the handler:
         await sceneState.setAssetState(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, 'image', 'ready');
-        await sceneState.syncLinearState(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, BUILD_ID);
 
         const statesAfter = await sceneState.getAssetStates(redis, BOOK_ID, CHAPTER_ID, SCENE_ID);
         expect(statesAfter.image).to.equal('ready');
@@ -1191,7 +1189,6 @@ describe('Happy Path: Scene Callbacks (with mocks)', () => {
 
         // Simulate what completeStage does after the handler:
         await sceneState.setAssetState(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, 'video', 'ready');
-        await sceneState.syncLinearState(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, BUILD_ID);
 
         const statesAfter = await sceneState.getAssetStates(redis, BOOK_ID, CHAPTER_ID, SCENE_ID);
         expect(statesAfter.video).to.equal('ready');

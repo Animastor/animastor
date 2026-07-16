@@ -196,7 +196,7 @@ module.exports = function(app, redis, deps) {
                     if (c.chapter_id && c.scene_id) {
                         const stateKey = `animastor:scene-state:${c.book_id}:${c.chapter_id}:${c.scene_id}`;
                         await redis.set(stateKey, JSON.stringify({
-                            state: state.SceneState.AUDIO_PENDING, updated_at: Date.now(),
+                            state: 'audio_pending', updated_at: Date.now(),
                             build_id: c.build_id || 'default', error: null,
                         }));
                         const jobKey = `animastor:job:${c.book_id}_${c.chapter_id}_${c.scene_id}_0001:audio`;
@@ -241,7 +241,7 @@ module.exports = function(app, redis, deps) {
                     if (c.chapter_id && c.scene_id) {
                         const stateKey = `animastor:scene-state:${c.book_id}:${c.chapter_id}:${c.scene_id}`;
                         await redis.set(stateKey, JSON.stringify({
-                            state: state.SceneState.IMAGE_PENDING, updated_at: Date.now(),
+                            state: 'image_pending', updated_at: Date.now(),
                             build_id: c.build_id || 'default', error: null,
                         }));
                         const jobKey = `animastor:job:${c.book_id}_${c.chapter_id}_${c.scene_id}_0002:image`;

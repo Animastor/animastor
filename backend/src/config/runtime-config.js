@@ -5,10 +5,6 @@
 // Centralized config to avoid hardcoded values in runtime modules.
 
 /**
- * @typedef {import('../state/scene-state').SceneStateValue} SceneStateValue
- */
-
-/**
  * @typedef {{ 
  *   SCENE_STATE_KEY_PREFIX: string, 
  *   SCENE_TRANSITION_LOCK_PREFIX: string, 

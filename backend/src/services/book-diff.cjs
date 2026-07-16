@@ -344,11 +344,11 @@ module.exports = function(redis, config, deps) {
             // Determine new scene state
             let newState;
             if (resetAudio) {
-                newState = state.SceneState.AUDIO_PENDING;
+                newState = 'audio_pending';
             } else if (resetImage) {
-                newState = state.SceneState.IMAGE_PENDING;
+                newState = 'image_pending';
             } else {
-                newState = state.SceneState.VIDEO_PENDING;
+                newState = 'video_pending';
             }
 
             // Build Redis keys for this scene
