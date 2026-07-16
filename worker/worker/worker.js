@@ -477,7 +477,11 @@ async function workerLoop() {
       await fetchTimeout(`${HUB_URL}/task/error`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ job_id: task.job_id })
+        body: JSON.stringify({
+          job_id: task.job_id,
+          build_id: task.build_id || null,
+          reason: String(err && err.message || err || "worker_error").slice(0, 500)
+        })
       })
     }
   }

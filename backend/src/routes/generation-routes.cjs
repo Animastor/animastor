@@ -1068,5 +1068,53 @@ module.exports = function(app, redis, deps) {
         }
     });
 
+    // ── GPU task error callback ─────────────────────────
+    // T3 консолидации: канал ошибок worker → gpu-hub → backend.
+    // Сбой генерации (ошибка воркера, worker_timeout от watchdog'а hub'а)
+    // превращается в orchestrator.failStage за секунды, а не в истёкший
+    // dispatch-lease через 15–30 минут.
+    app.post('/gpu/task/error', async (req, res) => {
+        try {
+            const { job_id, build_id, reason } = req.body || {};
+            if (!job_id) return res.status(400).json({ error: 'job_id required' });
+
+            const jobSchema = require('../runtime/job-schema');
+            const parsed = jobSchema.parseJobId(job_id);
+            if (!parsed) {
+                console.warn(`[GPU ERROR] Unparseable job_id: ${job_id} (reason=${reason})`);
+                return res.json({ ok: true, ignored: true });
+            }
+
+            // Короткий dedup: hub ретраит доставку 5 раз — повторные вызовы
+            // безвредны (failStage идемпотентен по валидации переходов), но
+            // не нужно спамить журнал.
+            const dedupKey = `animastor:error-processed:${job_id}:${build_id || 'nobuild'}`;
+            const first = await redis.set(dedupKey, '1', 'NX', 'EX', 60);
+            if (!first) return res.json({ ok: true, deduped: true });
+
+            const stage = { audio_chunk: 'audio', iu_image: 'image', scene_image: 'image', scene_video: 'video' }[parsed.kind];
+            const { bookId, chapterId, sceneId } = parsed;
+            log(`[GPU ERROR] ${bookId}/${chapterId}/${sceneId} ${stage} failed: ${reason || 'unknown'} (job=${job_id})`);
+
+            // Для аудио-чанков дополнительно фиксируем фазу аудио-машины —
+            // иначе triggerAudioMerge будет ждать чанк, который не придёт.
+            if (parsed.kind === 'audio_chunk') {
+                try {
+                    const audioOrch = require('../services/audio-orchestrator');
+                    await audioOrch.setFailed(redis, bookId, chapterId, sceneId,
+                        `chunk_error:${parsed.chunkIndex}:${reason || 'unknown'}`);
+                } catch (orchErr) {
+                    console.warn(`[GPU ERROR] audio-orch setFailed failed: ${orchErr.message}`);
+                }
+            }
+
+            const result = await orchestrator.failStage(redis, bookId, chapterId, sceneId, stage, build_id, reason || 'worker_error');
+            res.json({ ok: true, ...result });
+        } catch (err) {
+            console.error('[GPU ERROR] Handler error:', err.message);
+            res.status(500).json({ error: err.message });
+        }
+    });
+
     log('[ROUTES] Generation routes loaded');
 };

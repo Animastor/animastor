@@ -134,6 +134,70 @@ async function completeStage(redis, bookId, chapterId, sceneId, stage, buildId) 
     }
 }
 
+// ── failStage ─────────────────────────────────────────
+// T3 консолидации: единственный способ зафиксировать «генерация упала».
+// Вызывается endpoint'ом /gpu/task/error (ошибка воркера, форвард через
+// gpu-hub, включая worker_timeout) и внутренними обработчиками сбоев.
+// Делает: asset-state → FAILED (с валидацией перехода — поздняя ошибка
+// после успешного retry не сбивает READY), событие *_FAILED в journal,
+// release lease+quota через идемпотентный markDispatchCompleted.
+// После FAILED (если redispatch=true, по умолчанию) ассет переводится в
+// PENDING — планировщик передиспатчит на следующем тике под защитой
+// circuit-breaker и retry-budget (dispatch-engine). Это зеркалит проверенный
+// путь исчерпания merge-ретраев в task-handler; сам failStage retry-политику
+// не содержит.
+async function failStage(redis, bookId, chapterId, sceneId, stage, buildId, reason = 'unknown', { redispatch = true } = {}) {
+    const state = require('../state');
+    const dispatchEngine = require('../runtime/dispatch-engine');
+    const journal = require('./event-journal');
+    const { log, warn } = require('./scene-utils');
+
+    const eventType = {
+        audio: journal.EventType.AUDIO_FAILED,
+        image: journal.EventType.IMAGE_FAILED,
+        video: journal.EventType.VIDEO_FAILED,
+    }[stage];
+    if (!eventType) {
+        throw new Error(`orchestrator.failStage: unknown stage '${stage}'`);
+    }
+
+    try {
+        const states = await state.getAssetStates(redis, bookId, chapterId, sceneId);
+        const current = states ? states[stage] : null;
+        const check = state.validateAssetTransition(current, state.AssetState.FAILED);
+
+        if (!check.valid) {
+            // Например READY→FAILED: результат уже принят (поздний/повторный
+            // сигнал ошибки) — фиксируем в журнале, состояние не трогаем.
+            log(`[FAIL-STAGE] ${bookId}/${chapterId}/${sceneId}: ${stage} ${current}→failed отклонён (${check.reason}) — ignoring late error (reason=${reason})`);
+            await journal.appendSceneEvent(redis, bookId, chapterId, sceneId,
+                journal.EventType.INVALID_STATE_CALLBACK, current,
+                { stage, reason, attempted: 'failed', ignored: true }).catch(() => {});
+            return { failed: false, reason: check.reason, current };
+        }
+
+        await state.setAssetState(redis, bookId, chapterId, sceneId, stage, state.AssetState.FAILED);
+        log(`[FAIL-STAGE] ${bookId}/${chapterId}/${sceneId}: ${stage} → FAILED (reason=${reason})`);
+        await journal.appendSceneEvent(redis, bookId, chapterId, sceneId,
+            eventType, state.AssetState.FAILED, { stage, reason, buildId }).catch(() => {});
+
+        if (redispatch) {
+            // FAILED → PENDING: планировщик передиспатчит на следующем тике.
+            await state.setAssetState(redis, bookId, chapterId, sceneId, stage, state.AssetState.PENDING);
+            log(`[FAIL-STAGE] ${bookId}/${chapterId}/${sceneId}: ${stage} → PENDING (re-dispatch queued)`);
+        }
+        await state.syncLinearState(redis, bookId, chapterId, sceneId, buildId);
+        return { failed: true, reason, redispatch };
+    } finally {
+        // Как в completeStage: единый владелец release (C1), идемпотентно (Д.1).
+        try {
+            await dispatchEngine.markDispatchCompleted(redis, bookId, chapterId, sceneId, stage);
+        } catch (dispErr) {
+            warn(`failStage: markDispatchCompleted(${stage}) failed: ${dispErr.message}`);
+        }
+    }
+}
+
 // ── markDirtyScene ────────────────────────────────────
 // M5: Direct per-scene DIRTY writer — единственный способ выставить
 // per-asset DIRTY напрямую (без bookDiff/regen). Заменяет P4/P5/P6.
@@ -220,6 +284,7 @@ module.exports = {
     planScene,
     beginStage,
     completeStage,
+    failStage,
     completeStageWithoutVideo,
     completeStageWithoutImage,
     setScenePending,

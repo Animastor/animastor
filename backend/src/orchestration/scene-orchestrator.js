@@ -8,7 +8,7 @@ const book = require('../book');
 const { log, warn, logEvent } = require('./scene-utils');
 const { handleAudioCompleted, handleImageCompleted, handleVideoCompleted } = require('./scene-callbacks');
 const { restoreSceneChunkStatus } = require('./scene-restoration');
-const { completeStage } = require('./orchestrator');
+const { completeStage, failStage } = require('./orchestrator');
 
 // ======================================================
 // SCENE ORCHESTRATOR
@@ -221,4 +221,5 @@ module.exports = {
     handleImageCompleted,
     handleVideoCompleted,
     completeStage,
+    failStage,
 };

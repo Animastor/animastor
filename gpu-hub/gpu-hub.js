@@ -28,11 +28,53 @@ const gpus = new Map()
 // ======================================================
 
 // ======================================================
+// ERROR DELIVERY → BACKEND
+// ======================================================
+// T3 консолидации: любая ошибка задачи (сбой воркера, worker_timeout)
+// доносится до backend → orchestrator.failStage. До этого backend узнавал
+// о падении только по истечении dispatch-lease (15–30 мин).
+// При недоставке — фолбэк-ключ animastor:error:{job_id} (симметрично
+// animastor:result:* для результатов), его подберёт recovery.
+
+async function notifyBackendError(job_id, build_id, reason) {
+  for (let i = 0; i < 5; i++) {
+    try {
+      const backendRes = await fetch(
+        `${BACKEND_URL}/gpu/task/error`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ job_id, build_id: build_id || null, reason: reason || "unknown" })
+        }
+      )
+      if (!backendRes.ok) throw new Error(`HTTP ${backendRes.status}`)
+      return true
+    } catch (err) {
+      console.error(`⚠️ backend error-delivery retry ${i + 1} failed`, job_id, err.message)
+      await new Promise(r => setTimeout(r, 500))
+    }
+  }
+  console.error("❌ backend error-delivery failed:", job_id)
+  try {
+    await redis.set(
+      `animastor:error:${job_id}`,
+      JSON.stringify({ job_id, build_id: build_id || null, reason: reason || "unknown", ts: Date.now() }),
+      "EX",
+      3600
+    )
+  } catch (_) {}
+  return false
+}
+
+// ======================================================
 // HEARTBEAT REFRESH (every 15s) + GPU TIMEOUT
 // ======================================================
 // Two responsibilities in one interval:
 // 1. Refresh heartbeat for running tasks so busyImage stays valid
-// 2. Clean up timed-out GPUs and requeue their tasks
+// 2. Clean up timed-out GPUs and report their tasks as failed to backend
+//    (T3: hub — тупой транспорт; retry-решение принимает backend-планировщик,
+//    а не повторный enqueue здесь. Прежний авто-requeue терял build_id и
+//    конфликтовал с dispatch-lease backend'а.)
 
 setInterval(async () => {
 
@@ -79,25 +121,19 @@ setInterval(async () => {
 
           if (data.worker === id) {
 
-            const type = data.job_type || "image"
-
-            console.log("♻️ Requeue:", job_id)
-
-            await redis.lpush(
-              `animastor:queue:${type}`,
-              JSON.stringify({
-                job_id,
-                params: data.params,
-                job_type: type,
-              assets: data.assets || null
-            })
-            )
+            console.log("💀 Worker timeout, reporting failure:", job_id)
 
             await redis.hdel("animastor:running", job_id)
+
+            // Освобождаем dedup очереди, чтобы re-dispatch backend'а не
+            // отбился как duplicate.
+            await redis.del(`animastor:job:${job_id}`).catch(() => {})
+
+            await notifyBackendError(job_id, data.build_id, "worker_timeout")
           }
 
         } catch (err) {
-          console.error("Requeue error:", err)
+          console.error("Timeout report error:", err)
         }
       }
 
@@ -353,23 +389,28 @@ app.post("/task/result", async (req, res) => {
 
 app.post("/task/error", async (req, res) => {
 
-  const { job_id } = req.body
+  const { job_id, build_id, reason } = req.body
 
-  console.log("❌ Error:", job_id)
+  console.log("❌ Error:", job_id, reason || "")
 
   // Read running info before deleting
   let runningWorker = null;
   let runningType = null;
+  let runningBuildId = null;
   try {
     const raw = await redis.hget("animastor:running", job_id);
     if (raw) {
       const info = JSON.parse(raw);
       runningWorker = info.worker;
       runningType = info.job_type;
+      runningBuildId = info.build_id;
     }
   } catch (_) {}
 
   await redis.hdel("animastor:running", job_id)
+
+  // Освобождаем dedup очереди для будущего re-dispatch.
+  await redis.del(`animastor:job:${job_id}`).catch(() => {})
 
   // Clear busy flag from worker heartbeat
   if (runningWorker && runningType) {
@@ -379,6 +420,9 @@ app.post("/task/error", async (req, res) => {
       await redis.set(hbKey, hbPayload, 'EX', 30);
     } catch (_) {}
   }
+
+  // T3: форвард ошибки в backend → orchestrator.failStage
+  await notifyBackendError(job_id, build_id || runningBuildId, reason || "worker_error")
 
   res.json({ ok: true })
 })
