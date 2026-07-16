@@ -283,7 +283,7 @@ module.exports = function(app, redis, deps) {
 
             const windowModule = require('../../runtime/scene-window');
             await windowModule.clearCancelFlag(redis, bookId);
-            await redis.set(`animastor:force-dispatch:${bookId}`, '1', 'EX', 120);
+            await redis.set(`animastor:force-dispatch:${bookId}`, '1', 'EX', config.TIMEOUTS.FORCE_DISPATCH_TTL_S);
 
             const effectiveScope = scope || 'WHOLE_BOOK';
             await genScope.setScope(redis, bookId, effectiveScope, chapter_id, scene_id);

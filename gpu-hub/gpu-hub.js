@@ -10,7 +10,11 @@ const redis = new (require("ioredis"))("redis://animastor-redis:6379")
 const {
   PORT = 5000,
   BACKEND_URL = "http://animastor-backend:3000",
-  GPU_TIMEOUT = 600000  // 10 min — image ~1-2min, audio ~30s, video (LTX) ~5-10min
+  // 10 min — image ~1-2min, audio ~30s, video (LTX) ~5-10min.
+  // ИНВАРИАНТ: GPU_TIMEOUT должен быть МЕНЬШЕ минимального dispatch-lease TTL
+  // backend'а (backend/src/config/runtime-config.js → LEASE_TTL_S, минимум 15 мин),
+  // иначе backend узнает о мёртвом воркере позже, чем hub перевыдаст job.
+  GPU_TIMEOUT = 600000
 } = process.env
 
 const app = express()

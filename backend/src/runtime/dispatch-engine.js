@@ -33,17 +33,15 @@ function error(msg) {
 // CONFIGURATION
 // ======================================================
 
-// Lease TTLs (seconds)
-// Long enough to cover real generation duration + queue wait:
-//   audio:  up to 10 min gen  → 15 min TTL
-//   image:  up to 15 min gen  → 20 min TTL
-//   video:  up to 20 min gen  → 30 min TTL
-// Leases are released immediately on completion callback — TTL only matters for failures.
+// Lease TTLs (seconds) — canonical values live in config/runtime-config.js
+// (LEASE_TTL_S, единый реестр таймаутов). Leases are released immediately on
+// completion callback — TTL only matters for failures.
 // These are NOT used for worker toggle (toggle uses heartbeat busy status only).
+const runtimeConfig = require('../config/runtime-config');
 const LEASE_TTLS = {
-    audio: 15 * 60,   // 15 minutes
-    image: 20 * 60,   // 20 minutes
-    video: 30 * 60    // 30 minutes
+    audio: runtimeConfig.LEASE_TTL_S.AUDIO,
+    image: runtimeConfig.LEASE_TTL_S.IMAGE,
+    video: runtimeConfig.LEASE_TTL_S.VIDEO,
 };
 
 // Backpressure limits (active concurrent)

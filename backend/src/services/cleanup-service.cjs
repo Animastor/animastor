@@ -169,7 +169,7 @@ module.exports = function(redis, config, { log }) {
 
     // ── Start periodic cleanup ────────────────────────
     function startCleanupInterval() {
-        setInterval(cleanupExpiredAudioSceneLocks, 60000);
+        setInterval(cleanupExpiredAudioSceneLocks, config.TIMEOUTS.CLEANUP_INTERVAL_MS);
         cleanupExpiredAudioSceneLocks(); // Run immediately on startup
     }
 

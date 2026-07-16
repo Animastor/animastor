@@ -16,6 +16,12 @@ module.exports = function(redis, config, deps) {
     const { log, pad, parseChunkId, collectScenes, findSceneRuntimeData } = utils;
     const { resolveAssetPath } = cleanupService;
     const OUTPUT_DIR = config.OUTPUT_DIR;
+    const {
+        AUDIO_MERGE_RETRY_DELAY_MS,
+        AUDIO_MERGE_RETRY_MAX,
+        AUDIO_MERGE_RETRY_DEDUP_TTL_S,
+        AUDIO_MERGE_RETRY_COUNTER_TTL_S,
+    } = config.TIMEOUTS;
 
     // ── Handle GPU task result ────────────────────────
     async function handleTaskResult(job_id, result_base64, build_id) {
@@ -228,7 +234,7 @@ module.exports = function(redis, config, deps) {
             // transitioning to WAITING_CHUNKS and proceeding with merge.
             const recoveryExpectedCount = parseInt(expected_chunk_count || orchState.expected_count || '1', 10);
             let allPresent = true;
-            for (let i = 1; i <= expectedCount; i++) {
+            for (let i = 1; i <= recoveryExpectedCount; i++) {
                 const chunkPath = path.join(buildDir, `${book_id}_${chapter_id}_${scene_id}_${pad(i)}.mp3`);
                 if (!fs.existsSync(chunkPath)) {
                     allPresent = false;
@@ -278,7 +284,7 @@ module.exports = function(redis, config, deps) {
             const retryKey = `animastor:audio-merge-retry:${book_id}:${chapter_id}:${scene_id}`;
             // Track retry count to cap at MAX_RETRIES
             const retryCountKey = `${retryKey}:count`;
-            const MAX_RETRIES = 5;
+            const MAX_RETRIES = AUDIO_MERGE_RETRY_MAX;
             const attemptStr = await redis.get(retryCountKey);
             const attempt = attemptStr ? parseInt(attemptStr, 10) : 0;
             if (attempt >= MAX_RETRIES) {
@@ -336,9 +342,9 @@ module.exports = function(redis, config, deps) {
                 return;
             }
 
-            const scheduled = await redis.set(retryKey, '1', 'NX', 'EX', 30);
+            const scheduled = await redis.set(retryKey, '1', 'NX', 'EX', AUDIO_MERGE_RETRY_DEDUP_TTL_S);
             if (scheduled) {
-                await redis.set(retryCountKey, String(attempt + 1), 'EX', 180);
+                await redis.set(retryCountKey, String(attempt + 1), 'EX', AUDIO_MERGE_RETRY_COUNTER_TTL_S);
                 setTimeout(async () => {
                     try {
                         await redis.del(retryKey).catch(() => {});
@@ -351,7 +357,7 @@ module.exports = function(redis, config, deps) {
                     } catch (e) {
                         console.warn(`⚠️ Merge retry failed for ${book_id}/${chapter_id}/${scene_id}: ${e.message}`);
                     }
-                }, 15000);
+                }, AUDIO_MERGE_RETRY_DELAY_MS);
             } else {
                 log(`⏳ Merge retry already scheduled for ${book_id}/${chapter_id}/${scene_id}`);
             }

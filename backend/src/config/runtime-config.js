@@ -114,6 +114,41 @@ const QUOTAS = {
 };
 
 // ======================================================
+// TIMEOUTS — единый реестр временных констант оркестрации
+// (см. docs/03-audit/ORCHESTRATION_CONSOLIDATION_AUDIT.md, К9)
+// ======================================================
+// Инварианты (проверяются в tests/runtime-timeouts.test.js):
+//   1. AUDIO_MERGE_RETRY_MAX * AUDIO_MERGE_RETRY_DELAY_MS < LEASE_TTL_S.AUDIO * 1000
+//      — ретраи мержа должны уложиться в срок аудио-lease
+//   2. AUDIO_MERGE_RETRY_COUNTER_TTL_S * 1000 > AUDIO_MERGE_RETRY_MAX * AUDIO_MERGE_RETRY_DELAY_MS
+//      — счётчик ретраев должен пережить всю серию ретраев
+//   3. gpu-hub GPU_TIMEOUT (env, по умолчанию 600 000 мс) < min(LEASE_TTL_S) * 1000
+//      — hub обнаруживает мёртвого воркера раньше, чем истечёт lease backend'а
+
+// Dispatch lease TTL (секунды). Покрывает реальную генерацию + ожидание в очереди:
+//   audio: до 10 мин генерации → 15 мин; image: до 15 мин → 20 мин; video: до 20 мин → 30 мин.
+// Lease снимается сразу по completion callback — TTL важен только при сбоях.
+const LEASE_TTL_S = {
+    AUDIO: 15 * 60,
+    IMAGE: 20 * 60,
+    VIDEO: 30 * 60,
+};
+
+const TIMEOUTS = {
+    // Аудио-мерж: ожидание опоздавших чанков (task-handler.cjs)
+    AUDIO_MERGE_RETRY_DELAY_MS: 15000,
+    AUDIO_MERGE_RETRY_MAX: 5,
+    AUDIO_MERGE_RETRY_DEDUP_TTL_S: 30,
+    AUDIO_MERGE_RETRY_COUNTER_TTL_S: 180,
+
+    // Периодическая чистка протухших failsafe-локов (cleanup-service.cjs)
+    CLEANUP_INTERVAL_MS: 60000,
+
+    // Флаг форсированного диспатча при регенерации (generation-routes)
+    FORCE_DISPATCH_TTL_S: 120,
+};
+
+// ======================================================
 // SCENE WINDOW (triplet generation)
 // ======================================================
 const WINDOW_SIZE = 3;
@@ -162,6 +197,8 @@ module.exports = {
     HUB_URL,
     REDIS,
     QUOTAS,
+    LEASE_TTL_S,
+    TIMEOUTS,
     STUCK_THRESHOLDS,
 
     // Scene window
