@@ -8,8 +8,17 @@ async function createSession(bookId, sourceType) {
     return result.rows[0];
 }
 
+// Whitelist of allowed column names for updateSession to prevent SQL injection.
+// Must match the agent_sessions table schema (see storage/postgres/schema.js).
+const ALLOWED_UPDATE_COLUMNS = {
+    status: true,
+    progress_msg: true,
+    knowledge_base: true,
+    window_data: true,
+};
+
 async function updateSession(sessionId, updates) {
-    const keys = Object.keys(updates);
+    const keys = Object.keys(updates).filter(k => ALLOWED_UPDATE_COLUMNS[k]);
     if (keys.length === 0) return;
     const setClauses = keys.map((key, i) => `${key} = $${i + 1}`);
     const values = keys.map(k => updates[k]);
