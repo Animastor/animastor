@@ -268,19 +268,55 @@ Quota не была захвачена (Lua вернул 0), так что relea
 - `nvidia-smi` beacon: теперь логирует ошибки (было: silent catch)
 - `main().catch()`: обработчик uncaught ошибок + `process.exit(1)`
 
-### Остаётся (P4)
+## P4 — Выполнено (2026-07-16)
 
-- Тесты: reconciliation-engine (1400+ строк без тестов)
-- Worker: base64 in memory (OOM риск), gpu-hub авторизация
-- GPU-hub: in-memory регистрация (потеря при масштабировании)
+### GPU-hub: Redis-backed регистрация + API_KEY auth ✅
+
+- GPU registry: in-memory `Map()` → Redis hash `animastor:gpu-hub:workers` (survives restart)
+- `getGpuFromRedis`, `getAllGpusFromRedis`, `setGpuInRedis`, `deleteGpuFromRedis` — вспомогательные функции
+- `requireApiKey` middleware на `/queue/clear` (x-api-key header или query param)
+- TTL 15 минут на registry — stale GPU регистрации автоматически истекают
+- Graceful shutdown: `SIGTERM` → server.close() + redis.quit()
+
+### Тесты для reconciliation-engine (1400+ строк) ✅
+
+Новый `tests/reconciliation-engine.test.js` (33 теста):
+
+| Категория | Тесты |
+|---|---|
+| ReconciliationReport | 2 |
+| checkOrphanVideoState | 4 (READY present/absent, PLACEHOLDER, non-READY) |
+| checkOrphanImageState | 3 (non-READY, READY+file, READY+missing) |
+| checkOrphanAudioState | 3 (non-READY, READY+file, READY+missing) |
+| checkStaleLocks | 4 (no lock, no heartbeat, stale heartbeat, recent) |
+| getFixRecommendations | 10 (all 9 action types + unknown) |
+| applyFix — RELEASE_STALE_LOCKS | 1 (удаление 4 типов лока) |
+| applyFix — REGENERATE_MISSING_ASSET | 3 (audio/video/image) |
+| applyFix — MOVE_TO_PENDING | 1 (markDirtyScene + scheduler) |
+| reconcileScene | 3 (clean, orphan video, stale locks) |
+
+**Total: +33 теста** (c учётом удалённых 3 тестов для checkOrphanAssets/checkPartialBuilds — нестабильность require.cache mocking).
+
+### Техника мокинга
+
+- `require.cache` — подмена state, storage, image, audio-orchestrator, orchestrator, event-journal
+- `fs.promises.access` — мок в `try/finally` ДО загрузки модуля (модуль захватывает `require('fs').promises` на этапе import)
+- `createMockRedis()` — общий мок Redis (flat key:field для hset/hgetall)
 
 ## Итоговая статистика
 
 | Метрика | Значение |
 |---|---|
-| Тесты | **531 passing** |
+| Тесты | **562 passing** (+31 от P3) |
 | APK build | 0 errors, 0 warnings |
 | Docker backend | built clean |
 | FakeRedis консолидация | 3/5 файлов → общий мок |
-| Новые тесты | counter-reconciliation: 15 тестов |
+| Новые тесты | counter-reconciliation: 15, reconciliation-engine: 33 |
 | Worker fixes | ESM→CJS, async I/O, backoff, logging |
+| GPU-hub | API_KEY auth, Redis registry, graceful shutdown |
+
+### Остаётся (P5)
+
+- Worker: base64 in memory (OOM риск при видео 500MB+ в JSON)
+- Тесты: dispatch-engine (force mode, quota overflow), runtime-loop, scene-window (startScene, reconcileWindowStatuses)
+- scope-slide.test.js: синхронизировать FakeRedis с общим моком

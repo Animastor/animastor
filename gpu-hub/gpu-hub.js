@@ -22,11 +22,57 @@ const app = express()
 app.use(cors())
 app.use(express.json({ limit: "500mb" }))
 
-const gpus = new Map()
+// ======================================================
+// API KEY AUTH
+// ======================================================
+
+const API_KEY = process.env.API_KEY || null;
+
+function requireApiKey(req, res, next) {
+  if (!API_KEY) return next(); // no key configured = open access
+  const provided = req.headers['x-api-key'] || req.query.api_key;
+  if (provided !== API_KEY) {
+    return res.status(401).json({ error: 'unauthorized' });
+  }
+  next();
+}
 
 // ======================================================
-// CLEANUP (GPU TIMEOUT + REQUEUE)
+// GPU REGISTRY (Redis-backed, survives restart)
 // ======================================================
+
+const GPU_REGISTRY_KEY = 'animastor:gpu-hub:workers';
+
+async function getGpuFromRedis(id) {
+  try {
+    const raw = await redis.hget(GPU_REGISTRY_KEY, id);
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
+
+async function getAllGpusFromRedis() {
+  try {
+    const raw = await redis.hgetall(GPU_REGISTRY_KEY);
+    if (!raw) return new Map();
+    const result = new Map();
+    for (const [id, json] of Object.entries(raw)) {
+      result.set(id, JSON.parse(json));
+    }
+    return result;
+  } catch { return new Map(); }
+}
+
+async function setGpuInRedis(id, data) {
+  try {
+    await redis.hset(GPU_REGISTRY_KEY, id, JSON.stringify(data));
+    // TTL: prune stale registrations automatically
+    await redis.expire(GPU_REGISTRY_KEY, 900); // 15 min
+  } catch {}
+}
+
+async function deleteGpuFromRedis(id) {
+  try { await redis.hdel(GPU_REGISTRY_KEY, id); } catch {}
+}
 
 // ======================================================
 // ERROR DELIVERY → BACKEND
@@ -105,8 +151,9 @@ setInterval(async () => {
     }
   } catch (_) {}
 
-  // ── GPU timeout cleanup ──
-  for (const [id, gpu] of gpus.entries()) {
+  // ── GPU timeout cleanup (Redis-backed) ──
+  const allGpus = await getAllGpusFromRedis();
+  for (const [id, gpu] of allGpus) {
 
     if (now - gpu.last_seen > GPU_TIMEOUT) {
 
@@ -138,7 +185,7 @@ setInterval(async () => {
         }
       }
 
-      gpus.delete(id)
+      await deleteGpuFromRedis(id);
     }
   }
 
@@ -152,15 +199,12 @@ app.post("/beacon", async (req, res) => {
 
   const { id, type, gpu, vram } = req.body
 
-  gpus.set(id, {
-    id,
-    type,
-    gpu,
-    vram,
-    last_seen: Date.now()
-  })
+  const data = { id, type, gpu, vram, last_seen: Date.now() };
 
-  // Also write to Redis for backend worker count panel
+  // Primary registry: Redis (survives restart, cluster-aware)
+  await setGpuInRedis(id, data);
+
+  // Also write heartbeat for backend worker count panel
   try {
     const key = `animastor:worker:heartbeat:${type}:${id}`;
     const payload = JSON.stringify({ type, worker_id: id, ts: Date.now() });
@@ -239,12 +283,13 @@ app.get("/task/next", async (req, res) => {
     return res.status(400).json({ error: "worker required" })
   }
 
-  const gpu = gpus.get(worker)
+  const gpu = await getGpuFromRedis(worker);
   if (!gpu) {
     return res.status(404).json({ error: "not registered" })
   }
 
-  gpu.last_seen = Date.now()
+  gpu.last_seen = Date.now();
+  await setGpuInRedis(worker, gpu);
 
   const queueKey = `animastor:queue:${type || "image"}`
 
@@ -441,15 +486,16 @@ app.get("/health", async (req, res) => {
   }
 
   const running = await redis.hlen("animastor:running")
+  const gpuCount = (await getAllGpusFromRedis()).size;
 
   res.json({
-    gpus: gpus.size,
+    gpus: gpuCount,
     queues,
     running
   })
 })
 
-app.delete("/queue/clear", async (req, res) => {
+app.delete("/queue/clear", requireApiKey, async (req, res) => {
   try {
     const { book_id } = req.query
     const queueKeys = [
