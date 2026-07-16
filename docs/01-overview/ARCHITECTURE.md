@@ -63,18 +63,18 @@
 - `markDirty(deps, redis, bookId, buildId, dirtyScenes, layerCfg)` — через bookDiff.markDirtyScenes (Lua-атомарный reset)
 - `markDirtyScene(redis, bookId, chapterId, sceneId, assets)` — прямой per-scene DIRTY (для recovery)
 - `planScene(redis, bookId, chapterId, sceneId)` — чистая функция, читает per-asset состояния, НЕ пишет
-- `beginStage(redis, scene, loadedBook, buildId, stage)` — dispatch + syncLinearState (GENERATING/PENDING)
-- `completeStage(redis, bookId, chapterId, sceneId, stage, buildId)` — callback + version gate + READY + release + syncLinearState
+- `beginStage(redis, scene, loadedBook, buildId, stage)` — dispatch + per-asset GENERATING/PENDING
+- `completeStage(redis, bookId, chapterId, sceneId, stage, buildId)` — callback + version gate + READY + release
 - `completeStageWithoutVideo(redis, loadedBook, bookId, chapterId, sceneId, buildId)` — video disabled
 - `completeStageWithoutImage(redis, loadedBook, bookId, chapterId, sceneId, buildId)` — image disabled
-- `setScenePending(redis, bookId, chapterId, sceneId, asset, buildId)` — PENDING + syncLinearState
+- `setScenePending(redis, bookId, chapterId, sceneId, asset, buildId)` — per-asset PENDING
 - `setSceneAllReady(redis, bookId, chapterId, sceneId, buildId)` — cache hit: все ассеты READY
 - `setScenePlaceholder(redis, bookId, chapterId, sceneId, buildId)` — audio PLACEHOLDER
 - `reconcile(redis, bookId, chapterId, sceneId)` — сверка фактов через reconciliation-engine
 
 **Версионный гейт (M5 Шаг 5):** `completeStage` проверяет `scene_assets.scene_content_version < scenes.content_version` в PG перед READY. Если версия устарела → DIRTY вместо READY. Graceful fallback при недоступности PG.
 
-> **UPD 2026-06-28:** M5 шаги 1-5 завершены. Все 8+ писателей per-asset состояния сведены к фасаду. syncLinearState — автоматический побочный эффект каждой facade-команды.
+> **UPD 2026-07-16 (T8):** syncLinearState удалён, SceneState enum удалён. Per-asset — единственный source of truth.
 
 ### 3.1 Runtime Scheduler (`backend/src/runtime/runtime-scheduler.js`)
 
@@ -125,7 +125,7 @@
 **Ответственность:** Управление окном генерации (scope-aware). Старт/стоп/слайд окна по мере завершения сцен.
 
 **Ключевые изменения:**
-- **Все записи состояния через facade (M5 Шаг 2):** `setScenePending`, `setSceneAllReady`, `setScenePlaceholder` — 7 прямых вызовов `state.setAssetState/setAssetStates/syncLinearState` заменены на `orchestrator.*`
+- **Все записи состояния через facade (M5 Шаг 2):** `setScenePending`, `setSceneAllReady`, `setScenePlaceholder` — 7 прямых вызовов `state.setAssetState/setAssetStates` заменены на `orchestrator.*` (коммит d4bda21: syncLinearState удалён)
 - **Cache advisory (Phase 3/R3.3):** `checkSceneContentCache` — только информация, решение принимает facade. Version-based staleness check.
 - **Единый источник статусов файлов:** `getSceneFilesStatus()` — четырежды используемая функция для проверки наличия файлов на диске.
 - **Version gate (Д.3/M3):** `restoreChunkStatusForScene` и `reconcileWindowStatuses` проверяют PG версию перед записью 'ready'. Stale файлы не отменяют force-regen.
@@ -334,9 +334,9 @@
 NEW → DIRTY → PENDING → GENERATING → READY | FAILED | PLACEHOLDER
 ```
 
-**Ключевое изменение (v2.1.0):** Per-asset состояния — канонический источник истины. Линейная FSM была **удалена** — её валидация переходов (SceneTransitions) блокировала параллельный диспатч. Теперь `transitionSceneState` — прямой `setSceneStateWithBuildId` без проверок.
+**Ключевое изменение (v2.1.0):** Per-asset состояния — канонический источник истины. Линейная FSM **удалена**.
 
-Линейный `SceneState` (константы: `AUDIO_PENDING`, `IMAGE_GENERATING` и т.д.) сохранён как производная проекция для backward compatibility — `deriveLinearState()` вычисляет его из per-asset состояний на лету. Другие Redis-потребители (плеер, debug-энпоинты) всё ещё читают эти ключи.
+**T8 (июль 2026):** `SceneState` enum, `syncLinearState()`, `deriveLinearState()` — удалены. `SceneState` больше не экспортируется; все state.SceneState.* константы заменены на inline-строки. Ключи `animastor:scene-state:*` больше не пишутся; существующие получают TTL 7 дней при старте бэкенда. Читатели, которым нужен linear state (legacy), используют `getSceneState()` (сохранён).
 
 ---
 
@@ -571,12 +571,13 @@ NEW → DIRTY → PENDING → GENERATING → READY | FAILED | PLACEHOLDER
          │
          ▼
 ┌───────────────────────────────────────────────────────────────────────────┐
-│                       State Layer (DUAL MODEL)                             │
-│  ┌──────────────────────┐  ┌──────────────────────────┐                    │
-│  │  Linear FSM (legacy) │  │  Per-Asset States (NEW)  │                    │
-│  │  SceneState:         │  │  AssetState:             │                    │
-│  │  NEW→AUDIO→IMAGE→    │  │  NEW→DIRTY→PENDING→     │                    │
-│  │  →VIDEO→READY        │  │  →GENERATING→READY/FAILED│                   │
+│                    State Layer (PER-ASSET — единственный source of truth)      │
+│  ┌────────────────────────────────────────────────┐                         │
+│  │  Per-Asset States (CANONICAL)                  │                         │
+│  │  AssetState: NEW→DIRTY→PENDING→GENERATING→     │                         │
+│  │              →READY/FAILED/PLACEHOLDER          │                         │
+│  │  Redis: animastor:asset-state:<scene> (HASH)    │                         │
+│  │  SceneState enum — удалён (T8, июль 2026)      │                         │
 │  └──────────────────────┘  └──────────────────────────┘                    │
 └───────────────────────────────────────────────────────────────────────────┘
          │
@@ -649,8 +650,7 @@ NEW → DIRTY → PENDING → GENERATING → READY | FAILED | PLACEHOLDER
 **Ключевые правила:**
 - Audio, Image диспатчатся **НЕЗАВИСИМО** (параллельно)
 - Video требует `image=READY` для старта (функциональная зависимость — видео собирается из IU-картинок)
-- `transitionSceneState` — теперь прямой `setSceneStateWithBuildId` без валидации
-- Линейный `SceneState` — производная проекция (`deriveLinearState()`) для backward compat
+- `transitionSceneState` — прямой `setSceneStateWithBuildId` (сохранён для legacy-писателей, только `scene-state:*` ключ)
+- `SceneState` enum, `syncLinearState`, `deriveLinearState` — **удалены** (T8, июль 2026). Per-asset — единственный source of truth.
 - **Per-asset state хранится как Redis HASH** (`animastor:asset-state:<scene>`) для атомарного HSET/HGETALL — устранён RMW race между GET+merge+SET
-- **syncLinearState** — автоматический побочный эффект каждой facade-команды (M5 Шаг 3)
 - **Version gate** — `completeStage` проверяет PG-версию перед READY: stale GPU callback → DIRTY, не READY (M5 Шаг 5)

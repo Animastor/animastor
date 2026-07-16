@@ -130,7 +130,6 @@ dispatchEngine.dispatchStage(redis, bookId, chapterId, sceneId, stage, loadedBoo
 orchestrator.beginStage() → dispatchEngine.dispatchStage()
   → scene-orchestrator.executeAudioDispatch()
     → per-asset GENERATING (выставляется)
-    → syncLinearState (auto, в beginStage)
     → audio.generateSceneAudio() → segments → gpu.send()
   → callback → task-handler → orchestrator.completeStage('audio')
     → scene-callbacks.handleAudioCompleted()
@@ -152,7 +151,7 @@ orchestrator.beginStage() → dispatchEngine.dispatchStage()
 ```
 orchestrator.beginStage() → dispatchEngine.dispatchStage()
   → scene-orchestrator.executeImageDispatch()
-    → per-asset GENERATING + syncLinearState (auto)
+    → per-asset GENERATING (выставляется)
     → Чтение dirtyUnitIds из PG (для точечной регенерации IU)
     → image.generateSceneIUImages() → build prompts → gpu.send()
   → callback → task-handler (проверка IU completion)
@@ -175,7 +174,7 @@ orchestrator.beginStage() → dispatchEngine.dispatchStage()
 ```
 orchestrator.beginStage() → dispatchEngine.dispatchStage()
   → scene-orchestrator.executeVideoDispatch()
-    → per-asset GENERATING + syncLinearState (auto)
+    → per-asset GENERATING (выставляется)
     → Проверка: image=READY? (asset states + chunk fallback)
     → video.generateVideoAnimation() → jobSpecs
     → gpu.sendUnified() для каждой группы

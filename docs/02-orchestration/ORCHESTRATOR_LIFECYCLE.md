@@ -165,20 +165,13 @@ Per-asset состояние одной сцены пишут **семь** ра�
 Плюс отдельно **линейное** состояние (`SceneState`) — производная проекция, которую пишут
 `scene-orchestrator.execute*Dispatch` (через `transitionSceneState`) и `syncLinearState`.
 
-### 5.1 Дыра: `GENERATING` не выставляется в per-asset
+### 5.1 Дыра: `GENERATING` не выставляется в per-asset (FIXED в Н.7, июнь 2026)
 
-Критичная находка по коду. Когда диспатч стартует, `executeAudioDispatch/Image/Video`
-(`scene-orchestrator.js:48,73,114`) пишут **линейное** состояние `*_GENERATING`, но
-**per-asset состояние в `GENERATING` не переводят вообще**. Per-asset остаётся PENDING/DIRTY.
-
-Это «работает» только потому, что:
-- `shouldScheduleAssets` от повторного диспатча защищает **lease** (Redis NX), а не состояние;
-- колбэки принимают завершение, если per-asset ∈ {GENERATING, PENDING, DIRTY} — то есть
-  сознательно прощают «застрявший» PENDING.
-
-То есть per-asset модель, объявленная каноном, **не проходит через состояние GENERATING**
-в боевом пути — защита от дублей держится на lease, а не на состоянии. Это делает «канон»
-неполным и объясняет, почему так легко получить повторный диспатч при сбое lease.
+> **Исправлено:** `Н.7` (коммит `f0b81de`, июнь 2026) — `executeAudioDispatch/Image/VideoDispatch`
+> теперь вызывают `setAssetState(..., 'generating')` сразу после `transitionSceneState`.
+> Per-asset проходит через GENERATING. Защита от дублей больше не висит только на lease.
+> Подтверждение: тест `FIXED §5.1 (Н.7): GENERATING IS set in per-asset after dispatch`
+> в `happy-path.test.js`.
 
 ### 5.2 Кто кого «будит» (вход в активный индекс)
 
