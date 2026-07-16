@@ -77,8 +77,9 @@ const activeLeaseRenewals = new Map();
 
 /**
  * Start lease renewal timer for dispatch.
+ * @param {Object} redis — Redis client for lease renewal operations
  */
-function startLeaseRenewal(bookId, chapterId, sceneId, stage, leaseKey, token) {
+function startLeaseRenewal(redis, bookId, chapterId, sceneId, stage, leaseKey, token) {
     const timerKey = `${bookId}:${chapterId}:${sceneId}:${stage}`;
     
     // Clear existing timer if any
@@ -90,7 +91,7 @@ function startLeaseRenewal(bookId, chapterId, sceneId, stage, leaseKey, token) {
 
     const timerId = setTimeout(async () => {
         try {
-            await renewLeaseIfOwner(leaseKey, token);
+            await renewLeaseIfOwner(redis, leaseKey, token);
         } catch (err) {
             warn(`Renewal error for ${timerKey}: ${err.message}`);
         }
@@ -98,7 +99,7 @@ function startLeaseRenewal(bookId, chapterId, sceneId, stage, leaseKey, token) {
 
     const intervalId = setInterval(async () => {
         try {
-            await renewLeaseIfOwner(leaseKey, token);
+            await renewLeaseIfOwner(redis, leaseKey, token);
         } catch (err) {
             warn(`Renewal error for ${timerKey}: ${err.message}`);
         }
@@ -152,9 +153,14 @@ function stopLeaseRenewal(bookId, chapterId, sceneId, stage) {
 /**
  * Renew lease if we are still the owner.
  * Uses Lua script for atomic compare-and-renew operation.
+ * @param {Object} redis — Redis client (must be provided by caller)
  */
-async function renewLeaseIfOwner(leaseKey, expectedToken) {
-    const redis = require('ioredis'); // Will be passed from caller in production
+async function renewLeaseIfOwner(redis, leaseKey, expectedToken) {
+    if (!redis) {
+        warn(`No Redis context for renewal: ${leaseKey}`);
+        return { renewed: false, reason: 'no_redis' };
+    }
+
     const luaScript = `
         local key = KEYS[1]
         local expected = ARGV[1]
@@ -178,14 +184,6 @@ async function renewLeaseIfOwner(leaseKey, expectedToken) {
     `;
 
     try {
-        // Get Redis from dispatch engine context
-        const dispatchEngine = require('./dispatch-engine');
-        const redis = dispatchEngine._redis;
-
-        if (!redis) {
-            warn(`No Redis context for renewal: ${leaseKey}`);
-            return { renewed: false, reason: 'no_redis' };
-        }
 
         const result = await redis.eval(
             luaScript,

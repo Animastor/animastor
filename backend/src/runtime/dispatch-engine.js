@@ -883,8 +883,8 @@ async function getQuotaStatus(redis) {
  * Start lease renewal timer for a dispatch.
  * Called after successful dispatch.
  */
-function startDispatchRenewal(bookId, chapterId, sceneId, stage, leaseKey, token) {
-    return leaseManager.startLeaseRenewal(bookId, chapterId, sceneId, stage, leaseKey, token);
+function startDispatchRenewal(redis, bookId, chapterId, sceneId, stage, leaseKey, token) {
+    return leaseManager.startLeaseRenewal(redis, bookId, chapterId, sceneId, stage, leaseKey, token);
 }
 
 /**
