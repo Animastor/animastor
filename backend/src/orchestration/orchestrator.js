@@ -278,6 +278,150 @@ async function reconcile(redis, bookId, chapterId, sceneId) {
     return reconciliationEngine.reconcileScene(redis, bookId, chapterId, sceneId);
 }
 
+// ── resetScenes ───────────────────────────────────────
+// T4 консолидации: единственная команда для reset'а сцен при регенерации.
+// Собирает ритуал из /regenerate роута (очистка iu-progress/iu-in-flight,
+// снятие lease, чистка очередей gpu-hub, markDirty) в одну команду фасада.
+//
+// Параметры:
+//   scenes — [{chapter_id, scene_id}] — список сцен для reset'а
+//   options.scope, options.chapterId, options.sceneId — для gen-scope
+//   options.cleanPngUnitIds — мапу {chapterId_sceneId: [unitId, ...]} для удаления stale PNG
+//   options.bookDiff — DI-инстанс book-diff (передаётся из route)
+//
+// Что делает:
+//   1. force-dispatch флаг
+//   2. gen-scope
+//   3. событие SCENE_RESET в journal
+//   4. удаление из active index
+//   5. снятие dispatch leases
+//   6. очистка очередей gpu-hub (HTTP DELETE /queue/clear)
+//   7. pre-delete stale PNG для указанных unit_id
+//   8. очистка iu-progress + iu-in-flight
+//   9. markDirty (через bookDiff.markDirtyScenes)
+//   10. добавление сцен обратно в active index
+//   11. событие SCENE_RESET_COMPLETED в journal
+async function resetScenes(redis, bookId, buildId, scenes, layerCfg, options = {}) {
+    // force — зарезервировано для будущего использования (например, пропуск
+    // version-проверок на PG при полном reset). Сейчас resetScenes всегда
+    // очищает всё безусловно — это корректно для регенерации.
+    const { scope = 'WHOLE_BOOK', chapterId = null, sceneId = null, bookDiff = null, cleanPngUnitIds = null } = options;
+    const { log, warn } = require('./scene-utils');
+    const journal = require('./event-journal');
+
+    if (!scenes || scenes.length === 0) {
+        log('[RESET-SCENES] No scenes to reset');
+        return { marked: 0, reset_scenes: 0 };
+    }
+
+    const scopeDisplay = `${scope}${chapterId ? '/' + chapterId : ''}${sceneId ? '/' + sceneId : ''}`;
+    log(`[RESET-SCENES] ${bookId}: ${scenes.length} scenes, scope=${scopeDisplay}`);
+
+    // 1. Force-dispatch flag (T1: TTL из TIMEOUTS)
+    const runtimeConfig = require('../config/runtime-config');
+    await redis.set(
+        `animastor:force-dispatch:${bookId}`, '1',
+        'EX', runtimeConfig.TIMEOUTS.FORCE_DISPATCH_TTL_S
+    );
+
+    // 2. Gen-scope (единственное место записи — T4 цель)
+    const genScope = require('../services/gen-scope');
+    await genScope.setScope(redis, bookId, scope, chapterId, sceneId);
+
+    // 3. Event journal — start
+    await journal.appendSceneEvent(redis, bookId, chapterId || bookId, sceneId || 'all',
+        journal.EventType.SCENE_RESET, 'INITIATED',
+        { scenes_count: scenes.length, scope, force: !!options.force }
+    ).catch(() => {});
+
+    // 4. Remove from active index
+    const scheduler = require('../runtime/runtime-scheduler');
+    await scheduler.removeScenesFromActiveIndex(redis, bookId, scenes);
+
+    // 5. Clear dispatch leases for these scenes
+    const dispatchEngine = require('../runtime/dispatch-engine');
+    await dispatchEngine.clearLeasesForScenes(redis, bookId, scenes);
+
+    // 6. Clear GPU hub queues via HTTP endpoint (gpu-hub владеет ключами)
+    try {
+        const hubUrl = `${runtimeConfig.HUB_URL}/queue/clear?book_id=${bookId}`;
+        const hubRes = await fetch(hubUrl, { method: 'DELETE' });
+        if (hubRes.ok) {
+            log(`[RESET-SCENES] GPU hub queues cleared for ${bookId}`);
+        } else {
+            warn(`[RESET-SCENES] GPU hub queue clear returned ${hubRes.status}`);
+        }
+    } catch (hubErr) {
+        warn(`[RESET-SCENES] GPU hub HTTP error: ${hubErr.message} — queues may have stale entries`);
+    }
+
+    // 7. Pre-delete stale PNGs for specific unit IDs
+    const path = require('path');
+    const fs = require('fs');
+    if (cleanPngUnitIds && typeof cleanPngUnitIds === 'object' && buildId) {
+        const buildDir = path.join(runtimeConfig.OUTPUT_DIR, buildId);
+        if (fs.existsSync(buildDir)) {
+            let deletedCount = 0;
+            for (const ds of scenes) {
+                const sceneKey = `${ds.chapter_id}_${ds.scene_id}`;
+                const unitIds = cleanPngUnitIds[sceneKey] || [];
+                for (const uid of unitIds) {
+                    const pngPath = path.join(buildDir, `${bookId}_${ds.chapter_id}_${ds.scene_id}_${uid}.png`);
+                    try { if (fs.existsSync(pngPath)) { fs.unlinkSync(pngPath); deletedCount++; } } catch (_) {}
+                    const strippedUid = uid.replace(/^iu/, '');
+                    const previewPath = path.join(buildDir, `${bookId}_${ds.chapter_id}_${ds.scene_id}_pr${strippedUid}.png`);
+                    try { if (fs.existsSync(previewPath)) { fs.unlinkSync(previewPath); } } catch (_) {}
+                }
+            }
+            if (deletedCount > 0) log(`[RESET-SCENES] Deleted ${deletedCount} stale PNG files`);
+        }
+    }
+
+    // 8. Clear iu-progress and iu-in-flight Redis keys
+    for (const ds of scenes) {
+        const progKey = `animastor:iu-progress:${bookId}:${ds.chapter_id}:${ds.scene_id}:image`;
+        try { await redis.del(progKey); } catch (_) {}
+
+        try {
+            let cursor = '0';
+            const scenePrefix = `${bookId}_${ds.chapter_id}_${ds.scene_id}_iu-`;
+            do {
+                const [nextCursor, keys] = await redis.scan(cursor, 'MATCH', `animastor:iu-in-flight:${scenePrefix}*`, 'COUNT', 50);
+                cursor = nextCursor;
+                if (keys.length > 0) await redis.del(...keys);
+            } while (cursor !== '0');
+        } catch (_) {}
+    }
+
+    // 9. markDirty (через bookDiff.markDirtyScenes — DI-инстанс из route)
+    let marked = { marked: 0 };
+    if (bookDiff && typeof bookDiff.markDirtyScenes === 'function') {
+        marked = await markDirty({ bookDiff }, redis, bookId, buildId, scenes, layerCfg);
+    } else {
+        // Fallback: прямой markDirtyScene если bookDiff не передан
+        log('[RESET-SCENES] No bookDiff provided — using markDirtyScene fallback');
+        for (const ds of scenes) {
+            for (const layer of (ds.dirty_layers || ['audio', 'image', 'video'])) {
+                await markDirtyScene(redis, bookId, ds.chapter_id, ds.scene_id, [layer]);
+            }
+        }
+    }
+
+    // 10. Re-add to active index (планировщик подберёт на следующем тике)
+    for (const ds of scenes) {
+        await scheduler.addSceneToActiveIndex(redis, bookId, ds.chapter_id, ds.scene_id);
+    }
+    log(`[RESET-SCENES] ${bookId}: ${scenes.length} scenes re-added to active index`);
+
+    // 11. Event journal — completion
+    await journal.appendSceneEvent(redis, bookId, chapterId || bookId, sceneId || 'all',
+        journal.EventType.SCENE_RESET_COMPLETED, 'DONE',
+        { scenes_count: scenes.length, marked: marked.marked }
+    ).catch(() => {});
+
+    return { ...marked, reset_scenes: scenes.length };
+}
+
 module.exports = {
     markDirty,
     markDirtyScene,
@@ -291,4 +435,5 @@ module.exports = {
     setSceneAllReady,
     setScenePlaceholder,
     reconcile,
+    resetScenes,
 };

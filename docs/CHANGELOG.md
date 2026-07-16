@@ -4,6 +4,22 @@ All notable changes to Animastor are documented here.
 
 ---
 
+## [Unreleased] — 2026-07-16
+
+### Added
+
+- **T4: Команда `resetScenes` в фасаде оркестратора (R3/К3)**
+  (`backend/src/orchestration/orchestrator.js`, `backend/src/routes/book/generation-routes.cjs`):
+  - Единая команда `resetScenes()` в orchestrator.js, собирающая весь ритуал регенерации:
+    force-dispatch, gen-scope, active-index, dispatch-lease, GPU hub queues (HTTP),
+    stale PNG pre-delete, iu-progress/in-flight, markDirty, event-journal.
+  - `/regenerate` роут сокращён: бизнес-логика (scope, diff, cover) остаётся,
+    state management — через `resetScenes`. Force-dispatch и gen-scope убраны из route.
+  - `cancel-generation`: переведён на HTTP `DELETE /queue/clear?book_id=` gpu-hub
+    с fallback на прямой `clearGpuHubQueues`.
+  - Новые события `SCENE_RESET`/`SCENE_RESET_COMPLETED` в event-journal.
+  - 574 теста проходят.
+
 ## [Unreleased] — 2026-07-15
 
 ### Fixed

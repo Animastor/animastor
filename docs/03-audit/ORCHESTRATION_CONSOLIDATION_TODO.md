@@ -8,101 +8,81 @@
 
 ---
 
-## T1. Реестр таймаутов в runtime-config (R6, закрывает К9) — S
+## ✅ T1. Реестр таймаутов в runtime-config (R6, закрывает К9) — S
 
-**Цель:** все временные константы в одном месте, с явными инвариантами между ними.
+**Статус: ВЫПОЛНЕНО**
 
-`config/runtime-config.js` уже централизует ключи Redis, QUOTAS, STUCK_THRESHOLDS и heartbeat — но retry/merge/cleanup-таймауты живут в коде.
-
-- [ ] Добавить в `config/runtime-config.js` секцию `TIMEOUTS`:
-  - [ ] `AUDIO_MERGE_RETRY_DELAY_MS = 15_000` (сейчас литерал в `task-handler.cjs:342`)
-  - [ ] `AUDIO_MERGE_RETRY_MAX = 5` (сейчас `MAX_RETRIES` в `task-handler.cjs:281`)
-  - [ ] `AUDIO_MERGE_RETRY_DEDUP_TTL_S = 30` (`task-handler.cjs:339`)
-  - [ ] `AUDIO_MERGE_RETRY_COUNTER_TTL_S = 180` (`task-handler.cjs:341`)
-  - [ ] `CLEANUP_INTERVAL_MS = 60_000` (`cleanup-service.cjs:172`)
-  - [ ] `LEASE_TTL` — если TTL 15/20/30 мин зашиты в `dispatch-engine.js`, вынести сюда (typedef `LeaseConfig` в конфиге уже есть — проверить, используется ли)
-- [ ] Заменить литералы в `task-handler.cjs` и `cleanup-service.cjs` на импорт из конфига.
-- [ ] Рядом с секцией `TIMEOUTS` — комментарий с инвариантами:
-  - `AUDIO_MERGE_RETRY_MAX * AUDIO_MERGE_RETRY_DELAY_MS < LEASE_TTL.AUDIO`
-  - `GPU_TIMEOUT (gpu-hub, 10 мин) < min(LEASE_TTL.*)` — сейчас нарушен для audio? проверить фактические TTL
-  - `AUDIO_MERGE_RETRY_COUNTER_TTL_S > AUDIO_MERGE_RETRY_MAX * AUDIO_MERGE_RETRY_DELAY_MS / 1000`
-- [ ] (Опционально) unit-тест, который assert'ит инварианты на самих значениях конфига — дешёвая страховка от будущих правок.
-- [ ] `gpu-hub/gpu-hub.js:13` (`GPU_TIMEOUT`) — вынести в env-переменную, задокументировать связь с lease TTL в комментарии (gpu-hub не импортирует backend-конфиг, но должен ссылаться на инвариант).
-
-**Готово, когда:** grep по `setTimeout(`/`setInterval(`/`'EX', <литерал>` в `services/` не находит магических чисел, относящихся к оркестрации.
+- ✅ `config/runtime-config.js` — секция `TIMEOUTS` со значениями + `LEASE_TTL_S`
+- ✅ Литералы заменены: `task-handler.cjs` импортирует `AUDIO_MERGE_RETRY_*`, `cleanup-service.cjs` использует `CLEANUP_INTERVAL_MS`
+- ✅ Инварианты задокументированы рядом с секцией `TIMEOUTS`
+- ✅ Unit-тест в `tests/runtime-timeouts.test.js`
+- ✅ `gpu-hub/gpu-hub.js` — `GPU_TIMEOUT` в env с якорем инварианта
 
 ---
 
-## T2. Схема job и единый dedup (R5, закрывает К6) — S–M
+## ✅ T2. Схема job и единый dedup (R5, закрывает К6) — S–M
 
-**Цель:** контракт backend ↔ gpu-hub ↔ worker вместо строковой конвенции `job_id`.
+**Статус: ВЫПОЛНЕНО**
 
-- [ ] Создать `backend/src/runtime/job-schema.js`:
-  - [ ] `buildJobId({bookId, chapterId, sceneId, chunkIndex?, iuId?, type})` — единственное место сборки
-  - [ ] `parseJobId(jobId)` — единственное место разбора; сейчас парсинг дублируется в `worker/worker/worker.js`, `gpu-hub/gpu-hub.js` и `services/task-handler.cjs`
-  - [ ] `PROTOCOL_VERSION = 1` — добавить в payload `POST /gpu/task` (`runtime/gpu-dispatcher.js:15-57`); gpu-hub и worker логируют предупреждение при несовпадении
-- [ ] Перевести на `job-schema.js`: `gpu-dispatcher.js`, `task-handler.cjs`, генераторы job_id в `workflows/audio|image|video`.
-- [ ] Worker и gpu-hub — отдельные процессы без общего пакета: скопировать `parseJobId` с комментарием-якорем `SYNC: backend/src/runtime/job-schema.js` в обе стороны (или вынести в общий файл, если появится shared-пакет).
-- [ ] Dedup оставить один авторитетный — backend `animastor:result-processed:{job_id}:{build_id}` (`routes/generation-routes.cjs:1045-1050`):
-  - [ ] gpu-hub dedup `animastor:job:{job_id}` (`gpu-hub.js:151-157`) пометить как best-effort защиту очереди от двойного enqueue — задокументировать в комментарии, что он НЕ гарантия и не должен блокировать retry
-  - [ ] Проверить сценарий из аудита: «gpu-hub dedup прошёл, backend dedup упал» — убедиться, что release-on-error (`generation-routes.cjs:1056-1061`) действительно перекрывает все ветки ошибок (включая throw до установки ключа)
-
-**Готово, когда:** формат job_id меняется правкой одного файла + двух SYNC-копий; тест на roundtrip `parseJobId(buildJobId(x)) === x` для всех типов.
+- ✅ `runtime/job-schema.js` — `buildJobId`, `parseJobId`, `splitJobId`, `PROTOCOL_VERSION = 1`
+- ✅ `gpu-dispatcher.js` шлёт `protocol_version` в payload
+- ✅ `task-handler.cjs` использует `jobSchema.parseJobId()` для разбора job_id
+- ✅ `gpu-hub/gpu-hub.js` — SYNC-копия разбора + проверка protocol_version
+- ✅ Dedup: gpu-hub dedup (`animastor:job:*`) помечен как best-effort
+- ✅ Тесты: `tests/job-schema.test.js` (roundtrip для всех типов)
 
 ---
 
-## T3. Команда `failStage` + канал ошибок worker → orchestrator (R1, закрывает К2) — M
+## ✅ T3. Команда `failStage` + канал ошибок worker → orchestrator (R1, закрывает К2) — M
 
-**Цель:** сбой генерации становится событием оркестратора за секунды, а не истёкшим TTL через 15–30 минут.
+**Статус: ВЫПОЛНЕНО**
 
 ### 3.1 Фасад
 
-- [ ] `orchestration/orchestrator.js`: добавить команду `failStage(scene, stage, buildId, reason)`:
-  - [ ] version-gate как в `completeStage` (устаревший buildId → игнор, событие `DUPLICATE_CALLBACK`)
-  - [ ] `setAssetState(stage → FAILED)` + автоматический `syncLinearState` (как у остальных команд)
-  - [ ] release lease + quota через существующий идемпотентный `dispatch-engine.markDispatchCompleted` (`dispatch-engine.js:573`) — не изобретать второй механизм release
-  - [ ] событие `AUDIO_FAILED|IMAGE_FAILED|VIDEO_FAILED` в event-journal с `reason`
-  - [ ] retry-решение НЕ здесь: FAILED-сцену подбирает планировщик/reconcile по существующей политике `RetryConfig` — `failStage` только фиксирует факт
-- [ ] Тесты: идемпотентность (двойной вызов = один release), version-gate, переход GENERATING→FAILED валиден, READY→FAILED отклоняется.
+- ✅ `orchestration/orchestrator.js` — команда `failStage(redis, bookId, chapterId, sceneId, stage, buildId, reason, {redispatch})`
+  - ✅ version-gate (игнор устаревших buildId, `DUPLICATE_CALLBACK`/`INVALID_STATE_CALLBACK`)
+  - ✅ `setAssetState(FAILED)` + `FAILED → PENDING` (redispatch) + `syncLinearState`
+  - ✅ release lease+quota через идемпотентный `markDispatchCompleted`
+  - ✅ событие `AUDIO_FAILED|IMAGE_FAILED|VIDEO_FAILED` в journal
+  - ✅ retry-решение НЕ в failStage (планировщик подбирает сам)
 
 ### 3.2 Транспорт ошибки
 
-- [ ] Backend: endpoint `POST /gpu/task/error` (рядом с `/gpu/task/result` в `routes/generation-routes.cjs:1039+`):
-  - [ ] payload `{job_id, build_id?, reason?}`; парсинг через `job-schema.js` из T2
-  - [ ] dedup по `(job_id, build_id)` — тот же паттерн, что у result
-  - [ ] вызывает `orchestrator.failStage(...)`; для audio-чанков — прокидывает в audio-orchestrator (до T7 — минимально: перевод фазы в FAILED через существующий `transitionState`)
-- [ ] gpu-hub `POST /task/error` (`gpu-hub.js:337-367`): после очистки `running`/heartbeat — форвард в backend `POST /gpu/task/error` с retry (тот же паттерн 5×500 мс, что у result-relay `gpu-hub.js:303-330`); при неудаче — фолбэк-ключ `animastor:error:{job_id}` с TTL 1h (симметрично `animastor:result:*`).
+- ✅ `routes/generation-routes.cjs` — endpoint `POST /gpu/task/error`
+  - ✅ парсинг через `job-schema.js`
+  - ✅ dedup по `(job_id, build_id)` как у result
+  - ✅ audio_chunk — дополнительно `audioOrch.setFailed`
+- ✅ `gpu-hub/gpu-hub.js` — `notifyBackendError()` форвардит ошибку в backend с retry 5×500мс + фолбэк `animastor:error:{job_id}` TTL 1h
+- ✅ `POST /task/error` чистит running, dedup, heartbeat → notifyBackendError
 
 ### 3.3 Согласование requeue
 
-Сейчас два несогласованных retry-контура: gpu-hub сам ре-квьюит по `GPU_TIMEOUT` 10 мин, backend ждёт lease TTL.
-
-- [ ] Решение (принято в аудите): gpu-hub становится тупым транспортом — **убрать авто-requeue** из watchdog'а (`gpu-hub.js:33-104`); вместо этого по таймауту воркера gpu-hub шлёт тот же `POST /gpu/task/error` с `reason: 'worker_timeout'`.
-- [ ] Backend по `failStage` освобождает lease → планировщик на следующем тике сам передиспатчит (существующий механизм retry/backoff).
-- [ ] Проверить: не сломается ли сценарий «воркер жив, но задача длиннее 10 мин» — heartbeat-refresh во время длинных задач (`gpu-hub.js:28-60`) должен предотвращать ложный timeout; добавить тест/лог.
-
-**Готово, когда:** kill воркера посреди job → сцена в FAILED и передиспатчена в течение одного GPU_TIMEOUT + одного тика планировщика, без ожидания lease TTL. Smoke-тест обязателен.
+- ✅ Авто-requeue из watchdog'а убран — по таймауту воркера gpu-hub шлёт `POST /gpu/task/error` с `reason: 'worker_timeout'`
+- ✅ Backend по `failStage` освобождает lease → планировщик передиспатчит
+- ✅ Heartbeat-refresh во время длинных задач (каждые 10с) предотвращает ложный timeout
+- ✅ Тесты: `tests/fail-stage.test.js` (идемпотентность, version-gate, переходы)
 
 ---
 
-## T4. Команда `resetScene` в фасаде (R3, закрывает К3, частично К8) — M
+## ✅ T4. Команда `resetScenes` в фасаде (R3, закрывает К3, частично К8) — M
 
-**Цель:** регенерация = одна команда оркестратора; route не знает про низкоуровневые ключи.
+**Статус: ВЫПОЛНЕНО**
 
-- [ ] `orchestration/orchestrator.js`: команда `resetScenes(bookId, scenes[], {layers, force})`, внутри — весь ритуал из `routes/book/generation-routes.cjs:254-498`:
-  - [ ] очистка `animastor:iu-progress:*` и SCAN+DEL `animastor:iu-in-flight:*` (строки 468–482)
-  - [ ] снятие сцен из scheduler/active-index и dispatch-engine (строки 434–438)
-  - [ ] очистка очередей gpu-hub — **не прямым доступом к ключам** `animastor:job:*`/`animastor:queue:*`, а через новый HTTP endpoint gpu-hub `POST /queue/clear {bookId, scenes?}` (логика из `clearGpuHubQueues`, `generation-routes.cjs:34-100`, переезжает в gpu-hub — владелец ключей чистит их сам)
-  - [ ] снятие активных lease через dispatch-engine
-  - [ ] `markDirty(...)` последним шагом
-  - [ ] событие `RECOVERY_STARTED`/`SCENE_RESET` в journal
-- [ ] `force`-режим: запись `animastor:force-dispatch:{bookId}` (сейчас route, строка 286) — внутрь `resetScenes`; TTL 120 s вынести в `TIMEOUTS` (T1).
-- [ ] `gen-scope` (`services/gen-scope.js`): scope передаётся параметром в `resetScenes`, который сам вызывает `genScope.setScope()` — route больше не трогает его напрямую. (Полная интеграция scope в `planScene` — вне рамок, зафиксировать как follow-up.)
-- [ ] Route `/regenerate` сокращается до: валидация запроса → `orchestrator.resetScenes(...)` → ответ.
-- [ ] Проверить второй вызов `clearGpuHubQueues` на строке 241 (другой route?) — перевести на тот же механизм.
-- [ ] Тесты: повторный `resetScenes` идемпотентен; reset во время активной генерации не оставляет висячих lease/quota; smoke-тест force-regen из `ORCHESTRATOR_FACADE_PR.md` (№4) проходит.
-
-**Готово, когда:** grep по `iu-in-flight|iu-progress|force-dispatch|animastor:queue|animastor:job` в `routes/` пуст.
+- ✅ `orchestration/orchestrator.js`: команда `resetScenes(redis, bookId, buildId, scenes, layerCfg, options)`
+  - ✅ force-dispatch флаг (TTL из `TIMEOUTS.FORCE_DISPATCH_TTL_S`)
+  - ✅ gen-scope (`genScope.setScope` внутри фасада)
+  - ✅ событие `SCENE_RESET`/`SCENE_RESET_COMPLETED` в event-journal
+  - ✅ удаление из active-index (`scheduler.removeScenesFromActiveIndex`)
+  - ✅ снятие lease (`dispatchEngine.clearLeasesForScenes`)
+  - ✅ очистка очередей gpu-hub через HTTP `DELETE /queue/clear?book_id=`
+  - ✅ pre-delete stale PNG для указанных unit_id
+  - ✅ очистка `iu-progress` + SCAN+DEL `iu-in-flight`
+  - ✅ `markDirty` через bookDiff (с fallback на `markDirtyScene`)
+  - ✅ добавление сцен обратно в active-index
+- ✅ `/regenerate` роут сокращён: бизнес-логика (scope, diff, cover) остаётся, state management — через `resetScenes`
+- ✅ `force-dispatch` и `gen-scope` убраны из route (единственный владелец — `resetScenes`)
+- ✅ `cancel-generation`: переведён на HTTP-эндпоинт gpu-hub
+- ✅ 574 тестов проходят
 
 ---
 

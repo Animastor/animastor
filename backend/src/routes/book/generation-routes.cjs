@@ -12,7 +12,7 @@ module.exports = function(app, redis, deps) {
     const {
         config, state, audio, image, video, book, orchestrator, storage,
         txtImporter, lazyBook, genSessionRepo, bookSourceRepo,
-        placeholderAudio, layerConfig, genScope, activeScenes,
+        placeholderAudio, layerConfig, activeScenes,
         utils, saveChunk, getChunk, getAllChunks, getBookWindowStatus,
         detectAvailableMode, recoverChunksFromDisk, recoverAllBooksFromDisk,
         cleanupService, bookDiff, taskHandler, windowGenerator,
@@ -237,8 +237,20 @@ module.exports = function(app, redis, deps) {
             const dispatchEngine = require('../../runtime/dispatch-engine');
             await dispatchEngine.clearAllLeasesForBook(redis, bookId);
 
-            // Also clear GPU hub stale jobs so they don't interfere with future generation
-            await clearGpuHubQueues(redis, bookId);
+            // Also clear GPU hub stale jobs via HTTP endpoint (T4: владелец ключей — gpu-hub)
+            try {
+                const hubUrl = `${config.HUB_URL}/queue/clear?book_id=${bookId}`;
+                const hubRes = await fetch(hubUrl, { method: 'DELETE' });
+                if (hubRes.ok) {
+                    log(`[CANCEL-GENERATION] GPU hub queues cleared via HTTP for ${bookId}`);
+                } else {
+                    log(`[CANCEL-GENERATION] GPU hub queue clear returned ${hubRes.status} — falling back to direct`);
+                    await clearGpuHubQueues(redis, bookId);
+                }
+            } catch (hubErr) {
+                log(`[CANCEL-GENERATION] GPU hub HTTP error: ${hubErr.message} — falling back to direct`);
+                await clearGpuHubQueues(redis, bookId);
+            }
 
             log(`[CANCEL-GENERATION] ${bookId}: generation cancelled, counters + leases reset`);
             res.json({ ok: true, book_id: bookId });
@@ -283,10 +295,10 @@ module.exports = function(app, redis, deps) {
 
             const windowModule = require('../../runtime/scene-window');
             await windowModule.clearCancelFlag(redis, bookId);
-            await redis.set(`animastor:force-dispatch:${bookId}`, '1', 'EX', config.TIMEOUTS.FORCE_DISPATCH_TTL_S);
+            // Note: force-dispatch и gen-scope устанавливаются внутри
+            // orchestrator.resetScenes() — не дублировать здесь (T4).
 
             const effectiveScope = scope || 'WHOLE_BOOK';
-            await genScope.setScope(redis, bookId, effectiveScope, chapter_id, scene_id);
 
             const layerCfg = profile
                 ? await bookDiff.applyProfileToLayerConfig(redis, bookId, profile)
@@ -430,59 +442,27 @@ module.exports = function(app, redis, deps) {
                 return resetAudio || resetImage || resetVideo;
             });
 
-            // ── Remove dirty scenes from active index and clear their leases ──
-            // Scene-specific, so other scenes in the same book continue generating.
-            const scheduler = require('../../runtime/runtime-scheduler');
-            await scheduler.removeScenesFromActiveIndex(redis, bookId, filteredDirty);
-            const dispatchEngine = require('../../runtime/dispatch-engine');
-            await dispatchEngine.clearLeasesForScenes(redis, bookId, filteredDirty);
-
-            // ── Clear GPU hub stale jobs for dirty scenes only ──
-            // Must run AFTER filteredDirty is computed so we only kill jobs for
-            // the specific scenes being regenerated, not other scenes in the same
-            // book that may be generating audio/images in parallel.
-            await clearGpuHubQueues(redis, bookId, filteredDirty);
-
-            // Pre-delete stale PNGs
+            // ── State management через единую команду фасада ──
+            // T4 консолидации: resetScenes заменяет ручной ритуал очистки
+            // force-dispatch, gen-scope, active index, lease, GPU queues,
+            // iu-progress/in-flight, markDirty, re-add to active index.
+            // Собираем мапу unit_id для pre-delete stale PNG.
+            const cleanPngUnitIds = {};
             for (const ds of filteredDirty) {
                 const unitIds = ds.changes?.units?.unit_ids;
                 if (unitIds && Array.isArray(unitIds) && unitIds.length > 0) {
-                    const buildDir = path.join(config.OUTPUT_DIR, buildId);
-                    if (fs.existsSync(buildDir)) {
-                        for (const uid of unitIds) {
-                            const pngPath = path.join(buildDir, `${bookId}_${ds.chapter_id}_${ds.scene_id}_${uid}.png`);
-                            try {
-                                if (fs.existsSync(pngPath)) { fs.unlinkSync(pngPath); log(`[REGENERATE-PRE-DELETE] Deleted stale PNG: ${pngPath}`); }
-                            } catch (delErr) { console.warn(`[REGENERATE-PRE-DELETE] Failed to delete ${pngPath}: ${delErr.message}`); }
-                            const strippedUid = uid.replace(/^iu/, '');
-                            const previewPath = path.join(buildDir, `${bookId}_${ds.chapter_id}_${ds.scene_id}_pr${strippedUid}.png`);
-                            try {
-                                if (fs.existsSync(previewPath)) { fs.unlinkSync(previewPath); log(`[REGENERATE-PRE-DELETE] Deleted stale preview: ${previewPath}`); }
-                            } catch (delErr) { console.warn(`[REGENERATE-PRE-DELETE] Failed to delete ${previewPath}: ${delErr.message}`); }
-                        }
-                    }
+                    cleanPngUnitIds[`${ds.chapter_id}_${ds.scene_id}`] = unitIds;
                 }
             }
 
-            // Reset IU progress and in-flight markers
-            for (const ds of filteredDirty) {
-                const progKey = `animastor:iu-progress:${bookId}:${ds.chapter_id}:${ds.scene_id}:image`;
-                try { await redis.del(progKey); } catch (_) {}
-            }
-            for (const ds of filteredDirty) {
-                try {
-                    const scenePrefix = `${bookId}_${ds.chapter_id}_${ds.scene_id}_iu-`;
-                    let cursor = '0';
-                    do {
-                        const [nextCursor, keys] = await redis.scan(cursor, 'MATCH', `animastor:iu-in-flight:${scenePrefix}*`, 'COUNT', 50);
-                        cursor = nextCursor;
-                        if (keys.length > 0) { await redis.del(...keys); log(`[REGENERATE-IU-IN-FLIGHT-CLEAR] ${bookId}/${ds.chapter_id}/${ds.scene_id}: cleared ${keys.length} markers`); }
-                    } while (cursor !== '0');
-                } catch (e) { console.warn(`[REGENERATE-IU-IN-FLIGHT-CLEAR] Failed for ${bookId}/${ds.chapter_id}/${ds.scene_id}: ${e.message}`); }
-            }
-
             const { orchestrator: orch } = require('../../orchestration');
-            const marked = await orch.markDirty({ bookDiff }, redis, bookId, buildId, filteredDirty, layerCfg);
+            const marked = await orch.resetScenes(redis, bookId, buildId, filteredDirty, layerCfg, {
+                scope: effectiveScope,
+                chapterId: chapter_id || null,
+                sceneId: scene_id || null,
+                bookDiff,
+                cleanPngUnitIds: Object.keys(cleanPngUnitIds).length > 0 ? cleanPngUnitIds : null,
+            });
 
             try {
                 await storage.bookSync.reconcileFromDiff(bookId, filteredDirty, loadedBook);
@@ -508,10 +488,8 @@ module.exports = function(app, redis, deps) {
                 log(`[REGENERATE] ${bookId}: restored chunk metadata for ${restoredCount}/${filteredDirty.length} scenes with existing content`);
             }
 
-            for (const ds of filteredDirty) {
-                await scheduler.addSceneToActiveIndex(redis, bookId, ds.chapter_id, ds.scene_id);
-            }
-            log(`[REGENERATE] ${bookId}: added ${filteredDirty.length} scenes to active index for scheduling`);
+            // Note: addSceneToActiveIndex выполняется внутри orchestrator.resetScenes() —
+            // не дублировать, чтобы не добавить сцены дважды.
 
             res.json({ book_id: bookId, scope: effectiveScope, dirty_scenes: filteredDirty, marked: marked.marked, cover_needs_generation: coverNeedsGeneration });
         } catch (err) {
