@@ -4,6 +4,7 @@ import android.util.Log
 import com.example.animastor.repository.Repository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
@@ -76,16 +77,21 @@ class WindowTriggerManager(
         val idx = pos.unitIndex
         if (idx < 0) return
 
-        // ── Throttle: don't call the API more than once per interval ──
-        val now = System.currentTimeMillis()
-        if (now - lastApiCallTime < THROTTLE_MS) return
-
         // Skip if position hasn't changed since last check
         if (pos.chapterId == lastChapterId && pos.sceneId == lastSceneId && idx == lastUnitIndex) return
+
+        // ── Throttle: at most one API call per interval.  Wait instead of
+        // dropping: the position flow only emits on change, so a dropped
+        // position would never be re-delivered and its trigger would be lost
+        // (dedup above would then suppress it forever).  collectLatest cancels
+        // this delay if a newer position arrives.
+        val wait = THROTTLE_MS - (System.currentTimeMillis() - lastApiCallTime)
+        if (wait > 0) delay(wait)
+
         lastChapterId = pos.chapterId
         lastSceneId = pos.sceneId
         lastUnitIndex = idx
-        lastApiCallTime = now
+        lastApiCallTime = System.currentTimeMillis()
 
         // Delegate to server — it decides based on content tail, last-3, cooldown, dedup
         try {

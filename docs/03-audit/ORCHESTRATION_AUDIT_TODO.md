@@ -215,6 +215,23 @@ Quota не была захвачена (Lua вернул 0), так что relea
 
 Тесты: **518 passing** после всех правок.
 
+## Фронтенд: SSE и TriggerWindow (2026-07-16)
+
+### ProgressStream.kt — защита от stale callbacks
+- **Epoch-механизм:** `epoch++` при `start()`/`cancel()`, коллбэки проверяют `epoch != myEpoch` → stale-сессии игнорируются
+- **retryCount:** сброс перенесён из `onOpen` в `onEvent` — сервер не зацикливает reconnect на connect→close
+- **`@Volatile`:** добавлен к `epoch` и `isActive` (OkHttp callback thread vs coroutine scope)
+- **`reconnectJob?.cancel()`:** в `scheduleReconnect()` — защита от двойного reconnect при последовательных `onFailure`
+
+### WindowTriggerManager.kt — throttle delay вместо drop
+- **Deduplication:** проверка позиции перед throttle
+- **`collectLatest` + `delay`:** позиция не теряется — `collectLatest` отменяет pending delay при новой эмиссии
+
+## Сборка (2026-07-16)
+- APK: **собран без ошибок и ворнингов** (39 tasks, 2m 19s)
+- Docker backend: **animastor-backend:latest собран без ошибок**
+- Тесты: **518 passing**
+
 ### Остаётся (P3, без изменений)
 
 - Тесты: reconciliation-engine (1400+ строк без тестов), counter-reconciliation (Б10 не был бы пропущен)

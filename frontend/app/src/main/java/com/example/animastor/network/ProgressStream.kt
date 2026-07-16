@@ -90,10 +90,21 @@ class ProgressStream(
     private val scope: CoroutineScope
 ) {
     private var eventSource: EventSource? = null
-    private var isActive = false
+    @Volatile private var isActive = false
     private var retryCount = 0
     private var reconnectJob: Job? = null
     private var currentBookId: String = ""
+
+    /**
+     * Incremented on every start()/cancel(). Callbacks capture the epoch at
+     * connect time and become no-ops if a newer session has started — otherwise
+     * a stale onFailure/onClosed from the previous book could schedule a
+     * reconnect that clobbers [reconnectJob] and leaks.
+     *
+     * Volatile because it's written on the caller's thread (cancel/start)
+     * and read on OkHttp's callback thread (onEvent/onFailure/onClosed).
+     */
+    @Volatile private var epoch = 0
 
     private val gson: Gson = RetrofitClient.gson
 
@@ -118,6 +129,7 @@ class ProgressStream(
 
     /** Cancel the stream and release resources.  Safe to call multiple times. */
     fun cancel() {
+        epoch++
         isActive = false
         reconnectJob?.cancel()
         eventSource?.cancel()
@@ -129,6 +141,7 @@ class ProgressStream(
     private fun connect() {
         val bookId = currentBookId
         if (bookId.isBlank() || !isActive) return
+        val myEpoch = epoch
 
         val url = "${RetrofitClient.baseUrl.trimEnd('/')}/api/v1/book/$bookId/progress-stream"
         val request = Request.Builder()
@@ -141,7 +154,10 @@ class ProgressStream(
 
             override fun onOpen(eventSource: EventSource, response: Response) {
                 Log.i("ProgressStream", "SSE connected for book $bookId")
-                retryCount = 0
+                // NOTE: retryCount is deliberately NOT reset here.  A server (or
+                // proxy) that accepts the connection and immediately closes it
+                // would otherwise loop connect→reset→close at the minimum delay
+                // forever.  The counter resets on the first received event instead.
             }
 
             override fun onEvent(
@@ -150,7 +166,9 @@ class ProgressStream(
                 type: String?,
                 data: String
             ) {
-                if (!isActive) return
+                if (!isActive || epoch != myEpoch) return
+                // The stream has proven useful — re-arm the backoff
+                retryCount = 0
                 // Skip heartbeat comments (they are empty data lines)
                 if (data.isBlank()) return
 
@@ -170,35 +188,31 @@ class ProgressStream(
                 t: Throwable?,
                 response: Response?
             ) {
-                if (!isActive) return
+                if (!isActive || epoch != myEpoch) return
                 Log.w("ProgressStream", "SSE disconnected for book $bookId (retry=$retryCount): ${t?.message}")
-
-                // Exponential backoff: 1s → 2s → 4s → 8s → 15s cap
-                val delayMs = (1_000L * (1L shl minOf(retryCount, 4))).coerceAtMost(15_000L)
-                retryCount++
-
-                reconnectJob = scope.launch {
-                    delay(delayMs)
-                    if (isActive) {
-                        connect()
-                    }
-                }
+                scheduleReconnect(myEpoch)
             }
 
             override fun onClosed(eventSource: EventSource) {
                 Log.i("ProgressStream", "SSE closed for book $bookId")
-                if (isActive) {
+                if (isActive && epoch == myEpoch) {
                     // Server closed — reconnect with backoff
-                    val delayMs = (1_000L * (1L shl minOf(retryCount, 4))).coerceAtMost(15_000L)
-                    retryCount++
-                    reconnectJob = scope.launch {
-                        delay(delayMs)
-                        if (isActive) {
-                            connect()
-                        }
-                    }
+                    scheduleReconnect(myEpoch)
                 }
             }
         })
+    }
+
+    /** Exponential backoff: 1s → 2s → 4s → 8s → 15s cap. */
+    private fun scheduleReconnect(myEpoch: Int) {
+        val delayMs = (1_000L * (1L shl minOf(retryCount, 4))).coerceAtMost(15_000L)
+        retryCount++
+        reconnectJob?.cancel()
+        reconnectJob = scope.launch {
+            delay(delayMs)
+            if (isActive && epoch == myEpoch) {
+                connect()
+            }
+        }
     }
 }
