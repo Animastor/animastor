@@ -50,93 +50,54 @@
 
 ## 🟡 P1 — Высокая важность
 
-### Б5. `releaseQuota` на backpressure path (дрифт счётчика)
+### Б5. `releaseQuota` на backpressure path (дрифт счётчика) ✅
 
-**Файл:** `backend/src/runtime/dispatch-engine.js:~465-467`
+**Файл:** `backend/src/runtime/dispatch-engine.js:~456`
+**Коммит:** `5dcb091`
 
-**Описание:** Когда Lua-скрипт возвращает 0 (quota exceeded), `acquireQuota` НЕ инкрементирует счётчик, но `releaseQuota` на этом пути всё равно вызывается:
-```js
-if (!quota.acquired) {
-    await releaseQuota(redis, stage);  // Декремент без инкремента!
-    ...
-}
-```
-
-**Результат:** Дрифт активных счётчиков вниз.
-
-**Фикс:** Убрать `releaseQuota` на этом пути:
-```js
-if (!quota.acquired) {
-    // НЕ вызывать releaseQuota — квота не была захвачена
-    return { dispatched: false, reason: 'backpressure', ... };
-}
-```
+**Фикс:** Убран `await releaseQuota(redis, stage);` из блока `if (!quota.acquired)`.  
+Quota не была захвачена (Lua вернул 0), так что releaseQuota декрементировала бы счётчик ниже нуля.
 
 ---
 
-### Б7. `redis.keys()` вместо SCAN
+### Б7. `redis.keys()` вместо SCAN ✅
 
 **Файлы:**
 - `backend/src/runtime/scene-window.js:533`
 - `backend/src/runtime/worker-health.js:35,71`
+**Коммит:** `5dcb091`
 
-**Описание:** `redis.keys()` блокирует весь Redis на время выполнения. На продакшене с тысячами ключей — остановка всех операций на секунды.
-
-**Фикс:** Заменить на `redis.scan()` с итерацией.
+**Фикс:** Во всех 3 местах заменён на `redis.scan()` с do-while и COUNT 200.
 
 ---
 
-### Б9. `fairness-engine.isStarving` создаёт новый Redis клиент
+### Б9. `fairness-engine.isStarving` создаёт новый Redis клиент ✅
 
 **Файл:** `backend/src/runtime/fairness-engine.js:~339`
+**Коммит:** `5dcb091`
 
-**Описание:** Внутри `getAssetStates` используется новый Redis вместо переданного:
-```js
-const states = await assetStates.getAssetStates(
-    require('ioredis').default || redis, ...
-);
-```
-`require('ioredis').default` создаёт **новый** Redis клиент. На новом клиенте нет данных.
-
-**Результат:** Функция всегда возвращает `{ starving: false, reason: 'no_state' }`.
-
-**Фикс:** Убрать `require('ioredis').default` — использовать переданный `redis`:
-```js
-const states = await assetStates.getAssetStates(redis, ...);
-```
+**Фикс:** `require('ioredis').default || redis` → просто `redis`.
 
 ---
 
 ## 🟢 P2 — Средняя важность
 
-### Б6. `refillBudgets` с wildcard `*`
+### Б6. `refillBudgets` с wildcard `*` ✅
 
 **Файл:** `backend/src/runtime/retry-budget-manager.js:432-436`
+**Коммит:** `fe9e02f`
 
-**Описание:** Scene stage budgets используют wildcard `*` для bookId/chapterId/sceneId:
-```js
-const pattern = `${getSceneStageBudgetKey('*', '*', '*', stage)}`;
-const key = getSceneStageBudgetKey('*', '*', '*', stage);
-```
-Wildcard `*` не совпадает с реальными ключами (которые содержат конкретные bookId/chapterId/sceneId).  
-**Результат:** Scene stage budgets никогда не refill-ятся — утечка ключей без TTL.
-
-**Фикс:** Либо SCAN по паттерну, либо отказаться от per-scene budget refill (перейти на глобальные лимиты).
+**Фикс:** Удалён мёртвый цикл scene budget refill с `getSceneStageBudgetKey('*','*','*',stage)` — wildcard не совпадал с реальными ключами. Scene budgets истекают по TTL (300s). `sceneBudgetsRefilled: 0`.
 
 ---
 
-### Б8. `circuit-breaker.recordSuccess` переключает OPEN → HALF_OPEN
+### Б8. `circuit-breaker.recordSuccess` переключает OPEN → HALF_OPEN ✅
 
 **Файл:** `backend/src/runtime/circuit-breaker.js:199-208`
+**Коммит:** `fe9e02f`
 
-**Описание:** `recordSuccess` при OPEN переключает в HALF_OPEN. По семантике circuit breaker, OPEN → HALF_OPEN должен делать только таймер `tryRecover`:
-```js
-if (currentState === CircuitState.OPEN) {
-    // recordSuccess — не должен это делать!
-    await setCircuitState(redis, service, CircuitState.HALF_OPEN);
-```
-
-**Фиск:** Либо а) убрать этот переход (оставить только `tryRecover`), либо б) если это осознанное решение — **задокументировать** поведение как особенность.
+**Фикс:** `recordSuccess` при OPEN возвращает `{ success: false, state: OPEN, reason: 'circuit_open' }`.  
+Переход OPEN→HALF_OPEN делает только `tryRecover` (с проверкой recoveryTimeout).
 
 ---
 
@@ -188,21 +149,27 @@ if (currentState === CircuitState.OPEN) {
 
 ---
 
-## Рекомендуемый порядок исправления
+## Статус исправлений
 
-```
-P0 → Б1 (ReferenceError)    : сейчас, падает прод
-P0 → Б2 (sceneState)         : сейчас, падает прод
-P0 → Б3 (renewLease)         : сейчас, leases никогда не продлеваются
-P0 → Б4 (SQL-инъекция)       : сейчас, security дыра
-P1 → Б5 (quota drift)        : счётчики дрифтуют
-P1 → Б7 (keys→SCAN)          : блокировки Redis
-P1 → Б9 (ioredis.default)    : isStarving всегда false
-P2 → Б6 (retry budget)       : утечка ключей
-P2 → Б8 (circuit OPEN)       : неконсистентность
-P3 → Тесты                    : reconciliation-engine в первую очередь
-P3 → Cleanup / GPU-hub       : когда будет время
-```
+| Блок | Приоритет | Статус | Коммит |
+|---|---|---|---|
+| Б1 ReferenceError в applyFix | 🔴 P0 | ✅ | `8d0a079` |
+| Б2 sceneState undefined | 🔴 P0 | ✅ | `8d0a079` |
+| Б3 lease не продлевается | 🔴 P0 | ✅ | `af017f2` |
+| Б4 SQL-инъекция | 🔴 P0 | ✅ | `9457af3` |
+| Б5 releaseQuota на backpressure | 🟡 P1 | ✅ | `5dcb091` |
+| Б7 redis.keys() → SCAN | 🟡 P1 | ✅ | `5dcb091` |
+| Б9 isStarving создаёт новый Redis | 🟡 P1 | ✅ | `5dcb091` |
+| Б6 refillBudgets wildcard `*` | 🟢 P2 | ✅ | `fe9e02f` |
+| Б8 recordSuccess OPEN→HALF_OPEN | 🟢 P2 | ✅ | `fe9e02f` |
+
+## Остаётся (P3 — Cleanup, не баги)
+
+- P3 → Тесты: reconciliation-engine (1468 строк без тестов)
+- P3 → Консолидация FakeRedis (6+ копий в тестовых файлах)
+- P3 → Coverage reporting (nyc/c8)
+- P3 → Удалить мёртвый код (coreference-cleanup.test.js, retention-manager.js, runtime-persistence.js)
+- P3 → GPU-hub / Worker проблемы (hardcoded URL, OOM, ESM/CJS mix, и т.д.)
 
 ## Не вошло (уже исправлено T1–T8)
 
