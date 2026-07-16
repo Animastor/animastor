@@ -168,9 +168,12 @@ module.exports = function(redis, config, { log }) {
     }
 
     // ── Start periodic cleanup ────────────────────────
+    // T6: cleanupExpiredAudioSceneLocks moved to reconciliation-engine.reconcileCycle Phase B.
+    // startCleanupInterval kept for backward compat, but does nothing —
+    // the reconcile cycle handles periodic cleanup.
+    // @deprecated Use reconciliationEngine.reconcileCycle() instead.
     function startCleanupInterval() {
-        setInterval(cleanupExpiredAudioSceneLocks, config.TIMEOUTS.CLEANUP_INTERVAL_MS);
-        cleanupExpiredAudioSceneLocks(); // Run immediately on startup
+        log('[CLEANUP] Periodic cleanup migrated to reconcileCycle (T6) — interval skipped');
     }
 
     // ── Asset path resolution ─────────────────────────

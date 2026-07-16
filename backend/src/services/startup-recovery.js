@@ -29,98 +29,40 @@ function warn(msg) { console.warn(`${logPrefix} ⚠️  ${msg}`); }
 
 /**
  * Run all startup recovery steps.
- * Called once when the backend starts.
+ * T6: Delegates to reconciliation-engine.reconcileCycle with startup:true.
+ * Kept for backward compatibility — new code should call reconcileCycle directly.
  *
  * @param {Object} redis - Redis client
- * @param {Object} deps - Dependencies { recoverAllBooksFromDisk, postgres, state, config, placeholderAudio }
+ * @param {Object} deps - Dependencies { postgres, orchestrator, state, config, taskHandler, ... }
  * @returns {Promise<{recovered: number, version_outdated: number, sessions_resumed: number, errors: string[]}>}
  */
 async function recoverAll(redis, deps) {
     const startTime = Date.now();
     const result = { recovered: 0, version_outdated: 0, sessions_resumed: 0, errors: [] };
 
-    log('Starting full startup recovery...');
+    log('Starting startup recovery via reconcileCycle...');
 
-    // ── Step 1: Recover Redis chunks from disk (existing logic) ──
     try {
-        if (deps.recoverAllBooksFromDisk) {
-            await deps.recoverAllBooksFromDisk();
-            log('Step 1 complete: Redis chunks recovered from disk');
-        } else {
-            warn('recoverAllBooksFromDisk not available, skipping chunk recovery');
-        }
-    } catch (err) {
-        warn(`Step 1 failed (chunk recovery): ${err.message}`);
-        result.errors.push(`chunk_recovery: ${err.message}`);
-    }
+        const reconcileEngine = require('../runtime/reconciliation-engine');
+        const cycleResult = await reconcileEngine.reconcileCycle(redis, {
+            postgres: deps.postgres,
+            orchestrator: deps.orchestrator || require('../orchestration'),
+            taskHandler: deps.taskHandler,
+            state: deps.state,
+        }, {
+            startup: true,
+        });
 
-    // ── Step 2: For each book, additionally recover IU images from disk ──
-    // This catches scenes that have .mp3 + .png files but no Redis chunks
-    // (e.g., if recoverAllBooksFromDisk only found .mp3 files).
-    try {
-        const recoveredImages = await recoverIuImagesFromDisk(redis, deps);
-        if (recoveredImages > 0) {
-            log(`Step 2 complete: ${recoveredImages} IU image flags restored`);
-        }
-        result.recovered += recoveredImages;
-    } catch (err) {
-        warn(`Step 2 failed (IU image recovery): ${err.message}`);
-        result.errors.push(`iu_image_recovery: ${err.message}`);
-    }
+        result.recovered = cycleResult.summary.itemsRecovered;
+        result.errors = cycleResult.summary.errors;
+        result.sessions_resumed = cycleResult.phases.includes('session_resume') ? 1 : 0;
 
-    // ── Step 3: Reconcile scene counters and chunk statuses from PG ──
-    // For scenes registered in PG but with missing Redis state,
-    // restore counters and mark chunks as ready if files exist.
-    try {
-        const reconciled = await reconcileMissingSceneState(redis, deps);
-        if (reconciled > 0) {
-            log(`Step 3 complete: ${reconciled} scene counters reconciled`);
-        }
-        result.recovered += reconciled;
+        const elapsed = Date.now() - startTime;
+        log(`Startup recovery via cycle in ${elapsed}ms: phases [${cycleResult.phases.join(', ')}]`);
     } catch (err) {
-        warn(`Step 3 failed (scene counter reconciliation): ${err.message}`);
-        result.errors.push(`counter_reconciliation: ${err.message}`);
+        warn(`Startup recovery via cycle failed: ${err.message}`);
+        result.errors.push(`cycle_failed: ${err.message}`);
     }
-
-    // ── Step 4: Check version-based staleness from PG ──
-    try {
-        const outdated = await checkVersionStaleness(redis, deps);
-        if (outdated > 0) {
-            log(`Step 4 complete: ${outdated} assets outdated by version`);
-        }
-        result.version_outdated = outdated;
-    } catch (err) {
-        warn(`Step 4 failed (version staleness check): ${err.message}`);
-        result.errors.push(`version_staleness: ${err.message}`);
-    }
-
-    // ── Step 5: Resume incomplete PG sessions ──
-    try {
-        if (deps.resumeIncompleteSessions && deps.runBackgroundWindowGeneration) {
-            await deps.resumeIncompleteSessions(log, deps.runBackgroundWindowGeneration);
-            result.sessions_resumed = 1; // just a flag
-            log('Step 5 complete: incomplete sessions resumed');
-        }
-    } catch (err) {
-        warn(`Step 5 failed (session resume): ${err.message}`);
-        result.errors.push(`session_resume: ${err.message}`);
-    }
-
-    // ── Step 6: Recover audio-orch states ──
-    try {
-        const recovered = await recoverAudioOrchStates(redis, deps);
-        if (recovered > 0) {
-            log(`Step 6 complete: ${recovered} audio-orch states recovered`);
-        }
-        result.recovered += recovered;
-    } catch (err) {
-        warn(`Step 6 failed (audio-orch recovery): ${err.message}`);
-        result.errors.push(`audio_orch_recovery: ${err.message}`);
-    }
-
-    const elapsed = Date.now() - startTime;
-    log(`Startup recovery complete in ${elapsed}ms: ${result.recovered} items recovered, ` +
-        `${result.version_outdated} version stale, ${result.errors.length} errors`);
 
     return result;
 }

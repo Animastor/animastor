@@ -3,8 +3,17 @@
 // ======================================================
 // Self-healing engine that detects and fixes inconsistencies
 // between state machine and actual assets on disk/registry.
+//
+// T6: Единый reconciliation-контур (R4/К4). Включает:
+//   — startup-recovery (version staleness, audio-orch, chunk recovery)
+//   — audio-recovery (scan animastor:result:* keys)
+//   — cleanup-service (expired audio scene locks)
+//   — reconciliation-engine (orphan states, stale leases, drift)
+// Все фазы — через единый цикл reconcileCycle() с распределённым локом.
 
 const fs = require('fs').promises;
+const syncFs = require('fs');
+const syncPath = require('path');
 
 const state = require('../state');
 const storage = require('../storage');
@@ -12,6 +21,7 @@ const config = require('../config/runtime-config');
 const journal = require('../orchestration/event-journal');
 const runtimeScheduler = require('./runtime-scheduler');
 const counterReconciliation = require('./counter-reconciliation');
+const dispatchEngine = require('./dispatch-engine');
 
 const logPrefix = '[RECONCILE]';
 
@@ -896,6 +906,496 @@ async function getMetrics(redis) {
 }
 
 // ======================================================
+// T6: ЕДИНЫЙ RECONCILIATION-ЦИКЛ
+// ======================================================
+// Заменяет 4 несогласованных механизма восстановления:
+//   startup-recovery, audio-recovery, cleanup-service, reconcileAll
+//
+// Фазы:
+//   A. Result/error key recovery (из audio-recovery.cjs)
+//   B. Cleanup expired locks (из cleanup-service.cjs)
+//   C. Startup-specific (из startup-recovery.js) — только при startup:true
+//   D. Full scene reconciliation (из reconciliation-engine)
+//
+// Каждый прогон пишет RECOVERY_STARTED/RECOVERY_COMPLETED в event-journal.
+// Один распределённый CLEANUP_LOCK на цикл — прогоны не пересекаются.
+
+/**
+ * Единый reconciliation-цикл. Выполняет все фазы восстановления.
+ *
+ * @param {Object} redis
+ * @param {Object} deps — зависимости { state, config, postgres, orchestrator, taskHandler, ... }
+ * @param {Object} [options]
+ * @param {boolean} [options.startup=false] — первый прогон при старте (доп. шаги C)
+ * @param {string} [options.scope] — если указан, обработать только одну книгу/сцену
+ *   Формат: "bookId" (книга), "bookId:chapterId:sceneId" (одна сцена)
+ * @returns {Promise<{ok:boolean, phases:string[], summary:object}>}
+ */
+async function reconcileCycle(redis, deps = {}, options = {}) {
+    const { startup = false, scope = null } = options;
+    const startTime = Date.now();
+    const phases = [];
+    const summary = { totalScanned: 0, itemsRecovered: 0, staleLocks: 0, errors: [] };
+
+    // ── Acquire distributed CLEANUP_LOCK ──
+    const lockKey = config.REDIS.CLEANUP_LOCK || 'animastor:cleanup-lock';
+    const lockToken = `reconcile-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const lockAcquired = await redis.set(lockKey, lockToken, 'NX', 'EX', 120);
+    if (!lockAcquired) {
+        log('Cycle skipped — CLEANUP_LOCK held by another instance');
+        return { ok: false, reason: 'lock_held', phases: ['lock_skipped'], summary };
+    }
+
+    const releaseLock = async () => {
+        try {
+            const current = await redis.get(lockKey);
+            if (current === lockToken) await redis.del(lockKey);
+        } catch (_) {}
+    };
+
+    try {
+        // ── Journal: RECOVERY_STARTED ──
+        try {
+            await journal.appendSceneEvent(redis, '_system', '_recovery', '_cycle',
+                journal.EventType.RECOVERY_STARTED, 'INITIATED',
+                { startup, scope, phases: [] }
+            );
+        } catch (_) {}
+
+        // ══════════════════════════════════════════════
+        // PHASE A: Result/error key recovery (audio-recovery)
+        // ══════════════════════════════════════════════
+        if (deps.taskHandler) {
+            try {
+                const aCount = await recoverResultKeys(redis, deps, scope);
+                summary.itemsRecovered += aCount;
+                phases.push(`result_recovery:${aCount}`);
+            } catch (err) {
+                warn(`Phase A failed: ${err.message}`);
+                summary.errors.push(`result_recovery: ${err.message}`);
+            }
+        }
+
+        // ══════════════════════════════════════════════
+        // PHASE B: Cleanup expired audio scene locks (cleanup-service)
+        // ══════════════════════════════════════════════
+        try {
+            const bCount = await cleanupExpiredLocks(redis);
+            summary.staleLocks += bCount;
+            phases.push(`lock_cleanup:${bCount}`);
+        } catch (err) {
+            warn(`Phase B failed: ${err.message}`);
+            summary.errors.push(`lock_cleanup: ${err.message}`);
+        }
+
+        // ══════════════════════════════════════════════
+        // PHASE C: Startup-specific (startup-recovery)
+        // ══════════════════════════════════════════════
+        if (startup) {
+            // C0: Recover Redis chunks from disk
+            if (typeof deps.recoverAllBooksFromDisk === 'function') {
+                try {
+                    await deps.recoverAllBooksFromDisk();
+                    phases.push('chunk_recovery:ok');
+                } catch (err) {
+                    warn(`Phase C0 failed: ${err.message}`);
+                    summary.errors.push(`chunk_recovery: ${err.message}`);
+                }
+            }
+
+            // C1: Audio-orch state recovery
+            try {
+                const c1Count = await recoverAudioOrchStates(redis, deps);
+                summary.itemsRecovered += c1Count;
+                phases.push(`audio_orch:${c1Count}`);
+            } catch (err) {
+                warn(`Phase C1 failed: ${err.message}`);
+                summary.errors.push(`audio_orch: ${err.message}`);
+            }
+
+            // C2: Version staleness check
+            try {
+                const c2Count = await checkVersionStaleness(redis, deps);
+                if (c2Count > 0) phases.push(`version_stale:${c2Count}`);
+            } catch (err) {
+                warn(`Phase C2 failed: ${err.message}`);
+                summary.errors.push(`version_stale: ${err.message}`);
+            }
+
+            // C3: Log IU images from disk
+            try {
+                const c3Count = await recoverIuImagesFromDisk(redis, deps);
+                if (c3Count > 0) phases.push(`iu_scan:${c3Count}`);
+            } catch (err) {
+                warn(`Phase C3 failed: ${err.message}`);
+                summary.errors.push(`iu_scan: ${err.message}`);
+            }
+
+            // C4: Reconcile missing scene counters from PG
+            try {
+                const c4Count = await reconcileMissingSceneState(redis, deps);
+                if (c4Count > 0) phases.push(`counter_reconcile:${c4Count}`);
+            } catch (err) {
+                warn(`Phase C4 failed: ${err.message}`);
+                summary.errors.push(`counter_reconcile: ${err.message}`);
+            }
+
+            // C5: Resume incomplete sessions (optional — requires runBackgroundWindowGeneration)
+            if (typeof deps.resumeIncompleteSessions === 'function' && typeof deps.runBackgroundWindowGeneration === 'function') {
+                try {
+                    await deps.resumeIncompleteSessions(log, deps.runBackgroundWindowGeneration);
+                    phases.push('session_resume');
+                } catch (err) {
+                    warn(`Phase C5 failed: ${err.message}`);
+                    summary.errors.push(`session_resume: ${err.message}`);
+                }
+            }
+        }
+
+        // ══════════════════════════════════════════════
+        // PHASE D: Full scene reconciliation
+        // ══════════════════════════════════════════════
+        if (!scope || scope.includes(':')) {
+            try {
+                const dReport = await reconcileAll(redis);
+                summary.totalScanned = dReport.orphanStates.length + dReport.orphanAssets.length;
+                phases.push(`reconcile:${dReport.inconsistentScenes.length}_issues`);
+                // Auto-fix safe issues
+                const fixes = getFixRecommendations(dReport.inconsistentScenes);
+                for (const fix of fixes.filter(f => f.safeToExecute)) {
+                    try {
+                        await applyFix(redis, fix);
+                    } catch (fixErr) {
+                        warn(`Auto-fix failed for ${fix.scene.sceneId}: ${fixErr.message}`);
+                    }
+                }
+            } catch (err) {
+                warn(`Phase D failed: ${err.message}`);
+                summary.errors.push(`reconcile: ${err.message}`);
+            }
+        }
+
+        // ── Journal: RECOVERY_COMPLETED ──
+        try {
+            await journal.appendSceneEvent(redis, '_system', '_recovery', '_cycle',
+                journal.EventType.RECOVERY_COMPLETED, 'DONE',
+                { startup, scope, phases, summary, elapsedMs: Date.now() - startTime }
+            );
+        } catch (_) {}
+
+        log(`Cycle complete [${phases.join(', ')}] in ${Date.now() - startTime}ms`);
+        return { ok: true, phases, summary };
+
+    } finally {
+        await releaseLock();
+    }
+}
+
+// ── PHASE A: Recover result/error keys ─────────────────
+// Из audio-recovery.cjs: сканирует animastor:result:* и animastor:error:*,
+// доигрывает потерянные результаты через taskHandler.handleTaskResult.
+// Для error-ключей вызывает orchestrator.failStage.
+async function recoverResultKeys(redis, deps, scope) {
+    const taskHandler = deps.taskHandler;
+    if (!taskHandler || typeof taskHandler.handleTaskResult !== 'function') return 0;
+
+    let recovered = 0;
+
+    // Scan animastor:result:*
+    let cursor = '0';
+    do {
+        const [nextCursor, keys] = await redis.scan(cursor, 'MATCH', 'animastor:result:*', 'COUNT', 200);
+        cursor = nextCursor;
+        for (const key of keys) {
+            try {
+                const raw = await redis.get(key);
+                if (!raw) continue;
+
+                let job_id, result_base64, buildId;
+
+                // Try JSON (new format: { job_id, result_base64, build_id })
+                if (raw.startsWith('{')) {
+                    try {
+                        const data = JSON.parse(raw);
+                        job_id = data.job_id;
+                        result_base64 = data.result_base64;
+                        buildId = data.build_id;
+                    } catch (_) {
+                        await redis.del(key);
+                        continue;
+                    }
+                } else {
+                    // Data URL fallback (old format)
+                    result_base64 = raw;
+                    const keyParts = key.split(':');
+                    const buildPart = keyParts[2] || '';
+                    const combinedId = `${keyParts[3] || ''}_${keyParts[4] || ''}_${keyParts[5] || ''}`;
+                    job_id = `${combinedId}:${keyParts[6] || 'audio'}`;
+                    buildId = buildPart;
+                }
+
+                if (!job_id || !result_base64) continue;
+
+                // Scope filter
+                if (scope && !job_id.startsWith(scope)) continue;
+
+                await taskHandler.handleTaskResult(job_id, result_base64, buildId || 'default');
+                await redis.del(key);
+                recovered++;
+            } catch (itemErr) {
+                warn(`Result recovery item failed: ${itemErr.message}`);
+            }
+        }
+    } while (cursor !== '0');
+
+    // Scan animastor:error:* (T3: форвард ошибок, которые не дошли до backend)
+    cursor = '0';
+    do {
+        const [nextCursor, keys] = await redis.scan(cursor, 'MATCH', 'animastor:error:*', 'COUNT', 200);
+        cursor = nextCursor;
+        for (const key of keys) {
+            try {
+                const raw = await redis.get(key);
+                if (!raw) continue;
+
+                let job_id, buildId, reason;
+                try {
+                    const data = JSON.parse(raw);
+                    job_id = data.job_id;
+                    buildId = data.build_id;
+                    reason = data.reason;
+                } catch (_) {
+                    await redis.del(key);
+                    continue;
+                }
+
+                if (!job_id) continue;
+                if (scope && !job_id.startsWith(scope)) continue;
+
+                // Parse job_id to get stage and scene info
+                const jobSchema = require('./job-schema');
+                const parsed = jobSchema.parseJobId(job_id);
+                if (parsed) {
+                    const stageMap = { audio_chunk: 'audio', iu_image: 'image', scene_image: 'image', scene_video: 'video' };
+                    const stage = stageMap[parsed.kind];
+                    if (stage && deps.orchestrator) {
+                        await deps.orchestrator.failStage(redis, parsed.bookId, parsed.chapterId, parsed.sceneId,
+                            stage, buildId, reason || 'recovered_error');
+                        recovered++;
+                    }
+                }
+                await redis.del(key);
+            } catch (itemErr) {
+                warn(`Error recovery item failed: ${itemErr.message}`);
+            }
+        }
+    } while (cursor !== '0');
+
+    return recovered;
+}
+
+// ── PHASE B: Cleanup expired audio scene locks ──────────
+// Из cleanup-service.cjs: освобождает протухшие animastor:audio-scene-lock:*,
+// для которых аудио уже готово.
+async function cleanupExpiredLocks(redis) {
+    let cleaned = 0;
+    let cursor = '0';
+
+    do {
+        const [nextCursor, keys] = await redis.scan(cursor, 'MATCH', 'animastor:audio-scene-failsafe:*', 'COUNT', 100);
+        cursor = nextCursor;
+
+        for (const failsafeKey of keys) {
+            try {
+                const exists = await redis.exists(failsafeKey);
+                if (exists) continue;
+
+                const parts = failsafeKey.split(':');
+                if (parts.length < 7) continue;
+
+                const bookId = parts[4];
+                const chapterId = parts[5];
+                const sceneId = parts[6];
+
+                const lockKey = `animastor:audio-scene-lock:${bookId}:${chapterId}:${sceneId}`;
+                const current = await redis.get(lockKey);
+                if (current) {
+                    await redis.del(lockKey);
+                    cleaned++;
+                }
+            } catch (_) {}
+        }
+    } while (cursor !== '0');
+
+    if (cleaned > 0) log(`Cleaned ${cleaned} expired audio scene locks`);
+    return cleaned;
+}
+
+// ── PHASE C1: Recover audio-orch states ────────────────
+// Из startup-recovery.js: не-терминальные фазы → FAILED,
+// MERGING → DONE если файл есть, иначе FAILED.
+async function recoverAudioOrchStates(redis, deps) {
+    let audioOrch;
+    try {
+        audioOrch = require('../services/audio-orchestrator');
+    } catch (_) {
+        return 0;
+    }
+
+    const allStates = await audioOrch.scanAllStates(redis);
+    if (allStates.length === 0) return 0;
+
+    let recovered = 0;
+    const OUTPUT_DIR = config.OUTPUT_DIR;
+
+    for (const entry of allStates) {
+        const { bookId, chapterId, sceneId, state: orchState } = entry;
+        const phase = orchState.phase;
+        const buildId = orchState.build_id || 'default';
+        const mergedPath = syncPath.join(OUTPUT_DIR, buildId, `${bookId}_${chapterId}_${sceneId}.mp3`);
+
+        switch (phase) {
+            case 'GENERATING':
+            case 'WAITING_CHUNKS':
+                log(`[AUDIO-ORCH] Recover ${bookId}/${chapterId}/${sceneId}: ${phase} → FAILED`);
+                await audioOrch.setFailed(redis, bookId, chapterId, sceneId, 'restart_recovery');
+                // T6: Также сбрасываем asset state, чтобы scheduler передиспатчил
+                if (deps.orchestrator) {
+                    await deps.orchestrator.markDirtyScene(redis, bookId, chapterId, sceneId, ['audio']);
+                }
+                recovered++;
+                break;
+            case 'MERGING':
+                if (syncFs.existsSync(mergedPath)) {
+                    log(`[AUDIO-ORCH] Recover ${bookId}/${chapterId}/${sceneId}: MERGING → DONE`);
+                    await audioOrch.setDone(redis, bookId, chapterId, sceneId);
+                } else {
+                    log(`[AUDIO-ORCH] Recover ${bookId}/${chapterId}/${sceneId}: MERGING → FAILED`);
+                    await audioOrch.setFailed(redis, bookId, chapterId, sceneId, 'restart_merge_missing');
+                    if (deps.orchestrator) {
+                        await deps.orchestrator.markDirtyScene(redis, bookId, chapterId, sceneId, ['audio']);
+                    }
+                }
+                recovered++;
+                break;
+            case 'PLACEHOLDER_READY':
+                // Leave as is, scheduler will dispatch
+                break;
+            case 'DONE':
+            case 'FAILED':
+                // Terminal, leave as is
+                break;
+            default:
+                await audioOrch.deleteState(redis, bookId, chapterId, sceneId);
+                break;
+        }
+    }
+
+    if (recovered > 0) log(`[AUDIO-ORCH] ${recovered} non-terminal states recovered`);
+    return recovered;
+}
+
+// ── PHASE C2: Version staleness check ───────────────────
+// Из startup-recovery.js: для stale-ассетов → markDirtyScene
+async function checkVersionStaleness(redis, deps) {
+    const { postgres, orchestrator } = deps;
+    if (!postgres || !postgres.query || !orchestrator) return 0;
+
+    try {
+        const result = await postgres.query(`
+            SELECT s.book_id, s.chapter_id, s.scene_id, s.content_version, s.audio_config_version,
+                   a.asset_type, a.scene_content_version, a.scene_audio_config_version
+            FROM scenes s
+            LEFT JOIN scene_assets a ON a.book_id = s.book_id
+                AND a.chapter_id = s.chapter_id
+                AND a.scene_id = s.scene_id
+            WHERE s.content_version > 1 OR s.audio_config_version > 1
+        `);
+
+        const sceneMap = new Map();
+        for (const row of result.rows) {
+            const key = `${row.book_id}|${row.chapter_id}|${row.scene_id}`;
+            if (!sceneMap.has(key)) {
+                sceneMap.set(key, { bookId: row.book_id, chapterId: row.chapter_id, sceneId: row.scene_id, stale: false });
+            }
+            const entry = sceneMap.get(key);
+            if ((row.scene_content_version != null && row.content_version != null && row.scene_content_version < row.content_version) ||
+                (row.scene_audio_config_version != null && row.audio_config_version != null && row.scene_audio_config_version < row.audio_config_version)) {
+                entry.stale = true;
+            }
+        }
+
+        let outdated = 0;
+        for (const entry of sceneMap.values()) {
+            if (entry.stale) {
+                log(`[VERSION-STALE] ${entry.bookId}/${entry.chapterId}/${entry.sceneId}`);
+                await orchestrator.markDirtyScene(redis, entry.bookId, entry.chapterId, entry.sceneId);
+                outdated++;
+            }
+        }
+        return outdated;
+    } catch (err) {
+        warn(`Version staleness check failed: ${err.message}`);
+        return 0;
+    }
+}
+
+// ── PHASE C3: IU images from disk (log-only scan) ──────
+// Из startup-recovery.js: лог-только скан PNG файлов.
+async function recoverIuImagesFromDisk(redis, deps) {
+    const OUTPUT_DIR = config.OUTPUT_DIR;
+    if (!syncFs.existsSync(OUTPUT_DIR)) return 0;
+
+    const buildDirs = syncFs.readdirSync(OUTPUT_DIR).filter(name => {
+        try { return syncFs.statSync(syncPath.join(OUTPUT_DIR, name)).isDirectory(); } catch { return false; }
+    });
+
+    let totalFound = 0;
+    for (const buildId of buildDirs) {
+        const buildPath = syncPath.join(OUTPUT_DIR, buildId);
+        let allFiles;
+        try { allFiles = syncFs.readdirSync(buildPath); } catch { continue; }
+
+        const sceneIuMap = {};
+        for (const f of allFiles) {
+            if (!f.endsWith('.png')) continue;
+            const match = f.match(/^(.+)_(ch[^_]+)_(sc[^_]+)_iu[^_]*\.png$/);
+            if (match) {
+                sceneIuMap[`${match[1]}:${match[2]}:${match[3]}`] = true;
+            }
+        }
+        totalFound += Object.keys(sceneIuMap).length;
+    }
+
+    if (totalFound > 0) log(`[IU-LOG-ONLY] ${totalFound} scenes with IU images on disk`);
+    return totalFound;
+}
+
+// ── PHASE C4: Reconcile missing scene counters from PG ─
+// Из startup-recovery.js: логирует книги с PG записями без Redis-счётчиков.
+async function reconcileMissingSceneState(redis, deps) {
+    const { postgres } = deps;
+    if (!postgres || !postgres.query) return 0;
+
+    try {
+        const bookResult = await postgres.query(`SELECT DISTINCT book_id FROM scenes`);
+        let count = 0;
+        for (const row of bookResult.rows) {
+            const totalKey = `animastor:book-scenes:${row.book_id}:total`;
+            const totalRaw = await redis.get(totalKey);
+            if (!totalRaw || parseInt(totalRaw, 10) === 0) {
+                log(`[COUNTER-LOG-ONLY] Book ${row.book_id} has PG records but no Redis counters`);
+                count++;
+            }
+        }
+        return count;
+    } catch (err) {
+        warn(`Missing scene state check failed: ${err.message}`);
+        return 0;
+    }
+}
+
+// ======================================================
 // EXPORTS
 // ======================================================
 
@@ -903,6 +1403,14 @@ module.exports = {
     reconcileScene,
     reconcileBook,
     reconcileAll,
+    reconcileCycle,
+    recoverResultKeys,
+    cleanupExpiredLocks,
+    recoverAudioOrchStates,
+    checkVersionStaleness,
+    recoverIuImagesFromDisk,
+    reconcileMissingSceneState,
+
     checkOrphanVideoState,
     checkOrphanImageState,
     checkOrphanAudioState,

@@ -31,7 +31,6 @@ const lazyBook = require('./book/lazy-book');
 const genSessionRepo = require('./storage/postgres/repositories/gen-session-repo');
 const bookSourceRepo = require('./storage/postgres/repositories/book-source-repo');
 const placeholderAudio = require('./services/placeholder-audio');
-const startupRecovery = require('./services/startup-recovery');
 const utils = require('./helpers/utils.cjs');
 
 const filesystem = storage.filesystem;
@@ -121,18 +120,12 @@ const taskHandler = require('./services/task-handler.cjs')(redis, config, taskHa
 const bookDiffDeps = { state, book, layerConfig, genScope, activeScenes, getChunk, saveChunk, utils };
 const bookDiff = require('./services/book-diff.cjs')(redis, config, bookDiffDeps);
 
-const audioRecoveryDeps = {
-    audio, image, state, book, orchestrator, taskHandler,
-    getChunk, saveChunk, saveIURegistry, utils,
-};
-const audioRecovery = require('./services/audio-recovery.cjs')(redis, config, audioRecoveryDeps);
-
 // ======================================================
 // SERVICES — start periodic tasks
 // ======================================================
-cleanupService.startCleanupInterval();
-// Audio recovery auto-cycle removed in Phase 1 (Passive Recovery).
-// recoverAudioResults() is available for on-demand use via debug endpoint.
+// T6: Periodic lock cleanup moved into reconcileCycle (reconciliation-engine).
+// cleanupService is still used for build/file operations.
+// audio-recovery.cjs logic merged into reconcileCycle Phase A.
 
 // ======================================================
 // ROUTES (each registers endpoints on app)
@@ -218,28 +211,27 @@ async function startServer() {
             console.warn('[STARTUP] Runtime loop start failed:', loopErr.message);
         }
 
-        // Centralized startup recovery: chunks, counters, versions, sessions
+        // T6: Единый reconciliation-цикл (заменяет startup-recovery, audio-recovery, cleanup-service)
         setImmediate(async () => {
             try {
-                const recoverDeps = {
-                    recoverAllBooksFromDisk,
+                const reconcileEngine = require('./runtime/reconciliation-engine');
+                const recResult = await reconcileEngine.reconcileCycle(redis, {
                     postgres: storage.postgres,
-                    config,
+                    orchestrator,
+                    taskHandler,
                     state,
-                    book,
-                    placeholderAudio,
+                    recoverAllBooksFromDisk,
                     resumeIncompleteSessions,
                     runBackgroundWindowGeneration: windowGenerator.runBackgroundWindowGeneration,
-                };
-                const recResult = await startupRecovery.recoverAll(redis, recoverDeps);
-                log(`[STARTUP] Recovery complete: ${recResult.recovered} items, ` +
-                    `${recResult.version_outdated} version-stale, ${recResult.sessions_resumed} sessions, ` +
-                    `${recResult.errors.length} errors`);
-                if (recResult.errors.length > 0) {
-                    console.warn('[STARTUP] Recovery errors:', recResult.errors.join('; '));
+                }, {
+                    startup: true,
+                });
+                log(`[STARTUP] Reconcile cycle: ${recResult.phases.join(', ')}`);
+                if (recResult.summary.errors.length > 0) {
+                    console.warn('[STARTUP] Reconcile errors:', recResult.summary.errors.join('; '));
                 }
             } catch (recErr) {
-                console.warn('[STARTUP] Recovery failed:', recErr.message);
+                console.warn('[STARTUP] Reconcile cycle failed:', recErr.message);
             }
         });
 

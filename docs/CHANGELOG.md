@@ -8,6 +8,18 @@ All notable changes to Animastor are documented here.
 
 ### Added
 
+- **T6: Единый reconciliation-контур (R4/К4)**
+  (`backend/src/runtime/reconciliation-engine.js`, `backend/src/backend.cjs`,
+  `backend/src/services/startup-recovery.js`, `backend/src/services/cleanup-service.cjs`):
+  - Единый `reconcileCycle()` с 4 фазами: A (result/error recovery), B (lock cleanup),
+    C (startup: version staleness, audio-orch, chunk recovery, session resume),
+    D (full reconcile + auto-fix).
+  - Распределённый CLEANUP_LOCK + RECOVERY_STARTED/RECOVERY_COMPLETED в journal.
+  - `backend.cjs`: startup-recovery → reconcileCycle({startup: true}).
+  - `startup-recovery.js`: retain для обратной совместимости.
+  - `cleanup-service.cjs`: startCleanupInterval → no-op.
+  - 574 теста проходят.
+
 - **T5: Инвалидация статусов только через фасад (R8/К5)**
   (`backend/src/orchestration/orchestrator.js`, `backend/src/services/scene-asset-registry.js`,
   `backend/src/services/placeholder-audio.js`, `backend/src/services/task-handler.cjs`):

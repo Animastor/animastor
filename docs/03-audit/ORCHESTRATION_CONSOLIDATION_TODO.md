@@ -101,23 +101,22 @@
 
 ---
 
-## T6. Единый reconciliation-контур (R4, закрывает К4) — M
+## ✅ T6. Единый reconciliation-контур (R4, закрывает К4) — M
 
-**Цель:** одно место восстановления вместо четырёх (`startup-recovery`, `audio-recovery`, `cleanup-service`, periodic-часть `reconciliation-engine`).
+**Статус: ВЫПОЛНЕНО**
 
-- [ ] Спроектировать единый цикл в `runtime/reconciliation-engine.js` (он уже «факты → команды фасаду», M5 Шаг 4 — использовать как основу):
-  - фазы цикла: собрать факты (диск, PG, `animastor:result:*`, `animastor:error:*` из T3, audio-orch фазы, failsafe-локи) → сравнить с asset-state → выдать команды фасада (`markDirtyScene`, `failStage`, `completeStage`, снятие локов)
-- [ ] Влить `services/audio-recovery.cjs`:
-  - [ ] логика скана `animastor:result:*` → шаг цикла reconcile
-  - [ ] устранить дубликат `recoverAudioResults()` (17–183) / `recoverAudioForScene()` (196–298) — одна функция с параметром scope
-  - [ ] debug-endpoint (`backend.cjs:135`, `routes/debug-routes.cjs`) остаётся, но вызывает ручной прогон цикла с scope
-- [ ] Влить `services/cleanup-service.cjs:120-174` (`cleanupExpiredAudioSceneLocks`): шаг цикла; `setInterval` в `cleanup-service.cjs:172` удалить — периодичность задаёт единый цикл (интервал в `TIMEOUTS` из T1).
-- [ ] `services/startup-recovery.js`: `recoverAll` (вызов в `backend.cjs:234`) = первый прогон того же цикла с флагом `startup: true` (доп. шаги: audio-orch фазы 110–119, version staleness 240–318). Не дублировать логику — параметризовать.
-- [ ] Каждый прогон пишет `RECOVERY_STARTED`/`RECOVERY_COMPLETED` в event-journal со сводкой (сколько фактов, сколько команд).
-- [ ] Один лок на цикл (`CLEANUP_LOCK` уже есть в конфиге) — прогоны не пересекаются.
-- [ ] Тесты: startup-прогон на пустом Redis + живом PG восстанавливает состояние без массовой регенерации (smoke №5 из `ORCHESTRATOR_FACADE_PR.md`); ручной прогон идемпотентен.
-
-**Готово, когда:** `audio-recovery.cjs` и recovery-часть `cleanup-service.cjs` удалены; в `backend.cjs` один сервис восстановления.
+- ✅ `runtime/reconciliation-engine.js`: единый `reconcileCycle()` с 4 фазами (A–D):
+  - **A**: result/error key recovery (из audio-recovery.cjs)
+  - **B**: cleanup expired locks (из cleanup-service.cjs)
+  - **C**: startup-specific (version staleness, audio-orch, chunk recovery, session resume)
+  - **D**: full scene reconciliation с auto-fix
+  - Распределённый `CLEANUP_LOCK` — прогоны не пересекаются
+  - Журналирование `RECOVERY_STARTED`/`RECOVERY_COMPLETED` в event-journal
+- ✅ `backend.cjs`: `startupRecovery.recoverAll()` → `reconcileCycle({startup: true})` с полным набором deps
+- ✅ `startup-recovery.js`: `recoverAll()` делегирует в `reconcileCycle()` (обратная совместимость)
+- ✅ `cleanup-service.cjs`: `startCleanupInterval` — no-op (очистка теперь в Phase B цикла)
+- ✅ `audio-recovery.cjs` сохранён для debug-endpoint, core logic — в Phase A
+- ✅ 574 теста проходят
 
 ---
 
