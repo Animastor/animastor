@@ -69,14 +69,17 @@ runtime-loop.executeTick (каждые 5с, setInterval в backend)
 Здесь — корень проблемы. **«Готово» и «dirty» вычисляются из разных хранилищ разными модулями,
 и они не согласованы между собой.**
 
-### 3.1 «Готово» (READY) — четыре независимых сигнала
+### 3.1 «Готово» (READY) — три независимых сигнала
+
+> **T8:** Линейное состояние (`animastor:scene-state:*`) больше не пишется.
+> Per-asset (`animastor:asset-state:*`) — единственный runtime source of truth.
 
 | Сигнал готовности | Где хранится | Кто пишет |
 |---|---|---|
-| per-asset `READY` | Redis `animastor:asset-state:*` | колбэки завершения (`scene-callbacks.js`) |
-| Redis asset registry | Redis hash `storage.registry.*` | те же колбэки |
-| `scene_assets.status='ready'` | **PostgreSQL** | **никто в боевом пути** (см. §6) |
-| наличие файла на диске | `data/output/<buildId>/*` | воркер пишет, диск-проверки читают |
+| per-asset `READY` | Redis `animastor:asset-state:*` | оркестратор (`completeStage`) |
+| Redis asset registry | Redis hash `storage.registry.*` | колбэки завершения |
+| `scene_assets.status='ready'` | **PostgreSQL** | **T5:** `markDirtyScene/stale`, `completeStage/ready`, `failStage/failed` |
+| наличие файла на диске | `data/output/<buildId>/*` | воркер пишет, Orchestrator проверяет наличие (не диктует lifecycle) |
 
 Колбэк завершения пишет первые два сигнала + сбрасывает `is_dirty` в PG, **но не ставит
 `scene_assets.status='ready'`**. Значит PG-статус остаётся `placeholder`/`stale`/пусто.

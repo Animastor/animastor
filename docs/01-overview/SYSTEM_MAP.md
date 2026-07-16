@@ -226,11 +226,22 @@ Redis выполняет три роли одновременно:
 
 ## 8. Особенности текущего устройства
 
-### 8.1 Dual state model
+### 8.1 Per-asset state — единый source of truth (T8, июль 2026)
 
-Per-asset состояния — канон. Linear `SceneState` — производная проекция, поддерживаемая для совместимости с плеером.
+**Линейное состояние (`SceneState` / `animastor:scene-state:*`) объявлено deprecated.**
+`syncLinearState` — no-op (возвращает derived state, не пишет в Redis).
+Ключи `animastor:scene-state:*` больше не создаются/обновляются;
+существующие получат TTL 7 дней при старте бэкенда и будут удалены автоматически.
 
-### 8.2 Orchestrator-фасад (M5, июнь 2026)
+Per-asset состояния (`animastor:asset-state:*`, HSET с полями `audio`/`image`/`video`) —
+единственный runtime source of truth. Все критически важные читатели мигрированы:
+- `isWindowComplete` — проверяет per-asset
+- `attemptDispatch` — не падает при отсутствии scene-state
+- `isGenerating/isPending/isTerminal` — проверяют per-asset
+- orphan-проверки reconciliation — проверяют per-asset
+- `dispatchStage` — определение новой сцены по per-asset
+
+### 8.2 Orchestrator-фасад (T3–T7, июнь–июль 2026)
 
 Все 8+ писателей per-asset состояния сведены к единому фасаду `orchestrator.js` (11 команд). Единственный арбитр записи lifecycle-состояния.
 

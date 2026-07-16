@@ -185,16 +185,11 @@
 
 ---
 
-## T8. Убрать linear state (R7 / Д.2, закрывает К7) — M, требует frontend
+## После T8 (не вошло в этап, можно делать отдельно)
 
-**Цель:** одна модель состояния — per-asset; плеер перестаёт зависеть от линейной проекции.
-
-- [ ] Backend: API-эндпоинт(ы) состояния сцены отдают per-asset (`{audio, image, video}`) рядом с linear (совместимость, один релиз).
-- [ ] Frontend (Android): перевести `PlaybackViewModel`/поллинг состояния на per-asset. **Внимание на `docs/DONT_DO.md`** — не трогать sliding window preload и stall/retry-логику плеера (запреты №1–3).
-- [ ] После релиза фронта: удалить `deriveLinearState()` (`state/scene-state.js:343-386`, 18 ветвлений) и `syncLinearState` из всех команд фасада; удалить ключи `scene-state:*` (миграция: просто перестать писать, TTL/чистка).
-- [ ] Обновить `ORCHESTRATOR_LIFECYCLE.md` и `SYSTEM_MAP.md`.
-
-**Готово, когда:** grep по `deriveLinearState|syncLinearState|SCENE_STATE_KEY_PREFIX` находит только историю в docs.
+- Frontend: перевести `PlaybackViewModel`/поллинг на per-asset (см. `docs/DONT_DO.md`, запреты №1–3).
+- После подтверждения фронта: удалить `deriveLinearState()`, `syncLinearState()`, `SceneState` enum. Удалить ключи `animastor:scene-state:*`.
+- Обновить `ORCHESTRATOR_LIFECYCLE.md` и `SYSTEM_MAP.md`.
 
 ---
 

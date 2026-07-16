@@ -267,6 +267,28 @@ async function startServer() {
                 const reconcileCounters = require('./runtime/counter-reconciliation');
                 await reconcileCounters.reconcileCounters(redis);
                 log('[STARTUP] Counter reconciliation complete');
+
+                // T8: Set 7-day TTL on legacy scene-state keys (no longer written).
+                // Keys will auto-expire, transitioning from stale reads to clean absence.
+                try {
+                    let cursor = '0';
+                    let ttlSet = 0;
+                    const SCENE_STATE_TTL = 7 * 24 * 3600; // 7 days
+                    do {
+                        const scan = await redis.scan(cursor, 'MATCH', 'animastor:scene-state:*', 'COUNT', 200);
+                        cursor = scan[0];
+                        for (const key of scan[1]) {
+                            const remaining = await redis.ttl(key);
+                            if (remaining === -1) { // no TTL set
+                                await redis.expire(key, SCENE_STATE_TTL);
+                                ttlSet++;
+                            }
+                        }
+                    } while (cursor !== '0');
+                    if (ttlSet > 0) log(`[STARTUP] Set ${ttlSet} legacy scene-state TTLs (${SCENE_STATE_TTL}s)`);
+                } catch (ttlErr) {
+                    warn(`[STARTUP] Failed to set scene-state TTLs: ${ttlErr.message}`);
+                }
             } catch (cErr) {
                 console.warn('[STARTUP] Counter reconciliation failed:', cErr.message);
             }
