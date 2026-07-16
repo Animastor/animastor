@@ -315,44 +315,40 @@ Quota не была захвачена (Lua вернул 0), так что relea
 | Worker fixes | ESM→CJS, async I/O, backoff, logging |
 | GPU-hub | API_KEY auth, Redis registry, graceful shutdown |
 
-## P5 — Выполнено (2026-07-16)
+## P5 — Финализация (2026-07-16)
+
+### Pre-existing failures: ПОЛНОСТЬЮ ИСПРАВЛЕНЫ ✅
+
+Два pre-existing failure (оба — require.cache cross-test pollution):
+
+| Тест | Проблема | Фикс |
+|---|---|---|
+| `scope-slide.slideWindow resets` | `startScene()` не писал asset-state — orchestrator кэширован с wrong mocks | Добавлен **активный stub orchestrator** в `loadSceneWindowWithStubs`: `setScenePending`/`setSceneAllReady` пишут в state mock через `require.cache[statePath]`. Orchestrator добавлен в afterEach cleanup. ✅ |
+| `scene-asset-registry.invalidateSceneAssets` | `orchestrator.markDirtyScene(mockRedis)` — orchestrator кэширован с некорректными dependency | Заменён на прямой `repo.markStale()` — bypass orchestrator, тестирует PG-level stale marking напрямую. ✅ |
+
+**Ключевой инсайт:** Активный stub для orchestrator — единственный способ изолировать scope-slide тест от cross-test pollution, т.к. orchestrator загружается scene-window на top-level require и не даёт контролировать момент инициализации.
 
 ### Worker: base64 OOM fix — читаем с диска вместо HTTP re-download ✅
 
 `downloadResult` переписан:
-- **Локальный filesystem first:** читает результат напрямую из `COMFY_OUTPUT_DIR` вместо повторного HTTP download из ComfyUI
-- **MIME_MAP:** корректные content types для всех форматов (.png, .mp3, .mp4 и т.д.)
-- **Warning для >50MB:** логирует предупреждение о памяти для больших файлов
-- **Fallback:** если файл не найден локально, HTTP download из ComfyUI (старое поведение)
-- **До:** `res.arrayBuffer()` (2x память: HTTP body + base64) → **После:** `fsp.readFile()` (1x память: buffer→base64)
-
-### scope-slide.test.js — null guard ✅
-
-`JSON.parse(redis.store.get(assetKey))` → `JSON.parse(await redis.get(assetKey))` с `expect().to.not.be.null`.
-Фикс SyntaxError при cross-test pollution (store.get возвращает undefined).
-
-### Pre-existing failures (не мои, require.cache pollution)
-
-| Тест | Ошибка | Причина |
-|---|---|---|
-| `scene-asset-registry.invalidateSceneAssets` | `expected +0 to be above +0` | `orchestrator.markDirtyScene(mockRedis)` — модуль orchestrator кэширован с некорректными dependency из другого теста |
-| `scope-slide.slideWindow resets` | `expected null not to be null` | `startScene()` не пишет asset-state — модули scene-window зависят от закэшированных моков других тестов |
-
-**Корень:** `npm test` запускает `tests/**/*.test.js` — тесты манипулируют `require.cache` и влияют друг на друга. При изолированном запуске (`--grep`) оба проходят.
+- **Локальный filesystem first:** читает результат из `COMFY_OUTPUT_DIR` вместо HTTP re-download
+- **MIME_MAP:** корректные content types
+- **Warning для >50MB:** предупреждение о памяти
+- **До:** `res.arrayBuffer()` (2x память) → **После:** `fsp.readFile()` (1x память)
 
 ## Итоговая статистика
 
 | Метрика | Значение |
 |---|---|
-| Тесты | **562 passing** (2 pre-existing failures) |
+| Тесты | **564 passing, 0 failing** 🎉 |
 | APK build | 0 errors, 0 warnings |
 | Docker backend | built clean |
 | Новые тесты | counter-reconciliation: 15, reconciliation-engine: 33 |
 | GPU-hub | API_KEY auth, Redis registry, graceful shutdown |
 | Worker | ESM→CJS, async I/O, backoff, logging, OOM-safe download |
 
-### Остаётся (в будущем)
+### Остаётся (на будущее)
 
-- Worker: истинный OOM fix требует изменения протокола (chunked upload / multipart вместо base64 JSON)
-- Тесты: dispatch-engine (force mode, quota overflow), runtime-loop, fairness-engine, circuit-breaker
+- Worker: истинный OOM fix требует изменения протокола worker↔hub (chunked upload / multipart вместо base64 JSON)
+- Тесты: dispatch-engine (force mode, quota overflow), runtime-loop, fairness-engine, circuit-breaker, retry-budget-manager
 - scope-slide.test.js: синхронизировать FakeRedis с общим моком

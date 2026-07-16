@@ -190,6 +190,38 @@ function loadSceneWindowWithStubs({ redis, startedStateByScene = new Set(), addA
     };
     require.cache[audioPath] = { exports: audioStub, id: audioPath, loaded: true, filename: audioPath, children: [], paths: [] };
 
+    // Mock orchestrator — active stub that writes asset-state via the already-stubbed state module.
+    // This must come AFTER the state mock is set up, because we reference it here.
+    const orchPath = path.join(cwd, 'src/orchestration/orchestrator.js');
+    delete require.cache[orchPath]; // clear pollution from other test files
+    const orchStub = {
+        setScenePending: async (r, bookId, chapterId, sceneId, asset, buildId) => {
+            const stateMock = require.cache[statePath]?.exports;
+            if (stateMock?.setAssetState) {
+                await stateMock.setAssetState(r, bookId, chapterId, sceneId, asset, 'pending');
+            }
+        },
+        setSceneAllReady: async (r, bookId, chapterId, sceneId, buildId) => {
+            const stateMock = require.cache[statePath]?.exports;
+            if (stateMock?.setAssetStates) {
+                await stateMock.setAssetStates(r, bookId, chapterId, sceneId, { audio: 'ready', image: 'ready', video: 'ready' });
+            }
+        },
+        setScenePlaceholder: async () => {},
+        markDirtyScene: async () => {},
+        completeStage: async () => {},
+        beginStage: async () => {},
+        planScene: async () => {},
+        failStage: async () => {},
+        completeStageWithoutVideo: async () => {},
+        completeStageWithoutImage: async () => {},
+        setSceneGenerating: async () => {},
+        reconcile: async () => {},
+        resetScenes: async () => ({ marked: 0, reset_scenes: 0 }),
+        markDirty: async () => ({ marked: 0 }),
+    };
+    require.cache[orchPath] = { exports: orchStub, id: orchPath, loaded: true, filename: orchPath, children: [], paths: [] };
+
     for (const key of startedStateByScene) {
         redis.store.set(`animastor:scene-state:book-1:${key.chapter_id}:${key.scene_id}`, makeStartedState());
     }
@@ -205,12 +237,14 @@ describe('scope-aware slideWindow', () => {
 
     afterEach(() => {
         const cwd = path.resolve(__dirname, '..');
-        const bookPath = path.join(cwd, 'src/book/index.js');
-        const statePath = path.join(cwd, 'src/state/index.js');
-        const activeScenesPath = path.join(cwd, 'src/runtime/active-scenes-index.js');
-        const audioPath = path.join(cwd, 'src/audio/audio-service.js');
-        const sceneWindowPath = path.join(cwd, 'src/runtime/scene-window.js');
-        for (const p of [bookPath, statePath, activeScenesPath, audioPath, sceneWindowPath]) {
+        for (const p of [
+            path.join(cwd, 'src/book/index.js'),
+            path.join(cwd, 'src/state/index.js'),
+            path.join(cwd, 'src/runtime/active-scenes-index.js'),
+            path.join(cwd, 'src/audio/audio-service.js'),
+            path.join(cwd, 'src/runtime/scene-window.js'),
+            path.join(cwd, 'src/orchestration/orchestrator.js'),
+        ]) {
             delete require.cache[p];
         }
     });

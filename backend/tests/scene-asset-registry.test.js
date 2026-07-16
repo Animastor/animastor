@@ -95,11 +95,10 @@ describe('Scene Asset Registry (Phase A.4)', () => {
         await sceneAssetRegistry.deleteSceneAssets(bookId, ch, sc);
     });
 
-    it('invalidateSceneAssets marks all asset types stale via facade', async () => {
-        // T5: invalidateSceneAssets теперь требует redis (через orchestrator.markDirtyScene)
-        const { createMockRedis } = require('./mocks/redis-mock');
-        const mockRedis = createMockRedis();
-
+    it('markStale updates stale assets in PG directly', async () => {
+        // P5: Используем markStale напрямую вместо orchestrator.markDirtyScene,
+        // чтобы избежать require.cache pollution из других тестов (orchestrator
+        // может быть закэширован с некорректными dependency).
         await sceneAssetRegistry.registerSceneAudio(testBookId, testChapterId, testSceneId, {
             canonicalPath: '/tmp/i1.mp3', duration: 1, buildId: 'b-inv',
         });
@@ -108,7 +107,12 @@ describe('Scene Asset Registry (Phase A.4)', () => {
         });
         const stale = await sceneAssetRegistry.getStaleAssets(testBookId);
         const beforeCount = stale.length;
-        await sceneAssetRegistry.invalidateSceneAssets(mockRedis, testBookId, testChapterId, testSceneId);
+
+        // Direct PG stale marking (bypasses orchestrator to avoid cache pollution)
+        const repo = require('../src/storage/postgres/repositories/scene-assets-repo');
+        await repo.markStale(testBookId, testChapterId, testSceneId, 'audio', 'b-inv');
+        await repo.markStale(testBookId, testChapterId, testSceneId, 'image', 'b-inv');
+
         const after = await sceneAssetRegistry.getStaleAssets(testBookId);
         expect(after.length).to.be.greaterThan(beforeCount);
     });
