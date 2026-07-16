@@ -5,7 +5,8 @@
 const express = require("express")
 const cors = require("cors")
 
-const redis = new (require("ioredis"))("redis://animastor-redis:6379")
+const REDIS_URL = process.env.REDIS_URL || "redis://animastor-redis:6379";
+const redis = new (require("ioredis"))(REDIS_URL)
 
 const {
   PORT = 5000,

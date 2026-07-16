@@ -389,8 +389,6 @@ async function cleanupActiveScenesIndex(redis) {
 
     // Scene-state cleanup removed — active scenes are managed by the scheduler
     return { verifiedCount: 0, removedCount: 0 };
-
-    return { verifiedCount, removedCount };
 }
 
 // ======================================================
