@@ -275,6 +275,64 @@ async function checkPartialBuilds(redis, bookId, chapterId, sceneId) {
 }
 
 // ======================================================
+// T7.6: AUDIO-ORCH INVARIANT CHECKS
+// ======================================================
+// Проверяет соответствие между audio-orch phase и asset state:
+//   phase=DONE     ⇔ asset.audio = READY
+//   phase=FAILED   ⇒ asset.audio = FAILED (или PENDING — после re-dispatch)
+//   промежуточные  ⇒ asset.audio ∈ {PENDING, GENERATING, DIRTY}
+
+async function checkAudioOrchInvariants(redis, bookId, chapterId, sceneId) {
+    const audioOrch = require('../services/audio-orchestrator');
+    const assetStates = await state.getAssetStates(redis, bookId, chapterId, sceneId);
+    const orchState = await audioOrch.getState(redis, bookId, chapterId, sceneId);
+
+    if (!orchState || !assetStates) return null;
+
+    const phase = orchState.phase;
+    const audioState = assetStates.audio;
+    const violations = [];
+
+    if (phase === audioOrch.PHASES.DONE) {
+        if (audioState !== state.AssetState.READY && audioState !== state.AssetState.PLACEHOLDER) {
+            violations.push({
+                type: 'audio_orch_invariant_done',
+                scene: { bookId, chapterId, sceneId },
+                phase,
+                audioState,
+                expected: 'READY or PLACEHOLDER',
+                recommendation: 'run_completeStage'
+            });
+        }
+    } else if (phase === audioOrch.PHASES.FAILED) {
+        if (audioState !== state.AssetState.FAILED && audioState !== state.AssetState.PENDING) {
+            violations.push({
+                type: 'audio_orch_invariant_failed',
+                scene: { bookId, chapterId, sceneId },
+                phase,
+                audioState,
+                expected: 'FAILED or PENDING',
+                recommendation: 'mark_dirty'
+            });
+        }
+    } else if (phase !== audioOrch.PHASES.NEW && phase !== audioOrch.PHASES.PLACEHOLDER_READY) {
+        // Intermediate phases: GENERATING, WAITING_CHUNKS, MERGING
+        if (audioState === state.AssetState.READY) {
+            violations.push({
+                type: 'audio_orch_invariant_intermediate',
+                scene: { bookId, chapterId, sceneId },
+                phase,
+                audioState,
+                expected: 'PENDING|GENERATING|DIRTY',
+                recommendation: 'mark_dirty_or_set_done'
+            });
+        }
+    }
+
+    return violations.length > 0 ? violations : null;
+}
+
+// ======================================================
 // STALE LOCK CHECKS
 // ======================================================
 
@@ -493,6 +551,18 @@ async function reconcileScene(redis, bookId, chapterId, sceneId) {
                     });
                 }
             }
+        }
+
+        // T7.6: Check audio-orch invariants
+        const audioOrchViolations = await checkAudioOrchInvariants(redis, bookId, chapterId, sceneId);
+        if (audioOrchViolations) {
+            for (const v of audioOrchViolations) {
+                report.inconsistentScenes.push({
+                    scene: v.scene,
+                    issue: v.type
+                });
+            }
+            log(`[INVARIANT] ${bookId}/${chapterId}/${sceneId}: ${audioOrchViolations.length} audio-orch violations`);
         }
 
         return report;
@@ -1410,6 +1480,8 @@ module.exports = {
     checkVersionStaleness,
     recoverIuImagesFromDisk,
     reconcileMissingSceneState,
+
+    checkAudioOrchInvariants,
 
     checkOrphanVideoState,
     checkOrphanImageState,

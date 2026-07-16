@@ -8,6 +8,22 @@ All notable changes to Animastor are documented here.
 
 ### Added
 
+- **T7: Аудио-машина внутрь оркестра (R2/К1)**
+  (`backend/src/services/audio-orchestrator.js`, `backend/src/services/task-handler.cjs`,
+  `backend/src/orchestration/orchestrator.js`, `backend/src/orchestration/scene-orchestrator.js`,
+  `backend/src/audio/generation.js`, `backend/src/runtime/reconciliation-engine.js`):
+  - `completeChunk()` в audio-orchestrator.js — приём чанка, проверка комплектности,
+    retry-логика, recovery позднего чанка FAILED→WAITING_CHUNKS, MERGING→DONE + `completeStage`.
+  - `task-handler.cjs`: удалён мёртвый `triggerAudioMerge` (вся логика в completeChunk).
+  - `orchestrator.setSceneGenerating()` — единый фасад для перехода в GENERATING.
+  - `scene-orchestrator.js`: прямые `state.setAssetState(audio, PENDING/GENERATING)` →
+    `orchestrator.setScenePending()` / `setSceneGenerating()`. Убран файловый сигнал
+    (delete placeholder merged audio before TTS).
+  - `checkAudioOrchInvariants()` в reconciliation-engine.js: проверка DONE⇔READY,
+    FAILED⇒FAILED/PENDING, промежуточные⇒не READY. Вызывается из `reconcileScene()`.
+  - `AUDIO_ORCHESTRATOR.md` обновлён с инвариантами и документацией completeChunk.
+  - 574 теста проходят.
+
 - **T6: Единый reconciliation-контур (R4/К4)**
   (`backend/src/runtime/reconciliation-engine.js`, `backend/src/backend.cjs`,
   `backend/src/services/startup-recovery.js`, `backend/src/services/cleanup-service.cjs`):

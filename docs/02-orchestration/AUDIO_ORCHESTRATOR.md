@@ -93,11 +93,29 @@ NEW ──→ PLACEHOLDER_READY ──→ GENERATING             │
 | `NEW → PLACEHOLDER_READY` | `startScene()` | После создания placeholder + chunk metadata |
 | `PLACEHOLDER_READY → GENERATING` | `executeAudioDispatch()` | Перед отправкой TTS |
 | `GENERATING → WAITING_CHUNKS` | `executeAudioDispatch()` | После отправки TTS |
-| `WAITING_CHUNKS → MERGING` | `triggerAudioMerge` | Когда все чанки на диске (проверка по FS) |
-| `MERGING → DONE` | `triggerAudioMerge` | После успешного merge |
-| `WAITING_CHUNKS → FAILED` | `triggerAudioMerge` | После MAX_RETRIES |
+| `WAITING_CHUNKS → MERGING` | `audioOrch.completeChunk()` (ex-`triggerAudioMerge`) | Когда все чанки на диске (проверка комплектности) |
+| `MERGING → DONE` | `audioOrch.completeChunk()` → `completeMerge()` | После успешного merge + `orchestrator.completeStage()` |
+| `WAITING_CHUNKS → FAILED` | `audioOrch.completeChunk()` | После MAX_RETRIES → `orchestrator.failStage()` |
 | `FAILED → GENERATING` | scheduler re-dispatch | На следующем scheduler tick |
-| `FAILED → WAITING_CHUNKS` | `triggerAudioMerge` (recovery) | Когда все чанки пришли после FAILED (late chunk race) |
+| `FAILED → WAITING_CHUNKS` | `audioOrch.completeChunk()` (recovery) | Когда все чанки пришли после FAILED (late chunk race) |
+
+### T7: Инварианты audio-orch
+
+Проверяются в `reconcileCycle()` (T6) через `checkAudioOrchInvariants()`:
+
+| Условие | Инвариант | Auto-fix |
+|---------|-----------|----------|
+| `phase=DONE` | `asset.audio = READY или PLACEHOLDER` | Вызвать `completeStage(audio)` |
+| `phase=FAILED` | `asset.audio = FAILED или PENDING` | `markDirtyScene(['audio'])` |
+| `phase ∈ {GENERATING, WAITING_CHUNKS, MERGING}` | `asset.audio ≠ READY` | `markDirtyScene` или `setDone` |
+
+### T7: merge-оркестрация — `completeChunk()`
+
+`triggerAudioMerge()` из `task-handler.cjs` полностью перенесён в `audio-orchestrator.js` как `completeChunk()`:
+- Приём чанка, проверка комплектности, retry-логика — внутри `audio-orchestrator.js`
+- `task-handler.cjs` стал тонким роутингом результата по типу → делегирует в `audioOrch.completeChunk()` / `orchestrator.completeStage()`
+- Решение «мержить или нет» принимает машина по **phase**, а не по наличию файла на диске (T7.4)
+- `setScenePending` / `setSceneGenerating` в orchestrator.js — единый фасад для PENDING/GENERATING перехода
 
 > **Важно:** `chunks_received` в Redis-ключе — информационное поле. Решение "все ли чанки готовы"
 > принимается на основе **проверки FS** (список .mp3 файлов на диске), а не счётчика.
@@ -141,9 +159,9 @@ if (fs.existsSync(mergedPath)) fs.unlinkSync(mergedPath);
 await redis.set(orchKey, JSON.stringify({ ...state, phase: 'WAITING_CHUNKS' }));
 ```
 
-#### `triggerAudioMerge()` (task-handler.cjs)
+#### `completeChunk()` (audio-orchestrator.js, T7)
 
-**Было:**
+**Было (в task-handler.cjs, `triggerAudioMerge`):**
 ```js
 if (fs.existsSync(mergedAudioPath)) {
     log(`Merged audio already exists — skipping retry`);
@@ -151,32 +169,31 @@ if (fs.existsSync(mergedAudioPath)) {
 }
 ```
 
-**Стало:**
+**Стало (в audio-orchestrator.js, `completeChunk`):**
 ```js
-const raw = await redis.get(`animastor:audio-orch:${book_id}:${chapter_id}:${scene_id}`);
-const orch = raw ? JSON.parse(raw) : null;
-if (!orch || orch.phase === 'DONE') {
-    log(`Audio already done for ${book_id}/${chapter_id}/${scene_id}`);
-    return;  // merge уже выполнен, выходим
+const orchState = await getState(redis, bookId, chapterId, sceneId);
+if (!orchState || orchState.phase === 'DONE') {
+    log(`Audio already done — skipping`);
+    return;
 }
-if (orch.phase === 'MERGING') {
+if (orchState.phase === 'MERGING') {
     log(`Merge in progress — waiting`);
-    return;  // кто-то уже мержит, не мешаем
+    return;
 }
-// Для WAITING_CHUNKS: обновить chunks_received, проверить все ли есть.
-// Для FAILED: запустить re-dispatch.
+// Для WAITING_CHUNKS: проверить комплектность, принять решение о мерже
+// Для FAILED: recovery (late chunk race)
 ```
 
-`triggerAudioMerge` **никогда не смотрит на FS** для принятия решения.
+`completeChunk` **никогда не смотрит на FS** для принятия решения.
 FS используется только для фактического merge (список чанков → concat → ffmpeg).
 
 #### `completeStage` (orchestrator)
 
 **Стало — вызывается ТОЛЬКО после перехода `MERGING → DONE`:**
 ```js
-if (orch.phase === 'DONE') {
-    await orchestrator.completeStage(redis, book_id, chapter_id, scene_id, 'audio', build_id);
-}
+// внутри completeChunk, после успешного merge:
+await setDone(redis, bookId, chapterId, sceneId);
+await orchestrator.completeStage(redis, bookId, chapterId, sceneId, 'audio', buildId);
 ```
 
 ### Что делать с `isSceneAudioReady()`?

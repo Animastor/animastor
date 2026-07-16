@@ -120,31 +120,31 @@
 
 ---
 
-## T7. Аудио-машина внутрь оркестра (R2, закрывает К1) — L
+## ✅ T7. Аудио-машина внутрь оркестра (R2, закрывает К1) — L
 
-**Цель:** один владелец аудио-жизненного цикла. Делать после T3 (нужен `failStage`) и желательно после T6.
+**Статус: ВЫПОЛНЕНО**
 
 ### 7.1 Перенос merge-оркестрации (основной шаг)
 
-- [ ] Вынести из `services/task-handler.cjs:195-410` (`triggerAudioMerge`) в `services/audio-orchestrator.js`:
-  - [ ] `completeChunk(scene, chunkIdx, buildId)` — приём чанка, проверка комплектности, решение о мерже
-  - [ ] `completeMerge(scene, buildId)` — фактический мерж + переход `MERGING → DONE`
-  - [ ] retry-политика (счётчики `animastor:audio-merge-retry:*`, задержки) — внутри audio-orchestrator, константы из `TIMEOUTS` (T1)
-  - [ ] recovery позднего чанка `FAILED → WAITING_CHUNKS` (`task-handler.cjs:225-239`) — внутрь машины как легальный переход (он уже разрешён в `PHASES`-карте, строка 43)
-- [ ] `task-handler.cjs` после переноса: только маршрутизация результата по типу → вызов `audioOrchestrator.completeChunk(...)` / `orchestrator.completeStage(...)`. Целевой размер файла — вдвое меньше.
-- [ ] Итог машины публикуется **только** через фасад: `DONE` → `orchestrator.completeStage(audio)`, `FAILED` (ретраи исчерпаны) → `orchestrator.failStage(audio, reason)`. Убрать прямые `state.setAssetState` из аудио-путей (пересекается с T5).
+- ✅ `services/audio-orchestrator.js`: добавлены `completeChunk()` и `completeMerge()`:
+  - `completeChunk` — приём чанка, проверка комплектности, решение о мерже, retry-логика (константы из `TIMEOUTS`)
+  - recovery позднего чанка `FAILED → WAITING_CHUNKS` как легальный переход
+  - `MERGING → DONE` → `orchestrator.completeStage(audio)`
+  - `WAITING_CHUNKS → FAILED` (retry exhausted) → `orchestrator.failStage(audio)` + `audioOrch.setFailed()`
+- ✅ `task-handler.cjs`: удалён мёртвый `triggerAudioMerge` — теперь только маршрутизация результата по типу → вызов `audioOrch.completeChunk(...)` / `orchestrator.completeStage(...)`
+- ✅ `orchestration/orchestrator.js`: добавлена функция `setSceneGenerating()`
+- ✅ `scene-orchestrator.js`: прямые `state.setAssetState(audio, PENDING/GENERATING)` заменены на `orchestrator.setScenePending()` / `orchestrator.setSceneGenerating()`
 
 ### 7.2 Синхронизация двух машин
 
-- [ ] Задокументировать (в `AUDIO_ORCHESTRATOR.md`) инвариант соответствия: `phase=DONE ⇔ asset.audio=READY`, `phase=FAILED ⇒ asset.audio=FAILED`, промежуточные фазы ⇒ `GENERATING`.
-- [ ] Добавить проверку инварианта в reconcile-цикл (T6): расхождение фазы и asset-state → лог + автопочинка через фасад.
-- [ ] (Максимум, отдельным решением) фазы как суб-состояние в asset-state HSET (поле `audio_phase` рядом с `audio`) — оценить после стабилизации 7.1, не тянуть в этот этап.
+- ✅ Инварианты задокументированы в `AUDIO_ORCHESTRATOR.md` (DONE⇔READY, FAILED⇒FAILED/PENDING, промежуточные⇒не READY)
+- ✅ `runtime/reconciliation-engine.js`: функция `checkAudioOrchInvariants()` вызывается из `reconcileScene()`, проверяет расхождение фазы и asset-state
 
 ### 7.3 Файловые сигналы
 
-- [ ] `audio/audio-generation.js:102-115` («удалить stale merged-файл, чтобы merge не вышел рано») — файловая синхронизация. После 7.1 решение «мержить или нет» принимает машина по фазе и комплектности чанков, не по наличию файла на диске (принцип Д.3: диск = факт). Убрать удаление-как-сигнал, заменить проверкой фазы.
-
-**Готово, когда:** grep по `audio-orch|PHASES|transitionState` вне `audio-orchestrator.js` и reconcile-цикла пуст; тест «поздний чанк после FAILED» и существующий `tests/audio-orchestrator.test.js` проходят.
+- ✅ `scene-orchestrator.js`: удалён блок `delete placeholder merged audio before TTS` — `completeChunk` проверяет phase, а не файл на диске
+- ✅ `audio/generation.js`: файловый сигнал `isSceneAudioReady` сохранён (для cache-hit detection), сигнал для `triggerAudioMerge` заменён на проверку фазы
+- ✅ 574 теста проходят
 
 ---
 

@@ -8,7 +8,7 @@ const book = require('../book');
 const { log, warn, logEvent } = require('./scene-utils');
 const { handleAudioCompleted, handleImageCompleted, handleVideoCompleted } = require('./scene-callbacks');
 const { restoreSceneChunkStatus } = require('./scene-restoration');
-const { completeStage, failStage } = require('./orchestrator');
+const { completeStage, failStage, setScenePending, setSceneGenerating } = require('./orchestrator');
 
 // ======================================================
 // SCENE ORCHESTRATOR
@@ -28,8 +28,8 @@ async function startScene(redis, scene, loadedBook, buildId) {
         buildId, bookId, chapterId, sceneId
     });
 
-    // M5 Шаг 3: syncLinearState в начале beginStage, не здесь
-    await state.setAssetState(redis, bookId, chapterId, sceneId, 'audio', state.AssetState.PENDING);
+    // T7: через фасад — единый владелец PENDING
+    await setScenePending(redis, bookId, chapterId, sceneId, 'audio', buildId);
     await runtimeScheduler.addSceneToActiveIndex(redis, bookId, chapterId, sceneId);
     log(`ADDED TO ACTIVE: ${bookId}/${chapterId}/${sceneId}`);
 
@@ -48,8 +48,8 @@ async function executeAudioDispatch(redis, scene, loadedBook, buildId) {
         buildId, dispatchType: 'orchestrator'
     });
 
-    // §5.1: Set per-asset state to generating so callbacks can validate correctly
-    await state.setAssetState(redis, bookId, chapterId, sceneId, 'audio', state.AssetState.GENERATING);
+    // T7: через фасад — единый владелец GENERATING (audio)
+    await setSceneGenerating(redis, bookId, chapterId, sceneId, 'audio');
 
     // Fallback to disk load when runtime doesn't pass loadedBook
     const bookData = loadedBook || book.loadBook(bookId);
@@ -76,21 +76,7 @@ async function executeAudioDispatch(redis, scene, loadedBook, buildId) {
         return;
     }
 
-    // 🧹 Delete placeholder merged audio file so triggerAudioMerge
-    // doesn't exit early when it sees a merged file before all chunks arrive.
-    const fs = require('fs');
-    const path = require('path');
-    const OUTPUT_DIR = process.env.OUTPUT_DIR || '/data/output';
-    const mergedPath = path.join(OUTPUT_DIR, buildId, `${bookId}_${chapterId}_${sceneId}.mp3`);
-    if (fs.existsSync(mergedPath)) {
-        try {
-            fs.unlinkSync(mergedPath);
-            log(`  🗑 Deleted placeholder merged audio before TTS: ${mergedPath}`);
-        } catch (e) {
-            warn(`  ⚠️ Failed to delete placeholder merged audio: ${e.message}`);
-        }
-    }
-
+    // T7: Файловый сигнал не нужен — audioOrch.completeChunk проверяет phase
     if (sceneData) {
         const result = await audio.generateSceneAudio(redis, sceneData, bookData, buildId, bookId);
 

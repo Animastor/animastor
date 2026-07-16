@@ -100,11 +100,9 @@ async function generateSceneAudio(redis, sceneData, loadedBook, buildId, bookId)
             if (asset && asset.status === 'placeholder') {
                 helpers.log(`Audio is placeholder — will regenerate real audio: ${bookId}/${chapterId}/${sceneId}`);
                 isReady = false;
-                // 🧹 Delete stale placeholder merged audio so triggerAudioMerge
-                // doesn't exit early when it sees a merged file before all chunks
-                // arrive. Without this, each arriving chunk's triggerAudioMerge
-                // finds the old placeholder at mergedPath and returns early,
-                // preventing the multi-chunk merge from ever starting.
+                // T7: Удаляем stale placeholder merged файл, чтобы isSceneAudioReady()
+                // не вернула true (файл есть на диске) для placeholder-сцены.
+                // completeChunk проверяет phase, так что triggerAudioMerge не нужен.
                 const mergedPath = helpers.getOutputPath(buildId, `${bookId}_${chapterId}_${sceneId}.mp3`);
                 if (fs.existsSync(mergedPath)) {
                     try {

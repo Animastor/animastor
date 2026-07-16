@@ -252,6 +252,16 @@ async function setSceneAllReady(redis, bookId, chapterId, sceneId, buildId = nul
     return await state.syncLinearState(redis, bookId, chapterId, sceneId, buildId);
 }
 
+// ── setSceneGenerating ──────────────────────────────
+// Set an asset to GENERATING and sync linear state.
+// Used by executeAudioDispatch when TTS/image/video dispatch begins.
+// T7: Единственный владелец перехода в GENERATING для audio.
+async function setSceneGenerating(redis, bookId, chapterId, sceneId, asset, buildId = null) {
+    const state = require('../state');
+    await state.setAssetState(redis, bookId, chapterId, sceneId, asset, state.AssetState.GENERATING);
+    return await state.syncLinearState(redis, bookId, chapterId, sceneId, buildId);
+}
+
 // ── setScenePlaceholder ──────────────────────────────
 // Set audio to PLACEHOLDER and sync linear state.
 // Used by scene-window when audio is disabled by layer config.
@@ -447,6 +457,7 @@ module.exports = {
     completeStageWithoutVideo,
     completeStageWithoutImage,
     setScenePending,
+    setSceneGenerating,
     setSceneAllReady,
     setScenePlaceholder,
     reconcile,
