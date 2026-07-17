@@ -411,17 +411,18 @@ async function dispatchStage(redis, bookId, chapterId, sceneId, stage, loadedBoo
 
     log(`DISPATCH_REQUEST: ${bookId}/${chapterId}/${sceneId}:${stage}${force ? ' (force=true)' : ''}`);
 
-    // Force mode pre-clear: before any checks, nuke any existing lease + quota + metadata
+    // Force mode pre-clear: cancel existing dispatch, release quota ТОЛЬКО при наличии lease
     if (force) {
         const { leaseKey, token } = await getLeaseData(redis, bookId, chapterId, sceneId, stage);
         if (token) {
-            log(`FORCE_CLEAR_LEASE: ${bookId}/${chapterId}/${sceneId}:${stage} — deleting existing lease`);
-            await redis.del(leaseKey);
+            log(`FORCE_CLEAR_LEASE: ${bookId}/${chapterId}/${sceneId}:${stage} — cancelling existing dispatch`);
+            // T5: Используем cancelActiveDispatch для корректного освобождения
+            await cancelActiveDispatch(redis, bookId, chapterId, sceneId, stage, 'force_reset');
+        } else {
+            log(`FORCE_CLEAR: ${bookId}/${chapterId}/${sceneId}:${stage} — no active lease, only clearing metadata`);
+            await deleteDispatchMetadata(redis, bookId, chapterId, sceneId, stage);
+            // T5: Не освобождаем quota — не было lease → не было quota для этой сцены
         }
-        // Release quota if leaked
-        await releaseQuota(redis, stage);
-        // Delete metadata
-        await deleteDispatchMetadata(redis, bookId, chapterId, sceneId, stage);
     }
 
     // Phase 9 Step 0: Check circuit breaker
@@ -752,33 +753,126 @@ async function clearAllLeasesForBook(redis, bookId) {
     return { deleted };
 }
 
+// ======================================================
+// T5: Cancellation + quota-safe lease clearing
+// ======================================================
+
 /**
- * Clear leases, metadata, and completion markers for specific scenes.
- * Used by regenerate to only clear dirty scenes' leases, preserving other
- * scenes so they continue generating without interruption.
+ * Cancel an active dispatch: release lease+quota, save final record, log event.
+ * Используется force mode и clearLeasesForScenes.
+ */
+async function cancelActiveDispatch(redis, bookId, chapterId, sceneId, stage, reason = 'cancelled') {
+    const { leaseKey, token } = await getLeaseData(redis, bookId, chapterId, sceneId, stage);
+
+    if (token && leaseKey) {
+        log(`CANCEL_DISPATCH: ${bookId}/${chapterId}/${sceneId}:${stage} — releasing lease + quota`);
+        await releaseStageLease(redis, leaseKey, token);
+        await releaseQuota(redis, stage);
+    } else {
+        log(`CANCEL_DISPATCH: ${bookId}/${chapterId}/${sceneId}:${stage} — no active lease, skipping quota release`);
+    }
+
+    // Save cancellation in metadata (short-lived record for identity check)
+    const completedKey = getDispatchCompletedKey(bookId, chapterId, sceneId, stage);
+    await redis.set(completedKey, 'cancelled', 'NX', 'EX', LEASE_TTLS[stage] || 1800).catch(() => {});
+
+    await deleteDispatchMetadata(redis, bookId, chapterId, sceneId, stage);
+
+    await logDispatchEvent(redis, bookId, chapterId, sceneId, 'CANCELLED', stage, {
+        reason,
+        finalizedBy: 'cancelActiveDispatch'
+    }).catch(() => {});
+
+    return { cancelled: true, hadLease: !!(token && leaseKey) };
+}
+
+/**
+ * Clear leases for specific scenes — T5: корректно освобождает quota
+ * для каждого существующего dispatch. Не удаляет quota без ownership.
  *
  * @param {Array<{chapter_id:string,scene_id:string}>} scenes - scenes to clear
  */
 async function clearLeasesForScenes(redis, bookId, scenes) {
-    if (!scenes || scenes.length === 0) return { deleted: 0 };
+    if (!scenes || scenes.length === 0) return { cancelled: 0, quotaReleased: 0 };
     const stages = ['audio', 'image', 'video'];
-    const keysToDelete = [];
+    let cancelled = 0;
+    let quotaReleased = 0;
+
     for (const s of scenes) {
         for (const stage of stages) {
-            keysToDelete.push(
-                getLeaseKey(bookId, s.chapter_id, s.scene_id, stage),
-                getDispatchMetaKey(bookId, s.chapter_id, s.scene_id, stage),
-                getDispatchCompletedKey(bookId, s.chapter_id, s.scene_id, stage)
-            );
+            const { leaseKey, token } = await getLeaseData(redis, bookId, s.chapter_id, s.scene_id, stage);
+            if (token && leaseKey) {
+                // T5: есть реальный dispatch — освобождаем ресурсы
+                await releaseStageLease(redis, leaseKey, token);
+                await releaseQuota(redis, stage);
+                quotaReleased++;
+            }
+            // В любом случае удаляем metadata и completion marker
+            await deleteDispatchMetadata(redis, bookId, s.chapter_id, s.scene_id, stage);
+            await redis.del(getDispatchCompletedKey(bookId, s.chapter_id, s.scene_id, stage)).catch(() => {});
+            cancelled++;
         }
     }
-    // Delete all keys in a single batch call — ioredis unpacks array as variadic args
-    await redis.del(...keysToDelete);
-    const deleted = keysToDelete.length;
-    if (deleted > 0) {
-        log(`CLEAR_SCENE_LEASES: ${bookId} — ${deleted} keys deleted for ${scenes.length} scene(s)`);
+
+    if (cancelled > 0) {
+        log(`CLEAR_SCENE_LEASES: ${bookId} — ${cancelled} stages cancelled, ${quotaReleased} quota slots released for ${scenes.length} scene(s)`);
     }
-    return { deleted };
+    return { cancelled, quotaReleased };
+}
+
+/**
+ * Clear all dispatch leases and metadata for a book — T5: quota-safe.
+ */
+async function clearAllLeasesForBook(redis, bookId) {
+    let deleted = 0;
+    let quotaReleased = 0;
+    let cursor = 0;
+
+    // Scan all dispatch leases for this book
+    const leasePattern = `${DISPATCH_LEASE_PREFIX}:${bookId}:*`;
+    do {
+        const result = await redis.scan(cursor, 'MATCH', leasePattern, 'COUNT', 200);
+        cursor = parseInt(result[0], 10);
+        const keys = result[1];
+
+        for (const key of keys) {
+            // Parse: animastor:dispatch-lease:bookId:chapterId:sceneId:stage
+            const parts = key.split(':');
+            if (parts.length >= 6) {
+                const chapterId = parts[3];
+                const sceneId = parts[4];
+                const stage = parts[5];
+                const token = await redis.get(key);
+                if (token) {
+                    await releaseStageLease(redis, key, token);
+                    await releaseQuota(redis, stage);
+                    quotaReleased++;
+                }
+            }
+            await redis.del(key).catch(() => {});
+            deleted++;
+        }
+    } while (cursor !== 0);
+
+    // Delete metadata and completion markers
+    for (const prefix of [DISPATCH_META_PREFIX, DISPATCH_COMPLETED_PREFIX]) {
+        cursor = 0;
+        const pattern = `${prefix}:${bookId}:*`;
+        do {
+            const result = await redis.scan(cursor, 'MATCH', pattern, 'COUNT', 200);
+            cursor = parseInt(result[0], 10);
+            const keys = result[1];
+            if (keys.length > 0) {
+                await redis.del(...keys);
+                deleted += keys.length;
+            }
+        } while (cursor !== 0);
+    }
+
+    if (deleted > 0 || quotaReleased > 0) {
+        log(`CLEAR_ALL_LEASES: ${bookId} — ${deleted} keys deleted, ${quotaReleased} quota slots released`);
+    }
+    return { deleted, quotaReleased };
 }
 
 // ======================================================
