@@ -29,9 +29,13 @@ function error(msg) {
 // LOOP STATE
 // ======================================================
 
-let loopInterval = null;
+let loopTimeout = null;
 let isRunning = false;
 let currentTick = 0;
+let tickInProgress = false;
+// Redis reference kept for tick scheduling
+let loopRedis = null;
+let loopIntervalMs = null;
 
 // Metrics tracking
 const metricsHistory = [];
@@ -134,6 +138,49 @@ async function getCurrentMetrics(redis) {
 // ======================================================
 
 /**
+ * Schedule the next tick. Uses recursive setTimeout (не setInterval),
+ * чтобы гарантировать отсутствие перекрывающихся tick'ов (T6.6).
+ * Следующий tick планируется только после завершения предыдущего.
+ */
+function scheduleNext() {
+    if (!isRunning) return;
+
+    loopTimeout = setTimeout(async () => {
+        if (!isRunning || tickInProgress) return;
+
+        tickInProgress = true;
+        try {
+            // Check if Redis is available before executing tick
+            if (loopRedis) {
+                try {
+                    const pingResult = await loopRedis.ping();
+                    if (pingResult !== 'PONG') {
+                        warn('Redis not responding, skipping tick');
+                        tickInProgress = false;
+                        scheduleNext();
+                        return;
+                    }
+                } catch (_) {
+                    warn('Redis ping failed, skipping tick');
+                    tickInProgress = false;
+                    scheduleNext();
+                    return;
+                }
+            }
+
+            await executeTick(loopRedis);
+        } catch (err) {
+            error(`Tick execution error: ${err.message}`);
+            // Don't stop the loop on error - just log and continue
+        } finally {
+            tickInProgress = false;
+            // Schedule next tick only if still running (stop() мог быть вызван во время tick)
+            scheduleNext();
+        }
+    }, loopIntervalMs);
+}
+
+/**
  * Start the runtime loop.
  * @param {number} intervalMs - Interval in milliseconds (default: 5000)
  */
@@ -144,29 +191,20 @@ function start(redis, intervalMs = runtimeScheduler.SCHEDULER_TICK_MS) {
     }
 
     isRunning = true;
+    loopRedis = redis;
+    loopIntervalMs = intervalMs;
     log(`Starting runtime loop with interval: ${intervalMs}ms`);
 
-    loopInterval = setInterval(async () => {
-        try {
-            // Check if Redis is available before executing tick
-            const pingResult = await redis.ping();
-            if (pingResult !== 'PONG') {
-                warn('Redis not responding, skipping tick');
-                return;
-            }
-            
-            await executeTick(redis);
-        } catch (err) {
-            error(`Tick execution error: ${err.message}`);
-            // Don't stop the loop on error - just log and continue
-        }
-    }, intervalMs);
+    // Schedule first tick
+    scheduleNext();
 
     return { success: true, interval: intervalMs };
 }
 
 /**
  * Stop the runtime loop.
+ * Если tick выполняется в данный момент, stop() не прерывает его, 
+ * но предотвращает запуск следующего tick (T6.10).
  */
 function stop() {
     if (!isRunning) {
@@ -174,12 +212,14 @@ function stop() {
         return { success: false, reason: 'not_running' };
     }
 
-    if (loopInterval) {
-        clearInterval(loopInterval);
-        loopInterval = null;
+    // Предотвращаем запуск следующего tick
+    isRunning = false;
+
+    if (loopTimeout) {
+        clearTimeout(loopTimeout);
+        loopTimeout = null;
     }
 
-    isRunning = false;
     log('Runtime loop stopped');
 
     return { success: true };

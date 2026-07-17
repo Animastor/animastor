@@ -557,6 +557,11 @@ async function dispatchStage(redis, bookId, chapterId, sceneId, stage, loadedBoo
                 return { dispatched: false, reason: result.reason || 'already_done', result };
             }
 
+            // T6: Start lease renewal for this actively dispatched job
+            // Only started after confirming dispatcher returned dispatched:true
+            // (not for cache hits, backpressure, or empty executor results)
+            startDispatchRenewal(redis, bookId, chapterId, sceneId, stage, lease.leaseKey, lease.token);
+
             // Set 3s debounce — task actually sent to GPU hub
             await redis.set(`animastor:runtime:last-active:${stage}`, '1', 'EX', 3);
 
@@ -697,69 +702,13 @@ async function markDispatchFailed(redis, bookId, chapterId, sceneId, stage, erro
 }
 
 // ======================================================
-// RECOVERY
-// ======================================================
-
-/**
- * Clear all dispatch leases and metadata for a book.
- * Used when cancelling or regenerating a book.
- */
-async function clearAllLeasesForBook(redis, bookId) {
-    let deleted = 0;
-    let cursor = 0;
-    
-    // Delete all dispatch leases
-    const leasePattern = `${DISPATCH_LEASE_PREFIX}:${bookId}:*`;
-    do {
-        const result = await redis.scan(cursor, 'MATCH', leasePattern, 'COUNT', 200);
-        cursor = parseInt(result[0], 10);
-        const keys = result[1];
-        if (keys.length > 0) {
-            await redis.del(...keys);
-            deleted += keys.length;
-        }
-    } while (cursor !== 0);
-
-    // Delete all dispatch metadata
-    cursor = 0;
-    const metaPattern = `${DISPATCH_META_PREFIX}:${bookId}:*`;
-    do {
-        const result = await redis.scan(cursor, 'MATCH', metaPattern, 'COUNT', 200);
-        cursor = parseInt(result[0], 10);
-        const keys = result[1];
-        if (keys.length > 0) {
-            await redis.del(...keys);
-            deleted += keys.length;
-        }
-    } while (cursor !== 0);
-
-    // Д.1: Delete completion markers too, so a regenerated scene's first
-    // completion isn't skipped by a stale marker from the cancelled build.
-    cursor = 0;
-    const completedPattern = `${DISPATCH_COMPLETED_PREFIX}:${bookId}:*`;
-    do {
-        const result = await redis.scan(cursor, 'MATCH', completedPattern, 'COUNT', 200);
-        cursor = parseInt(result[0], 10);
-        const keys = result[1];
-        if (keys.length > 0) {
-            await redis.del(...keys);
-            deleted += keys.length;
-        }
-    } while (cursor !== 0);
-
-    if (deleted > 0) {
-        log(`CLEAR_ALL_LEASES: ${bookId} — ${deleted} keys deleted`);
-    }
-    return { deleted };
-}
-
-// ======================================================
 // T5: Cancellation + quota-safe lease clearing
 // ======================================================
 
 /**
- * Cancel an active dispatch: release lease+quota, save final record, log event.
+ * Cancel an active dispatch: stop renewal, release lease+quota, save final record, log event.
  * Используется force mode и clearLeasesForScenes.
+ * T6: Останавливает in-memory renewal timer, чтобы избежать утечки.
  */
 async function cancelActiveDispatch(redis, bookId, chapterId, sceneId, stage, reason = 'cancelled') {
     const { leaseKey, token } = await getLeaseData(redis, bookId, chapterId, sceneId, stage);
@@ -771,6 +720,9 @@ async function cancelActiveDispatch(redis, bookId, chapterId, sceneId, stage, re
     } else {
         log(`CANCEL_DISPATCH: ${bookId}/${chapterId}/${sceneId}:${stage} — no active lease, skipping quota release`);
     }
+
+    // T6: Останавливаем in-memory renewal timer
+    stopDispatchRenewal(bookId, chapterId, sceneId, stage);
 
     // Save cancellation in metadata (short-lived record for identity check)
     const completedKey = getDispatchCompletedKey(bookId, chapterId, sceneId, stage);
@@ -807,6 +759,9 @@ async function clearLeasesForScenes(redis, bookId, scenes) {
                 await releaseQuota(redis, stage);
                 quotaReleased++;
             }
+            // T6: Останавливаем in-memory renewal timer (идемпотентно)
+            stopDispatchRenewal(bookId, s.chapter_id, s.scene_id, stage);
+
             // В любом случае удаляем metadata и completion marker
             await deleteDispatchMetadata(redis, bookId, s.chapter_id, s.scene_id, stage);
             await redis.del(getDispatchCompletedKey(bookId, s.chapter_id, s.scene_id, stage)).catch(() => {});
@@ -842,6 +797,10 @@ async function clearAllLeasesForBook(redis, bookId) {
                 const chapterId = parts[3];
                 const sceneId = parts[4];
                 const stage = parts[5];
+
+                // T6: Останавливаем renewal timer перед удалением lease
+                stopDispatchRenewal(bookId, chapterId, sceneId, stage);
+
                 const token = await redis.get(key);
                 if (token) {
                     await releaseStageLease(redis, key, token);

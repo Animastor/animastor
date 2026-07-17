@@ -345,95 +345,105 @@ async function tick(redis, loadedBooks = {}) {
         };
     }
 
-    const activeKeys = await getActiveSceneKeys(redis);
-    const summary = {
-        totalActive: activeKeys.length,
-        processed: 0,
-        dispatched: 0,
-        throttled: 0,
-        skipped: 0,
-        completed: 0,
-        errors: []
-    };
+    // T6.5: Все тело tick обёрнуто в try/finally для гарантированного
+    // освобождения lock даже при исключении (не только в per-scene catch).
+    try {
+        const activeKeys = await getActiveSceneKeys(redis);
+        const summary = {
+            totalActive: activeKeys.length,
+            processed: 0,
+            dispatched: 0,
+            throttled: 0,
+            skipped: 0,
+            completed: 0,
+            errors: []
+        };
 
-    // Cache force-dispatch flags per book to avoid redundant Redis calls
-    const forceCache = new Map();
-    // Cache loaded books per tick to avoid redundant disk reads
-    const bookCache = new Map();
+        // Cache force-dispatch flags per book to avoid redundant Redis calls
+        const forceCache = new Map();
+        // Cache loaded books per tick to avoid redundant disk reads
+        const bookCache = new Map();
 
-    for (const sceneKey of activeKeys) {
-        const parsed = parseSceneKey(sceneKey);
-        if (!parsed) {
-            summary.errors.push(`Invalid scene key: ${sceneKey}`);
-            continue;
-        }
+        for (const sceneKey of activeKeys) {
+            const parsed = parseSceneKey(sceneKey);
+            if (!parsed) {
+                summary.errors.push(`Invalid scene key: ${sceneKey}`);
+                continue;
+            }
 
-        const { bookId, chapterId, sceneId } = parsed;
+            const { bookId, chapterId, sceneId } = parsed;
 
-        // Check force-dispatch flag for recently regenerated books (cached per book)
-        let force = false;
-        if (forceCache.has(bookId)) {
-            force = forceCache.get(bookId);
-        } else {
-            const forceFlag = await redis.get(`animastor:force-dispatch:${bookId}`);
-            force = forceFlag === '1';
-            forceCache.set(bookId, force);
-        }
-
-        // Resolve loaded book from cache or load it
-        let sceneLoadedBook = loadedBooks[bookId];
-        if (!sceneLoadedBook) {
-            if (bookCache.has(bookId)) {
-                sceneLoadedBook = bookCache.get(bookId);
+            // Check force-dispatch flag for recently regenerated books (cached per book)
+            let force = false;
+            if (forceCache.has(bookId)) {
+                force = forceCache.get(bookId);
             } else {
-                try {
-                    const bookModule = require('../book');
-                    sceneLoadedBook = bookModule.loadBook(bookId);
-                    bookCache.set(bookId, sceneLoadedBook);
-                } catch (_) {
-                    sceneLoadedBook = null;
+                const forceFlag = await redis.get(`animastor:force-dispatch:${bookId}`);
+                force = forceFlag === '1';
+                forceCache.set(bookId, force);
+            }
+
+            // Resolve loaded book from cache or load it
+            let sceneLoadedBook = loadedBooks[bookId];
+            if (!sceneLoadedBook) {
+                if (bookCache.has(bookId)) {
+                    sceneLoadedBook = bookCache.get(bookId);
+                } else {
+                    try {
+                        const bookModule = require('../book');
+                        sceneLoadedBook = bookModule.loadBook(bookId);
+                        bookCache.set(bookId, sceneLoadedBook);
+                    } catch (_) {
+                        sceneLoadedBook = null;
+                    }
                 }
             }
-        }
 
-        try {
-            const result = await attemptDispatch(redis, bookId, chapterId, sceneId, sceneLoadedBook, force);
-            summary.processed++;
+            try {
+                const result = await attemptDispatch(redis, bookId, chapterId, sceneId, sceneLoadedBook, force);
+                summary.processed++;
 
-            if (result.completed) {
-                summary.completed++;
-            } else if (result.dispatched && result.dispatched > 0) {
-                summary.dispatched += result.dispatched;
-                if (result.throttled > 0) summary.throttled += result.throttled;
-            } else if (result.skip) {
-                summary.skipped++;
-            } else if (result.throttled > 0) {
-                summary.throttled += result.throttled;
-            } else if (result.reason === 'backpressure' || result.reason === 'throttled') {
-                summary.throttled++;
-            } else if (result.success) {
-                // No action needed
-            } else {
-                summary.errors.push(`${result.reason} for ${sceneKey}`);
+                if (result.completed) {
+                    summary.completed++;
+                } else if (result.dispatched && result.dispatched > 0) {
+                    summary.dispatched += result.dispatched;
+                    if (result.throttled > 0) summary.throttled += result.throttled;
+                } else if (result.skip) {
+                    summary.skipped++;
+                } else if (result.throttled > 0) {
+                    summary.throttled += result.throttled;
+                } else if (result.reason === 'backpressure' || result.reason === 'throttled') {
+                    summary.throttled++;
+                } else if (result.success) {
+                    // No action needed
+                } else {
+                    summary.errors.push(`${result.reason} for ${sceneKey}`);
+                }
+            } catch (err) {
+                summary.errors.push(`Error processing ${sceneKey}: ${err.message}`);
+                error(`Tick error for ${sceneKey}: ${err.message}`);
             }
-        } catch (err) {
-            summary.errors.push(`Error processing ${sceneKey}: ${err.message}`);
-            error(`Tick error for ${sceneKey}: ${err.message}`);
+        }
+
+        log(`=== TICK COMPLETE ===`);
+        log(`Active: ${summary.totalActive}, Dispatched: ${summary.dispatched}, Skipped: ${summary.skipped}, Throttled: ${summary.throttled}, Completed: ${summary.completed}`);
+
+        if (summary.errors.length > 0) {
+            log(`Errors: ${summary.errors.length}`);
+            summary.errors.slice(0, 5).forEach(e => log(`  - ${e}`));
+        }
+
+        return summary;
+    } finally {
+        // T6.5: Гарантированное освобождение lock в finally.
+        // Если исключение вылетело за пределы per-scene catch (напр. getActiveSceneKeys),
+        // lock должен быть отпущен, чтобы scheduler не завис навсегда.
+        try {
+            await dispatchEngine.releaseSchedulerTickLock(redis, tickLock.token);
+        } catch (lockErr) {
+            error(`TICK_LOCK_RELEASE_FAILED: ${lockErr.message}`);
         }
     }
-
-    // Release tick lock
-    await dispatchEngine.releaseSchedulerTickLock(redis, tickLock.token);
-
-    log(`=== TICK COMPLETE ===`);
-    log(`Active: ${summary.totalActive}, Dispatched: ${summary.dispatched}, Skipped: ${summary.skipped}, Throttled: ${summary.throttled}, Completed: ${summary.completed}`);
-
-    if (summary.errors.length > 0) {
-        log(`Errors: ${summary.errors.length}`);
-        summary.errors.slice(0, 5).forEach(e => log(`  - ${e}`));
-    }
-
-    return summary;
 }
 
 /**
