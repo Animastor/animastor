@@ -110,7 +110,12 @@ module.exports = function registerCacheRoutes(app, ctx) {
             // Clear gpu-hub queue
             try {
                 const HUB_URL = process.env.HUB_URL || 'https://animastor.in/gpu';
-                await fetch(`${HUB_URL}/queue/clear?book_id=${bookId}`, { method: 'DELETE' }).catch(() => {});
+                const hubHeaders = { method: 'DELETE' };
+                const apiKey = config.GPU_HUB_API_KEY || process.env.GPU_HUB_API_KEY;
+                if (apiKey) {
+                    hubHeaders.headers = { 'x-api-key': apiKey };
+                }
+                await fetch(`${HUB_URL}/queue/clear?book_id=${bookId}`, hubHeaders).catch(() => {});
             } catch (_) {}
 
             log('[CACHE] Cache cleared for', bookId);

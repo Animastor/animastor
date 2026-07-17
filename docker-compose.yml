@@ -59,6 +59,8 @@ services:
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:?set OPENROUTER_API_KEY in .env}
       - OPENROUTER_MODEL=qwen/qwen3-32b
       - AI_MODEL=qwen/qwen3-32b
+      # T9: GPU Hub API key — должно совпадать с GPU_HUB_API_KEY в gpu-hub секции
+      - GPU_HUB_API_KEY=${GPU_HUB_API_KEY:-}
     volumes:
       - ./workflow.json:/workflow.json:ro
       - ./data/output:/data/output
@@ -79,6 +81,9 @@ services:
     restart: unless-stopped
     networks:
       - net
+    environment:
+      # T9: GPU Hub API key — должно совпадать с GPU_HUB_API_KEY в backend секции
+      - GPU_HUB_API_KEY=${GPU_HUB_API_KEY:-}
 
   nginx:
     image: nginx:alpine

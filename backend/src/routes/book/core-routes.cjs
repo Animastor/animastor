@@ -449,7 +449,12 @@ module.exports = function(app, redis, deps) {
 
             try {
                 const HUB_URL = process.env.HUB_URL || 'https://animastor.in/gpu';
-                await fetch(`${HUB_URL}/queue/clear?book_id=${bookId}`, { method: 'DELETE' }).catch(() => {});
+                const hubHeaders = { method: 'DELETE' };
+                const apiKey = process.env.GPU_HUB_API_KEY;
+                if (apiKey) {
+                    hubHeaders.headers = { 'x-api-key': apiKey };
+                }
+                await fetch(`${HUB_URL}/queue/clear?book_id=${bookId}`, hubHeaders).catch(() => {});
             } catch (_) {}
 
             log('[DELETE-BOOK] Book completely deleted:', bookId);

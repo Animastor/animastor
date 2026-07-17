@@ -33,6 +33,12 @@ async function sendUnified(taskSpec) {
         taskSpec.dispatch_id = `dispatch-unknown-${Date.now()}`;
     }
 
+    // T9: Include GPU_HUB_API_KEY header for authenticated requests
+    const headers = { "Content-Type": "application/json" };
+    if (config.GPU_HUB_API_KEY) {
+        headers['x-api-key'] = config.GPU_HUB_API_KEY;
+    }
+
     let lastError;
     for (let attempt = 0; attempt < 3; attempt++) {
         try {
@@ -41,7 +47,7 @@ async function sendUnified(taskSpec) {
 
             const res = await fetch(`${config.HUB_URL}/task`, {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
+                headers,
                 body: JSON.stringify(taskSpec),
                 signal: controller.signal
             });

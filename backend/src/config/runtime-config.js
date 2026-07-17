@@ -162,6 +162,13 @@ const WORKER_HEARTBEAT_KEY = (type, workerId) => `${WORKER_HEARTBEAT_PREFIX}:${t
 const WORKER_HEARTBEAT_TYPE_PATTERN = (type) => `${WORKER_HEARTBEAT_PREFIX}:${type}:*`;
 
 // ======================================================
+// GPU HUB
+// ======================================================
+// T9: Единое имя env для API-ключа GPU Hub.
+// Пробрасывается в backend и gpu-hub через docker-compose.
+const GPU_HUB_API_KEY = process.env.GPU_HUB_API_KEY || null;
+
+// ======================================================
 // AI (NVIDIA)
 // ======================================================
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
@@ -210,6 +217,9 @@ module.exports = {
     WORKER_HEARTBEAT_TYPES,
     WORKER_HEARTBEAT_KEY,
     WORKER_HEARTBEAT_TYPE_PATTERN,
+
+    // GPU Hub
+    GPU_HUB_API_KEY,
 
     // AI
     OPENROUTER_API_KEY,

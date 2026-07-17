@@ -419,7 +419,12 @@ async function resetScenes(redis, bookId, buildId, scenes, layerCfg, options = {
     // 6. Clear GPU hub queues via HTTP endpoint (gpu-hub владеет ключами)
     try {
         const hubUrl = `${runtimeConfig.HUB_URL}/queue/clear?book_id=${bookId}`;
-        const hubRes = await fetch(hubUrl, { method: 'DELETE' });
+        const hubHeaders = { method: 'DELETE' };
+        // T9: Include API key header for authenticated GPU Hub
+        if (runtimeConfig.GPU_HUB_API_KEY) {
+            hubHeaders.headers = { 'x-api-key': runtimeConfig.GPU_HUB_API_KEY };
+        }
+        const hubRes = await fetch(hubUrl, hubHeaders);
         if (hubRes.ok) {
             log(`[RESET-SCENES] GPU hub queues cleared for ${bookId}`);
         } else {

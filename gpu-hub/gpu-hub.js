@@ -26,12 +26,13 @@ app.use(express.json({ limit: "500mb" }))
 // API KEY AUTH
 // ======================================================
 
-const API_KEY = process.env.API_KEY || null;
+const GPU_HUB_API_KEY = process.env.GPU_HUB_API_KEY || null;
 
 function requireApiKey(req, res, next) {
-  if (!API_KEY) return next(); // no key configured = open access
-  const provided = req.headers['x-api-key'] || req.query.api_key;
-  if (provided !== API_KEY) {
+  if (!GPU_HUB_API_KEY) return next(); // no key configured = open access
+  // T9: Header-only — не принимаем ключ в query string
+  const provided = req.headers['x-api-key'];
+  if (provided !== GPU_HUB_API_KEY) {
     return res.status(401).json({ error: 'unauthorized' });
   }
   next();
@@ -264,7 +265,13 @@ if (!isNew) {
       job_type: type,
       assets: assets || null,
       build_id: build_id || null,
-      protocol_version: protocol_version || 1
+      protocol_version: protocol_version || 1,
+      // T9: Structured ownership для точной фильтрации без prefix-коллизий
+      book_id: params?.book_id || null,
+      chapter_id: params?.chapter_id || null,
+      scene_id: params?.scene_id || null,
+      stage: type,
+      dispatch_id: req.body.dispatch_id || null
     })
   )
 
@@ -545,11 +552,37 @@ app.delete("/queue/clear", requireApiKey, async (req, res) => {
         }
       } while (cursor !== '0')
 
-      // 3. Clear result and dedup keys for this book
-      for (const pattern of [`animastor:result:${book_id}_*`, `animastor:job:${book_id}_*`]) {
+      // 3. Clear result keys for this book (T9: правильный паттерн — book_id внутри ключа, не в начале)
+      // Key format: animastor:result:<build_id>:<bookId>:<chapterId>:<sceneId>:<type>
+      // Используем SCAN с HSCAN-подобным подходом: итерируем все result ключи и фильтруем по book_id.
+      // Аналог animastor:result:*:${book_id}:* — но SCAN с двумя * в начале медленный,
+      // поэтому итерируем все animastor:result:* и фильтруем на стороне клиента.
+      {
         let c = '0'
         do {
-          const scan = await redis.scan(c, 'MATCH', pattern, 'COUNT', 500)
+          const scan = await redis.scan(c, 'MATCH', 'animastor:result:*', 'COUNT', 1000)
+          c = scan[0]
+          const toDelete = []
+          for (const key of scan[1]) {
+            const parts = key.split(':')
+            // Format: animastor:result:<build_id>:<bookId>:...
+            // book_id at index 3 (0=animastor,1=result,2=build_id,3=bookId)
+            if (parts.length >= 4 && parts[3] === book_id) {
+              toDelete.push(key)
+            }
+          }
+          if (toDelete.length > 0) {
+            await redis.del(toDelete)
+            removed += toDelete.length
+          }
+        } while (c !== '0')
+      }
+
+      // 4. Clear dedup keys for this book (animastor:job:bookId_chapterId_sceneId_index:type)
+      {
+        let c = '0'
+        do {
+          const scan = await redis.scan(c, 'MATCH', `animastor:job:${book_id}_*`, 'COUNT', 500)
           c = scan[0]
           if (scan[1].length) {
             await redis.del(scan[1])
