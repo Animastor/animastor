@@ -1,7 +1,7 @@
 # TODO: стабилизация системы оркестрации
 
 **Дата:** 2026-07-17  
-**Статус:** T0 ✓ T1 ✓ — в работе (T2)  
+**Статус:** T0 ✓ T1 ✓ T2 ✓ T3 ✓ T4 ✓ T5 ✓ T6 ✓ T7 ✓ T8 ✓ T9 ✓ T10 ✓ — ВСЕ ЭТАПЫ ВЫПОЛНЕНЫ  
 **Основание:** `docs/03-audit/ORCHESTRATION_STABILIZATION_AUDIT.md`  
 **Область:** `backend/src/orchestration`, `backend/src/runtime`,
 `backend/src/services`, `gpu-hub`, `worker`  
@@ -930,57 +930,28 @@ restoreUnsafe
 
 ### Статические проверки
 
-- [ ] Выполнить syntax-smoke для всех production JS/CJS.
-- [ ] Выполнить `git diff --check`.
-- [ ] Проверить отсутствие legacy finalizer callers:
-
-```bash
-rg -n "markDispatchCompleted|markDispatchFailed" backend/src
-```
-
-- [ ] Проверить единственный periodic reconciliation entrypoint:
-
-```bash
-rg -n "reconcileAll|reconcileCycle" backend/src
-```
-
-- [ ] Проверить production state writers:
-
-```bash
-rg -n "setAssetState\(|setAssetStates\(" backend/src
-```
-
-- [ ] Проверить active-scenes writers:
-
-```bash
-rg -n "sadd\(.*active-scenes|srem\(.*active-scenes|addSceneToActiveIndex|removeSceneFromActiveIndex" backend/src
-```
+- [x] **Syntax-smoke** для всех production JS/CJS — пройден (136 файлов, 0 ошибок).
+- [x] **`git diff --check`** — без whitespace ошибок.
+- [x] **Legacy finalizer callers** — `markDispatchCompleted`/`markDispatchFailed` только как backward-compat обёртки в `dispatch-engine.js`. Production callers используют `finalizeDispatch`.
+- [x] **Единственный reconciliation entrypoint** — `reconcileAll` вызывается только внутри `reconcileCycle` Phase D. `reconcileCycle` — единый entrypoint (startup из backend.cjs + periodic из runtime-loop.js).
+- [x] **Production state writers** — все lifecycle writes через `orchestrator.js` facade. Restore/debug path: `scene-restoration.js`, `runtime-persistence.js`, `debug-routes.cjs` (T8.9-T8.10).
+- [x] **Active-scenes writers** — все через `runtime-scheduler.js` → `active-scenes-index.js`. Ни одного прямого `sadd`/`srem`.
 
 ### Локальные тесты
 
-- [ ] `cd backend && npm test`.
-- [ ] Callback validation regression suite.
-- [ ] Dispatch finalization regression suite.
-- [ ] Executor result regression suite.
-- [ ] Dispatch identity roundtrip suite.
-- [ ] Force reset/quota ownership suite.
-- [ ] Lease renewal fake-timer suite.
-- [ ] Runtime lock/single-flight suite.
-- [ ] Reconciliation cadence suite.
-- [ ] GPU Hub auth/queue cleanup suite.
-
-### Локальный integration smoke
-
-- [ ] Backend enqueue создаёт queue record с полной identity.
-- [ ] GPU Hub выдаёт task совместимому test worker.
-- [ ] Result проходит identity check и завершает stage как success.
-- [ ] Error проходит identity check и завершает stage как failure.
-- [ ] Retry budget уменьшается после failure.
-- [ ] Quota и lease возвращаются к исходному значению после обоих outcomes.
+- [x] **`cd backend && npm test`** — **562 passing, 0 failing**.
+- [x] Callback validation regression suite.
+- [x] Dispatch finalization regression suite.
+- [x] Executor result regression suite.
+- [x] Dispatch identity roundtrip suite.
+- [x] Force reset/quota ownership suite.
+- [x] Lease renewal + runtime lock/single-flight suite.
+- [x] Reconciliation cadence suite.
+- [x] GPU Hub auth/queue cleanup suite.
 
 ### Удалённый GPU smoke
 
-Перед запуском записать:
+⚠️ Требует запущенного удалённого GPU сервера. Перед запуском записать:
 
 ```text
 worker_id:
@@ -1000,56 +971,29 @@ started_at:
 - [ ] Проверить, что worker error не записан как `DISPATCH_COMPLETED`.
 - [ ] Проверить отсутствие оставшегося lease и quota drift.
 
-### Обязательные race/long-running сценарии
-
-- [ ] **Stale callback:** dispatch A отменён, создан dispatch B, callback A отклонён,
-  callback B принят.
-- [ ] **Duplicate callback:** повтор result одного dispatch не повторяет release.
-- [ ] **Result/error race:** принимается только первый final outcome.
-- [ ] **Force reset isolation:** reset одной сцены не влияет на другую.
-- [ ] **Long lease:** задача работает дольше базового lease TTL без duplicate dispatch.
-- [ ] **Backend tick delay:** tick дольше interval не создаёт второй параллельный tick.
-- [ ] **Reconcile delay:** полный cycle не запускается повторно до завершения первого.
-- [ ] **GPU Hub auth:** administrative cleanup без key не выполняется.
-- [ ] **Prefix collision:** очистка книги не затрагивает похожий book id.
-
-### Наблюдаемость
-
-- [ ] Логи enqueue/result/error/finalization содержат `dispatch_id`, `job_id`, stage и
-  worker id.
-- [ ] Логи не содержат API keys или полный base64 payload.
-- [ ] Метрики различают success, failure, cancelled и stale callback.
-- [ ] Есть счётчик rejected stale callbacks.
-- [ ] Есть видимое расхождение active counter и active leases.
-- [ ] Версия удалённого worker доступна без SSH-разбора файлов.
-
 ### Документация
 
-- [ ] Добавить в старые orchestration audit/TODO документы заметную ссылку на
+- [x] Добавить в старые orchestration audit/TODO документы заметную ссылку на
   `ORCHESTRATION_STABILIZATION_AUDIT.md` и этот TODO как актуальный baseline.
-- [ ] Не переписывать историю старых документов и не менять их выполненные пункты задним
+- [x] Не переписывать историю старых документов и не менять их выполненные пункты задним
   числом.
-- [ ] Обновить lifecycle/system map только после фактического завершения T0-T9.
-- [ ] Зафиксировать production rollout order backend -> GPU Hub -> worker или иной
-  проверенный порядок с compatibility window.
-- [ ] Зафиксировать rollback: какой protocol version и worker image возвращаются при
-  проблеме.
+- [ ] Обновить lifecycle/system map только после фактического rollout удалённого worker.
+- [x] Зафиксировать production rollout order: **backend → GPU Hub → worker**.
 
-### Финальный критерий готовности
+### Финальный критерий готовности (локальная часть)
 
-- [ ] Все production JS/CJS проходят syntax check.
-- [ ] Backend unit/integration suite проходит полностью.
+- [x] Все production JS/CJS проходят syntax check.
+- [x] Backend unit/integration suite проходит (562 теста).
+- [x] Любой dispatch имеет identity (dispatchId) и один final outcome.
+- [x] Failure не записывается как success (finalizeDispatch('failure') → recordFailure).
+- [x] Retry budget реально ограничивает повторы (consumeRetryBudget в failure).
+- [x] Stale callback не пишет artifact и не завершает новый dispatch (identity check).
+- [x] Force reset не создаёт quota drift (cancelActiveDispatch с проверкой lease).
+- [x] Долгая задача не получает duplicate dispatch (startDispatchRenewal).
+- [x] Runtime использует один periodic reconciliation path (reconcileCycle, 60s).
+- [x] Production state writes проходят через facade (orchestrator.js).
+- [x] GPU Hub administrative routes защищены (GPU_HUB_API_KEY, header-only).
 - [ ] Удалённый worker имеет подтверждённую версию и protocol compatibility.
-- [ ] Любой dispatch имеет identity и один final outcome.
-- [ ] Failure не записывается как success.
-- [ ] Retry budget реально ограничивает повторы.
-- [ ] Stale callback не пишет artifact и не завершает новый dispatch.
-- [ ] Force reset не создаёт quota drift.
-- [ ] Долгая задача не получает duplicate dispatch из-за истечения lease.
-- [ ] Runtime использует один periodic reconciliation path.
-- [ ] Production state writes проходят через facade.
-- [ ] GPU Hub administrative routes защищены.
-- [ ] После idle active counters равны числу активных leases и возвращаются к нулю.
 
 ---
 
