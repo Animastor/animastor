@@ -13,6 +13,8 @@ const stats = {
 
 
 
+// T4: Структурированный результат отправки
+// { sent: true, jobId } или { sent: false, error }
 async function sendUnified(taskSpec) {
     if (!taskSpec.job_id || !taskSpec.params || !taskSpec.job_type) {
         throw new Error("Invalid task specification");
@@ -25,6 +27,11 @@ async function sendUnified(taskSpec) {
         taskSpec.build_id = "default";
     }
     taskSpec.protocol_version = PROTOCOL_VERSION;
+
+    // T4: dispatch_id обязателен для identity check на callback
+    if (!taskSpec.dispatch_id) {
+        taskSpec.dispatch_id = `dispatch-unknown-${Date.now()}`;
+    }
 
     let lastError;
     for (let attempt = 0; attempt < 3; attempt++) {
@@ -42,24 +49,24 @@ async function sendUnified(taskSpec) {
 
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
-            log(`Task sent: ${taskSpec.job_id} (${taskSpec.job_type}), build: ${taskSpec.build_id}`);
+            log(`Task sent: ${taskSpec.job_id} (${taskSpec.job_type}), build: ${taskSpec.build_id}, dispatch: ${taskSpec.dispatch_id}`);
             switch (taskSpec.job_type) {
                 case 'audio': stats.audio_jobs_started++; break;
                 case 'image': stats.image_jobs_started++; break;
                 case 'video': stats.video_jobs_started++; break;
             }
-            return;
+            return { sent: true, jobId: taskSpec.job_id };
         } catch (err) {
             lastError = err;
             if (attempt < 2) await new Promise(r => setTimeout(r, 1000));
         }
     }
     stats.failed_jobs++;
-    throw lastError;
+    return { sent: false, error: lastError ? lastError.message : 'max_retries' };
 }
 
-async function send(job_id, workflow, type, build_id) {
-    await sendUnified({ job_id, params: workflow, job_type: type, build_id });
+async function send(job_id, workflow, type, build_id, dispatch_id) {
+    await sendUnified({ job_id, params: workflow, job_type: type, build_id, dispatch_id });
 }
 
 module.exports = { send, sendUnified };

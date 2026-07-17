@@ -528,32 +528,38 @@ async function dispatchStage(redis, bookId, chapterId, sceneId, stage, loadedBoo
         dispatchId,
         leaseKey: lease.leaseKey,
         started_at: metadata.started_at
-    });
+    });        // Step 6: Get orchestrator to perform dispatch
+        try {
+            log(`[DISPATCH-DEBUG] Passing buildId=${buildId} stage=${stage} dispatchId=${dispatchId.slice(0, 20)}... to orchestrator for ${bookId}/${chapterId}/${sceneId}`);
+            const orchestrator = require('../orchestration');
 
-    // Step 6: Get orchestrator to perform dispatch
-    try {
-        log(`[DISPATCH-DEBUG] Passing buildId=${buildId} stage=${stage} to orchestrator for ${bookId}/${chapterId}/${sceneId}`);
-        const orchestrator = require('../orchestration');
-        const result = await orchestrator.dispatchStage(
-            redis,
-            { book_id: bookId, chapter_id: chapterId, scene_id: sceneId },
-            loadedBook,
-            buildId,
-            stage  // Pass stage directly — orchestrator uses it instead of re-deciding
-        );
+            // T4: передаём dispatchId — executor включит его в job specs для GPU Hub
+            // dispatchId устанавливается в metadata ДО вызова executor, поэтому
+            // callback при проверке identity увидит актуальный dispatchId.
+            metadata.dispatch_id = dispatchId;
+            await setDispatchMetadata(redis, bookId, chapterId, sceneId, stage, metadata);
 
-        // If orchestrator didn't dispatch (already done/cached), release quota and lease
-        if (!result.dispatched) {
-            log(`DISPATCH_SKIPPED: ${bookId}/${chapterId}/${sceneId}:${stage} - ${result.reason || 'already_done'}`);
-            await releaseStageLease(redis, lease.leaseKey, lease.token);
-            await releaseQuota(redis, stage);
-            return { dispatched: false, reason: result.reason || 'already_done', result };
-        }
+            const result = await orchestrator.dispatchStage(
+                redis,
+                { book_id: bookId, chapter_id: chapterId, scene_id: sceneId },
+                loadedBook,
+                buildId,
+                stage,
+                dispatchId  // T4: передаём dispatchId в executor
+            );
 
-        // Set 3s debounce — task actually sent to GPU hub
-        await redis.set(`animastor:runtime:last-active:${stage}`, '1', 'EX', 3);
+            // If orchestrator didn't dispatch (already done/cached), release quota and lease
+            if (!result.dispatched) {
+                log(`DISPATCH_SKIPPED: ${bookId}/${chapterId}/${sceneId}:${stage} - ${result.reason || 'already_done'}`);
+                await releaseStageLease(redis, lease.leaseKey, lease.token);
+                await releaseQuota(redis, stage);
+                return { dispatched: false, reason: result.reason || 'already_done', result };
+            }
 
-        return { dispatched: true, dispatchId, stage, leaseKey: lease.leaseKey, result };
+            // Set 3s debounce — task actually sent to GPU hub
+            await redis.set(`animastor:runtime:last-active:${stage}`, '1', 'EX', 3);
+
+            return { dispatched: true, dispatchId, stage, leaseKey: lease.leaseKey, result };
     } catch (err) {
         error(`DISPATCH_FAILED: ${bookId}/${chapterId}/${sceneId}:${stage}: ${err.message}`);
         await logDispatchEvent(redis, bookId, chapterId, sceneId, 'FAILED', stage, {

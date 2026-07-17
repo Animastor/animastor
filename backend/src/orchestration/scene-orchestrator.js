@@ -205,14 +205,14 @@ async function executeVideoDispatch(redis, scene, loadedBook, buildId) {
     return { dispatched: false, jobs: 0, reason: 'send_failed' };
 }
 
-async function dispatchStage(redis, scene, loadedBook, buildId, overrideStage) {
+// T4: dispatchStage принимает dispatchId (из dispatch-engine) и передаёт executors
+async function dispatchStage(redis, scene, loadedBook, buildId, overrideStage, dispatchId) {
     const bookId = scene.book_id;
     const chapterId = scene.chapter_id;
     const sceneId = scene.scene_id;
 
-    log(`DISPATCH: ${bookId}/${chapterId}/${sceneId} (stage=${overrideStage})`);
+    log(`DISPATCH: ${bookId}/${chapterId}/${sceneId} (stage=${overrideStage}, dispatch=${dispatchId ? dispatchId.slice(0, 20) : 'none'}...)`);
 
-    // T8: проверяем asset-state вместо scene-state (per-asset — source of truth)
     const assetStates = await state.getAssetStates(redis, bookId, chapterId, sceneId);
     const isNewScene = !assetStates || (
         assetStates.audio === state.AssetState.NEW &&
@@ -229,20 +229,21 @@ async function dispatchStage(redis, scene, loadedBook, buildId, overrideStage) {
         return { dispatched: false, reason: 'no_override' };
     }
 
-    // T3: пробрасываем реальный результат executor
+    // T3+T4: пробрасываем реальный результат executor + dispatchId
     let result;
     if (overrideStage === 'audio') {
-        result = await executeAudioDispatch(redis, scene, loadedBook, buildId);
+        result = await executeAudioDispatch(redis, scene, loadedBook, buildId, dispatchId);
     } else if (overrideStage === 'image') {
-        result = await executeImageDispatch(redis, scene, loadedBook, buildId);
+        result = await executeImageDispatch(redis, scene, loadedBook, buildId, dispatchId);
     } else if (overrideStage === 'video') {
-        result = await executeVideoDispatch(redis, scene, loadedBook, buildId);
+        result = await executeVideoDispatch(redis, scene, loadedBook, buildId, dispatchId);
     } else {
         warn(`DISPATCH: Unknown stage ${overrideStage} for ${bookId}/${chapterId}/${sceneId}`);
         return { dispatched: false, reason: 'unknown_stage' };
     }
 
     result = result || { dispatched: false, reason: 'no_result', jobs: 0 };
+    result.dispatchId = dispatchId; // T4: привязываем dispatchId к результату
     log(`DISPATCH_RESULT: ${bookId}/${chapterId}/${sceneId} ${overrideStage}: dispatched=${result.dispatched}, jobs=${result.jobs}, reason=${result.reason || 'ok'}`);
     return result;
 }

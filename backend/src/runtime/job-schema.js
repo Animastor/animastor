@@ -22,7 +22,7 @@
 // Версия протокола backend ↔ gpu-hub ↔ worker. Передаётся в payload задачи;
 // получатель с другим мажором логирует предупреждение (не отклоняет — рантайм
 // смешанных версий возможен при раскатке).
-const PROTOCOL_VERSION = 1;
+const PROTOCOL_VERSION = 2; // T4: добавлен dispatch_id
 
 const JOB_TYPES = ['audio', 'image', 'iu_image', 'video'];
 

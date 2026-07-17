@@ -1002,25 +1002,17 @@ module.exports = function(app, redis, deps) {
     });
 
     // ======================================================
-    // GPU TASK RESULT
+    // GPU TASK RESULT — T4: dispatch identity check
     // ======================================================
     // Н.1: Idempotent callback handling.
-    // GPU Hub retries result delivery up to 5 times.
-    // Without dedup, each retry triggers handleTaskResult again,
-    // causing duplicate image completion, double quota release (C1),
-    // and redundant scene window slides.
-    //
-    // Dedup key includes build_id so force-regen (new build) is not blocked
-    // by a stale dedup from the previous build.
-    // TTL = 3600s (1h) — longer than any plausible GPU generation window.
+    // T4: dispatch_id проверяется перед обработкой — stale callback
+    // от предыдущего dispatch отклоняется, не влияя на текущий.
     app.post('/gpu/task/result', async (req, res) => {
         try {
-            const { job_id, result_base64, build_id } = req.body || {};
+            const { job_id, result_base64, build_id, dispatch_id } = req.body || {};
             if (!job_id || !result_base64) return res.status(400).json({ error: 'job_id and result_base64 required' });
 
-            // Н.1: Dedup — skip if already processed for this (job_id, build_id).
-            // Это АВТОРИТЕТНЫЙ dedup результатов (T2 консолидации); ключ
-            // animastor:job:* на gpu-hub — лишь best-effort защита очереди.
+            // Н.1: Dedup
             const dedupKey = `animastor:result-processed:${job_id}:${build_id || 'nobuild'}`;
             const alreadyProcessed = await redis.set(dedupKey, '1', 'NX', 'EX', 3600);
             if (!alreadyProcessed) {
@@ -1028,10 +1020,32 @@ module.exports = function(app, redis, deps) {
                 return res.json({ ok: true, deduped: true });
             }
 
-            // The dedup key is claimed BEFORE processing to win the race against
-            // concurrent retries. But if processing throws, the result would be lost
-            // forever (the key blocks every retry for 1h). So on failure we release
-            // the key, letting the Hub's next retry re-process this result.
+            // T4.9: Проверка dispatch identity до обработки payload
+            if (dispatch_id) {
+                const parsed = require('../runtime/job-schema').parseJobId(job_id);
+                if (parsed) {
+                    const stage = { audio_chunk: 'audio', iu_image: 'image', scene_image: 'image', scene_video: 'video' }[parsed.kind];
+                    if (stage) {
+                        const dispatchEngine = require('../runtime/dispatch-engine');
+                        const metaKey = dispatchEngine.getDispatchMetaKey(parsed.bookId, parsed.chapterId, parsed.sceneId, stage);
+                        const metaRaw = await redis.get(metaKey);
+                        if (metaRaw) {
+                            try {
+                                const meta = JSON.parse(metaRaw);
+                                if (meta.dispatch_id && meta.dispatch_id !== dispatch_id) {
+                                    log(`[GPU RESULT] STALE DISPATCH: ${job_id} — callback dispatch=${dispatch_id.slice(0, 16)}..., current=${meta.dispatch_id.slice(0, 16)}... — rejecting`);
+                                    // T4: dedup key НЕ удаляем — повторные ретраи этого же stale callback
+                                    // будут отбиты по dedup, а не повторят проверку identity.
+                                    return res.json({ ok: true, stale: true, reason: 'stale_dispatch' });
+                                }
+                            } catch (parseErr) {
+                                warn(`[GPU RESULT] Failed to parse metadata for ${metaKey}: ${parseErr.message}`);
+                            }
+                        }
+                    }
+                }
+            }
+
             try {
                 await deps.taskHandler.handleTaskResult(job_id, result_base64, build_id);
             } catch (procErr) {
@@ -1046,13 +1060,10 @@ module.exports = function(app, redis, deps) {
     });
 
     // ── GPU task error callback ─────────────────────────
-    // T3 консолидации: канал ошибок worker → gpu-hub → backend.
-    // Сбой генерации (ошибка воркера, worker_timeout от watchdog'а hub'а)
-    // превращается в orchestrator.failStage за секунды, а не в истёкший
-    // dispatch-lease через 15–30 минут.
+    // T4: dispatch_id проверяется перед обработкой
     app.post('/gpu/task/error', async (req, res) => {
         try {
-            const { job_id, build_id, reason } = req.body || {};
+            const { job_id, build_id, reason, dispatch_id } = req.body || {};
             if (!job_id) return res.status(400).json({ error: 'job_id required' });
 
             const jobSchema = require('../runtime/job-schema');
@@ -1062,19 +1073,39 @@ module.exports = function(app, redis, deps) {
                 return res.json({ ok: true, ignored: true });
             }
 
-            // Короткий dedup: hub ретраит доставку 5 раз — повторные вызовы
-            // безвредны (failStage идемпотентен по валидации переходов), но
-            // не нужно спамить журнал.
+            const stage = { audio_chunk: 'audio', iu_image: 'image', scene_image: 'image', scene_video: 'video' }[parsed.kind];
+            const { bookId, chapterId, sceneId } = parsed;
+
+            // T4.9: Проверка dispatch identity до failStage
+            let isStale = false;
+            if (dispatch_id && stage) {
+                const dispatchEngine = require('../runtime/dispatch-engine');
+                const metaKey = dispatchEngine.getDispatchMetaKey(bookId, chapterId, sceneId, stage);
+                const metaRaw = await redis.get(metaKey);
+                if (metaRaw) {
+                    try {
+                        const meta = JSON.parse(metaRaw);
+                        if (meta.dispatch_id && meta.dispatch_id !== dispatch_id) {
+                            log(`[GPU ERROR] STALE DISPATCH: ${job_id} — error dispatch=${dispatch_id.slice(0, 16)}..., current=${meta.dispatch_id.slice(0, 16)}... — rejecting`);
+                            isStale = true;
+                        }
+                    } catch (parseErr) {
+                        warn(`[GPU ERROR] Failed to parse metadata: ${parseErr.message}`);
+                    }
+                }
+            }
+
+            if (isStale) {
+                return res.json({ ok: true, stale: true, reason: 'stale_dispatch' });
+            }
+
+            // Короткий dedup
             const dedupKey = `animastor:error-processed:${job_id}:${build_id || 'nobuild'}`;
             const first = await redis.set(dedupKey, '1', 'NX', 'EX', 60);
             if (!first) return res.json({ ok: true, deduped: true });
 
-            const stage = { audio_chunk: 'audio', iu_image: 'image', scene_image: 'image', scene_video: 'video' }[parsed.kind];
-            const { bookId, chapterId, sceneId } = parsed;
             log(`[GPU ERROR] ${bookId}/${chapterId}/${sceneId} ${stage} failed: ${reason || 'unknown'} (job=${job_id})`);
 
-            // Для аудио-чанков дополнительно фиксируем фазу аудио-машины —
-            // иначе triggerAudioMerge будет ждать чанк, который не придёт.
             if (parsed.kind === 'audio_chunk') {
                 try {
                     const audioOrch = require('../services/audio-orchestrator');
