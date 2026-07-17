@@ -88,6 +88,7 @@ async function completeStage(redis, bookId, chapterId, sceneId, stage, buildId) 
 
     let handlerResult;
     let handlerError = null;
+    let handlerOk = false;  // T2: true если handler вернул ok:true
 
     let phaseCompleted = false;
     let phaseReason = 'handler_rejected';
@@ -105,9 +106,11 @@ async function completeStage(redis, bookId, chapterId, sceneId, stage, buildId) 
         if (handlerError || !handlerResult || handlerResult.ok !== true) {
             const reason = handlerResult?.reason || (handlerError ? handlerError.message : 'unknown');
             phaseReason = reason;
+            handlerOk = false;
             log(`[COMPLETE-STAGE] ${bookId}/${chapterId}/${sceneId} ${stage}: rejected (reason=${reason}) — NOT setting READY`);
-            // Не return — fall through к finally, затем к return { completed: false, reason }
         } else {
+            handlerOk = true;
+
             // ── Handler succeeded — version gate (T1.11: fail-closed) ────
             let shouldWriteReady = true;
             try {
@@ -157,18 +160,27 @@ async function completeStage(redis, bookId, chapterId, sceneId, stage, buildId) 
                 phaseCompleted = true;
                 phaseReason = null;
             } else {
+                // T2: version gate stale — dispatch успешен, но artifact устарел.
+                // Финализируем как success (диспетчеризация выполнена), просто не ставим READY.
                 log(`[VERSION-GATE] ${bookId}/${chapterId}/${sceneId}: ${stage} stale — DIRTY instead of READY`);
                 await state.setAssetState(redis, bookId, chapterId, sceneId, stage, state.AssetState.DIRTY);
                 phaseCompleted = false;
                 phaseReason = 'stale';
+                // handlerOk остаётся true — финализируем как success
             }
         }
     } finally {
-        // Всегда освобождаем lease+quota (T2 заменит на finalizeDispatch)
+        // T2: finalizeDispatch — handlerOk определяет success/failure
+        // Если handler вернул ok:true (handlerOk = true) — всегда success,
+        // даже при version gate stale. Failure только при ok:false/error handler.
         try {
-            await dispatchEngine.markDispatchCompleted(redis, bookId, chapterId, sceneId, stage);
+            const outcome = handlerOk ? 'success' : 'failure';
+            await dispatchEngine.finalizeDispatch(redis, bookId, chapterId, sceneId, stage, {
+                outcome,
+                reason: handlerOk ? (phaseReason || undefined) : (phaseReason || 'handler_rejected')
+            });
         } catch (dispErr) {
-            warn(`completeStage: markDispatchCompleted(${stage}) failed: ${dispErr.message}`);
+            warn(`completeStage: finalizeDispatch(${stage}) failed: ${dispErr.message}`);
         }
     }
 
@@ -229,11 +241,16 @@ async function failStage(redis, bookId, chapterId, sceneId, stage, buildId, reas
         }
         return { failed: true, reason, redispatch };
     } finally {
-        // Как в completeStage: единый владелец release (C1), идемпотентно (Д.1).
+        // T2: finalizeDispatch('failure') — recordFailure + consumeRetryBudget,
+        // НЕ recordSuccess, НЕ DISPATCH_COMPLETED.
         try {
-            await dispatchEngine.markDispatchCompleted(redis, bookId, chapterId, sceneId, stage);
+            await dispatchEngine.finalizeDispatch(redis, bookId, chapterId, sceneId, stage, {
+                outcome: 'failure',
+                reason: reason || 'unknown',
+                failureType: 'transient'
+            });
         } catch (dispErr) {
-            warn(`failStage: markDispatchCompleted(${stage}) failed: ${dispErr.message}`);
+            warn(`failStage: finalizeDispatch(${stage}) failed: ${dispErr.message}`);
         }
     }
 }

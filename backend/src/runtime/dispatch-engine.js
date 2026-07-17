@@ -566,106 +566,126 @@ async function dispatchStage(redis, bookId, chapterId, sceneId, stage, loadedBoo
     }
 }
 
+// ======================================================
+// T2: Единая finalization — finalizeDispatch
+// ======================================================
+// Единственная точка финализации dispatch. Принимает outcome:
+//   'success'   → recordSuccess,  DISPATCH_COMPLETED,  без retry budget
+//   'failure'   → recordFailure,  DISPATCH_FAILED,     consumeRetryBudget ровно 1×
+//   'cancelled' → без circuit breaker, без retry budget, DISPATCH_CANCELLED
+//
+// Идемпотентность: один dispatch финализируется ровно один раз
+// (проверка completion marker). Повторный вызов для того же dispatch
+// возвращает { finalized: false, reason: 'already_finalized' }.
+//
+// Порядок:
+//   1. Claim completion marker (NX)
+//   2. Stop renewal
+//   3. Release lease по token
+//   4. Release quota (только если есть claim)
+//   5. Circuit breaker согласно outcome
+//   6. Retry budget только для failure
+//   7. Удалить metadata
+//   8. Записать journal event
+// ======================================================
+
 /**
- * Mark dispatch as completed.
+ * Finalize a dispatch with a specific outcome.
+ *
+ * @param {Object} redis
+ * @param {string} bookId
+ * @param {string} chapterId
+ * @param {string} sceneId
+ * @param {string} stage - 'audio'|'image'|'video'
+ * @param {Object} options
+ * @param {'success'|'failure'|'cancelled'} options.outcome
+ * @param {string} [options.dispatchId]
+ * @param {string} [options.reason]
+ * @param {string} [options.failureType] - for failure-taxonomy
+ * @param {string} [options.workerId]
+ * @returns {Promise<{finalized: boolean, reason: string}>}
  */
-async function markDispatchCompleted(redis, bookId, chapterId, sceneId, stage) {
-    const dispatchId = generateDispatchToken();
+async function finalizeDispatch(redis, bookId, chapterId, sceneId, stage, options = {}) {
+    const { outcome = 'success', dispatchId, reason, failureType, workerId } = options;
 
-    // Д.1: Idempotency guard. releaseQuota is an unconditional decrement, so a
-    // repeated markDispatchCompleted (callback retry past the HTTP dedup, manual
-    // reconcile, etc.) would double-release a quota slot and drift backpressure.
-    // SET NX claims the completion exactly once per dispatch; the marker is cleared
-    // at dispatch start (see dispatchStage), so the next real dispatch completes again.
-    // TTL matches the lease so a leaked marker self-expires.
+    if (!['success', 'failure', 'cancelled'].includes(outcome)) {
+        throw new Error(`finalizeDispatch: invalid outcome '${outcome}' — must be success|failure|cancelled`);
+    }
+
+    // ── 1. Claim completion marker (идемпотентность) ──
     const completedKey = getDispatchCompletedKey(bookId, chapterId, sceneId, stage);
-    const claimed = await redis.set(completedKey, '1', 'NX', 'EX', LEASE_TTLS[stage] || 1800);
+    const claimed = await redis.set(completedKey, outcome, 'NX', 'EX', LEASE_TTLS[stage] || 1800);
     if (!claimed) {
-        log(`DISPATCH_COMPLETE: already completed for ${bookId}/${chapterId}/${sceneId}:${stage} — skipping release`);
-        return;
+        log(`FINALIZE_SKIPPED: ${bookId}/${chapterId}/${sceneId}:${stage} — already finalized (marker exists)`);
+        return { finalized: false, reason: 'already_finalized' };
     }
 
-    log(`DISPATCH_COMPLETE: ${bookId}/${chapterId}/${sceneId}:${stage}`);
+    log(`FINALIZE_${outcome.toUpperCase()}: ${bookId}/${chapterId}/${sceneId}:${stage}${reason ? ' (' + reason + ')' : ''}`);
 
-    // Phase 9: Record success for circuit breaker recovery
-    const circuitResult = await circuitBreaker.recordSuccess(redis, stage);
-    if (circuitResult.state === circuitBreaker.CircuitState.HALF_OPEN && circuitResult.testRequest) {
-        log(`CIRCUIT_HALF_OPEN_TEST: ${stage} (test request ${circuitResult.halfOpenCount})`);
-    }
-
-    // Stop lease renewal timer
+    // ── 2. Stop renewal ──
     stopDispatchRenewal(bookId, chapterId, sceneId, stage);
 
-    // Get lease to ensure it's still valid
+    // ── 3. Release lease по token ──
     const { leaseKey, token } = await getLeaseData(redis, bookId, chapterId, sceneId, stage);
-
-    if (!token) {
-        warn(`DISPATCH_COMPLETE: lease already expired for ${bookId}/${chapterId}/${sceneId}:${stage}`);
-    }
-
-    // Release lease if valid
     if (token && leaseKey) {
         await releaseStageLease(redis, leaseKey, token);
     }
 
-    // Release quota
+    // ── 4. Release quota ──
     await releaseQuota(redis, stage);
 
-    // Delete metadata
+    // ── 5-6. Circuit breaker + retry budget согласно outcome ──
+    if (outcome === 'success') {
+        const circuitResult = await circuitBreaker.recordSuccess(redis, stage);
+        if (circuitResult.state === circuitBreaker.CircuitState.HALF_OPEN && circuitResult.testRequest) {
+            log(`CIRCUIT_HALF_OPEN_TEST: ${stage} (test request ${circuitResult.halfOpenCount})`);
+        }
+        // Success не расходует retry budget
+    } else if (outcome === 'failure') {
+        await circuitBreaker.recordFailure(redis, stage);
+
+        // T2.8: Расходуем retry budget ровно один раз на принятый failure
+        try {
+            const budgetResult = await retryBudget.consumeRetryBudget(redis, bookId, chapterId, sceneId, stage, failureType || 'transient', workerId);
+            log(`RETRY_BUDGET_CONSUMED: ${bookId}/${chapterId}/${sceneId}:${stage} (type=${failureType || 'transient'})`);
+        } catch (budgetErr) {
+            warn(`consumeRetryBudget failed: ${budgetErr.message}`);
+        }
+    }
+    // 'cancelled': не трогаем circuit breaker, не расходуем retry budget
+
+    // ── 7. Delete metadata ──
     await deleteDispatchMetadata(redis, bookId, chapterId, sceneId, stage);
 
-    await logDispatchEvent(redis, bookId, chapterId, sceneId, 'COMPLETED', stage, {
-        dispatchedBy: 'dispatch-engine'
+    // ── 8. Journal event ──
+    const eventSuffix = outcome === 'success' ? 'COMPLETED' : outcome === 'failure' ? 'FAILED' : 'CANCELLED';
+    await logDispatchEvent(redis, bookId, chapterId, sceneId, eventSuffix, stage, {
+        outcome,
+        reason: reason || null,
+        failureType: failureType || null,
+        workerId: workerId || null,
+        dispatchId: dispatchId || null
     });
+
+    return { finalized: true, reason: outcome };
 }
 
 /**
- * Mark dispatch as failed.
+ * T2: markDispatchCompleted оставлен как обратно-совместимая обёртка
+ * для callers, которые пока не переведены на finalizeDispatch.
+ * Все новые вызовы должны использовать finalizeDispatch.
+ */
+async function markDispatchCompleted(redis, bookId, chapterId, sceneId, stage) {
+    return finalizeDispatch(redis, bookId, chapterId, sceneId, stage, { outcome: 'success' });
+}
+
+/**
+ * T2: markDispatchFailed — обёртка над finalizeDispatch('failure').
  */
 async function markDispatchFailed(redis, bookId, chapterId, sceneId, stage, error) {
-    log(`DISPATCH_FAILED: ${bookId}/${chapterId}/${sceneId}:${stage}: ${error}`);
-
-    // Phase 9: Record failure for circuit breaker
-    const circuitResult = await circuitBreaker.recordFailure(redis, stage);
-    if (circuitResult.isTripped) {
-        log(`CIRCUIT_OPENED: ${stage} (threshold reached)`);
-        await journal.appendSceneEvent(
-            redis,
-            bookId,
-            chapterId,
-            sceneId,
-            'CIRCUIT_OPENED',
-            stage,
-            { failureType: stage, failures: circuitResult.newCount }
-        );
-    }
-
-    // Stop lease renewal timer
-    stopDispatchRenewal(bookId, chapterId, sceneId, stage);
-
-    const { leaseKey, token } = await getLeaseData(redis, bookId, chapterId, sceneId, stage);
-
-    // Release lease if valid
-    if (token && leaseKey) {
-        await releaseStageLease(redis, leaseKey, token);
-    }
-
-    // Release quota
-    await releaseQuota(redis, stage);
-
-    // Update metadata
-    const metadata = await getDispatchMetadata(redis, bookId, chapterId, sceneId, stage);
-    if (metadata) {
-        metadata.status = 'failed';
-        metadata.error = error;
-        metadata.failed_at = Date.now();
-        metadata.retry_attempt = (metadata.retry_attempt || 0) + 1;
-        await setDispatchMetadata(redis, bookId, chapterId, sceneId, stage, metadata);
-    }
-
-    await logDispatchEvent(redis, bookId, chapterId, sceneId, 'FAILED', stage, {
-        dispatchedBy: 'dispatch-engine',
-        error
+    return finalizeDispatch(redis, bookId, chapterId, sceneId, stage, {
+        outcome: 'failure',
+        reason: error
     });
 }
 
@@ -943,6 +963,7 @@ module.exports = {
 
     // Dispatch control
     dispatchStage,
+    finalizeDispatch,
     markDispatchCompleted,
     markDispatchFailed,
 

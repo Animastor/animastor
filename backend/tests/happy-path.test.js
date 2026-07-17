@@ -1309,11 +1309,17 @@ describe('Happy Path: Orchestrator facade — completeStage', () => {
             loaded: true,
         };
 
-        // Stub dispatch-engine: record markDispatchCompleted calls
+        // Stub dispatch-engine: T2 — record finalizeDispatch calls
         const dePath = require.resolve('../src/runtime/dispatch-engine');
         require.cache[dePath] = {
             exports: {
+                finalizeDispatch: async (r, b, c, s, stage, opts) => {
+                    calls.markComplete.push(stage);
+                    calls._lastFinalizeOpts = opts;
+                    return { finalized: true, reason: opts?.outcome || 'success' };
+                },
                 markDispatchCompleted: async (r, b, c, s, stage) => { calls.markComplete.push(stage); },
+                markDispatchFailed: async () => {},
             },
             loaded: true,
         };
@@ -1363,17 +1369,16 @@ describe('Happy Path: Orchestrator facade — completeStage', () => {
         }
     });
 
-    it('completeStage runs the stage handler then markDispatchCompleted exactly once', async () => {
+    it('completeStage runs the stage handler then finalizeDispatch exactly once', async () => {
         const result = await orchestrator.completeStage(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, 'audio', BUILD_ID);
         expect(calls.handler.map(c => c[0])).to.deep.equal(['audio']);
         expect(calls.markComplete).to.deep.equal(['audio']);
-        // T1: result указывает успех
+        // T2: finalizeDispatch вызван с outcome:'success'
+        expect(calls._lastFinalizeOpts.outcome).to.equal('success');
         expect(result.completed).to.be.true;
     });
 
-    it('completeStage still releases (markDispatchCompleted) when handler returns ok:false', async () => {
-        // T1.7: handler не throw, а возвращает ok:false — completeStage не ставит READY,
-        // но всё равно освобождает ресурсы через markDispatchCompleted
+    it('completeStage finalizes as failure when handler returns ok:false', async () => {
         const cbPath = require.resolve('../src/orchestration/scene-callbacks');
         require.cache[cbPath].exports.handleImageCompleted = async () => {
             calls.handler.push(['image', []]);
@@ -1382,11 +1387,11 @@ describe('Happy Path: Orchestrator facade — completeStage', () => {
 
         const result = await orchestrator.completeStage(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, 'image', BUILD_ID);
 
-        // Handler не проходит — rejected, completeStage не ставит READY
         expect(result.completed).to.be.false;
         expect(result.reason).to.equal('test_error');
-        // Но ресурсы всё равно освобождены
+        // T2: finalizeDispatch должен быть вызван с outcome:'failure'
         expect(calls.markComplete).to.deep.equal(['image']);
+        expect(calls._lastFinalizeOpts.outcome).to.equal('failure');
     });
 
     it('completeStage throws on unknown stage', async () => {
