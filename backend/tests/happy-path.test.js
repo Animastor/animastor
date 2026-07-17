@@ -1034,7 +1034,7 @@ describe('Happy Path: Scene Callbacks (with mocks)', () => {
         } catch {}
     });
 
-    it('handleAudioCompleted validates and handles audio completion (READY set by facade)', async () => {
+    it('handleAudioCompleted validates and handles audio completion (T1: ok:true)', async () => {
         // Set up initial state: audio is pending
         await sceneState.setAssetState(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, 'audio', 'pending');
 
@@ -1045,121 +1045,55 @@ describe('Happy Path: Scene Callbacks (with mocks)', () => {
             redis, BOOK_ID, CHAPTER_ID, SCENE_ID, BUILD_ID
         );
 
-        expect(result.handled).to.be.true;
-        expect(result.nextStage).to.equal('image');
+        // T1: новый контракт — ok:true, artifact.path
+        expect(result.ok).to.be.true;
+        expect(result.artifact).to.have.property('buildId', BUILD_ID);
+        expect(result.artifact).to.have.property('path');
+        expect(result.artifact.path).to.include('.mp3');
 
-        // M5: setAssetState(READY) moved to orchestrator.completeStage (Шаг 1).
-        // Handler no longer sets READY — it only validates + does side effects.
+        // Handler no longer sets READY — это делает completeStage
         const states = await sceneState.getAssetStates(redis, BOOK_ID, CHAPTER_ID, SCENE_ID);
-        expect(states.audio).to.equal('pending'); // handler no longer sets READY
-
-        // Simulate what completeStage does after the handler:
-        await sceneState.setAssetState(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, 'audio', 'ready');
-
-        const statesAfter = await sceneState.getAssetStates(redis, BOOK_ID, CHAPTER_ID, SCENE_ID);
-        expect(statesAfter.audio).to.equal('ready');
+        expect(states.audio).to.equal('pending');
     });
 
-    // FIXED C2 (Н.5): handleAudioCompleted writes PG status='ready' via markReady.
-    // scene-assets-repo.markReady() is now called with correct book/chapter/scene/asset_type.
-    it('FIXED C2 (Н.5): handleAudioCompleted writes PG status=ready via markReady', async () => {
+    // T1.10: markReady перенесён в completeStage — handler больше не пишет PG
+    it('T1.10: handleAudioCompleted does NOT call markReady directly', async () => {
         await sceneState.setAssetState(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, 'audio', 'pending');
         await dispatchEngine.acquireQuota(redis, 'audio');
 
         const result = await callbacks.handleAudioCompleted(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, BUILD_ID);
-        expect(result.handled).to.be.true;
+        expect(result.ok).to.be.true;
 
-        // Verify markReady was called with correct params
-        const markReadyCalls = this.repoCalls.filter(c => c.method === 'markReady' && c.assetType === 'audio');
-        expect(markReadyCalls.length).to.equal(1);
-        expect(markReadyCalls[0].bookId).to.equal(BOOK_ID);
-        expect(markReadyCalls[0].chapterId).to.equal(CHAPTER_ID);
-        expect(markReadyCalls[0].sceneId).to.equal(SCENE_ID);
-        expect(markReadyCalls[0].assetType).to.equal('audio');
-        expect(markReadyCalls[0].path).to.include(SCENE_ID);
-        expect(markReadyCalls[0].path).to.include('.mp3');
+        // Handler больше не вызывает markReady — это делает completeStage
+        // В этом тесте repoCalls не должен содержать markReady вызовов от handler
+        const audioMarkReady = this.repoCalls.filter(c => c.method === 'markReady' && c.assetType === 'audio');
+        expect(audioMarkReady.length).to.equal(0, 'handler should not call markReady directly');
     });
 
-    it('FIXED C2 (Н.5): handleImageCompleted writes PG status=ready via markReady', async () => {
-        await sceneState.setAssetStates(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, {
-            audio: 'ready',
-            image: 'pending',
-        });
-        await dispatchEngine.acquireQuota(redis, 'image');
-
-        const result = await callbacks.handleImageCompleted(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, BUILD_ID);
-        expect(result.handled).to.be.true;
-
-        const markReadyCalls = this.repoCalls.filter(c => c.method === 'markReady' && c.assetType === 'image');
-        expect(markReadyCalls.length).to.equal(1);
-        expect(markReadyCalls[0].bookId).to.equal(BOOK_ID);
-        expect(markReadyCalls[0].chapterId).to.equal(CHAPTER_ID);
-        expect(markReadyCalls[0].sceneId).to.equal(SCENE_ID);
-        expect(markReadyCalls[0].assetType).to.equal('image');
-        expect(markReadyCalls[0].path).to.include(SCENE_ID);
-        expect(markReadyCalls[0].path).to.include('.png');
-        // extras should include dimensions
-        expect(markReadyCalls[0].extras).to.have.property('width', 1024);
-        expect(markReadyCalls[0].extras).to.have.property('height', 768);
-    });
-
-    it('FIXED C2 (Н.5): handleVideoCompleted writes PG status=ready via markReady', async () => {
-        await sceneState.setAssetStates(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, {
-            audio: 'ready',
-            image: 'ready',
-            video: 'pending',
-        });
-        await dispatchEngine.acquireQuota(redis, 'video');
-
-        const result = await callbacks.handleVideoCompleted(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, BUILD_ID);
-        expect(result.handled).to.be.true;
-        expect(result.completed).to.be.true;
-
-        const markReadyCalls = this.repoCalls.filter(c => c.method === 'markReady' && c.assetType === 'video');
-        expect(markReadyCalls.length).to.equal(1);
-        expect(markReadyCalls[0].bookId).to.equal(BOOK_ID);
-        expect(markReadyCalls[0].chapterId).to.equal(CHAPTER_ID);
-        expect(markReadyCalls[0].sceneId).to.equal(SCENE_ID);
-        expect(markReadyCalls[0].assetType).to.equal('video');
-        expect(markReadyCalls[0].path).to.include(SCENE_ID);
-        expect(markReadyCalls[0].path).to.include('.mp4');
-        // extras should include metadata
-        expect(markReadyCalls[0].extras).to.have.property('duration', 30);
-        expect(markReadyCalls[0].extras).to.have.property('width', 1920);
-        expect(markReadyCalls[0].extras).to.have.property('height', 1080);
-    });
-
-    it('handleImageCompleted validates and handles image completion (READY set by facade)', async () => {
+    it('handleImageCompleted validates and handles image completion (T1: ok:true)', async () => {
         // Set initial per-asset state
         await sceneState.setAssetStates(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, {
             audio: 'ready',
             image: 'pending',
         });
 
-        // Acquire quota
         await dispatchEngine.acquireQuota(redis, 'image');
 
         const result = await callbacks.handleImageCompleted(
             redis, BOOK_ID, CHAPTER_ID, SCENE_ID, BUILD_ID
         );
 
-        expect(result.handled).to.be.true;
-        expect(result.nextStage).to.equal('video');
+        expect(result.ok).to.be.true;
+        expect(result.artifact).to.have.property('buildId', BUILD_ID);
+        expect(result.artifact).to.have.property('path');
+        expect(result.artifact.path).to.include('.png');
 
-        // M5: setAssetState(READY) moved to orchestrator.completeStage (Шаг 1).
-        // Handler no longer sets READY — only validates + side effects.
+        // Handler no longer sets READY
         const states = await sceneState.getAssetStates(redis, BOOK_ID, CHAPTER_ID, SCENE_ID);
-        expect(states.image).to.equal('pending'); // handler no longer sets READY
-
-        // Simulate what completeStage does after the handler:
-        await sceneState.setAssetState(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, 'image', 'ready');
-
-        const statesAfter = await sceneState.getAssetStates(redis, BOOK_ID, CHAPTER_ID, SCENE_ID);
-        expect(statesAfter.image).to.equal('ready');
+        expect(states.image).to.equal('pending');
     });
 
-    it('handleVideoCompleted validates and handles video completion (READY set by facade)', async () => {
-        // Set initial per-asset state
+    it('handleVideoCompleted validates and handles video completion (T1: ok:true)', async () => {
         await sceneState.setAssetStates(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, {
             audio: 'ready',
             image: 'ready',
@@ -1172,32 +1106,24 @@ describe('Happy Path: Scene Callbacks (with mocks)', () => {
             redis, BOOK_ID, CHAPTER_ID, SCENE_ID, BUILD_ID
         );
 
-        expect(result.handled).to.be.true;
-        expect(result.completed).to.be.true;
+        expect(result.ok).to.be.true;
+        expect(result.artifact).to.have.property('buildId', BUILD_ID);
+        expect(result.artifact.path).to.include('.mp4');
 
-        // M5: setAssetState(READY) moved to orchestrator.completeStage (Шаг 1).
-        // Handler no longer sets READY — only validates + side effects.
+        // Handler no longer sets READY
         const states = await sceneState.getAssetStates(redis, BOOK_ID, CHAPTER_ID, SCENE_ID);
-        expect(states.video).to.equal('pending'); // handler no longer sets READY
-
-        // Simulate what completeStage does after the handler:
-        await sceneState.setAssetState(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, 'video', 'ready');
-
-        const statesAfter = await sceneState.getAssetStates(redis, BOOK_ID, CHAPTER_ID, SCENE_ID);
-        expect(statesAfter.video).to.equal('ready');
+        expect(states.video).to.equal('pending');
     });
 
     // FIXED C1 (Н.2): Callback no longer releases quota — markDispatchCompleted is the sole owner.
-    // The callback completes successfully but the quota is still held until markDispatchCompleted.
     it('FIXED C1 (Н.2): handleAudioCompleted does NOT release quota — deferred to markDispatchCompleted', async () => {
         await sceneState.setAssetState(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, 'audio', 'pending');
         await dispatchEngine.acquireQuota(redis, 'audio');
 
-        // Before: counter = 1
         expect(await dispatchEngine.getActiveCounter(redis, 'audio')).to.equal(1);
 
         const result = await callbacks.handleAudioCompleted(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, BUILD_ID);
-        expect(result.handled).to.be.true;
+        expect(result.ok).to.be.true;
 
         // After callback: counter still 1 (callback no longer releases quota)
         const afterCallback = await dispatchEngine.getActiveCounter(redis, 'audio');
@@ -1210,26 +1136,26 @@ describe('Happy Path: Scene Callbacks (with mocks)', () => {
     });
 
     it('handleAudioCompleted accepts callback in states: GENERATING, PENDING, DIRTY', async () => {
-        // Test all allowed states
         for (const state of ['generating', 'pending', 'dirty']) {
             const r = new FakeRedis();
             await sceneState.setAssetState(r, BOOK_ID, CHAPTER_ID, SCENE_ID, 'audio', state);
             await dispatchEngine.acquireQuota(r, 'audio');
 
             const result = await callbacks.handleAudioCompleted(r, BOOK_ID, CHAPTER_ID, SCENE_ID, BUILD_ID);
-            expect(result.handled, `should handle ${state}`).to.be.true;
+            expect(result.ok, `should handle ${state}`).to.be.true;
         }
     });
 
-    it('handleAudioCompleted rejects callback for invalid state (ready)', async () => {
+    it('handleAudioCompleted rejects callback for invalid state (ready) — T1: ok:false', async () => {
         await sceneState.setAssetState(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, 'audio', 'ready');
 
         const result = await callbacks.handleAudioCompleted(
             redis, BOOK_ID, CHAPTER_ID, SCENE_ID, BUILD_ID
         );
 
-        expect(result.handled).to.be.false;
+        expect(result.ok).to.be.false;
         expect(result.reason).to.equal('invalid_asset_state');
+        expect(result.retryable).to.be.false;
     });
 
     // NOTE: Individual callback tests above cover audio→image→video lifecycle.
@@ -1372,13 +1298,13 @@ describe('Happy Path: Orchestrator facade — completeStage', () => {
         redis = new FakeRedis();
         calls = { handler: [], markComplete: [] };
 
-        // Stub scene-callbacks: record which handler ran
+        // Stub scene-callbacks: T1 — handlers MUST return { ok: true, artifact } for success
         const cbPath = require.resolve('../src/orchestration/scene-callbacks');
         require.cache[cbPath] = {
             exports: {
-                handleAudioCompleted: async (...a) => { calls.handler.push(['audio', a]); },
-                handleImageCompleted: async (...a) => { calls.handler.push(['image', a]); },
-                handleVideoCompleted: async (...a) => { calls.handler.push(['video', a]); },
+                handleAudioCompleted: async (...a) => { calls.handler.push(['audio', a]); return { ok: true, artifact: { buildId: BUILD_ID, path: '/test.mp3' } }; },
+                handleImageCompleted: async (...a) => { calls.handler.push(['image', a]); return { ok: true, artifact: { buildId: BUILD_ID, path: '/test.png' } }; },
+                handleVideoCompleted: async (...a) => { calls.handler.push(['video', a]); return { ok: true, artifact: { buildId: BUILD_ID, path: '/test.mp4' } }; },
             },
             loaded: true,
         };
@@ -1399,6 +1325,27 @@ describe('Happy Path: Orchestrator facade — completeStage', () => {
             loaded: true,
         };
 
+        // Stub PG database and scene-assets-repo (used by completeStage version gate + markReady)
+        const dbPath = require.resolve('../src/storage/postgres/database');
+        require.cache[dbPath] = {
+            exports: {
+                query: async () => ({ rows: [] }), // empty rows = skip version check
+            },
+            loaded: true,
+        };
+        const repoPath = require.resolve('../src/storage/postgres/repositories/scene-assets-repo');
+        require.cache[repoPath] = {
+            exports: {
+                markReady: async () => { calls.markReady = true; },
+                clearDirtyFlag: async () => {},
+                getDirtyUnitIds: async () => [],
+                clearDirtyUnitIds: async () => {},
+                setDirtyUnitIds: async () => {},
+                getAsset: async () => null,
+            },
+            loaded: true,
+        };
+
         delete require.cache[require.resolve('../src/orchestration/orchestrator')];
         orchestrator = require('../src/orchestration/orchestrator');
     });
@@ -1409,28 +1356,36 @@ describe('Happy Path: Orchestrator facade — completeStage', () => {
             '../src/runtime/dispatch-engine',
             '../src/orchestration/scene-utils',
             '../src/orchestration/orchestrator',
+            '../src/storage/postgres/database',
+            '../src/storage/postgres/repositories/scene-assets-repo',
         ]) {
             delete require.cache[require.resolve(p)];
         }
     });
 
     it('completeStage runs the stage handler then markDispatchCompleted exactly once', async () => {
-        await orchestrator.completeStage(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, 'audio', BUILD_ID);
+        const result = await orchestrator.completeStage(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, 'audio', BUILD_ID);
         expect(calls.handler.map(c => c[0])).to.deep.equal(['audio']);
         expect(calls.markComplete).to.deep.equal(['audio']);
+        // T1: result указывает успех
+        expect(result.completed).to.be.true;
     });
 
-    it('completeStage still releases (markDispatchCompleted) when handler throws', async () => {
+    it('completeStage still releases (markDispatchCompleted) when handler returns ok:false', async () => {
+        // T1.7: handler не throw, а возвращает ok:false — completeStage не ставит READY,
+        // но всё равно освобождает ресурсы через markDispatchCompleted
         const cbPath = require.resolve('../src/orchestration/scene-callbacks');
-        require.cache[cbPath].exports.handleImageCompleted = async () => { throw new Error('boom'); };
+        require.cache[cbPath].exports.handleImageCompleted = async () => {
+            calls.handler.push(['image', []]);
+            return { ok: false, retryable: true, reason: 'test_error' };
+        };
 
-        let threw = false;
-        try {
-            await orchestrator.completeStage(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, 'image', BUILD_ID);
-        } catch (e) { threw = true; }
+        const result = await orchestrator.completeStage(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, 'image', BUILD_ID);
 
-        // finally runs release even though the handler threw (single-owner C1, error-safe)
-        expect(threw).to.be.true;
+        // Handler не проходит — rejected, completeStage не ставит READY
+        expect(result.completed).to.be.false;
+        expect(result.reason).to.equal('test_error');
+        // Но ресурсы всё равно освобождены
         expect(calls.markComplete).to.deep.equal(['image']);
     });
 

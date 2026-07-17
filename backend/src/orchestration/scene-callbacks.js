@@ -1,3 +1,15 @@
+// ======================================================
+// Callback handlers — contract (T1):
+//
+// Каждый handler возвращает:
+//   { ok: true,  artifact: { buildId, path } }           — успех
+//   { ok: false, retryable: true,  reason: '<cause>' }   — временная ошибка (→ failStage)
+//   { ok: false, retryable: false, reason: '<cause>' }   — терминальная ошибка (журнал, NO READY)
+//
+// Handler НЕ пишет PG status='ready' — это делает completeStage()
+// после валидации результата и version gate.
+// ======================================================
+
 const path = require('path');
 const fs = require('fs');
 const state = require('../state');
@@ -39,6 +51,8 @@ async function updateSceneChunks(redis, bookId, chapterId, sceneId, updates) {
 }
 
 async function handleAudioCompleted(redis, bookId, chapterId, sceneId, buildId) {
+    // T1: возвращает { ok, retryable, reason, artifact }
+    // artifact = { buildId, path } при ok:true
     log(`AUDIO_CALLBACK: ${bookId}/${chapterId}/${sceneId}`);
 
     const assetStates = await state.getAssetStates(redis, bookId, chapterId, sceneId);
@@ -48,15 +62,13 @@ async function handleAudioCompleted(redis, bookId, chapterId, sceneId, buildId) 
         assetStates.audio === state.AssetState.DIRTY
     );
 
-    // Н.2: Quota is released by markDispatchCompleted (single owner).
     if (!audioAllowed) {
         warn(`AUDIO_CALLBACK: Invalid per-asset state: ${assetStates?.audio || 'unknown'} (expected GENERATING/PENDING)`);
         log(`🔻 AUDIO callback rejected (invalid per-asset state): ${bookId}/${chapterId}/${sceneId}`);
-        return { handled: false, nextStage: null, reason: 'invalid_asset_state' };
+        return { ok: false, retryable: false, reason: 'invalid_asset_state' };
     }
 
     const isReady = await audio.isSceneAudioReady(buildId, bookId, chapterId, sceneId, require('music-metadata'));
-    // Н.2: Quota is released by markDispatchCompleted (single owner).
     if (!isReady) {
         error(`Audio not ready after completion: ${bookId}/${chapterId}/${sceneId}`);
         const scene = { book_id: bookId, chapter_id: chapterId, scene_id: sceneId };
@@ -64,7 +76,7 @@ async function handleAudioCompleted(redis, bookId, chapterId, sceneId, buildId) 
             reason: 'not_ready_validation'
         });
         log(`🔻 AUDIO callback: audio not ready: ${bookId}/${chapterId}/${sceneId}`);
-        return { handled: true, nextStage: null, reason: 'audio_not_ready' };
+        return { ok: false, retryable: true, reason: 'audio_not_ready' };
     }
 
     const scene = { book_id: bookId, chapter_id: chapterId, scene_id: sceneId };
@@ -72,33 +84,26 @@ async function handleAudioCompleted(redis, bookId, chapterId, sceneId, buildId) 
         buildId
     });
 
+    const audioPath = storage.filesystem.getSceneAudioPath(
+        process.env.OUTPUT_DIR || '/data/output', buildId, bookId, chapterId, sceneId
+    );
+
     try {
-        const audioPath = storage.filesystem.getSceneAudioPath(
-            process.env.OUTPUT_DIR || '/data/output', buildId, bookId, chapterId, sceneId
-        );
         await storage.registry.registerSceneAudioRedis(redis, bookId, chapterId, sceneId, {
             canonicalPath: audioPath,
             ready: true
         });
         storage.manifest.recordAsset(bookId, chapterId, sceneId, 'audio', audioPath);
         log(`CACHE-MANIFEST: audio recorded for ${bookId}/${chapterId}/${sceneId}`);
-
-        // C2: Write PG status='ready' so version-stale detection works
-        try {
-            await sceneAssetsRepo.markReady(bookId, chapterId, sceneId, 'audio', audioPath);
-            log(`[PG-AUDIO-READY] ${bookId}/${chapterId}/${sceneId}: status=ready`);
-        } catch (pgErr) {
-            warn(`Failed to mark audio READY in PG: ${pgErr.message}`);
-        }
     } catch (err) {
         warn(`Failed to register audio asset: ${err.message}`);
     }
 
+    // T1.10: PG markReady вынесен в completeStage после version gate
+    // T1.10: PG markReady is now called in completeStage() after version gate
+
     let realDuration = 0;
     try {
-        const audioPath = storage.filesystem.getSceneAudioPath(
-            process.env.OUTPUT_DIR || '/data/output', buildId, bookId, chapterId, sceneId
-        );
         const mm = require('music-metadata');
         try {
             const metadata = await mm.parseFile(audioPath);
@@ -112,10 +117,6 @@ async function handleAudioCompleted(redis, bookId, chapterId, sceneId, buildId) 
     }
 
     // ── IU TIMING RECALCULATION ──
-    // When real audio arrives, its duration likely differs from the placeholder-based
-    // scene_duration_sec in image_units. Recalculate all IU timings proportionally
-    // so start_ms/end_ms match the actual audio length.
-    // Skip recalculation if duration difference is <= 1s (no significant change).
     if (realDuration > 0) {
         try {
             const units = await iuRepo.getImageUnitsForScene(buildId, bookId, chapterId, sceneId);
@@ -159,29 +160,24 @@ async function handleAudioCompleted(redis, bookId, chapterId, sceneId, buildId) 
         }
     }
 
-    // M5: setAssetState(READY) moved to orchestrator.completeStage
     await publishProgress(redis, bookId, { layer: 'audio', chapterId, sceneId });
+    log(`AUDIO_CALLBACK: ${bookId}/${chapterId}/${sceneId} -> READY check passed`);
 
-    // Н.2: Quota is released by markDispatchCompleted (single owner).
-    log(`AUDIO_CALLBACK: ${bookId}/${chapterId}/${sceneId} -> AUDIO_READY`);
-
-    return { 
-        handled: true, 
-        nextStage: Stage.IMAGE,
-        completed: false 
+    return {
+        ok: true,
+        artifact: { buildId, path: audioPath }
     };
 }
 
 async function handleImageCompleted(redis, bookId, chapterId, sceneId, buildId) {
+    // T1: возвращает { ok, retryable, reason, artifact }
     log(`IMAGE_CALLBACK: ${bookId}/${chapterId}/${sceneId}`);
 
     const sceneImage = image.resolveCanonicalSceneImage(
         '/data/output', buildId, bookId, chapterId, sceneId
     );
 
-    // Per-asset check: image can complete in parallel with audio.
-    // Linear state may be 'audio_generating' or 'audio_ready', not necessarily
-    // 'image_generating'. Accept callback if per-asset state allows it.
+    // Per-asset check
     const assetStates = await state.getAssetStates(redis, bookId, chapterId, sceneId);
     const imageAllowed = assetStates && (
         assetStates.image === state.AssetState.GENERATING ||
@@ -189,15 +185,12 @@ async function handleImageCompleted(redis, bookId, chapterId, sceneId, buildId) 
         assetStates.image === state.AssetState.DIRTY
     );
 
-    // Н.2: Quota is released by markDispatchCompleted (single owner).
     if (!imageAllowed) {
         warn(`IMAGE_CALLBACK: Invalid per-asset state: ${assetStates?.image || 'unknown'} — expected GENERATING/PENDING`);
         log(`🔻 IMAGE callback rejected (invalid per-asset state): ${bookId}/${chapterId}/${sceneId}`);
-        return { handled: false, nextStage: null, reason: 'invalid_asset_state' };
+        return { ok: false, retryable: false, reason: 'invalid_asset_state' };
     }
 
-    // Н.2: image_not_found — throw so the dedup is deleted and GPU hub retries.
-    // Silent return here leaves the scene stuck in GENERATING forever.
     if (!sceneImage) {
         error(`Scene image not found after completion: ${bookId}/${chapterId}/${sceneId}`);
         const scene = { book_id: bookId, chapter_id: chapterId, scene_id: sceneId };
@@ -205,7 +198,8 @@ async function handleImageCompleted(redis, bookId, chapterId, sceneId, buildId) 
             reason: 'not_found'
         });
         log(`🔻 IMAGE callback: image not found: ${bookId}/${chapterId}/${sceneId}`);
-        throw new Error(`Scene image not found for ${bookId}/${chapterId}/${sceneId} in build ${buildId}`);
+        // T1.7: не throw, а ok:false — completeStage обработает
+        return { ok: false, retryable: true, reason: 'image_not_found' };
     }
 
     const imageInfo = await image.getImageMetadata(sceneImage);
@@ -219,17 +213,6 @@ async function handleImageCompleted(redis, bookId, chapterId, sceneId, buildId) 
         });
         storage.manifest.recordAsset(bookId, chapterId, sceneId, 'image', sceneImage);
         log(`CACHE-MANIFEST: image recorded for ${bookId}/${chapterId}/${sceneId}`);
-
-        // C2: Write PG status='ready' so version-stale detection works
-        try {
-            await sceneAssetsRepo.markReady(bookId, chapterId, sceneId, 'image', sceneImage, {
-                width: imageInfo?.width || null,
-                height: imageInfo?.height || null,
-            });
-            log(`[PG-IMAGE-READY] ${bookId}/${chapterId}/${sceneId}: status=ready`);
-        } catch (pgErr) {
-            warn(`Failed to mark image READY in PG: ${pgErr.message}`);
-        }
     } catch (err) {
         warn(`Failed to register image asset: ${err.message}`);
     }
@@ -240,13 +223,10 @@ async function handleImageCompleted(redis, bookId, chapterId, sceneId, buildId) 
         path: sceneImage
     });
 
-    // R4.1: Clear dirty unit IDs ONLY for units that have been processed.
-    // Do NOT clear ALL dirty IDs — there may still be unprocessed dirty units.
-    // Instead, remove only the completed unit IDs from the dirty list.
+    // R4.1: Clear dirty unit IDs
     try {
         const dirtyIds = await sceneAssetsRepo.getDirtyUnitIds(bookId, chapterId, sceneId);
         if (dirtyIds && dirtyIds.length > 0) {
-            // Check which dirty units have PNG files on disk
             const buildDir = path.join(process.env.OUTPUT_DIR || '/data/output', buildId);
             const stillPending = [];
             for (const uid of dirtyIds) {
@@ -256,19 +236,8 @@ async function handleImageCompleted(redis, bookId, chapterId, sceneId, buildId) 
                 }
             }
             if (stillPending.length === 0) {
-                // All dirty units have been processed — safe to clear
                 await sceneAssetsRepo.clearDirtyUnitIds(bookId, chapterId, sceneId);
                 log(`[DIRTY-UNITS-CLEARED] ${bookId}/${chapterId}/${sceneId}: all ${dirtyIds.length} dirty unit(s) completed, cleared`);
-
-                // CRITICAL: Reset the IU progress counter to the actual file count on disk.
-                // During regeneration, /regenerate deletes the counter (confirmed=0) so the
-                // formula (t-dirty)+min(confirmed,dirty) shows 3/4 before results. But after
-                // handleImageCompleted clears dirty unit IDs, iuReadyFromCounters switches to
-                // the dirty=0 branch: min(confirmed, t). With confirmed=1 (only the newly
-                // regenerated IU was counted) this gives 1/4 instead of 4/4.
-                //
-                // By setting the counter to the total file count AFTER clearing dirty IDs,
-                // the formula min(confirmed, t) = min(totalFiles, totalIUs) = totalIUs = 4/4.
                 try {
                     const iuPrefix = `${bookId}_${chapterId}_${sceneId}_iu`;
                     const allFiles = fs.existsSync(buildDir) ? fs.readdirSync(buildDir) : [];
@@ -282,7 +251,6 @@ async function handleImageCompleted(redis, bookId, chapterId, sceneId, buildId) 
                     warn(`Failed to reset IU progress counter: ${counterErr.message}`);
                 }
             } else {
-                // Some units still pending — keep them
                 await sceneAssetsRepo.setDirtyUnitIds(bookId, chapterId, sceneId, stillPending);
                 log(`[DIRTY-UNITS-PARTIAL] ${bookId}/${chapterId}/${sceneId}: ${stillPending.length}/${dirtyIds.length} dirty units still pending: ${stillPending.join(', ')}`);
             }
@@ -290,7 +258,6 @@ async function handleImageCompleted(redis, bookId, chapterId, sceneId, buildId) 
     } catch (e) {
         warn(`Failed to update dirty_unit_ids in IMAGE_CALLBACK: ${e.message}`);
     }
-
 
     try {
         const scenePrefix = `${bookId}_${chapterId}_${sceneId}_iu-`;
@@ -307,21 +274,17 @@ async function handleImageCompleted(redis, bookId, chapterId, sceneId, buildId) 
         warn(`Failed to clear in-flight markers in IMAGE_CALLBACK: ${e.message}`);
     }
 
-    // M5: setAssetState(READY) moved to orchestrator.completeStage
-
     await updateSceneChunks(redis, bookId, chapterId, sceneId, { image: true, image_status: 'ready' });
+    log(`IMAGE_CALLBACK: ${bookId}/${chapterId}/${sceneId} -> READY check passed`);
 
-    // Н.2: Quota is released by markDispatchCompleted (single owner).
-    log(`IMAGE_CALLBACK: ${bookId}/${chapterId}/${sceneId} -> IMAGE_READY`);
-
-    return { 
-        handled: true, 
-        nextStage: Stage.VIDEO,
-        completed: false 
+    return {
+        ok: true,
+        artifact: { buildId, path: sceneImage }
     };
 }
 
 async function handleVideoCompleted(redis, bookId, chapterId, sceneId, buildId) {
+    // T1: возвращает { ok, retryable, reason, artifact }
     log(`VIDEO_CALLBACK: ${bookId}/${chapterId}/${sceneId}`);
 
     const videoPath = `/data/output/${buildId}/${bookId}_${chapterId}_${sceneId}.mp4`;
@@ -334,14 +297,12 @@ async function handleVideoCompleted(redis, bookId, chapterId, sceneId, buildId) 
         assetStates.video === state.AssetState.DIRTY
     );
 
-    // Н.2: Quota is released by markDispatchCompleted (single owner).
     if (!videoAllowed) {
         warn(`VIDEO_CALLBACK: Invalid per-asset state: ${assetStates?.video || 'unknown'} (expected GENERATING/PENDING)`);
         log(`🔻 VIDEO callback rejected (invalid per-asset state): ${bookId}/${chapterId}/${sceneId}`);
-        return { handled: false, nextStage: null, reason: 'invalid_asset_state' };
+        return { ok: false, retryable: false, reason: 'invalid_asset_state' };
     }
 
-    // Н.2: Quota is released by markDispatchCompleted (single owner).
     if (!valid) {
         error(`Video not valid after completion: ${bookId}/${chapterId}/${sceneId}`);
         const scene = { book_id: bookId, chapter_id: chapterId, scene_id: sceneId };
@@ -349,7 +310,7 @@ async function handleVideoCompleted(redis, bookId, chapterId, sceneId, buildId) 
             reason: 'invalid'
         });
         log(`🔻 VIDEO callback: video invalid: ${bookId}/${chapterId}/${sceneId}`);
-        return { handled: true, nextStage: null, reason: 'video_invalid' };
+        return { ok: false, retryable: true, reason: 'video_invalid' };
     }
 
     try {
@@ -362,18 +323,6 @@ async function handleVideoCompleted(redis, bookId, chapterId, sceneId, buildId) 
         });
         storage.manifest.recordAsset(bookId, chapterId, sceneId, 'video', videoPath);
         log(`CACHE-MANIFEST: video recorded for ${bookId}/${chapterId}/${sceneId}`);
-
-        // C2: Write PG status='ready' so version-stale detection works
-        try {
-            await sceneAssetsRepo.markReady(bookId, chapterId, sceneId, 'video', videoPath, {
-                duration: duration || null,
-                width: metadata?.width || null,
-                height: metadata?.height || null,
-            });
-            log(`[PG-VIDEO-READY] ${bookId}/${chapterId}/${sceneId}: status=ready`);
-        } catch (pgErr) {
-            warn(`Failed to mark video READY in PG: ${pgErr.message}`);
-        }
     } catch (err) {
         warn(`Failed to register video asset: ${err.message}`);
     }
@@ -386,13 +335,8 @@ async function handleVideoCompleted(redis, bookId, chapterId, sceneId, buildId) 
     });
 
     await video.updateSceneVideoStatus(redis, bookId, chapterId, sceneId, 'ready');
-
     await updateSceneChunks(redis, bookId, chapterId, sceneId, { video: true, video_status: 'ready' });
-
-    // M5: setAssetState(READY) moved to orchestrator.completeStage
     await publishProgress(redis, bookId, { layer: 'video', chapterId, sceneId });
-
-    // Н.2: Quota is released by markDispatchCompleted (single owner).
 
     try {
         await sceneAssetsRepo.clearDirtyFlag(bookId, chapterId, sceneId);
@@ -412,8 +356,6 @@ async function handleVideoCompleted(redis, bookId, chapterId, sceneId, buildId) 
             log(`SCENE-COMPLETE auto-slide: started=${slide.started} remaining=${slide.remaining}`);
         } else if (slide && slide.remaining === 0 && slide.started === 0) {
             log(`SCENE-COMPLETE auto-slide: scope fully complete`);
-            // F11: Push terminal event so the frontend can stop polling immediately
-            // instead of relying on a 120s stuck heuristic.
             try {
                 await publishProgress(redis, bookId, { type: 'generation_complete' });
             } catch (_) {}
@@ -423,9 +365,8 @@ async function handleVideoCompleted(redis, bookId, chapterId, sceneId, buildId) 
     }
 
     return {
-        handled: true,
-        nextStage: null,
-        completed: true
+        ok: true,
+        artifact: { buildId, path: videoPath }
     };
 }
 

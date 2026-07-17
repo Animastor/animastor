@@ -59,11 +59,22 @@ async function beginStage(redis, scene, loadedBook, buildId, stage) {
 // в той же error-safe связке (try/finally), что сейчас повторена в task-handler.cjs
 // в шести местах. Фасад даёт ОДНУ реализацию этой пары.
 // ЦЕЛЬ Д.1: идемпотентность по dispatch-token (повторный вызов безвреден).
+//
+// ======================================================
+// T1: Callback completion contract
+// --------------------------------------
+// 1. Handler вызывается, возвращает { ok, retryable, reason, artifact }
+// 2. READY/DIRTY пишется ТОЛЬКО после handler.ok === true
+// 3. PG markReady вызывается ПОСЛЕ версионного gate (fail-closed)
+// 4. Исключение handler → failure, не success
+// 5. ok:false → НЕ ставит READY, не пишет PG
+// ======================================================
 async function completeStage(redis, bookId, chapterId, sceneId, stage, buildId) {
     const callbacks = require('./scene-callbacks');
     const dispatchEngine = require('../runtime/dispatch-engine');
     const state = require('../state');
-    const { log, warn } = require('./scene-utils');
+    const { log, warn, error } = require('./scene-utils');
+    const sceneAssetsRepo = require('../storage/postgres/repositories/scene-assets-repo');
 
     const handler = {
         audio: callbacks.handleAudioCompleted,
@@ -75,59 +86,93 @@ async function completeStage(redis, bookId, chapterId, sceneId, stage, buildId) 
         throw new Error(`orchestrator.completeStage: unknown stage '${stage}'`);
     }
 
+    let handlerResult;
+    let handlerError = null;
+
+    let phaseCompleted = false;
+    let phaseReason = 'handler_rejected';
+
     try {
-        await handler(redis, bookId, chapterId, sceneId, buildId);
-
-        // M5 Шаг 5: Version gate — проверяем PG версию перед READY.
-        // Если asset_version < scene_version, пишем DIRTY вместо READY,
-        // чтобы stale GPU callback не отменял force-regen.
-        // Graceful fallback: если PG недоступен, пропускаем gate (log warning).
-        let shouldWriteReady = true;
         try {
-            const { query: pgQuery } = require('../storage/postgres/database');
-            const sceneAssetsRepo = require('../storage/postgres/repositories/scene-assets-repo');
+            handlerResult = await handler(redis, bookId, chapterId, sceneId, buildId);
+        } catch (err) {
+            // T1.7: Исключение handler → failure path, не success
+            handlerError = err;
+            error(`completeStage: handler threw for ${bookId}/${chapterId}/${sceneId} ${stage}: ${err.message}`);
+        }
 
-            const sceneResult = await pgQuery(`
-                SELECT content_version, audio_config_version FROM scenes
-                WHERE book_id = $1 AND chapter_id = $2 AND scene_id = $3
-            `, [bookId, chapterId, sceneId]);
+        // ── Check handler result (T1.6) ────────────────────
+        if (handlerError || !handlerResult || handlerResult.ok !== true) {
+            const reason = handlerResult?.reason || (handlerError ? handlerError.message : 'unknown');
+            phaseReason = reason;
+            log(`[COMPLETE-STAGE] ${bookId}/${chapterId}/${sceneId} ${stage}: rejected (reason=${reason}) — NOT setting READY`);
+            // Не return — fall through к finally, затем к return { completed: false, reason }
+        } else {
+            // ── Handler succeeded — version gate (T1.11: fail-closed) ────
+            let shouldWriteReady = true;
+            try {
+                const { query: pgQuery } = require('../storage/postgres/database');
 
-            if (sceneResult.rows.length > 0) {
-                const sv = sceneResult.rows[0];
-                const asset = await sceneAssetsRepo.getAsset(bookId, chapterId, sceneId, stage, buildId)
-                    || await sceneAssetsRepo.getAsset(bookId, chapterId, sceneId, stage);
+                const sceneResult = await pgQuery(`
+                    SELECT content_version, audio_config_version FROM scenes
+                    WHERE book_id = $1 AND chapter_id = $2 AND scene_id = $3
+                `, [bookId, chapterId, sceneId]);
 
-                if (asset) {
-                    if (asset.scene_content_version != null && sv.content_version != null &&
-                        asset.scene_content_version < sv.content_version) {
-                        shouldWriteReady = false;
-                    }
-                    if (asset.scene_audio_config_version != null && sv.audio_config_version != null &&
-                        asset.scene_audio_config_version < sv.audio_config_version) {
-                        shouldWriteReady = false;
+                if (sceneResult.rows.length > 0) {
+                    const sv = sceneResult.rows[0];
+                    const asset = await sceneAssetsRepo.getAsset(bookId, chapterId, sceneId, stage, buildId)
+                        || await sceneAssetsRepo.getAsset(bookId, chapterId, sceneId, stage);
+
+                    if (asset) {
+                        if (asset.scene_content_version != null && sv.content_version != null &&
+                            asset.scene_content_version < sv.content_version) {
+                            shouldWriteReady = false;
+                        }
+                        if (asset.scene_audio_config_version != null && sv.audio_config_version != null &&
+                            asset.scene_audio_config_version < sv.audio_config_version) {
+                            shouldWriteReady = false;
+                        }
                     }
                 }
+            } catch (pgErr) {
+                // T1.11: Fail-closed — ошибка PG не разрешает READY
+                shouldWriteReady = false;
+                warn(`[VERSION-GATE] PG query failed for ${bookId}/${chapterId}/${sceneId}: ${pgErr.message} — blocking READY (fail-closed)`);
             }
-        } catch (pgErr) {
-            warn(`[VERSION-GATE] PG query failed for ${bookId}/${chapterId}/${sceneId}: ${pgErr.message} — allowing READY`);
-        }
 
-        // T8: syncLinearState удалён — per-asset state единственный source of truth
-        if (shouldWriteReady) {
-            await state.setAssetState(redis, bookId, chapterId, sceneId, stage, state.AssetState.READY);
-        } else {
-            log(`[VERSION-GATE] ${bookId}/${chapterId}/${sceneId}: ${stage} stale — DIRTY instead of READY`);
-            await state.setAssetState(redis, bookId, chapterId, sceneId, stage, state.AssetState.DIRTY);
+            if (shouldWriteReady) {
+                // T1.10: PG markReady ПОСЛЕ version gate
+                const artifactPath = handlerResult.artifact?.path;
+                if (artifactPath) {
+                    try {
+                        await sceneAssetsRepo.markReady(bookId, chapterId, sceneId, stage, artifactPath);
+                        log(`[PG-${stage.toUpperCase()}-READY] ${bookId}/${chapterId}/${sceneId}: status=ready`);
+                    } catch (pgErr) {
+                        warn(`Failed to mark ${stage} READY in PG: ${pgErr.message}`);
+                    }
+                }
+
+                await state.setAssetState(redis, bookId, chapterId, sceneId, stage, state.AssetState.READY);
+                log(`[COMPLETE-STAGE] ${bookId}/${chapterId}/${sceneId}: ${stage} → READY`);
+                phaseCompleted = true;
+                phaseReason = null;
+            } else {
+                log(`[VERSION-GATE] ${bookId}/${chapterId}/${sceneId}: ${stage} stale — DIRTY instead of READY`);
+                await state.setAssetState(redis, bookId, chapterId, sceneId, stage, state.AssetState.DIRTY);
+                phaseCompleted = false;
+                phaseReason = 'stale';
+            }
         }
     } finally {
-        // Always release lease+quota even if the callback throws — single owner
-        // of release (C1). Wrapped so a release error never masks a callback error.
+        // Всегда освобождаем lease+quota (T2 заменит на finalizeDispatch)
         try {
             await dispatchEngine.markDispatchCompleted(redis, bookId, chapterId, sceneId, stage);
         } catch (dispErr) {
             warn(`completeStage: markDispatchCompleted(${stage}) failed: ${dispErr.message}`);
         }
     }
+
+    return { completed: phaseCompleted, reason: phaseReason };
 }
 
 // ── failStage ─────────────────────────────────────────

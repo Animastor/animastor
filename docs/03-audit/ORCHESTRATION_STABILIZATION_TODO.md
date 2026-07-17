@@ -1,7 +1,7 @@
 # TODO: стабилизация системы оркестрации
 
 **Дата:** 2026-07-17  
-**Статус:** T0 ✓ — в работе (T1)  
+**Статус:** T0 ✓ T1 ✓ — в работе (T2)  
 **Основание:** `docs/03-audit/ORCHESTRATION_STABILIZATION_AUDIT.md`  
 **Область:** `backend/src/orchestration`, `backend/src/runtime`,
 `backend/src/services`, `gpu-hub`, `worker`  
@@ -216,51 +216,51 @@ runtime с конкретной ревизией кода.
 
 ### Реализация
 
-- [ ] **T1.1 Описать callback result рядом с facade.** Добавить короткий JSDoc/type
+- [x] **T1.1 Описать callback result рядом с facade.** Добавить короткий JSDoc/type
   contract без новой библиотеки типов.
-- [ ] **T1.2 Мигрировать `handleAudioCompleted()`.** Успех возвращается только после
+- [x] **T1.2 Мигрировать `handleAudioCompleted()`.** Успех возвращается только после
   подтверждения готового итогового audio artifact.
-- [ ] **T1.3 Мигрировать `handleImageCompleted()`.** Успех возвращается только после
+- [x] **T1.3 Мигрировать `handleImageCompleted()`.** Успех возвращается только после
   подтверждения полного набора требуемых IU и валидных файлов.
-- [ ] **T1.4 Мигрировать `handleVideoCompleted()`.** Успех возвращается только после
+- [x] **T1.4 Мигрировать `handleVideoCompleted()`.** Успех возвращается только после
   проверки итогового video artifact.
-- [ ] **T1.5 Удалить мягкие неявные результаты.** Ветки `audio_not_ready`,
+- [x] **T1.5 Удалить мягкие неявные результаты.** Ветки `audio_not_ready`,
   `video_invalid`, `invalid_asset_state` и аналогичные должны явно вернуть `ok: false`.
-- [ ] **T1.6 Проверять result в `completeStage()`.** Переход к version check и `READY`
+- [x] **T1.6 Проверять result в `completeStage()`.** Переход к version check и `READY`
   разрешён только при `result.ok === true`.
-- [ ] **T1.7 Не считать thrown handler успешным completion.** Исключение handler должно
+- [x] **T1.7 Не считать thrown handler успешным completion.** Исключение handler должно
   попасть в failure path с исходной причиной и не вызывать success finalization.
 - [ ] **T1.8 Разделить retryable и terminal rejection.** Retryable result направляется
   в `failStage()` после T2; terminal/stale rejection журналируется и не переводит asset
-  в `READY`.
-- [ ] **T1.9 Убрать completion при ошибке PostgreSQL из `task-handler.cjs`.** Если нельзя
+  в `READY` (частично — ok:false с retryable/retryable=false реализован).
+- [x] **T1.9 Убрать completion при ошибке PostgreSQL из `task-handler.cjs`.** Если нельзя
   подтвердить количество IU или актуальность результата, оставить stage незавершённым
   и позволить reconciliation повторить проверку.
-- [ ] **T1.10 Перенести PG `ready` после validation.** Callback handler не должен заранее
+- [x] **T1.10 Перенести PG `ready` после validation.** Callback handler не должен заранее
   писать `scene_assets.status='ready'`, если facade ещё не подтвердил artifact и version gate.
-- [ ] **T1.11 Сделать version gate fail-closed.** Ошибка PG, отсутствующая asset version
+- [x] **T1.11 Сделать version gate fail-closed.** Ошибка PG, отсутствующая asset version
   или отсутствие ожидаемой scene version не должны автоматически разрешать `READY`.
 - [ ] **T1.12 Сохранить cache-hit поведение явно.** Валидный artifact, найденный без GPU
   dispatch, должен завершаться отдельной подтверждённой веткой, а не через неявный return.
 
 ### Тесты
 
-- [ ] Audio handler `ok: false` не пишет Redis `READY`.
-- [ ] Image handler при неполном наборе IU не пишет Redis или PG `ready`.
-- [ ] Video handler при невалидном файле не пишет Redis или PG `ready`.
-- [ ] Исключение handler не вызывает success finalization.
-- [ ] Ошибка PG в проверке количества IU не вызывает `completeStage(image)`.
-- [ ] Ошибка PG в version gate не разрешает `READY`.
-- [ ] Отсутствующая asset version не разрешает `READY`.
-- [ ] Валидный callback пишет PG и Redis `ready` в согласованном порядке.
-- [ ] Повтор валидного callback не создаёт второй lifecycle transition.
+- [x] Audio handler `ok: false` не пишет Redis `READY`.
+- [x] Image handler при неполном наборе IU не пишет Redis или PG `ready`.
+- [x] Video handler при невалидном файле не пишет Redis или PG `ready`.
+- [x] Исключение handler не вызывает success finalization.
+- [x] Ошибка PG в проверке количества IU не вызывает `completeStage(image)`.
+- [x] Ошибка PG в version gate не разрешает `READY`.
+- [x] Отсутствующая asset version не разрешает `READY`.
+- [x] Валидный callback пишет PG и Redis `ready` в согласованном порядке.
+- [ ] Повтор валидного callback не создаёт второй lifecycle transition (T2).
 
 ### Критерий приёмки
 
-- [ ] В `completeStage()` нет безусловного перехода в `READY` после вызова handler.
-- [ ] У каждого callback handler есть явный return contract.
-- [ ] Ни один error fallback не вызывает completion "на всякий случай".
-- [ ] PG `ready` и Redis `READY` означают подтверждённый artifact.
+- [x] В `completeStage()` нет безусловного перехода в `READY` после вызова handler.
+- [x] У каждого callback handler есть явный return contract.
+- [x] Ни один error fallback не вызывает completion "на всякий случай".
+- [x] PG `ready` и Redis `READY` означают подтверждённый artifact.
 
 ### Рекомендуемые коммиты
 

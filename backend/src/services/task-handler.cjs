@@ -77,7 +77,9 @@ module.exports = function(redis, config, deps) {
                     console.warn(`⚠️ Failed to increment IU progress counter: ${progErr.message}`);
                 }
 
-                // Check if all IUs for this scene are complete
+                // T1.9: Проверка IU completion — только при подтверждённом PG
+                // Если PG недоступен или IUs не зарегистрированы, не форсируем completeStage.
+                // Reconciliation подберёт незавершённые сцены.
                 try {
                     const pgRows = await deps.iuRepo.getImageUnitsForScene(build_id, bookId, chapterId, sceneId);
                     const totalIUs = pgRows.length;
@@ -92,14 +94,13 @@ module.exports = function(redis, config, deps) {
                         log('🎯 All IUs complete for scene — triggering image completed');
                         await orchestrator.completeStage(redis, bookId, chapterId, sceneId, 'image', build_id);
                     } else if (totalIUs === 0) {
-                        log('⚠️ No IUs registered in PG for scene — triggering completion anyway');
-                        await orchestrator.completeStage(redis, bookId, chapterId, sceneId, 'image', build_id);
+                        // T1.9: Не завершаем stage без подтверждённых IU — reconciliation подберёт
+                        log('⚠️ No IUs registered in PG for scene — deferring to reconciliation');
                     }
                 } catch (err) {
+                    // T1.9: Не маскируем PG ошибку completeStage'ом
                     console.error('❌ Failed to check IU completion:', err.message);
-                    // If PG is down, try to trigger completion anyway
-                    log('⚠️ Falling back to trigger image completed despite PG error');
-                    await orchestrator.completeStage(redis, bookId, chapterId, sceneId, 'image', build_id);
+                    log('⚠️ PG error checking IU completion — deferring to reconciliation');
                 }
                 break;
             }
