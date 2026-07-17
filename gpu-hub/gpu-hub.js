@@ -197,9 +197,9 @@ setInterval(async () => {
 
 app.post("/beacon", async (req, res) => {
 
-  const { id, type, gpu, vram } = req.body
+  const { id, type, gpu, vram, version, image_tag } = req.body
 
-  const data = { id, type, gpu, vram, last_seen: Date.now() };
+  const data = { id, type, gpu, vram, version: version || null, image_tag: image_tag || null, last_seen: Date.now() };
 
   // Primary registry: Redis (survives restart, cluster-aware)
   await setGpuInRedis(id, data);

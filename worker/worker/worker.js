@@ -19,6 +19,8 @@ const WORKER_TYPE = process.env.WORKER_TYPE || "image";
 
 const NOTEBOOK_PATH = process.env.NOTEBOOK_PATH || "";
 const WORKER_ID = process.env.WORKER_ID || "gpu-" + os.hostname();
+const WORKER_VERSION = process.env.WORKER_VERSION || null;
+const WORKER_IMAGE_TAG = process.env.WORKER_IMAGE_TAG || null;
 
 const RESULT_TIMEOUT_MS = Number(process.env.RESULT_TIMEOUT_MS || 600000);
 const TASK_SLEEP_MS = Number(process.env.TASK_SLEEP_MS || 2000);
@@ -133,7 +135,9 @@ async function sendBeacon() {
         id: WORKER_ID,
         type: WORKER_TYPE,
         gpu: gpu.name,
-        vram: gpu.vram
+        vram: gpu.vram,
+        version: WORKER_VERSION,
+        image_tag: WORKER_IMAGE_TAG
       })
     });
   } catch (err) {
@@ -191,13 +195,11 @@ async function waitForFileReady(filePath, expectedSize, timeout = 5000) {
     }
 
     try {
-      try {
-        await fsp.access(filePath);
-        const stats = await fsp.stat(filePath);
-        if (stats.size === expectedSize && stats.size > 0) {
-          await sleep(50);
-          return true;
-        }
+      await fsp.access(filePath);
+      const stats = await fsp.stat(filePath);
+      if (stats.size === expectedSize && stats.size > 0) {
+        await sleep(50);
+        return true;
       }
     } catch (err) {
       log("warn", `waitForFileReady error`, err.message);
@@ -413,7 +415,13 @@ async function sendResult(task, data) {
   await fetchTimeout(`${HUB_URL}/task/result`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ job_id, build_id, result_base64: data })
+    body: JSON.stringify({
+      job_id,
+      build_id,
+      result_base64: data,
+      worker_version: WORKER_VERSION,
+      worker_image_tag: WORKER_IMAGE_TAG
+    })
   });
 }
 
@@ -478,7 +486,9 @@ async function workerLoop() {
           body: JSON.stringify({
             job_id: task.job_id,
             build_id: task.build_id || null,
-            reason: String(err && err.message || err || "worker_error").slice(0, 500)
+            reason: String(err && err.message || err || "worker_error").slice(0, 500),
+            worker_version: WORKER_VERSION,
+            worker_image_tag: WORKER_IMAGE_TAG
           })
         });
       } catch (sendErr) {
@@ -494,6 +504,11 @@ async function workerLoop() {
 
 async function main() {
   log("info", `Worker ${WORKER_TYPE} started`);
+  log("info", `Worker ID: ${WORKER_ID}`);
+  log("info", `Worker version: ${WORKER_VERSION || 'unknown'}`);
+  log("info", `Worker image tag: ${WORKER_IMAGE_TAG || 'unknown'}`);
+  log("info", `Hub URL: ${HUB_URL}`);
+  log("info", `Protocol version: 1`);
   await waitForComfyUI();
   await workerLoop();
 }
