@@ -215,7 +215,7 @@ async function startServer() {
         setImmediate(async () => {
             try {
                 const reconcileEngine = require('./runtime/reconciliation-engine');
-                const recResult = await reconcileEngine.reconcileCycle(redis, {
+                const reconcileDeps = {
                     postgres: storage.postgres,
                     orchestrator,
                     taskHandler,
@@ -223,7 +223,12 @@ async function startServer() {
                     recoverAllBooksFromDisk,
                     resumeIncompleteSessions,
                     runBackgroundWindowGeneration: windowGenerator.runBackgroundWindowGeneration,
-                }, {
+                };
+
+                // T7: Передаём deps в runtime loop для периодического reconcileCycle
+                runtime.loop.setReconcileDeps(reconcileDeps);
+
+                const recResult = await reconcileEngine.reconcileCycle(redis, reconcileDeps, {
                     startup: true,
                 });
                 log(`[STARTUP] Reconcile cycle: ${recResult.phases.join(', ')}`);

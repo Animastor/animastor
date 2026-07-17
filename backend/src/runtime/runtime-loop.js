@@ -11,6 +11,9 @@ const counterReconciliation = require('./counter-reconciliation');
 const dispatchEngine = require('./dispatch-engine');
 const prometheus = require('../metrics/prometheus');
 
+// Reconciliation cycle interval (60 seconds — not every 5s tick)
+const RECONCILE_INTERVAL_MS = 60000;
+
 const logPrefix = '[RUNTIME-LOOP]';
 
 function log(msg) {
@@ -30,12 +33,20 @@ function error(msg) {
 // ======================================================
 
 let loopTimeout = null;
+let reconcileTimeout = null;
 let isRunning = false;
 let currentTick = 0;
 let tickInProgress = false;
+let reconcileInProgress = false;
 // Redis reference kept for tick scheduling
 let loopRedis = null;
 let loopIntervalMs = null;
+
+// T7: Reconciliation deps (set from backend.cjs)
+let reconcileDeps = {};
+
+// T7: Store last reconcile summary for metrics
+let lastReconcileSummary = null;
 
 // Metrics tracking
 const metricsHistory = [];
@@ -45,7 +56,11 @@ const metricsHistory = [];
 // ======================================================
 
 /**
- * Execute one loop iteration (tick).
+ * Execute one fast tick loop iteration (T7: no full reconciliation).
+ * T7: Reconciliation убран из быстрого tick (был Phase 2 с reconcileAll).
+ * Теперь быстрый tick содержит только scheduler (scene progression),
+ * counter reconciliation (лёгкий) и metrics/Prometheus.
+ * Полный reconciliation запускается отдельным циклом раз в 60 секунд.
  */
 async function executeTick(redis, loadedBooks = {}) {
     currentTick++;
@@ -56,19 +71,16 @@ async function executeTick(redis, loadedBooks = {}) {
     // Phase 1: Runtime scheduler progression (with dispatch engine)
     const schedulerSummary = await runtimeScheduler.tick(redis, loadedBooks);
 
-    // Phase 2: Reconciliation & self-healing
-    const reconcileReport = await reconciliationEngine.reconcileAll(redis);
-
-    // Phase 3: Counter reconciliation (corrects leaked counters after crash/restart)
+    // Phase 2 (T7): Counter reconciliation only — lightweight, no full scan
     const counterReport = await counterReconciliation.reconcileCounters(redis);
 
-    // Phase 4: Store runtime metrics
+    // Phase 3: Store runtime metrics
     try {
         const metricsData = {
             tick: currentTick,
             duration: Date.now() - startTime,
             scheduler: schedulerSummary,
-            reconcile: reconcileReport ? reconcileReport.toSummary() : null,
+            reconcile: lastReconcileSummary,
             counter: counterReport,
             timestamp: new Date().toISOString()
         };
@@ -77,7 +89,7 @@ async function executeTick(redis, loadedBooks = {}) {
         console.warn(`[RUNTIME] Metrics storage error: ${metricsErr.message}`);
     }
 
-    // Phase 5: Collect Prometheus metrics
+    // Phase 4: Collect Prometheus metrics
     try {
         await prometheus.collect(redis);
     } catch (promErr) {
@@ -89,7 +101,7 @@ async function executeTick(redis, loadedBooks = {}) {
         tick: currentTick,
         duration,
         scheduler: schedulerSummary,
-        reconcile: reconcileReport ? reconcileReport.toSummary() : null,
+        reconcile: lastReconcileSummary,
         counter: counterReport,
         timestamp: new Date().toISOString()
     };
@@ -102,10 +114,61 @@ async function executeTick(redis, loadedBooks = {}) {
 
     log(`Tick #${currentTick} complete in ${duration}ms`);
     log(`  Scheduler: ${schedulerSummary.processed} processed, ${schedulerSummary.dispatched || 0} dispatched, ${schedulerSummary.throttled || 0} throttled`);
-    log(`  Reconcile: ${metrics.reconcile?.totalInconsistent || 0} inconsistencies`);
     log(`  Counter: ${counterReport.summary?.correctedCount || 0} corrected, ${counterReport.summary?.totalDrift || 0} total drift`);
 
     return metrics;
+}
+
+/**
+ * T7: Execute one reconciliation cycle (slow, periodic).
+ * Запускается отдельно от быстрого tick, раз в 60 секунд.
+ * Использует distributed lock (CLEANUP_LOCK) внутри reconcileCycle,
+ * поэтому не перекрывается с другими экземплярами.
+ */
+/**
+ * Set reconciliation deps (taskHandler, postgres, orchestrator, etc.)
+ * to enable full reconcileCycle phases during periodic execution.
+ * Called from backend.cjs after starting the loop.
+ */
+function setReconcileDeps(deps) {
+    reconcileDeps = deps || {};
+}
+
+async function executeReconcileCycle(redis) {
+    if (reconcileInProgress) {
+        log('RECONCILE_SKIPPED: Previous cycle still running');
+        return { skipped: true, reason: 'cycle_running' };
+    }
+
+    reconcileInProgress = true;
+    const startTime = Date.now();
+
+    try {
+        log('Starting periodic reconciliation cycle');
+        const result = await reconciliationEngine.reconcileCycle(redis, reconcileDeps, { startup: false });
+        const elapsed = Date.now() - startTime;
+
+        // Store summary for metrics
+        lastReconcileSummary = {
+            lastRun: new Date().toISOString(),
+            elapsedMs: elapsed,
+            phases: result.phases,
+            errors: result.summary?.errors || []
+        };
+
+        log(`Reconciliation cycle complete in ${elapsed}ms: phases [${result.phases.join(', ')}]`);
+        if (result.summary?.errors?.length > 0) {
+            log(`  Errors: ${result.summary.errors.length}`);
+        }
+
+        return result;
+    } catch (err) {
+        error(`Reconciliation cycle error: ${err.message}`);
+        lastReconcileSummary = { lastRun: new Date().toISOString(), error: err.message };
+        return { ok: false, error: err.message };
+    } finally {
+        reconcileInProgress = false;
+    }
 }
 
 /**
@@ -117,6 +180,7 @@ function getHistory(limit = 10) {
 
 /**
  * Get current runtime metrics (live, not historical).
+ * T7: Разделяет быстрый tick и reconciliation cycle.
  */
 async function getCurrentMetrics(redis) {
     const schedulerMetrics = await runtimeScheduler.getMetrics(redis);
@@ -126,10 +190,15 @@ async function getCurrentMetrics(redis) {
         loop: {
             running: isRunning,
             tick: currentTick,
-            metricsHistoryLength: metricsHistory.length
+            metricsHistoryLength: metricsHistory.length,
+            tickIntervalMs: loopIntervalMs,
+            reconcileIntervalMs: RECONCILE_INTERVAL_MS
         },
         scheduler: schedulerMetrics,
-        reconciliation: reconciliationMetrics
+        reconciliation: {
+            ...reconciliationMetrics,
+            lastRun: lastReconcileSummary
+        }
     };
 }
 
@@ -138,9 +207,8 @@ async function getCurrentMetrics(redis) {
 // ======================================================
 
 /**
- * Schedule the next tick. Uses recursive setTimeout (не setInterval),
+ * Schedule the next fast tick. Uses recursive setTimeout (не setInterval),
  * чтобы гарантировать отсутствие перекрывающихся tick'ов (T6.6).
- * Следующий tick планируется только после завершения предыдущего.
  */
 function scheduleNext() {
     if (!isRunning) return;
@@ -171,13 +239,26 @@ function scheduleNext() {
             await executeTick(loopRedis);
         } catch (err) {
             error(`Tick execution error: ${err.message}`);
-            // Don't stop the loop on error - just log and continue
         } finally {
             tickInProgress = false;
-            // Schedule next tick only if still running (stop() мог быть вызван во время tick)
             scheduleNext();
         }
     }, loopIntervalMs);
+}
+
+/**
+ * T7: Schedule the next reconciliation cycle (slow, 60s interval).
+ * Использует отдельный рекурсивный setTimeout, независимый от быстрого tick.
+ * Неперекрываемость обеспечивается distributed lock в reconcileCycle + флаг reconcileInProgress.
+ */
+function scheduleReconcile() {
+    if (!isRunning) return;
+
+    reconcileTimeout = setTimeout(async () => {
+        if (!isRunning || reconcileInProgress) return;
+        await executeReconcileCycle(loopRedis);
+        scheduleReconcile();
+    }, RECONCILE_INTERVAL_MS);
 }
 
 /**
@@ -193,18 +274,19 @@ function start(redis, intervalMs = runtimeScheduler.SCHEDULER_TICK_MS) {
     isRunning = true;
     loopRedis = redis;
     loopIntervalMs = intervalMs;
-    log(`Starting runtime loop with interval: ${intervalMs}ms`);
+    log(`Starting runtime loop: fast tick every ${intervalMs}ms, reconcile every ${RECONCILE_INTERVAL_MS}ms`);
 
-    // Schedule first tick
+    // Schedule first fast tick
     scheduleNext();
+
+    // T7: Schedule first reconciliation cycle (after initial delay)
+    scheduleReconcile();
 
     return { success: true, interval: intervalMs };
 }
 
 /**
- * Stop the runtime loop.
- * Если tick выполняется в данный момент, stop() не прерывает его, 
- * но предотвращает запуск следующего tick (T6.10).
+ * Stop the runtime loop (both fast tick and reconciliation cycle).
  */
 function stop() {
     if (!isRunning) {
@@ -212,12 +294,17 @@ function stop() {
         return { success: false, reason: 'not_running' };
     }
 
-    // Предотвращаем запуск следующего tick
+    // Предотвращаем запуск следующего tick/reconcile
     isRunning = false;
 
     if (loopTimeout) {
         clearTimeout(loopTimeout);
         loopTimeout = null;
+    }
+
+    if (reconcileTimeout) {
+        clearTimeout(reconcileTimeout);
+        reconcileTimeout = null;
     }
 
     log('Runtime loop stopped');
@@ -243,6 +330,7 @@ module.exports = {
     executeTick,
     getHistory,
     getCurrentMetrics,
+    setReconcileDeps,
     
     // Re-export for convenience
     runtimeScheduler,
