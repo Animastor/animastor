@@ -385,14 +385,19 @@ module.exports = function(redis) {
                 }
             }
 
-            // ── Active scenes set (iterate, pattern match, srem individually) ──
+            // ── Active scenes set (T8: через active-scenes-index API) ──
             try {
-                const allActive = await redis.smembers('animastor:active-scenes');
+                const runtimeScheduler = require('../runtime/runtime-scheduler');
+                const activeScenesIndex = require('../runtime/active-scenes-index');
                 let removedActive = 0;
+                const allActive = await redis.smembers('animastor:active-scenes');
                 for (const sceneKey of allActive) {
                     if (sceneKey.startsWith(`${bookId}:`)) {
-                        await redis.srem('animastor:active-scenes', sceneKey);
-                        removedActive++;
+                        const parsed = activeScenesIndex.parseSceneKey(sceneKey);
+                        if (parsed) {
+                            await runtimeScheduler.removeSceneFromActiveIndex(redis, parsed.bookId, parsed.chapterId, parsed.sceneId);
+                            removedActive++;
+                        }
                     }
                 }
                 log(`[CLEAN] ${bookId}: removed ${removedActive} scenes from active-scenes set`);

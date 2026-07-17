@@ -109,7 +109,8 @@ async function executeImageDispatch(redis, scene, loadedBook, buildId) {
         buildId, dispatchType: 'orchestrator'
     });
 
-    await state.setAssetState(redis, bookId, chapterId, sceneId, 'image', state.AssetState.GENERATING);
+    // T8: через фасад — единый владелец GENERATING
+    await setSceneGenerating(redis, bookId, chapterId, sceneId, 'image');
 
     const bookData = loadedBook || book.loadBook(bookId);
     const sceneData = book.findSceneRuntimeData(bookData, chapterId, sceneId);
@@ -162,7 +163,8 @@ async function executeVideoDispatch(redis, scene, loadedBook, buildId) {
         buildId, dispatchType: 'orchestrator'
     });
 
-    await state.setAssetState(redis, bookId, chapterId, sceneId, 'video', state.AssetState.GENERATING);
+    // T8: через фасад — единый владелец GENERATING
+    await setSceneGenerating(redis, bookId, chapterId, sceneId, 'video');
 
     const bookData = loadedBook || book.loadBook(bookId);
     const sceneData = book.findSceneRuntimeData(bookData, chapterId, sceneId);

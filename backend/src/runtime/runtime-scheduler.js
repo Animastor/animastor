@@ -72,31 +72,36 @@ async function checkChunksHaveImages(redis, bookId, chapterId, sceneId) {
 const SCHEDULER_TICK_MS = 5000; // 5 seconds
 
 // ======================================================
-// ACTIVE SCENE INDEX
+// ACTIVE SCENE INDEX — T8: де-дубликация
 // ======================================================
+// T8: runtime-scheduler больше НЕ владеет своим API active-scenes.
+// Все операции делегируются в active-scenes-index.js — единственный command API.
+// addSceneToActiveIndex/removeSceneToActiveIndex оставлены как обёртки для
+// обратной совместимости. Новый код должен использовать activeScenes API напрямую.
 
-const ACTIVE_SCENES_KEY = 'animastor:active-scenes';
+const activeScenes = require('./active-scenes-index');
+const ACTIVE_SCENES_KEY = activeScenes.ACTIVE_SCENES_KEY;
 
 /**
- * Add scene to active index when it enters a generating/pending state.
+ * Add scene to active index. T8: делегирует в active-scenes-index.js.
  */
 async function addSceneToActiveIndex(redis, bookId, chapterId, sceneId) {
-    const sceneKey = `${bookId}:${chapterId}:${sceneId}`;
-    const added = await redis.sadd(ACTIVE_SCENES_KEY, sceneKey);
-    if (added > 0) {
-        log(`+ ACTIVE: ${sceneKey} added to active index`);
+    const result = await activeScenes.addActiveScene(redis, bookId, chapterId, sceneId);
+    if (result.added) {
+        log(`+ ACTIVE: ${result.sceneKey} added to active index`);
     }
+    return result;
 }
 
 /**
- * Remove scene from active index when it completes or fails.
+ * Remove scene from active index. T8: делегирует в active-scenes-index.js.
  */
 async function removeSceneFromActiveIndex(redis, bookId, chapterId, sceneId) {
-    const sceneKey = `${bookId}:${chapterId}:${sceneId}`;
-    const removed = await redis.srem(ACTIVE_SCENES_KEY, sceneKey);
-    if (removed > 0) {
-        log(`- ACTIVE: ${sceneKey} removed from active index`);
+    const result = await activeScenes.removeActiveScene(redis, bookId, chapterId, sceneId);
+    if (result.removed) {
+        log(`- ACTIVE: ${result.sceneKey} removed from active index`);
     }
+    return result;
 }
 
 // M4 (Н.9): removed dead concurrent counter functions — dispatchEngine owns quotas
@@ -253,20 +258,16 @@ async function markVersionStaleDirty(redis, bookId, chapterId, sceneId) {
     const videoEnabled = layerCfg.video_enabled !== false;
 
     log(`[VERSION-DIRTY] ${bookId}/${chapterId}/${sceneId}: PG version mismatch — resetting per-asset states for dispatch`);
-    let reset = 0;
-    if (audioEnabled && assetStates.audio === state.AssetState.READY) {
-        await state.setAssetState(redis, bookId, chapterId, sceneId, 'audio', state.AssetState.DIRTY);
-        reset++;
+    // T8: через фасад — единый владелец DIRTY
+    const orchestrator = require('../orchestration/orchestrator');
+    const dirtyAssets = [];
+    if (audioEnabled && assetStates.audio === state.AssetState.READY) dirtyAssets.push('audio');
+    if (imageEnabled && assetStates.image === state.AssetState.READY) dirtyAssets.push('image');
+    if (videoEnabled && assetStates.video === state.AssetState.READY) dirtyAssets.push('video');
+    if (dirtyAssets.length > 0) {
+        await orchestrator.markDirtyScene(redis, bookId, chapterId, sceneId, dirtyAssets);
     }
-    if (imageEnabled && assetStates.image === state.AssetState.READY) {
-        await state.setAssetState(redis, bookId, chapterId, sceneId, 'image', state.AssetState.DIRTY);
-        reset++;
-    }
-    if (videoEnabled && assetStates.video === state.AssetState.READY) {
-        await state.setAssetState(redis, bookId, chapterId, sceneId, 'video', state.AssetState.DIRTY);
-        reset++;
-    }
-    return reset;
+    return dirtyAssets.length;
 }
 
 async function shouldScheduleAssets(redis, bookId, chapterId, sceneId) {
