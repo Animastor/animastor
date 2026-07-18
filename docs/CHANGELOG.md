@@ -8,6 +8,17 @@ All notable changes to Animastor are documented here.
 
 ### Fixed
 
+- **voices.json терял голоса персонажей при генерации второго окна vbook**
+  (`backend/src/book/lazy-book/create.js`):
+  - **Проблема:** `voices.json` перезаписывался целиком из `mergedCharacters`. `characters.json`
+    хранит персонажей без поля `voice` (оно вырезается при сохранении — голоса живут только
+    в `voices.json`). При загрузке старых персонажей с диска для второго окна `ch.voice`
+    отсутствовал → они не попадали в новый `voices.json`. Оставался только narrator.
+  - **Фикс:** `voices.json` — единственный source of truth. При записи: загружается существующий
+    `voices.json` как база (спред), итерация только по `analysis.characters` (персонажи
+    текущего окна). Старые голоса сохраняются из spread, новые/уточнённые — перезаписываются.
+  - 571 тест проходит.
+
 - **Race condition: чанки прилетали до WAITING_CHUNKS → completeChunk skip → retry exhaustion → цикл**
   (`backend/src/orchestration/scene-orchestrator.js`, `backend/src/services/audio-orchestrator.js`):
   - **Проблема:** `setWaitingChunks()` вызывался **после** `generateSceneAudio()` в `executeAudioDispatch`.

@@ -211,9 +211,22 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
     fs.writeFileSync(getLocationsPath(bookDir), JSON.stringify(locations, null, 2));
 
     // Save all voices to separate file (narrator + characters)
-    const voices = { narrator: { instruction: narratorVoice } };
-    for (const ch of mergedCharacters) {
-        if (ch.voice?.instruction) {
+    // voices.json — single source of truth. For subsequent windows, load existing
+    // and only add/update voices for NEW characters from the current window.
+    // Old characters keep their existing voices untouched.
+    let voices = { narrator: { instruction: narratorVoice } };
+    try {
+        const vPath = getVoicesPath(bookDir);
+        if (fs.existsSync(vPath)) {
+            const existing = JSON.parse(fs.readFileSync(vPath, 'utf8')) || {};
+            voices = { narrator: { instruction: narratorVoice }, ...existing };
+        }
+    } catch (e) {
+        console.warn(`[LAZY-BOOK] Failed to load existing voices: ${e.message}`);
+    }
+    // Add/update voices for characters from the current window
+    for (const ch of (analysis.characters || [])) {
+        if (ch.id && ch.voice?.instruction) {
             voices[ch.id] = { instruction: ch.voice.instruction };
         }
     }
