@@ -75,19 +75,38 @@ async function executeAudioDispatch(redis, scene, loadedBook, buildId, dispatchI
         transResult = await audioOrch.setGenerating(redis, bookId, chapterId, sceneId);
     }
 
+    // 🔧 FIX: Stale phase recovery (e.g. WAITING_CHUNKS от предыдущей генерации
+    // после перегенерации vbook). Сбрасываем state через deleteState и
+    // инициализируем PLACEHOLDER_READY заново.
+    if (!transResult.success && transResult.reason === 'invalid_transition') {
+        log(`  🔧 AUDIO_ORCH: stale phase ${transResult.from} for ${bookId}/${chapterId}/${sceneId} — resetting to PLACEHOLDER_READY`);
+        await audioOrch.deleteState(redis, bookId, chapterId, sceneId);
+        const segList = require('../audio/segments').buildSegments(sceneData);
+        await audioOrch.initPlaceholderReady(redis, bookId, chapterId, sceneId, buildId, segList.length);
+        log(`  🔧 AUDIO_ORCH: reset stale phase, initialized PLACEHOLDER_READY with ${segList.length} expected segments`);
+        transResult = await audioOrch.setGenerating(redis, bookId, chapterId, sceneId);
+    }
+
     if (!transResult.success) {
         warn(`AUDIO_ORCH: cannot set GENERATING for ${bookId}/${chapterId}/${sceneId}: ${transResult.reason}`);
         // T3: transition rejected — считаем что dispatch не выполнен
         return { dispatched: false, jobs: 0, reason: transResult.reason || 'phase_transition_rejected' };
     }
 
+    // 🔧 FIX (race condition): WAITING_CHUNKS должна быть установлена ДО отправки
+    // jobs, иначе первый чанк может вернуться быстрее чем setWaitingChunks выполнится,
+    // и completeChunk увидит фазу GENERATING → early return → чанк на диске есть,
+    // но merge не запускается → retry exhausting → failStage → re-dispatch → цикл.
+    await audioOrch.setWaitingChunks(redis, bookId, chapterId, sceneId);
+
     const result = await audio.generateSceneAudio(redis, sceneData, bookData, buildId, bookId, dispatchId);
 
     if (result && result.generated) {
-        await audioOrch.setWaitingChunks(redis, bookId, chapterId, sceneId);
         log(`AUDIO_DISPATCHED: ${bookId}/${chapterId}/${sceneId} (${result.chunks || 0} chunks sent)`);
         return { dispatched: true, jobs: result.chunks || 1, reason: null };
     } else if (result && result.reason === 'already_ready') {
+        // Audio already on disk — fast-track WAITING_CHUNKS→MERGING→DONE
+        await audioOrch.setMerging(redis, bookId, chapterId, sceneId);
         await audioOrch.setDone(redis, bookId, chapterId, sceneId);
         log(`AUDIO_DISPATCH: ${bookId}/${chapterId}/${sceneId} — already ready`);
         const completion = await completeStage(redis, bookId, chapterId, sceneId, 'audio', buildId, dispatchId);

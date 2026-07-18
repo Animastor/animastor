@@ -183,6 +183,22 @@ async function completeChunk(redis, bookId, chapterId, sceneId, chunkIndex, buil
         return;
     }
 
+    // ── SAFETY NET: GENERATING → WAITING_CHUNKS ──
+    // Если чанк пришёл до того, как executeAudioDispatch успел вызвать
+    // setWaitingChunks (race condition при быстрых TTS), переходим в
+    // WAITING_CHUNKS самостоятельно и продолжаем проверку комплектности.
+    if (orchState.phase === PHASES.GENERATING) {
+        log(`GENERATING→WAITING_CHUNKS: chunk ${chunkIndex} arrived early for ${bookId}/${chapterId}/${sceneId}`);
+        const transResult = await transitionState(redis, bookId, chapterId, sceneId, PHASES.WAITING_CHUNKS);
+        if (!transResult.success) {
+            warn(`GENERATING→WAITING_CHUNKS failed: ${transResult.reason}`);
+            return;
+        }
+        // Sync local variable — transitionState обновила Redis, но orchState
+        // всё ещё кешированная копия с phase=GENERATING.
+        orchState.phase = PHASES.WAITING_CHUNKS;
+    }
+
     const expectedCount = parseInt(orchState.expected_count || '1', 10);
     const pad = (n) => String(n).padStart(4, '0');
 

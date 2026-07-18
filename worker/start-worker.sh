@@ -140,9 +140,9 @@ export COMFY_INPUT_DIR="$HOME/ComfyUI/input"
 # 9. STOP OLD WORKERS (FIX)
 # ======================================================
 
-if pgrep -f "node worker.js" >/dev/null; then
+if pgrep -f "node worker.cjs" >/dev/null; then
   echo "Stopping old workers..."
-  pkill -f "node worker.js"
+  pkill -f "node worker.cjs"
   sleep 2
 fi
 
@@ -150,8 +150,8 @@ fi
 # 10. CHECK WORKER FILE
 # ======================================================
 
-if [ ! -f worker.js ]; then
-  echo "ERROR: worker.js not found"
+if [ ! -f worker.cjs ]; then
+  echo "ERROR: worker.cjs not found"
   exit 1
 fi
 
@@ -163,7 +163,7 @@ LOG_FILE="$BASE_DIR/logs/worker.log"
 
 echo "Starting $WORKER_TYPE worker..."
 
-setsid node worker.js >> "$LOG_FILE" 2>&1 &
+setsid node worker.cjs >> "$LOG_FILE" 2>&1 &
 
 WORKER_PID=$!
 

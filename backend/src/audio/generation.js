@@ -16,6 +16,102 @@ const ffmpeg = require('./ffmpeg');
 const WORKFLOW_NARRATION = 'tts-qwen-narrator';
 const WORKFLOW_DIALOGUE = 'tts-qwen-dialogue';
 
+// ══════════════════════════════════════════════════════
+//  MERGED DIALOGUE WORKFLOW
+// ══════════════════════════════════════════════════════
+// Собирает ВСЕ диалоговые сегменты чистой сцены в один
+// workflow с динамическим RoleBank на N ролей.
+// Это даёт Qwen3TTSAdvancedDialogue возможность
+// сгенерировать непрерывную естественную беседу.
+//
+// Для каждого уникального speaker-а создаётся пара нод:
+//   VoiceDesign (голосовая инструкция → аудио-образец)
+//   VoiceClonePrompt (аудио-образец → voice prompt)
+//
+// RoleBank расширяется role_name_N + prompt_N для всех
+// speaker-ов, а не только для первых двух.
+// ══════════════════════════════════════════════════════
+
+function buildMergedDialogueWorkflow(segments, loadedBook) {
+    const wfAudio = wfLoader.getWorkflow(WORKFLOW_DIALOGUE);
+    if (!wfAudio) {
+        helpers.error('buildMergedDialogueWorkflow: base workflow not found');
+        return null;
+    }
+
+    // ── 1. Collect all speakers and voice instructions ──
+    const speakers = new Map(); // speakerId → voiceInstruction
+    const scriptLines = [];
+    const speakerRegex = /^([a-z0-9_]+):\s/;
+
+    for (const seg of segments) {
+        if (seg.segment_type !== 'dialogue') continue;
+        const match = seg.text.match(speakerRegex);
+        const speakerId = match ? match[1] : null;
+        if (speakerId && !speakers.has(speakerId)) {
+            const vi = loadedBook?.voices?.[speakerId]?.instruction
+                || loadedBook?.characters?.find(x => x.id === speakerId)?.voice?.instruction
+                || "";
+            speakers.set(speakerId, vi);
+        }
+        scriptLines.push(seg.text);
+    }
+
+    const script = scriptLines.join('\n');
+    const speakerIds = [...speakers.keys()];
+    const speakerCount = speakerIds.length;
+
+    if (speakerCount === 0) {
+        helpers.warn('buildMergedDialogueWorkflow: no speakers found in segments');
+        return null;
+    }
+
+    if (speakerCount > 3) {
+        helpers.warn(`buildMergedDialogueWorkflow: ${speakerCount} speakers exceeds max 3 — falling back to per-segment`);
+        return null;
+    }
+
+    helpers.log(`🎭 Merged dialogue: ${speakerCount} speaker(s), ${segments.length} segment(s)`);
+
+    // ── 2. Build script node (node 108) ──
+    wfAudio["108"].inputs = {
+        script,
+        default_instruct: ""
+    };
+
+    // ── 3. Map speaker → static node IDs ──
+    // speaker 0 → 71(VoiceDesign) + 73(ClonePrompt)
+    // speaker 1 → 80(VoiceDesign) + 81(ClonePrompt)
+    // speaker 2 → 82(VoiceDesign) + 83(ClonePrompt)
+    const voiceDesignIds = [71, 80, 82];
+    const clonePromptIds = [73, 81, 83];
+
+    // Update VoiceDesign nodes with actual voice instructions.
+    // Если voice пустой — используем narrator voice как fallback.
+    // ComfyUI выдаёт ошибку "Voice instruction cannot be empty."
+    const narratorVi = segments.narratorVoice({}, loadedBook);
+    const vi0 = speakers.get(speakerIds[0]) || narratorVi;
+    if (vi0) wfAudio["71"].inputs.voice_instruction = vi0;
+    if (speakerCount > 1) {
+        const vi1 = speakers.get(speakerIds[1]) || narratorVi;
+        if (vi1) wfAudio["80"].inputs.voice_instruction = vi1;
+    }
+    if (speakerCount > 2) {
+        const vi2 = speakers.get(speakerIds[2]) || narratorVi;
+        if (vi2) wfAudio["82"].inputs.voice_instruction = vi2;
+    }
+
+    // ── 4. Configure RoleBank (node 74) with correct role names ──
+    for (let i = 0; i < speakerCount; i++) {
+        const idx = i + 1;
+        wfAudio["74"].inputs[`role_name_${idx}`] = speakerIds[i];
+        wfAudio["74"].inputs[`prompt_${idx}`] = [String(clonePromptIds[i]), 0];
+    }
+
+    helpers.log(`🎭 Merged dialogue: roles=${speakerIds.join(', ')}`);
+    return wfAudio;
+}
+
 async function trimPaddedSceneAudio(filePath) {
     const basename = path.basename(filePath);
 
@@ -44,6 +140,49 @@ async function trimPaddedSceneAudio(filePath) {
     }
 }
 
+// ══════════════════════════════════════════════════════
+//  HELPERS
+// ══════════════════════════════════════════════════════
+
+/**
+ * Create or update a single chunk in Redis for a merged dialogue scene.
+ */
+async function ensureMergedChunk(redis, buildId, bookId, chapterId, sceneId, sceneType, audioStatus) {
+    const chunkIndex = 1;
+    const id = chunks.makeChunkId(chapterId, sceneId, chunkIndex, bookId);
+    const chunkKey = `animastor:chunk:${id}`;
+
+    const chunkData = {
+        build_id: buildId,
+        book_id: bookId,
+        chapter_id: chapterId,
+        scene_id: sceneId,
+        chunk_index: String(chunkIndex).padStart(4, '0'),
+        expected_chunk_count: 1,
+        scene_type: sceneType,
+        audio: audioStatus === 'ready',
+        audio_status: audioStatus,
+        padded_text: false
+    };
+
+    await redis.set(chunkKey, JSON.stringify(chunkData));
+    await redis.sadd(`animastor:chunks:${bookId}`, id);
+    return { id };
+}
+
+/**
+ * Determine voice instruction for a character.
+ */
+function voiceForCharacter(charId, loadedBook) {
+    return loadedBook?.voices?.[charId]?.instruction
+        || loadedBook?.characters?.find(x => x.id === charId)?.voice?.instruction
+        || "";
+}
+
+// ══════════════════════════════════════════════════════
+//  GENERATE SCENE AUDIO
+// ══════════════════════════════════════════════════════
+
 async function generateSceneAudio(redis, sceneData, loadedBook, buildId, bookId, dispatchId) {
     const chapterId = sceneData.chapter_id;
     const sceneId = sceneData.scene_id;
@@ -56,12 +195,14 @@ async function generateSceneAudio(redis, sceneData, loadedBook, buildId, bookId,
     }
 
     const segList = segments.buildSegments(sceneData);
-    const expectedChunkCount = segList.length;
 
-    // 🧹 Stale cache invalidation: if cached chunks on disk have a different
-    // count than the new segment list, delete them all. This prevents old
-    // chunk files from being used at wrong positions when buildSegments()
-    // changes the segment structure (e.g. adding hybrid narration segments).
+    // ── Detect pure dialogue scene ──
+    // Если ВСЕ сегменты — dialogue, собираем их в один merged workflow.
+    // Это даёт Qwen3TTSAdvancedDialogue непрерывную беседу.
+    const isPureDialogue = segList.length > 0 && segList.every(s => s.segment_type === 'dialogue');
+    const expectedChunkCount = isPureDialogue ? 1 : segList.length;
+
+    // 🧹 Stale cache invalidation
     const existingChunks = chunks.findExistingSceneChunks(bookId, chapterId, sceneId, buildId);
     if (existingChunks.length > 0 && existingChunks.length !== expectedChunkCount) {
         helpers.log(`🧹 Stale chunk cache: ${existingChunks.length} on disk, ${expectedChunkCount} expected — invalidating`);
@@ -80,7 +221,6 @@ async function generateSceneAudio(redis, sceneData, loadedBook, buildId, bookId,
             await redis.del(chunkKey);
             await redis.srem(`animastor:chunks:${bookId}`, chunkId);
         }
-        // Also delete the merged scene audio if it exists — it contains stale data
         const mergedPath = helpers.getOutputPath(buildId, `${bookId}_${chapterId}_${sceneId}.mp3`);
         if (fs.existsSync(mergedPath)) {
             try {
@@ -92,6 +232,7 @@ async function generateSceneAudio(redis, sceneData, loadedBook, buildId, bookId,
         }
     }
 
+    // ── Check if audio is already ready ──
     let isReady = await validation.isSceneAudioReady(buildId, bookId, chapterId, sceneId);
     if (isReady) {
         try {
@@ -100,9 +241,6 @@ async function generateSceneAudio(redis, sceneData, loadedBook, buildId, bookId,
             if (asset && asset.status === 'placeholder') {
                 helpers.log(`Audio is placeholder — will regenerate real audio: ${bookId}/${chapterId}/${sceneId}`);
                 isReady = false;
-                // T7: Удаляем stale placeholder merged файл, чтобы isSceneAudioReady()
-                // не вернула true (файл есть на диске) для placeholder-сцены.
-                // completeChunk проверяет phase, так что triggerAudioMerge не нужен.
                 const mergedPath = helpers.getOutputPath(buildId, `${bookId}_${chapterId}_${sceneId}.mp3`);
                 if (fs.existsSync(mergedPath)) {
                     try {
@@ -118,10 +256,6 @@ async function generateSceneAudio(redis, sceneData, loadedBook, buildId, bookId,
             isReady = false;
         }
 
-        // 🔧 FIX: Also check Redis asset state. If audio is PENDING (e.g. marked
-        // dirty for regeneration), regenerate even though the file exists on disk.
-        // Without this check, Dirty regeneration gets stuck because the old merged
-        // audio file on disk makes isSceneAudioReady() return true.
         if (isReady) {
             try {
                 const state = require('../state');
@@ -135,49 +269,116 @@ async function generateSceneAudio(redis, sceneData, loadedBook, buildId, bookId,
             }
         }
     }
+
     if (isReady) {
         helpers.log(`Audio already ready, no generation needed: ${bookId}/${chapterId}/${sceneId}`);
-        for (let i = 0; i < segList.length; i++) {
-            const chunkIndex = i + 1;
-            const id = chunks.makeChunkId(chapterId, sceneId, chunkIndex, bookId);
-            const chunkKey = `animastor:chunk:${id}`;
-            const existingChunk = await redis.get(chunkKey);
-            if (existingChunk) {
-                const segment = segList[i];
-                const existing = JSON.parse(existingChunk);
-                existing.padded_text = segment.padded || false;
-                // 🔧 FIX: Update expected_chunk_count for existing chunks too
-                existing.expected_chunk_count = expectedChunkCount;
-                if (existing.audio_status !== 'ready') {
-                    existing.audio = true;
-                    existing.audio_status = 'ready';
+        if (isPureDialogue) {
+            // Pure dialogue: ensure single merged chunk
+            await ensureMergedChunk(redis, buildId, bookId, chapterId, sceneId, sceneData.scene_type, 'ready');
+        } else {
+            for (let i = 0; i < segList.length; i++) {
+                const chunkIndex = i + 1;
+                const id = chunks.makeChunkId(chapterId, sceneId, chunkIndex, bookId);
+                const chunkKey = `animastor:chunk:${id}`;
+                const existingChunk = await redis.get(chunkKey);
+                if (existingChunk) {
+                    const segment = segList[i];
+                    const existing = JSON.parse(existingChunk);
+                    existing.padded_text = segment.padded || false;
+                    existing.expected_chunk_count = expectedChunkCount;
+                    if (existing.audio_status !== 'ready') {
+                        existing.audio = true;
+                        existing.audio_status = 'ready';
+                    }
+                    await redis.set(chunkKey, JSON.stringify(existing));
+                } else {
+                    const segment = segList[i];
+                    const chunkData = {
+                        build_id: buildId,
+                        book_id: bookId,
+                        chapter_id: chapterId,
+                        scene_id: sceneId,
+                        chunk_index: String(chunkIndex).padStart(4, '0'),
+                        expected_chunk_count: expectedChunkCount,
+                        scene_type: sceneData.scene_type,
+                        audio: true,
+                        audio_status: 'ready',
+                        padded_text: segment.padded || false
+                    };
+                    await redis.set(chunkKey, JSON.stringify(chunkData));
+                    await redis.sadd(`animastor:chunks:${bookId}`, id);
                 }
-                await redis.set(chunkKey, JSON.stringify(existing));
-            } else {
-                const segment = segList[i];
-                const chunkData = {
-                    build_id: buildId,
-                    book_id: bookId,
-                    chapter_id: chapterId,
-                    scene_id: sceneId,
-                    chunk_index: String(chunkIndex).padStart(4, '0'),
-                    expected_chunk_count: expectedChunkCount,
-                    scene_type: sceneData.scene_type,
-                    audio: true,
-                    audio_status: 'ready',
-                    padded_text: segment.padded || false
-                };
-                await redis.set(chunkKey, JSON.stringify(chunkData));
-                await redis.sadd(`animastor:chunks:${bookId}`, id);
             }
         }
         await redis.del(sceneLockKey);
         return { generated: false, reason: 'already_ready' };
     }
 
+    // ── Generate audio ──
     let sentCount = 0;
+
+    if (isPureDialogue) {
+        // ════════════════════════════════════════
+        // PURE DIALOGUE: один merged workflow
+        // ════════════════════════════════════════
+        const mergedWf = buildMergedDialogueWorkflow(segList, loadedBook);
+        if (!mergedWf) {
+            helpers.warn(`Pure dialogue: buildMergedDialogueWorkflow returned null for ${bookId}/${chapterId}/${sceneId} — falling back to per-segment`);
+            // Fallback to per-segment approach
+            sentCount = await sendPerSegmentAudio(redis, segList, sceneData, loadedBook, buildId, bookId, dispatchId, chapterId, sceneId);
+        } else {
+            // Create single chunk and send one workflow
+            const { id } = await ensureMergedChunk(
+                redis, buildId, bookId, chapterId, sceneId, sceneData.scene_type, 'pending'
+            );
+
+            const sendResult = await gpu.send(
+                jobSchema.buildJobId(id, 'audio'),
+                mergedWf,
+                "audio",
+                buildId,
+                dispatchId
+            );
+
+            if (sendResult.sent) {
+                sentCount = 1;
+                helpers.log(`🎭 Merged dialogue dispatched: ${bookId}/${chapterId}/${sceneId} (${segList.length} segments in 1 workflow)`);
+            } else {
+                helpers.warn(`Audio enqueue failed for merged dialogue ${id}: ${sendResult.error || 'unknown'}`);
+                // Cleanup the pending chunk
+                const chunkKey = `animastor:chunk:${id}`;
+                await redis.del(chunkKey);
+                await redis.srem(`animastor:chunks:${bookId}`, id);
+            }
+        }
+    } else {
+        // ════════════════════════════════════════
+        // MIXED SCENE: по-сегментно (narration + dialogue)
+        // ════════════════════════════════════════
+        sentCount = await sendPerSegmentAudio(redis, segList, sceneData, loadedBook, buildId, bookId, dispatchId, chapterId, sceneId);
+    }
+
+    await redis.del(sceneLockKey);
+    helpers.log(`Audio orchestration lock released: ${bookId}/${chapterId}/${sceneId}`);
+
+    return {
+        generated: sentCount > 0,
+        chunks: sentCount,
+        expectedChunkCount: isPureDialogue ? 1 : segList.length,
+        reason: sentCount > 0 ? null : 'no_jobs_accepted'
+    };
+}
+
+/**
+ * Send audio per-segment (for mixed scenes or fallback).
+ * Each segment gets its own workflow with speaker-based voice.
+ */
+async function sendPerSegmentAudio(redis, segList, sceneData, loadedBook, buildId, bookId, dispatchId, chapterId, sceneId) {
+    let sentCount = 0;
+
     for (let i = 0; i < segList.length; i++) {
         const chunkIndex = i + 1;
+        const segment = segList[i];
         const id = chunks.makeChunkId(chapterId, sceneId, chunkIndex, bookId);
 
         const chunkFilePath = chunks.getChunkAudioPath(buildId, bookId, chapterId, sceneId, chunkIndex);
@@ -186,13 +387,7 @@ async function generateSceneAudio(redis, sceneData, loadedBook, buildId, bookId,
         const chunkKey = `animastor:chunk:${id}`;
         const existingChunk = await redis.get(chunkKey);
         if (existingChunk) {
-            const segment = segList[i];
             const existing = JSON.parse(existingChunk);
-            // 🧹 Stale padded_text flag: if the old chunk's padded_text differs
-            // from what we'd generate now, this chunk is stale even if count
-            // matches (e.g. cover scene sc-12a6ff03 with same count=1 but
-            // missing padded_text: true). Delete file + Redis metadata so the
-            // normal path below regenerates it fresh.
             const expectPadded = segment.padded || false;
             if (existing.padded_text !== expectPadded) {
                 helpers.log(`🧹 Stale padded_text flag for ${id}: was ${existing.padded_text}, expected ${expectPadded} — deleting stale cache`);
@@ -201,14 +396,13 @@ async function generateSceneAudio(redis, sceneData, loadedBook, buildId, bookId,
                 }
                 await redis.del(chunkKey);
                 await redis.srem(`animastor:chunks:${bookId}`, id);
-                // Create fresh pending metadata — TTS callback needs this to exist
                 const fresh = {
                     build_id: buildId,
                     book_id: bookId,
                     chapter_id: chapterId,
                     scene_id: sceneId,
                     chunk_index: String(chunkIndex).padStart(4, '0'),
-                    expected_chunk_count: expectedChunkCount,
+                    expected_chunk_count: segList.length,
                     scene_type: sceneData.scene_type,
                     audio: false,
                     audio_status: 'pending',
@@ -216,15 +410,9 @@ async function generateSceneAudio(redis, sceneData, loadedBook, buildId, bookId,
                 };
                 await redis.set(chunkKey, JSON.stringify(fresh));
                 await redis.sadd(`animastor:chunks:${bookId}`, id);
-                // Fall through to TTS submission below
             } else {
                 existing.padded_text = expectPadded;
-                // 🔧 FIX: Always update expected_chunk_count for existing chunks too.
-                // During initial generation the import creates _0001 with count=1, but
-                // buildSegments may produce more segments. Without this update, chunk
-                // _0001 retains expected_chunk_count=1, causing triggerAudioMerge to
-                // merge prematurely instead of waiting for all chunks to arrive.
-                existing.expected_chunk_count = expectedChunkCount;
+                existing.expected_chunk_count = segList.length;
                 existing.audio = chunkFileExists;
                 existing.audio_status = chunkFileExists ? 'ready' : 'pending';
                 await redis.set(chunkKey, JSON.stringify(existing));
@@ -235,14 +423,13 @@ async function generateSceneAudio(redis, sceneData, loadedBook, buildId, bookId,
                 }
             }
         } else {
-            const segment = segList[i];
             const chunkData = {
                 build_id: buildId,
                 book_id: bookId,
                 chapter_id: chapterId,
                 scene_id: sceneId,
                 chunk_index: String(chunkIndex).padStart(4, '0'),
-                expected_chunk_count: expectedChunkCount,
+                expected_chunk_count: segList.length,
                 scene_type: sceneData.scene_type,
                 audio: chunkFileExists,
                 audio_status: chunkFileExists ? 'ready' : 'pending',
@@ -257,7 +444,6 @@ async function generateSceneAudio(redis, sceneData, loadedBook, buildId, bookId,
             }
         }
 
-        const segment = segList[i];
         const isDialogue = segment.segment_type === 'dialogue';
         const workflowName = isDialogue ? WORKFLOW_DIALOGUE : WORKFLOW_NARRATION;
         const wfAudio = wfLoader.getWorkflow(workflowName);
@@ -272,43 +458,51 @@ async function generateSceneAudio(redis, sceneData, loadedBook, buildId, bookId,
                 wfAudio["108"].inputs = { script: segment.text, default_instruct: "" };
             }
 
-            const participants = sceneData.payload?.participants || [];
-            const chars = participants.map(id => loadedBook?.characters?.find(c => c.id === id)).filter(Boolean);
-            const c1 = chars[0] || {};
-            const c2 = chars[1] || {};
+            // ⚡ Определяем speaker из segment.text (формат: "speaker_id: текст")
+            const speakerMatch = segment.text.match(/^([a-z0-9_]+):\s/);
 
-            const voiceFor = (id) => loadedBook?.voices?.[id]?.instruction
-                || loadedBook?.characters?.find(x => x.id === id)?.voice?.instruction
-                || "";
+            const speakerId = speakerMatch ? speakerMatch[1] : null;
+
+            const speakerVoice = speakerId ? voiceForCharacter(speakerId, loadedBook) : "";
+            const narratorVi = segments.narratorVoice(sceneData.payload, loadedBook);
+
+            // ⚡ FALLBACK: если у speaker нет голоса — используем narrator голос.
+            // ComfyUI выдаёт ошибку "Voice instruction cannot be empty."
+            const c1Voice = speakerVoice || narratorVi || "";
+            const c2Voice = narratorVi || c1Voice || "";
+
+            if (!c1Voice) {
+                helpers.warn(`⚠️ EMPTY VOICE for ${speakerId || 'unknown'} in ${bookId}/${chapterId}/${sceneId} — using template default`);
+            }
 
             if (connector) {
                 const cl = require('../workflows/connector-loader');
-                const v1 = voiceFor(c1?.id);
-                if (v1) cl.setValue(wfAudio, connector, 'character1Voice', v1);
-                const v2 = voiceFor(c2?.id);
-                if (v2) cl.setValue(wfAudio, connector, 'character2Voice', v2);
-                cl.setValue(wfAudio, connector, 'roleName1', c1?.id || "role1");
-                cl.setValue(wfAudio, connector, 'roleName2', c2?.id || "role2");
+                if (c1Voice) cl.setValue(wfAudio, connector, 'character1Voice', c1Voice);
+                if (c2Voice) cl.setValue(wfAudio, connector, 'character2Voice', c2Voice);
+                cl.setValue(wfAudio, connector, 'roleName1', speakerId || "speaker");
+                cl.setValue(wfAudio, connector, 'roleName2', "narrator");
             } else {
-                const v1 = voiceFor(c1?.id);
-                if (v1) wfAudio["71"].inputs.voice_instruction = v1;
-                const v2 = voiceFor(c2?.id);
-                if (v2) wfAudio["80"].inputs.voice_instruction = v2;
-                wfAudio["74"].inputs.role_name_1 = c1?.id || "role1";
-                wfAudio["74"].inputs.role_name_2 = c2?.id || "role2";
+                if (c1Voice) wfAudio["71"].inputs.voice_instruction = c1Voice;
+                if (c2Voice) wfAudio["80"].inputs.voice_instruction = c2Voice;
+                wfAudio["74"].inputs.role_name_1 = speakerId || "speaker";
+                wfAudio["74"].inputs.role_name_2 = "narrator";
             }
         } else {
             const connector = wfLoader.getConnector(workflowName);
+            const vi = segments.narratorVoice(sceneData.payload, loadedBook);
+
+            if (!vi) {
+                helpers.warn(`⚠️ EMPTY narrator voice for ${bookId}/${chapterId}/${sceneId} — using template default`);
+            }
+
             if (connector) {
                 const cl = require('../workflows/connector-loader');
                 cl.setValue(wfAudio, connector, 'narrationText', segment.text);
-                const vi = segments.narratorVoice(sceneData.payload, loadedBook);
                 if (vi) {
                     cl.setValue(wfAudio, connector, 'voiceInstruction', vi);
                 }
             } else {
                 wfAudio["108"].inputs.text = segment.text;
-                const vi = segments.narratorVoice(sceneData.payload, loadedBook);
                 if (vi) {
                     wfAudio["108"].inputs.voice_instruction = vi;
                 }
@@ -329,15 +523,7 @@ async function generateSceneAudio(redis, sceneData, loadedBook, buildId, bookId,
         }
     }
 
-    await redis.del(sceneLockKey);
-    helpers.log(`Audio orchestration lock released: ${bookId}/${chapterId}/${sceneId}`);
-
-    return {
-        generated: sentCount > 0,
-        chunks: sentCount,
-        expectedChunkCount,
-        reason: sentCount > 0 ? null : 'no_jobs_accepted'
-    };
+    return sentCount;
 }
 
 async function mergeBookAudio(buildId, bookId, scenes) {
@@ -411,6 +597,7 @@ module.exports = {
     generateSceneAudio,
     mergeBookAudio,
     trimPaddedSceneAudio,
+    buildMergedDialogueWorkflow,
     WORKFLOW_NARRATION,
     WORKFLOW_DIALOGUE,
 };

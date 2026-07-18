@@ -89,6 +89,20 @@ const ENTITIES = {
     kind: 'input',
     description: 'Name/ID of dialogue character 2'
   },
+  character3Voice: {
+    key: 'character3Voice',
+    label: 'Character 3 Voice',
+    type: 'string',
+    kind: 'input',
+    description: 'Voice instruction for dialogue character 3'
+  },
+  roleName3: {
+    key: 'roleName3',
+    label: 'Role Name 3',
+    type: 'string',
+    kind: 'input',
+    description: 'Name/ID of dialogue character 3'
+  },
 
   // ─── Images ─────────────────────────────────────
   sourceImage: {

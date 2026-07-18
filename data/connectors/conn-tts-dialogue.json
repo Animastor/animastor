@@ -20,6 +20,8 @@
       "79": "Qwen3TTSLoader",
       "80": "Qwen3TTSVoiceDesign",
       "81": "Qwen3TTSVoiceClonePrompt",
+      "82": "Qwen3TTSVoiceDesign",
+      "83": "Qwen3TTSVoiceClonePrompt",
       "108": "Qwen3TTSScriptProcessor",
       "1008": "SaveAudioMP3"
     }
@@ -71,6 +73,22 @@
       "expectedClass": "Qwen3TTSRoleBank",
       "entityType": "roleName2",
       "label": "Role Name 2",
+      "required": false
+    },
+    "character3Voice": {
+      "nodeId": "82",
+      "field": "inputs.voice_instruction",
+      "expectedClass": "Qwen3TTSVoiceDesign",
+      "entityType": "character3Voice",
+      "label": "Character 3 Voice",
+      "required": false
+    },
+    "roleName3": {
+      "nodeId": "74",
+      "field": "inputs.role_name_3",
+      "expectedClass": "Qwen3TTSRoleBank",
+      "entityType": "roleName3",
+      "label": "Role Name 3",
       "required": false
     }
   },

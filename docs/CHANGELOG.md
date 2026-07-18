@@ -4,6 +4,26 @@ All notable changes to Animastor are documented here.
 
 ---
 
+## [Unreleased] — 2026-07-18
+
+### Fixed
+
+- **Race condition: чанки прилетали до WAITING_CHUNKS → completeChunk skip → retry exhaustion → цикл**
+  (`backend/src/orchestration/scene-orchestrator.js`, `backend/src/services/audio-orchestrator.js`):
+  - **Проблема:** `setWaitingChunks()` вызывался **после** `generateSceneAudio()` в `executeAudioDispatch`.
+    При быстрых TTS (5-10s на чанк) GPU hub возвращал результаты быстрее, чем выполнялся переход
+    GENERATING → WAITING_CHUNKS. `completeChunk` видел фазу GENERATING → early return (чанк на диске,
+    но не обрабатывался). Из 9 чанков приходили только 3 → retry exhaustion → `failStage` →
+    `cancelActiveDispatch` чистил GPU hub → воркеры для чанков 4-9 получали HTTP 409 →
+    re-dispatch → бесконечный цикл.
+  - **Фикс 1 — `scene-orchestrator.js`:** `setWaitingChunks` перенесён **до** `generateSceneAudio`.
+  - **Фикс 2 — `scene-orchestrator.js`:** `already_ready` path fast-track: WAITING_CHUNKS→MERGING→DONE
+    (все transitions валидны).
+  - **Фикс 3 — `audio-orchestrator.js`:** Safety net: если `completeChunk` вызван на фазе GENERATING,
+    самостоятельно перейти в WAITING_CHUNKS и продолжить. Локальная переменная `orchState`
+    синхронизируется после Redis-перехода.
+  - 571 тест проходит.
+
 ## [Unreleased] — 2026-07-16
 
 ### Removed

@@ -140,7 +140,7 @@ describe('orchestration stabilization: protocol contract', () => {
             path.join(__dirname, '../../gpu-hub/gpu-hub.js'), 'utf8'
         );
         const workerSource = fs.readFileSync(
-            path.join(__dirname, '../../worker/worker/worker.js'), 'utf8'
+            path.join(__dirname, '../../worker/worker/worker.cjs'), 'utf8'
         );
 
         expect(jobSchema.PROTOCOL_VERSION).to.equal(2);

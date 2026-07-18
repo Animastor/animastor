@@ -43,7 +43,14 @@ function splitDialogueIntoChunks(text, maxChars = 250) {
 }
 
 function narratorVoice(scene, book) {
-    const voiceId = scene?.audio?.voice || book?.book?.defaults?.narration_voice || "narrator";
+    const rawVoiceId = scene?.audio?.voice;
+    // 🔧 FIX: "dialogue" — это идентификатор типа сцены, а не voice ID.
+    // Если scene.audio.voice установлен в "dialogue", игнорируем его
+    // и используем narrator voice по умолчанию.
+    const isFakeVoiceId = rawVoiceId === 'dialogue' || rawVoiceId === 'narration';
+    const voiceId = (!rawVoiceId || isFakeVoiceId)
+        ? (book?.book?.defaults?.narration_voice || "narrator")
+        : rawVoiceId;
     if (voiceId === "narrator") {
         return book?.voices?.narrator?.instruction || book?.bible?.narrator?.voice?.instruction || "";
     }

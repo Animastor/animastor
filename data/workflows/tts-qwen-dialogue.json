@@ -54,6 +54,10 @@
       "prompt_2": [
         "81",
         0
+      ],
+      "prompt_3": [
+        "83",
+        0
       ]
     },
     "class_type": "Qwen3TTSRoleBank",
@@ -163,6 +167,49 @@
       ],
       "ref_audio": [
         "80",
+        0
+      ]
+    },
+    "class_type": "Qwen3TTSVoiceClonePrompt",
+    "_meta": {
+      "title": "Qwen3-TTS Clone Prompt 🧠"
+    }
+  },
+  "82": {
+    "inputs": {
+      "text": "Это тестовое предложение для согласования голоса.",
+      "voice_instruction": "A calm, warm male voice of a thoughtful Russian writer. Low and soft, gentle and reflective. Native Russian pronunciation.",
+      "language": "Russian",
+      "output_mode": "Concatenate (Merge)",
+      "seed": 412857391048253,
+      "max_new_tokens": 2048,
+      "temperature": 0.9,
+      "top_p": 1,
+      "top_k": 50,
+      "repetition_penalty": 1.05,
+      "subtalker_temperature": 0.9,
+      "subtalker_top_p": 1,
+      "subtalker_top_k": 50,
+      "model_obj": [
+        "78",
+        0
+      ]
+    },
+    "class_type": "Qwen3TTSVoiceDesign",
+    "_meta": {
+      "title": "Qwen3-TTS Voice Design 🎨"
+    }
+  },
+  "83": {
+    "inputs": {
+      "x_vector_only": false,
+      "ref_text": "Это тестовое предложение для согласования голоса.",
+      "model_obj": [
+        "79",
+        0
+      ],
+      "ref_audio": [
+        "82",
         0
       ]
     },
