@@ -1,7 +1,7 @@
 # Audio 8/9 Race Condition — Retry Timer vs GPU Hub
 
 > **Дата:** 2026-07-18  
-> **Статус:** Исправлено  
+> **Статус:** Костыль заменён оркестрацией  
 > **Теги:** `audio`, `race-condition`, `retry`, `gpu-hub`, `completeChunk`
 
 ---
@@ -167,3 +167,31 @@ t=75с+:  chunks 0007-0009 долетают до GPU hub
 2. **Dedup key должен быть ≥ retry delay.** Иначе промежуточные события создают конкурирующие retry-цепочки.
 
 3. **Debug-логи с префиксами `[DEBUG-*]` критически важны для диагностики распределённых гонок.** Без них причина цикла 8/9 была бы невидима.
+
+---
+
+## 8. Рефакторинг: retry-таймер заменён на event-driven модель + watchdog
+
+Вместо увеличения констант (предыдущий «фикс») выполнена полная замена механизма:
+
+| Было | Стало |
+|------|-------|
+| `completeChunk` заводит `setTimeout`-цепочку | Event-driven: приход последнего чанка триггерит merge |
+| FAILED по таймеру (гонка с живой генерацией) | FAILED только из `failWaitingScene()` (watchdog застоя) |
+| `AUDIO_MERGE_RETRY_*` (4 константы) | `AUDIO_CHUNK_STALL_MS` (одна константа) |
+| `animastor:audio-merge-retry:*` ключи в Redis | Удалены |
+| `[DEBUG-*]` логи в 4 файлах | Удалены (заменены на `helpers.log`/`warn`) |
+
+### Что изменилось
+
+1. **T-A1** (`197f838`): `completeChunk` при неполном наборе чанков пишет `chunks_received`/`last_chunk_at` и выходит. Merge запускается только приходом последнего чанка. `failWaitingScene()` — единственный владелец `WAITING_CHUNKS → FAILED` (чистка hub-dedup + сброс metadata + `orchestrator.failStage`).
+
+2. **T-A3** (`134db6a`): retry-константы заменены на `AUDIO_CHUNK_STALL_MS=300000` (5 мин).
+
+3. **T-A2** (`b7ad7fc`): watchdog `checkStalledAudioScenes` в `reconcileCycle` — фаза B1. Сканирует все audio-orch states, для `WAITING_CHUNKS` проверяет `last_chunk_at + STALL_MS < now` → вызывает `failWaitingScene()`.
+
+4. **T-A5** (`19eb680`): `[DEBUG-*]` логи удалены из всех 4 файлов.
+
+5. **T-A6** (`74e2f45`): 5 новых тестов для watchdog, 576 тестов проходят.
+
+Детали: `docs/03-audit/AUDIO_ORCH_INTEGRATION_TODO.md`

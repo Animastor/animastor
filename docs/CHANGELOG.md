@@ -6,6 +6,16 @@ All notable changes to Animastor are documented here.
 
 ## [Unreleased] — 2026-07-18
 
+### Refactored
+
+- **Аудио-оркестрация: retry-таймер заменён на event-driven модель + watchdog (T-A1…T-A7)**
+  - **T-A1** (`197f838`): `completeChunk` при неполном наборе чанков больше не заводит `setTimeout`-цепочку — пишет `chunks_received`/`last_chunk_at` и выходит. Merge триггерит приход последнего чанка (event-driven). Новая `failWaitingScene()` — единственный владелец `WAITING_CHUNKS → FAILED` (чистка hub-dedup, сброс metadata, `orchestrator.failStage`). Удалены `animastor:audio-merge-retry:*` ключи.
+  - **T-A3** (`134db6a`): 4 retry-константы заменены на `AUDIO_CHUNK_STALL_MS=300000` (5 мин). Обновлены инварианты.
+  - **T-A2** (`b7ad7fc`): watchdog `checkStalledAudioScenes` в `reconcileCycle` (фаза B1). Сканирует audio-orch states в `WAITING_CHUNKS`, при застое > STALL_MS вызывает `failWaitingScene()`.
+  - **T-A5** (`19eb680`): `[DEBUG-*]` console.logs удалены из 4 файлов (заменены на `helpers.log`/`warn`).
+  - **T-A6** (`74e2f45`): 5 новых тестов, 576 passing.
+  - Подробный план: `docs/03-audit/AUDIO_ORCH_INTEGRATION_TODO.md`
+
 ### Fixed
 
 - **8/9 audio generation loop — retry timer race condition with GPU hub**

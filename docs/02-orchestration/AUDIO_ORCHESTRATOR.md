@@ -95,7 +95,7 @@ NEW ──→ PLACEHOLDER_READY ──→ GENERATING             │
 | `GENERATING → WAITING_CHUNKS` | `executeAudioDispatch()` | После отправки TTS |
 | `WAITING_CHUNKS → MERGING` | `audioOrch.completeChunk()` (ex-`triggerAudioMerge`) | Когда все чанки на диске (проверка комплектности) |
 | `MERGING → DONE` | `audioOrch.completeChunk()` → `completeMerge()` | После успешного merge + `orchestrator.completeStage()` |
-| `WAITING_CHUNKS → FAILED` | `audioOrch.completeChunk()` | После MAX_RETRIES → `orchestrator.failStage()` |
+| `WAITING_CHUNKS → FAILED` | `audioOrch.failWaitingScene()` (watchdog/recovery) | Застой чанков (нет новых > STALL_MS) или restart recovery |
 | `FAILED → GENERATING` | scheduler re-dispatch | На следующем scheduler tick |
 | `FAILED → WAITING_CHUNKS` | `audioOrch.completeChunk()` (recovery) | Когда все чанки пришли после FAILED (late chunk race) |
 
@@ -203,15 +203,16 @@ audio-orch его можно **ограничить локальным кеши�
 запросы фронтенда, не для принятия решений). Для orchestration-решений — только
 Redis key.
 
-### Retry-логика
+### Retry-логика (устаревшая — заменена на event-driven + watchdog)
 
-Текущая retry-логика (MAX_RETRIES=5, re-dispatch) **сохраняется**, но с уточнением:
+**В рамках T-A1…T-A7 retry-таймер удалён.** Подробности: `docs/03-audit/AUDIO_ORCH_INTEGRATION_TODO.md`
 
-- После каждого retry проверяется **phase**, а не `fs.existsSync(merged)`.
-- Если phase = `WAITING_CHUNKS` и не все чанки → retry.
-- Если phase = `FAILED` → re-dispatch.
-- Если phase = `DONE` → exit (всё готово).
-- Если phase = `MERGING` → подождать (lock).
+Новая модель:
+
+- **Event-driven merge:** `completeChunk()` при неполном наборе чанков записывает `chunks_received`/`last_chunk_at` и выходит. Приход последнего чанка сам триггерит `WAITING_CHUNKS → MERGING`. Никаких `setTimeout`, никаких счётчиков попыток.
+- **Watchdog застоя (T-A2):** `reconcileCycle` (фаза B1) сканирует все audio-orch states. Для phase=WAITING_CHUNKS: если `now - last_chunk_at > TIMEOUTS.AUDIO_CHUNK_STALL_MS` — вызывает `audioOrch.failWaitingScene()` (чистка hub-dedup, сброс metadata, `orchestrator.failStage`). Не конкурирует с gpu-hub timeout.
+- **`failWaitingScene()`:** единственный владелец `WAITING_CHUNKS → FAILED`. PUB итог через фасад `orchestrator.failStage` → FAILED → PENDING → scheduler передиспатчит на следующем tick.
+- **Конфиг:** 4 retry-константы заменены на одну: `AUDIO_CHUNK_STALL_MS` (300 000 мс = 5 мин).
 
 ### Восстановление после перезапуска
 
