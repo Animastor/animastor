@@ -112,11 +112,9 @@ const QUOTAS = {
 // (см. docs/03-audit/ORCHESTRATION_CONSOLIDATION_AUDIT.md, К9)
 // ======================================================
 // Инварианты (проверяются в tests/runtime-timeouts.test.js):
-//   1. AUDIO_MERGE_RETRY_MAX * AUDIO_MERGE_RETRY_DELAY_MS < LEASE_TTL_S.AUDIO * 1000
-//      — ретраи мержа должны уложиться в срок аудио-lease
-//   2. AUDIO_MERGE_RETRY_COUNTER_TTL_S * 1000 > AUDIO_MERGE_RETRY_MAX * AUDIO_MERGE_RETRY_DELAY_MS
-//      — счётчик ретраев должен пережить всю серию ретраев
-//   3. gpu-hub GPU_TIMEOUT (env, по умолчанию 600 000 мс) < min(LEASE_TTL_S) * 1000
+//   1. AUDIO_CHUNK_STALL_MS < LEASE_TTL_S.AUDIO * 1000
+//      — watchdog застоя срабатывает раньше, чем истекает аудио-lease
+//   2. gpu-hub GPU_TIMEOUT (env, по умолчанию 600 000 мс) < min(LEASE_TTL_S) * 1000
 //      — hub обнаруживает мёртвого воркера раньше, чем истечёт lease backend'а
 
 // Dispatch lease TTL (секунды). Покрывает реальную генерацию + ожидание в очереди:
@@ -129,19 +127,13 @@ const LEASE_TTL_S = {
 };
 
 const TIMEOUTS = {
-    // Аудио-мерж: ожидание опоздавших чанков (task-handler.cjs)
-    // ⚡ Увеличено: 15с → 60с. С 9 чанками и 1 воркером GPU hub нужно
-    // ~10-15с на чанк × 9 = 90-135с. Старое значение (5 × 15с = 75с)
-    // приводило к max retries до завершения всех чанков → cancelActiveDispatch
-    // → HTTP 409 на опоздавшие результаты → цикл failStage→re-dispatch.
-    AUDIO_MERGE_RETRY_DELAY_MS: 60000,
-    AUDIO_MERGE_RETRY_MAX: 5,
-    // ⚡ Увеличен: 30 → 120. Dedup key должен пережить retry delay (60с).
-    // Инвариант: DEDUP_TTL_S × 1000 >= DELAY_MS; 120 × 1000 = 120000 >= 60000 ✅
-    AUDIO_MERGE_RETRY_DEDUP_TTL_S: 120,
-    // ⚡ Увеличен: 180 → 600 (10 мин). Должен пережить 5 × 60с = 300с.
-    // Инвариант: COUNTER_TTL_S × 1000 > MAX × DELAY_MS
-    AUDIO_MERGE_RETRY_COUNTER_TTL_S: 600,
+    // Порог застоя аудио-чанков (reconcileCycle, checkStalledAudioScenes).
+    // Если с момента последнего чанка прошло больше этого значения и комплект
+    // неполон — failWaitingScene() → re-dispatch. Должно быть:
+    //   > gpu-hub GPU_TIMEOUT (600 000 мс): hub сам репортит мёртвого воркера
+    //   < LEASE_TTL_S.AUDIO (900 000 мс): watchdog успевает до протухания lease
+    // 300 000 мс (5 мин) — безопасная середина; воркер жив, но чанк потерян.
+    AUDIO_CHUNK_STALL_MS: 300000,
 
     // Периодическая чистка протухших failsafe-локов (cleanup-service.cjs)
     CLEANUP_INTERVAL_MS: 60000,

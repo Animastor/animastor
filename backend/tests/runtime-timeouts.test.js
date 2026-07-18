@@ -14,18 +14,15 @@ describe('runtime-config TIMEOUTS invariants', () => {
         expect(LEASE_TTL_S).to.have.keys(['AUDIO', 'IMAGE', 'VIDEO']);
     });
 
-    it('audio merge retries finish within the audio dispatch lease', () => {
-        const retrySequenceMs = TIMEOUTS.AUDIO_MERGE_RETRY_MAX * TIMEOUTS.AUDIO_MERGE_RETRY_DELAY_MS;
-        expect(retrySequenceMs).to.be.below(LEASE_TTL_S.AUDIO * 1000);
+    it('AUDIO_CHUNK_STALL_MS is defined', () => {
+        expect(TIMEOUTS.AUDIO_CHUNK_STALL_MS).to.be.a('number').and.above(0);
     });
 
-    it('retry counter TTL outlives the whole retry sequence', () => {
-        const retrySequenceMs = TIMEOUTS.AUDIO_MERGE_RETRY_MAX * TIMEOUTS.AUDIO_MERGE_RETRY_DELAY_MS;
-        expect(TIMEOUTS.AUDIO_MERGE_RETRY_COUNTER_TTL_S * 1000).to.be.above(retrySequenceMs);
-    });
-
-    it('retry dedup TTL is longer than a single retry delay', () => {
-        expect(TIMEOUTS.AUDIO_MERGE_RETRY_DEDUP_TTL_S * 1000).to.be.at.least(TIMEOUTS.AUDIO_MERGE_RETRY_DELAY_MS);
+    it('stall watchdog fires before the audio dispatch lease expires', () => {
+        // reconcileCycle срабатывает раз в 60с; при первом же прогоне после
+        // AUDIO_CHUNK_STALL_MS без новых чанков → failWaitingScene.
+        // Должно успеть до протухания lease (LEASE_TTL_S.AUDIO).
+        expect(TIMEOUTS.AUDIO_CHUNK_STALL_MS).to.be.below(LEASE_TTL_S.AUDIO * 1000);
     });
 
     it('gpu-hub default GPU_TIMEOUT is below the minimum lease TTL', () => {
@@ -39,5 +36,13 @@ describe('runtime-config TIMEOUTS invariants', () => {
     it('lease TTLs are ordered audio <= image <= video', () => {
         expect(LEASE_TTL_S.AUDIO).to.be.at.most(LEASE_TTL_S.IMAGE);
         expect(LEASE_TTL_S.IMAGE).to.be.at.most(LEASE_TTL_S.VIDEO);
+    });
+
+    it('retired retry constants are no longer present', () => {
+        // Убедиться, что никто случайно не вернул старые константы.
+        expect(TIMEOUTS).to.not.have.property('AUDIO_MERGE_RETRY_DELAY_MS');
+        expect(TIMEOUTS).to.not.have.property('AUDIO_MERGE_RETRY_MAX');
+        expect(TIMEOUTS).to.not.have.property('AUDIO_MERGE_RETRY_DEDUP_TTL_S');
+        expect(TIMEOUTS).to.not.have.property('AUDIO_MERGE_RETRY_COUNTER_TTL_S');
     });
 });
