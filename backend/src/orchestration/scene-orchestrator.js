@@ -98,11 +98,10 @@ async function executeAudioDispatch(redis, scene, loadedBook, buildId, dispatchI
     // и completeChunk увидит фазу GENERATING → early return → чанк на диске есть,
     // но merge не запускается → retry exhausting → failStage → re-dispatch → цикл.
     await audioOrch.setWaitingChunks(redis, bookId, chapterId, sceneId);
-    console.log(`[DEBUG-DISPATCH] setWaitingChunks done: ${bookId}/${chapterId}/${sceneId} — now calling generateSceneAudio`);
 
     const result = await audio.generateSceneAudio(redis, sceneData, bookData, buildId, bookId, dispatchId);
 
-    console.log(`[DEBUG-DISPATCH] generateSceneAudio returned: ${bookId}/${chapterId}/${sceneId} generated=${result?.generated} chunks=${result?.chunks} expected=${result?.expectedChunkCount} reason=${result?.reason || 'ok'}`);
+    log(`AUDIO_DISPATCH generateSceneAudio: ${bookId}/${chapterId}/${sceneId} generated=${result?.generated} chunks=${result?.chunks}`);
 
     if (result && result.generated) {
         log(`AUDIO_DISPATCHED: ${bookId}/${chapterId}/${sceneId} (${result.chunks || 0} chunks sent)`);
