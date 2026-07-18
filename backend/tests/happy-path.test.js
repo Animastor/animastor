@@ -352,6 +352,42 @@ class FakeRedis {
         const keys = args.slice(0, numKeys);
         const scriptArgs = args.slice(numKeys);
 
+        if (script.includes('local metadata') && script.includes("ARGV[5] == '1'")) {
+            const [metadataKey, completedKey, leaseKey, quotaKey] = keys;
+            const [
+                expectedMetadata,
+                markerValue,
+                markerTtl,
+                expectedLease,
+                quotaOwned,
+            ] = scriptArgs;
+            const metadata = await this.get(metadataKey);
+            if (metadata === null) return await this.exists(completedKey) ? 2 : 0;
+            if (metadata !== expectedMetadata) return -1;
+            const lease = await this.get(leaseKey);
+            if (lease !== null && (!expectedLease || lease !== expectedLease)) return -2;
+            if (await this.exists(completedKey)) return 2;
+
+            await this.set(completedKey, markerValue, 'EX', markerTtl);
+            await this.del(metadataKey);
+            if (lease !== null && expectedLease) await this.del(leaseKey);
+            if (quotaOwned === '1') {
+                const current = parseInt(await this.get(quotaKey) || '0', 10);
+                if (current > 0) await this.decr(quotaKey);
+            }
+            return 1;
+        }
+
+        if (script.includes("current ~= ARGV[1]") && script.includes("redis.call('DEL', KEYS[1])")) {
+            const key = keys[0];
+            const expected = scriptArgs[0];
+            const current = await this.get(key);
+            if (current === null) return 0;
+            if (current !== expected) return -1;
+            await this.del(key);
+            return 1;
+        }
+
         // Atomic acquire quota: GET key, check < max, INCR
         // Returns 0 if exceeded, new count if acquired
         if (script.includes('tonumber')) {
@@ -399,6 +435,28 @@ const BUILD_ID = 'build-1';
 
 function makeSceneRef() {
     return { book_id: BOOK_ID, chapter_id: CHAPTER_ID, scene_id: SCENE_ID };
+}
+
+async function createOwnedDispatch(redis, stage, dispatchId = `dispatch-${stage}`) {
+    const quota = await dispatchEngine.acquireQuota(redis, stage);
+    expect(quota.acquired).to.be.true;
+    const lease = await dispatchEngine.acquireStageLease(
+        redis, BOOK_ID, CHAPTER_ID, SCENE_ID, stage
+    );
+    expect(lease.acquired).to.be.true;
+    await dispatchEngine.setDispatchMetadata(
+        redis,
+        BOOK_ID,
+        CHAPTER_ID,
+        SCENE_ID,
+        stage,
+        dispatchEngine.createDispatchMetadata(dispatchId, stage, 'test', {
+            leaseKey: lease.leaseKey,
+            leaseToken: lease.token,
+            quotaOwned: true,
+        })
+    );
+    return { dispatchId, leaseKey: lease.leaseKey, leaseToken: lease.token };
 }
 
 // ======================================================
@@ -527,19 +585,13 @@ describe('Happy Path: Dispatch Engine — Leases', () => {
     });
 
     it('markDispatchCompleted releases lease and cleans up', async () => {
-        // Acquire lease
-        const { leaseKey } = await dispatchEngine.acquireStageLease(
-            redis, BOOK_ID, CHAPTER_ID, SCENE_ID, 'audio'
-        );
+        const { leaseKey } = await createOwnedDispatch(redis, 'audio');
 
-        // Mark as completed
         await dispatchEngine.markDispatchCompleted(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, 'audio');
 
-        // Lease should be gone
         const leaseToken = await redis.get(leaseKey);
         expect(leaseToken).to.be.null;
 
-        // Metadata should be gone
         const metaKey = dispatchEngine.getDispatchMetaKey(BOOK_ID, CHAPTER_ID, SCENE_ID, 'audio');
         const meta = await redis.get(metaKey);
         expect(meta).to.be.null;
@@ -648,7 +700,7 @@ describe('Happy Path: Dispatch Engine — Quotas', () => {
     // releaseQuota was removed from scene-callbacks.js — markDispatchCompleted
     // is now the sole owner. One acquire → one release.
     it('FIXED C1 (Н.2): markDispatchCompleted is the sole owner of quota release', async () => {
-        await dispatchEngine.acquireQuota(redis, 'audio');
+        await createOwnedDispatch(redis, 'audio');
         expect(await dispatchEngine.getActiveCounter(redis, 'audio')).to.equal(1);
 
         await dispatchEngine.markDispatchCompleted(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, 'audio');
@@ -663,7 +715,7 @@ describe('Happy Path: Dispatch Engine — Quotas', () => {
     it('Д.1: repeated markDispatchCompleted releases quota exactly once', async () => {
         // Two slots held (e.g. two concurrent audio dispatches)
         await dispatchEngine.acquireQuota(redis, 'audio');
-        await dispatchEngine.acquireQuota(redis, 'audio');
+        const { dispatchId } = await createOwnedDispatch(redis, 'audio', 'dispatch-audio-1');
         expect(await dispatchEngine.getActiveCounter(redis, 'audio')).to.equal(2);
 
         // First completion releases one slot: 2 → 1
@@ -675,27 +727,31 @@ describe('Happy Path: Dispatch Engine — Quotas', () => {
         await dispatchEngine.markDispatchCompleted(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, 'audio');
         expect(await dispatchEngine.getActiveCounter(redis, 'audio')).to.equal(1);
 
-        // The completion marker exists for this scene/stage.
-        const completedKey = dispatchEngine.getDispatchCompletedKey(BOOK_ID, CHAPTER_ID, SCENE_ID, 'audio');
+        const completedKey = dispatchEngine.getDispatchCompletedKey(
+            BOOK_ID, CHAPTER_ID, SCENE_ID, 'audio', dispatchId
+        );
         expect(await redis.get(completedKey)).to.not.be.null;
     });
 
-    // Д.1: clearing the marker (as dispatchStage does at the start of a fresh
-    // dispatch) lets the next completion release again — force-regen is not blocked.
-    it('Д.1: clearing the completion marker re-enables release for the next dispatch', async () => {
-        await dispatchEngine.acquireQuota(redis, 'audio');
+    it('Д.1: a new dispatch has an independent completion marker', async () => {
+        const first = await createOwnedDispatch(redis, 'audio', 'dispatch-audio-1');
         await dispatchEngine.markDispatchCompleted(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, 'audio');
         expect(await dispatchEngine.getActiveCounter(redis, 'audio')).to.equal(0);
 
-        // Simulate a new dispatch: clear marker + acquire a fresh slot.
-        const completedKey = dispatchEngine.getDispatchCompletedKey(BOOK_ID, CHAPTER_ID, SCENE_ID, 'audio');
-        await redis.del(completedKey);
-        await dispatchEngine.acquireQuota(redis, 'audio');
+        const second = await createOwnedDispatch(redis, 'audio', 'dispatch-audio-2');
         expect(await dispatchEngine.getActiveCounter(redis, 'audio')).to.equal(1);
 
-        // Completion now releases again: 1 → 0.
         await dispatchEngine.markDispatchCompleted(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, 'audio');
         expect(await dispatchEngine.getActiveCounter(redis, 'audio')).to.equal(0);
+
+        const firstKey = dispatchEngine.getDispatchCompletedKey(
+            BOOK_ID, CHAPTER_ID, SCENE_ID, 'audio', first.dispatchId
+        );
+        const secondKey = dispatchEngine.getDispatchCompletedKey(
+            BOOK_ID, CHAPTER_ID, SCENE_ID, 'audio', second.dispatchId
+        );
+        expect(await redis.get(firstKey)).to.not.be.null;
+        expect(await redis.get(secondKey)).to.not.be.null;
     });
 });
 
@@ -1118,7 +1174,7 @@ describe('Happy Path: Scene Callbacks (with mocks)', () => {
     // FIXED C1 (Н.2): Callback no longer releases quota — markDispatchCompleted is the sole owner.
     it('FIXED C1 (Н.2): handleAudioCompleted does NOT release quota — deferred to markDispatchCompleted', async () => {
         await sceneState.setAssetState(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, 'audio', 'pending');
-        await dispatchEngine.acquireQuota(redis, 'audio');
+        await createOwnedDispatch(redis, 'audio');
 
         expect(await dispatchEngine.getActiveCounter(redis, 'audio')).to.equal(1);
 
@@ -1313,6 +1369,10 @@ describe('Happy Path: Orchestrator facade — completeStage', () => {
         const dePath = require.resolve('../src/runtime/dispatch-engine');
         require.cache[dePath] = {
             exports: {
+                verifyDispatchIdentity: async () => ({
+                    valid: true,
+                    metadata: { dispatch_id: 'dispatch-test' },
+                }),
                 finalizeDispatch: async (r, b, c, s, stage, opts) => {
                     calls.markComplete.push(stage);
                     calls._lastFinalizeOpts = opts;
@@ -1335,7 +1395,9 @@ describe('Happy Path: Orchestrator facade — completeStage', () => {
         const dbPath = require.resolve('../src/storage/postgres/database');
         require.cache[dbPath] = {
             exports: {
-                query: async () => ({ rows: [] }), // empty rows = skip version check
+                query: async () => ({
+                    rows: [{ content_version: 1, audio_config_version: 1 }],
+                }),
             },
             loaded: true,
         };
@@ -1347,7 +1409,10 @@ describe('Happy Path: Orchestrator facade — completeStage', () => {
                 getDirtyUnitIds: async () => [],
                 clearDirtyUnitIds: async () => {},
                 setDirtyUnitIds: async () => {},
-                getAsset: async () => null,
+                getAsset: async () => ({
+                    scene_content_version: 1,
+                    scene_audio_config_version: 1,
+                }),
             },
             loaded: true,
         };
@@ -1370,11 +1435,14 @@ describe('Happy Path: Orchestrator facade — completeStage', () => {
     });
 
     it('completeStage runs the stage handler then finalizeDispatch exactly once', async () => {
-        const result = await orchestrator.completeStage(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, 'audio', BUILD_ID);
+        const result = await orchestrator.completeStage(
+            redis, BOOK_ID, CHAPTER_ID, SCENE_ID, 'audio', BUILD_ID, 'dispatch-test'
+        );
         expect(calls.handler.map(c => c[0])).to.deep.equal(['audio']);
         expect(calls.markComplete).to.deep.equal(['audio']);
         // T2: finalizeDispatch вызван с outcome:'success'
         expect(calls._lastFinalizeOpts.outcome).to.equal('success');
+        expect(calls._lastFinalizeOpts.dispatchId).to.equal('dispatch-test');
         expect(result.completed).to.be.true;
     });
 
@@ -1385,7 +1453,9 @@ describe('Happy Path: Orchestrator facade — completeStage', () => {
             return { ok: false, retryable: true, reason: 'test_error' };
         };
 
-        const result = await orchestrator.completeStage(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, 'image', BUILD_ID);
+        const result = await orchestrator.completeStage(
+            redis, BOOK_ID, CHAPTER_ID, SCENE_ID, 'image', BUILD_ID, 'dispatch-test'
+        );
 
         expect(result.completed).to.be.false;
         expect(result.reason).to.equal('test_error');
@@ -1397,7 +1467,9 @@ describe('Happy Path: Orchestrator facade — completeStage', () => {
     it('completeStage throws on unknown stage', async () => {
         let threw = false;
         try {
-            await orchestrator.completeStage(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, 'bogus', BUILD_ID);
+            await orchestrator.completeStage(
+                redis, BOOK_ID, CHAPTER_ID, SCENE_ID, 'bogus', BUILD_ID, 'dispatch-test'
+            );
         } catch (e) {
             threw = true;
             expect(e.message).to.match(/unknown stage/);

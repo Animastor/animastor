@@ -21,6 +21,7 @@ const NOTEBOOK_PATH = process.env.NOTEBOOK_PATH || "";
 const WORKER_ID = process.env.WORKER_ID || "gpu-" + os.hostname();
 const WORKER_VERSION = process.env.WORKER_VERSION || null;
 const WORKER_IMAGE_TAG = process.env.WORKER_IMAGE_TAG || null;
+const PROTOCOL_VERSION = 2;
 
 const RESULT_TIMEOUT_MS = Number(process.env.RESULT_TIMEOUT_MS || 600000);
 const TASK_SLEEP_MS = Number(process.env.TASK_SLEEP_MS || 2000);
@@ -128,7 +129,7 @@ async function sendBeacon() {
   try {
     const gpu = getGPUInfo();
 
-    await fetchTimeout(`${HUB_URL}/beacon`, {
+    const res = await fetchTimeout(`${HUB_URL}/beacon`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -137,9 +138,13 @@ async function sendBeacon() {
         gpu: gpu.name,
         vram: gpu.vram,
         version: WORKER_VERSION,
-        image_tag: WORKER_IMAGE_TAG
+        image_tag: WORKER_IMAGE_TAG,
+        protocol_version: PROTOCOL_VERSION
       })
     });
+    if (!res.ok) {
+      throw new Error(`Hub rejected beacon: HTTP ${res.status}`);
+    }
   } catch (err) {
     log("error", "Beacon failed", err.message);
   }
@@ -411,18 +416,42 @@ async function downloadResult(result) {
 // ======================================================
 
 async function sendResult(task, data) {
-  const { job_id, build_id } = task;
-  await fetchTimeout(`${HUB_URL}/task/result`, {
+  const { job_id, build_id, dispatch_id } = task;
+  const res = await fetchTimeout(`${HUB_URL}/task/result`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       job_id,
       build_id,
+      dispatch_id,
+      protocol_version: PROTOCOL_VERSION,
       result_base64: data,
       worker_version: WORKER_VERSION,
       worker_image_tag: WORKER_IMAGE_TAG
     })
   });
+  if (!res.ok) {
+    throw new Error(`Hub rejected result: HTTP ${res.status}`);
+  }
+}
+
+async function sendTaskError(task, reason) {
+  const res = await fetchTimeout(`${HUB_URL}/task/error`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      job_id: task.job_id,
+      build_id: task.build_id || null,
+      dispatch_id: task.dispatch_id,
+      protocol_version: PROTOCOL_VERSION,
+      reason: String(reason || "worker_error").slice(0, 500),
+      worker_version: WORKER_VERSION,
+      worker_image_tag: WORKER_IMAGE_TAG
+    })
+  });
+  if (!res.ok) {
+    throw new Error(`Hub rejected task error: HTTP ${res.status}`);
+  }
 }
 
 // ======================================================
@@ -446,8 +475,18 @@ async function workerLoop() {
 
     log("info", `Task ${task.job_id}`);
 
-    if (task.protocol_version && task.protocol_version !== 1) {
-      log("warn", `Protocol version mismatch: got ${task.protocol_version}, worker expects 1`);
+    if (task.protocol_version !== PROTOCOL_VERSION || !task.dispatch_id) {
+      const reason = `incompatible_task_protocol:${task.protocol_version || 'missing'}`;
+      log("error", `Rejecting incompatible task: protocol=${task.protocol_version}, dispatch=${task.dispatch_id || 'missing'}`);
+      if (task.job_id && task.build_id && task.dispatch_id) {
+        try {
+          await sendTaskError(task, reason);
+        } catch (sendErr) {
+          log("error", "Failed to report incompatible task", sendErr.message);
+        }
+      }
+      await sleep(TASK_SLEEP_MS);
+      continue;
     }
 
     try {
@@ -480,17 +519,7 @@ async function workerLoop() {
       log("error", `Failed ${task.job_id}`, err.message);
 
       try {
-        await fetchTimeout(`${HUB_URL}/task/error`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            job_id: task.job_id,
-            build_id: task.build_id || null,
-            reason: String(err && err.message || err || "worker_error").slice(0, 500),
-            worker_version: WORKER_VERSION,
-            worker_image_tag: WORKER_IMAGE_TAG
-          })
-        });
+        await sendTaskError(task, err && err.message || err || "worker_error");
       } catch (sendErr) {
         log("error", "Failed to send error to hub", sendErr.message);
       }
@@ -508,7 +537,7 @@ async function main() {
   log("info", `Worker version: ${WORKER_VERSION || 'unknown'}`);
   log("info", `Worker image tag: ${WORKER_IMAGE_TAG || 'unknown'}`);
   log("info", `Hub URL: ${HUB_URL}`);
-  log("info", `Protocol version: 1`);
+  log("info", `Protocol version: ${PROTOCOL_VERSION}`);
   await waitForComfyUI();
   await workerLoop();
 }

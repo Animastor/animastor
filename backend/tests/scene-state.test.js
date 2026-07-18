@@ -1,5 +1,6 @@
 const { expect } = require('chai');
 const sceneState = require('../src/state/scene-state');
+const { createMockRedis } = require('./mocks/redis-mock');
 
 // SceneState enum removed in v2.2.0 — inline strings used instead
 
@@ -40,6 +41,30 @@ describe('AssetState (per-asset) — source of truth', () => {
 
     it('validateAssetTransition accepts READY → DIRTY (regeneration)', () => {
         expect(sceneState.validateAssetTransition('ready', 'dirty').valid).to.be.true;
+    });
+
+    it('setAssetState rejects an unknown status without writing it', async () => {
+        const redis = createMockRedis();
+        const result = await sceneState.setAssetState(
+            redis, 'book', 'chapter', 'scene', 'audio', 'finished'
+        );
+        expect(result).to.equal(null);
+        expect(await sceneState.getAssetStates(redis, 'book', 'chapter', 'scene'))
+            .to.deep.equal({ audio: 'new', image: 'new', video: 'new' });
+    });
+
+    it('setAssetStates rejects unknown assets atomically', async () => {
+        const redis = createMockRedis();
+        const result = await sceneState.setAssetStates(
+            redis,
+            'book',
+            'chapter',
+            'scene',
+            { audio: 'ready', music: 'ready' }
+        );
+        expect(result).to.equal(null);
+        expect(await sceneState.getAssetStates(redis, 'book', 'chapter', 'scene'))
+            .to.deep.equal({ audio: 'new', image: 'new', video: 'new' });
     });
 });
 

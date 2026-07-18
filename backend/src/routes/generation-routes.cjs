@@ -1009,45 +1009,50 @@ module.exports = function(app, redis, deps) {
     // от предыдущего dispatch отклоняется, не влияя на текущий.
     app.post('/gpu/task/result', async (req, res) => {
         try {
-            const { job_id, result_base64, build_id, dispatch_id } = req.body || {};
-            if (!job_id || !result_base64) return res.status(400).json({ error: 'job_id and result_base64 required' });
+            const jobSchema = require('../runtime/job-schema');
+            const { job_id, result_base64, build_id, dispatch_id, protocol_version } = req.body || {};
+            if (
+                !job_id ||
+                !result_base64 ||
+                !build_id ||
+                !dispatch_id ||
+                protocol_version !== jobSchema.PROTOCOL_VERSION
+            ) {
+                return res.status(400).json({
+                    error: 'valid job_id, result_base64, build_id, dispatch_id and protocol_version required'
+                });
+            }
+
+            const parsed = jobSchema.parseJobId(job_id);
+            const stage = parsed ? jobSchema.STAGE_BY_KIND[parsed.kind] : null;
+            if (!parsed || !stage) {
+                return res.status(400).json({ error: 'invalid job_id' });
+            }
+
+            const dispatchEngine = require('../runtime/dispatch-engine');
+            const identity = await dispatchEngine.verifyDispatchIdentity(
+                redis,
+                parsed.bookId,
+                parsed.chapterId,
+                parsed.sceneId,
+                stage,
+                dispatch_id
+            );
+            if (!identity.valid) {
+                log(`[GPU RESULT] Rejected ${job_id}: ${identity.reason}`);
+                return res.json({ ok: true, rejected: true, reason: identity.reason });
+            }
 
             // Н.1: Dedup
-            const dedupKey = `animastor:result-processed:${job_id}:${build_id || 'nobuild'}`;
+            const dedupKey = `animastor:result-processed:${dispatch_id}:${job_id}:${build_id}`;
             const alreadyProcessed = await redis.set(dedupKey, '1', 'NX', 'EX', 3600);
             if (!alreadyProcessed) {
                 log(`[GPU RESULT] Dedup: ${job_id} (build=${build_id}) already processed — skipping`);
                 return res.json({ ok: true, deduped: true });
             }
 
-            // T4.9: Проверка dispatch identity до обработки payload
-            if (dispatch_id) {
-                const parsed = require('../runtime/job-schema').parseJobId(job_id);
-                if (parsed) {
-                    const stage = { audio_chunk: 'audio', iu_image: 'image', scene_image: 'image', scene_video: 'video' }[parsed.kind];
-                    if (stage) {
-                        const dispatchEngine = require('../runtime/dispatch-engine');
-                        const metaKey = dispatchEngine.getDispatchMetaKey(parsed.bookId, parsed.chapterId, parsed.sceneId, stage);
-                        const metaRaw = await redis.get(metaKey);
-                        if (metaRaw) {
-                            try {
-                                const meta = JSON.parse(metaRaw);
-                                if (meta.dispatch_id && meta.dispatch_id !== dispatch_id) {
-                                    log(`[GPU RESULT] STALE DISPATCH: ${job_id} — callback dispatch=${dispatch_id.slice(0, 16)}..., current=${meta.dispatch_id.slice(0, 16)}... — rejecting`);
-                                    // T4: dedup key НЕ удаляем — повторные ретраи этого же stale callback
-                                    // будут отбиты по dedup, а не повторят проверку identity.
-                                    return res.json({ ok: true, stale: true, reason: 'stale_dispatch' });
-                                }
-                            } catch (parseErr) {
-                                warn(`[GPU RESULT] Failed to parse metadata for ${metaKey}: ${parseErr.message}`);
-                            }
-                        }
-                    }
-                }
-            }
-
             try {
-                await deps.taskHandler.handleTaskResult(job_id, result_base64, build_id);
+                await deps.taskHandler.handleTaskResult(job_id, result_base64, build_id, dispatch_id);
             } catch (procErr) {
                 await redis.del(dedupKey).catch(() => {});
                 throw procErr;
@@ -1063,44 +1068,47 @@ module.exports = function(app, redis, deps) {
     // T4: dispatch_id проверяется перед обработкой
     app.post('/gpu/task/error', async (req, res) => {
         try {
-            const { job_id, build_id, reason, dispatch_id } = req.body || {};
-            if (!job_id) return res.status(400).json({ error: 'job_id required' });
-
             const jobSchema = require('../runtime/job-schema');
+            const { job_id, build_id, reason, dispatch_id, protocol_version } = req.body || {};
+            if (
+                !job_id ||
+                !build_id ||
+                !dispatch_id ||
+                protocol_version !== jobSchema.PROTOCOL_VERSION
+            ) {
+                return res.status(400).json({
+                    error: 'valid job_id, build_id, dispatch_id and protocol_version required'
+                });
+            }
+
             const parsed = jobSchema.parseJobId(job_id);
             if (!parsed) {
                 console.warn(`[GPU ERROR] Unparseable job_id: ${job_id} (reason=${reason})`);
                 return res.json({ ok: true, ignored: true });
             }
 
-            const stage = { audio_chunk: 'audio', iu_image: 'image', scene_image: 'image', scene_video: 'video' }[parsed.kind];
+            const stage = jobSchema.STAGE_BY_KIND[parsed.kind];
             const { bookId, chapterId, sceneId } = parsed;
-
-            // T4.9: Проверка dispatch identity до failStage
-            let isStale = false;
-            if (dispatch_id && stage) {
-                const dispatchEngine = require('../runtime/dispatch-engine');
-                const metaKey = dispatchEngine.getDispatchMetaKey(bookId, chapterId, sceneId, stage);
-                const metaRaw = await redis.get(metaKey);
-                if (metaRaw) {
-                    try {
-                        const meta = JSON.parse(metaRaw);
-                        if (meta.dispatch_id && meta.dispatch_id !== dispatch_id) {
-                            log(`[GPU ERROR] STALE DISPATCH: ${job_id} — error dispatch=${dispatch_id.slice(0, 16)}..., current=${meta.dispatch_id.slice(0, 16)}... — rejecting`);
-                            isStale = true;
-                        }
-                    } catch (parseErr) {
-                        warn(`[GPU ERROR] Failed to parse metadata: ${parseErr.message}`);
-                    }
-                }
+            if (!stage) {
+                return res.status(400).json({ error: 'unsupported job type' });
             }
 
-            if (isStale) {
-                return res.json({ ok: true, stale: true, reason: 'stale_dispatch' });
+            const dispatchEngine = require('../runtime/dispatch-engine');
+            const identity = await dispatchEngine.verifyDispatchIdentity(
+                redis,
+                bookId,
+                chapterId,
+                sceneId,
+                stage,
+                dispatch_id
+            );
+            if (!identity.valid) {
+                log(`[GPU ERROR] Rejected ${job_id}: ${identity.reason}`);
+                return res.json({ ok: true, rejected: true, reason: identity.reason });
             }
 
             // Короткий dedup
-            const dedupKey = `animastor:error-processed:${job_id}:${build_id || 'nobuild'}`;
+            const dedupKey = `animastor:error-processed:${dispatch_id}:${job_id}:${build_id}`;
             const first = await redis.set(dedupKey, '1', 'NX', 'EX', 60);
             if (!first) return res.json({ ok: true, deduped: true });
 
@@ -1116,7 +1124,16 @@ module.exports = function(app, redis, deps) {
                 }
             }
 
-            const result = await orchestrator.failStage(redis, bookId, chapterId, sceneId, stage, build_id, reason || 'worker_error');
+            const result = await orchestrator.failStage(
+                redis,
+                bookId,
+                chapterId,
+                sceneId,
+                stage,
+                build_id,
+                reason || 'worker_error',
+                { dispatchId: dispatch_id }
+            );
             res.json({ ok: true, ...result });
         } catch (err) {
             console.error('[GPU ERROR] Handler error:', err.message);

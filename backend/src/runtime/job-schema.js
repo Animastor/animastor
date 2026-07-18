@@ -19,12 +19,18 @@
 // упрощённые копии разбора с якорем `SYNC: backend/src/runtime/job-schema.js`.
 // Меняешь формат здесь — обнови копии.
 
-// Версия протокола backend ↔ gpu-hub ↔ worker. Передаётся в payload задачи;
-// получатель с другим мажором логирует предупреждение (не отклоняет — рантайм
-// смешанных версий возможен при раскатке).
+// Версия протокола backend ↔ gpu-hub ↔ worker. Передаётся в task и callback
+// payload. Все три компонента отклоняют несовпадающую версию: mixed-version
+// rollout допускается только после остановки выдачи задач старому worker.
 const PROTOCOL_VERSION = 2; // T4: добавлен dispatch_id
 
 const JOB_TYPES = ['audio', 'image', 'iu_image', 'video'];
+const STAGE_BY_KIND = {
+    audio_chunk: 'audio',
+    iu_image: 'image',
+    scene_image: 'image',
+    scene_video: 'video',
+};
 
 const CHUNK_INDEX_RE = /^\d{4}$/;
 const GROUP_SUFFIX_RE = /^(.+?)(_g\d+)$/;
@@ -113,10 +119,18 @@ function parseJobId(jobId) {
     return null;
 }
 
+function getStageForJobId(jobId) {
+    const parsed = parseJobId(jobId);
+    if (!parsed) return null;
+    return STAGE_BY_KIND[parsed.kind] || null;
+}
+
 module.exports = {
     PROTOCOL_VERSION,
     JOB_TYPES,
+    STAGE_BY_KIND,
     buildJobId,
     splitJobId,
     parseJobId,
+    getStageForJobId,
 };

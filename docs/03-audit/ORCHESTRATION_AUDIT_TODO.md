@@ -176,6 +176,12 @@ Quota не была захвачена (Lua вернул 0), так что relea
 - ✅ `gpu-hub/gpu-hub.js`: hardcoded Redis URL → `process.env.REDIS_URL || "redis://animastor-redis:6379"`
 - ✅ Coverage reporting: `nyc` в devDependencies, `test:coverage` скрипт в `package.json`
 
+## T9–T10: GPU Hub contract и финальная проверка — ВЫПОЛНЕНО ✅
+
+- T9: GPU_HUB_API_KEY, protocol version enforcement, structured queue ownership, dispatch identity
+- T10: 571 passing, syntax-smoke, git diff --check, все этапы T0-T9 завершены
+- См. `ORCHESTRATION_STABILIZATION_TODO.md` для полного списка
+
 ## Не вошло (уже исправлено T1–T8)
 
 Всё из `ORCHESTRATION_CONSOLIDATION_TODO.md` (T1–T8) ✅:
@@ -213,7 +219,7 @@ Quota не была захвачена (Lua вернул 0), так что relea
 - **Б17** `reconciliation-engine.js` — глобальный audio drift-check выполнялся внутри `reconcileScene` (per-scene) → O(scenes) дублей `counter_drift` в отчёте. Вынесен в `reconcileAll` (один раз, все 3 стадии — раньше проверялся только audio); `applyFix` читает `fix.stage` (раньше `scene.stage`, всегда undefined). Guard `parts.length >= 4` → `>= 5` (читался `parts[4]`). ✅
 - **Б18** `retry-budget-manager.js:277` — `getGlobalBudgetOverview`: 5 промисов в `Promise.all`, 4 переменных в destructure + повторные redis.get. Переписан. Также: `cleanupExpiredSnapshots` (retention) — мёртвая инвертированная age-логика упрощена; `fairness-engine.js:313` — дробный TTL в `expire` → `Math.ceil`. ✅
 
-Тесты: **518 passing** после всех правок.
+Тесты: **518 passing** после всех правок (финал: **571 passing** после T9/T10).
 
 ## Фронтенд: SSE и TriggerWindow (2026-07-16)
 
@@ -339,8 +345,8 @@ Quota не была захвачена (Lua вернул 0), так что relea
 ## Итоговая статистика
 
 | Метрика | Значение |
-|---|---|
-| Тесты | **564 passing, 0 failing** 🎉 |
+|---|---|---|
+| Тесты | **571 passing, 0 failing** 🎉 |
 | APK build | 0 errors, 0 warnings |
 | Docker backend | built clean |
 | Новые тесты | counter-reconciliation: 15, reconciliation-engine: 33 |

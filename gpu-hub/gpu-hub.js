@@ -21,6 +21,7 @@ const {
 const app = express()
 app.use(cors())
 app.use(express.json({ limit: "500mb" }))
+const PROTOCOL_VERSION = 2;
 
 // ======================================================
 // API KEY AUTH
@@ -84,7 +85,11 @@ async function deleteGpuFromRedis(id) {
 // При недоставке — фолбэк-ключ animastor:error:{job_id} (симметрично
 // animastor:result:* для результатов), его подберёт recovery.
 
-async function notifyBackendError(job_id, build_id, reason) {
+function jobDedupKey(job_id, dispatch_id) {
+  return `animastor:job:${dispatch_id}:${job_id}`;
+}
+
+async function notifyBackendError(job_id, build_id, dispatch_id, reason) {
   for (let i = 0; i < 5; i++) {
     try {
       const backendRes = await fetch(
@@ -92,7 +97,13 @@ async function notifyBackendError(job_id, build_id, reason) {
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ job_id, build_id: build_id || null, reason: reason || "unknown" })
+          body: JSON.stringify({
+            job_id,
+            build_id: build_id || null,
+            dispatch_id,
+            protocol_version: PROTOCOL_VERSION,
+            reason: reason || "unknown"
+          })
         }
       )
       if (!backendRes.ok) throw new Error(`HTTP ${backendRes.status}`)
@@ -106,7 +117,14 @@ async function notifyBackendError(job_id, build_id, reason) {
   try {
     await redis.set(
       `animastor:error:${job_id}`,
-      JSON.stringify({ job_id, build_id: build_id || null, reason: reason || "unknown", ts: Date.now() }),
+      JSON.stringify({
+        job_id,
+        build_id: build_id || null,
+        dispatch_id,
+        protocol_version: PROTOCOL_VERSION,
+        reason: reason || "unknown",
+        ts: Date.now()
+      }),
       "EX",
       3600
     )
@@ -144,7 +162,11 @@ setInterval(async () => {
             type: data.job_type,
             worker_id: data.worker,
             ts: Date.now(),
-            current_job_id: job_id
+            current_job_id: job_id,
+            current_dispatch_id: data.dispatch_id || null,
+            version: data.worker_version || null,
+            image_tag: data.worker_image_tag || null,
+            protocol_version: data.worker_protocol_version || null
           })
           await redis.set(hbKey, hbPayload, 'EX', 30)
         }
@@ -173,12 +195,17 @@ setInterval(async () => {
             console.log("💀 Worker timeout, reporting failure:", job_id)
 
             await redis.hdel("animastor:running", job_id)
+            if (data.task_raw) {
+              await redis.lrem("animastor:processing", 1, data.task_raw).catch(() => {})
+            }
 
             // Освобождаем dedup очереди, чтобы re-dispatch backend'а не
             // отбился как duplicate.
-            await redis.del(`animastor:job:${job_id}`).catch(() => {})
+            if (data.dispatch_id) {
+              await redis.del(jobDedupKey(job_id, data.dispatch_id)).catch(() => {})
+            }
 
-            await notifyBackendError(job_id, data.build_id, "worker_timeout")
+            await notifyBackendError(job_id, data.build_id, data.dispatch_id, "worker_timeout")
           }
 
         } catch (err) {
@@ -198,9 +225,28 @@ setInterval(async () => {
 
 app.post("/beacon", async (req, res) => {
 
-  const { id, type, gpu, vram, version, image_tag } = req.body
+  const { id, type, gpu, vram, version, image_tag, protocol_version } = req.body
+  if (!id || !type) {
+    return res.status(400).json({ error: "worker_identity_required" })
+  }
+  if (protocol_version !== PROTOCOL_VERSION) {
+    return res.status(409).json({
+      error: "protocol_version_mismatch",
+      expected: PROTOCOL_VERSION,
+      received: protocol_version || null
+    })
+  }
 
-  const data = { id, type, gpu, vram, version: version || null, image_tag: image_tag || null, last_seen: Date.now() };
+  const data = {
+    id,
+    type,
+    gpu,
+    vram,
+    version: version || null,
+    image_tag: image_tag || null,
+    protocol_version: protocol_version || null,
+    last_seen: Date.now()
+  };
 
   // Primary registry: Redis (survives restart, cluster-aware)
   await setGpuInRedis(id, data);
@@ -208,7 +254,14 @@ app.post("/beacon", async (req, res) => {
   // Also write heartbeat for backend worker count panel
   try {
     const key = `animastor:worker:heartbeat:${type}:${id}`;
-    const payload = JSON.stringify({ type, worker_id: id, ts: Date.now() });
+    const payload = JSON.stringify({
+      type,
+      worker_id: id,
+      ts: Date.now(),
+      version: version || null,
+      image_tag: image_tag || null,
+      protocol_version: protocol_version || null
+    });
     await redis.set(key, payload, 'EX', 30);
   } catch (_) {}
 
@@ -219,17 +272,36 @@ app.post("/beacon", async (req, res) => {
 // TASK CREATE
 // ======================================================
 
-app.post("/task", async (req, res) => {
+app.post("/task", requireApiKey, async (req, res) => {
 
-  const { job_id, params, job_type, assets, build_id, protocol_version } = req.body
+  const {
+    job_id,
+    params,
+    job_type,
+    assets,
+    build_id,
+    protocol_version,
+    dispatch_id,
+    book_id,
+    chapter_id,
+    scene_id,
+    stage
+  } = req.body
 
   const type = job_type || "image"
 
   console.log("📥 Task:", job_id, type, "build:", build_id)
 
   // SYNC: backend/src/runtime/job-schema.js (PROTOCOL_VERSION)
-  if (protocol_version && protocol_version !== 1) {
-    console.warn(`⚠️ Protocol version mismatch: got ${protocol_version}, hub expects 1 — check backend/gpu-hub versions`)
+  if (protocol_version !== PROTOCOL_VERSION) {
+    return res.status(409).json({
+      error: "protocol_version_mismatch",
+      expected: PROTOCOL_VERSION,
+      received: protocol_version || null
+    })
+  }
+  if (!dispatch_id || !build_id || !book_id || !chapter_id || !scene_id || !stage) {
+    return res.status(400).json({ error: "incomplete_dispatch_identity" })
   }
 
   if (assets?.image) {
@@ -245,7 +317,7 @@ app.post("/task", async (req, res) => {
   // Этот ключ НЕ гарантия и не должен блокировать легитимный retry —
   // backend чистит его перед принудительным re-dispatch.
   const isNew = await redis.set(
-  `animastor:job:${job_id}`,
+  jobDedupKey(job_id, dispatch_id),
   1,
   "NX",
   "EX",
@@ -265,13 +337,13 @@ if (!isNew) {
       job_type: type,
       assets: assets || null,
       build_id: build_id || null,
-      protocol_version: protocol_version || 1,
+      protocol_version,
       // T9: Structured ownership для точной фильтрации без prefix-коллизий
-      book_id: params?.book_id || null,
-      chapter_id: params?.chapter_id || null,
-      scene_id: params?.scene_id || null,
-      stage: type,
-      dispatch_id: req.body.dispatch_id || null
+      book_id,
+      chapter_id,
+      scene_id,
+      stage,
+      dispatch_id
     })
   )
 
@@ -293,6 +365,20 @@ app.get("/task/next", async (req, res) => {
   const gpu = await getGpuFromRedis(worker);
   if (!gpu) {
     return res.status(404).json({ error: "not registered" })
+  }
+  if (gpu.protocol_version !== PROTOCOL_VERSION) {
+    return res.status(409).json({
+      error: "worker_protocol_mismatch",
+      expected: PROTOCOL_VERSION,
+      received: gpu.protocol_version || null
+    })
+  }
+  if (type && gpu.type !== type) {
+    return res.status(409).json({
+      error: "worker_type_mismatch",
+      registered: gpu.type,
+      requested: type
+    })
   }
 
   gpu.last_seen = Date.now();
@@ -318,6 +404,16 @@ app.get("/task/next", async (req, res) => {
       params: task.params,
       assets: task.assets || null,
       build_id: task.build_id || null,
+      book_id: task.book_id,
+      chapter_id: task.chapter_id,
+      scene_id: task.scene_id,
+      stage: task.stage,
+      dispatch_id: task.dispatch_id,
+      protocol_version: task.protocol_version,
+      worker_version: gpu.version || null,
+      worker_image_tag: gpu.image_tag || null,
+      worker_protocol_version: gpu.protocol_version || null,
+      task_raw: taskRaw,
       started_at: Date.now()
     })
   )
@@ -327,7 +423,16 @@ app.get("/task/next", async (req, res) => {
   // Mark worker as busy in heartbeat
   try {
     const hbKey = `animastor:worker:heartbeat:${task.job_type}:${worker}`;
-    const hbPayload = JSON.stringify({ type: task.job_type, worker_id: worker, ts: Date.now(), current_job_id: task.job_id });
+    const hbPayload = JSON.stringify({
+      type: task.job_type,
+      worker_id: worker,
+      ts: Date.now(),
+      current_job_id: task.job_id,
+      current_dispatch_id: task.dispatch_id,
+      version: gpu.version || null,
+      image_tag: gpu.image_tag || null,
+      protocol_version: gpu.protocol_version || null
+    });
     await redis.set(hbKey, hbPayload, 'EX', 30);
   } catch (_) {}
 
@@ -340,25 +445,25 @@ app.get("/task/next", async (req, res) => {
 
 app.post("/task/result", async (req, res) => {
 
-  const { job_id, build_id, result_base64 } = req.body
+  const { job_id, build_id, result_base64, dispatch_id, protocol_version } = req.body
 
-  if (!job_id || !result_base64) {
+  if (!job_id || !build_id || !result_base64 || !dispatch_id || protocol_version !== PROTOCOL_VERSION) {
     return res.status(400).json({ error: "invalid" })
   }
 
   console.log("📤 Result:", job_id, "build:", build_id || "none")
 
   // Read running info to get worker/job_type before deleting
-  let runningWorker = null;
-  let runningType = null;
+  let runningInfo = null;
   try {
     const raw = await redis.hget("animastor:running", job_id);
     if (raw) {
-      const info = JSON.parse(raw);
-      runningWorker = info.worker;
-      runningType = info.job_type;
+      runningInfo = JSON.parse(raw);
     }
   } catch (_) {}
+  if (!runningInfo || runningInfo.dispatch_id !== dispatch_id) {
+    return res.status(409).json({ error: "stale_or_unknown_dispatch" })
+  }
 
   // Store result as JSON so audio-recovery can parse it.
   // key format: animastor:result:<build_id>:<book_id>:<chapter_id>:<scene_id>:<type>
@@ -367,25 +472,18 @@ app.post("/task/result", async (req, res) => {
   // Split by ':' first to remove type suffix, then parse from the end.
   // SYNC: backend/src/runtime/job-schema.js — упрощённая копия parseJobId;
   // при изменении формата job_id обновить оба места.
-  const resultKeyParts = job_id.split(':');
-  const resultType = resultKeyParts.length > 1 ? resultKeyParts.pop() : 'audio';
-  const resultBaseId = resultKeyParts.join(':');
-  const resultIdParts = resultBaseId.split('_');
-  let resultBookId = '';
-  let resultChapterId = '';
-  let resultSceneId = '';
-  if (resultIdParts.length >= 3) {
-    resultIdParts.pop();  // discard chunk index e.g. '0001'
-    resultSceneId = resultIdParts.pop();           // e.g. 'sc-6c4ea9f6'
-    resultChapterId = resultIdParts.pop();         // e.g. 'ch-ce87fec4'
-    resultBookId = resultIdParts.join('_');        // e.g. 'master_margarita_demo'
-  }
+  const resultType = runningInfo.stage;
+  const resultBookId = runningInfo.book_id;
+  const resultChapterId = runningInfo.chapter_id;
+  const resultSceneId = runningInfo.scene_id;
   const resultData = JSON.stringify({
     job_id,
     result_base64,
-    build_id: build_id || null
+    build_id,
+    dispatch_id,
+    protocol_version
   });
-  const resultRedisKey = `animastor:result:${build_id || 'default'}:${resultBookId}:${resultChapterId}:${resultSceneId}:${resultType}`;
+  const resultRedisKey = `animastor:result:${build_id}:${resultBookId}:${resultChapterId}:${resultSceneId}:${resultType}`;
   await redis.set(
     resultRedisKey,
     resultData,
@@ -394,12 +492,24 @@ app.post("/task/result", async (req, res) => {
   )
 
   await redis.hdel("animastor:running", job_id)
+  if (runningInfo.task_raw) {
+    await redis.lrem("animastor:processing", 1, runningInfo.task_raw).catch(() => {})
+  }
 
   // Clear busy flag from worker heartbeat
-  if (runningWorker && runningType) {
+  if (runningInfo.worker && runningInfo.job_type) {
     try {
-      const hbKey = `animastor:worker:heartbeat:${runningType}:${runningWorker}`;
-      const hbPayload = JSON.stringify({ type: runningType, worker_id: runningWorker, ts: Date.now(), current_job_id: null });
+      const hbKey = `animastor:worker:heartbeat:${runningInfo.job_type}:${runningInfo.worker}`;
+      const hbPayload = JSON.stringify({
+        type: runningInfo.job_type,
+        worker_id: runningInfo.worker,
+        ts: Date.now(),
+        current_job_id: null,
+        current_dispatch_id: null,
+        version: runningInfo.worker_version || null,
+        image_tag: runningInfo.worker_image_tag || null,
+        protocol_version: runningInfo.worker_protocol_version || null
+      });
       await redis.set(hbKey, hbPayload, 'EX', 30);
     } catch (_) {}
   }
@@ -413,7 +523,13 @@ app.post("/task/result", async (req, res) => {
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ job_id, build_id, result_base64 })
+          body: JSON.stringify({
+            job_id,
+            build_id,
+            dispatch_id,
+            protocol_version,
+            result_base64
+          })
         }
       )
 
@@ -442,40 +558,53 @@ app.post("/task/result", async (req, res) => {
 
 app.post("/task/error", async (req, res) => {
 
-  const { job_id, build_id, reason } = req.body
+  const { job_id, build_id, dispatch_id, protocol_version, reason } = req.body
+  if (!job_id || !build_id || !dispatch_id || protocol_version !== PROTOCOL_VERSION) {
+    return res.status(400).json({ error: "invalid" })
+  }
 
   console.log("❌ Error:", job_id, reason || "")
 
   // Read running info before deleting
-  let runningWorker = null;
-  let runningType = null;
-  let runningBuildId = null;
+  let runningInfo = null;
   try {
     const raw = await redis.hget("animastor:running", job_id);
     if (raw) {
-      const info = JSON.parse(raw);
-      runningWorker = info.worker;
-      runningType = info.job_type;
-      runningBuildId = info.build_id;
+      runningInfo = JSON.parse(raw);
     }
   } catch (_) {}
+  if (!runningInfo || runningInfo.dispatch_id !== dispatch_id) {
+    return res.status(409).json({ error: "stale_or_unknown_dispatch" })
+  }
 
   await redis.hdel("animastor:running", job_id)
+  if (runningInfo.task_raw) {
+    await redis.lrem("animastor:processing", 1, runningInfo.task_raw).catch(() => {})
+  }
 
   // Освобождаем dedup очереди для будущего re-dispatch.
-  await redis.del(`animastor:job:${job_id}`).catch(() => {})
+  await redis.del(jobDedupKey(job_id, dispatch_id)).catch(() => {})
 
   // Clear busy flag from worker heartbeat
-  if (runningWorker && runningType) {
+  if (runningInfo.worker && runningInfo.job_type) {
     try {
-      const hbKey = `animastor:worker:heartbeat:${runningType}:${runningWorker}`;
-      const hbPayload = JSON.stringify({ type: runningType, worker_id: runningWorker, ts: Date.now(), current_job_id: null });
+      const hbKey = `animastor:worker:heartbeat:${runningInfo.job_type}:${runningInfo.worker}`;
+      const hbPayload = JSON.stringify({
+        type: runningInfo.job_type,
+        worker_id: runningInfo.worker,
+        ts: Date.now(),
+        current_job_id: null,
+        current_dispatch_id: null,
+        version: runningInfo.worker_version || null,
+        image_tag: runningInfo.worker_image_tag || null,
+        protocol_version: runningInfo.worker_protocol_version || null
+      });
       await redis.set(hbKey, hbPayload, 'EX', 30);
     } catch (_) {}
   }
 
   // T3: форвард ошибки в backend → orchestrator.failStage
-  await notifyBackendError(job_id, build_id || runningBuildId, reason || "worker_error")
+  await notifyBackendError(job_id, build_id, dispatch_id, reason || "worker_error")
 
   res.json({ ok: true })
 })
@@ -504,26 +633,31 @@ app.get("/health", async (req, res) => {
 
 app.delete("/queue/clear", requireApiKey, async (req, res) => {
   try {
-    const { book_id } = req.query
+    const { book_id, dispatch_id } = req.query
     const queueKeys = [
       "animastor:queue:image",
       "animastor:queue:audio",
       "animastor:queue:video"
     ]
-    let removed = 0
+    const summary = { queued: 0, processing: 0, running: 0, results: 0, dedup: 0 }
 
-    if (book_id) {
-      // === FILTERED CLEAR: only tasks for this book ===
+    if (book_id || dispatch_id) {
+      const matches = (record) => {
+        if (dispatch_id) return record.dispatch_id === dispatch_id
+        return record.book_id === book_id
+      }
+      const removedJobs = []
 
-      // 1. Clear queue lists (filter by book_id prefix in job_id)
+      // 1. Clear queue lists by structured ownership.
       for (const key of queueKeys) {
         const items = await redis.lrange(key, 0, -1)
         const remaining = []
         for (const item of items) {
           try {
             const parsed = JSON.parse(item)
-            if (parsed.job_id && parsed.job_id.startsWith(book_id + '_')) {
-              removed++
+            if (matches(parsed)) {
+              removedJobs.push(parsed)
+              summary.queued++
             } else {
               remaining.push(item)
             }
@@ -535,7 +669,7 @@ app.delete("/queue/clear", requireApiKey, async (req, res) => {
         }
       }
 
-      // 2. Clear animastor:running entries for this book
+      // 2. Clear running entries by the same ownership fields.
       let cursor = '0'
       do {
         const scan = await redis.hscan('animastor:running', cursor, 'COUNT', 500)
@@ -544,15 +678,21 @@ app.delete("/queue/clear", requireApiKey, async (req, res) => {
         if (entries && entries.length > 0) {
           for (let i = 0; i < entries.length; i += 2) {
             const job_id = entries[i]
-            if (job_id.startsWith(book_id + '_')) {
+            const record = JSON.parse(entries[i + 1])
+            if (matches(record)) {
+              removedJobs.push({ ...record, job_id })
               await redis.hdel('animastor:running', job_id)
-              removed++
+              if (record.task_raw) {
+                await redis.lrem('animastor:processing', 1, record.task_raw).catch(() => {})
+              }
+              summary.running++
             }
           }
         }
       } while (cursor !== '0')
 
-      // 3. Clear result keys for this book (T9: правильный паттерн — book_id внутри ключа, не в начале)
+      // 3. Clear result keys. Dispatch-scoped cleanup reads stored identity;
+      // book-scoped cleanup can use the structured key segment.
       // Key format: animastor:result:<build_id>:<bookId>:<chapterId>:<sceneId>:<type>
       // Используем SCAN с HSCAN-подобным подходом: итерируем все result ключи и фильтруем по book_id.
       // Аналог animastor:result:*:${book_id}:* — но SCAN с двумя * в начале медленный,
@@ -567,32 +707,31 @@ app.delete("/queue/clear", requireApiKey, async (req, res) => {
             const parts = key.split(':')
             // Format: animastor:result:<build_id>:<bookId>:...
             // book_id at index 3 (0=animastor,1=result,2=build_id,3=bookId)
-            if (parts.length >= 4 && parts[3] === book_id) {
+            if (dispatch_id) {
+              const raw = await redis.get(key)
+              try {
+                if (JSON.parse(raw || '{}').dispatch_id === dispatch_id) toDelete.push(key)
+              } catch (_) {}
+            } else if (parts.length >= 4 && parts[3] === book_id) {
               toDelete.push(key)
             }
           }
           if (toDelete.length > 0) {
-            await redis.del(toDelete)
-            removed += toDelete.length
+            await redis.del(...toDelete)
+            summary.results += toDelete.length
           }
         } while (c !== '0')
       }
 
-      // 4. Clear dedup keys for this book (animastor:job:bookId_chapterId_sceneId_index:type)
-      {
-        let c = '0'
-        do {
-          const scan = await redis.scan(c, 'MATCH', `animastor:job:${book_id}_*`, 'COUNT', 500)
-          c = scan[0]
-          if (scan[1].length) {
-            await redis.del(scan[1])
-            removed += scan[1].length
-          }
-        } while (c !== '0')
+      // 4. Clear exact dedup records for removed queue/running jobs.
+      for (const job of removedJobs) {
+        if (job.job_id && job.dispatch_id) {
+          summary.dedup += await redis.del(jobDedupKey(job.job_id, job.dispatch_id))
+        }
       }
 
-      console.log(`[QUEUE-CLEAR] Removed ${removed} entries for book ${book_id}`)
-      res.json({ ok: true, message: `Cleared ${removed} tasks for book ${book_id}` })
+      console.log(`[QUEUE-CLEAR] Filtered cleanup`, { book_id, dispatch_id, summary })
+      res.json({ ok: true, scope: { book_id: book_id || null, dispatch_id: dispatch_id || null }, removed: summary })
 
     } else {
       // === FULL CLEAR: wipe all queues ===
@@ -600,13 +739,17 @@ app.delete("/queue/clear", requireApiKey, async (req, res) => {
       for (const key of queueKeys) {
         const len = await redis.llen(key) || 0
         await redis.del(key)
-        removed += len
+        summary.queued += len
       }
 
       // Clear animastor:running
       const runningLen = await redis.hlen('animastor:running') || 0
       await redis.del('animastor:running')
-      removed += runningLen
+      summary.running += runningLen
+
+      const processingLen = await redis.llen('animastor:processing') || 0
+      await redis.del('animastor:processing')
+      summary.processing += processingLen
 
       // Clear all result and dedup keys
       for (const pattern of ['animastor:result:*', 'animastor:job:*']) {
@@ -615,14 +758,15 @@ app.delete("/queue/clear", requireApiKey, async (req, res) => {
           const scan = await redis.scan(c, 'MATCH', pattern, 'COUNT', 500)
           c = scan[0]
           if (scan[1].length) {
-            await redis.del(scan[1])
-            removed += scan[1].length
+            await redis.del(...scan[1])
+            if (pattern.includes(':result:')) summary.results += scan[1].length
+            else summary.dedup += scan[1].length
           }
         } while (c !== '0')
       }
 
-      console.log(`[QUEUE-CLEAR] Removed ${removed} entries (full clear)`)
-      res.json({ ok: true, message: "All gpu-hub queues cleared", removed })
+      console.log(`[QUEUE-CLEAR] Full cleanup`, summary)
+      res.json({ ok: true, message: "All gpu-hub queues cleared", removed: summary })
     }
   } catch (err) {
     console.error("Failed to clear queues:", err.message)

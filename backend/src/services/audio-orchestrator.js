@@ -165,7 +165,7 @@ async function setFailed(redis, bookId, chapterId, sceneId, reason) {
 
 async function completeChunk(redis, bookId, chapterId, sceneId, chunkIndex, buildId, deps = {}) {
     const startTime = Date.now();
-    const { audio, orchestrator, getChunk, saveChunk } = deps;
+    const { audio, orchestrator, getChunk, saveChunk, dispatchId } = deps;
     const OUTPUT_DIR = config.OUTPUT_DIR;
     const buildDir = path.join(OUTPUT_DIR, buildId);
     if (!fs.existsSync(buildDir)) {
@@ -266,7 +266,8 @@ async function completeChunk(redis, bookId, chapterId, sceneId, chunkIndex, buil
             if (orchestrator) {
                 try {
                     await orchestrator.failStage(redis, bookId, chapterId, sceneId, 'audio', buildId,
-                        `max_retries_exceeded:${missingIndices.length}_missing`);
+                        `max_retries_exceeded:${missingIndices.length}_missing`,
+                        { dispatchId });
                     log(`Audio FAILED→PENDING via failStage for ${bookId}/${chapterId}/${sceneId}`);
                 } catch (fsErr) {
                     warn(`failStage failed: ${fsErr.message}`);
@@ -338,7 +339,15 @@ async function completeChunk(redis, bookId, chapterId, sceneId, chunkIndex, buil
             await setDone(redis, bookId, chapterId, sceneId);
             // T7: Итог машины публикуется только через фасад
             if (orchestrator) {
-                await orchestrator.completeStage(redis, bookId, chapterId, sceneId, 'audio', buildId);
+                await orchestrator.completeStage(
+                    redis,
+                    bookId,
+                    chapterId,
+                    sceneId,
+                    'audio',
+                    buildId,
+                    dispatchId
+                );
             }
             log(`Audio merge complete for ${bookId}/${chapterId}/${sceneId}`);
         } else {

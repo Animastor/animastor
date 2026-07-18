@@ -1,5 +1,6 @@
 const config = require('../config/runtime-config');
-const { PROTOCOL_VERSION } = require('./job-schema');
+const jobSchema = require('./job-schema');
+const { PROTOCOL_VERSION } = jobSchema;
 
 const logPrefix = '[GPU]';
 function log(msg) { console.log(`${logPrefix} ${msg}`); }
@@ -23,15 +24,24 @@ async function sendUnified(taskSpec) {
     if (!validTypes.includes(taskSpec.job_type)) {
         throw new Error("Invalid job type");
     }
-    if (!taskSpec.build_id) {
-        taskSpec.build_id = "default";
+    if (!taskSpec.dispatch_id || typeof taskSpec.dispatch_id !== 'string') {
+        throw new Error("dispatch_id is required");
     }
-    taskSpec.protocol_version = PROTOCOL_VERSION;
 
-    // T4: dispatch_id обязателен для identity check на callback
-    if (!taskSpec.dispatch_id) {
-        taskSpec.dispatch_id = `dispatch-unknown-${Date.now()}`;
+    const parsed = jobSchema.parseJobId(taskSpec.job_id);
+    if (!parsed) {
+        throw new Error(`Invalid job_id: ${taskSpec.job_id}`);
     }
+
+    const payload = {
+        ...taskSpec,
+        build_id: taskSpec.build_id || "default",
+        protocol_version: PROTOCOL_VERSION,
+        book_id: parsed.bookId,
+        chapter_id: parsed.chapterId,
+        scene_id: parsed.sceneId,
+        stage: jobSchema.STAGE_BY_KIND[parsed.kind],
+    };
 
     // T9: Include GPU_HUB_API_KEY header for authenticated requests
     const headers = { "Content-Type": "application/json" };
@@ -48,20 +58,20 @@ async function sendUnified(taskSpec) {
             const res = await fetch(`${config.HUB_URL}/task`, {
                 method: "POST",
                 headers,
-                body: JSON.stringify(taskSpec),
+                body: JSON.stringify(payload),
                 signal: controller.signal
             });
             clearTimeout(timeoutId);
 
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
-            log(`Task sent: ${taskSpec.job_id} (${taskSpec.job_type}), build: ${taskSpec.build_id}, dispatch: ${taskSpec.dispatch_id}`);
-            switch (taskSpec.job_type) {
+            log(`Task sent: ${payload.job_id} (${payload.job_type}), build: ${payload.build_id}, dispatch: ${payload.dispatch_id}`);
+            switch (payload.job_type) {
                 case 'audio': stats.audio_jobs_started++; break;
                 case 'image': stats.image_jobs_started++; break;
                 case 'video': stats.video_jobs_started++; break;
             }
-            return { sent: true, jobId: taskSpec.job_id };
+            return { sent: true, jobId: payload.job_id, dispatchId: payload.dispatch_id };
         } catch (err) {
             lastError = err;
             if (attempt < 2) await new Promise(r => setTimeout(r, 1000));
@@ -72,7 +82,7 @@ async function sendUnified(taskSpec) {
 }
 
 async function send(job_id, workflow, type, build_id, dispatch_id) {
-    await sendUnified({ job_id, params: workflow, job_type: type, build_id, dispatch_id });
+    return sendUnified({ job_id, params: workflow, job_type: type, build_id, dispatch_id });
 }
 
 module.exports = { send, sendUnified };

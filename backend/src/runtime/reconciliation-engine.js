@@ -1025,18 +1025,6 @@ async function reconcileCycle(redis, deps = {}, options = {}) {
         }
 
         // ══════════════════════════════════════════════
-        // PHASE B: Cleanup expired audio scene locks (cleanup-service)
-        // ══════════════════════════════════════════════
-        try {
-            const bCount = await cleanupExpiredLocks(redis);
-            summary.staleLocks += bCount;
-            phases.push(`lock_cleanup:${bCount}`);
-        } catch (err) {
-            warn(`Phase B failed: ${err.message}`);
-            summary.errors.push(`lock_cleanup: ${err.message}`);
-        }
-
-        // ══════════════════════════════════════════════
         // PHASE C: Startup-specific (startup-recovery)
         // ══════════════════════════════════════════════
         if (startup) {
@@ -1159,7 +1147,7 @@ async function recoverResultKeys(redis, deps, scope) {
                 const raw = await redis.get(key);
                 if (!raw) continue;
 
-                let job_id, result_base64, buildId;
+                let job_id, result_base64, buildId, dispatchId;
 
                 // Try JSON (new format: { job_id, result_base64, build_id })
                 if (raw.startsWith('{')) {
@@ -1168,6 +1156,7 @@ async function recoverResultKeys(redis, deps, scope) {
                         job_id = data.job_id;
                         result_base64 = data.result_base64;
                         buildId = data.build_id;
+                        dispatchId = data.dispatch_id;
                     } catch (_) {
                         await redis.del(key);
                         continue;
@@ -1187,7 +1176,11 @@ async function recoverResultKeys(redis, deps, scope) {
                 // Scope filter
                 if (scope && !job_id.startsWith(scope)) continue;
 
-                await taskHandler.handleTaskResult(job_id, result_base64, buildId || 'default');
+                if (!buildId || !dispatchId) {
+                    warn(`Skipping legacy result without build/dispatch identity: ${job_id}`);
+                    continue;
+                }
+                await taskHandler.handleTaskResult(job_id, result_base64, buildId, dispatchId);
                 await redis.del(key);
                 recovered++;
             } catch (itemErr) {
@@ -1206,12 +1199,13 @@ async function recoverResultKeys(redis, deps, scope) {
                 const raw = await redis.get(key);
                 if (!raw) continue;
 
-                let job_id, buildId, reason;
+                let job_id, buildId, reason, dispatchId;
                 try {
                     const data = JSON.parse(raw);
                     job_id = data.job_id;
                     buildId = data.build_id;
                     reason = data.reason;
+                    dispatchId = data.dispatch_id;
                 } catch (_) {
                     await redis.del(key);
                     continue;
@@ -1228,7 +1222,7 @@ async function recoverResultKeys(redis, deps, scope) {
                     const stage = stageMap[parsed.kind];
                     if (stage && deps.orchestrator) {
                         await deps.orchestrator.failStage(redis, parsed.bookId, parsed.chapterId, parsed.sceneId,
-                            stage, buildId, reason || 'recovered_error');
+                            stage, buildId, reason || 'recovered_error', { dispatchId });
                         recovered++;
                     }
                 }
@@ -1240,43 +1234,6 @@ async function recoverResultKeys(redis, deps, scope) {
     } while (cursor !== '0');
 
     return recovered;
-}
-
-// ── PHASE B: Cleanup expired audio scene locks ──────────
-// Из cleanup-service.cjs: освобождает протухшие animastor:audio-scene-lock:*,
-// для которых аудио уже готово.
-async function cleanupExpiredLocks(redis) {
-    let cleaned = 0;
-    let cursor = '0';
-
-    do {
-        const [nextCursor, keys] = await redis.scan(cursor, 'MATCH', 'animastor:audio-scene-failsafe:*', 'COUNT', 100);
-        cursor = nextCursor;
-
-        for (const failsafeKey of keys) {
-            try {
-                const exists = await redis.exists(failsafeKey);
-                if (exists) continue;
-
-                const parts = failsafeKey.split(':');
-                if (parts.length < 7) continue;
-
-                const bookId = parts[4];
-                const chapterId = parts[5];
-                const sceneId = parts[6];
-
-                const lockKey = `animastor:audio-scene-lock:${bookId}:${chapterId}:${sceneId}`;
-                const current = await redis.get(lockKey);
-                if (current) {
-                    await redis.del(lockKey);
-                    cleaned++;
-                }
-            } catch (_) {}
-        }
-    } while (cursor !== '0');
-
-    if (cleaned > 0) log(`Cleaned ${cleaned} expired audio scene locks`);
-    return cleaned;
 }
 
 // ── PHASE C1: Recover audio-orch states ────────────────
@@ -1453,7 +1410,6 @@ module.exports = {
     reconcileAll,
     reconcileCycle,
     recoverResultKeys,
-    cleanupExpiredLocks,
     recoverAudioOrchStates,
     checkVersionStaleness,
     recoverIuImagesFromDisk,

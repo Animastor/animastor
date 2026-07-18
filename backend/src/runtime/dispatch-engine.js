@@ -87,8 +87,9 @@ function getDispatchMetaKey(bookId, chapterId, sceneId, stage) {
 /**
  * Get dispatch-completed idempotency key (Д.1).
  */
-function getDispatchCompletedKey(bookId, chapterId, sceneId, stage) {
-    return `${DISPATCH_COMPLETED_PREFIX}:${bookId}:${chapterId}:${sceneId}:${stage}`;
+function getDispatchCompletedKey(bookId, chapterId, sceneId, stage, dispatchId = null) {
+    const base = `${DISPATCH_COMPLETED_PREFIX}:${bookId}:${chapterId}:${sceneId}:${stage}`;
+    return dispatchId ? `${base}:${dispatchId}` : base;
 }
 
 /**
@@ -190,14 +191,17 @@ async function getLeaseData(redis, bookId, chapterId, sceneId, stage) {
 /**
  * Create dispatch metadata.
  */
-function createDispatchMetadata(dispatchId, stage, worker = 'scheduler') {
+function createDispatchMetadata(dispatchId, stage, worker = 'scheduler', ownership = {}) {
     return {
         dispatch_id: dispatchId,
         stage,
         started_at: Date.now(),
         worker,
         retry_attempt: 0,
-        status: 'dispatched'
+        status: 'dispatched',
+        lease_key: ownership.leaseKey || null,
+        lease_token: ownership.leaseToken || null,
+        quota_owned: ownership.quotaOwned === true
     };
 }
 
@@ -216,6 +220,29 @@ async function getDispatchMetadata(redis, bookId, chapterId, sceneId, stage) {
     const key = getDispatchMetaKey(bookId, chapterId, sceneId, stage);
     const raw = await redis.get(key);
     return raw ? JSON.parse(raw) : null;
+}
+
+async function verifyDispatchIdentity(redis, bookId, chapterId, sceneId, stage, dispatchId) {
+    if (!dispatchId || typeof dispatchId !== 'string') {
+        return { valid: false, reason: 'missing_dispatch_id', metadata: null };
+    }
+
+    const metadata = await getDispatchMetadata(redis, bookId, chapterId, sceneId, stage);
+    if (!metadata) {
+        return { valid: false, reason: 'no_active_dispatch', metadata: null };
+    }
+    if (!metadata.dispatch_id) {
+        return { valid: false, reason: 'metadata_missing_dispatch_id', metadata };
+    }
+    if (metadata.dispatch_id !== dispatchId) {
+        return {
+            valid: false,
+            reason: 'stale_dispatch',
+            metadata,
+            currentDispatchId: metadata.dispatch_id
+        };
+    }
+    return { valid: true, reason: 'current_dispatch', metadata };
 }
 
 /**
@@ -516,13 +543,12 @@ async function dispatchStage(redis, bookId, chapterId, sceneId, stage, loadedBoo
     }
 
     // Step 4: Set dispatch metadata
-    const metadata = createDispatchMetadata(dispatchId, stage);
+    const metadata = createDispatchMetadata(dispatchId, stage, 'scheduler', {
+        leaseKey: lease.leaseKey,
+        leaseToken: lease.token,
+        quotaOwned: true
+    });
     await setDispatchMetadata(redis, bookId, chapterId, sceneId, stage, metadata);
-
-    // Д.1: Clear the completion marker for this fresh dispatch, so its eventual
-    // markDispatchCompleted runs once (and a force-regen re-dispatch isn't blocked
-    // by the previous build's marker).
-    await redis.del(getDispatchCompletedKey(bookId, chapterId, sceneId, stage));
 
     // Step 5: Log dispatch event
     await logDispatchEvent(redis, bookId, chapterId, sceneId, 'STARTED', stage, {
@@ -552,9 +578,14 @@ async function dispatchStage(redis, bookId, chapterId, sceneId, stage, loadedBoo
             // If orchestrator didn't dispatch (already done/cached), release quota and lease
             if (!result.dispatched) {
                 log(`DISPATCH_SKIPPED: ${bookId}/${chapterId}/${sceneId}:${stage} - ${result.reason || 'already_done'}`);
-                await releaseStageLease(redis, lease.leaseKey, lease.token);
-                await releaseQuota(redis, stage);
-                return { dispatched: false, reason: result.reason || 'already_done', result };
+                if (!result.completed) {
+                    await finalizeDispatch(redis, bookId, chapterId, sceneId, stage, {
+                        outcome: 'cancelled',
+                        dispatchId,
+                        reason: result.reason || 'executor_sent_no_jobs'
+                    });
+                }
+                return { dispatched: false, dispatchId, reason: result.reason || 'already_done', result };
             }
 
             // T6: Start lease renewal for this actively dispatched job
@@ -572,8 +603,13 @@ async function dispatchStage(redis, bookId, chapterId, sceneId, stage, loadedBoo
             dispatchId,
             error: err.message
         });
-        await releaseStageLease(redis, lease.leaseKey, lease.token);
-        await releaseQuota(redis, stage);
+        await finalizeDispatch(redis, bookId, chapterId, sceneId, stage, {
+            outcome: 'cancelled',
+            dispatchId,
+            reason: `dispatch_error:${err.message}`
+        }).catch(finalizeErr => {
+            warn(`Dispatch rollback finalization failed: ${finalizeErr.message}`);
+        });
         return { dispatched: false, reason: 'dispatch_error', error: err.message, dispatchId };
     }
 }
@@ -591,14 +627,12 @@ async function dispatchStage(redis, bookId, chapterId, sceneId, stage, loadedBoo
 // возвращает { finalized: false, reason: 'already_finalized' }.
 //
 // Порядок:
-//   1. Claim completion marker (NX)
+//   1. Одним Lua-шагом проверить metadata + lease owner, claim marker,
+//      удалить metadata/lease и освободить owned quota
 //   2. Stop renewal
-//   3. Release lease по token
-//   4. Release quota (только если есть claim)
-//   5. Circuit breaker согласно outcome
-//   6. Retry budget только для failure
-//   7. Удалить metadata
-//   8. Записать journal event
+//   3. Circuit breaker согласно outcome
+//   4. Retry budget только для failure
+//   5. Записать journal event
 // ======================================================
 
 /**
@@ -617,6 +651,79 @@ async function dispatchStage(redis, bookId, chapterId, sceneId, stage, loadedBoo
  * @param {string} [options.workerId]
  * @returns {Promise<{finalized: boolean, reason: string}>}
  */
+const CLAIM_FINALIZATION_SCRIPT = `
+    local metadata = redis.call('GET', KEYS[1])
+    if not metadata then
+        if redis.call('EXISTS', KEYS[2]) == 1 then
+            return 2
+        end
+        return 0
+    end
+    if metadata ~= ARGV[1] then
+        return -1
+    end
+
+    local lease = redis.call('GET', KEYS[3])
+    local expected_lease = ARGV[4]
+    if lease and (expected_lease == '' or lease ~= expected_lease) then
+        return -2
+    end
+
+    local claimed = redis.call(
+        'SET',
+        KEYS[2],
+        ARGV[2],
+        'NX',
+        'EX',
+        tonumber(ARGV[3])
+    )
+    if not claimed then
+        return 2
+    end
+
+    redis.call('DEL', KEYS[1])
+
+    if lease and expected_lease ~= '' then
+        redis.call('DEL', KEYS[3])
+    end
+
+    if ARGV[5] == '1' then
+        local quota = tonumber(redis.call('GET', KEYS[4]) or '0')
+        if quota > 0 then
+            redis.call('DECR', KEYS[4])
+        end
+    end
+
+    return 1
+`;
+
+async function claimFinalization(
+    redis,
+    metadataKey,
+    completedKey,
+    leaseKey,
+    quotaKey,
+    expectedMetadataRaw,
+    markerValue,
+    markerTtl,
+    leaseToken,
+    quotaOwned
+) {
+    return redis.eval(
+        CLAIM_FINALIZATION_SCRIPT,
+        4,
+        metadataKey,
+        completedKey,
+        leaseKey,
+        quotaKey,
+        expectedMetadataRaw,
+        markerValue,
+        markerTtl,
+        leaseToken || '',
+        quotaOwned ? '1' : '0'
+    );
+}
+
 async function finalizeDispatch(redis, bookId, chapterId, sceneId, stage, options = {}) {
     const { outcome = 'success', dispatchId, reason, failureType, workerId } = options;
 
@@ -624,12 +731,78 @@ async function finalizeDispatch(redis, bookId, chapterId, sceneId, stage, option
         throw new Error(`finalizeDispatch: invalid outcome '${outcome}' — must be success|failure|cancelled`);
     }
 
-    // ── 1. Claim completion marker (идемпотентность) ──
-    const completedKey = getDispatchCompletedKey(bookId, chapterId, sceneId, stage);
-    const claimed = await redis.set(completedKey, outcome, 'NX', 'EX', LEASE_TTLS[stage] || 1800);
-    if (!claimed) {
-        log(`FINALIZE_SKIPPED: ${bookId}/${chapterId}/${sceneId}:${stage} — already finalized (marker exists)`);
+    if (!dispatchId || typeof dispatchId !== 'string') {
+        return { finalized: false, reason: 'missing_dispatch_id' };
+    }
+
+    const completedKey = getDispatchCompletedKey(bookId, chapterId, sceneId, stage, dispatchId);
+    if (await redis.get(completedKey)) {
         return { finalized: false, reason: 'already_finalized' };
+    }
+
+    const metadataKey = getDispatchMetaKey(bookId, chapterId, sceneId, stage);
+    const metadataRaw = await redis.get(metadataKey);
+    if (!metadataRaw) {
+        return { finalized: false, reason: 'no_active_dispatch' };
+    }
+
+    let metadata;
+    try {
+        metadata = JSON.parse(metadataRaw);
+    } catch (parseErr) {
+        return { finalized: false, reason: 'invalid_dispatch_metadata' };
+    }
+
+    if (metadata.dispatch_id !== dispatchId) {
+        return {
+            finalized: false,
+            reason: 'stale_dispatch',
+            currentDispatchId: metadata.dispatch_id || null
+        };
+    }
+
+    const leaseKey = metadata.lease_key || getLeaseKey(bookId, chapterId, sceneId, stage);
+    const leaseToken = metadata.lease_token || null;
+    if (metadata.quota_owned === true && !leaseToken) {
+        return { finalized: false, reason: 'ownership_metadata_incomplete' };
+    }
+    const currentLeaseToken = await redis.get(leaseKey);
+    if (currentLeaseToken && (!leaseToken || currentLeaseToken !== leaseToken)) {
+        return { finalized: false, reason: 'lease_token_mismatch' };
+    }
+
+    // ── 1. Atomically claim finalization and release Redis-owned resources ──
+    const markerValue = JSON.stringify({
+        outcome,
+        dispatch_id: dispatchId,
+        finalized_at: Date.now()
+    });
+    const claimResult = Number(await claimFinalization(
+        redis,
+        metadataKey,
+        completedKey,
+        leaseKey,
+        getActiveCounterKey(stage),
+        metadataRaw,
+        markerValue,
+        LEASE_TTLS[stage] || 1800,
+        leaseToken,
+        metadata.quota_owned === true
+    ));
+    if (claimResult === 2) {
+        return { finalized: false, reason: 'already_finalized' };
+    }
+    if (claimResult === 0) {
+        return { finalized: false, reason: 'no_active_dispatch' };
+    }
+    if (claimResult === -1) {
+        return { finalized: false, reason: 'dispatch_metadata_changed' };
+    }
+    if (claimResult === -2) {
+        return { finalized: false, reason: 'lease_token_mismatch' };
+    }
+    if (claimResult !== 1) {
+        throw new Error(`finalizeDispatch: unexpected claim result '${claimResult}'`);
     }
 
     log(`FINALIZE_${outcome.toUpperCase()}: ${bookId}/${chapterId}/${sceneId}:${stage}${reason ? ' (' + reason + ')' : ''}`);
@@ -637,49 +810,56 @@ async function finalizeDispatch(redis, bookId, chapterId, sceneId, stage, option
     // ── 2. Stop renewal ──
     stopDispatchRenewal(bookId, chapterId, sceneId, stage);
 
-    // ── 3. Release lease по token ──
-    const { leaseKey, token } = await getLeaseData(redis, bookId, chapterId, sceneId, stage);
-    if (token && leaseKey) {
-        await releaseStageLease(redis, leaseKey, token);
-    }
+    const cleanupErrors = [];
 
-    // ── 4. Release quota ──
-    await releaseQuota(redis, stage);
-
-    // ── 5-6. Circuit breaker + retry budget согласно outcome ──
+    // ── 3-4. Circuit breaker + retry budget согласно outcome ──
     if (outcome === 'success') {
-        const circuitResult = await circuitBreaker.recordSuccess(redis, stage);
-        if (circuitResult.state === circuitBreaker.CircuitState.HALF_OPEN && circuitResult.testRequest) {
-            log(`CIRCUIT_HALF_OPEN_TEST: ${stage} (test request ${circuitResult.halfOpenCount})`);
+        try {
+            const circuitResult = await circuitBreaker.recordSuccess(redis, stage);
+            if (circuitResult.state === circuitBreaker.CircuitState.HALF_OPEN && circuitResult.testRequest) {
+                log(`CIRCUIT_HALF_OPEN_TEST: ${stage} (test request ${circuitResult.halfOpenCount})`);
+            }
+        } catch (circuitErr) {
+            cleanupErrors.push(`circuit:${circuitErr.message}`);
+            warn(`recordSuccess failed: ${circuitErr.message}`);
         }
         // Success не расходует retry budget
     } else if (outcome === 'failure') {
-        await circuitBreaker.recordFailure(redis, stage);
+        try {
+            await circuitBreaker.recordFailure(redis, stage);
+        } catch (circuitErr) {
+            cleanupErrors.push(`circuit:${circuitErr.message}`);
+            warn(`recordFailure failed: ${circuitErr.message}`);
+        }
 
         // T2.8: Расходуем retry budget ровно один раз на принятый failure
         try {
-            const budgetResult = await retryBudget.consumeRetryBudget(redis, bookId, chapterId, sceneId, stage, failureType || 'transient', workerId);
+            await retryBudget.consumeRetryBudget(redis, bookId, chapterId, sceneId, stage, failureType || 'transient', workerId);
             log(`RETRY_BUDGET_CONSUMED: ${bookId}/${chapterId}/${sceneId}:${stage} (type=${failureType || 'transient'})`);
         } catch (budgetErr) {
+            cleanupErrors.push(`retry_budget:${budgetErr.message}`);
             warn(`consumeRetryBudget failed: ${budgetErr.message}`);
         }
     }
     // 'cancelled': не трогаем circuit breaker, не расходуем retry budget
 
-    // ── 7. Delete metadata ──
-    await deleteDispatchMetadata(redis, bookId, chapterId, sceneId, stage);
-
-    // ── 8. Journal event ──
+    // ── 5. Journal event ──
     const eventSuffix = outcome === 'success' ? 'COMPLETED' : outcome === 'failure' ? 'FAILED' : 'CANCELLED';
-    await logDispatchEvent(redis, bookId, chapterId, sceneId, eventSuffix, stage, {
-        outcome,
-        reason: reason || null,
-        failureType: failureType || null,
-        workerId: workerId || null,
-        dispatchId: dispatchId || null
-    });
+    try {
+        await logDispatchEvent(redis, bookId, chapterId, sceneId, eventSuffix, stage, {
+            outcome,
+            reason: reason || null,
+            failureType: failureType || null,
+            workerId: workerId || null,
+            dispatchId,
+            cleanupErrors
+        });
+    } catch (journalErr) {
+        cleanupErrors.push(`journal:${journalErr.message}`);
+        warn(`finalization journal write failed: ${journalErr.message}`);
+    }
 
-    return { finalized: true, reason: outcome };
+    return { finalized: true, reason: outcome, cleanupErrors };
 }
 
 /**
@@ -688,16 +868,22 @@ async function finalizeDispatch(redis, bookId, chapterId, sceneId, stage, option
  * Все новые вызовы должны использовать finalizeDispatch.
  */
 async function markDispatchCompleted(redis, bookId, chapterId, sceneId, stage) {
-    return finalizeDispatch(redis, bookId, chapterId, sceneId, stage, { outcome: 'success' });
+    const metadata = await getDispatchMetadata(redis, bookId, chapterId, sceneId, stage);
+    return finalizeDispatch(redis, bookId, chapterId, sceneId, stage, {
+        outcome: 'success',
+        dispatchId: metadata?.dispatch_id
+    });
 }
 
 /**
  * T2: markDispatchFailed — обёртка над finalizeDispatch('failure').
  */
 async function markDispatchFailed(redis, bookId, chapterId, sceneId, stage, error) {
+    const metadata = await getDispatchMetadata(redis, bookId, chapterId, sceneId, stage);
     return finalizeDispatch(redis, bookId, chapterId, sceneId, stage, {
         outcome: 'failure',
-        reason: error
+        reason: error,
+        dispatchId: metadata?.dispatch_id
     });
 }
 
@@ -711,31 +897,42 @@ async function markDispatchFailed(redis, bookId, chapterId, sceneId, stage, erro
  * T6: Останавливает in-memory renewal timer, чтобы избежать утечки.
  */
 async function cancelActiveDispatch(redis, bookId, chapterId, sceneId, stage, reason = 'cancelled') {
-    const { leaseKey, token } = await getLeaseData(redis, bookId, chapterId, sceneId, stage);
-
-    if (token && leaseKey) {
-        log(`CANCEL_DISPATCH: ${bookId}/${chapterId}/${sceneId}:${stage} — releasing lease + quota`);
-        await releaseStageLease(redis, leaseKey, token);
-        await releaseQuota(redis, stage);
-    } else {
-        log(`CANCEL_DISPATCH: ${bookId}/${chapterId}/${sceneId}:${stage} — no active lease, skipping quota release`);
+    const metadata = await getDispatchMetadata(redis, bookId, chapterId, sceneId, stage);
+    if (metadata?.dispatch_id) {
+        const result = await finalizeDispatch(redis, bookId, chapterId, sceneId, stage, {
+            outcome: 'cancelled',
+            dispatchId: metadata.dispatch_id,
+            reason
+        });
+        return {
+            cancelled: result.finalized,
+            hadLease: !!metadata.lease_token,
+            quotaReleased: result.finalized && metadata.quota_owned === true,
+            dispatchId: metadata.dispatch_id,
+            reason: result.reason
+        };
     }
 
-    // T6: Останавливаем in-memory renewal timer
+    const { leaseKey, token } = await getLeaseData(redis, bookId, chapterId, sceneId, stage);
     stopDispatchRenewal(bookId, chapterId, sceneId, stage);
-
-    // Save cancellation in metadata (short-lived record for identity check)
-    const completedKey = getDispatchCompletedKey(bookId, chapterId, sceneId, stage);
-    await redis.set(completedKey, 'cancelled', 'NX', 'EX', LEASE_TTLS[stage] || 1800).catch(() => {});
-
-    await deleteDispatchMetadata(redis, bookId, chapterId, sceneId, stage);
-
-    await logDispatchEvent(redis, bookId, chapterId, sceneId, 'CANCELLED', stage, {
-        reason,
-        finalizedBy: 'cancelActiveDispatch'
-    }).catch(() => {});
-
-    return { cancelled: true, hadLease: !!(token && leaseKey) };
+    if (token) {
+        await releaseStageLease(redis, leaseKey, token);
+        warn(`CANCEL_ORPHAN_LEASE: ${bookId}/${chapterId}/${sceneId}:${stage} — quota ownership unknown; counter reconciliation required`);
+        return {
+            cancelled: true,
+            hadLease: true,
+            quotaReleased: false,
+            dispatchId: null,
+            reason: 'orphan_lease'
+        };
+    }
+    return {
+        cancelled: false,
+        hadLease: false,
+        quotaReleased: false,
+        dispatchId: null,
+        reason: 'no_active_dispatch'
+    };
 }
 
 /**
@@ -745,34 +942,40 @@ async function cancelActiveDispatch(redis, bookId, chapterId, sceneId, stage, re
  * @param {Array<{chapter_id:string,scene_id:string}>} scenes - scenes to clear
  */
 async function clearLeasesForScenes(redis, bookId, scenes) {
-    if (!scenes || scenes.length === 0) return { cancelled: 0, quotaReleased: 0 };
+    if (!scenes || scenes.length === 0) {
+        return { cancelled: 0, quotaReleased: 0, dispatchIds: [] };
+    }
     const stages = ['audio', 'image', 'video'];
     let cancelled = 0;
     let quotaReleased = 0;
+    const dispatchIds = [];
 
     for (const s of scenes) {
         for (const stage of stages) {
-            const { leaseKey, token } = await getLeaseData(redis, bookId, s.chapter_id, s.scene_id, stage);
-            if (token && leaseKey) {
-                // T5: есть реальный dispatch — освобождаем ресурсы
-                await releaseStageLease(redis, leaseKey, token);
-                await releaseQuota(redis, stage);
+            const result = await cancelActiveDispatch(
+                redis,
+                bookId,
+                s.chapter_id,
+                s.scene_id,
+                stage,
+                'scene_reset'
+            );
+            if (result.cancelled) {
+                cancelled++;
+            }
+            if (result.quotaReleased) {
                 quotaReleased++;
             }
-            // T6: Останавливаем in-memory renewal timer (идемпотентно)
-            stopDispatchRenewal(bookId, s.chapter_id, s.scene_id, stage);
-
-            // В любом случае удаляем metadata и completion marker
-            await deleteDispatchMetadata(redis, bookId, s.chapter_id, s.scene_id, stage);
-            await redis.del(getDispatchCompletedKey(bookId, s.chapter_id, s.scene_id, stage)).catch(() => {});
-            cancelled++;
+            if (result.dispatchId) {
+                dispatchIds.push(result.dispatchId);
+            }
         }
     }
 
     if (cancelled > 0) {
         log(`CLEAR_SCENE_LEASES: ${bookId} — ${cancelled} stages cancelled, ${quotaReleased} quota slots released for ${scenes.length} scene(s)`);
     }
-    return { cancelled, quotaReleased };
+    return { cancelled, quotaReleased, dispatchIds };
 }
 
 /**
@@ -781,6 +984,7 @@ async function clearLeasesForScenes(redis, bookId, scenes) {
 async function clearAllLeasesForBook(redis, bookId) {
     let deleted = 0;
     let quotaReleased = 0;
+    const dispatchIds = [];
     let cursor = 0;
 
     // Scan all dispatch leases for this book
@@ -803,9 +1007,18 @@ async function clearAllLeasesForBook(redis, bookId) {
 
                 const token = await redis.get(key);
                 if (token) {
-                    await releaseStageLease(redis, key, token);
-                    await releaseQuota(redis, stage);
-                    quotaReleased++;
+                    const result = await cancelActiveDispatch(
+                        redis,
+                        bookId,
+                        chapterId,
+                        sceneId,
+                        stage,
+                        'book_reset'
+                    );
+                    if (result.cancelled && result.reason !== 'orphan_lease') {
+                        quotaReleased++;
+                    }
+                    if (result.dispatchId) dispatchIds.push(result.dispatchId);
                 }
             }
             await redis.del(key).catch(() => {});
@@ -813,8 +1026,9 @@ async function clearAllLeasesForBook(redis, bookId) {
         }
     } while (cursor !== 0);
 
-    // Delete metadata and completion markers
-    for (const prefix of [DISPATCH_META_PREFIX, DISPATCH_COMPLETED_PREFIX]) {
+    // Delete orphan metadata. Per-dispatch completion markers are retained until TTL
+    // so late callbacks remain recognizable as finalized/stale.
+    for (const prefix of [DISPATCH_META_PREFIX]) {
         cursor = 0;
         const pattern = `${prefix}:${bookId}:*`;
         do {
@@ -831,7 +1045,7 @@ async function clearAllLeasesForBook(redis, bookId) {
     if (deleted > 0 || quotaReleased > 0) {
         log(`CLEAR_ALL_LEASES: ${bookId} — ${deleted} keys deleted, ${quotaReleased} quota slots released`);
     }
-    return { deleted, quotaReleased };
+    return { deleted, quotaReleased, dispatchIds };
 }
 
 // ======================================================
@@ -1005,6 +1219,7 @@ module.exports = {
     createDispatchMetadata,
     setDispatchMetadata,
     getDispatchMetadata,
+    verifyDispatchIdentity,
     deleteDispatchMetadata,
 
     // Active counters (backpressure)

@@ -20,131 +20,6 @@ module.exports = function(app, redis, deps) {
     } = deps;
     const { log, pad, collectScenes, buildSegments } = utils;
 
-    // ── Clear GPU hub stale jobs ────────────────────────
-    // Shared between regenerate and cancel-generation.
-    // Without this, old jobs (possibly with wrong build_id) stay in the
-    // GPU hub queue and get processed, and new submissions with the same
-    // job_id are rejected (animastor:job:* SET NX EX 3600 dedup).
-    // Since backend & GPU hub share the same Redis, we clean up directly.
-    //
-    // @param {Array<{chapter_id:string,scene_id:string}>} [sceneFilter]
-    //   If provided, only clears jobs for these specific scenes.
-    //   Used by regenerate with filteredDirty so other scenes' jobs survive.
-    //   cancel-generation omits this to wipe everything.
-    async function clearGpuHubQueues(redis, bookId, sceneFilter) {
-        // Build per-scene prefixes: bookId_chapterId_sceneId_ (used for precise filtering)
-        const hasFilter = sceneFilter && sceneFilter.length > 0;
-        const scenePrefixes = hasFilter
-            ? new Set(sceneFilter.map(s => `${bookId}_${s.chapter_id}_${s.scene_id}_`))
-            : null;
-        const jobIdMatch = scenePrefixes
-            ? (jobId) => { for (const p of scenePrefixes) { if (jobId.startsWith(p)) return true; } return false; }
-            : (jobId) => jobId.startsWith(bookId + '_');
-
-        // 1. Clear animastor:job:* dedup keys
-        let cursor = '0';
-        let total = 0;
-        do {
-            const [nextCursor, keys] = await redis.scan(cursor, 'MATCH', `animastor:job:${bookId}_*`, 'COUNT', 100);
-            cursor = nextCursor;
-            const toDelete = [];
-            for (const key of keys) {
-                const jobId = key.replace(/^animastor:job:/, '');
-                if (jobIdMatch(jobId)) toDelete.push(key);
-            }
-            if (toDelete.length > 0) {
-                await redis.del(toDelete);
-                total += toDelete.length;
-            }
-        } while (cursor !== '0');
-        if (total > 0) log(`[GPU-HUB] Cleared ${total} animastor:job:* dedup keys`);
-
-        // 2. Clear animastor:result-processed:* dedup keys
-        cursor = '0';
-        total = 0;
-        do {
-            const [nextCursor, keys] = await redis.scan(cursor, 'MATCH', `animastor:result-processed:${bookId}_*`, 'COUNT', 100);
-            cursor = nextCursor;
-            const toDelete = [];
-            for (const key of keys) {
-                const jobId = key.replace(/^animastor:result-processed:/, '').split(':')[0];
-                if (jobIdMatch(jobId)) toDelete.push(key);
-            }
-            if (toDelete.length > 0) {
-                await redis.del(toDelete);
-                total += toDelete.length;
-            }
-        } while (cursor !== '0');
-        if (total > 0) log(`[GPU-HUB] Cleared ${total} animastor:result-processed:* keys`);
-
-        // 3. Clear GPU hub task queues (filter by scene prefix in job_id)
-        const queueKeys = ['animastor:queue:audio', 'animastor:queue:image', 'animastor:queue:video'];
-        for (const qkey of queueKeys) {
-            const items = await redis.lrange(qkey, 0, -1);
-            const remaining = [];
-            let cleaned = 0;
-            for (const item of items) {
-                try {
-                    const parsed = JSON.parse(item);
-                    if (parsed.job_id && jobIdMatch(parsed.job_id)) {
-                        cleaned++;
-                    } else {
-                        remaining.push(item);
-                    }
-                } catch (_) { remaining.push(item); }
-            }
-            if (cleaned > 0) {
-                await redis.del(qkey);
-                if (remaining.length > 0) {
-                    await redis.rpush(qkey, ...remaining);
-                }
-                log(`[GPU-HUB] Cleaned ${cleaned} stale jobs from ${qkey}`);
-            }
-        }
-
-        // 4. Clear animastor:running entries (filter by scene prefix)
-        let hcursor = '0';
-        let runningCleaned = 0;
-        do {
-            const [nextCursor, entries] = await redis.hscan('animastor:running', hcursor, 'COUNT', 100);
-            hcursor = nextCursor;
-            for (let i = 0; i < entries.length; i += 2) {
-                if (jobIdMatch(entries[i])) {
-                    await redis.hdel('animastor:running', entries[i]);
-                    runningCleaned++;
-                }
-            }
-        } while (hcursor !== '0');
-        if (runningCleaned > 0) log(`[GPU-HUB] Removed ${runningCleaned} running jobs`);
-
-        // 5. Clear GPU hub result keys for this book.
-        // Key format: animastor:result:{build_id}:{bookId}:{chapterId}:{sceneId}:{type}
-        // We need to match results that contain :{scene_chapter_scene}_ in the suffix.
-        cursor = '0';
-        total = 0;
-        do {
-            const [nextCursor, keys] = await redis.scan(cursor, 'MATCH', `animastor:result:*:${bookId}_*`, 'COUNT', 100);
-            cursor = nextCursor;
-            const toDelete = [];
-            for (const key of keys) {
-                // Key format: animastor:result:{bid}:{bookId}:{chapterId}:{sceneId}:{type}
-                // Extract the chapterId:sceneId part after bookId
-                const parts = key.split(':');
-                // parts[0]='animastor', parts[1]='result', parts[2]=build_id, parts[3]=bookId, parts[4]=chapterId, parts[5]=sceneId
-                if (parts.length >= 6 && parts[3] === bookId) {
-                    if (!hasFilter || scenePrefixes.has(`${bookId}_${parts[4]}_${parts[5]}_`)) {
-                        toDelete.push(key);
-                    }
-                }
-            }
-            if (toDelete.length > 0) {
-                await redis.del(toDelete);
-                total += toDelete.length;
-            }
-        } while (cursor !== '0');
-        if (total > 0) log(`[GPU-HUB] Cleared ${total} animastor:result:* keys`);
-    }
-
     // ======================================================
     // GENERATE NEXT (slide window)
     // ======================================================
@@ -240,16 +115,18 @@ module.exports = function(app, redis, deps) {
             // Also clear GPU hub stale jobs via HTTP endpoint (T4: владелец ключей — gpu-hub)
             try {
                 const hubUrl = `${config.HUB_URL}/queue/clear?book_id=${bookId}`;
-                const hubRes = await fetch(hubUrl, { method: 'DELETE' });
+                const hubOptions = { method: 'DELETE', headers: {} };
+                if (config.GPU_HUB_API_KEY) {
+                    hubOptions.headers['x-api-key'] = config.GPU_HUB_API_KEY;
+                }
+                const hubRes = await fetch(hubUrl, hubOptions);
                 if (hubRes.ok) {
                     log(`[CANCEL-GENERATION] GPU hub queues cleared via HTTP for ${bookId}`);
                 } else {
-                    log(`[CANCEL-GENERATION] GPU hub queue clear returned ${hubRes.status} — falling back to direct`);
-                    await clearGpuHubQueues(redis, bookId);
+                    throw new Error(`GPU hub queue clear returned ${hubRes.status}`);
                 }
             } catch (hubErr) {
-                log(`[CANCEL-GENERATION] GPU hub HTTP error: ${hubErr.message} — falling back to direct`);
-                await clearGpuHubQueues(redis, bookId);
+                throw new Error(`GPU hub cleanup failed: ${hubErr.message}`);
             }
 
             log(`[CANCEL-GENERATION] ${bookId}: generation cancelled, counters + leases reset`);

@@ -21,6 +21,7 @@ const AssetState = {
     FAILED: 'failed',
     PLACEHOLDER: 'placeholder'
 };
+const ASSET_STATES = new Set(Object.values(AssetState));
 
 // ======================================================
 // LOGGING HELPERS
@@ -125,6 +126,10 @@ async function setAssetState(redis, bookId, chapterId, sceneId, asset, status) {
         error(`Invalid asset type: ${asset}. Must be one of: ${ASSETS.join(', ')}`);
         return null;
     }
+    if (!ASSET_STATES.has(status)) {
+        error(`Invalid asset status: ${status}. Must be one of: ${[...ASSET_STATES].join(', ')}`);
+        return null;
+    }
 
     const key = `${ASSET_STATE_KEY_PREFIX}:${bookId}:${chapterId}:${sceneId}`;
     await redis.hset(key, asset, status);
@@ -143,6 +148,21 @@ async function setAssetState(redis, bookId, chapterId, sceneId, asset, status) {
  * @returns {Promise<{audio: string, image: string, video: string}>}
  */
 async function setAssetStates(redis, bookId, chapterId, sceneId, updates) {
+    if (!updates || typeof updates !== 'object' || Array.isArray(updates)) {
+        error('Invalid asset state updates: expected an object');
+        return null;
+    }
+    for (const [asset, status] of Object.entries(updates)) {
+        if (!ASSETS.includes(asset)) {
+            error(`Invalid asset type: ${asset}. Must be one of: ${ASSETS.join(', ')}`);
+            return null;
+        }
+        if (!ASSET_STATES.has(status)) {
+            error(`Invalid asset status for ${asset}: ${status}. Must be one of: ${[...ASSET_STATES].join(', ')}`);
+            return null;
+        }
+    }
+
     const key = `${ASSET_STATE_KEY_PREFIX}:${bookId}:${chapterId}:${sceneId}`;
     await redis.hset(key, updates);
     log(`ASSET STATES: ${bookId}/${chapterId}/${sceneId} -> ${JSON.stringify(updates)}`);

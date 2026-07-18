@@ -37,7 +37,7 @@ async function startScene(redis, scene, loadedBook, buildId) {
 }
 
 // T3: Каждый executor возвращает { dispatched: true/false, jobs, reason }
-async function executeAudioDispatch(redis, scene, loadedBook, buildId) {
+async function executeAudioDispatch(redis, scene, loadedBook, buildId, dispatchId) {
     const bookId = scene.book_id;
     const chapterId = scene.chapter_id;
     const sceneId = scene.scene_id;
@@ -81,7 +81,7 @@ async function executeAudioDispatch(redis, scene, loadedBook, buildId) {
         return { dispatched: false, jobs: 0, reason: transResult.reason || 'phase_transition_rejected' };
     }
 
-    const result = await audio.generateSceneAudio(redis, sceneData, bookData, buildId, bookId);
+    const result = await audio.generateSceneAudio(redis, sceneData, bookData, buildId, bookId, dispatchId);
 
     if (result && result.generated) {
         await audioOrch.setWaitingChunks(redis, bookId, chapterId, sceneId);
@@ -90,15 +90,15 @@ async function executeAudioDispatch(redis, scene, loadedBook, buildId) {
     } else if (result && result.reason === 'already_ready') {
         await audioOrch.setDone(redis, bookId, chapterId, sceneId);
         log(`AUDIO_DISPATCH: ${bookId}/${chapterId}/${sceneId} — already ready`);
-        // T3.9: cache hit — результат уже готов, не считаем активным dispatch
-        return { dispatched: false, jobs: 0, reason: 'already_ready' };
+        const completion = await completeStage(redis, bookId, chapterId, sceneId, 'audio', buildId, dispatchId);
+        return { dispatched: false, jobs: 0, completed: completion.completed, reason: 'already_ready' };
     } else {
         warn(`AUDIO_DISPATCH: generateSceneAudio did not send jobs for ${bookId}/${chapterId}/${sceneId}`);
         return { dispatched: false, jobs: 0, reason: 'no_jobs_generated' };
     }
 }
 
-async function executeImageDispatch(redis, scene, loadedBook, buildId) {
+async function executeImageDispatch(redis, scene, loadedBook, buildId, dispatchId) {
     const bookId = scene.book_id;
     const chapterId = scene.chapter_id;
     const sceneId = scene.scene_id;
@@ -136,8 +136,20 @@ async function executeImageDispatch(redis, scene, loadedBook, buildId) {
     // T3: generateSceneIUImages возвращает количество отправленных jobs
     let jobsSent = 0;
     try {
-        const genResult = await image.generateSceneIUImages(redis, sceneData, bookData, buildId, bookId, dirtyUnitIds);
-        jobsSent = (genResult && genResult.jobsSent) || 0;
+        const genResult = await image.generateSceneIUImages(
+            redis,
+            sceneData,
+            bookData,
+            buildId,
+            bookId,
+            dirtyUnitIds,
+            dispatchId
+        );
+        jobsSent = (genResult && genResult.sentCount) || 0;
+        if (jobsSent === 0 && genResult.total > 0 && genResult.cachedCount === genResult.total) {
+            const completion = await completeStage(redis, bookId, chapterId, sceneId, 'image', buildId, dispatchId);
+            return { dispatched: false, jobs: 0, completed: completion.completed, reason: 'cache_hit' };
+        }
     } catch (genErr) {
         warn(`IMAGE_DISPATCH: generateSceneIUImages error for ${bookId}/${chapterId}/${sceneId}: ${genErr.message}`);
         return { dispatched: false, jobs: 0, reason: 'generation_error' };
@@ -152,7 +164,7 @@ async function executeImageDispatch(redis, scene, loadedBook, buildId) {
     return { dispatched: false, jobs: 0, reason: 'no_jobs_sent' };
 }
 
-async function executeVideoDispatch(redis, scene, loadedBook, buildId) {
+async function executeVideoDispatch(redis, scene, loadedBook, buildId, dispatchId) {
     const bookId = scene.book_id;
     const chapterId = scene.chapter_id;
     const sceneId = scene.scene_id;
@@ -175,7 +187,7 @@ async function executeVideoDispatch(redis, scene, loadedBook, buildId) {
     }
 
     const wfLoader = require('../workflows/workflow-loader');
-    const videoResult = await video.generateVideoAnimation(sceneData, bookData, buildId, wfLoader.workflows);
+    const videoResult = await video.generateVideoAnimation(sceneData, bookData, buildId, wfLoader.workflows, dispatchId);
 
     if (!videoResult.success) {
         warn(`VIDEO_GENERATION: ${bookId}/${chapterId}/${sceneId} failed: ${videoResult.reason || 'unknown'}`);
@@ -191,8 +203,12 @@ async function executeVideoDispatch(redis, scene, loadedBook, buildId) {
     let sentCount = 0;
     for (const jobSpec of jobSpecs) {
         try {
-            await gpu.sendUnified(jobSpec);
-            sentCount++;
+            const sendResult = await gpu.sendUnified(jobSpec);
+            if (sendResult.sent) {
+                sentCount++;
+            } else {
+                warn(`VIDEO_DISPATCH: Hub rejected job ${jobSpec.job_id}: ${sendResult.error || 'unknown'}`);
+            }
         } catch (sendErr) {
             warn(`VIDEO_DISPATCH: sendUnified failed for job ${jobSpec.job_id}: ${sendErr.message}`);
         }
@@ -245,6 +261,9 @@ async function dispatchStage(redis, scene, loadedBook, buildId, overrideStage, d
     }
 
     result = result || { dispatched: false, reason: 'no_result', jobs: 0 };
+    if (!result.dispatched && !result.completed) {
+        await setScenePending(redis, bookId, chapterId, sceneId, overrideStage, buildId);
+    }
     result.dispatchId = dispatchId; // T4: привязываем dispatchId к результату
     log(`DISPATCH_RESULT: ${bookId}/${chapterId}/${sceneId} ${overrideStage}: dispatched=${result.dispatched}, jobs=${result.jobs}, reason=${result.reason || 'ok'}`);
     return result;

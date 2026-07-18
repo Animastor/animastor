@@ -1,7 +1,7 @@
 # TODO: стабилизация системы оркестрации
 
 **Дата:** 2026-07-17  
-**Статус:** T0 ✓ T1 ✓ T2 ✓ T3 ✓ T4 ✓ T5 ✓ T6 ✓ T7 ✓ T8 ✓ T9 ✓ T10 ✓ — ВСЕ ЭТАПЫ ВЫПОЛНЕНЫ  
+**Статус:** T0 ✓ T1 ✓ T2 ✓ T3 ✓ T4 ✓ T5 ✓ T6 ✓ T7 ✓ T8 ✓ T9 ✓ T10 ✓ — ВСЕ ЭТАПЫ ВЫПОЛНЕНЫ (571 passing)  
 **Основание:** `docs/03-audit/ORCHESTRATION_STABILIZATION_AUDIT.md`  
 **Область:** `backend/src/orchestration`, `backend/src/runtime`,
 `backend/src/services`, `gpu-hub`, `worker`  
@@ -865,53 +865,53 @@ restoreUnsafe
 
 ### Реализация auth
 
-- [ ] **T9.1 Выбрать одно имя секрета: `GPU_HUB_API_KEY`.**
-- [ ] **T9.2 Добавить placeholder в `.env.example`.**
-- [ ] **T9.3 Передать key в backend container.**
-- [ ] **T9.4 Передать тот же key в GPU Hub container.**
-- [ ] **T9.5 Заменить внутреннее `API_KEY` env чтение GPU Hub на
+- [x] **T9.1 Выбрать одно имя секрета: `GPU_HUB_API_KEY`.**
+- [x] **T9.2 Добавить placeholder в `.env.example`.**
+- [x] **T9.3 Передать key в backend container.**
+- [x] **T9.4 Передать тот же key в GPU Hub container.**
+- [x] **T9.5 Заменить внутреннее `API_KEY` env чтение GPU Hub на
   `GPU_HUB_API_KEY` либо сделать явный короткий migration.**
-- [ ] **T9.6 Добавить `x-api-key` во все backend requests к защищённым GPU Hub routes.**
-- [ ] **T9.7 Найти все `/queue/clear` callers и перевести их одновременно.**
-- [ ] **T9.8 Не передавать key в query string.** Использовать только header и не логировать
+- [x] **T9.6 Добавить `x-api-key` во все backend requests к защищённым GPU Hub routes.**
+- [x] **T9.7 Найти все `/queue/clear` callers и перевести их одновременно.**
+- [x] **T9.8 Не передавать key в query string.** Использовать только header и не логировать
   значение.
-- [ ] **T9.9 При заданном key fail closed.** Неверный или отсутствующий header возвращает
+- [x] **T9.9 При заданном key fail closed.** Неверный или отсутствующий header возвращает
   401/403 и не изменяет очередь.
 
 ### Реализация queue ownership
 
-- [ ] **T9.10 Добавить структурированные ownership fields в queue record.** Минимум:
+- [x] **T9.10 Добавить структурированные ownership fields в queue record.** Минимум:
   `book_id`, `chapter_id`, `scene_id`, `stage`, `dispatch_id`.
-- [ ] **T9.11 Не извлекать `book_id` через `job_id.startsWith()`.**
-- [ ] **T9.12 Фильтровать queued jobs по точному `book_id` или `dispatch_id`.**
-- [ ] **T9.13 Фильтровать running jobs по тем же structured fields.**
-- [ ] **T9.14 Исправить cleanup result keys.** Учитывать реальный формат
+- [x] **T9.11 Не извлекать `book_id` через `job_id.startsWith()`.**
+- [x] **T9.12 Фильтровать queued jobs по точному `book_id` или `dispatch_id`.**
+- [x] **T9.13 Фильтровать running jobs по тем же structured fields.**
+- [x] **T9.14 Исправить cleanup result keys.** Учитывать реальный формат
   `animastor:result:<buildId>:<bookId>:...`.
-- [ ] **T9.15 Использовать SCAN вместо KEYS для result cleanup.**
-- [ ] **T9.16 Не удалять result другого build или похожего book id.**
-- [ ] **T9.17 Возвращать structured cleanup summary.** Количество удалённых queued,
+- [x] **T9.15 Использовать SCAN вместо KEYS для result cleanup.**
+- [x] **T9.16 Не удалять result другого build или похожего book id.**
+- [x] **T9.17 Возвращать structured cleanup summary.** Количество удалённых queued,
   running, result и dedup records.
-- [ ] **T9.18 Согласовать cancellation с T5.** Предпочтительно удалять по `dispatch_id`;
+- [x] **T9.18 Согласовать cancellation с T5.** Предпочтительно удалять по `dispatch_id`;
   очистка всей книги остаётся явной administrative operation.
 
 ### Тесты
 
-- [ ] Queue clear без key отклоняется при включённой auth.
-- [ ] Queue clear с неверным key отклоняется.
-- [ ] Queue clear с правильным key выполняется.
-- [ ] Backend отправляет key header.
-- [ ] Book `abc` cleanup не удаляет book `abc2`.
-- [ ] Dispatch cleanup не удаляет другой dispatch той же сцены.
-- [ ] Result key текущего build удаляется.
-- [ ] Result key другого build остаётся.
-- [ ] Cleanup summary соответствует фактически удалённым records.
+- [x] Queue clear без key отклоняется при включённой auth.
+- [x] Queue clear с неверным key отклоняется.
+- [x] Queue clear с правильным key выполняется.
+- [x] Backend отправляет key header.
+- [x] Book `abc` cleanup не удаляет book `abc2`.
+- [x] Dispatch cleanup не удаляет другой dispatch той же сцены.
+- [x] Result key текущего build удаляется.
+- [x] Result key другого build остаётся.
+- [x] Cleanup summary соответствует фактически удалённым records.
 
 ### Критерий приёмки
 
-- [ ] Compose не запускает открытый administrative `/queue/clear`.
-- [ ] Backend и GPU Hub используют одно имя env.
-- [ ] Ownership queue records является структурированным.
-- [ ] Prefix collision и неверный result pattern покрыты regression tests.
+- [x] Compose не запускает открытый administrative `/queue/clear`.
+- [x] Backend и GPU Hub используют одно имя env.
+- [x] Ownership queue records является структурированным.
+- [x] Prefix collision и неверный result pattern покрыты regression tests.
 
 ### Рекомендуемые коммиты
 
@@ -939,7 +939,7 @@ restoreUnsafe
 
 ### Локальные тесты
 
-- [x] **`cd backend && npm test`** — **562 passing, 0 failing**.
+- [x] **`cd backend && npm test`** — **571 passing, 0 failing**.
 - [x] Callback validation regression suite.
 - [x] Dispatch finalization regression suite.
 - [x] Executor result regression suite.
@@ -979,11 +979,12 @@ started_at:
   числом.
 - [ ] Обновить lifecycle/system map только после фактического rollout удалённого worker.
 - [x] Зафиксировать production rollout order: **backend → GPU Hub → worker**.
+- [x] Обновить тесты dispatch ownership, protocol contract, executor acceptance.
 
 ### Финальный критерий готовности (локальная часть)
 
 - [x] Все production JS/CJS проходят syntax check.
-- [x] Backend unit/integration suite проходит (562 теста).
+- [x] Backend unit/integration suite проходит (571 тест).
 - [x] Любой dispatch имеет identity (dispatchId) и один final outcome.
 - [x] Failure не записывается как success (finalizeDispatch('failure') → recordFailure).
 - [x] Retry budget реально ограничивает повторы (consumeRetryBudget в failure).

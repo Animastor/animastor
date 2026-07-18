@@ -81,7 +81,7 @@ function readImageAsBase64(buildId, imageName) {
 // Generates video using the appropriate multi-image LTX workflow.
 // Returns array of job specs, one per workflow group.
 // Each job spec includes params (workflow JSON) and assets (multiple images).
-async function generateVideoAnimation(sceneData, loadedBook, buildId, workflows) {
+async function generateVideoAnimation(sceneData, loadedBook, buildId, workflows, dispatchId) {
     // Build multi-image workflows
     const buildResult = await wfBuilder.buildVideoWorkflows(sceneData, loadedBook, buildId, workflows);
     if (!buildResult.success) {
@@ -120,6 +120,7 @@ async function generateVideoAnimation(sceneData, loadedBook, buildId, workflows)
             job_type: 'video',
             assets: { images },
             build_id: buildId,
+            dispatch_id: dispatchId,
             workflow_name: wfGroup.workflowName,
             unit_ids: wfGroup.units.map(u => u.id)
         });

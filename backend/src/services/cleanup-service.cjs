@@ -113,64 +113,12 @@ module.exports = function(redis, config, { log }) {
         return { released: false, reason: 'token_mismatch' };
     }
 
-    // ── Periodic cleanup of expired audio scene locks ──
-    async function cleanupExpiredAudioSceneLocks() {
-        const lockResult = await acquireCleanupLock();
-        if (!lockResult.acquired) {
-            console.log('⚠️ Cleanup already running (distributed lock held), skipping this cycle');
-            return;
-        }
-
-        try {
-            let cursor = 0;
-            do {
-                const result = await redis.scan(cursor, 'MATCH', 'animastor:audio-scene-failsafe:*', 'COUNT', 100);
-                cursor = parseInt(result[0], 10);
-                const keys = result[1];
-
-                for (const failsafeKey of keys) {
-                    const exists = await redis.exists(failsafeKey);
-                    if (exists) continue;
-
-                    const parts = failsafeKey.split(':');
-                    if (parts.length < 7) continue;
-
-                    const buildId = parts[3];
-                    const bookId = parts[4];
-                    const chapterId = parts[5];
-                    const sceneId = parts[6];
-
-                    const audioStatusKey = `animastor:scene-audio-status:${bookId}:${chapterId}:${sceneId}`;
-                    const audioStatus = await redis.get(audioStatusKey);
-
-                    if (audioStatus === 'ready') {
-                        const lockKey = `animastor:audio-scene-lock:${bookId}:${chapterId}:${sceneId}`;
-                        const current = await redis.get(lockKey);
-                        if (current) {
-                            const data = JSON.parse(current);
-                            const token = data?.token;
-                            if (token) {
-                                await redis.del(lockKey);
-                                log('✅ Stale audio lock released (audio ready):', lockKey);
-                            }
-                        }
-                    }
-                }
-            } while (cursor !== 0);
-        } catch (err) {
-            console.error('❌ Audio scene stale lock cleanup error:', err.message);
-        } finally {
-            await releaseCleanupLock();
-        }
-    }
-
-    // ── Start periodic cleanup ────────────────────────
-    // T6: cleanupExpiredAudioSceneLocks moved to reconciliation-engine.reconcileCycle Phase B.
-    // startCleanupInterval kept for backward compat, but does nothing —
-    // the reconcile cycle handles periodic cleanup.
+    // Audio generation locks already have their own TTL. The former failsafe
+    // scan could never observe an expired key because Redis removes it before SCAN.
+    // Keep this no-op entrypoint only for callers that still initialize cleanup.
     // @deprecated Use reconciliationEngine.reconcileCycle() instead.
     function startCleanupInterval() {
-        log('[CLEANUP] Periodic cleanup migrated to reconcileCycle (T6) — interval skipped');
+        log('[CLEANUP] Periodic cleanup is handled by reconcileCycle — interval skipped');
     }
 
     // ── Asset path resolution ─────────────────────────
@@ -239,7 +187,6 @@ module.exports = function(redis, config, { log }) {
         cleanupBuild,
         acquireCleanupLock,
         releaseCleanupLock,
-        cleanupExpiredAudioSceneLocks,
         startCleanupInterval,
         resolveAssetPath,
     };

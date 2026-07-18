@@ -69,7 +69,7 @@ async function beginStage(redis, scene, loadedBook, buildId, stage) {
 // 4. Исключение handler → failure, не success
 // 5. ok:false → НЕ ставит READY, не пишет PG
 // ======================================================
-async function completeStage(redis, bookId, chapterId, sceneId, stage, buildId) {
+async function completeStage(redis, bookId, chapterId, sceneId, stage, buildId, dispatchId) {
     const callbacks = require('./scene-callbacks');
     const dispatchEngine = require('../runtime/dispatch-engine');
     const state = require('../state');
@@ -84,6 +84,19 @@ async function completeStage(redis, bookId, chapterId, sceneId, stage, buildId) 
 
     if (!handler) {
         throw new Error(`orchestrator.completeStage: unknown stage '${stage}'`);
+    }
+
+    const identity = await dispatchEngine.verifyDispatchIdentity(
+        redis,
+        bookId,
+        chapterId,
+        sceneId,
+        stage,
+        dispatchId
+    );
+    if (!identity.valid) {
+        warn(`[COMPLETE-STAGE] Rejected ${bookId}/${chapterId}/${sceneId} ${stage}: ${identity.reason}`);
+        return { completed: false, reason: identity.reason };
     }
 
     let handlerResult;
@@ -112,7 +125,7 @@ async function completeStage(redis, bookId, chapterId, sceneId, stage, buildId) 
             handlerOk = true;
 
             // ── Handler succeeded — version gate (T1.11: fail-closed) ────
-            let shouldWriteReady = true;
+            let shouldWriteReady = false;
             try {
                 const { query: pgQuery } = require('../storage/postgres/database');
 
@@ -121,20 +134,22 @@ async function completeStage(redis, bookId, chapterId, sceneId, stage, buildId) 
                     WHERE book_id = $1 AND chapter_id = $2 AND scene_id = $3
                 `, [bookId, chapterId, sceneId]);
 
-                if (sceneResult.rows.length > 0) {
+                if (sceneResult.rows.length === 1) {
                     const sv = sceneResult.rows[0];
-                    const asset = await sceneAssetsRepo.getAsset(bookId, chapterId, sceneId, stage, buildId)
-                        || await sceneAssetsRepo.getAsset(bookId, chapterId, sceneId, stage);
+                    const asset = await sceneAssetsRepo.getAsset(bookId, chapterId, sceneId, stage, buildId);
 
                     if (asset) {
-                        if (asset.scene_content_version != null && sv.content_version != null &&
-                            asset.scene_content_version < sv.content_version) {
-                            shouldWriteReady = false;
-                        }
-                        if (asset.scene_audio_config_version != null && sv.audio_config_version != null &&
-                            asset.scene_audio_config_version < sv.audio_config_version) {
-                            shouldWriteReady = false;
-                        }
+                        const contentVersionConfirmed =
+                            asset.scene_content_version != null &&
+                            sv.content_version != null &&
+                            asset.scene_content_version >= sv.content_version;
+                        const audioVersionConfirmed =
+                            stage !== 'audio' || (
+                                asset.scene_audio_config_version != null &&
+                                sv.audio_config_version != null &&
+                                asset.scene_audio_config_version >= sv.audio_config_version
+                            );
+                        shouldWriteReady = contentVersionConfirmed && audioVersionConfirmed;
                     }
                 }
             } catch (pgErr) {
@@ -146,19 +161,18 @@ async function completeStage(redis, bookId, chapterId, sceneId, stage, buildId) 
             if (shouldWriteReady) {
                 // T1.10: PG markReady ПОСЛЕ version gate
                 const artifactPath = handlerResult.artifact?.path;
-                if (artifactPath) {
-                    try {
-                        await sceneAssetsRepo.markReady(bookId, chapterId, sceneId, stage, artifactPath);
-                        log(`[PG-${stage.toUpperCase()}-READY] ${bookId}/${chapterId}/${sceneId}: status=ready`);
-                    } catch (pgErr) {
-                        warn(`Failed to mark ${stage} READY in PG: ${pgErr.message}`);
-                    }
-                }
+                if (!artifactPath) {
+                    handlerOk = false;
+                    phaseReason = 'artifact_path_missing';
+                } else {
+                    await sceneAssetsRepo.markReady(bookId, chapterId, sceneId, stage, artifactPath);
+                    log(`[PG-${stage.toUpperCase()}-READY] ${bookId}/${chapterId}/${sceneId}: status=ready`);
 
-                await state.setAssetState(redis, bookId, chapterId, sceneId, stage, state.AssetState.READY);
-                log(`[COMPLETE-STAGE] ${bookId}/${chapterId}/${sceneId}: ${stage} → READY`);
-                phaseCompleted = true;
-                phaseReason = null;
+                    await state.setAssetState(redis, bookId, chapterId, sceneId, stage, state.AssetState.READY);
+                    log(`[COMPLETE-STAGE] ${bookId}/${chapterId}/${sceneId}: ${stage} → READY`);
+                    phaseCompleted = true;
+                    phaseReason = null;
+                }
             } else {
                 // T2: version gate stale — dispatch успешен, но artifact устарел.
                 // Финализируем как success (диспетчеризация выполнена), просто не ставим READY.
@@ -169,6 +183,11 @@ async function completeStage(redis, bookId, chapterId, sceneId, stage, buildId) 
                 // handlerOk остаётся true — финализируем как success
             }
         }
+    } catch (completionErr) {
+        handlerOk = false;
+        phaseCompleted = false;
+        phaseReason = `completion_error:${completionErr.message}`;
+        error(`completeStage failed for ${bookId}/${chapterId}/${sceneId} ${stage}: ${completionErr.message}`);
     } finally {
         // T2: finalizeDispatch — handlerOk определяет success/failure
         // Если handler вернул ok:true (handlerOk = true) — всегда success,
@@ -177,6 +196,7 @@ async function completeStage(redis, bookId, chapterId, sceneId, stage, buildId) 
             const outcome = handlerOk ? 'success' : 'failure';
             await dispatchEngine.finalizeDispatch(redis, bookId, chapterId, sceneId, stage, {
                 outcome,
+                dispatchId,
                 reason: handlerOk ? (phaseReason || undefined) : (phaseReason || 'handler_rejected')
             });
         } catch (dispErr) {
@@ -199,7 +219,7 @@ async function completeStage(redis, bookId, chapterId, sceneId, stage, buildId) 
 // circuit-breaker и retry-budget (dispatch-engine). Это зеркалит проверенный
 // путь исчерпания merge-ретраев в task-handler; сам failStage retry-политику
 // не содержит.
-async function failStage(redis, bookId, chapterId, sceneId, stage, buildId, reason = 'unknown', { redispatch = true } = {}) {
+async function failStage(redis, bookId, chapterId, sceneId, stage, buildId, reason = 'unknown', { redispatch = true, dispatchId } = {}) {
     const state = require('../state');
     const dispatchEngine = require('../runtime/dispatch-engine');
     const journal = require('./event-journal');
@@ -212,6 +232,19 @@ async function failStage(redis, bookId, chapterId, sceneId, stage, buildId, reas
     }[stage];
     if (!eventType) {
         throw new Error(`orchestrator.failStage: unknown stage '${stage}'`);
+    }
+
+    const identity = await dispatchEngine.verifyDispatchIdentity(
+        redis,
+        bookId,
+        chapterId,
+        sceneId,
+        stage,
+        dispatchId
+    );
+    if (!identity.valid) {
+        log(`[FAIL-STAGE] Rejected ${bookId}/${chapterId}/${sceneId} ${stage}: ${identity.reason}`);
+        return { failed: false, reason: identity.reason };
     }
 
     try {
@@ -244,10 +277,13 @@ async function failStage(redis, bookId, chapterId, sceneId, stage, buildId, reas
         // T2: finalizeDispatch('failure') — recordFailure + consumeRetryBudget,
         // НЕ recordSuccess, НЕ DISPATCH_COMPLETED.
         try {
+            const failureTaxonomy = require('../runtime/failure-taxonomy');
+            const failureClass = failureTaxonomy.classifyFailure(new Error(reason || 'unknown'));
             await dispatchEngine.finalizeDispatch(redis, bookId, chapterId, sceneId, stage, {
                 outcome: 'failure',
+                dispatchId,
                 reason: reason || 'unknown',
-                failureType: 'transient'
+                failureType: failureClass.type
             });
         } catch (dispErr) {
             warn(`failStage: finalizeDispatch(${stage}) failed: ${dispErr.message}`);
@@ -414,24 +450,23 @@ async function resetScenes(redis, bookId, buildId, scenes, layerCfg, options = {
 
     // 5. Clear dispatch leases for these scenes
     const dispatchEngine = require('../runtime/dispatch-engine');
-    await dispatchEngine.clearLeasesForScenes(redis, bookId, scenes);
+    const cancellation = await dispatchEngine.clearLeasesForScenes(redis, bookId, scenes);
 
-    // 6. Clear GPU hub queues via HTTP endpoint (gpu-hub владеет ключами)
-    try {
-        const hubUrl = `${runtimeConfig.HUB_URL}/queue/clear?book_id=${bookId}`;
-        const hubHeaders = { method: 'DELETE' };
-        // T9: Include API key header for authenticated GPU Hub
-        if (runtimeConfig.GPU_HUB_API_KEY) {
-            hubHeaders.headers = { 'x-api-key': runtimeConfig.GPU_HUB_API_KEY };
+    // 6. Clear only jobs belonging to the cancelled dispatches.
+    for (const cancelledDispatchId of cancellation.dispatchIds) {
+        try {
+            const hubUrl = `${runtimeConfig.HUB_URL}/queue/clear?dispatch_id=${encodeURIComponent(cancelledDispatchId)}`;
+            const hubHeaders = { method: 'DELETE' };
+            if (runtimeConfig.GPU_HUB_API_KEY) {
+                hubHeaders.headers = { 'x-api-key': runtimeConfig.GPU_HUB_API_KEY };
+            }
+            const hubRes = await fetch(hubUrl, hubHeaders);
+            if (!hubRes.ok) {
+                warn(`[RESET-SCENES] GPU hub dispatch cleanup returned ${hubRes.status} for ${cancelledDispatchId}`);
+            }
+        } catch (hubErr) {
+            warn(`[RESET-SCENES] GPU hub HTTP error for ${cancelledDispatchId}: ${hubErr.message}`);
         }
-        const hubRes = await fetch(hubUrl, hubHeaders);
-        if (hubRes.ok) {
-            log(`[RESET-SCENES] GPU hub queues cleared for ${bookId}`);
-        } else {
-            warn(`[RESET-SCENES] GPU hub queue clear returned ${hubRes.status}`);
-        }
-    } catch (hubErr) {
-        warn(`[RESET-SCENES] GPU hub HTTP error: ${hubErr.message} — queues may have stale entries`);
     }
 
     // 7. Pre-delete stale PNGs for specific unit IDs

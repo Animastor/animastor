@@ -214,7 +214,11 @@ function scheduleNext() {
     if (!isRunning) return;
 
     loopTimeout = setTimeout(async () => {
-        if (!isRunning || tickInProgress) return;
+        if (!isRunning) return;
+        if (tickInProgress) {
+            scheduleNext();
+            return;
+        }
 
         tickInProgress = true;
         try {
@@ -255,9 +259,14 @@ function scheduleReconcile() {
     if (!isRunning) return;
 
     reconcileTimeout = setTimeout(async () => {
-        if (!isRunning || reconcileInProgress) return;
-        await executeReconcileCycle(loopRedis);
-        scheduleReconcile();
+        if (!isRunning) return;
+        try {
+            if (!reconcileInProgress) {
+                await executeReconcileCycle(loopRedis);
+            }
+        } finally {
+            scheduleReconcile();
+        }
     }, RECONCILE_INTERVAL_MS);
 }
 

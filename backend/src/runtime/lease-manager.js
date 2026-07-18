@@ -85,7 +85,8 @@ function startLeaseRenewal(redis, bookId, chapterId, sceneId, stage, leaseKey, t
     // Clear existing timer if any
     if (activeLeaseRenewals.has(timerKey)) {
         const existing = activeLeaseRenewals.get(timerKey);
-        clearInterval(existing.timerId);
+        if (existing.timerId) clearTimeout(existing.timerId);
+        if (existing.intervalId) clearInterval(existing.intervalId);
         log(`RENEWAL_RESTART: ${timerKey}`);
     }
 
@@ -161,6 +162,10 @@ async function renewLeaseIfOwner(redis, leaseKey, expectedToken) {
         return { renewed: false, reason: 'no_redis' };
     }
 
+    const metadataKey = leaseKey.replace(
+        'animastor:dispatch-lease:',
+        'animastor:dispatch-meta:'
+    );
     const luaScript = `
         local key = KEYS[1]
         local expected = ARGV[1]
@@ -177,8 +182,11 @@ async function renewLeaseIfOwner(redis, leaseKey, expectedToken) {
             return {tostring(false), 'token_mismatch', current}
         end
 
-        -- Renew the lease with additional TTL
+        -- Renew the lease and matching dispatch metadata together.
         redis.call('EXPIRE', key, ttl_add)
+        if redis.call('EXISTS', KEYS[2]) == 1 then
+            redis.call('EXPIRE', KEYS[2], ttl_add)
+        end
 
         return {tostring(true), 'renewed', tostring(now)}
     `;
@@ -187,8 +195,9 @@ async function renewLeaseIfOwner(redis, leaseKey, expectedToken) {
 
         const result = await redis.eval(
             luaScript,
-            1,
+            2,
             leaseKey,
+            metadataKey,
             expectedToken,
             LEASE_TOTAL_TTLS[getStageFromKey(leaseKey)] + LEASE_RENEWAL_TTL_ADD,
             Date.now()

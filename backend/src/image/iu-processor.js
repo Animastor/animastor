@@ -87,7 +87,7 @@ async function getSceneDuration(buildId, bookId, chapterId, sceneId) {
     return 0;
 }
 
-async function processSingleIU(redis, unit, uIdx, sceneData, loadedBook, buildId, bookId, chapterId, sceneId, sceneDuration, fullText, dirtyUnitIds = new Set()) {
+async function processSingleIU(redis, unit, uIdx, sceneData, loadedBook, buildId, bookId, chapterId, sceneId, sceneDuration, fullText, dirtyUnitIds = new Set(), dispatchId) {
     const canonicalUnitId = String(unit.id);
     if (!canonicalUnitId) {
         helpers.error(`IU unit.id missing, skipping: ${chapterId}/${sceneId}`);
@@ -190,7 +190,18 @@ async function processSingleIU(redis, unit, uIdx, sceneData, loadedBook, buildId
     }
 
     await registry.saveIURegistry(redis, imageIUId, buildId);
-    await gpu.send(jobSchema.buildJobId(imageIUId, 'iu_image'), wfImg, 'image', buildId);
+    const sendResult = await gpu.send(
+        jobSchema.buildJobId(imageIUId, 'iu_image'),
+        wfImg,
+        'image',
+        buildId,
+        dispatchId
+    );
+    if (!sendResult.sent) {
+        await redis.del(inFlightKey).catch(() => {});
+        helpers.warn(`IMAGE (IU) enqueue failed for ${imageIUId}: ${sendResult.error || 'unknown'}`);
+        return { sent: false, cached: false, reason: 'enqueue_failed' };
+    }
 
     try {
         await redis.del(`animastor:result-processed:${imageIUId}:iu_image:${buildId}`);
@@ -202,7 +213,7 @@ async function processSingleIU(redis, unit, uIdx, sceneData, loadedBook, buildId
     return { sent: true, cached: false };
 }
 
-async function generateSceneIUImages(redis, sceneData, loadedBook, buildId, bookId, dirtyUnitIds = new Set()) {
+async function generateSceneIUImages(redis, sceneData, loadedBook, buildId, bookId, dirtyUnitIds = new Set(), dispatchId) {
     const units = collectSceneUnits(sceneData.payload);
     const chapterId = sceneData.chapter_id;
     const sceneId = sceneData.scene_id;
@@ -215,11 +226,29 @@ async function generateSceneIUImages(redis, sceneData, loadedBook, buildId, book
     const fullText = sceneData.payload?.audio?.full_text || '';
 
     let sentCount = 0;
+    let cachedCount = 0;
+    let skippedCount = 0;
     for (let uIdx = 0; uIdx < units.length; uIdx++) {
-        const result = await processSingleIU(redis, units[uIdx], uIdx, sceneData, loadedBook, buildId, bookId, chapterId, sceneId, sceneDuration, fullText, dirtyUnitIds);
+        const result = await processSingleIU(
+            redis,
+            units[uIdx],
+            uIdx,
+            sceneData,
+            loadedBook,
+            buildId,
+            bookId,
+            chapterId,
+            sceneId,
+            sceneDuration,
+            fullText,
+            dirtyUnitIds,
+            dispatchId
+        );
         if (result.sent) sentCount++;
+        if (result.cached) cachedCount++;
+        if (result.skipped) skippedCount++;
     }
-    return { sentCount, total: units.length };
+    return { sentCount, cachedCount, skippedCount, total: units.length };
 }
 
 module.exports = {

@@ -44,7 +44,7 @@ async function trimPaddedSceneAudio(filePath) {
     }
 }
 
-async function generateSceneAudio(redis, sceneData, loadedBook, buildId, bookId) {
+async function generateSceneAudio(redis, sceneData, loadedBook, buildId, bookId, dispatchId) {
     const chapterId = sceneData.chapter_id;
     const sceneId = sceneData.scene_id;
 
@@ -175,6 +175,7 @@ async function generateSceneAudio(redis, sceneData, loadedBook, buildId, bookId)
         return { generated: false, reason: 'already_ready' };
     }
 
+    let sentCount = 0;
     for (let i = 0; i < segList.length; i++) {
         const chunkIndex = i + 1;
         const id = chunks.makeChunkId(chapterId, sceneId, chunkIndex, bookId);
@@ -314,13 +315,29 @@ async function generateSceneAudio(redis, sceneData, loadedBook, buildId, bookId)
             }
         }
 
-        await gpu.send(jobSchema.buildJobId(id, 'audio'), wfAudio, "audio", buildId);
+        const sendResult = await gpu.send(
+            jobSchema.buildJobId(id, 'audio'),
+            wfAudio,
+            "audio",
+            buildId,
+            dispatchId
+        );
+        if (sendResult.sent) {
+            sentCount++;
+        } else {
+            helpers.warn(`Audio enqueue failed for ${id}: ${sendResult.error || 'unknown'}`);
+        }
     }
 
     await redis.del(sceneLockKey);
     helpers.log(`Audio orchestration lock released: ${bookId}/${chapterId}/${sceneId}`);
 
-    return { generated: true, expectedChunkCount };
+    return {
+        generated: sentCount > 0,
+        chunks: sentCount,
+        expectedChunkCount,
+        reason: sentCount > 0 ? null : 'no_jobs_accepted'
+    };
 }
 
 async function mergeBookAudio(buildId, bookId, scenes) {

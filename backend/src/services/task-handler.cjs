@@ -17,11 +17,30 @@ module.exports = function(redis, config, deps) {
     // AUDIO_MERGE_RETRY_* removed (T7) — now in audioOrch.completeChunk
 
     // ── Handle GPU task result ────────────────────────
-    async function handleTaskResult(job_id, result_base64, build_id) {
+    async function handleTaskResult(job_id, result_base64, build_id, dispatch_id) {
         log('🎬 Handling task result:', job_id, 'build:', build_id);
 
         // Единый разбор job_id (runtime/job-schema.js)
         const parsed = jobSchema.parseJobId(job_id);
+        const stage = parsed ? jobSchema.STAGE_BY_KIND[parsed.kind] : null;
+        if (!parsed || !stage) {
+            throw new Error(`Invalid job_id: ${job_id}`);
+        }
+
+        const dispatchEngine = require('../runtime/dispatch-engine');
+        const identity = await dispatchEngine.verifyDispatchIdentity(
+            redis,
+            parsed.bookId,
+            parsed.chapterId,
+            parsed.sceneId,
+            stage,
+            dispatch_id
+        );
+        if (!identity.valid) {
+            const err = new Error(`Rejected task result: ${identity.reason}`);
+            err.code = identity.reason;
+            throw err;
+        }
 
         // Resolve asset path
         const asset = resolveAssetPath(job_id, build_id);
@@ -92,7 +111,7 @@ module.exports = function(redis, config, deps) {
 
                     if (iuFiles.length >= totalIUs && totalIUs > 0) {
                         log('🎯 All IUs complete for scene — triggering image completed');
-                        await orchestrator.completeStage(redis, bookId, chapterId, sceneId, 'image', build_id);
+                        await orchestrator.completeStage(redis, bookId, chapterId, sceneId, 'image', build_id, dispatch_id);
                     } else if (totalIUs === 0) {
                         // T1.9: Не завершаем stage без подтверждённых IU — reconciliation подберёт
                         log('⚠️ No IUs registered in PG for scene — deferring to reconciliation');
@@ -139,6 +158,7 @@ module.exports = function(redis, config, deps) {
                         orchestrator,
                         getChunk: deps.getChunk,
                         saveChunk: deps.saveChunk,
+                        dispatchId: dispatch_id,
                     });
                 } catch (orchErr) {
                     console.error('❌ audioOrch.completeChunk failed:', orchErr.message);
@@ -151,7 +171,15 @@ module.exports = function(redis, config, deps) {
                     console.warn('⚠️ Invalid video job_id format:', job_id);
                     break;
                 }
-                await orchestrator.completeStage(redis, parsed.bookId, parsed.chapterId, parsed.sceneId, 'video', build_id);
+                await orchestrator.completeStage(
+                    redis,
+                    parsed.bookId,
+                    parsed.chapterId,
+                    parsed.sceneId,
+                    'video',
+                    build_id,
+                    dispatch_id
+                );
                 break;
             }
 
@@ -161,7 +189,15 @@ module.exports = function(redis, config, deps) {
                     break;
                 }
                 log(`⚠️ SCENE_IMAGE (legacy) callback: ${parsed.bookId}/${parsed.chapterId}/${parsed.sceneId}`);
-                await orchestrator.completeStage(redis, parsed.bookId, parsed.chapterId, parsed.sceneId, 'image', build_id);
+                await orchestrator.completeStage(
+                    redis,
+                    parsed.bookId,
+                    parsed.chapterId,
+                    parsed.sceneId,
+                    'image',
+                    build_id,
+                    dispatch_id
+                );
                 break;
             }
 
