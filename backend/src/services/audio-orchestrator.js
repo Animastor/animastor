@@ -23,7 +23,7 @@
 // | GENERATING → WAITING_CHUNKS | executeAudioDispatch() | После отправки TTS |
 // | WAITING_CHUNKS → MERGING | completeChunk() | Когда все чанки на диске |
 // | MERGING → DONE | completeChunk() → completeMerge() | После успешного merge |
-// | WAITING_CHUNKS → FAILED | completeChunk() (retry exhausted) | После MAX_RETRIES |
+// | WAITING_CHUNKS → FAILED | failWaitingScene() (watchdog/recovery) | Застой чанков или сбой |
 // | FAILED → WAITING_CHUNKS | completeChunk() (late chunk) | Когда все чанки пришли после FAILED |
 // | FAILED → GENERATING | scheduler re-dispatch | На следующем scheduler tick |
 
@@ -165,7 +165,7 @@ async function setFailed(redis, bookId, chapterId, sceneId, reason) {
 
 async function completeChunk(redis, bookId, chapterId, sceneId, chunkIndex, buildId, deps = {}) {
     const startTime = Date.now();
-    const { audio, orchestrator, getChunk, saveChunk, dispatchId } = deps;
+    const { audio, orchestrator, getChunk, dispatchId } = deps;
     const OUTPUT_DIR = config.OUTPUT_DIR;
     const buildDir = path.join(OUTPUT_DIR, buildId);
     if (!fs.existsSync(buildDir)) {
@@ -174,7 +174,6 @@ async function completeChunk(redis, bookId, chapterId, sceneId, chunkIndex, buil
     }
 
     const orchState = await getState(redis, bookId, chapterId, sceneId);
-    console.log(`[DEBUG-CHUNK] completeChunk called: ${bookId}/${chapterId}/${sceneId} chunk=${chunkIndex} phase=${orchState?.phase} build=${buildId} dispatch=${dispatchId ? dispatchId.slice(0,16) : 'none'}...`);
     if (!orchState || orchState.phase === PHASES.DONE) {
         log(`Audio already done for ${bookId}/${chapterId}/${sceneId} — skipping`);
         return;
@@ -192,7 +191,6 @@ async function completeChunk(redis, bookId, chapterId, sceneId, chunkIndex, buil
     const pad = (n) => String(n).padStart(4, '0');
 
     if (orchState.phase === PHASES.GENERATING) {
-        console.log(`[DEBUG-CHUNK] GENERATING→WAITING_CHUNKS: chunk ${chunkIndex} arrived early for ${bookId}/${chapterId}/${sceneId} expected=${expectedCount}`);
         const transResult = await transitionState(redis, bookId, chapterId, sceneId, PHASES.WAITING_CHUNKS);
         if (!transResult.success) {
             warn(`GENERATING→WAITING_CHUNKS failed: ${transResult.reason}`);
@@ -230,109 +228,35 @@ async function completeChunk(redis, bookId, chapterId, sceneId, chunkIndex, buil
 
     // ── CHECK CHUNK COMPLETENESS ──
     const chunkPaths = [];
-    let allChunksExist = true;
-    let missingChunks = 0;
+    const presentIndices = [];
+    const missingIndices = [];
     for (let i = 1; i <= expectedCount; i++) {
         const chunkPath = path.join(buildDir, `${bookId}_${chapterId}_${sceneId}_${pad(i)}.mp3`);
         chunkPaths.push(chunkPath);
-        if (!fs.existsSync(chunkPath)) {
-            allChunksExist = false;
-            missingChunks++;
-        }
+        if (fs.existsSync(chunkPath)) presentIndices.push(i);
+        else missingIndices.push(i);
     }
 
-    if (!allChunksExist) {
-        // ── RETRY LOGIC ──
-        const { AUDIO_MERGE_RETRY_MAX, AUDIO_MERGE_RETRY_DEDUP_TTL_S, AUDIO_MERGE_RETRY_COUNTER_TTL_S, AUDIO_MERGE_RETRY_DELAY_MS } = config.TIMEOUTS;
-        const retryKey = `animastor:audio-merge-retry:${bookId}:${chapterId}:${sceneId}`;
-        const retryCountKey = `${retryKey}:count`;
-        const attempt = parseInt(await redis.get(retryCountKey) || '0', 10);
-
-        // Log which chunks exist and which are missing
-        const allIndices = [];
-        const presentIndices = [];
-        const missingIndicesLog = [];
-        for (let i = 1; i <= expectedCount; i++) {
-            allIndices.push(i);
-            const fp = path.join(buildDir, `${bookId}_${chapterId}_${sceneId}_${pad(i)}.mp3`);
-            if (fs.existsSync(fp)) presentIndices.push(i);
-            else missingIndicesLog.push(i);
-        }
-        console.log(`[DEBUG-CHUNK] Chunk completeness check: ${bookId}/${chapterId}/${sceneId} expected=${expectedCount} present=[${presentIndices.join(',')}] missing=[${missingIndicesLog.join(',')}] attempt=${attempt}/${AUDIO_MERGE_RETRY_MAX}`);
-
-        if (attempt >= AUDIO_MERGE_RETRY_MAX) {
-            // RETRY EXHAUSTED → failStage
-            const missingIndices = [];
-            for (let i = 1; i <= expectedCount; i++) {
-                if (!fs.existsSync(path.join(buildDir, `${bookId}_${chapterId}_${sceneId}_${pad(i)}.mp3`))) {
-                    missingIndices.push(i);
-                }
-            }
-            console.log(`[DEBUG-CHUNK] ⛔ MAX RETRIES EXCEEDED: ${bookId}/${chapterId}/${sceneId} expected=${expectedCount} missing=[${missingIndices.join(',')}] — calling failStage → re-dispatch loop`);
-            warn(`Max retries (${AUDIO_MERGE_RETRY_MAX}) reached for ${bookId}/${chapterId}/${sceneId} — ${missingIndices.length} missing`);
-
-            await setFailed(redis, bookId, chapterId, sceneId,
-                `max_retries_exceeded:${missingIndices.length}_missing`);
-
-            // Clear GPU hub dedup for missing chunks
-            for (const idx of missingIndices) {
-                const chunkId = `${bookId}_${chapterId}_${sceneId}_${pad(idx)}`;
-                await redis.del(`animastor:job:${chunkId}:audio`).catch(() => {});
-                await redis.del(`animastor:result-processed:${chunkId}:audio`).catch(() => {});
-                const raw = await redis.get(`animastor:chunk:${chunkId}`);
-                if (raw) {
-                    try {
-                        const ch = JSON.parse(raw);
-                        ch.audio = false;
-                        ch.audio_status = 'pending';
-                        await redis.set(`animastor:chunk:${chunkId}`, JSON.stringify(ch));
-                    } catch (e) {}
-                }
-            }
-            await redis.del(retryKey).catch(() => {});
-            await redis.del(retryCountKey).catch(() => {});
-
-            // T5: orchestrator.failStage делает FAILED→PENDING + markDispatchCompleted + journal
-            if (orchestrator) {
-                try {
-                    await orchestrator.failStage(redis, bookId, chapterId, sceneId, 'audio', buildId,
-                        `max_retries_exceeded:${missingIndices.length}_missing`,
-                        { dispatchId });
-                    log(`Audio FAILED→PENDING via failStage for ${bookId}/${chapterId}/${sceneId}`);
-                } catch (fsErr) {
-                    warn(`failStage failed: ${fsErr.message}`);
-                }
-            }
-            return;
-        }
-
-        // Schedule retry
-        const scheduled = await redis.set(retryKey, '1', 'NX', 'EX', AUDIO_MERGE_RETRY_DEDUP_TTL_S);
-        if (scheduled) {
-            await redis.set(retryCountKey, String(attempt + 1), 'EX', AUDIO_MERGE_RETRY_COUNTER_TTL_S);
-            setTimeout(async () => {
-                try {
-                    await redis.del(retryKey).catch(() => {});
-                    const currentChunkId = `${bookId}_${chapterId}_${sceneId}_${pad(chunkIndex)}`;
-                    const refreshed = getChunk ? await getChunk(currentChunkId) : null;
-                    if (refreshed) {
-                        log(`Merge retry (${attempt + 1}/${AUDIO_MERGE_RETRY_MAX}): ${bookId}/${chapterId}/${sceneId}`);
-                        await completeChunk(redis, bookId, chapterId, sceneId, chunkIndex, buildId, deps);
-                    }
-                } catch (e) {
-                    warn(`Merge retry failed: ${e.message}`);
-                }
-            }, AUDIO_MERGE_RETRY_DELAY_MS);
-        } else {
-            console.log(`[DEBUG-CHUNK] Retry NOT scheduled (dedup key exists): ${bookId}/${chapterId}/${sceneId} attempt=${attempt}`);
-        }
+    if (missingIndices.length > 0) {
+        // Не все чанки на месте — фиксируем прогресс и выходим. Merge
+        // запустит приход последнего чанка (event-driven); застой ловит
+        // watchdog в reconcileCycle (checkStalledAudioScenes), сбои воркера —
+        // gpu-hub → /gpu/task/error → failStage. Никаких retry-таймеров.
+        await transitionState(redis, bookId, chapterId, sceneId, PHASES.WAITING_CHUNKS, {
+            chunks_received: presentIndices.length,
+            last_chunk_at: Date.now(),
+        });
+        log(`${bookId}/${chapterId}/${sceneId}: ${presentIndices.length}/${expectedCount} chunks, waiting for [${missingIndices.join(',')}] (${Date.now() - startTime}ms)`);
         return;
     }
 
     // ══════════════════════════════════════════════════
     // ALL CHUNKS PRESENT → MERGE
     // ══════════════════════════════════════════════════
-    await setMerging(redis, bookId, chapterId, sceneId);
+    await transitionState(redis, bookId, chapterId, sceneId, PHASES.MERGING, {
+        chunks_received: expectedCount,
+        last_chunk_at: Date.now(),
+    });
     log(`${bookId}/${chapterId}/${sceneId} → MERGING`);
 
     try {
@@ -392,6 +316,66 @@ async function completeChunk(redis, bookId, chapterId, sceneId, chunkIndex, buil
 }
 
 // ════════════════════════════════════════════════════════
+// FAIL WAITING SCENE — единственный владелец WAITING_CHUNKS → FAILED.
+// Вызывается watchdog'ом застоя (reconcileCycle.checkStalledAudioScenes)
+// и recovery. Чистит hub-dedup недостающих чанков, сбрасывает их
+// metadata в pending и публикует итог через orchestrator.failStage
+// (FAILED → PENDING → scheduler передиспатчит).
+// ════════════════════════════════════════════════════════
+
+async function failWaitingScene(redis, bookId, chapterId, sceneId, buildId, reason, deps = {}) {
+    const { orchestrator, dispatchId } = deps;
+    const pad = (n) => String(n).padStart(4, '0');
+
+    const orchState = await getState(redis, bookId, chapterId, sceneId);
+    if (!orchState || orchState.phase !== PHASES.WAITING_CHUNKS) {
+        return { failed: false, reason: 'not_waiting_chunks', phase: orchState ? orchState.phase : null };
+    }
+
+    const expectedCount = parseInt(orchState.expected_count || '1', 10);
+    const buildDir = path.join(config.OUTPUT_DIR, buildId);
+    const missingIndices = [];
+    for (let i = 1; i <= expectedCount; i++) {
+        if (!fs.existsSync(path.join(buildDir, `${bookId}_${chapterId}_${sceneId}_${pad(i)}.mp3`))) {
+            missingIndices.push(i);
+        }
+    }
+
+    warn(`failWaitingScene: ${bookId}/${chapterId}/${sceneId} — ${missingIndices.length}/${expectedCount} missing (${reason})`);
+    await setFailed(redis, bookId, chapterId, sceneId, reason);
+
+    // Освобождаем hub-dedup и chunk-metadata недостающих чанков, чтобы
+    // передиспатч смог отправить их заново.
+    for (const idx of missingIndices) {
+        const chunkId = `${bookId}_${chapterId}_${sceneId}_${pad(idx)}`;
+        await redis.del(`animastor:job:${chunkId}:audio`).catch(() => {});
+        await redis.del(`animastor:result-processed:${chunkId}:audio`).catch(() => {});
+        const raw = await redis.get(`animastor:chunk:${chunkId}`);
+        if (raw) {
+            try {
+                const ch = JSON.parse(raw);
+                ch.audio = false;
+                ch.audio_status = 'pending';
+                await redis.set(`animastor:chunk:${chunkId}`, JSON.stringify(ch));
+            } catch (e) {}
+        }
+    }
+
+    // Итог машины публикуется только через фасад: FAILED → PENDING +
+    // finalizeDispatch + событие AUDIO_FAILED в journal.
+    if (orchestrator) {
+        try {
+            await orchestrator.failStage(redis, bookId, chapterId, sceneId, 'audio', buildId,
+                reason, { dispatchId });
+            log(`Audio FAILED→PENDING via failStage for ${bookId}/${chapterId}/${sceneId}`);
+        } catch (fsErr) {
+            warn(`failStage failed: ${fsErr.message}`);
+        }
+    }
+    return { failed: true, missing: missingIndices };
+}
+
+// ════════════════════════════════════════════════════════
 // SCAN ALL STATES (для startup recovery)
 // ════════════════════════════════════════════════════════
 
@@ -445,5 +429,6 @@ module.exports = {
     setDone,
     setFailed,
     completeChunk,
+    failWaitingScene,
     scanAllStates,
 };
