@@ -224,10 +224,14 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
     } catch (e) {
         console.warn(`[LAZY-BOOK] Failed to load existing voices: ${e.message}`);
     }
-    // Add/update voices for characters from the current window
+    // Add/update voices for characters from the current window.
+    // stepGenerateVoices sets ch.voice as a STRING (voices[id].instruction),
+    // not as { instruction: string }. Handle both formats.
     for (const ch of (analysis.characters || [])) {
-        if (ch.id && ch.voice?.instruction) {
-            voices[ch.id] = { instruction: ch.voice.instruction };
+        if (!ch.id) continue;
+        const vi = typeof ch.voice === 'string' ? ch.voice : ch.voice?.instruction;
+        if (vi) {
+            voices[ch.id] = { instruction: vi };
         }
     }
     fs.writeFileSync(getVoicesPath(bookDir), JSON.stringify(voices, null, 2));

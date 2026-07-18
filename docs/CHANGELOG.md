@@ -19,6 +19,14 @@ All notable changes to Animastor are documented here.
     текущего окна). Старые голоса сохраняются из spread, новые/уточнённые — перезаписываются.
   - 571 тест проходит.
 
+- **voices.json содержал только narrator после первой генерации — stepGenerateVoices пишет voice как строку, не как объект**
+  (`backend/src/book/lazy-book/create.js`):
+  - **Проблема:** `stepGenerateVoices` устанавливает `ch.voice = voices[ch.id].instruction` —
+    где `instruction` это строка. Код сохранения проверял `ch.voice?.instruction`, но на строке
+    это `undefined` → все персонажи пропускались, оставался только narrator.
+  - **Фикс:** нормализация: `typeof ch.voice === 'string' ? ch.voice : ch.voice?.instruction`.
+  - 571 тест проходит.
+
 - **Race condition: чанки прилетали до WAITING_CHUNKS → completeChunk skip → retry exhaustion → цикл**
   (`backend/src/orchestration/scene-orchestrator.js`, `backend/src/services/audio-orchestrator.js`):
   - **Проблема:** `setWaitingChunks()` вызывался **после** `generateSceneAudio()` в `executeAudioDispatch`.
