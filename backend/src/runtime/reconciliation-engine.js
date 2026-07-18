@@ -273,6 +273,58 @@ async function checkPartialBuilds(redis, bookId, chapterId, sceneId) {
 }
 
 // ======================================================
+// B1: STALLED AUDIO CHUNKS WATCHDOG
+// ======================================================
+// Сканирует audio-orch state машины в фазе WAITING_CHUNKS.
+// Если last_chunk_at + AUDIO_CHUNK_STALL_MS < Date.now() —
+// сцена зависла: вызываем failWaitingScene(), которая чистит
+// hub-dedup, сбрасывает metadata и публикует failStage.
+//
+// Важно: watchdog НЕ конкурирует с gpu-hub timeout — они ловят
+// разные сценарии (стоп прогресса vs мёртвый воркер).
+
+async function checkStalledAudioScenes(redis, deps) {
+    let audioOrch;
+    try {
+        audioOrch = require('../services/audio-orchestrator');
+    } catch (_) {
+        return 0;
+    }
+
+    const { AUDIO_CHUNK_STALL_MS } = config.TIMEOUTS;
+    const allStates = await audioOrch.scanAllStates(redis);
+    if (allStates.length === 0) return 0;
+
+    let stalled = 0;
+    for (const entry of allStates) {
+        const { bookId, chapterId, sceneId, state: orchState } = entry;
+        if (orchState.phase !== audioOrch.PHASES.WAITING_CHUNKS) continue;
+
+        const lastChunkAt = orchState.last_chunk_at;
+        if (!lastChunkAt) continue;
+
+        const age = Date.now() - lastChunkAt;
+        if (age < AUDIO_CHUNK_STALL_MS) continue;
+
+        const buildId = orchState.build_id || 'default';
+        const reason = `chunk_stall_timeout:${Math.round(age / 1000)}s`;
+        warn(`[STALLED-AUDIO] ${bookId}/${chapterId}/${sceneId} — ${reason}`);
+
+        try {
+            await audioOrch.failWaitingScene(redis, bookId, chapterId, sceneId, buildId, reason, {
+                orchestrator: deps.orchestrator
+            });
+            stalled++;
+        } catch (err) {
+            warn(`[STALLED-AUDIO] failWaitingScene error: ${err.message}`);
+        }
+    }
+
+    if (stalled > 0) log(`[STALLED-AUDIO] ${stalled} stalled audio scenes recovered`);
+    return stalled;
+}
+
+// ======================================================
 // T7.6: AUDIO-ORCH INVARIANT CHECKS
 // ======================================================
 // Проверяет соответствие между audio-orch phase и asset state:
@@ -1025,6 +1077,17 @@ async function reconcileCycle(redis, deps = {}, options = {}) {
         }
 
         // ══════════════════════════════════════════════
+        // PHASE B1: Stalled audio chunks watchdog
+        // ══════════════════════════════════════════════
+        try {
+            const b1Count = await checkStalledAudioScenes(redis, deps);
+            if (b1Count > 0) phases.push(`stalled_audio:${b1Count}`);
+        } catch (err) {
+            warn(`Phase B1 failed: ${err.message}`);
+            summary.errors.push(`stalled_audio: ${err.message}`);
+        }
+
+        // ══════════════════════════════════════════════
         // PHASE C: Startup-specific (startup-recovery)
         // ══════════════════════════════════════════════
         if (startup) {
@@ -1414,6 +1477,7 @@ module.exports = {
     checkVersionStaleness,
     recoverIuImagesFromDisk,
     reconcileMissingSceneState,
+    checkStalledAudioScenes,
 
     checkAudioOrchInvariants,
 
