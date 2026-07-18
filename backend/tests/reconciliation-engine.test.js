@@ -107,6 +107,33 @@ function mockDeps(redis, overrides = {}) {
             MERGING: 'MERGING', DONE: 'DONE', FAILED: 'FAILED', PLACEHOLDER_READY: 'PLACEHOLDER_READY',
         },
         getState: overrides.getAudioOrchState || (async () => null),
+        scanAllStates: overrides.scanAllStates || (async (r) => {
+            const keys = [];
+            let cursor = '0';
+            do {
+                const [nextCursor, batch] = await r.scan(cursor, 'MATCH', 'animastor:audio-orch:*', 'COUNT', 200);
+                cursor = nextCursor;
+                keys.push(...batch);
+            } while (cursor !== '0');
+            const results = [];
+            for (const k of keys) {
+                const raw = await r.get(k);
+                if (raw) {
+                    const parts = k.split(':');
+                    if (parts.length >= 5) {
+                        const sceneParts = parts.slice(2);
+                        if (sceneParts.length >= 3) {
+                            const sceneId = sceneParts.pop();
+                            const chapterId = sceneParts.pop();
+                            const bookId = sceneParts.join(':');
+                            results.push({ key: k, bookId, chapterId, sceneId, state: JSON.parse(raw) });
+                        }
+                    }
+                }
+            }
+            return results;
+        }),
+        failWaitingScene: overrides.failWaitingScene || (async () => ({ failed: false, reason: 'not_waiting_chunks' })),
     };
     require.cache[AUDIO_ORCH_PATH] = { exports: audioOrchMock, loaded: true };
 
@@ -316,6 +343,67 @@ describe('checkOrphanAudioState', () => {
 // they require require.cache mocking of `storage.registry.getSceneAssetsRedis`
 // which has an unfixed cross-test isolation issue in this file.
 // These functions are indirectly covered by reconcileScene tests above.
+
+// ======================================================
+// TESTS: checkStalledAudioScenes
+// ======================================================
+
+describe('checkStalledAudioScenes', () => {
+    let redis;
+    afterEach(() => { delete require.cache[RECONCILE_PATH]; });
+
+    it('returns 0 when no audio-orch states exist', async () => {
+        redis = createMockRedis();
+        const engine = mockDeps(redis);
+        const count = await engine.checkStalledAudioScenes(redis, {});
+        expect(count).to.equal(0);
+    });
+
+    it('returns 0 when states are not in WAITING_CHUNKS', async () => {
+        redis = createMockRedis();
+        const audioOrchKey = `animastor:audio-orch:${BOOK_ID}:${CHAPTER_ID}:${SCENE_ID}`;
+        await redis.set(audioOrchKey, JSON.stringify({
+            phase: 'GENERATING', build_id: 'build-1', last_chunk_at: Date.now() - 60000,
+        }));
+        const engine = mockDeps(redis);
+        const count = await engine.checkStalledAudioScenes(redis, { orchestrator: { failStage: async () => {} } });
+        expect(count).to.equal(0);
+    });
+
+    it('returns 0 when last_chunk_at is recent', async () => {
+        redis = createMockRedis();
+        const audioOrchKey = `animastor:audio-orch:${BOOK_ID}:${CHAPTER_ID}:${SCENE_ID}`;
+        await redis.set(audioOrchKey, JSON.stringify({
+            phase: 'WAITING_CHUNKS', build_id: 'build-1', last_chunk_at: Date.now() - 1000,
+        }));
+        const engine = mockDeps(redis);
+        const count = await engine.checkStalledAudioScenes(redis, { orchestrator: { failStage: async () => {} } });
+        expect(count).to.equal(0);
+    });
+
+    it('returns >0 for stalled WAITING_CHUNKS (last_chunk_at older than threshold)', async () => {
+        redis = createMockRedis();
+        const audioOrchKey = `animastor:audio-orch:${BOOK_ID}:${CHAPTER_ID}:${SCENE_ID}`;
+        await redis.set(audioOrchKey, JSON.stringify({
+            phase: 'WAITING_CHUNKS', build_id: 'build-1',
+            last_chunk_at: Date.now() - 600000, // 10 min ago, > 5 min threshold
+        }));
+        const engine = mockDeps(redis);
+        const count = await engine.checkStalledAudioScenes(redis, { orchestrator: { failStage: async () => {} } });
+        expect(count).to.equal(1);
+    });
+
+    it('skips WAITING_CHUNKS without last_chunk_at', async () => {
+        redis = createMockRedis();
+        const audioOrchKey = `animastor:audio-orch:${BOOK_ID}:${CHAPTER_ID}:${SCENE_ID}`;
+        await redis.set(audioOrchKey, JSON.stringify({
+            phase: 'WAITING_CHUNKS', build_id: 'build-1',
+        }));
+        const engine = mockDeps(redis);
+        const count = await engine.checkStalledAudioScenes(redis, { orchestrator: { failStage: async () => {} } });
+        expect(count).to.equal(0);
+    });
+});
 
 // ======================================================
 // TESTS: checkStaleLocks
