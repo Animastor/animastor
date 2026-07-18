@@ -174,6 +174,7 @@ async function completeChunk(redis, bookId, chapterId, sceneId, chunkIndex, buil
     }
 
     const orchState = await getState(redis, bookId, chapterId, sceneId);
+    console.log(`[DEBUG-CHUNK] completeChunk called: ${bookId}/${chapterId}/${sceneId} chunk=${chunkIndex} phase=${orchState?.phase} build=${buildId} dispatch=${dispatchId ? dispatchId.slice(0,16) : 'none'}...`);
     if (!orchState || orchState.phase === PHASES.DONE) {
         log(`Audio already done for ${bookId}/${chapterId}/${sceneId} — skipping`);
         return;
@@ -187,8 +188,11 @@ async function completeChunk(redis, bookId, chapterId, sceneId, chunkIndex, buil
     // Если чанк пришёл до того, как executeAudioDispatch успел вызвать
     // setWaitingChunks (race condition при быстрых TTS), переходим в
     // WAITING_CHUNKS самостоятельно и продолжаем проверку комплектности.
+    const expectedCount = parseInt(orchState.expected_count || '1', 10);
+    const pad = (n) => String(n).padStart(4, '0');
+
     if (orchState.phase === PHASES.GENERATING) {
-        log(`GENERATING→WAITING_CHUNKS: chunk ${chunkIndex} arrived early for ${bookId}/${chapterId}/${sceneId}`);
+        console.log(`[DEBUG-CHUNK] GENERATING→WAITING_CHUNKS: chunk ${chunkIndex} arrived early for ${bookId}/${chapterId}/${sceneId} expected=${expectedCount}`);
         const transResult = await transitionState(redis, bookId, chapterId, sceneId, PHASES.WAITING_CHUNKS);
         if (!transResult.success) {
             warn(`GENERATING→WAITING_CHUNKS failed: ${transResult.reason}`);
@@ -198,9 +202,6 @@ async function completeChunk(redis, bookId, chapterId, sceneId, chunkIndex, buil
         // всё ещё кешированная копия с phase=GENERATING.
         orchState.phase = PHASES.WAITING_CHUNKS;
     }
-
-    const expectedCount = parseInt(orchState.expected_count || '1', 10);
-    const pad = (n) => String(n).padStart(4, '0');
 
     // ── LATE CHUNK RECOVERY: FAILED → WAITING_CHUNKS ──
     if (orchState.phase === PHASES.FAILED) {
@@ -247,6 +248,18 @@ async function completeChunk(redis, bookId, chapterId, sceneId, chunkIndex, buil
         const retryCountKey = `${retryKey}:count`;
         const attempt = parseInt(await redis.get(retryCountKey) || '0', 10);
 
+        // Log which chunks exist and which are missing
+        const allIndices = [];
+        const presentIndices = [];
+        const missingIndicesLog = [];
+        for (let i = 1; i <= expectedCount; i++) {
+            allIndices.push(i);
+            const fp = path.join(buildDir, `${bookId}_${chapterId}_${sceneId}_${pad(i)}.mp3`);
+            if (fs.existsSync(fp)) presentIndices.push(i);
+            else missingIndicesLog.push(i);
+        }
+        console.log(`[DEBUG-CHUNK] Chunk completeness check: ${bookId}/${chapterId}/${sceneId} expected=${expectedCount} present=[${presentIndices.join(',')}] missing=[${missingIndicesLog.join(',')}] attempt=${attempt}/${AUDIO_MERGE_RETRY_MAX}`);
+
         if (attempt >= AUDIO_MERGE_RETRY_MAX) {
             // RETRY EXHAUSTED → failStage
             const missingIndices = [];
@@ -255,6 +268,7 @@ async function completeChunk(redis, bookId, chapterId, sceneId, chunkIndex, buil
                     missingIndices.push(i);
                 }
             }
+            console.log(`[DEBUG-CHUNK] ⛔ MAX RETRIES EXCEEDED: ${bookId}/${chapterId}/${sceneId} expected=${expectedCount} missing=[${missingIndices.join(',')}] — calling failStage → re-dispatch loop`);
             warn(`Max retries (${AUDIO_MERGE_RETRY_MAX}) reached for ${bookId}/${chapterId}/${sceneId} — ${missingIndices.length} missing`);
 
             await setFailed(redis, bookId, chapterId, sceneId,
@@ -309,6 +323,8 @@ async function completeChunk(redis, bookId, chapterId, sceneId, chunkIndex, buil
                     warn(`Merge retry failed: ${e.message}`);
                 }
             }, AUDIO_MERGE_RETRY_DELAY_MS);
+        } else {
+            console.log(`[DEBUG-CHUNK] Retry NOT scheduled (dedup key exists): ${bookId}/${chapterId}/${sceneId} attempt=${attempt}`);
         }
         return;
     }

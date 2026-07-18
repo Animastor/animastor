@@ -8,6 +8,22 @@ All notable changes to Animastor are documented here.
 
 ### Fixed
 
+- **8/9 audio generation loop — retry timer race condition with GPU hub**
+  (`backend/src/config/runtime-config.js`):
+  - **Проблема:** `AUDIO_MERGE_RETRY_DELAY_MS: 15000` (15с между retry) × 5 попыток = 75с.
+    При 9 чанках и 1 воркере (~10-15с на чанк ComfyUI TTS) GPU hub требовалось 90-135с
+    для полной обработки. Retry исчерпывался до завершения всех чанков → `failStage`
+    → `cancelActiveDispatch` очищал `animastor:running:{dispatch_id}` → все последующие
+    результаты от воркеров получали **HTTP 409** → scene → PENDING → re-dispatch → ∞.
+  - **Дополнительно:** `AUDIO_MERGE_RETRY_DEDUP_TTL_S: 30` был меньше нового retry delay,
+    из-за чего dedup key протухал до срабатывания таймера и промежуточные чанки создавали
+    конкурирующие retry-цепочки, ускоряя исчерпание budget.
+  - **Фикс:** DELAY 15000→60000 (60с), DEDUP 30→120с, COUNTER 180→600с.
+    Новый budget: 5 × 60с = 300с (5 минут) — покрывает 9 чанков × 10-15с = 90-135с.
+  - Все инварианты соблюдены: 5×60с=300с < lease_audio 900с; counter 600с > 300с; dedup 120с >= 60с.
+  - 571 тест проходит.
+  - Подробный post-mortem: `docs/03-audit/AUDIO_8_9_RACE_CONDITION.md`
+
 - **voices.json терял голоса персонажей при генерации второго окна vbook**
   (`backend/src/book/lazy-book/create.js`):
   - **Проблема:** `voices.json` перезаписывался целиком из `mergedCharacters`. `characters.json`

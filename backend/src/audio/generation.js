@@ -196,11 +196,18 @@ async function generateSceneAudio(redis, sceneData, loadedBook, buildId, bookId,
 
     const segList = segments.buildSegments(sceneData);
 
+    console.log(`[DEBUG-AUDIO] generateSceneAudio: ${bookId}/${chapterId}/${sceneId} segments=${segList.length} build=${buildId} dispatch=${dispatchId ? dispatchId.slice(0,16) : 'none'}...`);
+    for (let si = 0; si < segList.length; si++) {
+        const seg = segList[si];
+        console.log(`[DEBUG-AUDIO]   segment[${si+1}]: type=${seg.segment_type} text_len=${seg.text.length} text_preview="${seg.text.substring(0,80)}"`);
+    }
+
     // ── Detect pure dialogue scene ──
     // Если ВСЕ сегменты — dialogue, собираем их в один merged workflow.
     // Это даёт Qwen3TTSAdvancedDialogue непрерывную беседу.
     const isPureDialogue = segList.length > 0 && segList.every(s => s.segment_type === 'dialogue');
     const expectedChunkCount = isPureDialogue ? 1 : segList.length;
+    console.log(`[DEBUG-AUDIO]   isPureDialogue=${isPureDialogue} expectedChunkCount=${expectedChunkCount}`);
 
     // 🧹 Stale cache invalidation
     const existingChunks = chunks.findExistingSceneChunks(bookId, chapterId, sceneId, buildId);
@@ -361,6 +368,8 @@ async function generateSceneAudio(redis, sceneData, loadedBook, buildId, bookId,
     await redis.del(sceneLockKey);
     helpers.log(`Audio orchestration lock released: ${bookId}/${chapterId}/${sceneId}`);
 
+    console.log(`[DEBUG-AUDIO] generateSceneAudio DONE: ${bookId}/${chapterId}/${sceneId} generated=${sentCount > 0} chunks=${sentCount} expected=${isPureDialogue ? 1 : segList.length} reason=${sentCount > 0 ? 'ok' : 'no_jobs_accepted'}`);
+
     return {
         generated: sentCount > 0,
         chunks: sentCount,
@@ -383,6 +392,10 @@ async function sendPerSegmentAudio(redis, segList, sceneData, loadedBook, buildI
 
         const chunkFilePath = chunks.getChunkAudioPath(buildId, bookId, chapterId, sceneId, chunkIndex);
         const chunkFileExists = fs.existsSync(chunkFilePath);
+
+        if (chunkFileExists) {
+            console.log(`[DEBUG-AUDIO]   chunk ${id}: FILE EXISTS on disk, checking cache...`);
+        }
 
         const chunkKey = `animastor:chunk:${id}`;
         const existingChunk = await redis.get(chunkKey);
@@ -509,6 +522,7 @@ async function sendPerSegmentAudio(redis, segList, sceneData, loadedBook, buildI
             }
         }
 
+        console.log(`[DEBUG-AUDIO]   SENDING chunk ${id}: segment_type=${segment.segment_type} type=${isDialogue ? 'dialogue' : 'narration'} wf=${workflowName}`);
         const sendResult = await gpu.send(
             jobSchema.buildJobId(id, 'audio'),
             wfAudio,
@@ -518,8 +532,10 @@ async function sendPerSegmentAudio(redis, segList, sceneData, loadedBook, buildI
         );
         if (sendResult.sent) {
             sentCount++;
+            console.log(`[DEBUG-AUDIO]   ✅ SENT chunk ${id} (${sentCount}/${segList.length})`);
         } else {
             helpers.warn(`Audio enqueue failed for ${id}: ${sendResult.error || 'unknown'}`);
+            console.log(`[DEBUG-AUDIO]   ❌ SEND FAILED chunk ${id}: ${sendResult.error || 'unknown'}`);
         }
     }
 

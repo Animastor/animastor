@@ -130,10 +130,18 @@ const LEASE_TTL_S = {
 
 const TIMEOUTS = {
     // Аудио-мерж: ожидание опоздавших чанков (task-handler.cjs)
-    AUDIO_MERGE_RETRY_DELAY_MS: 15000,
+    // ⚡ Увеличено: 15с → 60с. С 9 чанками и 1 воркером GPU hub нужно
+    // ~10-15с на чанк × 9 = 90-135с. Старое значение (5 × 15с = 75с)
+    // приводило к max retries до завершения всех чанков → cancelActiveDispatch
+    // → HTTP 409 на опоздавшие результаты → цикл failStage→re-dispatch.
+    AUDIO_MERGE_RETRY_DELAY_MS: 60000,
     AUDIO_MERGE_RETRY_MAX: 5,
-    AUDIO_MERGE_RETRY_DEDUP_TTL_S: 30,
-    AUDIO_MERGE_RETRY_COUNTER_TTL_S: 180,
+    // ⚡ Увеличен: 30 → 120. Dedup key должен пережить retry delay (60с).
+    // Инвариант: DEDUP_TTL_S × 1000 >= DELAY_MS; 120 × 1000 = 120000 >= 60000 ✅
+    AUDIO_MERGE_RETRY_DEDUP_TTL_S: 120,
+    // ⚡ Увеличен: 180 → 600 (10 мин). Должен пережить 5 × 60с = 300с.
+    // Инвариант: COUNTER_TTL_S × 1000 > MAX × DELAY_MS
+    AUDIO_MERGE_RETRY_COUNTER_TTL_S: 600,
 
     // Периодическая чистка протухших failsafe-локов (cleanup-service.cjs)
     CLEANUP_INTERVAL_MS: 60000,

@@ -131,6 +131,7 @@ module.exports = function(redis, config, deps) {
                 }
                 const chunkId = parsed.assetId;
                 const { bookId, chapterId, sceneId, chunkIndex } = parsed;
+                console.log(`[DEBUG-RESULT] audio_chunk result: ${job_id} chunk=${chunkIndex} scene=${bookId}/${chapterId}/${sceneId} size=${(resultBuffer.length / 1024).toFixed(0)}KB dispatch=${dispatch_id ? dispatch_id.slice(0,16) : 'none'}...`);
 
                 // Update chunk metadata in Redis (thin: только metadata, routing)
                 try {
