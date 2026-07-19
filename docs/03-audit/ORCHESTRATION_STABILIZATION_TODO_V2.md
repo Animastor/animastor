@@ -285,29 +285,38 @@ k8s-кластер с readiness probes станет реальностью.
 
 ---
 
-## Этап S4 — Фикс тест-моков и полировка регрессий (5 строк)
+## Этап S4 — Фикс тест-моков и полировка регрессий  ✅ ЗАВЕРШЁН
 
 **Приоритет:** P3
 **Цель:** убрать предупреждения `audioOrch.initPlaceholderReady is not a function`,
 которые появляются в `npm test` логах.
 
-### S4.1 Mock audioOrch
+### S4.1 Mock audioOrch  ✅
 
-- [ ] Найти mock audioOrch в `backend/tests/mocks/`.
-- [ ] Добавить stub `initPlaceholderReady: async () => ({ ok: true })`.
-- [ ] Аналогично проверить, что все функции, вызываемые в `scene-window.js:760` и
-      `scene-orchestrator.js:65`, есть в mock'е.
-- [ ] Запустить `npm test` — предупреждений `audioOrch.* is not a function` нет.
+**Корневая причина найдена:** mock audioOrch в `tests/reconciliation-engine.test.js:103-138`
+перекрывал `require.cache[AUDIO_ORCH_PATH]` **без** stub'а `initPlaceholderReady` и
+других phase-transition функций. Эта подмена не чистилась после теста, поэтому
+последующие `happy-path.test.js` вызовы `scene-window.startScene` →
+`audioOrch.initPlaceholderReady()` получали неполный mock и выбрасывали `TypeError`,
+перехваченный `try/catch` в `scene-window.js:762-764` → warning в логах.
 
-### S4.2 Очистить пустые тест-файлы
+- [x] Добавлены stub'ы в mock audioOrch в `reconciliation-engine.test.js`:
+  `initPlaceholderReady`, `setGenerating`, `setWaitingChunks`, `setMerging`,
+  `setDone`, `setFailed`, `completeChunk`, `completeMerge`, `deleteState`.
+- [x] Проверены функции, вызываемые в `scene-window.js:760` и
+  `scene-orchestrator.js:65` — все добавлены.
+- [x] `npm test 2>&1 | grep "is not a function"` → **0 совпадений**.
 
-- [ ] Проверить `backend/tests/coreference-cleanup.test.js` (раньше был пустой).
-- [ ] Удалить или наполнить реальными тестами.
+### S4.2 Очистить пустые тест-файлы  ✅
 
-### Критерий приёмки S4
+- [x] `coreference-cleanup.test.js` уже удалён в более ранних commits (до S1).
+- [x] Проверка: `for f in backend/tests/*.test.js; do grep -qE "it\(|test\(" "$f" || echo "$f"; done` → 0 файлов без тестов.
 
-- [ ] `npm test 2>&1 | grep "is not a function"` → 0 совпадений.
-- [ ] Все `.test.js` файлы содержат хотя бы один `it()`/`test()`.
+### Критерий приёмки S4  ✅
+
+- [x] `npm test 2>&1 | grep "is not a function"` → 0 совпадений.
+- [x] Все `.test.js` файлы содержат хотя бы один `it()`/`test()`.
+- [x] `npm test` — 576 passing, без новых warnings.
 
 ### Рекомендуемые коммиты
 

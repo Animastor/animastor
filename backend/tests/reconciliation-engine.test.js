@@ -134,6 +134,18 @@ function mockDeps(redis, overrides = {}) {
             return results;
         }),
         failWaitingScene: overrides.failWaitingScene || (async () => ({ failed: false, reason: 'not_waiting_chunks' })),
+        // S4.1 (2026-07-19): stub'ы для функций, которые scene-window.startScene
+        // и scene-orchestrator.executeAudioDispatch зовут через lazy require.
+        // Без этих stub'ов warning «audioOrch.X is not a function» загрязняет логи.
+        initPlaceholderReady: overrides.initPlaceholderReady || (async () => ({ phase: 'PLACEHOLDER_READY' })),
+        setGenerating: overrides.setGenerating || (async () => ({ phase: 'GENERATING' })),
+        setWaitingChunks: overrides.setWaitingChunks || (async () => ({ phase: 'WAITING_CHUNKS' })),
+        setMerging: overrides.setMerging || (async () => ({ phase: 'MERGING' })),
+        setDone: overrides.setDone || (async () => ({ phase: 'DONE' })),
+        setFailed: overrides.setFailed || (async () => ({ phase: 'FAILED' })),
+        completeChunk: overrides.completeChunk || (async () => ({ phase: 'WAITING_CHUNKS' })),
+        completeMerge: overrides.completeMerge || (async () => ({ phase: 'DONE' })),
+        deleteState: overrides.deleteState || (async () => ({ deleted: true })),
     };
     require.cache[AUDIO_ORCH_PATH] = { exports: audioOrchMock, loaded: true };
 

@@ -25,8 +25,8 @@
 | S1.4 Убрать dead Phase C3 | ✅ завершён | `10ecf33` | −32 строки |
 | **Итого S1** | ✅ **завершён** | 4 коммита | **−1682 строки** (план был −580) |
 | S2 Упростить restore/debug state writes (unsafe*) | ✅ завершён | `18afacb` | rename + migrate 7 callers |
-| S3 Production-readiness полировка | ✅ завершён | pending | +90 строк (/health + graceful shutdown) |
-| S4 Фикс тест-моков | ⏳ pending | — | — |
+| S3 Production-readiness полировка | ✅ завершён | `d55b3d6` | +90 строк (/health + graceful shutdown) |
+| S4 Фикс тест-моков | ✅ завершён | pending | убраны warning'и audioOrch.* is not a function |
 
 > S1 закончился с **перевыполнением плана** за счёт удаления целиком `retry-manager.js`,
 > который в originale не был упомянут, и глубокого сокращения failure-taxonomy/
