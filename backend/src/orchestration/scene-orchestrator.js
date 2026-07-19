@@ -63,6 +63,14 @@ async function executeAudioDispatch(redis, scene, loadedBook, buildId, dispatchI
 
     // 🔧 AUDIO-ORCH: Transition PLACEHOLDER_READY → GENERATING
     const audioOrch = require('../services/audio-orchestrator');
+
+    // ── DONE GUARD: если аудио уже готово — не перезапускаем ──
+    const orchState = await audioOrch.getState(redis, bookId, chapterId, sceneId);
+    if (orchState && orchState.phase === audioOrch.PHASES.DONE) {
+        log(`AUDIO_ALREADY_DONE: ${bookId}/${chapterId}/${sceneId} — skipping dispatch`);
+        return { dispatched: false, jobs: 0, completed: true, reason: 'already_done' };
+    }
+
     let transResult = await audioOrch.setGenerating(redis, bookId, chapterId, sceneId);
 
     // 🔧 FIX: Если стейт не существует (no_state), инициализируем PLACEHOLDER_READY
@@ -75,11 +83,17 @@ async function executeAudioDispatch(redis, scene, loadedBook, buildId, dispatchI
         transResult = await audioOrch.setGenerating(redis, bookId, chapterId, sceneId);
     }
 
-    // 🔧 FIX: Stale phase recovery (e.g. WAITING_CHUNKS от предыдущей генерации
-    // после перегенерации vbook). Сбрасываем state через deleteState и
-    // инициализируем PLACEHOLDER_READY заново.
+    // 🔧 FIX: Stale phase recovery для непродуктивных фаз.
+    // WAITING_CHUNKS / GENERATING / FAILED — можно сбросить и начать заново.
+    // DONE — НЕ сбрасываем (ранний guard выше уже вернул).
     if (!transResult.success && transResult.reason === 'invalid_transition') {
-        log(`  🔧 AUDIO_ORCH: stale phase ${transResult.from} for ${bookId}/${chapterId}/${sceneId} — resetting to PLACEHOLDER_READY`);
+        const stalePhase = transResult.from;
+        // Финальный safety net: DONE не сбрасываем никогда
+        if (stalePhase === audioOrch.PHASES.DONE) {
+            warn(`AUDIO_ORCH: DONE guard prevented stale reset for ${bookId}/${chapterId}/${sceneId}`);
+            return { dispatched: false, jobs: 0, completed: true, reason: 'already_done' };
+        }
+        log(`  🔧 AUDIO_ORCH: stale phase ${stalePhase} for ${bookId}/${chapterId}/${sceneId} — resetting to PLACEHOLDER_READY`);
         await audioOrch.deleteState(redis, bookId, chapterId, sceneId);
         const segList = require('../audio/segments').buildSegments(sceneData);
         await audioOrch.initPlaceholderReady(redis, bookId, chapterId, sceneId, buildId, segList.length);

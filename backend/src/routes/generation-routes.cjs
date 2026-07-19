@@ -1011,6 +1011,8 @@ module.exports = function(app, redis, deps) {
         try {
             const jobSchema = require('../runtime/job-schema');
             const { job_id, result_base64, build_id, dispatch_id, protocol_version } = req.body || {};
+            log(`[GPU RESULT] Received: job_id=${job_id} build_id=${build_id} dispatch_id=${dispatch_id} proto=${protocol_version} size=${(result_base64 || '').length}B`);
+
             if (
                 !job_id ||
                 !result_base64 ||
@@ -1018,16 +1020,18 @@ module.exports = function(app, redis, deps) {
                 !dispatch_id ||
                 protocol_version !== jobSchema.PROTOCOL_VERSION
             ) {
-                return res.status(400).json({
-                    error: 'valid job_id, result_base64, build_id, dispatch_id and protocol_version required'
-                });
+                const msg = 'valid job_id, result_base64, build_id, dispatch_id and protocol_version required';
+                log(`[GPU RESULT] Validation failed: ${msg} (job_id=${!!job_id} base64=${!!result_base64} build_id=${!!build_id} dispatch_id=${!!dispatch_id} proto=${protocol_version} expected=${jobSchema.PROTOCOL_VERSION})`);
+                return res.status(400).json({ error: msg });
             }
 
             const parsed = jobSchema.parseJobId(job_id);
             const stage = parsed ? jobSchema.STAGE_BY_KIND[parsed.kind] : null;
             if (!parsed || !stage) {
+                log(`[GPU RESULT] parseJobId failed for ${job_id}`);
                 return res.status(400).json({ error: 'invalid job_id' });
             }
+            log(`[GPU RESULT] Parsed: kind=${parsed.kind} book=${parsed.bookId} ch=${parsed.chapterId} sc=${parsed.sceneId} stage=${stage}`);
 
             const dispatchEngine = require('../runtime/dispatch-engine');
             const identity = await dispatchEngine.verifyDispatchIdentity(
@@ -1038,6 +1042,7 @@ module.exports = function(app, redis, deps) {
                 stage,
                 dispatch_id
             );
+            log(`[GPU RESULT] verifyDispatchIdentity: valid=${identity.valid} reason=${identity.reason}`);
             if (!identity.valid) {
                 log(`[GPU RESULT] Rejected ${job_id}: ${identity.reason}`);
                 return res.json({ ok: true, rejected: true, reason: identity.reason });
@@ -1050,16 +1055,21 @@ module.exports = function(app, redis, deps) {
                 log(`[GPU RESULT] Dedup: ${job_id} (build=${build_id}) already processed — skipping`);
                 return res.json({ ok: true, deduped: true });
             }
+            log(`[GPU RESULT] Dedup acquired for ${job_id}`);
 
             try {
+                log(`[GPU RESULT] Calling handleTaskResult for ${job_id}...`);
                 await deps.taskHandler.handleTaskResult(job_id, result_base64, build_id, dispatch_id);
+                log(`[GPU RESULT] handleTaskResult OK: ${job_id}`);
             } catch (procErr) {
+                log(`[GPU RESULT] handleTaskResult FAILED: ${job_id} — ${procErr.message}`);
                 await redis.del(dedupKey).catch(() => {});
                 throw procErr;
             }
             res.json({ ok: true });
         } catch (err) {
             console.error('[GPU RESULT] Error:', err.message);
+            console.error('[GPU RESULT] Stack:', err.stack);
             res.status(500).json({ error: err.message });
         }
     });

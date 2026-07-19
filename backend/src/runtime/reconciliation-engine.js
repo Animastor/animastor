@@ -300,23 +300,75 @@ async function checkStalledAudioScenes(redis, deps) {
         const { bookId, chapterId, sceneId, state: orchState } = entry;
         if (orchState.phase !== audioOrch.PHASES.WAITING_CHUNKS) continue;
 
-        const lastChunkAt = orchState.last_chunk_at;
-        if (!lastChunkAt) continue;
-
-        const age = Date.now() - lastChunkAt;
-        if (age < AUDIO_CHUNK_STALL_MS) continue;
-
         const buildId = orchState.build_id || 'default';
-        const reason = `chunk_stall_timeout:${Math.round(age / 1000)}s`;
-        warn(`[STALLED-AUDIO] ${bookId}/${chapterId}/${sceneId} — ${reason}`);
 
-        try {
-            await audioOrch.failWaitingScene(redis, bookId, chapterId, sceneId, buildId, reason, {
-                orchestrator: deps.orchestrator
-            });
-            stalled++;
-        } catch (err) {
-            warn(`[STALLED-AUDIO] failWaitingScene error: ${err.message}`);
+        // ── LAST_CHUNK_AT || STARTED_AT ──
+        // Если completeChunk ни разу не был вызван (HTTP 500 на всех чанках),
+        // last_chunk_at = null, но started_at есть. Используем started_at как
+        // точку отсчёта застоя. Если и started_at нет — проверяем чанки на диске.
+        const lastChunkAt = orchState.last_chunk_at;
+        const startedAt = orchState.started_at;
+        const threshold = lastChunkAt || startedAt;
+
+        if (threshold) {
+            const age = Date.now() - threshold;
+            if (age < AUDIO_CHUNK_STALL_MS) continue;
+
+            const reason = `chunk_stall_timeout:${Math.round(age / 1000)}s`;
+            warn(`[STALLED-AUDIO] ${bookId}/${chapterId}/${sceneId} — ${reason} (last_chunk_at=${!!lastChunkAt} started_at=${!!startedAt})`);
+
+            try {
+                await audioOrch.failWaitingScene(redis, bookId, chapterId, sceneId, buildId, reason, {
+                    orchestrator: deps.orchestrator
+                });
+                stalled++;
+            } catch (err) {
+                warn(`[STALLED-AUDIO] failWaitingScene error: ${err.message}`);
+            }
+        } else {
+            // ── НЕТ НИ LAST_CHUNK_AT, НИ STARTED_AT ──
+            // Проверяем чанки на диске. Если все на месте — доигрываем merge.
+            // Если ни одного чанка нет — это fresh state без dispatch, не трогаем.
+            const expectedCount = parseInt(orchState.expected_count || '1', 10);
+            const pad = (n) => String(n).padStart(4, '0');
+            const OUTPUT_DIR = config.OUTPUT_DIR;
+            const buildDir = syncPath.join(OUTPUT_DIR, buildId);
+            let presentCount = 0;
+            for (let i = 1; i <= expectedCount; i++) {
+                const chunkPath = syncPath.join(buildDir, `${bookId}_${chapterId}_${sceneId}_${pad(i)}.mp3`);
+                if (syncFs.existsSync(chunkPath)) presentCount++;
+            }
+
+            if (presentCount === expectedCount) {
+                log(`[STALLED-AUDIO] ${bookId}/${chapterId}/${sceneId} — ALL ${presentCount} chunks on disk, no last_chunk_at. Calling completeChunk to trigger merge.`);
+                try {
+                    await audioOrch.completeChunk(redis, bookId, chapterId, sceneId, 'recovery', buildId, {
+                        audio: deps.audio || require('../audio'),
+                        orchestrator: deps.orchestrator,
+                        dispatchId: 'recovery-reconcile',
+                    });
+                    stalled++;
+                } catch (err) {
+                    warn(`[STALLED-AUDIO] completeChunk recovery failed: ${err.message}`);
+                    try {
+                        await audioOrch.failWaitingScene(redis, bookId, chapterId, sceneId, buildId,
+                            `recovery_fallback:${err.message}`, { orchestrator: deps.orchestrator });
+                        stalled++;
+                    } catch (fsErr) {
+                        warn(`[STALLED-AUDIO] failWaitingScene fallback failed: ${fsErr.message}`);
+                    }
+                }
+            } else if (presentCount > 0) {
+                warn(`[STALLED-AUDIO] ${bookId}/${chapterId}/${sceneId} — ${presentCount}/${expectedCount} on disk, no last_chunk_at. Partial chunks, failing scene.`);
+                try {
+                    await audioOrch.failWaitingScene(redis, bookId, chapterId, sceneId, buildId,
+                        `partial_chunks:${presentCount}/${expectedCount}_no_timestamps`, { orchestrator: deps.orchestrator });
+                    stalled++;
+                } catch (err) {
+                    warn(`[STALLED-AUDIO] failWaitingScene failed: ${err.message}`);
+                }
+            }
+            // Если presentCount === 0 — это fresh state, ничего не делаем
         }
     }
 
