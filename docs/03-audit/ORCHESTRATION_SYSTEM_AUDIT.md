@@ -26,7 +26,8 @@
 | **Итого S1** | ✅ **завершён** | 4 коммита | **−1682 строки** (план был −580) |
 | S2 Упростить restore/debug state writes (unsafe*) | ✅ завершён | `18afacb` | rename + migrate 7 callers |
 | S3 Production-readiness полировка | ✅ завершён | `d55b3d6` | +90 строк (/health + graceful shutdown) |
-| S4 Фикс тест-моков | ✅ завершён | pending | убраны warning'и audioOrch.* is not a function |
+| S4 Фикс тест-моков | ✅ завершён | `10c15c2` | убраны warning'и audioOrch.* is not a function |
+| **Итого S1–S4** | ✅ **все этапы завершены** | 8 коммитов | **−1767 строк**, + 0 new subsystems |
 
 > S1 закончился с **перевыполнением плана** за счёт удаления целиком `retry-manager.js`,
 > который в originale не был упомянут, и глубокого сокращения failure-taxonomy/
@@ -47,13 +48,32 @@
 - `execute{Audio,Image,Video}Dispatch` возвращают честный `{ dispatched, jobs, reason }`,
   lease/quota немедленно освобождаются при `dispatched:false` (✅, ранее P0.4).
 - `worker.cjs`, `gpu-hub.js` проходят syntax-smoke в `pretest` (✅).
-- Backend tests: **576 passing** (фовerged run с syntax-smoke gate в `pretest`).
+- Backend tests: **576 passing** (с syntax-smoke gate в `pretest` и без warning'ов).
 
-Критических дефектов в текущем коде **не найдено**. Оставшиеся проблемы — это **упрощение
-и стабилизационная полировка**: dead-code reconciliation фаз C3/C4/C5, дублирующие
-модули resilience (retry-budget / fairness / failure-taxonomy), отсутствие graceful
-shutdown / `/health`, незакрытые прямые writes asset-state из `scene-restoration` и
-`startup-recovery`.
+**Стабилизация S1–S4 завершена (2026-07-19):**
+
+| Ресурс | До S1 | После S4 | Дельта |
+|---|---|---|---|
+| `backend/src` объём (строки) | 11997 | ~10230 | **−1767 строк** |
+| `fairness-engine.js` | 605 строк | удалён | −605 |
+| `retry-manager.js` | 439 строк | удалён (неиспользуемый) | −439 |
+| `failure-taxonomy.js` | 424 строк | ~100 (только classifyFailure) | −324 |
+| `retry-budget-manager.js` | 520 строк | ~165 (только check/consume) | −355 |
+| `reconciliation-engine.js` Phase C3 | 32 строки | удалена | −32 |
+| Graceful shutdown | отсутствовал | есть (SIGTERM/SIGINT) | +60 |
+| `/health` endpoint | отсутствовал | есть | +30 |
+| `unsafeRestoreAssetState` API | нет (все calls через `setAssetState`) | есть (lifecycle через фасад) | refactor 7 files |
+| Warning'и в `npm test` | `audioOrch.X is not a function` × 5+ | 0 | clean |
+
+Стабилизация реализовала принцип **«не усложнять систему, а сделать стабильной»**:
+
+- Никаких новых подсистем, брокеров, state machine, workflow engine.
+- Все изменения — удаление/сокращение dead-code и точечные production-readiness патчи.
+
+Критических дефектов в текущем коде **не найдено**. Оставшиеся точки роста (вне scope
+стабилизации) — unit-тесты на graceful shutdown / `/health`, unit-тест на
+`consumeRetryBudget`, cleanup дублирующих api в `audio-recovery.cjs` / `cleanup-service.cjs`
+(отложено в S1.5).
 
 > Главный ориентир: **−580 строк без потери надёжности** (по `CAPACITY_AND_COMPLEXITY.md`).
 > Это согласовано с `ORCHESTRATOR_ARCHITECTURE_WITH_AUDIO.md`, где фасад уже владеет состоянием
