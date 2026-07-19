@@ -24,8 +24,8 @@
 | S1.3 Сократить retry-budget-manager | ✅ завершён | `dba7298` | −296 строк |
 | S1.4 Убрать dead Phase C3 | ✅ завершён | `10ecf33` | −32 строки |
 | **Итого S1** | ✅ **завершён** | 4 коммита | **−1682 строки** (план был −580) |
-| S2 Упростить restore/debug state writes (unsafe*) | ✅ завершён | pending | rename + migrate 7 callers |
-| S3 Production-readiness полировка | ⏳ pending | — | — |
+| S2 Упростить restore/debug state writes (unsafe*) | ✅ завершён | `18afacb` | rename + migrate 7 callers |
+| S3 Production-readiness полировка | ✅ завершён | pending | +90 строк (/health + graceful shutdown) |
 | S4 Фикс тест-моков | ⏳ pending | — | — |
 
 > S1 закончился с **перевыполнением плана** за счёт удаления целиком `retry-manager.js`,

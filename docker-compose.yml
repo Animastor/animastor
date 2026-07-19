@@ -84,6 +84,9 @@ services:
     environment:
       # T9: GPU Hub API key — должно совпадать с GPU_HUB_API_KEY в backend секции
       - GPU_HUB_API_KEY=${GPU_HUB_API_KEY:-}
+      # S3.4: GPU task hard timeout (ms, must be < min backend dispatch-lease TTL).
+      # Default: 600000 = 10 min. Override per-deployment if GPU stop is set longer.
+      - GPU_TIMEOUT=${GPU_TIMEOUT:-600000}
 
   nginx:
     image: nginx:alpine

@@ -173,6 +173,50 @@ app.get('/metrics', async (req, res) => {
 });
 
 // ======================================================
+// HEALTH ENDPOINT (S3.2, 2026-07-19)
+// ======================================================
+// Lightweight liveness probe. No auth — public endpoint.
+// Returns 200 if runtime loop is running AND Redis responds to PING,
+// 503 otherwise. Used by container orchestrators (docker healthcheck,
+// k8s liveness probe) to decide whether to restart the container.
+
+let _isShuttingDown = false;
+
+app.get('/health', async (req, res) => {
+    const ts = Date.now();
+    if (_isShuttingDown) {
+        return res.status(503).json({
+            status: 'shutting_down',
+            loop: false,
+            redis: 'unknown',
+            ts
+        });
+    }
+
+    let redisStatus = 'PONG';
+    let loopRunning = false;
+    try {
+        const pong = await redis.ping();
+        redisStatus = pong === 'PONG' ? 'PONG' : 'DOWN';
+    } catch (err) {
+        redisStatus = 'DOWN';
+    }
+    try {
+        loopRunning = runtime.loop.isRunning();
+    } catch (_) {
+        loopRunning = false;
+    }
+
+    const ok = redisStatus === 'PONG' && loopRunning;
+    res.status(ok ? 200 : 503).json({
+        status: ok ? 'ok' : 'degraded',
+        loop: loopRunning,
+        redis: redisStatus,
+        ts
+    });
+});
+
+// ======================================================
 // [14] SERVER STARTUP
 // ======================================================
 
@@ -280,23 +324,79 @@ async function startServer() {
         });
     });
 
-    // Graceful shutdown
-    process.on('SIGTERM', async () => {
-        log('[SHUTDOWN] SIGTERM received, shutting down gracefully...');
-        server.close(() => {
-            log('[SHUTDOWN] HTTP server closed');
-        });
+    // Graceful shutdown (S3.1, 2026-07-19)
+    // SIGTERM  — Kubernetes/docker stop.  Cancel dispatches, stop loop,
+    //            close HTTP server, close Redis & PG. Hard timeout 10s.
+    // SIGINT   — Ctrl+C in dev.  Same path.
+    // S2UP:    — uncaught exception.  Try to log + exit non-zero.
+    async function gracefulShutdown(signal) {
+        if (_isShuttingDown) return;
+        _isShuttingDown = true;
+        log(`[SHUTDOWN] ${signal} received, shutting down gracefully...`);
+
+        const HARD_TIMEOUT_MS = 10000;
+        const hardExit = setTimeout(() => {
+            console.error('[SHUTDOWN] Hard timeout — forcing exit');
+            process.exit(1);
+        }, HARD_TIMEOUT_MS);
+        hardExit.unref();
+
         try {
-            await redis.quit();
-            log('[SHUTDOWN] Redis connection closed');
-        } catch (_) {}
-        try {
-            await storage.postgres.closePool();
-            log('[SHUTDOWN] PostgreSQL connection closed');
-        } catch (_) {}
-        log('[SHUTDOWN] Goodbye');
-        process.exit(0);
-    });
+            // 1. Stop runtime loop (scheduler + reconcile timers)
+            try {
+                runtime.loop.stop();
+                log('[SHUTDOWN] Runtime loop stopped');
+            } catch (loopErr) {
+                console.warn(`[SHUTDOWN] Runtime loop stop failed: ${loopErr.message}`);
+            }
+
+            // 2. Cancel active dispatches so leases/quota are released cleanly
+            // (instead of waiting for TTL). Stale callbacks after this will be
+            // rejected by verifyDispatchIdentity.
+            try {
+                const dispatchEngine = require('./runtime/dispatch-engine');
+                const leases = await dispatchEngine.getActiveLeases(redis);
+                for (const l of leases) {
+                    if (!l.scene) continue;
+                    try {
+                        await dispatchEngine.cancelActiveDispatch(
+                            redis, l.scene.bookId, l.scene.chapterId,
+                            l.scene.sceneId, l.scene.stage, 'graceful_shutdown'
+                        );
+                        log(`[SHUTDOWN] Cancelled: ${l.scene.bookId}/${l.scene.chapterId}/${l.scene.sceneId}:${l.scene.stage}`);
+                    } catch (cancelErr) {
+                        console.warn(`[SHUTDOWN] Cancel failed: ${cancelErr.message}`);
+                    }
+                }
+                log(`[SHUTDOWN] Cancelled ${leases.length} active dispatches`);
+            } catch (leaseErr) {
+                console.warn(`[SHUTDOWN] Lease inspection failed: ${leaseErr.message}`);
+            }
+
+            // 3. Stop accepting new HTTP connections
+            try {
+                await new Promise((resolve) => server.close(() => {
+                    log('[SHUTDOWN] HTTP server closed');
+                    resolve();
+                }));
+            } catch (_) {}
+
+            // 4. Close Redis & PG pools
+            try { await redis.quit(); log('[SHUTDOWN] Redis closed'); } catch (_) {}
+            try { await storage.postgres.closePool(); log('[SHUTDOWN] PostgreSQL closed'); } catch (_) {}
+
+            log('[SHUTDOWN] Goodbye');
+            clearTimeout(hardExit);
+            process.exit(0);
+        } catch (shutdownErr) {
+            console.error('[SHUTDOWN] Error during shutdown:', shutdownErr.message);
+            clearTimeout(hardExit);
+            process.exit(1);
+        }
+    }
+
+    process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+    process.on('SIGINT',  () => gracefulShutdown('SIGINT'));
 }
 
 startServer().catch(err => {
