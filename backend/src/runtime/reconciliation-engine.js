@@ -1173,14 +1173,8 @@ async function reconcileCycle(redis, deps = {}, options = {}) {
                 summary.errors.push(`version_stale: ${err.message}`);
             }
 
-            // C3: Log IU images from disk
-            try {
-                const c3Count = await recoverIuImagesFromDisk(redis, deps);
-                if (c3Count > 0) phases.push(`iu_scan:${c3Count}`);
-            } catch (err) {
-                warn(`Phase C3 failed: ${err.message}`);
-                summary.errors.push(`iu_scan: ${err.message}`);
-            }
+            // C3 removed (S1.4): was log-only PNG scan, no state mutation.
+            // recoverIuImagesFromDisk() too expensive for every 60s cycle without value.
 
             // C4: Reconcile missing scene counters from PG
             try {
@@ -1460,36 +1454,11 @@ async function checkVersionStaleness(redis, deps) {
     }
 }
 
-// ── PHASE C3: IU images from disk (log-only scan) ──────
-// Из startup-recovery.js: лог-только скан PNG файлов.
-async function recoverIuImagesFromDisk(redis, deps) {
-    const OUTPUT_DIR = config.OUTPUT_DIR;
-    if (!syncFs.existsSync(OUTPUT_DIR)) return 0;
-
-    const buildDirs = syncFs.readdirSync(OUTPUT_DIR).filter(name => {
-        try { return syncFs.statSync(syncPath.join(OUTPUT_DIR, name)).isDirectory(); } catch { return false; }
-    });
-
-    let totalFound = 0;
-    for (const buildId of buildDirs) {
-        const buildPath = syncPath.join(OUTPUT_DIR, buildId);
-        let allFiles;
-        try { allFiles = syncFs.readdirSync(buildPath); } catch { continue; }
-
-        const sceneIuMap = {};
-        for (const f of allFiles) {
-            if (!f.endsWith('.png')) continue;
-            const match = f.match(/^(.+)_(ch[^_]+)_(sc[^_]+)_iu[^_]*\.png$/);
-            if (match) {
-                sceneIuMap[`${match[1]}:${match[2]}:${match[3]}`] = true;
-            }
-        }
-        totalFound += Object.keys(sceneIuMap).length;
-    }
-
-    if (totalFound > 0) log(`[IU-LOG-ONLY] ${totalFound} scenes with IU images on disk`);
-    return totalFound;
-}
+// ── PHASE C3: REMOVED in S1.4 (2026-07-19) ─────────────
+// Был log-only PNG scan, сканировал всю OUTPUT_DIR по 60s. Не мутировал состояние,
+// только логировал счётчик сцен с IU images. Полная walks FS без пользы для reconcile.
+// Аналогичная функция recoverIuImagesFromDisk осталась в services/startup-recovery.js
+// (вызывается явно, не на каждый reconcile-цикл).
 
 // ── PHASE C4: Reconcile missing scene counters from PG ─
 // Из startup-recovery.js: логирует книги с PG записями без Redis-счётчиков.
@@ -1527,7 +1496,6 @@ module.exports = {
     recoverResultKeys,
     recoverAudioOrchStates,
     checkVersionStaleness,
-    recoverIuImagesFromDisk,
     reconcileMissingSceneState,
     checkStalledAudioScenes,
 
