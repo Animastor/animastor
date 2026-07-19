@@ -588,7 +588,7 @@ async function recoverActiveScenes(redis, snapshot) {
     for (const scene of snapshot.activeScenes) {
         // T8: syncLinearState удалён — per-asset state единственный source of truth
         const perAsset = { audio: 'new', image: 'new', video: 'new' };
-        await state.setAssetStates(redis, scene.bookId, scene.chapterId, scene.sceneId, perAsset);
+        await state.unsafeRestoreAssetStates(redis, scene.bookId, scene.chapterId, scene.sceneId, perAsset);
         recovered++;
 
         // Re-add to active index

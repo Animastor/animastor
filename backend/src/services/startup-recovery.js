@@ -320,8 +320,8 @@ async function recoverAudioOrchStates(redis, deps) {
                 await audioOrch.setFailed(redis, bookId, chapterId, sceneId, 'restart_recovery');
                 // Also reset asset state to PENDING so scheduler picks it up
                 try {
-                    if (deps.state && deps.state.setAssetState) {
-                        await deps.state.setAssetState(redis, bookId, chapterId, sceneId,
+                    if (deps.state && deps.state.unsafeRestoreAssetState) {
+                        await deps.state.unsafeRestoreAssetState(redis, bookId, chapterId, sceneId,
                             'audio', deps.state.AssetState.PENDING);
                     }
                 } catch (_) {}
@@ -337,8 +337,8 @@ async function recoverAudioOrchStates(redis, deps) {
                     log(`[AUDIO-ORCH] Recover ${bookId}/${chapterId}/${sceneId}: MERGING → FAILED (no merged file)`);
                     await audioOrch.setFailed(redis, bookId, chapterId, sceneId, 'restart_merge_missing');
                     try {
-                        if (deps.state && deps.state.setAssetState) {
-                            await deps.state.setAssetState(redis, bookId, chapterId, sceneId,
+                        if (deps.state && deps.state.unsafeRestoreAssetState) {
+                            await deps.state.unsafeRestoreAssetState(redis, bookId, chapterId, sceneId,
                                 'audio', deps.state.AssetState.PENDING);
                         }
                     } catch (_) {}

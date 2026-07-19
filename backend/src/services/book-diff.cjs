@@ -446,7 +446,7 @@ module.exports = function(redis, config, deps) {
         }
 
         if (Object.keys(assetUpdates).length > 0) {
-            await state.setAssetStates(redis, bookId, chapterId, sceneId, assetUpdates);
+            await state.unsafeRestoreAssetStates(redis, bookId, chapterId, sceneId, assetUpdates);
         }
 
         // T8: syncLinearState удалён

@@ -176,7 +176,7 @@ module.exports = function(redis) {
 
             try {
                 // L5: Set per-asset to all READY (files exist on disk)
-                await state.setAssetStates(redis, bookId, chapterId, sceneId, {
+                await state.unsafeRestoreAssetStates(redis, bookId, chapterId, sceneId, {
                     audio: state.AssetState.READY,
                     image: state.AssetState.READY,
                     video: state.AssetState.READY

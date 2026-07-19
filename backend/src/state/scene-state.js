@@ -113,6 +113,21 @@ async function getAssetStates(redis, bookId, chapterId, sceneId) {
  * Set a single asset's state in the per-asset store.
  * Uses HSET for atomic per-field update.
  *
+ * ⚠️ UNSAFE (S2, 2026-07-19): use ONLY for restore from disk snapshot,
+ *    startup recovery, or debug routes. Lifecycle transitions MUST go
+ *    through orchestrator facade (orchestrator.completeStage / failStage /
+ *    markDirtyScene / markGenerating / ...). Facade owns validateAssetTransition
+ *    and journal events.
+ *
+ * Whitelist of files allowed to call unsafe* (lint convention, S2.4):
+ *   - backend/src/orchestration/orchestrator.js   (facade itself)
+ *   - backend/src/orchestration/scene-restoration.js   (disk restore)
+ *   - backend/src/services/startup-recovery.js    (startup restore)
+ *   - backend/src/runtime/runtime-persistence.js  (snapshot restore)
+ *   - backend/src/services/book-diff.cjs          (reset to PENDING on diff)
+ *   - backend/src/helpers/redis-helpers.cjs       (book-wide restore)
+ *   - backend/src/routes/debug-routes.cjs         (debug endpoints)
+ *
  * @param {RedisClient} redis
  * @param {string} bookId
  * @param {string} chapterId
@@ -121,7 +136,7 @@ async function getAssetStates(redis, bookId, chapterId, sceneId) {
  * @param {string} status — AssetState value
  * @returns {Promise<{audio: string, image: string, video: string}>}
  */
-async function setAssetState(redis, bookId, chapterId, sceneId, asset, status) {
+async function unsafeRestoreAssetState(redis, bookId, chapterId, sceneId, asset, status) {
     if (!ASSETS.includes(asset)) {
         error(`Invalid asset type: ${asset}. Must be one of: ${ASSETS.join(', ')}`);
         return null;
@@ -140,6 +155,10 @@ async function setAssetState(redis, bookId, chapterId, sceneId, asset, status) {
 /**
  * Set multiple asset states at once (atomic via HSET).
  *
+ * ⚠️ UNSAFE (S2, 2026-07-19): use ONLY for restore from disk snapshot,
+ *    startup recovery, or debug routes. Lifecycle transitions MUST go
+ *    through orchestrator facade.
+ *
  * @param {RedisClient} redis
  * @param {string} bookId
  * @param {string} chapterId
@@ -147,7 +166,7 @@ async function setAssetState(redis, bookId, chapterId, sceneId, asset, status) {
  * @param {{audio?: string, image?: string, video?: string}} updates
  * @returns {Promise<{audio: string, image: string, video: string}>}
  */
-async function setAssetStates(redis, bookId, chapterId, sceneId, updates) {
+async function unsafeRestoreAssetStates(redis, bookId, chapterId, sceneId, updates) {
     if (!updates || typeof updates !== 'object' || Array.isArray(updates)) {
         error('Invalid asset state updates: expected an object');
         return null;
@@ -169,6 +188,14 @@ async function setAssetStates(redis, bookId, chapterId, sceneId, updates) {
     return await getAssetStates(redis, bookId, chapterId, sceneId);
 }
 
+// ── DEPRECATED ALIASES (S2) ───────────────────────────────
+// Оставлены на переходный коммит, чтобы не сломать внешние callers.
+// Все lifecycle writes в orchestrator.js должны быть переведены на
+// приватный facade._writeAssetState (см. S2.2). После миграции
+// всех callers на `unsafe*` имена удалить.
+const setAssetState = unsafeRestoreAssetState;
+const setAssetStates = unsafeRestoreAssetStates;
+
 // ======================================================
 // EXPORTS
 // ======================================================
@@ -179,7 +206,14 @@ module.exports = {
     ASSET_STATE_KEY_PREFIX,
     ASSETS,
     getAssetStates,
+
+    // ⚠️ UNSAFE: use ONLY for restore/debug. Lifecycle: orchestrator facade.
+    unsafeRestoreAssetState,
+    unsafeRestoreAssetStates,
+
+    // Deprecated aliases — REMOVE after S2.3 migration
     setAssetState,
     setAssetStates,
+
     validateAssetTransition,
 };

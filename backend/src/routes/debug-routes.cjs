@@ -332,7 +332,7 @@ module.exports = function(app, redis, deps) {
             const buildId = req.body.build_id || 'default';
 
             // L7: Set per-asset (audio+image READY, video DIRTY to force regen), then derive
-            await state.setAssetStates(redis, book_id, chapter_id, scene_id, {
+            await state.unsafeRestoreAssetStates(redis, book_id, chapter_id, scene_id, {
                 audio: state.AssetState.READY,
                 image: state.AssetState.READY,
                 video: state.AssetState.DIRTY
@@ -399,7 +399,7 @@ module.exports = function(app, redis, deps) {
             } while (cursor !== 0);
 
             // Reset per-asset states — debug route
-            await state.setAssetStates(redis, book_id, chapter_id, scene_id, {
+            await state.unsafeRestoreAssetStates(redis, book_id, chapter_id, scene_id, {
                 audio: state.AssetState.PENDING,
                 image: state.AssetState.PENDING,
                 video: state.AssetState.PENDING

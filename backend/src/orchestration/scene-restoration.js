@@ -84,7 +84,7 @@ async function restoreSceneChunkStatus(redis, buildId, bookId, chapterId, sceneI
             }
         } catch (_) {}
         if (!audioVersionStale) {
-            await state.setAssetState(redis, bookId, chapterId, sceneId, 'audio', state.AssetState.READY);
+            await state.unsafeRestoreAssetState(redis, bookId, chapterId, sceneId, 'audio', state.AssetState.READY);
         } else {
             log(`[RESTORE-AUDIO-STALE] ${bookId}/${chapterId}/${sceneId}: audio file exists but version is stale — leaving pending`);
         }

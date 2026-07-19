@@ -168,7 +168,7 @@ async function completeStage(redis, bookId, chapterId, sceneId, stage, buildId, 
                     await sceneAssetsRepo.markReady(bookId, chapterId, sceneId, stage, artifactPath);
                     log(`[PG-${stage.toUpperCase()}-READY] ${bookId}/${chapterId}/${sceneId}: status=ready`);
 
-                    await state.setAssetState(redis, bookId, chapterId, sceneId, stage, state.AssetState.READY);
+                    await state.unsafeRestoreAssetState(redis, bookId, chapterId, sceneId, stage, state.AssetState.READY);
                     log(`[COMPLETE-STAGE] ${bookId}/${chapterId}/${sceneId}: ${stage} → READY`);
                     phaseCompleted = true;
                     phaseReason = null;
@@ -177,7 +177,7 @@ async function completeStage(redis, bookId, chapterId, sceneId, stage, buildId, 
                 // T2: version gate stale — dispatch успешен, но artifact устарел.
                 // Финализируем как success (диспетчеризация выполнена), просто не ставим READY.
                 log(`[VERSION-GATE] ${bookId}/${chapterId}/${sceneId}: ${stage} stale — DIRTY instead of READY`);
-                await state.setAssetState(redis, bookId, chapterId, sceneId, stage, state.AssetState.DIRTY);
+                await state.unsafeRestoreAssetState(redis, bookId, chapterId, sceneId, stage, state.AssetState.DIRTY);
                 phaseCompleted = false;
                 phaseReason = 'stale';
                 // handlerOk остаётся true — финализируем как success
@@ -262,14 +262,14 @@ async function failStage(redis, bookId, chapterId, sceneId, stage, buildId, reas
             return { failed: false, reason: check.reason, current };
         }
 
-        await state.setAssetState(redis, bookId, chapterId, sceneId, stage, state.AssetState.FAILED);
+        await state.unsafeRestoreAssetState(redis, bookId, chapterId, sceneId, stage, state.AssetState.FAILED);
         log(`[FAIL-STAGE] ${bookId}/${chapterId}/${sceneId}: ${stage} → FAILED (reason=${reason})`);
         await journal.appendSceneEvent(redis, bookId, chapterId, sceneId,
             eventType, state.AssetState.FAILED, { stage, reason, buildId }).catch(() => {});
 
         // T8: syncLinearState удалён — per-asset state единственный source of truth
         if (redispatch) {
-            await state.setAssetState(redis, bookId, chapterId, sceneId, stage, state.AssetState.PENDING);
+            await state.unsafeRestoreAssetState(redis, bookId, chapterId, sceneId, stage, state.AssetState.PENDING);
             log(`[FAIL-STAGE] ${bookId}/${chapterId}/${sceneId}: ${stage} → PENDING (re-dispatch queued)`);
         }
         return { failed: true, reason, redispatch };
@@ -304,7 +304,7 @@ async function failStage(redis, bookId, chapterId, sceneId, stage, buildId, reas
 async function markDirtyScene(redis, bookId, chapterId, sceneId, assets = ['audio', 'image', 'video'], buildId = null) {
     const state = require('../state');
     for (const asset of assets) {
-        await state.setAssetState(redis, bookId, chapterId, sceneId, asset, state.AssetState.DIRTY);
+        await state.unsafeRestoreAssetState(redis, bookId, chapterId, sceneId, asset, state.AssetState.DIRTY);
     }
 
     // T8: syncLinearState удалён — per-asset state единственный source of truth
@@ -327,7 +327,7 @@ async function markDirtyScene(redis, bookId, chapterId, sceneId, assets = ['audi
 // T8: syncLinearState удалён — per-asset state единственный source of truth.
 async function setScenePending(redis, bookId, chapterId, sceneId, asset, buildId = null) {
     const state = require('../state');
-    await state.setAssetState(redis, bookId, chapterId, sceneId, asset, state.AssetState.PENDING);
+    await state.unsafeRestoreAssetState(redis, bookId, chapterId, sceneId, asset, state.AssetState.PENDING);
 }
 
 // ── setSceneAllReady ─────────────────────────────────
@@ -336,7 +336,7 @@ async function setScenePending(redis, bookId, chapterId, sceneId, asset, buildId
 // T8: syncLinearState удалён — per-asset state единственный source of truth.
 async function setSceneAllReady(redis, bookId, chapterId, sceneId, buildId = null) {
     const state = require('../state');
-    await state.setAssetStates(redis, bookId, chapterId, sceneId, {
+    await state.unsafeRestoreAssetStates(redis, bookId, chapterId, sceneId, {
         audio: state.AssetState.READY,
         image: state.AssetState.READY,
         video: state.AssetState.READY,
@@ -348,7 +348,7 @@ async function setSceneAllReady(redis, bookId, chapterId, sceneId, buildId = nul
 // T7+T8: syncLinearState удалён — per-asset state единственный source of truth.
 async function setSceneGenerating(redis, bookId, chapterId, sceneId, asset, buildId = null) {
     const state = require('../state');
-    await state.setAssetState(redis, bookId, chapterId, sceneId, asset, state.AssetState.GENERATING);
+    await state.unsafeRestoreAssetState(redis, bookId, chapterId, sceneId, asset, state.AssetState.GENERATING);
 }
 
 // ── setScenePlaceholder ──────────────────────────────
@@ -356,7 +356,7 @@ async function setSceneGenerating(redis, bookId, chapterId, sceneId, asset, buil
 // T8: syncLinearState удалён — per-asset state единственный source of truth.
 async function setScenePlaceholder(redis, bookId, chapterId, sceneId, buildId = null) {
     const state = require('../state');
-    await state.setAssetState(redis, bookId, chapterId, sceneId, 'audio', state.AssetState.PLACEHOLDER);
+    await state.unsafeRestoreAssetState(redis, bookId, chapterId, sceneId, 'audio', state.AssetState.PLACEHOLDER);
 }
 
 // ── completeStageWithoutVideo ────────────────────────
@@ -366,7 +366,7 @@ async function setScenePlaceholder(redis, bookId, chapterId, sceneId, buildId = 
 async function completeStageWithoutVideo(redis, loadedBook, bookId, chapterId, sceneId, buildId) {
     const state = require('../state');
     const callbacks = require('./scene-callbacks');
-    await state.setAssetState(redis, bookId, chapterId, sceneId, 'video', state.AssetState.READY);
+    await state.unsafeRestoreAssetState(redis, bookId, chapterId, sceneId, 'video', state.AssetState.READY);
     await callbacks.completeSceneWithoutVideo(redis, loadedBook, bookId, chapterId, sceneId, buildId);
 }
 
@@ -376,7 +376,7 @@ async function completeStageWithoutVideo(redis, loadedBook, bookId, chapterId, s
 async function completeStageWithoutImage(redis, loadedBook, bookId, chapterId, sceneId, buildId) {
     const state = require('../state');
     const callbacks = require('./scene-callbacks');
-    await state.setAssetState(redis, bookId, chapterId, sceneId, 'image', state.AssetState.READY);
+    await state.unsafeRestoreAssetState(redis, bookId, chapterId, sceneId, 'image', state.AssetState.READY);
     await callbacks.completeSceneWithoutImage(redis, loadedBook, bookId, chapterId, sceneId, buildId);
 }
 
