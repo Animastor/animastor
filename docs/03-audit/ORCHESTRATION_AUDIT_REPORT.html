@@ -215,27 +215,6 @@
   .callout-title { font-weight: 600; margin-bottom: 4px; }
   .callout p { margin-bottom: 0; font-size: 0.92em; }
 
-  /* ── Flow box ── */
-  .flow {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    align-items: center;
-    margin: 16px 0;
-  }
-  .flow-step {
-    background: var(--surface-2);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 6px 14px;
-    font-size: 0.85em;
-    white-space: nowrap;
-  }
-  .flow-step.ok { border-color: var(--green); color: var(--green); }
-  .flow-step.warn { border-color: var(--yellow); color: var(--yellow); }
-  .flow-step.err { border-color: var(--red); color: var(--red); }
-  .flow-arrow { color: var(--text-dim); font-size: 1.2em; }
-
   /* ── Tags ── */
   .tag {
     display: inline-block;
@@ -311,6 +290,29 @@
   .stat.yellow .num { color: var(--yellow); }
   .stat.red .num { color: var(--red); }
   .stat.blue .num { color: var(--blue); }
+
+  /* ── Progress bar ── */
+  .progress-container { margin: 20px 0; }
+  .progress-bar {
+    height: 12px;
+    background: var(--surface-2);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  .progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--green), var(--accent));
+    border-radius: 6px;
+    width: 95%;
+    transition: width 0.5s;
+  }
+  .progress-label {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 6px;
+    font-size: 0.85em;
+    color: var(--text-dim);
+  }
 </style>
 </head>
 <body>
@@ -322,8 +324,16 @@
   <div class="subtitle">Animastor — Backend Orchestration Layer</div>
   <div class="meta">
     <span>📅 19 июля 2026</span>
-    <span>📁 v1.0.0</span>
+    <span>📁 d29eca0</span>
     <span>🔍 deepseek-v4-flash</span>
+  </div>
+  <div class="progress-container">
+    <div class="progress-bar"><div class="progress-fill" style="width: 95%"></div></div>
+    <div class="progress-label">
+      <span>Стабилизация S1-S4</span>
+      <span>−1767 строк + /health + graceful shutdown</span>
+      <span>95%</span>
+    </div>
   </div>
 </header>
 
@@ -333,16 +343,15 @@
   <ol>
     <li><a href="#arch">Общая архитектура</a></li>
     <li><a href="#statemachines">Две state machine</a></li>
-    <li><a href="#facade">Единый фасад orchestrator.js (M5)</a></li>
-    <li><a href="#dispatch">Dispatch Engine — полный пайплайн</a></li>
-    <li><a href="#dataflow">Data Flow — от генерации до готовности</a></li>
+    <li><a href="#facade">Единый фасад orchestrator.js</a></li>
+    <li><a href="#dispatch">Dispatch Engine</a></li>
+    <li><a href="#stabilization">Стабилизация S1-S4</a></li>
     <li><a href="#reconcile">Reconciliation — самовосстановление</a></li>
-    <li><a href="#target">Целевая архитектура (To-Be) — Unified Facade</a></li>
-    <li><a href="#callflows">Call Flows: 4 сценария</a></li>
-    <li><a href="#findings">Ключевые находки</a></li>
-    <li><a href="#metrics">Метрики и конфигурация</a></li>
-    <li><a href="#asistobe">As-Is → To-Be: план конвергенции</a></li>
-    <li><a href="#recommendations">Рекомендации</a></li>
+    <li><a href="#regeneration">Regeneration System</a></li>
+    <li><a href="#callflows">Call Flows</a></li>
+    <li><a href="#findings">Находки и статус</a></li>
+    <li><a href="#capacity">Ёмкость и масштабирование</a></li>
+    <li><a href="#config">Конфигурация и файлы</a></li>
   </ol>
 </div>
 
@@ -351,53 +360,60 @@
 <h2>1. Общая архитектура</h2>
 
 <div class="diagram">
-<span class="hl">                    ┌─────────────────────────────────────────┐</span>
-<span class="hl">                    │           runtime-loop (5s tick)         │</span>
-<span class="hl">                    │  reconcile-цикл (60s) ←───<span class="g"> CLEANUP_LOCK</span> │</span>
-<span class="hl">                    └────┬────────────┬──────────────┬────────┘</span>
-<span class="hl">                         │            │              │</span>
-<span class="hl">                    ┌────<span class="b">▼</span>───┐  ┌────<span class="b">▼</span>────┐  ┌──────<span class="b">▼</span>───────┐</span>
-<span class="hl">                    │<span class="b">Scheduler</span> │  │<span class="b">Counter</span>  │  │<span class="b">Prometheus</span>    │</span>
-<span class="hl">                    │(tick()) │  │Reconcil.│  │Metrics      │</span>
+<span class="hl">                    ┌──────────────────────────────────────────┐</span>
+<span class="hl">                    │         runtime-loop (tick 5s)            │</span>
+<span class="hl">                    │  reconcile-цикл (60s) ←──<span class="g"> CLEANUP_LOCK</span>   │</span>
+<span class="hl">                    └────┬───────────┬──────────────┬──────────┘</span>
+<span class="hl">                         │           │              │</span>
+<span class="hl">                    ┌────<span class="b">▼</span>───┐  ┌───<span class="b">▼</span>─────┐  ┌─────<span class="b">▼</span>────────┐</span>
+<span class="hl">                    │Scheduler │  │Counter  │  │Prometheus    │</span>
+<span class="hl">                    │(tick()) │  │Reconcil.│  │Metrics       │</span>
 <span class="hl">                    └────┬───┘  └─────────┘  └──────────────┘</span>
 <span class="hl">                         │</span>
 <span class="hl">              ┌──────────<span class="b">▼</span>──────────────────────┐</span>
-<span class="hl">              │     <span class="p">dispatch-engine.js</span>         │</span>
+<span class="hl">              │     dispatch-engine.js          │</span>
 <span class="hl">              │  lease + quota + circuit-break  │</span>
-<span class="hl">              │  + retry-budget + fairness      │</span>
+<span class="hl">              │  + retry-budget + dispatch      │</span>
+<span class="hl">              │  <span class="r">(fairness-engine УДАЛЁН)</span>       │</span>
 <span class="hl">              └──────────┬──────────────────────┘</span>
 <span class="hl">                         │</span>
 <span class="hl">         ┌───────────────<span class="b">▼</span>──────────────────┐</span>
-<span class="hl">         │   <span class="y">orchestrator.js (FACADE)</span>      │</span>
-<span class="hl">         │   markDirty / beginStage/        │</span>
-<span class="hl">         │   completeStage / failStage      │</span>
-<span class="hl">         │   resetScenes / reconcile        │</span>
+<span class="hl">         │    orchestrator.js (FACADE)      │</span>
+<span class="hl">         │  markDirty / setSceneGenerating │</span>
+<span class="hl">         │  completeStage / failStage      │</span>
+<span class="hl">         │  reconcile / resetScenes        │</span>
 <span class="hl">         └──────┬──────────────┬──────────┘</span>
 <span class="hl">                │              │</span>
 <span class="hl">         ┌──────<span class="b">▼</span>──┐    ┌─────<span class="b">▼</span>──────────┐</span>
-<span class="hl">         │<span class="b"> state.js</span>│    │<span class="b">audio-orch.js</span>  │</span>
-<span class="hl">         │(per-asset)    │(phase machine) │</span>
+<span class="hl">         │ state.js│    │ audio-orch.js │</span>
+<span class="hl">         │(per-asset)    │(phase machine)│</span>
+<span class="hl">         │<span class="r">(unsafe*)</span>    │               │</span>
 <span class="hl">         └─────────┘    └────────────────┘</span>
 <span class="hl">                │              │</span>
 <span class="hl">         ┌──────<span class="b">▼</span>──────────────<span class="b">▼</span>──────────┐</span>
 <span class="hl">         │   scene-orchestrator.js        │</span>
 <span class="hl">         │   executeAudio/Image/Video     │</span>
 <span class="hl">         └───────────────────────────────┘</span>
+
+<span class="hl">    GPU Hub (gpu-hub.js) ←─── backend</span>
+<span class="hl">      └── Worker (worker.cjs) ←──→ ComfyUI</span>
 </div>
 
-<p>Система оркестрации Animastor построена на <strong>трёх уровнях абстракции</strong>:</p>
-
-<ul>
-  <li><strong>Runtime Loop</strong> — сердце системы. Каждые 5с запускает scheduler tick, каждые 60с — reconcile cycle.</li>
-  <li><strong>Dispatch Engine</strong> — единая точка входа для отправки задач на GPU. Управляет lease, quota, circuit breaker, retry budget.</li>
-  <li><strong>Orchestrator Facade</strong> — тонкий фасад над двумя state machine (assset state + audio-orch). Единственный, кто пишет состояние.</li>
-  <li><strong>Scene Orchestrator</strong> — исполнитель. `executeAudioDispatch`, `executeImageDispatch`, `executeVideoDispatch`.</li>
-</ul>
-
-<div class="callout info">
-  <div class="callout-title">💡 Ключевое решение</div>
-  <p>Разделение на <strong>fast tick (5s)</strong> и <strong>slow reconcile (60s)</strong> — правильный архитектурный выбор. Tick содержит только лёгкие операции (scheduler + counter reconcil), а тяжёлое сканирование — в отдельном цикле с distributed lock.</p>
+<div class="callout ok">
+  <div class="callout-title">✅ После стабилизации (S1-S4)</div>
+  <p>—1767 строк кода, 0 новых подсистем. Удалены: <code>fairness-engine.js</code> (618 строк), <code>retry-manager.js</code> (439 строк). Сокращены: <code>failure-taxonomy.js</code> 424→100, <code>retry-budget-manager.js</code> 520→165. Phase C3 удалена из reconciliation. Добавлены: graceful shutdown, /health endpoint.</p>
 </div>
+
+<h3>Ключевые решения</h3>
+
+<table>
+  <tr><th>Решение</th><th>Обоснование</th></tr>
+  <tr><td><strong>Один процесс Node.js</strong></td><td>Нет кластеризации. Всё: API, tick, reconcile, SSE — в одном event loop.</td></tr>
+  <tr><td><strong>Redis</strong></td><td>Runtime-состояние: очереди, блокировки, asset states, lease, квоты.</td></tr>
+  <tr><td><strong>PostgreSQL</strong></td><td>Канон: сцены, версии, scene_assets (status), book JSON.</td></tr>
+  <tr><td><strong>Файловая система</strong></td><td>OUTPUT_DIR — байты результата (.mp3, .png, .mp4).</td></tr>
+  <tr><td><strong>Fast tick + slow reconcile</strong></td><td>Tick (5s) — лёгкие операции. Reconcile (60s) — тяжёлое сканирование с distributed lock.</td></tr>
+</table>
 </section>
 
 <!-- ═══════════ 2. STATE MACHINES ═══════════ -->
@@ -406,7 +422,7 @@
 
 <div class="callout ok">
   <div class="callout-title">✅ Верный дизайн</div>
-  <p>Разделение на per-asset (высокоуровневый статус) и audio-orch (детальный пайплайн) — правильная абстракция, позволяющая независимо отслеживать состояние каждого ассета.</p>
+  <p>Разделение на per-asset (высокоуровневый статус для scheduler) и audio-orch (детальный пайплайн для watchdogs) — правильная абстракция. Ниже — что уже проверено по коду.</p>
 </div>
 
 <h3>Asset State Machine (state.js)</h3>
@@ -419,23 +435,13 @@
                                   <span class="y">DIRTY</span> ────────────→ <span class="y">PENDING</span> (regenerate)
 </div>
 
-<table>
-  <tr><th>State</th><th>Семантика</th></tr>
-  <tr><td><span class="tag tag-blue">NEW</span></td><td>Только что создана, не начиналась</td></tr>
-  <tr><td><span class="tag tag-yellow">PENDING</span></td><td>Ожидает диспетчеризации</td></tr>
-  <tr><td><span class="tag tag-yellow">GENERATING</span></td><td>В процессе генерации</td></tr>
-  <tr><td><span class="tag tag-green">READY</span></td><td>Готово (ассет на диске есть)</td></tr>
-  <tr><td><span class="tag tag-red">FAILED</span></td><td>Ошибка генерации</td></tr>
-  <tr><td><span class="tag tag-yellow">DIRTY</span></td><td>Требует регенерации (версия устарела)</td></tr>
-  <tr><td><span class="tag tag-blue">PLACEHOLDER</span></td><td>Плейсхолдер (аудио с синтезированной речью)</td></tr>
-</table>
+<p>Key: <code>animastor:scene-assets-state:{bookId}:{chapterId}:{sceneId}</code> → <code>{ audio, image, video }</code></p>
 
 <h3>Audio-Orch State Machine (audio-orchestrator.js)</h3>
 
 <div class="diagram">
 <span class="hl">        initPlaceholderReady()  setGenerating()  setWaitingChunks()</span>
 <span class="g">NEW</span> ─────────────────────→ <span class="y">PLACEHOLDER_READY</span> ──────────→ <span class="y">GENERATING</span> ──────────→
-                                              executeAudioDispatch()
 
 <span class="y">WAITING_CHUNKS</span> ──→ <span class="y">MERGING</span> ──→ <span class="g">DONE</span>
                     completeChunk()
@@ -446,36 +452,30 @@
 <span class="r">FAILED</span> ──→ <span class="y">WAITING_CHUNKS</span> (completeChunk, late chunk recovery)
 </div>
 
-<table>
-  <tr><th>Phase</th><th>Семантика</th></tr>
-  <tr><td><span class="tag tag-blue">NEW</span></td><td>Не инициализирована</td></tr>
-  <tr><td><span class="tag tag-yellow">PLACEHOLDER_READY</span></td><td>Плейсхолдер создан, ждём генерации</td></tr>
-  <tr><td><span class="tag tag-yellow">GENERATING</span></td><td>Генерация запущена</td></tr>
-  <tr><td><span class="tag tag-yellow">WAITING_CHUNKS</span></td><td>Ожидание чанков от GPU</td></tr>
-  <tr><td><span class="tag tag-yellow">MERGING</span></td><td>Склейка чанков в один файл (ffmpeg)</td></tr>
-  <tr><td><span class="tag tag-green">DONE</span></td><td>Завершено успешно</td></tr>
-  <tr><td><span class="tag tag-red">FAILED</span></td><td>Ошибка</td></tr>
-</table>
+<p>Key: <code>animastor:audio-orch:{bookId}:{chapterId}:{sceneId}</code> → <code>{ phase, expected_count, chunks_received, last_chunk_at, started_at, build_id }</code></p>
 
-<h3>Инварианты (всегда true)</h3>
+<h3>Инвариант (всегда true)</h3>
 
 <div class="diagram">
 <span class="g">audio-orch.phase == DONE   ⇔   asset.audio == READY</span>
-<span class="r">audio-orch.phase == FAILED   ⇒   asset.audio == FAILED или PENDING</span>
-<span class="y">audio-orch.phase ∈ {WAITING_CHUNKS, MERGING}   ⇒   asset.audio == GENERATING</span>
+<span class="r">audio-orch.phase == FAILED   ⇒   asset.audio ∈ {FAILED, PENDING}</span>
+<span class="y">audio-orch.phase ∈ {WAITING_CHUNKS, MERGING, GENERATING}</span>
+<span class="y">                            ⇒   asset.audio == GENERATING</span>
 </div>
 
-<p>Проверяются в <code>reconcileCycle</code> → <code>checkAudioOrchInvariants()</code>.</p>
+<p>Проверяется в <code>reconcileCycle</code> → <code>checkAudioOrchInvariants()</code>.</p>
+
+<div class="callout ok">
+  <div class="callout-title">✅ Инварианты подтверждены кодом</div>
+  <p><code>completeStage('audio')</code> в <code>orchestrator.js:161-184</code> пишет READY только после version gate и <code>audioOrch.completeMerge()</code> → DONE. <code>failStage('audio')</code> → FAILED синхронно. <code>markDirtyScene('audio')</code> → deleteState при DONE.</p>
+</div>
 </section>
 
 <!-- ═══════════ 3. FACADE ═══════════ -->
 <section id="facade">
-<h2>3. Единый фасад orchestrator.js <span class="badge">M5 COMPLETE</span></h2>
+<h2>3. Единый фасад orchestrator.js <span class="badge">M5 ✅</span></h2>
 
-<div class="callout ok">
-  <div class="callout-title">✅ M5: 5 шагов консолидации завершены</div>
-  <p>Все 8 точек записи per-asset состояния проведены через единый фасад. 400/400 тестов проходят.</p>
-</div>
+<p>Единственный модуль, который пишет lifecycle-состояние. <strong>Никто не вызывает <code>state.setAssetState()</code> или <code>audioOrch.*()</code> напрямую</strong> — только через фасад. Исключение: <code>unsafe*</code> методы для restore/debug, явно помеченные.</p>
 
 <table>
   <tr><th>Команда</th><th>Asset state</th><th>Audio-orch</th><th>Вызывается из</th></tr>
@@ -529,64 +529,63 @@
   </tr>
 </table>
 
-<h3>⚠️ Остались 4 прямых вызова state.setAssetState вне фасада</h3>
+<h3>Оставшиеся прямые writes (через unsafe*)</h3>
 
 <table>
-  <tr><th>#</th><th>Файл</th><th>Назначение</th><th>Риск</th></tr>
+  <tr><th>#</th><th>Файл</th><th>Что пишет</th><th>Риск</th></tr>
   <tr>
     <td><span class="tag tag-yellow">L</span></td>
     <td><code>runtime-persistence.js</code></td>
-    <td>snapshot restore</td>
-    <td>✅ легитимно — вне dispatch</td>
+    <td><code>unsafeRestoreAssetStates()</code></td>
+    <td>✅ легитимно — snapshot restore</td>
   </tr>
   <tr>
     <td><span class="tag tag-yellow">L</span></td>
     <td><code>debug-routes.cjs</code></td>
-    <td>ручной debug</td>
-    <td>✅ легитимно — не runtime</td>
+    <td><code>unsafeRestoreAssetStates()</code></td>
+    <td>✅ легитимно — debug</td>
   </tr>
   <tr>
     <td><span class="tag tag-yellow">L</span></td>
     <td><code>redis-helpers.cjs</code></td>
-    <td>хелпер</td>
-    <td>⚠️ малый риск</td>
+    <td><code>unsafeRestoreAssetState()</code></td>
+    <td>⚠️ restore on book reset</td>
   </tr>
   <tr>
-    <td><span class="tag tag-red">L</span></td>
+    <td><span class="tag tag-yellow">L</span></td>
     <td><code>scene-restoration.js</code></td>
-    <td>setAssetState(audio, READY)</td>
-    <td>🔴 bypass версионного gate</td>
+    <td><code>unsafeRestoreAssetState(audio, READY)</code></td>
+    <td>⚠️ bypass version gate, но помечен</td>
   </tr>
 </table>
+
+<div class="callout info">
+  <div class="callout-title">💡 unsafe* convention</div>
+  <p>С S2 (завершён) все прямые writes переименованы в <code>unsafeRestoreAssetState/setAssetStates</code> с явным JSDoc whitelist: только restore/debug use cases. Производственные lifecycle writes — только через <code>orchestrator.*</code>.</p>
+</div>
 </section>
 
 <!-- ═══════════ 4. DISPATCH ENGINE ═══════════ -->
 <section id="dispatch">
 <h2>4. Dispatch Engine — полный пайплайн</h2>
 
-<p>Dispatch-engine реализует полный конвейер перед отправкой job в GPU:</p>
+<p>Dispatch-engine реализует полный конвейер перед отправкой job в GPU. <strong>Fairness-engine удалён</strong> в S1 (618 строк мёртвого кода).</p>
 
 <div class="diagram">
 <span class="hl">dispatchStage():</span>
   <span class="g"> 1. Force pre-clear</span> (если force=true)
-  <span class="p"> 2. Circuit breaker check</span>
+  <span class="p"> 2. Circuit breaker check</span>        (5 failures → open → 30s cooldown)
   <span class="y"> 3. Duplicate/stale lease check</span>
-  <span class="b"> 4. Quota acquisition</span> (Lua atomic: GET+INCR)
-  <span class="p"> 5. Retry budget check</span>
-  <span class="b"> 6. Fairness/starvation check</span>
-  <span class="y"> 7. Lease acquisition</span> (NX + TTL)
-  <span class="g"> 8. Set dispatch metadata</span>
-  <span class="g"> 9. Journal event</span>
-  <span class="b">10. Call orchestrator.dispatchStage()</span>
-  <span class="y">11. Start lease renewal timer</span>
+  <span class="b"> 4. Quota acquisition</span>             (Lua atomic: GET+INCR)
+  <span class="p"> 5. Retry budget check</span>            (per-scene INCR + TTL)
+  <span class="y"> 6. Lease acquisition</span>              (NX + TTL: audio 15min, image 20min, video 30min)
+  <span class="g"> 7. Set dispatch metadata</span>
+  <span class="g"> 8. Journal event</span>
+  <span class="b"> 9. Call orchestrator.dispatchStage()</span>
+  <span class="y">10. Start lease renewal timer</span>     (только после dispatched:true)
 </div>
 
-<div class="callout ok">
-  <div class="callout-title">✅ Сильные стороны</div>
-  <p><strong>Lua EVAL</strong> для атомарного <code>acquireQuota</code> — элегантное решение race condition между проверкой лимита и инкрементом. <strong>FinalizeDispatch</strong> — единая точка финализации с идемпотентностью (completion marker). <strong>Lease renewal</strong> предотвращает преждевременное истечение аренды для долгих задач.</p>
-</div>
-
-<h3>Поток финализации (finalizeDispatch)</h3>
+<h3>Идемпотентная финализация</h3>
 
 <div class="diagram">
 <span class="hl">finalizeDispatch(outcome):</span>
@@ -598,362 +597,203 @@
              DISPATCH_CANCELLED
 </div>
 
-<div class="callout info">
-  <div class="callout-title">💡 Атомарность через Lua</div>
-  <p>CLAIM_FINALIZATION_SCRIPT — один Lua-скрипт проверяет metadata + lease owner, ставит completion marker, удаляет metadata/lease и освобождает quota. Всё атомарно.</p>
+<div class="callout ok">
+  <div class="callout-title">✅ Проверено по коду</div>
+  <p><code>completeStage</code> НЕ пишет READY без <code>handler.ok === true</code> + version gate. <code>failStage</code> НЕ пишет <code>recordSuccess</code>. <code>execute*Dispatch</code> возвращает честный <code>{ dispatched, jobs, reason }</code> — lease/quota освобождаются при <code>dispatched:false</code>. Renewal стартует только после <code>dispatched:true</code>.</p>
 </div>
 </section>
 
-<!-- ═══════════ 5. DATA FLOW ═══════════ -->
-<section id="dataflow">
-<h2>5. Data Flow — от генерации до готовности</h2>
+<!-- ═══════════ 5. STABILIZATION ═══════════ -->
+<section id="stabilization">
+<h2>5. Стабилизация S1-S4 <span class="badge">-1767 строк</span></h2>
 
-<div class="diagram">
-<span class="b">Frontend                 Backend                       GPU Hub / Workers</span>
-  │                         │                               │
-  │  POST /generate         │                               │
-  │────────────────────────>│                               │
-  │                         │  <span class="y">orchestrator.resetScenes()</span>   │
-  │                         │    ├─ genScope.setScope()     │
-  │                         │    ├─ clearLeasesForScenes()  │
-  │                         │    ├─ DELETE /queue/clear     │───────>
-  │                         │    └─ markDirty()             │
-  │                         │                               │
-  │  <span class="g">SSE: progress</span>          │  <span class="p">runtime-loop tick (5s)</span>       │
-  │<────────────────────────│    │                           │
-  │                         │    ├─ <span class="b">scheduler.tick()</span>        │
-  │                         │    │   └─ attemptDispatch()   │
-  │                         │    │       ├─ detectVersionStale──> PG
-  │                         │    │       ├─ shouldScheduleAssets
-  │                         │    │       └─ dispatchStage() │
-  │                         │    │           ├─ lease+quota │──> Redis
-  │                         │    │           └─ <span class="y">executeAudioDispatch()</span>
-  │                         │    │               ├─ setSceneGenerating
-  │                         │    │               │  ├─ asset state → GENERATING
-  │                         │    │               │  └─ audio-orch → GENERATING
-  │                         │    │               ├─ audioOrch.setWaitingChunks
-  │                         │    │               └─ audio.generateSceneAudio()
-  │                         │    │                                    │
-  │                         │    │    <span class="g">GPU result callback</span>             │
-  │                         │<───────────────────────────────────────│
-  │                         │    ├─ verifyDispatchIdentity()
-  │                         │    ├─ handleTaskResult()
-  │                         │    │   └─ audioOrch.completeChunk()
-  │                         │    │       ├─ save chunk to disk
-  │                         │    │       ├─ chunks_received++
-  │                         │    │       └─ if all chunks:
-  │                         │    │           ├─ <span class="y">ffmpeg merge</span>
-  │                         │    │           ├─ setDone()
-  │                         │    │           └─ <span class="y">completeStage()</span>
-  │                         │    │               ├─ version gate (PG)
-  │                         │    │               ├─ asset state → <span class="g">READY</span>
-  │                         │    │               ├─ finalizeDispatch
-  │                         │    │               └─ <span class="g">SSE: progress</span>
-  │                         │    │                               │
-  │  <span class="g">SSE: complete</span>    │  <span class="p">reconcile-cycle (60s)</span>            │
-  │<────────────────────────│    ├─ checkStalledAudioScenes     │
-  │                         │    ├─ recoverResultKeys           │
-  │                         │    └─ reconcileAll + auto-fix     │
+<div class="summary-bar">
+  <div class="stat green">
+    <div class="num">-1682</div>
+    <div class="label">S1: dead-code удаление</div>
+  </div>
+  <div class="stat yellow">
+    <div class="num">7</div>
+    <div class="label">S2: файлов переведены на unsafe*</div>
+  </div>
+  <div class="stat blue">
+    <div class="num">+90</div>
+    <div class="label">S3: graceful shutdown + /health</div>
+  </div>
+  <div class="stat green">
+    <div class="num">0</div>
+    <div class="label">S4: warnings в тестах</div>
+  </div>
 </div>
+
+<h3>S1: Удаление dead-code resilience модулей</h3>
+
+<table>
+  <tr><th>Подэтап</th><th>Коммит</th><th>Эффект</th></tr>
+  <tr>
+    <td>S1.1: Удалён fairness-engine.js</td>
+    <td><code>45b2485</code></td>
+    <td>−618 строк. <code>isStarving()</code> всегда возвращала <code>{starving:false}</code></td>
+  </tr>
+  <tr>
+    <td>S1.2: Сокращён failure-taxonomy.js + удалён retry-manager.js</td>
+    <td><code>d4444cb</code></td>
+    <td>−736 строк. retry-manager не имел production-callers</td>
+  </tr>
+  <tr>
+    <td>S1.3: Сокращён retry-budget-manager.js</td>
+    <td><code>dba7298</code></td>
+    <td>−296 строк. Оставлены только check + consumeRetryBudget</td>
+  </tr>
+  <tr>
+    <td>S1.4: Удалена Phase C3 (IU disk scan, log-only)</td>
+    <td><code>10ecf33</code></td>
+    <td>−32 строки. C4/C5 оставлены — они живые</td>
+  </tr>
+</table>
+
+<div class="callout info">
+  <div class="callout-title">💡 Уточнение к аудиту</div>
+  <p>Аудиторские рекомендации нуждались в сверке с кодом: <code>retry-budget</code> нельзя удалять целиком (зашит в finalizeDispatch), C4/C5 нельзя удалять (они реально работают через deps из backend.cjs). Результат S1 — глубже аудиторского плана, но ничего полезного не выкинуто.</p>
+</div>
+
+<h3>S2: unsafe* rename</h3>
+<p>7 файлов, 11 вызовов <code>state.setAssetState</code> переведены на <code>unsafeRestoreAssetState/setAssetStates</code>. JSDoc whitelist явно перечисляет разрешённые файлы.</p>
+
+<h3>S3: Production-readiness</h3>
+<p><strong>Graceful shutdown:</strong> SIGTERM/SIGINT → runtime.loop.stop() → cancelActiveDispatch → server.close() → redis.quit(). Hard timeout 10s.</p>
+<p><strong>/health endpoint:</strong> <code>{ status, loop, redis, ts }</code>. 200 если всё ок, 503 при shutdown или отказе Redis.</p>
+<p><strong>GPU_TIMEOUT:</strong> вынесен в env, документирован в .env.example.</p>
+
+<h3>S4: Тест-моки</h3>
+<p>Добавлены stub'ы <code>initPlaceholderReady</code> и всех phase-transition функций в mock audioOrch. <code>npm test 2>&1 | grep "is not a function"</code> → <strong>0 совпадений</strong>.</p>
 </section>
 
 <!-- ═══════════ 6. RECONCILIATION ═══════════ -->
 <section id="reconcile">
 <h2>6. Reconciliation — самовосстановление</h2>
 
-<p>ReconcileCycle — единый цикл восстановления, заменивший 4 отдельных механизма: <code>startup-recovery</code>, <code>audio-recovery</code>, <code>cleanup-service</code> и <code>reconcileAll</code>.</p>
+<p>Единый цикл с distributed lock, заменяющий 4 отдельных механизма. <strong>Phase C3 удалена</strong> (S1).</p>
 
-<h3>6 фаз восстановления</h3>
+<h3>Фазы восстановления</h3>
 
 <table>
-  <tr><th>Фаза</th><th>Описание</th><th>Когда</th></tr>
+  <tr><th>Фаза</th><th>Описание</th><th>Статус</th></tr>
   <tr>
     <td><span class="tag tag-blue">A</span></td>
     <td>Recover result/error keys</td>
-    <td>Всегда</td>
+    <td><span class="tag tag-green">✅</span></td>
   </tr>
   <tr>
     <td><span class="tag tag-yellow">B1</span></td>
-    <td>Watchdog застоя чанков (checkStalledAudioScenes)</td>
-    <td>Всегда</td>
+    <td>Watchdog застоя чанков (<code>last_chunk_at || started_at</code>)</td>
+    <td><span class="tag tag-green">✅ + disk recovery</span></td>
   </tr>
   <tr>
     <td><span class="tag tag-blue">C0</span></td>
     <td>Recover chunks from disk</td>
-    <td>Startup</td>
+    <td><span class="tag tag-green">✅</span></td>
   </tr>
   <tr>
     <td><span class="tag tag-blue">C1</span></td>
     <td>Audio-orch state recovery</td>
-    <td>Startup</td>
+    <td><span class="tag tag-green">✅</span></td>
   </tr>
   <tr>
     <td><span class="tag tag-blue">C2</span></td>
     <td>Version staleness check</td>
-    <td>Startup</td>
+    <td><span class="tag tag-green">✅</span></td>
   </tr>
   <tr>
     <td><span class="tag tag-blue">C3</span></td>
-    <td>IU images from disk (log-only)</td>
-    <td>Startup</td>
+    <td><del>IU images from disk (log-only)</del></td>
+    <td><span class="tag tag-red">🗑 УДАЛЕНА</span></td>
   </tr>
   <tr>
     <td><span class="tag tag-blue">C4</span></td>
     <td>Missing scene counters from PG</td>
-    <td>Startup</td>
+    <td><span class="tag tag-green">✅ (живая)</span></td>
   </tr>
   <tr>
     <td><span class="tag tag-blue">C5</span></td>
     <td>Resume incomplete sessions</td>
-    <td>Startup</td>
+    <td><span class="tag tag-green">✅ (живая)</span></td>
   </tr>
   <tr>
     <td><span class="tag tag-green">D</span></td>
     <td>Full scene reconciliation + auto-fix</td>
-    <td>Всегда</td>
+    <td><span class="tag tag-green">✅</span></td>
   </tr>
 </table>
 
-<h3>Watchdog чанков (B1)</h3>
-
-<p>Сканирует audio-orch state машины в фазе WAITING_CHUNKS. Логика восстановления:</p>
+<h3>Watchdog чанков (B1) — улучшенная логика</h3>
 
 <div class="diagram">
 <span class="hl">checkStalledAudioScenes():</span>
   <span class="y">1. LAST_CHUNK_AT || STARTED_AT</span>
      │
      ├── если threshold есть + age > AUDIO_CHUNK_STALL_MS
-     │     → failWaitingScene()
+     │     → <span class="r">failWaitingScene()</span>
      │
      ├── если threshold НЕТ:
-     │   ├── все чанки на диске → completeChunk (recovery merge)
-     │   ├── частичные чанки    → failWaitingScene()
+     │   ├── все чанки на диске → <span class="g">completeChunk</span> (recovery merge)
+     │   ├── частичные чанки    → <span class="r">failWaitingScene()</span>
      │   └── 0 чанков           → fresh state, не трогать
 </div>
 </section>
 
-<!-- ═══════════ 7. TARGET ARCHITECTURE ═══════════ -->
-<section id="target">
-<h2>7. Целевая архитектура (To-Be) — Unified Facade <span class="badge">VISION</span></h2>
+<!-- ═══════════ 7. REGENERATION ═══════════ -->
+<section id="regeneration">
+<h2>7. Regeneration System <span class="badge">R0-R19 ✅</span></h2>
 
-<div class="callout info">
-  <div class="callout-title">🎯 Откуда: ORCHESTRATOR_ARCHITECTURE_WITH_AUDIO.md</div>
-  <p>Этот документ описывает <strong>целевое состояние</strong> — как будет выглядеть оркестрация после полной реализации единого фасада. Ниже — что уже сделано из этого плана (M5), а что ещё предстоит.</p>
-</div>
+<p>Система частичной/полной перегенерации контента после редактирования vbook. Все 20 задач выполнены.</p>
 
-<h3>7.1 Проблема: рассинхронизация двух state machine</h3>
-
-<div class="callout err">
-  <div class="callout-title">🔴 As-Is: два независимых механизма пишут состояние параллельно</div>
-  <p><code>state.setAssetState()</code> и <code>audioOrch.transitionState()</code> вызываются разными модулями, не зная друг о друге. Результат — рассинхронизация в 3 из 4 сценариев.</p>
-</div>
-
-<table>
-  <tr><th>Сценарий</th><th>Asset state</th><th>Audio-orch</th><th>Статус</th></tr>
-  <tr>
-    <td>Штатное завершение</td>
-    <td><span class="tag tag-green">READY</span></td>
-    <td><span class="tag tag-green">DONE</span></td>
-    <td><span class="tag tag-green">✅ Оба ок</span></td>
-  </tr>
-  <tr>
-    <td>Watchdog сбросил</td>
-    <td><span class="tag tag-yellow">PENDING</span></td>
-    <td><span class="tag tag-red">FAILED</span></td>
-    <td><span class="tag tag-red">❌ Рассинхрон</span></td>
-  </tr>
-  <tr>
-    <td>Re-dispatch после DONE</td>
-    <td><span class="tag tag-yellow">GENERATING</span></td>
-    <td><span class="tag tag-green">DONE</span></td>
-    <td><span class="tag tag-red">❌ Рассинхрон</span></td>
-  </tr>
-  <tr>
-    <td>Stale recovery убил DONE</td>
-    <td><span class="tag tag-yellow">GENERATING</span></td>
-    <td><span class="tag tag-yellow">PLACEHOLDER_READY</span></td>
-    <td><span class="tag tag-red">❌ Рассинхрон</span></td>
-  </tr>
-</table>
-
-<h3>7.2 Решение: orchestrator.js — единый фасад над двумя state machine</h3>
+<h3>Протокол</h3>
 
 <div class="diagram">
-<span class="hl">                    ┌─────────────────────────┐</span>
-<span class="hl">                    │     orchestrator.js     │</span>
-<span class="g">                    │   (единый фасад)        │</span>
-<span class="hl">                    │                         │</span>
-<span class="hl">                    │  setSceneGenerating()   │</span>
-<span class="hl">                    │  setScenePending()      │</span>
-<span class="hl">                    │  completeStage()        │</span>
-<span class="hl">                    │  failStage()            │</span>
-<span class="hl">                    │  markDirtyScene()       │</span>
-<span class="hl">                    │  resetScenes()          │</span>
-<span class="hl">                    └──────┬──────────┬───────┘</span>
-<span class="hl">                           │          │</span>
-<span class="hl">                    ┌──────┘          └──────┐</span>
-<span class="hl">                    <span class="b">▼</span>                       <span class="b">▼</span></span>
-<span class="hl">           ┌──────────────┐      ┌──────────────────┐</span>
-<span class="hl">           │   state.js   │      │ audio-orchestrator│</span>
-<span class="hl">           │ (asset state)│      │  (audio-orch)     │</span>
-<span class="hl">           │              │      │                   │</span>
-<span class="hl">           │ NEW, PENDING │      │ PLACEHOLDER_READY │</span>
-<span class="hl">           │ GENERATING   │      │ GENERATING        │</span>
-<span class="hl">           │ READY        │      │ WAITING_CHUNKS    │</span>
-<span class="hl">           │ FAILED       │      │ MERGING           │</span>
-<span class="hl">           │ DIRTY        │      │ DONE/FAILED       │</span>
-<span class="hl">           └──────────────┘      └───────────────────┘</span>
+Edit → Save → PUT /api/v1/book/:bookId → disk
+  → Regenerate → POST /api/v1/book/:bookId/regenerate
+    → computeBookDiff(oldBook, newBook)
+    → filterDirtyScenesByScope(scope)
+    → removeScenesFromActiveIndex() <span class="g">(только dirty)</span>
+    → clearLeasesForScenes()        <span class="g">(только dirty)</span>
+    → clearGpuHubQueues()           <span class="g">(только dirty)</span>
+    → markDirtyScenes()             <span class="p">(Lua atomic: chunks + state + active index)</span>
+    → restoreChunkStatusForScene()
+    → Scheduler picks up dirty scenes
 </div>
 
-<h3>7.3 Контракт фасада — инварианты каждой команды</h3>
-
-<p><strong>КАЖДАЯ</strong> команда фасада гарантирует синхронность обоих state machine:</p>
+<h3>Dependency Graph</h3>
 
 <div class="diagram">
-<span class="y">setSceneGenerating(audio):</span>
-  asset.audio = <span class="g">GENERATING</span>
-  if audio-orch exists AND NOT DONE → audio-orch = <span class="y">GENERATING</span>
-  if audio-orch is DONE → return { skipped: true, reason: 'already_done' }
+<span class="hl">SceneText</span>
+  ├──► <span class="g">Audio</span> (mp3) — отдельно, параллельно Image
+  │
+  └──► UnitText ──► ImagePrompt ──► <span class="y">Image</span> (png)
+                                        │
+                                        └──► <span class="b">Video</span> (mp4 без звука)
 
-<span class="g">completeStage(audio):</span>
-  1. verifyDispatchIdentity
-  2. handler (handleAudioCompleted)
-  3. <span class="p">version gate (PG)</span>
-  4. if ok: asset.audio = <span class="g">READY</span>  AND  audio-orch = <span class="g">DONE</span>  (синхронно)
-  5. if stale: asset.audio = <span class="y">DIRTY</span>  AND  audio-orch → reset
-  6. finalizeDispatch (success/failure)
-
-<span class="r">failStage(audio):</span>
-  1. verifyDispatchIdentity
-  2. validateAssetTransition(current → FAILED)
-  3. if ok: asset.audio = <span class="r">FAILED</span>  AND  audio-orch = <span class="r">FAILED</span>  (синхронно)
-  4. if redispatch: asset.audio = <span class="y">PENDING</span>
-  5. finalizeDispatch (failure)
-
-<span class="y">markDirtyScene(audio):</span>
-  if audio-orch <span class="g">DONE</span> → deleteState (clean slate for regeneration)
-  asset.audio = <span class="y">DIRTY</span>
-  PG: markStale
-
-<span class="b">setScenePending(audio):</span>
-  if audio-orch <span class="g">DONE</span> → deleteState (clean slate)
-  asset.audio = <span class="y">PENDING</span>
+<span class="hl">Cross-cutting:</span>
+  Character.appearance ──► Image
+  Character.voice       ──► Audio
+  Location              ──► Image
+  Video ✚ Audio        ──► FinalVideo (mux на экспорте, не GPU)
 </div>
-
-<h3>7.4 Главный инвариант системы</h3>
-
-<div class="diagram">
-<span class="g">audio-orch.phase == DONE   ⇔   asset.audio == READY</span>
-<span class="r">audio-orch.phase == FAILED   ⇒   asset.audio == FAILED или PENDING</span>
-<span class="y">audio-orch.phase ∈ {WAITING_CHUNKS, MERGING}   ⇒   asset.audio == GENERATING</span>
-</div>
-
-<p>Проверяется в <code>reconcileCycle</code> → <code>checkAudioOrchInvariants()</code>. <strong>Уже реализовано ✅.</strong></p>
-
-<h3>7.5 Redis key layout — целевой</h3>
-
-<div class="diagram">
-<span class="b"># Asset states (per-scene, per-asset)</span>
-<span class="hl">animastor:scene-assets-state:{bookId}:{chapterId}:{sceneId}</span>
-  → { audio: "READY", image: "READY", video: "PENDING" }
-
-<span class="b"># Audio-orch state (per-scene, audio-specific)</span>
-<span class="hl">animastor:audio-orch:{bookId}:{chapterId}:{sceneId}</span>
-  → { phase: "DONE", expected_count: 9, chunks_received: 9,
-      last_chunk_at: 1743212345, started_at: 1743212300,
-      build_id: "build_abc123" }
-
-<span class="b"># Dispatch metadata (per-scene, per-stage)</span>
-<span class="hl">animastor:dispatch-meta:{bookId}:{chapterId}:{sceneId}:audio</span>
-  → { dispatch_id: "dispatch-xxx", stage: "audio",
-      started_at: 1743212300, lease_key: "...", lease_token: "..." }
-
-<span class="b"># Dispatch lease</span>
-<span class="hl">animastor:dispatch-lease:{bookId}:{chapterId}:{sceneId}:audio</span>
-  → "dispatch-xxx-token"
-</div>
-
-<h3>7.6 Модули, которые НЕ должны писать состояние напрямую</h3>
-
-<p>Цель: только <code>orchestrator.js</code> вызывает <code>state.setAssetState()</code> и <code>audioOrch.*()</code>. Остальные модули — только через фасад.</p>
-
-<table>
-  <tr><th>Модуль</th><th>Сейчас (As-Is)</th><th>Цель (To-Be)</th><th>Статус</th></tr>
-  <tr>
-    <td><code>scene-orchestrator.js</code></td>
-    <td><code>setSceneGenerating</code> + <code>audioOrch.*()</code></td>
-    <td>через <code>orchestrator.*()</code></td>
-    <td><span class="tag tag-green">✅ M5 done</span></td>
-  </tr>
-  <tr>
-    <td><code>task-handler.cjs</code></td>
-    <td><code>audioOrch.completeChunk()</code> напрямую</td>
-    <td>через <code>orchestrator.*()</code> обёртку</td>
-    <td><span class="tag tag-green">✅</span></td>
-  </tr>
-  <tr>
-    <td><code>reconciliation-engine.js</code></td>
-    <td><code>audioOrch.*()</code> напрямую</td>
-    <td>через <code>orchestrator.*()</code></td>
-    <td><span class="tag tag-yellow">⚠️ Частично</span></td>
-  </tr>
-  <tr>
-    <td><code>scene-callbacks.js</code></td>
-    <td><code>state.setAssetState()</code> напрямую</td>
-    <td>через <code>orchestrator.*()</code></td>
-    <td><span class="tag tag-green">✅ M5 done</span></td>
-  </tr>
-  <tr>
-    <td><code>scene-window.js</code></td>
-    <td><code>state.setAssetState()</code> напрямую</td>
-    <td>через <code>orchestrator.*()</code></td>
-    <td><span class="tag tag-green">✅ M5 done</span></td>
-  </tr>
-  <tr>
-    <td><code>scene-restoration.js</code></td>
-    <td><code>state.setAssetState(audio, READY)</code> ✗</td>
-    <td>через <code>orchestrator.completeStage()</code></td>
-    <td><span class="tag tag-red">🔴 Bypass</span></td>
-  </tr>
-  <tr>
-    <td><code>runtime-persistence.js</code></td>
-    <td><code>state.setAssetState()</code> ✗</td>
-    <td>через <code>orchestrator.*()</code></td>
-    <td><span class="tag tag-yellow">⚠️ Легитимен?</span></td>
-  </tr>
-</table>
 
 <div class="callout ok">
-  <div class="callout-title">💡 Исключения: только чтение</div>
-  <p><code>state.getAssetState()</code> и <code>audioOrch.getState()</code> остаются прямыми — это read-only операции. Любой модуль может читать оба state machine, но <strong>писать</strong> — только через фасад.</p>
+  <div class="callout-title">✅ Ключевые правила</div>
+  <p><strong>Audio НЕ зависит от Image, Image НЕ зависит от Audio</strong> — две независимые ветки. <strong>Video НЕ зависит от Audio</strong> — видео генерируется без звука, mux только на экспорте. <strong>Audio change НЕ делает Video dirty</strong>.</p>
 </div>
 
-<h3>7.7 Целевые тестовые сценарии</h3>
+<h3>Prompt Dependency Registry</h3>
+<p><code>prompt-dependency-registry.js</code> — единый реестр полей → dirty layers. <code>diffScene()</code> и <code>buildImagePrompt()</code> читают из одного registry, исключая рассинхронизацию.</p>
 
-<p>Из документа ORCHESTRATOR_ARCHITECTURE_WITH_AUDIO.md — 7 сценариев, которые должны покрываться тестами:</p>
-
-<div class="flow">
-  <span class="flow-step ok">1. ✅ Норма: PLACEHOLDER_READY → DONE + READY</span>
-  <span class="flow-arrow">→</span>
-  <span class="flow-step ok">2. ✅ Watchdog: WAITING_CHUNKS → FAILED → PENDING</span>
-  <span class="flow-arrow">→</span>
-  <span class="flow-step ok">3. ✅ Re-dispatch: FAILED → GENERATING → DONE</span>
-  <span class="flow-arrow">→</span>
-  <span class="flow-step ok">4. ✅ Regenerate: DONE → DIRTY → PENDING → DONE</span>
-  <span class="flow-arrow">→</span>
-  <span class="flow-step warn">5. ⚠️ Stale recovery: WAITING_CHUNKS → reset → DONE</span>
-  <span class="flow-arrow">→</span>
-  <span class="flow-step warn">6. ⚠️ DONE guard: skip, без deleteState</span>
-  <span class="flow-arrow">→</span>
-  <span class="flow-step warn">7. ⚠️ Version gate fail: → DIRTY, не READY</span>
-</div>
+<p><strong>Data Provenance:</strong> Image Prompt собирается из: renderMode, style, location_visual_style, location_description, environment (epoch/time/season/weather/mood/atmosphere/lighting), shot_type, character_passport (через <code>inferCharactersFromPrompt()</code>), character_state, visual_prompt, quality. Персонажи определяются ТОЛЬКО через <code>inferCharactersFromPrompt()</code> — <code>unit.participants</code> удалён.</p>
 </section>
 
-<!-- ═══════════ 7.5. CALL FLOWS ═══════════ -->
+<!-- ═══════════ 8. CALL FLOWS ═══════════ -->
 <section id="callflows">
-<h2>8. Call Flows: 4 сценария <span class="badge">TO-BE</span></h2>
-
-<p>Детальные диаграммы последовательностей из ORCHESTRATOR_ARCHITECTURE_WITH_AUDIO.md — как ДОЛЖНА работать оркестрация после полной реализации единого фасада.</p>
+<h2>8. Call Flows</h2>
 
 <h3>8.1 Штатная генерация аудио</h3>
 
@@ -962,371 +802,311 @@
   → attemptDispatch()
     → shouldScheduleAssets(): asset=PENDING → stages=['audio']
     → dispatchStage('audio')
-      → acquireLease()
-      → acquireQuota()
+      → acquireLease(), acquireQuota()
       → scene-orchestrator.executeAudioDispatch()
-        ┌─ <span class="y">orchestrator.setSceneGenerating('audio')</span>
-        │   → asset.audio = GENERATING
-        │   → audioOrch.setGenerating()        # PLACEHOLDER_READY → GENERATING
-        │     (или initPlaceholderReady если нет state)
-        ├─ audioOrch.setWaitingChunks()
-        ├─ audio.generateSceneAudio() → GPU hub (9 chunks)
-        └─ return { dispatched: true }
-
-<span class="g">Chunk 0001 arrives</span>
-  → /gpu/task/result
-    → handleTaskResult()
-      → save file to disk
-      → orchestrator передаётся в audioOrch.completeChunk()
-        → audioOrch WAITING_CHUNKS (chunks_received=1)
-
-... (chunks 0002-0008)
+        └─ <span class="y">orchestrator.setSceneGenerating('audio')</span>
+          → asset.audio = GENERATING
+          → audioOrch.setGenerating() (PLACEHOLDER_READY → GENERATING)
+        → audioOrch.setWaitingChunks()
+        → audio.generateSceneAudio() → GPU hub (9 chunks)
+        → return { dispatched: true }
 
 <span class="g">Chunk 0009 arrives</span>
-  → audioOrch.completeChunk()
-    → WAITING_CHUNKS → <span class="y">MERGING</span> (all 9 chunks present)
-    → ffmpeg merge → merged MP3
-    → MERGING → DONE
+  → /gpu/task/result → handleTaskResult()
+    → save to disk → audioOrch.completeChunk()
+    → WAITING_CHUNKS → MERGING (all 9 present)
+    → ffmpeg merge → MERGING → DONE
     → <span class="y">orchestrator.completeStage('audio')</span>
       → handleAudioCompleted()
       → <span class="p">version gate (PG)</span>
-      → asset.audio = <span class="g">READY</span>  (синхронно с audio-orch DONE)
+      → asset.audio = READY  <span class="g">(синхронно с audio-orch DONE)</span>
       → finalizeDispatch(success)
-    → publishProgress (SSE)
 </div>
 
-<h3>8.2 Re-dispatch после watchdog</h3>
+<h3>8.2 Watchdog (timeout)</h3>
 
 <div class="diagram">
-<span class="y">Watchdog (reconcileCycle → checkStalledAudioScenes)</span>
-  → audioOrch state: WAITING_CHUNKS, last_chunk_at + 5min < now
+<span class="y">reconcileCycle → checkStalledAudioScenes()</span>
+  → audioOrch WAITING_CHUNKS, last_chunk_at + 5min < now
   → audioOrch.failWaitingScene()
     └─ <span class="r">orchestrator.failStage('audio')</span>
-      → asset.audio = FAILED
-      → audio-orch = FAILED (<span class="g">синхронно</span>)
-      → asset.audio = PENDING (re-dispatch)
+      → asset.audio = FAILED + audio-orch = FAILED <span class="g">(синхронно)</span>
       → finalizeDispatch(failure)
 
 <span class="b">Scheduler tick (next)</span>
-  → asset.audio = PENDING → stages=['audio']
+  → asset.audio = FAILED → PENDING (re-dispatch)
   → dispatchStage('audio')
     └─ orchestrator.setSceneGenerating('audio')
-      → audio-orch FAILED → <span class="g">GENERATING</span> (valid transition!)
-      ... генерация заново
+      → audio-orch FAILED → GENERATING <span class="g">(valid)</span>
 </div>
 
-<h3>8.3 Regenerate (dirty scene)</h3>
+<h3>8.3 Regenerate</h3>
 
 <div class="diagram">
-<span class="b">User edits text, clicks "Generate"</span>
-  → /api/v1/regenerate
-    → <span class="y">orchestrator.resetScenes()</span>
-      → clearLeases, clear queues
-      └─ orchestrator.markDirtyScene('audio')
-        → audio-orch DONE? → <span class="r">deleteState</span> (clean slate)
-        → asset.audio = <span class="y">DIRTY</span>
-    → scheduler.addSceneToActiveIndex()
+<span class="b">User edits → POST /regenerate</span>
+  → orchestrator.resetScenes()
+    → <span class="y">orchestrator.markDirtyScene('audio')</span>
+      → audio-orch DONE? → deleteState
+      → asset.audio = DIRTY
+  → scheduler.addSceneToActiveIndex()
 
 <span class="b">Scheduler tick</span>
   → asset.audio = DIRTY → stages=['audio']
   → dispatchStage('audio')
     → orchestrator.setSceneGenerating('audio')
-      → audio-orch: no state → <span class="y">initPlaceholderReady</span>
-      → asset.audio = GENERATING
-      → audioOrch.setGenerating()
-      → dispatch to GPU
+      → audio-orch: no state → initPlaceholderReady → setGenerating
+      → asset.audio = GENERATING → dispatch to GPU
 </div>
 
 <h3>8.4 Stale recovery (WAITING_CHUNKS → reset)</h3>
 
 <div class="diagram">
-<span class="y">После рестарта или сбоя:</span>
-  → audio-orch в WAITING_CHUNKS (от предыдущей незавершённой генерации)
-  → Scheduler видит asset.audio = GENERATING (остался от прошлого раза)
+<span class="y">После рестарта: audio-orch WAITING_CHUNKS (старая генерация)</span>
+  → Scheduler видит asset.audio = GENERATING
   → dispatchStage('audio')
     → orchestrator.setSceneGenerating('audio')
-      → setGenerating() → <span class="r">FAILS</span> (WAITING_CHUNKS → GENERATING invalid)
-      → <span class="y">stale-phase recovery:</span>
-        → deleteState (только если WAITING_CHUNKS/GENERATING/FAILED)
-        → initPlaceholderReady
-        → setGenerating ✅
+      → setGenerating() → FAILS (WAITING_CHUNKS → GENERATING invalid)
+      → <span class=\"p\">stale-phase recovery:</span>
+        → deleteState <span class="r">(только WAITING_CHUNKS/GENERATING/FAILED — НЕ DONE)</span>
+        → initPlaceholderReady → setGenerating ✅
       → dispatch to GPU (свежая генерация)
 </div>
 
 <div class="callout ok">
-  <div class="callout-title">✅ Уже реализовано</div>
-  <p>Все 4 call flow сценария уже работают в текущей кодовой базе. stale-phase recovery, DONE guard, version gate — всё реализовано между M5 + T7 + текущими изменениями.</p>
+  <div class="callout-title">✅ Все 4 сценария работают в текущем коде</div>
+  <p>DONE guard, stale-phase recovery, version gate — всё реализовано в <code>scene-orchestrator.js</code> и <code>orchestrator.js</code>.</p>
 </div>
 </section>
 
-<!-- ═══════════ 7. FINDINGS ═══════════ -->
+<!-- ═══════════ 9. FINDINGS ═══════════ -->
 <section id="findings">
-<h2>9. Ключевые находки <span class="badge">FINDINGS</span></h2>
+<h2>9. Находки и статус</h2>
 
 <div class="summary-bar">
   <div class="stat green">
-    <div class="num">7</div>
-    <div class="label">✅ Всё хорошо</div>
+    <div class="num">14</div>
+    <div class="label">✅ Гипотез кода подтверждены</div>
+  </div>
+  <div class="stat green">
+    <div class="num">576</div>
+    <div class="label">✅ Тестов проходят</div>
+  </div>
+  <div class="stat green">
+    <div class="num">-1767</div>
+    <div class="label">✅ Строк удалено</div>
   </div>
   <div class="stat yellow">
     <div class="num">4</div>
-    <div class="label">⚠️ Требует внимания</div>
-  </div>
-  <div class="stat red">
-    <div class="num">2</div>
-    <div class="label">🔴 Риски</div>
+    <div class="label">⚠️ Остаточных дефекта</div>
   </div>
 </div>
 
-<h3>✅ Что хорошо</h3>
+<h3>✅ Что подтверждено кодом (14 гипотез)</h3>
+
+<div class="table-wrap">
+<table>
+  <tr><th>Гипотеза из прошлых аудитов</th><th>Статус</th><th>Ссылка</th></tr>
+  <tr><td>Worker не разворачивается — SyntaxError в <code>waitForFileReady()</code></td><td><span class="tag tag-green">✅ Исправлено</span></td><td><code>worker.cjs</code> — <code>node --check</code> OK</td></tr>
+  <tr><td><code>completeStage()</code> игнорирует result handler и ставит READY</td><td><span class="tag tag-green">✅ Исправлено</span></td><td><code>orchestrator.js:119-184</code> — handlerOk обязателен</td></tr>
+  <tr><td><code>failStage()</code> пишет success finalization</td><td><span class="tag tag-green">✅ Исправлено</span></td><td><code>orchestrator.js:280-289</code> → <code>finalizeDispatch('failure')</code></td></tr>
+  <tr><td>Executor возвращает <code>dispatched:true</code> без отправки job</td><td><span class="tag tag-green">✅ Исправлено</span></td><td><code>scene-orchestrator.js</code> → <code>{ dispatched, jobs, reason }</code></td></tr>
+  <tr><td>Lease renewal не стартует</td><td><span class="tag tag-green">✅ Исправлено</span></td><td><code>dispatch-engine.js:594</code> — после dispatched:true</td></tr>
+  <tr><td>Runtime 5s-tick гоняет полный <code>reconcileAll()</code> без lock</td><td><span class="tag tag-green">✅ Исправлено</span></td><td><code>runtime-loop.js:65-120</code> — tick без reconcile</td></tr>
+  <tr><td><code>active-scenes</code> управляются двумя API</td><td><span class="tag tag-green">✅ Исправлено</span></td><td><code>runtime-scheduler.js:82-100</code> → <code>active-scenes-index.js</code></td></tr>
+  <tr><td>SQL-инъекция в <code>agent-session.js</code></td><td><span class="tag tag-green">✅ Исправлено</span></td><td><code>services/agent-session.js:21</code> — ALLOWED_UPDATE_COLUMNS</td></tr>
+  <tr><td><code>redis.keys()</code> блокирует Redis</td><td><span class="tag tag-green">✅ Убрано</span></td><td>grep не находит <code>keys('animastor...')</code></td></tr>
+  <tr><td>ReferenceError <code>pendingState</code> / <code>sceneState</code> в reconcile</td><td><span class="tag tag-green">✅ Исправлено</span></td><td><code>reconciliation-engine.js:834-851</code></td></tr>
+  <tr><td><code>_redis</code> приватный, продление lease всегда <code>{renewed:false}</code></td><td><span class="tag tag-green">✅ Исправлено</span></td><td>lease-manager принимает redis параметром</td></tr>
+  <tr><td>GPU Hub auth не передаётся backend'ом</td><td><span class="tag tag-green">✅ Исправлено</span></td><td><code>gpu-dispatcher.js:46-49</code> — x-api-key</td></tr>
+  <tr><td>Placeholder ≠ valid content</td><td><span class="tag tag-green">✅ Исправлено</span></td><td>R10 — placeholder не valid content</td></tr>
+  <tr><td>Callback chain repair (GPU hub → backend)</td><td><span class="tag tag-green">✅ Исправлено</span></td><td>R18 — формат JSON + cleanup dedup</td></tr>
+</table>
+</div>
+
+<h3>⚠️ Остаточные дефекты</h3>
+
+<table>
+  <tr><th>#</th><th>Проблема</th><th>Серьёзность</th><th>Статус</th></tr>
+  <tr>
+    <td>P1</td>
+    <td>Прямые writes state в обход фасада (<code>scene-restoration.js</code>, <code>startup-recovery.js</code>)</td>
+    <td>Средняя</td>
+    <td>Используют <code>unsafe*</code> — приемлемо</td>
+  </tr>
+  <tr>
+    <td>P2</td>
+    <td>GPU Hub auth: env var не задан в <code>.env</code></td>
+    <td>Низкая</td>
+    <td>Код корректный, нужен deploy-секрет</td>
+  </tr>
+  <tr>
+    <td>P3</td>
+    <td>Нет единого теста на force-regen + stale файлы</td>
+    <td>Средняя</td>
+    <td>Coverage gap</td>
+  </tr>
+  <tr>
+    <td>P4</td>
+    <td>Counter reconciliation — как safety net</td>
+    <td>Средняя</td>
+    <td>Оставлен, полезен</td>
+  </tr>
+</table>
+
+<h3>🔴 Чего НЕ делаем (согласовано)</h3>
 
 <div class="findings-grid">
   <div class="finding good">
-    <h4>Две state machine</h4>
-    <p>Правильное разделение: per-asset (высокоуровневый статус) и audio-orch (детальный пайплайн).</p>
+    <h4>Kafka, RabbitMQ, BullMQ</h4>
+    <p>Не добавлять — текущая архитектура Redis-очередей достаточна для 1-15 пользователей.</p>
   </div>
   <div class="finding good">
-    <h4>M5 завершён</h4>
-    <p>Все 8 точек записи состояния проведены через единый фасад. 400/400 тестов.</p>
+    <h4>Вторая state machine</h4>
+    <p>Не вводить — две уже есть (asset FSM + audio-orch), этого достаточно.</p>
   </div>
   <div class="finding good">
-    <h4>Dispatch-engine пайплайн</h4>
-    <p>Полный конвейер: circuit breaker → quota → lease → metadata → dispatch. Ничего не забыто.</p>
+    <h4>Перенос lifecycle в PG одним PR</h4>
+    <p>Не делать — Redis как runtime кэш оправдан.</p>
   </div>
   <div class="finding good">
-    <h4>Атомарный acquireQuota</h4>
-    <p>Lua EVAL для атомарной проверки лимита и инкремента — устранена race condition.</p>
+    <h4>Rewrite audio/image/video pipeline</h4>
+    <p>Не трогать — транспорт стабилен.</p>
   </div>
   <div class="finding good">
-    <h4>reconcileCycle с distributed lock</h4>
-    <p>Единый цикл с CLEANUP_LOCK вместо 4 несогласованных механизмов восстановления.</p>
+    <h4>Новый reconciliation service</h4>
+    <p>Не добавлять — один цикл с CLEANUP_LOCK достаточен.</p>
   </div>
   <div class="finding good">
-    <h4>Version gate в completeStage</h4>
-    <p>Проверка PG версии перед установкой READY — защита от stale artifact.</p>
-  </div>
-  <div class="finding good">
-    <h4>Fast tick + slow reconcile</h4>
-    <p>Чистое разделение: tick (5s) — только лёгкие операции, reconcile (60s) — тяжёлое сканирование.</p>
-  </div>
-</div>
-
-<h3>⚠️ Что требует внимания</h3>
-
-<div class="findings-grid">
-  <div class="finding bad">
-    <h4>Циклическая зависимость orchestrator↔dispatch-engine</h4>
-    <p><code>orchestrator.js</code> → <code>dispatch-engine.js</code> → <code>../orchestration</code> (index.js → scene-orchestrator.js, не facade). Хрупкое равновесие через index.js.</p>
-  </div>
-  <div class="finding bad">
-    <h4>4 прямых вызова state.setAssetState</h4>
-    <p>Вне фасада: <code>runtime-persistence.js</code>, <code>debug-routes.cjs</code>, <code>redis-helpers.cjs</code>, <code>scene-restoration.js</code>.</p>
-  </div>
-  <div class="finding bad">
-    <h4>Bypass версионного gate</h4>
-    <p><code>scene-restoration.js</code> пишет <code>setAssetState(audio, READY)</code> напрямую, минуя version gate в completeStage.</p>
-  </div>
-  <div class="finding bad">
-    <h4>Lease renewal timer — риск утечки</h4>
-    <p>In-memory таймеры на каждый dispatch. Если процесс упал — таймеры не чиститятся. WeakRef/stdInterval не используются.</p>
+    <h4>Расширение facade >13 команд</h4>
+    <p>Не нужно — текущих команд достаточно для всех инвариантов.</p>
   </div>
 </div>
 </section>
 
-<!-- ═══════════ 8. METRICS ═══════════ -->
-<section id="metrics">
-<h2>10. Метрики и конфигурация</h2>
+<!-- ═══════════ 10. CAPACITY ═══════════ -->
+<section id="capacity">
+<h2>10. Ёмкость и масштабирование</h2>
+
+<h3>Текущие лимиты</h3>
 
 <table>
-  <tr><th>Метрика</th><th>Значение</th><th>Описание</th></tr>
-  <tr><td>Scheduler tick</td><td>5s</td><td>Частота быстрого цикла</td></tr>
-  <tr><td>ReconCycle</td><td>60s</td><td>Частота медленного цикла</td></tr>
-  <tr><td>ReconCycle lock TTL</td><td>120s</td><td>CLEANUP_LOCK timeout</td></tr>
-  <tr><td>Audio quota</td><td>3</td><td>Макс. параллельных аудио-генераций</td></tr>
-  <tr><td>Image quota</td><td>2</td><td>Макс. параллельных image-генераций</td></tr>
-  <tr><td>Video quota</td><td>1</td><td>Макс. параллельных видео-генераций</td></tr>
-  <tr><td>Tick lock TTL</td><td>30s</td><td>SCHEDULER_TICK_LOCK timeout</td></tr>
-  <tr><td>Audio chunk stall</td><td>из config</td><td>Порог застоя чанков (watchdog)</td></tr>
+  <tr><th>Ресурс</th><th>Максимум</th><th>Узкое место</th></tr>
+  <tr><td>Audio generation</td><td>3</td><td>quota <code>maxActiveAudio: 3</code></td></tr>
+  <tr><td>Image generation</td><td>2</td><td>quota <code>maxActiveImage: 2</code></td></tr>
+  <tr><td>Video generation</td><td>1</td><td>quota <code>maxActiveVideo: 1</code></td></tr>
+  <tr><td>Scheduler tick</td><td>1 экземпляр</td><td>distributed lock</td></tr>
+  <tr><td>Node.js backend</td><td>1 процесс</td><td>single-threaded, без cluster</td></tr>
+  <tr><td>GPU Hub</td><td>1 прокси</td><td>без шардирования</td></tr>
 </table>
-
-<h3>Тестовое покрытие</h3>
-
-<table>
-  <tr><th>Тест</th><th>Покрывает</th><th>Статус</th></tr>
-  <tr><td><code>happy-path.test.js</code></td><td>Полный lifecycle + facade</td><td><span class="tag tag-green">400+ passing</span></td></tr>
-  <tr><td><code>orchestration-stabilization.test.js</code></td><td>Dispatch ownership, protocol</td><td><span class="tag tag-green">✅</span></td></tr>
-  <tr><td><code>reconciliation-engine.test.js</code></td><td>reconcileScene</td><td><span class="tag tag-green">✅</span></td></tr>
-  <tr><td><code>fail-stage.test.js</code></td><td>failStage + identity</td><td><span class="tag tag-green">✅</span></td></tr>
-  <tr><td><code>counter-reconciliation.test.js</code></td><td>Counter drift correction</td><td><span class="tag tag-green">✅</span></td></tr>
-  <tr><td><code>runtime-timeouts.test.js</code></td><td>reconcileCycle watchdog</td><td><span class="tag tag-green">✅</span></td></tr>
-  <tr><td><code>scene-state.test.js</code></td><td>State machine transitions</td><td><span class="tag tag-green">✅</span></td></tr>
-</table>
-</section>
-
-<!-- ═══════════ 9.5. AS-IS → TO-BE ═══════════ -->
-<section id="asistobe">
-<h2>11. As-Is → To-Be: план конвергенции</h2>
-
-<p>Сводка: что уже соответствует целевой архитектуре из ORCHESTRATOR_ARCHITECTURE_WITH_AUDIO.md, а что ещё нужно доделать.</p>
-
-<h3>Уже реализовано <span class="tag tag-green">✅</span></h3>
-
-<table>
-  <tr><th>Требование из документа</th><th>Статус</th><th>Где</th></tr>
-  <tr>
-    <td><code>setSceneGenerating</code> → asset + audio-orch синхронно</td>
-    <td><span class="tag tag-green">✅</span></td>
-    <td><code>orchestrator.js</code></td>
-  </tr>
-  <tr>
-    <td><code>completeStage</code> → asset READY + audio-orch DONE + version gate</td>
-    <td><span class="tag tag-green">✅</span></td>
-    <td><code>orchestrator.js</code></td>
-  </tr>
-  <tr>
-    <td><code>failStage</code> → asset FAILED + redispatch + audio-orch FAILED</td>
-    <td><span class="tag tag-green">✅</span></td>
-    <td><code>orchestrator.js</code></td>
-  </tr>
-  <tr>
-    <td><code>markDirtyScene</code> → asset DIRTY + if DONE → deleteState</td>
-    <td><span class="tag tag-green">✅</span></td>
-    <td><code>orchestrator.js</code></td>
-  </tr>
-  <tr>
-    <td><code>setScenePending</code> → asset PENDING + if DONE → deleteState</td>
-    <td><span class="tag tag-green">✅</span></td>
-    <td><code>orchestrator.js</code></td>
-  </tr>
-  <tr>
-    <td>DONE guard: не перезапускать готовое аудио</td>
-    <td><span class="tag tag-green">✅</span></td>
-    <td><code>scene-orchestrator.js:74-77</code></td>
-  </tr>
-  <tr>
-    <td>Stale-phase recovery: WAITING_CHUNKS → reset → PLACEHOLDER_READY</td>
-    <td><span class="tag tag-green">✅</span></td>
-    <td><code>scene-orchestrator.js:101-118</code></td>
-  </tr>
-  <tr>
-    <td>WAITING_CHUNKS устанавливается ДО отправки jobs (race fix)</td>
-    <td><span class="tag tag-green">✅</span></td>
-    <td><code>scene-orchestrator.js:138-139</code></td>
-  </tr>
-  <tr>
-    <td>Инварианты проверяются в reconcileCycle</td>
-    <td><span class="tag tag-green">✅</span></td>
-    <td><code>reconciliation-engine.js</code></td>
-  </tr>
-  <tr>
-    <td>Event-driven completeChunk (в аудио-оркестраторе)</td>
-    <td><span class="tag tag-green">✅</span></td>
-    <td><code>audio-orchestrator.js</code></td>
-  </tr>
-</table>
-
-<h3>Ещё не реализовано / частично <span class="tag tag-yellow">⚠️</span></h3>
-
-<table>
-  <tr><th>Требование из документа</th><th>Статус</th><th>Примечание</th></tr>
-  <tr>
-    <td><code>setSceneAllReady</code> → all audio-orch DONE</td>
-    <td><span class="tag tag-yellow">⚠️</span></td>
-    <td>Только <code>setSceneAllReady</code> существует, sync audio-orch не везде</td>
-  </tr>
-  <tr>
-    <td><code>resetScenes</code> → все audio-orch deleteState/FAILED</td>
-    <td><span class="tag tag-yellow">⚠️</span></td>
-    <td>Реализовано, но не все модули консистентны</td>
-  </tr>
-  <tr>
-    <td>scene-orchestrator → только через orchestrator.*()</td>
-    <td><span class="tag tag-yellow">⚠️</span></td>
-    <td>Частично: audioOrch.*() вызываются напрямую</td>
-  </tr>
-  <tr>
-    <td>reconciliation-engine → только через orchestrator.*()</td>
-    <td><span class="tag tag-yellow">⚠️</span></td>
-    <td>audioOrch.*() напрямую (scanAllStates, completeChunk, failWaitingScene)</td>
-  </tr>
-  <tr>
-    <td>task-handler → через orchestrator.*() обёртку</td>
-    <td><span class="tag tag-yellow">⚠️</span></td>
-    <td>Частично: orchestrator передаётся через deps</td>
-  </tr>
-  <tr>
-    <td>scene-restoration → через version gate</td>
-    <td><span class="tag tag-red">🔴</span></td>
-    <td>Прямой вызов <code>setAssetState(audio, READY)</code></td>
-  </tr>
-  <tr>
-    <td>Циклическая зависимость orchestration↔runtime</td>
-    <td><span class="tag tag-red">🔴</span></td>
-    <td>Разрыв через index.js — хрупкое равновесие</td>
-  </tr>
-</table>
-
-<h3>Тестовые сценарии из документа — покрытие</h3>
-
-<table>
-  <tr><th>#</th><th>Сценарий</th><th>Покрытие</th></tr>
-  <tr><td>1</td><td>Штатная генерация: PLACEHOLDER_READY → ... → DONE + READY</td><td><span class="tag tag-green">✅ happy-path</span></td></tr>
-  <tr><td>2</td><td>Watchdog: WAITING_CHUNKS → FAILED → PENDING</td><td><span class="tag tag-green">✅ runtime-timeouts</span></td></tr>
-  <tr><td>3</td><td>Re-dispatch: FAILED → GENERATING → ... → DONE</td><td><span class="tag tag-green">✅ happy-path</span></td></tr>
-  <tr><td>4</td><td>Regenerate: DONE → deleteState → DIRTY → PENDING → DONE</td><td><span class="tag tag-yellow">⚠️ Частично</span></td></tr>
-  <tr><td>5</td><td>Stale recovery (WAITING_CHUNKS): → reset → PLACEHOLDER_READY → DONE</td><td><span class="tag tag-yellow">⚠️ Частично</span></td></tr>
-  <tr><td>6</td><td>Stale recovery (DONE): guard → return already_done</td><td><span class="tag tag-red">❌ Нет теста</span></td></tr>
-  <tr><td>7</td><td>Version gate fail: → DIRTY (не READY)</td><td><span class="tag tag-red">❌ Нет теста</span></td></tr>
-</table>
-</section>
-
-<!-- ═══════════ 9. RECOMMENDATIONS ═══════════ -->
-<section id="recommendations">
-<h2>12. Рекомендации</h2>
-
-<div class="callout err">
-  <div class="callout-title">🔴 Приоритет 1: Устранить циклическую зависимость</div>
-  <p>Внедрить DI/интерфейсы между <code>orchestrator.js</code> и <code>dispatch-engine.js</code>. Сейчас разрыв через <code>index.js</code> — хрупкое равновесие. Цель — чтобы ни один модуль не делал <code>require</code> другого напрямую.</p>
-</div>
 
 <div class="callout warn">
-  <div class="callout-title">⚠️ Приоритет 2: Прогнать scene-restoration через version gate</div>
-  <p><code>scene-restoration.js</code> пишет <code>state.setAssetState(audio, READY)</code> в обход фасада, минуя version gate. Добавить вызов <code>orchestrator.completeStage</code> (или хотя бы проверку PG версии) перед установкой READY.</p>
+  <div class="callout-title">⚡ 1-5 concurrent пользователей</div>
+  <p>Дизайн под одного пользователя с одной книгой. 6 concurrent GPU задач на всю систему.</p>
 </div>
 
-<div class="callout warn">
-  <div class="callout-title">⚠️ Приоритет 3: Мониторинг lease renewal timer'ов</div>
-  <p>Добавить метрики в <code>lease-manager.js</code>: количество активных таймеров, количество утечек (таймер без lease), gc-коллбек. Рассмотреть использование одного setInterval вместо множества setTimeout.</p>
-</div>
+<h3>Без усложнения (твик конфигов) → 10-15 пользователей</h3>
 
-<div class="callout info">
-  <div class="callout-title">💡 Приоритет 4: Обновить тесты для новых фич</div>
-  <p>Последние изменения (<code>checkStalledAudioScenes</code> с disk recovery, DONE guard, event-driven completeChunk) не покрыты тестами. Добавить тесты для:
-  <ul>
-    <li>Watchdog с полным/частичным набором чанков на диске</li>
-    <li>DONE guard (предотвращение re-dispatch готового аудио)</li>
-    <li>Version gate stale → DIRTY (не READY)</li>
-  </ul>
-  </p>
-</div>
+<table>
+  <tr><th>Изменение</th><th>Результат</th></tr>
+  <tr><td><code>maxActiveAudio: 3 → 10</code></td><td>3× больше аудио-генераций</td></tr>
+  <tr><td><code>maxActiveImage: 2 → 6</code></td><td>3× больше image</td></tr>
+  <tr><td><code>maxActiveVideo: 1 → 3</code></td><td>3× больше видео</td></tr>
+  <tr><td>GPU Hub → +1 инстанс</td><td>отказоустойчивость</td></tr>
+</table>
 
-<div class="callout info">
-  <div class="callout-title">💡 Приоритет 5: Аудит оставшихся 4 прямых писателей</div>
-  <p>Проверить, можно ли провести через фасад 4 оставшихся прямых вызова <code>state.setAssetState</code>:
-  <ul>
-    <li><code>runtime-persistence.js</code> — snapshot restore (вероятно, легитимен)</li>
-    <li><code>debug-routes.cjs</code> — debug (легитимен)</li>
-    <li><code>redis-helpers.cjs</code> — утилита (можно через фасад)</li>
-    <li><code>scene-restoration.js</code> — <strong>нужно срочно</strong> (bypass gate)</li>
-  </ul>
-  </p>
+<h3>Для 50+ пользователей</h3>
+
+<table>
+  <tr><th>Компонент</th><th>Сейчас</th><th>Нужно</th></tr>
+  <tr><td>Очередь задач</td><td>—</td><td>RabbitMQ / Redis Streams</td></tr>
+  <tr><td>Node.js кластеризация</td><td>1 процесс</td><td><code>cluster</code> или PM2</td></tr>
+  <tr><td>Хранилище</td><td>локальная FS</td><td>S3-совместимое (MinIO/S3)</td></tr>
+  <tr><td>GPU Hub</td><td>1 инстанс</td><td>балансировка + шарды</td></tr>
+  <tr><td>Rate limiting</td><td>нет</td><td>на /gpu/result и /regenerate</td></tr>
+</table>
+</section>
+
+<!-- ═══════════ 11. CONFIG ═══════════ -->
+<section id="config">
+<h2>11. Конфигурация и файлы</h2>
+
+<h3>Параметры</h3>
+
+<table>
+  <tr><th>Параметр</th><th>Файл</th><th>Значение</th></tr>
+  <tr><td><code>maxActiveAudio</code></td><td><code>dispatch-engine.js</code></td><td>3</td></tr>
+  <tr><td><code>maxActiveImage</code></td><td><code>dispatch-engine.js</code></td><td>2</td></tr>
+  <tr><td><code>maxActiveVideo</code></td><td><code>dispatch-engine.js</code></td><td>1</td></tr>
+  <tr><td><code>LEASE_TTL_audio</code></td><td><code>lease-manager.js</code></td><td>15 min</td></tr>
+  <tr><td><code>LEASE_TTL_image</code></td><td><code>lease-manager.js</code></td><td>20 min</td></tr>
+  <tr><td><code>LEASE_TTL_video</code></td><td><code>lease-manager.js</code></td><td>30 min</td></tr>
+  <tr><td><code>GPU_TIMEOUT</code></td><td><code>gpu-hub.js</code> (env)</td><td>600000 ms (10 min)</td></tr>
+  <tr><td><code>SCHEDULER_TICK_INTERVAL</code></td><td><code>runtime-loop.js</code></td><td>5000 ms</td></tr>
+  <tr><td><code>RECONCILE_INTERVAL_MS</code></td><td><code>runtime-loop.js</code></td><td>60000 ms</td></tr>
+  <tr><td><code>AUDIO_CHUNK_STALL_MS</code></td><td><code>runtime-config.js</code></td><td>300000 ms</td></tr>
+</table>
+
+<h3>Основные файлы</h3>
+
+<table>
+  <tr><th>Файл</th><th>Строк</th><th>Роль</th></tr>
+  <tr><td><code>orchestration/orchestrator.js</code></td><td>~500</td><td>Facade — единый владелец состояния</td></tr>
+  <tr><td><code>orchestration/scene-orchestrator.js</code></td><td>~300</td><td>Dispatch executor (audio/image/video)</td></tr>
+  <tr><td><code>orchestration/event-journal.js</code></td><td>~100</td><td>Журнал событий (TTL 7d)</td></tr>
+  <tr><td><code>runtime/dispatch-engine.js</code></td><td>~960</td><td>Lease, quota, governance</td></tr>
+  <tr><td><code>runtime/reconciliation-engine.js</code></td><td>~1200</td><td>Самовосстановление</td></tr>
+  <tr><td><code>runtime/runtime-loop.js</code></td><td>~150</td><td>Tick + reconcile</td></tr>
+  <tr><td><code>runtime/runtime-scheduler.js</code></td><td>~320</td><td>Tick dispatch</td></tr>
+  <tr><td><code>runtime/lease-manager.js</code></td><td>~200</td><td>Redis lease</td></tr>
+  <tr><td><code>runtime/counter-reconciliation.js</code></td><td>~200</td><td>Фикс дрейфа квот</td></tr>
+  <tr><td><code>runtime/failure-taxonomy.js</code></td><td>~100</td><td>Классификация ошибок</td></tr>
+  <tr><td><code>runtime/retry-budget-manager.js</code></td><td>~165</td><td>Per-scene retry budget</td></tr>
+  <tr><td><code>state/scene-state.js</code></td><td>~250</td><td>Per-asset state (unsafe*)</td></tr>
+  <tr><td><code>services/audio-orchestrator.js</code></td><td>~450</td><td>Audio phase machine</td></tr>
+  <tr><td><code>services/task-handler.cjs</code></td><td>~300</td><td>Callback обработка</td></tr>
+  <tr><td><code>services/book-diff.cjs</code></td><td>~360</td><td>Diff scenes, mark dirty</td></tr>
+  <tr><td><code>services/prompt-dependency-registry.js</code></td><td>~200</td><td>Prompt field → dirty layer</td></tr>
+  <tr><td><code>services/startup-recovery.js</code></td><td>~300</td><td>5-step recovery на старте</td></tr>
+  <tr><td><code>runtime/scene-window.js</code></td><td>~680</td><td>Window slide, cache check</td></tr>
+  <tr><td><code>gpu-hub/gpu-hub.js</code></td><td>~400</td><td>GPU прокси</td></tr>
+  <tr><td><code>worker/worker/worker.cjs</code></td><td>~250</td><td>GPU worker</td></tr>
+</table>
+
+<h3>Redis Key Space</h3>
+
+<div class="diagram">
+<span class="b"># Runtime state</span>
+animastor:scene-assets-state:{bid}:{cid}:{sid}    # per-asset states
+animastor:audio-orch:{bid}:{cid}:{sid}            # audio-orch phase
+animastor:dispatch-lease:{bid}:{cid}:{sid}:{type}  # lease (SET NX)
+animastor:dispatch-meta:{bid}:{cid}:{sid}:{type}   # dispatch metadata
+animastor:active-scenes                            # SMEMBERS
+
+<span class="b"># Quota</span>
+animastor:runtime:active-{audio|image|video}      # INCR counters
+
+<span class="b"># Chunks</span>
+animastor:chunk:{bid}_{cid}_{sid}_{idx}            # chunk metadata
+animastor:iu-progress:{bid}:{cid}:{sid}:image      # IU counter
+
+<span class="b"># GPU Hub</span>
+animastor:queue:{audio|image|video}                # LPUSH/BRPOP queues
+animastor:job:{job_id}                             # dedup (SET NX)
+animastor:result-processed:{job_id}:{build_id}     # result dedup
+animastor:iu-in-flight:{imageIUId}                 # in-flight marker
+
+<span class="b"># Coordination</span>
+animastor:regenerate-lock:{bookId}                 # lock (SET NX)
+animastor:scheduler-tick-lock                      # tick lock
+animastor:cleanup-lock                             # reconcile lock
 </div>
 </section>
 
 <!-- ═══════════ FOOTER ═══════════ -->
-<footer style="text-align:center; padding: 40px 0 20px; border-top: 1px solid var(--border); color: var(--text-dim); font-size: 0.85em;">
-  <p>Сгенерирован с помощью Freebuff · deepseek/deepseek-v4-flash · 19 июля 2026</p>
-  <p style="margin-top: 4px;">Источники: <code>backend/src/orchestration/</code> · <code>backend/src/runtime/</code> · <code>docs/02-orchestration/ORCHESTRATOR_ARCHITECTURE_WITH_AUDIO.md</code></p>
+<footer style="text-align:center; padding:40px 0 20px; border-top:1px solid var(--border); color:var(--text-dim); font-size:0.85em;">
+  <p>Аудит системы оркестрации Animastor · Ревизия <code>d29eca0</code> · 19 июля 2026</p>
+  <p>Основано на <code>docs/02-orchestration/ORCHESTRATION.md</code> (единый документ)</p>
+  <p style="margin-top:8px; font-size:0.8em; opacity:0.6;">Исторические версии: <code>docs/99-archive/</code></p>
 </footer>
 
 </div>
