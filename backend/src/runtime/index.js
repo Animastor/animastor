@@ -15,7 +15,7 @@
 //   sceneWindow → scene window management
 //
 // Phase 8 modules (error handling):
-//   failureTaxonomy, retryManager, retentionManager
+//   failureTaxonomy, retentionManager
 //
 // The following are REMOVED from runtime exports (files preserved on disk):
 //   priority-manager, policy-engine, workload-classifier,
@@ -66,7 +66,6 @@ module.exports = {
 
     // Error handling & retry
     failureTaxonomy: lazyRequire('./failure-taxonomy'),
-    retryManager: lazyRequire('./retry-manager'),
     retentionManager: lazyRequire('./retention-manager'),
 
     // NOTE: the former `debug: { ... }` governance facade (D.3/L1) was removed —
@@ -75,4 +74,7 @@ module.exports = {
     // Live resilience modules: circuit-breaker, retry-budget-manager
     // require()'d directly by dispatch-engine and remain.
     // S1 (2026-07-19): fairness-engine removed — dead code (isStarving always false).
+    // S1 (2026-07-19): retry-manager removed — no production callers (was unused
+    // next to failure-taxonomy; all retry logic now lives in dispatch-engine
+    // finalizeDispatch + retry-budget-manager).
 };
