@@ -18,8 +18,8 @@
 //   failureTaxonomy, retryManager, retentionManager
 //
 // The following are REMOVED from runtime exports (files preserved on disk):
-//   fairness-engine, priority-manager, policy-engine, workload-classifier,
-//   cost-estimator, circuit-breaker, retry-budget-manager, admission-control,
+//   priority-manager, policy-engine, workload-classifier,
+//   cost-estimator, admission-control,
 //   decision-trace, feedback-engine, governance-*, adaptation-controller,
 //   execution-semantics,
 //   trace-compactor, invariant-engine, safe-mode,
@@ -27,6 +27,9 @@
 //   snapshot-manager, runtime-persistence
 //   policy-simulator, governance-sandbox, failure-replay,
 //   governance-validator, policy-engine
+//
+// S1 (2026-07-19): fairness-engine removed entirely — isStarving() always
+//   returned {starving:false}; Phase 9 in dispatch-engine was dead code.
 
 const lazyRequire = (modulePath) => {
     let module = null;
@@ -69,6 +72,7 @@ module.exports = {
     // NOTE: the former `debug: { ... }` governance facade (D.3/L1) was removed —
     // its only consumer was the unreferenced src/api/runtime.js, and several of
     // its modules require()'d files that no longer exist (debug-endpoint 500s).
-    // Live resilience modules (circuit-breaker, fairness-engine, retry-budget-manager)
-    // are require()'d directly by dispatch-engine / runtime-persistence and remain.
+    // Live resilience modules: circuit-breaker, retry-budget-manager
+    // require()'d directly by dispatch-engine and remain.
+    // S1 (2026-07-19): fairness-engine removed — dead code (isStarving always false).
 };

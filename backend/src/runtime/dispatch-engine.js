@@ -13,7 +13,6 @@ const runtimeMetrics = require('./runtime-metrics');
 const storage = require('../storage');
 const circuitBreaker = require('./circuit-breaker');
 const retryBudget = require('./retry-budget-manager');
-const fairness = require('./fairness-engine');
 
 const logPrefix = '[DISPATCH]';
 
@@ -525,13 +524,6 @@ async function dispatchStage(redis, bookId, chapterId, sceneId, stage, loadedBoo
             { reason: retryBudgetCheck.reason, budgets: retryBudgetCheck.budgets }
         );
         return { dispatched: false, reason: 'retry_budget_exceeded', budgets: retryBudgetCheck.budgets, dispatchId };
-    }
-
-    // Phase 9: Check fairness - detect starvation
-    const fairnessStatus = await fairness.isStarving(redis, bookId, chapterId, sceneId);
-    if (fairnessStatus.starving) {
-        log(`STARVATION_DETECTED: ${bookId}/${chapterId}/${sceneId}:${stage} (age: ${fairnessStatus.ageMinutes}m)`);
-        await fairness.boostStarvingScene(redis, bookId, chapterId, sceneId);
     }
 
     // Step 3: Acquire lease (force mode bypasses existing lease)

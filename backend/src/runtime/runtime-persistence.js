@@ -9,7 +9,6 @@ const state = require('../state');
 const runtimeMetrics = require('./runtime-metrics');
 const activeScenesIndex = require('./active-scenes-index');
 const circuitBreaker = require('./circuit-breaker');
-const fairness = require('./fairness-engine');
 const journal = require('../orchestration/event-journal');
 
 const logPrefix = '[PERSISTENCE]';
