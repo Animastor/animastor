@@ -62,8 +62,11 @@ module.exports = function(redis, config, deps) {
             ? result_base64.split(',')[1]
             : result_base64;
         const resultBuffer = Buffer.from(cleanBase64, 'base64');
+        if (resultBuffer.length === 0) {
+            warn(`[DEBUG] EMPTY RESULT from GPU for ${job_id} — writing 0-byte file!`);
+        }
         fs.writeFileSync(asset.fullPath, resultBuffer);
-        log('✅ Saved result to disk:', asset.fullPath, `(${resultBuffer.length} bytes)`);
+        log(`[DEBUG] Saved result to disk: ${asset.fullPath} (${resultBuffer.length} bytes, job=${job_id})`);
 
         // Route by asset type
         switch (asset.type) {

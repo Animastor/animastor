@@ -36,6 +36,7 @@ function log(msg) { console.log(`${logPrefix} ${msg}`); }
 function warn(msg) { console.warn(`${logPrefix} ⚠️ ${msg}`); }
 
 const PREFIX = 'animastor:audio-orch';
+const MIN_CHUNK_BYTES = 100; // Chunks smaller than this are treated as empty (TTS failure)
 
 const PHASES = {
     NEW: 'NEW',
@@ -226,29 +227,47 @@ async function completeChunk(redis, bookId, chapterId, sceneId, chunkIndex, buil
         return;
     }
 
-    // ── CHECK CHUNK COMPLETENESS ──
+    // ── CHECK CHUNK COMPLETENESS (with file size validation) ──
     const chunkPaths = [];
     const presentIndices = [];
     const missingIndices = [];
+    const emptyIndices = [];
+    const chunkSizes = [];
     for (let i = 1; i <= expectedCount; i++) {
         const chunkPath = path.join(buildDir, `${bookId}_${chapterId}_${sceneId}_${pad(i)}.mp3`);
         chunkPaths.push(chunkPath);
-        if (fs.existsSync(chunkPath)) presentIndices.push(i);
-        else missingIndices.push(i);
+        let size = 0;
+        try {
+            if (fs.existsSync(chunkPath)) {
+                size = fs.statSync(chunkPath).size;
+            }
+        } catch (_) {}
+        chunkSizes.push(size);
+        if (size >= MIN_CHUNK_BYTES) {
+            presentIndices.push(i);
+        } else if (size > 0 && size < MIN_CHUNK_BYTES) {
+            emptyIndices.push(i);
+            warn(`[DEBUG] completeChunk: chunk ${pad(i)} exists but too small (${size} bytes) — deleting so re-dispatch can resend`);
+            try { fs.unlinkSync(chunkPath); } catch (_) {}
+            // Also clear Redis dedup keys so the re-sent job isn't rejected as duplicate
+            const staleChunkId = `${bookId}_${chapterId}_${sceneId}_${pad(i)}`;
+            await redis.del(`animastor:job:${staleChunkId}:audio`).catch(() => {});
+            await redis.del(`animastor:result-processed:${staleChunkId}:audio`).catch(() => {});
+        } else {
+            missingIndices.push(i);
+        }
     }
 
-    log(`[DEBUG] completeChunk ${bookId}/${chapterId}/${sceneId}: expected=${expectedCount}, present=[${presentIndices.join(',')}], missing=[${missingIndices.join(',')}] (${Date.now() - startTime}ms)`);
+    log(`[DEBUG] completeChunk ${bookId}/${chapterId}/${sceneId}: expected=${expectedCount}, present=[${presentIndices.join(',')}], empty=[${emptyIndices.join(',')}], missing=[${missingIndices.join(',')}], sizes=[${chunkSizes.join(',')}] (${Date.now() - startTime}ms)`);
 
-    if (missingIndices.length > 0) {
-        // Не все чанки на месте — фиксируем прогресс и выходим. Merge
-        // запустит приход последнего чанка (event-driven); застой ловит
-        // watchdog в reconcileCycle (checkStalledAudioScenes), сбои воркера —
-        // gpu-hub → /gpu/task/error → failStage. Никаких retry-таймеров.
+    if (missingIndices.length > 0 || emptyIndices.length > 0) {
+        // Не все чанки на месте или есть пустые — фиксируем прогресс и выходим.
+        // Пустые чанки будут перезапрошены при re-dispatch (failWaitingScene очистит dedup).
         await transitionState(redis, bookId, chapterId, sceneId, PHASES.WAITING_CHUNKS, {
             chunks_received: presentIndices.length,
             last_chunk_at: Date.now(),
         });
-        log(`${bookId}/${chapterId}/${sceneId}: ${presentIndices.length}/${expectedCount} chunks, waiting for [${missingIndices.join(',')}] (${Date.now() - startTime}ms)`);
+        log(`${bookId}/${chapterId}/${sceneId}: ${presentIndices.length}/${expectedCount} chunks valid, empty=[${emptyIndices.join(',')}], missing=[${missingIndices.join(',')}] (${Date.now() - startTime}ms)`);
         return;
     }
 
@@ -344,9 +363,20 @@ async function failWaitingScene(redis, bookId, chapterId, sceneId, buildId, reas
     const buildDir = path.join(config.OUTPUT_DIR, buildId);
     const missingIndices = [];
     for (let i = 1; i <= expectedCount; i++) {
-        if (!fs.existsSync(path.join(buildDir, `${bookId}_${chapterId}_${sceneId}_${pad(i)}.mp3`))) {
-            missingIndices.push(i);
-        }
+        const chunkPath = path.join(buildDir, `${bookId}_${chapterId}_${sceneId}_${pad(i)}.mp3`);
+        let exists = false;
+        try {
+            if (fs.existsSync(chunkPath)) {
+                const size = fs.statSync(chunkPath).size;
+                if (size < MIN_CHUNK_BYTES) {
+                    warn(`failWaitingScene: chunk ${pad(i)} is empty (${size} bytes) — treating as missing, deleting`);
+                    try { fs.unlinkSync(chunkPath); } catch (_) {}
+                } else {
+                    exists = true;
+                }
+            }
+        } catch (_) {}
+        if (!exists) missingIndices.push(i);
     }
 
     warn(`failWaitingScene: ${bookId}/${chapterId}/${sceneId} — ${missingIndices.length}/${expectedCount} missing (${reason})`);

@@ -160,7 +160,19 @@ async function mergeSceneAudioChunks(redis, bookId, chapterId, sceneId, buildId,
         }
 
         const chunkPaths = existingChunks.map(ch => helpers.getOutputPath(buildId, `${bookId}_${chapterId}_${sceneId}_${String(ch).padStart(4, '0')}.mp3`));
-        helpers.log(`[DEBUG] MERGE: proceeding with ${chunkPaths.length} chunks`);
+
+        // Validate all chunk files have content > 0
+        const MIN_CHUNK_BYTES = 100;
+        const emptyChunks = [];
+        for (let i = 0; i < chunkPaths.length; i++) {
+            let size = 0;
+            try { if (fs.existsSync(chunkPaths[i])) size = fs.statSync(chunkPaths[i]).size; } catch (_) {}
+            helpers.log(`[DEBUG] MERGE: chunk ${i + 1}/${chunkPaths.length}: ${path.basename(chunkPaths[i])} = ${size} bytes`);
+            if (size < MIN_CHUNK_BYTES) emptyChunks.push(i + 1);
+        }
+        if (emptyChunks.length > 0) {
+            helpers.warn(`[DEBUG] MERGE: ${emptyChunks.length} chunk(s) are empty — will produce incomplete output: [${emptyChunks.join(',')}]`);
+        }
 
         const result = await buildSceneAudio(chunkPaths, finalPath, buildId, true);
         helpers.log(`[DEBUG] MERGE: buildSceneAudio result=${result ? 'ok' : 'null'}`);
