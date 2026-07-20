@@ -366,9 +366,20 @@ async function generateSceneAudio(redis, sceneData, loadedBook, buildId, bookId,
 async function sendPerSegmentAudio(redis, segList, sceneData, loadedBook, buildId, bookId, dispatchId, chapterId, sceneId) {
     let sentCount = 0;
 
-    for (let i = 0; i < segList.length; i++) {
-        const chunkIndex = i + 1;
-        const segment = segList[i];
+    // ═══ BATCH DISPATCH ═══
+    // Отправляем все narration чанки скопом, затем все dialogue.
+    // Narration workflow загружает 1 модель (VoiceDesign),
+    // dialogue workflow — 2 модели (VoiceDesign + Base).
+    // Чередование вызывает постоянную перезагрузку Base-модели на ComfyUI,
+    // что приводит к 0-секундному аудио при переходе narration→dialogue→narration...
+    // Batching сохраняет оригинальные chunkIndex — мердж не путает порядок.
+    const indexedSegs = segList.map((seg, i) => ({ idx: i + 1, segment: seg }));
+    const narrationSegs = indexedSegs.filter(s => s.segment.segment_type !== 'dialogue');
+    const dialogueSegs = indexedSegs.filter(s => s.segment.segment_type === 'dialogue');
+    const reordered = [...narrationSegs, ...dialogueSegs];
+    helpers.log(`📦 BATCH dispatch: ${narrationSegs.length} narration first, then ${dialogueSegs.length} dialogue`);
+
+    for (const { idx: chunkIndex, segment } of reordered) {
         const id = chunks.makeChunkId(chapterId, sceneId, chunkIndex, bookId);
 
         const chunkFilePath = chunks.getChunkAudioPath(buildId, bookId, chapterId, sceneId, chunkIndex);
