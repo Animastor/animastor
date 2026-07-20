@@ -118,10 +118,10 @@ const QUOTAS = {
 //      — hub обнаруживает мёртвого воркера раньше, чем истечёт lease backend'а
 
 // Dispatch lease TTL (секунды). Покрывает реальную генерацию + ожидание в очереди:
-//   audio: до 10 мин генерации → 15 мин; image: до 15 мин → 20 мин; video: до 20 мин → 30 мин.
+//   audio: до 10 мин генерации → 20 мин; image: до 15 мин → 20 мин; video: до 20 мин → 30 мин.
 // Lease снимается сразу по completion callback — TTL важен только при сбоях.
 const LEASE_TTL_S = {
-    AUDIO: 15 * 60,
+    AUDIO: 20 * 60,
     IMAGE: 20 * 60,
     VIDEO: 30 * 60,
 };
@@ -129,11 +129,12 @@ const LEASE_TTL_S = {
 const TIMEOUTS = {
     // Порог застоя аудио-чанков (reconcileCycle, checkStalledAudioScenes).
     // Если с момента последнего чанка прошло больше этого значения и комплект
-    // неполон — failWaitingScene() → re-dispatch. Должно быть:
-    //   > gpu-hub GPU_TIMEOUT (600 000 мс): hub сам репортит мёртвого воркера
-    //   < LEASE_TTL_S.AUDIO (900 000 мс): watchdog успевает до протухания lease
-    // 300 000 мс (5 мин) — безопасная середина; воркер жив, но чанк потерян.
-    AUDIO_CHUNK_STALL_MS: 300000,
+    // неполон — failWaitingScene() → re-dispatch. Инвариант:
+    //   gpu-hub GPU_TIMEOUT (600 000 мс) < AUDIO_CHUNK_STALL_MS < LEASE_TTL_S.AUDIO * 1000
+    // GPU timeout (10 мин) находит мёртвого воркера и репортит ошибку РАНЬШЕ,
+    // чем watchdog убьёт dispatch. Это гарантирует, что живые чанки не будут
+    // отвергнуты как stale_dispatch.
+    AUDIO_CHUNK_STALL_MS: 900000,
 
     // Периодическая чистка протухших failsafe-локов (cleanup-service.cjs)
     CLEANUP_INTERVAL_MS: 60000,

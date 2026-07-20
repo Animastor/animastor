@@ -398,7 +398,7 @@ describe('checkStalledAudioScenes', () => {
         const audioOrchKey = `animastor:audio-orch:${BOOK_ID}:${CHAPTER_ID}:${SCENE_ID}`;
         await redis.set(audioOrchKey, JSON.stringify({
             phase: 'WAITING_CHUNKS', build_id: 'build-1',
-            last_chunk_at: Date.now() - 600000, // 10 min ago, > 5 min threshold
+            last_chunk_at: Date.now() - 1200000, // 20 min ago, > 15 min threshold
         }));
         const engine = mockDeps(redis);
         const count = await engine.checkStalledAudioScenes(redis, { orchestrator: { failStage: async () => {} } });
