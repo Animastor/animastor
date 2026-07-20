@@ -441,6 +441,7 @@ async function sendPerSegmentAudio(redis, segList, sceneData, loadedBook, buildI
         const wfAudio = wfLoader.getWorkflow(workflowName);
 
         if (isDialogue) {
+            // Dialogue → Qwen3TTSAdvancedDialogue
             const connector = wfLoader.getConnector(workflowName);
             if (connector) {
                 const cl = require('../workflows/connector-loader');
@@ -452,7 +453,6 @@ async function sendPerSegmentAudio(redis, segList, sceneData, loadedBook, buildI
 
             // ⚡ Определяем speaker из segment.text (формат: "speaker_id: текст")
             const speakerMatch = segment.text.match(/^([a-z0-9_]+):\s/);
-
             const speakerId = speakerMatch ? speakerMatch[1] : null;
 
             const speakerVoice = speakerId ? voiceForCharacter(speakerId, loadedBook) : "";
@@ -479,7 +479,11 @@ async function sendPerSegmentAudio(redis, segList, sceneData, loadedBook, buildI
                 wfAudio["74"].inputs.role_name_1 = speakerId || "speaker";
                 wfAudio["74"].inputs.role_name_2 = "narrator";
             }
+
+            // [DEBUG] Log actual workflow values for this dialogue chunk
+            helpers.log(`[DEBUG] Dialogue chunk prompt: id=${id} speaker=${speakerId || 'unknown'} text="${segment.text.substring(0, 80)}" c1Voice=${c1Voice ? '(set)' : '(empty)'} c2Voice=${c2Voice ? '(set)' : '(empty)'} workflow=${workflowName}`);
         } else {
+            // Narration segment
             const connector = wfLoader.getConnector(workflowName);
             const vi = segments.narratorVoice(sceneData.payload, loadedBook);
 
@@ -498,6 +502,21 @@ async function sendPerSegmentAudio(redis, segList, sceneData, loadedBook, buildI
                 if (vi) {
                     wfAudio["108"].inputs.voice_instruction = vi;
                 }
+            }
+        }
+
+        // [DEBUG] Dump full workflow JSON for dialogue chunks
+        if (isDialogue) {
+            const dumpDir = helpers.getOutputPath(buildId, '');
+            const dumpPath = path.join(dumpDir, `wf_dump_${id}.json`);
+            try {
+                if (!fs.existsSync(dumpDir)) {
+                    fs.mkdirSync(dumpDir, { recursive: true });
+                }
+                fs.writeFileSync(dumpPath, JSON.stringify(wfAudio, null, 2));
+                helpers.log(`[DEBUG] Workflow dumped to ${dumpPath}`);
+            } catch (e) {
+                helpers.warn(`[DEBUG] Failed to dump workflow: ${e.message}`);
             }
         }
 
