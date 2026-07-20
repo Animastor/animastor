@@ -6,6 +6,16 @@ All notable changes to Animastor are documented here.
 
 ## [Unreleased] — 2026-07-20
 
+### Added
+
+- **Batch dispatch: narration → dialogue — минимизация переключения моделей ComfyUI**
+  (`backend/src/audio/generation.js`):
+  - `sendPerSegmentAudio()` группирует сегменты: сначала все narration чанки, затем все dialogue.
+    Narration workflow загружает 1 модель (VoiceDesign 1.7B), dialogue — 2 (VoiceDesign + Base).
+    При чередовании N→D→N→D модель перезагружалась 4 раза за сцену; батч сократил до 1 переключения.
+  - Оригинальные `chunkIndex` сохраняются (`idx = i + 1`) — мердж не зависит от порядка отправки.
+  - Коммит: `1ce49ee`
+
 ### Fixed
 
 - **IU timing calculation — narration/perception units получали `text_proportion=0` в смешанных сценах (диалог + нарратив)**
@@ -37,6 +47,17 @@ All notable changes to Animastor are documented here.
   - Подробный план: `docs/03-audit/AUDIO_ORCH_INTEGRATION_TODO.md`
 
 ### Fixed
+
+- **Qwen3-TTS выдавал 0-секундное аудио для voice instruction с "Hoarse, raspy" через API**
+  (`backend/src/audio/generation.js`):
+  - **Проблема:** голосовая инструкция `ivan_ponyrev` содержала `"Hoarse, raspy tenor"`.
+    Ручная загрузка workflow в ComfyUI UI работала нормально, но через API — стабильно 0 секунд.
+    Эксперимент подтвердил: замена спикера на `mikhail_berlioz` с той же фразой "Пиво есть?"
+    работала; замена обратно с голосом Берлиоза тоже работала. Проблема именно в комбинации
+    "raspy" + API-вызов, не в тексте, не в позиции батча, не в содержимом workflow.
+  - **Вывод:** Qwen3-TTS через ComfyUI API не умеет корректно синтезировать хрипоту (raspy).
+    Через UI — выдаёт без хрипоты, через API — 0 секунд. Систематический глюк, не race condition.
+  - **Debug:** workflow dump `wf_dump_*.json` подтвердил 100% идентичность реального и ручного workflow.
 
 - **8/9 audio generation loop — retry timer race condition with GPU hub**
   (`backend/src/config/runtime-config.js`):
