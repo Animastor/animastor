@@ -203,34 +203,10 @@ async function generateSceneAudio(redis, sceneData, loadedBook, buildId, bookId,
     const expectedChunkCount = isPureDialogue ? 1 : segList.length;
     helpers.log(`generateSceneAudio: ${bookId}/${chapterId}/${sceneId} segments=${segList.length} isPureDialogue=${isPureDialogue} expectedChunks=${expectedChunkCount}`);
 
-    // 🧹 Stale cache invalidation
+    // 🧹 Log partial completion — don't delete, sendPerSegmentAudio handles cache-hit per chunk
     const existingChunks = chunks.findExistingSceneChunks(bookId, chapterId, sceneId, buildId);
     if (existingChunks.length > 0 && existingChunks.length !== expectedChunkCount) {
-        helpers.log(`🧹 Stale chunk cache: ${existingChunks.length} on disk, ${expectedChunkCount} expected — invalidating`);
-        for (const chunkIdx of existingChunks) {
-            const filePath = chunks.getChunkAudioPath(buildId, bookId, chapterId, sceneId, chunkIdx);
-            try {
-                if (fs.existsSync(filePath)) {
-                    fs.unlinkSync(filePath);
-                    helpers.log(`  🗑 Deleted stale chunk file: ${filePath}`);
-                }
-            } catch (e) {
-                helpers.warn(`  ⚠️ Failed to delete stale chunk ${filePath}: ${e.message}`);
-            }
-            const chunkId = chunks.makeChunkId(chapterId, sceneId, chunkIdx, bookId);
-            const chunkKey = `animastor:chunk:${chunkId}`;
-            await redis.del(chunkKey);
-            await redis.srem(`animastor:chunks:${bookId}`, chunkId);
-        }
-        const mergedPath = helpers.getOutputPath(buildId, `${bookId}_${chapterId}_${sceneId}.mp3`);
-        if (fs.existsSync(mergedPath)) {
-            try {
-                fs.unlinkSync(mergedPath);
-                helpers.log(`  🗑 Deleted stale merged scene audio: ${mergedPath}`);
-            } catch (e) {
-                helpers.warn(`  ⚠️ Failed to delete stale merged audio: ${e.message}`);
-            }
-        }
+        helpers.log(`🧹 Partial audio cache: ${existingChunks.length}/${expectedChunkCount} chunks on disk — preserving, sendPerSegmentAudio will reuse existing and dispatch missing`);
     }
 
     // ── Check if audio is already ready ──
