@@ -166,7 +166,8 @@ function buildSegments(runtimeEntry) {
             segment_id: String(i + 1).padStart(4, "0"),
             segment_type: "narration",
             text,
-            padded: isPadded
+            padded: isPadded,
+            original_text_length: isPadded ? rawText.length : undefined
         }));
     }
     if (runtimeEntry.runtime_type === "scene" && runtimeEntry.scene_type === "dialogue") {
@@ -212,6 +213,7 @@ function buildSegments(runtimeEntry) {
                             segment_type: "narration",
                             text: chunk,
                             padded: isPadded,
+                            original_text_length: isPadded ? rawText.length : undefined,
                         });
                     }
                     continue;
@@ -233,6 +235,7 @@ function buildSegments(runtimeEntry) {
                         segment_type: "narration",
                         text: fullNarration,
                         padded: isPadded,
+                        original_text_length: isPadded ? extractResult.pre.length : undefined,
                     });
                 }
 
@@ -259,6 +262,7 @@ function buildSegments(runtimeEntry) {
                         segment_type: "narration",
                         text: fullNarration,
                         padded: isPadded,
+                        original_text_length: isPadded ? extractResult.post.length : undefined,
                     });
                 }
             } else {
@@ -279,6 +283,7 @@ function buildSegments(runtimeEntry) {
                         segment_type: "narration",
                         text: chunk,
                         padded: isPadded,
+                        original_text_length: isPadded ? rawText.length : undefined,
                     });
                 }
             }

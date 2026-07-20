@@ -147,19 +147,23 @@ async function mergeSceneAudioChunks(redis, bookId, chapterId, sceneId, buildId,
         const finalPath = helpers.getOutputPath(buildId, `${bookId}_${chapterId}_${sceneId}.mp3`);
         const existingChunks = chunks.findExistingSceneChunks(bookId, chapterId, sceneId, buildId);
 
+        helpers.log(`[DEBUG] MERGE: mergeSceneAudioChunks ${bookId}/${chapterId}/${sceneId}: found=${existingChunks.length} expected=${expectedChunkCount}`);
+
         if (existingChunks.length === 0) {
-            helpers.warn(`No audio chunks found for scene: ${bookId}/${chapterId}/${sceneId}`);
+            helpers.warn(`[DEBUG] MERGE: No audio chunks found for scene: ${bookId}/${chapterId}/${sceneId}`);
             return null;
         }
 
         if (expectedChunkCount && existingChunks.length !== expectedChunkCount) {
-            helpers.warn(`Not all chunks ready for merge: found=${existingChunks.length}, expected=${expectedChunkCount}`);
+            helpers.warn(`[DEBUG] MERGE: Not all chunks ready: found=${existingChunks.length}, expected=${expectedChunkCount}`);
             return null;
         }
 
         const chunkPaths = existingChunks.map(ch => helpers.getOutputPath(buildId, `${bookId}_${chapterId}_${sceneId}_${String(ch).padStart(4, '0')}.mp3`));
+        helpers.log(`[DEBUG] MERGE: proceeding with ${chunkPaths.length} chunks`);
 
         const result = await buildSceneAudio(chunkPaths, finalPath, buildId, true);
+        helpers.log(`[DEBUG] MERGE: buildSceneAudio result=${result ? 'ok' : 'null'}`);
         return result;
     } catch (err) {
         helpers.error(`Audio merge error: ${err.message}`);

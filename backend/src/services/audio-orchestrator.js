@@ -237,6 +237,8 @@ async function completeChunk(redis, bookId, chapterId, sceneId, chunkIndex, buil
         else missingIndices.push(i);
     }
 
+    log(`[DEBUG] completeChunk ${bookId}/${chapterId}/${sceneId}: expected=${expectedCount}, present=[${presentIndices.join(',')}], missing=[${missingIndices.join(',')}] (${Date.now() - startTime}ms)`);
+
     if (missingIndices.length > 0) {
         // Не все чанки на месте — фиксируем прогресс и выходим. Merge
         // запустит приход последнего чанка (event-driven); застой ловит
@@ -257,7 +259,7 @@ async function completeChunk(redis, bookId, chapterId, sceneId, chunkIndex, buil
         chunks_received: expectedCount,
         last_chunk_at: Date.now(),
     });
-    log(`${bookId}/${chapterId}/${sceneId} → MERGING`);
+    log(`${bookId}/${chapterId}/${sceneId} → MERGING (${expectedCount} chunks, ${Date.now() - startTime}ms since first check)`);
 
     try {
         // Trim padded chunks
@@ -267,17 +269,21 @@ async function completeChunk(redis, bookId, chapterId, sceneId, chunkIndex, buil
                 try {
                     const currentMeta = getChunk ? await getChunk(currentChunkId) : null;
                     if (currentMeta && currentMeta.padded_text) {
-                        log(`Padded chunk ${i + 1}/${chunkPaths.length}: trimming`);
-                        await audio.trimPaddedSceneAudio(chunkPaths[i]);
+                        log(`[DEBUG] TRIM: padded chunk ${i + 1}/${chunkPaths.length} (${currentChunkId}), original_text_length=${currentMeta.original_text_length}`);
+                        await audio.trimPaddedSceneAudio(chunkPaths[i], currentMeta.original_text_length);
                     }
-                } catch (_) {}
+                } catch (trimErr) {
+                    warn(`[DEBUG] TRIM failed for ${currentChunkId}: ${trimErr.message}`);
+                }
             }
         }
 
         // Merge chunks
         let mergeSuccess = false;
         if (audio && typeof audio.mergeSceneAudioChunks === 'function') {
+            log(`[DEBUG] MERGE: calling mergeSceneAudioChunks expected=${expectedCount}`);
             const mergeResult = await audio.mergeSceneAudioChunks(redis, bookId, chapterId, sceneId, buildId, expectedCount);
+            log(`[DEBUG] MERGE: result=${mergeResult ? 'ok' : 'null'}`);
             if (mergeResult) {
                 mergeSuccess = true;
             } else if (chunkPaths.length === 1 && fs.existsSync(chunkPaths[0])) {
@@ -285,7 +291,7 @@ async function completeChunk(redis, bookId, chapterId, sceneId, chunkIndex, buil
                 const outputPath = path.join(buildDir, `${bookId}_${chapterId}_${sceneId}.mp3`);
                 if (!fs.existsSync(outputPath)) {
                     fs.copyFileSync(chunkPaths[0], outputPath);
-                    log(`Single chunk fallback: ${outputPath}`);
+                    log(`[DEBUG] MERGE: single chunk fallback: ${outputPath}`);
                     mergeSuccess = true;
                 }
             }
@@ -295,6 +301,7 @@ async function completeChunk(redis, bookId, chapterId, sceneId, chunkIndex, buil
             await setDone(redis, bookId, chapterId, sceneId);
             // T7: Итог машины публикуется только через фасад
             if (orchestrator) {
+                log(`[DEBUG] MERGE: calling completeStage for ${bookId}/${chapterId}/${sceneId}`);
                 await orchestrator.completeStage(
                     redis,
                     bookId,
@@ -305,12 +312,13 @@ async function completeChunk(redis, bookId, chapterId, sceneId, chunkIndex, buil
                     dispatchId
                 );
             }
-            log(`Audio merge complete for ${bookId}/${chapterId}/${sceneId}`);
+            log(`[DEBUG] MERGE: Audio merge complete for ${bookId}/${chapterId}/${sceneId}`);
         } else {
+            warn(`[DEBUG] MERGE: merge produced no output for ${bookId}/${chapterId}/${sceneId}`);
             await setFailed(redis, bookId, chapterId, sceneId, 'merge_failed_no_output');
         }
     } catch (err) {
-        warn(`Merge failed for ${bookId}/${chapterId}/${sceneId}: ${err.message}`);
+        warn(`[DEBUG] MERGE: failed for ${bookId}/${chapterId}/${sceneId}: ${err.message}`);
         await setFailed(redis, bookId, chapterId, sceneId, `merge_error:${err.message}`);
     }
 }

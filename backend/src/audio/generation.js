@@ -112,7 +112,7 @@ function buildMergedDialogueWorkflow(segments, loadedBook) {
     return wfAudio;
 }
 
-async function trimPaddedSceneAudio(filePath) {
+async function trimPaddedSceneAudio(filePath, originalTextLength) {
     const basename = path.basename(filePath);
 
     const duration = await ffmpeg.probeDuration(filePath);
@@ -121,8 +121,21 @@ async function trimPaddedSceneAudio(filePath) {
         return;
     }
 
-    const quietest = await ffmpeg.findQuietestPoint(filePath, 0.40, 0.60);
-    let cutTime = (quietest > 0.3) ? quietest : (duration / 2);
+    let cutTime;
+    if (originalTextLength && originalTextLength > 0) {
+        // Ratio-based cut: padShortText produces `text + " " + text`
+        // Keep only the first copy. Ratio = original_len / (original_len * 2 + 1).
+        const paddedLength = originalTextLength * 2 + 1;
+        const ratio = originalTextLength / paddedLength;
+        cutTime = duration * ratio;
+        helpers.log(`✂️ trimPaddedSceneAudio: ${basename} ratio-based cut: ${originalTextLength}/${paddedLength} = ${ratio.toFixed(3)} of ${duration.toFixed(2)}s → cut at ${cutTime.toFixed(2)}s`);
+    } else {
+        // Fallback: silence detection for legacy padded chunks without original_text_length
+        const quietest = await ffmpeg.findQuietestPoint(filePath, 0.40, 0.60);
+        cutTime = (quietest > 0.3) ? quietest : (duration / 2);
+        helpers.log(`✂️ trimPaddedSceneAudio: ${basename} silence-based fallback: quietest=${quietest.toFixed(3)}s → cut at ${cutTime.toFixed(2)}s`);
+    }
+
     const safetyMargin = 0.10;
     cutTime = Math.min(cutTime + safetyMargin, duration * 0.55);
 
@@ -131,7 +144,7 @@ async function trimPaddedSceneAudio(filePath) {
     if (ok) {
         try {
             fs.renameSync(tempPath, filePath);
-            helpers.log(`✂️ trimPaddedSceneAudio: trimmed ${basename} → kept first ${cutTime.toFixed(1)}s`);
+            helpers.log(`✂️ trimPaddedSceneAudio: trimmed ${basename} → kept first ${cutTime.toFixed(1)}s (original ${duration.toFixed(1)}s)`);
         } catch (e) {
             helpers.log(`⚠️ trimPaddedSceneAudio: rename failed for ${basename}: ${e.message}`);
         }
@@ -383,7 +396,8 @@ async function sendPerSegmentAudio(redis, segList, sceneData, loadedBook, buildI
                     scene_type: sceneData.scene_type,
                     audio: false,
                     audio_status: 'pending',
-                    padded_text: expectPadded
+                    padded_text: expectPadded,
+                    original_text_length: segment.original_text_length
                 };
                 await redis.set(chunkKey, JSON.stringify(fresh));
                 await redis.sadd(`animastor:chunks:${bookId}`, id);
@@ -410,7 +424,8 @@ async function sendPerSegmentAudio(redis, segList, sceneData, loadedBook, buildI
                 scene_type: sceneData.scene_type,
                 audio: chunkFileExists,
                 audio_status: chunkFileExists ? 'ready' : 'pending',
-                padded_text: segment.padded || false
+                padded_text: segment.padded || false,
+                original_text_length: segment.original_text_length
             };
             await redis.set(chunkKey, JSON.stringify(chunkData));
             await redis.sadd(`animastor:chunks:${bookId}`, id);
@@ -495,6 +510,7 @@ async function sendPerSegmentAudio(redis, segList, sceneData, loadedBook, buildI
         );
         if (sendResult.sent) {
             sentCount++;
+            helpers.log(`📤 Dispatched chunk ${chunkIndex}/${segList.length}: ${id} (${segment.segment_type}, padded=${!!segment.padded})`);
         } else {
             helpers.warn(`Audio enqueue failed for ${id}: ${sendResult.error || 'unknown'}`);
         }
