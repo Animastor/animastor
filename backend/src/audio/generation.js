@@ -516,21 +516,6 @@ async function sendPerSegmentAudio(redis, segList, sceneData, loadedBook, buildI
             }
         }
 
-        // [DEBUG] Dump full workflow JSON for dialogue chunks
-        if (isDialogue) {
-            const dumpDir = helpers.getOutputPath(buildId, '');
-            const dumpPath = path.join(dumpDir, `wf_dump_${id}.json`);
-            try {
-                if (!fs.existsSync(dumpDir)) {
-                    fs.mkdirSync(dumpDir, { recursive: true });
-                }
-                fs.writeFileSync(dumpPath, JSON.stringify(wfAudio, null, 2));
-                helpers.log(`[DEBUG] Workflow dumped to ${dumpPath}`);
-            } catch (e) {
-                helpers.warn(`[DEBUG] Failed to dump workflow: ${e.message}`);
-            }
-        }
-
         const sendResult = await gpu.send(
             jobSchema.buildJobId(id, 'audio'),
             wfAudio,
