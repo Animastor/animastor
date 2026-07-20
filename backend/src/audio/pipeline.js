@@ -91,6 +91,8 @@ async function buildSceneAudio(chunkPaths, finalPath, buildId = null, force = fa
     }
 
     helpers.log(`🎬 Merging ${chunkPaths.length} audio chunks with ffmpeg`);
+    const concatContent = chunkPaths.map(ch => `file '${ch}'`).join('\n');
+    helpers.log(`[DEBUG] MERGE concat order:\n${concatContent}`);
     const concatPath = createConcatFile(chunkPaths, buildId);
 
     try {

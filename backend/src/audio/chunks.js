@@ -15,13 +15,17 @@ function findExistingSceneChunks(bookId, chapterId, sceneId, buildId) {
 
     try {
         if (!fs.existsSync(dir)) return [];
-        return fs.readdirSync(dir)
+        const chunks = fs.readdirSync(dir)
             .filter(f => pattern.test(f))
             .map(f => {
                 const match = f.match(chunkPrefix + '(\\d+)\\.mp3$');
                 return match ? parseInt(match[1], 10) : null;
             })
             .filter(Boolean);
+        // CRITICAL: sort numerically — filesystem order (EXT4 hash table) is NOT deterministic
+        chunks.sort((a, b) => a - b);
+        helpers.log(`findExistingSceneChunks: sorted ${chunks.length} chunks: [${chunks.join(',')}]`);
+        return chunks;
     } catch (err) {
         helpers.error(`findExistingSceneChunks error: ${err.message}`);
         return [];
