@@ -4,7 +4,27 @@ All notable changes to Animastor are documented here.
 
 ---
 
-## [Unreleased] — 2026-07-18
+## [Unreleased] — 2026-07-20
+
+### Fixed
+
+- **IU timing calculation — narration/perception units получали `text_proportion=0` в смешанных сценах (диалог + нарратив)**
+  (`backend/src/image/iu-processor.js`):
+  - **Проблема:** `saveIUMetadata()` использовал только `unit.audio?.text` для расчёта пропорции текста юнита.
+    Поле `audio.text` устанавливается ТОЛЬКО для диалоговых юнитов (`type: "dialogue"` с `audio.speaker`).
+    Для нарративных/перцептивных юнитов `audio.text == undefined` → `iuText = ''` →
+    `text_length = 0` → `text_proportion = 0` → `estimated_duration_sec = 0`.
+  - **Следствие:** `needsDuration` в сториборде становился `false` (диалоговые юниты имели ненулевые
+    значения), fallback-пересчёт из `u.text` не срабатывал. Вся длительность сцены уходила только
+    в диалоговые юниты. Нарративные юниты схлопывались до 200ms, диалоговые получали
+    непропорционально большие тайминги (напр. 21.7s на одном юните), захватывая аудио соседних
+    юнитов → рассинхрон.
+  - **Фикс:** `unit.audio?.text || unit.text || ''` — добавлен fallback на `unit.text` для юнитов
+    без `audio.text`. Все 576 тестов проходят.
+  - Сравнение с бэкапом `animastor-src-2026-07-14_05-33-26-Dialogue-Good.zip` подтвердило:
+    код `saveIUMetadata` идентичен, баг существовал всегда, но не проявлялся в чисто-нарративных
+    сценах (там все юниты имели `estimated_duration_sec = 0` → `needsDuration = true` →
+    fallback из `u.text`).
 
 ### Refactored
 
