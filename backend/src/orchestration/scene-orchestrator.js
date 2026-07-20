@@ -64,11 +64,17 @@ async function executeAudioDispatch(redis, scene, loadedBook, buildId, dispatchI
     // 🔧 AUDIO-ORCH: Transition PLACEHOLDER_READY → GENERATING
     const audioOrch = require('../services/audio-orchestrator');
 
-    // ── DONE GUARD: если аудио уже готово — не перезапускаем ──
+    // ── PHASE GUARDS: не передиспатчим, если аудио-оркестратор уже занят ──
     const orchState = await audioOrch.getState(redis, bookId, chapterId, sceneId);
-    if (orchState && orchState.phase === audioOrch.PHASES.DONE) {
-        log(`AUDIO_ALREADY_DONE: ${bookId}/${chapterId}/${sceneId} — skipping dispatch`);
-        return { dispatched: false, jobs: 0, completed: true, reason: 'already_done' };
+    if (orchState) {
+        if (orchState.phase === audioOrch.PHASES.DONE) {
+            log(`AUDIO_ALREADY_DONE: ${bookId}/${chapterId}/${sceneId} — skipping dispatch`);
+            return { dispatched: false, jobs: 0, completed: true, reason: 'already_done' };
+        }
+        if (orchState.phase === audioOrch.PHASES.WAITING_CHUNKS || orchState.phase === audioOrch.PHASES.MERGING) {
+            log(`AUDIO_ORCH: phase ${orchState.phase} — chunks in flight, skipping dispatch (expected=${orchState.expected_count})`);
+            return { dispatched: false, jobs: 0, completed: true, reason: 'chunks_in_flight' };
+        }
     }
 
     let transResult = await audioOrch.setGenerating(redis, bookId, chapterId, sceneId);
@@ -83,15 +89,19 @@ async function executeAudioDispatch(redis, scene, loadedBook, buildId, dispatchI
         transResult = await audioOrch.setGenerating(redis, bookId, chapterId, sceneId);
     }
 
-    // 🔧 FIX: Stale phase recovery для непродуктивных фаз.
-    // WAITING_CHUNKS / GENERATING / FAILED — можно сбросить и начать заново.
-    // DONE — НЕ сбрасываем (ранний guard выше уже вернул).
+    // 🔧 FIX: Stale phase recovery — DONE и WAITING_CHUNKS/MERGING уже отсечены выше.
+    // FAILED → можно переинициализировать, GENERATING → race condition (быстрый completeChunk)
     if (!transResult.success && transResult.reason === 'invalid_transition') {
         const stalePhase = transResult.from;
-        // Финальный safety net: DONE не сбрасываем никогда
+        // DONE — дополнительный safety net (выше уже должен был отсечься)
         if (stalePhase === audioOrch.PHASES.DONE) {
             warn(`AUDIO_ORCH: DONE guard prevented stale reset for ${bookId}/${chapterId}/${sceneId}`);
             return { dispatched: false, jobs: 0, completed: true, reason: 'already_done' };
+        }
+        // WAITING_CHUNKS / MERGING — не сбрасываем (уже отсечено выше, safety check)
+        if (stalePhase === audioOrch.PHASES.WAITING_CHUNKS || stalePhase === audioOrch.PHASES.MERGING) {
+            log(`  🔧 AUDIO_ORCH: safety guard for WAITING_CHUNKS/MERGING in stale recovery`);
+            return { dispatched: false, jobs: 0, completed: true, reason: 'chunks_in_flight' };
         }
         log(`  🔧 AUDIO_ORCH: stale phase ${stalePhase} for ${bookId}/${chapterId}/${sceneId} — resetting to PLACEHOLDER_READY`);
         await audioOrch.deleteState(redis, bookId, chapterId, sceneId);
