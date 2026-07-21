@@ -128,6 +128,16 @@ class MainActivity : AppCompatActivity() {
                 .commit()
         }
 
+        // ── Timer observer — формат HH:MM:SS ──
+        lifecycleScope.launch {
+            viewModel.elapsedSeconds.collect { sec ->
+                val hh = (sec / 3600).toInt()
+                val mm = ((sec % 3600) / 60).toInt()
+                val ss = (sec % 60).toInt()
+                binding.generationTimer.text = String.format("%02d:%02d:%02d", hh, mm, ss)
+            }
+        }
+
         // Handle incoming intent from .vbook file association
         handleVBookIntent(intent)
 
@@ -667,16 +677,19 @@ class MainActivity : AppCompatActivity() {
             is ProgressPanelState.Workers -> {
                 binding.generationProgressContainer.visibility = View.VISIBLE
                 binding.generationDoneRow.visibility = View.GONE
+                binding.generationTimerRow.visibility = View.VISIBLE
                 binding.workerProgressList.visibility = View.VISIBLE
                 renderWorkers(state.workers)
             }
             is ProgressPanelState.DoneRow -> {
                 binding.generationProgressContainer.visibility = View.VISIBLE
+                binding.generationTimerRow.visibility = View.VISIBLE  // показываем финальное время
                 binding.workerProgressList.visibility = View.GONE
                 binding.generationDoneRow.visibility = View.VISIBLE
             }
             is ProgressPanelState.Hidden -> {
                 binding.generationProgressContainer.visibility = View.GONE
+                binding.generationTimerRow.visibility = View.GONE
             }
         }
     }

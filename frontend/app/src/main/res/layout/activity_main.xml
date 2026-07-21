@@ -227,6 +227,28 @@
                 android:progress="100" />
         </LinearLayout>
 
+        <!-- Timer + overall progress header -->
+        <LinearLayout
+            android:id="@+id/generationTimerRow"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:visibility="gone"
+            android:paddingBottom="4dp">
+
+            <TextView
+                android:id="@+id/generationTimer"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textSize="12sp"
+                android:textColor="?attr/colorOnSurfaceVariant"
+                android:fontFamily="sans-serif-medium"
+                android:letterSpacing="0.1"
+                android:singleLine="true"
+                android:text="00:00:00" />
+        </LinearLayout>
+
         <!-- Dynamic list of individual worker progress rows -->
         <LinearLayout
             android:id="@+id/workerProgressList"

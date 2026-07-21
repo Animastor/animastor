@@ -88,12 +88,16 @@ module.exports = function(app, redis, deps) {
 
             // ── 3. Count ready chunks per layer ──
             // Each worker shows honest progress based on its own work units:
-            //   - Audio: TTS segments (chunks). Long scenes split into _0001.._0003
-            //     count as separate work items — user sees real TTS progress.
+            //   - Audio: expected_count-based total. Each scene stores its expected
+            //     chunk count once at dispatch time. Total = sum(expected_count)
+            //     across unique scenes, so total grows only when a NEW scene
+            //     appears (e.g. +5 at once), not on every individual chunk.
+            //     This prevents the old jitter (25 → 30 → 34 per chunk dispatch).
             //   - Image: IU images (individual image generation tasks).
             //   - Video: scenes (one video per scene).
             // Each worker has its own total — this is fine, they are separate rows.
             let audioReady = 0, audioReadyReal = 0, imageReady = 0, videoReady = 0;
+            const audioSceneExpected = new Map(); // "ch:sc" -> expected_count (stable per scene)
 
             for (const cid of filteredIds) {
                 const chunk = chunkById.get(cid);
@@ -104,8 +108,20 @@ module.exports = function(app, redis, deps) {
                 }
                 if (chunk.image_status === 'ready') imageReady++;
                 if (chunk.video_status === 'ready') videoReady++;
+
+                // expected_count per unique scene — set once at dispatch, never changes
+                if (chunk.chapter_id && chunk.scene_id && chunk.expected_chunk_count != null) {
+                    const sceneKey = `${chunk.chapter_id}:${chunk.scene_id}`;
+                    if (!audioSceneExpected.has(sceneKey)) {
+                        const expected = parseInt(chunk.expected_chunk_count, 10);
+                        if (!isNaN(expected) && expected > 0) {
+                            audioSceneExpected.set(sceneKey, expected);
+                        }
+                    }
+                }
             }
 
+            const audioExpectedTotal = [...audioSceneExpected.values()].reduce((a, b) => a + b, 0);
             const scopeTotal = filteredIds.length;
 
             // ── 4. IU counts (for image worker) ──
@@ -194,14 +210,14 @@ module.exports = function(app, redis, deps) {
                 });
             }
 
-            // Audio worker
-            if (layers.audio && scopeTotal > 0) {
-                const audioDone = audioReadyReal === scopeTotal;
+            // Audio worker (expected_count-based, not chunk-count-based)
+            if (layers.audio && audioExpectedTotal > 0) {
+                const audioDone = audioReadyReal >= audioExpectedTotal;
                 workers.push({
                     type: 'audio',
                     ready: audioReadyReal,
-                    total: scopeTotal,
-                    percent: Math.round(audioDone ? 100 : (audioReadyReal * 100 / scopeTotal)),
+                    total: audioExpectedTotal,
+                    percent: Math.round(audioDone ? 100 : (audioReadyReal * 100 / audioExpectedTotal)),
                     done: audioDone,
                     visible: true,
                     indeterminate: false,

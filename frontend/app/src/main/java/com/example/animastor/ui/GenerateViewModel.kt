@@ -77,6 +77,30 @@ class GenerateViewModel(
     val playbackPrepared: SharedFlow<PlaybackPreparation> = _playbackPrepared.asSharedFlow()
 
 
+    // ── Elapsed timer (client-side) ──────────────────────────────
+
+    private val _elapsedSeconds = MutableStateFlow(0L)
+    val elapsedSeconds: StateFlow<Long> = _elapsedSeconds.asStateFlow()
+
+    /** Coroutine that increments [_elapsedSeconds] every second while generation runs. */
+    private var timerJob: Job? = null
+
+    private fun startTimer() {
+        timerJob?.cancel()
+        _elapsedSeconds.value = 0L
+        timerJob = viewModelScope.launch {
+            while (true) {
+                delay(1000L)
+                _elapsedSeconds.update { it + 1 }
+            }
+        }
+    }
+
+    private fun stopTimer() {
+        timerJob?.cancel()
+        timerJob = null
+    }
+
     // ── UI State (generation/import related only) ─────────────────
 
     private val _uiState = MutableStateFlow(GenUiState())
@@ -315,6 +339,7 @@ class GenerateViewModel(
                 val dirtyCount = res.dirty_scenes?.size ?: 0
                 onResult(GenerationResult.Started(dirtyCount, res.scope ?: req.scope))
                 viewModelScope.launch { refreshAssetsState() }
+                startTimer()  // 🕐 начали генерацию — запускаем таймер
                 // Keep _activeGeneration alive: the progress bar polls getAssetsState
                 // to show actual completion. Only clear when cancelled or on a new
                 // generation that replaces this one. The poller hides the bar when
@@ -354,6 +379,7 @@ class GenerateViewModel(
             _isRegenerating.value = false
         }
         _activeGeneration.value = null
+        stopTimer()  // 🕐 генерация завершена — останавливаем таймер
 
         viewModelScope.launch {
             // Build scene list from book JSON
@@ -406,6 +432,7 @@ class GenerateViewModel(
     fun cancelGeneration() {
         Log.i(TAG, "cancelGeneration: $bookId")
         if (bookId.isBlank()) return
+        stopTimer()  // 🕐 отмена — останавливаем таймер
         viewModelScope.launch {
             runCatching {
                 _repository.cancelGeneration(bookId)
@@ -950,6 +977,7 @@ class GenerateViewModel(
 
     fun closeBook() {
         generationJob?.cancel()
+        stopTimer()  // 🕐 закрыли книгу — сбрасываем таймер
         windowTriggerManager.stop()
         persistBookId("")
         persistBuildId("")
@@ -1096,6 +1124,9 @@ class GenerateViewModel(
      * Call when new GPU generation or VBook work is detected.
      */
     fun resetWorkerState() {
+        // НЕ останавливаем таймер — он живёт от startGeneration до applyGenerationResults/cancel.
+        // resetWorkerState вызывается poller'ом при детекте новой генерации,
+        // и стоп таймера здесь убил бы только что запущенный startTimer().
         workerCompletedAt.clear()
         _workerPermanentlyDone.clear()
         _coverEverIncomplete = false

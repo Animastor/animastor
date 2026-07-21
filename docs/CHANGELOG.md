@@ -8,6 +8,29 @@ All notable changes to Animastor are documented here.
 
 ### Added
 
+- **Аудио-прогресс: expected_count-based total + таймер выполнения**
+  (`backend/src/routes/book/progress-panel.cjs`,
+  `frontend/.../GenerateViewModel.kt`, `frontend/.../MainActivity.kt`,
+  `frontend/.../activity_main.xml`):
+  - **Проблема:** прогресс генерации аудио считался по количеству GPU-чанков (TTS сегментов).
+    Total = количество всех chunk ID в Redis. Каждый новый чанк увеличивал total на 1
+    (напр. 25 → 30 → 34), прогресс дёргался, в конце показывал некорректные значения.
+  - **Фикс (backend):** Прогресс аудио переведён на `expected_count`-базу.
+    Каждая сцена при диспатче сохраняет `expected_chunk_count` в чанк-метаданных
+    (устанавливается один раз, не меняется). В `/progress-panel`:
+    `total = сумма expected_count по уникальным сценам` — растёт только при появлении
+    НОВОЙ сцены (напр. +5 за раз), а не на каждый отдельный чанк.
+    `ready = количество готовых чанков` (как было).
+    Добавлена защита от NaN в `parseInt`.
+  - **Фикс (frontend):** Добавлен клиентский таймер выполнения — `elapsedSeconds` StateFlow
+    в `GenerateViewModel.kt`. Стартует при `startGeneration().onSuccess`, стопается при
+    `applyGenerationResults()` / `cancelGeneration()` / `closeBook()`.
+    `resetWorkerState()` не трогает таймер. В `MainActivity.kt` — lifecycleScope-подписка,
+    формат `HH:MM:SS`, показывается в `generationTimerRow` над списком воркеров.
+  - **Layout:** `activity_main.xml` — `generationTimerRow` с `generationTimer` TextView
+    внутри `generationProgressContainer`.
+  - 12/12 тестов проходят, syntax check OK.
+
 - **A0: Детерминированное перечисление чанков — enumeration вместо readdir**
   (`backend/src/audio/chunks.js`):
   - `findExistingSceneChunks()` теперь принимает опциональный `expectedCount`.
