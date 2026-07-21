@@ -161,6 +161,14 @@ module.exports = function({ redis, txtImporter, genSessionRepo, state, activeSce
                     status: 'cancelled',
                     progress_msg: '✗ Генерация VBook остановлена пользователем',
                 }).catch(() => {});
+                try {
+                    const { publishProgress } = require('../services/progress-pubsub.cjs');
+                    publishProgress(redis, bookId, {
+                        type: 'vbook',
+                        stage: 'cancelled',
+                        message: '✗ Отменено',
+                    });
+                } catch (_) {}
             } else {
                 console.log(`[CANCEL-DEBUG] window-generator: НЕ cancelled → status=failed, err.message=${err.message}`);
                 await genSessionRepo.updateSession(sessionId, {

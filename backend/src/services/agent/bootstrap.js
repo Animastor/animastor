@@ -170,6 +170,25 @@ async function bootstrapWithAgent(bookId, progress, publishProgress, redis) {
             _progress({ stage: 'error', message: `✗ Ошибка: ${err.message}` });
         } else {
             console.log(`[CANCEL-DEBUG] bootstrapWithAgent: cancelled → сохраняю status=cancelled, НЕ перезаписываю`);
+            // Отправляем статус «Отменено» через publishProgress (progress-колбэк — no-op)
+            try {
+                if (publishProgress) {
+                    publishProgress(bookId, {
+                        type: 'vbook',
+                        stage: 'cancelled',
+                        message: '✗ Отменено',
+                    });
+                }
+            } catch (_) {}
+            // Сохраняем в PG chat_messages, чтобы сообщение было в истории чата
+            try {
+                const chatRepo = require('../../storage/postgres/repositories/chat-repo');
+                await chatRepo.appendMessage(bookId, {
+                    role: 'system',
+                    topic: 'vbook',
+                    message: '✗ Отменено',
+                });
+            } catch (_) {}
             _progress({ stage: 'done', message: '✗ Генерация VBook остановлена пользователем' });
         }
         throw err;
@@ -496,6 +515,25 @@ async function bootstrapNextWindow(bookId, progress, publishProgress, redis) {
             _progress({ stage: 'error', message: `✗ Ошибка: ${err.message}` });
         } else {
             console.log(`[CANCEL-DEBUG] bootstrapNextWindow: cancelled → сохраняю status=cancelled, НЕ перезаписываю`);
+            // Отправляем статус «Отменено» через publishProgress (progress-колбэк — no-op)
+            try {
+                if (publishProgress) {
+                    publishProgress(bookId, {
+                        type: 'vbook',
+                        stage: 'cancelled',
+                        message: '✗ Отменено',
+                    });
+                }
+            } catch (_) {}
+            // Сохраняем в PG chat_messages, чтобы сообщение было в истории чата
+            try {
+                const chatRepo = require('../../storage/postgres/repositories/chat-repo');
+                await chatRepo.appendMessage(bookId, {
+                    role: 'system',
+                    topic: 'vbook',
+                    message: '✗ Отменено',
+                });
+            } catch (_) {}
             _progress({ stage: 'done', message: '✗ Генерация VBook остановлена пользователем' });
         }
         throw err;

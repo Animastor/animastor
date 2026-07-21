@@ -397,6 +397,29 @@ module.exports = function(app, redis, deps) {
                 }
             }
 
+            // ── КРИТИЧЕСКИ важно: сначала ОТМЕНИТЬ активные agent-сессии, потом чистить ──
+            // Если сначала почистить Redis и PG, running agent никогда не узнает об отмене:
+            //   - cleanBookRedisKeys удалит animastor:cancelled-workers:{bookId}
+            //   - DELETE agent_sessions удалит все сессии
+            // Агент продолжит работу — он не может обнаружить отмену.
+            //
+            // Сначала сигнализируем агенту через cancelled-workers (Redis) и статус сессий (PG),
+            // потом чистим Redis и PG. Агент увидит отмену на следующем checkCancelled().
+            try {
+                await redis.sadd(`animastor:cancelled-workers:${bookId}`, 'vbook');
+                log(`[DELETE-BOOK] Set cancelled-workers for ${bookId} — VBook agent will be stopped`);
+            } catch (redisErr) {
+                console.warn(`[DELETE-BOOK] Failed to set cancelled-workers: ${redisErr.message}`);
+            }
+            try {
+                await storage.postgres.query(
+                    `UPDATE agent_sessions SET status = 'cancelled', updated_at = $1 WHERE book_id = $2 AND status IN ('running', 'paused')`,
+                    [Math.floor(Date.now() / 1000), bookId]
+                );
+            } catch (pgErr) {
+                console.warn(`[DELETE-BOOK] Failed to cancel agent sessions: ${pgErr.message}`);
+            }
+
             const windowModule = require('../../runtime/scene-window');
             await windowModule.setCancelFlag(redis, bookId);
             await redis.del('animastor:runtime:active-audio');
