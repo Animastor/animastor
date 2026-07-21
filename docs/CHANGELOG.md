@@ -90,6 +90,23 @@ All notable changes to Animastor are documented here.
   - **Фикс (шрифт):** `workerTimer` согласован с `workerCount` — 12sp, без кастомного
     fontFamily/letterSpacing.
   - Syntax check OK, code review OK.
+  - Syntax check OK, code review OK.
+
+- **DoneRow: таймер справа на строке при 100% + финальное время + bold**
+  (`frontend/.../activity_main.xml`, `frontend/.../GenerateViewModel.kt`,
+  `frontend/.../MainActivity.kt`):
+  - **Проблема:** при глобальном прогрессе 100% (DoneRow) таймер висел на отдельной
+    строке слева под статусом. Должен быть справа на строке, как в обычных воркерах.
+  - **Фикс (позиция):** `generationTimerRow` удалён из `activity_main.xml`.
+    `generationTimer` перенесён внутрь `generationDoneRow`, после `100%` — справа.
+    DoneRow: `[Готово — Audio ...] [100%] [00:01:42]`.
+  - **Фикс (финальное время):** в `GenerateViewModel.kt` добавлено
+    `@Volatile finalElapsedSeconds: Long`. `stopTimer()` сохраняет elapsed до остановки.
+    `timerStartedAt = -1L` как sentinel «остановлен». Таймер показывает итоговое
+    время, а не 00:00:00.
+  - **Фикс (bold):** в `MainActivity.kt` timer loop ставит `typeface = DEFAULT_BOLD`
+    на `generationTimer` и все `workerTimer` при `timerStartedAt == -1L`.
+  - Syntax check OK, code review OK.
 
 - **A0: Детерминированное перечисление чанков — enumeration вместо readdir**
   (`backend/src/audio/chunks.js`):

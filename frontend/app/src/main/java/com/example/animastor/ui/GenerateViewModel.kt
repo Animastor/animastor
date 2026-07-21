@@ -82,19 +82,29 @@ class GenerateViewModel(
     /**
      * Wall-clock start timestamp (ms). 0 = not running.
      * MainActivity timer loop reads this directly — no coroutine/StateFlow.
+     * When stopped (timerStartedAt == -1L), check [finalElapsedSeconds].
      */
     @Volatile
     var timerStartedAt: Long = 0L
         private set
 
+    /** Final elapsed seconds when timer was stopped (0L if never stopped). */
+    @Volatile
+    var finalElapsedSeconds: Long = 0L
+        private set
+
     /** Start the timer — records wall-clock timestamp. */
     private fun startTimer() {
         timerStartedAt = System.currentTimeMillis()
+        finalElapsedSeconds = 0L
     }
 
-    /** Stop the timer — resets to 0 (not running). */
+    /** Stop the timer — preserves final elapsed value, sets state to stopped (-1). */
     private fun stopTimer() {
-        timerStartedAt = 0L
+        if (timerStartedAt > 0L) {
+            finalElapsedSeconds = (System.currentTimeMillis() - timerStartedAt) / 1000L
+        }
+        timerStartedAt = -1L  // -1 = stopped, finalElapsedSeconds holds the final value
     }
 
     // ── UI State (generation/import related only) ─────────────────

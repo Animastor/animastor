@@ -131,17 +131,23 @@ class MainActivity : AppCompatActivity() {
         // ── Timer loop — читает viewModel.timerStartedAt напрямую ──
         lifecycleScope.launch {
             while (true) {
-                val elapsed = viewModel.timerStartedAt.let { start ->
-                    if (start > 0L) (System.currentTimeMillis() - start) / 1000L else 0L
+                val elapsed = when {
+                    viewModel.timerStartedAt > 0L -> (System.currentTimeMillis() - viewModel.timerStartedAt) / 1000L
+                    viewModel.timerStartedAt == -1L -> viewModel.finalElapsedSeconds
+                    else -> 0L
                 }
                 val timerText = formatTimerText(elapsed)
+                val isStopped = viewModel.timerStartedAt == -1L
                 binding.generationTimer.text = timerText
+                binding.generationTimer.typeface = if (isStopped) android.graphics.Typeface.DEFAULT_BOLD else android.graphics.Typeface.DEFAULT
                 // Update timer in each visible worker row
                 val container = binding.workerProgressList
                 for (i in 0 until container.childCount) {
                     val row = container.getChildAt(i)
                     if (row.visibility == View.VISIBLE) {
-                        row.findViewById<TextView>(R.id.workerTimer)?.text = timerText
+                        val tv = row.findViewById<TextView>(R.id.workerTimer)
+                        tv?.text = timerText
+                        if (isStopped) tv?.setTypeface(null, android.graphics.Typeface.BOLD)
                     }
                 }
                 delay(500L)
@@ -687,19 +693,17 @@ class MainActivity : AppCompatActivity() {
             is ProgressPanelState.Workers -> {
                 binding.generationProgressContainer.visibility = View.VISIBLE
                 binding.generationDoneRow.visibility = View.GONE
-                binding.generationTimerRow.visibility = View.GONE  // timer показан в каждой строке worker
                 binding.workerProgressList.visibility = View.VISIBLE
                 renderWorkers(state.workers)
             }
             is ProgressPanelState.DoneRow -> {
                 binding.generationProgressContainer.visibility = View.VISIBLE
-                binding.generationTimerRow.visibility = View.VISIBLE  // показываем финальное время
                 binding.workerProgressList.visibility = View.GONE
                 binding.generationDoneRow.visibility = View.VISIBLE
+                // timer находится внутри generationDoneRow, справа от 100%
             }
             is ProgressPanelState.Hidden -> {
                 binding.generationProgressContainer.visibility = View.GONE
-                binding.generationTimerRow.visibility = View.GONE
             }
         }
     }
@@ -740,8 +744,10 @@ class MainActivity : AppCompatActivity() {
             val barView = row.findViewById<com.google.android.material.progressindicator.LinearProgressIndicator>(R.id.workerProgressBar)
 
             val timerView = row.findViewById<TextView>(R.id.workerTimer)
-            val currentSec = viewModel.timerStartedAt.let { start ->
-                if (start > 0L) (System.currentTimeMillis() - start) / 1000L else 0L
+            val currentSec = when {
+                viewModel.timerStartedAt > 0L -> (System.currentTimeMillis() - viewModel.timerStartedAt) / 1000L
+                viewModel.timerStartedAt == -1L -> viewModel.finalElapsedSeconds
+                else -> 0L
             }
             val timerText = formatTimerText(currentSec)
 
