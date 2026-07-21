@@ -644,21 +644,22 @@ class GenerateViewModel(
                             vbookProgress = VBookProgress(stage = VBookStage.ANALYZING)
                         )}
 
-                        // New import — bootstrap and poll
-                        val pollDuringBootstrap = viewModelScope.launch {
-                            var lastSeen = ""
-                            while (true) {
-                                val st = runCatching { _repository.getAgentStatus(bId) }.getOrNull()
-                                if (st?.progress_msg != null && st.progress_msg != lastSeen) {
-                                    msgs.add(st.progress_msg)
-                                    _uiState.update { it.copy(importProgressMessages = msgs.toList()) }
-                                    lastSeen = st.progress_msg
-                                }
-                                delay(2000)
+                    // New import — bootstrap and poll
+                    val pollDuringBootstrap = viewModelScope.launch {
+                        var lastSeen = ""
+                        while (true) {
+                            val st = runCatching { _repository.getAgentStatus(bId) }.getOrNull()
+                            if (st?.progress_msg != null && st.progress_msg != lastSeen) {
+                                msgs.add(st.progress_msg)
+                                _uiState.update { it.copy(importProgressMessages = msgs.toList()) }
+                                lastSeen = st.progress_msg
                             }
+                            delay(2000)
                         }
+                    }
 
-                        val bootstrapRes = _repository.bootstrapBook(bId)
+                    startTimer()  // 🕐 VBook-импорт — запускаем таймер
+                    val bootstrapRes = _repository.bootstrapBook(bId)
                         pollDuringBootstrap.cancel()
 
                         val finalStatus = runCatching { _repository.getAgentStatus(bId) }.getOrNull()
@@ -672,8 +673,9 @@ class GenerateViewModel(
                         msgs.add("✓ Import complete: ${bootstrapRes.characters} characters, ${bootstrapRes.locations} locations, ${bootstrapRes.scenes} scenes")
                         _uiState.update { it.copy(importProgressMessages = msgs.toList()) }
 
-                        pollAgentProgress(bId, msgs, afterBootstrapMsg)
-                        msgs.add("💬 You can ask questions or start generation using the toolbar button.")
+                    pollAgentProgress(bId, msgs, afterBootstrapMsg)
+                    stopTimer()  // 🕐 VBook-импорт завершён — останавливаем таймер
+                    msgs.add("💬 You can ask questions or start generation using the toolbar button.")
                         _uiState.update { it.copy(importProgressMessages = msgs.toList()) }
 
                         // Build scene list from book JSON for navigation
@@ -723,6 +725,7 @@ class GenerateViewModel(
                 Log.e(TAG, "importBookFromFile failed: ${e.message}", e)
                 val msg = if (e is java.io.IOException && e.message != null) e.message!! else "Import failed: ${e.message}"
                 _uiState.update { it.copy(phase = PlayerPhase.IDLE, errorMessage = msg) }
+                stopTimer()  // 🕐 ошибка импорта — останавливаем таймер
             }
         }
     }

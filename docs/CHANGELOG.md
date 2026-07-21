@@ -235,6 +235,18 @@ All notable changes to Animastor are documented here.
   - `stopTimer()` добавлен в `.onFailure` — останавливает таймер при ошибке API.
   - Syntax check OK, code review OK.
 
+- **Таймер: запуск при VBook-импорте (txt → AI-агент)**
+  (`frontend/.../GenerateViewModel.kt`):
+  - **Проблема:** `startTimer()` вызывался только в `startGeneration()` (GPU-генерация
+    audio/image/video). При VBook-импорте txt-файла `startTimer()` никогда не вызывался →
+    таймер всегда показывал `00:00:00` (`timerStartedAt == -1L` после `closeBook()`).
+  - **Фикс:** три добавления в `importBookFromFile()`:
+    (1) `startTimer()` перед `bootstrapBook()` — таймер стартует при начале VBook-обработки;
+    (2) `stopTimer()` после `pollAgentProgress()` — останавливается при завершении;
+    (3) `stopTimer()` в catch-блоке — останавливается при ошибке импорта.
+  - `stopTimer()` идемпотентен (двойной вызов при cancel безопасен).
+  - Syntax check OK, code review OK.
+
 - **A0: Детерминированное перечисление чанков — enumeration вместо readdir**
   (`backend/src/audio/chunks.js`):
   - `findExistingSceneChunks()` теперь принимает опциональный `expectedCount`.
