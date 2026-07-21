@@ -299,6 +299,7 @@ class GenerateViewModel(
             chapterId = req.chapterId,
             sceneId = req.sceneId
         )
+        startTimer()  // 🕐 таймер стартует сразу, до API-вызова
         generationJob?.cancel()
         generationJob = viewModelScope.launch {
             // Preserve VBook progress and import messages when GPU generation starts
@@ -345,7 +346,7 @@ class GenerateViewModel(
                 val dirtyCount = res.dirty_scenes?.size ?: 0
                 onResult(GenerationResult.Started(dirtyCount, res.scope ?: req.scope))
                 viewModelScope.launch { refreshAssetsState() }
-                startTimer()  // 🕐 начали генерацию — запускаем таймер
+                // таймер уже запущен при входе в startGeneration
                 // Keep _activeGeneration alive: the progress bar polls getAssetsState
                 // to show actual completion. Only clear when cancelled or on a new
                 // generation that replaces this one. The poller hides the bar when
@@ -364,6 +365,7 @@ class GenerateViewModel(
                     onResult(GenerationResult.Failed(e.message ?: "unknown"))
                     _activeGeneration.value = null
                 }
+                stopTimer()  // 🕐 ошибка — останавливаем таймер
             }
         }
     }

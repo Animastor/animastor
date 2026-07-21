@@ -108,6 +108,19 @@ All notable changes to Animastor are documented here.
     на `generationTimer` и все `workerTimer` при `timerStartedAt == -1L`.
   - Syntax check OK, code review OK.
 
+- **Таймер: старт до API-вызова + bold только при реальной остановке**
+  (`frontend/.../GenerateViewModel.kt`, `frontend/.../MainActivity.kt`):
+  - **Проблема:** `startTimer()` вызывался только внутри `.onSuccess` API-вызова.
+    После `closeBook()` в `onCreate` `timerStartedAt = -1L`. В промежутке между кликом
+    Generate и ответом API (секунды) таймер-луп читал `-1L` → `00:00:00` + bold
+    (`isStopped = true`). Если API-вызов падал — `startTimer()` вообще не вызывался.
+  - **Фикс:** `startTimer()` перенесён в начало `startGeneration()` — вызывается
+    **синхронно** перед корутиной API-вызова. Таймер стартует немедленно при клике.
+  - **Bold:** `shouldBold = isStopped && finalElapsedSeconds > 0L` — жирный шрифт
+    только когда таймер был реально остановлен после работы, а не при холодном старте.
+  - `stopTimer()` добавлен в `.onFailure` — останавливает таймер при ошибке API.
+  - Syntax check OK, code review OK.
+
 - **A0: Детерминированное перечисление чанков — enumeration вместо readdir**
   (`backend/src/audio/chunks.js`):
   - `findExistingSceneChunks()` теперь принимает опциональный `expectedCount`.

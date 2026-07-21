@@ -138,8 +138,10 @@ class MainActivity : AppCompatActivity() {
                 }
                 val timerText = formatTimerText(elapsed)
                 val isStopped = viewModel.timerStartedAt == -1L
+                val hasFinalTime = viewModel.finalElapsedSeconds > 0L
+                val shouldBold = isStopped && hasFinalTime
                 binding.generationTimer.text = timerText
-                binding.generationTimer.typeface = if (isStopped) android.graphics.Typeface.DEFAULT_BOLD else android.graphics.Typeface.DEFAULT
+                binding.generationTimer.typeface = if (shouldBold) android.graphics.Typeface.DEFAULT_BOLD else android.graphics.Typeface.DEFAULT
                 // Update timer in each visible worker row
                 val container = binding.workerProgressList
                 for (i in 0 until container.childCount) {
@@ -147,7 +149,7 @@ class MainActivity : AppCompatActivity() {
                     if (row.visibility == View.VISIBLE) {
                         val tv = row.findViewById<TextView>(R.id.workerTimer)
                         tv?.text = timerText
-                        if (isStopped) tv?.setTypeface(null, android.graphics.Typeface.BOLD)
+                        if (shouldBold) tv?.setTypeface(null, android.graphics.Typeface.BOLD) else tv?.setTypeface(null, android.graphics.Typeface.NORMAL)
                     }
                 }
                 delay(500L)
