@@ -251,11 +251,18 @@ data class WorkflowSummaryResponse(
 // ======================================================
 
 data class ConnectorProfilesResponse(
-    val profiles: PromptProfiles = PromptProfiles()
+    val profiles: PromptProfiles = PromptProfiles(),
+    val options: ProfileOptions = ProfileOptions()
 )
 
 data class PromptProfiles(
     val audio: String? = null,
     val image: String? = null,
     val video: String? = null
+)
+
+data class ProfileOptions(
+    val audio: List<String> = emptyList(),
+    val image: List<String> = emptyList(),
+    val video: List<String> = emptyList()
 )

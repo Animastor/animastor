@@ -345,8 +345,8 @@
 
     <!-- Prompt Profiles (Settings) -->
     <string name="settings_prompt_profiles">Prompt Profiles</string>
-    <string name="settings_audio_profile">🎤 Audio Profile</string>
-    <string name="settings_image_profile">🖼️ Image Profile</string>
-    <string name="settings_video_profile">🎬 Video Profile</string>
-    <string name="settings_profiles_determined_by_workflow">Read-only — determined by active workflow connectors</string>
+    <string name="settings_audio_profile">Audio Profile</string>
+    <string name="settings_image_profile">Image Profile</string>
+    <string name="settings_video_profile">Video Profile</string>
+    <string name="settings_profiles_determined_by_workflow">Determined by active workflow connectors</string>
 </resources>

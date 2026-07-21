@@ -65,13 +65,44 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
         lifecycleScope.launch {
             try {
                 val resp = RetrofitClient.api.getConnectorProfiles()
-                b.audioProfileValue.text = resp.profiles.audio ?: getString(R.string.workflow_manager_no_workflows)
-                b.imageProfileValue.text = resp.profiles.image ?: getString(R.string.workflow_manager_no_workflows)
-                b.videoProfileValue.text = resp.profiles.video ?: getString(R.string.workflow_manager_no_workflows)
+
+                // Audio spinner
+                val audioOpts = resp.options.audio.ifEmpty { listOf(resp.profiles.audio ?: "qwen-tts") }
+                val audioAdapter = ArrayAdapter(requireContext(), android.R.layout.simple_spinner_item, audioOpts)
+                audioAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+                b.audioProfileSpinner.adapter = audioAdapter
+                val audioIdx = audioOpts.indexOf(resp.profiles.audio).coerceAtLeast(0)
+                b.audioProfileSpinner.setSelection(audioIdx)
+
+                // Image spinner
+                val imageOpts = resp.options.image.ifEmpty { listOf(resp.profiles.image ?: "qwen-image") }
+                val imageAdapter = ArrayAdapter(requireContext(), android.R.layout.simple_spinner_item, imageOpts)
+                imageAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+                b.imageProfileSpinner.adapter = imageAdapter
+                val imageIdx = imageOpts.indexOf(resp.profiles.image).coerceAtLeast(0)
+                b.imageProfileSpinner.setSelection(imageIdx)
+
+                // Video spinner
+                val videoOpts = resp.options.video.ifEmpty { listOf(resp.profiles.video ?: "ltx-2.3") }
+                val videoAdapter = ArrayAdapter(requireContext(), android.R.layout.simple_spinner_item, videoOpts)
+                videoAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+                b.videoProfileSpinner.adapter = videoAdapter
+                val videoIdx = videoOpts.indexOf(resp.profiles.video).coerceAtLeast(0)
+                b.videoProfileSpinner.setSelection(videoIdx)
             } catch (e: Exception) {
-                b.audioProfileValue.text = "—"
-                b.imageProfileValue.text = "—"
-                b.videoProfileValue.text = "—"
+                // Fallback: single-option spinners with defaults
+                val fallbackAudio = listOf("qwen-tts")
+                val fallbackImage = listOf("qwen-image")
+                val fallbackVideo = listOf("ltx-2.3")
+                val fAdapter = ArrayAdapter(requireContext(), android.R.layout.simple_spinner_item, fallbackAudio)
+                fAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+                b.audioProfileSpinner.adapter = fAdapter
+                val fImgAdapter = ArrayAdapter(requireContext(), android.R.layout.simple_spinner_item, fallbackImage)
+                fImgAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+                b.imageProfileSpinner.adapter = fImgAdapter
+                val fVidAdapter = ArrayAdapter(requireContext(), android.R.layout.simple_spinner_item, fallbackVideo)
+                fVidAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+                b.videoProfileSpinner.adapter = fVidAdapter
             }
         }
 

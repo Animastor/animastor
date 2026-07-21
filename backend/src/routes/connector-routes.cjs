@@ -230,7 +230,7 @@ module.exports = function(app, redis, deps) {
     });
 
     // ======================================================
-    // GET PROMPT PROFILES — aggregated profile info by type
+    // GET PROMPT PROFILES — active profiles + available options by type
     // ======================================================
     app.get('/api/v1/connectors/profiles', async (req, res) => {
         try {
@@ -253,7 +253,11 @@ module.exports = function(app, redis, deps) {
                 }
             }
 
-            res.json({ profiles });
+            // Include available profile options from skill files
+            const profileLoader = require('../services/prompt-profile-loader');
+            const options = profileLoader.listAvailableProfiles();
+
+            res.json({ profiles, options });
         } catch (err) {
             console.error('[CONNECTORS] Profiles error:', err.message);
             res.status(500).json({ error: err.message });

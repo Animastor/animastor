@@ -77,10 +77,31 @@ function buildSkillSection(profileType, profileName) {
            `${content}\n`;
 }
 
+/**
+ * List all available profiles grouped by type.
+ * Scans the keys loaded by ai-loader.js for pattern `{type}/{name}`.
+ *
+ * @returns {{ audio: string[], image: string[], video: string[] }}
+ */
+function listAvailableProfiles() {
+    const allSkills = aiLoader.getSkillNames();
+    const grouped = { audio: [], image: [], video: [] };
+    for (const key of allSkills) {
+        const parts = key.split('/');
+        if (parts.length !== 2) continue;
+        const [type, name] = parts;
+        if (grouped[type]) {
+            grouped[type].push(name);
+        }
+    }
+    return grouped;
+}
+
 module.exports = {
     getProfile,
     getVideoProfile,
     getImageProfile,
     getAudioProfile,
     buildSkillSection,
+    listAvailableProfiles,
 };

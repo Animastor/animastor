@@ -168,6 +168,10 @@ function getExample(name) {
     return getExamples()[name] || null;
 }
 
+function getSkillNames() {
+    return Object.keys(getSkills());
+}
+
 function invalidateCache() {
     Object.keys(cache).forEach(k => { cache[k].data = null; cache[k].mtime = 0; });
 }
@@ -180,5 +184,6 @@ module.exports = {
     getRule,
     getSkill,
     getExample,
+    getSkillNames,
     invalidateCache,
 };
