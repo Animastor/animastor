@@ -670,6 +670,20 @@ function detectFileFormat(buf) {
                     return res.json({ triggered: false, all_done: true, message: 'All windows processed' });
                 }
 
+                // Even if the last session has status='running' (created after cancel-worker),
+                // check if the book was cancelled by the user (via Redis cancelled-workers set).
+                // Without this check, trigger-next-window would call bootstrapNextWindow in a loop
+                // (it returns all_done=true due to Redis check, but frontend sees triggered=true and retries).
+                try {
+                    const wasCancelled = await redis.sismember(`animastor:cancelled-workers:${bookId}`, 'vbook');
+                    if (wasCancelled) {
+                        log(`[TRIGGER] book ${bookId} was cancelled (vbook) — stopping trigger loop`);
+                        return res.json({ triggered: false, all_done: true, reason: 'cancelled', message: 'Generation stopped by user' });
+                    }
+                } catch (redisErr) {
+                    console.warn(`[TRIGGER] Redis cancelled check failed: ${redisErr.message}`);
+                }
+
                 if (inFlightTriggers.has(bookId)) {
                     log(`[TRIGGER] ⏳ TXT book ${bookId} already has an in-flight trigger, queuing`);
                     return res.json({ triggered: false, queued: true, book_id: bookId, source: 'txt_import' });
@@ -737,7 +751,17 @@ function detectFileFormat(buf) {
                 return res.json({ triggered: true, source: 'txt_import', session_id: agentSession.session_id });
             }
 
-            // VBook / windowGenerator path
+            // VBook / windowGenerator path — also check cancellation
+            try {
+                const wasCancelled = await redis.sismember(`animastor:cancelled-workers:${bookId}`, 'vbook');
+                if (wasCancelled) {
+                    log(`[TRIGGER] book ${bookId} was cancelled (vbook) — VBook path aborting`);
+                    return res.json({ triggered: false, all_done: true, reason: 'cancelled', message: 'Generation stopped by user' });
+                }
+            } catch (redisErr) {
+                console.warn(`[TRIGGER] Redis cancelled check failed (VBook path): ${redisErr.message}`);
+            }
+
             const lastWindow = await genSessionRepo.getHighestCompletedWindow(bookId);
             const nextWindowIndex = lastWindow + 1;
             log(`[TRIGGER] 📊 lastWindow=${lastWindow} nextWindow=${nextWindowIndex}`);

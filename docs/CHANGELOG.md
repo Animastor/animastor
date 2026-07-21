@@ -42,6 +42,11 @@ All notable changes to Animastor are documented here.
     Generate button when any generation is active. Shows confirm dialog before calling `cancelGeneration()`.
   - Build: frontend BUILD SUCCESSFUL, 577/578 backend tests pass (1 pre-existing failure).
 
+- **trigger-next-window создавал бесконечный цикл — возвращал triggered:true после cancelled, фронт вызывал снова**
+  (`backend/src/routes/book/import-routes.cjs`):
+  - **Проблема:** trigger-next-window проверял статус ПОСЛЕДНЕЙ agent_session. Если cancel-worker отменил старые сессии, но bootstrapNextWindow создал новую (status=running), проверка `=== 'cancelled'` не срабатывала. Код вызывал bootstrapNextWindow через setImmediate (которая возвращала all_done через Redis check), НО ответ фронту уже был отправлен как `triggered: true`. Фронт видел `triggered: true` и вызывал trigger-next-window снова — бесконечный цикл.
+  - **Фикс:** Redis `cancelled-workers:{bookId}` проверка для 'vbook' добавлена в ОБА пути trigger-next-window (TXT agent path + VBook/windowGenerator path) ДО вызова bootstrapNextWindow или создания gen_session. При cancelled возвращает `{ triggered: false, all_done: true }`, разрывая цикл.
+
 - **VBook агент не убиваем — window-generator.cjs перезаписывал cancelled на failed и не передавал redis в bootstrapNextWindow**
   (`backend/src/services/window-generator.cjs`):
   - **Проблема:** `window-generator.cjs` вызывал `bootstrapNextWindow(bookId, progress)` БЕЗ `redis`, из-за чего Redis cancelled-workers проверка в bootstrap.js пропускалась. Хуже того: catch-блок ВСЕГДА ставил `status='failed'`, перезаписывая `cancelled`. После этого `trigger-next-window` не находил cancelled сессии и запускал новые окна — бесконечный цикл.
