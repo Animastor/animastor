@@ -664,8 +664,9 @@ function detectFileFormat(buf) {
                     : null;
 
                 if (agentSession.status === 'completed' ||
+                    agentSession.status === 'cancelled' ||
                     (windowData && windowData.remaining_scenes && windowData.remaining_scenes.length === 0 && !windowData.remaining_text)) {
-                    log(`[TRIGGER] all done for TXT book ${bookId}`);
+                    log(`[TRIGGER] all done for TXT book ${bookId} (status=${agentSession.status})`);
                     return res.json({ triggered: false, all_done: true, message: 'All windows processed' });
                 }
 

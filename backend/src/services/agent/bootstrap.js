@@ -255,6 +255,22 @@ async function bootstrapNextWindow(bookId, progress, publishProgress, redis) {
         console.warn(`[AGENT] bootstrapNextWindow: failed to look up previous window_data: ${lookupErr.message}`);
     }
 
+    // ── Check if book was cancelled (even if no window_data session found) ──
+    // If cancel-worker set any session to 'cancelled', don't start a new window.
+    // We do this before creating a new session because the cancelled status can
+    // exist on a session that has no window_data (cancelled before saving results).
+    if (redis && bookId) {
+        try {
+            const isCancelled = await redis.sismember(`animastor:cancelled-workers:${bookId}`, 'vbook');
+            if (isCancelled) {
+                console.log(`[AGENT] bootstrapNextWindow: cancelled-workers set has vbook — aborting`);
+                return { session_id: null, cached: false, added_scenes: 0, all_done: true };
+            }
+        } catch (redisErr) {
+            console.warn(`[AGENT] bootstrapNextWindow: Redis cancelled check failed: ${redisErr.message}`);
+        }
+    }
+
     // ── Определяем offset из двух источников ──
     // 1. lastSourceEnd из файлов на диске (приоритет — истина)
     // 2. windowData.currentOffset из БД сессии (резерв)

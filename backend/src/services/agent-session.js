@@ -22,6 +22,20 @@ async function isSessionCancelled(sessionId) {
     return result.rows[0]?.status === 'cancelled';
 }
 
+/**
+ * Check if ANY agent session for this book has been cancelled.
+ * This catches cases where cancel-worker cancelled old sessions and
+ * a new session was created afterwards (which has status='running' but
+ * the book as a whole should be considered cancelled).
+ */
+async function isBookCancelled(bookId) {
+    const result = await query(
+        `SELECT COUNT(*) as cnt FROM agent_sessions WHERE book_id = $1 AND status = 'cancelled'`,
+        [bookId]
+    );
+    return parseInt(result.rows[0]?.cnt || '0', 10) > 0;
+}
+
 async function updateSession(sessionId, updates) {
     const keys = Object.keys(updates).filter(k => ALLOWED_UPDATE_COLUMNS[k]);
     if (keys.length === 0) return;
@@ -65,6 +79,6 @@ async function failStep(stepId, error) {
 }
 
 module.exports = {
-    createSession, isSessionCancelled, updateSession, getSession,
+    createSession, isSessionCancelled, isBookCancelled, updateSession, getSession,
     createStep, completeStep, failStep,
 };

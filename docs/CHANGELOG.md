@@ -44,6 +44,20 @@ All notable changes to Animastor are documented here.
 
 ### Fixed
 
+- **VBook Stop не останавливал агента — checkCancelled проверял sessionId, а новая сессия имела status=running**
+  (`backend/src/services/agent-session.js`,
+  `backend/src/services/agent/pipeline-runner.js`,
+  `backend/src/services/agent/bootstrap.js`,
+  `backend/src/routes/book/import-routes.cjs`):
+  - **Проблема:** `checkCancelled()` проверял `isSessionCancelled(sessionId)` — статус ТЕКУЩЕЙ сессии. Но cancel-worker отменяет ВСЕ сессии book_id. Если `bootstrapNextWindow` создавал НОВУЮ сессию ПОСЛЕ cancel, новая сессия имела status='running', и `checkCancelled()` не видел отмены.
+  - **Фикс (agent-session.js):** добавлена `isBookCancelled(bookId)` — проверяет наличие ЛЮБОЙ cancelled сессии для книги.
+  - **Фикс (pipeline-runner.js):** `checkCancelled()` проверяет ДВА условия: `isSessionCancelled(sessionId)` И `isBookCancelled(bookId)`. Если найдена отмена на уровне книги — обновляет и текущую сессию до 'cancelled'.
+  - **Фикс (bootstrap.js):** `bootstrapNextWindow()` проверяет Redis `cancelled-workers:{bookId}` на 'vbook' ДО создания новой сессии.
+  - **Фикс (import-routes.cjs):** `trigger-next-window` проверяет `status === 'cancelled'` наравне с `'completed'`.
+  - 578/578 тестов проходят.
+
+### Fixed
+
 - **VBook Stop/Cancel All не останавливали VBook генерацию — агент продолжал работу**
   (`backend/src/services/agent-session.js`,
   `backend/src/services/agent/pipeline-runner.js`,

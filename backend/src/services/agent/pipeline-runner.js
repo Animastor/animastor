@@ -7,7 +7,7 @@
 const sourceCoverage = require('../source-coverage');
 const lazyBook = require('../../book/lazy-book');
 const config = require('../../config/runtime-config');
-const { updateSession, createSession, isSessionCancelled } = require('../agent-session');
+const { updateSession, createSession, isSessionCancelled, isBookCancelled } = require('../agent-session');
 const { PROGRESS_STAGES, MAX_WINDOW_CHARS, MAX_SCENES_PER_CHUNK } = require('../agent-prompts');
 const { mergeCharacterLists } = require('../../utils/character-identity');
 const { estimateSpeechDurationSec } = require('../placeholder-audio');
@@ -170,8 +170,22 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
     // If so, throws an error to abort pipeline execution immediately.
     // Called between major pipeline steps; DB query overhead is negligible
     // because each AI step takes multiple seconds.
+    //
+    // Checks TWO conditions:
+    //   1. Current session's status in DB (isSessionCancelled)
+    //   2. Any cancelled session for this book (isBookCancelled) — covers case where
+    //      cancel-worker cancelled old sessions and a new session was created afterwards
+    //      (new session has status='running' but the book is cancelled).
     async function checkCancelled() {
         if (await isSessionCancelled(sessionId)) {
+            const err = new Error('Agent session was cancelled by user');
+            err.code = 'SESSION_CANCELLED';
+            throw err;
+        }
+        if (bookId && await isBookCancelled(bookId)) {
+            // Also update this session's status to 'cancelled' so future
+            // isSessionCancelled checks will also detect it
+            try { await updateSession(sessionId, { status: 'cancelled' }); } catch (_) {}
             const err = new Error('Agent session was cancelled by user');
             err.code = 'SESSION_CANCELLED';
             throw err;
