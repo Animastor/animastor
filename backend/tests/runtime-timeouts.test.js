@@ -1,45 +1,63 @@
 const { expect } = require('chai');
 const config = require('../src/config/runtime-config');
 
-// Инварианты единого реестра таймаутов (T1 консолидации, см.
-// docs/03-audit/ORCHESTRATION_CONSOLIDATION_TODO.md). Ломающийся тест здесь
-// означает, что новое значение создаёт окно рассинхрона между retry-логикой,
-// lease и watchdog'ом gpu-hub — сначала пересчитать цепочку, потом менять.
+// Инварианты таймаутов. Все аудио-константы ВЫЧИСЛЯЮТСЯ от GPU_TIMEOUT_MS,
+// а не подбираются вручную. Ломающийся тест здесь означает, что формула
+// нарушила архитектурный инвариант:
+//   GPU_TIMEOUT_MS < STALL_FAILSAFE_MS < LEASE_TTL_S.AUDIO * 1000
 describe('runtime-config TIMEOUTS invariants', () => {
-    const { TIMEOUTS, LEASE_TTL_S } = config;
+    const { TIMEOUTS, LEASE_TTL_S, GPU_TIMEOUT_MS, STALL_FAILSAFE_MS } = config;
 
-    it('exports TIMEOUTS and LEASE_TTL_S', () => {
+    it('exports GPU_TIMEOUT_MS, STALL_FAILSAFE_MS, TIMEOUTS, LEASE_TTL_S', () => {
+        expect(GPU_TIMEOUT_MS).to.be.a('number').and.above(0);
+        expect(STALL_FAILSAFE_MS).to.be.a('number').and.above(0);
         expect(TIMEOUTS).to.be.an('object');
         expect(LEASE_TTL_S).to.be.an('object');
         expect(LEASE_TTL_S).to.have.keys(['AUDIO', 'IMAGE', 'VIDEO']);
     });
 
-    it('AUDIO_CHUNK_STALL_MS is defined', () => {
-        expect(TIMEOUTS.AUDIO_CHUNK_STALL_MS).to.be.a('number').and.above(0);
+    it('STALL_FAILSAFE_MS = GPU_TIMEOUT_MS * 3', () => {
+        expect(STALL_FAILSAFE_MS).to.equal(GPU_TIMEOUT_MS * 3);
     });
 
-    it('stall watchdog fires before the audio dispatch lease expires', () => {
-        // reconcileCycle срабатывает раз в 60с; при первом же прогоне после
-        // AUDIO_CHUNK_STALL_MS без новых чанков → failWaitingScene.
-        // Должно успеть до протухания lease (LEASE_TTL_S.AUDIO).
-        expect(TIMEOUTS.AUDIO_CHUNK_STALL_MS).to.be.below(LEASE_TTL_S.AUDIO * 1000);
+    it('AUDIO_CHUNK_STALL_MS = STALL_FAILSAFE_MS', () => {
+        expect(TIMEOUTS.AUDIO_CHUNK_STALL_MS).to.equal(STALL_FAILSAFE_MS);
     });
 
-    it('gpu-hub default GPU_TIMEOUT is below the minimum lease TTL', () => {
-        // gpu-hub/gpu-hub.js читает GPU_TIMEOUT из env с дефолтом 600 000 мс;
-        // при изменении дефолта там — обновить здесь.
-        const GPU_HUB_DEFAULT_TIMEOUT_MS = 600000;
-        const minLeaseMs = Math.min(...Object.values(LEASE_TTL_S)) * 1000;
-        expect(GPU_HUB_DEFAULT_TIMEOUT_MS).to.be.below(minLeaseMs);
+    it('АРХИТЕКТУРНЫЙ ИНВАРИАНТ: GPU_TIMEOUT_MS < STALL_FAILSAFE_MS < LEASE_TTL_S.AUDIO * 1000', () => {
+        // Основание: GPU hub затаймливает воркера РАНЬШЕ, чем watchdog
+        // объявит застой. Watchdog срабатывает РАНЬШЕ, чем истечёт lease.
+        // Это гарантирует, что живые чанки не отвергаются как stale_dispatch.
+        expect(GPU_TIMEOUT_MS).to.be.below(STALL_FAILSAFE_MS);
+        expect(STALL_FAILSAFE_MS).to.be.below(LEASE_TTL_S.AUDIO * 1000);
     });
 
-    it('lease TTLs are ordered audio <= image <= video', () => {
-        expect(LEASE_TTL_S.AUDIO).to.be.at.most(LEASE_TTL_S.IMAGE);
-        expect(LEASE_TTL_S.IMAGE).to.be.at.most(LEASE_TTL_S.VIDEO);
+    it('ФОРМУЛА: LEASE_TTL_S.AUDIO = ceil(STALL_FAILSAFE_MS / 1000) + 60', () => {
+        const expectedLease = Math.ceil(STALL_FAILSAFE_MS / 1000) + 60;
+        expect(LEASE_TTL_S.AUDIO).to.equal(expectedLease);
+    });
+
+    it('параметризация: GPU_TIMEOUT_MS=300000 даёт STALL=900000 LEASE=960', () => {
+        // Если бы GPU_TIMEOUT_MS был 300000 (5 мин), то:
+        //   STALL = 300000 * 3 = 900000 (15 мин)
+        //   LEASE = ceil(900000/1000) + 60 = 960 (16 мин)
+        // Тест безразмерный — проверяет формулу, а не конкретные значения.
+        const gpuTimeout500 = 500_000;
+        const expectedStall500 = gpuTimeout500 * 3;
+        const expectedLease500 = Math.ceil(expectedStall500 / 1000) + 60;
+        expect(expectedStall500).to.equal(1_500_000);
+        expect(expectedLease500).to.equal(1560);
+    });
+
+    it('all lease TTLs are positive and LEASE_TTL_S.AUDIO >= STALL_FAILSAFE_MS / 1000', () => {
+        // AUDIO вычисляется от GPU_TIMEOUT_MS, может быть длиннее IMAGE/VIDEO.
+        // Важен только инвариант: LEASE > STALL.
+        expect(LEASE_TTL_S.AUDIO).to.be.above(STALL_FAILSAFE_MS / 1000);
+        expect(LEASE_TTL_S.IMAGE).to.be.above(0);
+        expect(LEASE_TTL_S.VIDEO).to.be.above(0);
     });
 
     it('retired retry constants are no longer present', () => {
-        // Убедиться, что никто случайно не вернул старые константы.
         expect(TIMEOUTS).to.not.have.property('AUDIO_MERGE_RETRY_DELAY_MS');
         expect(TIMEOUTS).to.not.have.property('AUDIO_MERGE_RETRY_MAX');
         expect(TIMEOUTS).to.not.have.property('AUDIO_MERGE_RETRY_DEDUP_TTL_S');

@@ -4,6 +4,39 @@ All notable changes to Animastor are documented here.
 
 ---
 
+## [Unreleased] — 2026-07-21
+
+### Added
+
+- **A0: Детерминированное перечисление чанков — enumeration вместо readdir**
+  (`backend/src/audio/chunks.js`):
+  - `findExistingSceneChunks()` теперь принимает опциональный `expectedCount`.
+    Когда известен — перечисляет `1..expectedCount` детерминированно (никакого readdir).
+    Когда не известен — fallback к readdir + .sort().
+  - Callers (generation.js, pipeline.js) передают `expectedChunkCount`.
+  - filesystem-store.js имеет свою копию (не в аудио-пути, не тронута).
+
+- **A2: Таймауты через формулу — GPU_TIMEOUT_MS как single source of truth**
+  (`backend/src/config/runtime-config.js`, `gpu-hub/gpu-hub.js`):
+  - `GPU_TIMEOUT_MS` (env, default 600000) → `STALL_FAILSAFE_MS = GPU_TIMEOUT_MS * 3`
+    → `LEASE_TTL_S.AUDIO = ceil(STALL/1000) + 60`.
+  - Инвариант GPU_TIMEOUT < STALL < LEASE теперь гарантирован математически.
+  - Backend + gpu-hub синхронизированы (оба читают `GPU_TIMEOUT_MS`,
+    fallback к старому `GPU_TIMEOUT`).
+  - Startup warning при изменении env.
+  - Тесты переписаны на проверку формул (8/8).
+
+- **A3: Phase guard удалён — dispatch-engine lease + timeout formula**
+  (`backend/src/orchestration/scene-orchestrator.js`):
+  - WAITING_CHUNKS/MERGING guard удалён: A2 гарантирует LEASE > STALL > GPU_TIMEOUT,
+    так что lease переживает watchdog, и stale re-dispatch невозможен.
+  - Stale recovery WAITING_CHUNKS/MERGING теперь падает через deleteState+reinit
+    (не оставляет сцены зависшими навсегда).
+
+### Changed
+
+- **batch dispatch commit message** was already in the changelog from 2026-07-20
+
 ## [Unreleased] — 2026-07-20
 
 ### Added

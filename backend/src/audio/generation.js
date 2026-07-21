@@ -217,7 +217,7 @@ async function generateSceneAudio(redis, sceneData, loadedBook, buildId, bookId,
     helpers.log(`generateSceneAudio: ${bookId}/${chapterId}/${sceneId} segments=${segList.length} isPureDialogue=${isPureDialogue} expectedChunks=${expectedChunkCount}`);
 
     // 🧹 Log partial completion — don't delete, sendPerSegmentAudio handles cache-hit per chunk
-    const existingChunks = chunks.findExistingSceneChunks(bookId, chapterId, sceneId, buildId);
+    const existingChunks = chunks.findExistingSceneChunks(bookId, chapterId, sceneId, buildId, expectedChunkCount);
     if (existingChunks.length > 0 && existingChunks.length !== expectedChunkCount) {
         helpers.log(`🧹 Partial audio cache: ${existingChunks.length}/${expectedChunkCount} chunks on disk — preserving, sendPerSegmentAudio will reuse existing and dispatch missing`);
     }

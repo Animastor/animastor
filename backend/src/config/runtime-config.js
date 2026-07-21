@@ -108,33 +108,45 @@ const QUOTAS = {
 };
 
 // ======================================================
-// TIMEOUTS — единый реестр временных констант оркестрации
-// (см. docs/03-audit/ORCHESTRATION_CONSOLIDATION_AUDIT.md, К9)
+// GPU TIMEOUT — ЕДИНСТВЕННАЯ ВХОДНАЯ КОНСТАНТА
 // ======================================================
-// Инварианты (проверяются в tests/runtime-timeouts.test.js):
-//   1. AUDIO_CHUNK_STALL_MS < LEASE_TTL_S.AUDIO * 1000
-//      — watchdog застоя срабатывает раньше, чем истекает аудио-lease
-//   2. gpu-hub GPU_TIMEOUT (env, по умолчанию 600 000 мс) < min(LEASE_TTL_S) * 1000
-//      — hub обнаруживает мёртвого воркера раньше, чем истечёт lease backend'а
+// Single source of truth для всех аудио-таймаутов оркестрации.
+// gpu-hub, watchdog, dispatch lease — все вычисляются от неё.
+// (см. docs/02-orchestration/AUDIO_ORCH_ARCHITECTURAL_FIXES.md §1)
+//
+// Инвариант (проверяется в tests/runtime-timeouts.test.js):
+//   GPU_TIMEOUT_MS < STALL_FAILSAFE_MS < LEASE_TTL_S.AUDIO * 1000
+// Backward compat: GPU_TIMEOUT (without _MS) — устаревшее имя, удалить после миграции.
+const GPU_TIMEOUT_MS = Number(process.env.GPU_TIMEOUT_MS ?? process.env.GPU_TIMEOUT ?? 600_000);
 
+// ======================================================
+// TIMEOUTS — все аудио-таймауты вычисляются от GPU_TIMEOUT_MS
+// ======================================================
+// Формулы:
+//   STALL_FAILSAFE_MS  = GPU_TIMEOUT_MS * 3
+//     — watchdog срабатывает только после того, как hub объявил timeout
+//     — живые чанки НЕ отвергаются как stale_dispatch
+//   LEASE_TTL_S.AUDIO  = ceil(STALL_FAILSAFE_MS / 1000) + 60
+//     — lease переживает watchdog, не блокирует re-dispatch при реальном застое
+//
 // Dispatch lease TTL (секунды). Покрывает реальную генерацию + ожидание в очереди:
-//   audio: до 10 мин генерации → 20 мин; image: до 15 мин → 20 мин; video: до 20 мин → 30 мин.
+//   audio, image: до 15 мин генерации; video: до 20 мин.
 // Lease снимается сразу по completion callback — TTL важен только при сбоях.
+const STALL_FAILSAFE_MS = GPU_TIMEOUT_MS * 3;
+
 const LEASE_TTL_S = {
-    AUDIO: 20 * 60,
+    AUDIO: Math.ceil(STALL_FAILSAFE_MS / 1000) + 60,
     IMAGE: 20 * 60,
     VIDEO: 30 * 60,
 };
 
 const TIMEOUTS = {
     // Порог застоя аудио-чанков (reconcileCycle, checkStalledAudioScenes).
-    // Если с момента последнего чанка прошло больше этого значения и комплект
-    // неполон — failWaitingScene() → re-dispatch. Инвариант:
-    //   gpu-hub GPU_TIMEOUT (600 000 мс) < AUDIO_CHUNK_STALL_MS < LEASE_TTL_S.AUDIO * 1000
-    // GPU timeout (10 мин) находит мёртвого воркера и репортит ошибку РАНЬШЕ,
-    // чем watchdog убьёт dispatch. Это гарантирует, что живые чанки не будут
-    // отвергнуты как stale_dispatch.
-    AUDIO_CHUNK_STALL_MS: 900000,
+    // Вычисляется от GPU_TIMEOUT_MS: watchdog срабатывает ПОСЛЕ того, как
+    // gpu-hub затаймил воркера, но ДО истечения dispatch lease.
+    // Если ты меняешь GPU_TIMEOUT_MS — STALL_FAILSAFE_MS и LEASE_TTL_S.AUDIO
+    // пересчитываются автоматически.
+    AUDIO_CHUNK_STALL_MS: STALL_FAILSAFE_MS,
 
     // Периодическая чистка протухших failsafe-локов (cleanup-service.cjs)
     CLEANUP_INTERVAL_MS: 60000,
@@ -169,6 +181,14 @@ const WORKER_HEARTBEAT_TYPE_PATTERN = (type) => `${WORKER_HEARTBEAT_PREFIX}:${ty
 // Пробрасывается в backend и gpu-hub через docker-compose.
 const GPU_HUB_API_KEY = process.env.GPU_HUB_API_KEY || null;
 
+// Startup warning: если GPU_TIMEOUT_MS был явно изменён — логируем
+// пересчитанные значения, чтобы в логах было видно, что изменилось.
+if ((process.env.GPU_TIMEOUT_MS || process.env.GPU_TIMEOUT) && process.env.NODE_ENV !== 'test') {
+    console.log(`[CONFIG] GPU_TIMEOUT_MS=${GPU_TIMEOUT_MS} → ` +
+        `STALL_FAILSAFE_MS=${STALL_FAILSAFE_MS} (${(STALL_FAILSAFE_MS/60000).toFixed(0)}min), ` +
+        `AUDIO_LEASE_TTL_S=${LEASE_TTL_S.AUDIO} (${(LEASE_TTL_S.AUDIO/60).toFixed(0)}min)`);
+}
+
 // ======================================================
 // AI (NVIDIA)
 // ======================================================
@@ -199,6 +219,8 @@ module.exports = {
     HUB_URL,
     REDIS,
     QUOTAS,
+    GPU_TIMEOUT_MS,
+    STALL_FAILSAFE_MS,
     LEASE_TTL_S,
     TIMEOUTS,
     STUCK_THRESHOLDS,

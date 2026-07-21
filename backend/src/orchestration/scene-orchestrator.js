@@ -64,16 +64,17 @@ async function executeAudioDispatch(redis, scene, loadedBook, buildId, dispatchI
     // 🔧 AUDIO-ORCH: Transition PLACEHOLDER_READY → GENERATING
     const audioOrch = require('../services/audio-orchestrator');
 
-    // ── PHASE GUARDS: не передиспатчим, если аудио-оркестратор уже занят ──
+    // ── PHASE CHECK: DONE → skip, иначе продолжаем ──
+    // WAITING_CHUNKS/MERGING guard удалён (см. AUDIO_ORCH_ARCHITECTURAL_FIXES.md §3):
+    // dispatch-engine.acquireStageLease + A2 timeout formula гарантируют, что
+    // LEASE_TTL (≈31 мин при GPU_TIMEOUT=10мин) > STALL (30 мин) > GPU_TIMEOUT (10 мин).
+    // Если сцена в WAITING_CHUNKS, lease ещё активен → dispatch-engine не допустит
+    // re-dispatch. Если lease истёк → STALL уже перевёл сцену в FAILED.
     const orchState = await audioOrch.getState(redis, bookId, chapterId, sceneId);
     if (orchState) {
         if (orchState.phase === audioOrch.PHASES.DONE) {
             log(`AUDIO_ALREADY_DONE: ${bookId}/${chapterId}/${sceneId} — skipping dispatch`);
             return { dispatched: false, jobs: 0, completed: true, reason: 'already_done' };
-        }
-        if (orchState.phase === audioOrch.PHASES.WAITING_CHUNKS || orchState.phase === audioOrch.PHASES.MERGING) {
-            log(`AUDIO_ORCH: phase ${orchState.phase} — chunks in flight, skipping dispatch (expected=${orchState.expected_count})`);
-            return { dispatched: false, jobs: 0, completed: true, reason: 'chunks_in_flight' };
         }
     }
 
@@ -98,10 +99,13 @@ async function executeAudioDispatch(redis, scene, loadedBook, buildId, dispatchI
             warn(`AUDIO_ORCH: DONE guard prevented stale reset for ${bookId}/${chapterId}/${sceneId}`);
             return { dispatched: false, jobs: 0, completed: true, reason: 'already_done' };
         }
-        // WAITING_CHUNKS / MERGING — не сбрасываем (уже отсечено выше, safety check)
+        // WAITING_CHUNKS / MERGING (stale recovery): с A2 timeout formula lease
+        // переживает watchdog — если дошли до stale recovery, значит lease истёк
+        // и watchdog уже перевёл сцену в FAILED. WAITING_CHUNKS/MERGING в stale
+        // recovery больше не возникает (бывший phase guard удалён).
+        // Проверка оставлена как assertion-style safety net для логирования.
         if (stalePhase === audioOrch.PHASES.WAITING_CHUNKS || stalePhase === audioOrch.PHASES.MERGING) {
-            log(`  🔧 AUDIO_ORCH: safety guard for WAITING_CHUNKS/MERGING in stale recovery`);
-            return { dispatched: false, jobs: 0, completed: true, reason: 'chunks_in_flight' };
+            log(`  🔧 AUDIO_ORCH: unexpected WAITING_CHUNKS/MERGING in stale recovery — lease outpaced watchdog (phase=${stalePhase})`);
         }
         log(`  🔧 AUDIO_ORCH: stale phase ${stalePhase} for ${bookId}/${chapterId}/${sceneId} — resetting to PLACEHOLDER_READY`);
         await audioOrch.deleteState(redis, bookId, chapterId, sceneId);

@@ -147,7 +147,7 @@ async function mergeSceneAudioChunks(redis, bookId, chapterId, sceneId, buildId,
 
     try {
         const finalPath = helpers.getOutputPath(buildId, `${bookId}_${chapterId}_${sceneId}.mp3`);
-        const existingChunks = chunks.findExistingSceneChunks(bookId, chapterId, sceneId, buildId);
+        const existingChunks = chunks.findExistingSceneChunks(bookId, chapterId, sceneId, buildId, expectedChunkCount);
 
         helpers.log(`[DEBUG] MERGE: mergeSceneAudioChunks ${bookId}/${chapterId}/${sceneId}: found=${existingChunks.length} expected=${expectedChunkCount}`);
 
@@ -200,7 +200,7 @@ async function recoverSceneAudioFromChunks(bookId, chapterId, sceneId, buildId, 
         try { fs.unlinkSync(finalPath); } catch (e) {}
     }
 
-    const existingChunks = chunks.findExistingSceneChunks(bookId, chapterId, sceneId, buildId);
+    const existingChunks = chunks.findExistingSceneChunks(bookId, chapterId, sceneId, buildId, expectedChunkCount);
 
     if (existingChunks.length === 0) {
         helpers.warn(`No audio chunks found for recovery: ${bookId}/${chapterId}/${sceneId}`);

@@ -12,10 +12,11 @@ const {
   PORT = 5000,
   BACKEND_URL = "http://animastor-backend:3000",
   // 10 min — image ~1-2min, audio ~30s, video (LTX) ~5-10min.
-  // ИНВАРИАНТ: GPU_TIMEOUT должен быть МЕНЬШЕ минимального dispatch-lease TTL
-  // backend'а (backend/src/config/runtime-config.js → LEASE_TTL_S, минимум 15 мин),
-  // иначе backend узнает о мёртвом воркере позже, чем hub перевыдаст job.
-  GPU_TIMEOUT = 600000
+  // ИНВАРИАНТ: GPU_TIMEOUT_MS должен быть МЕНЬШЕ STALL_FAILSAFE_MS backend'а
+  // (backend/src/config/runtime-config.js, формула GPU_TIMEOUT_MS * 3).
+  // Имя переменной GPU_TIMEOUT_MS синхронизировано с backend'ом — один env
+  // управляет обоими таймаутами. Backwards compat: GPU_TIMEOUT (without _MS).
+  GPU_TIMEOUT_MS = process.env.GPU_TIMEOUT_MS ?? process.env.GPU_TIMEOUT ?? 600000
 } = process.env
 
 const app = express()
@@ -178,7 +179,7 @@ setInterval(async () => {
   const allGpus = await getAllGpusFromRedis();
   for (const [id, gpu] of allGpus) {
 
-    if (now - gpu.last_seen > GPU_TIMEOUT) {
+    if (now - gpu.last_seen > GPU_TIMEOUT_MS) {
 
       console.log("💀 GPU timeout:", id)
 
