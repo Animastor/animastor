@@ -37,10 +37,15 @@ bootstrapWithAgent():
     Шаг 3: stepCreateScenes()       — сцены (до 3, из буфера 1500 символов)
     stepEnrichScenes()              — обогащение сцен (title, location, env)
     Шаг 4: stepCreateUnits()        — IU (визуальные единицы), per-scene
-    Шаг 5: stepCreateVisuals()      — промпты, per-scene
+    Шаг 5: stepCreateVisuals()      — промпты (image + video), per-scene
+    ── Post-processing (window-level) ──
+    Шаг 6a: stepReconcilePassports   — сверка image.prompt с паспортами
+    Шаг 6b: stepReconcileVideoActions — фикс video.action (temporal only)
+    Шаг 7a: stepPolishStoryboard     — полировка image.prompt (continuity)
+    Шаг 7b: stepPolishVideoActions   — полировка video.action (сюжет+ряд)
 ```
 
-**Важно:** `runPipeline()` состоит из 5 шагов + enrichment + voice generation.
+**Важно:** `runPipeline()` состоит из 5 шагов + enrichment + voice generation + 4 post-processing шага.
 
 **Удалено из пайплайна:**
 - `stepResolveCoreferences` — coreference-резолюция удалена из пайплайна (июль 2026)
@@ -162,7 +167,7 @@ LLM отвечает только за смысловое разбиение п�
 
 ### Шаг 5: Create Visuals
 
-**Назначение:** Добавление визуальных промптов (тип съёмки, текст промпта) к каждому IU.
+**Назначение:** Добавление визуальных промптов (тип съёмки, текст промпта, video action) к каждому IU.
 
 **Важные изменения (июль 2026):**
 - **`unit.participants` удалён** — LLM больше не генерирует participants для IU.
@@ -171,7 +176,46 @@ LLM отвечает только за смысловое разбиение п�
 - **`character_anchors` удалён** — позиции персонажей пишутся напрямую в
   `visual.prompt`, без отдельного поля.
 
-**Формат выхода:** `{ units: [{ text, type, visual: { shot, prompt } }] }`
+**Формат выхода:** `{ units: [{ text, type, image: { shot, prompt }, video: { action } }] }`
+
+**Разделение ответственности:**
+- `image.prompt` — статическая композиция (кто где, как расположены)
+- `video.action` — динамическое изменение (жесты, движения, camera motion)
+
+### Шаг 6a: Reconcile Passports
+
+**Назначение:** Удаление семантических дубликатов из `image.prompt`,
+конфликтующих с автоматически инжектируемыми паспортами персонажей.
+Не трогает `video.action`.
+
+### Шаг 6b: Reconcile Video Actions
+
+**Назначение:** Исправление `video.action` — удаление static composition
+(которая должна быть только в `image.prompt`), оставление только temporal/dynamic
+описаний (жесты, движение, camera motion, delivery cues).
+
+### Шаг 7a: Polish Storyboard
+
+**Назначение:** Согласование визуального ряда сториборда — правило 180°,
+прогрессия крупности планов, непрерывность позиционирования персонажей.
+Меняет только `image.prompt` и `image.shot`. Не трогает `video.action`.
+
+### Шаг 7b: Polish Video Actions
+
+**Назначение:** Согласование последовательности `video.action`:
+- Непрерывность жестов между смежными юнитами
+- Соответствие сюжету (проверка по scene text)
+- Эмоциональная дуга (gradual escalation)
+- Кросс-сценные переходы
+
+Итоговый поток:
+```
+stepCreateVisuals
+  → stepReconcilePassports (image.prompt только)
+  → stepReconcileVideoActions (video.action только)
+  → stepPolishStoryboard (image.prompt только)
+  → stepPolishVideoActions (video.action только)
+```
 
 ## Оконная обработка
 

@@ -8,6 +8,27 @@ All notable changes to Animastor are documented here.
 
 ### Added
 
+- **Разделение post-processing: два новых шага для video.action**
+  (`backend/src/services/agent-prompts.js`,
+  `backend/src/services/agent/pipeline-steps.js`,
+  `backend/src/services/agent/pipeline-runner.js`):
+  - **Проблема:** `video.action` всегда равнялся `image.prompt` — оба пост-процессинговых шага
+    (`stepReconcilePassports`, `stepPolishStoryboard`) перезаписывали `video.action` значением
+    `image.prompt`, полностью теряя семантику temporal/dynamic.
+  - **Фикс бага:** в `stepReconcilePassports` и `stepPolishStoryboard` `video.action` теперь
+    сохраняется: `original.video?.action || mergedPrompt` вместо `mergedPrompt`.
+  - **Шаг A — `stepReconcileVideoActions` (новый):** Простой положительный промпт.
+    Исправляет `video.action`: убирает static composition, оставляет только temporal/dynamic
+    (жесты, движения, camera motion, delivery cues). Работает по одному юниту.
+  - **Шаг B — `stepPolishVideoActions` (новый):** Перепроверка концепции + согласование ряда.
+    Смотрит последовательность video.actions: непрерывность жестов, соответствие сюжету,
+    эмоциональная дуга, кросс-сценные переходы. Работает со всеми юнитами окна (≥2).
+  - **Новые системные промпты:** `video_action_reconciliation` и `video_action_polish`
+    в `agent-prompts.js`.
+  - **Итоговый поток:** `createVisuals` → `passportReconcile (image)` → `videoReconcile` →
+    `storyboardPolish (image)` → `videoPolish`.
+  - 577/578 тестов проходят (1 pre-existing failure в audio stall detection).
+
 - **Аудио-прогресс: expected_count-based total + таймер выполнения**
   (`backend/src/routes/book/progress-panel.cjs`,
   `frontend/.../GenerateViewModel.kt`, `frontend/.../MainActivity.kt`,

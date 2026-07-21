@@ -444,7 +444,7 @@ async function stepReconcilePassports(sessionId, allVisualUnits, characters, ste
                         negative: rec.image?.negative || original.image?.negative,
                     },
                     video: {
-                        action: mergedPrompt,
+                        action: original.video?.action || mergedPrompt,
                     },
                 };
             }
@@ -464,6 +464,64 @@ async function stepReconcilePassports(sessionId, allVisualUnits, characters, ste
     } catch (err) {
         await failStep(step.step_id, `Passport reconciliation failed: ${err.message}`);
         console.warn(`[AGENT] Step passport (reconciliation) FAILED, keeping original units: ${err.message}`);
+        return allVisualUnits;
+    }
+}
+
+async function stepReconcileVideoActions(sessionId, allVisualUnits, characters, stepIndex, progress) {
+    const _progress = progress || (() => {});
+    _progress({ stage: 'video_action_reconciliation', message: PROGRESS_STAGES.video_action_reconciliation });
+    await updateSession(sessionId, { progress_msg: PROGRESS_STAGES.video_action_reconciliation });
+
+    if (!allVisualUnits || allVisualUnits.length === 0) {
+        console.log(`[AGENT] Step video_action_reconciliation: skipped — no units`);
+        return allVisualUnits || [];
+    }
+
+    const step = await createStep(sessionId, 'reconcile_video_actions', stepIndex || 0);
+
+    const unitsStr = allVisualUnits.map((u, i) =>
+        `Unit ${i}: scene_index=${u.sceneIndex}, unit_index=${u.unitIndex}, type="${u.type || 'unknown'}", ` +
+        `image.prompt="${(u.image?.prompt || '').substring(0, 200)}", ` +
+        `video.action="${(u.video?.action || '').substring(0, 200)}"`
+    ).join('\n');
+
+    const messages = [
+        { role: 'system', content: SYSTEM_PROMPTS.video_action_reconciliation },
+        { role: 'user', content: `Fix video.action for these ${allVisualUnits.length} units — ensure each describes temporal/dynamic change only, not static composition:\n\n${unitsStr}` },
+    ];
+
+    try {
+        const result = await aiCaller.callAI(messages, { maxTokens: 4096 });
+        const reconciled = result.units || [];
+
+        // Merge AI results back, preserving original fields and only updating video.action
+        const merged = allVisualUnits.map((original, i) => {
+            const rec = reconciled.find(r => r.scene_index === original.sceneIndex && r.unit_index === original.unitIndex);
+            if (rec && rec.video?.action) {
+                return {
+                    ...original,
+                    video: {
+                        action: rec.video.action,
+                    },
+                };
+            }
+            return original;
+        });
+
+        await aiCaller.logConversation(sessionId, step.step_id, messages, JSON.stringify(result));
+        await completeStep(step.step_id, { units: merged.length });
+
+        const changedCount = merged.filter((m, i) => {
+            const orig = allVisualUnits[i];
+            return m.video?.action !== orig.video?.action;
+        }).length;
+        console.log(`[AGENT] Step video_action_reconciliation: ${merged.length} units, ${changedCount} actions fixed`);
+
+        return merged;
+    } catch (err) {
+        await failStep(step.step_id, `Video action reconciliation failed: ${err.message}`);
+        console.warn(`[AGENT] Step video_action_reconciliation FAILED, keeping original units: ${err.message}`);
         return allVisualUnits;
     }
 }
@@ -529,7 +587,7 @@ async function stepPolishStoryboard(sessionId, allVisualUnits, characters, locat
                         negative: polished.image?.negative || original.image?.negative,
                     },
                     video: {
-                        action: mergedPrompt,
+                        action: original.video?.action || mergedPrompt,
                     },
                 };
             }
@@ -549,6 +607,86 @@ async function stepPolishStoryboard(sessionId, allVisualUnits, characters, locat
     } catch (err) {
         await failStep(step.step_id, `Storyboard polish failed: ${err.message}`);
         console.warn(`[AGENT] Step 6 (storyboard polish) FAILED, keeping original units: ${err.message}`);
+        return allVisualUnits;
+    }
+}
+
+async function stepPolishVideoActions(sessionId, allVisualUnits, characters, locations, stepIndex, progress) {
+    const _progress = progress || (() => {});
+    _progress({ stage: 'video_action_polish', message: PROGRESS_STAGES.video_action_polish });
+    await updateSession(sessionId, { progress_msg: PROGRESS_STAGES.video_action_polish });
+
+    if (!allVisualUnits || allVisualUnits.length < 2) {
+        console.log(`[AGENT] Step video_action_polish: skipped — ${allVisualUnits?.length || 0} unit(s), need >= 2`);
+        return allVisualUnits || [];
+    }
+
+    const step = await createStep(sessionId, 'polish_video_actions', stepIndex || 0);
+
+    const charsContext = (characters || []).map(c => `- ${c.id}: ${c.name} (${c.role || 'unknown'})`).join('\n') || 'None';
+    const locsContext = (locations || []).map(l => `- ${l.id}: ${l.name} (${l.type || 'unknown'})`).join('\n') || 'None';
+
+    // Build scene context: unique scenes with full text for plot understanding
+    const seenScenes = new Set();
+    const scenesParts = [];
+    for (const u of allVisualUnits) {
+        const key = `${u.sceneIndex}:${u.sceneTitle}`;
+        if (!seenScenes.has(key) && u.sceneText) {
+            seenScenes.add(key);
+            const truncated = u.sceneText.length > 1200 ? u.sceneText.substring(0, 1200) + '...' : u.sceneText;
+            scenesParts.push(`--- Scene ${u.sceneIndex}: "${u.sceneTitle || 'Untitled'}" ---\n${truncated}\n`);
+        }
+    }
+    const scenesStr = scenesParts.join('\n');
+
+    const unitsStr = allVisualUnits.map((u, i) =>
+        `Unit ${i}: scene_index=${u.sceneIndex}, unit_index=${u.unitIndex}, type="${u.type || 'unknown'}", ` +
+        `image.prompt="${(u.image?.prompt || '').substring(0, 150)}", ` +
+        `video.action="${(u.video?.action || '').substring(0, 150)}"`
+    ).join('\n');
+
+    const prompt = SYSTEM_PROMPTS.video_action_polish
+        .replace('%CHARACTERS%', charsContext)
+        .replace('%LOCATIONS%', locsContext)
+        .replace('%SCENES%', scenesStr || '(no scene text available)')
+        .replace('%UNITS%', unitsStr);
+
+    const messages = [
+        { role: 'system', content: prompt },
+        { role: 'user', content: `Review and polish video.actions for continuity and narrative consistency across these ${allVisualUnits.length} units:\n\n${unitsStr}` },
+    ];
+
+    try {
+        const result = await aiCaller.callAI(messages, { maxTokens: 4096 });
+        const polishedUnits = result.units || [];
+
+        // Merge AI results back, preserving original fields and only updating video.action
+        const merged = allVisualUnits.map((original, i) => {
+            const polished = polishedUnits.find(p => p.scene_index === original.sceneIndex && p.unit_index === original.unitIndex);
+            if (polished && polished.video?.action) {
+                return {
+                    ...original,
+                    video: {
+                        action: polished.video.action,
+                    },
+                };
+            }
+            return original;
+        });
+
+        await aiCaller.logConversation(sessionId, step.step_id, messages, JSON.stringify(result));
+        await completeStep(step.step_id, { units: merged.length });
+
+        const changedCount = merged.filter((m, i) => {
+            const orig = allVisualUnits[i];
+            return m.video?.action !== orig.video?.action;
+        }).length;
+        console.log(`[AGENT] Step video_action_polish: ${merged.length} units reviewed, ${changedCount} actions polished`);
+
+        return merged;
+    } catch (err) {
+        await failStep(step.step_id, `Video action polish failed: ${err.message}`);
+        console.warn(`[AGENT] Step video_action_polish FAILED, keeping original units: ${err.message}`);
         return allVisualUnits;
     }
 }
@@ -752,5 +890,7 @@ module.exports = {
     stepCreateVisuals,
     stepPolishStoryboard,
     stepReconcilePassports,
+    stepReconcileVideoActions,
+    stepPolishVideoActions,
     stepGenerateVoices,
 };

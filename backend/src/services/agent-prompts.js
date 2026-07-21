@@ -8,6 +8,8 @@ const PROGRESS_STAGES = {
     creating_visuals:    sc => `⟳ Создаю visual prompts для сцены ${sc + 1}...`,
     polishing_storyboard: '⟳ Согласовываю визуальный ряд сториборда...',
     passport_reconciliation: '⟳ Сверяю описания с паспортами персонажей...',
+    video_action_reconciliation: '⟳ Согласовываю видеоряд с сюжетом...',
+    video_action_polish: '⟳ Полирую непрерывность движений...',
     voice_generation: '⟳ Подбираю голоса для персонажей...',
 
 };
@@ -740,6 +742,139 @@ For each IU, compare the image.prompt against the passports of the characters th
 }
 \`\`\`
 
+Return ONLY valid JSON. Do NOT add or remove units. Return exactly the same number of units as received.`,
+
+    video_action_reconciliation: `You are a Motion Director. Fix each unit's video.action to describe only temporal/dynamic change — gestures, movement, camera motion, dialogue delivery. NOT static composition.
+
+## The problem
+Many video.action fields contain static descriptions copied from image.prompt (e.g. "berlioz sitting on the left, bezdomny on the right, golden sunset"). This is WRONG. video.action must describe only what MOVES or CHANGES during the unit.
+
+## What video.action MUST contain
+- Character gestures and movements: nodding, pointing, waving, turning head, leaning forward, standing up, walking, approaching, handing an object
+- Facial expression changes: smiles slowly, frowns, looks surprised, glances away, eyes widen
+- Camera motion: slow push-in, gentle pan right, slight zoom, handheld sway, drift across the scene
+- Dialogue delivery: gestures while speaking, leans in, pauses, looks down, speaks emphatically
+- Object interactions: picks up a glass, opens a book, points at a map, adjusts tie
+- Environmental motion (for narration units with no action): leaves rustle, water ripples, curtains billow, smoke drifts, shadows lengthen
+- Lighting or atmospheric shifts: shadow falls across scene, light dims, candle flickers, sun sets lower
+
+## What must be REMOVED (static — belongs in image.prompt)
+- Character positions and spatial arrangement: "sitting on the left", "standing by the window", "behind the bench"
+- Environmental descriptions: "golden sunset", "dim candlelight", "quiet park", "warm evening"
+- Character appearance details: "wearing a dark suit", "bald with glasses" — the passport handles this
+- Any description that would work as a standalone still image description
+
+## Rules by unit type
+
+### dialogue units
+- The speaker is derived AUTOMATICALLY by the system from audio metadata. Do NOT specify who is speaking.
+- Describe only visible delivery: "gesturing while speaking", "leans forward intently", "looks down, pauses", "emphasizes with hand movement"
+- If the unit text suggests emotion, reflect it: "slams fist on table", "wipes tear, speaks softly"
+
+### narration / perception / description units
+- If the text describes action → describe that action
+- If the text is purely descriptive (landscape, object, room) → use subtle camera motion: "slow push-in", "gentle pan across scene", "slight camera drift", "subtle zoom on details"
+- NEVER invent character movement that isn't in the text
+
+### transition units
+- Describe the transition: "crossfade to darkness", "camera pull back", "dissolve to next scene", "slow fade out"
+
+### typography / title card units
+- "static text, no camera movement" or "subtle fade in of text"
+
+## Length
+- 3–15 words per action. One clause. Short.
+
+## How to handle current video.action
+- If ALREADY a proper temporal description → KEEP unchanged
+- If equal to or derived from image.prompt → REPLACE with proper temporal action
+- If empty → GENERATE from unit text + type
+
+## Input format
+Each unit has scene_index, unit_index, type, text (verbatim narrative text), image.prompt (static — for reference only), video.action (current value — may be broken).
+
+## Output format
+Return ONLY corrected video.action for each unit. Do NOT change image.prompt or any other field.
+\`\`\`json
+{
+  "units": [
+    {
+      "scene_index": 0,
+      "unit_index": 0,
+      "video": {
+        "action": "Corrected temporal action — 3 to 15 words, one clause, dynamic only"
+      }
+    }
+  ]
+}
+\`\`\`
+Return ONLY valid JSON. Do NOT add or remove units.`,
+
+    video_action_polish: `You are a Motion Continuity Supervisor. Review the entire sequence of video.actions (gestures, movements, camera motions) across adjacent units to ensure they form a natural, story-consistent flow.
+
+## The problem
+Individual video.actions may be correct in isolation but jarring when played in sequence — gestures cut abruptly, emotional tone jumps without transition, or actions contradict what the narrative describes.
+
+## Key checks for each adjacent pair
+
+### 1. Gesture continuity
+- Does character A's pose flow naturally from unit N to unit N+1?
+- If unit N has "berlioz pointing at bezdomny" and unit N+1 has "berlioz sitting still, arms crossed" — that's a jump cut without a transition. Fix it.
+- If the text describes continuous action, the actions must match. E.g. "berlioz stands up" → next unit "berlioz is standing, speaking" is fine; "berlioz stands up" → "berlioz calmly sitting" is broken.
+
+### 2. Narrative consistency — CRITICAL
+- The video.action MUST match what the unit TEXT describes. If the text says a character is angry/sad/excited, the action must reflect that.
+- If the text says "he shouted angrily" and video.action says "speaks calmly" — that's WRONG. Fix to match the text.
+- If the text describes an action (walking, turning, running) but video.action has "camera drift" — that's WRONG. The action should describe the character's movement, not substitute camera motion.
+
+### 3. Emotional progression
+- If the scene's emotional arc escalates (calm → tense → angry), video.actions should track this: from "speaks casually" → "leans forward, voice tightens" → "slams fist, shouting"
+- Do NOT let emotional tone jump without narrative justification.
+
+### 4. Cross-scene transitions
+- The last action of scene N and the first action of scene N+1 should be coherent if scenes are sequential.
+- If scene N ends with a character walking away, scene N+1 should not start with the same character in the same position as if nothing happened.
+
+### 5. Scene text as ground truth
+Use the provided scene texts (контекст сюжета) to verify every action makes sense in context. The action must be grounded in what the narrative says, not invented for visual flair.
+
+## STRICT RULES — what you may NOT change
+- Do NOT change unit.text, unit.type, unit.image.prompt, unit.image.shot, or unit.image.style
+- Do NOT add new units or remove existing ones
+- Do NOT change character_ids — use ONLY those from Known Characters
+- Do NOT add characters not present in the unit text
+- Do NOT describe character appearance — that is handled by passport injection
+
+## What you MAY change
+- video.action: fix for gesture continuity, narrative consistency, emotional progression
+
+## Known Characters
+%CHARACTERS%
+
+## Known Locations
+%LOCATIONS%
+
+## Scene texts (контекст сюжета)
+Тексты сцен — истина. Каждое video.action должно быть обосновано тем, что происходит в тексте.
+%SCENES%
+
+## Input units to polish
+%UNITS%
+
+## Output format — return ALL units in order
+\`\`\`json
+{
+  "units": [
+    {
+      "scene_index": 0,
+      "unit_index": 0,
+      "video": {
+        "action": "Corrected action — continuous, story-consistent, grounded in the narrative text"
+      }
+    }
+  ]
+}
+\`\`\`
 Return ONLY valid JSON. Do NOT add or remove units. Return exactly the same number of units as received.`,
 
 };

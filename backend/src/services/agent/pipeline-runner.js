@@ -516,6 +516,40 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
         }
     }
 
+    // ── Video action reconciliation pass ──
+    // After passport reconciliation, fix video.actions: remove static,
+    // keep only temporal/dynamic descriptions.
+    if (enrichedScenes.length > 0) {
+        const allVisualUnits = enrichedScenes.flatMap((scene, si) =>
+            (scene.units || []).map((unit, ui) => ({
+                sceneIndex: si,
+                unitIndex: ui,
+                sceneTitle: scene.title || '',
+                sceneText: scene.text || '',
+                text: unit.text,
+                type: unit.type,
+                image: unit.image || {},
+                video: unit.video || {},
+            }))
+        );
+
+        if (allVisualUnits.length >= 1) {
+            const reconciled = await pipelineSteps.stepReconcileVideoActions(sessionId, allVisualUnits, characters, stepIndex, _progress);
+
+            // Map results back into enrichedScenes
+            for (const rec of reconciled) {
+                const scene = enrichedScenes[rec.sceneIndex];
+                if (scene && scene.units[rec.unitIndex]) {
+                    const unit = scene.units[rec.unitIndex];
+                    if (rec.video?.action) {
+                        unit.video = unit.video || {};
+                        unit.video.action = rec.video.action;
+                    }
+                }
+            }
+        }
+    }
+
     // ── Storyboard polish pass ──
     // After passport reconciliation, do a cross-scene continuity correction.
     if (enrichedScenes.length > 0) {
@@ -554,6 +588,42 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
             }
         } else {
             console.log(`[AGENT] Storyboard polish skipped: ${allVisualUnits.length} unit(s) in window (need >= 2)`);
+        }
+    }
+
+    // ── Video action polish pass ──
+    // After storyboard polish, check video.actions for gesture continuity,
+    // narrative consistency, and emotional progression across the sequence.
+    if (enrichedScenes.length > 0) {
+        const allVisualUnits = enrichedScenes.flatMap((scene, si) =>
+            (scene.units || []).map((unit, ui) => ({
+                sceneIndex: si,
+                unitIndex: ui,
+                sceneTitle: scene.title || '',
+                sceneText: scene.text || '',
+                text: unit.text,
+                type: unit.type,
+                image: unit.image || {},
+                video: unit.video || {},
+            }))
+        );
+
+        if (allVisualUnits.length >= 2) {
+            const polished = await pipelineSteps.stepPolishVideoActions(sessionId, allVisualUnits, characters, locations, stepIndex, _progress);
+
+            // Map results back into enrichedScenes
+            for (const pu of polished) {
+                const scene = enrichedScenes[pu.sceneIndex];
+                if (scene && scene.units[pu.unitIndex]) {
+                    const unit = scene.units[pu.unitIndex];
+                    if (pu.video?.action) {
+                        unit.video = unit.video || {};
+                        unit.video.action = pu.video.action;
+                    }
+                }
+            }
+        } else {
+            console.log(`[AGENT] Video action polish skipped: ${allVisualUnits.length} unit(s) in window (need >= 2)`);
         }
     }
 
