@@ -363,7 +363,8 @@ CREATE TABLE IF NOT EXISTS agent_steps (
                         'create_units','create_visual_prompts',
                         'collect_character_candidates','resolve_character_mentions',
                         'generate_voices',
-                        'polish_storyboard','reconcile_passports'
+                        'polish_storyboard','reconcile_passports',
+                        'reconcile_video_actions','polish_video_actions'
                     )),
     step_index      INTEGER NOT NULL DEFAULT 0,
     scene_index     INTEGER, -- NULL for whole-chapter steps, scene index for per-scene steps
@@ -547,9 +548,10 @@ async function runMigrations() {
                 'create_units','create_visual_prompts',
                 'collect_character_candidates','resolve_character_mentions',
                 'generate_voices',
-                'polish_storyboard','reconcile_passports'
+                'polish_storyboard','reconcile_passports',
+                'reconcile_video_actions','polish_video_actions'
             ))`);
-        console.log('[PG] Updated agent_steps step_type check constraint (added generate_voices, reconcile_passports)');
+        console.log('[PG] Updated agent_steps step_type check constraint (added video_action steps)');
     } catch (err) {
         if (!err.message.includes('does not exist')) {
             console.error('[PG] Failed to update step_type constraint:', err.message);
