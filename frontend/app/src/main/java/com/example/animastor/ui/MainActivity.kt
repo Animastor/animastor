@@ -128,13 +128,23 @@ class MainActivity : AppCompatActivity() {
                 .commit()
         }
 
-        // ── Timer observer — формат HH:MM:SS ──
+        // ── Timer loop — читает viewModel.timerStartedAt напрямую ──
         lifecycleScope.launch {
-            viewModel.elapsedSeconds.collect { sec ->
-                val hh = (sec / 3600).toInt()
-                val mm = ((sec % 3600) / 60).toInt()
-                val ss = (sec % 60).toInt()
-                binding.generationTimer.text = String.format("%02d:%02d:%02d", hh, mm, ss)
+            while (true) {
+                val elapsed = viewModel.timerStartedAt.let { start ->
+                    if (start > 0L) (System.currentTimeMillis() - start) / 1000L else 0L
+                }
+                val timerText = formatTimerText(elapsed)
+                binding.generationTimer.text = timerText
+                // Update timer in each visible worker row
+                val container = binding.workerProgressList
+                for (i in 0 until container.childCount) {
+                    val row = container.getChildAt(i)
+                    if (row.visibility == View.VISIBLE) {
+                        row.findViewById<TextView>(R.id.workerTimer)?.text = timerText
+                    }
+                }
+                delay(500L)
             }
         }
 
@@ -677,7 +687,7 @@ class MainActivity : AppCompatActivity() {
             is ProgressPanelState.Workers -> {
                 binding.generationProgressContainer.visibility = View.VISIBLE
                 binding.generationDoneRow.visibility = View.GONE
-                binding.generationTimerRow.visibility = View.VISIBLE
+                binding.generationTimerRow.visibility = View.GONE  // timer показан в каждой строке worker
                 binding.workerProgressList.visibility = View.VISIBLE
                 renderWorkers(state.workers)
             }
@@ -729,6 +739,12 @@ class MainActivity : AppCompatActivity() {
             val pctView = row.findViewById<TextView>(R.id.workerPercent)
             val barView = row.findViewById<com.google.android.material.progressindicator.LinearProgressIndicator>(R.id.workerProgressBar)
 
+            val timerView = row.findViewById<TextView>(R.id.workerTimer)
+            val currentSec = viewModel.timerStartedAt.let { start ->
+                if (start > 0L) (System.currentTimeMillis() - start) / 1000L else 0L
+            }
+            val timerText = formatTimerText(currentSec)
+
             if (worker.indeterminate) {
                 // Cyclic/indeterminate progress — no count, no percentage
                 nameView.text = worker.label
@@ -737,6 +753,8 @@ class MainActivity : AppCompatActivity() {
                 countView.visibility = View.GONE
                 pctView.text = ""
                 pctView.visibility = View.GONE
+                timerView?.text = timerText
+                timerView?.visibility = View.VISIBLE
                 barView.isIndeterminate = true
                 barView.setIndicatorColor(accentColor)
             } else if (worker.done) {
@@ -748,6 +766,8 @@ class MainActivity : AppCompatActivity() {
                 pctView.text = "100%"
                 pctView.setTextColor(greenColor)
                 pctView.visibility = View.VISIBLE
+                timerView?.text = timerText
+                timerView?.visibility = View.VISIBLE
                 barView.isIndeterminate = false
                 barView.setProgressCompat(100, true)
                 barView.setIndicatorColor(greenColor)
@@ -760,6 +780,8 @@ class MainActivity : AppCompatActivity() {
                 pctView.text = "${worker.percent}%"
                 pctView.setTextColor(accentColor)
                 pctView.visibility = View.VISIBLE
+                timerView?.text = timerText
+                timerView?.visibility = View.VISIBLE
                 barView.isIndeterminate = false
                 barView.setProgressCompat(worker.percent, true)
                 barView.setIndicatorColor(accentColor)
@@ -818,6 +840,13 @@ class MainActivity : AppCompatActivity() {
                 null
             }
         }
+    }
+
+    private fun formatTimerText(sec: Long): String {
+        val hh = (sec / 3600).toInt()
+        val mm = ((sec % 3600) / 60).toInt()
+        val ss = (sec % 60).toInt()
+        return String.format("%02d:%02d:%02d", hh, mm, ss)
     }
 
     companion object {

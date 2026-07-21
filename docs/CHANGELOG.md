@@ -52,6 +52,26 @@ All notable changes to Animastor are documented here.
     внутри `generationProgressContainer`.
   - 12/12 тестов проходят, syntax check OK.
 
+- **Таймер: переезд в строку воркера + переделка на прямой polling**
+  (`frontend/.../GenerateViewModel.kt`, `frontend/.../MainActivity.kt`,
+  `frontend/.../item_worker_progress.xml`):
+  - **Проблема 1:** таймер висел отдельной строкой (`generationTimerRow`) над воркерами,
+    слева. Должен быть в правом углу каждой строки воркера.
+  - **Проблема 2:** таймер всегда показывал `00:00:00` — корутина в ViewModel (StateFlow +
+    `timerJob`) отменялась до первого инкремента, значение застывало на 0.
+  - **Фикс (таймер):** Вся логика таймера перенесена из ViewModel в MainActivity.
+    `_elapsedSeconds` StateFlow + корутина заменены на `@Volatile var timerStartedAt: Long`.
+    `startTimer()` просто сохраняет `System.currentTimeMillis()`, `stopTimer()` сбрасывает в 0.
+    MainActivity в `lifecycleScope` запускает `while(true) { delay(500); elapsed = (now - start) / 1000 }`
+    — читает `viewModel.timerStartedAt` напрямую, без промежуточных корутин и StateFlow.
+    Таймер не может быть отменён, так как MainActivity владеет циклом.
+  - **Фикс (позиция):** `item_worker_progress.xml` — добавлен `workerTimer` TextView справа от
+    `workerPercent`. `generationTimerRow` скрыт при показе воркеров (оставлен для DoneRow).
+    Timer observer обновляет `workerTimer` во всех видимых строках каждые 500ms.
+  - **Фикс (шрифт):** `workerTimer` согласован с `workerCount` — 12sp, без кастомного
+    fontFamily/letterSpacing.
+  - Syntax check OK, code review OK.
+
 - **A0: Детерминированное перечисление чанков — enumeration вместо readdir**
   (`backend/src/audio/chunks.js`):
   - `findExistingSceneChunks()` теперь принимает опциональный `expectedCount`.

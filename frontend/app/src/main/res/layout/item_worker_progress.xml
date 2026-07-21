@@ -45,6 +45,17 @@
             android:singleLine="true"
             android:minWidth="32dp"
             android:gravity="end" />
+
+        <TextView
+            android:id="@+id/workerTimer"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textSize="12sp"
+            android:textColor="?attr/colorOnSurfaceVariant"
+            android:singleLine="true"
+            android:paddingStart="8dp"
+            android:gravity="end"
+            android:text="00:00:00" />
     </LinearLayout>
 
     <com.google.android.material.progressindicator.LinearProgressIndicator

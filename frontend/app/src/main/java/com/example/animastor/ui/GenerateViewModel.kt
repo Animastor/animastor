@@ -79,26 +79,22 @@ class GenerateViewModel(
 
     // ── Elapsed timer (client-side) ──────────────────────────────
 
-    private val _elapsedSeconds = MutableStateFlow(0L)
-    val elapsedSeconds: StateFlow<Long> = _elapsedSeconds.asStateFlow()
+    /**
+     * Wall-clock start timestamp (ms). 0 = not running.
+     * MainActivity timer loop reads this directly — no coroutine/StateFlow.
+     */
+    @Volatile
+    var timerStartedAt: Long = 0L
+        private set
 
-    /** Coroutine that increments [_elapsedSeconds] every second while generation runs. */
-    private var timerJob: Job? = null
-
+    /** Start the timer — records wall-clock timestamp. */
     private fun startTimer() {
-        timerJob?.cancel()
-        _elapsedSeconds.value = 0L
-        timerJob = viewModelScope.launch {
-            while (true) {
-                delay(1000L)
-                _elapsedSeconds.update { it + 1 }
-            }
-        }
+        timerStartedAt = System.currentTimeMillis()
     }
 
+    /** Stop the timer — resets to 0 (not running). */
     private fun stopTimer() {
-        timerJob?.cancel()
-        timerJob = null
+        timerStartedAt = 0L
     }
 
     // ── UI State (generation/import related only) ─────────────────
