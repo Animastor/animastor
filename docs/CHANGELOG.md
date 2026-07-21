@@ -8,6 +8,40 @@ All notable changes to Animastor are documented here.
 
 ### Added
 
+- **Per-worker stop buttons + Cancel All + backend per-type cancel API**
+  (`frontend/.../item_worker_progress.xml`, `frontend/.../activity_main.xml`,
+  `frontend/.../strings.xml`, `frontend/.../GenerateViewModel.kt`,
+  `frontend/.../MainActivity.kt`, `frontend/.../BookModels.kt`,
+  `frontend/.../BackendApi.kt`, `frontend/.../Repository.kt`,
+  `backend/src/routes/book/generation-routes.cjs`,
+  `backend/src/routes/book/progress-panel.cjs`,
+  `backend/src/runtime/dispatch-engine.js`):
+  - **Backend: per-type cancel API** (`POST /api/v1/book/{bookId}/cancel-worker`):
+    - Cancels only the specified worker type (audio/image/video/cover/vbook) without affecting others.
+    - Stores cancelled type in Redis set `animastor:cancelled-workers:{bookId}`.
+    - For GPU types: clears dispatch leases + quotas only for that stage via
+      `clearLeasesForBookByStage()`. Does NOT clear GPU hub queues (non-cancelled types keep jobs).
+    - For cover: cancels audio+image dispatches.
+    - For vbook: sets agent_sessions status to 'cancelled' in Postgres.
+    - /regenerate now clears the cancelled-workers set.
+  - **Backend: progress-panel returns `cancelled` flag** — reads `animastor:cancelled-workers:{bookId}`
+    and sets `cancelled: true` on each worker entry.
+  - **Backend: `clearLeasesForBookByStage()`** in dispatch-engine.js — cancels leases for a specific
+    stage across all active scenes, leaving other stages intact.
+  - **Frontend: simplified state management** — `_cancelledWorkers` set and `isWorkerCancelled()`
+    removed from `GenerateViewModel`. Frontend no longer tracks cancellation state locally.
+    `cancelWorker(type)` calls the backend API and lets the server handle cancellation.
+  - **Frontend: per-row stop button** — each worker progress row has a small square ImageButton
+    with stop icon (tinted cinema_error). Click opens PopupMenu with «Отменить». Row highlights
+    semi-transparent red while popup is open. ProgressWorker model now includes `cancelled: Boolean`.
+  - **Frontend: cancelled state rendering** — cancelled workers show muted red "Done — WorkerName"
+    row with 0% progress, hidden stop button. `WorkerUi` has `cancelled: Boolean` field.
+  - **Frontend: Generate button simplified** — always shows "GENERATE", never toggles to CANCEL.
+    Can start new generation while another is running (no `_isRegenerating` guard).
+  - **Frontend: Cancel All button** — red-outlined MaterialButton with stop icon appears right of
+    Generate button when any generation is active. Shows confirm dialog before calling `cancelGeneration()`.
+  - Build: frontend BUILD SUCCESSFUL, 577/578 backend tests pass (1 pre-existing failure).
+
 - **Prompt Profiles — model-specific правила промптинга вынесены из хардкода в скилл-файлы**
   (`backend/src/services/ai-loader.js`, `backend/src/services/prompt-profile-loader.js`,
   `backend/src/services/agent/pipeline-steps.js`,

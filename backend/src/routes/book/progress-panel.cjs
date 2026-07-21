@@ -193,6 +193,10 @@ module.exports = function(app, redis, deps) {
 
             const useIu = scopeIuTotal > 0;
 
+            // ── 4.5. Read cancelled worker types ──
+            const cancelledWorkersKey = `animastor:cancelled-workers:${bookId}`;
+            const cancelledTypes = new Set(await redis.smembers(cancelledWorkersKey) || []);
+
             // ── 5. Build worker entries ──
             const workers = [];
 
@@ -207,6 +211,7 @@ module.exports = function(app, redis, deps) {
                     done: covDone,
                     visible: true,
                     indeterminate: false,
+                    cancelled: cancelledTypes.has('cover'),
                 });
             }
 
@@ -221,6 +226,7 @@ module.exports = function(app, redis, deps) {
                     done: audioDone,
                     visible: true,
                     indeterminate: false,
+                    cancelled: cancelledTypes.has('audio'),
                 });
             }
 
@@ -237,6 +243,7 @@ module.exports = function(app, redis, deps) {
                     done: imgDone,
                     visible: true,
                     indeterminate: useIu && imgTotal === 0,
+                    cancelled: cancelledTypes.has('image'),
                 });
             }
 
@@ -251,6 +258,7 @@ module.exports = function(app, redis, deps) {
                     done: videoDone,
                     visible: true,
                     indeterminate: false,
+                    cancelled: cancelledTypes.has('video'),
                 });
             }
 

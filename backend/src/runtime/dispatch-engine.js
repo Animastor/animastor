@@ -971,6 +971,70 @@ async function clearLeasesForScenes(redis, bookId, scenes) {
 }
 
 /**
+ * Clear all dispatch leases and metadata for a specific stage within a book.
+ * T5: quota-safe — uses cancelActiveDispatch for each lease.
+ * Non-cancelled stages keep their leases and quotas intact.
+ */
+async function clearLeasesForBookByStage(redis, bookId, stage) {
+    let deleted = 0;
+    let quotaReleased = 0;
+    const dispatchIds = [];
+    let cursor = 0;
+
+    const leasePattern = `${DISPATCH_LEASE_PREFIX}:${bookId}:*:${stage}`;
+    do {
+        const result = await redis.scan(cursor, 'MATCH', leasePattern, 'COUNT', 200);
+        cursor = parseInt(result[0], 10);
+        const keys = result[1];
+
+        for (const key of keys) {
+            const parts = key.split(':');
+            if (parts.length >= 6) {
+                const chapterId = parts[3];
+                const sceneId = parts[4];
+                stopDispatchRenewal(bookId, chapterId, sceneId, stage);
+
+                const token = await redis.get(key);
+                if (token) {
+                    const result = await cancelActiveDispatch(
+                        redis,
+                        bookId,
+                        chapterId,
+                        sceneId,
+                        stage,
+                        'stage_reset'
+                    );
+                    if (result.cancelled && result.reason !== 'orphan_lease') {
+                        quotaReleased++;
+                    }
+                    if (result.dispatchId) dispatchIds.push(result.dispatchId);
+                }
+            }
+            await redis.del(key).catch(() => {});
+            deleted++;
+        }
+    } while (cursor !== 0);
+
+    // Clean up orphan metadata for this stage
+    cursor = 0;
+    const metaPattern = `${DISPATCH_META_PREFIX}:${bookId}:*:${stage}`;
+    do {
+        const result = await redis.scan(cursor, 'MATCH', metaPattern, 'COUNT', 200);
+        cursor = parseInt(result[0], 10);
+        const keys = result[1];
+        if (keys.length > 0) {
+            await redis.del(...keys);
+            deleted += keys.length;
+        }
+    } while (cursor !== 0);
+
+    if (deleted > 0 || quotaReleased > 0) {
+        log(`CLEAR_STAGE_LEASES: ${bookId}/${stage} — ${deleted} keys deleted, ${quotaReleased} quota slots released`);
+    }
+    return { deleted, quotaReleased, dispatchIds };
+}
+
+/**
  * Clear all dispatch leases and metadata for a book — T5: quota-safe.
  */
 async function clearAllLeasesForBook(redis, bookId) {
@@ -1239,6 +1303,7 @@ module.exports = {
 
     // Recovery
     clearAllLeasesForBook,
+    clearLeasesForBookByStage,
     clearLeasesForScenes,
 
     // Runtime metrics

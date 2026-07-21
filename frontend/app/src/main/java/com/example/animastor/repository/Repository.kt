@@ -422,6 +422,11 @@ class Repository(
         api.cancelGeneration(bookId)
     }
 
+    suspend fun cancelWorker(bookId: String, type: String): CancelWorkerResponse {
+        Log.i("Repo", "cancelWorker: $bookId type=$type")
+        return api.cancelWorker(bookId, CancelWorkerRequest(type = type))
+    }
+
     suspend fun getSceneStoryboard(bookId: String, chapterId: String, sceneId: String, buildId: String): StoryboardResponse {
         val cacheKey = "scene_sb_${bookId}_${chapterId}_${sceneId}_${buildId}"
         storyboardCache.get(cacheKey)?.let {

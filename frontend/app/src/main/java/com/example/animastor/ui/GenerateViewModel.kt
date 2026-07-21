@@ -289,10 +289,13 @@ class GenerateViewModel(
     }
 
     fun startGeneration(req: GenerationRequest, onResult: (GenerationResult) -> Unit) {
-        if (bookId.isBlank() || _isRegenerating.value) {
-            onResult(GenerationResult.Failed("No book or already running"))
+        if (bookId.isBlank()) {
+            onResult(GenerationResult.Failed("No book"))
             return
         }
+        // Allow starting new generation even if one is already running.
+        // The previous generation job will be cancelled, and the new one
+        // replaces it. Per-worker stop buttons on the backend handle granular cancellation.
         _isRegenerating.value = true
         _activeGeneration.value = ActiveGeneration(
             scope = req.scope,
@@ -1047,7 +1050,6 @@ class GenerateViewModel(
     /** Workers that have completed their 10s display cycle and must not reappear. */
     private val _workerPermanentlyDone = mutableSetOf<String>()
 
-    /** Whether cover was ever incomplete during the current generation session. */
     private var _coverEverIncomplete = false
 
     /** Timestamp when the last worker completed and "Done" row started showing. */
@@ -1128,6 +1130,32 @@ class GenerateViewModel(
     }
 
     /**
+     * Cancel a specific worker type via the backend cancel-worker API.
+     * The backend handles per-type cancellation (leases, counters, GPU hub).
+     * The frontend just tells the backend what to cancel.
+     */
+    fun cancelWorker(type: String) {
+        Log.i(TAG, "cancelWorker: type=$type bookId=$bookId")
+        if (bookId.isBlank()) return
+
+        // If VBook was cancelled, clear its progress immediately
+        if (type == "vbook") {
+            _uiState.update { it.copy(vbookProgress = VBookProgress(stage = VBookStage.IDLE)) }
+        }
+
+        // Call backend per-worker cancel API — backend handles the rest
+        viewModelScope.launch {
+            runCatching {
+                _repository.cancelWorker(bookId, type)
+            }.onSuccess {
+                Log.i(TAG, "cancelWorker: backend cancelled type=$type successfully")
+            }.onFailure { e ->
+                Log.w(TAG, "cancelWorker: backend call failed: ${e.message}")
+            }
+        }
+    }
+
+    /**
      * Reset all worker tracking state for a new generation session.
      * Call when new GPU generation or VBook work is detected.
      */
@@ -1174,7 +1202,8 @@ class GenerateViewModel(
             serverDone: Boolean,
             serverPct: Int,
             serverIndeterminate: Boolean,
-            countText: String? = null
+            countText: String? = null,
+            cancelled: Boolean = false
         ) {
             if (serverTotal <= 0) return
             if (type in _workerPermanentlyDone) return
@@ -1182,7 +1211,7 @@ class GenerateViewModel(
             val r = maxOf(serverReady, workerReadyFloor[type] ?: 0)
             workerReadyFloor[type] = r
             val done = serverDone || (r >= serverTotal && r > 0)
-            if (done) {
+            if (done && !cancelled) {
                 if (!workerCompletedAt.containsKey(type)) {
                     workerCompletedAt[type] = now
                 }
@@ -1194,7 +1223,7 @@ class GenerateViewModel(
                 }
             }
             val pct = if (done) 100 else serverPct.coerceIn(0, 99)
-            workers.add(WorkerUi(type, label, r, serverTotal, pct, done, countText = countText, indeterminate = serverIndeterminate))
+            workers.add(WorkerUi(type, label, r, serverTotal, pct, done, countText = countText, indeterminate = serverIndeterminate, cancelled = cancelled))
         }
 
         // ── GPU workers (from server progress-panel) ──
@@ -1208,7 +1237,8 @@ class GenerateViewModel(
                     "video" -> labels.video
                     else -> sw.type
                 }
-                addFromServer(sw.type, label, sw.ready, sw.total, sw.done, sw.percent, sw.indeterminate)
+                // Pass server cancelled flag — backend now owns cancellation state
+                addFromServer(sw.type, label, sw.ready, sw.total, sw.done, sw.percent, sw.indeterminate, cancelled = sw.cancelled)
             }
         }
 
@@ -1312,7 +1342,9 @@ data class WorkerUi(
     val done: Boolean,
     val countText: String? = null,
     /** Show cyclic/indeterminate progress bar (spinner). Hides x/y count and z%. */
-    val indeterminate: Boolean = false
+    val indeterminate: Boolean = false,
+    /** Server-set — true when this worker type has been cancelled via cancel-worker API. */
+    val cancelled: Boolean = false
 )
 
 /**

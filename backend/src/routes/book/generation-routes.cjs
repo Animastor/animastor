@@ -92,7 +92,74 @@ module.exports = function(app, redis, deps) {
     });
 
     // ======================================================
-    // CANCEL GENERATION
+    // CANCEL WORKER (per-type cancel)
+    // ======================================================
+    // Cancels only the specified worker type ("audio", "image", "video", "cover", "vbook")
+    // without affecting other workers. Stores cancelled type in Redis so /progress-panel
+    // can return cancelled:true for that worker.
+    app.post('/api/v1/book/:bookId/cancel-worker', async (req, res) => {
+        try {
+            const { bookId } = req.params;
+            const { type } = req.body || {};
+
+            if (!type || !['audio', 'image', 'video', 'cover', 'vbook'].includes(type)) {
+                return res.status(400).json({ error: 'Invalid or missing worker type. Must be one of: audio, image, video, cover, vbook' });
+            }
+
+            log(`[CANCEL-WORKER] ${bookId}: cancelling type=${type}`);
+
+            // Store cancelled type in Redis — progress-panel will read and return cancelled:true
+            const cancelledWorkersKey = `animastor:cancelled-workers:${bookId}`;
+            await redis.sadd(cancelledWorkersKey, type);
+            // Keep alive while worker might still be processing (1 hour max)
+            await redis.expire(cancelledWorkersKey, 3600);
+
+            const dispatchEngine = require('../../runtime/dispatch-engine');
+
+            if (type === 'vbook') {
+                // Cancel VBook/AI agent: update agent session status to 'cancelled'
+                try {
+                    const { query } = require('../../storage/postgres/database');
+                    await query(
+                        `UPDATE agent_sessions SET status = 'cancelled', updated_at = $1
+                         WHERE book_id = $2 AND status IN ('running', 'paused')`,
+                        [Math.floor(Date.now() / 1000), bookId]
+                    );
+                    log(`[CANCEL-WORKER] ${bookId}: VBook agent sessions cancelled`);
+                } catch (pgErr) {
+                    console.warn(`[CANCEL-WORKER] Failed to cancel VBook session: ${pgErr.message}`);
+                }
+            } else if (type === 'cover') {
+                // Cover uses both audio + image stages — cancel both
+                await dispatchEngine.clearLeasesForBookByStage(redis, bookId, 'audio');
+                await dispatchEngine.clearLeasesForBookByStage(redis, bookId, 'image');
+                await redis.del('animastor:runtime:active-audio');
+                await redis.del('animastor:runtime:active-image');
+                log(`[CANCEL-WORKER] ${bookId}: cover (audio+image) leases cleared`);
+            } else {
+                // GPU worker type: cancel only this stage's dispatches
+                const stage = type; // "audio", "image", "video"
+                await dispatchEngine.clearLeasesForBookByStage(redis, bookId, stage);
+                // Clear the active counter for this stage
+                await redis.del(`animastor:runtime:active-${stage}`);
+                log(`[CANCEL-WORKER] ${bookId}: ${stage} leases cleared, counter reset`);
+            }
+
+            // Note: we do NOT clear GPU hub queues here to avoid disrupting
+            // non-cancelled worker types. The cancelled type's dispatches have been
+            // cleared via clearLeasesForBookByStage — leases + quotas are released.
+            // Non-cancelled types keep their leases and hub jobs intact.
+
+            log(`[CANCEL-WORKER] ${bookId}: type=${type} cancelled successfully`);
+            res.json({ ok: true, book_id: bookId, cancelled: [type] });
+        } catch (err) {
+            console.error('[CANCEL-WORKER] Error:', err.message);
+            res.status(500).json({ error: err.message });
+        }
+    });
+
+    // ======================================================
+    // CANCEL GENERATION (global — stops everything)
     // ======================================================
     app.post('/api/v1/book/:bookId/cancel-generation', async (req, res) => {
         try {
@@ -109,8 +176,10 @@ module.exports = function(app, redis, deps) {
             await redis.del('animastor:runtime:active-image');
             await redis.del('animastor:runtime:active-video');
 
-            const dispatchEngine = require('../../runtime/dispatch-engine');
             await dispatchEngine.clearAllLeasesForBook(redis, bookId);
+
+            // Clear per-worker cancel tracking (if any was set)
+            await redis.del(`animastor:cancelled-workers:${bookId}`);
 
             // Also clear GPU hub stale jobs via HTTP endpoint (T4: владелец ключей — gpu-hub)
             try {
@@ -172,6 +241,8 @@ module.exports = function(app, redis, deps) {
 
             const windowModule = require('../../runtime/scene-window');
             await windowModule.clearCancelFlag(redis, bookId);
+            // Clear any per-worker cancellation flags from previous generation
+            await redis.del(`animastor:cancelled-workers:${bookId}`);
             // Note: force-dispatch и gen-scope устанавливаются внутри
             // orchestrator.resetScenes() — не дублировать здесь (T4).
 

@@ -213,6 +213,12 @@ interface BackendApi {
         @Path("bookId") bookId: String
     ): GenericResponse
 
+    @POST("/api/v1/book/{bookId}/cancel-worker")
+    suspend fun cancelWorker(
+        @Path("bookId") bookId: String,
+        @Body request: CancelWorkerRequest
+    ): CancelWorkerResponse
+
     // Audio Timeline
 
     @Streaming

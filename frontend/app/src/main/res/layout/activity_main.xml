@@ -51,6 +51,28 @@
                 app:rippleColor="?attr/colorOnSurface"
                 app:strokeWidth="0dp" />
 
+            <!-- Cancel All button — shown when any generation process is active -->                <com.google.android.material.button.MaterialButton
+                android:id="@+id/toolbarCancelAllButton"
+                style="@style/Widget.Material3.Button.TextButton"
+                android:layout_width="wrap_content"
+                android:layout_height="40dp"
+                android:layout_marginEnd="6dp"
+                android:text="@string/toolbar_cancel_all"
+                android:textSize="11sp"
+                android:textAllCaps="true"
+                android:fontFamily="sans-serif-medium"
+                android:visibility="gone"
+                android:paddingStart="8dp"
+                android:paddingEnd="8dp"
+                android:minWidth="0dp"
+                android:minHeight="0dp"
+                app:icon="@drawable/ic_stop"
+                app:iconPadding="4dp"
+                app:iconTint="@color/cinema_error"
+                app:iconGravity="textStart"
+                app:rippleColor="@color/cinema_error"
+                android:textColor="@color/cinema_error" />
+
             <LinearLayout
                 android:id="@+id/workerPanel"
                 android:layout_width="wrap_content"

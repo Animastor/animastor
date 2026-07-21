@@ -8,6 +8,8 @@ import android.os.Bundle
 import android.animation.ObjectAnimator
 import android.util.Log
 import android.view.View
+import android.widget.ImageButton
+import android.widget.PopupMenu
 import android.widget.TextView
 import android.widget.Toast
 import com.google.android.material.chip.Chip
@@ -175,6 +177,7 @@ class MainActivity : AppCompatActivity() {
             val normalColor = getColor(R.color.cinema_text_disabled)
             val activeColor = getColor(R.color.cinema_accent)
             val errorColor = getColor(R.color.cinema_error)
+
             while (true) {
                 try {
                     val counts = RetrofitClient.api.getWorkerCounts()
@@ -229,11 +232,11 @@ class MainActivity : AppCompatActivity() {
         }
 
         binding.toolbarGenerateButton.setOnClickListener {
-            if (viewModel.isRegenerating.value) {
-                viewModel.cancelGeneration()
-            } else {
-                onGenerateClicked()
-            }
+            onGenerateClicked()
+        }
+
+        binding.toolbarCancelAllButton.setOnClickListener {
+            onCancelAllClicked()
         }
 
         lifecycleScope.launch {
@@ -431,23 +434,36 @@ class MainActivity : AppCompatActivity() {
 
     private fun refreshGenerateButton() {
         val bookId = viewModel.bookId
-        val isRegenerating = viewModel.isRegenerating.value
         val genBtn = binding.toolbarGenerateButton
 
         genBtn.visibility = View.VISIBLE
+        genBtn.text = getString(R.string.toolbar_generate_idle)
+        genBtn.backgroundTintList = ColorStateList.valueOf(getColor(R.color.cinema_accent))
+        val canGenerate = bookId.isNotBlank()
+        genBtn.isEnabled = canGenerate
+        genBtn.alpha = if (bookId.isBlank()) 0.3f else 1f
 
-        if (isRegenerating) {
-            genBtn.text = getString(R.string.toolbar_generate_cancel)
-            genBtn.backgroundTintList = ColorStateList.valueOf(getColor(R.color.cinema_primary))
-            genBtn.isEnabled = true
-            genBtn.alpha = 1f
+        // Cancel All button visibility: show when any generation is active
+        val cancelAllBtn = binding.toolbarCancelAllButton
+        val hasActiveGen = viewModel.activeGeneration.value != null ||
+            viewModel.uiState.value.vbookProgress?.takeIf { it.stage != VBookStage.IDLE } != null
+        if (hasActiveGen) {
+            cancelAllBtn.visibility = View.VISIBLE
         } else {
-            genBtn.text = getString(R.string.toolbar_generate_idle)
-            genBtn.backgroundTintList = ColorStateList.valueOf(getColor(R.color.cinema_accent))
-            val canGenerate = bookId.isNotBlank()
-            genBtn.isEnabled = canGenerate
-            genBtn.alpha = if (bookId.isBlank()) 0.3f else 1f
+            cancelAllBtn.visibility = View.GONE
         }
+    }
+
+    private fun onCancelAllClicked() {
+        AlertDialog.Builder(this)
+            .setTitle(R.string.cancel_all_dialog_title)
+            .setMessage(R.string.cancel_all_dialog_message)
+            .setNegativeButton(R.string.dialog_cancel, null)
+            .setPositiveButton(R.string.cancel_all_confirm) { _, _ ->
+                Log.i("MainActivity", "Cancel All clicked — stopping all generation")
+                viewModel.cancelGeneration()
+            }
+            .show()
     }
 
     private fun onGenerateClicked() {
@@ -713,6 +729,8 @@ class MainActivity : AppCompatActivity() {
     /**
      * Render worker rows into the progress panel.
      * Pure rendering — data already computed by [GenerateViewModel].
+     * Each active row gets a small stop button in the right end that opens
+     * a popup menu with "Отменить" to cancel that specific worker.
      */
     private fun renderWorkers(workers: List<WorkerUi>) {
         val container = binding.workerProgressList
@@ -720,6 +738,7 @@ class MainActivity : AppCompatActivity() {
         val accentColor = getColor(R.color.cinema_accent)
         val textColor = getColor(R.color.cinema_text_secondary)
         val mutedColor = getColor(R.color.cinema_text_disabled)
+        val errorColor = getColor(R.color.cinema_error)
 
         val childCount = container.childCount
         val maxIdx = childCount.coerceAtLeast(workers.size)
@@ -744,6 +763,7 @@ class MainActivity : AppCompatActivity() {
             val countView = row.findViewById<TextView>(R.id.workerCount)
             val pctView = row.findViewById<TextView>(R.id.workerPercent)
             val barView = row.findViewById<com.google.android.material.progressindicator.LinearProgressIndicator>(R.id.workerProgressBar)
+            val stopButton = row.findViewById<ImageButton>(R.id.workerStopButton)
 
             val timerView = row.findViewById<TextView>(R.id.workerTimer)
             val currentSec = when {
@@ -753,7 +773,23 @@ class MainActivity : AppCompatActivity() {
             }
             val timerText = formatTimerText(currentSec)
 
-            if (worker.indeterminate) {
+            // Reset row background (clears any previous popup highlight)
+            row.setBackgroundColor(android.graphics.Color.TRANSPARENT)
+
+            if (worker.cancelled) {
+                // Cancelled state — show muted "Cancelled" row, no progress bar
+                nameView.text = getString(R.string.generation_done) + " — " + worker.label
+                nameView.setTextColor(errorColor)
+                countView.text = ""
+                countView.visibility = View.GONE
+                pctView.text = ""
+                pctView.visibility = View.GONE
+                timerView?.text = ""
+                timerView?.visibility = View.GONE
+                barView.visibility = View.GONE
+                stopButton.visibility = View.GONE
+                stopButton.setOnClickListener(null)
+            } else if (worker.indeterminate) {
                 // Cyclic/indeterminate progress — no count, no percentage
                 nameView.text = worker.label
                 nameView.setTextColor(textColor)
@@ -763,6 +799,7 @@ class MainActivity : AppCompatActivity() {
                 pctView.visibility = View.GONE
                 timerView?.text = timerText
                 timerView?.visibility = View.VISIBLE
+                barView.visibility = View.VISIBLE
                 barView.isIndeterminate = true
                 barView.setIndicatorColor(accentColor)
             } else if (worker.done) {
@@ -776,6 +813,7 @@ class MainActivity : AppCompatActivity() {
                 pctView.visibility = View.VISIBLE
                 timerView?.text = timerText
                 timerView?.visibility = View.VISIBLE
+                barView.visibility = View.VISIBLE
                 barView.isIndeterminate = false
                 barView.setProgressCompat(100, true)
                 barView.setIndicatorColor(greenColor)
@@ -790,10 +828,49 @@ class MainActivity : AppCompatActivity() {
                 pctView.visibility = View.VISIBLE
                 timerView?.text = timerText
                 timerView?.visibility = View.VISIBLE
+                barView.visibility = View.VISIBLE
                 barView.isIndeterminate = false
                 barView.setProgressCompat(worker.percent, true)
                 barView.setIndicatorColor(accentColor)
             }
+
+            // Configure stop button: visible for active workers, hidden for done or cancelled
+            if (worker.done || worker.cancelled) {
+                stopButton.visibility = View.GONE
+                stopButton.setOnClickListener(null)
+            } else {
+                stopButton.visibility = View.VISIBLE
+                setupWorkerStopButton(stopButton, row, worker)
+            }
+        }
+    }
+
+    /**
+     * Configure the stop button to show a popup menu with "Отменить".
+     * Highlights the row with a semi-transparent red tint while the popup is open.
+     */
+    private fun setupWorkerStopButton(
+        stopButton: ImageButton,
+        row: View,
+        worker: WorkerUi
+    ) {
+        // Semi-transparent red highlight (~12% alpha)
+        val errorColor = getColor(R.color.cinema_error)
+        val highlightColor = (errorColor and 0x00FFFFFF) or (0x1F shl 24)
+        stopButton.setOnClickListener { view ->
+            val popup = PopupMenu(this@MainActivity, view, android.view.Gravity.END)
+            popup.menu.add(0, 1, 0, getString(R.string.worker_stop_menu_cancel))
+            row.setBackgroundColor(highlightColor)
+            popup.setOnDismissListener {
+                row.setBackgroundColor(android.graphics.Color.TRANSPARENT)
+            }
+            popup.setOnMenuItemClickListener { _ ->
+                row.setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                viewModel.cancelWorker(worker.type)
+                Log.i("MainActivity", "Worker cancelled via popup: type=${worker.type}")
+                true
+            }
+            popup.show()
         }
     }
 

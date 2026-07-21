@@ -401,7 +401,9 @@ data class ProgressWorker(
     val percent: Int = 0,
     val done: Boolean = false,
     val visible: Boolean = true,
-    val indeterminate: Boolean = false
+    val indeterminate: Boolean = false,
+    /** Server-set — true when this worker type has been cancelled via cancel-worker API. */
+    val cancelled: Boolean = false
 )
 
 // ======================================================
@@ -424,6 +426,16 @@ data class TriggerNextWindowResponse(
     val all_done: Boolean = false,
     val reason: String? = null,
     val error: String? = null
+)
+
+data class CancelWorkerRequest(
+    val type: String
+)
+
+data class CancelWorkerResponse(
+    val ok: Boolean = false,
+    val book_id: String? = null,
+    val cancelled: List<String>? = null
 )
 
 data class GenerationStateResponse(

@@ -147,6 +147,17 @@
     <string name="generate_start_failed">Could not start generation: %1$s</string>
     <string name="generate_no_scene_selected">Open a scene first to target a scope</string>
 
+    <!-- Cancel All button -->
+    <string name="toolbar_cancel_all">CANCEL ALL</string>
+    <string name="cancel_all_dialog_title">Cancel all processes?</string>
+    <string name="cancel_all_dialog_message">All active generation processes will be stopped. Progress will be lost for incomplete workers.</string>
+    <string name="cancel_all_confirm">Yes, cancel all</string>
+
+    <!-- Worker stop button -->
+    <string name="worker_stop_desc">Stop process</string>
+    <string name="worker_stop_menu_title">Stop</string>
+    <string name="worker_stop_menu_cancel">Отменить</string>
+
     <!-- Generation progress -->
     <string name="progress_label_audio">Audio</string>
     <string name="progress_label_image">Image</string>
