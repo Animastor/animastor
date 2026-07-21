@@ -18,6 +18,7 @@ module.exports = function({ redis, txtImporter, genSessionRepo, state, activeSce
         const { registerForGpu = true, buildId = 'default' } = options;
         const bgLog = (msg) => log(`[BG-GEN][${bookId}:${sessionId}] ${msg}`);
         bgLog(`🚀 === BACKGROUND WINDOW GENERATION START (registerForGpu=${registerForGpu}) ===`);
+        console.log(`[CANCEL-DEBUG] runBackgroundWindowGeneration START: bookId=${bookId}, sessionId=${sessionId}, registerForGpu=${registerForGpu}, redis=${!!redis}`);
 
         try {
             // — 1. Mark session as generating + set initial progress —
@@ -41,7 +42,9 @@ module.exports = function({ redis, txtImporter, genSessionRepo, state, activeSce
             // — 2. Bootstrap the next window from source text —
             bgLog(`📖 Calling txtImporter.bootstrapNextWindow...`);
             // Pass redis and publishProgress so bootstrapNextWindow can check cancellation
+            console.log(`[CANCEL-DEBUG] window-generator: about to call bootstrapNextWindow(bookId=${bookId}, redis=${!!redis})`);
             const result = await txtImporter.bootstrapNextWindow(bookId, progress, null, redis);
+            console.log(`[CANCEL-DEBUG] window-generator: bootstrapNextWindow вернула result: all_done=${result.all_done}, added_scenes=${result.added_scenes}, cached=${result.cached}`);
             bgLog(`📖 bootstrapNextWindow result: all_done=${result.all_done} added_scenes=${result.added_scenes} cached=${result.cached}`);
 
             if (result.all_done) {
@@ -151,13 +154,15 @@ module.exports = function({ redis, txtImporter, genSessionRepo, state, activeSce
             console.error(`[BG-GEN][${bookId}:${sessionId}] ❌ FAILED:`, err.message);
             // Don't overwrite 'cancelled' status — user requested cancellation
             const isCancelled = err.code === 'SESSION_CANCELLED' || (await isBookCancelled(bookId).catch(() => false));
+            console.log(`[CANCEL-DEBUG] window-generator CATCH: err.code=${err.code}, bookId=${bookId}, sessionId=${sessionId}, isCancelled=${isCancelled}`);
             if (isCancelled) {
-                console.log(`[BG-GEN][${bookId}:${sessionId}] Session was cancelled by user — preserving 'cancelled'`);
+                console.log(`[CANCEL-DEBUG] ❗❗❗ window-generator: ПЕРЕХВАЧЕНА ОТМЕНА — устанавливаю status=cancelled, err.message=${err.message}`);
                 await genSessionRepo.updateSession(sessionId, {
                     status: 'cancelled',
                     progress_msg: '✗ Генерация VBook остановлена пользователем',
                 }).catch(() => {});
             } else {
+                console.log(`[CANCEL-DEBUG] window-generator: НЕ cancelled → status=failed, err.message=${err.message}`);
                 await genSessionRepo.updateSession(sessionId, {
                     status: 'failed',
                     error: err.message,

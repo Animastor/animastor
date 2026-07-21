@@ -32,6 +32,7 @@ async function bootstrapWithAgent(bookId, progress, publishProgress, redis) {
     const session = await createSession(bookId, 'txt_import');
     const sessionId = session.session_id;
     console.log(`[AGENT] Session ${sessionId} created for book ${bookId}`);
+    console.log(`[CANCEL-DEBUG] bootstrapWithAgent: session=${sessionId}, bookId=${bookId}, redis=${!!redis}`);
 
     try {
         const windowInfo = pipelineRunner.getWindowText(draft.sourceText, [], [], 0);
@@ -159,14 +160,16 @@ async function bootstrapWithAgent(bookId, progress, publishProgress, redis) {
         console.error(`[AGENT] Bootstrap failed: ${err.message}`);
         // Don't overwrite 'cancelled' status — user requested cancellation
         const alreadyCancelled = err.code === 'SESSION_CANCELLED' || (await isSessionCancelled(sessionId).catch(() => false));
+        console.log(`[CANCEL-DEBUG] bootstrapWithAgent CATCH: err.code=${err.code}, sessionId=${sessionId}, alreadyCancelled=${alreadyCancelled}`);
         if (!alreadyCancelled) {
+            console.log(`[CANCEL-DEBUG] bootstrapWithAgent: НЕ cancelled → status=failed`);
             await updateSession(sessionId, {
                 status: 'failed',
                 progress_msg: `Ошибка: ${err.message}`,
             }).catch(() => {});
             _progress({ stage: 'error', message: `✗ Ошибка: ${err.message}` });
         } else {
-            console.log(`[AGENT] Bootstrap cancelled by user — preserving 'cancelled' status`);
+            console.log(`[CANCEL-DEBUG] bootstrapWithAgent: cancelled → сохраняю status=cancelled, НЕ перезаписываю`);
             _progress({ stage: 'done', message: '✗ Генерация VBook остановлена пользователем' });
         }
         throw err;
@@ -236,11 +239,12 @@ async function bootstrapNextWindow(bookId, progress, publishProgress, redis) {
 
             if (prevStatus === 'completed') {
                 console.log(`[AGENT] bootstrapNextWindow: previous session completed, all done`);
+                console.log(`[CANCEL-DEBUG] bootstrapNextWindow: prevStatus=completed — all_done, return`);
                 return { session_id: null, cached: false, added_scenes: 0, all_done: true };
             }
 
             if (prevStatus === 'cancelled') {
-                console.log(`[AGENT] bootstrapNextWindow: previous session was cancelled — aborting`);
+                console.log(`[CANCEL-DEBUG] bootstrapNextWindow: prevStatus=cancelled — aborting, all_done`);
                 return { session_id: null, cached: false, added_scenes: 0, all_done: true };
             }
 
@@ -259,11 +263,13 @@ async function bootstrapNextWindow(bookId, progress, publishProgress, redis) {
     // If cancel-worker set any session to 'cancelled', don't start a new window.
     // We do this before creating a new session because the cancelled status can
     // exist on a session that has no window_data (cancelled before saving results).
+    // ── Check if book was cancelled (even if no window_data session found) ──
     if (redis && bookId) {
         try {
             const isCancelled = await redis.sismember(`animastor:cancelled-workers:${bookId}`, 'vbook');
+            console.log(`[CANCEL-DEBUG] bootstrapNextWindow REDIS CHECK: bookId=${bookId}, redis.sismember(vbook)=${!!isCancelled}`);
             if (isCancelled) {
-                console.log(`[AGENT] bootstrapNextWindow: cancelled-workers set has vbook — aborting`);
+                console.log(`[CANCEL-DEBUG] bootstrapNextWindow: 🎯 REDIS cancelled-workers:${bookId} has vbook — aborting, all_done`);
                 return { session_id: null, cached: false, added_scenes: 0, all_done: true };
             }
         } catch (redisErr) {
@@ -480,14 +486,16 @@ async function bootstrapNextWindow(bookId, progress, publishProgress, redis) {
         console.error(`[AGENT] bootstrapNextWindow failed: ${err.message}`);
         // Don't overwrite 'cancelled' status — user requested cancellation
         const alreadyCancelled = err.code === 'SESSION_CANCELLED' || (await isSessionCancelled(sessionId).catch(() => false));
+        console.log(`[CANCEL-DEBUG] bootstrapNextWindow CATCH: err.code=${err.code}, sessionId=${sessionId}, alreadyCancelled=${alreadyCancelled}`);
         if (!alreadyCancelled) {
+            console.log(`[CANCEL-DEBUG] bootstrapNextWindow: НЕ cancelled → status=failed`);
             await updateSession(sessionId, {
                 status: 'failed',
                 progress_msg: `Ошибка: ${err.message}`,
             }).catch(() => {});
             _progress({ stage: 'error', message: `✗ Ошибка: ${err.message}` });
         } else {
-            console.log(`[AGENT] bootstrapNextWindow cancelled by user — preserving 'cancelled' status`);
+            console.log(`[CANCEL-DEBUG] bootstrapNextWindow: cancelled → сохраняю status=cancelled, НЕ перезаписываю`);
             _progress({ stage: 'done', message: '✗ Генерация VBook остановлена пользователем' });
         }
         throw err;

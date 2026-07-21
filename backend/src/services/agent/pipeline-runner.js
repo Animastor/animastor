@@ -161,6 +161,7 @@ function resolveSceneProgress(sceneText, scenes, sourceOffsetBase) {
 }
 
 async function runPipeline(sessionId, text, existingChars, existingLocs, stepIndex, progress, baseSceneCount, options = {}) {
+    console.log(`[CANCEL-DEBUG] runPipeline START sessionId=${sessionId}, bookId=${options.bookId}, stepIndex=${stepIndex}, textLen=${text.length}, redis=${!!options.redis}`);
     const _progress = progress || (() => {});
     const { publishProgress, bookId, redis: redisClient } = options;
     const sceneOffset = baseSceneCount || 0;
@@ -177,19 +178,53 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
     //      cancel-worker cancelled old sessions and a new session was created afterwards
     //      (new session has status='running' but the book is cancelled).
     async function checkCancelled() {
-        if (await isSessionCancelled(sessionId)) {
+        // LEVEL 1: session-level DB check
+        const sessCancelled = await isSessionCancelled(sessionId);
+        console.log(`[CANCEL-DEBUG] checkCancelled(sessionId=${sessionId}, bookId=${bookId}) level1(isSessionCancelled)=${sessCancelled}`);
+        if (sessCancelled) {
+            console.log(`[CANCEL-DEBUG] 🎯 LEVEL 1 TRIGGERED — session ${sessionId} status=cancelled`);
             const err = new Error('Agent session was cancelled by user');
             err.code = 'SESSION_CANCELLED';
             throw err;
         }
-        if (bookId && await isBookCancelled(bookId)) {
-            // Also update this session's status to 'cancelled' so future
-            // isSessionCancelled checks will also detect it
+
+        // LEVEL 2: book-level DB check — any cancelled session for this book
+        if (bookId) {
+            const bookCancelled = await isBookCancelled(bookId);
+            console.log(`[CANCEL-DEBUG] checkCancelled(sessionId=${sessionId}, bookId=${bookId}) level2(isBookCancelled)=${bookCancelled}`);
+            if (bookCancelled) {
+                console.log(`[CANCEL-DEBUG] 🎯 LEVEL 2 TRIGGERED — isBookCancelled(${bookId})=true, setting session ${sessionId} to cancelled`);
+                try { await updateSession(sessionId, { status: 'cancelled' }); } catch (_) {}
+                const err = new Error('Agent session was cancelled by user');
+                err.code = 'SESSION_CANCELLED';
+                throw err;
+            }
+        }
+
+        // LEVEL 3: Redis cancelled-workers check — cancel-worker ALWAYS sets this Redis key
+        // even if the DB UPDATE fails (e.g. no running/paused sessions found).
+        // This is the most reliable cancellation signal.
+        //
+        // ВАЖНО: try/catch покрывает ТОЛЬКО redisClient.sismember (ошибка соединения),
+        // НЕ throw SESSION_CANCELLED. Раньше throw был внутри try и catch (_) {} 
+        // проглатывал SESSION_CANCELLED — агент продолжал работу после отмены.
+        let cancelledByRedis = false;
+        if (bookId && redisClient) {
+            try {
+                const redisCancelled = await redisClient.sismember(`animastor:cancelled-workers:${bookId}`, 'vbook');
+                console.log(`[CANCEL-DEBUG] checkCancelled(sessionId=${sessionId}, bookId=${bookId}) level3(redis cancelled-workers)=${!!redisCancelled}`);
+                cancelledByRedis = !!redisCancelled;
+            } catch (_) { /* Redis check is best-effort */ }
+        }
+        if (cancelledByRedis) {
+            console.log(`[CANCEL-DEBUG] 🎯 LEVEL 3 TRIGGERED — Redis cancelled-workers:${bookId} has vbook, setting session ${sessionId} to cancelled`);
             try { await updateSession(sessionId, { status: 'cancelled' }); } catch (_) {}
             const err = new Error('Agent session was cancelled by user');
             err.code = 'SESSION_CANCELLED';
-            throw err;
+            throw err;  // ← этот throw теперь НЕ может быть проглочен
         }
+
+        console.log(`[CANCEL-DEBUG] checkCancelled(sessionId=${sessionId}, bookId=${bookId}) → NOT cancelled, continuing pipeline`);
     }
     let characters = existingChars || [];
     let locations = existingLocs || [];
