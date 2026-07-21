@@ -51,27 +51,27 @@
                 app:rippleColor="?attr/colorOnSurface"
                 app:strokeWidth="0dp" />
 
-            <!-- Cancel All button — shown when any generation process is active -->                <com.google.android.material.button.MaterialButton
+            <!-- Cancel All button — square warm-red button with stop icon, shown when any generation is active -->
+            <FrameLayout
                 android:id="@+id/toolbarCancelAllButton"
-                style="@style/Widget.Material3.Button.TextButton"
-                android:layout_width="wrap_content"
-                android:layout_height="40dp"
+                android:layout_width="36dp"
+                android:layout_height="36dp"
                 android:layout_marginEnd="6dp"
-                android:text="@string/toolbar_cancel_all"
-                android:textSize="11sp"
-                android:textAllCaps="true"
-                android:fontFamily="sans-serif-medium"
                 android:visibility="gone"
-                android:paddingStart="8dp"
-                android:paddingEnd="8dp"
-                android:minWidth="0dp"
-                android:minHeight="0dp"
-                app:icon="@drawable/ic_stop"
-                app:iconPadding="4dp"
-                app:iconTint="@color/cinema_error"
-                app:iconGravity="textStart"
-                app:rippleColor="@color/cinema_error"
-                android:textColor="@color/cinema_error" />
+                android:background="@drawable/ic_cancel_bg"
+                android:foreground="?attr/selectableItemBackgroundBorderless"
+                android:clickable="true"
+                android:focusable="true"
+                android:contentDescription="@string/toolbar_cancel_all">
+
+                <ImageView
+                    android:layout_width="18dp"
+                    android:layout_height="18dp"
+                    android:layout_gravity="center"
+                    android:src="@drawable/ic_stop"
+                    android:tint="@android:color/white" />
+
+            </FrameLayout>
 
             <LinearLayout
                 android:id="@+id/workerPanel"

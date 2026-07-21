@@ -181,6 +181,19 @@ module.exports = function(app, redis, deps) {
             // Clear per-worker cancel tracking (if any was set)
             await redis.del(`animastor:cancelled-workers:${bookId}`);
 
+            // Cancel VBook/AI agent sessions too
+            try {
+                const { query: pgQuery } = require('../../storage/postgres/database');
+                await pgQuery(
+                    `UPDATE agent_sessions SET status = 'cancelled', updated_at = $1
+                     WHERE book_id = $2 AND status IN ('running', 'paused')`,
+                    [Math.floor(Date.now() / 1000), bookId]
+                );
+                log(`[CANCEL-GENERATION] ${bookId}: VBook agent sessions cancelled`);
+            } catch (pgErr) {
+                console.warn(`[CANCEL-GENERATION] Failed to cancel VBook session: ${pgErr.message}`);
+            }
+
             // Also clear GPU hub stale jobs via HTTP endpoint (T4: владелец ключей — gpu-hub)
             try {
                 const hubUrl = `${config.HUB_URL}/queue/clear?book_id=${bookId}`;

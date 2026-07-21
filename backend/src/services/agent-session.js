@@ -17,6 +17,11 @@ const ALLOWED_UPDATE_COLUMNS = {
     window_data: true,
 };
 
+async function isSessionCancelled(sessionId) {
+    const result = await query(`SELECT status FROM agent_sessions WHERE session_id = $1`, [sessionId]);
+    return result.rows[0]?.status === 'cancelled';
+}
+
 async function updateSession(sessionId, updates) {
     const keys = Object.keys(updates).filter(k => ALLOWED_UPDATE_COLUMNS[k]);
     if (keys.length === 0) return;
@@ -60,6 +65,6 @@ async function failStep(stepId, error) {
 }
 
 module.exports = {
-    createSession, updateSession, getSession,
+    createSession, isSessionCancelled, updateSession, getSession,
     createStep, completeStep, failStep,
 };

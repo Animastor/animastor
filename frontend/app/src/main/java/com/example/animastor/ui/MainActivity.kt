@@ -702,6 +702,12 @@ class MainActivity : AppCompatActivity() {
     // Track VBook presence transitions
     private var _lastHasVBook = false
 
+    /** Worker type that currently has the stop-popup open (for persistent row highlight). */
+    private var _highlightedWorkerType: String? = null
+
+    /** Pre-computed semi-transparent red highlight (~12% alpha). */
+    private var _highlightColor: Int = 0
+
     /**
      * Apply the panel state computed by [GenerateViewModel.computeWorkers].
      * Handles rendering workers, showing the done row, or hiding the panel.
@@ -773,8 +779,12 @@ class MainActivity : AppCompatActivity() {
             }
             val timerText = formatTimerText(currentSec)
 
-            // Reset row background (clears any previous popup highlight)
-            row.setBackgroundColor(android.graphics.Color.TRANSPARENT)
+            // Reset row background — unless this row has an active stop-popup
+            if (_highlightedWorkerType == worker.type && _highlightColor != 0) {
+                row.setBackgroundColor(_highlightColor)
+            } else {
+                row.setBackgroundColor(android.graphics.Color.TRANSPARENT)
+            }
 
             if (worker.cancelled) {
                 // Cancelled state — show muted "Cancelled" row, no progress bar
@@ -854,17 +864,26 @@ class MainActivity : AppCompatActivity() {
         row: View,
         worker: WorkerUi
     ) {
-        // Semi-transparent red highlight (~12% alpha)
-        val errorColor = getColor(R.color.cinema_error)
-        val highlightColor = (errorColor and 0x00FFFFFF) or (0x1F shl 24)
         stopButton.setOnClickListener { view ->
+            // Compute highlight color once and cache
+            if (_highlightColor == 0) {
+                val errColor = getColor(R.color.cinema_error)
+                _highlightColor = (errColor and 0x00FFFFFF) or (0x1F shl 24)
+            }
+            val highlightColor = _highlightColor
+
+            // Track this worker type so renderWorkers re-applies highlight on each cycle
+            _highlightedWorkerType = worker.type
+            row.setBackgroundColor(highlightColor)
+
             val popup = PopupMenu(this@MainActivity, view, android.view.Gravity.END)
             popup.menu.add(0, 1, 0, getString(R.string.worker_stop_menu_cancel))
-            row.setBackgroundColor(highlightColor)
             popup.setOnDismissListener {
+                _highlightedWorkerType = null
                 row.setBackgroundColor(android.graphics.Color.TRANSPARENT)
             }
             popup.setOnMenuItemClickListener { _ ->
+                _highlightedWorkerType = null
                 row.setBackgroundColor(android.graphics.Color.TRANSPARENT)
                 viewModel.cancelWorker(worker.type)
                 Log.i("MainActivity", "Worker cancelled via popup: type=${worker.type}")

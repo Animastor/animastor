@@ -7,7 +7,7 @@
 const sourceCoverage = require('../source-coverage');
 const lazyBook = require('../../book/lazy-book');
 const config = require('../../config/runtime-config');
-const { updateSession, createSession } = require('../agent-session');
+const { updateSession, createSession, isSessionCancelled } = require('../agent-session');
 const { PROGRESS_STAGES, MAX_WINDOW_CHARS, MAX_SCENES_PER_CHUNK } = require('../agent-prompts');
 const { mergeCharacterLists } = require('../../utils/character-identity');
 const { estimateSpeechDurationSec } = require('../placeholder-audio');
@@ -164,6 +164,19 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
     const _progress = progress || (() => {});
     const { publishProgress, bookId, redis: redisClient } = options;
     const sceneOffset = baseSceneCount || 0;
+
+    // ── Cancellation helper ──
+    // Checks if the agent session has been marked as cancelled in the DB.
+    // If so, throws an error to abort pipeline execution immediately.
+    // Called between major pipeline steps; DB query overhead is negligible
+    // because each AI step takes multiple seconds.
+    async function checkCancelled() {
+        if (await isSessionCancelled(sessionId)) {
+            const err = new Error('Agent session was cancelled by user');
+            err.code = 'SESSION_CANCELLED';
+            throw err;
+        }
+    }
     let characters = existingChars || [];
     let locations = existingLocs || [];
     const rawWindowText = options.rawWindowText || text;
@@ -215,6 +228,8 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
         console.log(`[AGENT] Characters: ${existingChars.length} existing + ${mergeResult.added} new + ${mergeResult.enriched} enriched + ${mergeResult.skippedGeneric} generic skipped = ${characters.length} total, mentions: ${Object.keys(mentions).length}`);
     }
 
+    await checkCancelled();
+
     // ── Dedicated voice generation step ──
     // Generate rich voice descriptions for characters using the current window text
     // for dialogue style analysis. Overrides weak/generic voices from character
@@ -228,6 +243,8 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
             console.log(`[AGENT] Voice generation: ${voiced} characters got voice descriptions`);
         }
     }
+
+    await checkCancelled();
 
     publishVBook({ stage: 'extracting_chars', scene_index: 0, total_scenes: 0, window_size: MAX_SCENES_PER_CHUNK, message: PROGRESS_STAGES.extracting_chars });
 
@@ -261,6 +278,8 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
         locations = Array.from(mergedMap.values());
         console.log(`[AGENT] Locations: ${existingLocs.length} existing + ${added} new + ${enriched} enriched = ${locations.length} total`);
     }
+
+    await checkCancelled();
 
     // ── Scene split with unified validation ──
     const capScenes = (arr) => (arr || []).slice(0, MAX_SCENES_PER_CHUNK);
@@ -393,6 +412,8 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
         duration_retry_count: durRetryCount,
     }));
 
+    await checkCancelled();
+
     // ── Normalize characters_present → participants ──
     // The AI scene split returns characters_present, but downstream steps
     // (stepCreateVisuals, enrich, etc.) expect scene.participants.
@@ -406,6 +427,7 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
 
     const enrichedScenes = [];
     for (let si = 0; si < windowScenes.length; si++) {
+        await checkCancelled();
         const scene = windowScenes[si];
         const globalSceneIndex = sceneOffset + si;
 
@@ -476,6 +498,8 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
         });
     }
 
+    await checkCancelled();
+
     // ── Passport reconciliation pass ──
     // Before storyboard polish: remove semantically duplicate descriptions
     // that conflict with automatically-injected character passports.
@@ -516,6 +540,8 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
         }
     }
 
+    await checkCancelled();
+
     // ── Video action reconciliation pass ──
     // After passport reconciliation, fix video.actions: remove static,
     // keep only temporal/dynamic descriptions.
@@ -549,6 +575,8 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
             }
         }
     }
+
+    await checkCancelled();
 
     // ── Storyboard polish pass ──
     // After passport reconciliation, do a cross-scene continuity correction.
@@ -590,6 +618,8 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
             console.log(`[AGENT] Storyboard polish skipped: ${allVisualUnits.length} unit(s) in window (need >= 2)`);
         }
     }
+
+    await checkCancelled();
 
     // ── Video action polish pass ──
     // After storyboard polish, check video.actions for gesture continuity,

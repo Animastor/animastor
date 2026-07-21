@@ -9,7 +9,7 @@ const path = require('path');
 const lazyBook = require('../../book/lazy-book');
 const config = require('../../config/runtime-config');
 const sourceCoverage = require('../source-coverage');
-const { updateSession, createSession } = require('../agent-session');
+const { updateSession, createSession, isSessionCancelled } = require('../agent-session');
 const { PROGRESS_STAGES, MAX_SCENES_PER_CHUNK } = require('../agent-prompts');
 const pipelineSteps = require('./pipeline-steps');
 const pipelineRunner = require('./pipeline-runner');
@@ -157,11 +157,18 @@ async function bootstrapWithAgent(bookId, progress, publishProgress, redis) {
         };
     } catch (err) {
         console.error(`[AGENT] Bootstrap failed: ${err.message}`);
-        await updateSession(sessionId, {
-            status: 'failed',
-            progress_msg: `Ошибка: ${err.message}`,
-        }).catch(() => {});
-        _progress({ stage: 'error', message: `✗ Ошибка: ${err.message}` });
+        // Don't overwrite 'cancelled' status — user requested cancellation
+        const alreadyCancelled = err.code === 'SESSION_CANCELLED' || (await isSessionCancelled(sessionId).catch(() => false));
+        if (!alreadyCancelled) {
+            await updateSession(sessionId, {
+                status: 'failed',
+                progress_msg: `Ошибка: ${err.message}`,
+            }).catch(() => {});
+            _progress({ stage: 'error', message: `✗ Ошибка: ${err.message}` });
+        } else {
+            console.log(`[AGENT] Bootstrap cancelled by user — preserving 'cancelled' status`);
+            _progress({ stage: 'done', message: '✗ Генерация VBook остановлена пользователем' });
+        }
         throw err;
     }
 }
@@ -229,6 +236,11 @@ async function bootstrapNextWindow(bookId, progress, publishProgress, redis) {
 
             if (prevStatus === 'completed') {
                 console.log(`[AGENT] bootstrapNextWindow: previous session completed, all done`);
+                return { session_id: null, cached: false, added_scenes: 0, all_done: true };
+            }
+
+            if (prevStatus === 'cancelled') {
+                console.log(`[AGENT] bootstrapNextWindow: previous session was cancelled — aborting`);
                 return { session_id: null, cached: false, added_scenes: 0, all_done: true };
             }
 
@@ -450,11 +462,18 @@ async function bootstrapNextWindow(bookId, progress, publishProgress, redis) {
         };
     } catch (err) {
         console.error(`[AGENT] bootstrapNextWindow failed: ${err.message}`);
-        await updateSession(sessionId, {
-            status: 'failed',
-            progress_msg: `Ошибка: ${err.message}`,
-        }).catch(() => {});
-        _progress({ stage: 'error', message: `✗ Ошибка: ${err.message}` });
+        // Don't overwrite 'cancelled' status — user requested cancellation
+        const alreadyCancelled = err.code === 'SESSION_CANCELLED' || (await isSessionCancelled(sessionId).catch(() => false));
+        if (!alreadyCancelled) {
+            await updateSession(sessionId, {
+                status: 'failed',
+                progress_msg: `Ошибка: ${err.message}`,
+            }).catch(() => {});
+            _progress({ stage: 'error', message: `✗ Ошибка: ${err.message}` });
+        } else {
+            console.log(`[AGENT] bootstrapNextWindow cancelled by user — preserving 'cancelled' status`);
+            _progress({ stage: 'done', message: '✗ Генерация VBook остановлена пользователем' });
+        }
         throw err;
     }
 }

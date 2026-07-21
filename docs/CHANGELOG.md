@@ -42,6 +42,45 @@ All notable changes to Animastor are documented here.
     Generate button when any generation is active. Shows confirm dialog before calling `cancelGeneration()`.
   - Build: frontend BUILD SUCCESSFUL, 577/578 backend tests pass (1 pre-existing failure).
 
+### Fixed
+
+- **VBook Stop/Cancel All не останавливали VBook генерацию — агент продолжал работу**
+  (`backend/src/services/agent-session.js`,
+  `backend/src/services/agent/pipeline-runner.js`,
+  `backend/src/services/agent/bootstrap.js`,
+  `backend/src/routes/book/generation-routes.cjs`):
+  - **Проблема:** per-worker stop и Cancel All не останавливали VBook генерацию.
+    Cancel-worker проставлял `status='cancelled'` в БД, но агент не проверял этот статус
+    между шагами AI пайплайна. `bootstrapNextWindow` не проверял cancelled-статус предыдущей
+    сессии и создавал новую с `status='running'`, которая игнорировала отмену. Глобальный
+    cancel-generation вообще не отменял VBook.
+  - **Фикс (`agent-session.js`):** добавлена `isSessionCancelled(sessionId)`.
+  - **Фикс (`pipeline-runner.js`):** `checkCancelled()` между ВСЕМИ шагами пайплайна.
+    При cancelled статусе кидает `SESSION_CANCELLED`.
+  - **Фикс (`bootstrap.js`):** catch-блоки не перезаписывают `cancelled` на `failed`.
+    `bootstrapNextWindow` проверяет `prevStatus === 'cancelled'`.
+  - **Фикс (`generation-routes.cjs`):** глобальный `cancel-generation` теперь тоже отменяет
+    VBook agent sessions.
+  - 578/578 тестов проходят.
+
+- **Cancel All кнопка — красная подсветка строки держится только мгновение**
+  (`frontend/.../MainActivity.kt`):
+  - **Проблема:** при открытии PopupMenu красная подсветка строки пропадала через ~1.5с
+    при следующем цикле поллера (`renderWorkers()` сбрасывал фон в TRANSPARENT).
+  - **Фикс:** добавлены `_highlightedWorkerType` и `_highlightColor`. `renderWorkers()`
+    восстанавливает подсветку в каждом цикле для строки с открытым поп-апом.
+
+### Changed
+
+- **Cancel All кнопка переделана на квадратную тёпло-красную с иконкой стоп**
+  (`frontend/.../activity_main.xml`, `frontend/.../colors.xml`,
+  `frontend/app/src/main/res/drawable/ic_cancel_bg.xml`):
+  - **Проблема:** Cancel All была текстовой кнопкой с красным контуром (MaterialButton).
+    Не вписывалась в общий дизайн.
+  - **Фикс:** FrameLayout 36х36dp со скруглённой прямоугольной тёпло-красной подложкой
+    (ic_cancel_bg.xml, cinema_cancel = #E55353), иконка ■ Stop (18dp, белая).
+    Ripple-эффект через selectableItemBackgroundBorderless.
+
 - **Prompt Profiles — model-specific правила промптинга вынесены из хардкода в скилл-файлы**
   (`backend/src/services/ai-loader.js`, `backend/src/services/prompt-profile-loader.js`,
   `backend/src/services/agent/pipeline-steps.js`,
