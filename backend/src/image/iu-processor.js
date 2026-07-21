@@ -17,7 +17,13 @@ const { applyImageValue } = require('./connector-utils');
 const { collectSceneUnits } = require('./registry');
 
 async function saveIUMetadata(buildId, bookId, chapterId, sceneId, unit, sceneDuration, fullText, sceneOrder) {
-    const iuText = unit.audio?.text || unit.text || '';
+    // IMPORTANT: always use unit.text (full text with speech markers for dialogue units),
+    // NOT unit.audio?.text (bare dialogue, e.g. "Дайте нарзану" instead of
+    // "— Дайте нарзану, — попросил Берлиоз."). The text field is used for:
+    //   - Display in storyboard/timeline
+    //   - text_length for IU timing recalculation (text-length proportional distribution)
+    // Using audio.text would give dialogue units 3-4x less timing than they should have.
+    const iuText = unit.text || '';
     const proportion = fullText.length > 0 ? iuText.length / fullText.length : 0;
     const iuDuration = sceneDuration * proportion;
 
