@@ -5,6 +5,9 @@
   "label": "Image Generation (Qwen)",
   "description": "Generates images using Qwen-based ComfyUI workflow with CLIP text encoding",
   "type": "image",
+  "profile": {
+    "imageProfile": "qwen-image"
+  },
   "metadata": {
     "author": "Animastor",
     "updated": "2026-06-19",

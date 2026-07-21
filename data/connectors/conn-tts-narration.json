@@ -5,6 +5,9 @@
   "label": "TTS Narration (Qwen)",
   "description": "Text-to-speech narration using Qwen3-TTS Voice Design",
   "type": "audio",
+  "profile": {
+    "audioProfile": "qwen-tts"
+  },
   "metadata": {
     "author": "Animastor",
     "updated": "2026-06-19",

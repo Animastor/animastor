@@ -245,3 +245,17 @@ data class WorkflowSummaryResponse(
     val withConnector: Int = 0,
     val withoutConnector: Int = 0
 )
+
+// ======================================================
+// Prompt Profiles Models
+// ======================================================
+
+data class ConnectorProfilesResponse(
+    val profiles: PromptProfiles = PromptProfiles()
+)
+
+data class PromptProfiles(
+    val audio: String? = null,
+    val image: String? = null,
+    val video: String? = null
+)

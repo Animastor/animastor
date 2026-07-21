@@ -5,6 +5,9 @@
   "label": "Video Generation (1 Image)",
   "description": "LTX video generation with single image input — 1 source image, 1 LTXVAddGuide",
   "type": "video",
+  "profile": {
+    "videoProfile": "ltx-2.3"
+  },
   "metadata": {
     "author": "Animastor",
     "updated": "2026-06-19",

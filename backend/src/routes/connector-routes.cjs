@@ -230,6 +230,37 @@ module.exports = function(app, redis, deps) {
     });
 
     // ======================================================
+    // GET PROMPT PROFILES — aggregated profile info by type
+    // ======================================================
+    app.get('/api/v1/connectors/profiles', async (req, res) => {
+        try {
+            const result = wfManager.getConnectorsGrouped();
+            const profiles = { audio: null, image: null, video: null };
+
+            for (const type of ['audio', 'image', 'video']) {
+                const connectors = result[type] || [];
+                // Collect unique profiles from all connectors of this type
+                const profileSet = new Set();
+                for (const conn of connectors) {
+                    if (conn.profile) {
+                        if (conn.profile.audioProfile) profileSet.add(conn.profile.audioProfile);
+                        if (conn.profile.imageProfile) profileSet.add(conn.profile.imageProfile);
+                        if (conn.profile.videoProfile) profileSet.add(conn.profile.videoProfile);
+                    }
+                }
+                if (profileSet.size > 0) {
+                    profiles[type] = Array.from(profileSet).join(', ');
+                }
+            }
+
+            res.json({ profiles });
+        } catch (err) {
+            console.error('[CONNECTORS] Profiles error:', err.message);
+            res.status(500).json({ error: err.message });
+        }
+    });
+
+    // ======================================================
     // UPDATE CONNECTOR BINDING (parameterized)
     // ======================================================
     app.put('/api/v1/connectors/:name/bindings', async (req, res) => {

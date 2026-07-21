@@ -5,6 +5,9 @@
   "label": "Video Generation (3 Images)",
   "description": "LTX video generation with 3 image inputs — 3 LTXVAddGuide nodes",
   "type": "video",
+  "profile": {
+    "videoProfile": "ltx-2.3"
+  },
   "metadata": {
     "author": "Animastor",
     "updated": "2026-06-19",

@@ -15,19 +15,44 @@ const cache = {
 };
 
 /**
- * Read all .md files from a directory, return as { filename (no ext): content }
+ * Recursively walk a directory, collecting .md files.
+ * Returns { relativePath_without_ext: content }.
+ * For nested files, the key includes the subdirectory path:
+ *   "video/ltx-2.3" → content of skills/video/ltx-2.3.md
+ */
+function walkMdDir(dirPath, baseDir) {
+    const result = {};
+    if (!fs.existsSync(dirPath)) return result;
+    const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+    for (const entry of entries) {
+        const fullPath = path.join(dirPath, entry.name);
+        if (entry.isDirectory()) {
+            // Recurse into subdirectory
+            const subResult = walkMdDir(fullPath, baseDir);
+            Object.assign(result, subResult);
+        } else if (entry.name.endsWith('.md')) {
+            // Compute key relative to baseDir, without .md extension
+            const relPath = path.relative(baseDir, fullPath);
+            const key = relPath.replace(/\.md$/, '');
+            try {
+                const content = fs.readFileSync(fullPath, 'utf-8').trim();
+                result[key] = content;
+            } catch (e) {
+                console.warn(`[AI-Loader] Failed to read ${fullPath}: ${e.message}`);
+            }
+        }
+    }
+    return result;
+}
+
+/**
+ * Read all .md files from a directory (recursively), return as { key: content }.
+ * Keys are paths relative to the subdirectory, without .md extension.
+ * Example: loadMdDir('skills') returns { "video/ltx-2.3": "...", "camera_language": "..." }
  */
 function loadMdDir(subdir) {
     const dir = path.join(AI_DIR, subdir);
-    const result = {};
-    if (!fs.existsSync(dir)) return result;
-    const files = fs.readdirSync(dir).filter(f => f.endsWith('.md'));
-    for (const file of files) {
-        const key = path.basename(file, '.md');
-        const content = fs.readFileSync(path.join(dir, file), 'utf-8').trim();
-        result[key] = content;
-    }
-    return result;
+    return walkMdDir(dir, dir);
 }
 
 /**
@@ -51,12 +76,30 @@ function loadJsonDir(subdir) {
 }
 
 /**
- * Get mtime for a directory (latest mtime of any file in it)
+ * Recursively walk a directory and collect mtime of every file.
+ */
+function collectAllFiles(dir) {
+    const files = [];
+    if (!fs.existsSync(dir)) return files;
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    for (const entry of entries) {
+        const fullPath = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+            files.push(...collectAllFiles(fullPath));
+        } else {
+            files.push(fullPath);
+        }
+    }
+    return files;
+}
+
+/**
+ * Get mtime for a directory (latest mtime of any file in it, recursively).
  */
 function getDirMtime(subdir) {
     const dir = path.join(AI_DIR, subdir);
     if (!fs.existsSync(dir)) return 0;
-    const files = fs.readdirSync(dir).map(f => path.join(dir, f));
+    const files = collectAllFiles(dir);
     if (files.length === 0) return 0;
     const stats = files.map(f => {
         try { return fs.statSync(f).mtimeMs; } catch { return 0; }

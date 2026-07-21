@@ -442,7 +442,7 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
         });
 
         const nextScene = windowScenes[si + 1] || null;
-        const visualUnits = await pipelineSteps.stepCreateVisuals(sessionId, scene, units, globalSceneIndex, characters, locations, stepIndex, _progress, nextScene, mentions);
+        const visualUnits = await pipelineSteps.stepCreateVisuals(sessionId, scene, units, globalSceneIndex, characters, locations, stepIndex, _progress, nextScene, mentions, options.promptProfiles);
         const sceneSpan = coverage.scene_spans[si] || null;
         let annotatedUnits = visualUnits;
 
@@ -534,7 +534,7 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
         );
 
         if (allVisualUnits.length >= 1) {
-            const reconciled = await pipelineSteps.stepReconcileVideoActions(sessionId, allVisualUnits, characters, stepIndex, _progress);
+            const reconciled = await pipelineSteps.stepReconcileVideoActions(sessionId, allVisualUnits, characters, stepIndex, _progress, options.promptProfiles);
 
             // Map results back into enrichedScenes
             for (const rec of reconciled) {
@@ -566,7 +566,7 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
         );
 
         if (allVisualUnits.length >= 2) {
-            const polished = await pipelineSteps.stepPolishStoryboard(sessionId, allVisualUnits, characters, locations, stepIndex, _progress);
+            const polished = await pipelineSteps.stepPolishStoryboard(sessionId, allVisualUnits, characters, locations, stepIndex, _progress, options.promptProfiles);
 
             // Map results back into enrichedScenes
             for (const pu of polished) {
@@ -609,7 +609,7 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
         );
 
         if (allVisualUnits.length >= 2) {
-            const polished = await pipelineSteps.stepPolishVideoActions(sessionId, allVisualUnits, characters, locations, stepIndex, _progress);
+            const polished = await pipelineSteps.stepPolishVideoActions(sessionId, allVisualUnits, characters, locations, stepIndex, _progress, options.promptProfiles);
 
             // Map results back into enrichedScenes
             for (const pu of polished) {

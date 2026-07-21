@@ -14,6 +14,7 @@ import com.example.animastor.BuildConfig
 import com.example.animastor.R
 import com.example.animastor.databinding.DialogDeleteVbookBinding
 import com.example.animastor.databinding.FragmentSettingsBinding
+import com.example.animastor.network.RetrofitClient
 import kotlinx.coroutines.launch
 
 class SettingsFragment : Fragment(R.layout.fragment_settings) {
@@ -59,6 +60,20 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
 
         b.serverUrlInput.setText(BuildConfig.BASE_URL)
         b.debugInfo.text = "App: ${BuildConfig.VERSION_NAME}\nServer: ${BuildConfig.BASE_URL}"
+
+        // ── Load Prompt Profiles ──
+        lifecycleScope.launch {
+            try {
+                val resp = RetrofitClient.api.getConnectorProfiles()
+                b.audioProfileValue.text = resp.profiles.audio ?: getString(R.string.workflow_manager_no_workflows)
+                b.imageProfileValue.text = resp.profiles.image ?: getString(R.string.workflow_manager_no_workflows)
+                b.videoProfileValue.text = resp.profiles.video ?: getString(R.string.workflow_manager_no_workflows)
+            } catch (e: Exception) {
+                b.audioProfileValue.text = "—"
+                b.imageProfileValue.text = "—"
+                b.videoProfileValue.text = "—"
+            }
+        }
 
         b.clearCacheButton.setOnClickListener {
             if (viewModel.bookId.isBlank()) {

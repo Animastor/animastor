@@ -1,0 +1,193 @@
+# Prompt Profiles — Architecture & Implementation Plan
+
+## 1. Проблема
+
+Сейчас все правила построения промптов зашиты в `backend/src/services/agent-prompts.js`
+как константы `SYSTEM_PROMPTS`. Это создаёт несколько проблем:
+
+- **LTX-specific знание** в `video_action_reconciliation` и `video_action_polish`
+  (правила про reference image, temporal vs static) жёстко закодировано в JS.
+- При добавлении новой модели (Veo, V1, Kling, Wan) нужно менять код агента.
+- Нельзя иметь разные версии промптинга для одной модели (ltx-2.3 vs ltx-2.4).
+- Знания о промптинге распределены между JS-строкой и документацией — нет единого источника истины.
+
+## 2. Решение: Prompt Profiles
+
+**Prompt Profile** — это набор правил промптинга для конкретной модели, хранящийся
+в виде markdown-файла в `backend/ai/skills/`.
+
+### Принцип
+
+```
+Workflow (ComfyUI JSON) → выбирает модель
+       ↓
+Connector (JSON) → содержит profile: "ltx-2.3"
+       ↓
+Skill-файл (backend/ai/skills/video/ltx-2.3.md) → правила промптинга
+       ↓
+Agent Pipeline — перед генерацией промпта читает соответствующий Skill
+                  и использует его рекомендации
+```
+
+### Структура скиллов
+
+```
+backend/ai/skills/
+├── video/
+│   ├── ltx-2.3.md          # LTX 2.3 Image-to-Video prompting rules
+│   ├── ltx-2.4.md          # (будущее) LTX 2.4 prompting rules
+│   ├── veo.md              # (будущее) Veo prompting rules
+│   └── kling.md            # (будущее) Kling prompting rules
+├── image/
+│   ├── qwen-image.md       # Qwen Image prompting rules
+│   ├── flux.md             # (будущее) Flux prompting rules
+│   └── sdxl.md             # (будущее) SDXL prompting rules
+├── audio/
+│   ├── qwen-tts.md         # Qwen TTS prompting rules
+│   └── fish-speech.md      # (будущее) Fish Speech prompting rules
+├── (существующие общие скиллы)
+│   ├── camera_language.md
+│   ├── composition.md
+│   ├── continuity.md
+│   ├── directing.md
+│   ├── entity_extraction.md
+│   ├── lighting.md
+│   ├── prompt_engineering.md
+│   └── storyboard.md
+```
+
+### Типы профилей
+
+| Тип | Назначение | Примеры |
+|---|---|---|
+| `videoProfile` | Правила для `video.action` | `ltx-2.3`, `veo`, `kling` |
+| `imageProfile` | Правила для `image.prompt` | `qwen-image`, `flux` |
+| `audioProfile` | Правила для `audio.*` | `qwen-tts`, `fish-speech` |
+
+## 3. Изменения в Connector
+
+Каждый connector (в `data/connectors/`) получает поле `profile`, указывающее,
+какой профиль промптинга соответствует его workflow:
+
+```json
+{
+  "connectorVersion": "1.0.0",
+  "workflow": "video-ltx-1p",
+  "type": "video",
+  "profile": {
+    "videoProfile": "ltx-2.3"
+  },
+  ...
+}
+```
+
+### Mapping connector → profile
+
+| Connector | type | profile |
+|---|---|---|
+| `conn-video-1p` | video | `{ "videoProfile": "ltx-2.3" }` |
+| `conn-video-2p` | video | `{ "videoProfile": "ltx-2.3" }` |
+| `conn-video-3p` | video | `{ "videoProfile": "ltx-2.3" }` |
+| `conn-video-4p` | video | `{ "videoProfile": "ltx-2.3" }` |
+| `conn-image-generation` | image | `{ "imageProfile": "qwen-image" }` |
+| `conn-tts-dialogue` | audio | `{ "audioProfile": "qwen-tts" }` |
+| `conn-tts-narration` | audio | `{ "audioProfile": "qwen-tts" }` |
+
+## 4. Изменения в Agent Pipeline
+
+### 4.1 Загрузка скилла
+
+Перед шагами, которые генерируют промпты, агент проверяет активный профиль
+и загружает соответствующий skill-файл через `ai-loader.js`:
+
+```js
+const aiLoader = require('../ai-loader');
+
+function getPromptProfile(profileName, profileType) {
+  // profileName = "ltx-2.3", profileType = "video"
+  // Ищет: backend/ai/skills/video/ltx-2.3.md
+  const skillKey = `${profileType}/${profileName}`;
+  const skill = aiLoader.getSkill(skillKey);
+  return skill || null;
+}
+```
+
+### 4.2 Какие шаги используют профили
+
+| Шаг пайплайна | Какой профиль | Что делает с скиллом |
+|---|---|---|
+| `stepCreateVisuals` | `imageProfile` + `videoProfile` | Добавляет skill в system prompt перед генерацией `image.prompt` и `video.action` |
+| `stepReconcilePassports` | — | Не меняется (работа с паспортами, не с промптами) |
+| `stepReconcileVideoActions` | `videoProfile` | Добавляет video skill в system prompt |
+| `stepPolishVideoActions` | `videoProfile` | Добавляет video skill в system prompt |
+| `stepPolishStoryboard` | `imageProfile` | Добавляет image skill в system prompt |
+
+### 4.3 Передача профиля в pipeline
+
+Профиль передаётся через `options` в `runPipeline()`:
+
+```js
+const result = await runPipeline(sessionId, text, chars, locs, stepIndex, progress, sceneOffset, {
+  ...options,
+  promptProfiles: {
+    videoProfile: "ltx-2.3",   // из активного коннектора
+    imageProfile: "qwen-image",
+    audioProfile: "qwen-tts"
+  }
+});
+```
+
+## 5. Изменения во Frontend
+
+### 5.1 Экран Настроек → Секция Prompt Profiles
+
+На экране Settings добавляется секция **Prompt Profiles** после Workflow Manager
+и до Cache/Storyboard.
+
+Порядок: **Audio → Image → Video** (соответствует порядку генерации).
+
+Каждая строка показывает:
+- Иконка/лейбл типа
+- Название активного профиля (определяется выбранным workflow)
+- Статус: отображается read-only, так как профиль определяется workflow
+
+### 5.2 Макет
+
+```
+┌──────────────────────────────────────┐
+│  Prompt Profiles                     │
+│                                      │
+│  🎤 Audio Profile  →  qwen-tts      │
+│  🖼️ Image Profile  →  qwen-image    │
+│  🎬 Video Profile  →  ltx-2.3       │
+│                                      │
+│  (read-only — determined by workflow)│
+└──────────────────────────────────────┘
+```
+
+## 6. Порядок реализации
+
+### Фаза 1 — Документация и скилл-файлы
+1. ✅ Этот документ
+2. ✅ `backend/ai/skills/video/ltx-2.3.md` — из беседы с ChatGPT
+3. ✅ `backend/ai/skills/image/qwen-image.md` — базовые правила для Qwen Image
+4. ✅ `backend/ai/skills/audio/qwen-tts.md` — базовые правила для Qwen TTS
+
+### Фаза 2 — Backend
+5. ✅ `ai-loader.js`: поддержка поддиректорий в loadMdDir()
+6. ✅ `prompt-profile-loader.js`: новый модуль для загрузки профилей
+7. ✅ Добавить поле `profile` в connector JSONs
+8. ✅ Модифицировать `pipeline-steps.js`: inject skill в system prompt
+9. ✅ Модифицировать `pipeline-runner.js`: передача promptProfiles в options
+
+### Фаза 3 — Frontend
+10. ✅ Prompt Profiles секция на экране Settings
+11. ✅ API endpoint `/api/workflows/prompt-profiles` для статуса профилей
+
+## 7. Дальнейшее расширение
+
+- **Ручной выбор профиля**: в будущем можно дать пользователю возможность
+  переопределить профиль для каждого типа независимо от workflow.
+- **Версионирование**: `ltx-2.3.md`, `ltx-2.4.md` — разные файлы = разные профили.
+- **A/B тестирование**: можно добавить fallback-профиль для сравнения.
+- **Кастомные профили**: пользовательские .md файлы в отдельной директории.

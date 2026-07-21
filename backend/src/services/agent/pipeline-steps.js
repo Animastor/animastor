@@ -6,6 +6,7 @@
 
 const aiCaller = require('./ai-caller');
 const imageUtils = require('./image-utils');
+const promptProfileLoader = require('../prompt-profile-loader');
 const {
     createStep, completeStep, failStep, updateSession,
 } = require('../agent-session');
@@ -468,7 +469,7 @@ async function stepReconcilePassports(sessionId, allVisualUnits, characters, ste
     }
 }
 
-async function stepReconcileVideoActions(sessionId, allVisualUnits, characters, stepIndex, progress) {
+async function stepReconcileVideoActions(sessionId, allVisualUnits, characters, stepIndex, progress, promptProfiles) {
     const _progress = progress || (() => {});
     _progress({ stage: 'video_action_reconciliation', message: PROGRESS_STAGES.video_action_reconciliation });
     await updateSession(sessionId, { progress_msg: PROGRESS_STAGES.video_action_reconciliation });
@@ -486,8 +487,17 @@ async function stepReconcileVideoActions(sessionId, allVisualUnits, characters, 
         `video.action="${(u.video?.action || '').substring(0, 200)}"`
     ).join('\n');
 
+    // Inject video prompt profile if available
+    let videoReconPrompt = SYSTEM_PROMPTS.video_action_reconciliation;
+    if (promptProfiles?.videoProfile) {
+        const skillSection = promptProfileLoader.buildSkillSection('video', promptProfiles.videoProfile);
+        if (skillSection) {
+            videoReconPrompt = `${skillSection}\n\n${videoReconPrompt}`;
+        }
+    }
+
     const messages = [
-        { role: 'system', content: SYSTEM_PROMPTS.video_action_reconciliation },
+        { role: 'system', content: videoReconPrompt },
         { role: 'user', content: `Fix video.action for these ${allVisualUnits.length} units — ensure each describes temporal/dynamic change only, not static composition:\n\n${unitsStr}` },
     ];
 
@@ -526,7 +536,7 @@ async function stepReconcileVideoActions(sessionId, allVisualUnits, characters, 
     }
 }
 
-async function stepPolishStoryboard(sessionId, allVisualUnits, characters, locations, stepIndex, progress) {
+async function stepPolishStoryboard(sessionId, allVisualUnits, characters, locations, stepIndex, progress, promptProfiles) {
     const _progress = progress || (() => {});
     _progress({ stage: 'polishing_storyboard', message: PROGRESS_STAGES.polishing_storyboard });
     await updateSession(sessionId, { progress_msg: PROGRESS_STAGES.polishing_storyboard });
@@ -558,7 +568,17 @@ async function stepPolishStoryboard(sessionId, allVisualUnits, characters, locat
         `Unit ${i}: scene_index=${u.sceneIndex}, unit_index=${u.unitIndex}, scene_title="${u.sceneTitle || ''}", type="${u.type || 'unknown'}", shot="${u.image?.shot || 'unknown'}", prompt="${(u.image?.prompt || '').substring(0, 200)}"`
     ).join('\n');
 
-    const prompt = SYSTEM_PROMPTS.storyboard_polish
+    let polishPrompt = SYSTEM_PROMPTS.storyboard_polish;
+
+    // Inject image prompt profile if available (for shot type, style rules)
+    if (promptProfiles?.imageProfile) {
+        const skillSection = promptProfileLoader.buildSkillSection('image', promptProfiles.imageProfile);
+        if (skillSection) {
+            polishPrompt = `${skillSection}\n\n${polishPrompt}`;
+        }
+    }
+
+    const prompt = polishPrompt
         .replace('%CHARACTERS%', charsContext)
         .replace('%LOCATIONS%', locsContext)
         .replace('%SCENES%', scenesStr || '(no scene text available)')
@@ -611,7 +631,7 @@ async function stepPolishStoryboard(sessionId, allVisualUnits, characters, locat
     }
 }
 
-async function stepPolishVideoActions(sessionId, allVisualUnits, characters, locations, stepIndex, progress) {
+async function stepPolishVideoActions(sessionId, allVisualUnits, characters, locations, stepIndex, progress, promptProfiles) {
     const _progress = progress || (() => {});
     _progress({ stage: 'video_action_polish', message: PROGRESS_STAGES.video_action_polish });
     await updateSession(sessionId, { progress_msg: PROGRESS_STAGES.video_action_polish });
@@ -645,7 +665,17 @@ async function stepPolishVideoActions(sessionId, allVisualUnits, characters, loc
         `video.action="${(u.video?.action || '').substring(0, 150)}"`
     ).join('\n');
 
-    const prompt = SYSTEM_PROMPTS.video_action_polish
+    let polishPrompt = SYSTEM_PROMPTS.video_action_polish;
+
+    // Inject video prompt profile if available (for motion rules, camera vocabulary)
+    if (promptProfiles?.videoProfile) {
+        const skillSection = promptProfileLoader.buildSkillSection('video', promptProfiles.videoProfile);
+        if (skillSection) {
+            polishPrompt = `${skillSection}\n\n${polishPrompt}`;
+        }
+    }
+
+    const prompt = polishPrompt
         .replace('%CHARACTERS%', charsContext)
         .replace('%LOCATIONS%', locsContext)
         .replace('%SCENES%', scenesStr || '(no scene text available)')
@@ -691,7 +721,7 @@ async function stepPolishVideoActions(sessionId, allVisualUnits, characters, loc
     }
 }
 
-async function stepCreateVisuals(sessionId, scene, units, sceneIndex, characters, locations, stepIndex, progress, nextScene, mentions) {
+async function stepCreateVisuals(sessionId, scene, units, sceneIndex, characters, locations, stepIndex, progress, nextScene, mentions, promptProfiles) {
     const _progress = progress || (() => {});
     const msg = PROGRESS_STAGES.creating_visuals(sceneIndex);
     _progress({ stage: 'creating_visuals', message: msg });
@@ -811,7 +841,22 @@ async function stepCreateVisuals(sessionId, scene, units, sceneIndex, characters
         `Unit ${i + 1}: text="${(u.text || '').substring(0, 300)}", type="${u.type || 'perception'}"`
     ).join('\n');
 
-    const prompt = SYSTEM_PROMPTS.visuals
+    // Inject prompt profiles if available — model-specific rules for image & video
+    let visualsPrompt = SYSTEM_PROMPTS.visuals;
+    if (promptProfiles) {
+        const imageSkill = promptProfiles.imageProfile
+            ? promptProfileLoader.buildSkillSection('image', promptProfiles.imageProfile)
+            : '';
+        const videoSkill = promptProfiles.videoProfile
+            ? promptProfileLoader.buildSkillSection('video', promptProfiles.videoProfile)
+            : '';
+        const skillBlock = [imageSkill, videoSkill].filter(Boolean).join('\n');
+        if (skillBlock) {
+            visualsPrompt = `${skillBlock}\n\n${visualsPrompt}`;
+        }
+    }
+
+    const prompt = visualsPrompt
         .replace('%CONTEXT%', contextStr)
         .replace('%EXAMPLES%', imageUtils.buildImageExemplars())
         .replace('%UNITS%', unitsStr);

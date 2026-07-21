@@ -5,6 +5,9 @@
   "label": "TTS Dialogue (Qwen)",
   "description": "Multi-character dialogue TTS using Qwen3-TTS Role Bank and Advanced Dialogue Engine",
   "type": "audio",
+  "profile": {
+    "audioProfile": "qwen-tts"
+  },
   "metadata": {
     "author": "Animastor",
     "updated": "2026-06-19",

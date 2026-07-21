@@ -6,6 +6,47 @@ All notable changes to Animastor are documented here.
 
 ## [Unreleased] — 2026-07-21
 
+### Added
+
+- **Prompt Profiles — model-specific правила промптинга вынесены из хардкода в скилл-файлы**
+  (`backend/src/services/ai-loader.js`, `backend/src/services/prompt-profile-loader.js`,
+  `backend/src/services/agent/pipeline-steps.js`,
+  `backend/src/services/agent/pipeline-runner.js`,
+  `backend/src/routes/connector-routes.cjs`,
+  `data/connectors/*.json`,
+  `frontend/.../SettingsFragment.kt`, `frontend/.../fragment_settings.xml`,
+  `frontend/.../strings.xml`, `frontend/.../BackendApi.kt`, `frontend/.../ConnectorModels.kt`):
+  - **Проблема:** правила промптинга для LTX 2.3 (temporal/dynamic, reference image = identity)
+    были зашиты в JS-константы `SYSTEM_PROMPTS.video_action_reconciliation` и
+    `video_action_polish` в `agent-prompts.js`. При добавлении новой модели (Veo, V1, Kling, Wan)
+    требовалось менять код агента.
+  - **Решение:** модель-специфичные правила промптинга хранятся как markdown-файлы в
+    `backend/ai/skills/{type}/{profile}.md` и загружаются агентом перед генерацией промпта.
+  - **Скилл-файлы (новые):**
+    - `backend/ai/skills/video/ltx-2.3.md` — LTX 2.3 I2V: temporal-only, camera vocabulary,
+      motion vocabulary, reference image = identity.
+    - `backend/ai/skills/image/qwen-image.md` — Qwen Image: natural language, spatial arrangement,
+      composition-first ordering.
+    - `backend/ai/skills/audio/qwen-tts.md` — Qwen TTS: clean text, proper punctuation.
+  - **ai-loader.js:** рекурсивный обход поддиректорий (".md" в `video/`, `image/`, `audio/`),
+    ключи вида `"video/ltx-2.3"`. `getDirMtime` теперь рекурсивный.
+  - **prompt-profile-loader.js:** новый модуль — `getVideoProfile()`, `getImageProfile()`,
+    `buildSkillSection()` для инъекции скилла в system prompt.
+  - **pipeline-steps.js:** 4 шага (`stepCreateVisuals`, `stepReconcileVideoActions`,
+    `stepPolishStoryboard`, `stepPolishVideoActions`) — читают `promptProfiles` из параметров
+    и inject скилл-секцию перед основным промптом.
+  - **pipeline-runner.js:** передаёт `options.promptProfiles` во все шаги (по умолчанию
+    `undefined` — система работает без изменений, постепенный rollout).
+  - **Connector profile:** в каждый `data/connectors/*.json` добавлено поле `profile`:
+    `videoProfile: "ltx-2.3"`, `imageProfile: "qwen-image"`, `audioProfile: "qwen-tts"`.
+  - **API endpoint:** `GET /api/v1/connectors/profiles` — агрегированные профили по типам.
+  - **Frontend:**
+    - `fragment_settings.xml` — секция Prompt Profiles (Audio → Image → Video) над Workflow Manager.
+    - `SettingsFragment.kt` — загрузка профилей через API при открытии настроек.
+    - `BackendApi.kt` / `ConnectorModels.kt` — модель `ConnectorProfilesResponse`.
+  - **Design doc:** `docs/07-agents-and-generators/AGENT_PROMPT_PROFILES.md`.
+  - 577/578 тестов проходят (1 pre-existing failure).
+
 ### Fixed
 
 - **IU тайминги диалоговых юнитов: text_length считался от audio.text вместо unit.text**
