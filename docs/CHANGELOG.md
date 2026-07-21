@@ -42,6 +42,11 @@ All notable changes to Animastor are documented here.
     Generate button when any generation is active. Shows confirm dialog before calling `cancelGeneration()`.
   - Build: frontend BUILD SUCCESSFUL, 577/578 backend tests pass (1 pre-existing failure).
 
+- **VBook агент не убиваем — window-generator.cjs перезаписывал cancelled на failed и не передавал redis в bootstrapNextWindow**
+  (`backend/src/services/window-generator.cjs`):
+  - **Проблема:** `window-generator.cjs` вызывал `bootstrapNextWindow(bookId, progress)` БЕЗ `redis`, из-за чего Redis cancelled-workers проверка в bootstrap.js пропускалась. Хуже того: catch-блок ВСЕГДА ставил `status='failed'`, перезаписывая `cancelled`. После этого `trigger-next-window` не находил cancelled сессии и запускал новые окна — бесконечный цикл.
+  - **Фикс:** импортирован `isBookCancelled` из agent-session. `redis` передаётся в `bootstrapNextWindow(bookId, progress, null, redis)`. Catch-блок проверяет `err.code === 'SESSION_CANCELLED' || isBookCancelled(bookId)` — если cancelled, сохраняет `status='cancelled'`.
+
 ### Fixed
 
 - **VBook Stop не останавливал агента — checkCancelled проверял sessionId, а новая сессия имела status=running**

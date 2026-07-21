@@ -6,6 +6,7 @@
 // scenes for GPU processing, and reports progress.
 
 const { log } = require('../helpers/utils.cjs');
+const { isBookCancelled } = require('./agent-session');
 
 module.exports = function({ redis, txtImporter, genSessionRepo, state, activeScenes, placeholderAudio, saveChunk, config }) {
     /**
@@ -39,7 +40,8 @@ module.exports = function({ redis, txtImporter, genSessionRepo, state, activeSce
 
             // — 2. Bootstrap the next window from source text —
             bgLog(`📖 Calling txtImporter.bootstrapNextWindow...`);
-            const result = await txtImporter.bootstrapNextWindow(bookId, progress);
+            // Pass redis and publishProgress so bootstrapNextWindow can check cancellation
+            const result = await txtImporter.bootstrapNextWindow(bookId, progress, null, redis);
             bgLog(`📖 bootstrapNextWindow result: all_done=${result.all_done} added_scenes=${result.added_scenes} cached=${result.cached}`);
 
             if (result.all_done) {
@@ -147,11 +149,21 @@ module.exports = function({ redis, txtImporter, genSessionRepo, state, activeSce
             }
         } catch (err) {
             console.error(`[BG-GEN][${bookId}:${sessionId}] ❌ FAILED:`, err.message);
-            await genSessionRepo.updateSession(sessionId, {
-                status: 'failed',
-                error: err.message,
-                progress_msg: `✗ Failed: ${err.message}`,
-            }).catch(() => {});
+            // Don't overwrite 'cancelled' status — user requested cancellation
+            const isCancelled = err.code === 'SESSION_CANCELLED' || (await isBookCancelled(bookId).catch(() => false));
+            if (isCancelled) {
+                console.log(`[BG-GEN][${bookId}:${sessionId}] Session was cancelled by user — preserving 'cancelled'`);
+                await genSessionRepo.updateSession(sessionId, {
+                    status: 'cancelled',
+                    progress_msg: '✗ Генерация VBook остановлена пользователем',
+                }).catch(() => {});
+            } else {
+                await genSessionRepo.updateSession(sessionId, {
+                    status: 'failed',
+                    error: err.message,
+                    progress_msg: `✗ Failed: ${err.message}`,
+                }).catch(() => {});
+            }
         }
     }
 
