@@ -54,8 +54,8 @@
             <!-- Cancel All button — square warm-red button with stop icon, shown when any generation is active -->
             <FrameLayout
                 android:id="@+id/toolbarCancelAllButton"
-                android:layout_width="36dp"
-                android:layout_height="36dp"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
                 android:layout_marginEnd="6dp"
                 android:visibility="gone"
                 android:background="@drawable/ic_cancel_bg"
@@ -65,8 +65,8 @@
                 android:contentDescription="@string/toolbar_cancel_all">
 
                 <ImageView
-                    android:layout_width="18dp"
-                    android:layout_height="18dp"
+                    android:layout_width="24dp"
+                    android:layout_height="24dp"
                     android:layout_gravity="center"
                     android:src="@drawable/ic_stop"
                     android:tint="@android:color/white" />
