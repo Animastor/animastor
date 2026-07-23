@@ -6,7 +6,7 @@
         android:title="@string/tab_file" />
     <item
         android:id="@+id/generateFragment"
-        android:icon="@drawable/ic_sparkle_outline"
+        android:icon="@drawable/ic_spiral"
         android:title="@string/tab_generate" />
     <item
         android:id="@+id/playFragment"
