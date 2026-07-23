@@ -74,10 +74,11 @@
                             android:text="@string/generate_all"
                             android:textSize="15sp"
                             android:fontFamily="sans-serif-medium"
-                            app:cornerRadius="14dp"
+                            style="@style/Widget.Animastor.Button.Outlined"
+                            app:strokeWidth="3dp"
                             app:icon="@drawable/ic_play"
                             app:iconGravity="textStart"
-                            app:iconTint="?attr/colorOnPrimary" />
+                            app:iconTint="?attr/colorOnSurface" />
 
                         <com.google.android.material.button.MaterialButton
                             android:id="@+id/stopAllButton"
@@ -88,7 +89,6 @@
                             android:textSize="15sp"
                             android:fontFamily="sans-serif-medium"
                             style="@style/Widget.Animastor.Button.Outlined.Error"
-                            app:cornerRadius="14dp"
                             app:icon="@drawable/ic_stop"
                             app:iconGravity="textStart"
                             app:iconTint="@color/cinema_error" />
@@ -190,7 +190,11 @@
                             android:text="@string/generate_vbook"
                             android:textSize="14sp"
                             android:fontFamily="sans-serif-medium"
-                            app:cornerRadius="14dp" />
+                            style="@style/Widget.Animastor.Button.Outlined"
+                            app:strokeWidth="3dp"
+                            app:icon="@drawable/ic_play"
+                            app:iconGravity="textStart"
+                            app:iconTint="?attr/colorOnSurface" />
 
                         <com.google.android.material.button.MaterialButton
                             android:id="@+id/stopVBookButton"
@@ -201,7 +205,9 @@
                             android:textSize="14sp"
                             android:fontFamily="sans-serif-medium"
                             style="@style/Widget.Animastor.Button.Outlined.Error"
-                            app:cornerRadius="14dp" />
+                            app:icon="@drawable/ic_stop"
+                            app:iconGravity="textStart"
+                            app:iconTint="@color/cinema_error" />
                     </LinearLayout>
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
@@ -299,7 +305,11 @@
                             android:text="@string/generate_audio"
                             android:textSize="14sp"
                             android:fontFamily="sans-serif-medium"
-                            app:cornerRadius="14dp" />
+                            style="@style/Widget.Animastor.Button.Outlined"
+                            app:strokeWidth="3dp"
+                            app:icon="@drawable/ic_play"
+                            app:iconGravity="textStart"
+                            app:iconTint="?attr/colorOnSurface" />
 
                         <com.google.android.material.button.MaterialButton
                             android:id="@+id/stopAudioButton"
@@ -310,7 +320,9 @@
                             android:textSize="14sp"
                             android:fontFamily="sans-serif-medium"
                             style="@style/Widget.Animastor.Button.Outlined.Error"
-                            app:cornerRadius="14dp" />
+                            app:icon="@drawable/ic_stop"
+                            app:iconGravity="textStart"
+                            app:iconTint="@color/cinema_error" />
                     </LinearLayout>
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
@@ -408,7 +420,11 @@
                             android:text="@string/generate_images"
                             android:textSize="14sp"
                             android:fontFamily="sans-serif-medium"
-                            app:cornerRadius="14dp" />
+                            style="@style/Widget.Animastor.Button.Outlined"
+                            app:strokeWidth="3dp"
+                            app:icon="@drawable/ic_play"
+                            app:iconGravity="textStart"
+                            app:iconTint="?attr/colorOnSurface" />
 
                         <com.google.android.material.button.MaterialButton
                             android:id="@+id/stopImageButton"
@@ -419,7 +435,9 @@
                             android:textSize="14sp"
                             android:fontFamily="sans-serif-medium"
                             style="@style/Widget.Animastor.Button.Outlined.Error"
-                            app:cornerRadius="14dp" />
+                            app:icon="@drawable/ic_stop"
+                            app:iconGravity="textStart"
+                            app:iconTint="@color/cinema_error" />
                     </LinearLayout>
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
@@ -517,7 +535,11 @@
                             android:text="@string/generate_video"
                             android:textSize="14sp"
                             android:fontFamily="sans-serif-medium"
-                            app:cornerRadius="14dp" />
+                            style="@style/Widget.Animastor.Button.Outlined"
+                            app:strokeWidth="3dp"
+                            app:icon="@drawable/ic_play"
+                            app:iconGravity="textStart"
+                            app:iconTint="?attr/colorOnSurface" />
 
                         <com.google.android.material.button.MaterialButton
                             android:id="@+id/stopVideoButton"
@@ -528,7 +550,9 @@
                             android:textSize="14sp"
                             android:fontFamily="sans-serif-medium"
                             style="@style/Widget.Animastor.Button.Outlined.Error"
-                            app:cornerRadius="14dp" />
+                            app:icon="@drawable/ic_stop"
+                            app:iconGravity="textStart"
+                            app:iconTint="@color/cinema_error" />
                     </LinearLayout>
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
