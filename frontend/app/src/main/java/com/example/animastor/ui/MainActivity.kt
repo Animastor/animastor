@@ -3,7 +3,6 @@ package com.example.animastor.ui
 import android.content.ComponentCallbacks2
 import android.content.Context
 import android.content.Intent
-import android.content.res.ColorStateList
 import android.os.Bundle
 import android.animation.ObjectAnimator
 import android.util.Log
@@ -36,8 +35,6 @@ class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
     private var selectedBook: BookItem? = null
     private var isBottomNavHidden = false
-    private var pendingAiCreateMode = false
-
     private val viewModel: GenerateViewModel by lazy {
         ViewModelProvider(this, GenerateViewModel.factory).get(GenerateViewModel::class.java)
     }
@@ -55,7 +52,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     fun switchToGenerateTab() {
-        openGenerateFragment()
+        binding.bottomNavigation.selectedItemId = R.id.generateFragment
     }
 
     fun switchToAiTab(createMode: Boolean = false) {
@@ -64,8 +61,13 @@ class MainActivity : AppCompatActivity() {
                 supportFragmentManager.beginTransaction().remove(it).commitNow()
             }
         }
-        pendingAiCreateMode = createMode
-        binding.bottomNavigation.selectedItemId = R.id.aiFragment
+        // Open as standalone fragment (toolbar button, not bottom nav)
+        val current = supportFragmentManager.findFragmentByTag("AiAssistantFragment")
+        if (current != null && current.isVisible) return
+        supportFragmentManager.beginTransaction()
+            .add(R.id.nav_host_container, AiAssistantFragment.newInstance(createMode = createMode), "AiAssistantFragment")
+            .addToBackStack(null)
+            .commit()
     }
 
     fun toggleBottomNavigationVisible(show: Boolean) {
@@ -235,9 +237,8 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        binding.toolbarGenerateButton.setOnClickListener {
-            // Open Generate screen instead of showing scope dialog
-            openGenerateFragment()
+        binding.toolbarAiButton.setOnClickListener {
+            switchToAiTab()
         }
 
         binding.toolbarCancelAllButton.setOnClickListener {
@@ -254,7 +255,7 @@ class MainActivity : AppCompatActivity() {
                         viewModel.loadLayerConfig()
                     }
                 }
-                refreshGenerateButton()
+                updateCancelAllVisibility()
                 if (bookId.isNotBlank()) {
                     viewModel.refreshAssetsState()
                 }
@@ -273,7 +274,7 @@ class MainActivity : AppCompatActivity() {
                 R.id.editFragment -> "EditFragment"
                 R.id.playFragment -> "PlayFragment"
                 R.id.navigateFragment -> "NavigateFragment"
-                R.id.aiFragment -> "AiAssistantFragment"
+                R.id.generateFragment -> "GenerateFragment"
                 else -> return@setOnItemSelectedListener true
             }
 
@@ -290,11 +291,7 @@ class MainActivity : AppCompatActivity() {
                     R.id.editFragment -> EditFragment()
                     R.id.playFragment -> PlayFragment()
                     R.id.navigateFragment -> NavigateFragment()
-                    R.id.aiFragment -> {
-                        val createMode = pendingAiCreateMode
-                        pendingAiCreateMode = false
-                        AiAssistantFragment.newInstance(createMode = createMode)
-                    }
+                    R.id.generateFragment -> GenerateFragment()
                     else -> FileFragment()
                 }
                 supportFragmentManager.beginTransaction()
@@ -408,7 +405,7 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch {
             viewModel.loadLayerConfig()
             viewModel.refreshAssetsState()
-            refreshGenerateButton()
+            updateCancelAllVisibility()
             refreshWorkerToggleUi()
         }
     }
@@ -437,25 +434,11 @@ class MainActivity : AppCompatActivity() {
         )
     }
 
-    private fun refreshGenerateButton() {
-        val genBtn = binding.toolbarGenerateButton
-
-        genBtn.visibility = View.VISIBLE
-        genBtn.text = getString(R.string.toolbar_generate_idle)
-        genBtn.backgroundTintList = ColorStateList.valueOf(getColor(R.color.cinema_accent))
-        // Always enabled — user can open Generate screen anytime
-        genBtn.isEnabled = true
-        genBtn.alpha = 1f
-
-        // Cancel All button visibility: show when any generation is active
+    private fun updateCancelAllVisibility() {
         val cancelAllBtn = binding.toolbarCancelAllButton
         val hasActiveGen = viewModel.activeGeneration.value != null ||
             viewModel.uiState.value.vbookProgress?.takeIf { it.stage != VBookStage.IDLE } != null
-        if (hasActiveGen) {
-            cancelAllBtn.visibility = View.VISIBLE
-        } else {
-            cancelAllBtn.visibility = View.GONE
-        }
+        cancelAllBtn.visibility = if (hasActiveGen) View.VISIBLE else View.GONE
     }
 
     private fun onCancelAllClicked() {
@@ -470,15 +453,7 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
-    fun openGenerateFragment() {
-        val current = supportFragmentManager.findFragmentByTag("GenerateFragment")
-        if (current != null && current.isVisible) return // already open
 
-        supportFragmentManager.beginTransaction()
-            .add(R.id.nav_host_container, GenerateFragment(), "GenerateFragment")
-            .addToBackStack(null)
-            .commit()
-    }
 
     private suspend fun startGenerationProgressPoller() {
         val labels = WorkerLabels(
@@ -584,7 +559,7 @@ class MainActivity : AppCompatActivity() {
                                 Log.i("MainActivity", "Fallback stuck detection — auto-completing")
                                 viewModel.stopProgressStream()
                                 viewModel.applyGenerationResults()
-                                refreshGenerateButton()
+                                updateCancelAllVisibility()
                                 binding.generationProgressContainer.visibility = View.GONE
                                 lastReadyCount = -1
                             }

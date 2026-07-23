@@ -32,25 +32,6 @@
                 android:textStyle="normal"
                 android:fontFamily="sans-serif-medium" />
 
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/toolbarGenerateButton"
-                android:layout_width="wrap_content"
-                android:layout_height="40dp"
-                android:layout_marginEnd="4dp"
-                android:text="@string/edit_generate"
-                android:textSize="11sp"
-                android:textAllCaps="true"
-                android:fontFamily="sans-serif-medium"
-                android:visibility="gone"
-                android:paddingStart="12dp"
-                android:paddingEnd="12dp"
-                android:minWidth="0dp"
-                android:minHeight="0dp"
-                app:cornerRadius="8dp"
-                app:backgroundTint="@color/btn_generate_bg"
-                app:rippleColor="?attr/colorOnSurface"
-                app:strokeWidth="0dp" />
-
             <!-- Cancel All button — square warm-red button with stop icon, shown when any generation is active -->
             <FrameLayout
                 android:id="@+id/toolbarCancelAllButton"
@@ -168,6 +149,32 @@
                 </LinearLayout>
 
             </LinearLayout>
+
+            <com.google.android.material.card.MaterialCardView
+                android:id="@+id/toolbarAiButton"
+                android:layout_width="48dp"
+                android:layout_height="40dp"
+                android:clickable="true"
+                android:focusable="true"
+                android:foreground="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="@string/toolbar_ai"
+                app:cardCornerRadius="10dp"
+                app:cardElevation="0dp"
+                app:cardBackgroundColor="?attr/colorSurface"
+                app:strokeColor="?attr/colorOutlineVariant"
+                app:strokeWidth="1dp">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:gravity="center"
+                    android:text="@string/toolbar_ai"
+                    android:textSize="14sp"
+                    android:textStyle="bold"
+                    android:textColor="?attr/colorOnSurfaceVariant"
+                    android:includeFontPadding="false" />
+
+            </com.google.android.material.card.MaterialCardView>
 
             <ImageButton
                 android:id="@+id/settings_button"

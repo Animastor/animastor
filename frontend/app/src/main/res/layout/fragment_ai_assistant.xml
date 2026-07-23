@@ -6,19 +6,33 @@
     android:layout_height="match_parent"
     android:background="?attr/colorSurface">
 
-    <!-- Session list button (top-left) -->
+    <!-- Back button (top-left) — closes the fragment, like Settings -->
+    <ImageButton
+        android:id="@+id/backButton"
+        android:layout_width="40dp"
+        android:layout_height="40dp"
+        android:layout_marginStart="8dp"
+        android:layout_marginTop="8dp"
+        android:background="?attr/selectableItemBackgroundBorderless"
+        android:src="?attr/homeAsUpIndicator"
+        android:contentDescription="@string/action_back"
+        android:tint="?attr/colorOnSurfaceVariant"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintStart_toStartOf="parent" />
+
+    <!-- Session list button (next to back) -->
     <com.google.android.material.button.MaterialButton
         android:id="@+id/sessionListButton"
         style="@style/Widget.Animastor.Button.Tonal"
         android:layout_width="40dp"
         android:layout_height="40dp"
-        android:layout_marginStart="8dp"
+        android:layout_marginStart="4dp"
         android:layout_marginTop="8dp"
         app:icon="@drawable/ic_menu"
         app:iconGravity="textStart"
         android:contentDescription="@string/ai_session_list"
         app:layout_constraintTop_toTopOf="parent"
-        app:layout_constraintStart_toStartOf="parent" />
+        app:layout_constraintStart_toEndOf="@id/backButton" />
 
     <!-- New chat button (always visible, top-right) -->
     <com.google.android.material.button.MaterialButton
@@ -40,7 +54,7 @@
         layout="@layout/include_position_bar"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
-        android:layout_marginStart="56dp"
+        android:layout_marginStart="100dp"
         android:layout_marginEnd="56dp"
         android:layout_marginTop="8dp"
         app:layout_constraintTop_toTopOf="parent"

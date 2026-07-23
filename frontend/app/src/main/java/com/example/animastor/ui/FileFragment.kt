@@ -281,7 +281,7 @@ class FileFragment : Fragment(R.layout.fragment_file) {
                     if (!hasSwitchedToAi && !hasSwitchedToPlay && state.phase == PlayerPhase.SCENE_READY && state.importStage == ImportStage.DONE) {
                         hasSwitchedToPlay = true
                         hasSwitchedToAi = true
-                        (requireActivity() as MainActivity).openGenerateFragment()
+                        (requireActivity() as MainActivity).switchToGenerateTab()
                     }
 
                     // Only auto-switch to Play for non-TXT imports (vbook)

@@ -4,10 +4,11 @@
 
     <!-- Bottom Navigation -->
     <string name="tab_file">FILE</string>
-    <string name="tab_edit">EDIT</string>
+    <string name="tab_generate">GENERATE</string>
+    <string name="toolbar_ai">AI</string>
     <string name="tab_play">PLAY</string>
+    <string name="tab_edit">EDIT</string>
     <string name="tab_navigate">NAVIGATE</string>
-    <string name="tab_ai">AI</string>
 
     <!-- File Screen -->
     <string name="file_title">Import Book</string>

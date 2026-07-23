@@ -106,6 +106,9 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
             } else false
         }
         b.newChatButton.setOnClickListener { startNewSession() }
+        b.backButton.setOnClickListener {
+            requireActivity().onBackPressedDispatcher.onBackPressed()
+        }
         b.sessionListButton.setOnClickListener { showSessionListDialog() }
 
         // Build mode chips + topic chips

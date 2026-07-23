@@ -4,10 +4,11 @@
 
     <!-- Bottom Navigation -->
     <string name="tab_file">ФАЙЛ</string>
+    <string name="tab_generate">ГЕНЕРАТОР</string>
+    <string name="toolbar_ai">ИИ</string>
     <string name="tab_play">ПЛЕЕР</string>
     <string name="tab_edit">РЕДАКТОР</string>
     <string name="tab_navigate">НАВИГАТОР</string>
-    <string name="tab_ai">ИИ</string>
 
     <!-- File Screen -->
     <string name="file_title">Импорт книги</string>

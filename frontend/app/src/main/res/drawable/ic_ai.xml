@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- A letter - left leg -->
+    <path
+        android:fillColor="#000000"
+        android:pathData="M9,4L11,4L5,20L3,20Z" />
+    <!-- A letter - right leg -->
+    <path
+        android:fillColor="#000000"
+        android:pathData="M9,4L11,4L15,20L13,20Z" />
+    <!-- A letter - crossbar -->
+    <path
+        android:fillColor="#000000"
+        android:pathData="M4.5,14L13.5,14L13.5,12L4.5,12Z" />
+    <!-- I letter - stem -->
+    <path
+        android:fillColor="#000000"
+        android:pathData="M15.5,4L15.5,20L19,20L19,4Z" />
+</vector>
