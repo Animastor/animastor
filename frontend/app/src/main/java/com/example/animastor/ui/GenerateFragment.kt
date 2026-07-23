@@ -13,11 +13,14 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.activityViewModels
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import com.example.animastor.R
 import com.example.animastor.databinding.FragmentGenerateBinding
 import com.example.animastor.databinding.ItemWorkerProgressBinding
 import com.example.animastor.network.RetrofitClient
+import com.example.animastor.repository.BookData
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -36,13 +39,16 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
     // VBook window tracking: becomes true after first window completes
     private var _vbookWindowGenerated = false
 
+    private var bookData: BookData? = null
+
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         binding = FragmentGenerateBinding.bind(view)
         val b = binding ?: return
 
         // ── Position bar ──
-        setupPositionBar()
+        observePosition()
+        loadBook()
 
         // ── Switch toggles ──
         // VBook switch is informational — always enabled; no listener needed
@@ -172,6 +178,13 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
                     // Connection error — keep previous state
                 }
                 delay(5_000)
+            }
+        }
+
+        // ── Reload book data when generation completes (new scenes) ──
+        lifecycleScope.launch {
+            viewModel.playbackPrepared.collect {
+                loadBook()
             }
         }
 
@@ -508,37 +521,77 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
     }
 
     // ═══════════════════════════════════════════════════════════════
-    //  POSITION BAR
+    //  POSITION BAR (reactive, matches NavigateFragment/EditFragment)
     // ═══════════════════════════════════════════════════════════════
 
-    private fun setupPositionBar() {
+    private fun observePosition() {
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                SharedPositionManager.current.collect { pos ->
+                    updatePositionBar(pos)
+                }
+            }
+        }
+    }
+
+    private fun loadBook() {
+        val bookId = viewModel.bookId.takeIf { it.isNotBlank() } ?: return
+        lifecycleScope.launch {
+            try {
+                bookData = viewModel.repository.getBook(bookId)
+                updatePositionBar(SharedPositionManager.current.value)
+            } catch (_: Exception) {
+                // Keep stale bookData on error
+            }
+        }
+    }
+
+    private fun updatePositionBar(pos: ActivePosition) {
         val b = binding ?: return
         val label = b.positionBar.positionLabel
         val unitCount = b.positionBar.unitCount
 
-        lifecycleScope.launch {
-            while (true) {
-                val pos = SharedPositionManager.current.value
-                val chId = pos.chapterId
-                val scId = pos.sceneId
+        if (pos.chapterId != null) {
+            val bd = bookData
+            val ch = bd?.chapters?.firstOrNull { it.chapter == pos.chapterId }
+            val sc = ch?.scenes?.firstOrNull { it.scene_id == pos.sceneId }
 
-                if (!chId.isNullOrBlank() && !scId.isNullOrBlank()) {
-                    val chNum = chId.substringAfter("ch").substringBefore("_").takeIf { it.isNotBlank() } ?: chId
-                    val scNum = scId.substringAfter("sc").substringBefore("_").takeIf { it.isNotBlank() } ?: scId
-                    label.text = getString(R.string.navigate_chapter) + " $chNum  /  " + getString(R.string.navigate_scene) + " $scNum"
-                    unitCount.visibility = View.GONE
-                } else {
-                    label.text = getString(R.string.navigate_no_position)
-                    unitCount.visibility = View.GONE
-                }
+            val isSpecial = ch?.is_special == true
+            val scIdx = sc?.display_index ?: 0
+            val allUnits = sc?.units ?: emptyList()
+            val uIdx = if (allUnits.isNotEmpty()) pos.unitIndex.coerceIn(0, allUnits.size - 1) else 0
 
-                b.positionBar.root.setOnClickListener {
-                    val activity = requireActivity() as? MainActivity
-                    activity?.switchToNavigateTab()
-                }
+            val chTitle = ch?.chapter_title?.takeIf { it.isNotBlank() }
+            val scTitle = sc?.scene_title?.takeIf { it.isNotBlank() }
 
-                delay(3_000)
+            val chLabel = when {
+                isSpecial -> chTitle ?: (ch?.type?.replaceFirstChar { it.uppercase() } ?: "")
+                chTitle != null -> chTitle
+                ch?.display_number != null -> "${getString(R.string.navigate_chapter)} ${ch.display_number}"
+                else -> getString(R.string.navigate_no_position)
             }
+            val scLabel = if (scIdx > 0) "${getString(R.string.navigate_scene)} $scIdx" else ""
+            val unitLabel = if (uIdx >= 0 && allUnits.isNotEmpty()) "${getString(R.string.navigate_unit)} ${uIdx + 1}" else ""
+
+            val fullLabel = when {
+                chLabel.isEmpty() -> getString(R.string.navigate_no_position)
+                isSpecial && scTitle != null -> "$chLabel / $scLabel — $scTitle / $unitLabel"
+                isSpecial -> "$chLabel / $scLabel / $unitLabel"
+                chTitle != null && scTitle != null -> "$chLabel / $scLabel — $scTitle / $unitLabel"
+                scTitle != null -> "$chLabel / $scLabel — $scTitle / $unitLabel"
+                else -> "$chLabel / $scLabel / $unitLabel"
+            }
+            label.text = fullLabel
+
+            unitCount.text = getString(R.string.navigate_units_count, allUnits.size)
+            unitCount.visibility = if (allUnits.isNotEmpty()) View.VISIBLE else View.GONE
+        } else {
+            label.text = getString(R.string.navigate_no_position)
+            unitCount.visibility = View.GONE
+        }
+
+        b.positionBar.root.setOnClickListener {
+            (requireActivity() as? MainActivity)?.switchToNavigateTab()
         }
     }
 
