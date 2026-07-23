@@ -129,25 +129,15 @@ class GenerateViewModel(
         val prefs = getApplication<Application>().getSharedPreferences("animastor", 0)
         bookId = prefs.getString("bookId", "") ?: ""
         buildId = prefs.getString("buildId", "") ?: ""
-        // Start global window trigger if a book is already loaded from prefs
-        if (bookId.isNotBlank()) {
-            windowTriggerManager.start(bookId)
-        }
+        // WindowTriggerManager is disabled — user controls window generation
+        // manually via "Generate VBook Next" button on the Generate screen.
     }
 
     private fun persistBookId(id: String) {
-        val oldId = bookId
         bookId = id
         val prefs = getApplication<Application>().getSharedPreferences("animastor", 0)
         prefs.edit().putString("bookId", id).apply()
-        // Restart window trigger for the new book
-        if (oldId != id) {
-            if (id.isNotBlank()) {
-                windowTriggerManager.start(id)
-            } else {
-                windowTriggerManager.stop()
-            }
-        }
+        // WindowTriggerManager is disabled — no auto-trigger on position changes
     }
 
     private fun persistBuildId(id: String) {
@@ -180,6 +170,7 @@ class GenerateViewModel(
 
     fun audioEnabled(): Boolean = _audioEnabled.value
     fun videoEnabled(): Boolean = _videoEnabled.value
+    fun vbookEnabled(): Boolean = true // VBook is always enabled
     // Profile is computed server-side (resolveProfile) and cached in _layerProfile.
     // The client never re-derives it from the toggles.
     fun currentProfile(): String = _layerProfile.value
@@ -193,6 +184,11 @@ class GenerateViewModel(
     fun setVideoEnabled(enabled: Boolean) {
         _videoEnabled.value = enabled
         viewModelScope.launch { persistLayerConfig() }
+    }
+
+    /** VBook is always enabled — kept for interface consistency. */
+    fun setVBookEnabled(@Suppress("UNUSED_PARAMETER") enabled: Boolean) {
+        // VBook agent is always active; this is a no-op for consistency
     }
 
     /**
@@ -410,7 +406,10 @@ class GenerateViewModel(
                     }
                 }
             }
-            if (scenes.isEmpty()) return@launch
+            if (scenes.isEmpty()) {
+                Log.w(TAG, "applyGenerationResults: book has 0 scenes — skipping playback refresh")
+                return@launch
+            }
 
             // Load cover image for first scene
             var cover: Bitmap? = null
@@ -438,6 +437,98 @@ class GenerateViewModel(
                 softRefresh = true
             ))
         }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    //  VBOOK GENERATION (AI agent bootstrap, not GPU)
+    // ═══════════════════════════════════════════════════════════════
+
+    /**
+     * Start VBook AI agent generation. Calls bootstrap or resume on the
+     * backend and shows real-time progress via SSE + polling.
+     * This is NOT GPU generation — it creates/updates the book structure.
+     */
+    fun startVBookGeneration() {
+        val bid = bookId.takeIf { it.isNotBlank() } ?: return
+        Log.i(TAG, "startVBookGeneration: $bid")
+
+        _uiState.update { it.copy(vbookProgress = VBookProgress(stage = VBookStage.ANALYZING)) }
+        startTimer()
+        startProgressStream(bid)
+        _importCompleteReceived = false
+
+        generationJob?.cancel()
+        generationJob = viewModelScope.launch {
+            runCatching {
+                val status = runCatching { _repository.getLazyBookStatus(bid) }.getOrNull()
+                val needsBootstrap = status?.ready != true
+                if (needsBootstrap) {
+                    Log.i(TAG, "startVBookGeneration: calling bootstrapBook")
+                    _repository.bootstrapBook(bid)
+                } else {
+                    Log.i(TAG, "startVBookGeneration: calling resumeBootstrap")
+                    _repository.resumeBootstrap(bid)
+                }
+            }.onSuccess {
+                pollVBookProgress(bid)
+            }.onFailure { e ->
+                Log.w(TAG, "startVBookGeneration failed: ${e.message}")
+                _uiState.update { it.copy(vbookProgress = VBookProgress(stage = VBookStage.IDLE)) }
+                stopTimer()
+            }
+        }
+    }
+
+    /**
+     * Poll /agent-status until the VBook agent completes.
+     * Updates [vbookProgress] for the Generate screen progress display.
+     * Exits early when SSE import_complete event arrives.
+     */
+    private suspend fun pollVBookProgress(bId: String) {
+        var consecutiveInactive = 0
+        val maxInactive = 2
+        val maxPollTimeMs = 5 * 60 * 1000L
+        val startTime = System.currentTimeMillis()
+
+        while (consecutiveInactive < maxInactive) {
+            if (_importCompleteReceived) {
+                Log.i(TAG, "[VBookPoll] import_complete SSE received — marking completed")
+                _uiState.update { it.copy(vbookProgress = VBookProgress(stage = VBookStage.COMPLETED)) }
+                break
+            }
+            if (System.currentTimeMillis() - startTime > maxPollTimeMs) {
+                Log.w(TAG, "[VBookPoll] safety timeout (${maxPollTimeMs}ms)")
+                break
+            }
+            delay(2000)
+            try {
+                val status = _repository.getAgentStatus(bId)
+
+                if (status.active && status.progress_msg != null) {
+                    consecutiveInactive = 0
+                    updateVBookProgress(status)
+                } else if (!status.active) {
+                    consecutiveInactive++
+                    if (status.progress_msg != null) {
+                        updateVBookProgress(status)
+                    }
+                    if (consecutiveInactive >= maxInactive) {
+                        _uiState.update { it.copy(vbookProgress = VBookProgress(stage = VBookStage.COMPLETED)) }
+                    }
+                } else {
+                    // active=true but no message — agent between steps
+                    consecutiveInactive = 0
+                }
+            } catch (e: Exception) {
+                consecutiveInactive++
+                Log.w(TAG, "[VBookPoll] failed: ${e.message} (x$consecutiveInactive)")
+                delay(3000)
+            }
+        }
+
+        stopTimer()
+        Log.i(TAG, "[VBookPoll] done — refreshing player with new scenes")
+        applyGenerationResults()
     }
 
     fun cancelGeneration() {
@@ -552,146 +643,35 @@ class GenerateViewModel(
                         _uiState.update { it.copy(phase = if (scenes.isNotEmpty()) PlayerPhase.SCENE_READY else PlayerPhase.IDLE) }
                     }
                     "txt" -> {
-                        // ── TXT path ──
+                        // ── TXT path (SIMPLIFIED: import only, no auto-generation) ──
                         // build_id is owned by the backend (resolved from manifest.json).
                         // The thin client just stores whatever the import response carries.
                         persistBuildId(importRes.build_id ?: "")
-                        val msgs = mutableListOf<String>()
 
                         _uiState.update { it.copy(
                             phase = PlayerPhase.IMPORTING_TXT,
                             importStage = ImportStage.VALIDATING,
                             importProgress = 0.1f,
-                            importProgressMessages = emptyList()
+                            importProgressMessages = listOf(
+                                "✓ File selected",
+                                "✓ TXT read",
+                                "✓ Encoding detected",
+                                "✓ VBook structure created"
+                            )
                         )}
-
-                        msgs.add("✓ File selected")
-                        msgs.add("✓ TXT read")
-                        msgs.add("✓ Encoding detected")
-                        msgs.add("✓ VBook structure created")
-                        _uiState.update { it.copy(importProgress = 0.2f, importProgressMessages = msgs.toList()) }
-
-                        _uiState.update { it.copy(importStage = ImportStage.ANALYZING, importProgress = 0.3f) }
-
-                        // Handle dedup
-                        if (importRes.dedup) {
-                            msgs.add("✓ Book already exists — checking state...")
-                            _uiState.update { it.copy(importProgressMessages = msgs.toList()) }
-
-                            val bookStatus = runCatching { _repository.getLazyBookStatus(bId) }.getOrNull()
-                            // N4: readiness is decided by the server (BookStatus.ready), not
-                            // by matching state strings + a parsedChapters threshold here.
-                            val isComplete = bookStatus?.ready ?: false
-
-                            if (!isComplete) {
-                                msgs.add("⟳ Book incomplete — resuming import...")
-                                _uiState.update { it.copy(importProgressMessages = msgs.toList()) }
-                                val resumeRes = _repository.resumeBootstrap(bId)
-                                if (!resumeRes.ready) {
-                                    pollAgentProgress(bId, msgs)
-                                } else {
-                                    msgs.add("✓ Book was already fully processed")
-                                }
-                                msgs.add("💬 Import resumed. You can ask questions or start generation.")
-                            } else {
-                                val bs = bookStatus!!
-                                msgs.add("✓ Book ready (${bs.parsedChapters} chapters, ${bs.parsedScenes} scenes)")
-                            }
-
-                            // Build scene list from book JSON for navigation
-                            val bookForNav = runCatching { _repository.getBook(bId) }.getOrNull()
-                            val scenesFromDedup = mutableListOf<SceneRef>()
-                            if (bookForNav != null) {
-                                for (ch in bookForNav.chapters.orEmpty()) {
-                                    for (sc in ch.scenes.orEmpty()) {
-                                        scenesFromDedup.add(SceneRef(ch.chapter, sc.scene_id, sc.type))
-                                    }
-                                }
-                            }
-
-                            // Navigate to first scene from book JSON
-                            val firstChapter = bookForNav?.chapters?.firstOrNull()
-                            val firstScene = firstChapter?.scenes?.firstOrNull()
-                            if (firstChapter != null && firstScene != null) {
-                                SharedPositionManager.navigateTo(
-                                    chapterId = firstChapter.chapter,
-                                    sceneId = firstScene.scene_id,
-                                    unitIndex = 0
-                                )
-                            }
-
-                            _playbackPrepared.tryEmit(PlaybackPreparation(
-                                bookId = bId,
-                                buildId = buildId,
-                                scenes = scenesFromDedup
-                            ))
-
-                            msgs.add("✓ Loaded ${scenesFromDedup.size} scenes")
-                            _uiState.update { it.copy(
-                                importProgressMessages = msgs.toList(),
-                                importStage = ImportStage.DONE,
-                                importProgress = 1f,
-                                vbookProgress = VBookProgress(stage = VBookStage.IDLE),
-                                phase = if (scenesFromDedup.isNotEmpty()) PlayerPhase.SCENE_READY else PlayerPhase.IDLE,
-                            )}
-                            return@launch
-                        }
-
-                        // New import — start VBook progress tracking
-                        _firstWindowDone = false
-                        startProgressStream(bId)
-                        _uiState.update { it.copy(
-                            vbookProgress = VBookProgress(stage = VBookStage.ANALYZING)
-                        )}
-
-                    // New import — bootstrap and poll
-                    val pollDuringBootstrap = viewModelScope.launch {
-                        var lastSeen = ""
-                        while (true) {
-                            val st = runCatching { _repository.getAgentStatus(bId) }.getOrNull()
-                            if (st?.progress_msg != null && st.progress_msg != lastSeen) {
-                                msgs.add(st.progress_msg)
-                                _uiState.update { it.copy(importProgressMessages = msgs.toList()) }
-                                lastSeen = st.progress_msg
-                            }
-                            delay(2000)
-                        }
-                    }
-
-                    startTimer()  // 🕐 VBook-импорт — запускаем таймер
-                    val bootstrapRes = _repository.bootstrapBook(bId)
-                        pollDuringBootstrap.cancel()
-
-                        val finalStatus = runCatching { _repository.getAgentStatus(bId) }.getOrNull()
-                        var afterBootstrapMsg = ""
-                        if (finalStatus?.progress_msg != null) {
-                            afterBootstrapMsg = finalStatus.progress_msg
-                            msgs.add(afterBootstrapMsg)
-                            _uiState.update { it.copy(importProgressMessages = msgs.toList()) }
-                        }
-
-                        msgs.add("✓ Import complete: ${bootstrapRes.characters} characters, ${bootstrapRes.locations} locations, ${bootstrapRes.scenes} scenes")
-                        _uiState.update { it.copy(importProgressMessages = msgs.toList()) }
-
-                    pollAgentProgress(bId, msgs, afterBootstrapMsg)
-                    stopTimer()  // 🕐 VBook-импорт завершён — останавливаем таймер
-                    msgs.add("💬 You can ask questions or start generation using the toolbar button.")
-                        _uiState.update { it.copy(importProgressMessages = msgs.toList()) }
 
                         // Build scene list from book JSON for navigation
-                        val scenesFromTxt = runCatching {
-                            val bookForScenes = _repository.getBook(bId)
-                            val sc = mutableListOf<SceneRef>()
-                            for (ch in bookForScenes.chapters.orEmpty()) {
-                                for (scn in ch.scenes.orEmpty()) {
-                                    sc.add(SceneRef(ch.chapter, scn.scene_id, scn.type))
+                        val bookForNav = runCatching { _repository.getBook(bId) }.getOrNull()
+                        val scenesFromTxt = mutableListOf<SceneRef>()
+                        if (bookForNav != null) {
+                            for (ch in bookForNav.chapters.orEmpty()) {
+                                for (sc in ch.scenes.orEmpty()) {
+                                    scenesFromTxt.add(SceneRef(ch.chapter, sc.scene_id, sc.type))
                                 }
                             }
-                            sc
-                        }.getOrDefault(emptyList())
+                        }
 
                         // Navigate to first scene from book JSON
-                        val bookForNav = runCatching { _repository.getBook(bId) }.getOrNull()
                         val firstChapter = bookForNav?.chapters?.firstOrNull()
                         val firstScene = firstChapter?.scenes?.firstOrNull()
                         if (firstChapter != null && firstScene != null) {
@@ -713,6 +693,7 @@ class GenerateViewModel(
                         _uiState.update { it.copy(
                             importStage = ImportStage.DONE,
                             importProgress = 1f,
+                            vbookProgress = VBookProgress(stage = VBookStage.IDLE),
                             phase = if (scenesFromTxt.isNotEmpty()) PlayerPhase.SCENE_READY else PlayerPhase.IDLE,
                         )}
                         Log.i(TAG, "importBookFromFile (txt): ready with ${scenesFromTxt.size} scenes")
@@ -838,7 +819,7 @@ class GenerateViewModel(
                                 vbookProgress = VBookProgress(stage = VBookStage.COMPLETED)
                             )}
                         }
-                        VBookStage.COMPLETED -> { /* keep — MainActivity handles display cycle */ }
+                        VBookStage.COMPLETED -> { /* keep */ }
                         VBookStage.IDLE -> { /* keep idle */ }
                     }
                 }
@@ -992,7 +973,6 @@ class GenerateViewModel(
     fun closeBook() {
         generationJob?.cancel()
         stopTimer()  // 🕐 закрыли книгу — сбрасываем таймер
-        windowTriggerManager.stop()
         persistBookId("")
         persistBuildId("")
         hasUnsavedChanges = false
@@ -1316,9 +1296,9 @@ class GenerateViewModel(
                 _workerPermanentlyDone.clear()
                 gpuProgressDoneAt = 0L
                 val shouldRefresh = panel != null
-                if (vbookProgress?.stage == VBookStage.COMPLETED) {
-                    _uiState.update { it.copy(vbookProgress = VBookProgress(stage = VBookStage.IDLE)) }
-                }
+                    if (vbookProgress?.stage == VBookStage.COMPLETED) {
+                        _uiState.update { it.copy(vbookProgress = VBookProgress(stage = VBookStage.IDLE)) }
+                    }
                 if (shouldRefresh) {
                     applyGenerationResults()
                 }

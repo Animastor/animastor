@@ -277,11 +277,11 @@ class FileFragment : Fragment(R.layout.fragment_file) {
                 viewModel.uiState.collect { state ->
                     val b = binding ?: return@collect
 
-                    // After TXT upload, switch to AI tab (not Play)
-                    if (!hasSwitchedToAi && state.phase == PlayerPhase.IMPORTING_TXT && state.importProgressMessages.isNotEmpty()) {
+                    // After TXT import completes, open Generate screen
+                    if (!hasSwitchedToAi && !hasSwitchedToPlay && state.phase == PlayerPhase.SCENE_READY && state.importStage == ImportStage.DONE) {
+                        hasSwitchedToPlay = true
                         hasSwitchedToAi = true
-                        hasSwitchedToPlay = true // prevent auto-switch to Play later
-                        (requireActivity() as MainActivity).switchToAiTab()
+                        (requireActivity() as MainActivity).openGenerateFragment()
                     }
 
                     // Only auto-switch to Play for non-TXT imports (vbook)

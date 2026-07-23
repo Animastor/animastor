@@ -4,9 +4,27 @@ All notable changes to Animastor are documented here.
 
 ---
 
-## [Unreleased] — 2026-07-21
+## [Unreleased] — 2026-07-23
 
 ### Added
+
+- **Новый экран Generate — вся генерация на отдельном экране**
+  (`frontend/.../GenerateFragment.kt`, `frontend/.../fragment_generate.xml`,
+  `frontend/.../GenerateViewModel.kt`, `frontend/.../MainActivity.kt`,
+  `frontend/.../FileFragment.kt`, `frontend/.../strings.xml`):
+  - **Экран Generate** — новый фрагмент с секциями VBook, Audio, Image, Video.
+    Верхняя панель: Book / Chapter / Scene / Imagination Unit (как на других экранах).
+  - **Глобальная секция** — кнопки Generate All / Stop All в самом верху.
+  - **Generate VBook Next** — после первого окна кнопка меняет текст на «Generate VBook Next».
+    Каждое следующее нажатие запускает следующее окно сцен вручную.
+  - **Worker-тогглы** — VBook Switch (всегда включён), Audio / Image / Video Switch
+    с пульсацией иконок при активных воркерах.
+  - **Кнопка Generate в тулбаре** — всегда активна, открывает экран Generate (не запускает генерацию).
+  - **TXT импорт больше не запускает авто-генерацию** — после импорта пользователь переходит
+    на экран Generate и сам решает, когда нажимать Generate VBook / Generate All.
+  - **WindowTriggerManager отключён** — автоматический запуск следующего окна при активации
+    последнего IU удалён. Только ручное нажатие Generate VBook Next.
+  - Build: frontend BUILD SUCCESSFUL.
 
 - **Per-worker stop buttons + Cancel All + backend per-type cancel API**
   (`frontend/.../item_worker_progress.xml`, `frontend/.../activity_main.xml`,
@@ -53,6 +71,19 @@ All notable changes to Animastor are documented here.
   - **Фикс:** импортирован `isBookCancelled` из agent-session. `redis` передаётся в `bootstrapNextWindow(bookId, progress, null, redis)`. Catch-блок проверяет `err.code === 'SESSION_CANCELLED' || isBookCancelled(bookId)` — если cancelled, сохраняет `status='cancelled'`.
 
 ### Fixed
+
+- **Stale cancelled sessions убивали новую VBook генерацию — isBookCancelled находил старую cancelled сессию**
+  (`backend/src/services/agent/bootstrap.js`):
+  - **Проблема:** `isBookCancelled()` в `checkCancelled()` (LEVEL 2) искал ЛЮБУЮ сессию
+    со `status='cancelled'` для этой книги в PostgreSQL. Если пользователь когда-то нажал Stop,
+    cancelled-статус оставался в БД навсегда. При новом старте VBook после извлечения персонажей
+    `checkCancelled()` находил старую cancelled-сессию → SESSION_CANCELLED → агент падал.
+    Фронтенд видел `active: false`, через 2 поллинга ставил COMPLETED (100%),
+    `applyGenerationResults()` запускался без сцен → тихий return. Пользователь видел
+    100% прогресс и пустую структуру.
+  - **Фикс:** перед созданием новой сессии в `bootstrapWithAgent()` чищу старые cancelled-сессии:
+    `UPDATE agent_sessions SET status='failed' WHERE book_id=$1 AND status='cancelled'`.
+  - Фронтенд: убран `VBookStage.FAILED` (вызывал краш приложения).
 
 - **VBook Stop не останавливал агента — checkCancelled проверял sessionId, а новая сессия имела status=running**
   (`backend/src/services/agent-session.js`,

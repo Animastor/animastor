@@ -29,6 +29,23 @@ async function bootstrapWithAgent(bookId, progress, publishProgress, redis) {
         throw new Error('AI assistant is not available — cannot import book');
     }
 
+    // ── Clear old cancellation state from PREVIOUS sessions ──
+    // isBookCancelled() checks ANY session with status='cancelled' for this book.
+    // If a previous session was cancelled (e.g. user pressed Stop in an earlier
+    // app session), LEVEL 2 of checkCancelled() would immediately kill the new
+    // session — even though the user explicitly asked to start a new generation.
+    // We only clear the DB status (not Redis) here, because:
+    //   - Redis TTL is 1h — a stale key from hours ago won't affect us
+    //   - A FRESH Redis cancellation (set milliseconds ago) IS intentional
+    // DB sessions persist indefinitely, so old cancelled entries MUST be cleaned.
+    try {
+        const { query } = require('../../storage/postgres/database');
+        await query(`UPDATE agent_sessions SET status = 'failed' WHERE book_id = $1 AND status = 'cancelled'`, [bookId]);
+        console.log(`[CANCEL-DEBUG] bootstrapWithAgent: cleared stale cancelled sessions for book ${bookId}`);
+    } catch (_) {
+        // Best-effort — DB cleanup failure should not block generation
+    }
+
     const session = await createSession(bookId, 'txt_import');
     const sessionId = session.session_id;
     console.log(`[AGENT] Session ${sessionId} created for book ${bookId}`);

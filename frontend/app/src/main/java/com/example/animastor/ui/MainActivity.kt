@@ -54,6 +54,10 @@ class MainActivity : AppCompatActivity() {
         binding.bottomNavigation.selectedItemId = R.id.navigateFragment
     }
 
+    fun switchToGenerateTab() {
+        openGenerateFragment()
+    }
+
     fun switchToAiTab(createMode: Boolean = false) {
         if (createMode) {
             supportFragmentManager.findFragmentByTag("AiAssistantFragment")?.let {
@@ -232,7 +236,8 @@ class MainActivity : AppCompatActivity() {
         }
 
         binding.toolbarGenerateButton.setOnClickListener {
-            onGenerateClicked()
+            // Open Generate screen instead of showing scope dialog
+            openGenerateFragment()
         }
 
         binding.toolbarCancelAllButton.setOnClickListener {
@@ -433,15 +438,14 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun refreshGenerateButton() {
-        val bookId = viewModel.bookId
         val genBtn = binding.toolbarGenerateButton
 
         genBtn.visibility = View.VISIBLE
         genBtn.text = getString(R.string.toolbar_generate_idle)
         genBtn.backgroundTintList = ColorStateList.valueOf(getColor(R.color.cinema_accent))
-        val canGenerate = bookId.isNotBlank()
-        genBtn.isEnabled = canGenerate
-        genBtn.alpha = if (bookId.isBlank()) 0.3f else 1f
+        // Always enabled — user can open Generate screen anytime
+        genBtn.isEnabled = true
+        genBtn.alpha = 1f
 
         // Cancel All button visibility: show when any generation is active
         val cancelAllBtn = binding.toolbarCancelAllButton
@@ -466,89 +470,14 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
-    private fun onGenerateClicked() {
-        val bookId = viewModel.bookId
-        if (bookId.isBlank()) {
-            Toast.makeText(this, R.string.file_status_opening, Toast.LENGTH_SHORT).show()
-            return
-        }
+    fun openGenerateFragment() {
+        val current = supportFragmentManager.findFragmentByTag("GenerateFragment")
+        if (current != null && current.isVisible) return // already open
 
-        val profile = viewModel.currentProfile()
-        val currentPos = SharedPositionManager.current.value
-        val hasChapter = !currentPos.chapterId.isNullOrBlank()
-        val hasScene = !currentPos.sceneId.isNullOrBlank()
-
-        val dialogBinding = DialogGenerateScopeBinding.inflate(layoutInflater)
-        dialogBinding.dialogSubtitle.text = getString(
-            R.string.generate_dialog_subtitle,
-            getString(profileLabel(profile))
-        )
-        dialogBinding.scopeCurrentScene.isEnabled = hasScene
-        dialogBinding.scopeCurrentChapter.isEnabled = hasChapter
-        dialogBinding.scopeWholeBook.isChecked = true
-
-        AlertDialog.Builder(this)
-            .setTitle(R.string.generate_dialog_title)
-            .setView(dialogBinding.root)
-            .setNegativeButton(R.string.dialog_cancel, null)
-            .setPositiveButton(R.string.dialog_start) { _, _ ->
-                val scope: String
-                val chId: String?
-                val scId: String?
-                when (dialogBinding.scopeGroup.checkedRadioButtonId) {
-                    R.id.scopeCurrentScene -> {
-                        scope = "current_scene"
-                        chId = SharedPositionManager.current.value.chapterId
-                        scId = SharedPositionManager.current.value.sceneId
-                    }
-                    R.id.scopeCurrentChapter -> {
-                        scope = "current_chapter"
-                        chId = SharedPositionManager.current.value.chapterId
-                        scId = null
-                    }
-                    else -> {
-                        scope = "whole_book"
-                        chId = null
-                        scId = null
-                    }
-                }
-                startGenerationWithProfile(profile, scope, chId, scId)
-            }
-            .show()
-    }
-
-    private fun startGenerationWithProfile(
-        profile: String,
-        scope: String,
-        chapterId: String?,
-        sceneId: String?
-    ) {
-        viewModel.startGeneration(
-            GenerateViewModel.GenerationRequest(
-                profile = profile,
-                scope = scope,
-                chapterId = chapterId,
-                sceneId = sceneId
-            )
-        ) { result ->
-            when (result) {
-                is GenerateViewModel.GenerationResult.Started -> {
-                    refreshGenerateButton()
-                }
-                is GenerateViewModel.GenerationResult.Failed -> {
-                    val msg = getString(R.string.generate_start_failed, result.message)
-                    Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
-                    refreshGenerateButton()
-                }
-            }
-        }
-    }
-
-    private fun profileLabel(profile: String): Int = when (profile) {
-        "audio_only" -> R.string.profile_audio
-        "image_only" -> R.string.profile_storyboard
-        "storyboard" -> R.string.profile_storyboard
-        else -> R.string.profile_video
+        supportFragmentManager.beginTransaction()
+            .add(R.id.nav_host_container, GenerateFragment(), "GenerateFragment")
+            .addToBackStack(null)
+            .commit()
     }
 
     private suspend fun startGenerationProgressPoller() {

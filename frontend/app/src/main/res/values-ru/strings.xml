@@ -315,4 +315,20 @@
     <!-- Developer Mode -->
     <string name="developer_tools">Инструменты разработчика</string>
     <string name="developer_workflow">Разработка Workflow</string>
+    <!-- Generate Screen (new) -->
+    <string name="generate_screen_title">Генерация</string>
+    <string name="generate_global_section">Общее</string>
+    <string name="generate_all">Генерировать всё</string>
+    <string name="stop_all">Стоп всё</string>
+    <string name="generate_section_vbook">VBook Agents: %1$d</string>
+    <string name="generate_section_audio">Audio Workers: %1$d</string>
+    <string name="generate_section_image">Image Workers: %1$d</string>
+    <string name="generate_section_video">Video Workers: %1$d</string>
+    <string name="generate_vbook">Генерировать VBook</string>
+    <string name="generate_audio">Генерировать аудио</string>
+    <string name="generate_images">Генерировать изображения</string>
+    <string name="generate_video">Генерировать видео</string>
+    <string name="generate_stop">Стоп</string>
+    <string name="generate_no_workers">Нет доступных воркеров</string>
+    <string name="generate_vbook_next">Генерировать VBook далее</string>
 </resources>

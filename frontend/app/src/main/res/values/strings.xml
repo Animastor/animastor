@@ -349,4 +349,21 @@
     <string name="settings_image_profile">Image Profile</string>
     <string name="settings_video_profile">Video Profile</string>
     <string name="settings_profiles_determined_by_workflow">Determined by active workflow connectors</string>
+
+    <!-- Generate Screen (new) -->
+    <string name="generate_screen_title">Generate</string>
+    <string name="generate_global_section">Global</string>
+    <string name="generate_all">Generate All</string>
+    <string name="stop_all">Stop All</string>
+    <string name="generate_section_vbook">VBook Agents: %1$d</string>
+    <string name="generate_section_audio">Audio Workers: %1$d</string>
+    <string name="generate_section_image">Image Workers: %1$d</string>
+    <string name="generate_section_video">Video Workers: %1$d</string>
+    <string name="generate_vbook">Generate VBook</string>
+    <string name="generate_audio">Generate Audio</string>
+    <string name="generate_images">Generate Images</string>
+    <string name="generate_video">Generate Video</string>
+    <string name="generate_stop">Stop</string>
+    <string name="generate_no_workers">No workers available</string>
+    <string name="generate_vbook_next">Generate VBook Next</string>
 </resources>
