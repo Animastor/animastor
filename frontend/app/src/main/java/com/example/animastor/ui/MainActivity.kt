@@ -5,20 +5,23 @@ import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import android.animation.ObjectAnimator
+import android.content.res.ColorStateList
 import android.util.Log
 import android.view.View
-import android.widget.ImageButton
-import android.widget.PopupMenu
+import android.view.ViewGroup
+import android.widget.ImageView
 import android.widget.TextView
 import android.widget.Toast
 import com.google.android.material.chip.Chip
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
 import com.example.animastor.R
 import com.example.animastor.databinding.ActivityMainBinding
+import com.example.animastor.ui.GenerationStatus
 import com.example.animastor.databinding.DialogLibraryBinding
 import com.example.animastor.databinding.DialogGenerateScopeBinding
 import com.example.animastor.model.BookItem
@@ -28,6 +31,7 @@ import java.io.File
 import java.util.Calendar
 import java.util.Locale
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
 class MainActivity : AppCompatActivity() {
@@ -134,34 +138,6 @@ class MainActivity : AppCompatActivity() {
             supportFragmentManager.beginTransaction()
                 .add(R.id.nav_host_container, FileFragment(), "FileFragment")
                 .commit()
-        }
-
-        // ── Timer loop — читает viewModel.timerStartedAt напрямую ──
-        lifecycleScope.launch {
-            while (true) {
-                val elapsed = when {
-                    viewModel.timerStartedAt > 0L -> (System.currentTimeMillis() - viewModel.timerStartedAt) / 1000L
-                    viewModel.timerStartedAt == -1L -> viewModel.finalElapsedSeconds
-                    else -> 0L
-                }
-                val timerText = formatTimerText(elapsed)
-                val isStopped = viewModel.timerStartedAt == -1L
-                val hasFinalTime = viewModel.finalElapsedSeconds > 0L
-                val shouldBold = isStopped && hasFinalTime
-                binding.generationTimer.text = timerText
-                binding.generationTimer.typeface = if (shouldBold) android.graphics.Typeface.DEFAULT_BOLD else android.graphics.Typeface.DEFAULT
-                // Update timer in each visible worker row
-                val container = binding.workerProgressList
-                for (i in 0 until container.childCount) {
-                    val row = container.getChildAt(i)
-                    if (row.visibility == View.VISIBLE) {
-                        val tv = row.findViewById<TextView>(R.id.workerTimer)
-                        tv?.text = timerText
-                        if (shouldBold) tv?.setTypeface(null, android.graphics.Typeface.BOLD) else tv?.setTypeface(null, android.graphics.Typeface.NORMAL)
-                    }
-                }
-                delay(500L)
-            }
         }
 
         // Handle incoming intent from .vbook file association
@@ -274,9 +250,13 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        // ── Observe generation status (bottom nav icon indicator) ──
         lifecycleScope.launch {
-            startGenerationProgressPoller()
+            viewModel.generationStatus.collectLatest { status ->
+                updateNavIconStatus(status)
+            }
         }
+        findGenerateIconView()
 
         binding.bottomNavigation.setOnItemSelectedListener { item ->
             val tag = when (item.itemId) {
@@ -286,6 +266,11 @@ class MainActivity : AppCompatActivity() {
                 R.id.navigateFragment -> "NavigateFragment"
                 R.id.generateFragment -> "GenerateFragment"
                 else -> return@setOnItemSelectedListener true
+            }
+
+            // Reset generation status when user opens the generate screen
+            if (item.itemId == R.id.generateFragment) {
+                viewModel.resetGenerationStatus()
             }
 
             val existing = supportFragmentManager.findFragmentByTag(tag)
@@ -358,6 +343,107 @@ class MainActivity : AppCompatActivity() {
     }
 
     private val pulseAnimators = mutableMapOf<View, ObjectAnimator>()
+
+    // ═══════════════════════════════════════════════════════════════
+    //  GENERATION STATUS → BOTTOM NAV INDICATOR
+    // ═══════════════════════════════════════════════════════════════
+
+    private var generateIconView: ImageView? = null
+    private var navPulseAnimator: ObjectAnimator? = null
+
+    /**
+     * Find the generate item's ImageView inside the BottomNavigationView.
+     * Called once after the bottom nav is laid out.
+     */
+    private fun findGenerateIconView() {
+        binding.bottomNavigation.post {
+            val menuView = binding.bottomNavigation.getChildAt(0) as? ViewGroup ?: return@post
+            var generateIdx = -1
+            for (i in 0 until binding.bottomNavigation.menu.size()) {
+                if (binding.bottomNavigation.menu.getItem(i).itemId == R.id.generateFragment) {
+                    generateIdx = i; break
+                }
+            }
+            if (generateIdx < 0 || generateIdx >= menuView.childCount) return@post
+            val itemView = menuView.getChildAt(generateIdx) as? ViewGroup ?: return@post
+            for (i in 0 until itemView.childCount) {
+                val child = itemView.getChildAt(i)
+                if (child is ImageView) {
+                    generateIconView = child
+                    // Reapply current status after layout
+                    updateNavIconStatus(viewModel.generationStatus.value)
+                    // Listen for layout changes to reapply tint
+                    child.addOnLayoutChangeListener { v, _, _, _, _, _, _, _, _ ->
+                        if (viewModel.generationStatus.value != GenerationStatus.IDLE) {
+                            val status = viewModel.generationStatus.value
+                            val color = when (status) {
+                                GenerationStatus.RUNNING -> getColor(R.color.cinema_accent)
+                                GenerationStatus.ERROR -> getColor(R.color.cinema_error)
+                                GenerationStatus.SUCCESS -> getColor(R.color.cinema_success)
+                                else -> return@addOnLayoutChangeListener
+                            }
+                            (v as ImageView).imageTintList = ColorStateList.valueOf(color)
+                        }
+                    }
+                    break
+                }
+            }
+        }
+    }
+
+    private fun updateNavIconStatus(status: GenerationStatus) {
+        navPulseAnimator?.cancel()
+        navPulseAnimator = null
+
+        // Restore normal alpha on the icon view
+        generateIconView?.alpha = 1f
+
+        // Keep itemIconTint at its normal state list — the generate icon
+        // gets its custom tint directly via imageTintList on the ImageView.
+        binding.bottomNavigation.itemIconTintList = ContextCompat.getColorStateList(this, R.color.bottom_nav_tint)
+        binding.bottomNavigation.itemTextColor = ContextCompat.getColorStateList(this, R.color.bottom_nav_tint)
+
+        if (status == GenerationStatus.IDLE) {
+            generateIconView?.imageTintList = null
+            return
+        }
+
+        val color = when (status) {
+            GenerationStatus.RUNNING -> getColor(R.color.cinema_accent)
+            GenerationStatus.ERROR -> getColor(R.color.cinema_error)
+            GenerationStatus.SUCCESS -> getColor(R.color.cinema_success)
+            else -> return
+        }
+
+        generateIconView?.imageTintList = ColorStateList.valueOf(color)
+
+        val iconView = generateIconView ?: return
+        when (status) {
+            GenerationStatus.RUNNING -> {
+                navPulseAnimator = ObjectAnimator.ofFloat(iconView, "alpha", 1f, 0.35f, 1f).apply {
+                    duration = 1600
+                    repeatCount = ObjectAnimator.INFINITE
+                    start()
+                }
+            }
+            GenerationStatus.ERROR -> {
+                navPulseAnimator = ObjectAnimator.ofFloat(iconView, "alpha", 1f, 0.4f, 1f).apply {
+                    duration = 1200
+                    repeatCount = ObjectAnimator.INFINITE
+                    start()
+                }
+            }
+            GenerationStatus.SUCCESS -> {
+                // Pulse green for ~10 seconds, then stay static green
+                navPulseAnimator = ObjectAnimator.ofFloat(iconView, "alpha", 1f, 0.45f, 1f).apply {
+                    duration = 1500
+                    repeatCount = 7 // ≈10.5s
+                    start()
+                }
+            }
+            else -> {}
+        }
+    }
 
     private fun updateWorkerPanel(
         chip: Chip,
@@ -464,348 +550,6 @@ class MainActivity : AppCompatActivity() {
     }
 
 
-
-    private suspend fun startGenerationProgressPoller() {
-        val labels = WorkerLabels(
-            cover = getString(R.string.progress_cover_generating),
-            audio = getString(R.string.progress_label_audio),
-            image = getString(R.string.progress_label_image),
-            video = getString(R.string.progress_label_video),
-            generationDone = getString(R.string.generation_done),
-            vbookLabel = "VBook, scenes",
-            vbookAnalyzing = getString(R.string.progress_vbook_analyzing),
-            vbookScenesFormat = { ready, total -> getString(R.string.progress_vbook_scenes, ready, total) }
-        )
-
-        while (true) {
-            val bookId = viewModel.bookId
-            if (bookId.isBlank()) {
-                binding.generationProgressContainer.visibility = View.GONE
-                lastReadyCount = -1
-                delay(1_500)
-                continue
-            }
-
-            val activeGen = viewModel.activeGeneration.value
-            val uiState = viewModel.uiState.value
-            val vbookProg = uiState.vbookProgress
-            val hasVBook = vbookProg != null && vbookProg.stage != VBookStage.IDLE
-            val hasActiveWork = activeGen != null || hasVBook
-
-            if (!hasActiveWork) {
-                val panelState = viewModel.computeWorkers(null, vbookProg, labels)
-                if (panelState is ProgressPanelState.DoneRow || panelState is ProgressPanelState.Workers) {
-                    applyPanelState(panelState)
-                    delay(1_500)
-                    continue
-                }
-                if (panelState is ProgressPanelState.Hidden && binding.generationProgressContainer.visibility != View.GONE) {
-                    binding.generationProgressContainer.visibility = View.GONE
-                }
-                val agentProg = viewModel.checkVBookAgentStatus()
-                if (agentProg.stage != VBookStage.IDLE) {
-                    if (!_lastHasVBook) {
-                        viewModel.resetWorkerState()
-                        viewModel.startProgressStream(bookId)
-                        _lastHasVBook = true
-                    }
-                    val ps = viewModel.computeWorkers(null, agentProg, labels)
-                    applyPanelState(ps)
-                    delay(1_500)
-                    continue
-                }
-                if (binding.generationProgressContainer.visibility != View.GONE) {
-                    binding.generationProgressContainer.visibility = View.GONE
-                }
-                _lastActiveGeneration = null
-                _lastHasVBook = false
-                lastReadyCount = -1
-                delay(1_500)
-                continue
-            }
-
-            // ── Detect new work start ─────────────────────────
-            if ((activeGen != null && (_lastActiveGeneration == null || _lastActiveGeneration != activeGen)) ||
-                (hasVBook && !_lastHasVBook)) {
-                Log.i("MainActivity", "New work detected (gen=${activeGen != null} vbook=$hasVBook) — resetting")
-                viewModel.resetWorkerState()
-                lastReadyCount = -1
-                if (activeGen != null || hasVBook) {
-                    viewModel.startProgressStream(bookId)
-                }
-            }
-            _lastActiveGeneration = activeGen
-            _lastHasVBook = hasVBook
-
-            // ── Poll progress panel (if GPU gen active) or just show VBook ──
-            if (activeGen != null) {
-                try {
-                    val panel = viewModel.repository.getProgressPanel(
-                        bookId = bookId,
-                        scope = activeGen.scope,
-                        chapterId = activeGen.chapterId,
-                        sceneId = activeGen.sceneId
-                    )
-                    val panelState = viewModel.computeWorkers(panel, if (hasVBook) vbookProg else null, labels)
-                    applyPanelState(panelState)
-
-                    // Detect stuck progress (only when panel shows workers).
-                    // Primary completion signal comes from the server-pushed
-                    // generation_complete SSE event. This is a short emergency
-                    // fallback (30s) for rare cases where the SSE event is lost
-                    // due to connection drop.
-                    if (panelState is ProgressPanelState.Workers) {
-                        val progressTotal = panel.overall_percent
-                        val anyLayerIncomplete = panel.any_incomplete
-                        if (progressTotal != lastReadyCount) {
-                            lastReadyCount = progressTotal
-                            lastReadyChangeAt = System.currentTimeMillis()
-                        } else if (!lastPollFailed && anyLayerIncomplete && System.currentTimeMillis() - lastReadyChangeAt > STUCK_FALLBACK_MS) {
-                            val backendActive = runCatching {
-                                val counts = RetrofitClient.api.getWorkerCounts()
-                                counts.active_scenes > 0
-                            }.getOrDefault(false)
-                            if (!backendActive) {
-                                Log.i("MainActivity", "Fallback stuck detection — auto-completing")
-                                viewModel.stopProgressStream()
-                                viewModel.applyGenerationResults()
-                                updateCancelAllVisibility()
-                                binding.generationProgressContainer.visibility = View.GONE
-                                lastReadyCount = -1
-                            }
-                        }
-                    }
-
-                    lastPollFailed = false
-                    pollerBackoffMs = 1_500L
-                } catch (e: Exception) {
-                    Log.w("MainActivity", "GPU progress poll failed: ${e.message}")
-                    lastPollFailed = true
-                    pollerBackoffMs = (pollerBackoffMs * 2).coerceAtMost(6_000L)
-                    if (hasVBook) {
-                        val ps = viewModel.computeWorkers(null, vbookProg, labels)
-                        applyPanelState(ps)
-                    }
-                }
-            } else if (hasVBook) {
-                val updated = viewModel.checkVBookAgentStatus()
-                val vbookToShow = if (updated.stage != VBookStage.IDLE) updated else vbookProg
-                val ps = viewModel.computeWorkers(null, vbookToShow, labels)
-                applyPanelState(ps)
-            }
-
-            delay(pollerBackoffMs)
-        }
-    }
-
-    private var lastReadyCount = -1
-    private var lastReadyChangeAt = 0L
-
-    /** Set to true when getAssetsState throws, to suppress stuck-detection */
-    private var lastPollFailed = false
-
-    /** Exponential backoff for poller errors (1.5s → 3s → 6s cap), reset on success */
-    private var pollerBackoffMs = 1_500L
-
-    /** Emergency fallback: if server-pushed generation_complete is lost (30s). */
-    private val STUCK_FALLBACK_MS = 30_000L
-
-    // Detect new-generation transitions so we can clear completion tracking.
-    private var _lastActiveGeneration: GenerateViewModel.ActiveGeneration? = null
-
-    // Track VBook presence transitions
-    private var _lastHasVBook = false
-
-    /** Worker type that currently has the stop-popup open (for persistent row highlight). */
-    private var _highlightedWorkerType: String? = null
-
-    /** Pre-computed semi-transparent red highlight (~12% alpha). */
-    private var _highlightColor: Int = 0
-
-    /**
-     * Apply the panel state computed by [GenerateViewModel.computeWorkers].
-     * Handles rendering workers, showing the done row, or hiding the panel.
-     */
-    private fun applyPanelState(state: ProgressPanelState) {
-        when (state) {
-            is ProgressPanelState.Workers -> {
-                binding.generationProgressContainer.visibility = View.VISIBLE
-                binding.generationDoneRow.visibility = View.GONE
-                binding.workerProgressList.visibility = View.VISIBLE
-                renderWorkers(state.workers)
-            }
-            is ProgressPanelState.DoneRow -> {
-                binding.generationProgressContainer.visibility = View.VISIBLE
-                binding.workerProgressList.visibility = View.GONE
-                binding.generationDoneRow.visibility = View.VISIBLE
-                // timer находится внутри generationDoneRow, справа от 100%
-            }
-            is ProgressPanelState.Hidden -> {
-                binding.generationProgressContainer.visibility = View.GONE
-            }
-        }
-    }
-
-    /**
-     * Render worker rows into the progress panel.
-     * Pure rendering — data already computed by [GenerateViewModel].
-     * Each active row gets a small stop button in the right end that opens
-     * a popup menu with "Отменить" to cancel that specific worker.
-     */
-    private fun renderWorkers(workers: List<WorkerUi>) {
-        val container = binding.workerProgressList
-        val greenColor = getColor(R.color.cinema_success)
-        val accentColor = getColor(R.color.cinema_accent)
-        val textColor = getColor(R.color.cinema_text_secondary)
-        val mutedColor = getColor(R.color.cinema_text_disabled)
-        val errorColor = getColor(R.color.cinema_error)
-
-        val childCount = container.childCount
-        val maxIdx = childCount.coerceAtLeast(workers.size)
-
-        for (i in 0 until maxIdx) {
-            if (i >= workers.size) {
-                container.getChildAt(i).visibility = View.GONE
-                continue
-            }
-
-            val worker = workers[i]
-            val row: View = if (i < childCount) {
-                container.getChildAt(i)
-            } else {
-                layoutInflater.inflate(R.layout.item_worker_progress, container, false).also {
-                    container.addView(it)
-                }
-            }
-            row.visibility = View.VISIBLE
-
-            val nameView = row.findViewById<TextView>(R.id.workerName)
-            val countView = row.findViewById<TextView>(R.id.workerCount)
-            val pctView = row.findViewById<TextView>(R.id.workerPercent)
-            val barView = row.findViewById<com.google.android.material.progressindicator.LinearProgressIndicator>(R.id.workerProgressBar)
-            val stopButton = row.findViewById<ImageButton>(R.id.workerStopButton)
-
-            val timerView = row.findViewById<TextView>(R.id.workerTimer)
-            val currentSec = when {
-                viewModel.timerStartedAt > 0L -> (System.currentTimeMillis() - viewModel.timerStartedAt) / 1000L
-                viewModel.timerStartedAt == -1L -> viewModel.finalElapsedSeconds
-                else -> 0L
-            }
-            val timerText = formatTimerText(currentSec)
-
-            // Reset row background — unless this row has an active stop-popup
-            if (_highlightedWorkerType == worker.type && _highlightColor != 0) {
-                row.setBackgroundColor(_highlightColor)
-            } else {
-                row.setBackgroundColor(android.graphics.Color.TRANSPARENT)
-            }
-
-            if (worker.cancelled) {
-                // Cancelled state — show muted "Cancelled" row, no progress bar
-                nameView.text = getString(R.string.generation_done) + " — " + worker.label
-                nameView.setTextColor(errorColor)
-                countView.text = ""
-                countView.visibility = View.GONE
-                pctView.text = ""
-                pctView.visibility = View.GONE
-                timerView?.text = ""
-                timerView?.visibility = View.GONE
-                barView.visibility = View.GONE
-                stopButton.visibility = View.GONE
-                stopButton.setOnClickListener(null)
-            } else if (worker.indeterminate) {
-                // Cyclic/indeterminate progress — no count, no percentage
-                nameView.text = worker.label
-                nameView.setTextColor(textColor)
-                countView.text = ""
-                countView.visibility = View.GONE
-                pctView.text = ""
-                pctView.visibility = View.GONE
-                timerView?.text = timerText
-                timerView?.visibility = View.VISIBLE
-                barView.visibility = View.VISIBLE
-                barView.isIndeterminate = true
-                barView.setIndicatorColor(accentColor)
-            } else if (worker.done) {
-                nameView.text = getString(R.string.generation_done) + " — " + worker.label
-                nameView.setTextColor(greenColor)
-                countView.text = worker.countText ?: "${worker.ready}/${worker.total}"
-                countView.setTextColor(greenColor)
-                countView.visibility = View.VISIBLE
-                pctView.text = "100%"
-                pctView.setTextColor(greenColor)
-                pctView.visibility = View.VISIBLE
-                timerView?.text = timerText
-                timerView?.visibility = View.VISIBLE
-                barView.visibility = View.VISIBLE
-                barView.isIndeterminate = false
-                barView.setProgressCompat(100, true)
-                barView.setIndicatorColor(greenColor)
-            } else {
-                nameView.text = worker.label
-                nameView.setTextColor(textColor)
-                countView.text = worker.countText ?: "${worker.ready}/${worker.total}"
-                countView.setTextColor(mutedColor)
-                countView.visibility = View.VISIBLE
-                pctView.text = "${worker.percent}%"
-                pctView.setTextColor(accentColor)
-                pctView.visibility = View.VISIBLE
-                timerView?.text = timerText
-                timerView?.visibility = View.VISIBLE
-                barView.visibility = View.VISIBLE
-                barView.isIndeterminate = false
-                barView.setProgressCompat(worker.percent, true)
-                barView.setIndicatorColor(accentColor)
-            }
-
-            // Configure stop button: visible for active workers, hidden for done or cancelled
-            if (worker.done || worker.cancelled) {
-                stopButton.visibility = View.GONE
-                stopButton.setOnClickListener(null)
-            } else {
-                stopButton.visibility = View.VISIBLE
-                setupWorkerStopButton(stopButton, row, worker)
-            }
-        }
-    }
-
-    /**
-     * Configure the stop button to show a popup menu with "Отменить".
-     * Highlights the row with a semi-transparent red tint while the popup is open.
-     */
-    private fun setupWorkerStopButton(
-        stopButton: ImageButton,
-        row: View,
-        worker: WorkerUi
-    ) {
-        stopButton.setOnClickListener { view ->
-            // Compute highlight color once and cache
-            if (_highlightColor == 0) {
-                val errColor = getColor(R.color.cinema_error)
-                _highlightColor = (errColor and 0x00FFFFFF) or (0x1F shl 24)
-            }
-            val highlightColor = _highlightColor
-
-            // Track this worker type so renderWorkers re-applies highlight on each cycle
-            _highlightedWorkerType = worker.type
-            row.setBackgroundColor(highlightColor)
-
-            val popup = PopupMenu(this@MainActivity, view, android.view.Gravity.END)
-            popup.menu.add(0, 1, 0, getString(R.string.worker_stop_menu_cancel))
-            popup.setOnDismissListener {
-                _highlightedWorkerType = null
-                row.setBackgroundColor(android.graphics.Color.TRANSPARENT)
-            }
-            popup.setOnMenuItemClickListener { _ ->
-                _highlightedWorkerType = null
-                row.setBackgroundColor(android.graphics.Color.TRANSPARENT)
-                viewModel.cancelWorker(worker.type)
-                Log.i("MainActivity", "Worker cancelled via popup: type=${worker.type}")
-                true
-            }
-            popup.show()
-        }
-    }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)

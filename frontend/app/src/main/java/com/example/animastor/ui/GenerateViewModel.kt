@@ -107,6 +107,20 @@ class GenerateViewModel(
         timerStartedAt = -1L  // -1 = stopped, finalElapsedSeconds holds the final value
     }
 
+    // ═══════════════════════════════════════════════════════════════
+    //  GENERATION STATUS (bottom nav icon indicator)
+    // ═══════════════════════════════════════════════════════════════
+
+    private val _generationStatus = MutableStateFlow(GenerationStatus.IDLE)
+    val generationStatus: StateFlow<GenerationStatus> = _generationStatus.asStateFlow()
+
+    /**
+     * Reset generation status to IDLE (called when user opens Generate screen).
+     */
+    fun resetGenerationStatus() {
+        _generationStatus.value = GenerationStatus.IDLE
+    }
+
     // ── UI State (generation/import related only) ─────────────────
 
     private val _uiState = MutableStateFlow(GenUiState())
@@ -289,6 +303,7 @@ class GenerateViewModel(
             onResult(GenerationResult.Failed("No book"))
             return
         }
+        _generationStatus.value = GenerationStatus.RUNNING
         // Allow starting new generation even if one is already running.
         // The previous generation job will be cancelled, and the new one
         // replaces it. Per-worker stop buttons on the backend handle granular cancellation.
@@ -358,6 +373,7 @@ class GenerateViewModel(
                     onResult(GenerationResult.Failed("cancelled"))
                 } else {
                     Log.e(TAG, "startGeneration failed: ${e.message}", e)
+                    _generationStatus.value = GenerationStatus.ERROR
                     _uiState.update {
                         it.copy(phase = PlayerPhase.SCENE_READY, errorMessage = "Generation failed: ${e.message}")
                     }
@@ -451,6 +467,7 @@ class GenerateViewModel(
     fun startVBookGeneration() {
         val bid = bookId.takeIf { it.isNotBlank() } ?: return
         Log.i(TAG, "startVBookGeneration: $bid")
+        _generationStatus.value = GenerationStatus.RUNNING
 
         _uiState.update { it.copy(vbookProgress = VBookProgress(stage = VBookStage.ANALYZING)) }
         startTimer()
@@ -526,6 +543,7 @@ class GenerateViewModel(
             }
         }
 
+        _generationStatus.value = GenerationStatus.SUCCESS
         stopTimer()
         Log.i(TAG, "[VBookPoll] done — refreshing player with new scenes")
         applyGenerationResults()
@@ -534,6 +552,7 @@ class GenerateViewModel(
     fun cancelGeneration() {
         Log.i(TAG, "cancelGeneration: $bookId")
         if (bookId.isBlank()) return
+        _generationStatus.value = GenerationStatus.IDLE
         stopTimer()  // 🕐 отмена — останавливаем таймер
         stopProgressStream()  // ❄ закрываем SSE канал
         resetWorkerState()
@@ -974,6 +993,7 @@ class GenerateViewModel(
 
     fun closeBook() {
         generationJob?.cancel()
+        _generationStatus.value = GenerationStatus.IDLE
         stopTimer()  // 🕐 закрыли книгу — сбрасываем таймер
         persistBookId("")
         persistBuildId("")
@@ -1082,6 +1102,7 @@ class GenerateViewModel(
                     // and trigger playback refresh immediately, replacing the
                     // 120s stuck heuristic that was on the client.
                     Log.i(TAG, "SSE generation_complete received — applying results")
+                    _generationStatus.value = GenerationStatus.SUCCESS
                     stopProgressStream()
                     applyGenerationResults()
                 } else if (event.type == "import_complete") {
@@ -1478,6 +1499,12 @@ class PreloadedScene(
         return result
     }
 }
+
+/**
+ * Generation status for the bottom nav icon indicator.
+ * Priority order for display: ERROR > RUNNING > SUCCESS > IDLE.
+ */
+enum class GenerationStatus { IDLE, RUNNING, ERROR, SUCCESS }
 
 data class ActivePosition(
     val chapterId: String? = null,
