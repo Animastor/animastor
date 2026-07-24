@@ -78,7 +78,6 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
     private var typingAnimJob: Job? = null
     private var bookData: BookData? = null
     private var bookDataLoadAttempted = false
-    private var lastVBookStage: VBookStage? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -115,13 +114,7 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
         buildModeChips()
         buildTopicChips()
 
-        val currentState = generateViewModel.uiState.value
-        val isTxtImporting = currentState.phase == PlayerPhase.IMPORTING_TXT && currentState.importProgressMessages.isNotEmpty()
-
-        if (isTxtImporting) {
-            // TXT import in progress — don't load sessions or show welcome.
-            // observeImportProgress will populate the chat with import messages.
-        } else if (argCreateMode && generateViewModel.bookId.isBlank()) {
+        if (argCreateMode && generateViewModel.bookId.isBlank()) {
             messages.clear()
             apiMessages.clear()
             val msg = ChatMessage(text = getString(R.string.ai_creation_welcome), isUser = false)
@@ -139,7 +132,6 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
 
         setupSpeechRecognizer()
         observePosition()
-        observeImportProgress()
         loadBookDataAsync()
     }
 
@@ -254,86 +246,6 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
                     updateContextBar(pos)
                 }
             }
-        }
-    }
-
-    private var lastMessageCount = 0
-    private var importInProgress = false
-    private var importTypingJob: Job? = null
-    private var lastMessageList: List<String>? = null
-
-    private fun observeImportProgress() {
-        viewLifecycleOwner.lifecycleScope.launch {
-            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
-                generateViewModel.uiState.collect { state ->
-                    // ── VBook completed → refresh bookData for position bar ──
-                    val currentStage = state.vbookProgress?.stage
-                    if (currentStage == VBookStage.COMPLETED && lastVBookStage != VBookStage.COMPLETED) {
-                        bookDataLoadAttempted = false
-                        loadBookDataAsync()
-                    }
-                    if (currentStage != null) {
-                        lastVBookStage = currentStage
-                    }
-
-                    val msgs = state.importProgressMessages
-
-                    // TXT import active → reset chat
-                    if (state.phase == PlayerPhase.IMPORTING_TXT && msgs.isNotEmpty() && !importInProgress) {
-                        importInProgress = true
-                        lastMessageCount = 0
-                        lastMessageList = null
-                        messages.clear()
-                        apiMessages.clear()
-                        importTypingJob?.cancel()
-                        scheduleImportTyping()
-                    }
-
-                    if (msgs.isNotEmpty()) {
-                        if (msgs.size > lastMessageCount) {
-                            // New messages appended
-                            if (lastMessageCount == 0) {
-                                messages.clear()
-                                apiMessages.clear()
-                            }
-                            for (i in lastMessageCount until msgs.size) {
-                                val chatMsg = ChatMessage(text = msgs[i], isUser = false)
-                                messages.add(chatMsg)
-                            }
-                            lastMessageCount = msgs.size
-                            adapter.submitList(messages.toList())
-                            scrollToBottom()
-                            hideTypingIndicator()
-                            scheduleImportTyping()
-                        } else if (msgs.size == lastMessageCount && lastMessageCount > 0) {
-                            // Same count — check if last message content changed (update)
-                            if (lastMessageList != msgs) {
-                                val lastContent = msgs.last()
-                                if (messages.lastOrNull()?.text != lastContent) {
-                                    messages[messages.size - 1] = ChatMessage(text = lastContent, isUser = false)
-                                    adapter.submitList(messages.toList())
-                                }
-                                lastMessageList = msgs
-                            }
-                        }
-                    }
-
-                    // Import fully done
-                    if (importInProgress && state.phase != PlayerPhase.IMPORTING_TXT) {
-                        importInProgress = false
-                        hideTypingIndicator()
-                        importTypingJob?.cancel()
-                    }
-                }
-            }
-        }
-    }
-
-    private fun scheduleImportTyping() {
-        importTypingJob?.cancel()
-        importTypingJob = lifecycleScope.launch {
-            delay(3000)
-            if (importInProgress) showTypingIndicator()
         }
     }
 
@@ -833,7 +745,6 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
         stopListening()
         sessionLoadJob?.cancel()
         welcomeJob?.cancel()
-        importTypingJob?.cancel()
         speechRecognizer?.destroy()
         speechRecognizer = null
         binding = null
