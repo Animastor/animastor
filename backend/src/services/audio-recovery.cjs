@@ -9,7 +9,7 @@ const fs = require('fs');
 
 module.exports = function(redis, config, deps) {
     const { audio, image, state, book, orchestrator, taskHandler, getChunk, saveChunk, saveIURegistry } = deps;
-    const { log, pad, parseChunkId } = deps.utils;
+    const { log } = deps.utils;
 
     async function recoverAudioResults() {
         try {

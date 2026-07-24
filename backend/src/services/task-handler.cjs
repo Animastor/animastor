@@ -11,7 +11,7 @@ const jobSchema = require('../runtime/job-schema');
 
 module.exports = function(redis, config, deps) {
     const { audio, image, video, state, book, orchestrator, activeScenes, placeholderAudio, cleanupService, utils, bookDiff } = deps;
-    const { log, pad, collectScenes, findSceneRuntimeData } = utils;
+    const { log } = utils;
     const { resolveAssetPath } = cleanupService;
     const OUTPUT_DIR = config.OUTPUT_DIR;
     // AUDIO_MERGE_RETRY_* removed (T7) — now in audioOrch.completeChunk

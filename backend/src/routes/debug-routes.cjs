@@ -15,7 +15,7 @@ module.exports = function(app, redis, deps) {
         cleanupService, iuRepo, computeWaveform,
         taskHandler, bookDiff, journal,
     } = deps;
-    const { log, pad, collectScenes } = utils;
+    const { log } = utils;
     const { stats } = cleanupService;
     const OUTPUT_DIR = config.OUTPUT_DIR;
 

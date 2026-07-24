@@ -20,7 +20,7 @@ module.exports = function(app, redis, deps) {
         detectAvailableMode, recoverChunksFromDisk, recoverAllBooksFromDisk,
         cleanupService, iuRepo, computeWaveform,
     } = deps;
-    const { log, pad, collectScenes } = utils;
+    const { log } = utils;
     const OUTPUT_DIR = config.OUTPUT_DIR;
 
     // ======================================================

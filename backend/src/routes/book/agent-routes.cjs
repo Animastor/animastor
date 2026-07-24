@@ -14,7 +14,7 @@ module.exports = function(app, redis, deps) {
         cleanupService, bookDiff, taskHandler, windowGenerator,
         iuRepo, cleanBookRedisKeys,
     } = deps;
-    const { log, pad, collectScenes, buildSegments } = utils;
+    const { log } = utils;
 
     const buildWindowProgressMeta = (createdScenes, totalScenes, vbookSceneIdx) => {
         const toFiniteNumber = (value) => {

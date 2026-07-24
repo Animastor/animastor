@@ -86,7 +86,7 @@ const OUTPUT_DIR = config.OUTPUT_DIR;
 // ======================================================
 // HELPERS
 // ======================================================
-const { log, pad, parseChunkId, collectScenes, findSceneRuntimeData } = utils;
+const { log } = utils;
 
 // Redis helpers (factory, initialized with redis instance)
 const {

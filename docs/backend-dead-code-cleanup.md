@@ -6,21 +6,18 @@
 
 ---
 
-## Этап 1: Неиспользуемые CJS-файлы (helpers и сервисы)
+## Этап 1 ✅ (завершён)
 
-**Scope:** `backend/src/helpers/`, `backend/src/services/` — файлы, которые не импортируются ниоткуда.
+**Удалено:**
+- `backend/src/services/startup-recovery.js` — 0 импортов, вытеснен reconciliation-engine
+- `backend/src/storage/manifest.js` — 0 импортов, экспорт удалён из `storage/index.js`
 
-Кандидаты на удаление (после верификации отсутствия импортов):
-- `backend/src/services/startup-recovery.js` — возможно, вытеснен reconciliation-engine
-- `backend/src/services/encoding-detect.js` — проверить импорты
-- `backend/src/services/knowledge-base.js` — проверить импорты
-- `backend/src/services/source-coverage-audit.js` — проверить импорты
-- `backend/src/helpers/utils.cjs` — активно используется
-- `backend/src/helpers/redis-helpers.cjs` — активно используется
+**Проверено (оставлено):**
+- `backend/src/services/encoding-detect.js` — жив, используется `txt-importer.js`
+- `backend/src/services/knowledge-base.js` — жив, используется `agent-service.js`
+- `backend/src/services/source-coverage-audit.js` — жив, используется `book/core-routes.cjs`
 
-**Действие:** Найти все require/import этих файлов. Если импортов нет — удалить.
-
-**Статус:** 🔲 Не начато
+**Commit:** `5f07d34`
 
 ---
 
@@ -52,15 +49,7 @@
 
 ---
 
-## Этап 4: Неиспользуемые модули storage
-
-**Scope:** `backend/src/storage/`
-
-- `backend/src/storage/manifest.js` — проверить импорты
-
-**Действие:** Проверить require/import. Удалить если не используется.
-
-**Статус:** 🔲 Не начато
+## Этап 4: (объединён с Этапом 1 — manifest.js удалён)
 
 ---
 
@@ -155,10 +144,10 @@
 
 | Этап | Область | Статус | Commit |
 |------|---------|--------|--------|
-| 1 | CJS helpers/services | 🔲 | |
+| 1 | CJS helpers/services | ✅ | `5f07d34` |
 | 2 | helpers/utils.cjs | 🔲 | |
 | 3 | runtime modules | 🔲 | |
-| 4 | storage modules | 🔲 | |
+| 4 | storage modules (объединён с 1) | ✅ | `5f07d34` |
 | 5 | audio/video/image services | 🔲 | |
 | 6 | book/lazy-book modules | 🔲 | |
 | 7 | orchestration modules | 🔲 | |

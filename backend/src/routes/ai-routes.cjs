@@ -14,7 +14,7 @@ module.exports = function(app, redis, deps) {
         cleanupService, bookDiff, taskHandler, chatEngine,
         iuRepo, genSessionRepo, lazyBook, txtImporter, bookSourceRepo,
     } = deps;
-    const { log, pad, collectScenes, findSceneRuntimeData } = utils;
+    const { log } = utils;
 
     // ── Session ID counter ───────────────────────────
     let sessionIdCounter = 0;
