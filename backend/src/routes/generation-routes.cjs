@@ -488,17 +488,32 @@ module.exports = function(app, redis, deps) {
             const activeImage = status.image > 0 ? busyImage : 0;
             const activeVideo = status.video > 0 ? busyVideo : 0;
 
+            // VBook agent count: live running AI agent sessions across all books
+            let vbookCount = 0;
+            let activeVBook = 0;
+            try {
+                const result = await storage.postgres.query(
+                    `SELECT COUNT(*)::int as cnt FROM agent_sessions WHERE status = 'running'`
+                );
+                vbookCount = result.rows[0]?.cnt || 0;
+                activeVBook = vbookCount > 0 ? 1 : 0;
+            } catch (pgErr) {
+                console.warn('[WORKER-COUNTS] Failed to query agent_sessions:', pgErr.message);
+            }
+
             res.json({
                 audio: status.audio || 0,
                 image: status.image || 0,
                 video: status.video || 0,
+                vbook: vbookCount,
                 active_audio: activeAudio,
                 active_image: activeImage,
                 active_video: activeVideo,
+                active_vbook: activeVBook,
                 active_scenes: activeCount || 0,
             });
         } catch (err) {
-            res.json({ audio: 0, image: 0, video: 0, active_audio: 0, active_image: 0, active_video: 0 });
+            res.json({ audio: 0, image: 0, video: 0, active_audio: 0, active_image: 0, active_video: 0, vbook: 0, active_vbook: 0 });
         }
     });
 
