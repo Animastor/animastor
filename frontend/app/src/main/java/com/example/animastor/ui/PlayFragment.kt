@@ -449,6 +449,11 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                             b.coverImage.setImageBitmap(null)
                             b.coverImage.visibility = View.GONE
                             b.fullscreenButton.visibility = View.GONE
+                            // Show theatre curtains as fallback background.
+                            // stopAll() hides curtains (to avoid bleed-through behind
+                            // transparent cover margins), so re-show them explicitly.
+                            showCurtains()
+                            stopPulse()  // IDLE — static curtains, no pulse
                         }
 
                         if (state.phase == PlayerPhase.PLAYING && state.chunkSequence > playbackViewModel.lastProcessedSceneSequence) {
