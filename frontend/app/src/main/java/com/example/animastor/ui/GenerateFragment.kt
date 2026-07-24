@@ -452,7 +452,7 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
             return
         }
         // Show scope dialog — applies to the GPU stages after VBook completes
-        showScopeDialog(profile = "full") { scope, _chId, _scId ->
+        showScopeDialog(profile = "full") { scope, _, _ ->
             onGenerateVBookClicked()
             val scopeLabel = when (scope) {
                 "current_scene" -> getString(R.string.scope_current_scene)

@@ -4,7 +4,68 @@ All notable changes to Animastor are documented here.
 
 ---
 
-## [Unreleased] — 2026-07-23
+## [Unreleased] — 2026-07-24
+
+### Fixed
+
+- **Worker icon logic: неверное отображение иконок в GenerateFragment**
+  (`frontend/.../GenerateFragment.kt`):
+  - **Проблема:** когда worker есть (total > 0) но не активен (active == 0), иконка показывалась
+    перечёркнутой (iconInactiveRes), будто worker отсутствует.
+  - **Фикс:** `updateSectionHeader()` теперь принимает `isEnabled`. Показывает normal-иконку
+    (без пульсации) когда `total > 0 && isEnabled`. Перечёркнутая иконка только при `total == 0`
+    или выключенном переключателе.
+
+- **Pulse-анимация продолжалась после потери соединения с GPU**
+  (`frontend/.../MainActivity.kt`):
+  - **Проблема:** при ошибке `getWorkerCounts()` catch-блок только выставлял "?", но не
+    отменял pulse-анимацию — иконки продолжали пульсировать.
+  - **Фикс:** catch отменяет все pulseAnimators + сбрасывает tint/alpha чипов.
+
+- **Cover-воркеры не отображались в секции Image; Video шёл в Image контейнер**
+  (`frontend/.../GenerateFragment.kt`):
+  - **Проблема:** `renderWorkersToSections()` не маршрутизировал "cover" тип никуда (отбрасывался),
+    а "video" ошибочно шёл в imageContainer.
+  - **Фикс:** `"cover" → imageContainer` (теперь "Генерация обложки" и "Генерация изображений"
+    показываются в одной секции); `"video" → videoContainer`.
+
+- **VBook button text теперь зависит от реального содержимого книги**
+  (`frontend/.../GenerateFragment.kt`):
+  - **Проблема:** `updateVBookButtonText()` использовал локальный `_vbookWindowGenerated` флаг,
+    который становился true только после первого клика. При открытии книги с уже готовыми сценами
+    кнопка всё равно показывала "Generate VBook" вместо "Generate VBook Next".
+  - **Фикс:** проверка `bookData?.chapters?.any { has scenes }` — реальное содержимое.
+    Удалён мёртвый `_vbookWindowGenerated`.
+
+- **VBook секция пульсировала при генерации аудио**
+  (`frontend/.../GenerateFragment.kt`, `backend/.../generation-routes.cjs`,
+  `backend/.../ai-service.js`, `frontend/.../WorkerCounts.kt`):
+  - **Проблема:** VBook header использовал `counts.audio` / `counts.active_audio` — при генерации
+    аудио VBook иконка пульсировала, хотя VBook не был запущен.
+  - **Фикс (бэкенд):** `/api/v1/worker/counts` теперь возвращает `vbook` и `active_vbook`.
+    `vbook` = 1 если LLM API жив (ключ + квота), 0 если нет. `active_vbook` = 1 если есть
+    running agent session.
+  - **Фикс (ai-service.js):** добавлена `checkAIHealth()` — минимальный `POST /chat/completions`
+    с `max_tokens=1` для реальной проверки валидности ключа и наличия квоты. Кеш 60s.
+  - **Фикс (WorkerCounts.kt):** добавлены поля `vbook`, `active_vbook`.
+  - **Фикс (GenerateFragment.kt):** VBook читает `counts.vbook`/`counts.active_vbook` с бэкенда.
+
+- **Пропал диалог выбора Scope перед генерацией**
+  (`frontend/.../GenerateFragment.kt`, `frontend/.../dialog_generate_scope.xml`):
+  - **Проблема:** Generate на Audio/Image/Video сразу запускал `whole_book` без диалога.
+  - **Фикс:** `showScopeDialog()` восстановлен. Показывает: Current Scene → Current Chapter →
+    **From This Scene Onward** (новый) → Whole Book.
+  - Scope `from_current_scene` добавлен в RadioGroup, маппинг на бэкендовое значение.
+  - Также добавлен вызов диалога в `onGenerateAllClicked()`.
+
+- **cancelGeneration не закрывал SSE-канал**
+  (`frontend/.../GenerateViewModel.kt`):
+  - **Проблема:** `cancelGeneration()` не вызывал `stopProgressStream()` — SSE оставался открыт.
+  - **Фикс:** добавлены `stopProgressStream()` + `resetWorkerState()` в cancelGeneration.
+
+- **Kotlin warning: неиспользуемые параметры `_chId`, `_scId`**
+  (`frontend/.../GenerateFragment.kt`):
+  - **Фикс:** переименованы в `_, _` (стандартная Kotlin конвенция).
 
 ### Added
 

@@ -488,15 +488,17 @@ module.exports = function(app, redis, deps) {
             const activeImage = status.image > 0 ? busyImage : 0;
             const activeVideo = status.video > 0 ? busyVideo : 0;
 
-            // VBook agent count: live running AI agent sessions across all books
-            let vbookCount = 0;
+            // VBook agent: check if the AI API is alive (key set + responds).
+            // vbook = number of available AI agents (1 if alive, 0 if not).
+            // active_vbook = 1 when a VBook agent session is actually running.
+            const aiService = require('../services/ai-service');
+            const vbookCount = await aiService.checkAIHealth(config);
             let activeVBook = 0;
             try {
                 const result = await storage.postgres.query(
                     `SELECT COUNT(*)::int as cnt FROM agent_sessions WHERE status = 'running'`
                 );
-                vbookCount = result.rows[0]?.cnt || 0;
-                activeVBook = vbookCount > 0 ? 1 : 0;
+                activeVBook = (result.rows[0]?.cnt || 0) > 0 ? 1 : 0;
             } catch (pgErr) {
                 console.warn('[WORKER-COUNTS] Failed to query agent_sessions:', pgErr.message);
             }

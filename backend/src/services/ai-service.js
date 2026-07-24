@@ -438,6 +438,61 @@ function validateAnalysis(analysis, chapterText) {
 }
 
 // ======================================================
+// AI HEALTH CHECK — lightweight ping to see if the LLM API is alive
+// ======================================================
+// Checks if the AI API key is set and the models endpoint responds.
+// Result is cached for 60 seconds to avoid hammering the API on every poll.
+
+let _healthCache = { alive: false, at: 0 };
+const HEALTH_CACHE_TTL_MS = 60_000;
+
+/**
+ * Check if the AI API is alive (key configured + LLM can generate).
+ * Makes a minimal chat completion with max_tokens=1 to verify both
+ * key validity AND available quota (token balance).
+ * Caches the result for 60s to avoid hammering the API on every poll.
+ * @param {object} [cfg] - optional config object (for OPENROUTER_API_KEY)
+ * @returns {Promise<number>} 1 if alive, 0 if not
+ */
+async function checkAIHealth(cfg) {
+    const apiKey = cfg?.OPENROUTER_API_KEY || process.env.OPENROUTER_API_KEY;
+    if (!apiKey) return 0;
+
+    const now = Date.now();
+    if (now - _healthCache.at < HEALTH_CACHE_TTL_MS) {
+        return _healthCache.alive ? 1 : 0;
+    }
+
+    try {
+        // Minimal chat completion — verifies key is valid AND quota is available
+        const response = await fetch(`${AI_API_BASE_URL}/chat/completions`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${apiKey}`,
+            },
+            body: JSON.stringify({
+                model: 'qwen/qwen3-8b',  // cheapest model for health check
+                messages: [{ role: 'user', content: 'ok' }],
+                max_tokens: 1,
+                temperature: 0,
+            }),
+            signal: AbortSignal.timeout(15_000),
+        });
+        _healthCache = { alive: response.ok, at: now };
+        if (!response.ok) {
+            const text = await response.text().catch(() => '');
+            console.warn(`[AI-HEALTH] API returned ${response.status}: ${text.substring(0, 200)}`);
+        }
+        return response.ok ? 1 : 0;
+    } catch (err) {
+        console.warn(`[AI-HEALTH] API check failed: ${err.message}`);
+        _healthCache = { alive: false, at: now };
+        return 0;
+    }
+}
+
+// ======================================================
 // EXPORTS
 // ======================================================
 
@@ -445,4 +500,5 @@ module.exports = {
     callAI,
     parseJsonResponse,
     refineDraft,
+    checkAIHealth,
 };
