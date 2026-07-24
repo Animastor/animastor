@@ -483,8 +483,8 @@ class GenerateViewModel(
                     Log.i(TAG, "startVBookGeneration: calling bootstrapBook")
                     _repository.bootstrapBook(bid)
                 } else {
-                    Log.i(TAG, "startVBookGeneration: calling resumeBootstrap")
-                    _repository.resumeBootstrap(bid)
+                    Log.i(TAG, "startVBookGeneration: calling bootstrapNextWindow")
+                    _repository.bootstrapNextWindow(bid)
                 }
             }.onSuccess {
                 pollVBookProgress(bid)
