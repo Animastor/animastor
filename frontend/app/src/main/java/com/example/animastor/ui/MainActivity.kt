@@ -10,10 +10,7 @@ import android.util.Log
 import android.view.View
 import android.view.ViewGroup
 import android.widget.ImageView
-import android.widget.TextView
 import android.widget.Toast
-import com.google.android.material.chip.Chip
-import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
@@ -22,11 +19,7 @@ import androidx.lifecycle.lifecycleScope
 import com.example.animastor.R
 import com.example.animastor.databinding.ActivityMainBinding
 import com.example.animastor.ui.GenerationStatus
-import com.example.animastor.databinding.DialogLibraryBinding
-import com.example.animastor.databinding.DialogGenerateScopeBinding
-import com.example.animastor.model.BookItem
-import com.example.animastor.network.RetrofitClient
-import com.example.animastor.ui.adapter.BookAdapter
+
 import java.io.File
 import java.util.Calendar
 import java.util.Locale
@@ -37,7 +30,6 @@ import kotlinx.coroutines.launch
 class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
-    private var selectedBook: BookItem? = null
     private var isBottomNavHidden = false
     private val viewModel: GenerateViewModel by lazy {
         ViewModelProvider(this, GenerateViewModel.factory).get(GenerateViewModel::class.java)
@@ -150,74 +142,21 @@ class MainActivity : AppCompatActivity() {
                 .commit()
         }
 
-        setupWorkerToggles()
-        loadInitialLayerConfig()
         setupPlaybackCoordination()
 
+        // Periodically refresh assets state + load layer config on book change
         lifecycleScope.launch {
-            binding.workerPanel.visibility = View.VISIBLE
-            val normalColor = getColor(R.color.cinema_text_disabled)
-            val activeColor = getColor(R.color.cinema_accent)
-            val errorColor = getColor(R.color.cinema_error)
-
+            var prevBookId = ""
             while (true) {
-                try {
-                    val counts = RetrofitClient.api.getWorkerCounts()
-                    val state = viewModel.uiState.value
-                    val phase = state.phase
-                    val mode = state.mode
-                    val isGenerating = phase == PlayerPhase.GENERATING || phase == PlayerPhase.LOADING_BOOK || viewModel.isRegenerating.value
-                    val audioNeeded = mode == "storyboard" || mode == "full" || mode == "image_only"
-                    val imageNeeded = mode == "storyboard" || mode == "full" || mode == "image_only"
-                    val videoNeeded = mode == "full"
-
-                    updateWorkerPanel(
-                        chip = binding.workerAudioLayout,
-                        count = binding.workerAudioCount,
-                        total = counts.audio,
-                        active = counts.active_audio,
-                        isGenerating = isGenerating,
-                        isNeeded = audioNeeded,
-                        normalColor = normalColor,
-                        activeColor = activeColor,
-                        errorColor = errorColor
-                    )
-                    updateWorkerPanel(
-                        chip = binding.workerImageLayout,
-                        count = binding.workerImageCount,
-                        total = counts.image,
-                        active = counts.active_image,
-                        isGenerating = isGenerating,
-                        isNeeded = imageNeeded,
-                        normalColor = normalColor,
-                        activeColor = activeColor,
-                        errorColor = errorColor
-                    )
-                    updateWorkerPanel(
-                        chip = binding.workerVideoLayout,
-                        count = binding.workerVideoCount,
-                        total = counts.video,
-                        active = counts.active_video,
-                        isGenerating = isGenerating,
-                        isNeeded = videoNeeded,
-                        normalColor = normalColor,
-                        activeColor = activeColor,
-                        errorColor = errorColor
-                    )
-                } catch (_: Exception) {
-                    binding.workerAudioCount.text = "?"
-                    binding.workerImageCount.text = "?"
-                    binding.workerVideoCount.text = "?"
-                    // Stop any stale pulse animations when connection is lost
-                    pulseAnimators.values.forEach { it.cancel() }
-                    pulseAnimators.clear()
-                    // Reset chips to normal state (no pulse, no error tint)
-                    binding.workerAudioLayout.setChipIconTint(android.content.res.ColorStateList.valueOf(normalColor))
-                    binding.workerImageLayout.setChipIconTint(android.content.res.ColorStateList.valueOf(normalColor))
-                    binding.workerVideoLayout.setChipIconTint(android.content.res.ColorStateList.valueOf(normalColor))
-                    binding.workerAudioLayout.alpha = 1f
-                    binding.workerImageLayout.alpha = 1f
-                    binding.workerVideoLayout.alpha = 1f
+                val bId = viewModel.bookId
+                if (bId != prevBookId) {
+                    prevBookId = bId
+                    if (bId.isNotBlank()) {
+                        viewModel.loadLayerConfig()
+                    }
+                }
+                if (bId.isNotBlank()) {
+                    viewModel.refreshAssetsState()
                 }
                 delay(5_000)
             }
@@ -225,29 +164,6 @@ class MainActivity : AppCompatActivity() {
 
         binding.toolbarAiButton.setOnClickListener {
             switchToAiTab()
-        }
-
-        binding.toolbarCancelAllButton.setOnClickListener {
-            onCancelAllClicked()
-        }
-
-        lifecycleScope.launch {
-            var prevBookId = ""
-            while (true) {
-                val bookId = viewModel.bookId
-                if (bookId != prevBookId) {
-                    prevBookId = bookId
-                    if (bookId.isNotBlank()) {
-                        viewModel.loadLayerConfig()
-                    }
-                }
-                updateCancelAllVisibility()
-                if (bookId.isNotBlank()) {
-                    viewModel.refreshAssetsState()
-                }
-                refreshWorkerToggleUi()
-                delay(1_500)
-            }
         }
 
         // ── Observe generation status (bottom nav icon indicator) ──
@@ -341,8 +257,6 @@ class MainActivity : AppCompatActivity() {
             fragment?.stopAll()
         }
     }
-
-    private val pulseAnimators = mutableMapOf<View, ObjectAnimator>()
 
     // ═══════════════════════════════════════════════════════════════
     //  GENERATION STATUS → BOTTOM NAV INDICATOR
@@ -445,112 +359,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun updateWorkerPanel(
-        chip: Chip,
-        count: TextView,
-        total: Int,
-        active: Int,
-        isGenerating: Boolean,
-        isNeeded: Boolean,
-        normalColor: Int,
-        activeColor: Int,
-        errorColor: Int
-    ) {
-        count.text = total.toString()
-
-        pulseAnimators[chip]?.cancel()
-        pulseAnimators.remove(chip)
-
-        val tint: Int
-        if (isGenerating && active == 0 && isNeeded && total == 0) {
-            tint = errorColor
-            chip.alpha = 1f
-        } else if (active > 0) {
-            // Pulse only when real worker leases are active on the backend
-            tint = activeColor
-            chip.alpha = 1f
-            val pulse = ObjectAnimator.ofFloat(chip, "alpha", 1f, 0.4f, 1f)
-            pulse.duration = 1600
-            pulse.repeatCount = ObjectAnimator.INFINITE
-            pulse.start()
-            pulseAnimators[chip] = pulse
-        } else {
-            tint = normalColor
-            chip.alpha = 1f
-        }
-        chip.setChipIconTint(android.content.res.ColorStateList.valueOf(tint))
-    }
-
-    // -------------------------------------------------------------------
-    // Phase C — Worker toggles as profile selector
-    // -------------------------------------------------------------------
-
-    private fun setupWorkerToggles() {
-        binding.workerAudioLayout.setOnClickListener {
-            viewModel.toggleAudioForProfile()
-        }
-        binding.workerImageLayout.setOnClickListener {
-            viewModel.toggleImageForProfile()
-        }
-        binding.workerVideoLayout.setOnClickListener {
-            viewModel.toggleVideoForProfile()
-        }
-    }
-
-    private fun loadInitialLayerConfig() {
-        lifecycleScope.launch {
-            viewModel.loadLayerConfig()
-            viewModel.refreshAssetsState()
-            updateCancelAllVisibility()
-            refreshWorkerToggleUi()
-        }
-    }
-
-    private fun refreshWorkerToggleUi() {
-        val isAudioOn = viewModel.audioEnabled()
-        val isImageOn = viewModel.imageEnabled
-        val isVideoOn = viewModel.videoEnabled()
-
-        // Audio: now toggleable
-        binding.workerAudioLayout.isChecked = isAudioOn
-        binding.workerAudioLayout.setChipIconResource(
-            if (isAudioOn) R.drawable.ic_volume_up else R.drawable.ic_volume_off
-        )
-
-        // Image: ON = storyboard/image_only profile, OFF = audio-only
-        binding.workerImageLayout.isChecked = isImageOn
-        binding.workerImageLayout.setChipIconResource(
-            if (isImageOn) R.drawable.ic_image else R.drawable.ic_image_off
-        )
-
-        // Video: ON = full profile (requires image), OFF = storyboard or less
-        binding.workerVideoLayout.isChecked = isVideoOn
-        binding.workerVideoLayout.setChipIconResource(
-            if (isVideoOn) R.drawable.ic_videocam else R.drawable.ic_videocam_off
-        )
-    }
-
-    private fun updateCancelAllVisibility() {
-        val cancelAllBtn = binding.toolbarCancelAllButton
-        val hasActiveGen = viewModel.activeGeneration.value != null ||
-            viewModel.uiState.value.vbookProgress?.takeIf { it.stage != VBookStage.IDLE } != null
-        cancelAllBtn.visibility = if (hasActiveGen) View.VISIBLE else View.GONE
-    }
-
-    private fun onCancelAllClicked() {
-        AlertDialog.Builder(this)
-            .setTitle(R.string.cancel_all_dialog_title)
-            .setMessage(R.string.cancel_all_dialog_message)
-            .setNegativeButton(R.string.dialog_cancel, null)
-            .setPositiveButton(R.string.cancel_all_confirm) { _, _ ->
-                Log.i("MainActivity", "Cancel All clicked — stopping all generation")
-                viewModel.cancelGeneration()
-            }
-            .show()
-    }
-
-
-
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
@@ -602,13 +410,6 @@ class MainActivity : AppCompatActivity() {
                 null
             }
         }
-    }
-
-    private fun formatTimerText(sec: Long): String {
-        val hh = (sec / 3600).toInt()
-        val mm = ((sec % 3600) / 60).toInt()
-        val ss = (sec % 60).toInt()
-        return String.format("%02d:%02d:%02d", hh, mm, ss)
     }
 
     companion object {
