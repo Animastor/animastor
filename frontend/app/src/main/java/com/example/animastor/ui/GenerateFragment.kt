@@ -37,9 +37,6 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
     // Pulse animation trackers per section
     private val pulseAnimators = mutableMapOf<Int, ObjectAnimator>() // viewId -> animator
 
-    // VBook window tracking: becomes true after first window completes
-    private var _vbookWindowGenerated = false
-
     private var bookData: BookData? = null
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
@@ -454,8 +451,17 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
             Toast.makeText(requireContext(), R.string.file_status_opening, Toast.LENGTH_SHORT).show()
             return
         }
-        onGenerateVBookClicked()
-        Toast.makeText(requireContext(), "Generate All: starting VBook → Audio → Image → Video", Toast.LENGTH_SHORT).show()
+        // Show scope dialog — applies to the GPU stages after VBook completes
+        showScopeDialog(profile = "full") { scope, _chId, _scId ->
+            onGenerateVBookClicked()
+            val scopeLabel = when (scope) {
+                "current_scene" -> getString(R.string.scope_current_scene)
+                "current_chapter" -> getString(R.string.scope_current_chapter)
+                "from_current_scene" -> getString(R.string.scope_from_current_scene)
+                else -> getString(R.string.scope_whole_book)
+            }
+            Toast.makeText(requireContext(), "Generate All: VBook → Audio → Image → Video ($scopeLabel)", Toast.LENGTH_SHORT).show()
+        }
     }
 
     private fun onStopAllClicked() {
@@ -470,14 +476,17 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
             return
         }
         viewModel.startVBookGeneration()
-        _vbookWindowGenerated = true
         updateVBookButtonText()
         Toast.makeText(requireContext(), "VBook generation started", Toast.LENGTH_SHORT).show()
     }
 
     private fun updateVBookButtonText() {
         val b = binding ?: return
-        if (_vbookWindowGenerated && viewModel.activeGeneration.value == null) {
+        // Show "Next" if the book already has scenes/content, regardless of local click flag
+        val hasExistingContent = bookData?.chapters?.orEmpty()?.any { ch ->
+            ch.scenes?.orEmpty()?.isNotEmpty() == true
+        } == true
+        if (hasExistingContent && viewModel.activeGeneration.value == null) {
             b.generateVBookButton.text = getString(R.string.generate_vbook_next)
         } else {
             b.generateVBookButton.text = getString(R.string.generate_vbook)
@@ -610,6 +619,7 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
             try {
                 bookData = viewModel.repository.getBook(bookId)
                 updatePositionBar(SharedPositionManager.current.value)
+                updateVBookButtonText()
             } catch (_: Exception) {
                 // Keep stale bookData on error
             }
