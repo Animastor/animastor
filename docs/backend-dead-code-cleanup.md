@@ -78,17 +78,19 @@
 
 ## Этап 8: Неиспользуемые репозитории PostgreSQL
 
-**Scope:** `backend/src/storage/postgres/repositories/`
+**Удалено:**
+- `cache-repo.js` — 0 production references (бывший потребитель `manifest.js` удалён в Этапе 1, функции не вызывались)
+- `chat-session-repo.js` — 0 production references (экспортировался только через barrel)
 
-- `backend/src/storage/postgres/repositories/events-repo.js`
-- `backend/src/storage/postgres/repositories/cache-repo.js`
-- `backend/src/storage/postgres/repositories/task-repo.js`
-- `backend/src/storage/postgres/repositories/chat-repo.js`
-- `backend/src/storage/postgres/repositories/chat-session-repo.js`
+**Оставлено:**
+- `events-repo.js` — жив, используется в `book-event-log.js`
+- `task-repo.js` — мёртв в production, но используется в тестах (`book-sync.test.js`). Сохранён.
+- `chat-repo.js` — жив, используется в `agent/bootstrap.js`
 
-**Действие:** Проверить require/import из routes и других модулей. Удалить неиспользуемые.
+**Также исправлено:**
+- `scene-callbacks.js` — удалены 3 вызова `storage.manifest.recordAsset()`, которые упали бы с runtime-ошибкой после удаления `manifest.js` в Этапе 1
 
-**Статус:** 🔲 Не начато
+**Commit:** `c6c992e`
 
 ---
 
@@ -127,6 +129,6 @@
 | 5 | audio/video/image services | ✅ (пропущен — всё живо) | |
 | 6 | book/lazy-book modules | ✅ (пропущен — всё живо) | |
 | 7 | orchestration modules | ✅ (пропущен — всё живо) | |
-| 8 | postgres repositories | 🔲 | |
+| 8 | postgres repositories | ✅ | `c6c992e` |
 | 9 | agent services | 🔲 | |
 | 10 | workflow modules | 🔲 | |
