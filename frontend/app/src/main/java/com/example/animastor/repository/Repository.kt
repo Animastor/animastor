@@ -402,11 +402,6 @@ class Repository(
         api.deleteBook(bookId)
     }
 
-    suspend fun slideWindow(bookId: String): SlideWindowResponse {
-        Log.i("Repo", "slideWindow: $bookId")
-        return api.slideWindow(bookId)
-    }
-
     suspend fun getProgressPanel(
         bookId: String,
         scope: String? = null,

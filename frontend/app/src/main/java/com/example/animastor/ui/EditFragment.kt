@@ -229,8 +229,6 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
             updatePositionLabel()
             rebuildContent(binding?.propertyTabs?.selectedTabPosition ?: 0)
             loadTimelineData()
-
-            // Window trigger is handled globally by WindowTriggerManager
         }
     }
 

@@ -136,22 +136,16 @@ class GenerateViewModel(
     /** Set true when SSE import_complete event arrives (F10). */
     @Volatile private var _importCompleteReceived = false
 
-    // ── Global window trigger (observes SharedPositionManager) ───
-    val windowTriggerManager: WindowTriggerManager = WindowTriggerManager(_repository, viewModelScope)
-
     init {
         val prefs = getApplication<Application>().getSharedPreferences("animastor", 0)
         bookId = prefs.getString("bookId", "") ?: ""
         buildId = prefs.getString("buildId", "") ?: ""
-        // WindowTriggerManager is disabled — user controls window generation
-        // manually via "Generate VBook Next" button on the Generate screen.
     }
 
     private fun persistBookId(id: String) {
         bookId = id
         val prefs = getApplication<Application>().getSharedPreferences("animastor", 0)
         prefs.edit().putString("bookId", id).apply()
-        // WindowTriggerManager is disabled — no auto-trigger on position changes
     }
 
     private fun persistBuildId(id: String) {
@@ -820,7 +814,6 @@ class GenerateViewModel(
     /**
      * Poll /agent-status and update [vbookProgress] in [GenUiState].
      * Designed to be called periodically from the MainActivity progress poller
-     * so that subsequent windows triggered by WindowTriggerManager show progress.
      * @return the current [VBookProgress] after the poll (may be IDLE if inactive).
      */
     suspend fun checkVBookAgentStatus(): VBookProgress {

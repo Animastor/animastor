@@ -203,11 +203,6 @@ interface BackendApi {
         @Path("bookId") bookId: String
     ): GenericResponse
 
-    @POST("/api/v1/book/{bookId}/slide-window")
-    suspend fun slideWindow(
-        @Path("bookId") bookId: String
-    ): SlideWindowResponse
-
     @POST("/api/v1/book/{bookId}/cancel-generation")
     suspend fun cancelGeneration(
         @Path("bookId") bookId: String

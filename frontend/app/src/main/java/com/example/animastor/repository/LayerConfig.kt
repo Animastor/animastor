@@ -1,11 +1,5 @@
 package com.example.animastor.repository
 
-data class LayerConfig(
-    val audio_enabled: Boolean = true,
-    val image_enabled: Boolean = true,
-    val video_enabled: Boolean = true
-)
-
 data class LayerConfigResponse(
     val book_id: String? = null,
     val audio_enabled: Boolean = true,
