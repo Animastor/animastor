@@ -18,8 +18,6 @@
 //                Immutable output files keyed by build/scene/asset IDs.
 //
 const postgres = require('./postgres');
-const manifest = require('./manifest');
-
 module.exports = {
     filesystem: require('./filesystem-store'),
     registry: require('./asset-registry'),
@@ -28,7 +26,6 @@ module.exports = {
     bookSync: require('../services/book-sync'),
     layerConfig: require('../services/layer-config'),
     genScope: require('../services/gen-scope'),
-    manifest: manifest,
     postgres: postgres,
     redis: null   // Will be provided by main app
 };
