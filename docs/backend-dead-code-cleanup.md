@@ -21,31 +21,30 @@
 
 ---
 
-## Этап 2: Неиспользуемые функции в helpers/utils.cjs
+## Этап 2 ✅ (завершён)
 
-**Scope:** `backend/src/helpers/utils.cjs`
+**Удалено из `helpers/utils.cjs`:**
+- `pad` — 0 вызовов
+- `parseChunkId` — 0 вызовов
+- `splitTextIntoChunks` — 0 вызовов (дублируется в `audio/segments.js`)
+- `splitDialogueIntoChunks` — 0 вызовов (дублируется в `audio/segments.js`)
+- `buildSegments` — 0 вызовов (дублируется в `audio/segments.js`)
+- `findSceneRuntimeData` — 0 вызовов (дублируется в `book/index.js`)
+- `resolveAssetPath` — приватная функция, не экспортировалась, 0 вызовов
 
-Найти функции, которые экспортируются, но нигде не вызываются.
+**Оставлено в экспорте:** `log` и `collectScenes` (используется в `book-diff.cjs`)
 
-**Действие:** Поиск по grep, удаление неиспользуемых экспортов.
+**Обновлены деструктуризации в 12 файлах:** `backend.cjs`, `generation-routes.cjs`, `ai-routes.cjs`, `debug-routes.cjs`, `book/generation-routes.cjs`, `book/agent-routes.cjs`, `book/chunks-routes.cjs`, `book/core-routes.cjs`, `book/import-routes.cjs`, `book/recovery-routes.cjs`, `task-handler.cjs`, `audio-recovery.cjs`
 
-**Статус:** 🔲 Не начато
+**Commit:** `6c9a065`
 
 ---
 
 ## Этап 3: Неиспользуемые runtime-модули
 
-**Scope:** `backend/src/runtime/`
+**Проверка:** Все 4 кандидата (`job-schema.js`, `circuit-breaker.js`, `retry-budget-manager.js`, `runtime-persistence.js`) — живые, используются другими модулями. Ничего не удалено.
 
-Модули, исключённые из `runtime/index.js`, но всё ещё на диске:
-- `backend/src/runtime/job-schema.js` — проверить, используется ли напрямую
-- `backend/src/runtime/retry-budget-manager.js` — проверить прямые require
-- `backend/src/runtime/circuit-breaker.js` — проверить прямые require
-- `backend/src/runtime/runtime-persistence.js` — исключён из экспорта
-
-**Действие:** Проверить прямые require() из других файлов. Если не используется — удалить.
-
-**Статус:** 🔲 Не начато
+**Статус:** ✅ Пропущен (нет мёртвого кода)
 
 ---
 
@@ -55,48 +54,25 @@
 
 ## Этап 5: Неиспользуемые сервисы audio/video/image
 
-**Scope:** `backend/src/audio/`, `backend/src/video/`, `backend/src/image/`
+**Проверка:** Все 6 кандидатов (`silence.js`, `chunks.js`, `video-merge.js`, `preview.js`, `character-utils.js`, `registry.js`) — живые, импортируются через `audio-service.js`, `image-service.js` или напрямую.
 
-- `backend/src/audio/silence.js` — утилита для тишины
-- `backend/src/audio/chunks.js` — работа с аудио-чанками
-- `backend/src/video/video-merge.js` — мерж видео
-- `backend/src/image/preview.js` — превью изображений
-- `backend/src/image/character-utils.js` — утилиты персонажей
-- `backend/src/image/registry.js` — реестр изображений
-
-**Действие:** Проверить import/require. Удалить неиспользуемые.
-
-**Статус:** 🔲 Не начато
+**Статус:** ✅ Пропущен (нет мёртвого кода)
 
 ---
 
 ## Этап 6: Неиспользуемые модули book/lazy-book
 
-**Scope:** `backend/src/book/lazy-book/`
+**Проверка:** Все 5 кандидатов — живые. `create.js` использует `appearance.js` и `metadata.js` внутренне. `status.js` и `draft.js` используются внешне через routes.
 
-- `backend/src/book/lazy-book/status.js`
-- `backend/src/book/lazy-book/appearance.js`
-- `backend/src/book/lazy-book/draft.js`
-- `backend/src/book/lazy-book/create.js`
-- `backend/src/book/lazy-book/metadata.js`
-
-**Действие:** Проверить импорты из `lazy-book/index.js` и других файлов. Удалить неиспользуемые.
-
-**Статус:** 🔲 Не начато
+**Статус:** ✅ Пропущен (нет мёртвого кода)
 
 ---
 
 ## Этап 7: Неиспользуемые модули orchestration
 
-**Scope:** `backend/src/orchestration/`
+**Проверка:** Все 3 кандидата — живые. `scene-callbacks.js` — ядро колбэков аудио/видео/изображений. `scene-utils.js` — утилиты логирования для всех файлов оркестрации. `scene-restoration.js` — восстановление чанков.
 
-- `backend/src/orchestration/scene-callbacks.js`
-- `backend/src/orchestration/scene-restoration.js`
-- `backend/src/orchestration/scene-utils.js`
-
-**Действие:** Проверить require/import. Удалить неиспользуемые.
-
-**Статус:** 🔲 Не начато
+**Статус:** ✅ Пропущен (нет мёртвого кода)
 
 ---
 
@@ -145,12 +121,12 @@
 | Этап | Область | Статус | Commit |
 |------|---------|--------|--------|
 | 1 | CJS helpers/services | ✅ | `5f07d34` |
-| 2 | helpers/utils.cjs | 🔲 | |
-| 3 | runtime modules | 🔲 | |
+| 2 | helpers/utils.cjs | ✅ | `6c9a065` |
+| 3 | runtime modules | ✅ (пропущен — всё живо) | |
 | 4 | storage modules (объединён с 1) | ✅ | `5f07d34` |
-| 5 | audio/video/image services | 🔲 | |
-| 6 | book/lazy-book modules | 🔲 | |
-| 7 | orchestration modules | 🔲 | |
+| 5 | audio/video/image services | ✅ (пропущен — всё живо) | |
+| 6 | book/lazy-book modules | ✅ (пропущен — всё живо) | |
+| 7 | orchestration modules | ✅ (пропущен — всё живо) | |
 | 8 | postgres repositories | 🔲 | |
 | 9 | agent services | 🔲 | |
 | 10 | workflow modules | 🔲 | |

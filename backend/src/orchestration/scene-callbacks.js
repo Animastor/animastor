@@ -93,7 +93,6 @@ async function handleAudioCompleted(redis, bookId, chapterId, sceneId, buildId) 
             canonicalPath: audioPath,
             ready: true
         });
-        storage.manifest.recordAsset(bookId, chapterId, sceneId, 'audio', audioPath);
         log(`CACHE-MANIFEST: audio recorded for ${bookId}/${chapterId}/${sceneId}`);
     } catch (err) {
         warn(`Failed to register audio asset: ${err.message}`);
@@ -211,7 +210,6 @@ async function handleImageCompleted(redis, bookId, chapterId, sceneId, buildId) 
             height: imageInfo?.height || null,
             ready: true
         });
-        storage.manifest.recordAsset(bookId, chapterId, sceneId, 'image', sceneImage);
         log(`CACHE-MANIFEST: image recorded for ${bookId}/${chapterId}/${sceneId}`);
     } catch (err) {
         warn(`Failed to register image asset: ${err.message}`);
@@ -321,7 +319,6 @@ async function handleVideoCompleted(redis, bookId, chapterId, sceneId, buildId) 
             height: metadata?.height || null,
             ready: true
         });
-        storage.manifest.recordAsset(bookId, chapterId, sceneId, 'video', videoPath);
         log(`CACHE-MANIFEST: video recorded for ${bookId}/${chapterId}/${sceneId}`);
     } catch (err) {
         warn(`Failed to register video asset: ${err.message}`);
