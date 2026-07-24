@@ -17,6 +17,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.example.animastor.R
+import com.example.animastor.databinding.DialogGenerateScopeBinding
 import com.example.animastor.databinding.FragmentGenerateBinding
 import com.example.animastor.databinding.ItemWorkerProgressBinding
 import com.example.animastor.network.RetrofitClient
@@ -121,6 +122,7 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
                         labelFormat = R.string.generate_section_vbook,
                         isGenerating = isGenerating,
                         isNeeded = true,
+                        isEnabled = true,
                         normalColor = normalColor,
                         activeColor = activeColor,
                         errorColor = errorColor
@@ -137,6 +139,7 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
                         labelFormat = R.string.generate_section_audio,
                         isGenerating = isGenerating,
                         isNeeded = mode == "storyboard" || mode == "full" || mode == "image_only",
+                        isEnabled = viewModel.audioEnabled(),
                         normalColor = normalColor,
                         activeColor = activeColor,
                         errorColor = errorColor
@@ -153,6 +156,7 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
                         labelFormat = R.string.generate_section_image,
                         isGenerating = isGenerating,
                         isNeeded = mode == "storyboard" || mode == "full" || mode == "image_only",
+                        isEnabled = viewModel.imageEnabled,
                         normalColor = normalColor,
                         activeColor = activeColor,
                         errorColor = errorColor
@@ -169,13 +173,16 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
                         labelFormat = R.string.generate_section_video,
                         isGenerating = isGenerating,
                         isNeeded = mode == "full",
+                        isEnabled = viewModel.videoEnabled(),
                         normalColor = normalColor,
                         activeColor = activeColor,
                         errorColor = errorColor
                     )
 
                 } catch (_: Exception) {
-                    // Connection error — keep previous state
+                    // Connection error — stop any stale pulse and leave chips as-is
+                    pulseAnimators.values.forEach { it.cancel() }
+                    pulseAnimators.clear()
                 }
                 delay(5_000)
             }
@@ -213,6 +220,7 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
         labelFormat: Int,
         isGenerating: Boolean,
         isNeeded: Boolean,
+        isEnabled: Boolean = true,
         normalColor: Int,
         activeColor: Int,
         errorColor: Int
@@ -223,11 +231,13 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
         pulseAnimators.remove(sectionId)
 
         val tint: Int
+        // Error state: generating, needed, but no workers at all
         if (isGenerating && active == 0 && isNeeded && total == 0) {
             tint = errorColor
             icon.alpha = 1f
             icon.setImageResource(iconInactiveRes)
         } else if (active > 0) {
+            // Active workers — show normal icon + golden pulsing
             tint = activeColor
             icon.alpha = 1f
             icon.setImageResource(iconActiveRes)
@@ -236,7 +246,13 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
             pulse.repeatCount = ObjectAnimator.INFINITE
             pulse.start()
             pulseAnimators[sectionId] = pulse
+        } else if (total > 0 && isEnabled) {
+            // Worker exists and is enabled — show normal (non-crossed-out) icon, no pulse
+            tint = normalColor
+            icon.alpha = 1f
+            icon.setImageResource(iconActiveRes)
         } else {
+            // Worker absent (0) or disabled — show crossed-out icon
             tint = normalColor
             icon.alpha = 1f
             icon.setImageResource(iconInactiveRes)
@@ -318,8 +334,9 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
             val container = when (worker.type) {
                 "vbook" -> vbookContainer
                 "audio" -> audioContainer
+                "cover" -> imageContainer
                 "image" -> imageContainer
-                "video" -> imageContainer
+                "video" -> videoContainer
                 else -> null
             } ?: continue
 
@@ -473,12 +490,14 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
             Toast.makeText(requireContext(), R.string.file_status_opening, Toast.LENGTH_SHORT).show()
             return
         }
-        viewModel.startGeneration(
-            GenerateViewModel.GenerationRequest(profile = "audio_only", scope = "whole_book", chapterId = null, sceneId = null)
-        ) { result ->
-            when (result) {
-                is GenerateViewModel.GenerationResult.Started -> Toast.makeText(requireContext(), "Audio generation started", Toast.LENGTH_SHORT).show()
-                is GenerateViewModel.GenerationResult.Failed -> Toast.makeText(requireContext(), "Failed: ${result.message}", Toast.LENGTH_LONG).show()
+        showScopeDialog(profile = "audio_only") { scope, chId, scId ->
+            viewModel.startGeneration(
+                GenerateViewModel.GenerationRequest(profile = "audio_only", scope = scope, chapterId = chId, sceneId = scId)
+            ) { result ->
+                when (result) {
+                    is GenerateViewModel.GenerationResult.Started -> Toast.makeText(requireContext(), "Audio generation started", Toast.LENGTH_SHORT).show()
+                    is GenerateViewModel.GenerationResult.Failed -> Toast.makeText(requireContext(), "Failed: ${result.message}", Toast.LENGTH_LONG).show()
+                }
             }
         }
     }
@@ -489,12 +508,14 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
             Toast.makeText(requireContext(), R.string.file_status_opening, Toast.LENGTH_SHORT).show()
             return
         }
-        viewModel.startGeneration(
-            GenerateViewModel.GenerationRequest(profile = "image_only", scope = "whole_book", chapterId = null, sceneId = null)
-        ) { result ->
-            when (result) {
-                is GenerateViewModel.GenerationResult.Started -> Toast.makeText(requireContext(), "Image generation started", Toast.LENGTH_SHORT).show()
-                is GenerateViewModel.GenerationResult.Failed -> Toast.makeText(requireContext(), "Failed: ${result.message}", Toast.LENGTH_LONG).show()
+        showScopeDialog(profile = "image_only") { scope, chId, scId ->
+            viewModel.startGeneration(
+                GenerateViewModel.GenerationRequest(profile = "image_only", scope = scope, chapterId = chId, sceneId = scId)
+            ) { result ->
+                when (result) {
+                    is GenerateViewModel.GenerationResult.Started -> Toast.makeText(requireContext(), "Image generation started", Toast.LENGTH_SHORT).show()
+                    is GenerateViewModel.GenerationResult.Failed -> Toast.makeText(requireContext(), "Failed: ${result.message}", Toast.LENGTH_LONG).show()
+                }
             }
         }
     }
@@ -505,12 +526,14 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
             Toast.makeText(requireContext(), R.string.file_status_opening, Toast.LENGTH_SHORT).show()
             return
         }
-        viewModel.startGeneration(
-            GenerateViewModel.GenerationRequest(profile = "full", scope = "whole_book", chapterId = null, sceneId = null)
-        ) { result ->
-            when (result) {
-                is GenerateViewModel.GenerationResult.Started -> Toast.makeText(requireContext(), "Video generation started", Toast.LENGTH_SHORT).show()
-                is GenerateViewModel.GenerationResult.Failed -> Toast.makeText(requireContext(), "Failed: ${result.message}", Toast.LENGTH_LONG).show()
+        showScopeDialog(profile = "full") { scope, chId, scId ->
+            viewModel.startGeneration(
+                GenerateViewModel.GenerationRequest(profile = "full", scope = scope, chapterId = chId, sceneId = scId)
+            ) { result ->
+                when (result) {
+                    is GenerateViewModel.GenerationResult.Started -> Toast.makeText(requireContext(), "Video generation started", Toast.LENGTH_SHORT).show()
+                    is GenerateViewModel.GenerationResult.Failed -> Toast.makeText(requireContext(), "Failed: ${result.message}", Toast.LENGTH_LONG).show()
+                }
             }
         }
     }
@@ -518,6 +541,53 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
     private fun onStopClicked(type: String) {
         Log.i(TAG, "Stop clicked for type=$type")
         viewModel.cancelWorker(type)
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    //  SCOPE DIALOG
+    // ═══════════════════════════════════════════════════════════════
+
+    /**
+     * Show the scope selection dialog before starting generation.
+     * Calls [onStart] with (scope, chapterId, sceneId) when the user confirms.
+     */
+    private fun showScopeDialog(profile: String, onStart: (scope: String, chapterId: String?, sceneId: String?) -> Unit) {
+        val binding = DialogGenerateScopeBinding.inflate(layoutInflater)
+
+        val pos = SharedPositionManager.current.value
+        val hasPosition = pos.chapterId != null
+
+        binding.dialogSubtitle.text = getString(R.string.generate_dialog_subtitle, profile)
+
+        // Disable scope options that require a position if no position is set
+        if (!hasPosition) {
+            binding.scopeCurrentScene.isEnabled = false
+            binding.scopeCurrentScene.alpha = 0.4f
+            binding.scopeCurrentChapter.isEnabled = false
+            binding.scopeCurrentChapter.alpha = 0.4f
+            binding.scopeFromCurrentScene.isEnabled = false
+            binding.scopeFromCurrentScene.alpha = 0.4f
+        }
+
+        // Default selection: whole_book
+        binding.scopeWholeBook.isChecked = true
+
+        androidx.appcompat.app.AlertDialog.Builder(requireContext())
+            .setTitle(R.string.generate_dialog_title)
+            .setView(binding.root)
+            .setNegativeButton(R.string.dialog_cancel, null)
+            .setPositiveButton(R.string.dialog_start) { _, _ ->
+                val scope = when (binding.scopeGroup.checkedRadioButtonId) {
+                    R.id.scopeCurrentScene -> "current_scene"
+                    R.id.scopeCurrentChapter -> "current_chapter"
+                    R.id.scopeFromCurrentScene -> "from_current_scene"
+                    else -> "whole_book"
+                }
+                val chId: String? = if (scope != "whole_book") pos.chapterId else null
+                val scId: String? = if (scope == "current_scene" || scope == "from_current_scene") pos.sceneId else null
+                onStart(scope, chId, scId)
+            }
+            .show()
     }
 
     // ═══════════════════════════════════════════════════════════════

@@ -535,6 +535,8 @@ class GenerateViewModel(
         Log.i(TAG, "cancelGeneration: $bookId")
         if (bookId.isBlank()) return
         stopTimer()  // 🕐 отмена — останавливаем таймер
+        stopProgressStream()  // ❄ закрываем SSE канал
+        resetWorkerState()
         viewModelScope.launch {
             runCatching {
                 _repository.cancelGeneration(bookId)
@@ -1126,7 +1128,15 @@ class GenerateViewModel(
             _uiState.update { it.copy(vbookProgress = VBookProgress(stage = VBookStage.IDLE)) }
         }
 
-        // Call backend per-worker cancel API — backend handles the rest
+        // Do NOT add non-vbook types to _workerPermanentlyDone here.
+        // The backend will return cancelled:true on the next progress-panel poll,
+        // and addFromServer + renderWorkersToSections will show the red "Stopped"
+        // row until the cancellation propagates to GPU hub and the worker
+        // disappears from subsequent panel responses.
+
+        // Call backend per-worker cancel API — backend marks cancelled in Redis
+        // and clears leases for that stage. GPU hub queue is NOT cleared for
+        // per-worker cancel to avoid disrupting other workers (backend handles this).
         viewModelScope.launch {
             runCatching {
                 _repository.cancelWorker(bookId, type)

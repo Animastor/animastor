@@ -22,11 +22,11 @@
         android:orientation="vertical">
 
         <RadioButton
-            android:id="@+id/scopeWholeBook"
+            android:id="@+id/scopeCurrentScene"
             android:layout_width="match_parent"
             android:layout_height="48dp"
             android:textSize="14sp"
-            android:text="@string/scope_whole_book" />
+            android:text="@string/scope_current_scene" />
 
         <RadioButton
             android:id="@+id/scopeCurrentChapter"
@@ -36,11 +36,18 @@
             android:text="@string/scope_current_chapter" />
 
         <RadioButton
-            android:id="@+id/scopeCurrentScene"
+            android:id="@+id/scopeFromCurrentScene"
             android:layout_width="match_parent"
             android:layout_height="48dp"
             android:textSize="14sp"
-            android:text="@string/scope_current_scene" />
+            android:text="@string/scope_from_current_scene" />
+
+        <RadioButton
+            android:id="@+id/scopeWholeBook"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:textSize="14sp"
+            android:text="@string/scope_whole_book" />
     </RadioGroup>
 
 </LinearLayout>

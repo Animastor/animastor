@@ -232,6 +232,16 @@ class MainActivity : AppCompatActivity() {
                     binding.workerAudioCount.text = "?"
                     binding.workerImageCount.text = "?"
                     binding.workerVideoCount.text = "?"
+                    // Stop any stale pulse animations when connection is lost
+                    pulseAnimators.values.forEach { it.cancel() }
+                    pulseAnimators.clear()
+                    // Reset chips to normal state (no pulse, no error tint)
+                    binding.workerAudioLayout.setChipIconTint(android.content.res.ColorStateList.valueOf(normalColor))
+                    binding.workerImageLayout.setChipIconTint(android.content.res.ColorStateList.valueOf(normalColor))
+                    binding.workerVideoLayout.setChipIconTint(android.content.res.ColorStateList.valueOf(normalColor))
+                    binding.workerAudioLayout.alpha = 1f
+                    binding.workerImageLayout.alpha = 1f
+                    binding.workerVideoLayout.alpha = 1f
                 }
                 delay(5_000)
             }
