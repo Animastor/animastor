@@ -108,13 +108,27 @@
 
 ---
 
-## Этап 10: Неиспользуемые workflow-модули
+## Этап 9: Неиспользуемые сервисы агента
 
-**Scope:** `backend/src/workflows/video/`, `backend/src/workflows/image/`, `backend/src/workflows/audio/`
+**Проверка:** Все 3 кандидата (`bootstrap.js`, `text-utils.js`, `image-utils.js`) — живые, используются `txt-importer.js`, `pipeline-runner.js`, `pipeline-steps.js`.
 
-**Действие:** Проверить импорты из `workflows/index.js` и connector-loader. Удалить неиспользуемые.
+**Статус:** ✅ Пропущен (нет мёртвого кода)
 
-**Статус:** 🔲 Не начато
+---
+
+## Этап 10 ✅ (завершён)
+
+**Удалено:**
+- `workflows/index.js` — barrel-файл, 0 require()
+- `workflows/image/image-workflows.js` — функции не вызывались ниоткуда
+- `workflows/audio/audio-workflows.js` — функции не вызывались ниоткуда
+
+**Оставлено:**
+- `video-workflows.js` — жив, `video-service.js`
+- `entity-schema.js` — жив, `workflow-manager.js`
+- `connector-loader.js` — жив, множество прямых require
+
+**Commit:** `6d6aa58`
 
 ---
 
@@ -124,11 +138,11 @@
 |------|---------|--------|--------|
 | 1 | CJS helpers/services | ✅ | `5f07d34` |
 | 2 | helpers/utils.cjs | ✅ | `6c9a065` |
-| 3 | runtime modules | ✅ (пропущен — всё живо) | |
+| 3 | runtime modules | ✅ (пропущен — всё живо) | — |
 | 4 | storage modules (объединён с 1) | ✅ | `5f07d34` |
-| 5 | audio/video/image services | ✅ (пропущен — всё живо) | |
-| 6 | book/lazy-book modules | ✅ (пропущен — всё живо) | |
-| 7 | orchestration modules | ✅ (пропущен — всё живо) | |
+| 5 | audio/video/image services | ✅ (пропущен — всё живо) | — |
+| 6 | book/lazy-book modules | ✅ (пропущен — всё живо) | — |
+| 7 | orchestration modules | ✅ (пропущен — всё живо) | — |
 | 8 | postgres repositories | ✅ | `c6c992e` |
-| 9 | agent services | 🔲 | |
-| 10 | workflow modules | 🔲 | |
+| 9 | agent services | ✅ (пропущен — всё живо) | — |
+| 10 | workflow modules | ✅ | `6d6aa58` |
