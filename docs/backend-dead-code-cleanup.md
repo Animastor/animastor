@@ -94,25 +94,20 @@
 
 ---
 
-## Этап 9: Неиспользуемые сервисы агента
+## Этап 9 ✅ (завершён)
 
 **Scope:** `backend/src/services/agent/`
 
-- `backend/src/services/agent/bootstrap.js`
-- `backend/src/services/agent/text-utils.js`
-- `backend/src/services/agent/image-utils.js`
+**Проверка:** Все 7 файлов директории проверены:
+- `bootstrap.js` — жив, используется `agent-service.js`, `txt-importer.js`
+- `text-utils.js` — жив, используется `bootstrap.js`, `pipeline-runner.js`, `agent-service.js`
+- `image-utils.js` — жив, используется `pipeline-steps.js`, `agent-service.js`
+- `pipeline-runner.js` — жив, используется `agent-service.js`
+- `pipeline-steps.js` — жив, используется `bootstrap.js`, `pipeline-runner.js`
+- `ai-caller.js` — жив, используется `pipeline-steps.js`
 
-**Действие:** Проверить require/import. Удалить неиспользуемые.
-
-**Статус:** 🔲 Не начато
-
----
-
-## Этап 9: Неиспользуемые сервисы агента
-
-**Проверка:** Все 3 кандидата (`bootstrap.js`, `text-utils.js`, `image-utils.js`) — живые, используются `txt-importer.js`, `pipeline-runner.js`, `pipeline-steps.js`.
-
-**Статус:** ✅ Пропущен (нет мёртвого кода)
+**Удалено:**
+- `coreference.js` — пустой стаб (функционал удалён ранее, `unit.participants` вытеснен `scene.participants`), всё ещё импортировался в `pipeline-runner.js` без использования
 
 ---
 
@@ -144,5 +139,5 @@
 | 6 | book/lazy-book modules | ✅ (пропущен — всё живо) | — |
 | 7 | orchestration modules | ✅ (пропущен — всё живо) | — |
 | 8 | postgres repositories | ✅ | `c6c992e` |
-| 9 | agent services | ✅ (пропущен — всё живо) | — |
+| 9 | agent services | ✅ (удалён coreference.js) | — |
 | 10 | workflow modules | ✅ | `6d6aa58` |

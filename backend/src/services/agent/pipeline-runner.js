@@ -13,7 +13,6 @@ const { mergeCharacterLists } = require('../../utils/character-identity');
 const { estimateSpeechDurationSec } = require('../placeholder-audio');
 const pipelineSteps = require('./pipeline-steps');
 const textUtils = require('./text-utils');
-const coreference = require('./coreference');
 const { SCENE_TARGET_SEC, SCENE_MAX_SEC, SCENE_MIN_SEC } = require('../agent-prompts');
 
 function getWindowText(sourceText, existingChars, existingLocs, windowIndex, startOffset) {
