@@ -12,7 +12,7 @@ const {
 } = require('../agent-session');
 const {
     PROGRESS_STAGES, SYSTEM_PROMPTS, MAX_SCENES_PER_CHUNK,
-    SCENE_TARGET_SEC, SCENE_MAX_SEC,
+    SCENE_TARGET_SEC, SCENE_MAX_SEC, SCENE_MIN_SEC,
 } = require('../agent-prompts');
 const { normalizeCharacterRefs } = require('../../image/image-service');
 const { extractSceneTitle, isGenericSceneTitle } = require('../../utils/scene-title-utils');
@@ -129,7 +129,13 @@ async function stepCreateScenes(sessionId, text, characters, locations, stepInde
         .replace('%EXISTING_CHARACTERS%', charsContext)
         .replace('%EXISTING_LOCATIONS%', locsContext)
         .replace('%REFERENCE_EXAMPLES%', examplesSection)
-        .replace(/%MAX_SCENES%/g, MAX_SCENES_PER_CHUNK);
+        .replace(/%MAX_SCENES%/g, MAX_SCENES_PER_CHUNK)
+        .replace(/%SCENE_MAX_SEC%/g, SCENE_MAX_SEC)
+        .replace(/%SCENE_TARGET_SEC%/g, SCENE_TARGET_SEC)
+        .replace(/%SCENE_MIN_SEC%/g, SCENE_MIN_SEC)
+        .replace(/%SCENE_MAX_WORDS%/g, Math.round(SCENE_MAX_SEC / 0.3))
+        .replace(/%SCENE_TARGET_WORDS%/g, Math.round(SCENE_TARGET_SEC / 0.3))
+        .replace(/%SCENE_MIN_WORDS%/g, Math.round(SCENE_MIN_SEC / 0.3));
 
     let repairText = '';
     if (repairHint) {

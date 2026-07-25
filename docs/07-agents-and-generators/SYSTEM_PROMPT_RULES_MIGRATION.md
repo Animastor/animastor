@@ -12,8 +12,10 @@
 
 ## Статус
 
-**Подготовительная фаза выполнена.** 12 файлов созданы, очищены от модель-специфичного.
-Файлы не подключены — production продолжает читать из `agent-prompts.js`.
+**✅ Миграция выполнена.**
+
+`agent-prompts.js` загружает все 12 промптов из `backend/ai/rules/*.md` через `ai-loader.js`.
+Плейсхолдеры заменяются через `.replace()` в `pipeline-steps.js`.
 
 ## Структура
 
@@ -31,8 +33,9 @@ backend/ai/rules/
 ├── passport_reconciliation.md   # Сверка image.prompt с паспортами
 ├── video_action_reconciliation.md # Исправление video.action (temporal only)
 ├── video_action_polish.md       # Полировка video.action (gesture continuity)
-└── (8 старых файлов помечены - как мёртвый код)
 ```
+
+> 8 старых `-*.md` файлов (dead code) удалены.
 
 ## Что изменено в .md vs исходный JS
 
@@ -69,47 +72,16 @@ backend/ai/rules/
 (без LTX-specific примеров, camera vocabulary, motion vocabulary — всё в
 `skills/video/ltx-2.3.md`).
 
-## Порядок миграции
+## Выполненные шаги
 
-### Шаг 1: Замена agent-prompts.js на загрузчик
+### ✅ Шаг 1: agent-prompts.js → загрузчик
+`agent-prompts.js` переписан: конфигурация (константы) осталась inline, 12 SYSTEM_PROMPTS загружаются из `.md` через `ai-loader.js`.
 
-Новый `agent-prompts.js` вместо template literals читает `.md` через `ai-loader.js`:
+### ✅ Шаг 2: Плейсхолдеры → .replace()
+В `pipeline-steps.js` добавлены 6 `.replace()` для новых плейсхолдеров длительности сцен (`%SCENE_MAX_SEC%`, `%SCENE_TARGET_SEC%`, `%SCENE_MIN_SEC%`, `%SCENE_MAX_WORDS%`, `%SCENE_TARGET_WORDS%`, `%SCENE_MIN_WORDS%`).
 
-```js
-const aiLoader = require('./ai-loader');
-
-const SYSTEM_PROMPTS = {};
-const RULES = [
-  'structure', 'characters', 'locations', 'scenes',
-  'enrich_scenes', 'units', 'visuals', 'storyboard_polish',
-  'voice_generation', 'passport_reconciliation',
-  'video_action_reconciliation', 'video_action_polish',
-];
-
-for (const name of RULES) {
-  SYSTEM_PROMPTS[name] = aiLoader.getRule(name) || '';
-}
-```
-
-### Шаг 2: Замена плейсхолдеров на .replace()
-
-В `pipeline-steps.js` (и других файлах, использующих SYSTEM_PROMPTS),
-добавить `.replace()` для плейсхолдеров из `scenes.md`:
-
-```js
-prompt = prompt
-  .replace('%SCENE_MAX_SEC%', SCENE_MAX_SEC)
-  .replace('%SCENE_TARGET_SEC%', SCENE_TARGET_SEC)
-  .replace('%SCENE_MIN_SEC%', SCENE_MIN_SEC)
-  .replace('%SCENE_MAX_WORDS%', Math.round(SCENE_MAX_SEC / 0.3))
-  .replace('%SCENE_TARGET_WORDS%', Math.round(SCENE_TARGET_SEC / 0.3))
-  .replace('%SCENE_MIN_WORDS%', Math.round(SCENE_MIN_SEC / 0.3));
-```
-
-### Шаг 3: Проверить все .replace() в callers
-
-Нужно убедиться, что каждый `%ПЛЕЙСХОЛДЕР%` во всех 12 .md файлах имеет
-соответствующий `.replace()` в JS. Сейчас используются:
+### ✅ Шаг 3: Аудит .replace() в callers
+Все плейсхолдеры во всех 12 .md файлах имеют соответствующий `.replace()` в JS:
 
 | Плейсхолдер | Где заменяется | Файл |
 |---|---|---|
@@ -125,20 +97,22 @@ prompt = prompt
 | `%LOCATIONS%` | stepPolishStoryboard, stepPolishVideoActions | pipeline-steps.js |
 | `%SCENES%` | stepPolishStoryboard, stepPolishVideoActions | pipeline-steps.js |
 | `%SCENES_TO_ENRICH%` | stepEnrichScenes | pipeline-steps.js |
-| `%SCENE_MAX_SEC%` (новый) | stepCreateScenes | pipeline-steps.js |
-| `%SCENE_TARGET_SEC%` (новый) | stepCreateScenes | pipeline-steps.js |
+| `%SCENE_MAX_SEC%` | stepCreateScenes | pipeline-steps.js |
+| `%SCENE_TARGET_SEC%` | stepCreateScenes | pipeline-steps.js |
+| `%SCENE_MIN_SEC%` | stepCreateScenes | pipeline-steps.js |
+| `%SCENE_MAX_WORDS%` | stepCreateScenes | pipeline-steps.js |
+| `%SCENE_TARGET_WORDS%` | stepCreateScenes | pipeline-steps.js |
+| `%SCENE_MIN_WORDS%` | stepCreateScenes | pipeline-steps.js |
+| `%TEXT%` | stepGenerateVoices | pipeline-steps.js |
 
-### Шаг 4: Тесты
+### ✅ Шаг 4: Тесты
+```
+npm test → 578 passing (1s)
+```
 
-После замены прогнать `npm test`. Все 577 тестов должны проходить,
-так как содержимое промптов не изменилось — только источник данных.
-
-### Шаг 5: Удалить старые `-` файлы
-
-После успешной миграции и проверки удалить `-general.md`, `-naming.md`,
-`-camera_language.md` и остальные 13 помеченных файлов.
+### ✅ Шаг 5: Удалены старые `-` файлы
+Удалено 8 файлов: `-general.md`, `-naming.md`, `-edit_mode.md`, `-extraction_rules.md`, `-json_rules.md`, `-json_schema.md`, `-validation.md`, `-import_rules.md`.
 
 ## Rollback
 
-При проблемах — вернуть `agent-prompts.js` из git. Файлы в `ai/rules/`
-никак не влияют на production, пока не подключён загрузчик.
+`git checkout -- backend/src/services/agent-prompts.js` — вернёт старую версию с inline template literals.
