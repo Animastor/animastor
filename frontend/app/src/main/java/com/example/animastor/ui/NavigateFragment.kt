@@ -195,7 +195,12 @@ class NavigateFragment : Fragment(R.layout.fragment_navigate) {
                     else -> chTitle ?: (ch?.type?.replaceFirstChar { it.uppercase() } ?: "")
                 }
             } else if (ch?.display_number != null) {
-                "${getString(R.string.navigate_chapter)} ${ch.display_number}"
+                val prefix = "${getString(R.string.navigate_chapter)} ${ch.display_number}"
+                if (chTitle != null && chTitle.isNotBlank() && !chTitle.matches(Regex("""^\p{L}+\s+\d+$"""))) {
+                    "$prefix — $chTitle"
+                } else {
+                    prefix
+                }
             } else if (chTitle != null) {
                 chTitle
             } else {
@@ -293,7 +298,12 @@ class NavigateFragment : Fragment(R.layout.fragment_navigate) {
                     else -> chTitle ?: (ch.type?.replaceFirstChar { it.uppercase() } ?: "")
                 }
             } else if (ch.display_number != null) {
-                "${getString(R.string.navigate_chapter)} ${ch.display_number}"
+                val prefix = "${getString(R.string.navigate_chapter)} ${ch.display_number}"
+                if (chTitle != null && chTitle.isNotBlank() && !chTitle.matches(Regex("""^\p{L}+\s+\d+$"""))) {
+                    "$prefix — $chTitle"
+                } else {
+                    prefix
+                }
             } else if (chTitle != null) {
                 chTitle
             } else {
