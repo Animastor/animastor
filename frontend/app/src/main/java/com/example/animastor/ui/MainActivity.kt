@@ -274,6 +274,7 @@ class MainActivity : AppCompatActivity() {
 
     private var generateIconView: ImageView? = null
     private var navPulseAnimator: ObjectAnimator? = null
+    private var autoResetJob: kotlinx.coroutines.Job? = null
 
     /**
      * Find the generate item's ImageView inside the BottomNavigationView.
@@ -333,6 +334,8 @@ class MainActivity : AppCompatActivity() {
     private fun updateNavIconStatus(status: GenerationStatus) {
         navPulseAnimator?.cancel()
         navPulseAnimator = null
+        autoResetJob?.cancel()
+        autoResetJob = null
 
         // Restore normal alpha on the icon view
         generateIconView?.alpha = 1f
@@ -375,11 +378,16 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             GenerationStatus.SUCCESS -> {
-                // Pulse green for ~10 seconds, then stay static green
+                // Pulse green for ~12s, then 10s solid green, then auto-IDLE
                 navPulseAnimator = ObjectAnimator.ofFloat(iconView, "alpha", 1f, 0.45f, 1f).apply {
                     duration = 1500
-                    repeatCount = 7 // ≈10.5s
+                    repeatCount = 7 // 8 cycles × 1.5s = 12s
                     start()
+                }
+                // Auto-reset: wait for pulse to finish (12s) + 10s hold → IDLE
+                autoResetJob = lifecycleScope.launch {
+                    delay(1500L * 8 + 10_000L)
+                    viewModel.resetGenerationStatus()
                 }
             }
             else -> {}
