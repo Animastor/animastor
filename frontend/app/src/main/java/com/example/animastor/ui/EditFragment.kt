@@ -733,14 +733,6 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
             setPadding(0, 0, 0, 8)
         }
 
-        val sectionLabel = TextView(ctx).apply {
-            text = getString(R.string.edit_section_characters)
-            textSize = 14f
-            typeface = android.graphics.Typeface.DEFAULT_BOLD
-            setPadding(0, 8, 0, 8)
-        }
-        ll.addView(sectionLabel)
-
         if (characters.isEmpty()) {
             ll.addView(TextView(ctx).apply {
                 text = getString(R.string.edit_no_characters)
@@ -830,14 +822,6 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
             setPadding(0, 0, 0, 8)
         }
 
-        val sectionLabel = TextView(ctx).apply {
-            text = getString(R.string.edit_section_voices)
-            textSize = 14f
-            typeface = android.graphics.Typeface.DEFAULT_BOLD
-            setPadding(0, 8, 0, 8)
-        }
-        ll.addView(sectionLabel)
-
         if (voices.isEmpty()) {
             ll.addView(TextView(ctx).apply {
                 text = getString(R.string.edit_no_voices)
@@ -891,14 +875,6 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
             orientation = LinearLayout.VERTICAL
             setPadding(0, 0, 0, 8)
         }
-
-        val sectionLabel = TextView(ctx).apply {
-            text = getString(R.string.edit_section_locations)
-            textSize = 14f
-            typeface = android.graphics.Typeface.DEFAULT_BOLD
-            setPadding(0, 8, 0, 8)
-        }
-        ll.addView(sectionLabel)
 
         if (locations.isEmpty()) {
             ll.addView(TextView(ctx).apply {

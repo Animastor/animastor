@@ -84,12 +84,9 @@
     <string name="edit_section_audio">Аудио</string>
     <string name="edit_section_image">Изображение</string>
     <string name="edit_section_video">Видео</string>
-    <string name="edit_characters_tab">Герои</string>
+    <string name="edit_characters_tab">Персонажи</string>
     <string name="edit_voices_tab">Голоса</string>
     <string name="edit_locations_tab">Локации</string>
-    <string name="edit_section_characters">Персонажи</string>
-    <string name="edit_section_voices">Голоса</string>
-    <string name="edit_section_locations">Локации</string>
     <string name="edit_no_characters">Нет персонажей</string>
     <string name="edit_no_locations">Нет локаций</string>
     <string name="edit_no_voices">Нет голосов</string>
