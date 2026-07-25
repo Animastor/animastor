@@ -1296,9 +1296,12 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
             b.curtainsImage.visibility = View.GONE
             isInCurtainsState = false
             stopPulse()
+            b.videoSurface.visibility = View.INVISIBLE
             if (b.coverImage.drawable != null) {
                 b.coverImage.visibility = View.VISIBLE
-                b.videoSurface.visibility = View.INVISIBLE
+            } else {
+                // No cover available — show curtains as fallback to avoid blank screen
+                showCurtains()
             }
         }
         anchorFullscreenToImage()
