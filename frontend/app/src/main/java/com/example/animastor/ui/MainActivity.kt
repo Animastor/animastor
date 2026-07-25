@@ -19,6 +19,7 @@ import androidx.lifecycle.lifecycleScope
 import com.example.animastor.R
 import com.example.animastor.databinding.ActivityMainBinding
 import com.example.animastor.ui.GenerationStatus
+import com.example.animastor.ui.VBookStage
 
 import java.io.File
 import java.util.Calendar
@@ -184,9 +185,18 @@ class MainActivity : AppCompatActivity() {
                 else -> return@setOnItemSelectedListener true
             }
 
-            // Reset generation status when user opens the generate screen
+            // Reset generation status → IDLE only when ALL generation processes
+            // have completed. Check both GPU generation (activeGeneration) and
+            // VBook agent (vbookProgress stage). If anything is still running,
+            // the nav icon keeps pulsing — even if one process errored.
             if (item.itemId == R.id.generateFragment) {
-                viewModel.resetGenerationStatus()
+                val hasActiveWork = viewModel.activeGeneration.value != null ||
+                    viewModel.uiState.value.vbookProgress?.stage?.let {
+                        it != VBookStage.IDLE && it != VBookStage.COMPLETED
+                    } == true
+                if (!hasActiveWork) {
+                    viewModel.resetGenerationStatus()
+                }
             }
 
             val existing = supportFragmentManager.findFragmentByTag(tag)
@@ -267,6 +277,8 @@ class MainActivity : AppCompatActivity() {
 
     /**
      * Find the generate item's ImageView inside the BottomNavigationView.
+     * Recursively searches the item view hierarchy because Material Components
+     * nests the ImageView inside a FrameLayout container (not a direct child).
      * Called once after the bottom nav is laid out.
      */
     private fun findGenerateIconView() {
@@ -280,29 +292,42 @@ class MainActivity : AppCompatActivity() {
             }
             if (generateIdx < 0 || generateIdx >= menuView.childCount) return@post
             val itemView = menuView.getChildAt(generateIdx) as? ViewGroup ?: return@post
-            for (i in 0 until itemView.childCount) {
-                val child = itemView.getChildAt(i)
-                if (child is ImageView) {
-                    generateIconView = child
-                    // Reapply current status after layout
-                    updateNavIconStatus(viewModel.generationStatus.value)
-                    // Listen for layout changes to reapply tint
-                    child.addOnLayoutChangeListener { v, _, _, _, _, _, _, _, _ ->
-                        if (viewModel.generationStatus.value != GenerationStatus.IDLE) {
-                            val status = viewModel.generationStatus.value
-                            val color = when (status) {
-                                GenerationStatus.RUNNING -> getColor(R.color.cinema_accent)
-                                GenerationStatus.ERROR -> getColor(R.color.cinema_error)
-                                GenerationStatus.SUCCESS -> getColor(R.color.cinema_success)
-                                else -> return@addOnLayoutChangeListener
-                            }
-                            (v as ImageView).imageTintList = ColorStateList.valueOf(color)
-                        }
+            // Recursively search for ImageView (it's nested in icon container)
+            generateIconView = findImageViewDeep(itemView)
+            if (generateIconView != null) {
+                // Reapply current status after layout
+                val currentStatus = viewModel.generationStatus.value
+                updateNavIconStatus(currentStatus)
+                // Listen for layout changes to reapply tint AND pulse
+                // (Material Components re-layouts items on tab switch, which
+                //  would otherwise lose our custom tint and pulse animator.)
+                generateIconView!!.addOnLayoutChangeListener { v, _, _, _, _, _, _, _, _ ->
+                    val status = viewModel.generationStatus.value
+                    if (status != GenerationStatus.IDLE) {
+                        // Re-run full status update so both tint AND pulse are restored
+                        generateIconView = v as ImageView
+                        updateNavIconStatus(status)
                     }
-                    break
                 }
             }
         }
+    }
+
+    /**
+     * Recursively search a [ViewGroup] for the first [ImageView] descendant.
+     * Material Components BottomNavigationView nests the icon ImageView inside
+     * container FrameLayouts, so a single-level child scan misses it.
+     */
+    private fun findImageViewDeep(viewGroup: ViewGroup): ImageView? {
+        for (i in 0 until viewGroup.childCount) {
+            val child = viewGroup.getChildAt(i)
+            if (child is ImageView) return child
+            if (child is ViewGroup) {
+                val found = findImageViewDeep(child)
+                if (found != null) return found
+            }
+        }
+        return null
     }
 
     private fun updateNavIconStatus(status: GenerationStatus) {
@@ -318,7 +343,9 @@ class MainActivity : AppCompatActivity() {
         binding.bottomNavigation.itemTextColor = ContextCompat.getColorStateList(this, R.color.bottom_nav_tint)
 
         if (status == GenerationStatus.IDLE) {
-            generateIconView?.imageTintList = null
+            // Restore normal bottom nav tint (selected = gold, unselected = gray).
+            // Setting null would show the raw black drawable color.
+            generateIconView?.imageTintList = ContextCompat.getColorStateList(this, R.color.bottom_nav_tint)
             return
         }
 
