@@ -91,6 +91,15 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
             updateTabScrollIndicators()
         }
 
+        // Sync scroll indicators after the user finishes a touch gesture (fling settles)
+        b.propertyTabs.setOnTouchListener { _, event ->
+            if (event.action == android.view.MotionEvent.ACTION_UP ||
+                event.action == android.view.MotionEvent.ACTION_CANCEL) {
+                b.propertyTabs.postDelayed({ updateTabScrollIndicators() }, 80)
+            }
+            false // don't consume — let TabLayout handle the touch normally
+        }
+
         // Carousel navigation
         b.currentUnitCard.setOnClickListener { }  // no-op, shows current
         b.prevUnitCard.setOnClickListener { navigateUnit(-1) }
