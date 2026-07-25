@@ -442,7 +442,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                         }
                         prevPhase = state.phase
 
-                        if (state.phase == PlayerPhase.IDLE && playbackViewModel.bookId.isBlank()) {
+                        if (state.phase == PlayerPhase.IDLE && playbackViewModel.bookId.isBlank() && generateViewModel.bookId.isBlank()) {
                             hasDisplayedCover = false
                             isInCurtainsState = false
                             stopAll()
@@ -485,10 +485,16 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                         }
 
                         if (state.phase == PlayerPhase.IDLE) {
-                            if (playbackViewModel.bookId.isBlank()) {
+                            if (playbackViewModel.bookId.isBlank() && generateViewModel.bookId.isBlank()) {
+                                // No book opened in either ViewModel
                                 b.placeholderText.text = getString(R.string.play_placeholder)
                                 b.placeholderText.visibility = View.VISIBLE
+                            } else if (playbackViewModel.bookId.isBlank()) {
+                                // Book opened in GenVM but Player not yet initialized
+                                b.placeholderText.text = getString(R.string.play_placeholder_no_generation)
+                                b.placeholderText.visibility = View.VISIBLE
                             } else {
+                                // Player initialized, show generate hint
                                 b.placeholderText.text = getString(R.string.play_generate_hint)
                                 b.placeholderText.visibility = View.VISIBLE
                             }
@@ -510,7 +516,11 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                             PlayerPhase.GENERATING, PlayerPhase.DOWNLOADING -> b.statusText.text = getString(R.string.play_loading)
                             PlayerPhase.SCENE_READY -> b.statusText.text = getString(R.string.play_ready)
                             PlayerPhase.PLAYING -> b.statusText.text = getString(R.string.play_playing)
-                            PlayerPhase.IDLE -> b.statusText.text = if (playbackViewModel.bookId.isBlank()) getString(R.string.empty_state) else getString(R.string.empty_state_book_loaded)
+                            PlayerPhase.IDLE -> b.statusText.text = when {
+                                playbackViewModel.bookId.isBlank() && generateViewModel.bookId.isBlank() -> getString(R.string.empty_state)
+                                playbackViewModel.bookId.isBlank() -> getString(R.string.play_placeholder_no_generation)
+                                else -> getString(R.string.empty_state_book_loaded)
+                            }
                             PlayerPhase.PAUSED -> b.statusText.text = getString(R.string.play_paused)
                             PlayerPhase.IMPORTING_TXT -> b.statusText.text = getString(R.string.play_loading)
                         }

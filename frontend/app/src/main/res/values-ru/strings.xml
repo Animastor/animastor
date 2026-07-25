@@ -51,6 +51,7 @@
 
     <!-- Play Screen -->
     <string name="play_placeholder">Откройте книгу для начала воспроизведения</string>
+    <string name="play_placeholder_no_generation">Начните генерацию. Перейдите на вкладку «Генератор».</string>
     <string name="play_generate_hint">Нажмите «Генерировать» для начала</string>
     <string name="play_generate">ГЕНЕРИРОВАТЬ</string>
     <string name="play_play">СТАРТ</string>

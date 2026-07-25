@@ -75,6 +75,7 @@
 
     <!-- Play Screen -->
     <string name="play_placeholder">Open a book to start playback</string>
+    <string name="play_placeholder_no_generation">Start generation. Go to the GENERATE tab.</string>
     <string name="play_generate_hint">Press GENERATE to start</string>
     <string name="play_generate">GENERATE</string>
     <string name="play_play">PLAY</string>

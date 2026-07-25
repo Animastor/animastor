@@ -85,6 +85,7 @@ class FileFragment : Fragment(R.layout.fragment_file) {
             }
 
             hasSwitchedToPlay = false
+            hasSwitchedToAi = false
             viewModel.importBookFromFile(tempFile)
         }.onFailure {
             Toast.makeText(requireContext(), "${getString(R.string.upload_failed)}: ${it.message}", Toast.LENGTH_SHORT).show()
