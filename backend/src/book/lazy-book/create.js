@@ -18,7 +18,7 @@ function createFromAnalysis(bookId, analysis, options = {}) {
     const structure = options.structure || analysis.structure || null;
     return createOrAppendScenes(bookId, analysis, {
         maxScenes: maxScenes ?? analysis.maxScenes ?? 6,
-        chapterTitle: chapterTitle ?? analysis.chapterTitle ?? 'Глава 1',
+        chapterTitle: chapterTitle ?? analysis.chapterTitle ?? null,
         chapterIndex: 0,
         isFirstWindow: true,
         structure: structure,
@@ -30,7 +30,7 @@ function appendToBook(bookId, analysis, options = {}) {
     const structure = options.structure || analysis.structure || null;
     return createOrAppendScenes(bookId, analysis, {
         maxScenes: options.maxScenes ?? analysis.maxScenes ?? 6,
-        chapterTitle: chapterTitle ?? analysis.chapterTitle ?? `Глава ${(chapterIndex ?? analysis.chapterIndex ?? 0) + 1}`,
+        chapterTitle: chapterTitle ?? analysis.chapterTitle ?? null,
         chapterIndex: chapterIndex ?? analysis.chapterIndex ?? 0,
         isFirstWindow: false,
         structure: structure,
@@ -265,7 +265,7 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
         chFile = `${chId}.json`;
         chapterObj = {
             chapter: chId,
-            chapter_title: chapterTitle || `Chapter ${chapterIndex + 1}`,
+            chapter_title: chapterTitle || null,
             type: 'chapter',
             chapter_index: chapterIndex,
             status: SceneStatus.PARSED,
@@ -312,25 +312,24 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
         chapterObj.scenes.splice(oldIntroIdx, 1);
     }
 
-    // ── Build chapter title with full name ──
-    let fullChapterTitle = null;
+    // ── Build clean chapter title (no prefix) ──
+    let cleanChapterTitle = null;
     if (structure && structure.chapters && structure.chapters.length > 0) {
         const chapterInfo = windowConfig.chapterIndex < structure.chapters.length
             ? structure.chapters[windowConfig.chapterIndex]
             : null;
         if (chapterInfo) {
-            const chNum = chapterInfo.number || (windowConfig.chapterIndex + 1);
             const chTitleRaw = chapterInfo.title || '';
-            if (chTitleRaw && chTitleRaw.length > 0) {
-                fullChapterTitle = `Глава ${chNum} — ${chTitleRaw}`;
+            if (chTitleRaw.length > 0) {
+                cleanChapterTitle = chTitleRaw;
             }
         }
     }
-    if (!fullChapterTitle) {
-        fullChapterTitle = chapterTitle || `Глава ${(chapterIndex || 0) + 1}`;
+    if (!cleanChapterTitle) {
+        cleanChapterTitle = chapterTitle || null;
     }
-    if (chapterObj && !chapterObj.chapter_title || chapterObj.chapter_title === chapterTitle) {
-        chapterObj.chapter_title = fullChapterTitle;
+    if (chapterObj && !chapterObj.chapter_title) {
+        chapterObj.chapter_title = cleanChapterTitle;
     }
 
     // ── Create chapter_intro metadata ──

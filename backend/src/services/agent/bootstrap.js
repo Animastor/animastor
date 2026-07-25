@@ -134,11 +134,7 @@ async function bootstrapWithAgent(bookId, progress, publishProgress, redis) {
 
         _progress({ stage: 'saving', message: '⟳ Сохраняю структуру книги...' });
 
-        const chapterTitle = windowInfo.chapterTitle
-            ? (/^(?:глава|chapter|часть|part|пролог|prologue|эпилог|epilogue)/i.test(windowInfo.chapterTitle)
-                ? windowInfo.chapterTitle
-                : `Глава 1: ${windowInfo.chapterTitle}`)
-            : 'Глава 1';
+        const chapterTitle = windowInfo.chapterTitle || null;
 
         const bookResult = lazyBook.createFromAnalysis(bookId, {
             characters: result.characters,
@@ -465,7 +461,7 @@ async function bootstrapNextWindow(bookId, progress, publishProgress, redis) {
             mentions: result.mentions,
             scenes: result.scenes,
             maxScenes: MAX_SCENES_PER_CHUNK,
-            chapterTitle: windowInfo.chapterTitle || `Глава ${nextChapterIndex + 1}`,
+            chapterTitle: windowInfo.chapterTitle || null,
             chapterIndex: nextChapterIndex,
             structure: structure,
         });
