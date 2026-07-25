@@ -1,6 +1,5 @@
 package com.example.animastor.ui
 
-import android.animation.ObjectAnimator
 import android.graphics.Bitmap
 import android.media.MediaPlayer
 import android.os.Bundle
@@ -63,7 +62,6 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
     private var nextChainReady = false
     private var hasDisplayedCover = false
     private var isInCurtainsState = false
-    private var pulseAnim: ObjectAnimator? = null
     private var currentVolume = 1.0f
     private var isFullscreen = false
     private var pendingLoad = false
@@ -147,19 +145,8 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         }
     }
 
-    private fun startPulse(b: FragmentPlayBinding) {
-        stopPulse()
-        pulseAnim = ObjectAnimator.ofFloat(b.curtainsImage, "alpha", 1.0f, 0.8f).apply {
-            duration = 900
-            repeatMode = ObjectAnimator.REVERSE
-            repeatCount = ObjectAnimator.INFINITE
-            start()
-        }
-    }
-
     private fun stopPulse() {
-        pulseAnim?.cancel()
-        pulseAnim = null
+        // Pulse animation removed — no-op kept for safety cleanup calls
     }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
@@ -424,8 +411,6 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                             // particular state emission has coverImage=null momentarily.
                             if (!hasDisplayedCover) {
                                 showCurtains()
-                                val loading = state.phase == PlayerPhase.LOADING_BOOK || state.phase == PlayerPhase.DOWNLOADING
-                                if (loading) startPulse(b) else stopPulse()
                             } else {
                                 // Cover was previously loaded — keep it visible as fallback
                                 b.curtainsImage.visibility = View.GONE
@@ -1322,10 +1307,6 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                 }
             }
         } else {
-            if (isInCurtainsState) {
-                val b = binding
-                if (b != null) startPulse(b)
-            }
             if (isPaused) {
                 syncVideoFrame()
                 showCurrentIu()
