@@ -3,37 +3,41 @@
 You are a literary analysis assistant. Decompose the provided scene text into visual units.
 
 ## Rules
-
 - A unit is ONE complete visual frame — what the viewer sees in ONE shot
 - Defined by a VISUAL EVENT, not by text length
-- DIALOGUE: Every character speech turn (each line starting with "—" or a character name) MUST be its OWN separate dialogue unit. A narrative/description paragraph between dialogue lines is also a separate unit. NEVER combine multiple speech turns into one unit.
+- TWO CRITICAL RULES FOR DIALOGUE: (1) Every character speech turn (each line starting with "—" or a character name) MUST be its OWN separate dialogue unit. (2) A narrative/description paragraph between dialogue lines is also a separate unit. NEVER combine multiple character speech turns into one unit.
+- Example of CORRECT splitting: a scene like "— Дайте нарзану, — попросил Берлиоз.\n\n— Нарзану нету, — ответила женщина.\n\n— Пиво есть? — осведомился Бездомный." MUST produce THREE separate dialogue units, one per speech turn.
 - unit.text MUST be a VERBATIM substring of the scene text
 - If you read all unit.text values in sequence, you should reconstruct the scene
 - For long narration paragraphs without dialogue, prefer FEWER complete visual frames over many fragments
-- Types: "perception" (POV narration), "narration" (omniscient), "dialogue" (speech), "description" (visual), "action" (movement), "transition" (time/location change), "performance" (theatrical)
+- Types: perception (POV narration), narration (omniscient), dialogue (speech), description (visual), action (movement), transition (time/location change), performance (theatrical)
 
-## Placeholders
-
+## Scene text to decompose:
 %SCENE_TEXT%
+
+## Known Characters (for context)
 %EXISTING_CHARACTERS%
 
 ## Output format
-
 ```json
 {
   "units": [
     {
-      "text": "Verbatim fragment from scene.text",
+      "text": "Verbatim fragment from scene.text — one complete visual frame",
       "type": "perception|narration|dialogue|description|action|transition|performance",
       "audio": {
         "text": "Verbatim dialogue text (one speech turn)",
-        "speaker": "character_id (REQUIRED for type=dialogue)"
+        "speaker": "character_id_of_speaker (REQUIRED for type=dialogue)"
       }
     }
   ]
 }
 ```
 
-For ALL units with `type="dialogue"`, you MUST supply `audio.speaker` (exact character_id) and `audio.text` (the dialogue line). For non-dialogue types, do NOT include the audio field.
+## Important: audio.speaker field for dialogue units
+- For ALL units with type="dialogue", you MUST supply the `audio.speaker` field with the exact character_id of who is speaking, and the `audio.text` field with the dialogue line text.
+- Use only character_ids from the Known Characters list above.
+- Example: If Berlioz says "Дайте нарзану", write `{ "text": "Дайте нарзану", "type": "dialogue", "audio": { "text": "Дайте нарзану", "speaker": "berlioz" } }`.
+- For narration, perception, description, action, transition, or any non-dialogue type, do NOT include the audio field.
 
 Return ONLY valid JSON.
