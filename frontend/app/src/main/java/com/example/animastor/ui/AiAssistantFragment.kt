@@ -114,6 +114,38 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
         buildModeChips()
         buildTopicChips()
 
+        // Mode scroll indicators
+        b.modeScrollLeft.setOnClickListener {
+            val hsv = b.modeRow
+            val targetX = (hsv.scrollX - hsv.width * 3 / 4).coerceAtLeast(0)
+            hsv.smoothScrollTo(targetX, 0)
+        }
+        b.modeScrollRight.setOnClickListener {
+            val hsv = b.modeRow
+            val contentW = hsv.getChildAt(0)?.width ?: 0
+            val maxScroll = (contentW - hsv.width).coerceAtLeast(0)
+            val targetX = (hsv.scrollX + hsv.width * 3 / 4).coerceAtMost(maxScroll)
+            hsv.smoothScrollTo(targetX, 0)
+        }
+        b.modeRow.viewTreeObserver.addOnScrollChangedListener { updateModeScrollIndicators() }
+        b.modeRow.post { updateModeScrollIndicators() }
+
+        // Topic scroll indicators
+        b.topicScrollLeft.setOnClickListener {
+            val hsv = b.topicRow
+            val targetX = (hsv.scrollX - hsv.width * 3 / 4).coerceAtLeast(0)
+            hsv.smoothScrollTo(targetX, 0)
+        }
+        b.topicScrollRight.setOnClickListener {
+            val hsv = b.topicRow
+            val contentW = hsv.getChildAt(0)?.width ?: 0
+            val maxScroll = (contentW - hsv.width).coerceAtLeast(0)
+            val targetX = (hsv.scrollX + hsv.width * 3 / 4).coerceAtMost(maxScroll)
+            hsv.smoothScrollTo(targetX, 0)
+        }
+        b.topicRow.viewTreeObserver.addOnScrollChangedListener { updateTopicScrollIndicators() }
+        b.topicRow.post { updateTopicScrollIndicators() }
+
         if (argCreateMode && generateViewModel.bookId.isBlank()) {
             messages.clear()
             apiMessages.clear()
@@ -168,6 +200,7 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
             }
             container.addView(chip)
         }
+        binding?.modeRow?.post { updateModeScrollIndicators() }
     }
 
     private fun buildTopicChips() {
@@ -190,6 +223,7 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
             }
             container.addView(chip)
         }
+        binding?.topicRow?.post { updateTopicScrollIndicators() }
     }
 
     private fun switchTopic(topicId: String) {
@@ -722,6 +756,28 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
                 scrollToBottom()
             }
         }
+    }
+
+    private fun updateModeScrollIndicators() {
+        val b = binding ?: return
+        val hsv = b.modeRow
+        val canLeft = hsv.canScrollHorizontally(-1)
+        val canRight = hsv.canScrollHorizontally(1)
+        b.modeScrollLeft.alpha = if (canLeft) 1.0f else 0.3f
+        b.modeScrollLeft.isEnabled = canLeft
+        b.modeScrollRight.alpha = if (canRight) 1.0f else 0.3f
+        b.modeScrollRight.isEnabled = canRight
+    }
+
+    private fun updateTopicScrollIndicators() {
+        val b = binding ?: return
+        val hsv = b.topicRow
+        val canLeft = hsv.canScrollHorizontally(-1)
+        val canRight = hsv.canScrollHorizontally(1)
+        b.topicScrollLeft.alpha = if (canLeft) 1.0f else 0.3f
+        b.topicScrollLeft.isEnabled = canLeft
+        b.topicScrollRight.alpha = if (canRight) 1.0f else 0.3f
+        b.topicScrollRight.isEnabled = canRight
     }
 
     private fun scrollToBottom() {
