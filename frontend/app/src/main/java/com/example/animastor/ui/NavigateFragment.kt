@@ -189,11 +189,15 @@ class NavigateFragment : Fragment(R.layout.fragment_navigate) {
             val chTitle = ch?.chapter_title?.takeIf { it.isNotBlank() }
             val scTitle = sc?.scene_title?.takeIf { it.isNotBlank() }
             val chLabel = if (isSpecial) {
-                chTitle ?: (ch?.type?.replaceFirstChar { it.uppercase() } ?: "")
-            } else if (chTitle != null) {
-                chTitle
+                when (ch?.type?.lowercase()) {
+                    "cover" -> getString(R.string.navigate_cover)
+                    "prologue" -> getString(R.string.navigate_prologue)
+                    else -> chTitle ?: (ch?.type?.replaceFirstChar { it.uppercase() } ?: "")
+                }
             } else if (ch?.display_number != null) {
                 "${getString(R.string.navigate_chapter)} ${ch.display_number}"
+            } else if (chTitle != null) {
+                chTitle
             } else {
                 ""
             }
@@ -283,11 +287,15 @@ class NavigateFragment : Fragment(R.layout.fragment_navigate) {
             val chTitle = ch.chapter_title?.take(60)?.replace('\n', ' ')?.trim()
             val isSpecial = ch.is_special
             val chLabel = if (isSpecial) {
-                chTitle ?: (ch.type?.replaceFirstChar { it.uppercase() } ?: "")
-            } else if (chTitle != null) {
-                chTitle
+                when (ch.type?.lowercase()) {
+                    "cover" -> getString(R.string.navigate_cover)
+                    "prologue" -> getString(R.string.navigate_prologue)
+                    else -> chTitle ?: (ch.type?.replaceFirstChar { it.uppercase() } ?: "")
+                }
             } else if (ch.display_number != null) {
                 "${getString(R.string.navigate_chapter)} ${ch.display_number}"
+            } else if (chTitle != null) {
+                chTitle
             } else {
                 "${getString(R.string.navigate_chapter)} ${chIdx + 1}"
             }
@@ -522,7 +530,7 @@ class BookStructureAdapter(
                 holder.imageView.visibility = View.GONE
                 val indent = 8
                 holder.textView.setPadding(indent * 2, 14, 16, 14)
-                holder.textView.text = if (item.type != null) "${item.label} (${item.type})" else item.label
+                holder.textView.text = item.label
                 holder.textView.setTextColor(secondary)
                 holder.textView.textSize = 15f
                 holder.textView.setTypeface(null, android.graphics.Typeface.BOLD)
@@ -536,7 +544,7 @@ class BookStructureAdapter(
                 val indent = 24
                 holder.textView.setPadding(indent * 2, 12, 16, 12)
                 holder.textView.text = if (item.style != null) "${item.label} — ${item.type} (${item.style})"
-                    else "${item.label} (${item.type ?: "scene"})"
+                    else "${item.label} (${item.type ?: ctx.getString(R.string.navigate_scene_type)})"
                 holder.textView.setTextColor(onSurface)
                 holder.textView.textSize = 14f
                 holder.textView.setTypeface(null, android.graphics.Typeface.NORMAL)

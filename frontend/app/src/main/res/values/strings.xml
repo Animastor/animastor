@@ -225,6 +225,9 @@
     <string name="navigate_units_count">%1$d units</string>
     <string name="navigate_current_position">Current: %1$s / %2$s / %3$s</string>
     <string name="navigate_no_position">No position selected</string>
+    <string name="navigate_cover">Cover</string>
+    <string name="navigate_prologue">Prologue</string>
+    <string name="navigate_scene_type">scene</string>
 
     <!-- AI Tab -->
     <string name="ai_context_bar">%s</string>

@@ -227,6 +227,9 @@
     <string name="navigate_units_count">%1$d модулей</string>
     <string name="navigate_current_position">Текущее: %1$s / %2$s / %3$s</string>
     <string name="navigate_no_position">Позиция не выбрана</string>
+    <string name="navigate_cover">Обложка</string>
+    <string name="navigate_prologue">Пролог</string>
+    <string name="navigate_scene_type">сцена</string>
 
     <!-- AI Context Bar -->
     <string name="ai_context_bar">%s</string>
