@@ -220,42 +220,90 @@
         </LinearLayout>
     </com.google.android.material.card.MaterialCardView>
 
-    <!-- Section tabs -->
-    <com.google.android.material.tabs.TabLayout
-        android:id="@+id/propertyTabs"
+    <!-- Section tabs with scroll indicators -->
+    <!-- Single FrameLayout background ensures no gaps between chevrons and panel -->
+    <FrameLayout
+        android:id="@+id/tabContainer"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
         android:layout_marginStart="8dp"
         android:layout_marginEnd="8dp"
         android:layout_marginTop="8dp"
-        app:tabMode="fixed"
-        app:tabGravity="fill"
-        app:tabIndicatorHeight="2dp"
-        app:tabIndicatorColor="?attr/colorSecondary"
-        app:tabRippleColor="?attr/colorSecondaryContainer"
-        app:tabTextAppearance="@style/TextAppearance.Material3.LabelLarge"
-        app:tabTextColor="?attr/colorOnSurfaceVariant"
-        app:tabSelectedTextColor="?attr/colorSecondary"
-        app:tabBackground="?attr/colorSurfaceVariant"
+        android:background="?attr/colorSurfaceVariant"
         app:layout_constraintTop_toBottomOf="@id/timelinePanel"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent">
 
-        <com.google.android.material.tabs.TabItem
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="@string/edit_scene" />
+        <ImageButton
+            android:id="@+id/tabScrollLeft"
+            android:layout_width="36dp"
+            android:layout_height="match_parent"
+            android:layout_gravity="start|center_vertical"
+            android:background="@android:color/transparent"
+            android:src="@drawable/ic_chevron_left"
+            android:contentDescription="Scroll left"
+            android:scaleType="center"
+            android:tint="?attr/colorOnSurfaceVariant" />
 
-        <com.google.android.material.tabs.TabItem
-            android:layout_width="wrap_content"
+        <com.google.android.material.tabs.TabLayout
+            android:id="@+id/propertyTabs"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="@string/edit_audio" />
+            android:layout_marginStart="36dp"
+            android:layout_marginEnd="36dp"
+            app:tabMode="scrollable"
+            app:tabGravity="fill"
+            app:tabIndicatorHeight="2dp"
+            app:tabIndicatorColor="?attr/colorSecondary"
+            app:tabRippleColor="?attr/colorSecondaryContainer"
+            app:tabTextAppearance="@style/TextAppearance.Material3.LabelLarge"
+            app:tabTextColor="?attr/colorOnSurfaceVariant"
+            app:tabSelectedTextColor="?attr/colorSecondary"
+            app:tabBackground="?attr/colorSurfaceVariant">
 
-        <com.google.android.material.tabs.TabItem
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="@string/edit_units_tab" />
-    </com.google.android.material.tabs.TabLayout>
+            <com.google.android.material.tabs.TabItem
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/edit_scene" />
+
+            <com.google.android.material.tabs.TabItem
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/edit_audio" />
+
+            <com.google.android.material.tabs.TabItem
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/edit_units_tab" />
+
+            <com.google.android.material.tabs.TabItem
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/edit_characters_tab" />
+
+            <com.google.android.material.tabs.TabItem
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/edit_voices_tab" />
+
+            <com.google.android.material.tabs.TabItem
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/edit_locations_tab" />
+        </com.google.android.material.tabs.TabLayout>
+
+        <ImageButton
+            android:id="@+id/tabScrollRight"
+            android:layout_width="36dp"
+            android:layout_height="match_parent"
+            android:layout_gravity="end|center_vertical"
+            android:background="@android:color/transparent"
+            android:src="@drawable/ic_chevron_right"
+            android:contentDescription="Scroll right"
+            android:scaleType="center"
+            android:tint="?attr/colorOnSurfaceVariant" />
+
+    </FrameLayout>
 
     <!-- Content area -->
     <androidx.core.widget.NestedScrollView
@@ -267,7 +315,7 @@
         android:layout_marginTop="8dp"
         android:layout_marginBottom="8dp"
         android:fillViewport="true"
-        app:layout_constraintTop_toBottomOf="@id/propertyTabs"
+        app:layout_constraintTop_toBottomOf="@id/tabContainer"
         app:layout_constraintBottom_toTopOf="@id/bottomRow"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent">

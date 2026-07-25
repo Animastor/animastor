@@ -67,14 +67,28 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         b.propertyTabs.addOnTabSelectedListener(object : com.google.android.material.tabs.TabLayout.OnTabSelectedListener {
             override fun onTabSelected(tab: com.google.android.material.tabs.TabLayout.Tab) {
                 rebuildContent(tab.position)
+                // Update scroll indicators after tab switch; the scroll position
+                // changes asynchronously so we post to the next frame.
+                b.propertyTabs.post { updateTabScrollIndicators() }
             }
             override fun onTabUnselected(tab: com.google.android.material.tabs.TabLayout.Tab) {}
-            override fun onTabReselected(tab: com.google.android.material.tabs.TabLayout.Tab) {}
+            override fun onTabReselected(tab: com.google.android.material.tabs.TabLayout.Tab) {
+                b.propertyTabs.post { updateTabScrollIndicators() }
+            }
         })
 
         b.saveButton.setOnClickListener { saveToBackend() }
         b.positionBar.root.setOnClickListener {
             (requireActivity() as? MainActivity)?.switchToNavigateTab()
+        }
+
+        // Tab scroll indicators
+        b.tabScrollLeft.setOnClickListener { scrollTabs(-1) }
+        b.tabScrollRight.setOnClickListener { scrollTabs(1) }
+
+        // Reliable scroll position tracking — fires on every scroll pixel change
+        b.propertyTabs.viewTreeObserver.addOnScrollChangedListener {
+            updateTabScrollIndicators()
         }
 
         // Carousel navigation
@@ -89,6 +103,9 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
 
         // Default to Units tab
         b.propertyTabs.getTabAt(2)?.select()
+
+        // Initial scroll indicator state
+        b.propertyTabs.post { updateTabScrollIndicators() }
 
         observePosition()
         observeViewModel()
@@ -609,7 +626,12 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                 0 -> buildSceneFields(frame)
                 1 -> buildFields(frame, listOf("voice", "full_text"))
                 2 -> buildUnitFields(frame)
+                3 -> buildCharactersFields(frame)
+                4 -> buildVoicesFields(frame)
+                5 -> buildLocationsFields(frame)
             }
+            // Update scroll indicators after rebuilding
+            updateTabScrollIndicators()
         } catch (e: Exception) {
             Log.e("EditFragment", "rebuildContent error", e)
             val ctx = binding?.contentFrame?.context ?: return
@@ -690,6 +712,246 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         }
 
         parent.addView(ll)
+    }
+
+    private fun buildCharactersFields(parent: ViewGroup) {
+        val ctx = parent.context
+        val bd = bookData
+        val characters = bd?.characters ?: emptyList()
+
+        val ll = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, 0, 0, 8)
+        }
+
+        val sectionLabel = TextView(ctx).apply {
+            text = getString(R.string.edit_section_characters)
+            textSize = 14f
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            setPadding(0, 8, 0, 8)
+        }
+        ll.addView(sectionLabel)
+
+        if (characters.isEmpty()) {
+            ll.addView(TextView(ctx).apply {
+                text = getString(R.string.edit_no_characters)
+                textSize = 13f
+                setTextColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorOnSurfaceVariant))
+                setPadding(0, 8, 0, 8)
+            })
+        } else {
+            characters.forEach { ch ->
+                val card = MaterialCardView(ctx).apply {
+                    layoutParams = ViewGroup.MarginLayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT
+                    ).also { it.setMargins(0, 0, 0, 6) }
+                    radius = 12f
+                    cardElevation = 1f
+                    setContentPadding(12, 8, 12, 8)
+                }
+
+                val inner = LinearLayout(ctx).apply {
+                    orientation = LinearLayout.VERTICAL
+                }
+
+                inner.addView(TextView(ctx).apply {
+                    text = ch.name ?: ch.id ?: "—"
+                    textSize = 14f
+                    typeface = android.graphics.Typeface.DEFAULT_BOLD
+                })
+
+                inner.addView(readOnlyCard(ctx, "id", ch.id ?: ""))
+
+                inner.addView(inputCard(ctx, "name", ch.name ?: "", false))
+
+                inner.addView(inputCard(ctx, "voice_id", ch.voice_id ?: "", false))
+
+                // Passport fields
+                val passport = ch.passport
+                if (passport != null) {
+                    val passportLabel = TextView(ctx).apply {
+                        text = getString(R.string.field_passport)
+                        textSize = 12f
+                        typeface = android.graphics.Typeface.DEFAULT_BOLD
+                        setTextColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorSecondary))
+                        setPadding(0, 8, 0, 4)
+                    }
+                    inner.addView(passportLabel)
+
+                    val charId = ch.id ?: "char_unknown"
+                    val passportPrefix = "char.${charId}.passport"
+                    val passportKeys = listOf(
+                        "${passportPrefix}.base_appearance",
+                        "${passportPrefix}.detailed_appearance",
+                        "${passportPrefix}.clothing_base",
+                        "${passportPrefix}.clothing_details",
+                        "${passportPrefix}.video_tokens"
+                    )
+                    val pf = mapOf(
+                        "${passportPrefix}.base_appearance" to (passport.base_appearance ?: ""),
+                        "${passportPrefix}.detailed_appearance" to (passport.detailed_appearance ?: ""),
+                        "${passportPrefix}.clothing_base" to (passport.clothing_base ?: ""),
+                        "${passportPrefix}.clothing_details" to (passport.clothing_details ?: ""),
+                        "${passportPrefix}.video_tokens" to (passport.video_tokens ?: "")
+                    )
+
+                    passportKeys.forEach { key ->
+                        val v = pf[key] ?: ""
+                        if (!fieldValues.containsKey(key)) fieldValues[key] = v
+                        inner.addView(inputCard(ctx, key, fieldValues[key] ?: v, (v.length > 80)))
+                    }
+                }
+
+                card.addView(inner)
+                ll.addView(card)
+            }
+        }
+
+        parent.addView(ll)
+    }
+
+    private fun buildVoicesFields(parent: ViewGroup) {
+        val ctx = parent.context
+        val bd = bookData
+        val voices = bd?.voices ?: emptyMap()
+
+        val ll = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, 0, 0, 8)
+        }
+
+        val sectionLabel = TextView(ctx).apply {
+            text = getString(R.string.edit_section_voices)
+            textSize = 14f
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            setPadding(0, 8, 0, 8)
+        }
+        ll.addView(sectionLabel)
+
+        if (voices.isEmpty()) {
+            ll.addView(TextView(ctx).apply {
+                text = getString(R.string.edit_no_voices)
+                textSize = 13f
+                setTextColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorOnSurfaceVariant))
+                setPadding(0, 8, 0, 8)
+            })
+        } else {
+            voices.forEach { (voiceId, entry) ->
+                val card = MaterialCardView(ctx).apply {
+                    layoutParams = ViewGroup.MarginLayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT
+                    ).also { it.setMargins(0, 0, 0, 6) }
+                    radius = 12f
+                    cardElevation = 1f
+                    setContentPadding(12, 8, 12, 8)
+                }
+
+                val inner = LinearLayout(ctx).apply {
+                    orientation = LinearLayout.VERTICAL
+                }
+
+                inner.addView(TextView(ctx).apply {
+                    text = voiceId
+                    textSize = 14f
+                    typeface = android.graphics.Typeface.DEFAULT_BOLD
+                })
+
+                val instruction = entry.instruction ?: ""
+                val voiceKey = "voice.${voiceId}.instruction"
+                if (!fieldValues.containsKey(voiceKey)) fieldValues[voiceKey] = instruction
+                inner.addView(inputCard(ctx, "instruction", fieldValues[voiceKey] ?: instruction, instruction.length > 80))
+
+                card.addView(inner)
+                ll.addView(card)
+            }
+        }
+
+        parent.addView(ll)
+    }
+
+    private fun buildLocationsFields(parent: ViewGroup) {
+        val ctx = parent.context
+        val bd = bookData
+        // Locations come at the top level from the API (separate locations.json),
+        // not from bible.locations. Fallback to bible.locations for legacy data.
+        val locations = bd?.locations ?: bd?.bible?.locations ?: emptyMap()
+
+        val ll = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, 0, 0, 8)
+        }
+
+        val sectionLabel = TextView(ctx).apply {
+            text = getString(R.string.edit_section_locations)
+            textSize = 14f
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            setPadding(0, 8, 0, 8)
+        }
+        ll.addView(sectionLabel)
+
+        if (locations.isEmpty()) {
+            ll.addView(TextView(ctx).apply {
+                text = getString(R.string.edit_no_locations)
+                textSize = 13f
+                setTextColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorOnSurfaceVariant))
+                setPadding(0, 8, 0, 8)
+            })
+        } else {
+            locations.forEach { (key, loc) ->
+                val card = MaterialCardView(ctx).apply {
+                    layoutParams = ViewGroup.MarginLayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT
+                    ).also { it.setMargins(0, 0, 0, 6) }
+                    radius = 12f
+                    cardElevation = 1f
+                    setContentPadding(12, 8, 12, 8)
+                }
+
+                val inner = LinearLayout(ctx).apply {
+                    orientation = LinearLayout.VERTICAL
+                }
+
+                inner.addView(TextView(ctx).apply {
+                    text = loc.name ?: loc.id ?: key
+                    textSize = 14f
+                    typeface = android.graphics.Typeface.DEFAULT_BOLD
+                })
+
+                inner.addView(readOnlyCard(ctx, "id", loc.id ?: key))
+
+                inner.addView(inputCard(ctx, "name", loc.name ?: "", false))
+                inner.addView(inputCard(ctx, "description", loc.description ?: "", (loc.description?.length ?: 0) > 80))
+                inner.addView(inputCard(ctx, "visual_style", loc.visual_style ?: "", false))
+                inner.addView(inputCard(ctx, "cinematic_space", loc.cinematic_space ?: "", false))
+                inner.addView(inputCard(ctx, "default_mood", loc.default_mood ?: "", false))
+
+                card.addView(inner)
+                ll.addView(card)
+            }
+        }
+
+        parent.addView(ll)
+    }
+
+    private fun scrollTabs(direction: Int) {
+        val tabLayout = binding?.propertyTabs ?: return
+        val selectedTab = tabLayout.selectedTabPosition
+        val newPos = (selectedTab + direction).coerceIn(0, tabLayout.tabCount - 1)
+        tabLayout.getTabAt(newPos)?.select()
+    }
+
+    private fun updateTabScrollIndicators() {
+        val b = binding ?: return
+        val tabLayout = b.propertyTabs
+        val canScrollLeft = tabLayout.canScrollHorizontally(-1)
+        val canScrollRight = tabLayout.canScrollHorizontally(1)
+        b.tabScrollLeft.isEnabled = canScrollLeft
+        b.tabScrollLeft.alpha = if (canScrollLeft) 1.0f else 0.3f
+        b.tabScrollRight.isEnabled = canScrollRight
+        b.tabScrollRight.alpha = if (canScrollRight) 1.0f else 0.3f
     }
 
     private fun buildSceneFields(parent: ViewGroup) {

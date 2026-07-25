@@ -14,7 +14,9 @@ data class BookData(
     val book: BookMeta? = null,
     val bible: Bible? = null,
     val characters: List<CharDef>? = null,
-    val chapters: List<Chapter>? = null
+    val chapters: List<Chapter>? = null,
+    val locations: Map<String, Location>? = null,
+    val voices: Map<String, VoiceEntry>? = null
 )
 
 data class Manifest(
@@ -101,7 +103,20 @@ data class RenderRules(
 data class CharDef(
     val id: String? = null,
     val name: String? = null,
-    val voice_id: String? = null
+    val voice_id: String? = null,
+    val passport: CharPassport? = null
+)
+
+data class CharPassport(
+    val base_appearance: String? = null,
+    val detailed_appearance: String? = null,
+    val clothing_base: String? = null,
+    val clothing_details: String? = null,
+    val video_tokens: String? = null
+)
+
+data class VoiceEntry(
+    val instruction: String? = null
 )
 
 data class Chapter(

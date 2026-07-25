@@ -263,9 +263,34 @@
     <string name="edit_field_chapter_id">Chapter ID</string>
     <string name="edit_field_scene_id">Scene ID</string>
 
-    <!-- Edit Unit Carousel -->
+    <!-- Edit Tabs -->
     <string name="edit_unit_label">Unit %1$d/%2$d</string>
     <string name="edit_units_tab">Unit</string>
+    <string name="edit_characters_tab">Characters</string>
+    <string name="edit_voices_tab">Voices</string>
+    <string name="edit_locations_tab">Locations</string>
+    <string name="edit_section_characters">Characters</string>
+    <string name="edit_section_voices">Voices</string>
+    <string name="edit_section_locations">Locations</string>
+    <string name="edit_no_characters">No characters</string>
+    <string name="edit_no_locations">No locations</string>
+    <string name="edit_no_voices">No voices</string>
+    <string name="edit_narrator_voice">Narrator</string>
+    <string name="edit_character_voice">%1$s (character voice)</string>
+    <!-- Field labels for chars/voices/locations tabs -->
+    <string name="field_name">Name</string>
+    <string name="field_voice_id">Voice ID</string>
+    <string name="field_description">Description</string>
+    <string name="field_visual_style">Visual Style</string>
+    <string name="field_cinematic_space">Cinematic Space</string>
+    <string name="field_default_mood">Default Mood</string>
+    <string name="field_instruction">Instruction</string>
+    <string name="field_passport">Passport</string>
+    <string name="field_base_appearance">Base Appearance</string>
+    <string name="field_detailed_appearance">Detailed Appearance</string>
+    <string name="field_clothing_base">Clothing Base</string>
+    <string name="field_clothing_details">Clothing Details</string>
+    <string name="field_video_tokens">Video Tokens</string>
 
     <!-- Audio Timeline -->
     <string name="timeline_play">Play scene audio</string>
