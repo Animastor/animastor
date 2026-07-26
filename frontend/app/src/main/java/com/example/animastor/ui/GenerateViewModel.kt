@@ -1315,12 +1315,35 @@ class GenerateViewModel(
             return ProgressPanelState.Hidden
         }
 
-        // ── Decide panel state ──
+        // ── No workers at all → Hidden (no generation running) ──
         if (workers.isEmpty()) {
-            // No workers at all → Hidden. Clean up stale state from previous sessions.
             workerCompletedAt.clear()
             gpuProgressDoneAt = 0L
             _isRegenerating.value = false
+            return ProgressPanelState.Hidden
+        }
+
+        // ── Per-worker expiry: filter out done workers whose 10s display window expired ──
+        workers.removeAll { worker ->
+            if (worker.done && !worker.cancelled) {
+                val taskKey = worker.taskId ?: "legacy:${worker.type}"
+                val completedAt = workerCompletedAt[taskKey]
+                completedAt != null && (now - completedAt) >= COMPLETED_WORKER_DISPLAY_MS
+            } else false
+        }
+
+        // ── All workers expired → finalise generation ──
+        if (workers.isEmpty()) {
+            _generationCompleted = true
+            stopProgressStream()
+            workerCompletedAt.clear()
+            gpuProgressDoneAt = 0L
+            if (vbookProgress?.stage == VBookStage.COMPLETED) {
+                _uiState.update { it.copy(vbookProgress = VBookProgress(stage = VBookStage.IDLE)) }
+            }
+            _generationStatus.value = GenerationStatus.SUCCESS
+            _isRegenerating.value = false
+            applyGenerationResults()
             return ProgressPanelState.Hidden
         }
 
@@ -1328,30 +1351,11 @@ class GenerateViewModel(
         val anyActive = workers.any { !it.done && !it.cancelled }
 
         if (!anyActive) {
-            // ── ALL workers done — start/check 10s DoneRow countdown ──
-            if (gpuProgressDoneAt == 0L) {
-                gpuProgressDoneAt = now  // First time all-done detected
-            }
-            val elapsed = now - gpuProgressDoneAt
-            if (elapsed >= COMPLETED_WORKER_DISPLAY_MS) {
-                // 10s display window expired — finalise generation
-                _generationCompleted = true
-                stopProgressStream()
-                workerCompletedAt.clear()
-                gpuProgressDoneAt = 0L
-                if (vbookProgress?.stage == VBookStage.COMPLETED) {
-                    _uiState.update { it.copy(vbookProgress = VBookProgress(stage = VBookStage.IDLE)) }
-                }
-                _generationStatus.value = GenerationStatus.SUCCESS
-                _isRegenerating.value = false
-                applyGenerationResults()
-                return ProgressPanelState.Hidden
-            }
-            // Within the 10s DoneRow window — keep showing workers at their final state
+            // All remaining workers are done but still within 10s display window
             return ProgressPanelState.Workers(workers)
         }
 
-        // ── Some workers still active — show ALL workers (completed ones stay visible) ──
+        // ── Some workers still active — show ALL visible remaining workers ──
         gpuProgressDoneAt = 0L  // Reset countdown since new active work appeared
         _isRegenerating.value = true
         return ProgressPanelState.Workers(workers)
