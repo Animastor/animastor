@@ -713,6 +713,7 @@ class GenerateViewModel(
                             scenes = scenesFromTxt
                         ))
 
+                        _generationCompleted = true
                         _uiState.update { it.copy(
                             importStage = ImportStage.DONE,
                             importProgress = 1f,
