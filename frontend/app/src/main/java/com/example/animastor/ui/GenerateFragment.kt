@@ -94,6 +94,16 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
             }
         }
 
+        // ── Auto-detect active generation tasks from previous sessions ──
+        // При входе на экран Generator проверяем WorkerCounts: если есть
+        // активные воркеры (восстановленные backend'ом после restart'а),
+        // восстанавливаем UI-состояние: прогресс-бары, таймер, пульсацию.
+        lifecycleScope.launch {
+            // Небольшая задержка, чтобы backend успел завершить startup recovery
+            delay(2_500)
+            viewModel.checkAndRestoreGenerationState()
+        }
+
         // ── Observe worker counts ──
         lifecycleScope.launch {
             val normalColor = requireContext().getColor(R.color.cinema_text_disabled)

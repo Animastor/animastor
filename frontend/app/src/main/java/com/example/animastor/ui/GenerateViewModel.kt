@@ -121,6 +121,53 @@ class GenerateViewModel(
         _generationStatus.value = GenerationStatus.IDLE
     }
 
+    /**
+     * При входе на экран Generator — проверить, есть ли активная GPU-генерация
+     * (унаследованная от предыдущей сессии, восстановленная после restart backend'а).
+     *
+     * WorkerCounts.active_audio/image/video > 0 означает, что scheduler уже
+     * диспатчит задачи на GPU Hub. Восстанавливаем UI-состояние:
+     *   - _activeGeneration (чтобы refreshProgressUi показывал прогресс-бары)
+     *   - _generationStatus = RUNNING (чтобы nav-иконка пульсировала)
+     *   - timer (чтобы показывать прошедшее время)
+     *
+     * Вызывается один раз при загрузке GenerateFragment.onViewCreated.
+     */
+    suspend fun checkAndRestoreGenerationState() {
+        val currentBookId = bookId
+        if (currentBookId.isBlank()) return
+
+        // Если генерация уже запущена пользователем (например, при повторном
+        // заходе на экран Generator), не затираем её состояние.
+        if (_activeGeneration.value != null) {
+            Log.d(TAG, "checkAndRestoreGenerationState: user generation already active — skipping restore")
+            return
+        }
+
+        try {
+            val counts = _repository.getWorkerCounts()
+            val hasActiveWorkers = counts.active_audio > 0 || counts.active_image > 0 || counts.active_video > 0 || counts.active_vbook > 0
+
+            if (hasActiveWorkers) {
+                Log.i(TAG, "checkAndRestoreGenerationState: active workers found (a=${counts.active_audio} i=${counts.active_image} v=${counts.active_video} vb=${counts.active_vbook}) — restoring generation state")
+                _activeGeneration.value = ActiveGeneration(
+                    scope = "whole_book",
+                    chapterId = null,
+                    sceneId = null
+                )
+                _generationStatus.value = GenerationStatus.RUNNING
+                if (timerStartedAt <= 0L) startTimer()  // Не сбрасываем таймер, если уже запущен
+                startProgressStream(currentBookId)
+                resetWorkerState()
+                _uiState.update { it.copy(phase = PlayerPhase.GENERATING) }
+            } else {
+                Log.d(TAG, "checkAndRestoreGenerationState: no active workers")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "checkAndRestoreGenerationState failed: ${e.message}")
+        }
+    }
+
     // ── UI State (generation/import related only) ─────────────────
 
     private val _uiState = MutableStateFlow(GenUiState())
