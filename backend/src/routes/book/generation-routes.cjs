@@ -2,6 +2,8 @@
 // Book Generation Routes — Regenerate, Cancel, Generate Next
 // ======================================================
 
+const path = require('path');
+const fs = require('fs');
 const sceneAssetsRepo = require('../../storage/postgres/repositories/scene-assets-repo');
 const generationProgress = require('../../services/generation-progress');
 const dispatchEngine = require('../../runtime/dispatch-engine');
@@ -409,6 +411,38 @@ module.exports = function(app, redis, deps) {
                         .filter(type => requestedTypeSet.has(type)),
                 }))
                 .filter(ds => ds.dirty_layers.length > 0);
+
+            // ── Cover check — ensure cover scene is included in generation ──
+            const coverCh = (loadedBook.chapters || []).find(ch => ch.type === 'cover');
+            if (coverCh && coverCh.scenes && coverCh.scenes.length > 0 && requestedTypeSet.has('image')) {
+                const coverScene = coverCh.scenes[0];
+                const coverChapterId = coverCh.chapter;
+                const coverSceneId = coverScene.scene_id;
+                const alreadyDirty = filteredDirty.some(d => d.chapter_id === coverChapterId && d.scene_id === coverSceneId);
+                if (!alreadyDirty && filteredDirty.length > 0) {
+                    const buildDir = path.join(config.OUTPUT_DIR, buildId);
+                    let coverHasImages = false;
+                    try {
+                        if (fs.existsSync(buildDir)) {
+                            const iuPrefix = `${bookId}_${coverChapterId}_${coverSceneId}_iu`;
+                            const files = fs.readdirSync(buildDir).filter(f => f.startsWith(iuPrefix) && f.endsWith('.png'));
+                            const iuCount = (coverScene.units || []).length +
+                                (coverScene.dialogue_blocks || []).reduce((sum, db) => sum + (db.units || []).length, 0);
+                            coverHasImages = files.length >= iuCount && iuCount > 0;
+                        }
+                    } catch (_) {}
+                    if (!coverHasImages) {
+                        const coverLayers = ['image'];
+                        if (requestedTypeSet.has('audio')) coverLayers.push('audio');
+                        if (requestedTypeSet.has('video')) coverLayers.push('video');
+                        filteredDirty.unshift({
+                            chapter_id: coverChapterId, scene_id: coverSceneId,
+                            reason: 'cover', dirty_layers: coverLayers,
+                        });
+                        log(`[REGENERATE] ${bookId}: Cover prepended to dirty scenes (ch=${coverChapterId} sc=${coverSceneId})`);
+                    }
+                }
+            }
 
             // ── State management через единую команду фасада ──
             // T4 консолидации: resetScenes заменяет ручной ритуал очистки
