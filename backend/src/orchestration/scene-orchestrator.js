@@ -65,7 +65,7 @@ async function executeAudioDispatch(redis, scene, loadedBook, buildId, dispatchI
         } catch (cleanupErr) {
             warn(`AUDIO_DISPATCH: cleanup error for ${bookId}/${chapterId}/${sceneId}: ${cleanupErr.message}`);
         }
-        return { dispatched: false, jobs: 0, reason: 'scene_not_found' };
+        return { dispatched: false, jobs: 0, completed: true, reason: 'scene_not_found' };
     }
 
     // 🔧 AUDIO-ORCH: Transition PLACEHOLDER_READY → GENERATING
@@ -206,7 +206,7 @@ async function executeImageDispatch(redis, scene, loadedBook, buildId, dispatchI
         } catch (cleanupErr) {
             warn(`IMAGE_DISPATCH: cleanup error for ${bookId}/${chapterId}/${sceneId}: ${cleanupErr.message}`);
         }
-        return { dispatched: false, jobs: 0, reason: 'scene_not_found' };
+        return { dispatched: false, jobs: 0, completed: true, reason: 'scene_not_found' };
     }
 
     // Read dirty unit IDs from PG
@@ -278,7 +278,7 @@ async function executeVideoDispatch(redis, scene, loadedBook, buildId, dispatchI
         } catch (cleanupErr) {
             warn(`VIDEO_DISPATCH: cleanup error for ${bookId}/${chapterId}/${sceneId}: ${cleanupErr.message}`);
         }
-        return { dispatched: false, jobs: 0, reason: 'scene_not_found' };
+        return { dispatched: false, jobs: 0, completed: true, reason: 'scene_not_found' };
     }
 
     const wfLoader = require('../workflows/workflow-loader');
