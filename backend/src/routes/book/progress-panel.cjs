@@ -12,10 +12,59 @@ const generationProgress = require('../../services/generation-progress');
 
 module.exports = function(app, redis, deps) {
     const {
-        state, activeScenes, iuRepo,
+        state, activeScenes, iuRepo, book,
         utils, getChunk, getAllChunks,
     } = deps;
     const { log } = utils;
+
+    /**
+     * Resolve human-readable scene and chapter labels from the book JSON.
+     * Parameters accept the already-loaded book data to avoid re-reading
+     * the book file for each scene in a multi-target task.
+     *
+     * @param {object|null} bookData — result of book.loadBook(bookId)
+     * @returns {{ scene_label: string|null, chapter_label: string|null }}
+     */
+    function resolveLabels(bookData, chapterId, sceneId) {
+        if (!bookData || !chapterId) return { scene_label: null, chapter_label: null };
+
+        const ch = (bookData.chapters || []).find(c => c.chapter === chapterId);
+        if (!ch) return { scene_label: null, chapter_label: null };
+
+        // Chapter label: "Chapter 2" or chapter_title or both
+        let chapterLabel = null;
+        if (ch.display_number != null) {
+            chapterLabel = `Chapter ${ch.display_number}`;
+        }
+        if (ch.chapter_title && ch.chapter_title.trim()) {
+            if (chapterLabel) {
+                chapterLabel += ` — ${ch.chapter_title.trim()}`;
+            } else {
+                chapterLabel = ch.chapter_title.trim();
+            }
+        }
+
+        // Scene label: "Scene 3" or scene_title or both
+        let sceneLabel = null;
+        if (!sceneId) return { scene_label: null, chapter_label: chapterLabel };
+
+        const sc = (ch.scenes || []).find(s => s.scene_id === sceneId);
+        if (!sc) return { scene_label: null, chapter_label: chapterLabel };
+
+        const scIdx = sc.display_index;
+        const scTitle = sc.scene_title && sc.scene_title.trim() ? sc.scene_title.trim() : null;
+
+        if (scIdx > 0) {
+            sceneLabel = `Scene ${scIdx}`;
+            if (scTitle) sceneLabel += ` — ${scTitle}`;
+        } else if (scTitle) {
+            sceneLabel = scTitle;
+        } else if (sc.type === 'cover') {
+            sceneLabel = 'Cover';
+        }
+
+        return { scene_label: sceneLabel, chapter_label: chapterLabel };
+    }
 
     function sceneKey(chapterId, sceneId) {
         return `${chapterId}:${sceneId}`;
@@ -161,6 +210,9 @@ module.exports = function(app, redis, deps) {
     async function buildTaskRows(bookId, task, chunkData, buildId) {
         const targets = task.targets || [];
 
+        // Load book data once — reused across all resolveLabels calls
+        const bookData = (() => { try { return book.loadBook(bookId); } catch (_) { return null; } })();
+
         // ── current_scene: expand into per-target (one row per scene) ──
         // All other scopes (whole_book, current_chapter, from_current_scene)
         // are ONE task → one aggregated row.
@@ -194,12 +246,15 @@ module.exports = function(app, redis, deps) {
                     ? 100
                     : Math.round(ready * 100 / Math.max(1, counts.total));
 
+                const labels = resolveLabels(bookData, target.chapter_id, target.scene_id);
                 result.push({
                     task_id: task.task_id || null,
                     type: task.type,
                     scope: task.scope || 'whole_book',
                     chapter_id: target.chapter_id,
                     scene_id: target.scene_id,
+                    scene_label: labels.scene_label,
+                    chapter_label: labels.chapter_label,
                     target_count: 1,
                     started_at: task.started_at || null,
                     ready,
@@ -236,12 +291,15 @@ module.exports = function(app, redis, deps) {
             ? 100
             : Math.round(ready * 100 / Math.max(1, counts.total));
 
+        const labels = resolveLabels(bookData, task.chapter_id || null, task.scene_id || null);
         return [{
             task_id: task.task_id || null,
             type: task.type,
             scope: task.scope || 'whole_book',
             chapter_id: task.chapter_id || null,
             scene_id: task.scene_id || null,
+            scene_label: labels.scene_label,
+            chapter_label: labels.chapter_label,
             target_count: targets.length,
             started_at: task.started_at || null,
             ready,

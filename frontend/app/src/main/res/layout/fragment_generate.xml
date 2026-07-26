@@ -124,7 +124,23 @@
                         android:gravity="center_vertical"
                         android:clickable="true"
                         android:focusable="true"
-                        android:foreground="?attr/selectableItemBackgroundBorderless">
+                        android:foreground="?attr/selectableItemBackgroundBorderless"
+                        android:paddingStart="4dp"
+                        android:paddingEnd="4dp"
+                        android:paddingTop="6dp"
+                        android:paddingBottom="6dp"
+                        android:layout_marginBottom="0dp"
+                        android:clipToPadding="false">
+
+                        <!-- Left accent indicator bar -->
+                        <View
+                            android:id="@+id/vbookAccentBar"
+                            android:layout_width="3dp"
+                            android:layout_height="32dp"
+                            android:layout_gravity="center_vertical"
+                            android:layout_marginEnd="12dp"
+                            android:background="@color/cinema_accent"
+                            android:importantForAccessibility="no" />
 
                         <ImageView
                             android:id="@+id/vbookIcon"
@@ -239,7 +255,22 @@
                         android:gravity="center_vertical"
                         android:clickable="true"
                         android:focusable="true"
-                        android:foreground="?attr/selectableItemBackgroundBorderless">
+                        android:foreground="?attr/selectableItemBackgroundBorderless"
+                        android:paddingStart="4dp"
+                        android:paddingEnd="4dp"
+                        android:paddingTop="6dp"
+                        android:paddingBottom="6dp"
+                        android:clipToPadding="false">
+
+                        <!-- Left accent indicator bar (tinted via code based on enabled state) -->
+                        <View
+                            android:id="@+id/audioAccentBar"
+                            android:layout_width="3dp"
+                            android:layout_height="32dp"
+                            android:layout_gravity="center_vertical"
+                            android:layout_marginEnd="12dp"
+                            android:background="@color/cinema_outline_variant"
+                            android:importantForAccessibility="no" />
 
                         <ImageView
                             android:id="@+id/audioIcon"
@@ -354,7 +385,22 @@
                         android:gravity="center_vertical"
                         android:clickable="true"
                         android:focusable="true"
-                        android:foreground="?attr/selectableItemBackgroundBorderless">
+                        android:foreground="?attr/selectableItemBackgroundBorderless"
+                        android:paddingStart="4dp"
+                        android:paddingEnd="4dp"
+                        android:paddingTop="6dp"
+                        android:paddingBottom="6dp"
+                        android:clipToPadding="false">
+
+                        <!-- Left accent indicator bar (tinted via code based on enabled state) -->
+                        <View
+                            android:id="@+id/imageAccentBar"
+                            android:layout_width="3dp"
+                            android:layout_height="32dp"
+                            android:layout_gravity="center_vertical"
+                            android:layout_marginEnd="12dp"
+                            android:background="@color/cinema_outline_variant"
+                            android:importantForAccessibility="no" />
 
                         <ImageView
                             android:id="@+id/imageIcon"
@@ -469,7 +515,22 @@
                         android:gravity="center_vertical"
                         android:clickable="true"
                         android:focusable="true"
-                        android:foreground="?attr/selectableItemBackgroundBorderless">
+                        android:foreground="?attr/selectableItemBackgroundBorderless"
+                        android:paddingStart="4dp"
+                        android:paddingEnd="4dp"
+                        android:paddingTop="6dp"
+                        android:paddingBottom="6dp"
+                        android:clipToPadding="false">
+
+                        <!-- Left accent indicator bar (tinted via code based on enabled state) -->
+                        <View
+                            android:id="@+id/videoAccentBar"
+                            android:layout_width="3dp"
+                            android:layout_height="32dp"
+                            android:layout_gravity="center_vertical"
+                            android:layout_marginEnd="12dp"
+                            android:background="@color/cinema_outline_variant"
+                            android:importantForAccessibility="no" />
 
                         <ImageView
                             android:id="@+id/videoIcon"

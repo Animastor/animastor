@@ -219,6 +219,9 @@ class GenerateViewModel(
     private val _videoEnabled = MutableStateFlow(true)
     val videoEnabledFlow: StateFlow<Boolean> = _videoEnabled.asStateFlow()
 
+    private val _vbookEnabled = MutableStateFlow(true)
+    val vbookEnabledFlow: StateFlow<Boolean> = _vbookEnabled.asStateFlow()
+
     private val _hasAssets = MutableStateFlow(false)
     val hasAssetsFlow: StateFlow<Boolean> = _hasAssets.asStateFlow()
 
@@ -227,7 +230,7 @@ class GenerateViewModel(
 
     fun audioEnabled(): Boolean = _audioEnabled.value
     fun videoEnabled(): Boolean = _videoEnabled.value
-    fun vbookEnabled(): Boolean = true // VBook is always enabled
+    fun vbookEnabled(): Boolean = _vbookEnabled.value
     fun hasAssets(): Boolean = _hasAssets.value
 
     fun setAudioEnabled(enabled: Boolean) {
@@ -245,9 +248,9 @@ class GenerateViewModel(
         viewModelScope.launch { persistLayerConfig() }
     }
 
-    /** VBook is always enabled — kept for interface consistency. */
-    fun setVBookEnabled(@Suppress("UNUSED_PARAMETER") enabled: Boolean) {
-        // VBook agent is always active; this is a no-op for consistency
+    fun setVBookEnabled(enabled: Boolean) {
+        _vbookEnabled.value = enabled
+        viewModelScope.launch { persistLayerConfig() }
     }
 
     suspend fun loadLayerConfig() {
@@ -261,8 +264,9 @@ class GenerateViewModel(
                 _audioEnabled.value = cfg.audio_enabled
                 imageEnabled = cfg.image_enabled
                 _videoEnabled.value = cfg.video_enabled
+                _vbookEnabled.value = cfg.vbook_enabled
                 _layerConfigLoaded.value = true
-                Log.i(TAG, "loadLayerConfig: a=${cfg.audio_enabled} i=${cfg.image_enabled} v=${cfg.video_enabled}")
+                Log.i(TAG, "loadLayerConfig: a=${cfg.audio_enabled} i=${cfg.image_enabled} v=${cfg.video_enabled} vb=${cfg.vbook_enabled}")
             }
             .onFailure { e ->
                 Log.w(TAG, "loadLayerConfig failed: ${e.message}")
@@ -293,9 +297,10 @@ class GenerateViewModel(
             val cfg = _repository.putLayerConfig(currentBookId, LayerConfigUpdate(
                 audio_enabled = _audioEnabled.value,
                 image_enabled = imageEnabled,
-                video_enabled = _videoEnabled.value
+                video_enabled = _videoEnabled.value,
+                vbook_enabled = _vbookEnabled.value
             ))
-            Log.i(TAG, "persistLayerConfig: a=${cfg.audio_enabled} i=${cfg.image_enabled} v=${cfg.video_enabled}")
+            Log.i(TAG, "persistLayerConfig: a=${cfg.audio_enabled} i=${cfg.image_enabled} v=${cfg.video_enabled} vb=${cfg.vbook_enabled}")
         }.onFailure { e ->
             Log.w(TAG, "persistLayerConfig failed: ${e.message}")
         }
@@ -1219,6 +1224,8 @@ class GenerateViewModel(
                 scope = sw.scope,
                 chapterId = sw.chapter_id,
                 sceneId = sw.scene_id,
+                sceneLabel = sw.scene_label,
+                chapterLabel = sw.chapter_label,
                 ready = ready,
                 total = sw.total,
                 percent = if (done) 100 else sw.percent.coerceIn(0, 99),
@@ -1366,6 +1373,10 @@ data class TaskRow(
     val scope: String = "whole_book",
     val chapterId: String? = null,
     val sceneId: String? = null,
+    /** Human-readable scene label from backend (e.g. "Scene 3 — The Forest"). */
+    val sceneLabel: String? = null,
+    /** Human-readable chapter label from backend (e.g. "Chapter 2"). */
+    val chapterLabel: String? = null,
     val ready: Int,
     val total: Int,
     val percent: Int,

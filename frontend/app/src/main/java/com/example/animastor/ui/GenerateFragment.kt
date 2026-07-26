@@ -49,19 +49,25 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
         loadBook()
 
         // ── Switch toggles ──
-        // VBook switch is informational — always enabled; no listener needed
+        b.vbookSwitch.setOnCheckedChangeListener { _, checked ->
+            viewModel.setVBookEnabled(checked)
+            updateHeaderPanelStyle(b.vbookHeaderRow, b.vbookAccentBar, checked)
+        }
         b.audioSwitch.setOnCheckedChangeListener { _, checked ->
             viewModel.setAudioEnabled(checked)
+            updateHeaderPanelStyle(b.audioHeaderRow, b.audioAccentBar, checked)
         }
         b.imageSwitch.setOnCheckedChangeListener { _, checked ->
             viewModel.setImageEnabled(checked)
+            updateHeaderPanelStyle(b.imageHeaderRow, b.imageAccentBar, checked)
         }
         b.videoSwitch.setOnCheckedChangeListener { _, checked ->
             viewModel.setVideoEnabled(checked)
+            updateHeaderPanelStyle(b.videoHeaderRow, b.videoAccentBar, checked)
         }
 
         // ── Header rows (tap to toggle) ──
-        // VBook header is informational — no toggle action
+        b.vbookHeaderRow.setOnClickListener { b.vbookSwitch.performClick() }
         b.audioHeaderRow.setOnClickListener { b.audioSwitch.performClick() }
         b.imageHeaderRow.setOnClickListener { b.imageSwitch.performClick() }
         b.videoHeaderRow.setOnClickListener { b.videoSwitch.performClick() }
@@ -86,10 +92,17 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
         lifecycleScope.launch {
             viewModel.layerConfigLoadedFlow.collect { loaded ->
                 if (loaded) {
-                    b.vbookSwitch.isChecked = true // VBook is always on
+                    b.vbookSwitch.isChecked = viewModel.vbookEnabled()
+                    updateHeaderPanelStyle(b.vbookHeaderRow, b.vbookAccentBar, viewModel.vbookEnabled())
+
                     b.audioSwitch.isChecked = viewModel.audioEnabled()
+                    updateHeaderPanelStyle(b.audioHeaderRow, b.audioAccentBar, viewModel.audioEnabled())
+
                     b.imageSwitch.isChecked = viewModel.imageEnabled
+                    updateHeaderPanelStyle(b.imageHeaderRow, b.imageAccentBar, viewModel.imageEnabled)
+
                     b.videoSwitch.isChecked = viewModel.videoEnabled()
+                    updateHeaderPanelStyle(b.videoHeaderRow, b.videoAccentBar, viewModel.videoEnabled())
                 }
             }
         }
@@ -138,7 +151,7 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
                         labelFormat = R.string.generate_section_vbook,
                         isGenerating = isGenerating,
                         isNeeded = true,
-                        isEnabled = true,
+                        isEnabled = viewModel.vbookEnabled(),
                         normalColor = normalColor,
                         activeColor = activeColor,
                         errorColor = errorColor
@@ -535,7 +548,7 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
         }
         // Build list of actually enabled layers based on toggle switches
         val enabledLayers = buildList {
-            add("VBook")
+            if (viewModel.vbookEnabled()) add("VBook")
             if (viewModel.audioEnabled()) add("Audio")
             if (viewModel.imageEnabled) add("Image")
             if (viewModel.videoEnabled()) add("Video")
@@ -657,12 +670,38 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
 
     private fun scopedTaskLabel(taskRow: TaskRow): String {
         val target = when (taskRow.scope) {
-            "current_scene" -> taskRow.sceneId
-            "current_chapter" -> taskRow.chapterId
-            "from_current_scene" -> taskRow.sceneId?.let { "$it+" }
+            "current_scene" -> taskRow.sceneLabel
+            "current_chapter" -> taskRow.chapterLabel
+            "from_current_scene" -> taskRow.sceneLabel?.let { "$it+" }
             else -> null
         }
         return if (target.isNullOrBlank()) taskRow.label else "${taskRow.label} · $target"
+    }
+
+    /**
+     * Style a worker section header row as a unified interactive panel.
+     *
+     * When [isEnabled]:
+     *   - Accent bar turns gold (cinema_accent) — a clear active indicator
+     *   - Background gets a warm container tint (cinema_accent_container)
+     * When disabled:
+     *   - Accent bar dims to outline variant — subtle, unobtrusive
+     *   - Background becomes transparent — blends with the card
+     */
+    private fun updateHeaderPanelStyle(headerRow: View, accentBar: View, isEnabled: Boolean) {
+        val accentColor = if (isEnabled) {
+            requireContext().getColor(R.color.cinema_accent)
+        } else {
+            requireContext().getColor(R.color.cinema_outline_variant)
+        }
+        val bgColor = if (isEnabled) {
+            requireContext().getColor(R.color.cinema_accent_container)
+        } else {
+            android.graphics.Color.TRANSPARENT
+        }
+
+        accentBar.setBackgroundColor(accentColor)
+        headerRow.setBackgroundColor(bgColor)
     }
 
     // ═══════════════════════════════════════════════════════════════

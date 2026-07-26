@@ -4,13 +4,15 @@ data class LayerConfigResponse(
     val book_id: String? = null,
     val audio_enabled: Boolean = true,
     val image_enabled: Boolean = true,
-    val video_enabled: Boolean = true
+    val video_enabled: Boolean = true,
+    val vbook_enabled: Boolean = true
 )
 
 data class LayerConfigUpdate(
     val audio_enabled: Boolean? = null,
     val image_enabled: Boolean? = null,
-    val video_enabled: Boolean? = null
+    val video_enabled: Boolean? = null,
+    val vbook_enabled: Boolean? = null
 )
 
 /**

@@ -414,6 +414,10 @@ data class ProgressWorker(
     val scope: String = "whole_book",
     val chapter_id: String? = null,
     val scene_id: String? = null,
+    /** Human-readable scene label from backend (e.g. "Scene 3 — The Forest"). */
+    val scene_label: String? = null,
+    /** Human-readable chapter label from backend (e.g. "Chapter 2"). */
+    val chapter_label: String? = null,
     val target_count: Int = 0,
     val started_at: Long? = null,
     val ready: Int = 0,
