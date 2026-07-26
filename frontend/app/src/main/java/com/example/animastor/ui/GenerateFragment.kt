@@ -451,6 +451,15 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
             Toast.makeText(requireContext(), R.string.file_status_opening, Toast.LENGTH_SHORT).show()
             return
         }
+        // Build list of actually enabled layers based on toggle switches
+        val enabledLayers = buildList {
+            add("VBook")
+            if (viewModel.audioEnabled()) add("Audio")
+            if (viewModel.imageEnabled) add("Image")
+            if (viewModel.videoEnabled()) add("Video")
+        }
+        val layersText = enabledLayers.joinToString(" → ")
+
         // Show scope dialog — applies to the GPU stages after VBook completes
         showScopeDialog(profile = "full") { scope, _, _ ->
             onGenerateVBookClicked()
@@ -460,7 +469,7 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
                 "from_current_scene" -> getString(R.string.scope_from_current_scene)
                 else -> getString(R.string.scope_whole_book)
             }
-            Toast.makeText(requireContext(), "Generate All: VBook → Audio → Image → Video ($scopeLabel)", Toast.LENGTH_SHORT).show()
+            Toast.makeText(requireContext(), "Generate All: $layersText ($scopeLabel)", Toast.LENGTH_SHORT).show()
         }
     }
 

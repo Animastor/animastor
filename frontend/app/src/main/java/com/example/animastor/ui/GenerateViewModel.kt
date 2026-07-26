@@ -204,23 +204,6 @@ class GenerateViewModel(
         // VBook agent is always active; this is a no-op for consistency
     }
 
-    /**
-     * Toggle audio independently. Does NOT affect image or video.
-     */
-    fun toggleAudioForProfile() {
-        _audioEnabled.value = !_audioEnabled.value
-        viewModelScope.launch { persistLayerConfig() }
-    }
-
-    /**
-     * Toggle video independently. Does NOT affect audio or image.
-     */
-    fun toggleVideoForProfile() {
-        _videoEnabled.value = !_videoEnabled.value
-        viewModelScope.launch { persistLayerConfig() }
-    }
-
-
     suspend fun loadLayerConfig() {
         val currentBookId = bookId
         if (currentBookId.isBlank()) {
