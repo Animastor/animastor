@@ -104,6 +104,15 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
             viewModel.checkAndRestoreGenerationState()
         }
 
+        // ── Init labels with zero counts immediately (avoid flicker) ──
+        // Labels start empty in XML; set initial "Audio (0)" values now,
+        // before the first API poll completes, to prevent sudden "pop-in"
+        // when data arrives.
+        b.vbookLabel.text = getString(R.string.generate_section_vbook, 0)
+        b.audioLabel.text = getString(R.string.generate_section_audio, 0)
+        b.imageLabel.text = getString(R.string.generate_section_image, 0)
+        b.videoLabel.text = getString(R.string.generate_section_video, 0)
+
         // ── Observe worker counts ──
         lifecycleScope.launch {
             val normalColor = requireContext().getColor(R.color.cinema_text_disabled)
