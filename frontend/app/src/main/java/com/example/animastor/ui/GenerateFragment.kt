@@ -22,6 +22,7 @@ import com.example.animastor.databinding.FragmentGenerateBinding
 import com.example.animastor.databinding.ItemWorkerProgressBinding
 import com.example.animastor.network.RetrofitClient
 import com.example.animastor.repository.BookData
+import com.google.android.material.color.MaterialColors
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -690,10 +691,14 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
      */
     private fun updateHeaderPanelStyle(headerRow: View, accentBar: View, isEnabled: Boolean) {
         val ctx = requireContext()
-        // Detect active theme (dark vs light) to pick appropriate panel colors
-        val isDark = (ctx.resources.configuration.uiMode and
-            android.content.res.Configuration.UI_MODE_NIGHT_MASK) ==
-            android.content.res.Configuration.UI_MODE_NIGHT_YES
+        // Detect theme by checking the resolved colorSurface brightness.
+        // The app uses setTheme() (not system uiMode), so we inspect the
+        // actual resolved attribute: dark → #1B1816, light → #FAF7F0.
+        val surfaceColor = MaterialColors.getColor(ctx, com.google.android.material.R.attr.colorSurface, 0)
+        val brightness = android.graphics.Color.red(surfaceColor) +
+            android.graphics.Color.green(surfaceColor) +
+            android.graphics.Color.blue(surfaceColor)
+        val isDark = brightness < 384 // threshold between dark (~73) and light (~737)
 
         val accentColor = if (isEnabled) {
             ctx.getColor(R.color.cinema_accent)
