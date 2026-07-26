@@ -712,7 +712,19 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
         }
 
         accentBar.setBackgroundColor(accentColor)
-        headerRow.setBackgroundColor(bgColor)
+
+        // Rounded corner background — 12dp matches ShapeAppearance.Small,
+        // creating a nested rounded look inside the 18dp card.
+        val radius = android.util.TypedValue.applyDimension(
+            android.util.TypedValue.COMPLEX_UNIT_DIP, 12f,
+            ctx.resources.displayMetrics
+        )
+        val bg = android.graphics.drawable.GradientDrawable().apply {
+            shape = android.graphics.drawable.GradientDrawable.RECTANGLE
+            cornerRadius = radius
+            setColor(bgColor)
+        }
+        headerRow.background = bg
     }
 
     // ═══════════════════════════════════════════════════════════════
