@@ -2,7 +2,7 @@
 // ANIMASTOR BACKEND — BOOK DIFF SERVICE
 // ======================================================
 // Scene comparison, diff computation, dirty scene marking,
-// and profile/layer configuration.
+// and layer configuration.
 
 const fs = require('fs');
 const path = require('path');
@@ -453,32 +453,6 @@ module.exports = function(redis, config, deps) {
         await activeScenes.addActiveScene(redis, bookId, chapterId, sceneId);
     }
 
-    // ── Apply profile to layer config ─────────────────
-    async function applyProfileToLayerConfig(redis, bookId, profile) {
-        let newProfile;
-        switch (profile) {
-            case 'audio_only':
-                newProfile = { audio_enabled: true, image_enabled: false, video_enabled: false };
-                break;
-            case 'image_only':
-                newProfile = { audio_enabled: false, image_enabled: true, video_enabled: false };
-                break;
-            case 'video_only':
-                newProfile = { audio_enabled: false, image_enabled: false, video_enabled: true };
-                break;
-            case 'storyboard':
-                newProfile = { audio_enabled: true, image_enabled: true, video_enabled: false };
-                break;
-            case 'full':
-            default:
-                newProfile = { audio_enabled: true, image_enabled: true, video_enabled: true };
-                break;
-        }
-        const result = await layerConfig.set(redis, bookId, newProfile);
-        log(`📋 Layer profile updated for ${bookId}:`, JSON.stringify(result));
-        return result;
-    }
-
     // ── Filter dirty scenes by scope ──────────────────
     function filterDirtyScenesByScope(dirtyScenes, scope, chapterId, sceneId, allScenes) {
         if (!dirtyScenes || dirtyScenes.length === 0) return [];
@@ -533,7 +507,6 @@ module.exports = function(redis, config, deps) {
         diffScene,
         computeBookDiff,
         markDirtyScenes,
-        applyProfileToLayerConfig,
         filterDirtyScenesByScope,
         isInScope,
     };

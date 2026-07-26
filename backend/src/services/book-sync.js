@@ -39,7 +39,7 @@ const splitKey = (k) => {
 
 /**
  * Reconcile PG state based on a book-diff result.
- * Called by /regenerate after bookDiff.markDirtyScenes().
+ * Called after persisted book content changes have been diffed.
  *
  * @param {string} bookId
  * @param {Array} dirtyScenes - book-diff dirty scenes [{chapter_id, scene_id, reason, dirty_layers}]
@@ -82,8 +82,8 @@ async function reconcileFromDiff(bookId, dirtyScenes, loadedBook) {
         // Mark scene_assets as stale for changed scenes
         assetsStale = await markSceneAssetsStale(bookId, changedKeys);
 
-        // Cancel running generation_tasks for changed scenes
-        tasksCancelled = await markGenerationTasksStale(bookId, changedKeys);
+        // Cancel only task types invalidated by the content diff.
+        tasksCancelled = await markGenerationTasksStale(bookId, changed);
     }
 
     // ── Purge DB rows for removed scenes ──
@@ -260,16 +260,31 @@ async function markSceneAssetsStale(bookId, chapterSceneKeys) {
     return total;
 }
 
-async function markGenerationTasksStale(bookId, chapterSceneKeys) {
+async function markGenerationTasksStale(bookId, dirtyScenes) {
     let total = 0;
-    for (const key of chapterSceneKeys) {
-        const [chapterId, sceneId] = splitKey(key);
+    for (const entry of dirtyScenes) {
+        const isLegacyKey = typeof entry === 'string';
+        const [chapterId, sceneId] = isLegacyKey
+            ? splitKey(entry)
+            : [entry.chapter_id, entry.scene_id];
+        const dirtyLayers = isLegacyKey
+            ? ['audio', 'image', 'video']
+            : (Array.isArray(entry.dirty_layers)
+                ? entry.dirty_layers
+                : ['audio', 'image', 'video']).filter(layer =>
+                layer === 'audio' || layer === 'image' || layer === 'video'
+            );
+        if (!chapterId || !sceneId || dirtyLayers.length === 0) continue;
+
         const r = await query(`
             UPDATE generation_tasks
-            SET status = 'cancelled', error = COALESCE(error, '') || ' (cancelled by book-sync)'
+            SET status = 'cancelled',
+                completed_at = EXTRACT(EPOCH FROM NOW())::bigint,
+                error = COALESCE(error, '') || ' (cancelled by book-sync)'
             WHERE book_id = $1 AND chapter_id = $2 AND scene_id = $3
+              AND task_type = ANY($4::text[])
               AND status IN ('queued', 'running')
-        `, [bookId, chapterId, sceneId]);
+        `, [bookId, chapterId, sceneId, dirtyLayers]);
         total += r.rowCount || 0;
     }
     return total;

@@ -328,16 +328,16 @@ class Repository(
         bookId: String,
         newBook: BookData? = null,
         rebuildAll: Boolean = false,
-        profile: String? = null,
+        workerTypes: List<String>? = null,
         scope: String? = null,
         chapterId: String? = null,
         sceneId: String? = null
     ): RegenerateResponse {
-        Log.i("Repo", "regenerateBookScoped: $bookId profile=$profile scope=$scope ch=$chapterId sc=$sceneId")
-        return api.regenerateBookScoped(bookId, RegenerateScope(
+        Log.i("Repo", "regenerateBookScoped: $bookId workers=$workerTypes scope=$scope ch=$chapterId sc=$sceneId")
+        return api.regenerateBookScoped(bookId, RegenerateRequest(
             new_book = newBook,
             rebuild_all = rebuildAll,
-            profile = profile,
+            worker_types = workerTypes,
             scope = scope,
             chapter_id = chapterId,
             scene_id = sceneId
@@ -417,9 +417,9 @@ class Repository(
         api.cancelGeneration(bookId)
     }
 
-    suspend fun cancelWorker(bookId: String, type: String): CancelWorkerResponse {
-        Log.i("Repo", "cancelWorker: $bookId type=$type")
-        return api.cancelWorker(bookId, CancelWorkerRequest(type = type))
+    suspend fun cancelWorker(bookId: String, type: String, taskId: String? = null): CancelWorkerResponse {
+        Log.i("Repo", "cancelWorker: $bookId type=$type taskId=$taskId")
+        return api.cancelWorker(bookId, CancelWorkerRequest(type = type, task_id = taskId))
     }
 
     suspend fun getSceneStoryboard(bookId: String, chapterId: String, sceneId: String, buildId: String): StoryboardResponse {

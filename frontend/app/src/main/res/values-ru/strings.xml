@@ -120,21 +120,6 @@
     <string name="edit_generate">ГЕНЕРИРОВАТЬ</string>
     <string name="edit_generating">ГЕНЕРАЦИЯ…</string>
 
-    <!-- Worker Panel as Profile Selector (Phase C) -->
-    <string name="workers_label">воркеры:</string>
-    <string name="worker_audio_desc">Аудио воркеры (базовый слой, всегда вкл)</string>
-    <string name="worker_image_desc">Графические воркеры (сториборд)</string>
-    <string name="worker_video_desc">Видео воркеры (финальная сборка)</string>
-    <string name="worker_label_audio">АУДИО</string>
-    <string name="worker_label_image">СТОРИ</string>
-    <string name="worker_label_video">ВИДЕО</string>
-    <string name="profile_audio">Только аудио</string>
-    <string name="profile_storyboard">Сториборд</string>
-    <string name="profile_video">Видео (полная)</string>
-    <string name="profile_desc_audio">Только озвучка без картинок и видео</string>
-    <string name="profile_desc_storyboard">Аудио + изображения сториборда (без видео)</string>
-    <string name="profile_desc_video">Аудио + сториборд + видео (полная сборка)</string>
-
     <!-- Toolbar Generate Button (Phase C) — всегда "ГЕНЕРИРОВАТЬ" -->
     <string name="toolbar_generate_create">ГЕНЕРИРОВАТЬ</string>
     <string name="toolbar_generate_refresh">ГЕНЕРИРОВАТЬ</string>

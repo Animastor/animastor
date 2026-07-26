@@ -2,13 +2,10 @@
 // Book Generation Routes — Regenerate, Cancel, Generate Next
 // ======================================================
 
-const path = require('path');
-const fs = require('fs');
 const sceneAssetsRepo = require('../../storage/postgres/repositories/scene-assets-repo');
-const { restoreSceneChunkStatus } = require('../../orchestration/scene-restoration');
-const { computeIuReady } = require('./iu-progress-utils.cjs');
 const generationProgress = require('../../services/generation-progress');
 const dispatchEngine = require('../../runtime/dispatch-engine');
+const taskRepo = require('../../storage/postgres/repositories/task-repo');
 
 module.exports = function(app, redis, deps) {
     const {
@@ -21,6 +18,24 @@ module.exports = function(app, redis, deps) {
         iuRepo, cleanBookRedisKeys,
     } = deps;
     const { log } = utils;
+
+    async function clearHubDispatches(dispatchIds) {
+        for (const dispatchId of dispatchIds || []) {
+            try {
+                const hubUrl = `${config.HUB_URL}/queue/clear?dispatch_id=${encodeURIComponent(dispatchId)}`;
+                const hubOptions = { method: 'DELETE', headers: {} };
+                if (config.GPU_HUB_API_KEY) {
+                    hubOptions.headers['x-api-key'] = config.GPU_HUB_API_KEY;
+                }
+                const hubRes = await fetch(hubUrl, hubOptions);
+                if (!hubRes.ok) {
+                    console.warn(`[CANCEL-WORKER] GPU hub cleanup returned ${hubRes.status} for ${dispatchId}`);
+                }
+            } catch (hubErr) {
+                console.warn(`[CANCEL-WORKER] GPU hub cleanup failed for ${dispatchId}: ${hubErr.message}`);
+            }
+        }
+    }
 
     // ======================================================
     // GENERATE NEXT (slide window)
@@ -48,11 +63,7 @@ module.exports = function(app, redis, deps) {
     });
 
     // ======================================================
-    // LAYER CONFIG (read / write) — canonical generation profile
-    //
-    // The `profile` field is computed server-side (resolveProfile) so clients
-    // never re-derive it from the audio/image/video toggles. Clients send only
-    // the toggles; the server owns the 8-state profile mapping.
+    // LAYER CONFIG (read / write) — defaults for initial/bulk generation
     // ======================================================
     app.get('/api/v1/book/:bookId/layer-config', async (req, res) => {
         try {
@@ -63,7 +74,6 @@ module.exports = function(app, redis, deps) {
                 audio_enabled: cfg.audio_enabled,
                 image_enabled: cfg.image_enabled,
                 video_enabled: cfg.video_enabled,
-                profile: layerConfig.resolveProfile(cfg),
             });
         } catch (err) {
             console.error('[LAYER-CONFIG] GET error:', err.message);
@@ -78,14 +88,12 @@ module.exports = function(app, redis, deps) {
             const cfg = await layerConfig.set(redis, bookId, {
                 audio_enabled, image_enabled, video_enabled,
             });
-            const profile = layerConfig.resolveProfile(cfg);
-            log(`[LAYER-CONFIG] book=${bookId} → a=${cfg.audio_enabled} i=${cfg.image_enabled} v=${cfg.video_enabled} profile=${profile}`);
+            log(`[LAYER-CONFIG] book=${bookId} → a=${cfg.audio_enabled} i=${cfg.image_enabled} v=${cfg.video_enabled}`);
             res.json({
                 book_id: bookId,
                 audio_enabled: cfg.audio_enabled,
                 image_enabled: cfg.image_enabled,
                 video_enabled: cfg.video_enabled,
-                profile,
             });
         } catch (err) {
             console.error('[LAYER-CONFIG] PUT error:', err.message);
@@ -94,30 +102,39 @@ module.exports = function(app, redis, deps) {
     });
 
     // ======================================================
-    // CANCEL WORKER (per-type cancel)
+    // CANCEL WORKER (task-aware; type remains as bulk fallback)
     // ======================================================
-    // Cancels only the specified worker type ("audio", "image", "video", "cover", "vbook")
-    // without affecting other workers. Stores cancelled type in Redis so /progress-panel
-    // can return cancelled:true for that worker.
+    // A row-level stop sends task_id and cancels only that task's stage/scene
+    // targets. A section-level stop sends type and cancels every active task of
+    // that type. Other task ids, including the same worker type, stay intact.
     app.post('/api/v1/book/:bookId/cancel-worker', async (req, res) => {
         try {
             const { bookId } = req.params;
-            const { type } = req.body || {};
+            const { type, task_id: taskId } = req.body || {};
 
-            if (!type || !['audio', 'image', 'video', 'cover', 'vbook'].includes(type)) {
-                return res.status(400).json({ error: 'Invalid or missing worker type. Must be one of: audio, image, video, cover, vbook' });
+            if (!taskId && (!type || !['audio', 'image', 'video', 'cover', 'vbook'].includes(type))) {
+                return res.status(400).json({
+                    error: 'Provide task_id or a worker type: audio, image, video, cover, vbook',
+                });
             }
 
-            log(`[CANCEL-WORKER] ${bookId}: cancelling type=${type}`);
+            let resolvedType = type;
+            let tasks = [];
+            if (taskId) {
+                const task = await generationProgress.getTask(redis, bookId, taskId);
+                if (!task) return res.status(404).json({ error: 'Generation task not found' });
+                resolvedType = task.type;
+                tasks = task.status === 'active' ? [task] : [];
+            } else if (['audio', 'image', 'video'].includes(type)) {
+                tasks = await generationProgress.getActiveTasksByType(redis, bookId, type);
+            }
 
-            // Store cancelled type in Redis — progress-panel will read and return cancelled:true
-            const cancelledWorkersKey = `animastor:cancelled-workers:${bookId}`;
-            await redis.sadd(cancelledWorkersKey, type);
-            // Keep alive while worker might still be processing (1 hour max)
-            await redis.expire(cancelledWorkersKey, 3600);
+            log(`[CANCEL-WORKER] ${bookId}: cancelling type=${resolvedType} task=${taskId || 'all'}`);
 
-            if (type === 'vbook') {
+            if (resolvedType === 'vbook') {
                 // Cancel VBook/AI agent: update agent session status to 'cancelled'
+                await redis.sadd(`animastor:cancelled-workers:${bookId}`, 'vbook');
+                await redis.expire(`animastor:cancelled-workers:${bookId}`, 3600);
                 try {
                     const { query } = require('../../storage/postgres/database');
                     await query(
@@ -129,31 +146,63 @@ module.exports = function(app, redis, deps) {
                 } catch (pgErr) {
                     console.warn(`[CANCEL-WORKER] Failed to cancel VBook session: ${pgErr.message}`);
                 }
-            } else if (type === 'cover') {
+            } else if (resolvedType === 'cover') {
                 // Cover uses both audio + image stages — cancel both
                 await dispatchEngine.clearLeasesForBookByStage(redis, bookId, 'audio');
                 await dispatchEngine.clearLeasesForBookByStage(redis, bookId, 'image');
-                await redis.del('animastor:runtime:active-audio');
-                await redis.del('animastor:runtime:active-image');
                 log(`[CANCEL-WORKER] ${bookId}: cover (audio+image) leases cleared`);
             } else {
-                // GPU worker type: cancel only this stage's dispatches
-                const stage = type; // "audio", "image", "video"
-                await dispatchEngine.clearLeasesForBookByStage(redis, bookId, stage);
-                // Clear the active counter for this stage
-                await redis.del(`animastor:runtime:active-${stage}`);
-                log(`[CANCEL-WORKER] ${bookId}: ${stage} leases cleared, counter reset`);
+                for (const task of tasks) {
+                    await generationProgress.markCancelled(redis, bookId, task.task_id);
+                    try {
+                        await taskRepo.updateTaskStatus(task.task_id, 'cancelled');
+                    } catch (pgErr) {
+                        console.warn(`[CANCEL-WORKER] Failed to persist cancellation for ${task.task_id}: ${pgErr.message}`);
+                    }
+                }
+
+                const scenesToCancel = [];
+                const seen = new Set();
+                for (const task of tasks) {
+                    for (const target of task.targets || []) {
+                        const remaining = await generationProgress.getSceneTaskState(
+                            redis,
+                            bookId,
+                            target.chapter_id,
+                            target.scene_id
+                        );
+                        if (remaining.activeTypes.has(resolvedType)) continue;
+                        const sceneKey = `${target.chapter_id}:${target.scene_id}`;
+                        if (seen.has(sceneKey)) continue;
+                        seen.add(sceneKey);
+                        scenesToCancel.push({
+                            chapter_id: target.chapter_id,
+                            scene_id: target.scene_id,
+                            stages: [resolvedType],
+                        });
+                    }
+                }
+
+                let cancellation;
+                if (scenesToCancel.length > 0) {
+                    cancellation = await dispatchEngine.clearLeasesForScenes(redis, bookId, scenesToCancel);
+                } else if (tasks.length === 0 && !taskId) {
+                    // Backward compatibility for work started before task ids existed.
+                    cancellation = await dispatchEngine.clearLeasesForBookByStage(redis, bookId, resolvedType);
+                } else {
+                    cancellation = { dispatchIds: [] };
+                }
+                await clearHubDispatches(cancellation.dispatchIds);
+                log(`[CANCEL-WORKER] ${bookId}: ${resolvedType} cancelled for ${scenesToCancel.length} scene(s)`);
             }
 
-            await generationProgress.removeScope(redis, bookId, type);
-
-            // Note: we do NOT clear GPU hub queues here to avoid disrupting
-            // non-cancelled worker types. The cancelled type's dispatches have been
-            // cleared via clearLeasesForBookByStage — leases + quotas are released.
-            // Non-cancelled types keep their leases and hub jobs intact.
-
-            log(`[CANCEL-WORKER] ${bookId}: type=${type} cancelled successfully`);
-            res.json({ ok: true, book_id: bookId, cancelled: [type] });
+            log(`[CANCEL-WORKER] ${bookId}: type=${resolvedType} cancelled successfully`);
+            res.json({
+                ok: true,
+                book_id: bookId,
+                cancelled: [resolvedType],
+                task_ids: tasks.map(task => task.task_id),
+            });
         } catch (err) {
             console.error('[CANCEL-WORKER] Error:', err.message);
             res.status(500).json({ error: err.message });
@@ -184,7 +233,17 @@ module.exports = function(app, redis, deps) {
             await redis.del(`animastor:cancelled-workers:${bookId}`);
             await generationProgress.clear(redis, bookId);
 
-            // Cancel VBook/AI agent sessions too
+            // Persist terminal state for GPU tasks.
+            try {
+                const cancelledTasks = await taskRepo.cancelActiveTasksForBook(bookId);
+                if (cancelledTasks > 0) {
+                    log(`[CANCEL-GENERATION] ${bookId}: ${cancelledTasks} generation task row(s) cancelled`);
+                }
+            } catch (pgErr) {
+                console.warn(`[CANCEL-GENERATION] Failed to cancel generation task rows: ${pgErr.message}`);
+            }
+
+            // Cancel VBook/AI agent sessions too.
             try {
                 const { query: pgQuery } = require('../../storage/postgres/database');
                 await pgQuery(
@@ -248,7 +307,13 @@ module.exports = function(app, redis, deps) {
 
         try {
             const { bookId } = req.params;
-            const { scope, chapter_id, scene_id, profile, rebuild_all } = req.body || {};
+            const {
+                scope,
+                chapter_id,
+                scene_id,
+                worker_types: workerTypes,
+                rebuild_all,
+            } = req.body || {};
 
             const loadedBook = book.loadBook(bookId);
             if (!loadedBook) return res.status(404).json({ error: 'book not found' });
@@ -257,49 +322,39 @@ module.exports = function(app, redis, deps) {
 
             const windowModule = require('../../runtime/scene-window');
             await windowModule.clearCancelFlag(redis, bookId);
-            // Clear any per-worker cancellation flags from previous generation
-            await redis.del(`animastor:cancelled-workers:${bookId}`);
-            // Note: force-dispatch и gen-scope устанавливаются внутри
-            // orchestrator.resetScenes() — не дублировать здесь (T4).
+            // force-dispatch is owned by orchestrator.resetScenes().
 
-            const effectiveScope = scope || 'WHOLE_BOOK';
-
-            const layerCfg = profile
-                ? await bookDiff.applyProfileToLayerConfig(redis, bookId, profile)
-                : await layerConfig.get(redis, bookId);
-            if (!layerCfg) {
-                return res.status(400).json({ error: 'No layer config found for this book' });
+            const effectiveScope = scope || 'whole_book';
+            const persistedLayerCfg = await layerConfig.get(redis, bookId);
+            const validWorkerTypes = new Set(['audio', 'image', 'video']);
+            let requestedWorkerTypes;
+            if (workerTypes !== undefined) {
+                if (!Array.isArray(workerTypes) || workerTypes.length === 0 ||
+                    workerTypes.some(type => !validWorkerTypes.has(type))) {
+                    return res.status(400).json({
+                        error: 'worker_types must be a non-empty array containing audio, image, or video',
+                    });
+                }
+                requestedWorkerTypes = [...new Set(workerTypes)];
+            } else {
+                requestedWorkerTypes = ['audio', 'image', 'video'].filter(
+                    type => persistedLayerCfg[`${type}_enabled`] !== false
+                );
             }
+            const requestedTypeSet = new Set(requestedWorkerTypes);
+            const requestLayerCfg = {
+                audio_enabled: requestedTypeSet.has('audio'),
+                image_enabled: requestedTypeSet.has('image'),
+                video_enabled: requestedTypeSet.has('video'),
+            };
 
             const allScenes = book.collectScenes(loadedBook);
             let filteredDirty;
 
             if (rebuild_all) {
-                const buildDir = path.join(config.OUTPUT_DIR, buildId);
-                let allDiskFiles = [];
-                if (fs.existsSync(buildDir)) {
-                    allDiskFiles = fs.readdirSync(buildDir).filter(f => f.endsWith('.png'));
-                }
-                const needsRebuild = [];
-                const alreadyComplete = [];
-                for (const s of allScenes) {
-                    const iuPrefix = `${bookId}_${s.chapter_id}_${s.scene_id}_iu`;
-                    const pngCount = allDiskFiles.filter(f => f.startsWith(iuPrefix)).length;
-                    const iuCount = (s.units || []).length + ((s.dialogue_blocks || []).reduce((sum, db) => sum + (db.units || []).length, 0));
-                    if (pngCount >= iuCount && iuCount > 0) {
-                        alreadyComplete.push(s);
-                        continue;
-                    }
-                    needsRebuild.push(s);
-                }
-
-                if (alreadyComplete.length > 0) {
-                    log(`[REGENERATE] ${bookId}: full rebuild — ${alreadyComplete.length}/${allScenes.length} scenes already have images, skipping`);
-                }
-
-                const allDirty = needsRebuild.map(s => ({
+                const allDirty = allScenes.map(s => ({
                     chapter_id: s.chapter_id, scene_id: s.scene_id,
-                    reason: 'rebuild', dirty_layers: ['audio', 'image', 'video'],
+                    reason: 'rebuild', dirty_layers: requestedWorkerTypes,
                 }));
                 filteredDirty = bookDiff.filterDirtyScenesByScope(allDirty, effectiveScope, chapter_id, scene_id, allScenes);
                 log(`[REGENERATE] ${bookId}: full rebuild — ${filteredDirty.length} scenes marked dirty`);
@@ -323,7 +378,7 @@ module.exports = function(app, redis, deps) {
                     }
                     filteredDirty = [{
                         chapter_id, scene_id, reason: 'explicit_regen',
-                        dirty_layers: ['image'],
+                        dirty_layers: requestedWorkerTypes,
                         changes: changedUnitIds.length > 0 ? { units: { unit_ids: changedUnitIds } } : null,
                     }];
                     log(`[REGENERATE] ${bookId}: primary path — created dirty entry for ${chapter_id}/${scene_id} (${changedUnitIds.length} units)`);
@@ -363,48 +418,13 @@ module.exports = function(app, redis, deps) {
                 }
             }
 
-            // Cover check
-            const coverCh = (loadedBook.chapters || []).find(ch => ch.type === 'cover');
-            let coverNeedsGeneration = false;
-            if (coverCh && coverCh.scenes && coverCh.scenes.length > 0 && layerCfg.image_enabled !== false) {
-                const coverScene = coverCh.scenes[0];
-                const coverChapterId = coverCh.chapter;
-                const coverSceneId = coverScene.scene_id;
-                const alreadyDirty = filteredDirty.some(d => d.chapter_id === coverChapterId && d.scene_id === coverSceneId);
-                if (!alreadyDirty) {
-                    const buildDir = path.join(config.OUTPUT_DIR, buildId);
-                    let coverHasImages = false;
-                    if (fs.existsSync(buildDir)) {
-                        const iuPrefix = `${bookId}_${coverChapterId}_${coverSceneId}_iu`;
-                        const files = fs.readdirSync(buildDir).filter(f => f.startsWith(iuPrefix) && f.endsWith('.png'));
-                        const iuCount = (coverScene.units || []).length;
-                        coverHasImages = files.length >= iuCount && iuCount > 0;
-                    }
-                    if (!coverHasImages) {
-                        const coverLayers = ['audio', 'image'];
-                        if (layerCfg.video_enabled !== false) coverLayers.push('video');
-                        const coverUnits = [...(coverScene.units || [])];
-                        for (const db of (coverScene.dialogue_blocks || [])) {
-                            if (db.units) coverUnits.push(...db.units);
-                        }
-                        const coverUnitIds = coverUnits.map(u => String(u.id)).filter(Boolean);
-                        filteredDirty.unshift({
-                            chapter_id: coverChapterId, scene_id: coverSceneId,
-                            reason: 'cover', dirty_layers: coverLayers,
-                            changes: coverUnitIds.length > 0 ? { units: { unit_ids: coverUnitIds } } : null,
-                        });
-                        coverNeedsGeneration = true;
-                        log(`[REGENERATE] ${bookId}: Cover prepended to dirty scenes (units=${coverUnitIds.length})`);
-                    }
-                }
-            }
-
-            filteredDirty = filteredDirty.filter(ds => {
-                const resetAudio = layerCfg.audio_enabled !== false && ds.dirty_layers.includes('audio');
-                const resetImage = layerCfg.image_enabled !== false && ds.dirty_layers.includes('image');
-                const resetVideo = layerCfg.video_enabled !== false && ds.dirty_layers.includes('video');
-                return resetAudio || resetImage || resetVideo;
-            });
+            filteredDirty = filteredDirty
+                .map(ds => ({
+                    ...ds,
+                    dirty_layers: (ds.dirty_layers || requestedWorkerTypes)
+                        .filter(type => requestedTypeSet.has(type)),
+                }))
+                .filter(ds => ds.dirty_layers.length > 0);
 
             // ── State management через единую команду фасада ──
             // T4 консолидации: resetScenes заменяет ручной ритуал очистки
@@ -413,6 +433,7 @@ module.exports = function(app, redis, deps) {
             // Собираем мапу unit_id для pre-delete stale PNG.
             const cleanPngUnitIds = {};
             for (const ds of filteredDirty) {
+                if (!ds.dirty_layers.includes('image')) continue;
                 const unitIds = ds.changes?.units?.unit_ids;
                 if (unitIds && Array.isArray(unitIds) && unitIds.length > 0) {
                     cleanPngUnitIds[`${ds.chapter_id}_${ds.scene_id}`] = unitIds;
@@ -420,62 +441,94 @@ module.exports = function(app, redis, deps) {
             }
 
             const { orchestrator: orch } = require('../../orchestration');
-            const marked = await orch.resetScenes(redis, bookId, buildId, filteredDirty, layerCfg, {
+            const marked = await orch.resetScenes(redis, bookId, buildId, filteredDirty, requestLayerCfg, {
                 scope: effectiveScope,
                 chapterId: chapter_id || null,
                 sceneId: scene_id || null,
                 bookDiff,
                 cleanPngUnitIds: Object.keys(cleanPngUnitIds).length > 0 ? cleanPngUnitIds : null,
+                readdToActiveIndex: false,
             });
 
-            const requestedWorkerTypes = new Set();
+            // /regenerate is an execution command, not a content change. The
+            // runtime reset above already marks the requested layers pending.
+            // Running book-sync here would invalidate unrelated parallel tasks
+            // for the same scene and bump content versions without an edit.
             for (const ds of filteredDirty) {
-                for (const type of (ds.dirty_layers || [])) {
-                    if (['audio', 'image', 'video'].includes(type) &&
-                        layerCfg[`${type}_enabled`] !== false) {
-                        requestedWorkerTypes.add(type);
-                    }
+                if (!ds.dirty_layers.includes('image')) continue;
+                const unitIds = ds.changes?.units?.unit_ids;
+                if (!unitIds || !Array.isArray(unitIds) || unitIds.length === 0) continue;
+                try {
+                    await sceneAssetsRepo.setDirtyUnitIds(
+                        bookId,
+                        ds.chapter_id,
+                        ds.scene_id,
+                        unitIds
+                    );
+                } catch (pgErr) {
+                    console.warn(
+                        `[REGENERATE] Failed to persist dirty image units for ` +
+                        `${ds.chapter_id}/${ds.scene_id}: ${pgErr.message}`
+                    );
                 }
             }
-            await generationProgress.recordScopes(
+
+            const generationTasks = await generationProgress.createTasks(
                 redis,
                 bookId,
-                [...requestedWorkerTypes],
+                requestedWorkerTypes,
                 {
                     scope: effectiveScope,
                     chapterId: chapter_id || null,
                     sceneId: scene_id || null,
-                }
+                },
+                filteredDirty
             );
 
-            try {
-                await storage.bookSync.reconcileFromDiff(bookId, filteredDirty, loadedBook);
-                try {
-                    await sceneAssetsRepo.bumpSceneVersions(bookId, filteredDirty);
-                    for (const ds of filteredDirty) {
-                        const unitIds = ds.changes?.units?.unit_ids;
-                        if (unitIds && Array.isArray(unitIds) && unitIds.length > 0) {
-                            await sceneAssetsRepo.setDirtyUnitIds(bookId, ds.chapter_id, ds.scene_id, unitIds);
-                        }
+            for (const task of generationTasks) {
+                for (const target of task.targets || []) {
+                    try {
+                        await taskRepo.createTask(
+                            task.task_id,
+                            bookId,
+                            target.chapter_id,
+                            target.scene_id,
+                            task.type,
+                            {
+                                scope: task.scope,
+                                chapter_id: task.chapter_id,
+                                scene_id: task.scene_id,
+                            }
+                        );
+                        await taskRepo.updateTaskStatus(task.task_id, 'running');
+                    } catch (pgErr) {
+                        console.warn(`[REGENERATE] Failed to persist task ${task.task_id}: ${pgErr.message}`);
+                        break;
                     }
-                } catch (verErr) { console.warn(`[REGENERATE] Version bump failed: ${verErr.message}`); }
-            } catch (syncErr) { console.warn(`[REGENERATE] PG reconcile failed for ${bookId}: ${syncErr.message}`); }
+                }
+            }
 
-            let restoredCount = 0;
+            const scheduler = require('../../runtime/runtime-scheduler');
             for (const ds of filteredDirty) {
-                const hasDirtyUnits = ds.changes?.units?.unit_ids && ds.changes.units.unit_ids.length > 0;
-                const unitIds = hasDirtyUnits ? ds.changes.units.unit_ids : [];
-                const result = await restoreSceneChunkStatus(redis, buildId, bookId, ds.chapter_id, ds.scene_id, hasDirtyUnits, unitIds);
-                if (result.restored) restoredCount++;
-            }
-            if (restoredCount > 0) {
-                log(`[REGENERATE] ${bookId}: restored chunk metadata for ${restoredCount}/${filteredDirty.length} scenes with existing content`);
+                await scheduler.addSceneToActiveIndex(
+                    redis,
+                    bookId,
+                    ds.chapter_id,
+                    ds.scene_id
+                );
             }
 
-            // Note: addSceneToActiveIndex выполняется внутри orchestrator.resetScenes() —
-            // не дублировать, чтобы не добавить сцены дважды.
-
-            res.json({ book_id: bookId, scope: effectiveScope, dirty_scenes: filteredDirty, marked: marked.marked, cover_needs_generation: coverNeedsGeneration });
+            res.json({
+                book_id: bookId,
+                scope: effectiveScope,
+                dirty_scenes: filteredDirty,
+                marked: marked.marked,
+                tasks: generationTasks.map(task => ({
+                    task_id: task.task_id,
+                    type: task.type,
+                    target_count: task.targets.length,
+                })),
+            });
         } catch (err) {
             console.error('[REGENERATE] Error:', err.message);
             res.status(500).json({ error: err.message });

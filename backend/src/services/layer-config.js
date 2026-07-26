@@ -1,7 +1,7 @@
 // ======================================================
 // Layer Config Service
 // ======================================================
-// Persists per-book generation profile (which layers to produce):
+// Persists per-book defaults for initial/bulk generation:
 //   - audio_enabled:  base layer, always true (audio is the story narration)
 //   - image_enabled:  storyboard / IU images
 //   - video_enabled:  full video composition (requires image_enabled to be true)
@@ -16,14 +16,6 @@
 //   - GET  /api/v1/book/:bookId/layer-config (read)
 //   - PUT  /api/v1/book/:bookId/layer-config (write)
 //   - GET  /api/v1/book/:bookId/assets-state (derived: which layers have content)
-
-const PROFILES = Object.freeze({
-    AUDIO_ONLY:    'audio_only',
-    IMAGE_ONLY:    'image_only',
-    VIDEO_ONLY:    'video_only',
-    STORYBOARD:    'storyboard',
-    FULL:          'full',
-});
 
 const SCOPES = Object.freeze({
     CURRENT_SCENE:      'current_scene',
@@ -72,35 +64,16 @@ async function set(redis, bookId, partial) {
     return next;
 }
 
-function resolveProfile(cfg) {
-    const c = normalize(cfg);
-    if (c.audio_enabled && c.image_enabled && c.video_enabled) return PROFILES.FULL;
-    if (!c.audio_enabled && c.image_enabled && c.video_enabled) return PROFILES.IMAGE_ONLY;
-    if (c.audio_enabled && !c.image_enabled && c.video_enabled) return PROFILES.AUDIO_ONLY;
-    if (!c.audio_enabled && !c.image_enabled && c.video_enabled) return PROFILES.VIDEO_ONLY;
-    if (c.audio_enabled && c.image_enabled && !c.video_enabled) return PROFILES.STORYBOARD;
-    if (!c.audio_enabled && c.image_enabled && !c.video_enabled) return PROFILES.IMAGE_ONLY;
-    if (c.audio_enabled && !c.image_enabled && !c.video_enabled) return PROFILES.AUDIO_ONLY;
-    return PROFILES.AUDIO_ONLY;
-}
-
-function isValidProfile(value) {
-    return Object.values(PROFILES).includes(value);
-}
-
 function isValidScope(value) {
     return Object.values(SCOPES).includes(value);
 }
 
 module.exports = {
-    PROFILES,
     SCOPES,
     DEFAULTS,
     key,
     get,
     set,
     normalize,
-    resolveProfile,
-    isValidProfile,
     isValidScope,
 };

@@ -127,7 +127,7 @@ class GenerateViewModel(
      *
      * WorkerCounts.active_audio/image/video > 0 означает, что scheduler уже
      * диспатчит задачи на GPU Hub. Восстанавливаем UI-состояние:
-     *   - _activeGeneration (чтобы refreshProgressUi показывал прогресс-бары)
+     *   - task-aware progress panel state
      *   - _generationStatus = RUNNING (чтобы nav-иконка пульсировала)
      *   - timer (чтобы показывать прошедшее время)
      *
@@ -137,24 +137,20 @@ class GenerateViewModel(
         val currentBookId = bookId
         if (currentBookId.isBlank()) return
 
-        // Если генерация уже запущена пользователем (например, при повторном
-        // заходе на экран Generator), не затираем её состояние.
-        if (_activeGeneration.value != null) {
+        if (_isRegenerating.value) {
             Log.d(TAG, "checkAndRestoreGenerationState: user generation already active — skipping restore")
             return
         }
 
         try {
+            val panel = _repository.getProgressPanel(currentBookId)
             val counts = _repository.getWorkerCounts()
-            val hasActiveWorkers = counts.active_audio > 0 || counts.active_image > 0 || counts.active_video > 0 || counts.active_vbook > 0
+            val hasActiveGpuTasks = panel.any_incomplete
+            val hasActiveWorkers = hasActiveGpuTasks || counts.active_vbook > 0
 
             if (hasActiveWorkers) {
                 Log.i(TAG, "checkAndRestoreGenerationState: active workers found (a=${counts.active_audio} i=${counts.active_image} v=${counts.active_video} vb=${counts.active_vbook}) — restoring generation state")
-                _activeGeneration.value = ActiveGeneration(
-                    scope = "whole_book",
-                    chapterId = null,
-                    sceneId = null
-                )
+                _isRegenerating.value = hasActiveGpuTasks
                 _generationStatus.value = GenerationStatus.RUNNING
                 if (timerStartedAt <= 0L) startTimer()  // Не сбрасываем таймер, если уже запущен
                 startProgressStream(currentBookId)
@@ -203,7 +199,7 @@ class GenerateViewModel(
 
     private var generationJob: Job? = null
 
-    // ── Layer config & profile toggles ────────────────────────────
+    // ── Layer defaults ────────────────────────────────────────────
 
     var imageEnabled: Boolean = true
         private set
@@ -214,9 +210,6 @@ class GenerateViewModel(
     private val _videoEnabled = MutableStateFlow(true)
     val videoEnabledFlow: StateFlow<Boolean> = _videoEnabled.asStateFlow()
 
-    private val _layerProfile = MutableStateFlow("full")
-    val layerProfileFlow: StateFlow<String> = _layerProfile.asStateFlow()
-
     private val _hasAssets = MutableStateFlow(false)
     val hasAssetsFlow: StateFlow<Boolean> = _hasAssets.asStateFlow()
 
@@ -226,9 +219,6 @@ class GenerateViewModel(
     fun audioEnabled(): Boolean = _audioEnabled.value
     fun videoEnabled(): Boolean = _videoEnabled.value
     fun vbookEnabled(): Boolean = true // VBook is always enabled
-    // Profile is computed server-side (resolveProfile) and cached in _layerProfile.
-    // The client never re-derives it from the toggles.
-    fun currentProfile(): String = _layerProfile.value
     fun hasAssets(): Boolean = _hasAssets.value
 
     fun setAudioEnabled(enabled: Boolean) {
@@ -262,10 +252,8 @@ class GenerateViewModel(
                 _audioEnabled.value = cfg.audio_enabled
                 imageEnabled = cfg.image_enabled
                 _videoEnabled.value = cfg.video_enabled
-                // Profile is authoritative from the server; keep prior value if absent.
-                cfg.profile?.let { _layerProfile.value = it }
                 _layerConfigLoaded.value = true
-                Log.i(TAG, "loadLayerConfig: ${cfg.profile} (a=${cfg.audio_enabled} i=${cfg.image_enabled} v=${cfg.video_enabled})")
+                Log.i(TAG, "loadLayerConfig: a=${cfg.audio_enabled} i=${cfg.image_enabled} v=${cfg.video_enabled}")
             }
             .onFailure { e ->
                 Log.w(TAG, "loadLayerConfig failed: ${e.message}")
@@ -298,8 +286,7 @@ class GenerateViewModel(
                 image_enabled = imageEnabled,
                 video_enabled = _videoEnabled.value
             ))
-            cfg.profile?.let { _layerProfile.value = it }
-            Log.i(TAG, "persistLayerConfig: ${cfg.profile}")
+            Log.i(TAG, "persistLayerConfig: a=${cfg.audio_enabled} i=${cfg.image_enabled} v=${cfg.video_enabled}")
         }.onFailure { e ->
             Log.w(TAG, "persistLayerConfig failed: ${e.message}")
         }
@@ -308,7 +295,7 @@ class GenerateViewModel(
     // ── Generation ───────────────────────────────────────────────
 
     data class GenerationRequest(
-        val profile: String,
+        val workerTypes: List<String>,
         val scope: String,
         val chapterId: String?,
         val sceneId: String?
@@ -327,20 +314,8 @@ class GenerateViewModel(
         _generationStatus.value = GenerationStatus.RUNNING
         _isRegenerating.value = true
 
-        // Always overwrite _activeGeneration with each new generation call.
-        // This ensures the progress poller (refreshProgressUi) keeps running
-        // even when previous workers finish — without this, the first worker's
-        // completion would clear _activeGeneration and hide all other workers.
-        //
-        // Keep the latest scope as a polling fallback. The backend records the
-        // original scope independently for every worker type, so replacing this
-        // sentinel does not replace Audio/Image/Video progress state.
-        _activeGeneration.value = ActiveGeneration(
-            scope = req.scope,
-            chapterId = req.chapterId,
-            sceneId = req.sceneId
-        )
         if (timerStartedAt <= 0L) startTimer()
+        startProgressStream(bookId)
 
         // 🔧 FIX: Don't cancel previous generationJob — parallel generations are
         // independent. The /regenerate API call is fire-and-forget; its response
@@ -358,15 +333,11 @@ class GenerateViewModel(
                 importProgressMessages = prevImportMsgs
             )}
             runCatching {
-                // Pass profile to backend so /regenerate applies it BEFORE
-                // checking cover/images. This eliminates a race condition where
-                // persistLayerConfig() (called asynchronously by toggle chips)
-                // might not have completed by the time /regenerate reads from Redis.
                 val res = _repository.regenerateBookScoped(
                     bookId = bookId,
                     newBook = null,
                     rebuildAll = true,
-                    profile = req.profile,
+                    workerTypes = req.workerTypes,
                     scope = req.scope,
                     chapterId = req.chapterId,
                     sceneId = req.sceneId
@@ -393,10 +364,6 @@ class GenerateViewModel(
                 onResult(GenerationResult.Started(dirtyCount, res.scope ?: req.scope))
                 viewModelScope.launch { refreshAssetsState() }
             }.onFailure { e ->
-                // 🔧 FIX: Don't clear _activeGeneration or stop the timer on a per-generation
-                // API failure. Multiple generations can run in parallel (e.g. audio + image).
-                // A failure in one should NOT kill progress display for the others.
-                // _activeGeneration and timer are owned by cancelGeneration() / applyGenerationResults().
                 if (e is CancellationException) {
                     Log.i(TAG, "startGeneration cancelled")
                     onResult(GenerationResult.Failed("cancelled"))
@@ -421,11 +388,9 @@ class GenerateViewModel(
      *   - Progress is stuck and deemed complete (backend idle, no progress)
      */
     fun applyGenerationResults() {
-        if (_isRegenerating.value) {
-            _isRegenerating.value = false
+        if (!_isRegenerating.value) {
+            stopTimer()
         }
-        _activeGeneration.value = null
-        stopTimer()  // 🕐 генерация завершена — останавливаем таймер
 
         viewModelScope.launch {
             // Build scene list from book JSON
@@ -567,7 +532,7 @@ class GenerateViewModel(
         }
 
         _generationStatus.value = GenerationStatus.SUCCESS
-        stopTimer()
+        if (!_isRegenerating.value) stopTimer()
         Log.i(TAG, "[VBookPoll] done — refreshing player with new scenes")
         applyGenerationResults()
     }
@@ -590,7 +555,6 @@ class GenerateViewModel(
             generationJob?.cancel()
             generationJob = null
             _isRegenerating.value = false
-            _activeGeneration.value = null
             _uiState.update { it.copy(phase = PlayerPhase.IDLE, errorMessage = null) }
 
             // Refresh player with whatever content was generated so far.
@@ -618,7 +582,6 @@ class GenerateViewModel(
         _uiState.update { it.copy(vbookProgress = VBookProgress(stage = VBookStage.IDLE)) }
         generationJob?.cancel()
         hasUnsavedChanges = false
-        _activeGeneration.value = null
         _dirtySummary.value = null
         _dirtyScenes.value = emptyList()
         _isRegenerating.value = false
@@ -949,21 +912,16 @@ class GenerateViewModel(
     private val _isRegenerating = MutableStateFlow(false)
     val isRegenerating: StateFlow<Boolean> = _isRegenerating.asStateFlow()
 
-    data class ActiveGeneration(
-        val scope: String,
-        val chapterId: String?,
-        val sceneId: String?
-    )
-
-    private val _activeGeneration = MutableStateFlow<ActiveGeneration?>(null)
-    val activeGeneration: StateFlow<ActiveGeneration?> = _activeGeneration.asStateFlow()
-
     fun markUnsavedChanges() { hasUnsavedChanges = true }
 
     fun regenerateFromSnapshot() {
         startGeneration(
             req = GenerationRequest(
-                profile = currentProfile(),
+                workerTypes = buildList {
+                    if (audioEnabled()) add("audio")
+                    if (imageEnabled) add("image")
+                    if (videoEnabled()) add("video")
+                },
                 scope = "whole_book",
                 chapterId = null,
                 sceneId = null
@@ -1020,7 +978,7 @@ class GenerateViewModel(
         persistBookId("")
         persistBuildId("")
         hasUnsavedChanges = false
-        _activeGeneration.value = null
+        _isRegenerating.value = false
         SharedPositionManager.navigateTo(chapterId = null, sceneId = null)
         _uiState.update { GenUiState() }
     }
@@ -1068,16 +1026,11 @@ class GenerateViewModel(
 
     private val COMPLETED_WORKER_DISPLAY_MS = 10_000L
 
-    /** Floor per worker type — prevents progress rollback. Thread-safe (ConcurrentHashMap). */
+    /** Floor per generation task — prevents progress rollback. */
     private val workerReadyFloor = ConcurrentHashMap<String, Int>()
 
-    /** Track when each worker type completed (to show green "Done" for 10s). */
+    /** Track when each generation task completed. */
     private val workerCompletedAt = mutableMapOf<String, Long>()
-
-    /** Workers that have completed their 10s display cycle and must not reappear. */
-    private val _workerPermanentlyDone = mutableSetOf<String>()
-
-    private var _coverEverIncomplete = false
 
     /** Timestamp when the last worker completed and "Done" row started showing. */
     private var gpuProgressDoneAt = 0L
@@ -1132,9 +1085,6 @@ class GenerateViewModel(
                     // Set a flag so the next poll iteration finishes quickly.
                     Log.i(TAG, "SSE import_complete received — stopping agent poll")
                     _importCompleteReceived = true
-                } else if (event.layer == "image" && event.ready != null) {
-                    val floor = maxOf(workerReadyFloor["image"] ?: 0, event.ready)
-                    workerReadyFloor["image"] = floor
                 }
             }
         }
@@ -1160,8 +1110,8 @@ class GenerateViewModel(
      * The backend handles per-type cancellation (leases, counters, GPU hub).
      * The frontend just tells the backend what to cancel.
      */
-    fun cancelWorker(type: String) {
-        Log.i(TAG, "cancelWorker: type=$type bookId=$bookId")
+    fun cancelWorker(type: String, taskId: String? = null) {
+        Log.i(TAG, "cancelWorker: type=$type taskId=$taskId bookId=$bookId")
         if (bookId.isBlank()) return
 
         // If VBook was cancelled, clear its progress immediately
@@ -1169,29 +1119,13 @@ class GenerateViewModel(
             _uiState.update { it.copy(vbookProgress = VBookProgress(stage = VBookStage.IDLE)) }
         }
 
-        // Do NOT add non-vbook types to _workerPermanentlyDone here.
-        // The backend will return cancelled:true on the next progress-panel poll,
-        // and addFromServer + renderWorkersToSections will show the red "Stopped"
-        // row until the cancellation propagates to GPU hub and the worker
-        // disappears from subsequent panel responses.
-
-        // Call backend per-worker cancel API — backend marks cancelled in Redis
-        // and clears leases for that stage. GPU hub queue is NOT cleared for
-        // per-worker cancel to avoid disrupting other workers (backend handles this).
         viewModelScope.launch {
             runCatching {
-                _repository.cancelWorker(bookId, type)
+                _repository.cancelWorker(bookId, type, taskId)
             }.onSuccess {
-                Log.i(TAG, "cancelWorker: backend cancelled type=$type successfully")
+                Log.i(TAG, "cancelWorker: backend cancelled type=$type taskId=$taskId successfully")
             }.onFailure { e ->
                 Log.w(TAG, "cancelWorker: backend call failed: ${e.message}")
-            }
-            // After the API call, transition to IDLE only if nothing else is
-            // still running (no active GPU generation and no VBook progress).
-            if (_activeGeneration.value == null &&
-                (_uiState.value.vbookProgress == null || _uiState.value.vbookProgress?.stage == VBookStage.IDLE)
-            ) {
-                _generationStatus.value = GenerationStatus.IDLE
             }
         }
     }
@@ -1205,8 +1139,6 @@ class GenerateViewModel(
         // resetWorkerState вызывается poller'ом при детекте новой генерации,
         // и стоп таймера здесь убил бы только что запущенный startTimer().
         workerCompletedAt.clear()
-        _workerPermanentlyDone.clear()
-        _coverEverIncomplete = false
         gpuProgressDoneAt = 0L
         workerReadyFloor.clear()
     }
@@ -1218,8 +1150,7 @@ class GenerateViewModel(
      */
     private fun hasAnyProgress(): Boolean {
         return workerReadyFloor.values.any { it > 0 } ||
-            workerCompletedAt.isNotEmpty() ||
-            _workerPermanentlyDone.isNotEmpty()
+            workerCompletedAt.isNotEmpty()
     }
 
     /**
@@ -1242,27 +1173,31 @@ class GenerateViewModel(
         val workers = mutableListOf<WorkerUi>()
 
         fun addFromServer(
-            type: String,
-            label: String,
-            serverReady: Int,
-            serverTotal: Int,
-            serverDone: Boolean,
-            serverPct: Int,
-            serverIndeterminate: Boolean,
-            countText: String? = null,
-            cancelled: Boolean = false
+            sw: com.example.animastor.repository.ProgressWorker,
+            label: String
         ) {
-            if (serverTotal <= 0) return
-            // Monotonic floor (client UI policy)
-            val r = maxOf(serverReady, workerReadyFloor[type] ?: 0)
-            workerReadyFloor[type] = r
-            val done = serverDone || (r >= serverTotal && r > 0)
-            // Record completion timestamp when first seen done (don't overwrite)
-            if (done && !cancelled && !workerCompletedAt.containsKey(type)) {
-                workerCompletedAt[type] = now
+            if (sw.total <= 0) return
+            val taskKey = sw.task_id ?: "legacy:${sw.type}"
+            val ready = maxOf(sw.ready, workerReadyFloor[taskKey] ?: 0)
+            workerReadyFloor[taskKey] = ready
+            val done = sw.done || (ready >= sw.total && ready > 0)
+            if (done && !sw.cancelled && !workerCompletedAt.containsKey(taskKey)) {
+                workerCompletedAt[taskKey] = now
             }
-            val pct = if (done) 100 else serverPct.coerceIn(0, 99)
-            workers.add(WorkerUi(type, label, r, serverTotal, pct, done, countText = countText, indeterminate = serverIndeterminate, cancelled = cancelled))
+            workers.add(WorkerUi(
+                taskId = sw.task_id,
+                type = sw.type,
+                label = label,
+                scope = sw.scope,
+                chapterId = sw.chapter_id,
+                sceneId = sw.scene_id,
+                ready = ready,
+                total = sw.total,
+                percent = if (done) 100 else sw.percent.coerceIn(0, 99),
+                done = done,
+                indeterminate = sw.indeterminate,
+                cancelled = sw.cancelled
+            ))
         }
 
         // ── GPU workers (from server progress-panel) ──
@@ -1276,8 +1211,7 @@ class GenerateViewModel(
                     "video" -> labels.video
                     else -> sw.type
                 }
-                // Pass server cancelled flag — backend now owns cancellation state
-                addFromServer(sw.type, label, sw.ready, sw.total, sw.done, sw.percent, sw.indeterminate, cancelled = sw.cancelled)
+                addFromServer(sw, label)
             }
         }
 
@@ -1288,7 +1222,15 @@ class GenerateViewModel(
                 if (!workerCompletedAt.containsKey("vbook")) {
                     workerCompletedAt["vbook"] = now
                 }
-                workers.add(WorkerUi("vbook", labels.vbookLabel, 1, 1, 100, done = true))
+                workers.add(WorkerUi(
+                    taskId = "vbook",
+                    type = "vbook",
+                    label = labels.vbookLabel,
+                    ready = 1,
+                    total = 1,
+                    percent = 100,
+                    done = true
+                ))
             } else {
                 val stageMsg = vbookProgress.message?.takeIf { it.isNotBlank() }
                 val label = stageMsg ?: labels.vbookLabel
@@ -1310,21 +1252,18 @@ class GenerateViewModel(
                         countText = ""; indeterminate = true
                     }
                 }
-                workers.add(WorkerUi("vbook", label, ready, totalVBook, pctVBook, done = false, countText = countText, indeterminate = indeterminate))
+                workers.add(WorkerUi(
+                    taskId = "vbook",
+                    type = "vbook",
+                    label = label,
+                    ready = ready,
+                    total = totalVBook,
+                    percent = pctVBook,
+                    done = false,
+                    countText = countText,
+                    indeterminate = indeterminate
+                ))
             }
-        }
-
-        // ── Recently completed workers (not returned by server but tracked locally) ──
-        val activeTypes = workers.map { it.type }.toSet()
-        for ((type, _) in workerCompletedAt) {
-            if (type in activeTypes) continue
-            val label = when (type) {
-                "cover" -> labels.cover; "audio" -> labels.audio
-                "image" -> labels.image; "video" -> labels.video
-                "vbook" -> labels.vbookLabel
-                else -> labels.generationDone
-            }
-            workers.add(WorkerUi(type, label, 100, 100, 100, done = true))
         }
 
         // ── All-cancelled guard: if every remaining worker is cancelled,
@@ -1332,8 +1271,8 @@ class GenerateViewModel(
         val allCancelled = workers.isNotEmpty() && workers.all { it.cancelled }
         if (allCancelled) {
             workerCompletedAt.clear()
-            _workerPermanentlyDone.clear()
             gpuProgressDoneAt = 0L
+            _isRegenerating.value = false
             return ProgressPanelState.Hidden
         }
 
@@ -1341,8 +1280,8 @@ class GenerateViewModel(
         if (workers.isEmpty()) {
             // No workers at all → Hidden. Clean up stale state from previous sessions.
             workerCompletedAt.clear()
-            _workerPermanentlyDone.clear()
             gpuProgressDoneAt = 0L
+            _isRegenerating.value = false
             return ProgressPanelState.Hidden
         }
 
@@ -1359,12 +1298,12 @@ class GenerateViewModel(
                 // 10s display window expired — finalise generation
                 stopProgressStream()
                 workerCompletedAt.clear()
-                _workerPermanentlyDone.clear()
                 gpuProgressDoneAt = 0L
                 if (vbookProgress?.stage == VBookStage.COMPLETED) {
                     _uiState.update { it.copy(vbookProgress = VBookProgress(stage = VBookStage.IDLE)) }
                 }
                 _generationStatus.value = GenerationStatus.SUCCESS
+                _isRegenerating.value = false
                 applyGenerationResults()
                 return ProgressPanelState.Hidden
             }
@@ -1374,6 +1313,7 @@ class GenerateViewModel(
 
         // ── Some workers still active — show ALL workers (completed ones stay visible) ──
         gpuProgressDoneAt = 0L  // Reset countdown since new active work appeared
+        _isRegenerating.value = true
         return ProgressPanelState.Workers(workers)
     }
 }
@@ -1384,8 +1324,12 @@ class GenerateViewModel(
  * One row in the GPU progress panel.
  */
 data class WorkerUi(
+    val taskId: String? = null,
     val type: String,
     val label: String,
+    val scope: String = "whole_book",
+    val chapterId: String? = null,
+    val sceneId: String? = null,
     val ready: Int,
     val total: Int,
     val percent: Int,

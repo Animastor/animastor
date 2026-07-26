@@ -29,7 +29,7 @@ data class DirtyScene(
 data class RegenerateRequest(
     val new_book: BookData? = null,
     val rebuild_all: Boolean = false,
-    val profile: String? = null,
+    val worker_types: List<String>? = null,
     val scope: String? = null,
     val chapter_id: String? = null,
     val scene_id: String? = null
@@ -48,5 +48,11 @@ data class RegenerateResponse(
     val summary: DiffSummary? = null,
     val rebuild_all: Boolean = false,
     val scope: String? = null,
-    val profile: String? = null
+    val tasks: List<GenerationTaskRef> = emptyList()
+)
+
+data class GenerationTaskRef(
+    val task_id: String = "",
+    val type: String = "",
+    val target_count: Int = 0
 )

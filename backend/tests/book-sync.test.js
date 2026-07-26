@@ -115,6 +115,29 @@ describe('Book Sync (Phase B.3)', () => {
         expect(after[0].status).to.equal('cancelled');
     });
 
+    it('reconcileFromDiff cancels only task types invalidated by the diff', async () => {
+        const chapters = [{ chapter: 'ch-1', scenes: [{ scene_id: 'sc-1', text: 'a' }] }];
+        saveFixture(chapters);
+        await bookSync.syncBook(TEST_BOOK_ID);
+        await taskRepo().createTask('audio-task', TEST_BOOK_ID, 'ch-1', 'sc-1', 'audio');
+        await taskRepo().createTask('image-task', TEST_BOOK_ID, 'ch-1', 'sc-1', 'image');
+        await taskRepo().updateTaskStatus('audio-task', 'running');
+        await taskRepo().updateTaskStatus('image-task', 'running');
+
+        const loadedBook = book.loadBook(TEST_BOOK_ID);
+        const result = await bookSync.reconcileFromDiff(TEST_BOOK_ID, [{
+            chapter_id: 'ch-1',
+            scene_id: 'sc-1',
+            reason: 'changed',
+            dirty_layers: ['image'],
+        }], loadedBook);
+
+        expect(result.generation_tasks_cancelled).to.equal(1);
+        const after = await taskRepo().getSceneTasks(TEST_BOOK_ID, 'ch-1', 'sc-1');
+        expect(after.find(task => task.task_id === 'audio-task').status).to.equal('running');
+        expect(after.find(task => task.task_id === 'image-task').status).to.equal('cancelled');
+    });
+
     it('syncBook purges DB rows for scenes removed from JSON', async () => {
         saveFixture([{ chapter: 'ch-1', scenes: [{ scene_id: 'sc-1' }, { scene_id: 'sc-2' }] }]);
         await bookSync.syncBook(TEST_BOOK_ID);

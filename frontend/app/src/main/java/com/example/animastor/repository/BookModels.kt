@@ -403,14 +403,19 @@ data class PreliminaryObject(
 
 data class ProgressPanelResponse(
     val book_id: String = "",
-    val profile: String? = null,
     val workers: List<ProgressWorker> = emptyList(),
     val overall_percent: Int = 0,
     val any_incomplete: Boolean = false
 )
 
 data class ProgressWorker(
+    val task_id: String? = null,
     val type: String = "",
+    val scope: String = "whole_book",
+    val chapter_id: String? = null,
+    val scene_id: String? = null,
+    val target_count: Int = 0,
+    val started_at: Long? = null,
     val ready: Int = 0,
     val total: Int = 0,
     val percent: Int = 0,
@@ -444,7 +449,8 @@ data class TriggerNextWindowResponse(
 )
 
 data class CancelWorkerRequest(
-    val type: String
+    val type: String? = null,
+    val task_id: String? = null
 )
 
 data class CancelWorkerResponse(
@@ -557,4 +563,3 @@ fun BookData.unitIndex(chapterId: String?, sceneId: String?, unitOffset: Int): I
     }
     return 0
 }
-

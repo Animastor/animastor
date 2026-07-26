@@ -7,6 +7,8 @@
 
 const state = require('../state');
 const dispatchEngine = require('./dispatch-engine');
+const generationProgress = require('../services/generation-progress');
+const taskRepo = require('../storage/postgres/repositories/task-repo');
 
 const logPrefix = '[SCHEDULER]';
 
@@ -252,10 +254,17 @@ async function detectVersionStale(redis, bookId, chapterId, sceneId) {
  */
 async function markVersionStaleDirty(redis, bookId, chapterId, sceneId) {
     const layerCfg = await getLayerConfig(redis, bookId);
+    const taskState = await generationProgress.getSceneTaskState(redis, bookId, chapterId, sceneId);
     const assetStates = await state.getAssetStates(redis, bookId, chapterId, sceneId);
-    const audioEnabled = layerCfg.audio_enabled !== false;
-    const imageEnabled = layerCfg.image_enabled !== false;
-    const videoEnabled = layerCfg.video_enabled !== false;
+    const audioEnabled = taskState.managed
+        ? taskState.activeTypes.has('audio')
+        : layerCfg.audio_enabled !== false;
+    const imageEnabled = taskState.managed
+        ? taskState.activeTypes.has('image')
+        : layerCfg.image_enabled !== false;
+    const videoEnabled = taskState.managed
+        ? taskState.activeTypes.has('video')
+        : layerCfg.video_enabled !== false;
 
     log(`[VERSION-DIRTY] ${bookId}/${chapterId}/${sceneId}: PG version mismatch — resetting per-asset states for dispatch`);
     // T8: через фасад — единый владелец DIRTY
@@ -278,15 +287,22 @@ async function shouldScheduleAssets(redis, bookId, chapterId, sceneId) {
     // from the mutation (single arbiter — see docs/STATE_WRITERS_MAP.md P3).
     const assetStates = await state.getAssetStates(redis, bookId, chapterId, sceneId);
     const layerCfg = await getLayerConfig(redis, bookId);
+    const taskState = await generationProgress.getSceneTaskState(redis, bookId, chapterId, sceneId);
 
-    // A later generation request may change the book-wide layer profile while
-    // another stage is already pending or generating. Those explicit per-asset
-    // states remain authoritative until that stage reaches a terminal state.
+    // Selective generation tasks are authoritative for their target scenes.
+    // Book-wide layer preferences are only a fallback for the initial/legacy
+    // generation flow, where no explicit task registry exists.
     const isInFlight = status =>
         status === state.AssetState.PENDING || status === state.AssetState.GENERATING;
-    const audioEnabled = layerCfg.audio_enabled !== false || isInFlight(assetStates.audio);
-    const imageEnabled = layerCfg.image_enabled !== false || isInFlight(assetStates.image);
-    const videoEnabled = layerCfg.video_enabled !== false || isInFlight(assetStates.video);
+    const audioEnabled = taskState.managed
+        ? taskState.activeTypes.has('audio')
+        : layerCfg.audio_enabled !== false || isInFlight(assetStates.audio);
+    const imageEnabled = taskState.managed
+        ? taskState.activeTypes.has('image')
+        : layerCfg.image_enabled !== false || isInFlight(assetStates.image);
+    const videoEnabled = taskState.managed
+        ? taskState.activeTypes.has('video')
+        : layerCfg.video_enabled !== false || isInFlight(assetStates.video);
 
     // Check if all enabled assets are in terminal states
     // (after potential version-stale reset above)
@@ -364,6 +380,26 @@ async function tick(redis, loadedBooks = {}) {
             completed: 0,
             errors: []
         };
+
+        const activeBookIds = new Set();
+        for (const sceneKey of activeKeys) {
+            const parsed = parseSceneKey(sceneKey);
+            if (parsed) activeBookIds.add(parsed.bookId);
+        }
+        for (const bookId of activeBookIds) {
+            const completedTasks = await generationProgress.reconcileCompletedTasks(
+                redis,
+                bookId,
+                state.getAssetStates
+            );
+            for (const task of completedTasks) {
+                try {
+                    await taskRepo.updateTaskStatus(task.task_id, 'completed');
+                } catch (pgErr) {
+                    warn(`TASK_COMPLETE_PERSIST_FAILED: ${task.task_id}: ${pgErr.message}`);
+                }
+            }
+        }
 
         // Cache force-dispatch flags per book to avoid redundant Redis calls
         const forceCache = new Map();

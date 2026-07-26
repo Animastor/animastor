@@ -1,5 +1,6 @@
 const { expect } = require('chai');
 const genScope = require('../src/services/gen-scope');
+const generationProgress = require('../src/services/generation-progress');
 const path = require('path');
 const fs = require('fs');
 const Module = require('module');
@@ -42,6 +43,43 @@ class FakeRedis {
         this.store.set(k, JSON.stringify({ [field]: value }));
         return 1;
     }
+    async hget(k, field) {
+        const raw = this.store.get(k);
+        if (!raw || typeof raw !== 'string') return null;
+        try {
+            const obj = JSON.parse(raw);
+            return obj && typeof obj === 'object' && !Array.isArray(obj)
+                ? obj[field] ?? null
+                : null;
+        } catch {
+            return null;
+        }
+    }
+    async hgetall(k) {
+        const raw = this.store.get(k);
+        if (!raw || typeof raw !== 'string') return {};
+        try {
+            const obj = JSON.parse(raw);
+            return obj && typeof obj === 'object' && !Array.isArray(obj) ? obj : {};
+        } catch {
+            return {};
+        }
+    }
+    async hdel(k, field) {
+        const raw = this.store.get(k);
+        if (!raw || typeof raw !== 'string') return 0;
+        try {
+            const obj = JSON.parse(raw);
+            if (!obj || typeof obj !== 'object' || Array.isArray(obj) || !(field in obj)) return 0;
+            delete obj[field];
+            if (Object.keys(obj).length === 0) this.store.delete(k);
+            else this.store.set(k, JSON.stringify(obj));
+            return 1;
+        } catch {
+            return 0;
+        }
+    }
+    async expire() { return 1; }
     async scan(cursor, ...args) {
         let pattern = null;
         for (let i = 0; i < args.length; i++) {
@@ -180,7 +218,16 @@ function loadSceneWindowWithStubs({ redis, startedStateByScene = new Set(), addA
     require.cache[statePath] = { exports: stateStub, id: statePath, loaded: true, filename: statePath, children: [], paths: [] };
 
     const activeScenesPath = path.join(cwd, 'src/runtime/active-scenes-index.js');
-    const activeScenesStub = { addActiveScene: async () => ({ added: addActiveSceneResult }) };
+    const activeScenesStub = {
+        addActiveScene: async (_redis, bookId, chapterId, sceneId) => ({
+            added: addActiveSceneResult,
+            sceneKey: `${bookId}:${chapterId}:${sceneId}`,
+        }),
+        removeActiveScene: async (_redis, bookId, chapterId, sceneId) => ({
+            removed: true,
+            sceneKey: `${bookId}:${chapterId}:${sceneId}`,
+        }),
+    };
     require.cache[activeScenesPath] = { exports: activeScenesStub, id: activeScenesPath, loaded: true, filename: activeScenesPath, children: [], paths: [] };
 
     const audioPath = path.join(cwd, 'src/audio/audio-service.js');
@@ -373,6 +420,32 @@ describe('scope-aware slideWindow', () => {
         const r = await sw.trySlideWindowOnComplete(redis, 'book-1', null, 'b1');
         expect(r.started).to.equal(0);
         expect(r.remaining).to.equal(0);
+    });
+
+    it('trySlideWindowOnComplete does not advance a task-managed generation', async () => {
+        const sw = loadSceneWindowWithStubs({ redis });
+        await sw.setWindowBounds(redis, 'book-1', { scope: 'whole_book' }, allScenes);
+        await sw.slideWindow(redis, 'book-1', null, 'b1');
+        for (let i = 0; i < 3; i++) {
+            const s = allScenes[i];
+            makeSceneReady(redis, 'book-1', s.chapter_id, s.scene_id);
+        }
+        await generationProgress.createTasks(
+            redis,
+            'book-1',
+            ['audio'],
+            { scope: 'current_scene', chapterId: 'ch-1', sceneId: 's-1' },
+            [{ chapter_id: 'ch-1', scene_id: 's-1', dirty_layers: ['audio'] }]
+        );
+
+        const result = await sw.trySlideWindowOnComplete(redis, 'book-1', null, 'b1');
+
+        expect(result).to.deep.equal({
+            started: 0,
+            remaining: 0,
+            reason: 'task_managed',
+        });
+        expect(parseInt(await redis.get(sw.BOOK_SCENE_NEXT('book-1')))).to.equal(3);
     });
 });
 

@@ -115,21 +115,6 @@
     <string name="edit_generate">GENERATE</string>
     <string name="edit_generating">GENERATING…</string>
 
-    <!-- Worker Panel as Profile Selector (Phase C) -->
-    <string name="workers_label">workers:</string>
-    <string name="worker_audio_desc">Audio workers (base layer, always on)</string>
-    <string name="worker_image_desc">Image workers (storyboard layer)</string>
-    <string name="worker_video_desc">Video workers (final composition)</string>
-    <string name="worker_label_audio">AUDIO</string>
-    <string name="worker_label_image">STORY</string>
-    <string name="worker_label_video">VIDEO</string>
-    <string name="profile_audio">Audio only</string>
-    <string name="profile_storyboard">Storyboard</string>
-    <string name="profile_video">Video (full)</string>
-    <string name="profile_desc_audio">Audio narration only</string>
-    <string name="profile_desc_storyboard">Audio + storyboard images (no video)</string>
-    <string name="profile_desc_video">Audio + storyboard + video (full)</string>
-
     <!-- Toolbar Generate Button (Phase C) — always reads "GENERATE" -->
     <string name="toolbar_generate_create">GENERATE</string>
     <string name="toolbar_generate_refresh">GENERATE</string>

@@ -160,7 +160,7 @@ interface BackendApi {
     @POST("/api/v1/book/{bookId}/regenerate")
     suspend fun regenerateBookScoped(
         @Path("bookId") bookId: String,
-        @Body request: RegenerateScope
+        @Body request: RegenerateRequest
     ): RegenerateResponse
 
     @GET("/api/v1/book/{bookId}/layer-config")

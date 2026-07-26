@@ -1,6 +1,5 @@
 const { expect } = require('chai');
 const { createMockRedis } = require('./mocks/redis-mock');
-const layerConfig = require('../src/services/layer-config');
 const sceneState = require('../src/state/scene-state');
 const activeScenes = require('../src/runtime/active-scenes-index');
 const generationProgress = require('../src/services/generation-progress');
@@ -20,120 +19,65 @@ function createResponse() {
     };
 }
 
-describe('Progress panel parallel workers', () => {
-    it('keeps active Audio visible after the latest profile switches to Image', async () => {
-        const redis = createMockRedis();
-        const bookId = 'parallel-book';
-        const chapterId = 'ch-1';
-        const sceneId = 'scene-1';
-        const chunkIds = [
-            `${bookId}_${chapterId}_${sceneId}_0001`,
-            `${bookId}_${chapterId}_${sceneId}_0002`,
-        ];
-        const chunks = new Map(chunkIds.map((id, index) => [id, {
-            book_id: bookId,
-            chapter_id: chapterId,
-            scene_id: sceneId,
-            build_id: 'build-1',
-            chunk_index: String(index + 1).padStart(4, '0'),
-            expected_chunk_count: 2,
-            audio_status: index === 0 ? 'ready' : 'pending',
-            image_status: 'pending',
-            video_status: 'pending',
-        }]));
-
-        await layerConfig.set(redis, bookId, {
-            audio_enabled: false,
-            image_enabled: true,
-            video_enabled: false,
-        });
-        await sceneState.unsafeRestoreAssetStates(redis, bookId, chapterId, sceneId, {
-            audio: sceneState.AssetState.GENERATING,
-            image: sceneState.AssetState.PENDING,
-            video: sceneState.AssetState.NEW,
-        });
-        await activeScenes.addActiveScene(redis, bookId, chapterId, sceneId);
-
-        let handler = null;
-        const app = {
-            get(path, callback) {
-                if (path.endsWith('/progress-panel')) handler = callback;
-            },
-        };
-        const deps = {
-            config: { OUTPUT_DIR: '/tmp/animastor-progress-panel-test' },
-            state: sceneState,
-            book: { loadBook: () => ({ chapters: [] }) },
-            layerConfig,
-            activeScenes,
-            getAllChunks: async () => chunkIds,
-            getChunk: async id => chunks.get(id) || null,
-            iuRepo: { getImageUnitsForScene: async () => [] },
-            utils: { log: () => {} },
-        };
-
-        require('../src/routes/book/progress-panel.cjs')(app, redis, deps);
+function createHarness(redis, chunks, chunkIds) {
+    let handler = null;
+    const app = {
+        get(path, callback) {
+            if (path.endsWith('/progress-panel')) handler = callback;
+        },
+    };
+    const deps = {
+        state: sceneState,
+        activeScenes,
+        getAllChunks: async () => chunkIds,
+        getChunk: async id => chunks.get(id) || null,
+        iuRepo: { getImageUnitsForScene: async () => [] },
+        utils: { log: () => {} },
+    };
+    require('../src/routes/book/progress-panel.cjs')(app, redis, deps);
+    return async bookId => {
         const res = createResponse();
-        await handler({
-            params: { bookId },
-            query: {
-                scope: 'current_scene',
-                chapter_id: chapterId,
-                scene_id: sceneId,
-            },
-        }, res);
+        await handler({ params: { bookId }, query: {} }, res);
+        return res;
+    };
+}
 
-        expect(res.statusCode).to.equal(200);
-        expect(res.body.profile).to.equal('image_only');
-        expect(res.body.workers.map(worker => worker.type)).to.include.members(['audio', 'image']);
-
-        const audio = res.body.workers.find(worker => worker.type === 'audio');
-        expect(audio.ready).to.equal(1);
-        expect(audio.total).to.equal(2);
-        expect(audio.done).to.be.false;
+function addChunk(chunks, chunkIds, bookId, chapterId, sceneId, index, data) {
+    const id = `${bookId}_${chapterId}_${sceneId}_${String(index).padStart(4, '0')}`;
+    chunkIds.push(id);
+    chunks.set(id, {
+        book_id: bookId,
+        chapter_id: chapterId,
+        scene_id: sceneId,
+        build_id: 'build-1',
+        chunk_index: String(index).padStart(4, '0'),
+        ...data,
     });
+}
 
-    it('computes each parallel worker from its own stored scope', async () => {
+describe('Progress panel independent generation tasks', () => {
+    it('shows Audio and Image tasks with their own targets', async () => {
         const redis = createMockRedis();
-        const bookId = 'parallel-scopes-book';
+        const bookId = 'parallel-types-book';
         const chunks = new Map();
         const chunkIds = [];
 
-        function addChunk(chapterId, sceneId, index, data) {
-            const id = `${bookId}_${chapterId}_${sceneId}_${String(index).padStart(4, '0')}`;
-            chunkIds.push(id);
-            chunks.set(id, {
-                book_id: bookId,
-                chapter_id: chapterId,
-                scene_id: sceneId,
-                build_id: 'build-1',
-                chunk_index: String(index).padStart(4, '0'),
-                video_status: 'pending',
-                ...data,
-            });
-        }
-
-        addChunk('ch-1', 'audio-scene', 1, {
+        addChunk(chunks, chunkIds, bookId, 'ch-1', 'audio-scene', 1, {
             expected_chunk_count: 2,
             audio_status: 'ready',
             image_status: 'ready',
         });
-        addChunk('ch-1', 'audio-scene', 2, {
+        addChunk(chunks, chunkIds, bookId, 'ch-1', 'audio-scene', 2, {
             expected_chunk_count: 2,
             audio_status: 'pending',
             image_status: 'ready',
         });
-        addChunk('ch-1', 'image-scene', 1, {
+        addChunk(chunks, chunkIds, bookId, 'ch-1', 'image-scene', 1, {
             expected_chunk_count: 1,
             audio_status: 'ready',
             image_status: 'pending',
         });
 
-        await layerConfig.set(redis, bookId, {
-            audio_enabled: false,
-            image_enabled: true,
-            video_enabled: false,
-        });
         await sceneState.unsafeRestoreAssetStates(redis, bookId, 'ch-1', 'audio-scene', {
             audio: sceneState.AssetState.GENERATING,
             image: sceneState.AssetState.READY,
@@ -144,51 +88,97 @@ describe('Progress panel parallel workers', () => {
             image: sceneState.AssetState.GENERATING,
             video: sceneState.AssetState.NEW,
         });
-        await activeScenes.addActiveScene(redis, bookId, 'ch-1', 'audio-scene');
-        await activeScenes.addActiveScene(redis, bookId, 'ch-1', 'image-scene');
-        await generationProgress.recordScopes(redis, bookId, ['audio'], {
-            scope: 'current_scene',
-            chapterId: 'ch-1',
-            sceneId: 'audio-scene',
+
+        const [audioTask] = await generationProgress.createTasks(
+            redis,
+            bookId,
+            ['audio'],
+            { scope: 'current_scene', chapterId: 'ch-1', sceneId: 'audio-scene' },
+            [{ chapter_id: 'ch-1', scene_id: 'audio-scene', dirty_layers: ['audio'] }]
+        );
+        const [imageTask] = await generationProgress.createTasks(
+            redis,
+            bookId,
+            ['image'],
+            { scope: 'current_scene', chapterId: 'ch-1', sceneId: 'image-scene' },
+            [{ chapter_id: 'ch-1', scene_id: 'image-scene', dirty_layers: ['image'] }]
+        );
+
+        const res = await createHarness(redis, chunks, chunkIds)(bookId);
+
+        expect(res.statusCode).to.equal(200);
+        expect(res.body.workers).to.have.length(2);
+        expect(res.body.workers.map(worker => worker.task_id))
+            .to.have.members([audioTask.task_id, imageTask.task_id]);
+
+        const audio = res.body.workers.find(worker => worker.task_id === audioTask.task_id);
+        const image = res.body.workers.find(worker => worker.task_id === imageTask.task_id);
+        expect(audio).to.include({
+            type: 'audio',
+            scene_id: 'audio-scene',
+            ready: 1,
+            total: 2,
+            done: false,
         });
-        await generationProgress.recordScopes(redis, bookId, ['image'], {
-            scope: 'current_scene',
-            chapterId: 'ch-1',
-            sceneId: 'image-scene',
+        expect(image).to.include({
+            type: 'image',
+            scene_id: 'image-scene',
+            ready: 0,
+            total: 1,
+            done: false,
+        });
+    });
+
+    it('keeps two Audio commands as two progress rows', async () => {
+        const redis = createMockRedis();
+        const bookId = 'parallel-audio-book';
+        const chunks = new Map();
+        const chunkIds = [];
+
+        addChunk(chunks, chunkIds, bookId, 'ch-1', 'scene-a', 1, {
+            expected_chunk_count: 2,
+            audio_status: 'ready',
+        });
+        addChunk(chunks, chunkIds, bookId, 'ch-1', 'scene-a', 2, {
+            expected_chunk_count: 2,
+            audio_status: 'pending',
+        });
+        addChunk(chunks, chunkIds, bookId, 'ch-2', 'scene-b', 1, {
+            expected_chunk_count: 1,
+            audio_status: 'pending',
         });
 
-        let handler = null;
-        const app = {
-            get(path, callback) {
-                if (path.endsWith('/progress-panel')) handler = callback;
-            },
-        };
-        const deps = {
-            config: { OUTPUT_DIR: '/tmp/animastor-progress-panel-test' },
-            state: sceneState,
-            book: { loadBook: () => ({ chapters: [] }) },
-            layerConfig,
-            activeScenes,
-            getAllChunks: async () => chunkIds,
-            getChunk: async id => chunks.get(id) || null,
-            iuRepo: { getImageUnitsForScene: async () => [] },
-            utils: { log: () => {} },
-        };
+        await sceneState.unsafeRestoreAssetState(
+            redis, bookId, 'ch-1', 'scene-a', 'audio', sceneState.AssetState.GENERATING
+        );
+        await sceneState.unsafeRestoreAssetState(
+            redis, bookId, 'ch-2', 'scene-b', 'audio', sceneState.AssetState.PENDING
+        );
 
-        require('../src/routes/book/progress-panel.cjs')(app, redis, deps);
-        const res = createResponse();
-        await handler({
-            params: { bookId },
-            query: {
-                scope: 'current_scene',
-                chapter_id: 'ch-1',
-                scene_id: 'image-scene',
-            },
-        }, res);
+        const [firstTask] = await generationProgress.createTasks(
+            redis,
+            bookId,
+            ['audio'],
+            { scope: 'current_scene', chapterId: 'ch-1', sceneId: 'scene-a' },
+            [{ chapter_id: 'ch-1', scene_id: 'scene-a', dirty_layers: ['audio'] }]
+        );
+        const [secondTask] = await generationProgress.createTasks(
+            redis,
+            bookId,
+            ['audio'],
+            { scope: 'current_scene', chapterId: 'ch-2', sceneId: 'scene-b' },
+            [{ chapter_id: 'ch-2', scene_id: 'scene-b', dirty_layers: ['audio'] }]
+        );
 
-        const audio = res.body.workers.find(worker => worker.type === 'audio');
-        const image = res.body.workers.find(worker => worker.type === 'image');
-        expect(audio).to.include({ ready: 1, total: 2, done: false });
-        expect(image).to.include({ ready: 0, total: 1, done: false });
+        const res = await createHarness(redis, chunks, chunkIds)(bookId);
+        const audioRows = res.body.workers.filter(worker => worker.type === 'audio');
+
+        expect(audioRows).to.have.length(2);
+        expect(audioRows.map(worker => worker.task_id))
+            .to.have.members([firstTask.task_id, secondTask.task_id]);
+        expect(audioRows.find(worker => worker.task_id === firstTask.task_id))
+            .to.include({ scene_id: 'scene-a', ready: 1, total: 2 });
+        expect(audioRows.find(worker => worker.task_id === secondTask.task_id))
+            .to.include({ scene_id: 'scene-b', ready: 0, total: 1 });
     });
 });

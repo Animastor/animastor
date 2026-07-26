@@ -213,14 +213,6 @@ module.exports = function(app, redis, deps) {
                 }
             } catch (_) {}
 
-            // Canonical generation profile — computed server-side so clients never
-            // re-derive it from the layer toggles (single source of truth).
-            let profile = null;
-            try {
-                const cfg = await layerConfig.get(redis, bookId);
-                profile = layerConfig.resolveProfile(cfg);
-            } catch (_) {}
-
             res.json({
                 book_id: bookId, scope: scope || 'book', total_chunks: totalChunks,
                 audio_ready: audioReady, audio_ready_real: audioReadyReal,
@@ -239,7 +231,6 @@ module.exports = function(app, redis, deps) {
                 scope_iu_total: scopeIuTotal, scope_iu_ready: scopeIuReady,
                 cover_iu_total: coverIuTotal, cover_iu_ready: coverIuReady,
                 audio_error: audioError, image_error: imageError, video_error: videoError,
-                profile,
             });
         } catch (err) {
             console.error('[ASSETS-STATE] Error:', err.message);

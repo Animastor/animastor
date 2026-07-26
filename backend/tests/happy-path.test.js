@@ -1771,11 +1771,22 @@ describe('Happy Path: Д.2 — shouldScheduleAssets is a pure decision', () => {
         expect(after).to.deep.equal(before);
     });
 
-    it('shouldScheduleAssets preserves pending audio after profile switches to image_only', async () => {
+    it('task-managed scene schedules only worker types requested for that scene', async () => {
         await redis.set(`animastor:layer-config:${BOOK_ID}`, JSON.stringify({
-            audio_enabled: false,
+            audio_enabled: true,
             image_enabled: true,
-            video_enabled: false,
+            video_enabled: true,
+        }));
+        const generationProgress = require('../src/services/generation-progress');
+        await redis.hset(generationProgress.key(BOOK_ID), 'task-audio', JSON.stringify({
+            task_id: 'task-audio',
+            type: 'audio',
+            status: 'active',
+            scope: 'current_scene',
+            chapter_id: CHAPTER_ID,
+            scene_id: SCENE_ID,
+            targets: [{ chapter_id: CHAPTER_ID, scene_id: SCENE_ID }],
+            started_at: Date.now(),
         }));
         await sceneState.setAssetStates(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, {
             audio: 'pending', image: 'pending', video: 'new',
@@ -1784,7 +1795,8 @@ describe('Happy Path: Д.2 — shouldScheduleAssets is a pure decision', () => {
         const result = await scheduler.shouldScheduleAssets(redis, BOOK_ID, CHAPTER_ID, SCENE_ID);
 
         expect(result.stages).to.include('audio');
-        expect(result.stages).to.include('image');
+        expect(result.stages).to.not.include('image');
+        expect(result.stages).to.not.include('video');
         expect(result.allDone).to.be.false;
     });
 

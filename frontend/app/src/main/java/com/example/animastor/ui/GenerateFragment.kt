@@ -301,63 +301,23 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
             vbookScenesFormat = { ready, total -> getString(R.string.progress_vbook_scenes, ready, total) }
         )
 
-        val activeGen = viewModel.activeGeneration.value
         val uiState = viewModel.uiState.value
         val vbookProg = uiState.vbookProgress
         val hasVBook = vbookProg != null && vbookProg.stage != VBookStage.IDLE
 
-        if (activeGen != null) {
-            val panel = runCatching {
-                viewModel.repository.getProgressPanel(
-                    bookId = viewModel.bookId,
-                    scope = activeGen.scope,
-                    chapterId = activeGen.chapterId,
-                    sceneId = activeGen.sceneId
-                )
-            }.getOrNull()
-
-            // 🔧 FIX: If the progress-panel API errors (transient Redis/PG timeout),
-            // just skip this poll cycle — the next poll (1.5s later) will retry.
-            if (panel == null) return
-
-            val panelState = viewModel.computeWorkers(panel, if (hasVBook) vbookProg else null, labels)
-
-            when (panelState) {
-                is ProgressPanelState.Workers -> renderWorkersToSections(panelState.workers)
-                is ProgressPanelState.DoneRow -> {
-                    // All workers complete — show final state in UI
-                    val finalLabel = getString(R.string.generation_done)
-                    showSingleDoneRow(finalLabel)
-                }
-                is ProgressPanelState.Hidden -> clearAllProgressLists()
-            }
-        } else if (hasVBook) {
+        val panel = runCatching {
+            viewModel.repository.getProgressPanel(bookId = viewModel.bookId)
+        }.getOrNull() ?: return
+        val vbookToShow = if (hasVBook) {
             val updated = viewModel.checkVBookAgentStatus()
-            val vbookToShow = if (updated.stage != VBookStage.IDLE) updated else vbookProg
-            val panelState = viewModel.computeWorkers(null, vbookToShow, labels)
-            when (panelState) {
-                is ProgressPanelState.Workers -> renderWorkersToSections(panelState.workers)
-                is ProgressPanelState.DoneRow -> {
-                    val finalLabel = getString(R.string.generation_done)
-                    showSingleDoneRow(finalLabel)
-                }
-                is ProgressPanelState.Hidden -> clearAllProgressLists()
-            }
-        } else {
-            // activeGen is null and no VBook. But we might have recently-completed
-            // workers from a generation that just finished (e.g., SSE generation_complete
-            // arrived but computeWorkers hasn't cleared workerCompletedAt yet).
-            // Call computeWorkers to let it decide: if recently-completed workers exist,
-            // show them for the remaining DoneRow window; otherwise hide.
-            val panelState = viewModel.computeWorkers(null, null, labels)
-            when (panelState) {
-                is ProgressPanelState.Workers -> renderWorkersToSections(panelState.workers)
-                is ProgressPanelState.DoneRow -> {
-                    val finalLabel = getString(R.string.generation_done)
-                    showSingleDoneRow(finalLabel)
-                }
-                is ProgressPanelState.Hidden -> clearAllProgressLists()
-            }
+            if (updated.stage != VBookStage.IDLE) updated else vbookProg
+        } else null
+        val panelState = viewModel.computeWorkers(panel, vbookToShow, labels)
+
+        when (panelState) {
+            is ProgressPanelState.Workers -> renderWorkersToSections(panelState.workers)
+            is ProgressPanelState.DoneRow -> showSingleDoneRow(getString(R.string.generation_done))
+            is ProgressPanelState.Hidden -> clearAllProgressLists()
         }
     }
 
@@ -441,7 +401,7 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
             val row = rowBinding.root
 
             if (worker.cancelled) {
-                rowBinding.workerName.text = getString(R.string.generation_done) + " — " + worker.label
+                rowBinding.workerName.text = getString(R.string.generation_done) + " — " + scopedWorkerLabel(worker)
                 rowBinding.workerName.setTextColor(errorColor)
                 rowBinding.workerCount.visibility = View.GONE
                 rowBinding.workerPercent.visibility = View.GONE
@@ -449,7 +409,7 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
                 rowBinding.workerProgressBar.visibility = View.GONE
                 rowBinding.workerStopButton.visibility = View.GONE
             } else if (worker.indeterminate) {
-                rowBinding.workerName.text = worker.label
+                rowBinding.workerName.text = scopedWorkerLabel(worker)
                 rowBinding.workerName.setTextColor(textColor)
                 rowBinding.workerCount.visibility = View.GONE
                 rowBinding.workerPercent.visibility = View.GONE
@@ -461,7 +421,7 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
                 rowBinding.workerStopButton.visibility = View.VISIBLE
                 setupWorkerStopButton(rowBinding.workerStopButton, row, worker)
             } else if (worker.done) {
-                rowBinding.workerName.text = getString(R.string.generation_done) + " — " + worker.label
+                rowBinding.workerName.text = getString(R.string.generation_done) + " — " + scopedWorkerLabel(worker)
                 rowBinding.workerName.setTextColor(greenColor)
                 rowBinding.workerCount.text = worker.countText ?: "${worker.ready}/${worker.total}"
                 rowBinding.workerCount.setTextColor(greenColor)
@@ -477,7 +437,7 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
                 rowBinding.workerProgressBar.setIndicatorColor(greenColor)
                 rowBinding.workerStopButton.visibility = View.GONE
             } else {
-                rowBinding.workerName.text = worker.label
+                rowBinding.workerName.text = scopedWorkerLabel(worker)
                 rowBinding.workerName.setTextColor(textColor)
                 rowBinding.workerCount.text = worker.countText ?: "${worker.ready}/${worker.total}"
                 rowBinding.workerCount.setTextColor(mutedColor)
@@ -533,8 +493,8 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
             popup.setOnMenuItemClickListener { _ ->
                 _highlightedRow?.setBackgroundColor(android.graphics.Color.TRANSPARENT)
                 _highlightedRow = null
-                viewModel.cancelWorker(worker.type)
-                Log.i(TAG, "Worker cancelled via popup: type=${worker.type}")
+                viewModel.cancelWorker(worker.type, worker.taskId)
+                Log.i(TAG, "Worker cancelled via popup: type=${worker.type} task=${worker.taskId}")
                 true
             }
             popup.show()
@@ -595,7 +555,7 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
         val hasExistingContent = bookData?.chapters?.orEmpty()?.any { ch ->
             ch.scenes?.orEmpty()?.isNotEmpty() == true
         } == true
-        if (hasExistingContent && viewModel.activeGeneration.value == null) {
+        if (hasExistingContent && !viewModel.isRegenerating.value) {
             b.generateVBookButton.text = getString(R.string.generate_vbook_next)
         } else {
             b.generateVBookButton.text = getString(R.string.generate_vbook)
@@ -614,7 +574,7 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
         }
         showScopeDialog { scope, chId, scId ->
             viewModel.startGeneration(
-                GenerateViewModel.GenerationRequest(profile = "audio_only", scope = scope, chapterId = chId, sceneId = scId)
+                GenerateViewModel.GenerationRequest(workerTypes = listOf("audio"), scope = scope, chapterId = chId, sceneId = scId)
             ) { result ->
                 when (result) {
                     is GenerateViewModel.GenerationResult.Started -> Toast.makeText(requireContext(), "Audio generation started", Toast.LENGTH_SHORT).show()
@@ -636,7 +596,7 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
         }
         showScopeDialog { scope, chId, scId ->
             viewModel.startGeneration(
-                GenerateViewModel.GenerationRequest(profile = "image_only", scope = scope, chapterId = chId, sceneId = scId)
+                GenerateViewModel.GenerationRequest(workerTypes = listOf("image"), scope = scope, chapterId = chId, sceneId = scId)
             ) { result ->
                 when (result) {
                     is GenerateViewModel.GenerationResult.Started -> Toast.makeText(requireContext(), "Image generation started", Toast.LENGTH_SHORT).show()
@@ -658,7 +618,7 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
         }
         showScopeDialog { scope, chId, scId ->
             viewModel.startGeneration(
-                GenerateViewModel.GenerationRequest(profile = "full", scope = scope, chapterId = chId, sceneId = scId)
+                GenerateViewModel.GenerationRequest(workerTypes = listOf("video"), scope = scope, chapterId = chId, sceneId = scId)
             ) { result ->
                 when (result) {
                     is GenerateViewModel.GenerationResult.Started -> Toast.makeText(requireContext(), "Video generation started", Toast.LENGTH_SHORT).show()
@@ -671,6 +631,16 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
     private fun onStopClicked(type: String) {
         Log.i(TAG, "Stop clicked for type=$type")
         viewModel.cancelWorker(type)
+    }
+
+    private fun scopedWorkerLabel(worker: WorkerUi): String {
+        val target = when (worker.scope) {
+            "current_scene" -> worker.sceneId
+            "current_chapter" -> worker.chapterId
+            "from_current_scene" -> worker.sceneId?.let { "$it+" }
+            else -> null
+        }
+        return if (target.isNullOrBlank()) worker.label else "${worker.label} · $target"
     }
 
     // ═══════════════════════════════════════════════════════════════

@@ -18,7 +18,7 @@ async function updateTaskStatus(taskId, status, error) {
         setClauses.push('started_at = $' + (params.length + 1));
         params.push(now);
     }
-    if (status === 'completed' || status === 'failed') {
+    if (status === 'completed' || status === 'failed' || status === 'cancelled') {
         setClauses.push('completed_at = $' + (params.length + 1));
         params.push(now);
     }
@@ -65,6 +65,16 @@ async function getSceneTasks(bookId, chapterId, sceneId) {
     return result.rows;
 }
 
+async function cancelActiveTasksForBook(bookId, error = 'Cancelled by user') {
+    const now = Math.floor(Date.now() / 1000);
+    const result = await query(`
+        UPDATE generation_tasks
+        SET status = 'cancelled', completed_at = $1, error = COALESCE(error, $2)
+        WHERE book_id = $3 AND status IN ('queued', 'running')
+    `, [now, error, bookId]);
+    return result.rowCount || 0;
+}
+
 module.exports = {
     createTask,
     updateTaskStatus,
@@ -72,4 +82,5 @@ module.exports = {
     getPendingTasks,
     getFailedTasks,
     getSceneTasks,
+    cancelActiveTasksForBook,
 };

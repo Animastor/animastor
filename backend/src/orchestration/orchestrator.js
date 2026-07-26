@@ -395,27 +395,33 @@ async function reconcile(redis, bookId, chapterId, sceneId) {
 //
 // Параметры:
 //   scenes — [{chapter_id, scene_id}] — список сцен для reset'а
-//   options.scope, options.chapterId, options.sceneId — для gen-scope
 //   options.cleanPngUnitIds — мапу {chapterId_sceneId: [unitId, ...]} для удаления stale PNG
 //   options.bookDiff — DI-инстанс book-diff (передаётся из route)
+//   options.readdToActiveIndex — вернуть сцены планировщику после reset (default true)
 //
 // Что делает:
 //   1. force-dispatch флаг
-//   2. gen-scope
-//   3. событие SCENE_RESET в journal
-//   4. удаление из active index
-//   5. снятие dispatch leases только для сбрасываемых стадий
-//   6. очистка очередей gpu-hub (HTTP DELETE /queue/clear)
-//   7. pre-delete stale PNG для указанных unit_id
-//   8. очистка iu-progress + iu-in-flight
-//   9. markDirty (через bookDiff.markDirtyScenes)
-//   10. добавление сцен обратно в active index
-//   11. событие SCENE_RESET_COMPLETED в journal
+//   2. событие SCENE_RESET в journal
+//   3. удаление из active index
+//   4. снятие dispatch leases только для сбрасываемых стадий
+//   5. очистка очередей gpu-hub (HTTP DELETE /queue/clear)
+//   6. pre-delete stale PNG для указанных unit_id
+//   7. очистка iu-progress + iu-in-flight
+//   8. markDirty (через bookDiff.markDirtyScenes)
+//   9. добавление сцен обратно в active index
+//   10. событие SCENE_RESET_COMPLETED в journal
 async function resetScenes(redis, bookId, buildId, scenes, layerCfg, options = {}) {
     // force — зарезервировано для будущего использования (например, пропуск
     // version-проверок на PG при полном reset). Сейчас resetScenes всегда
     // очищает всё безусловно — это корректно для регенерации.
-    const { scope = 'WHOLE_BOOK', chapterId = null, sceneId = null, bookDiff = null, cleanPngUnitIds = null } = options;
+    const {
+        scope = 'WHOLE_BOOK',
+        chapterId = null,
+        sceneId = null,
+        bookDiff = null,
+        cleanPngUnitIds = null,
+        readdToActiveIndex = true,
+    } = options;
     const { log, warn } = require('./scene-utils');
     const journal = require('./event-journal');
 
@@ -434,21 +440,17 @@ async function resetScenes(redis, bookId, buildId, scenes, layerCfg, options = {
         'EX', runtimeConfig.TIMEOUTS.FORCE_DISPATCH_TTL_S
     );
 
-    // 2. Gen-scope (единственное место записи — T4 цель)
-    const genScope = require('../services/gen-scope');
-    await genScope.setScope(redis, bookId, scope, chapterId, sceneId);
-
-    // 3. Event journal — start
+    // 2. Event journal — start
     await journal.appendSceneEvent(redis, bookId, chapterId || bookId, sceneId || 'all',
         journal.EventType.SCENE_RESET, 'INITIATED',
         { scenes_count: scenes.length, scope, force: !!options.force }
     ).catch(() => {});
 
-    // 4. Remove from active index
+    // 3. Remove from active index
     const scheduler = require('../runtime/runtime-scheduler');
     await scheduler.removeScenesFromActiveIndex(redis, bookId, scenes);
 
-    // 5. Clear dispatch leases only for stages requested by this regeneration.
+    // 4. Clear dispatch leases only for stages requested by this regeneration.
     // A parallel Image request must not cancel an already-running Audio lease
     // for the same scene.
     const dispatchEngine = require('../runtime/dispatch-engine');
@@ -465,7 +467,7 @@ async function resetScenes(redis, bookId, buildId, scenes, layerCfg, options = {
     ]));
     const cancellation = await dispatchEngine.clearLeasesForScenes(redis, bookId, leaseResetScenes);
 
-    // 6. Clear only jobs belonging to the cancelled dispatches.
+    // 5. Clear only jobs belonging to the cancelled dispatches.
     for (const cancelledDispatchId of cancellation.dispatchIds) {
         try {
             const hubUrl = `${runtimeConfig.HUB_URL}/queue/clear?dispatch_id=${encodeURIComponent(cancelledDispatchId)}`;
@@ -482,7 +484,7 @@ async function resetScenes(redis, bookId, buildId, scenes, layerCfg, options = {
         }
     }
 
-    // 7. Pre-delete stale PNGs for specific unit IDs
+    // 6. Pre-delete stale PNGs for specific unit IDs
     const path = require('path');
     const fs = require('fs');
     if (cleanPngUnitIds && typeof cleanPngUnitIds === 'object' && buildId) {
@@ -504,7 +506,7 @@ async function resetScenes(redis, bookId, buildId, scenes, layerCfg, options = {
         }
     }
 
-    // 8. Clear image-specific IU progress only for scenes whose image stage is reset.
+    // 7. Clear image-specific IU progress only for scenes whose image stage is reset.
     for (const ds of scenes) {
         const resetStages = resetStagesByScene.get(`${ds.chapter_id}:${ds.scene_id}`) || [];
         if (!resetStages.includes('image')) continue;
@@ -523,7 +525,7 @@ async function resetScenes(redis, bookId, buildId, scenes, layerCfg, options = {
         } catch (_) {}
     }
 
-    // 9. markDirty (через bookDiff.markDirtyScenes — DI-инстанс из route)
+    // 8. markDirty (через bookDiff.markDirtyScenes — DI-инстанс из route)
     let marked = { marked: 0 };
     if (bookDiff && typeof bookDiff.markDirtyScenes === 'function') {
         marked = await markDirty({ bookDiff }, redis, bookId, buildId, scenes, layerCfg);
@@ -537,13 +539,18 @@ async function resetScenes(redis, bookId, buildId, scenes, layerCfg, options = {
         }
     }
 
-    // 10. Re-add to active index (планировщик подберёт на следующем тике)
-    for (const ds of scenes) {
-        await scheduler.addSceneToActiveIndex(redis, bookId, ds.chapter_id, ds.scene_id);
+    // 9. Re-add to active index (планировщик подберёт на следующем тике).
+    // Selective generation can defer this until its task registry is ready.
+    if (readdToActiveIndex) {
+        for (const ds of scenes) {
+            await scheduler.addSceneToActiveIndex(redis, bookId, ds.chapter_id, ds.scene_id);
+        }
+        log(`[RESET-SCENES] ${bookId}: ${scenes.length} scenes re-added to active index`);
+    } else {
+        log(`[RESET-SCENES] ${bookId}: activation deferred for ${scenes.length} scenes`);
     }
-    log(`[RESET-SCENES] ${bookId}: ${scenes.length} scenes re-added to active index`);
 
-    // 11. Event journal — completion
+    // 10. Event journal — completion
     await journal.appendSceneEvent(redis, bookId, chapterId || bookId, sceneId || 'all',
         journal.EventType.SCENE_RESET_COMPLETED, 'DONE',
         { scenes_count: scenes.length, marked: marked.marked }

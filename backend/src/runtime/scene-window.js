@@ -425,6 +425,11 @@ async function trySlideWindowOnComplete(redis, bookId, loadedBook, buildId) {
         return { started: 0, remaining: 0, reason: 'cancelled' };
     }
 
+    const generationProgress = require('../services/generation-progress');
+    if (await generationProgress.hasActiveTasks(redis, bookId)) {
+        return { started: 0, remaining: 0, reason: 'task_managed' };
+    }
+
     // Reconcile chunk statuses against actual files on disk before checking
     // window completeness. This catches stale 'pending' statuses that may
     // have survived from a previous Cancel→Generate cycle — allowing the

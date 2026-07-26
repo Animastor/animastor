@@ -4,15 +4,13 @@ data class LayerConfigResponse(
     val book_id: String? = null,
     val audio_enabled: Boolean = true,
     val image_enabled: Boolean = true,
-    val video_enabled: Boolean = true,
-    val profile: String? = null
+    val video_enabled: Boolean = true
 )
 
 data class LayerConfigUpdate(
     val audio_enabled: Boolean? = null,
     val image_enabled: Boolean? = null,
-    val video_enabled: Boolean? = null,
-    val profile: String? = null
+    val video_enabled: Boolean? = null
 )
 
 /**
@@ -67,17 +65,7 @@ data class AssetsStateResponse(
     val audio_error: Int = 0,
     val image_error: Int = 0,
     val video_error: Int = 0,
-    val cover_needs_generation: Boolean = false,
-    val profile: String? = null
-)
-
-data class RegenerateScope(
-    val new_book: BookData? = null,
-    val rebuild_all: Boolean = false,
-    val profile: String? = null,
-    val scope: String? = null,
-    val chapter_id: String? = null,
-    val scene_id: String? = null
+    val cover_needs_generation: Boolean = false
 )
 
 // ======================================================

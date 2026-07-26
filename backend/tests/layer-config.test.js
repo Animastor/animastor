@@ -48,22 +48,7 @@ describe('Layer Config Service', () => {
         expect(cfg.image_enabled).to.be.true;
     });
 
-    it('resolveProfile maps layer config to profile', () => {
-        expect(layerConfig.resolveProfile({ audio_enabled: true, image_enabled: false, video_enabled: false })).to.equal('audio_only');
-        expect(layerConfig.resolveProfile({ audio_enabled: false, image_enabled: true, video_enabled: false })).to.equal('image_only');
-        expect(layerConfig.resolveProfile({ audio_enabled: true, image_enabled: true, video_enabled: false })).to.equal('storyboard');
-        expect(layerConfig.resolveProfile({ audio_enabled: true, image_enabled: true, video_enabled: true })).to.equal('full');
-        expect(layerConfig.resolveProfile(null)).to.equal('full');
-        expect(layerConfig.resolveProfile(undefined)).to.equal('full');
-    });
-
-    it('isValidProfile / isValidScope accept only known values', () => {
-        expect(layerConfig.isValidProfile('audio_only')).to.be.true;
-        expect(layerConfig.isValidProfile('image_only')).to.be.true;
-        expect(layerConfig.isValidProfile('storyboard')).to.be.true;
-        expect(layerConfig.isValidProfile('full')).to.be.true;
-        expect(layerConfig.isValidProfile('unknown')).to.be.false;
-        expect(layerConfig.isValidProfile('')).to.be.false;
+    it('isValidScope accepts only known values', () => {
         expect(layerConfig.isValidScope('current_scene')).to.be.true;
         expect(layerConfig.isValidScope('current_chapter')).to.be.true;
         expect(layerConfig.isValidScope('from_current_scene')).to.be.true;
@@ -75,8 +60,7 @@ describe('Layer Config Service', () => {
         expect(layerConfig.key('mybook')).to.equal('animastor:layer-config:mybook');
     });
 
-    it('PROFILES and SCOPES are frozen', () => {
-        expect(Object.isFrozen(layerConfig.PROFILES)).to.be.true;
+    it('SCOPES is frozen', () => {
         expect(Object.isFrozen(layerConfig.SCOPES)).to.be.true;
     });
 

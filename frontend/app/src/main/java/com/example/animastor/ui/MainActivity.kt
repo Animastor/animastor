@@ -185,12 +185,9 @@ class MainActivity : AppCompatActivity() {
                 else -> return@setOnItemSelectedListener true
             }
 
-            // Reset generation status → IDLE only when ALL generation processes
-            // have completed. Check both GPU generation (activeGeneration) and
-            // VBook agent (vbookProgress stage). If anything is still running,
-            // the nav icon keeps pulsing — even if one process errored.
+            // Reset generation status only when both GPU tasks and VBook are idle.
             if (item.itemId == R.id.generateFragment) {
-                val hasActiveWork = viewModel.activeGeneration.value != null ||
+                val hasActiveWork = viewModel.isRegenerating.value ||
                     viewModel.uiState.value.vbookProgress?.stage?.let {
                         it != VBookStage.IDLE && it != VBookStage.COMPLETED
                     } == true
