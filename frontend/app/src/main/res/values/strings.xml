@@ -139,7 +139,6 @@
 
     <!-- Generate Scope Dialog (Phase C) -->
     <string name="generate_dialog_title">Generate scope</string>
-    <string name="generate_dialog_subtitle">Profile: %1$s</string>
     <string name="scope_whole_book">Whole book</string>
     <string name="scope_current_chapter">Current chapter</string>
     <string name="scope_current_scene">Current scene</string>

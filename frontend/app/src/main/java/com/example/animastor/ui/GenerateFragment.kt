@@ -490,7 +490,7 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
         val layersText = enabledLayers.joinToString(" → ")
 
         // Show scope dialog — applies to the GPU stages after VBook completes
-        showScopeDialog(profile = "full") { scope, _, _ ->
+        showScopeDialog { scope, _, _ ->
             onGenerateVBookClicked()
             val scopeLabel = when (scope) {
                 "current_scene" -> getString(R.string.scope_current_scene)
@@ -541,7 +541,7 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
             Toast.makeText(requireContext(), R.string.generate_audio_disabled, Toast.LENGTH_SHORT).show()
             return
         }
-        showScopeDialog(profile = "audio_only") { scope, chId, scId ->
+        showScopeDialog { scope, chId, scId ->
             viewModel.startGeneration(
                 GenerateViewModel.GenerationRequest(profile = "audio_only", scope = scope, chapterId = chId, sceneId = scId)
             ) { result ->
@@ -563,7 +563,7 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
             Toast.makeText(requireContext(), R.string.generate_image_disabled, Toast.LENGTH_SHORT).show()
             return
         }
-        showScopeDialog(profile = "image_only") { scope, chId, scId ->
+        showScopeDialog { scope, chId, scId ->
             viewModel.startGeneration(
                 GenerateViewModel.GenerationRequest(profile = "image_only", scope = scope, chapterId = chId, sceneId = scId)
             ) { result ->
@@ -585,7 +585,7 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
             Toast.makeText(requireContext(), R.string.generate_video_disabled, Toast.LENGTH_SHORT).show()
             return
         }
-        showScopeDialog(profile = "full") { scope, chId, scId ->
+        showScopeDialog { scope, chId, scId ->
             viewModel.startGeneration(
                 GenerateViewModel.GenerationRequest(profile = "full", scope = scope, chapterId = chId, sceneId = scId)
             ) { result ->
@@ -610,13 +610,11 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
      * Show the scope selection dialog before starting generation.
      * Calls [onStart] with (scope, chapterId, sceneId) when the user confirms.
      */
-    private fun showScopeDialog(profile: String, onStart: (scope: String, chapterId: String?, sceneId: String?) -> Unit) {
+    private fun showScopeDialog(onStart: (scope: String, chapterId: String?, sceneId: String?) -> Unit) {
         val binding = DialogGenerateScopeBinding.inflate(layoutInflater)
 
         val pos = SharedPositionManager.current.value
         val hasPosition = pos.chapterId != null
-
-        binding.dialogSubtitle.text = getString(R.string.generate_dialog_subtitle, profile)
 
         // Disable scope options that require a position if no position is set
         if (!hasPosition) {

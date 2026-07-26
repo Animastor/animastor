@@ -144,7 +144,6 @@
 
     <!-- Generate Scope Dialog (Phase C) -->
     <string name="generate_dialog_title">Область генерации</string>
-    <string name="generate_dialog_subtitle">Профиль: %1$s</string>
     <string name="scope_whole_book">Вся книга</string>
     <string name="scope_current_chapter">Текущая глава</string>
     <string name="scope_current_scene">Текущая сцена</string>

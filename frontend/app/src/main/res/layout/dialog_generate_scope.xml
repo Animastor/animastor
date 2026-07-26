@@ -7,14 +7,6 @@
     android:padding="20dp"
     android:background="?attr/colorSurface">
 
-    <TextView
-        android:id="@+id/dialogSubtitle"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:textSize="13sp"
-        android:textColor="?attr/colorOnSurfaceVariant"
-        android:layout_marginBottom="12dp" />
-
     <RadioGroup
         android:id="@+id/scopeGroup"
         android:layout_width="match_parent"
