@@ -161,96 +161,97 @@ module.exports = function(app, redis, deps) {
     async function buildWorker(bookId, task, chunkData, buildId) {
         const targets = task.targets || [];
 
-        // ── whole-book scope: keep aggregated (one row per type) ──
-        if (task.scope === 'whole_book' || !task.scope) {
-            const targetStates = await loadTargetStates(bookId, targets);
-            const chunks = chunksForTargets(chunkData.ids, chunkData.chunkById, targets);
+        // ── current_scene: expand into per-target (one row per scene) ──
+        // All other scopes (whole_book, current_chapter, from_current_scene)
+        // are ONE task → one aggregated row.
+        if (task.scope === 'current_scene') {
+            const allTargetStates = await loadTargetStates(bookId, targets);
+            const result = [];
 
-            let counts;
-            if (task.type === 'audio') {
-                counts = countAudio(targets, chunks, targetStates);
-            } else if (task.type === 'image') {
-                counts = await countImage(bookId, buildId, targets, chunks, targetStates);
-            } else {
-                counts = countSceneStage(task.type, targets, chunks, targetStates);
+            for (const target of targets) {
+                const single = [target];
+                const chunks = chunksForTargets(chunkData.ids, chunkData.chunkById, single);
+                const targetStates = new Map();
+                const key = sceneKey(target.chapter_id, target.scene_id);
+                if (allTargetStates.has(key)) {
+                    targetStates.set(key, allTargetStates.get(key));
+                }
+
+                let counts;
+                if (task.type === 'audio') {
+                    counts = countAudio(single, chunks, targetStates);
+                } else if (task.type === 'image') {
+                    counts = await countImage(bookId, buildId, single, chunks, targetStates);
+                } else {
+                    counts = countSceneStage(task.type, single, chunks, targetStates);
+                }
+
+                const cancelled = task.status === 'cancelled';
+                const doneByProgress = counts.total > 0 && counts.ready >= counts.total;
+                const done = task.status === 'completed' || (!cancelled && doneByProgress);
+                const ready = task.status === 'completed' ? counts.total : counts.ready;
+                const percent = done
+                    ? 100
+                    : Math.round(ready * 100 / Math.max(1, counts.total));
+
+                result.push({
+                    task_id: task.task_id || null,
+                    type: task.type,
+                    scope: task.scope || 'whole_book',
+                    chapter_id: target.chapter_id,
+                    scene_id: target.scene_id,
+                    target_count: 1,
+                    started_at: task.started_at || null,
+                    ready,
+                    total: counts.total,
+                    percent,
+                    done,
+                    visible: true,
+                    indeterminate: counts.indeterminate,
+                    cancelled,
+                });
             }
 
-            const cancelled = task.status === 'cancelled';
-            const doneByProgress = counts.total > 0 && counts.ready >= counts.total;
-            const done = task.status === 'completed' || (!cancelled && doneByProgress);
-            const ready = task.status === 'completed' ? counts.total : counts.ready;
-            const percent = done
-                ? 100
-                : Math.round(ready * 100 / Math.max(1, counts.total));
-
-            return [{
-                task_id: task.task_id || null,
-                type: task.type,
-                scope: task.scope || 'whole_book',
-                chapter_id: task.chapter_id || null,
-                scene_id: task.scene_id || null,
-                target_count: targets.length,
-                started_at: task.started_at || null,
-                ready,
-                total: counts.total,
-                percent,
-                done,
-                visible: true,
-                indeterminate: counts.indeterminate,
-                cancelled,
-            }];
+            return result;
         }
 
-        // ── Scoped generation (e.g. current_scene, current_chapter):
-        //    one progress row per target scene ──
-        const allTargetStates = await loadTargetStates(bookId, targets);
-        const result = [];
+        // ── All other scopes: one aggregated row per type ──
+        const targetStates = await loadTargetStates(bookId, targets);
+        const chunks = chunksForTargets(chunkData.ids, chunkData.chunkById, targets);
 
-        for (const target of targets) {
-            const single = [target];
-            const chunks = chunksForTargets(chunkData.ids, chunkData.chunkById, single);
-            const targetStates = new Map();
-            const key = sceneKey(target.chapter_id, target.scene_id);
-            if (allTargetStates.has(key)) {
-                targetStates.set(key, allTargetStates.get(key));
-            }
-
-            let counts;
-            if (task.type === 'audio') {
-                counts = countAudio(single, chunks, targetStates);
-            } else if (task.type === 'image') {
-                counts = await countImage(bookId, buildId, single, chunks, targetStates);
-            } else {
-                counts = countSceneStage(task.type, single, chunks, targetStates);
-            }
-
-            const cancelled = task.status === 'cancelled';
-            const doneByProgress = counts.total > 0 && counts.ready >= counts.total;
-            const done = task.status === 'completed' || (!cancelled && doneByProgress);
-            const ready = task.status === 'completed' ? counts.total : counts.ready;
-            const percent = done
-                ? 100
-                : Math.round(ready * 100 / Math.max(1, counts.total));
-
-            result.push({
-                task_id: task.task_id || null,
-                type: task.type,
-                scope: task.scope || 'whole_book',
-                chapter_id: target.chapter_id,
-                scene_id: target.scene_id,
-                target_count: 1,
-                started_at: task.started_at || null,
-                ready,
-                total: counts.total,
-                percent,
-                done,
-                visible: true,
-                indeterminate: counts.indeterminate,
-                cancelled,
-            });
+        let counts;
+        if (task.type === 'audio') {
+            counts = countAudio(targets, chunks, targetStates);
+        } else if (task.type === 'image') {
+            counts = await countImage(bookId, buildId, targets, chunks, targetStates);
+        } else {
+            counts = countSceneStage(task.type, targets, chunks, targetStates);
         }
 
-        return result;
+        const cancelled = task.status === 'cancelled';
+        const doneByProgress = counts.total > 0 && counts.ready >= counts.total;
+        const done = task.status === 'completed' || (!cancelled && doneByProgress);
+        const ready = task.status === 'completed' ? counts.total : counts.ready;
+        const percent = done
+            ? 100
+            : Math.round(ready * 100 / Math.max(1, counts.total));
+
+        return [{
+            task_id: task.task_id || null,
+            type: task.type,
+            scope: task.scope || 'whole_book',
+            chapter_id: task.chapter_id || null,
+            scene_id: task.scene_id || null,
+            target_count: targets.length,
+            started_at: task.started_at || null,
+            ready,
+            total: counts.total,
+            percent,
+            done,
+            visible: true,
+            indeterminate: counts.indeterminate,
+            cancelled,
+        }];
     }
 
     async function legacyTasks(bookId) {
