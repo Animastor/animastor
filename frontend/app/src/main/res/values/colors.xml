@@ -39,6 +39,12 @@
     <color name="cinema_light_outline_variant">#E2DACD</color>
     <color name="cinema_light_error_container">#FCE4E7</color>
 
+    <!-- Worker panel backgrounds — distinct per theme -->
+    <color name="cinema_worker_panel_on">#3A2E1A</color>
+    <color name="cinema_worker_panel_off">#25211E</color>
+    <color name="cinema_light_worker_panel_on">#E0CC99</color>
+    <color name="cinema_light_worker_panel_off">#E6DFD3</color>
+
     <!--
     ============================================================
     SHARED — не меняются между темами

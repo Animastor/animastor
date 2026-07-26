@@ -22,7 +22,6 @@ import com.example.animastor.databinding.FragmentGenerateBinding
 import com.example.animastor.databinding.ItemWorkerProgressBinding
 import com.example.animastor.network.RetrofitClient
 import com.example.animastor.repository.BookData
-import com.google.android.material.color.MaterialColors
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -691,15 +690,20 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
      */
     private fun updateHeaderPanelStyle(headerRow: View, accentBar: View, isEnabled: Boolean) {
         val ctx = requireContext()
+        // Detect active theme (dark vs light) to pick appropriate panel colors
+        val isDark = (ctx.resources.configuration.uiMode and
+            android.content.res.Configuration.UI_MODE_NIGHT_MASK) ==
+            android.content.res.Configuration.UI_MODE_NIGHT_YES
+
         val accentColor = if (isEnabled) {
-            MaterialColors.getColor(ctx, com.google.android.material.R.attr.colorSecondary, ctx.getColor(R.color.cinema_accent))
+            ctx.getColor(R.color.cinema_accent)
         } else {
-            MaterialColors.getColor(ctx, com.google.android.material.R.attr.colorOutlineVariant, ctx.getColor(R.color.cinema_outline_variant))
+            ctx.getColor(if (isDark) R.color.cinema_outline_variant else R.color.cinema_light_outline_variant)
         }
         val bgColor = if (isEnabled) {
-            MaterialColors.getColor(ctx, com.google.android.material.R.attr.colorSecondaryContainer, ctx.getColor(R.color.cinema_accent_container))
+            ctx.getColor(if (isDark) R.color.cinema_worker_panel_on else R.color.cinema_light_worker_panel_on)
         } else {
-            MaterialColors.getColor(ctx, com.google.android.material.R.attr.colorSurfaceVariant, ctx.getColor(R.color.cinema_surface_variant))
+            ctx.getColor(if (isDark) R.color.cinema_worker_panel_off else R.color.cinema_light_worker_panel_off)
         }
 
         accentBar.setBackgroundColor(accentColor)
