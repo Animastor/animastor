@@ -10,6 +10,7 @@ const taskRepo = require('../../storage/postgres/repositories/task-repo');
 module.exports = function(app, redis, deps) {
     const {
         config, state, audio, image, video, book, orchestrator, storage,
+        runtime,
         txtImporter, lazyBook, genSessionRepo, bookSourceRepo,
         placeholderAudio, layerConfig, activeScenes,
         utils, saveChunk, getChunk, getAllChunks, getBookWindowStatus,
@@ -34,8 +35,7 @@ module.exports = function(app, redis, deps) {
                 const firstChunk = await getChunk(ids[0]);
                 if (firstChunk?.build_id) buildId = firstChunk.build_id;
             }
-            const windowModule = require('../../runtime/scene-window');
-            const result = await windowModule.slideWindow(redis, bookId, loadedBook, buildId);
+            const result = await runtime.sceneWindow.slideWindow(redis, bookId, loadedBook, buildId);
             const newIds = await getAllChunks(bookId);
             res.json({ started: result.started, remaining: result.remaining, chunk_ids: newIds });
         } catch (err) {
@@ -204,11 +204,9 @@ module.exports = function(app, redis, deps) {
             const { bookId } = req.params;
             log(`[CANCEL-GENERATION] ${bookId}: cancelling generation`);
 
-            const windowModule = require('../../runtime/scene-window');
-            await windowModule.setCancelFlag(redis, bookId);
+            await runtime.sceneWindow.setCancelFlag(redis, bookId);
 
-            const scheduler = require('../../runtime/runtime-scheduler');
-            await scheduler.clearBookFromActiveIndex(redis, bookId);
+            await runtime.scheduler.clearBookFromActiveIndex(redis, bookId);
 
             await redis.del('animastor:runtime:active-audio');
             await redis.del('animastor:runtime:active-image');
@@ -307,8 +305,7 @@ module.exports = function(app, redis, deps) {
 
             const buildId = loadedBook.manifest?.build_id || 'default';
 
-            const windowModule = require('../../runtime/scene-window');
-            await windowModule.clearCancelFlag(redis, bookId);
+            await runtime.sceneWindow.clearCancelFlag(redis, bookId);
             // force-dispatch is owned by orchestrator.resetScenes().
 
             const effectiveScope = scope || 'whole_book';
@@ -497,9 +494,8 @@ module.exports = function(app, redis, deps) {
             // The scene stays outside the active index until task metadata is
             // complete. Missing an intermediate scheduler tick is harmless; the
             // next tick sees the fully registered command after this re-add.
-            const scheduler = require('../../runtime/runtime-scheduler');
             for (const ds of filteredDirty) {
-                await scheduler.addSceneToActiveIndex(
+                await runtime.scheduler.addSceneToActiveIndex(
                     redis,
                     bookId,
                     ds.chapter_id,

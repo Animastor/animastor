@@ -631,35 +631,37 @@ describe('Happy Path: Dispatch Engine — Quotas', () => {
     });
 
     it('acquireQuota returns exceeded when over limit', async () => {
-        // Acquire all audio slots (max 8)
-        for (let i = 0; i < 8; i++) {
+        const maxAudio = dispatchEngine.QUOTAS.maxActiveAudio;
+        // Acquire all audio slots
+        for (let i = 0; i < maxAudio; i++) {
             const r = await dispatchEngine.acquireQuota(redis, 'audio');
             expect(r.acquired).to.be.true;
         }
 
-        // 9th should fail
+        // Next should fail
         const result = await dispatchEngine.acquireQuota(redis, 'audio');
         expect(result.acquired).to.be.false;
         expect(result.reason).to.equal('quota_exceeded');
     });
 
     it('acquireQuota respects different limits per stage', async () => {
-        // Image max is 4
+        const maxImage = dispatchEngine.QUOTAS.maxActiveImage;
+        const maxVideo = dispatchEngine.QUOTAS.maxActiveVideo;
+
         let r;
-        for (let i = 0; i < 4; i++) {
+        for (let i = 0; i < maxImage; i++) {
             r = await dispatchEngine.acquireQuota(redis, 'image');
             expect(r.acquired).to.be.true;
         }
-        // 5th should fail
+        // Next should fail
         const rFail = await dispatchEngine.acquireQuota(redis, 'image');
         expect(rFail.acquired).to.be.false;
 
-        // Video max is 2
-        const v1 = await dispatchEngine.acquireQuota(redis, 'video');
-        expect(v1.acquired).to.be.true;
-        const v2 = await dispatchEngine.acquireQuota(redis, 'video');
-        expect(v2.acquired).to.be.true;
-        // 3rd should fail
+        for (let i = 0; i < maxVideo; i++) {
+            r = await dispatchEngine.acquireQuota(redis, 'video');
+            expect(r.acquired).to.be.true;
+        }
+        // Next should fail
         const vFail = await dispatchEngine.acquireQuota(redis, 'video');
         expect(vFail.acquired).to.be.false;
     });
@@ -697,11 +699,10 @@ describe('Happy Path: Dispatch Engine — Quotas', () => {
     });
 
     it('checkQuota reports correct status', async () => {
-        // Initially 0/8 for audio
         const check = await dispatchEngine.checkQuota(redis, 'audio');
         expect(check.exceeded).to.be.false;
         expect(check.current).to.equal(0);
-        expect(check.max).to.equal(8);
+        expect(check.max).to.equal(dispatchEngine.QUOTAS.maxActiveAudio);
     });
 
     it('getQuotaStatus returns per-stage breakdown', async () => {
@@ -709,9 +710,10 @@ describe('Happy Path: Dispatch Engine — Quotas', () => {
         await dispatchEngine.acquireQuota(redis, 'audio');
 
         const status = await dispatchEngine.getQuotaStatus(redis);
+        const maxAudio = dispatchEngine.QUOTAS.maxActiveAudio;
         expect(status.audio.current).to.equal(2);
-        expect(status.audio.max).to.equal(8);
-        expect(status.audio.available).to.equal(6);
+        expect(status.audio.max).to.equal(maxAudio);
+        expect(status.audio.available).to.equal(maxAudio - 2);
         expect(status.image.current).to.equal(0);
         expect(status.video.current).to.equal(0);
     });
@@ -851,22 +853,23 @@ describe('Happy Path: State — Per-Asset Operations', () => {
     // Uses a single EVAL call that atomically GETs the counter, checks the limit,
     // and INCRs — eliminating the race between checkQuota and incrementActiveCounter.
     it('FIXED M2 (Н.3): acquireQuota is atomic — respects limits with Lua eval', async () => {
-        // Acquire all audio slots (max 8)
-        for (let i = 0; i < 8; i++) {
+        const maxAudio = dispatchEngine.QUOTAS.maxActiveAudio;
+        // Acquire all audio slots
+        for (let i = 0; i < maxAudio; i++) {
             const r = await dispatchEngine.acquireQuota(redis, 'audio');
             expect(r.acquired).to.be.true;
             expect(r.current).to.equal(i + 1);
         }
 
-        // 9th should fail (atomic — no race possible)
+        // Next should fail (atomic — no race possible)
         const result = await dispatchEngine.acquireQuota(redis, 'audio');
         expect(result.acquired).to.be.false;
         expect(result.reason).to.equal('quota_exceeded');
-        expect(result.current).to.equal(8);
+        expect(result.current).to.equal(maxAudio);
 
-        // Verify counter is exactly 8 (not overshot)
+        // Verify counter is exactly max (not overshot)
         const counter = await dispatchEngine.getActiveCounter(redis, 'audio');
-        expect(counter).to.equal(8);
+        expect(counter).to.equal(maxAudio);
     });
 
     it('FIXED M2 (Н.3): acquireQuota handles first-time key (nil → INCR)', async () => {
@@ -877,22 +880,23 @@ describe('Happy Path: State — Per-Asset Operations', () => {
     });
 
     it('FIXED M2 (Н.3): acquireQuota respects different limits per stage atomically', async () => {
-        // Image max is 4
+        const maxImage = dispatchEngine.QUOTAS.maxActiveImage;
+        const maxVideo = dispatchEngine.QUOTAS.maxActiveVideo;
+
         let r;
-        for (let i = 0; i < 4; i++) {
+        for (let i = 0; i < maxImage; i++) {
             r = await dispatchEngine.acquireQuota(redis, 'image');
             expect(r.acquired).to.be.true;
         }
-        // 5th should fail atomically
+        // Next should fail atomically
         const rFail = await dispatchEngine.acquireQuota(redis, 'image');
         expect(rFail.acquired).to.be.false;
 
-        // Video max is 2
-        const v1 = await dispatchEngine.acquireQuota(redis, 'video');
-        expect(v1.acquired).to.be.true;
-        const v2 = await dispatchEngine.acquireQuota(redis, 'video');
-        expect(v2.acquired).to.be.true;
-        // 3rd should fail
+        for (let i = 0; i < maxVideo; i++) {
+            r = await dispatchEngine.acquireQuota(redis, 'video');
+            expect(r.acquired).to.be.true;
+        }
+        // Next should fail
         const vFail = await dispatchEngine.acquireQuota(redis, 'video');
         expect(vFail.acquired).to.be.false;
     });

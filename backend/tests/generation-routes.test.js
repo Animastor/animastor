@@ -129,6 +129,19 @@ describe('Generation routes independent commands', () => {
                     return { marked: scenes.length, reset_scenes: scenes.length };
                 },
             },
+            runtime: {
+                sceneWindow: {
+                    clearCancelFlag: async () => {},
+                    setCancelFlag: async () => {},
+                    slideWindow: async () => ({ started: 0, remaining: 0 }),
+                },
+                scheduler: {
+                    addSceneToActiveIndex: async (_redis, _bookId, chapterId, sceneId) => {
+                        events.push(`activate:${chapterId}/${sceneId}`);
+                    },
+                    clearBookFromActiveIndex: async () => {},
+                },
+            },
             utils: { log: () => {} },
         };
         require('../src/routes/book/generation-routes.cjs')(app, redis, deps);
