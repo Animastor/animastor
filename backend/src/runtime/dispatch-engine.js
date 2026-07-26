@@ -44,10 +44,12 @@ const LEASE_TTLS = {
 };
 
 // Backpressure limits (active concurrent)
+// EДИНЫЙ источник — runtime-config.js. Изменяй только там.
+const { QUOTAS: QUOTAS_CFG } = require('../config/runtime-config');
 const QUOTAS = {
-    maxActiveAudio: 3,
-    maxActiveImage: 2,
-    maxActiveVideo: 1
+    maxActiveAudio: QUOTAS_CFG.MAX_ACTIVE_AUDIO,
+    maxActiveImage: QUOTAS_CFG.MAX_ACTIVE_IMAGE,
+    maxActiveVideo: QUOTAS_CFG.MAX_ACTIVE_VIDEO
 };
 
 // ======================================================

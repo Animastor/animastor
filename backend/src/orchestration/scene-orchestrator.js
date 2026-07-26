@@ -58,6 +58,13 @@ async function executeAudioDispatch(redis, scene, loadedBook, buildId, dispatchI
 
     if (!sceneData) {
         warn(`AUDIO_DISPATCH: sceneData not found for ${bookId}/${chapterId}/${sceneId}`);
+        // scene_not_found: remove from active index so scheduler stops retrying.
+        // Lease will expire on its own TTL — no need for active cleanup.
+        try {
+            await runtimeScheduler.removeSceneFromActiveIndex(redis, bookId, chapterId, sceneId);
+        } catch (cleanupErr) {
+            warn(`AUDIO_DISPATCH: cleanup error for ${bookId}/${chapterId}/${sceneId}: ${cleanupErr.message}`);
+        }
         return { dispatched: false, jobs: 0, reason: 'scene_not_found' };
     }
 
@@ -166,6 +173,12 @@ async function executeImageDispatch(redis, scene, loadedBook, buildId, dispatchI
 
     if (!sceneData) {
         warn(`IMAGE_DISPATCH: sceneData not found for ${bookId}/${chapterId}/${sceneId}`);
+        // scene_not_found: remove from active index so scheduler stops retrying.
+        try {
+            await runtimeScheduler.removeSceneFromActiveIndex(redis, bookId, chapterId, sceneId);
+        } catch (cleanupErr) {
+            warn(`IMAGE_DISPATCH: cleanup error for ${bookId}/${chapterId}/${sceneId}: ${cleanupErr.message}`);
+        }
         return { dispatched: false, jobs: 0, reason: 'scene_not_found' };
     }
 
@@ -232,6 +245,12 @@ async function executeVideoDispatch(redis, scene, loadedBook, buildId, dispatchI
 
     if (!sceneData) {
         warn(`VIDEO_DISPATCH: sceneData not found for ${bookId}/${chapterId}/${sceneId}`);
+        // scene_not_found: remove from active index so scheduler stops retrying.
+        try {
+            await runtimeScheduler.removeSceneFromActiveIndex(redis, bookId, chapterId, sceneId);
+        } catch (cleanupErr) {
+            warn(`VIDEO_DISPATCH: cleanup error for ${bookId}/${chapterId}/${sceneId}: ${cleanupErr.message}`);
+        }
         return { dispatched: false, jobs: 0, reason: 'scene_not_found' };
     }
 

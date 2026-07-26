@@ -86,7 +86,7 @@ const OUTPUT_DIR = config.OUTPUT_DIR;
 // ======================================================
 // HELPERS
 // ======================================================
-const { log } = utils;
+const { log, warn } = utils;
 
 // Redis helpers (factory, initialized with redis instance)
 const {

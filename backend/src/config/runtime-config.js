@@ -101,10 +101,13 @@ const REDIS = {
 // ======================================================
 // QUOTAS
 // ======================================================
+// Tune these values to match your GPU capacity.
+// Each slot = one concurrent worker task.
+// Start with 8/4/2 if you have 2+ GPUs; lower if 1 GPU.
 const QUOTAS = {
-    MAX_ACTIVE_AUDIO: 3,
-    MAX_ACTIVE_IMAGE: 2,
-    MAX_ACTIVE_VIDEO: 1,
+    MAX_ACTIVE_AUDIO: 8,
+    MAX_ACTIVE_IMAGE: 4,
+    MAX_ACTIVE_VIDEO: 2,
 };
 
 // ======================================================
