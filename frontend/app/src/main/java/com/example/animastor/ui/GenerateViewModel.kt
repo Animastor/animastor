@@ -327,24 +327,20 @@ class GenerateViewModel(
         _generationStatus.value = GenerationStatus.RUNNING
         _isRegenerating.value = true
 
-        // 🔧 FIX: Don't overwrite _activeGeneration if one is already active.
-        // Multiple workers can run in parallel (e.g. audio + image). Overwriting
-        // would change the progress-panel scope and lose progress for existing
-        // workers.
+        // Always overwrite _activeGeneration with each new generation call.
+        // This ensures the progress poller (refreshProgressUi) keeps running
+        // and is not cleared when previous workers finish.
         //
-        // NOTE: _activeGeneration.scope controls the /progress-panel API query
-        // (which workers to DISPLAY). The generation scope from the dialog goes
-        // to /regenerate (which scenes to GENERATE). These are separate concerns.
-        // Always use "whole_book" for display so ALL workers are shown regardless
-        // of which scope each worker type was started with.
-        if (_activeGeneration.value == null) {
-            _activeGeneration.value = ActiveGeneration(
-                scope = "whole_book",
-                chapterId = null,
-                sceneId = null
-            )
-            startTimer()
-        }
+        // The backend /progress-panel endpoint IGNORES scope filtering (F15),
+        // so we always use "whole_book" to show ALL workers regardless of
+        // which scope each worker type was started with. x/y numbers are
+        // computed per-worker from actual dispatched work, not from scope.
+        _activeGeneration.value = ActiveGeneration(
+            scope = "whole_book",
+            chapterId = null,
+            sceneId = null
+        )
+        if (timerStartedAt <= 0L) startTimer()
 
         // 🔧 FIX: Don't cancel previous generationJob — parallel generations are
         // independent. The /regenerate API call is fire-and-forget; its response
@@ -1232,6 +1228,12 @@ class GenerateViewModel(
      * Build the progress panel state from server-computed worker list + local VBook.
      * Server provides ready/total/percent/done/visible for each GPU worker.
      * Client keeps: 10s "Done" row timing, monotonic floor, VBook progress rendering.
+     *
+     * Parallel-worker policy (F15 fix):
+     * - Completed workers stay visible at 100% while ANY worker is still active.
+     * - When ALL workers are done, they show completed for COMPLETED_WORKER_DISPLAY_MS,
+     *   then applyGenerationResults() is called and the panel hides.
+     * - Workers NEVER disappear mid-generation just because 10s elapsed.
      */
     fun computeWorkers(
         panel: com.example.animastor.repository.ProgressPanelResponse?,
@@ -1253,21 +1255,13 @@ class GenerateViewModel(
             cancelled: Boolean = false
         ) {
             if (serverTotal <= 0) return
-            if (type in _workerPermanentlyDone) return
             // Monotonic floor (client UI policy)
             val r = maxOf(serverReady, workerReadyFloor[type] ?: 0)
             workerReadyFloor[type] = r
             val done = serverDone || (r >= serverTotal && r > 0)
-            if (done && !cancelled) {
-                if (!workerCompletedAt.containsKey(type)) {
-                    workerCompletedAt[type] = now
-                }
-                val completedAt = workerCompletedAt[type] ?: now
-                if (now - completedAt >= COMPLETED_WORKER_DISPLAY_MS) {
-                    _workerPermanentlyDone.add(type)
-                    workerCompletedAt.remove(type)
-                    return
-                }
+            // Record completion timestamp when first seen done (don't overwrite)
+            if (done && !cancelled && !workerCompletedAt.containsKey(type)) {
+                workerCompletedAt[type] = now
             }
             val pct = if (done) 100 else serverPct.coerceIn(0, 99)
             workers.add(WorkerUi(type, label, r, serverTotal, pct, done, countText = countText, indeterminate = serverIndeterminate, cancelled = cancelled))
@@ -1292,13 +1286,11 @@ class GenerateViewModel(
         // ── VBook worker (local state) ──
         if (vbookProgress != null && vbookProgress.stage != VBookStage.IDLE) {
             if (vbookProgress.stage == VBookStage.COMPLETED) {
-                val completedAt = workerCompletedAt.getOrPut("vbook") { now }
-                if (now - completedAt < COMPLETED_WORKER_DISPLAY_MS && "vbook" !in _workerPermanentlyDone) {
-                    workers.add(WorkerUi("vbook", labels.vbookLabel, 1, 1, 100, done = true))
-                } else {
-                    _workerPermanentlyDone.add("vbook")
-                    workerCompletedAt.remove("vbook")
+                // Record completion timestamp if not already set
+                if (!workerCompletedAt.containsKey("vbook")) {
+                    workerCompletedAt["vbook"] = now
                 }
+                workers.add(WorkerUi("vbook", labels.vbookLabel, 1, 1, 100, done = true))
             } else {
                 val stageMsg = vbookProgress.message?.takeIf { it.isNotBlank() }
                 val label = stageMsg ?: labels.vbookLabel
@@ -1324,16 +1316,9 @@ class GenerateViewModel(
             }
         }
 
-        // ── Recently completed workers (still within 10s display window) ──
+        // ── Recently completed workers (not returned by server but tracked locally) ──
         val activeTypes = workers.map { it.type }.toSet()
-        val staleTypes = mutableListOf<String>()
-        for ((type, completedAt) in workerCompletedAt) {
-            if (type in _workerPermanentlyDone) continue
-            if (now - completedAt >= COMPLETED_WORKER_DISPLAY_MS) {
-                staleTypes.add(type)
-                _workerPermanentlyDone.add(type)
-                continue
-            }
+        for ((type, _) in workerCompletedAt) {
             if (type in activeTypes) continue
             val label = when (type) {
                 "cover" -> labels.cover; "audio" -> labels.audio
@@ -1343,44 +1328,54 @@ class GenerateViewModel(
             }
             workers.add(WorkerUi(type, label, 100, 100, 100, done = true))
         }
-        staleTypes.forEach { workerCompletedAt.remove(it) }
 
         // ── All-cancelled guard: if every remaining worker is cancelled,
-        // move them to permanently-done so the DoneRow can fire and
-        // transition the nav icon to SUCCESS or IDLE.
+        // hide the panel immediately since there's nothing to show.
         val allCancelled = workers.isNotEmpty() && workers.all { it.cancelled }
         if (allCancelled) {
-            _workerPermanentlyDone.addAll(workers.map { it.type })
-            workers.clear()
+            workerCompletedAt.clear()
+            _workerPermanentlyDone.clear()
+            gpuProgressDoneAt = 0L
+            return ProgressPanelState.Hidden
         }
 
         // ── Decide panel state ──
         if (workers.isEmpty()) {
-            if (gpuProgressDoneAt == 0L && workerCompletedAt.isEmpty() && _workerPermanentlyDone.isEmpty()) {
-                return ProgressPanelState.Hidden
+            // No workers at all → Hidden. Clean up stale state from previous sessions.
+            workerCompletedAt.clear()
+            _workerPermanentlyDone.clear()
+            gpuProgressDoneAt = 0L
+            return ProgressPanelState.Hidden
+        }
+
+        // Check if any worker is still active (non-done, non-cancelled)
+        val anyActive = workers.any { !it.done && !it.cancelled }
+
+        if (!anyActive) {
+            // ── ALL workers done — start/check 10s DoneRow countdown ──
+            if (gpuProgressDoneAt == 0L) {
+                gpuProgressDoneAt = now  // First time all-done detected
             }
-            if (gpuProgressDoneAt == 0L) gpuProgressDoneAt = now
             val elapsed = now - gpuProgressDoneAt
-            if (elapsed < COMPLETED_WORKER_DISPLAY_MS) {
-                return ProgressPanelState.DoneRow
-            } else {
+            if (elapsed >= COMPLETED_WORKER_DISPLAY_MS) {
+                // 10s display window expired — finalise generation
                 stopProgressStream()
                 workerCompletedAt.clear()
                 _workerPermanentlyDone.clear()
                 gpuProgressDoneAt = 0L
-                val shouldRefresh = panel != null
-                    if (vbookProgress?.stage == VBookStage.COMPLETED) {
-                        _uiState.update { it.copy(vbookProgress = VBookProgress(stage = VBookStage.IDLE)) }
-                    }
-                if (shouldRefresh) {
-                    _generationStatus.value = GenerationStatus.SUCCESS
-                    applyGenerationResults()
+                if (vbookProgress?.stage == VBookStage.COMPLETED) {
+                    _uiState.update { it.copy(vbookProgress = VBookProgress(stage = VBookStage.IDLE)) }
                 }
+                _generationStatus.value = GenerationStatus.SUCCESS
+                applyGenerationResults()
                 return ProgressPanelState.Hidden
             }
+            // Within the 10s DoneRow window — keep showing workers at their final state
+            return ProgressPanelState.Workers(workers)
         }
 
-        gpuProgressDoneAt = 0L
+        // ── Some workers still active — show ALL workers (completed ones stay visible) ──
+        gpuProgressDoneAt = 0L  // Reset countdown since new active work appeared
         return ProgressPanelState.Workers(workers)
     }
 }

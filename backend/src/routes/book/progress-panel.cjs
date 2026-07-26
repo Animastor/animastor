@@ -13,6 +13,13 @@
 // Everything else — which layers are visible for the profile,
 // ready/total/percent/done, IU vs legacy image counting,
 // cover relevance — is computed here.
+//
+// IMPORTANT (F15): Scope/chapter_id/scene_id query params are IGNORED.
+// The panel always shows ALL workers across ALL scenes so that parallel
+// workers started with different scopes are visible simultaneously.
+// x/y numbers for each worker are derived from actual dispatched work
+// (expected_chunk_count for audio, IU counts for image, unique scenes
+// for video), NOT from the total number of chunks in a scope.
 
 const path = require('path');
 const fs = require('fs');
@@ -45,14 +52,13 @@ module.exports = function(app, redis, deps) {
     app.get('/api/v1/book/:bookId/progress-panel', async (req, res) => {
         try {
             const { bookId } = req.params;
-            const { scope, chapter_id, scene_id } = req.query;
 
             // ── 1. Read layer config (profile) ──
             const cfg = await layerConfig.get(redis, bookId);
             const profile = layerConfig.resolveProfile(cfg);
             const layers = layersForProfile(profile);
 
-            // ── 2. Read all chunk metadata ──
+            // ── 2. Read ALL chunk metadata (no scope filtering) ──
             const allChunkIds = await getAllChunks(bookId);
 
             const chunkById = new Map();
@@ -76,16 +82,6 @@ module.exports = function(app, redis, deps) {
                 }
             }
 
-            let filteredIds = allChunkIds;
-            if ((scope === 'current_chapter' || scope === 'chapter') && chapter_id) {
-                filteredIds = allChunkIds.filter(cid => chunkById.get(cid)?.chapter_id === chapter_id);
-            } else if ((scope === 'current_scene' || scope === 'scene') && chapter_id && scene_id) {
-                filteredIds = allChunkIds.filter(cid => {
-                    const c = chunkById.get(cid);
-                    return c?.chapter_id === chapter_id && c?.scene_id === scene_id;
-                });
-            }
-
             // ── 3. Count ready chunks per layer ──
             // Each worker shows honest progress based on its own work units:
             //   - Audio: expected_count-based total. Each scene stores its expected
@@ -93,21 +89,37 @@ module.exports = function(app, redis, deps) {
             //     across unique scenes, so total grows only when a NEW scene
             //     appears (e.g. +5 at once), not on every individual chunk.
             //     This prevents the old jitter (25 → 30 → 34 per chunk dispatch).
-            //   - Image: IU images (individual image generation tasks).
-            //   - Video: scenes (one video per scene).
+            //   - Image: IU images (individual image generation tasks) or scenes with image chunks.
+            //   - Video: unique scenes with chunks (one video per scene).
             // Each worker has its own total — this is fine, they are separate rows.
-            let audioReady = 0, audioReadyReal = 0, imageReady = 0, videoReady = 0;
+            let audioReady = 0, audioReadyReal = 0;
             const audioSceneExpected = new Map(); // "ch:sc" -> expected_count (stable per scene)
+            const uniqueSceneKeys = new Set();     // "ch:sc" for all scenes with dispatch
+            const videoReadyScenes = new Set();    // "ch:sc" for scenes with at least one ready video chunk
+            const imageReadyScenes = new Set();    // "ch:sc" for scenes with at least one ready image chunk
 
-            for (const cid of filteredIds) {
+            for (const cid of allChunkIds) {
                 const chunk = chunkById.get(cid);
                 if (!chunk) continue;
                 if (chunk.audio_status === 'ready' || chunk.audio_status === 'placeholder') {
                     audioReady++;
                     if (chunk.audio_status === 'ready') audioReadyReal++;
                 }
-                if (chunk.image_status === 'ready') imageReady++;
-                if (chunk.video_status === 'ready') videoReady++;
+                if (chunk.image_status === 'ready') {
+                    if (chunk.chapter_id && chunk.scene_id) {
+                        imageReadyScenes.add(`${chunk.chapter_id}:${chunk.scene_id}`);
+                    }
+                }
+                if (chunk.video_status === 'ready') {
+                    if (chunk.chapter_id && chunk.scene_id) {
+                        videoReadyScenes.add(`${chunk.chapter_id}:${chunk.scene_id}`);
+                    }
+                }
+
+                // Track unique scenes for video/fallback denominators
+                if (chunk.chapter_id && chunk.scene_id) {
+                    uniqueSceneKeys.add(`${chunk.chapter_id}:${chunk.scene_id}`);
+                }
 
                 // expected_count per unique scene — take the MAX across all chunks
                 // for this scene, because import may create chunks with expected=1 and
@@ -126,12 +138,14 @@ module.exports = function(app, redis, deps) {
             }
 
             const audioExpectedTotal = [...audioSceneExpected.values()].reduce((a, b) => a + b, 0);
-            const scopeTotal = filteredIds.length;
+            const uniqueSceneCount = uniqueSceneKeys.size;
+            const videoReadyCount = videoReadyScenes.size;
+            const imageReadySceneCount = imageReadyScenes.size;
 
             // ── 4. IU counts (for image worker) ──
             let scopeIuTotal = 0, scopeIuReady = 0, coverIuTotal = 0, coverIuReady = 0;
             try {
-                let buildId = chunkById.get(filteredIds[0])?.build_id;
+                let buildId = chunkById.get(allChunkIds[0])?.build_id;
                 if (!buildId) {
                     for (const cid of allChunkIds) {
                         const b = chunkById.get(cid)?.build_id;
@@ -140,17 +154,9 @@ module.exports = function(app, redis, deps) {
                 }
 
                 if (buildId) {
-                    const uniqueScenes = new Map();
-                    for (const cid of filteredIds) {
-                        const chunk = chunkById.get(cid);
-                        if (chunk?.chapter_id && chunk?.scene_id) {
-                            uniqueScenes.set(`${chunk.chapter_id}:${chunk.scene_id}`, {
-                                chapter_id: chunk.chapter_id, scene_id: chunk.scene_id,
-                            });
-                        }
-                    }
-
-                    for (const { chapter_id: ch, scene_id: sc } of uniqueScenes.values()) {
+                    // Count IUs for ALL scenes (not filtered by scope)
+                    for (const sceneKey of uniqueSceneKeys) {
+                        const [ch, sc] = sceneKey.split(':');
                         const rows = await iuRepo.getImageUnitsForScene(buildId, bookId, ch, sc);
                         if (rows.length > 0) {
                             scopeIuTotal += rows.length;
@@ -234,10 +240,10 @@ module.exports = function(app, redis, deps) {
                 });
             }
 
-            // Image worker
-            if (layers.image && scopeTotal > 0) {
-                const imgTotal = useIu ? scopeIuTotal : scopeTotal;
-                const imgReady = useIu ? scopeIuReady : imageReady;
+            // Image worker (uses IU counts when available, otherwise scenes-with-image-chunks)
+            if (layers.image && uniqueSceneCount > 0) {
+                const imgTotal = useIu ? scopeIuTotal : uniqueSceneCount;
+                const imgReady = useIu ? scopeIuReady : imageReadySceneCount;
                 const imgDone = imgReady >= imgTotal && imgTotal > 0;
                 workers.push({
                     type: 'image',
@@ -251,14 +257,14 @@ module.exports = function(app, redis, deps) {
                 });
             }
 
-            // Video worker
-            if (layers.video && scopeTotal > 0) {
-                const videoDone = videoReady === scopeTotal;
+            // Video worker (denominator = unique scenes, numerator = scenes with ready video)
+            if (layers.video && uniqueSceneCount > 0) {
+                const videoDone = videoReadyCount >= uniqueSceneCount;
                 workers.push({
                     type: 'video',
-                    ready: videoReady,
-                    total: scopeTotal,
-                    percent: Math.round(videoDone ? 100 : (videoReady * 100 / scopeTotal)),
+                    ready: videoReadyCount,
+                    total: uniqueSceneCount,
+                    percent: Math.round(videoDone ? 100 : (videoReady * 100 / uniqueSceneCount)),
                     done: videoDone,
                     visible: true,
                     indeterminate: false,

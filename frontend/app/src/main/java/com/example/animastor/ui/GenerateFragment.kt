@@ -211,12 +211,19 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
             }
         }
 
-        // ── Observe progress ──
+        // ── Observe progress (poll /progress-panel every 1.5s) ──
         lifecycleScope.launch {
             while (true) {
                 refreshProgressUi()
-
                 delay(1_500)
+            }
+        }
+
+        // ── Timer refresh loop (500ms) — updates elapsed time smoothly ──
+        lifecycleScope.launch {
+            while (true) {
+                refreshTimerDisplay()
+                delay(500)
             }
         }
     }
@@ -310,31 +317,95 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
             }.getOrNull()
 
             // 🔧 FIX: If the progress-panel API errors (transient Redis/PG timeout),
-            // don't enter DoneRow → applyGenerationResults path. Just skip this poll
-            // cycle — the next poll (1.5s later) will retry and restore progress.
-            // Without this guard, a transient error made workers=[] → DoneRow fired
-            // after 10s → applyGenerationResults() cleared _activeGeneration →
-            // all workers (including still-running video) disappeared permanently.
-            if (panel == null) {
-                return
-            }
+            // just skip this poll cycle — the next poll (1.5s later) will retry.
+            if (panel == null) return
 
             val panelState = viewModel.computeWorkers(panel, if (hasVBook) vbookProg else null, labels)
 
-            if (panelState is ProgressPanelState.Workers) {
-                renderWorkersToSections(panelState.workers)
-            } else if (panelState is ProgressPanelState.Hidden) {
-                clearAllProgressLists()
+            when (panelState) {
+                is ProgressPanelState.Workers -> renderWorkersToSections(panelState.workers)
+                is ProgressPanelState.DoneRow -> {
+                    // All workers complete — show final state in UI
+                    val finalLabel = getString(R.string.generation_done)
+                    showSingleDoneRow(finalLabel)
+                }
+                is ProgressPanelState.Hidden -> clearAllProgressLists()
             }
         } else if (hasVBook) {
             val updated = viewModel.checkVBookAgentStatus()
             val vbookToShow = if (updated.stage != VBookStage.IDLE) updated else vbookProg
             val panelState = viewModel.computeWorkers(null, vbookToShow, labels)
-            if (panelState is ProgressPanelState.Workers) {
-                renderWorkersToSections(panelState.workers)
+            when (panelState) {
+                is ProgressPanelState.Workers -> renderWorkersToSections(panelState.workers)
+                is ProgressPanelState.DoneRow -> {
+                    val finalLabel = getString(R.string.generation_done)
+                    showSingleDoneRow(finalLabel)
+                }
+                is ProgressPanelState.Hidden -> clearAllProgressLists()
             }
         } else {
-            clearAllProgressLists()
+            // activeGen is null and no VBook. But we might have recently-completed
+            // workers from a generation that just finished (e.g., SSE generation_complete
+            // arrived but computeWorkers hasn't cleared workerCompletedAt yet).
+            // Call computeWorkers to let it decide: if recently-completed workers exist,
+            // show them for the remaining DoneRow window; otherwise hide.
+            val panelState = viewModel.computeWorkers(null, null, labels)
+            when (panelState) {
+                is ProgressPanelState.Workers -> renderWorkersToSections(panelState.workers)
+                is ProgressPanelState.DoneRow -> {
+                    val finalLabel = getString(R.string.generation_done)
+                    showSingleDoneRow(finalLabel)
+                }
+                is ProgressPanelState.Hidden -> clearAllProgressLists()
+            }
+        }
+    }
+
+    /**
+     * Show a single "Done" row across all section containers.
+     * Clears all previous rows and shows one green done message.
+     */
+    private fun showSingleDoneRow(label: String) {
+        val b = binding ?: return
+        val containers = listOf(b.vbookProgressList, b.audioProgressList, b.imageProgressList, b.videoProgressList)
+        val greenColor = requireContext().getColor(R.color.cinema_success)
+
+        for (container in containers) {
+            container.removeAllViews()
+            val doneRow = ItemWorkerProgressBinding.inflate(layoutInflater, container, false)
+            doneRow.workerName.text = label
+            doneRow.workerName.setTextColor(greenColor)
+            doneRow.workerCount.visibility = View.GONE
+            doneRow.workerPercent.text = "100%"
+            doneRow.workerPercent.setTextColor(greenColor)
+            doneRow.workerPercent.visibility = View.VISIBLE
+            doneRow.workerTimer.text = formatTimerText()
+            doneRow.workerTimer.visibility = View.VISIBLE
+            doneRow.workerProgressBar.isIndeterminate = false
+            doneRow.workerProgressBar.setProgressCompat(100, true)
+            doneRow.workerProgressBar.setIndicatorColor(greenColor)
+            doneRow.workerProgressBar.visibility = View.VISIBLE
+            doneRow.workerStopButton.visibility = View.GONE
+            container.addView(doneRow.root)
+        }
+    }
+
+    /**
+     * Refresh timer display on all currently visible worker rows.
+     * Called every 500ms from a dedicated coroutine.
+     */
+    private fun refreshTimerDisplay() {
+        val b = binding ?: return
+        val timerText = formatTimerText()
+        val containers = listOf(b.vbookProgressList, b.audioProgressList, b.imageProgressList, b.videoProgressList)
+        for (container in containers) {
+            for (i in 0 until container.childCount) {
+                val row = container.getChildAt(i)
+                val tv = row.findViewById<TextView>(R.id.workerTimer)
+                if (tv != null) {
+                    tv.text = timerText
+                }
+            }
         }
     }
 
@@ -738,6 +809,8 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
         val ss = (sec % 60).toInt()
         return String.format("%02d:%02d:%02d", hh, mm, ss)
     }
+
+
 
     override fun onDestroyView() {
         pulseAnimators.values.forEach { it.cancel() }
