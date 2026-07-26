@@ -1371,7 +1371,33 @@ async function recoverAudioOrchStates(redis, deps) {
         switch (phase) {
             case 'GENERATING':
             case 'WAITING_CHUNKS':
-                log(`[AUDIO-ORCH] Recover ${bookId}/${chapterId}/${sceneId}: ${phase} → FAILED`);
+                // ── RECOVERY: сначала проверяем, все ли чанки на диске ──
+                // Если все чанки на месте — доигрываем merge, не FAIL'им.
+                // Иначе FAILED → re-dispatch.
+                const expectedChunkCount = parseInt(orchState.expected_count || '0', 10);
+                const chunks = require('../audio/chunks');
+                const presentChunks = chunks.findExistingSceneChunks(bookId, chapterId, sceneId, buildId, expectedChunkCount > 0 ? expectedChunkCount : null);
+                if (presentChunks.length > 0) {
+                    const actualCount = expectedChunkCount > 0 ? expectedChunkCount : presentChunks.length;
+                    log(`[AUDIO-ORCH] Recover ${bookId}/${chapterId}/${sceneId}: ${phase} — ${presentChunks.length}/${actualCount} chunks on disk, driving merge`);
+                    // Восстанавливаем expected_count если он был 0
+                    if (expectedChunkCount === 0 && presentChunks.length > 0) {
+                        orchState.expected_count = presentChunks.length;
+                        await audioOrch.setState(redis, bookId, chapterId, sceneId, orchState);
+                    }
+                    try {
+                        await audioOrch.completeChunk(redis, bookId, chapterId, sceneId, 'recovery', buildId, {
+                            audio: deps.audio || require('../audio'),
+                            orchestrator: deps.orchestrator,
+                            dispatchId: 'startup-recovery',
+                        });
+                        recovered++;
+                        break;
+                    } catch (mergeErr) {
+                        warn(`[AUDIO-ORCH] Recover merge failed for ${bookId}/${chapterId}/${sceneId}: ${mergeErr.message} — falling through to FAILED`);
+                    }
+                }
+                log(`[AUDIO-ORCH] Recover ${bookId}/${chapterId}/${sceneId}: ${phase} → FAILED (${presentChunks.length}/${expectedChunkCount || '?'} chunks on disk)`);
                 await audioOrch.setFailed(redis, bookId, chapterId, sceneId, 'restart_recovery');
                 // T6: Также сбрасываем asset state, чтобы scheduler передиспатчил
                 if (deps.orchestrator) {

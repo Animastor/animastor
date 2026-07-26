@@ -113,6 +113,23 @@ async function executeAudioDispatch(redis, scene, loadedBook, buildId, dispatchI
         // Проверка оставлена как assertion-style safety net для логирования.
         if (stalePhase === audioOrch.PHASES.WAITING_CHUNKS || stalePhase === audioOrch.PHASES.MERGING) {
             log(`  🔧 AUDIO_ORCH: unexpected WAITING_CHUNKS/MERGING in stale recovery — lease outpaced watchdog (phase=${stalePhase})`);
+            // 🔧 FIX: Прежде чем reset'ить, проверяем — есть ли чанки на диске?
+            // Если все чанки на месте, зовём completeChunk для завершения merge.
+            const chunksUtil = require('../audio/chunks');
+            const presentChunks = chunksUtil.findExistingSceneChunks(bookId, chapterId, sceneId, buildId, null);
+            if (presentChunks.length > 0) {
+                log(`  🔧 AUDIO_ORCH: ${presentChunks.length} chunks on disk for ${bookId}/${chapterId}/${sceneId} — calling completeChunk instead of reset`);
+                try {
+                    await audioOrch.completeChunk(redis, bookId, chapterId, sceneId, 'recovery', buildId, {
+                        audio: require('../audio'),
+                        orchestrator: require('./orchestrator'),
+                        dispatchId: 'stale-recovery',
+                    });
+                    return { dispatched: false, jobs: 0, completed: true, reason: 'recovered_via_completeChunk' };
+                } catch (recoverErr) {
+                    warn(`  🔧 AUDIO_ORCH: completeChunk recovery failed: ${recoverErr.message} — falling through to reset`);
+                }
+            }
         }
         log(`  🔧 AUDIO_ORCH: stale phase ${stalePhase} for ${bookId}/${chapterId}/${sceneId} — resetting to PLACEHOLDER_READY`);
         await audioOrch.deleteState(redis, bookId, chapterId, sceneId);

@@ -188,8 +188,34 @@ async function completeChunk(redis, bookId, chapterId, sceneId, chunkIndex, buil
     // Если чанк пришёл до того, как executeAudioDispatch успел вызвать
     // setWaitingChunks (race condition при быстрых TTS), переходим в
     // WAITING_CHUNKS самостоятельно и продолжаем проверку комплектности.
-    const expectedCount = parseInt(orchState.expected_count || '1', 10);
+    let expectedCount = parseInt(orchState.expected_count || '1', 10);
     const pad = (n) => String(n).padStart(4, '0');
+
+    // 🔧 FIX: если expected_count = 0, но чанки на диске есть —
+    // восстанавливаем реальное количество из файловой системы.
+    // Это происходит после restart'а, когда stale recovery reset'нул
+    // expected_count в 0 (buildSegments вернул 0), но GPU уже успел
+    // сгенерировать чанки до restart'а.
+    if (expectedCount === 0) {
+        const chunks = require('../audio/chunks');
+        const actualChunks = chunks.findExistingSceneChunks(bookId, chapterId, sceneId, buildId, null);
+        if (actualChunks.length > 0) {
+            expectedCount = actualChunks.length;
+            orchState.expected_count = expectedCount;
+            log(`🛠 completeChunk: expected=0, detected ${expectedCount} chunks on disk — recovering`);
+            await setState(redis, bookId, chapterId, sceneId, orchState);
+        } else {
+            // Нет чанков и expected=0 — сцена реально пустая (0 сегментов)
+            // Переходим DONE сразу, чтобы не циклиться
+            log(`completeChunk ${bookId}/${chapterId}/${sceneId}: expected=0, no chunks on disk — setting DONE`);
+            await setMerging(redis, bookId, chapterId, sceneId);
+            await setDone(redis, bookId, chapterId, sceneId);
+            if (orchestrator) {
+                await orchestrator.completeStage(redis, bookId, chapterId, sceneId, 'audio', buildId, dispatchId);
+            }
+            return;
+        }
+    }
 
     if (orchState.phase === PHASES.GENERATING) {
         const transResult = await transitionState(redis, bookId, chapterId, sceneId, PHASES.WAITING_CHUNKS);
