@@ -1306,7 +1306,6 @@ class GenerateViewModel(
         val allCancelled = rows.isNotEmpty() && rows.all { it.cancelled }
         if (allCancelled) {
             taskCompletedAt.clear()
-            
             _isRegenerating.value = false
             return ProgressPanelState.Hidden
         }
@@ -1314,7 +1313,6 @@ class GenerateViewModel(
         // ── No workers at all → Hidden (no generation running) ──
         if (rows.isEmpty()) {
             taskCompletedAt.clear()
-            
             _isRegenerating.value = false
             return ProgressPanelState.Hidden
         }
@@ -1333,7 +1331,6 @@ class GenerateViewModel(
             _generationCompleted = true
             stopProgressStream()
             taskCompletedAt.clear()
-            
             if (vbookProgress?.stage == VBookStage.COMPLETED) {
                 _uiState.update { it.copy(vbookProgress = VBookProgress(stage = VBookStage.IDLE)) }
             }
@@ -1352,7 +1349,6 @@ class GenerateViewModel(
         }
 
         // ── Some workers still active — show ALL visible remaining workers ──
-          // Reset countdown since new active work appeared
         _isRegenerating.value = true
         return ProgressPanelState.Rows(rows)
     }
