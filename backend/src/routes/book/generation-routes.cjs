@@ -19,24 +19,6 @@ module.exports = function(app, redis, deps) {
     } = deps;
     const { log } = utils;
 
-    async function clearHubDispatches(dispatchIds) {
-        for (const dispatchId of dispatchIds || []) {
-            try {
-                const hubUrl = `${config.HUB_URL}/queue/clear?dispatch_id=${encodeURIComponent(dispatchId)}`;
-                const hubOptions = { method: 'DELETE', headers: {} };
-                if (config.GPU_HUB_API_KEY) {
-                    hubOptions.headers['x-api-key'] = config.GPU_HUB_API_KEY;
-                }
-                const hubRes = await fetch(hubUrl, hubOptions);
-                if (!hubRes.ok) {
-                    console.warn(`[CANCEL-WORKER] GPU hub cleanup returned ${hubRes.status} for ${dispatchId}`);
-                }
-            } catch (hubErr) {
-                console.warn(`[CANCEL-WORKER] GPU hub cleanup failed for ${dispatchId}: ${hubErr.message}`);
-            }
-        }
-    }
-
     // ======================================================
     // GENERATE NEXT (slide window)
     // ======================================================
@@ -192,7 +174,12 @@ module.exports = function(app, redis, deps) {
                 } else {
                     cancellation = { dispatchIds: [] };
                 }
-                await clearHubDispatches(cancellation.dispatchIds);
+                await dispatchEngine.clearHubDispatches(cancellation.dispatchIds, {
+                    hubUrl: config.HUB_URL,
+                    apiKey: config.GPU_HUB_API_KEY,
+                    context: 'CANCEL-WORKER',
+                    warn: message => console.warn(message),
+                });
                 log(`[CANCEL-WORKER] ${bookId}: ${resolvedType} cancelled for ${scenesToCancel.length} scene(s)`);
             }
 
@@ -440,8 +427,7 @@ module.exports = function(app, redis, deps) {
                 }
             }
 
-            const { orchestrator: orch } = require('../../orchestration');
-            const marked = await orch.resetScenes(redis, bookId, buildId, filteredDirty, requestLayerCfg, {
+            const marked = await orchestrator.resetScenes(redis, bookId, buildId, filteredDirty, requestLayerCfg, {
                 scope: effectiveScope,
                 chapterId: chapter_id || null,
                 sceneId: scene_id || null,
@@ -508,6 +494,9 @@ module.exports = function(app, redis, deps) {
                 }
             }
 
+            // The scene stays outside the active index until task metadata is
+            // complete. Missing an intermediate scheduler tick is harmless; the
+            // next tick sees the fully registered command after this re-add.
             const scheduler = require('../../runtime/runtime-scheduler');
             for (const ds of filteredDirty) {
                 await scheduler.addSceneToActiveIndex(

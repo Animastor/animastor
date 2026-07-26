@@ -25,6 +25,21 @@ describe('gen-scope service', () => {
         expect(got.set_at).to.be.a('string');
     });
 
+    it('setScope applies a retention TTL', async () => {
+        let setArgs = null;
+        const captureRedis = {
+            set: async (...args) => {
+                setArgs = args;
+                return 'OK';
+            },
+        };
+
+        await genScope.setScope(captureRedis, 'book-ttl', 'whole_book');
+
+        expect(setArgs[0]).to.equal(genScope.key('book-ttl'));
+        expect(setArgs.slice(2)).to.deep.equal(['EX', genScope.SCOPE_TTL_SECONDS]);
+    });
+
     it('setScope without scope defaults to whole_book', async () => {
         await genScope.setScope(redis, 'book-1', null, null, null);
         const got = await genScope.getScope(redis, 'book-1');
@@ -63,6 +78,35 @@ describe('gen-scope service', () => {
         const r2 = await genScope.getScope(null, 'book-1');
         expect(r2).to.be.null;
         await genScope.clearScope(null, 'book-1');
+    });
+
+    it('migrates legacy no-TTL scopes and removes invalid records', async () => {
+        const validKey = genScope.key('legacy-valid');
+        const invalidKey = genScope.key('legacy-invalid');
+        await redis.set(validKey, JSON.stringify({
+            scope: 'current_scene',
+            chapter_id: 'ch-1',
+            scene_id: 's-1',
+        }));
+        await redis.set(invalidKey, '{not json');
+
+        const expirations = [];
+        redis.ttl = async () => -1;
+        redis.expire = async (scopeKey, ttl) => {
+            expirations.push([scopeKey, ttl]);
+            return 1;
+        };
+
+        const result = await genScope.migrateLegacyScopes(redis);
+
+        expect(result).to.deep.equal({
+            scanned: 2,
+            expiry_added: 1,
+            invalid_removed: 1,
+        });
+        expect(expirations).to.deep.equal([[validKey, genScope.SCOPE_TTL_SECONDS]]);
+        expect(await redis.get(validKey)).to.not.equal(null);
+        expect(await redis.get(invalidKey)).to.equal(null);
     });
 });
 

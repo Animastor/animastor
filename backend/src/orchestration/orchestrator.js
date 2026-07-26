@@ -468,21 +468,10 @@ async function resetScenes(redis, bookId, buildId, scenes, layerCfg, options = {
     const cancellation = await dispatchEngine.clearLeasesForScenes(redis, bookId, leaseResetScenes);
 
     // 5. Clear only jobs belonging to the cancelled dispatches.
-    for (const cancelledDispatchId of cancellation.dispatchIds) {
-        try {
-            const hubUrl = `${runtimeConfig.HUB_URL}/queue/clear?dispatch_id=${encodeURIComponent(cancelledDispatchId)}`;
-            const hubHeaders = { method: 'DELETE' };
-            if (runtimeConfig.GPU_HUB_API_KEY) {
-                hubHeaders.headers = { 'x-api-key': runtimeConfig.GPU_HUB_API_KEY };
-            }
-            const hubRes = await fetch(hubUrl, hubHeaders);
-            if (!hubRes.ok) {
-                warn(`[RESET-SCENES] GPU hub dispatch cleanup returned ${hubRes.status} for ${cancelledDispatchId}`);
-            }
-        } catch (hubErr) {
-            warn(`[RESET-SCENES] GPU hub HTTP error for ${cancelledDispatchId}: ${hubErr.message}`);
-        }
-    }
+    await dispatchEngine.clearHubDispatches(cancellation.dispatchIds, {
+        context: 'RESET-SCENES',
+        warn,
+    });
 
     // 6. Pre-delete stale PNGs for specific unit IDs
     const path = require('path');

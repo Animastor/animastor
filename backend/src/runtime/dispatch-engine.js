@@ -978,6 +978,46 @@ async function clearLeasesForScenes(redis, bookId, scenes) {
 }
 
 /**
+ * Remove specific cancelled dispatches from GPU Hub.
+ * Kept here with dispatch cancellation so every caller uses the same auth and
+ * error-handling contract.
+ */
+async function clearHubDispatches(dispatchIds, options = {}) {
+    const ids = [...new Set((dispatchIds || []).filter(Boolean))];
+    const hubUrl = options.hubUrl || runtimeConfig.HUB_URL;
+    const apiKey = options.apiKey !== undefined
+        ? options.apiKey
+        : runtimeConfig.GPU_HUB_API_KEY;
+    const context = options.context || 'DISPATCH';
+    const reportWarning = typeof options.warn === 'function' ? options.warn : warn;
+    const fetchImpl = options.fetchImpl || globalThis.fetch;
+    let cleared = 0;
+    let failed = 0;
+
+    for (const dispatchId of ids) {
+        try {
+            const headers = {};
+            if (apiKey) headers['x-api-key'] = apiKey;
+            const response = await fetchImpl(
+                `${hubUrl}/queue/clear?dispatch_id=${encodeURIComponent(dispatchId)}`,
+                { method: 'DELETE', headers }
+            );
+            if (!response.ok) {
+                failed++;
+                reportWarning(`${context}: GPU hub cleanup returned ${response.status} for ${dispatchId}`);
+                continue;
+            }
+            cleared++;
+        } catch (err) {
+            failed++;
+            reportWarning(`${context}: GPU hub cleanup failed for ${dispatchId}: ${err.message}`);
+        }
+    }
+
+    return { requested: ids.length, cleared, failed };
+}
+
+/**
  * Clear all dispatch leases and metadata for a specific stage within a book.
  * T5: quota-safe — uses cancelActiveDispatch for each lease.
  * Non-cancelled stages keep their leases and quotas intact.
@@ -1312,6 +1352,7 @@ module.exports = {
     clearAllLeasesForBook,
     clearLeasesForBookByStage,
     clearLeasesForScenes,
+    clearHubDispatches,
 
     // Runtime metrics
     getRuntimeMetrics,

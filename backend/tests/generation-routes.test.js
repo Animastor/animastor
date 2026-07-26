@@ -22,7 +22,6 @@ describe('Generation routes independent commands', () => {
         '../src/routes/book/generation-routes.cjs',
         '../src/storage/postgres/repositories/scene-assets-repo',
         '../src/storage/postgres/repositories/task-repo',
-        '../src/orchestration',
         '../src/runtime/runtime-scheduler',
         '../src/runtime/scene-window',
     ];
@@ -79,15 +78,6 @@ describe('Generation routes independent commands', () => {
             },
             updateTaskStatus: async () => {},
         });
-        stub('../src/orchestration', {
-            orchestrator: {
-                resetScenes: async (_redis, _bookId, _buildId, scenes, cfg, options) => {
-                    events.push(`reset:${scenes[0].dirty_layers[0]}`);
-                    resetCalls.push({ scenes, cfg, options });
-                    return { marked: scenes.length, reset_scenes: scenes.length };
-                },
-            },
-        });
         stub('../src/runtime/runtime-scheduler', {
             addSceneToActiveIndex: async (_redis, _bookId, chapterId, sceneId) => {
                 events.push(`activate:${chapterId}/${sceneId}`);
@@ -132,6 +122,13 @@ describe('Generation routes independent commands', () => {
                 },
             },
             storage: {},
+            orchestrator: {
+                resetScenes: async (_redis, _bookId, _buildId, scenes, cfg, options) => {
+                    events.push(`reset:${scenes[0].dirty_layers[0]}`);
+                    resetCalls.push({ scenes, cfg, options });
+                    return { marked: scenes.length, reset_scenes: scenes.length };
+                },
+            },
             utils: { log: () => {} },
         };
         require('../src/routes/book/generation-routes.cjs')(app, redis, deps);

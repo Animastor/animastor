@@ -32,6 +32,27 @@ describe('Generation progress task registry', () => {
         ]);
     });
 
+    it('includes targets whose dirty layers are omitted', async () => {
+        const redis = createMockRedis();
+        const bookId = 'generation-progress-default-layers';
+
+        const tasks = await generationProgress.createTasks(
+            redis,
+            bookId,
+            ['audio', 'image'],
+            { scope: 'current_scene', chapterId: 'ch-1', sceneId: 'scene-1' },
+            [{ chapter_id: 'ch-1', scene_id: 'scene-1' }]
+        );
+
+        expect(tasks).to.have.length(2);
+        expect(tasks.map(task => task.type)).to.have.members(['audio', 'image']);
+        expect(tasks.every(task =>
+            task.targets.length === 1 &&
+            task.targets[0].chapter_id === 'ch-1' &&
+            task.targets[0].scene_id === 'scene-1'
+        )).to.equal(true);
+    });
+
     it('cancels one task without changing a sibling task', async () => {
         const redis = createMockRedis();
         const bookId = 'generation-progress-cancel';

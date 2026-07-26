@@ -9,13 +9,11 @@
 //   Redis key: animastor:gen-scope:<bookId>
 //   Value:     JSON { scope, chapter_id, scene_id, set_at }
 //
-// Used by:
-//   - POST /api/v1/book/:bookId/regenerate   (writes scope on start)
-//   - /api/v1/book/:bookId/slide-window      (reads scope)
-//   - /api/v1/book/:bookId/assets-state      (reads scope via query params)
-//   - scene-orchestrator auto-slide          (reads scope)
+// Used by the legacy/initial scene-window generation flow. Selective Navigator
+// commands use generation-progress tasks instead.
 
 const KEY_PREFIX = 'animastor:gen-scope:';
+const SCOPE_TTL_SECONDS = 24 * 60 * 60;
 const key = (bookId) => `${KEY_PREFIX}${bookId}`;
 
 async function setScope(redis, bookId, scope, chapterId, sceneId) {
@@ -26,7 +24,7 @@ async function setScope(redis, bookId, scope, chapterId, sceneId) {
         scene_id: sceneId || null,
         set_at: new Date().toISOString(),
     };
-    await redis.set(key(bookId), JSON.stringify(data));
+    await redis.set(key(bookId), JSON.stringify(data), 'EX', SCOPE_TTL_SECONDS);
     return data;
 }
 
@@ -44,6 +42,58 @@ async function getScope(redis, bookId) {
 async function clearScope(redis, bookId) {
     if (!redis || !bookId) return;
     await redis.del(key(bookId));
+}
+
+/**
+ * Add expiry to scope records created before TTL enforcement. Invalid records
+ * are removed. This is intentionally non-destructive for valid active window
+ * generation: legacy scopes remain usable for the full retention period.
+ */
+async function migrateLegacyScopes(redis) {
+    if (!redis) return { scanned: 0, expiry_added: 0, invalid_removed: 0 };
+
+    let cursor = '0';
+    let scanned = 0;
+    let expiryAdded = 0;
+    let invalidRemoved = 0;
+
+    do {
+        const [nextCursor, keys] = await redis.scan(
+            cursor,
+            'MATCH',
+            `${KEY_PREFIX}*`,
+            'COUNT',
+            200
+        );
+        cursor = nextCursor;
+
+        for (const scopeKey of keys || []) {
+            scanned++;
+            const raw = await redis.get(scopeKey);
+            try {
+                const parsed = JSON.parse(raw);
+                if (!parsed || typeof parsed !== 'object' || typeof parsed.scope !== 'string') {
+                    throw new Error('invalid scope');
+                }
+            } catch (_) {
+                await redis.del(scopeKey);
+                invalidRemoved++;
+                continue;
+            }
+
+            const ttl = typeof redis.ttl === 'function' ? await redis.ttl(scopeKey) : -1;
+            if (ttl < 0) {
+                await redis.expire(scopeKey, SCOPE_TTL_SECONDS);
+                expiryAdded++;
+            }
+        }
+    } while (cursor !== '0');
+
+    return {
+        scanned,
+        expiry_added: expiryAdded,
+        invalid_removed: invalidRemoved,
+    };
 }
 
 function inScope(scopeInfo, chapterId, sceneId) {
@@ -113,7 +163,10 @@ module.exports = {
     setScope,
     getScope,
     clearScope,
+    migrateLegacyScopes,
     inScope,
     scopeBounds,
     key,
+    KEY_PREFIX,
+    SCOPE_TTL_SECONDS,
 };

@@ -287,6 +287,15 @@ async function startServer() {
         // Reset stale active counters and reconcile
         setImmediate(async () => {
             try {
+                const scopeMigration = await genScope.migrateLegacyScopes(redis);
+                if (scopeMigration.expiry_added > 0 || scopeMigration.invalid_removed > 0) {
+                    log(
+                        `[STARTUP] Generation scope migration: ` +
+                        `${scopeMigration.expiry_added} expiry added, ` +
+                        `${scopeMigration.invalid_removed} invalid removed`
+                    );
+                }
+
                 // Force-reset active counters to 0 on startup. These are runtime
                 // optimizations (backpressure), not source of truth — leases are.
                 // Prevents stale counters from previous sessions keeping pulse alive.
