@@ -109,12 +109,16 @@ module.exports = function(app, redis, deps) {
                 if (chunk.image_status === 'ready') imageReady++;
                 if (chunk.video_status === 'ready') videoReady++;
 
-                // expected_count per unique scene — set once at dispatch, never changes
+                // expected_count per unique scene — take the MAX across all chunks
+                // for this scene, because import may create chunks with expected=1 and
+                // startScene updates them to the true segment count later. Taking the
+                // first chunk may pick up the stale import value, causing "9/3" display.
                 if (chunk.chapter_id && chunk.scene_id && chunk.expected_chunk_count != null) {
                     const sceneKey = `${chunk.chapter_id}:${chunk.scene_id}`;
-                    if (!audioSceneExpected.has(sceneKey)) {
-                        const expected = parseInt(chunk.expected_chunk_count, 10);
-                        if (!isNaN(expected) && expected > 0) {
+                    const expected = parseInt(chunk.expected_chunk_count, 10);
+                    if (!isNaN(expected) && expected > 0) {
+                        const current = audioSceneExpected.get(sceneKey) || 0;
+                        if (expected > current) {
                             audioSceneExpected.set(sceneKey, expected);
                         }
                     }

@@ -309,6 +309,16 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
                 )
             }.getOrNull()
 
+            // 🔧 FIX: If the progress-panel API errors (transient Redis/PG timeout),
+            // don't enter DoneRow → applyGenerationResults path. Just skip this poll
+            // cycle — the next poll (1.5s later) will retry and restore progress.
+            // Without this guard, a transient error made workers=[] → DoneRow fired
+            // after 10s → applyGenerationResults() cleared _activeGeneration →
+            // all workers (including still-running video) disappeared permanently.
+            if (panel == null) {
+                return
+            }
+
             val panelState = viewModel.computeWorkers(panel, if (hasVBook) vbookProg else null, labels)
 
             if (panelState is ProgressPanelState.Workers) {
