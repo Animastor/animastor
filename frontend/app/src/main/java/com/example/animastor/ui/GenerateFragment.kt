@@ -329,6 +329,11 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
         val b = binding ?: return
         val containers = listOf(b.vbookProgressList, b.audioProgressList, b.imageProgressList, b.videoProgressList)
         val greenColor = requireContext().getColor(R.color.cinema_success)
+        val globalSec = when {
+            viewModel.timerStartedAt > 0L -> (System.currentTimeMillis() - viewModel.timerStartedAt) / 1000L
+            viewModel.timerStartedAt == -1L -> viewModel.finalElapsedSeconds
+            else -> 0L
+        }
 
         for (container in containers) {
             container.removeAllViews()
@@ -339,7 +344,7 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
             doneRow.workerPercent.text = "100%"
             doneRow.workerPercent.setTextColor(greenColor)
             doneRow.workerPercent.visibility = View.VISIBLE
-            doneRow.workerTimer.text = formatTimerText()
+            doneRow.workerTimer.text = formatTimerText(globalSec)
             doneRow.workerTimer.visibility = View.VISIBLE
             doneRow.workerProgressBar.isIndeterminate = false
             doneRow.workerProgressBar.setProgressCompat(100, true)
@@ -353,17 +358,28 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
     /**
      * Refresh timer display on all currently visible worker rows.
      * Called every 500ms from a dedicated coroutine.
+     *
+     * Each row is tagged with its elapsed seconds:
+     *   - tag >= 0 → frozen (done worker). Show the frozen value directly.
+     *   - tag < 0  → live (active worker). Compute from viewModel.timerStartedAt.
      */
     private fun refreshTimerDisplay() {
         val b = binding ?: return
-        val timerText = formatTimerText()
         val containers = listOf(b.vbookProgressList, b.audioProgressList, b.imageProgressList, b.videoProgressList)
         for (container in containers) {
             for (i in 0 until container.childCount) {
                 val row = container.getChildAt(i)
                 val tv = row.findViewById<TextView>(R.id.workerTimer)
                 if (tv != null) {
-                    tv.text = timerText
+                    val tag = row.tag
+                    val sec = if (tag is Long && tag >= 0L) {
+                        tag  // frozen — use stored value
+                    } else if (viewModel.timerStartedAt > 0L) {
+                        (System.currentTimeMillis() - viewModel.timerStartedAt) / 1000L
+                    } else {
+                        viewModel.finalElapsedSeconds
+                    }
+                    tv.text = formatTimerText(sec)
                 }
             }
         }
@@ -413,13 +429,15 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
                 rowBinding.workerName.setTextColor(textColor)
                 rowBinding.workerCount.visibility = View.GONE
                 rowBinding.workerPercent.visibility = View.GONE
-                rowBinding.workerTimer.text = formatTimerText()
+                rowBinding.workerTimer.text = formatTimerText(worker.elapsedSeconds)
                 rowBinding.workerTimer.visibility = View.VISIBLE
                 rowBinding.workerProgressBar.visibility = View.VISIBLE
                 rowBinding.workerProgressBar.isIndeterminate = true
                 rowBinding.workerProgressBar.setIndicatorColor(accentColor)
                 rowBinding.workerStopButton.visibility = View.VISIBLE
                 setupWorkerStopButton(rowBinding.workerStopButton, row, worker)
+                // Tag for refreshTimerDisplay: -1L = live, compute from timerStartedAt
+                row.tag = -1L
             } else if (worker.done) {
                 rowBinding.workerName.text = getString(R.string.generation_done) + " — " + scopedWorkerLabel(worker)
                 rowBinding.workerName.setTextColor(greenColor)
@@ -429,13 +447,15 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
                 rowBinding.workerPercent.text = "100%"
                 rowBinding.workerPercent.setTextColor(greenColor)
                 rowBinding.workerPercent.visibility = View.VISIBLE
-                rowBinding.workerTimer.text = formatTimerText()
+                rowBinding.workerTimer.text = formatTimerText(worker.elapsedSeconds)
                 rowBinding.workerTimer.visibility = View.VISIBLE
                 rowBinding.workerProgressBar.visibility = View.VISIBLE
                 rowBinding.workerProgressBar.isIndeterminate = false
                 rowBinding.workerProgressBar.setProgressCompat(100, true)
                 rowBinding.workerProgressBar.setIndicatorColor(greenColor)
                 rowBinding.workerStopButton.visibility = View.GONE
+                // Tag for refreshTimerDisplay: frozen elapsed (>= 0)
+                row.tag = worker.elapsedSeconds
             } else {
                 rowBinding.workerName.text = scopedWorkerLabel(worker)
                 rowBinding.workerName.setTextColor(textColor)
@@ -445,7 +465,7 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
                 rowBinding.workerPercent.text = "${worker.percent}%"
                 rowBinding.workerPercent.setTextColor(accentColor)
                 rowBinding.workerPercent.visibility = View.VISIBLE
-                rowBinding.workerTimer.text = formatTimerText()
+                rowBinding.workerTimer.text = formatTimerText(worker.elapsedSeconds)
                 rowBinding.workerTimer.visibility = View.VISIBLE
                 rowBinding.workerProgressBar.visibility = View.VISIBLE
                 rowBinding.workerProgressBar.isIndeterminate = false
@@ -453,6 +473,8 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
                 rowBinding.workerProgressBar.setIndicatorColor(accentColor)
                 rowBinding.workerStopButton.visibility = View.VISIBLE
                 setupWorkerStopButton(rowBinding.workerStopButton, row, worker)
+                // Tag for refreshTimerDisplay: -1L = live, compute from timerStartedAt
+                row.tag = -1L
             }
 
             container.addView(row)
@@ -768,12 +790,14 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
     //  HELPERS
     // ═══════════════════════════════════════════════════════════════
 
-    private fun formatTimerText(): String {
-        val sec = when {
-            viewModel.timerStartedAt > 0L -> (System.currentTimeMillis() - viewModel.timerStartedAt) / 1000L
-            viewModel.timerStartedAt == -1L -> viewModel.finalElapsedSeconds
-            else -> 0L
-        }
+    /**
+     * Format elapsed seconds into HH:MM:SS display string.
+     * @param elapsedSeconds Number of seconds elapsed (frozen for done workers,
+     *                       live for active workers). Can be -1 if timer hasn't
+     *                       started (falls back to 0).
+     */
+    private fun formatTimerText(elapsedSeconds: Long): String {
+        val sec = elapsedSeconds.coerceAtLeast(0L)
         val hh = (sec / 3600).toInt()
         val mm = ((sec % 3600) / 60).toInt()
         val ss = (sec % 60).toInt()

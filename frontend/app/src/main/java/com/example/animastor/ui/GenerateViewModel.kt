@@ -93,6 +93,15 @@ class GenerateViewModel(
     var finalElapsedSeconds: Long = 0L
         private set
 
+    /**
+     * True once a generation session has fully completed and the 10s
+     * DoneRow display window has expired. Prevents the poll loop from
+     * re-displaying stale completed workers from the server.
+     * Reset to false when a new generation starts.
+     */
+    @Volatile
+    private var _generationCompleted = false
+
     /** Start the timer — records wall-clock timestamp. */
     private fun startTimer() {
         timerStartedAt = System.currentTimeMillis()
@@ -314,6 +323,7 @@ class GenerateViewModel(
         _generationStatus.value = GenerationStatus.RUNNING
         _isRegenerating.value = true
 
+        _generationCompleted = false
         if (timerStartedAt <= 0L) startTimer()
         startProgressStream(bookId)
 
@@ -457,6 +467,7 @@ class GenerateViewModel(
         Log.i(TAG, "startVBookGeneration: $bid")
         _generationStatus.value = GenerationStatus.RUNNING
 
+        _generationCompleted = false
         _uiState.update { it.copy(vbookProgress = VBookProgress(stage = VBookStage.ANALYZING)) }
         startTimer()
         startProgressStream(bid)
@@ -1032,6 +1043,13 @@ class GenerateViewModel(
     /** Track when each generation task completed. */
     private val workerCompletedAt = mutableMapOf<String, Long>()
 
+    /**
+     * Per-worker frozen elapsed seconds at the moment that worker reached 100%.
+     * Once set for a taskKey, the timer display for that worker stays frozen.
+     * Cleared in [resetWorkerState].
+     */
+    private val workerFrozenElapsed = mutableMapOf<String, Long>()
+
     /** Timestamp when the last worker completed and "Done" row started showing. */
     private var gpuProgressDoneAt = 0L
 
@@ -1141,6 +1159,8 @@ class GenerateViewModel(
         workerCompletedAt.clear()
         gpuProgressDoneAt = 0L
         workerReadyFloor.clear()
+        workerFrozenElapsed.clear()
+        _generationCompleted = false
     }
 
     /**
@@ -1169,6 +1189,10 @@ class GenerateViewModel(
         vbookProgress: VBookProgress?,
         labels: WorkerLabels
     ): ProgressPanelState {
+        // Once generation has been finalised, never re-show stale workers
+        // from a previous session until a new generation starts.
+        if (_generationCompleted) return ProgressPanelState.Hidden
+
         val now = System.currentTimeMillis()
         val workers = mutableListOf<WorkerUi>()
 
@@ -1184,6 +1208,14 @@ class GenerateViewModel(
             if (done && !sw.cancelled && !workerCompletedAt.containsKey(taskKey)) {
                 workerCompletedAt[taskKey] = now
             }
+            // Per-worker elapsed: frozen at completion, live while active
+            val elapsedSeconds: Long = if (done) {
+                workerFrozenElapsed.getOrPut(taskKey) {
+                    if (timerStartedAt > 0L) (now - timerStartedAt) / 1000L else 0L
+                }
+            } else {
+                if (timerStartedAt > 0L) (now - timerStartedAt) / 1000L else 0L
+            }
             workers.add(WorkerUi(
                 taskId = sw.task_id,
                 type = sw.type,
@@ -1196,7 +1228,8 @@ class GenerateViewModel(
                 percent = if (done) 100 else sw.percent.coerceIn(0, 99),
                 done = done,
                 indeterminate = sw.indeterminate,
-                cancelled = sw.cancelled
+                cancelled = sw.cancelled,
+                elapsedSeconds = elapsedSeconds
             ))
         }
 
@@ -1222,6 +1255,9 @@ class GenerateViewModel(
                 if (!workerCompletedAt.containsKey("vbook")) {
                     workerCompletedAt["vbook"] = now
                 }
+                val vbookElapsed = workerFrozenElapsed.getOrPut("vbook") {
+                    if (timerStartedAt > 0L) (now - timerStartedAt) / 1000L else 0L
+                }
                 workers.add(WorkerUi(
                     taskId = "vbook",
                     type = "vbook",
@@ -1229,12 +1265,14 @@ class GenerateViewModel(
                     ready = 1,
                     total = 1,
                     percent = 100,
-                    done = true
+                    done = true,
+                    elapsedSeconds = vbookElapsed
                 ))
             } else {
                 val stageMsg = vbookProgress.message?.takeIf { it.isNotBlank() }
                 val label = stageMsg ?: labels.vbookLabel
                 val ready: Int; val totalVBook: Int; val pctVBook: Int; val countText: String; val indeterminate: Boolean
+                val vbookElapsed: Long = if (timerStartedAt > 0L) (now - timerStartedAt) / 1000L else 0L
                 when (vbookProgress.stage) {
                     VBookStage.ANALYZING -> {
                         ready = 0; totalVBook = 1; pctVBook = 0
@@ -1261,7 +1299,8 @@ class GenerateViewModel(
                     percent = pctVBook,
                     done = false,
                     countText = countText,
-                    indeterminate = indeterminate
+                    indeterminate = indeterminate,
+                    elapsedSeconds = vbookElapsed
                 ))
             }
         }
@@ -1296,6 +1335,7 @@ class GenerateViewModel(
             val elapsed = now - gpuProgressDoneAt
             if (elapsed >= COMPLETED_WORKER_DISPLAY_MS) {
                 // 10s display window expired — finalise generation
+                _generationCompleted = true
                 stopProgressStream()
                 workerCompletedAt.clear()
                 gpuProgressDoneAt = 0L
@@ -1338,7 +1378,14 @@ data class WorkerUi(
     /** Show cyclic/indeterminate progress bar (spinner). Hides x/y count and z%. */
     val indeterminate: Boolean = false,
     /** Server-set — true when this worker type has been cancelled via cancel-worker API. */
-    val cancelled: Boolean = false
+    val cancelled: Boolean = false,
+    /**
+     * Elapsed seconds this worker should display.
+     * Frozen at the moment this worker reached 100% (done=true), or live via
+     * (now - timerStartedAt) while the worker is still active.
+     * -1 means the timer is not running (should not happen for visible workers).
+     */
+    val elapsedSeconds: Long = -1L
 )
 
 /**
