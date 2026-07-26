@@ -1159,6 +1159,13 @@ class GenerateViewModel(
             }.onFailure { e ->
                 Log.w(TAG, "cancelWorker: backend call failed: ${e.message}")
             }
+            // After the API call, transition to IDLE only if nothing else is
+            // still running (no active GPU generation and no VBook progress).
+            if (_activeGeneration.value == null &&
+                (_uiState.value.vbookProgress == null || _uiState.value.vbookProgress?.stage == VBookStage.IDLE)
+            ) {
+                _generationStatus.value = GenerationStatus.IDLE
+            }
         }
     }
 
@@ -1305,6 +1312,15 @@ class GenerateViewModel(
         }
         staleTypes.forEach { workerCompletedAt.remove(it) }
 
+        // ── All-cancelled guard: if every remaining worker is cancelled,
+        // move them to permanently-done so the DoneRow can fire and
+        // transition the nav icon to SUCCESS or IDLE.
+        val allCancelled = workers.isNotEmpty() && workers.all { it.cancelled }
+        if (allCancelled) {
+            _workerPermanentlyDone.addAll(workers.map { it.type })
+            workers.clear()
+        }
+
         // ── Decide panel state ──
         if (workers.isEmpty()) {
             if (gpuProgressDoneAt == 0L && workerCompletedAt.isEmpty() && _workerPermanentlyDone.isEmpty()) {
@@ -1324,6 +1340,7 @@ class GenerateViewModel(
                         _uiState.update { it.copy(vbookProgress = VBookProgress(stage = VBookStage.IDLE)) }
                     }
                 if (shouldRefresh) {
+                    _generationStatus.value = GenerationStatus.SUCCESS
                     applyGenerationResults()
                 }
                 return ProgressPanelState.Hidden
