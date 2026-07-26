@@ -163,7 +163,7 @@ class GenerateViewModel(
                 _generationStatus.value = GenerationStatus.RUNNING
                 if (timerStartedAt <= 0L) startTimer()  // Не сбрасываем таймер, если уже запущен
                 startProgressStream(currentBookId)
-                resetWorkerState()
+                resetProgressState()
                 _uiState.update { it.copy(phase = PlayerPhase.GENERATING) }
             } else {
                 Log.d(TAG, "checkAndRestoreGenerationState: no active workers")
@@ -554,7 +554,7 @@ class GenerateViewModel(
         _generationStatus.value = GenerationStatus.IDLE
         stopTimer()  // 🕐 отмена — останавливаем таймер
         stopProgressStream()  // ❄ закрываем SSE канал
-        resetWorkerState()
+        resetProgressState()
         viewModelScope.launch {
             runCatching {
                 _repository.cancelGeneration(bookId)
@@ -589,7 +589,7 @@ class GenerateViewModel(
         Log.i(TAG, "importBookFromFile: ${file.name}")
         // Сброс worker tracking и vbook прогресса от предыдущей сессии,
         // чтобы избежать двух прогресс-баров при повторном открытии.
-        resetWorkerState()
+        resetProgressState()
         _uiState.update { it.copy(vbookProgress = VBookProgress(stage = VBookStage.IDLE)) }
         generationJob?.cancel()
         hasUnsavedChanges = false
@@ -1035,23 +1035,20 @@ class GenerateViewModel(
     //  WORKER PROGRESS PANEL (moved from MainActivity in F2)
     // ═══════════════════════════════════════════════════════════════
 
-    private val COMPLETED_WORKER_DISPLAY_MS = 10_000L
+    private val COMPLETED_TASK_DISPLAY_MS = 10_000L
 
     /** Floor per generation task — prevents progress rollback. */
-    private val workerReadyFloor = ConcurrentHashMap<String, Int>()
+    private val taskReadyFloor = ConcurrentHashMap<String, Int>()
 
     /** Track when each generation task completed. */
-    private val workerCompletedAt = mutableMapOf<String, Long>()
+    private val taskCompletedAt = mutableMapOf<String, Long>()
 
     /**
-     * Per-worker frozen elapsed seconds at the moment that worker reached 100%.
-     * Once set for a taskKey, the timer display for that worker stays frozen.
-     * Cleared in [resetWorkerState].
+     * Per-task frozen elapsed seconds at the moment that task reached 100%.
+     * Once set for a taskKey, the timer display for that task stays frozen.
+     * Cleared in [resetProgressState].
      */
-    private val workerFrozenElapsed = mutableMapOf<String, Long>()
-
-    /** Timestamp when the last worker completed and "Done" row started showing. */
-    private var gpuProgressDoneAt = 0L
+    private val taskFrozenElapsed = mutableMapOf<String, Long>()
 
     /**
      * SSE push client for real-time GPU + VBook progress.
@@ -1128,8 +1125,8 @@ class GenerateViewModel(
      * The backend handles per-type cancellation (leases, counters, GPU hub).
      * The frontend just tells the backend what to cancel.
      */
-    fun cancelWorker(type: String, taskId: String? = null) {
-        Log.i(TAG, "cancelWorker: type=$type taskId=$taskId bookId=$bookId")
+    fun cancelTask(type: String, taskId: String? = null) {
+        Log.i(TAG, "cancelTask: type=$type taskId=$taskId bookId=$bookId")
         if (bookId.isBlank()) return
 
         // If VBook was cancelled, clear its progress immediately
@@ -1141,9 +1138,9 @@ class GenerateViewModel(
             runCatching {
                 _repository.cancelWorker(bookId, type, taskId)
             }.onSuccess {
-                Log.i(TAG, "cancelWorker: backend cancelled type=$type taskId=$taskId successfully")
+                Log.i(TAG, "cancelTask: backend cancelled type=$type taskId=$taskId successfully")
             }.onFailure { e ->
-                Log.w(TAG, "cancelWorker: backend call failed: ${e.message}")
+                Log.w(TAG, "cancelTask: backend call failed: ${e.message}")
             }
         }
     }
@@ -1152,14 +1149,13 @@ class GenerateViewModel(
      * Reset all worker tracking state for a new generation session.
      * Call when new GPU generation or VBook work is detected.
      */
-    fun resetWorkerState() {
+    fun resetProgressState() {
         // НЕ останавливаем таймер — он живёт от startGeneration до applyGenerationResults/cancel.
         // resetWorkerState вызывается poller'ом при детекте новой генерации,
         // и стоп таймера здесь убил бы только что запущенный startTimer().
-        workerCompletedAt.clear()
-        gpuProgressDoneAt = 0L
-        workerReadyFloor.clear()
-        workerFrozenElapsed.clear()
+        taskCompletedAt.clear()
+        taskReadyFloor.clear()
+        taskFrozenElapsed.clear()
         _generationCompleted = false
     }
 
@@ -1169,8 +1165,8 @@ class GenerateViewModel(
      * Returns true if any worker type has ever had non-zero progress.
      */
     private fun hasAnyProgress(): Boolean {
-        return workerReadyFloor.values.any { it > 0 } ||
-            workerCompletedAt.isNotEmpty()
+        return taskReadyFloor.values.any { it > 0 } ||
+            taskCompletedAt.isNotEmpty()
     }
 
     /**
@@ -1180,21 +1176,21 @@ class GenerateViewModel(
      *
      * Parallel-worker policy (F15 fix):
      * - Completed workers stay visible at 100% while ANY worker is still active.
-     * - When ALL workers are done, they show completed for COMPLETED_WORKER_DISPLAY_MS,
+     * - When ALL workers are done, they show completed for COMPLETED_TASK_DISPLAY_MS,
      *   then applyGenerationResults() is called and the panel hides.
      * - Workers NEVER disappear mid-generation just because 10s elapsed.
      */
-    fun computeWorkers(
+    fun computeProgressRows(
         panel: com.example.animastor.repository.ProgressPanelResponse?,
         vbookProgress: VBookProgress?,
-        labels: WorkerLabels
+        labels: TaskLabels
     ): ProgressPanelState {
         // Once generation has been finalised, never re-show stale workers
         // from a previous session until a new generation starts.
         if (_generationCompleted) return ProgressPanelState.Hidden
 
         val now = System.currentTimeMillis()
-        val workers = mutableListOf<WorkerUi>()
+        val rows = mutableListOf<TaskRow>()
 
         fun addFromServer(
             sw: com.example.animastor.repository.ProgressWorker,
@@ -1202,21 +1198,21 @@ class GenerateViewModel(
         ) {
             if (sw.total <= 0) return
             val taskKey = sw.task_id ?: "legacy:${sw.type}"
-            val ready = maxOf(sw.ready, workerReadyFloor[taskKey] ?: 0)
-            workerReadyFloor[taskKey] = ready
+            val ready = maxOf(sw.ready, taskReadyFloor[taskKey] ?: 0)
+            taskReadyFloor[taskKey] = ready
             val done = sw.done || (ready >= sw.total && ready > 0)
-            if (done && !sw.cancelled && !workerCompletedAt.containsKey(taskKey)) {
-                workerCompletedAt[taskKey] = now
+            if (done && !sw.cancelled && !taskCompletedAt.containsKey(taskKey)) {
+                taskCompletedAt[taskKey] = now
             }
             // Per-worker elapsed: frozen at completion, live while active
             val elapsedSeconds: Long = if (done) {
-                workerFrozenElapsed.getOrPut(taskKey) {
+                taskFrozenElapsed.getOrPut(taskKey) {
                     if (timerStartedAt > 0L) (now - timerStartedAt) / 1000L else 0L
                 }
             } else {
                 if (timerStartedAt > 0L) (now - timerStartedAt) / 1000L else 0L
             }
-            workers.add(WorkerUi(
+            rows.add(TaskRow(
                 taskId = sw.task_id,
                 type = sw.type,
                 label = label,
@@ -1252,13 +1248,13 @@ class GenerateViewModel(
         if (vbookProgress != null && vbookProgress.stage != VBookStage.IDLE) {
             if (vbookProgress.stage == VBookStage.COMPLETED) {
                 // Record completion timestamp if not already set
-                if (!workerCompletedAt.containsKey("vbook")) {
-                    workerCompletedAt["vbook"] = now
+                if (!taskCompletedAt.containsKey("vbook")) {
+                    taskCompletedAt["vbook"] = now
                 }
-                val vbookElapsed = workerFrozenElapsed.getOrPut("vbook") {
+                val vbookElapsed = taskFrozenElapsed.getOrPut("vbook") {
                     if (timerStartedAt > 0L) (now - timerStartedAt) / 1000L else 0L
                 }
-                workers.add(WorkerUi(
+                rows.add(TaskRow(
                     taskId = "vbook",
                     type = "vbook",
                     label = labels.vbookLabel,
@@ -1290,7 +1286,7 @@ class GenerateViewModel(
                         countText = ""; indeterminate = true
                     }
                 }
-                workers.add(WorkerUi(
+                rows.add(TaskRow(
                     taskId = "vbook",
                     type = "vbook",
                     label = label,
@@ -1307,37 +1303,37 @@ class GenerateViewModel(
 
         // ── All-cancelled guard: if every remaining worker is cancelled,
         // hide the panel immediately since there's nothing to show.
-        val allCancelled = workers.isNotEmpty() && workers.all { it.cancelled }
+        val allCancelled = rows.isNotEmpty() && rows.all { it.cancelled }
         if (allCancelled) {
-            workerCompletedAt.clear()
-            gpuProgressDoneAt = 0L
+            taskCompletedAt.clear()
+            
             _isRegenerating.value = false
             return ProgressPanelState.Hidden
         }
 
         // ── No workers at all → Hidden (no generation running) ──
-        if (workers.isEmpty()) {
-            workerCompletedAt.clear()
-            gpuProgressDoneAt = 0L
+        if (rows.isEmpty()) {
+            taskCompletedAt.clear()
+            
             _isRegenerating.value = false
             return ProgressPanelState.Hidden
         }
 
         // ── Per-worker expiry: filter out done workers whose 10s display window expired ──
-        workers.removeAll { worker ->
-            if (worker.done && !worker.cancelled) {
-                val taskKey = worker.taskId ?: "legacy:${worker.type}"
-                val completedAt = workerCompletedAt[taskKey]
-                completedAt != null && (now - completedAt) >= COMPLETED_WORKER_DISPLAY_MS
+        rows.removeAll { row ->
+            if (row.done && !row.cancelled) {
+                val taskKey = row.taskId ?: "legacy:${row.type}"
+                val completedAt = taskCompletedAt[taskKey]
+                completedAt != null && (now - completedAt) >= COMPLETED_TASK_DISPLAY_MS
             } else false
         }
 
         // ── All workers expired → finalise generation ──
-        if (workers.isEmpty()) {
+        if (rows.isEmpty()) {
             _generationCompleted = true
             stopProgressStream()
-            workerCompletedAt.clear()
-            gpuProgressDoneAt = 0L
+            taskCompletedAt.clear()
+            
             if (vbookProgress?.stage == VBookStage.COMPLETED) {
                 _uiState.update { it.copy(vbookProgress = VBookProgress(stage = VBookStage.IDLE)) }
             }
@@ -1348,17 +1344,17 @@ class GenerateViewModel(
         }
 
         // Check if any worker is still active (non-done, non-cancelled)
-        val anyActive = workers.any { !it.done && !it.cancelled }
+        val anyActive = rows.any { !it.done && !it.cancelled }
 
         if (!anyActive) {
             // All remaining workers are done but still within 10s display window
-            return ProgressPanelState.Workers(workers)
+            return ProgressPanelState.Rows(rows)
         }
 
         // ── Some workers still active — show ALL visible remaining workers ──
-        gpuProgressDoneAt = 0L  // Reset countdown since new active work appeared
+          // Reset countdown since new active work appeared
         _isRegenerating.value = true
-        return ProgressPanelState.Workers(workers)
+        return ProgressPanelState.Rows(rows)
     }
 }
 
@@ -1367,7 +1363,7 @@ class GenerateViewModel(
 /**
  * One row in the GPU progress panel.
  */
-data class WorkerUi(
+data class TaskRow(
     val taskId: String? = null,
     val type: String,
     val label: String,
@@ -1399,7 +1395,7 @@ data class WorkerUi(
  * - [Hidden]: no progress to display
  */
 sealed class ProgressPanelState {
-    data class Workers(val workers: List<WorkerUi>) : ProgressPanelState()
+    data class Rows(val rows: List<TaskRow>) : ProgressPanelState()
     object DoneRow : ProgressPanelState()
     object Hidden : ProgressPanelState()
 }
@@ -1408,7 +1404,7 @@ sealed class ProgressPanelState {
  * Localized label strings for the worker progress panel.
  * Provided by the Activity (which has access to Android string resources).
  */
-data class WorkerLabels(
+data class TaskLabels(
     val cover: String,
     val audio: String,
     val image: String,

@@ -151,7 +151,7 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
                             // intact and the Navigator should keep displaying it.
                             playbackViewModel.closeBook()
                             // Reset any in-progress generation tracking
-                            viewModel.resetWorkerState()
+                            viewModel.resetProgressState()
                         }.onSuccess {
                             Toast.makeText(requireContext(), R.string.settings_cache_cleared, Toast.LENGTH_SHORT).show()
                         }.onFailure { e ->

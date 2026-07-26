@@ -158,7 +158,7 @@ module.exports = function(app, redis, deps) {
         return { ready, total: targets.length, indeterminate: targets.length === 0 };
     }
 
-    async function buildWorker(bookId, task, chunkData, buildId) {
+    async function buildTaskRows(bookId, task, chunkData, buildId) {
         const targets = task.targets || [];
 
         // ── current_scene: expand into per-target (one row per scene) ──
@@ -316,8 +316,8 @@ module.exports = function(app, redis, deps) {
 
             const workers = [];
             for (const task of tasks) {
-                const taskWorkers = await buildWorker(bookId, task, chunkData, buildId);
-                workers.push(...taskWorkers);
+                const taskRows = await buildTaskRows(bookId, task, chunkData, buildId);
+                workers.push(...taskRows);
             }
 
             const visibleWorkers = workers.filter(worker => worker.visible);
