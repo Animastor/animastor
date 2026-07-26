@@ -656,13 +656,13 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
     }
 
     private fun scopedTaskLabel(taskRow: TaskRow): String {
-        val target = when (row.scope) {
-            "current_scene" -> row.sceneId
-            "current_chapter" -> row.chapterId
-            "from_current_scene" -> row.sceneId?.let { "$it+" }
+        val target = when (taskRow.scope) {
+            "current_scene" -> taskRow.sceneId
+            "current_chapter" -> taskRow.chapterId
+            "from_current_scene" -> taskRow.sceneId?.let { "$it+" }
             else -> null
         }
-        return if (target.isNullOrBlank()) row.label else "${row.label} · $target"
+        return if (target.isNullOrBlank()) taskRow.label else "${taskRow.label} · $target"
     }
 
     // ═══════════════════════════════════════════════════════════════
