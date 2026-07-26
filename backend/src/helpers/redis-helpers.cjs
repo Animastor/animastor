@@ -323,6 +323,8 @@ module.exports = function(redis) {
                 `animastor:asset-state:${bookId}:*`,
                 // Generation scope
                 `animastor:gen-scope:${bookId}`,
+                // Per-worker generation scopes for parallel progress
+                `animastor:generation-progress:${bookId}`,
                 // Layer config
                 `animastor:layer-config:${bookId}`,
                 // Runtime dispatch leases & metadata

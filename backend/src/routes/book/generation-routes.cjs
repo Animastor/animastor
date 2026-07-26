@@ -7,6 +7,8 @@ const fs = require('fs');
 const sceneAssetsRepo = require('../../storage/postgres/repositories/scene-assets-repo');
 const { restoreSceneChunkStatus } = require('../../orchestration/scene-restoration');
 const { computeIuReady } = require('./iu-progress-utils.cjs');
+const generationProgress = require('../../services/generation-progress');
+const dispatchEngine = require('../../runtime/dispatch-engine');
 
 module.exports = function(app, redis, deps) {
     const {
@@ -114,8 +116,6 @@ module.exports = function(app, redis, deps) {
             // Keep alive while worker might still be processing (1 hour max)
             await redis.expire(cancelledWorkersKey, 3600);
 
-            const dispatchEngine = require('../../runtime/dispatch-engine');
-
             if (type === 'vbook') {
                 // Cancel VBook/AI agent: update agent session status to 'cancelled'
                 try {
@@ -144,6 +144,8 @@ module.exports = function(app, redis, deps) {
                 await redis.del(`animastor:runtime:active-${stage}`);
                 log(`[CANCEL-WORKER] ${bookId}: ${stage} leases cleared, counter reset`);
             }
+
+            await generationProgress.removeScope(redis, bookId, type);
 
             // Note: we do NOT clear GPU hub queues here to avoid disrupting
             // non-cancelled worker types. The cancelled type's dispatches have been
@@ -180,6 +182,7 @@ module.exports = function(app, redis, deps) {
 
             // Clear per-worker cancel tracking (if any was set)
             await redis.del(`animastor:cancelled-workers:${bookId}`);
+            await generationProgress.clear(redis, bookId);
 
             // Cancel VBook/AI agent sessions too
             try {
@@ -424,6 +427,26 @@ module.exports = function(app, redis, deps) {
                 bookDiff,
                 cleanPngUnitIds: Object.keys(cleanPngUnitIds).length > 0 ? cleanPngUnitIds : null,
             });
+
+            const requestedWorkerTypes = new Set();
+            for (const ds of filteredDirty) {
+                for (const type of (ds.dirty_layers || [])) {
+                    if (['audio', 'image', 'video'].includes(type) &&
+                        layerCfg[`${type}_enabled`] !== false) {
+                        requestedWorkerTypes.add(type);
+                    }
+                }
+            }
+            await generationProgress.recordScopes(
+                redis,
+                bookId,
+                [...requestedWorkerTypes],
+                {
+                    scope: effectiveScope,
+                    chapterId: chapter_id || null,
+                    sceneId: scene_id || null,
+                }
+            );
 
             try {
                 await storage.bookSync.reconcileFromDiff(bookId, filteredDirty, loadedBook);

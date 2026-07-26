@@ -513,6 +513,21 @@ describe('Happy Path: Dispatch Engine — Leases', () => {
         expect(imageLease.leaseKey).to.include('image');
     });
 
+    it('clearLeasesForScenes preserves parallel stages not requested by reset', async () => {
+        const audio = await createOwnedDispatch(redis, 'audio', 'dispatch-audio-parallel');
+        const image = await createOwnedDispatch(redis, 'image', 'dispatch-image-parallel');
+
+        const result = await dispatchEngine.clearLeasesForScenes(redis, BOOK_ID, [{
+            chapter_id: CHAPTER_ID,
+            scene_id: SCENE_ID,
+            stages: ['image'],
+        }]);
+
+        expect(result.dispatchIds).to.deep.equal(['dispatch-image-parallel']);
+        expect(await redis.get(audio.leaseKey)).to.equal(audio.leaseToken);
+        expect(await redis.get(image.leaseKey)).to.equal(null);
+    });
+
     it('releaseStageLease releases the lease', async () => {
         const { leaseKey, token } = await dispatchEngine.acquireStageLease(
             redis, BOOK_ID, CHAPTER_ID, SCENE_ID, 'audio'
@@ -1754,6 +1769,23 @@ describe('Happy Path: Д.2 — shouldScheduleAssets is a pure decision', () => {
         expect(result.stages).to.include('image');
         expect(result.stages).to.not.include('audio');
         expect(after).to.deep.equal(before);
+    });
+
+    it('shouldScheduleAssets preserves pending audio after profile switches to image_only', async () => {
+        await redis.set(`animastor:layer-config:${BOOK_ID}`, JSON.stringify({
+            audio_enabled: false,
+            image_enabled: true,
+            video_enabled: false,
+        }));
+        await sceneState.setAssetStates(redis, BOOK_ID, CHAPTER_ID, SCENE_ID, {
+            audio: 'pending', image: 'pending', video: 'new',
+        });
+
+        const result = await scheduler.shouldScheduleAssets(redis, BOOK_ID, CHAPTER_ID, SCENE_ID);
+
+        expect(result.stages).to.include('audio');
+        expect(result.stages).to.include('image');
+        expect(result.allDone).to.be.false;
     });
 
     it('markVersionStaleDirty resets enabled READY assets to DIRTY (explicit write pass)', async () => {

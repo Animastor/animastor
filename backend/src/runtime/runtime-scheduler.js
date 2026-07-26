@@ -279,9 +279,14 @@ async function shouldScheduleAssets(redis, bookId, chapterId, sceneId) {
     const assetStates = await state.getAssetStates(redis, bookId, chapterId, sceneId);
     const layerCfg = await getLayerConfig(redis, bookId);
 
-    const audioEnabled = layerCfg.audio_enabled !== false;
-    const imageEnabled = layerCfg.image_enabled !== false;
-    const videoEnabled = layerCfg.video_enabled !== false;
+    // A later generation request may change the book-wide layer profile while
+    // another stage is already pending or generating. Those explicit per-asset
+    // states remain authoritative until that stage reaches a terminal state.
+    const isInFlight = status =>
+        status === state.AssetState.PENDING || status === state.AssetState.GENERATING;
+    const audioEnabled = layerCfg.audio_enabled !== false || isInFlight(assetStates.audio);
+    const imageEnabled = layerCfg.image_enabled !== false || isInFlight(assetStates.image);
+    const videoEnabled = layerCfg.video_enabled !== false || isInFlight(assetStates.video);
 
     // Check if all enabled assets are in terminal states
     // (after potential version-stale reset above)

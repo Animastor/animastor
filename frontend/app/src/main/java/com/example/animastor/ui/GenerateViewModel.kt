@@ -332,11 +332,9 @@ class GenerateViewModel(
         // even when previous workers finish — without this, the first worker's
         // completion would clear _activeGeneration and hide all other workers.
         //
-        // The scope comes from the USER's dialog choice so x/y numbers reflect
-        // the selected range (current_scene / current_chapter / whole_book).
-        // The backend /progress-panel endpoint uses this scope for x/y
-        // computation while still returning ALL workers that have any work
-        // globally — enabling parallel progress display.
+        // Keep the latest scope as a polling fallback. The backend records the
+        // original scope independently for every worker type, so replacing this
+        // sentinel does not replace Audio/Image/Video progress state.
         _activeGeneration.value = ActiveGeneration(
             scope = req.scope,
             chapterId = req.chapterId,
@@ -1122,13 +1120,11 @@ class GenerateViewModel(
                     // SSE only updates GPU panel. Chat messages come from pollAgentProgress
                     // using the same msgs.add + copy(toList) pattern as status messages.
                 } else if (event.type == "generation_complete") {
-                    // F11: Server-pushed terminal event — stop progress stream
-                    // and trigger playback refresh immediately, replacing the
-                    // 120s stuck heuristic that was on the client.
-                    Log.i(TAG, "SSE generation_complete received — applying results")
-                    _generationStatus.value = GenerationStatus.SUCCESS
-                    stopProgressStream()
-                    applyGenerationResults()
+                    // A completion event belongs to one server-side generation
+                    // scope and is not proof that every parallel worker type is
+                    // finished. The progress-panel poll remains authoritative
+                    // and finalises only after all visible workers are done.
+                    Log.i(TAG, "SSE generation_complete received — waiting for progress-panel reconciliation")
                 } else if (event.type == "import_complete") {
                     // F10: Server-pushed terminal event — all agent windows
                     // processed. The pollAgentProgress loop will exit on next

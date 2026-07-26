@@ -933,18 +933,23 @@ async function cancelActiveDispatch(redis, bookId, chapterId, sceneId, stage, re
  * Clear leases for specific scenes — T5: корректно освобождает quota
  * для каждого существующего dispatch. Не удаляет quota без ownership.
  *
- * @param {Array<{chapter_id:string,scene_id:string}>} scenes - scenes to clear
+ * @param {Array<{chapter_id:string,scene_id:string,stages?:string[]}>} scenes - scenes to clear
+ * Each scene may restrict cancellation to specific stages. When omitted, all
+ * stages are cleared for backward compatibility.
  */
 async function clearLeasesForScenes(redis, bookId, scenes) {
     if (!scenes || scenes.length === 0) {
         return { cancelled: 0, quotaReleased: 0, dispatchIds: [] };
     }
-    const stages = ['audio', 'image', 'video'];
+    const allStages = ['audio', 'image', 'video'];
     let cancelled = 0;
     let quotaReleased = 0;
     const dispatchIds = [];
 
     for (const s of scenes) {
+        const stages = Array.isArray(s.stages)
+            ? s.stages.filter(stage => allStages.includes(stage))
+            : allStages;
         for (const stage of stages) {
             const result = await cancelActiveDispatch(
                 redis,

@@ -404,7 +404,7 @@ async function reconcile(redis, bookId, chapterId, sceneId) {
 //   2. gen-scope
 //   3. событие SCENE_RESET в journal
 //   4. удаление из active index
-//   5. снятие dispatch leases
+//   5. снятие dispatch leases только для сбрасываемых стадий
 //   6. очистка очередей gpu-hub (HTTP DELETE /queue/clear)
 //   7. pre-delete stale PNG для указанных unit_id
 //   8. очистка iu-progress + iu-in-flight
@@ -448,9 +448,22 @@ async function resetScenes(redis, bookId, buildId, scenes, layerCfg, options = {
     const scheduler = require('../runtime/runtime-scheduler');
     await scheduler.removeScenesFromActiveIndex(redis, bookId, scenes);
 
-    // 5. Clear dispatch leases for these scenes
+    // 5. Clear dispatch leases only for stages requested by this regeneration.
+    // A parallel Image request must not cancel an already-running Audio lease
+    // for the same scene.
     const dispatchEngine = require('../runtime/dispatch-engine');
-    const cancellation = await dispatchEngine.clearLeasesForScenes(redis, bookId, scenes);
+    const leaseResetScenes = scenes.map(ds => ({
+        chapter_id: ds.chapter_id,
+        scene_id: ds.scene_id,
+        stages: (ds.dirty_layers || ['audio', 'image', 'video']).filter(stage =>
+            layerCfg?.[`${stage}_enabled`] !== false
+        ),
+    }));
+    const resetStagesByScene = new Map(leaseResetScenes.map(s => [
+        `${s.chapter_id}:${s.scene_id}`,
+        s.stages,
+    ]));
+    const cancellation = await dispatchEngine.clearLeasesForScenes(redis, bookId, leaseResetScenes);
 
     // 6. Clear only jobs belonging to the cancelled dispatches.
     for (const cancelledDispatchId of cancellation.dispatchIds) {
@@ -491,8 +504,11 @@ async function resetScenes(redis, bookId, buildId, scenes, layerCfg, options = {
         }
     }
 
-    // 8. Clear iu-progress and iu-in-flight Redis keys
+    // 8. Clear image-specific IU progress only for scenes whose image stage is reset.
     for (const ds of scenes) {
+        const resetStages = resetStagesByScene.get(`${ds.chapter_id}:${ds.scene_id}`) || [];
+        if (!resetStages.includes('image')) continue;
+
         const progKey = `animastor:iu-progress:${bookId}:${ds.chapter_id}:${ds.scene_id}:image`;
         try { await redis.del(progKey); } catch (_) {}
 

@@ -10,13 +10,14 @@
 //   3. VBook COMPLETED → IDLE transition
 //   4. Hidden/DoneRow/Workers state machine
 //
-// Everything else — which layers are visible for the profile,
+// Everything else — which layers are visible for the profile or active state,
 // ready/total/percent/done, IU vs legacy image counting,
 // cover relevance — is computed here.
 //
 // ARCHITECTURE (F15):
-// - Worker existence is determined GLOBALLY (all chunks) so that ALL workers
-//   are shown regardless of scope — this enables parallel progress display.
+// - Worker existence combines the current profile with canonical per-asset
+//   PENDING/GENERATING state. Starting Image must not hide active Audio merely
+//   because the book-wide profile changed to image_only.
 // - x/y numbers are computed PER-SCOPE (scope/chapter_id/scene_id query params)
 //   so that progress accurately reflects the selected range.
 // - If no scope is provided, all data is used (backward compatible).
@@ -25,6 +26,7 @@ const path = require('path');
 const fs = require('fs');
 const sceneAssetsRepo = require('../../storage/postgres/repositories/scene-assets-repo');
 const { computeIuReady } = require('./iu-progress-utils.cjs');
+const generationProgress = require('../../services/generation-progress');
 
 module.exports = function(app, redis, deps) {
     const {
@@ -59,6 +61,31 @@ module.exports = function(app, redis, deps) {
             const profile = layerConfig.resolveProfile(cfg);
             const layers = layersForProfile(profile);
 
+            // The layer config reflects the latest request only. Parallel work
+            // already queued or running is represented by per-asset state and
+            // must stay visible independently of that latest profile.
+            const activeWorkerTypes = new Set();
+            try {
+                const activeKeys = await activeScenes.getAllActiveSceneKeys(redis);
+                for (const key of activeKeys) {
+                    const parsed = activeScenes.parseSceneKey(key);
+                    if (!parsed || parsed.bookId !== bookId) continue;
+                    const states = await state.getAssetStates(
+                        redis,
+                        parsed.bookId,
+                        parsed.chapterId,
+                        parsed.sceneId
+                    );
+                    for (const type of ['audio', 'image', 'video']) {
+                        if (states?.[type] === 'pending' || states?.[type] === 'generating') {
+                            activeWorkerTypes.add(type);
+                        }
+                    }
+                }
+            } catch (activeErr) {
+                console.warn(`[PROGRESS-PANEL] Active state lookup failed for ${bookId}: ${activeErr.message}`);
+            }
+
             // ── 2. Read ALL chunk metadata ──
             const allChunkIds = await getAllChunks(bookId);
 
@@ -83,22 +110,47 @@ module.exports = function(app, redis, deps) {
                 }
             }
 
-            // ── 3. Filter by scope (for x/y accuracy) ──
-            let filteredIds = allChunkIds;
-            if ((scope === 'current_chapter' || scope === 'chapter') && chapter_id) {
-                filteredIds = allChunkIds.filter(cid => chunkById.get(cid)?.chapter_id === chapter_id);
-            } else if ((scope === 'current_scene' || scope === 'scene') && chapter_id && scene_id) {
-                filteredIds = allChunkIds.filter(cid => {
+            // ── 3. Resolve scope independently for each worker type ──
+            const storedScopes = await generationProgress.getScopes(redis, bookId);
+            const fallbackScope = {
+                scope: scope || 'whole_book',
+                chapter_id: chapter_id || null,
+                scene_id: scene_id || null,
+            };
+
+            function filterIdsForScope(workerScope) {
+                const selected = workerScope || fallbackScope;
+                if ((selected.scope === 'current_chapter' || selected.scope === 'chapter') && selected.chapter_id) {
+                    return allChunkIds.filter(cid =>
+                        chunkById.get(cid)?.chapter_id === selected.chapter_id
+                    );
+                }
+                if ((selected.scope === 'current_scene' || selected.scope === 'scene') &&
+                    selected.chapter_id && selected.scene_id) {
+                    return allChunkIds.filter(cid => {
+                        const c = chunkById.get(cid);
+                        return c?.chapter_id === selected.chapter_id && c?.scene_id === selected.scene_id;
+                    });
+                }
+                return allChunkIds;
+            }
+
+            const audioIds = filterIdsForScope(storedScopes.audio);
+            const imageIds = filterIdsForScope(storedScopes.image);
+            const videoIds = filterIdsForScope(storedScopes.video);
+
+            function uniqueSceneCount(ids) {
+                return new Set(ids.map(cid => {
                     const c = chunkById.get(cid);
-                    return c?.chapter_id === chapter_id && c?.scene_id === scene_id;
-                });
+                    return c?.chapter_id && c?.scene_id ? `${c.chapter_id}:${c.scene_id}` : null;
+                }).filter(Boolean)).size;
             }
 
             // ── 4. Count GLOBAL (unfiltered) data for worker EXISTENCE ──
             // We need BOTH global and per-scope counts:
             //   - Global: decide which workers SHOW (has any work anywhere)
             //   - Per-scope: compute x/y numbers (accuracy for selected range)
-            let globalAudioExpectedTotal = 0;
+            const globalAudioSceneExpected = new Map();
             let globalUniqueSceneCount = 0;
             const globalSceneKeys = new Set();
 
@@ -117,28 +169,28 @@ module.exports = function(app, redis, deps) {
                 if (chunk.chapter_id && chunk.scene_id) {
                     globalSceneKeys.add(`${chunk.chapter_id}:${chunk.scene_id}`);
                 }
-                // Global expected_count for audio existence
+                // Global expected_count for audio existence. Keep one maximum
+                // per scene because every chunk may carry the same expected count.
                 if (chunk.chapter_id && chunk.scene_id && chunk.expected_chunk_count != null) {
+                    const sceneKey = `${chunk.chapter_id}:${chunk.scene_id}`;
                     const expected = parseInt(chunk.expected_chunk_count, 10);
                     if (!isNaN(expected) && expected > 0) {
-                        globalAudioExpectedTotal += expected;
+                        const current = globalAudioSceneExpected.get(sceneKey) || 0;
+                        if (expected > current) {
+                            globalAudioSceneExpected.set(sceneKey, expected);
+                        }
                     }
                 }
             }
             globalUniqueSceneCount = globalSceneKeys.size;
+            const globalAudioExpectedTotal = [...globalAudioSceneExpected.values()]
+                .reduce((a, b) => a + b, 0);
 
-            // Second pass: per-scope counts for x/y (from filteredIds)
-            for (const cid of filteredIds) {
+            // Second pass: Audio counts use the Audio request's original scope.
+            for (const cid of audioIds) {
                 const chunk = chunkById.get(cid);
                 if (!chunk) continue;
                 if (chunk.audio_status === 'ready') audioReadyReal++;
-
-                if (chunk.image_status === 'ready' && chunk.chapter_id && chunk.scene_id) {
-                    imageReadySceneKeys.add(`${chunk.chapter_id}:${chunk.scene_id}`);
-                }
-                if (chunk.video_status === 'ready' && chunk.chapter_id && chunk.scene_id) {
-                    videoReadySceneKeys.add(`${chunk.chapter_id}:${chunk.scene_id}`);
-                }
 
                 // expected_count per unique scene (per-scope)
                 if (chunk.chapter_id && chunk.scene_id && chunk.expected_chunk_count != null) {
@@ -153,11 +205,22 @@ module.exports = function(app, redis, deps) {
                 }
             }
 
+            for (const cid of imageIds) {
+                const chunk = chunkById.get(cid);
+                if (chunk?.image_status === 'ready' && chunk.chapter_id && chunk.scene_id) {
+                    imageReadySceneKeys.add(`${chunk.chapter_id}:${chunk.scene_id}`);
+                }
+            }
+            for (const cid of videoIds) {
+                const chunk = chunkById.get(cid);
+                if (chunk?.video_status === 'ready' && chunk.chapter_id && chunk.scene_id) {
+                    videoReadySceneKeys.add(`${chunk.chapter_id}:${chunk.scene_id}`);
+                }
+            }
+
             const audioExpectedTotal = [...audioSceneExpected.values()].reduce((a, b) => a + b, 0);
-            const scopeUniqueSceneCount = (new Set(filteredIds.map(cid => {
-                const c = chunkById.get(cid);
-                return c?.chapter_id && c?.scene_id ? `${c.chapter_id}:${c.scene_id}` : null;
-            }).filter(Boolean))).size;
+            const imageScopeSceneCount = uniqueSceneCount(imageIds);
+            const videoScopeSceneCount = uniqueSceneCount(videoIds);
 
             videoReadyScenesCount = videoReadySceneKeys.size;
             imageReadySceneCount = imageReadySceneKeys.size;
@@ -176,7 +239,7 @@ module.exports = function(app, redis, deps) {
                 if (buildId) {
                     // Count IUs for scenes IN FILTERED SCOPE only (for x/y accuracy)
                     const scopeSceneKeys = new Set();
-                    for (const cid of filteredIds) {
+                    for (const cid of imageIds) {
                         const chunk = chunkById.get(cid);
                         if (chunk?.chapter_id && chunk?.scene_id) {
                             scopeSceneKeys.add(`${chunk.chapter_id}:${chunk.scene_id}`);
@@ -230,7 +293,7 @@ module.exports = function(app, redis, deps) {
             } catch (_) {}
 
             const useIu = scopeIuTotal > 0;
-            const imgDenominator = useIu ? scopeIuTotal : scopeUniqueSceneCount;
+            const imgDenominator = useIu ? scopeIuTotal : imageScopeSceneCount;
             const imgNumerator = useIu ? scopeIuReady : imageReadySceneCount;
 
             // ── 5.5. Read cancelled worker types ──
@@ -238,9 +301,8 @@ module.exports = function(app, redis, deps) {
             const cancelledTypes = new Set(await redis.smembers(cancelledWorkersKey) || []);
 
             // ── 6. Build worker entries ──
-            // IMPORTANT: Worker EXISTENCE is based on GLOBAL data (all scenes),
-            // but x/y numbers are computed PER-SCOPE (from filteredIds).
-            // This ensures all workers are visible regardless of scope.
+            // IMPORTANT: Worker existence combines profile + active state, while
+            // x/y numbers use the scope stored for each individual worker type.
             const workers = [];
 
             // Cover worker (only if cover has IUs, already per-scope from IU computation)
@@ -260,7 +322,7 @@ module.exports = function(app, redis, deps) {
 
             // Audio worker: existence = globalAudioExpectedTotal > 0
             // x/y = per-scope audioReadyReal vs audioExpectedTotal
-            if (layers.audio && globalAudioExpectedTotal > 0) {
+            if ((layers.audio || activeWorkerTypes.has('audio')) && globalAudioExpectedTotal > 0) {
                 const audioTotal = audioExpectedTotal > 0 ? audioExpectedTotal : globalAudioExpectedTotal;
                 const audioDone = audioTotal > 0 && audioReadyReal >= audioTotal;
                 workers.push({
@@ -277,7 +339,7 @@ module.exports = function(app, redis, deps) {
 
             // Image worker: existence = IU data exists OR global scene count > 0
             // x/y = per-scope IU counts or per-scope scene counts
-            if (layers.image && (useIu || globalUniqueSceneCount > 0)) {
+            if ((layers.image || activeWorkerTypes.has('image')) && (useIu || globalUniqueSceneCount > 0)) {
                 const imgDone = imgNumerator >= imgDenominator && imgDenominator > 0;
                 workers.push({
                     type: 'image',
@@ -292,9 +354,9 @@ module.exports = function(app, redis, deps) {
             }
 
             // Video worker: existence = globalUniqueSceneCount > 0
-            // x/y = per-scope videoReadyScenesCount vs scopeUniqueSceneCount
-            if (layers.video && globalUniqueSceneCount > 0) {
-                const videoDenominator = scopeUniqueSceneCount > 0 ? scopeUniqueSceneCount : globalUniqueSceneCount;
+            // x/y = per-scope videoReadyScenesCount vs videoScopeSceneCount
+            if ((layers.video || activeWorkerTypes.has('video')) && globalUniqueSceneCount > 0) {
+                const videoDenominator = videoScopeSceneCount > 0 ? videoScopeSceneCount : globalUniqueSceneCount;
                 const videoDone = videoDenominator > 0 && videoReadyScenesCount >= videoDenominator;
                 workers.push({
                     type: 'video',
