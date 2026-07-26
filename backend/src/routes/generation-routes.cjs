@@ -945,8 +945,14 @@ module.exports = function(app, redis, deps) {
 
             let cursorMs = 0;
             const needsCompute = ius.some(iu => iu.start_ms == null || iu.end_ms == null || (Number(iu.end_ms) - Number(iu.start_ms)) <= 0);
+            // When needsCompute is true, always recompute ALL units from scratch
+            // using cumulative cursorMs. Trusting existing start_ms/end_ms values
+            // when some units are being recomputed creates inconsistent gaps:
+            // unit0 may be recomputed with the current scene_duration_sec, but
+            // unit1's "valid" timings from a different audio duration are kept
+            // unchanged, causing overlaps or gaps.
             const units = ius.map(iu => {
-                if (iu.start_ms != null && iu.end_ms != null && (Number(iu.end_ms) - Number(iu.start_ms)) > 0) {
+                if (!needsCompute && iu.start_ms != null && iu.end_ms != null && (Number(iu.end_ms) - Number(iu.start_ms)) > 0) {
                     cursorMs = iu.end_ms;
                     const clampedEndMs = sceneDurationMs > 0 ? Math.min(iu.end_ms, sceneDurationMs) : iu.end_ms;
                     return { unit_id: iu.unit_id, scene_order: iu.scene_order, start_ms: iu.start_ms, end_ms: clampedEndMs, estimated_duration_sec: iu.estimated_duration_sec, text_proportion: iu.text_proportion };
