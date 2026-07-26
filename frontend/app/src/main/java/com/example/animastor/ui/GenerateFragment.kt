@@ -22,6 +22,7 @@ import com.example.animastor.databinding.FragmentGenerateBinding
 import com.example.animastor.databinding.ItemWorkerProgressBinding
 import com.example.animastor.network.RetrofitClient
 import com.example.animastor.repository.BookData
+import com.google.android.material.color.MaterialColors
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -689,15 +690,16 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
      *   - Background becomes transparent — blends with the card
      */
     private fun updateHeaderPanelStyle(headerRow: View, accentBar: View, isEnabled: Boolean) {
+        val ctx = requireContext()
         val accentColor = if (isEnabled) {
-            requireContext().getColor(R.color.cinema_accent)
+            MaterialColors.getColor(ctx, com.google.android.material.R.attr.colorSecondary, ctx.getColor(R.color.cinema_accent))
         } else {
-            requireContext().getColor(R.color.cinema_outline_variant)
+            MaterialColors.getColor(ctx, com.google.android.material.R.attr.colorOutlineVariant, ctx.getColor(R.color.cinema_outline_variant))
         }
         val bgColor = if (isEnabled) {
-            requireContext().getColor(R.color.cinema_accent_container)
+            MaterialColors.getColor(ctx, com.google.android.material.R.attr.colorSecondaryContainer, ctx.getColor(R.color.cinema_accent_container))
         } else {
-            android.graphics.Color.TRANSPARENT
+            MaterialColors.getColor(ctx, com.google.android.material.R.attr.colorSurfaceVariant, ctx.getColor(R.color.cinema_surface_variant))
         }
 
         accentBar.setBackgroundColor(accentColor)
