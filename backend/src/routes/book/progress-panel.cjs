@@ -14,12 +14,12 @@
 // ready/total/percent/done, IU vs legacy image counting,
 // cover relevance — is computed here.
 //
-// IMPORTANT (F15): Scope/chapter_id/scene_id query params are IGNORED.
-// The panel always shows ALL workers across ALL scenes so that parallel
-// workers started with different scopes are visible simultaneously.
-// x/y numbers for each worker are derived from actual dispatched work
-// (expected_chunk_count for audio, IU counts for image, unique scenes
-// for video), NOT from the total number of chunks in a scope.
+// ARCHITECTURE (F15):
+// - Worker existence is determined GLOBALLY (all chunks) so that ALL workers
+//   are shown regardless of scope — this enables parallel progress display.
+// - x/y numbers are computed PER-SCOPE (scope/chapter_id/scene_id query params)
+//   so that progress accurately reflects the selected range.
+// - If no scope is provided, all data is used (backward compatible).
 
 const path = require('path');
 const fs = require('fs');
@@ -52,13 +52,14 @@ module.exports = function(app, redis, deps) {
     app.get('/api/v1/book/:bookId/progress-panel', async (req, res) => {
         try {
             const { bookId } = req.params;
+            const { scope, chapter_id, scene_id } = req.query;
 
             // ── 1. Read layer config (profile) ──
             const cfg = await layerConfig.get(redis, bookId);
             const profile = layerConfig.resolveProfile(cfg);
             const layers = layersForProfile(profile);
 
-            // ── 2. Read ALL chunk metadata (no scope filtering) ──
+            // ── 2. Read ALL chunk metadata ──
             const allChunkIds = await getAllChunks(bookId);
 
             const chunkById = new Map();
@@ -82,49 +83,64 @@ module.exports = function(app, redis, deps) {
                 }
             }
 
-            // ── 3. Count ready chunks per layer ──
-            // Each worker shows honest progress based on its own work units:
-            //   - Audio: expected_count-based total. Each scene stores its expected
-            //     chunk count once at dispatch time. Total = sum(expected_count)
-            //     across unique scenes, so total grows only when a NEW scene
-            //     appears (e.g. +5 at once), not on every individual chunk.
-            //     This prevents the old jitter (25 → 30 → 34 per chunk dispatch).
-            //   - Image: IU images (individual image generation tasks) or scenes with image chunks.
-            //   - Video: unique scenes with chunks (one video per scene).
-            // Each worker has its own total — this is fine, they are separate rows.
-            let audioReady = 0, audioReadyReal = 0;
-            const audioSceneExpected = new Map(); // "ch:sc" -> expected_count (stable per scene)
-            const uniqueSceneKeys = new Set();     // "ch:sc" for all scenes with dispatch
-            const videoReadyScenes = new Set();    // "ch:sc" for scenes with at least one ready video chunk
-            const imageReadyScenes = new Set();    // "ch:sc" for scenes with at least one ready image chunk
+            // ── 3. Filter by scope (for x/y accuracy) ──
+            let filteredIds = allChunkIds;
+            if ((scope === 'current_chapter' || scope === 'chapter') && chapter_id) {
+                filteredIds = allChunkIds.filter(cid => chunkById.get(cid)?.chapter_id === chapter_id);
+            } else if ((scope === 'current_scene' || scope === 'scene') && chapter_id && scene_id) {
+                filteredIds = allChunkIds.filter(cid => {
+                    const c = chunkById.get(cid);
+                    return c?.chapter_id === chapter_id && c?.scene_id === scene_id;
+                });
+            }
 
+            // ── 4. Count GLOBAL (unfiltered) data for worker EXISTENCE ──
+            // We need BOTH global and per-scope counts:
+            //   - Global: decide which workers SHOW (has any work anywhere)
+            //   - Per-scope: compute x/y numbers (accuracy for selected range)
+            let globalAudioExpectedTotal = 0;
+            let globalUniqueSceneCount = 0;
+            const globalSceneKeys = new Set();
+
+            // Per-scope counts (for x/y)
+            let audioReadyReal = 0;
+            const audioSceneExpected = new Map();
+            let videoReadyScenesCount = 0;
+            const videoReadySceneKeys = new Set();
+            let imageReadySceneCount = 0;
+            const imageReadySceneKeys = new Set();
+
+            // First pass: gather global scene keys (from ALL chunks)
             for (const cid of allChunkIds) {
                 const chunk = chunkById.get(cid);
                 if (!chunk) continue;
-                if (chunk.audio_status === 'ready' || chunk.audio_status === 'placeholder') {
-                    audioReady++;
-                    if (chunk.audio_status === 'ready') audioReadyReal++;
-                }
-                if (chunk.image_status === 'ready') {
-                    if (chunk.chapter_id && chunk.scene_id) {
-                        imageReadyScenes.add(`${chunk.chapter_id}:${chunk.scene_id}`);
-                    }
-                }
-                if (chunk.video_status === 'ready') {
-                    if (chunk.chapter_id && chunk.scene_id) {
-                        videoReadyScenes.add(`${chunk.chapter_id}:${chunk.scene_id}`);
-                    }
-                }
-
-                // Track unique scenes for video/fallback denominators
                 if (chunk.chapter_id && chunk.scene_id) {
-                    uniqueSceneKeys.add(`${chunk.chapter_id}:${chunk.scene_id}`);
+                    globalSceneKeys.add(`${chunk.chapter_id}:${chunk.scene_id}`);
+                }
+                // Global expected_count for audio existence
+                if (chunk.chapter_id && chunk.scene_id && chunk.expected_chunk_count != null) {
+                    const expected = parseInt(chunk.expected_chunk_count, 10);
+                    if (!isNaN(expected) && expected > 0) {
+                        globalAudioExpectedTotal += expected;
+                    }
+                }
+            }
+            globalUniqueSceneCount = globalSceneKeys.size;
+
+            // Second pass: per-scope counts for x/y (from filteredIds)
+            for (const cid of filteredIds) {
+                const chunk = chunkById.get(cid);
+                if (!chunk) continue;
+                if (chunk.audio_status === 'ready') audioReadyReal++;
+
+                if (chunk.image_status === 'ready' && chunk.chapter_id && chunk.scene_id) {
+                    imageReadySceneKeys.add(`${chunk.chapter_id}:${chunk.scene_id}`);
+                }
+                if (chunk.video_status === 'ready' && chunk.chapter_id && chunk.scene_id) {
+                    videoReadySceneKeys.add(`${chunk.chapter_id}:${chunk.scene_id}`);
                 }
 
-                // expected_count per unique scene — take the MAX across all chunks
-                // for this scene, because import may create chunks with expected=1 and
-                // startScene updates them to the true segment count later. Taking the
-                // first chunk may pick up the stale import value, causing "9/3" display.
+                // expected_count per unique scene (per-scope)
                 if (chunk.chapter_id && chunk.scene_id && chunk.expected_chunk_count != null) {
                     const sceneKey = `${chunk.chapter_id}:${chunk.scene_id}`;
                     const expected = parseInt(chunk.expected_chunk_count, 10);
@@ -138,11 +154,15 @@ module.exports = function(app, redis, deps) {
             }
 
             const audioExpectedTotal = [...audioSceneExpected.values()].reduce((a, b) => a + b, 0);
-            const uniqueSceneCount = uniqueSceneKeys.size;
-            const videoReadyCount = videoReadyScenes.size;
-            const imageReadySceneCount = imageReadyScenes.size;
+            const scopeUniqueSceneCount = (new Set(filteredIds.map(cid => {
+                const c = chunkById.get(cid);
+                return c?.chapter_id && c?.scene_id ? `${c.chapter_id}:${c.scene_id}` : null;
+            }).filter(Boolean))).size;
 
-            // ── 4. IU counts (for image worker) ──
+            videoReadyScenesCount = videoReadySceneKeys.size;
+            imageReadySceneCount = imageReadySceneKeys.size;
+
+            // ── 5. IU counts (for image worker, per-scope) ──
             let scopeIuTotal = 0, scopeIuReady = 0, coverIuTotal = 0, coverIuReady = 0;
             try {
                 let buildId = chunkById.get(allChunkIds[0])?.build_id;
@@ -154,8 +174,16 @@ module.exports = function(app, redis, deps) {
                 }
 
                 if (buildId) {
-                    // Count IUs for ALL scenes (not filtered by scope)
-                    for (const sceneKey of uniqueSceneKeys) {
+                    // Count IUs for scenes IN FILTERED SCOPE only (for x/y accuracy)
+                    const scopeSceneKeys = new Set();
+                    for (const cid of filteredIds) {
+                        const chunk = chunkById.get(cid);
+                        if (chunk?.chapter_id && chunk?.scene_id) {
+                            scopeSceneKeys.add(`${chunk.chapter_id}:${chunk.scene_id}`);
+                        }
+                    }
+
+                    for (const sceneKey of scopeSceneKeys) {
                         const [ch, sc] = sceneKey.split(':');
                         const rows = await iuRepo.getImageUnitsForScene(buildId, bookId, ch, sc);
                         if (rows.length > 0) {
@@ -202,15 +230,20 @@ module.exports = function(app, redis, deps) {
             } catch (_) {}
 
             const useIu = scopeIuTotal > 0;
+            const imgDenominator = useIu ? scopeIuTotal : scopeUniqueSceneCount;
+            const imgNumerator = useIu ? scopeIuReady : imageReadySceneCount;
 
-            // ── 4.5. Read cancelled worker types ──
+            // ── 5.5. Read cancelled worker types ──
             const cancelledWorkersKey = `animastor:cancelled-workers:${bookId}`;
             const cancelledTypes = new Set(await redis.smembers(cancelledWorkersKey) || []);
 
-            // ── 5. Build worker entries ──
+            // ── 6. Build worker entries ──
+            // IMPORTANT: Worker EXISTENCE is based on GLOBAL data (all scenes),
+            // but x/y numbers are computed PER-SCOPE (from filteredIds).
+            // This ensures all workers are visible regardless of scope.
             const workers = [];
 
-            // Cover worker (only if cover has IUs)
+            // Cover worker (only if cover has IUs, already per-scope from IU computation)
             if (coverIuTotal > 0) {
                 const covDone = coverIuReady >= coverIuTotal;
                 workers.push({
@@ -225,14 +258,16 @@ module.exports = function(app, redis, deps) {
                 });
             }
 
-            // Audio worker (expected_count-based, not chunk-count-based)
-            if (layers.audio && audioExpectedTotal > 0) {
-                const audioDone = audioReadyReal >= audioExpectedTotal;
+            // Audio worker: existence = globalAudioExpectedTotal > 0
+            // x/y = per-scope audioReadyReal vs audioExpectedTotal
+            if (layers.audio && globalAudioExpectedTotal > 0) {
+                const audioTotal = audioExpectedTotal > 0 ? audioExpectedTotal : globalAudioExpectedTotal;
+                const audioDone = audioTotal > 0 && audioReadyReal >= audioTotal;
                 workers.push({
                     type: 'audio',
                     ready: audioReadyReal,
-                    total: audioExpectedTotal,
-                    percent: Math.round(audioDone ? 100 : (audioReadyReal * 100 / audioExpectedTotal)),
+                    total: audioTotal,
+                    percent: Math.round(audioDone ? 100 : (audioReadyReal * 100 / Math.max(1, audioTotal))),
                     done: audioDone,
                     visible: true,
                     indeterminate: false,
@@ -240,31 +275,32 @@ module.exports = function(app, redis, deps) {
                 });
             }
 
-            // Image worker (uses IU counts when available, otherwise scenes-with-image-chunks)
-            if (layers.image && uniqueSceneCount > 0) {
-                const imgTotal = useIu ? scopeIuTotal : uniqueSceneCount;
-                const imgReady = useIu ? scopeIuReady : imageReadySceneCount;
-                const imgDone = imgReady >= imgTotal && imgTotal > 0;
+            // Image worker: existence = IU data exists OR global scene count > 0
+            // x/y = per-scope IU counts or per-scope scene counts
+            if (layers.image && (useIu || globalUniqueSceneCount > 0)) {
+                const imgDone = imgNumerator >= imgDenominator && imgDenominator > 0;
                 workers.push({
                     type: 'image',
-                    ready: imgReady,
-                    total: imgTotal,
-                    percent: Math.round(imgDone ? 100 : (imgReady * 100 / Math.max(1, imgTotal))),
+                    ready: imgNumerator,
+                    total: imgDenominator,
+                    percent: Math.round(imgDone ? 100 : (imgNumerator * 100 / Math.max(1, imgDenominator))),
                     done: imgDone,
                     visible: true,
-                    indeterminate: useIu && imgTotal === 0,
+                    indeterminate: useIu && imgDenominator === 0,
                     cancelled: cancelledTypes.has('image'),
                 });
             }
 
-            // Video worker (denominator = unique scenes, numerator = scenes with ready video)
-            if (layers.video && uniqueSceneCount > 0) {
-                const videoDone = videoReadyCount >= uniqueSceneCount;
+            // Video worker: existence = globalUniqueSceneCount > 0
+            // x/y = per-scope videoReadyScenesCount vs scopeUniqueSceneCount
+            if (layers.video && globalUniqueSceneCount > 0) {
+                const videoDenominator = scopeUniqueSceneCount > 0 ? scopeUniqueSceneCount : globalUniqueSceneCount;
+                const videoDone = videoDenominator > 0 && videoReadyScenesCount >= videoDenominator;
                 workers.push({
                     type: 'video',
-                    ready: videoReadyCount,
-                    total: uniqueSceneCount,
-                    percent: Math.round(videoDone ? 100 : (videoReady * 100 / uniqueSceneCount)),
+                    ready: videoReadyScenesCount,
+                    total: videoDenominator,
+                    percent: Math.round(videoDone ? 100 : (videoReadyScenesCount * 100 / Math.max(1, videoDenominator))),
                     done: videoDone,
                     visible: true,
                     indeterminate: false,
@@ -272,7 +308,7 @@ module.exports = function(app, redis, deps) {
                 });
             }
 
-            // ── 6. Overall aggregates ──
+            // ── 7. Overall aggregates ──
             const anyIncomplete = workers.some(w => !w.done && w.visible && w.total > 0);
             const overallPercent = workers.length > 0
                 ? Math.round(workers.reduce((s, w) => s + w.percent, 0) / workers.length)

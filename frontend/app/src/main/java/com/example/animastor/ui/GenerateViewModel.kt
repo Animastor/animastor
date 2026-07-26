@@ -329,16 +329,18 @@ class GenerateViewModel(
 
         // Always overwrite _activeGeneration with each new generation call.
         // This ensures the progress poller (refreshProgressUi) keeps running
-        // and is not cleared when previous workers finish.
+        // even when previous workers finish — without this, the first worker's
+        // completion would clear _activeGeneration and hide all other workers.
         //
-        // The backend /progress-panel endpoint IGNORES scope filtering (F15),
-        // so we always use "whole_book" to show ALL workers regardless of
-        // which scope each worker type was started with. x/y numbers are
-        // computed per-worker from actual dispatched work, not from scope.
+        // The scope comes from the USER's dialog choice so x/y numbers reflect
+        // the selected range (current_scene / current_chapter / whole_book).
+        // The backend /progress-panel endpoint uses this scope for x/y
+        // computation while still returning ALL workers that have any work
+        // globally — enabling parallel progress display.
         _activeGeneration.value = ActiveGeneration(
-            scope = "whole_book",
-            chapterId = null,
-            sceneId = null
+            scope = req.scope,
+            chapterId = req.chapterId,
+            sceneId = req.sceneId
         )
         if (timerStartedAt <= 0L) startTimer()
 
