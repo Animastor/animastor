@@ -330,12 +330,18 @@ class GenerateViewModel(
         // 🔧 FIX: Don't overwrite _activeGeneration if one is already active.
         // Multiple workers can run in parallel (e.g. audio + image). Overwriting
         // would change the progress-panel scope and lose progress for existing
-        // workers. First generation sets the scope; subsequent generations keep it.
+        // workers.
+        //
+        // NOTE: _activeGeneration.scope controls the /progress-panel API query
+        // (which workers to DISPLAY). The generation scope from the dialog goes
+        // to /regenerate (which scenes to GENERATE). These are separate concerns.
+        // Always use "whole_book" for display so ALL workers are shown regardless
+        // of which scope each worker type was started with.
         if (_activeGeneration.value == null) {
             _activeGeneration.value = ActiveGeneration(
-                scope = req.scope,
-                chapterId = req.chapterId,
-                sceneId = req.sceneId
+                scope = "whole_book",
+                chapterId = null,
+                sceneId = null
             )
             startTimer()
         }
