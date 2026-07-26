@@ -358,4 +358,7 @@
     <string name="generate_stop">Стоп</string>
     <string name="generate_no_workers">Нет доступных воркеров</string>
     <string name="generate_vbook_next">Генерировать VBook далее</string>
+    <string name="generate_audio_disabled">Генерация аудио отключена. Включите переключатель выше.</string>
+    <string name="generate_image_disabled">Генерация изображений отключена. Включите переключатель выше.</string>
+    <string name="generate_video_disabled">Генерация видео отключена. Включите переключатель выше.</string>
 </resources>

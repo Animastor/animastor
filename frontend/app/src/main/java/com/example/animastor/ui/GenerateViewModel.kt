@@ -189,6 +189,11 @@ class GenerateViewModel(
         viewModelScope.launch { persistLayerConfig() }
     }
 
+    fun setImageEnabled(enabled: Boolean) {
+        imageEnabled = enabled
+        viewModelScope.launch { persistLayerConfig() }
+    }
+
     fun setVideoEnabled(enabled: Boolean) {
         _videoEnabled.value = enabled
         viewModelScope.launch { persistLayerConfig() }
@@ -204,14 +209,6 @@ class GenerateViewModel(
      */
     fun toggleAudioForProfile() {
         _audioEnabled.value = !_audioEnabled.value
-        viewModelScope.launch { persistLayerConfig() }
-    }
-
-    /**
-     * Toggle image independently. Does NOT affect audio or video.
-     */
-    fun toggleImageForProfile() {
-        imageEnabled = !imageEnabled
         viewModelScope.launch { persistLayerConfig() }
     }
 

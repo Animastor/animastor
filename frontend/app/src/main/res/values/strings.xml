@@ -393,4 +393,7 @@
     <string name="generate_stop">Stop</string>
     <string name="generate_no_workers">No workers available</string>
     <string name="generate_vbook_next">Generate VBook Next</string>
+    <string name="generate_audio_disabled">Audio generation is disabled. Enable it in the switches above.</string>
+    <string name="generate_image_disabled">Image generation is disabled. Enable it in the switches above.</string>
+    <string name="generate_video_disabled">Video generation is disabled. Enable it in the switches above.</string>
 </resources>

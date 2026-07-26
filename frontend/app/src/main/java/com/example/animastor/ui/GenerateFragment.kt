@@ -53,8 +53,8 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
         b.audioSwitch.setOnCheckedChangeListener { _, checked ->
             viewModel.setAudioEnabled(checked)
         }
-        b.imageSwitch.setOnCheckedChangeListener { _, _ ->
-            viewModel.toggleImageForProfile()
+        b.imageSwitch.setOnCheckedChangeListener { _, checked ->
+            viewModel.setImageEnabled(checked)
         }
         b.videoSwitch.setOnCheckedChangeListener { _, checked ->
             viewModel.setVideoEnabled(checked)
@@ -499,6 +499,10 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
             Toast.makeText(requireContext(), R.string.file_status_opening, Toast.LENGTH_SHORT).show()
             return
         }
+        if (!viewModel.audioEnabled()) {
+            Toast.makeText(requireContext(), R.string.generate_audio_disabled, Toast.LENGTH_SHORT).show()
+            return
+        }
         showScopeDialog(profile = "audio_only") { scope, chId, scId ->
             viewModel.startGeneration(
                 GenerateViewModel.GenerationRequest(profile = "audio_only", scope = scope, chapterId = chId, sceneId = scId)
@@ -517,6 +521,10 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
             Toast.makeText(requireContext(), R.string.file_status_opening, Toast.LENGTH_SHORT).show()
             return
         }
+        if (!viewModel.imageEnabled) {
+            Toast.makeText(requireContext(), R.string.generate_image_disabled, Toast.LENGTH_SHORT).show()
+            return
+        }
         showScopeDialog(profile = "image_only") { scope, chId, scId ->
             viewModel.startGeneration(
                 GenerateViewModel.GenerationRequest(profile = "image_only", scope = scope, chapterId = chId, sceneId = scId)
@@ -533,6 +541,10 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
         val bookId = viewModel.bookId
         if (bookId.isBlank()) {
             Toast.makeText(requireContext(), R.string.file_status_opening, Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (!viewModel.videoEnabled()) {
+            Toast.makeText(requireContext(), R.string.generate_video_disabled, Toast.LENGTH_SHORT).show()
             return
         }
         showScopeDialog(profile = "full") { scope, chId, scId ->
