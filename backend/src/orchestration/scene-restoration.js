@@ -4,6 +4,7 @@ const state = require('../state');
 const runtimeScheduler = require('../runtime/runtime-scheduler');
 const sceneAssetsRepo = require('../storage/postgres/repositories/scene-assets-repo');
 const { query: pgQuery } = require('../storage/postgres/database');
+const placeholderAudio = require('../services/placeholder-audio');
 const { log, warn } = require('./scene-utils');
 
 const OUTPUT_DIR = process.env.OUTPUT_DIR || '/data/output';
@@ -16,9 +17,17 @@ async function restoreSceneChunkStatus(redis, buildId, bookId, chapterId, sceneI
     if (!hasDirtyUnits) {
         // Нет информации о конкретных dirty-юнитах (например, rebuild_all=true).
         // Проверяем, есть ли какой-либо контент на диске.
-        const hasAnyContent = fileStatus.audio.exists || fileStatus.image.exists || fileStatus.video.exists;
+        // 🔧 Placeholder audio file counts as EXISTS but NOT as real content.
+        // If only placeholder audio exists, the scene still needs regeneration.
+        let audioIsReal = false;
+        if (fileStatus.audio.exists) {
+            try {
+                audioIsReal = await placeholderAudio.hasRealAudio(bookId, chapterId, sceneId, buildId);
+            } catch (_) {}
+        }
+        const hasAnyContent = audioIsReal || fileStatus.image.exists || fileStatus.video.exists;
         if (!hasAnyContent) {
-            log(`[RESTORE-SKIP] ${bookId}/${chapterId}/${sceneId}: no content on disk — leaving as-is for regeneration`);
+            log(`[RESTORE-SKIP] ${bookId}/${chapterId}/${sceneId}: no real content on disk — leaving as-is for regeneration`);
             return { restored: false, reason: 'no_content' };
         }
 
@@ -28,7 +37,7 @@ async function restoreSceneChunkStatus(redis, buildId, bookId, chapterId, sceneI
         await sceneWindow.restoreChunkStatusForScene(redis, buildId, bookId, chapterId, sceneId);
 
         // T8: syncLinearState удалён — per-asset state единственный source of truth
-        log(`[RESTORE-PARTIAL] ${bookId}/${chapterId}/${sceneId}: chunks restored from disk (audio=${fileStatus.audio.exists}, image=${fileStatus.image.exists}), keeping pending for regeneration`);
+        log(`[RESTORE-PARTIAL] ${bookId}/${chapterId}/${sceneId}: chunks restored from disk (audio=${audioIsReal ? 'real' : 'placeholder'}, image=${fileStatus.image.exists}), keeping pending for regeneration`);
         return { restored: true, reason: 'partial_restore' };
     }
 
