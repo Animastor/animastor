@@ -1061,8 +1061,24 @@ module.exports = function(app, redis, deps) {
             );
             log(`[GPU RESULT] verifyDispatchIdentity: valid=${identity.valid} reason=${identity.reason}`);
             if (!identity.valid) {
-                log(`[GPU RESULT] Rejected ${job_id}: ${identity.reason}`);
-                return res.json({ ok: true, rejected: true, reason: identity.reason });
+                // 🔧 FIX: Audio chunks can arrive with stale dispatch_id when batch
+                // dispatch reorders narration→dialogue. By the time dialogue chunks
+                // complete, the original dispatch lease may have expired and the
+                // scheduler created a new dispatch. Accept audio chunks as long as
+                // the scene is still in WAITING_CHUNKS/MERGING (actively collecting chunks).
+                if (stage === 'audio' && identity.reason === 'stale_dispatch') {
+                    const audioOrch = require('../services/audio-orchestrator');
+                    const orchState = await audioOrch.getState(redis, parsed.bookId, parsed.chapterId, parsed.sceneId);
+                    if (orchState && (orchState.phase === audioOrch.PHASES.WAITING_CHUNKS || orchState.phase === audioOrch.PHASES.MERGING)) {
+                        log(`[GPU RESULT] Stale dispatch ACCEPTED for ${job_id} (scene still ${orchState.phase})`);
+                    } else {
+                        log(`[GPU RESULT] Rejected ${job_id}: ${identity.reason} (scene phase=${orchState?.phase || 'none'})`);
+                        return res.json({ ok: true, rejected: true, reason: identity.reason });
+                    }
+                } else {
+                    log(`[GPU RESULT] Rejected ${job_id}: ${identity.reason}`);
+                    return res.json({ ok: true, rejected: true, reason: identity.reason });
+                }
             }
 
             // Н.1: Dedup

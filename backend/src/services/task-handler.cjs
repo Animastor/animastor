@@ -37,9 +37,23 @@ module.exports = function(redis, config, deps) {
             dispatch_id
         );
         if (!identity.valid) {
-            const err = new Error(`Rejected task result: ${identity.reason}`);
-            err.code = identity.reason;
-            throw err;
+            // 🔧 FIX: Allow stale dispatch for audio chunks if scene is still
+            // in WAITING_CHUNKS (batch dispatch reorder: dialogue chunks come later).
+            if (stage === 'audio' && identity.reason === 'stale_dispatch') {
+                const audioOrch = require('./audio-orchestrator');
+                const orchState = await audioOrch.getState(redis, parsed.bookId, parsed.chapterId, parsed.sceneId);
+                if (orchState && (orchState.phase === audioOrch.PHASES.WAITING_CHUNKS || orchState.phase === audioOrch.PHASES.MERGING)) {
+                    log(`Stale dispatch accepted for audio chunk ${parsed.assetId} (scene still ${orchState.phase})`);
+                } else {
+                    const err = new Error(`Rejected task result: ${identity.reason} (scene phase=${orchState?.phase || 'none'})`);
+                    err.code = identity.reason;
+                    throw err;
+                }
+            } else {
+                const err = new Error(`Rejected task result: ${identity.reason}`);
+                err.code = identity.reason;
+                throw err;
+            }
         }
 
         // Resolve asset path
