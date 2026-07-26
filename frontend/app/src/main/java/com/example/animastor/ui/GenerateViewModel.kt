@@ -325,18 +325,27 @@ class GenerateViewModel(
             return
         }
         _generationStatus.value = GenerationStatus.RUNNING
-        // Allow starting new generation even if one is already running.
-        // The previous generation job will be cancelled, and the new one
-        // replaces it. Per-worker stop buttons on the backend handle granular cancellation.
         _isRegenerating.value = true
-        _activeGeneration.value = ActiveGeneration(
-            scope = req.scope,
-            chapterId = req.chapterId,
-            sceneId = req.sceneId
-        )
-        startTimer()  // 🕐 таймер стартует сразу, до API-вызова
-        generationJob?.cancel()
-        generationJob = viewModelScope.launch {
+
+        // 🔧 FIX: Don't overwrite _activeGeneration if one is already active.
+        // Multiple workers can run in parallel (e.g. audio + image). Overwriting
+        // would change the progress-panel scope and lose progress for existing
+        // workers. Use "whole_book" scope so /progress-panel returns ALL workers.
+        if (_activeGeneration.value == null) {
+            _activeGeneration.value = ActiveGeneration(
+                scope = "whole_book",
+                chapterId = null,
+                sceneId = null
+            )
+            startTimer()
+        }
+
+        // 🔧 FIX: Don't cancel previous generationJob — parallel generations are
+        // independent. The /regenerate API call is fire-and-forget; its response
+        // handler only updates local state (buildId, cache). Cancelling would
+        // prevent the new generation from updating buildId, but more importantly
+        // it would break the pattern of independent parallel workers.
+        viewModelScope.launch {
             // Preserve VBook progress and import messages when GPU generation starts
             // while VBook (AI agent) is still processing text windows.
             val prevVBook = _uiState.value.vbookProgress
@@ -381,27 +390,18 @@ class GenerateViewModel(
                 val dirtyCount = res.dirty_scenes?.size ?: 0
                 onResult(GenerationResult.Started(dirtyCount, res.scope ?: req.scope))
                 viewModelScope.launch { refreshAssetsState() }
-                // таймер уже запущен при входе в startGeneration
-                // Keep _activeGeneration alive: the progress bar polls getAssetsState
-                // to show actual completion. Only clear when cancelled or on a new
-                // generation that replaces this one. The poller hides the bar when
-                // ready >= total.
             }.onFailure { e ->
+                // 🔧 FIX: Don't clear _activeGeneration or stop the timer on a per-generation
+                // API failure. Multiple generations can run in parallel (e.g. audio + image).
+                // A failure in one should NOT kill progress display for the others.
+                // _activeGeneration and timer are owned by cancelGeneration() / applyGenerationResults().
                 if (e is CancellationException) {
                     Log.i(TAG, "startGeneration cancelled")
-                    _uiState.update { it.copy(phase = PlayerPhase.IDLE, errorMessage = null) }
-                    _activeGeneration.value = null
                     onResult(GenerationResult.Failed("cancelled"))
                 } else {
                     Log.e(TAG, "startGeneration failed: ${e.message}", e)
-                    _generationStatus.value = GenerationStatus.ERROR
-                    _uiState.update {
-                        it.copy(phase = PlayerPhase.SCENE_READY, errorMessage = "Generation failed: ${e.message}")
-                    }
                     onResult(GenerationResult.Failed(e.message ?: "unknown"))
-                    _activeGeneration.value = null
                 }
-                stopTimer()  // 🕐 ошибка — останавливаем таймер
             }
         }
     }
