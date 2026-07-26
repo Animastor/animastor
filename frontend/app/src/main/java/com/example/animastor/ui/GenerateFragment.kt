@@ -403,8 +403,8 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
         val mutedColor = requireContext().getColor(R.color.cinema_text_disabled)
         val errorColor = requireContext().getColor(R.color.cinema_error)
 
-        for (row in rows) {
-            val container = when (    row.type) {
+        for (taskRow in rows) {
+            val container = when (taskRow.type) {
                 "vbook" -> vbookContainer
                 "audio" -> audioContainer
                 "cover" -> imageContainer
@@ -416,38 +416,38 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
             val rowBinding = ItemWorkerProgressBinding.inflate(layoutInflater, container, false)
             val row = rowBinding.root
 
-            if (row.cancelled) {
-                rowBinding.workerName.text = getString(R.string.generation_done) + " — " + scopedTaskLabel(worker)
+            if (taskRow.cancelled) {
+                rowBinding.workerName.text = getString(R.string.generation_done) + " — " + scopedTaskLabel(taskRow)
                 rowBinding.workerName.setTextColor(errorColor)
                 rowBinding.workerCount.visibility = View.GONE
                 rowBinding.workerPercent.visibility = View.GONE
                 rowBinding.workerTimer.visibility = View.GONE
                 rowBinding.workerProgressBar.visibility = View.GONE
                 rowBinding.workerStopButton.visibility = View.GONE
-            } else if (row.indeterminate) {
-                rowBinding.workerName.text = scopedTaskLabel(worker)
+            } else if (taskRow.indeterminate) {
+                rowBinding.workerName.text = scopedTaskLabel(taskRow)
                 rowBinding.workerName.setTextColor(textColor)
                 rowBinding.workerCount.visibility = View.GONE
                 rowBinding.workerPercent.visibility = View.GONE
-                rowBinding.workerTimer.text = formatTimerText(row.elapsedSeconds)
+                rowBinding.workerTimer.text = formatTimerText(taskRow.elapsedSeconds)
                 rowBinding.workerTimer.visibility = View.VISIBLE
                 rowBinding.workerProgressBar.visibility = View.VISIBLE
                 rowBinding.workerProgressBar.isIndeterminate = true
                 rowBinding.workerProgressBar.setIndicatorColor(accentColor)
                 rowBinding.workerStopButton.visibility = View.VISIBLE
-                setupTaskStopButton(rowBinding.workerStopButton, row, row)
+                setupTaskStopButton(rowBinding.workerStopButton, row, taskRow)
                 // Tag for refreshTimerDisplay: -1L = live, compute from timerStartedAt
                 row.tag = -1L
-            } else if (row.done) {
-                rowBinding.workerName.text = getString(R.string.generation_done) + " — " + scopedTaskLabel(worker)
+            } else if (taskRow.done) {
+                rowBinding.workerName.text = getString(R.string.generation_done) + " — " + scopedTaskLabel(taskRow)
                 rowBinding.workerName.setTextColor(greenColor)
-                rowBinding.workerCount.text = row.countText ?: "${row.ready}/${row.total}"
+                rowBinding.workerCount.text = taskRow.countText ?: "${taskRow.ready}/${taskRow.total}"
                 rowBinding.workerCount.setTextColor(greenColor)
                 rowBinding.workerCount.visibility = View.VISIBLE
                 rowBinding.workerPercent.text = "100%"
                 rowBinding.workerPercent.setTextColor(greenColor)
                 rowBinding.workerPercent.visibility = View.VISIBLE
-                rowBinding.workerTimer.text = formatTimerText(row.elapsedSeconds)
+                rowBinding.workerTimer.text = formatTimerText(taskRow.elapsedSeconds)
                 rowBinding.workerTimer.visibility = View.VISIBLE
                 rowBinding.workerProgressBar.visibility = View.VISIBLE
                 rowBinding.workerProgressBar.isIndeterminate = false
@@ -455,24 +455,24 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
                 rowBinding.workerProgressBar.setIndicatorColor(greenColor)
                 rowBinding.workerStopButton.visibility = View.GONE
                 // Tag for refreshTimerDisplay: frozen elapsed (>= 0)
-                row.tag = row.elapsedSeconds
+                row.tag = taskRow.elapsedSeconds
             } else {
-                rowBinding.workerName.text = scopedTaskLabel(worker)
+                rowBinding.workerName.text = scopedTaskLabel(taskRow)
                 rowBinding.workerName.setTextColor(textColor)
-                rowBinding.workerCount.text = row.countText ?: "${row.ready}/${row.total}"
+                rowBinding.workerCount.text = taskRow.countText ?: "${taskRow.ready}/${taskRow.total}"
                 rowBinding.workerCount.setTextColor(mutedColor)
                 rowBinding.workerCount.visibility = View.VISIBLE
-                rowBinding.workerPercent.text = "${row.percent}%"
+                rowBinding.workerPercent.text = "${taskRow.percent}%"
                 rowBinding.workerPercent.setTextColor(accentColor)
                 rowBinding.workerPercent.visibility = View.VISIBLE
-                rowBinding.workerTimer.text = formatTimerText(row.elapsedSeconds)
+                rowBinding.workerTimer.text = formatTimerText(taskRow.elapsedSeconds)
                 rowBinding.workerTimer.visibility = View.VISIBLE
                 rowBinding.workerProgressBar.visibility = View.VISIBLE
                 rowBinding.workerProgressBar.isIndeterminate = false
-                rowBinding.workerProgressBar.setProgressCompat(row.percent, true)
+                rowBinding.workerProgressBar.setProgressCompat(taskRow.percent, true)
                 rowBinding.workerProgressBar.setIndicatorColor(accentColor)
                 rowBinding.workerStopButton.visibility = View.VISIBLE
-                setupTaskStopButton(rowBinding.workerStopButton, row, row)
+                setupTaskStopButton(rowBinding.workerStopButton, row, taskRow)
                 // Tag for refreshTimerDisplay: -1L = live, compute from timerStartedAt
                 row.tag = -1L
             }
@@ -494,7 +494,9 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
 
     private fun setupTaskStopButton(
         stopButton: ImageButton,
-        row: View, row: TaskRow) {
+        row: View,
+        rowData: TaskRow
+    ) {
         stopButton.setOnClickListener { view ->
             if (_highlightColor == 0) {
                 val errColor = requireContext().getColor(R.color.cinema_error)
@@ -513,8 +515,8 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
             popup.setOnMenuItemClickListener { _ ->
                 _highlightedRow?.setBackgroundColor(android.graphics.Color.TRANSPARENT)
                 _highlightedRow = null
-                viewModel.cancelTask(row.type, row.taskId)
-                Log.i(TAG, "Task cancelled via popup: type=${row.type} task=${row.taskId}")
+                viewModel.cancelTask(rowData.type, rowData.taskId)
+                Log.i(TAG, "Task cancelled via popup: type=${rowData.type} task=${rowData.taskId}")
                 true
             }
             popup.show()
@@ -653,7 +655,7 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
         viewModel.cancelTask(type)
     }
 
-    private fun scopedTaskLabel(row: TaskRow): String {
+    private fun scopedTaskLabel(taskRow: TaskRow): String {
         val target = when (row.scope) {
             "current_scene" -> row.sceneId
             "current_chapter" -> row.chapterId
