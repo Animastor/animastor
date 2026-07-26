@@ -165,6 +165,16 @@ async function executeAudioDispatch(redis, scene, loadedBook, buildId, dispatchI
         log(`AUDIO_DISPATCH: ${bookId}/${chapterId}/${sceneId} — already ready`);
         const completion = await completeStage(redis, bookId, chapterId, sceneId, 'audio', buildId, dispatchId);
         return { dispatched: false, jobs: 0, completed: completion.completed, reason: 'already_ready' };
+    } else if (result && result.expectedChunkCount === 0) {
+        // 0 segments = nothing to generate (scene has no TTS content).
+        // Fast-track WAITING_CHUNKS→MERGING→DONE to break the infinite
+        // dispatch→pending→re-dispatch loop that occurs when buildSegments
+        // returns 0 (invalid units, missing audio data, etc).
+        log(`AUDIO_DISPATCH: ${bookId}/${chapterId}/${sceneId} — 0 segments, nothing to generate, marking DONE`);
+        await audioOrch.setMerging(redis, bookId, chapterId, sceneId);
+        await audioOrch.setDone(redis, bookId, chapterId, sceneId);
+        const completion = await completeStage(redis, bookId, chapterId, sceneId, 'audio', buildId, dispatchId);
+        return { dispatched: false, jobs: 0, completed: completion.completed, reason: 'no_segments' };
     } else {
         warn(`AUDIO_DISPATCH: generateSceneAudio did not send jobs for ${bookId}/${chapterId}/${sceneId}`);
         return { dispatched: false, jobs: 0, reason: 'no_jobs_generated' };
