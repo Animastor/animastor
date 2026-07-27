@@ -1135,9 +1135,11 @@ class GenerateViewModel(
         Log.i(TAG, "cancelTask: type=$type taskId=$taskId bookId=$bookId")
         if (bookId.isBlank()) return
 
-        // If VBook was cancelled, clear its progress immediately
+        // If VBook was cancelled, clear its progress immediately and stop the poller
         if (type == "vbook") {
             _uiState.update { it.copy(vbookProgress = VBookProgress(stage = VBookStage.IDLE)) }
+            generationJob?.cancel()
+            generationJob = null
         }
 
         viewModelScope.launch {
