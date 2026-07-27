@@ -6,6 +6,19 @@ All notable changes to Animastor are documented here.
 
 ## [Unreleased] — 2026-07-27
 
+### Fixed
+
+- **W1: resetScenes — try/catch гарантирует addSceneToActiveIndex при ошибке markDirty**
+  (`backend/src/orchestration/orchestrator.js`):
+  - **Проблема:** `markDirty` (шаг 8) бросал исключение → `addSceneToActiveIndex`
+    (шаг 9) не выполнялся → сцены исчезали из active index → scheduler их не видел →
+    сцены зависали навсегда.
+  - **Фикс:** `markDirty` обёрнут в try/catch. При runtime-ошибке (PG failure, Redis
+    timeout) логируется `warn`, `marked` = `{ marked: 0 }`, и выполнение продолжается.
+    `addSceneToActiveIndex` (шаг 9) и journal (шаг 10) выполняются всегда.
+    Проверка `bookDiff` оставлена снаружи try/catch — programming error падает жёстко.
+  - 598 тестов проходят.
+
 ### Added
 
 - **R1: validateAssetTransition + journal events в setScene* (4 функции)**
