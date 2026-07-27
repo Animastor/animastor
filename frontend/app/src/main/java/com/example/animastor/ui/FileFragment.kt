@@ -254,6 +254,8 @@ class FileFragment : Fragment(R.layout.fragment_file) {
                         binding?.downloadStoryboardButton?.isEnabled = enabled
                         binding?.downloadAudioButton?.isEnabled = enabled
                         binding?.downloadVideoButton?.isEnabled = enabled
+                        // Download Book button only needs bookId (no buildId/phase requirement)
+                        binding?.downloadBookButton?.isEnabled = !exporting && viewModel.bookId.isNotBlank()
                     }
                 }
                 launch {
