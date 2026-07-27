@@ -14,7 +14,6 @@ import com.example.animastor.BuildConfig
 import com.example.animastor.R
 import com.example.animastor.databinding.DialogDeleteVbookBinding
 import com.example.animastor.databinding.FragmentSettingsBinding
-import com.example.animastor.network.RetrofitClient
 import kotlinx.coroutines.launch
 
 class SettingsFragment : Fragment(R.layout.fragment_settings) {
@@ -60,51 +59,6 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
 
         b.serverUrlInput.setText(BuildConfig.BASE_URL)
         b.debugInfo.text = "App: ${BuildConfig.VERSION_NAME}\nServer: ${BuildConfig.BASE_URL}"
-
-        // ── Load Prompt Profiles ──
-        lifecycleScope.launch {
-            try {
-                val resp = RetrofitClient.api.getConnectorProfiles()
-
-                // Audio spinner
-                val audioOpts = resp.options.audio.ifEmpty { listOf(resp.profiles.audio ?: "qwen-tts") }
-                val audioAdapter = ArrayAdapter(requireContext(), android.R.layout.simple_spinner_item, audioOpts)
-                audioAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
-                b.audioProfileSpinner.adapter = audioAdapter
-                val audioIdx = audioOpts.indexOf(resp.profiles.audio).coerceAtLeast(0)
-                b.audioProfileSpinner.setSelection(audioIdx)
-
-                // Image spinner
-                val imageOpts = resp.options.image.ifEmpty { listOf(resp.profiles.image ?: "qwen-image") }
-                val imageAdapter = ArrayAdapter(requireContext(), android.R.layout.simple_spinner_item, imageOpts)
-                imageAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
-                b.imageProfileSpinner.adapter = imageAdapter
-                val imageIdx = imageOpts.indexOf(resp.profiles.image).coerceAtLeast(0)
-                b.imageProfileSpinner.setSelection(imageIdx)
-
-                // Video spinner
-                val videoOpts = resp.options.video.ifEmpty { listOf(resp.profiles.video ?: "ltx-2.3") }
-                val videoAdapter = ArrayAdapter(requireContext(), android.R.layout.simple_spinner_item, videoOpts)
-                videoAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
-                b.videoProfileSpinner.adapter = videoAdapter
-                val videoIdx = videoOpts.indexOf(resp.profiles.video).coerceAtLeast(0)
-                b.videoProfileSpinner.setSelection(videoIdx)
-            } catch (e: Exception) {
-                // Fallback: single-option spinners with defaults
-                val fallbackAudio = listOf("qwen-tts")
-                val fallbackImage = listOf("qwen-image")
-                val fallbackVideo = listOf("ltx-2.3")
-                val fAdapter = ArrayAdapter(requireContext(), android.R.layout.simple_spinner_item, fallbackAudio)
-                fAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
-                b.audioProfileSpinner.adapter = fAdapter
-                val fImgAdapter = ArrayAdapter(requireContext(), android.R.layout.simple_spinner_item, fallbackImage)
-                fImgAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
-                b.imageProfileSpinner.adapter = fImgAdapter
-                val fVidAdapter = ArrayAdapter(requireContext(), android.R.layout.simple_spinner_item, fallbackVideo)
-                fVidAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
-                b.videoProfileSpinner.adapter = fVidAdapter
-            }
-        }
 
         b.clearCacheButton.setOnClickListener {
             if (viewModel.bookId.isBlank()) {
@@ -207,14 +161,6 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
 
         b.toolbar.setNavigationOnClickListener {
             parentFragmentManager.popBackStack()
-        }
-
-        // Open Workflow Manager
-        b.workflowManagerButton.setOnClickListener {
-            parentFragmentManager.beginTransaction()
-                .add(R.id.nav_host_container, WorkflowManagerFragment(), "WorkflowManagerFragment")
-                .addToBackStack(null)
-                .commit()
         }
 
         b.acceptButton.setOnClickListener {
