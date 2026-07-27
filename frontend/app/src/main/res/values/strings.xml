@@ -380,4 +380,8 @@
     <string name="generate_audio_disabled">Audio generation is disabled. Enable it in the switches above.</string>
     <string name="generate_image_disabled">Image generation is disabled. Enable it in the switches above.</string>
     <string name="generate_video_disabled">Video generation is disabled. Enable it in the switches above.</string>
+
+    <!-- Toggle chip labels -->
+    <string name="toggle_on">On</string>
+    <string name="toggle_off">Off</string>
 </resources>

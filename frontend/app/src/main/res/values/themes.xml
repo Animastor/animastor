@@ -247,6 +247,33 @@
         <item name="elevation">0dp</item>
     </style>
 
+    <!-- Toggle Chip — On/Off toggle button for worker sections
+         Height matches the gear icon (32dp).
+         Width is fixed (62dp) so the chip doesn't change size between
+         "On"/"Off" or "Вкл."/"Выкл." texts.
+
+         Use wrap_content + chipMinHeight (not EXACTLY) so the Chip's
+         internal onMeasure logic correctly calculates 32dp without
+         interference from touch-target insets. -->
+    <style name="Widget.Animastor.Chip.Toggle" parent="Widget.Animastor.Chip">
+        <item name="chipBackgroundColor">@color/toggle_chip_bg</item>
+        <item name="chipStrokeColor">@color/toggle_chip_stroke</item>
+        <item name="chipStrokeWidth">1.5dp</item>
+        <item name="android:textColor">@color/toggle_chip_text</item>
+        <item name="chipIconTint">@color/toggle_chip_text</item>
+        <item name="android:textSize">12sp</item>
+        <item name="android:textAllCaps">false</item>
+        <item name="checkedIconVisible">false</item>
+        <item name="closeIconVisible">false</item>
+        <item name="elevation">0dp</item>
+        <item name="chipMinHeight">32dp</item>
+        <item name="chipMinTouchTargetSize">0dp</item>
+        <item name="android:minHeight">32dp</item>
+        <item name="android:paddingTop">0dp</item>
+        <item name="android:paddingBottom">0dp</item>
+        <item name="android:gravity">center</item>
+    </style>
+
     <!-- Worker Chip — toggleable worker buttons in the toolbar -->
     <style name="Widget.Animastor.Chip.Worker" parent="Widget.Animastor.Chip">
         <item name="chipBackgroundColor">@color/worker_chip_bg</item>

@@ -115,7 +115,7 @@
                     android:orientation="vertical"
                     android:padding="20dp">
 
-                    <!-- Header: icon + label + switch -->
+                    <!-- Header: icon + label + toggle chip -->
                     <LinearLayout
                         android:id="@+id/vbookHeaderRow"
                         android:layout_width="match_parent"
@@ -157,7 +157,7 @@
                             android:layout_height="wrap_content"
                             android:layout_weight="1"
                             android:textSize="15sp"
-                            android:textStyle="bold"
+                            android:fontFamily="sans-serif-medium"
                             android:textColor="?attr/colorOnSurface"
                             android:singleLine="true" />
 
@@ -173,11 +173,13 @@
                             android:tint="?attr/colorOnSurfaceVariant"
                             android:visibility="visible" />
 
-                        <com.google.android.material.switchmaterial.SwitchMaterial
-                            android:id="@+id/vbookSwitch"
-                            android:layout_width="wrap_content"
+                        <com.google.android.material.chip.Chip
+                            android:id="@+id/vbookToggle"
+                            android:layout_width="64dp"
                             android:layout_height="wrap_content"
-                            android:layout_marginEnd="4dp" />
+                            style="@style/Widget.Animastor.Chip.Toggle"
+                            android:checkable="true"
+                            android:checked="true" />
                     </LinearLayout>
 
                     <!-- Progress rows container -->
@@ -246,7 +248,7 @@
                     android:orientation="vertical"
                     android:padding="20dp">
 
-                    <!-- Header: icon + label + switch -->
+                    <!-- Header: icon + label + toggle chip -->
                     <LinearLayout
                         android:id="@+id/audioHeaderRow"
                         android:layout_width="match_parent"
@@ -287,7 +289,7 @@
                             android:layout_height="wrap_content"
                             android:layout_weight="1"
                             android:textSize="15sp"
-                            android:textStyle="bold"
+                            android:fontFamily="sans-serif-medium"
                             android:textColor="?attr/colorOnSurface"
                             android:singleLine="true" />
 
@@ -303,11 +305,13 @@
                             android:tint="?attr/colorOnSurfaceVariant"
                             android:visibility="visible" />
 
-                        <com.google.android.material.switchmaterial.SwitchMaterial
-                            android:id="@+id/audioSwitch"
-                            android:layout_width="wrap_content"
+                        <com.google.android.material.chip.Chip
+                            android:id="@+id/audioToggle"
+                            android:layout_width="64dp"
                             android:layout_height="wrap_content"
-                            android:layout_marginEnd="4dp" />
+                            style="@style/Widget.Animastor.Chip.Toggle"
+                            android:checkable="true"
+                            android:checked="false" />
                     </LinearLayout>
 
                     <!-- Progress rows container -->
@@ -376,7 +380,7 @@
                     android:orientation="vertical"
                     android:padding="20dp">
 
-                    <!-- Header: icon + label + switch -->
+                    <!-- Header: icon + label + toggle chip -->
                     <LinearLayout
                         android:id="@+id/imageHeaderRow"
                         android:layout_width="match_parent"
@@ -417,7 +421,7 @@
                             android:layout_height="wrap_content"
                             android:layout_weight="1"
                             android:textSize="15sp"
-                            android:textStyle="bold"
+                            android:fontFamily="sans-serif-medium"
                             android:textColor="?attr/colorOnSurface"
                             android:singleLine="true" />
 
@@ -433,11 +437,13 @@
                             android:tint="?attr/colorOnSurfaceVariant"
                             android:visibility="visible" />
 
-                        <com.google.android.material.switchmaterial.SwitchMaterial
-                            android:id="@+id/imageSwitch"
-                            android:layout_width="wrap_content"
+                        <com.google.android.material.chip.Chip
+                            android:id="@+id/imageToggle"
+                            android:layout_width="64dp"
                             android:layout_height="wrap_content"
-                            android:layout_marginEnd="4dp" />
+                            style="@style/Widget.Animastor.Chip.Toggle"
+                            android:checkable="true"
+                            android:checked="false" />
                     </LinearLayout>
 
                     <!-- Progress rows container -->
@@ -506,7 +512,7 @@
                     android:orientation="vertical"
                     android:padding="20dp">
 
-                    <!-- Header: icon + label + switch -->
+                    <!-- Header: icon + label + toggle chip -->
                     <LinearLayout
                         android:id="@+id/videoHeaderRow"
                         android:layout_width="match_parent"
@@ -547,7 +553,7 @@
                             android:layout_height="wrap_content"
                             android:layout_weight="1"
                             android:textSize="15sp"
-                            android:textStyle="bold"
+                            android:fontFamily="sans-serif-medium"
                             android:textColor="?attr/colorOnSurface"
                             android:singleLine="true" />
 
@@ -563,11 +569,13 @@
                             android:tint="?attr/colorOnSurfaceVariant"
                             android:visibility="visible" />
 
-                        <com.google.android.material.switchmaterial.SwitchMaterial
-                            android:id="@+id/videoSwitch"
-                            android:layout_width="wrap_content"
+                        <com.google.android.material.chip.Chip
+                            android:id="@+id/videoToggle"
+                            android:layout_width="64dp"
                             android:layout_height="wrap_content"
-                            android:layout_marginEnd="4dp" />
+                            style="@style/Widget.Animastor.Chip.Toggle"
+                            android:checkable="true"
+                            android:checked="false" />
                     </LinearLayout>
 
                     <!-- Progress rows container -->

@@ -6,6 +6,7 @@ import android.animation.ObjectAnimator
 import android.os.Bundle
 import android.util.Log
 import android.view.View
+import android.widget.CompoundButton
 import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.PopupMenu
@@ -22,6 +23,7 @@ import com.example.animastor.databinding.FragmentGenerateBinding
 import com.example.animastor.databinding.ItemWorkerProgressBinding
 import com.example.animastor.network.RetrofitClient
 import com.example.animastor.repository.BookData
+import com.google.android.material.chip.Chip
 import com.google.android.material.color.MaterialColors
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -49,29 +51,45 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
         observePosition()
         loadBook()
 
-        // ── Switch toggles ──
-        b.vbookSwitch.setOnCheckedChangeListener { _, checked ->
+        // ── Toggle chips ──
+        // ── Toggle chips — save listener refs for later state restoration ──
+        val vbookToggleListener = CompoundButton.OnCheckedChangeListener { _, checked ->
             viewModel.setVBookEnabled(checked)
             updateHeaderPanelStyle(b.vbookHeaderRow, b.vbookAccentBar, checked)
+            updateToggleText(b.vbookToggle, checked)
         }
-        b.audioSwitch.setOnCheckedChangeListener { _, checked ->
+        val audioToggleListener = CompoundButton.OnCheckedChangeListener { _, checked ->
             viewModel.setAudioEnabled(checked)
             updateHeaderPanelStyle(b.audioHeaderRow, b.audioAccentBar, checked)
+            updateToggleText(b.audioToggle, checked)
         }
-        b.imageSwitch.setOnCheckedChangeListener { _, checked ->
+        val imageToggleListener = CompoundButton.OnCheckedChangeListener { _, checked ->
             viewModel.setImageEnabled(checked)
             updateHeaderPanelStyle(b.imageHeaderRow, b.imageAccentBar, checked)
+            updateToggleText(b.imageToggle, checked)
         }
-        b.videoSwitch.setOnCheckedChangeListener { _, checked ->
+        val videoToggleListener = CompoundButton.OnCheckedChangeListener { _, checked ->
             viewModel.setVideoEnabled(checked)
             updateHeaderPanelStyle(b.videoHeaderRow, b.videoAccentBar, checked)
+            updateToggleText(b.videoToggle, checked)
         }
 
+        b.vbookToggle.setOnCheckedChangeListener(vbookToggleListener)
+        b.audioToggle.setOnCheckedChangeListener(audioToggleListener)
+        b.imageToggle.setOnCheckedChangeListener(imageToggleListener)
+        b.videoToggle.setOnCheckedChangeListener(videoToggleListener)
+
+        // ── Init chip text immediately (avoid blank chips until first toggle) ──
+        updateToggleText(b.vbookToggle, b.vbookToggle.isChecked)
+        updateToggleText(b.audioToggle, b.audioToggle.isChecked)
+        updateToggleText(b.imageToggle, b.imageToggle.isChecked)
+        updateToggleText(b.videoToggle, b.videoToggle.isChecked)
+
         // ── Header rows (tap to toggle) ──
-        b.vbookHeaderRow.setOnClickListener { b.vbookSwitch.performClick() }
-        b.audioHeaderRow.setOnClickListener { b.audioSwitch.performClick() }
-        b.imageHeaderRow.setOnClickListener { b.imageSwitch.performClick() }
-        b.videoHeaderRow.setOnClickListener { b.videoSwitch.performClick() }
+        b.vbookHeaderRow.setOnClickListener { b.vbookToggle.performClick() }
+        b.audioHeaderRow.setOnClickListener { b.audioToggle.performClick() }
+        b.imageHeaderRow.setOnClickListener { b.imageToggle.performClick() }
+        b.videoHeaderRow.setOnClickListener { b.videoToggle.performClick() }
 
         // ── Generate buttons ──
         b.generateAllButton.setOnClickListener { onGenerateAllClicked() }
@@ -89,20 +107,20 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
         b.generateVideoButton.setOnClickListener { onGenerateVideoClicked() }
         b.stopVideoButton.setOnClickListener { onStopClicked("video") }
 
-        // ── Observe layer config (switch states) ──
+        // ── Observe layer config (toggle states) ──
         lifecycleScope.launch {
             viewModel.layerConfigLoadedFlow.collect { loaded ->
                 if (loaded) {
-                    b.vbookSwitch.isChecked = viewModel.vbookEnabled()
+                    setToggleChecked(b.vbookToggle, viewModel.vbookEnabled(), vbookToggleListener)
                     updateHeaderPanelStyle(b.vbookHeaderRow, b.vbookAccentBar, viewModel.vbookEnabled())
 
-                    b.audioSwitch.isChecked = viewModel.audioEnabled()
+                    setToggleChecked(b.audioToggle, viewModel.audioEnabled(), audioToggleListener)
                     updateHeaderPanelStyle(b.audioHeaderRow, b.audioAccentBar, viewModel.audioEnabled())
 
-                    b.imageSwitch.isChecked = viewModel.imageEnabled
+                    setToggleChecked(b.imageToggle, viewModel.imageEnabled, imageToggleListener)
                     updateHeaderPanelStyle(b.imageHeaderRow, b.imageAccentBar, viewModel.imageEnabled)
 
-                    b.videoSwitch.isChecked = viewModel.videoEnabled()
+                    setToggleChecked(b.videoToggle, viewModel.videoEnabled(), videoToggleListener)
                     updateHeaderPanelStyle(b.videoHeaderRow, b.videoAccentBar, viewModel.videoEnabled())
                 }
             }
@@ -693,11 +711,14 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
      * Style a worker section header row as a unified interactive panel.
      *
      * When [isEnabled]:
-     *   - Accent bar turns gold (cinema_accent) — a clear active indicator
-     *   - Background gets a warm container tint (cinema_accent_container)
+     *   - Accent bar turns gold (cinema_accent) — clear active indicator
+     *   - Background gets a slightly darker shade than the inactive panel
      * When disabled:
      *   - Accent bar dims to outline variant — subtle, unobtrusive
-     *   - Background becomes transparent — blends with the card
+     *   - Background stays at the default neutral shade
+     *
+     * Gold is reserved for accent elements (bar, label, icon) and no longer
+     * used for the panel background, so the gold accents remain visually distinct.
      */
     private fun updateHeaderPanelStyle(headerRow: View, accentBar: View, isEnabled: Boolean) {
         val ctx = requireContext()
@@ -736,6 +757,35 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
         }
         headerRow.background = bg
     }
+
+    /**
+     * Update the toggle chip text based on checked state.
+     * Uses localized strings: On/Off (EN) or Вкл./Выкл. (RU).
+     */
+    private fun updateToggleText(toggle: Chip, isChecked: Boolean) {
+        toggle.text = if (isChecked) {
+            getString(R.string.toggle_on)
+        } else {
+            getString(R.string.toggle_off)
+        }
+    }
+
+    /**
+     * Set chip checked state and update its text without triggering the listener.
+     * Used when restoring state from ViewModel to avoid infinite loops.
+     */
+    private fun setToggleChecked(
+        toggle: Chip,
+        checked: Boolean,
+        listener: CompoundButton.OnCheckedChangeListener?
+    ) {
+        toggle.setOnCheckedChangeListener(null)
+        toggle.isChecked = checked
+        updateToggleText(toggle, checked)
+        toggle.setOnCheckedChangeListener(listener)
+    }
+
+    // ═══════════════════════════════════════════════════════════════
 
     // ═══════════════════════════════════════════════════════════════
     //  SCOPE DIALOG
