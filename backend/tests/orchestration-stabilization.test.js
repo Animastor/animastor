@@ -311,3 +311,218 @@ describe('orchestration stabilization: executor acceptance', () => {
         expect(calls.pending).to.have.length(1);
     });
 });
+
+describe('audio-orch invariant (R6)', () => {
+    const modulePaths = [
+        '../src/orchestration/orchestrator',
+        '../src/state',
+        '../src/orchestration/scene-callbacks',
+        '../src/orchestration/scene-utils',
+        '../src/orchestration/event-journal',
+        '../src/runtime/dispatch-engine',
+        '../src/runtime/failure-taxonomy',
+        '../src/storage/postgres/repositories/scene-assets-repo',
+        '../src/storage/postgres/database',
+    ];
+
+    let redis;
+    let savedCache;
+    let assetWrites;
+    let dispatchFinalizedCalls;
+
+    beforeEach(() => {
+        redis = createMockRedis();
+        assetWrites = [];
+        dispatchFinalizedCalls = [];
+
+        savedCache = new Map();
+        for (const request of modulePaths) {
+            const resolved = require.resolve(request);
+            savedCache.set(resolved, require.cache[resolved]);
+            delete require.cache[resolved];
+        }
+    });
+
+    afterEach(() => {
+        for (const request of modulePaths) {
+            const resolved = require.resolve(request);
+            const saved = savedCache.get(resolved);
+            if (saved) require.cache[resolved] = saved;
+            else delete require.cache[resolved];
+        }
+    });
+
+    function stub(request, exports) {
+        const resolved = require.resolve(request);
+        require.cache[resolved] = { exports, loaded: true };
+    }
+
+    it('1. completeStage(audio) with ok handler → asset.audio = READY', async () => {
+        stub('../src/state', {
+            AssetState: {
+                NEW: 'new', DIRTY: 'dirty', PENDING: 'pending',
+                GENERATING: 'generating', READY: 'ready', FAILED: 'failed', PLACEHOLDER: 'placeholder',
+            },
+            getAssetStates: async () => ({ audio: 'generating', image: 'new', video: 'new' }),
+            unsafeRestoreAssetState: async (r, bid, cid, sid, asset, status) => {
+                assetWrites.push({ asset, status });
+            },
+            unsafeRestoreAssetStates: async () => {},
+            validateAssetTransition: () => ({ valid: true, reason: 'valid' }),
+        });
+        stub('../src/orchestration/scene-callbacks', {
+            handleAudioCompleted: async () => ({ ok: true, artifact: { path: '/tmp/test.mp3' } }),
+            handleImageCompleted: async () => ({ ok: true }),
+            handleVideoCompleted: async () => ({ ok: true }),
+        });
+        stub('../src/orchestration/scene-utils', { log: () => {}, warn: () => {}, error: () => {} });
+        stub('../src/orchestration/event-journal', {
+            EventType: { AUDIO_COMPLETED: 'AUDIO_COMPLETED' },
+            appendSceneEvent: async () => ({ success: true }),
+        });
+        stub('../src/runtime/dispatch-engine', {
+            verifyDispatchIdentity: async () => ({ valid: true }),
+            finalizeDispatch: async (r, bid, cid, sid, stage, opts) => {
+                dispatchFinalizedCalls.push({ stage, opts });
+            },
+        });
+        stub('../src/runtime/failure-taxonomy', {
+            classifyFailure: () => ({ type: 'unknown' }),
+        });
+        stub('../src/storage/postgres/repositories/scene-assets-repo', {
+            getAsset: async () => ({
+                scene_content_version: 1,
+                scene_audio_config_version: 1,
+            }),
+            markReady: async () => ({
+                id: 1, book_id: BOOK_ID, chapter_id: CHAPTER_ID, scene_id: SCENE_ID,
+                asset_type: 'audio', status: 'ready', path: '/tmp/test.mp3',
+            }),
+        });
+        stub('../src/storage/postgres/database', {
+            query: async () => ({
+                rows: [{ content_version: 1, audio_config_version: 1 }],
+            }),
+        });
+
+        const orchestrator = require('../src/orchestration/orchestrator');
+        const result = await orchestrator.completeStage(
+            redis, BOOK_ID, CHAPTER_ID, SCENE_ID, 'audio', 'build-1', 'dispatch-ok'
+        );
+
+        expect(result).to.deep.include({ completed: true, reason: null });
+
+        // Asset state was written as READY
+        const audioWrite = assetWrites.find(w => w.asset === 'audio');
+        expect(audioWrite).to.exist;
+        expect(audioWrite.status).to.equal('ready');
+
+        // Dispatch finalized as success
+        const finalize = dispatchFinalizedCalls.find(c => c.stage === 'audio');
+        expect(finalize).to.exist;
+        expect(finalize.opts.outcome).to.equal('success');
+    });
+
+    it('2. failStage(audio) → asset.audio = FAILED then PENDING', async () => {
+        stub('../src/state', {
+            AssetState: {
+                NEW: 'new', DIRTY: 'dirty', PENDING: 'pending',
+                GENERATING: 'generating', READY: 'ready', FAILED: 'failed', PLACEHOLDER: 'placeholder',
+            },
+            getAssetStates: async () => ({ audio: 'generating', image: 'new', video: 'new' }),
+            unsafeRestoreAssetState: async (r, bid, cid, sid, asset, status) => {
+                assetWrites.push({ asset, status });
+            },
+            unsafeRestoreAssetStates: async () => {},
+            validateAssetTransition: (from, to) => ({ valid: true, reason: 'valid' }),
+        });
+        stub('../src/orchestration/scene-utils', { log: () => {}, warn: () => {} });
+        stub('../src/orchestration/event-journal', {
+            EventType: { AUDIO_FAILED: 'AUDIO_FAILED', IMAGE_FAILED: 'IMAGE_FAILED', VIDEO_FAILED: 'VIDEO_FAILED' },
+            appendSceneEvent: async () => ({ success: true }),
+        });
+        stub('../src/runtime/dispatch-engine', {
+            verifyDispatchIdentity: async () => ({ valid: true }),
+            finalizeDispatch: async (r, bid, cid, sid, stage, opts) => {
+                dispatchFinalizedCalls.push({ stage, opts });
+            },
+        });
+        stub('../src/runtime/failure-taxonomy', {
+            classifyFailure: () => ({ type: 'transient' }),
+        });
+
+        const orchestrator = require('../src/orchestration/orchestrator');
+        const result = await orchestrator.failStage(
+            redis, BOOK_ID, CHAPTER_ID, SCENE_ID, 'audio', 'build-1', 'test_error'
+        );
+
+        expect(result).to.deep.include({ failed: true, redispatch: true });
+
+        // Asset state was written as FAILED then PENDING
+        expect(assetWrites.length).to.equal(2);
+        expect(assetWrites[0]).to.deep.include({ asset: 'audio', status: 'failed' });
+        expect(assetWrites[1]).to.deep.include({ asset: 'audio', status: 'pending' });
+
+        // Dispatch finalized as failure
+        const finalize = dispatchFinalizedCalls.find(c => c.stage === 'audio');
+        expect(finalize).to.exist;
+        expect(finalize.opts.outcome).to.equal('failure');
+    });
+
+    it('3. completeStage(audio) with handler.ok:false → NO asset state change', async () => {
+        stub('../src/state', {
+            AssetState: {
+                NEW: 'new', DIRTY: 'dirty', PENDING: 'pending',
+                GENERATING: 'generating', READY: 'ready', FAILED: 'failed', PLACEHOLDER: 'placeholder',
+            },
+            getAssetStates: async () => ({ audio: 'generating', image: 'new', video: 'new' }),
+            unsafeRestoreAssetState: async (r, bid, cid, sid, asset, status) => {
+                assetWrites.push({ asset, status });
+            },
+            unsafeRestoreAssetStates: async () => {},
+            validateAssetTransition: () => ({ valid: true, reason: 'valid' }),
+        });
+        stub('../src/orchestration/scene-callbacks', {
+            handleAudioCompleted: async () => ({ ok: false, reason: 'merge_failed' }),
+            handleImageCompleted: async () => ({ ok: true }),
+            handleVideoCompleted: async () => ({ ok: true }),
+        });
+        stub('../src/orchestration/scene-utils', { log: () => {}, warn: () => {}, error: () => {} });
+        stub('../src/orchestration/event-journal', {
+            EventType: { AUDIO_COMPLETED: 'AUDIO_COMPLETED' },
+            appendSceneEvent: async () => ({ success: true }),
+        });
+        stub('../src/runtime/dispatch-engine', {
+            verifyDispatchIdentity: async () => ({ valid: true }),
+            finalizeDispatch: async (r, bid, cid, sid, stage, opts) => {
+                dispatchFinalizedCalls.push({ stage, opts });
+            },
+        });
+        stub('../src/runtime/failure-taxonomy', {
+            classifyFailure: () => ({ type: 'unknown' }),
+        });
+        stub('../src/storage/postgres/repositories/scene-assets-repo', {
+            getAsset: async () => null,
+            markReady: async () => {},
+        });
+        stub('../src/storage/postgres/database', {
+            query: async () => ({ rows: [] }),
+        });
+
+        const orchestrator = require('../src/orchestration/orchestrator');
+        const result = await orchestrator.completeStage(
+            redis, BOOK_ID, CHAPTER_ID, SCENE_ID, 'audio', 'build-1', 'dispatch-reject'
+        );
+
+        // Handler rejected — not completed
+        expect(result).to.deep.include({ completed: false });
+
+        // No asset state was written (handler.ok !== true)
+        expect(assetWrites.length).to.equal(0);
+
+        // Dispatch finalized as failure
+        const finalize = dispatchFinalizedCalls.find(c => c.stage === 'audio');
+        expect(finalize).to.exist;
+        expect(finalize.opts.outcome).to.equal('failure');
+    });
+});

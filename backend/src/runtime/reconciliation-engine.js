@@ -1409,6 +1409,8 @@ async function recoverAudioOrchStates(redis, deps) {
                 if (syncFs.existsSync(mergedPath)) {
                     log(`[AUDIO-ORCH] Recover ${bookId}/${chapterId}/${sceneId}: MERGING → DONE`);
                     await audioOrch.setDone(redis, bookId, chapterId, sceneId);
+                    // R3: sync asset state after audioOrch.setDone — asset.audio → READY
+                    await state.unsafeRestoreAssetState(redis, bookId, chapterId, sceneId, 'audio', state.AssetState.READY);
                 } else {
                     log(`[AUDIO-ORCH] Recover ${bookId}/${chapterId}/${sceneId}: MERGING → FAILED`);
                     await audioOrch.setFailed(redis, bookId, chapterId, sceneId, 'restart_merge_missing');

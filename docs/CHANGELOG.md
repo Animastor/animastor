@@ -4,6 +4,41 @@ All notable changes to Animastor are documented here.
 
 ---
 
+## [Unreleased] — 2026-07-27
+
+### Added
+
+- **R1: validateAssetTransition + journal events в setScene* (4 функции)**
+  (`backend/src/orchestration/orchestrator.js`, `backend/src/orchestration/event-journal.js`):
+  - `setScenePending`, `setSceneGenerating`, `setSceneAllReady`, `setScenePlaceholder`:
+    каждая теперь читает текущее состояние, вызывает `validateAssetTransition`, при
+    невалидном переходе пишет `INVALID_STATE_CALLBACK` в journal, после успешной записи —
+    `SCENE_PENDING/GENERATING/ALL_READY/PLACEHOLDER`.
+  - Добавлены 4 новых EventType: `SCENE_PENDING`, `SCENE_GENERATING`, `SCENE_ALL_READY`,
+    `SCENE_PLACEHOLDER`.
+  - Все callers продолжают звать те же методы — контракт не сломан.
+
+- **R3: sync asset state после audioOrch.setDone() в recoverAudioOrchStates**
+  (`backend/src/runtime/reconciliation-engine.js`):
+  - При MERGING→DONE recovery: после `audioOrch.setDone()` теперь вызывается
+    `state.unsafeRestoreAssetState(audio, READY)`. Закрывает пробел в инварианте
+    `audio-orch.DONE ⇔ asset.audio.READY`.
+
+- **R6: Тест на audio-orch инвариант**
+  (`backend/tests/orchestration-stabilization.test.js`):
+  - 3 теста: (1) completeStage(audio) с ok → asset READY, (2) failStage(audio) → asset
+    FAILED→PENDING, (3) completeStage(audio) с ok:false → ноль writes.
+  - 598 тестов проходят.
+
+### Changed
+
+- **R7: bookDiff обязательный в resetScenes**
+  (`backend/src/orchestration/orchestrator.js`):
+  - Удалён неатомарный fallback (markDirtyScene в цикле).
+  - Теперь `if (!bookDiff) throw new Error(...)` — жёсткий контракт.
+
+---
+
 ## [Unreleased] — 2026-07-24
 
 ### Fixed

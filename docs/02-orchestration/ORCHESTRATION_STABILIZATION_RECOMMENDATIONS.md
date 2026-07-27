@@ -1,6 +1,7 @@
 # Рекомендации по стабилизации системы оркестрации
 
 > **Дата:** 26 июля 2026
+> **Последнее обновление:** 27 июля 2026 — реализованы R1, R3 (частично), R6, R7
 > **Основание:** анализ `backend/src/orchestration/*`, `backend/src/runtime/*`, `backend/src/state/scene-state.js`
 > **Принцип:** хирургические точечные правки без переусложнения. Никаких новых state-machine'ов,
 > очередей, сервисов. Текущая архитектура (фасад + dispatch-engine + per-asset state) — корректна,
@@ -8,18 +9,18 @@
 
 ---
 
-## TL;DR — что не так
+## TL;DR — что не так (статус на 27 июля 2026)
 
-| # | Проблема | Серьёзность | Объём |
-|---|---------|------------|------|
-| R1 | `setScene*` в фасаде пишут state без `validateAssetTransition` и без journal events | **Высокая** | ~30 строк |
-| R2 | Deprec­ated aliases `setAssetState`/`setAssetStates` висят в экспортах `scene-state.js` | Низкая | −2 строки |
-| R3 | `reconciliation-engine.js` и `scene-window.js` напрямую зовут `audioOrch.*` в обход фасада | Средняя | Рефакторинг по местам |
-| R4 | `completeStage`/`failStage` на каждый вызов делают 4–6 lazy `require()` внутри тел | Низкая | ~10 строк |
-| R5 | `resetScenes` смешивает 10 слоёв ответственности (journal + fs + redis + lua-итд) в одном теле | Средняя | Вынести в 2 helper'а |
-| R6 | Нет тестов на invariant `audio-orch.phase == DONE ⇔ asset.audio == READY` | Средняя | 1 тест |
-| R7 | Fallback по `bookDiff = null` в `resetScenes` дублирует логику `markDirtyScene` | Низкая | Унифицировать |
-| R8 | `completeStage` совершает inline PG-запрос вместо `sceneAssetsRepo` метода | Низкая | Вынести в repo |
+| # | Проблема | Серьёзность | Статус |
+|---|---------|------------|--------|
+| R1 | `setScene*` в фасаде пишут state без `validateAssetTransition` и без journal events | **Высокая** | ✅ **Реализовано** |
+| R2 | Deprec­ated aliases `setAssetState`/`setAssetStates` висят в экспортах `scene-state.js` | Низкая | ❓ Отложено: алиасы всё ещё используются в тестах |
+| R3 | `reconciliation-engine.js` и `scene-window.js` напрямую зовут `audioOrch.*` в обход фасада | Средняя | 🟡 **Частично**: добавлен sync после `audioOrch.setDone()` в recovery |
+| R4 | `completeStage`/`failStage` на каждый вызов делают 4–6 lazy `require()` внутри тел | Низкая | ❓ Отложено: косметика, без изменения поведения |
+| R5 | `resetScenes` смешивает 10 слоёв ответственности (journal + fs + redis + lua-итд) в одном теле | Средняя | ❓ Отложено: функция уже хорошо структурирована комментариями |
+| R6 | Нет тестов на invariant `audio-orch.phase == DONE ⇔ asset.audio == READY` | Средняя | ✅ **Реализовано** (3 теста) |
+| R7 | Fallback по `bookDiff = null` в `resetScenes` дублирует логику `markDirtyScene` | Низкая | ✅ **Реализовано** (throw вместо fallback) |
+| R8 | `completeStage` совершает inline PG-запрос вместо `sceneAssetsRepo` метода | Низкая | ❓ Отложено: низкий приоритет, SELECT стабилен |
 
 Все рекомендации укладываются в существующий контур из 13 команд фасада — расширять фасад не нужно.
 

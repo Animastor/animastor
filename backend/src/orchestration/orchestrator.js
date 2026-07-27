@@ -322,41 +322,116 @@ async function markDirtyScene(redis, bookId, chapterId, sceneId, assets = ['audi
 }
 
 // ── setScenePending ──────────────────────────────────
-// Set an asset to PENDING.
+// Set an asset to PENDING. R1: validateAssetTransition + journal event.
 // Used by scene-window when starting a scene.
 // T8: syncLinearState удалён — per-asset state единственный source of truth.
 async function setScenePending(redis, bookId, chapterId, sceneId, asset, buildId = null) {
     const state = require('../state');
+    const journal = require('./event-journal');
+    const { log, warn } = require('./scene-utils');
+
+    const states = await state.getAssetStates(redis, bookId, chapterId, sceneId);
+    const current = states?.[asset];
+    const check = state.validateAssetTransition(current, state.AssetState.PENDING);
+
+    if (!check.valid && current !== state.AssetState.PENDING) {
+        warn(`[SET-PENDING] ${bookId}/${chapterId}/${sceneId} ${asset}: ${current}→pending rejected (${check.reason})`);
+        await journal.appendSceneEvent(redis, bookId, chapterId, sceneId,
+            journal.EventType.INVALID_STATE_CALLBACK, current,
+            { asset, attempted: 'pending', ignored: true }).catch(() => {});
+        return { changed: false, reason: check.reason };
+    }
+
     await state.unsafeRestoreAssetState(redis, bookId, chapterId, sceneId, asset, state.AssetState.PENDING);
+    await journal.appendSceneEvent(redis, bookId, chapterId, sceneId,
+        journal.EventType.SCENE_PENDING, state.AssetState.PENDING,
+        { asset, buildId }).catch(() => {});
+    return { changed: true };
 }
 
 // ── setSceneAllReady ─────────────────────────────────
-// Set all three assets to READY.
+// Set all three assets to READY. R1: validateAssetTransition + journal event.
 // Used by scene-window when valid content found on disk (cache hit).
 // T8: syncLinearState удалён — per-asset state единственный source of truth.
 async function setSceneAllReady(redis, bookId, chapterId, sceneId, buildId = null) {
     const state = require('../state');
+    const journal = require('./event-journal');
+    const { log, warn } = require('./scene-utils');
+
+    const states = await state.getAssetStates(redis, bookId, chapterId, sceneId);
+    for (const asset of ['audio', 'image', 'video']) {
+        const current = states?.[asset];
+        const check = state.validateAssetTransition(current, state.AssetState.READY);
+        if (!check.valid && current !== state.AssetState.READY) {
+            warn(`[SET-ALL-READY] ${bookId}/${chapterId}/${sceneId} ${asset}: ${current}→ready rejected (${check.reason}) — skipping`);
+            await journal.appendSceneEvent(redis, bookId, chapterId, sceneId,
+                journal.EventType.INVALID_STATE_CALLBACK, current,
+                { asset, attempted: 'ready', ignored: true }).catch(() => {});
+        }
+    }
+
     await state.unsafeRestoreAssetStates(redis, bookId, chapterId, sceneId, {
         audio: state.AssetState.READY,
         image: state.AssetState.READY,
         video: state.AssetState.READY,
     });
+    await journal.appendSceneEvent(redis, bookId, chapterId, sceneId,
+        journal.EventType.SCENE_ALL_READY, state.AssetState.READY,
+        { assets: ['audio', 'image', 'video'], buildId }).catch(() => {});
 }
 
 // ── setSceneGenerating ──────────────────────────────
-// Set an asset to GENERATING.
+// Set an asset to GENERATING. R1: validateAssetTransition + journal event.
 // T7+T8: syncLinearState удалён — per-asset state единственный source of truth.
 async function setSceneGenerating(redis, bookId, chapterId, sceneId, asset, buildId = null) {
     const state = require('../state');
+    const journal = require('./event-journal');
+    const { log, warn } = require('./scene-utils');
+
+    const states = await state.getAssetStates(redis, bookId, chapterId, sceneId);
+    const current = states?.[asset];
+    const check = state.validateAssetTransition(current, state.AssetState.GENERATING);
+
+    if (!check.valid && current !== state.AssetState.GENERATING) {
+        warn(`[SET-GENERATING] ${bookId}/${chapterId}/${sceneId} ${asset}: ${current}→generating rejected (${check.reason})`);
+        await journal.appendSceneEvent(redis, bookId, chapterId, sceneId,
+            journal.EventType.INVALID_STATE_CALLBACK, current,
+            { asset, attempted: 'generating', ignored: true }).catch(() => {});
+        return { changed: false, reason: check.reason };
+    }
+
     await state.unsafeRestoreAssetState(redis, bookId, chapterId, sceneId, asset, state.AssetState.GENERATING);
+    await journal.appendSceneEvent(redis, bookId, chapterId, sceneId,
+        journal.EventType.SCENE_GENERATING, state.AssetState.GENERATING,
+        { asset, buildId }).catch(() => {});
+    return { changed: true };
 }
 
 // ── setScenePlaceholder ──────────────────────────────
-// Set audio to PLACEHOLDER.
+// Set audio to PLACEHOLDER. R1: validateAssetTransition + journal event.
 // T8: syncLinearState удалён — per-asset state единственный source of truth.
 async function setScenePlaceholder(redis, bookId, chapterId, sceneId, buildId = null) {
     const state = require('../state');
+    const journal = require('./event-journal');
+    const { log, warn } = require('./scene-utils');
+
+    const states = await state.getAssetStates(redis, bookId, chapterId, sceneId);
+    const current = states?.audio;
+    const check = state.validateAssetTransition(current, state.AssetState.PLACEHOLDER);
+
+    if (!check.valid && current !== state.AssetState.PLACEHOLDER) {
+        warn(`[SET-PLACEHOLDER] ${bookId}/${chapterId}/${sceneId} audio: ${current}→placeholder rejected (${check.reason})`);
+        await journal.appendSceneEvent(redis, bookId, chapterId, sceneId,
+            journal.EventType.INVALID_STATE_CALLBACK, current,
+            { asset: 'audio', attempted: 'placeholder', ignored: true }).catch(() => {});
+        return { changed: false, reason: check.reason };
+    }
+
     await state.unsafeRestoreAssetState(redis, bookId, chapterId, sceneId, 'audio', state.AssetState.PLACEHOLDER);
+    await journal.appendSceneEvent(redis, bookId, chapterId, sceneId,
+        journal.EventType.SCENE_PLACEHOLDER, state.AssetState.PLACEHOLDER,
+        { buildId }).catch(() => {});
+    return { changed: true };
 }
 
 // ── completeStageWithoutVideo ────────────────────────
@@ -514,19 +589,12 @@ async function resetScenes(redis, bookId, buildId, scenes, layerCfg, options = {
         } catch (_) {}
     }
 
-    // 8. markDirty (через bookDiff.markDirtyScenes — DI-инстанс из route)
-    let marked = { marked: 0 };
-    if (bookDiff && typeof bookDiff.markDirtyScenes === 'function') {
-        marked = await markDirty({ bookDiff }, redis, bookId, buildId, scenes, layerCfg);
-    } else {
-        // Fallback: прямой markDirtyScene если bookDiff не передан
-        log('[RESET-SCENES] No bookDiff provided — using markDirtyScene fallback');
-        for (const ds of scenes) {
-            for (const layer of (ds.dirty_layers || ['audio', 'image', 'video'])) {
-                await markDirtyScene(redis, bookId, ds.chapter_id, ds.scene_id, [layer]);
-            }
-        }
+    // 8. markDirty (через bookDiff.markDirtyScenes — обязательный DI-инстанс из route)
+    // R7: bookDiff обязателен — неатомарный fallback удалён.
+    if (!bookDiff || typeof bookDiff.markDirtyScenes !== 'function') {
+        throw new Error(`resetScenes: bookDiff.markDirtyScenes is required for book ${bookId}`);
     }
+    const marked = await markDirty({ bookDiff }, redis, bookId, buildId, scenes, layerCfg);
 
     // 9. Re-add to active index (планировщик подберёт на следующем тике).
     // Selective generation can defer this until its task registry is ready.
