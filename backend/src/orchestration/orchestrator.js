@@ -594,10 +594,21 @@ async function resetScenes(redis, bookId, buildId, scenes, layerCfg, options = {
     if (!bookDiff || typeof bookDiff.markDirtyScenes !== 'function') {
         throw new Error(`resetScenes: bookDiff.markDirtyScenes is required for book ${bookId}`);
     }
-    const marked = await markDirty({ bookDiff }, redis, bookId, buildId, scenes, layerCfg);
+    // W1: try/catch вокруг markDirty гарантирует, что addSceneToActiveIndex
+    // (шаг 9) выполнится даже при runtime-ошибке (PG failure, Redis timeout).
+    // Сцена без dirty не страшна; сцена вне active index — scheduler её не
+    // увидит, и она зависнет навсегда. Programming error (bookDiff missing)
+    // валидируется выше и падает жёстко — это контракт, а не runtime-сбой.
+    let marked = { marked: 0 };
+    try {
+        marked = await markDirty({ bookDiff }, redis, bookId, buildId, scenes, layerCfg);
+    } catch (mdErr) {
+        warn(`[RESET-SCENES] markDirty failed for ${bookId}: ${mdErr.message} — continuing to re-add scenes to active index`);
+    }
 
     // 9. Re-add to active index (планировщик подберёт на следующем тике).
     // Selective generation can defer this until its task registry is ready.
+    // Гарантированно выполняется даже при ошибке markDirty (шаг 8).
     if (readdToActiveIndex) {
         for (const ds of scenes) {
             await scheduler.addSceneToActiveIndex(redis, bookId, ds.chapter_id, ds.scene_id);
