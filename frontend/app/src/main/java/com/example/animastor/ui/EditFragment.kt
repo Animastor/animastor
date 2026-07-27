@@ -177,6 +177,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         val b = binding ?: return
         positionLabel()?.text = getString(R.string.navigate_no_position)
         b.errorText.visibility = View.GONE
+        b.emptyState.visibility = View.VISIBLE
         b.contentFrame.removeAllViews()
         b.prevUnitCard.visibility = View.INVISIBLE
         b.currentUnitCard.visibility = View.INVISIBLE
@@ -194,6 +195,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
     }
 
     private fun loadBookAndAutoPosition() {
+        binding?.emptyState?.visibility = View.GONE
         setSaveLoading(busy = true, isSaving = false)
         lifecycleScope.launch {
             try {
@@ -224,10 +226,12 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
             chapters = emptyList()
             positionLabel()?.text = getString(R.string.navigate_no_position)
             binding?.errorText?.visibility = View.GONE
+            binding?.emptyState?.visibility = View.VISIBLE
             setSaveLoading(false)
             binding?.contentFrame?.removeAllViews()
             return
         }
+        binding?.emptyState?.visibility = View.GONE
         setSaveLoading(busy = true, isSaving = false)
         lifecycleScope.launch {
             try {
