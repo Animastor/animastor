@@ -85,6 +85,15 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
         updateToggleText(b.imageToggle, b.imageToggle.isChecked)
         updateToggleText(b.videoToggle, b.videoToggle.isChecked)
 
+        // ── Initial header panel styling (always needed, not gated on layerConfigLoaded) ──
+        // Without this, when no book is loaded the header row backgrounds are never styled
+        // because loadLayerConfig() (which triggers layerConfigLoadedFlow → updateHeaderPanelStyle)
+        // is only called from MainActivity when bookId is non-blank.
+        updateHeaderPanelStyle(b.vbookHeaderRow, b.vbookAccentBar, b.vbookToggle.isChecked)
+        updateHeaderPanelStyle(b.audioHeaderRow, b.audioAccentBar, b.audioToggle.isChecked)
+        updateHeaderPanelStyle(b.imageHeaderRow, b.imageAccentBar, b.imageToggle.isChecked)
+        updateHeaderPanelStyle(b.videoHeaderRow, b.videoAccentBar, b.videoToggle.isChecked)
+
         // ── Header rows (tap to toggle) ──
         b.vbookHeaderRow.setOnClickListener { b.vbookToggle.performClick() }
         b.audioHeaderRow.setOnClickListener { b.audioToggle.performClick() }
