@@ -43,7 +43,7 @@
                 app:cardCornerRadius="10dp"
                 app:cardElevation="0dp"
                 app:cardBackgroundColor="?attr/colorSurface"
-                app:strokeColor="?attr/colorOutlineVariant"
+                app:strokeColor="?attr/colorOutline"
                 app:strokeWidth="1dp">
 
                 <TextView
@@ -53,7 +53,7 @@
                     android:text="@string/toolbar_ai"
                     android:textSize="14sp"
                     android:textStyle="bold"
-                    android:textColor="?attr/colorOnSurfaceVariant"
+                    android:textColor="?attr/colorSecondary"
                     android:includeFontPadding="false" />
 
             </com.google.android.material.card.MaterialCardView>
