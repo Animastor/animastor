@@ -102,6 +102,15 @@ class GenerateViewModel(
     @Volatile
     private var _generationCompleted = false
 
+    /**
+     * True when a new generation has just been started but the server may still
+     * return stale completed workers from a previous generation. Used to suppress
+     * the false green 100% flash on screen.
+     * Cleared in [computeProgressRows] when actual new progress is detected.
+     */
+    @Volatile
+    private var _newGenerationPending = false
+
     /** Start the timer — records wall-clock timestamp. */
     private fun startTimer() {
         timerStartedAt = System.currentTimeMillis()
@@ -328,7 +337,10 @@ class GenerateViewModel(
         _generationStatus.value = GenerationStatus.RUNNING
         _isRegenerating.value = true
 
-        _generationCompleted = false
+        // Don't reset _generationCompleted here — let _newGenerationPending
+        // gate the UI until the server reports actual new workers, preventing
+        // a brief flash of stale green 100% progress from the previous generation.
+        _newGenerationPending = true
         if (timerStartedAt <= 0L) startTimer()
         startProgressStream(bookId)
 
@@ -472,7 +484,9 @@ class GenerateViewModel(
         Log.i(TAG, "startVBookGeneration: $bid")
         _generationStatus.value = GenerationStatus.RUNNING
 
-        _generationCompleted = false
+        // Don't reset _generationCompleted here — let _newGenerationPending
+        // gate the UI until VBook progress or server workers appear.
+        _newGenerationPending = true
         _uiState.update { it.copy(vbookProgress = VBookProgress(stage = VBookStage.ANALYZING)) }
         startTimer()
         startProgressStream(bid)
@@ -557,6 +571,7 @@ class GenerateViewModel(
         Log.i(TAG, "cancelGeneration: $bookId")
         if (bookId.isBlank()) return
         _generationStatus.value = GenerationStatus.IDLE
+        _newGenerationPending = false
         stopTimer()  // 🕐 отмена — останавливаем таймер
         stopProgressStream()  // ❄ закрываем SSE канал
         resetProgressState()
@@ -1193,6 +1208,23 @@ class GenerateViewModel(
         vbookProgress: VBookProgress?,
         labels: TaskLabels
     ): ProgressPanelState {
+        // NEW-GEN GATE: If a new generation just started, wait until we see actual
+        // new worker activity on the server before showing anything. The server may
+        // still return stale completed workers from the previous generation for a
+        // brief window after startGeneration() / startVBookGeneration() is called.
+        // Without this gate, those stale 100%-done workers would flash green on screen.
+        if (_newGenerationPending) {
+            val hasVBook = vbookProgress != null &&
+                (vbookProgress.stage == VBookStage.ANALYZING || vbookProgress.stage == VBookStage.CREATING_SCENES)
+            val hasGpuActivity = panel?.tasks?.any { !it.done && !it.cancelled && it.visible } == true
+            if (hasVBook || hasGpuActivity) {
+                _generationCompleted = false
+                _newGenerationPending = false
+            } else {
+                return ProgressPanelState.Hidden
+            }
+        }
+
         // Once generation has been finalised, never re-show stale workers
         // from a previous session until a new generation starts.
         if (_generationCompleted) return ProgressPanelState.Hidden
