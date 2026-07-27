@@ -116,6 +116,20 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
         b.generateVideoButton.setOnClickListener { onGenerateVideoClicked() }
         b.stopVideoButton.setOnClickListener { onStopClicked("video") }
 
+        // ── Worker settings buttons (gear icons) ──
+        b.vbookSettingsButton.setOnClickListener {
+            Toast.makeText(requireContext(), "VBook settings coming soon", Toast.LENGTH_SHORT).show()
+        }
+        b.audioSettingsButton.setOnClickListener {
+            openWorkerSettings("audio", getString(R.string.generate_audio))
+        }
+        b.imageSettingsButton.setOnClickListener {
+            openWorkerSettings("image", getString(R.string.generate_images))
+        }
+        b.videoSettingsButton.setOnClickListener {
+            openWorkerSettings("video", getString(R.string.generate_video))
+        }
+
         // ── Observe layer config (toggle states) ──
         lifecycleScope.launch {
             viewModel.layerConfigLoadedFlow.collect { loaded ->
@@ -694,6 +708,14 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
     private fun onStopClicked(type: String) {
         Log.i(TAG, "Stop clicked for type=$type")
         viewModel.cancelTask(type)
+    }
+
+    private fun openWorkerSettings(workerType: String, label: String) {
+        val fragment = WorkerSettingsFragment.newInstance(workerType, label)
+        parentFragmentManager.beginTransaction()
+            .add(R.id.nav_host_container, fragment, "WorkerSettingsFragment")
+            .addToBackStack(null)
+            .commit()
     }
 
     private fun scopedTaskLabel(taskRow: TaskRow): String {

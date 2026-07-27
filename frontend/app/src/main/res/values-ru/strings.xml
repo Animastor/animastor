@@ -347,6 +347,9 @@
     <string name="generate_video_disabled">Генерация видео отключена. Включите переключатель выше.</string>
 
     <!-- Toggle chip labels -->
+    <!-- Worker Settings -->
+    <string name="worker_settings_title">Настройки %1$s</string>
+
     <string name="toggle_on">Вкл.</string>
     <string name="toggle_off">Выкл.</string>
 </resources>

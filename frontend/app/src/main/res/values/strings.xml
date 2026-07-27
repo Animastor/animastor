@@ -381,6 +381,9 @@
     <string name="generate_image_disabled">Image generation is disabled. Enable it in the switches above.</string>
     <string name="generate_video_disabled">Video generation is disabled. Enable it in the switches above.</string>
 
+    <!-- Worker Settings -->
+    <string name="worker_settings_title">%1$s Settings</string>
+
     <!-- Toggle chip labels -->
     <string name="toggle_on">On</string>
     <string name="toggle_off">Off</string>
