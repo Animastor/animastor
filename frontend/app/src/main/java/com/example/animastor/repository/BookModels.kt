@@ -403,12 +403,12 @@ data class PreliminaryObject(
 
 data class ProgressPanelResponse(
     val book_id: String = "",
-    val workers: List<ProgressWorker> = emptyList(),
+    val tasks: List<ProgressTask> = emptyList(),
     val overall_percent: Int = 0,
     val any_incomplete: Boolean = false
 )
 
-data class ProgressWorker(
+data class ProgressTask(
     val task_id: String? = null,
     val type: String = "",
     val scope: String = "whole_book",
@@ -418,6 +418,10 @@ data class ProgressWorker(
     val scene_label: String? = null,
     /** Human-readable chapter label from backend (e.g. "Chapter 2"). */
     val chapter_label: String? = null,
+    /** Human-readable end scene label for range scopes (e.g. "Scene 48"). */
+    val end_scene_label: String? = null,
+    /** Human-readable end chapter label for range scopes. */
+    val end_chapter_label: String? = null,
     val target_count: Int = 0,
     val started_at: Long? = null,
     val ready: Int = 0,
@@ -426,7 +430,7 @@ data class ProgressWorker(
     val done: Boolean = false,
     val visible: Boolean = true,
     val indeterminate: Boolean = false,
-    /** Server-set — true when this worker type has been cancelled via cancel-worker API. */
+    /** Server-set — true when this task has been cancelled via cancel-worker API. */
     val cancelled: Boolean = false
 )
 

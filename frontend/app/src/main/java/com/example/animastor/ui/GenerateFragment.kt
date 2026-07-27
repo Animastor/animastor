@@ -673,7 +673,17 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
         val target = when (taskRow.scope) {
             "current_scene" -> taskRow.sceneLabel
             "current_chapter" -> taskRow.chapterLabel
-            "from_current_scene" -> taskRow.sceneLabel?.let { "$it+" }
+            "from_current_scene" -> {
+                val start = taskRow.sceneLabel
+                val end = taskRow.endSceneLabel
+                if (start != null && end != null && start != end) {
+                    "$start — $end"
+                } else if (start != null) {
+                    "$start+"
+                } else {
+                    null
+                }
+            }
             else -> null
         }
         return if (target.isNullOrBlank()) taskRow.label else "${taskRow.label} · $target"

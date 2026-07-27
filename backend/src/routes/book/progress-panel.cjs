@@ -292,6 +292,20 @@ module.exports = function(app, redis, deps) {
             : Math.round(ready * 100 / Math.max(1, counts.total));
 
         const labels = resolveLabels(bookData, task.chapter_id || null, task.scene_id || null);
+
+        // ── For range scopes (from_current_scene): resolve end labels from the last target ──
+        // targets is an ordered array of { chapter_id, scene_id } fixed at task creation time.
+        // The last entry represents the final scene in the scope. We resolve its labels so
+        // the frontend can display a range like "Scene 12 — Scene 48".
+        let endSceneLabel = null;
+        let endChapterLabel = null;
+        const lastTarget = targets.length > 0 ? targets[targets.length - 1] : null;
+        if (lastTarget) {
+            const endLabels = resolveLabels(bookData, lastTarget.chapter_id, lastTarget.scene_id);
+            endSceneLabel = endLabels.scene_label;
+            endChapterLabel = endLabels.chapter_label;
+        }
+
         return [{
             task_id: task.task_id || null,
             type: task.type,
@@ -300,6 +314,8 @@ module.exports = function(app, redis, deps) {
             scene_id: task.scene_id || null,
             scene_label: labels.scene_label,
             chapter_label: labels.chapter_label,
+            end_scene_label: endSceneLabel,
+            end_chapter_label: endChapterLabel,
             target_count: targets.length,
             started_at: task.started_at || null,
             ready,
@@ -372,24 +388,24 @@ module.exports = function(app, redis, deps) {
                 if (buildId) break;
             }
 
-            const workers = [];
+            const rows = [];
             for (const task of tasks) {
                 const taskRows = await buildTaskRows(bookId, task, chunkData, buildId);
-                workers.push(...taskRows);
+                rows.push(...taskRows);
             }
 
-            const visibleWorkers = workers.filter(worker => worker.visible);
-            const anyIncomplete = visibleWorkers.some(worker => !worker.done && !worker.cancelled);
-            const overallPercent = visibleWorkers.length > 0
+            const visibleTasks = rows.filter(t => t.visible);
+            const anyIncomplete = visibleTasks.some(t => !t.done && !t.cancelled);
+            const overallPercent = visibleTasks.length > 0
                 ? Math.round(
-                    visibleWorkers.reduce((sum, worker) => sum + worker.percent, 0) /
-                    visibleWorkers.length
+                    visibleTasks.reduce((sum, t) => sum + t.percent, 0) /
+                    visibleTasks.length
                 )
                 : 0;
 
             res.json({
                 book_id: bookId,
-                workers: visibleWorkers,
+                tasks: visibleTasks,
                 overall_percent: overallPercent,
                 any_incomplete: anyIncomplete,
             });

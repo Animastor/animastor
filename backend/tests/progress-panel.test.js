@@ -107,12 +107,12 @@ describe('Progress panel independent generation tasks', () => {
         const res = await createHarness(redis, chunks, chunkIds)(bookId);
 
         expect(res.statusCode).to.equal(200);
-        expect(res.body.workers).to.have.length(2);
-        expect(res.body.workers.map(worker => worker.task_id))
+        expect(res.body.tasks).to.have.length(2);
+        expect(res.body.tasks.map(task => task.task_id))
             .to.have.members([audioTask.task_id, imageTask.task_id]);
 
-        const audio = res.body.workers.find(worker => worker.task_id === audioTask.task_id);
-        const image = res.body.workers.find(worker => worker.task_id === imageTask.task_id);
+        const audio = res.body.tasks.find(task => task.task_id === audioTask.task_id);
+        const image = res.body.tasks.find(task => task.task_id === imageTask.task_id);
         expect(audio).to.include({
             type: 'audio',
             scene_id: 'audio-scene',
@@ -171,14 +171,14 @@ describe('Progress panel independent generation tasks', () => {
         );
 
         const res = await createHarness(redis, chunks, chunkIds)(bookId);
-        const audioRows = res.body.workers.filter(worker => worker.type === 'audio');
+        const audioRows = res.body.tasks.filter(task => task.type === 'audio');
 
         expect(audioRows).to.have.length(2);
-        expect(audioRows.map(worker => worker.task_id))
+        expect(audioRows.map(task => task.task_id))
             .to.have.members([firstTask.task_id, secondTask.task_id]);
-        expect(audioRows.find(worker => worker.task_id === firstTask.task_id))
+        expect(audioRows.find(task => task.task_id === firstTask.task_id))
             .to.include({ scene_id: 'scene-a', ready: 1, total: 2 });
-        expect(audioRows.find(worker => worker.task_id === secondTask.task_id))
+        expect(audioRows.find(task => task.task_id === secondTask.task_id))
             .to.include({ scene_id: 'scene-b', ready: 0, total: 1 });
     });
 });

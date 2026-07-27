@@ -1199,7 +1199,7 @@ class GenerateViewModel(
         val rows = mutableListOf<TaskRow>()
 
         fun addFromServer(
-            sw: com.example.animastor.repository.ProgressWorker,
+            sw: com.example.animastor.repository.ProgressTask,
             label: String
         ) {
             if (sw.total <= 0) return
@@ -1227,6 +1227,8 @@ class GenerateViewModel(
                 sceneId = sw.scene_id,
                 sceneLabel = sw.scene_label,
                 chapterLabel = sw.chapter_label,
+                endSceneLabel = sw.end_scene_label,
+                endChapterLabel = sw.end_chapter_label,
                 ready = ready,
                 total = sw.total,
                 percent = if (done) 100 else sw.percent.coerceIn(0, 99),
@@ -1237,9 +1239,9 @@ class GenerateViewModel(
             ))
         }
 
-        // ── GPU workers (from server progress-panel) ──
+        // ── GPU tasks (from server progress-panel) ──
         if (panel != null) {
-            for (sw in panel.workers) {
+            for (sw in panel.tasks) {
                 if (!sw.visible) continue
                 val label = when (sw.type) {
                     "cover" -> labels.cover
@@ -1378,6 +1380,10 @@ data class TaskRow(
     val sceneLabel: String? = null,
     /** Human-readable chapter label from backend (e.g. "Chapter 2"). */
     val chapterLabel: String? = null,
+    /** Human-readable end scene label for range scopes (e.g. "Scene 48"). */
+    val endSceneLabel: String? = null,
+    /** Human-readable end chapter label for range scopes. */
+    val endChapterLabel: String? = null,
     val ready: Int,
     val total: Int,
     val percent: Int,
