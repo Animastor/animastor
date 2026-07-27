@@ -271,7 +271,6 @@
         <item name="android:minHeight">32dp</item>
         <item name="android:paddingTop">0dp</item>
         <item name="android:paddingBottom">0dp</item>
-        <item name="android:gravity">center</item>
     </style>
 
     <!-- Worker Chip — toggleable worker buttons in the toolbar -->

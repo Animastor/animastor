@@ -759,14 +759,24 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
     }
 
     /**
-     * Update the toggle chip text based on checked state.
+     * Update the toggle chip text and alignment based on checked state.
      * Uses localized strings: On/Off (EN) or Вкл./Выкл. (RU).
+     * Text alignment: On/Вкл → right (end), Off/Выкл → left (start).
+     *
+     * Uses [View.setTextAlignment] rather than [View.setGravity] because
+     * Chip's internal layout (icon + text + close icon) doesn't respect
+     * gravity on the Chip view itself. textAlignment targets the text view.
      */
     private fun updateToggleText(toggle: Chip, isChecked: Boolean) {
         toggle.text = if (isChecked) {
             getString(R.string.toggle_on)
         } else {
             getString(R.string.toggle_off)
+        }
+        toggle.textAlignment = if (isChecked) {
+            android.view.View.TEXT_ALIGNMENT_VIEW_END
+        } else {
+            android.view.View.TEXT_ALIGNMENT_VIEW_START
         }
     }
 
