@@ -1163,16 +1163,7 @@ module.exports = function(app, redis, deps) {
 
             log(`[GPU ERROR] ${bookId}/${chapterId}/${sceneId} ${stage} failed: ${reason || 'unknown'} (job=${job_id})`);
 
-            if (parsed.kind === 'audio_chunk') {
-                try {
-                    const audioOrch = require('../services/audio-orchestrator');
-                    await audioOrch.setFailed(redis, bookId, chapterId, sceneId,
-                        `chunk_error:${parsed.chunkIndex}:${reason || 'unknown'}`);
-                } catch (orchErr) {
-                    console.warn(`[GPU ERROR] audio-orch setFailed failed: ${orchErr.message}`);
-                }
-            }
-
+            // F2: raw audioOrch.setFailed removed — orchestrator.failStage handles audio-orch sync
             const result = await orchestrator.failStage(
                 redis,
                 bookId,

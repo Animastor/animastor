@@ -263,6 +263,13 @@ async function failStage(redis, bookId, chapterId, sceneId, stage, buildId, reas
         }
 
         await state.unsafeRestoreAssetState(redis, bookId, chapterId, sceneId, stage, state.AssetState.FAILED);
+        // F2: sync audio-orch phase → FAILED through the orchestrator facade
+        if (stage === 'audio') {
+            try {
+                const audioOrch = require('../services/audio-orchestrator');
+                await audioOrch.setFailed(redis, bookId, chapterId, sceneId, reason);
+            } catch (_) {}
+        }
         log(`[FAIL-STAGE] ${bookId}/${chapterId}/${sceneId}: ${stage} → FAILED (reason=${reason})`);
         await journal.appendSceneEvent(redis, bookId, chapterId, sceneId,
             eventType, state.AssetState.FAILED, { stage, reason, buildId }).catch(() => {});

@@ -5,6 +5,11 @@
 // Every row represents one user-started generation task. Rows are keyed by
 // task_id rather than worker type, so multiple Audio/Image/Video commands can
 // run concurrently with different scopes and target scenes.
+//
+// Contract: JSON field "workers" in the API response is legacy, retained for
+// backward compatibility. In new code use `rows`/`taskRows`; rename the JSON
+// field only in a coordinated frontend+backend release (see
+// docs/05-frontend/TASK_ARCHITECTURE.md §6).
 
 const sceneAssetsRepo = require('../../storage/postgres/repositories/scene-assets-repo');
 const { computeIuReady } = require('./iu-progress-utils.cjs');

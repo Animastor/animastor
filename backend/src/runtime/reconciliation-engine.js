@@ -1399,6 +1399,8 @@ async function recoverAudioOrchStates(redis, deps) {
                 }
                 log(`[AUDIO-ORCH] Recover ${bookId}/${chapterId}/${sceneId}: ${phase} → FAILED (${presentChunks.length}/${expectedChunkCount || '?'} chunks on disk)`);
                 await audioOrch.setFailed(redis, bookId, chapterId, sceneId, 'restart_recovery');
+                // F1: sync asset.audio → FAILED after audioOrch.setFailed (R3 follow-up)
+                await state.unsafeRestoreAssetState(redis, bookId, chapterId, sceneId, 'audio', state.AssetState.FAILED);
                 // T6: Также сбрасываем asset state, чтобы scheduler передиспатчил
                 if (deps.orchestrator) {
                     await deps.orchestrator.markDirtyScene(redis, bookId, chapterId, sceneId, ['audio']);
@@ -1414,6 +1416,8 @@ async function recoverAudioOrchStates(redis, deps) {
                 } else {
                     log(`[AUDIO-ORCH] Recover ${bookId}/${chapterId}/${sceneId}: MERGING → FAILED`);
                     await audioOrch.setFailed(redis, bookId, chapterId, sceneId, 'restart_merge_missing');
+                    // F1: sync asset.audio → FAILED after audioOrch.setFailed (R3 follow-up)
+                    await state.unsafeRestoreAssetState(redis, bookId, chapterId, sceneId, 'audio', state.AssetState.FAILED);
                     if (deps.orchestrator) {
                         await deps.orchestrator.markDirtyScene(redis, bookId, chapterId, sceneId, ['audio']);
                     }

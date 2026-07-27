@@ -8,6 +8,34 @@ All notable changes to Animastor are documented here.
 
 ### Fixed
 
+- **F1: sync asset.audio → FAILED in recoverAudioOrchStates (2 missing branches)**
+  (`backend/src/runtime/reconciliation-engine.js`):
+  - **Проблема:** R3-патч синхронизировал asset.audio после `setDone` (MERGING→DONE),
+    но две другие ветки recoverAudioOrchStates (GENERATING/WAITING_CHUNKS→FAILED
+    и MERGING→FAILED) не синхронизировали asset.audio → FAILED после `setFailed`.
+    При рестарте backend сцена оказывалась в DIRTY без записи об AUDIO_FAILED в
+    журнале — расследовать инциденты было сложно.
+  - **Фикс:** добавлен `unsafeRestoreAssetState('audio', FAILED)` после каждого
+    `audioOrch.setFailed()` в recoverAudioOrchStates — по аналогии с R3.
+  - 598 тестов проходят.
+
+- **F2: redundant raw audioOrch.setFailed removed from /gpu/task/error + added in failStage**
+  (`backend/src/routes/generation-routes.cjs`,
+  `backend/src/orchestration/orchestrator.js`):
+  - **Проблема:** в `/gpu/task/error` был прямой вызов `audioOrch.setFailed()`
+    перед `orchestrator.failStage()`. Между ними — окно, где audio-orch FAILED,
+    а asset.audio ещё GENERATING. chunk-specific причина терялась, в journal
+    писался только общий `worker_error`.
+  - **Фикс:** raw `audioOrch.setFailed` удалён из роута. `failStage` фасада
+    теперь сам синхронизирует audio-orch phase → FAILED для stage='audio'.
+  - 598 тестов проходят.
+
+- **F4: legacy workers field comment in progress-panel.cjs header**
+  (`backend/src/routes/book/progress-panel.cjs`):
+  - Добавлен комментарий, что JSON-поле "workers" в API-ответе legacy,
+    retained for backward compatibility — предотвращает случайное переименование.
+  - 598 тестов проходят.
+
 - **W1: resetScenes — try/catch гарантирует addSceneToActiveIndex при ошибке markDirty**
   (`backend/src/orchestration/orchestrator.js`):
   - **Проблема:** `markDirty` (шаг 8) бросал исключение → `addSceneToActiveIndex`
