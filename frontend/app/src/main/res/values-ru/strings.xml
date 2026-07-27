@@ -348,7 +348,9 @@
 
     <!-- Toggle chip labels -->
     <!-- Worker Settings -->
-    <string name="worker_settings_title">Настройки %1$s</string>
+    <string name="worker_settings_title_audio">Настройки генерации аудио</string>
+    <string name="worker_settings_title_image">Настройки генерации изображений</string>
+    <string name="worker_settings_title_video">Настройки генерации видео</string>
 
     <string name="toggle_on">Вкл.</string>
     <string name="toggle_off">Выкл.</string>

@@ -121,13 +121,13 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
             Toast.makeText(requireContext(), "VBook settings coming soon", Toast.LENGTH_SHORT).show()
         }
         b.audioSettingsButton.setOnClickListener {
-            openWorkerSettings("audio", getString(R.string.generate_audio))
+            openWorkerSettings("audio", getString(R.string.worker_settings_title_audio))
         }
         b.imageSettingsButton.setOnClickListener {
-            openWorkerSettings("image", getString(R.string.generate_images))
+            openWorkerSettings("image", getString(R.string.worker_settings_title_image))
         }
         b.videoSettingsButton.setOnClickListener {
-            openWorkerSettings("video", getString(R.string.generate_video))
+            openWorkerSettings("video", getString(R.string.worker_settings_title_video))
         }
 
         // ── Observe layer config (toggle states) ──

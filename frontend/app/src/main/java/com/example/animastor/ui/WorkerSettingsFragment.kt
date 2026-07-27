@@ -48,8 +48,8 @@ class WorkerSettingsFragment : Fragment(R.layout.fragment_worker_settings) {
         val workerType = arguments?.getString(ARG_WORKER_TYPE) ?: "audio"
         val workerLabel = arguments?.getString(ARG_WORKER_LABEL) ?: workerType
 
-        // ── Toolbar ──
-        b.toolbar.title = getString(R.string.worker_settings_title, workerLabel)
+        // ── Toolbar — workerLabel now carries the full localized title from GenerateFragment ──
+        b.toolbar.title = workerLabel
         b.toolbar.setNavigationOnClickListener {
             parentFragmentManager.popBackStack()
         }

@@ -382,7 +382,9 @@
     <string name="generate_video_disabled">Video generation is disabled. Enable it in the switches above.</string>
 
     <!-- Worker Settings -->
-    <string name="worker_settings_title">%1$s Settings</string>
+    <string name="worker_settings_title_audio">Audio Generation Settings</string>
+    <string name="worker_settings_title_image">Image Generation Settings</string>
+    <string name="worker_settings_title_video">Video Generation Settings</string>
 
     <!-- Toggle chip labels -->
     <string name="toggle_on">On</string>
