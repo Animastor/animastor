@@ -4,7 +4,7 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="?attr/colorSurface">
+    android:background="?attr/colorSurfaceDim">
 
     <androidx.appcompat.widget.Toolbar
         android:id="@+id/toolbar"
@@ -15,40 +15,7 @@
         app:navigationIcon="?attr/homeAsUpIndicator"
         app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent">
-
-        <LinearLayout
-            android:layout_width="wrap_content"
-            android:layout_height="match_parent"
-            android:orientation="horizontal"
-            android:gravity="center_vertical">
-
-            <com.google.android.material.chip.Chip
-                android:id="@+id/jsonChip"
-                style="@style/Widget.Material3.Chip.Filter"
-                android:layout_width="wrap_content"
-                android:layout_height="32dp"
-                android:text="Raw JSON"
-                android:textSize="12sp"
-                android:checked="true"
-                app:chipBackgroundColor="?attr/colorSecondaryContainer"
-                android:textColor="?attr/colorOnSecondaryContainer"
-                app:chipCornerRadius="16dp" />
-
-            <com.google.android.material.chip.Chip
-                android:id="@+id/bindingsChip"
-                style="@style/Widget.Material3.Chip.Filter"
-                android:layout_width="wrap_content"
-                android:layout_height="32dp"
-                android:layout_marginStart="8dp"
-                android:text="Bindings"
-                android:textSize="12sp"
-                app:chipBackgroundColor="@android:color/transparent"
-                android:textColor="?attr/colorOnSurfaceVariant"
-                app:chipCornerRadius="16dp" />
-
-        </LinearLayout>
-    </androidx.appcompat.widget.Toolbar>
+        app:layout_constraintEnd_toEndOf="parent" />
 
     <com.google.android.material.progressindicator.LinearProgressIndicator
         android:id="@+id/loadingIndicator"
@@ -60,19 +27,74 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent" />
 
+    <!-- ── Segmented Control ── -->
+    <com.google.android.material.card.MaterialCardView
+        android:id="@+id/segmentedContainer"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginHorizontal="16dp"
+        android:layout_marginTop="12dp"
+        app:cardCornerRadius="12dp"
+        app:cardElevation="0dp"
+        app:cardBackgroundColor="?attr/colorSurfaceVariant"
+        app:strokeWidth="0dp"
+        app:layout_constraintTop_toBottomOf="@id/loadingIndicator"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:padding="3dp">
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/jsonButton"
+                android:layout_width="0dp"
+                android:layout_height="40dp"
+                android:layout_weight="1"
+                android:layout_marginEnd="2dp"
+                android:text="Raw JSON"
+                android:textSize="13sp"
+                android:fontFamily="sans-serif-medium"
+                android:textAllCaps="false"
+                app:cornerRadius="10dp"
+                app:elevation="0dp"
+                app:rippleColor="?attr/colorSecondaryContainer"
+                style="@style/Widget.Material3.Button.TonalButton" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/bindingsButton"
+                android:layout_width="0dp"
+                android:layout_height="40dp"
+                android:layout_weight="1"
+                android:layout_marginStart="2dp"
+                android:text="Bindings"
+                android:textSize="13sp"
+                android:fontFamily="sans-serif-medium"
+                android:textAllCaps="false"
+                app:cornerRadius="10dp"
+                app:elevation="0dp"
+                app:rippleColor="?attr/colorSecondaryContainer"
+                style="@style/Widget.Material3.Button.TonalButton" />
+
+        </LinearLayout>
+    </com.google.android.material.card.MaterialCardView>
+
     <!-- Raw JSON section -->
     <ScrollView
         android:id="@+id/jsonScrollView"
         android:layout_width="0dp"
         android:layout_height="0dp"
         android:visibility="visible"
-        android:padding="12dp"
+        android:paddingHorizontal="12dp"
+        android:paddingTop="12dp"
         android:fadeScrollbars="false"
         android:scrollbars="vertical"
         android:scrollbarSize="5dp"
         android:scrollbarThumbVertical="@drawable/scrollbar_thumb"
         android:scrollbarTrackVertical="@drawable/scrollbar_track"
-        app:layout_constraintTop_toBottomOf="@id/loadingIndicator"
+        app:layout_constraintTop_toBottomOf="@id/segmentedContainer"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent">
@@ -85,7 +107,7 @@
             android:textSize="11sp"
             android:textColor="?attr/colorOnSurface"
             android:lineSpacingExtra="2sp"
-            android:padding="8dp"
+            android:padding="12dp"
             android:background="?attr/colorSurfaceVariant"
             android:textIsSelectable="true" />
 
@@ -97,13 +119,14 @@
         android:layout_width="0dp"
         android:layout_height="0dp"
         android:visibility="gone"
-        android:padding="12dp"
+        android:paddingHorizontal="12dp"
+        android:paddingTop="12dp"
         android:fadeScrollbars="false"
         android:scrollbars="vertical"
         android:scrollbarSize="5dp"
         android:scrollbarThumbVertical="@drawable/scrollbar_thumb"
         android:scrollbarTrackVertical="@drawable/scrollbar_track"
-        app:layout_constraintTop_toBottomOf="@id/loadingIndicator"
+        app:layout_constraintTop_toBottomOf="@id/segmentedContainer"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent">
