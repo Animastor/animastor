@@ -16,7 +16,6 @@ import com.example.animastor.databinding.FragmentDeveloperViewBinding
 import com.example.animastor.network.RetrofitClient
 import com.google.android.material.card.MaterialCardView
 import com.google.android.material.color.MaterialColors
-import android.content.res.ColorStateList
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
@@ -48,31 +47,15 @@ class DeveloperViewFragment : Fragment(R.layout.fragment_developer_view) {
             parentFragmentManager.popBackStack()
         }
 
-        // ── Segmented control: toggle between JSON and Bindings ──
-        val ctx = requireContext()
-        val activeBg = MaterialColors.getColor(ctx, com.google.android.material.R.attr.colorSecondaryContainer, 0)
-        val activeFg = MaterialColors.getColor(ctx, com.google.android.material.R.attr.colorOnSecondaryContainer, 0)
-        val inactiveFg = MaterialColors.getColor(ctx, com.google.android.material.R.attr.colorOnSurfaceVariant, 0)
-        val transparentBg = ColorStateList.valueOf(android.graphics.Color.TRANSPARENT)
-        val activeBgList = ColorStateList.valueOf(activeBg)
-
+        // ── Chip toggle: switch between JSON and Bindings ──
         fun selectTab(isJson: Boolean) {
-            // Update button appearance (always — even before guard)
-            val activeBtn = if (isJson) b.jsonButton else b.bindingsButton
-            val inactiveBtn = if (isJson) b.bindingsButton else b.jsonButton
-
-            activeBtn.backgroundTintList = activeBgList
-            activeBtn.setTextColor(activeFg)
-            inactiveBtn.backgroundTintList = transparentBg
-            inactiveBtn.setTextColor(inactiveFg)
-
-            // Crossfade between views
             val showView = if (isJson) b.jsonScrollView else b.bindingsScrollView
             val hideView = if (isJson) b.bindingsScrollView else b.jsonScrollView
 
-            // If already showing, skip animation
+            // Skip if already showing this tab
             if (showView.visibility == View.VISIBLE && showView.alpha == 1f) return
 
+            // Crossfade between views
             hideView.animate()
                 .alpha(0f)
                 .setDuration(200)
@@ -91,11 +74,21 @@ class DeveloperViewFragment : Fragment(R.layout.fragment_developer_view) {
                 .start()
         }
 
-        // Default: JSON selected
-        selectTab(true)
-
-        b.jsonButton.setOnClickListener { selectTab(true) }
-        b.bindingsButton.setOnClickListener { selectTab(false) }
+        // Sync view visibility with chip checked state
+        b.jsonChip.post {
+            b.jsonChip.setOnCheckedChangeListener { _, isChecked ->
+                if (isChecked) {
+                    b.bindingsChip.isChecked = false
+                    selectTab(true)
+                }
+            }
+            b.bindingsChip.setOnCheckedChangeListener { _, isChecked ->
+                if (isChecked) {
+                    b.jsonChip.isChecked = false
+                    selectTab(false)
+                }
+            }
+        }
 
         // Observe loading
         lifecycleScope.launch {

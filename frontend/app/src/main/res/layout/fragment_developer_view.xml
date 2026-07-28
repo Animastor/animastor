@@ -23,38 +23,23 @@
             android:gravity="center_vertical"
             android:layout_marginStart="8dp">
 
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/jsonButton"
+            <com.google.android.material.chip.Chip
+                android:id="@+id/jsonChip"
                 android:layout_width="wrap_content"
-                android:layout_height="30dp"
-                android:minWidth="0dp"
-                android:minHeight="0dp"
-                android:paddingHorizontal="12dp"
+                android:layout_height="wrap_content"
                 android:text="Raw JSON"
-                android:textSize="12sp"
-                android:fontFamily="sans-serif-medium"
-                android:textAllCaps="false"
-                app:cornerRadius="8dp"
-                app:elevation="0dp"
-                app:rippleColor="?attr/colorSecondaryContainer"
-                style="@style/Widget.Material3.Button.TonalButton" />
+                android:checkable="true"
+                android:checked="true"
+                style="@style/Widget.Animastor.Chip.Toggle" />
 
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/bindingsButton"
+            <com.google.android.material.chip.Chip
+                android:id="@+id/bindingsChip"
                 android:layout_width="wrap_content"
-                android:layout_height="30dp"
-                android:layout_marginStart="6dp"
-                android:minWidth="0dp"
-                android:minHeight="0dp"
-                android:paddingHorizontal="12dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
                 android:text="Bindings"
-                android:textSize="12sp"
-                android:fontFamily="sans-serif-medium"
-                android:textAllCaps="false"
-                app:cornerRadius="8dp"
-                app:elevation="0dp"
-                app:rippleColor="?attr/colorSecondaryContainer"
-                style="@style/Widget.Material3.Button.TonalButton" />
+                android:checkable="true"
+                style="@style/Widget.Animastor.Chip.Toggle" />
 
         </LinearLayout>
     </androidx.appcompat.widget.Toolbar>
