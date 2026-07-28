@@ -87,7 +87,9 @@
                             android:paddingHorizontal="10dp"
                             android:text="@string/vbook_settings_default"
                             android:textSize="11sp"
-                            app:strokeWidth="1dp" />
+                            app:strokeWidth="1dp"
+                            app:insetTop="0dp"
+                            app:insetBottom="0dp" />
 
                     </LinearLayout>
 
