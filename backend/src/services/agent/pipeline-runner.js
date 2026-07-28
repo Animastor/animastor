@@ -8,14 +8,24 @@ const sourceCoverage = require('../source-coverage');
 const lazyBook = require('../../book/lazy-book');
 const config = require('../../config/runtime-config');
 const { updateSession, createSession, isSessionCancelled, isBookCancelled } = require('../agent-session');
-const { PROGRESS_STAGES, MAX_WINDOW_CHARS, MAX_SCENES_PER_CHUNK } = require('../agent-prompts');
+const { PROGRESS_STAGES, MAX_WINDOW_CHARS, MAX_SCENES_PER_CHUNK, CHARS_PER_SCENE, WINDOW_OVERHEAD, computeWindowChars } = require('../agent-prompts');
 const { mergeCharacterLists } = require('../../utils/character-identity');
 const { estimateSpeechDurationSec } = require('../placeholder-audio');
 const pipelineSteps = require('./pipeline-steps');
 const textUtils = require('./text-utils');
 const { SCENE_TARGET_SEC, SCENE_MAX_SEC, SCENE_MIN_SEC } = require('../agent-prompts');
 
-function getWindowText(sourceText, existingChars, existingLocs, windowIndex, startOffset) {
+/**
+ * Resolve effective chunk size from options or fall back to module default.
+ */
+function _resolveChunkSize(options) {
+    return Math.max(1, Math.min(5, (options && options.chunkSize) || MAX_SCENES_PER_CHUNK));
+}
+
+function getWindowText(sourceText, existingChars, existingLocs, windowIndex, startOffset, chunkSize) {
+    const maxWindowChars = (chunkSize != null)
+        ? computeWindowChars(chunkSize)
+        : MAX_WINDOW_CHARS;
     const chapters = lazyBook.splitIntoChapters(sourceText);
 
     if (startOffset === undefined || startOffset === null) {
@@ -65,7 +75,7 @@ function getWindowText(sourceText, existingChars, existingLocs, windowIndex, sta
         );
     }
 
-    let endPos = Math.min(startOffset + MAX_WINDOW_CHARS, sourceText.length);
+    let endPos = Math.min(startOffset + maxWindowChars, sourceText.length);
     let windowText = sourceText.substring(startOffset, endPos);
 
     const skipLen = sourceCoverage.findNarrativeStartOffset(windowText);
@@ -83,11 +93,11 @@ function getWindowText(sourceText, existingChars, existingLocs, windowIndex, sta
         );
     }
 
-    if (endPos < sourceText.length && (endPos - actualStart) >= MAX_WINDOW_CHARS) {
+    if (endPos < sourceText.length && (endPos - actualStart) >= maxWindowChars) {
         const lastPeriod = windowText.lastIndexOf('.');
         const lastNewline = windowText.lastIndexOf('\n\n');
         const breakAt = Math.max(lastPeriod, lastNewline);
-        if (breakAt > MAX_WINDOW_CHARS / 2) {
+        if (breakAt > maxWindowChars / 2) {
             windowText = windowText.substring(0, breakAt + 1).trim();
             endPos = actualStart + breakAt + 1;
         }
@@ -164,6 +174,12 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
     const _progress = progress || (() => {});
     const { publishProgress, bookId, redis: redisClient } = options;
     const sceneOffset = baseSceneCount || 0;
+
+    // Dynamic chunk size: override MAX_SCENES_PER_CHUNK from options
+    const effectiveChunkSize = _resolveChunkSize(options);
+    const effectiveMaxChars = (options.chunkSize != null)
+        ? computeWindowChars(effectiveChunkSize)
+        : MAX_WINDOW_CHARS;
 
     // ── Cancellation helper ──
     // Checks if the agent session has been marked as cancelled in the DB.
@@ -251,11 +267,11 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
         }
     };
 
-    publishVBook({ stage: 'extracting_chars', scene_index: 0, total_scenes: 0, window_size: MAX_SCENES_PER_CHUNK, message: PROGRESS_STAGES.extracting_chars });
+    publishVBook({ stage: 'extracting_chars', scene_index: 0, total_scenes: 0, window_size: effectiveChunkSize, message: PROGRESS_STAGES.extracting_chars });
 
     const sceneText = rawWindowText.trimEnd();
 
-    publishVBook({ stage: 'analyzing', scene_index: 0, total_scenes: 0, window_size: MAX_SCENES_PER_CHUNK, message: PROGRESS_STAGES.analyzing_structure });
+    publishVBook({ stage: 'analyzing', scene_index: 0, total_scenes: 0, window_size: effectiveChunkSize, message: PROGRESS_STAGES.analyzing_structure });
 
     const charResult = await pipelineSteps.stepExtractCharacters(sessionId, text, stepIndex, _progress);
     let mentions = options.existingMentions || {};
@@ -294,7 +310,7 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
 
     await checkCancelled();
 
-    publishVBook({ stage: 'extracting_chars', scene_index: 0, total_scenes: 0, window_size: MAX_SCENES_PER_CHUNK, message: PROGRESS_STAGES.extracting_chars });
+    publishVBook({ stage: 'extracting_chars', scene_index: 0, total_scenes: 0, window_size: effectiveChunkSize, message: PROGRESS_STAGES.extracting_chars });
 
     const newLocations = await pipelineSteps.stepExtractLocations(sessionId, text, characters, stepIndex, _progress);
     if (!newLocations || newLocations.length === 0) {
@@ -330,7 +346,7 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
     await checkCancelled();
 
     // ── Scene split with unified validation ──
-    const capScenes = (arr) => (arr || []).slice(0, MAX_SCENES_PER_CHUNK);
+    const capScenes = (arr) => (arr || []).slice(0, effectiveChunkSize);
 
     const findOversized = (arr) => arr
         .map((s, i) => ({ i, dur: estimateSpeechDurationSec(s.text || '') }))
@@ -347,10 +363,10 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
         return { progressInfo, cov: progressInfo.coverage, oversized, undersized };
     };
 
-    const totalScenesEstimate = Math.min(MAX_SCENES_PER_CHUNK, Math.ceil(sceneText.length / 200) || 1);
-    publishVBook({ stage: 'creating_scenes', scene_index: 0, total_scenes: totalScenesEstimate, window_size: MAX_SCENES_PER_CHUNK, message: PROGRESS_STAGES.creating_scenes });
+    const totalScenesEstimate = Math.min(effectiveChunkSize, Math.ceil(sceneText.length / 200) || 1);
+    publishVBook({ stage: 'creating_scenes', scene_index: 0, total_scenes: totalScenesEstimate, window_size: effectiveChunkSize, message: PROGRESS_STAGES.creating_scenes });
 
-    let scenes = capScenes(await pipelineSteps.stepCreateScenes(sessionId, sceneText, characters, locations, stepIndex, _progress));
+    let scenes = capScenes(await pipelineSteps.stepCreateScenes(sessionId, sceneText, characters, locations, stepIndex, _progress, null, effectiveChunkSize));
     if (!scenes || scenes.length === 0) throw new Error('AI returned no scenes');
 
     let windowScenes = scenes;
@@ -370,7 +386,7 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
             repairHint = { reason: 'duration_exceeded', duration_preview: preview };
         }
         coverageRetryCount += 1;
-        windowScenes = capScenes(await pipelineSteps.stepCreateScenes(sessionId, sceneText, characters, locations, stepIndex, _progress, repairHint));
+        windowScenes = capScenes(await pipelineSteps.stepCreateScenes(sessionId, sceneText, characters, locations, stepIndex, _progress, repairHint, effectiveChunkSize));
         ({ progressInfo, cov: coverage, oversized, undersized } = evaluate(windowScenes));
     }
 
@@ -409,7 +425,7 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
             duration_preview: preview,
         };
 
-        const retryScenes = capScenes(await pipelineSteps.stepCreateScenes(sessionId, sceneText, characters, locations, stepIndex, _progress, repairHint));
+        const retryScenes = capScenes(await pipelineSteps.stepCreateScenes(sessionId, sceneText, characters, locations, stepIndex, _progress, repairHint, effectiveChunkSize));
         const retryEval = evaluate(retryScenes);
 
         // If retry broke coverage, keep previous result and break — don't lose valid scenes
@@ -487,7 +503,7 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
             stage: 'creating_units',
             scene_index: globalSceneIndex + 1,
             total_scenes: sceneOffset + windowTotalScenes,
-            window_size: MAX_SCENES_PER_CHUNK,
+            window_size: effectiveChunkSize,
             window_scene_index: windowSceneIndex,
             window_total_scenes: windowTotalScenes,
             window_start_scene: windowStartScene,
@@ -504,7 +520,7 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
             stage: 'creating_visuals',
             scene_index: globalSceneIndex + 1,
             total_scenes: sceneOffset + windowTotalScenes,
-            window_size: MAX_SCENES_PER_CHUNK,
+            window_size: effectiveChunkSize,
             window_scene_index: windowSceneIndex,
             window_total_scenes: windowTotalScenes,
             window_start_scene: windowStartScene,
@@ -565,6 +581,7 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
         );
 
         if (allVisualUnits.length >= 1) {
+
             const reconciled = await pipelineSteps.stepReconcilePassports(sessionId, allVisualUnits, characters, stepIndex, _progress);
 
             // Map results back into enrichedScenes

@@ -12,6 +12,16 @@ const stats = {
     failed_jobs: 0
 };
 
+/**
+ * Default timeouts per job type (ms). Used when layer-config
+ * provides per-type timeout values.
+ */
+const DEFAULT_TYPE_TIMEOUT_MS = {
+    audio: 30 * 60 * 1000,   // 30 min
+    image: 30 * 60 * 1000,   // 30 min
+    video: 60 * 60 * 1000,   // 60 min
+};
+
 
 
 // T4: Структурированный результат отправки
@@ -33,8 +43,16 @@ async function sendUnified(taskSpec) {
         throw new Error(`Invalid job_id: ${taskSpec.job_id}`);
     }
 
+    // Per-type timeout: use taskSpec.timeout_ms if provided, else use DEFAULT_TYPE_TIMEOUT_MS,
+    // else fall back to config.GPU_TIMEOUT_MS (global default).
+    const timeoutMs = taskSpec.timeout_ms
+        ?? DEFAULT_TYPE_TIMEOUT_MS[taskSpec.job_type]
+        ?? config.GPU_TIMEOUT_MS
+        ?? 600_000;
+
     const payload = {
         ...taskSpec,
+        timeout_ms: timeoutMs,
         build_id: taskSpec.build_id || "default",
         protocol_version: PROTOCOL_VERSION,
         book_id: parsed.bookId,

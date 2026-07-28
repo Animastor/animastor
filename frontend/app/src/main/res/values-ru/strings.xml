@@ -351,6 +351,16 @@
     <string name="worker_settings_title_audio">Настройки генерации аудио</string>
     <string name="worker_settings_title_image">Настройки генерации изображений</string>
     <string name="worker_settings_title_video">Настройки генерации видео</string>
+    <string name="worker_settings_timeout_title">Таймаут генерации</string>
+    <string name="worker_settings_timeout_label">Таймаут %1$s</string>
+    <string name="worker_settings_timeout_desc">Если генерация превышает это время, задача будет автоматически отправлена повторно</string>
+    <string name="worker_settings_timeout_unit">мин</string>
+
+    <!-- VBook Settings -->
+    <string name="vbook_settings_title">Настройки VBook</string>
+    <string name="vbook_settings_scenes_per_pass">Сцен за раз</string>
+    <string name="vbook_settings_scenes_per_pass_desc">Сколько сцен AI создаёт за один проход (1-5). Большие значения обрабатывают больше текста за проход, но увеличивают время на окно.</string>
+    <string name="vbook_settings_save">Сохранить</string>
 
     <string name="toggle_on">Вкл.</string>
     <string name="toggle_off">Выкл.</string>

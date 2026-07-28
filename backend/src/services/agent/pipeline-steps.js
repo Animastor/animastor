@@ -110,7 +110,8 @@ async function stepExtractLocations(sessionId, text, characters, stepIndex, prog
     }
 }
 
-async function stepCreateScenes(sessionId, text, characters, locations, stepIndex, progress, repairHint) {
+async function stepCreateScenes(sessionId, text, characters, locations, stepIndex, progress, repairHint, chunkSize) {
+    const effectiveMaxScenes = (chunkSize != null) ? Math.max(1, Math.min(5, chunkSize)) : MAX_SCENES_PER_CHUNK;
     const _progress = progress || (() => {});
     _progress({ stage: 'creating_scenes', message: PROGRESS_STAGES.creating_scenes });
     await updateSession(sessionId, { progress_msg: PROGRESS_STAGES.creating_scenes });
@@ -129,7 +130,7 @@ async function stepCreateScenes(sessionId, text, characters, locations, stepInde
         .replace('%EXISTING_CHARACTERS%', charsContext)
         .replace('%EXISTING_LOCATIONS%', locsContext)
         .replace('%REFERENCE_EXAMPLES%', examplesSection)
-        .replace(/%MAX_SCENES%/g, MAX_SCENES_PER_CHUNK)
+        .replace(/%MAX_SCENES%/g, effectiveMaxScenes)
         .replace(/%SCENE_MAX_SEC%/g, SCENE_MAX_SEC)
         .replace(/%SCENE_TARGET_SEC%/g, SCENE_TARGET_SEC)
         .replace(/%SCENE_MIN_SEC%/g, SCENE_MIN_SEC)
@@ -140,9 +141,9 @@ async function stepCreateScenes(sessionId, text, characters, locations, stepInde
     let repairText = '';
     if (repairHint) {
         if (repairHint.duration_preview) {
-            repairText = `\n\n=== DURATION LIMIT VIOLATION (ATTENTION) ===\n\nThe previous scene split had scenes that exceeded the absolute maximum duration.\n\nHard limit: ${SCENE_MAX_SEC} seconds (absolute, must NOT exceed).\nTarget duration: ~${SCENE_TARGET_SEC} seconds (preferred).\n\nDuration breakdown of violations:\n${repairHint.duration_preview}\n\nYou MUST fix EVERY scene listed above. For each violating scene, choose one:\n  (A) SHORTEN — keep only essential narration, trim verbose description. Use this when\n      the text can convey the same meaning in fewer words.\n  (B) SPLIT — divide the single long scene into TWO OR MORE shorter scenes, each ending\n      on a complete sentence and each with estimated duration ≤ ${SCENE_MAX_SEC}s.\n      Use this when the scene contains too much essential content for one scene.\n\nRules:\n- Each resulting scene MUST have estimated duration ≤ ${SCENE_MAX_SEC}s (~${Math.round(SCENE_MAX_SEC / 0.3)} words).\n- Target ~${SCENE_TARGET_SEC}s (~${Math.round(SCENE_TARGET_SEC / 0.3)} words) per scene.\n- Every scene must begin and end on a COMPLETE sentence.\n- Do NOT lose content — use split (B) if shortening would remove essential text.\n- Do NOT create gaps or overlaps between returned scenes.\n- Return at most ${MAX_SCENES_PER_CHUNK} scenes, stop after scene ${MAX_SCENES_PER_CHUNK}; unused tail text is allowed.`;
+            repairText = `\n\n=== DURATION LIMIT VIOLATION (ATTENTION) ===\n\nThe previous scene split had scenes that exceeded the absolute maximum duration.\n\nHard limit: ${SCENE_MAX_SEC} seconds (absolute, must NOT exceed).\nTarget duration: ~${SCENE_TARGET_SEC} seconds (preferred).\n\nDuration breakdown of violations:\n${repairHint.duration_preview}\n\nYou MUST fix EVERY scene listed above. For each violating scene, choose one:\n  (A) SHORTEN — keep only essential narration, trim verbose description. Use this when\n      the text can convey the same meaning in fewer words.\n  (B) SPLIT — divide the single long scene into TWO OR MORE shorter scenes, each ending\n      on a complete sentence and each with estimated duration ≤ ${SCENE_MAX_SEC}s.\n      Use this when the scene contains too much essential content for one scene.\n\nRules:\n- Each resulting scene MUST have estimated duration ≤ ${SCENE_MAX_SEC}s (~${Math.round(SCENE_MAX_SEC / 0.3)} words).\n- Target ~${SCENE_TARGET_SEC}s (~${Math.round(SCENE_TARGET_SEC / 0.3)} words) per scene.\n- Every scene must begin and end on a COMPLETE sentence.\n- Do NOT lose content — use split (B) if shortening would remove essential text.\n- Do NOT create gaps or overlaps between returned scenes.\n- Return at most ${effectiveMaxScenes} scenes, stop after scene ${effectiveMaxScenes}; unused tail text is allowed.`;
         } else {
-            repairText = `\n\nPrevious scene split failed source coverage validation.\nReason: ${repairHint.reason || 'unknown'}.\nMissing or problematic source fragment:\n\`\`\`\n${repairHint.gap_preview || ''}\n\`\`\`\nReturn a corrected split that starts at the first narrative word and covers a contiguous prefix of the provided text without gaps. Return at most ${MAX_SCENES_PER_CHUNK} scenes and stop after scene ${MAX_SCENES_PER_CHUNK}; unused tail text is allowed.`;
+            repairText = `\n\nPrevious scene split failed source coverage validation.\nReason: ${repairHint.reason || 'unknown'}.\nMissing or problematic source fragment:\n\`\`\`\n${repairHint.gap_preview || ''}\n\`\`\`\nReturn a corrected split that starts at the first narrative word and covers a contiguous prefix of the provided text without gaps. Return at most ${effectiveMaxScenes} scenes and stop after scene ${effectiveMaxScenes}; unused tail text is allowed.`;
         }
     }
 

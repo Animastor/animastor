@@ -5,14 +5,24 @@ data class LayerConfigResponse(
     val audio_enabled: Boolean = true,
     val image_enabled: Boolean = true,
     val video_enabled: Boolean = true,
-    val vbook_enabled: Boolean = true
+    val vbook_enabled: Boolean = true,
+    // VBook chunk size: how many scenes the AI agent generates per pass (1-5, default 3)
+    val chunk_size: Int = 3,
+    // Per-worker generation timeouts (minutes)
+    val audio_timeout_minutes: Int? = null,
+    val image_timeout_minutes: Int? = null,
+    val video_timeout_minutes: Int? = null
 )
 
 data class LayerConfigUpdate(
     val audio_enabled: Boolean? = null,
     val image_enabled: Boolean? = null,
     val video_enabled: Boolean? = null,
-    val vbook_enabled: Boolean? = null
+    val vbook_enabled: Boolean? = null,
+    val chunk_size: Int? = null,
+    val audio_timeout_minutes: Int? = null,
+    val image_timeout_minutes: Int? = null,
+    val video_timeout_minutes: Int? = null
 )
 
 /**

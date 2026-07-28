@@ -118,7 +118,7 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
 
         // ── Worker settings buttons (gear icons) ──
         b.vbookSettingsButton.setOnClickListener {
-            Toast.makeText(requireContext(), "VBook settings coming soon", Toast.LENGTH_SHORT).show()
+            openVBookSettings()
         }
         b.audioSettingsButton.setOnClickListener {
             openWorkerSettings("audio", getString(R.string.worker_settings_title_audio))
@@ -708,6 +708,14 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
     private fun onStopClicked(type: String) {
         Log.i(TAG, "Stop clicked for type=$type")
         viewModel.cancelTask(type)
+    }
+
+    private fun openVBookSettings() {
+        val fragment = VBookSettingsFragment()
+        parentFragmentManager.beginTransaction()
+            .add(R.id.nav_host_container, fragment, "VBookSettingsFragment")
+            .addToBackStack(null)
+            .commit()
     }
 
     private fun openWorkerSettings(workerType: String, label: String) {

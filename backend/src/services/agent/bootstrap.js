@@ -10,10 +10,27 @@ const lazyBook = require('../../book/lazy-book');
 const config = require('../../config/runtime-config');
 const sourceCoverage = require('../source-coverage');
 const { updateSession, createSession, isSessionCancelled } = require('../agent-session');
+const layerConfig = require('../layer-config');
 const { PROGRESS_STAGES, MAX_SCENES_PER_CHUNK } = require('../agent-prompts');
 const pipelineSteps = require('./pipeline-steps');
 const pipelineRunner = require('./pipeline-runner');
 const textUtils = require('./text-utils');
+
+/**
+ * Read chunk_size from Redis layer-config for the given book.
+ * Falls back to MAX_SCENES_PER_CHUNK (3) if not set or not available.
+ */
+async function _readChunkSize(redis, bookId) {
+    try {
+        if (redis && bookId) {
+            const cfg = await layerConfig.get(redis, bookId);
+            if (cfg && cfg.chunk_size >= 1 && cfg.chunk_size <= 5) {
+                return cfg.chunk_size;
+            }
+        }
+    } catch (_) {}
+    return MAX_SCENES_PER_CHUNK;
+}
 
 async function bootstrapWithAgent(bookId, progress, publishProgress, redis) {
     const _progress = progress || (() => {});
@@ -51,8 +68,11 @@ async function bootstrapWithAgent(bookId, progress, publishProgress, redis) {
     console.log(`[AGENT] Session ${sessionId} created for book ${bookId}`);
     console.log(`[CANCEL-DEBUG] bootstrapWithAgent: session=${sessionId}, bookId=${bookId}, redis=${!!redis}`);
 
-    try {
-        const windowInfo = pipelineRunner.getWindowText(draft.sourceText, [], [], 0);
+    // Read chunk_size from layer-config BEFORE getWindowText so the text budget matches
+        const chunkSize = await _readChunkSize(redis, bookId);
+        console.log(`[AGENT] bootstrapWithAgent: using chunk_size=${chunkSize} for book ${bookId}`);
+
+        const windowInfo = pipelineRunner.getWindowText(draft.sourceText, [], [], 0, undefined, chunkSize);
         console.log(`[FIRST-WINDOW] currentOffset=${windowInfo.currentOffset}, chapterIndex=${windowInfo.chapterIndex}, chapterTitle="${windowInfo.chapterTitle}", textLen=${windowInfo.text.length}`);
 
         _progress({ stage: 'analyzing_structure', message: PROGRESS_STAGES.analyzing_structure });
@@ -90,6 +110,7 @@ async function bootstrapWithAgent(bookId, progress, publishProgress, redis) {
             publishProgress,
             bookId,
             redis,
+            chunkSize,
         });
 
         if (result.scenes.length === 0) {
@@ -142,7 +163,7 @@ async function bootstrapWithAgent(bookId, progress, publishProgress, redis) {
             mentions: result.mentions,
             scenes: result.scenes,
             chapterTitle: chapterTitle,
-            maxScenes: MAX_SCENES_PER_CHUNK,
+            maxScenes: chunkSize,
             structure: structure,
         });
 
@@ -348,7 +369,11 @@ async function bootstrapNextWindow(bookId, progress, publishProgress, redis) {
     const existingChars = windowData?.all_characters || [];
     const existingLocs = windowData?.all_locations || [];
 
-    const windowInfo = pipelineRunner.getWindowText(draft.sourceText, existingChars, existingLocs, 1, currentOffset);
+    // Read chunk_size from layer-config for this book
+    const chunkSize = await _readChunkSize(redis, bookId);
+    console.log(`[AGENT] bootstrapNextWindow: using chunk_size=${chunkSize} for book ${bookId}`);
+
+    const windowInfo = pipelineRunner.getWindowText(draft.sourceText, existingChars, existingLocs, 1, currentOffset, chunkSize);
 
     // Guard: windowStartOffset должен быть >= currentOffset (минимум)
     // Если он значительно меньше — агент пошёл назад, abort.
@@ -434,6 +459,7 @@ async function bootstrapNextWindow(bookId, progress, publishProgress, redis) {
             bookId,
             redis,
             existingMentions: windowData?.all_mentions || {},
+            chunkSize,
         });
 
         const extraScenes = [];
@@ -460,7 +486,7 @@ async function bootstrapNextWindow(bookId, progress, publishProgress, redis) {
             locations: result.locations,
             mentions: result.mentions,
             scenes: result.scenes,
-            maxScenes: MAX_SCENES_PER_CHUNK,
+            maxScenes: chunkSize,
             chapterTitle: windowInfo.chapterTitle || null,
             chapterIndex: nextChapterIndex,
             structure: structure,

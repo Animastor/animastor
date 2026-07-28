@@ -41,6 +41,16 @@ const CHARS_PER_SCENE = 1300;
 const WINDOW_OVERHEAD = 100;
 const MAX_WINDOW_CHARS = WINDOW_OVERHEAD + MAX_SCENES_PER_CHUNK * CHARS_PER_SCENE;
 
+/**
+ * Compute window char budget from a given chunk size (scenes per pass).
+ * Allows the pipeline to dynamically override MAX_SCENES_PER_CHUNK
+ * without re-importing the module.
+ */
+function computeWindowChars(chunkSize) {
+    const scenes = Math.max(1, Math.min(5, chunkSize || MAX_SCENES_PER_CHUNK));
+    return WINDOW_OVERHEAD + scenes * CHARS_PER_SCENE;
+}
+
 // ── Load SYSTEM_PROMPTS from ai/rules/*.md ──
 const SYSTEM_PROMPTS = {};
 const RULES = [
@@ -57,4 +67,5 @@ for (const name of RULES) {
 module.exports = {
     PROGRESS_STAGES, MAX_WINDOW_CHARS, STEP_RETRIES, SYSTEM_PROMPTS,
     SCENE_TARGET_SEC, SCENE_MAX_SEC, SCENE_MIN_SEC, MAX_SCENES_PER_CHUNK,
+    CHARS_PER_SCENE, WINDOW_OVERHEAD, computeWindowChars,
 };

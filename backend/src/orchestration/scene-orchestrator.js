@@ -5,6 +5,7 @@ const video = require('../video');
 const gpu = require('../runtime/gpu-dispatcher');
 const runtimeScheduler = require('../runtime/runtime-scheduler');
 const book = require('../book');
+const layerConfig = require('../services/layer-config');
 const { log, warn, logEvent } = require('./scene-utils');
 const { handleAudioCompleted, handleImageCompleted, handleVideoCompleted } = require('./scene-callbacks');
 const { restoreSceneChunkStatus } = require('./scene-restoration');
@@ -281,6 +282,16 @@ async function executeVideoDispatch(redis, scene, loadedBook, buildId, dispatchI
         return { dispatched: false, jobs: 0, completed: true, reason: 'scene_not_found' };
     }
 
+    // Read per-type timeout from layer-config
+    let videoTimeoutMs;
+    try {
+        const cfg = await layerConfig.get(redis, bookId);
+        if (cfg && cfg.video_timeout_minutes > 0) {
+            videoTimeoutMs = cfg.video_timeout_minutes * 60 * 1000;
+            log(`VIDEO_DISPATCH: ${bookId}/${chapterId}/${sceneId}: using timeout=${cfg.video_timeout_minutes} min from layer-config`);
+        }
+    } catch (_) {}
+
     const wfLoader = require('../workflows/workflow-loader');
     const videoResult = await video.generateVideoAnimation(sceneData, bookData, buildId, wfLoader.workflows, dispatchId);
 
@@ -293,6 +304,13 @@ async function executeVideoDispatch(redis, scene, loadedBook, buildId, dispatchI
     if (jobSpecs.length === 0) {
         warn(`VIDEO_GENERATION: ${bookId}/${chapterId}/${sceneId}: no jobSpecs returned`);
         return { dispatched: false, jobs: 0, reason: 'no_job_specs' };
+    }
+
+    // Add per-type timeout to each job spec
+    for (const jobSpec of jobSpecs) {
+        if (videoTimeoutMs) {
+            jobSpec.timeout_ms = videoTimeoutMs;
+        }
     }
 
     let sentCount = 0;

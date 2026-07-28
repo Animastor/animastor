@@ -58,6 +58,10 @@ module.exports = function(app, redis, deps) {
                 audio_enabled: cfg.audio_enabled,
                 image_enabled: cfg.image_enabled,
                 video_enabled: cfg.video_enabled,
+                chunk_size: cfg.chunk_size,
+                audio_timeout_minutes: cfg.audio_timeout_minutes,
+                image_timeout_minutes: cfg.image_timeout_minutes,
+                video_timeout_minutes: cfg.video_timeout_minutes,
             });
         } catch (err) {
             console.error('[LAYER-CONFIG] GET error:', err.message);
@@ -68,18 +72,24 @@ module.exports = function(app, redis, deps) {
     app.put('/api/v1/book/:bookId/layer-config', async (req, res) => {
         try {
             const { bookId } = req.params;
-            const { audio_enabled, image_enabled, video_enabled } = req.body || {};
+            const { audio_enabled, image_enabled, video_enabled, chunk_size, audio_timeout_minutes, image_timeout_minutes, video_timeout_minutes } = req.body || {};
             const cfg = await layerConfig.set(redis, bookId, {
                 audio_enabled, image_enabled, video_enabled,
+                chunk_size, audio_timeout_minutes, image_timeout_minutes, video_timeout_minutes,
             });
-            log(`[LAYER-CONFIG] book=${bookId} → a=${cfg.audio_enabled} i=${cfg.image_enabled} v=${cfg.video_enabled}`);
+            log(`[LAYER-CONFIG] book=${bookId} → a=${cfg.audio_enabled} i=${cfg.image_enabled} v=${cfg.video_enabled} cs=${cfg.chunk_size} ato=${cfg.audio_timeout_minutes} ito=${cfg.image_timeout_minutes} vto=${cfg.video_timeout_minutes}`);
             res.json({
                 book_id: bookId,
                 audio_enabled: cfg.audio_enabled,
                 image_enabled: cfg.image_enabled,
                 video_enabled: cfg.video_enabled,
+                chunk_size: cfg.chunk_size,
+                audio_timeout_minutes: cfg.audio_timeout_minutes,
+                image_timeout_minutes: cfg.image_timeout_minutes,
+                video_timeout_minutes: cfg.video_timeout_minutes,
             });
         } catch (err) {
+            console.error('[LAYER-CONFIG] PUT error:', err.message);
             console.error('[LAYER-CONFIG] PUT error:', err.message);
             res.status(500).json({ error: err.message });
         }

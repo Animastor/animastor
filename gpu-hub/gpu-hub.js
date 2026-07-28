@@ -176,41 +176,62 @@ setInterval(async () => {
   } catch (_) {}
 
   // ── GPU timeout cleanup (Redis-backed) ──
+  // Checks TWO levels:
+  //   1. Per-job timeout (job.timeout_ms from started_at)
+  //   2. Per-GPU timeout (gpu.last_seen staleness)
   const allGpus = await getAllGpusFromRedis();
+  const running = await redis.hgetall("animastor:running")
+  const runningMap = new Map(Object.entries(running || {}).map(([k, v]) => [k, JSON.parse(v)]));
+
+  // ── Level 1: Per-job timeout ──
+  for (const [job_id, data] of runningMap) {
+    const jobTimeoutMs = data.timeout_ms || GPU_TIMEOUT_MS;
+    const jobStarted = data.started_at || 0;
+    if (now - jobStarted > jobTimeoutMs) {
+      console.log(`💀 Job timeout: ${job_id} (type=${data.job_type}, timeout=${Math.round(jobTimeoutMs / 1000)}s, started=${Math.round((now - jobStarted) / 1000)}s ago)`)
+      try {
+        await redis.hdel("animastor:running", job_id)
+        if (data.task_raw) {
+          await redis.lrem("animastor:processing", 1, data.task_raw).catch(() => {})
+        }
+        if (data.dispatch_id) {
+          await redis.del(jobDedupKey(job_id, data.dispatch_id)).catch(() => {})
+        }
+        await notifyBackendError(job_id, data.build_id, data.dispatch_id, "worker_timeout")
+      } catch (err) {
+        console.error("Job timeout error:", err)
+      }
+    }
+  }
+
+  // ── Level 2: Per-GPU timeout (for jobs still running on stale GPUs) ──
   for (const [id, gpu] of allGpus) {
 
     if (now - gpu.last_seen > GPU_TIMEOUT_MS) {
 
       console.log("💀 GPU timeout:", id)
 
-      const running = await redis.hgetall("animastor:running")
+      for (const [job_id, data] of runningMap) {
+        if (data.worker === id) {
+          // Skip if already handled by per-job timeout
+          const jobTimeoutMs = data.timeout_ms || GPU_TIMEOUT_MS;
+          const jobStarted = data.started_at || 0;
+          if (now - jobStarted > jobTimeoutMs) continue;
 
-      for (const job_id in running) {
+          console.log("💀 Worker timeout, reporting failure:", job_id)
 
-        try {
-
-          const data = JSON.parse(running[job_id])
-
-          if (data.worker === id) {
-
-            console.log("💀 Worker timeout, reporting failure:", job_id)
-
-            await redis.hdel("animastor:running", job_id)
-            if (data.task_raw) {
-              await redis.lrem("animastor:processing", 1, data.task_raw).catch(() => {})
-            }
-
-            // Освобождаем dedup очереди, чтобы re-dispatch backend'а не
-            // отбился как duplicate.
-            if (data.dispatch_id) {
-              await redis.del(jobDedupKey(job_id, data.dispatch_id)).catch(() => {})
-            }
-
-            await notifyBackendError(job_id, data.build_id, data.dispatch_id, "worker_timeout")
+          await redis.hdel("animastor:running", job_id)
+          if (data.task_raw) {
+            await redis.lrem("animastor:processing", 1, data.task_raw).catch(() => {})
           }
 
-        } catch (err) {
-          console.error("Timeout report error:", err)
+          // Освобождаем dedup очереди, чтобы re-dispatch backend'а не
+          // отбился как duplicate.
+          if (data.dispatch_id) {
+            await redis.del(jobDedupKey(job_id, data.dispatch_id)).catch(() => {})
+          }
+
+          await notifyBackendError(job_id, data.build_id, data.dispatch_id, "worker_timeout")
         }
       }
 
@@ -410,6 +431,7 @@ app.get("/task/next", async (req, res) => {
       scene_id: task.scene_id,
       stage: task.stage,
       dispatch_id: task.dispatch_id,
+      timeout_ms: task.timeout_ms || null,
       protocol_version: task.protocol_version,
       worker_version: gpu.version || null,
       worker_image_tag: gpu.image_tag || null,

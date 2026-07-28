@@ -31,6 +31,15 @@ const DEFAULTS = Object.freeze({
     audio_enabled: true,
     image_enabled: true,
     video_enabled: true,
+
+    // VBook AI agent: how many scenes to generate per pass (1-5, default 3)
+    chunk_size: 3,
+
+    // Per-worker generation timeouts (minutes). Controls GPU_TIMEOUT_MS.
+    // Used by dispatch-engine to set per-type timeout for gpu-hub tasks.
+    audio_timeout_minutes: 30,
+    image_timeout_minutes: 30,
+    video_timeout_minutes: 60,
 });
 
 function normalize(raw) {
@@ -43,7 +52,19 @@ function normalize(raw) {
         audio_enabled: obj.audio_enabled !== false,
         image_enabled: obj.image_enabled !== false,
         video_enabled: obj.video_enabled !== false,
+
+        chunk_size: _clampInt(obj.chunk_size, 1, 5, DEFAULTS.chunk_size),
+
+        audio_timeout_minutes: _clampInt(obj.audio_timeout_minutes, 5, 120, DEFAULTS.audio_timeout_minutes),
+        image_timeout_minutes: _clampInt(obj.image_timeout_minutes, 5, 120, DEFAULTS.image_timeout_minutes),
+        video_timeout_minutes: _clampInt(obj.video_timeout_minutes, 10, 180, DEFAULTS.video_timeout_minutes),
     };
+}
+
+function _clampInt(value, min, max, fallback) {
+    const n = parseInt(value, 10);
+    if (isNaN(n)) return fallback;
+    return Math.max(min, Math.min(max, n));
 }
 
 async function get(redis, bookId) {
@@ -59,6 +80,22 @@ async function set(redis, bookId, partial) {
         audio_enabled: partial.audio_enabled !== undefined ? !!partial.audio_enabled : current.audio_enabled,
         image_enabled: partial.image_enabled !== undefined ? !!partial.image_enabled : current.image_enabled,
         video_enabled: partial.video_enabled !== undefined ? !!partial.video_enabled : current.video_enabled,
+
+        chunk_size: partial.chunk_size !== undefined
+            ? _clampInt(partial.chunk_size, 1, 5, current.chunk_size)
+            : current.chunk_size,
+
+        audio_timeout_minutes: partial.audio_timeout_minutes !== undefined
+            ? _clampInt(partial.audio_timeout_minutes, 5, 120, current.audio_timeout_minutes)
+            : current.audio_timeout_minutes,
+
+        image_timeout_minutes: partial.image_timeout_minutes !== undefined
+            ? _clampInt(partial.image_timeout_minutes, 5, 120, current.image_timeout_minutes)
+            : current.image_timeout_minutes,
+
+        video_timeout_minutes: partial.video_timeout_minutes !== undefined
+            ? _clampInt(partial.video_timeout_minutes, 10, 180, current.video_timeout_minutes)
+            : current.video_timeout_minutes,
     };
     await redis.set(key(bookId), JSON.stringify(next));
     return next;
