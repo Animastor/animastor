@@ -135,7 +135,7 @@
                         <Spinner
                             android:id="@+id/timeoutSpinner"
                             android:layout_width="0dp"
-                            android:layout_height="36dp"
+                            android:layout_height="40dp"
                             android:layout_weight="1"
                             android:textColor="?attr/colorOnSurface"
                             android:background="@drawable/spinner_bg"
@@ -143,14 +143,15 @@
 
                         <com.google.android.material.button.MaterialButton
                             android:id="@+id/timeoutDefaultButton"
-                            style="@style/Widget.Animastor.Button.Outlined.Compact"
+                            style="@style/Widget.Animastor.Button.Outlined"
                             android:layout_width="wrap_content"
-                            android:layout_height="36dp"
+                            android:layout_height="40dp"
                             android:layout_marginStart="8dp"
                             android:minWidth="0dp"
                             android:paddingHorizontal="10dp"
                             android:text="@string/worker_settings_default"
-                            android:textSize="11sp" />
+                            android:textSize="11sp"
+                            app:strokeWidth="1dp" />
 
                     </LinearLayout>
 
