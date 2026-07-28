@@ -14,7 +14,7 @@ import kotlinx.coroutines.launch
 /**
  * VBook generation settings: chunk size (scenes per pass).
  *
- * Accepts no arguments — reads/chunk_size from layer-config.
+ * Accepts no arguments — reads chunk_size from layer-config.
  * Opened from GenerateFragment's VBook gear icon button.
  */
 class VBookSettingsFragment : Fragment(R.layout.fragment_vbook_settings) {
@@ -22,6 +22,11 @@ class VBookSettingsFragment : Fragment(R.layout.fragment_vbook_settings) {
     private var binding: FragmentVbookSettingsBinding? = null
     private val viewModel: GenerateViewModel by activityViewModels {
         GenerateViewModel.factory
+    }
+
+    companion object {
+        /** Default chunk size (scenes per pass). */
+        const val DEFAULT_CHUNK_SIZE = 3
     }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
@@ -54,18 +59,23 @@ class VBookSettingsFragment : Fragment(R.layout.fragment_vbook_settings) {
                 val adapter = ArrayAdapter(requireContext(), android.R.layout.simple_spinner_item, options)
                 adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
                 b.chunkSizeSpinner.adapter = adapter
-                b.chunkSizeSpinner.setSelection(2) // index 2 = value 3
+                b.chunkSizeSpinner.setSelection(DEFAULT_CHUNK_SIZE - 1)
             }
         }
 
-        // ── Save button ──
-        b.saveButton.setOnClickListener {
+        // ── Default button: reset to 3 ──
+        b.defaultButton.setOnClickListener {
+            b.chunkSizeSpinner.setSelection(DEFAULT_CHUNK_SIZE - 1)
+        }
+
+        // ── Apply button: save and close ──
+        b.applyButton.setOnClickListener {
             lifecycleScope.launch {
                 try {
                     val bookId = viewModel.bookId
                     if (bookId.isBlank()) return@launch
 
-                    val selectedValue = (b.chunkSizeSpinner.selectedItem as? Int) ?: 3
+                    val selectedValue = (b.chunkSizeSpinner.selectedItem as? Int) ?: DEFAULT_CHUNK_SIZE
                     viewModel.repository.putLayerConfig(bookId, LayerConfigUpdate(
                         chunk_size = selectedValue
                     ))

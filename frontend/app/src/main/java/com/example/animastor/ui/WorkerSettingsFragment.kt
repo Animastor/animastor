@@ -18,6 +18,8 @@ import kotlinx.coroutines.launch
  *
  * Accepts [ARG_WORKER_TYPE] and [ARG_WORKER_LABEL] as fragment arguments.
  * Opened from GenerateFragment's gear icon buttons.
+ *
+ * Changes are saved explicitly via the Apply button (no auto-save).
  */
 class WorkerSettingsFragment : Fragment(R.layout.fragment_worker_settings) {
 
@@ -30,10 +32,14 @@ class WorkerSettingsFragment : Fragment(R.layout.fragment_worker_settings) {
         private const val ARG_WORKER_TYPE = "worker_type"
         private const val ARG_WORKER_LABEL = "worker_label"
 
+        /** Default timeout in minutes per worker type. */
+        private const val DEFAULT_TIMEOUT_AUDIO_IMAGE = 30
+        private const val DEFAULT_TIMEOUT_VIDEO = 60
+
         /**
          * Timeout options (minutes) shown in the timeout spinner.
          * Audio/Image: 5, 10, 15, 20, 30, 45, 60, 90, 120
-         * Video: adds 150, 180
+         * Video: 10, 15, 20, 30, 45, 60, 90, 120, 150, 180
          */
         val TIMEOUT_OPTIONS_MINUTES = intArrayOf(5, 10, 15, 20, 30, 45, 60, 90, 120)
         val TIMEOUT_OPTIONS_VIDEO_MINUTES = intArrayOf(10, 15, 20, 30, 45, 60, 90, 120, 150, 180)
@@ -48,6 +54,9 @@ class WorkerSettingsFragment : Fragment(R.layout.fragment_worker_settings) {
             return fragment
         }
     }
+
+    /** Currently loaded timeout from layer-config (before user edits). */
+    private var currentTimeoutMinutes: Int = 30
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
@@ -82,13 +91,15 @@ class WorkerSettingsFragment : Fragment(R.layout.fragment_worker_settings) {
             "video" -> "video_timeout_minutes"
             else -> null
         }
+        val defaultTimeout = when (workerType) {
+            "video" -> DEFAULT_TIMEOUT_VIDEO
+            else -> DEFAULT_TIMEOUT_AUDIO_IMAGE
+        }
 
         b.timeoutLabel.text = getString(R.string.worker_settings_timeout_label, workerLabel)
 
-        // ── Guard: ignore onItemSelected until loading completes ──
-        var timeoutLoading = true
-
-        val timeoutAdapter = ArrayAdapter(requireContext(), android.R.layout.simple_spinner_item, timeoutOptions.map { "$it ${getString(R.string.worker_settings_timeout_unit)}" })
+        val timeoutAdapter = ArrayAdapter(requireContext(), android.R.layout.simple_spinner_item,
+            timeoutOptions.map { "$it ${getString(R.string.worker_settings_timeout_unit)}" })
         timeoutAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
         b.timeoutSpinner.adapter = timeoutAdapter
 
@@ -98,47 +109,50 @@ class WorkerSettingsFragment : Fragment(R.layout.fragment_worker_settings) {
                 val bookId = viewModel.bookId
                 if (bookId.isNotBlank()) {
                     val cfg = viewModel.repository.getLayerConfig(bookId)
-                    val currentMinutes = when (workerType) {
-                        "audio" -> cfg.audio_timeout_minutes ?: 30
-                        "image" -> cfg.image_timeout_minutes ?: 30
-                        "video" -> cfg.video_timeout_minutes ?: 60
-                        else -> 30
+                    currentTimeoutMinutes = when (workerType) {
+                        "audio" -> cfg.audio_timeout_minutes ?: defaultTimeout
+                        "image" -> cfg.image_timeout_minutes ?: defaultTimeout
+                        "video" -> cfg.video_timeout_minutes ?: defaultTimeout
+                        else -> defaultTimeout
                     }
-                    val idx = timeoutOptions.indexOfFirst { it >= currentMinutes }.coerceAtLeast(0)
+                    val idx = timeoutOptions.indexOfFirst { it >= currentTimeoutMinutes }.coerceAtLeast(0)
                     b.timeoutSpinner.setSelection(idx)
                 }
             } catch (_: Exception) {
-                // Keep default selection
-            } finally {
-                timeoutLoading = false
+                currentTimeoutMinutes = defaultTimeout
             }
         }
 
-        // ── Save timeout on selection change ──
-        b.timeoutSpinner.setOnItemSelectedListener(object : android.widget.AdapterView.OnItemSelectedListener {
-            override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: View?, position: Int, id: Long) {
-                // Ignore the initial selection event that fires immediately when the adapter is set.
-                // This prevents saving the wrong default (index 0) before the actual value loads.
-                if (timeoutLoading) return
+        // ── Default button: reset timeout to factory default ──
+        b.defaultButton.setOnClickListener {
+            currentTimeoutMinutes = defaultTimeout
+            val idx = timeoutOptions.indexOfFirst { it >= defaultTimeout }.coerceAtLeast(0)
+            b.timeoutSpinner.setSelection(idx)
+        }
 
-                val selectedMinutes = timeoutOptions.getOrElse(position) { 30 }
-                lifecycleScope.launch {
-                    try {
-                        val bookId = viewModel.bookId
-                        if (bookId.isNotBlank() && timeoutField != null) {
-                            val update = when (timeoutField) {
-                                "audio_timeout_minutes" -> LayerConfigUpdate(audio_timeout_minutes = selectedMinutes)
-                                "image_timeout_minutes" -> LayerConfigUpdate(image_timeout_minutes = selectedMinutes)
-                                "video_timeout_minutes" -> LayerConfigUpdate(video_timeout_minutes = selectedMinutes)
-                                else -> return@launch
-                            }
-                            viewModel.repository.putLayerConfig(bookId, update)
+        // ── Apply button: save timeout to layer-config and close ──
+        b.applyButton.setOnClickListener {
+            lifecycleScope.launch {
+                try {
+                    val bookId = viewModel.bookId
+                    if (bookId.isNotBlank() && timeoutField != null) {
+                        val selectedMinutes = timeoutOptions.getOrElse(
+                            b.timeoutSpinner.selectedItemPosition
+                        ) { defaultTimeout }
+                        val update = when (timeoutField) {
+                            "audio_timeout_minutes" -> LayerConfigUpdate(audio_timeout_minutes = selectedMinutes)
+                            "image_timeout_minutes" -> LayerConfigUpdate(image_timeout_minutes = selectedMinutes)
+                            "video_timeout_minutes" -> LayerConfigUpdate(video_timeout_minutes = selectedMinutes)
+                            else -> return@launch
                         }
-                    } catch (_: Exception) { /* best-effort */ }
+                        viewModel.repository.putLayerConfig(bookId, update)
+                    }
+                    parentFragmentManager.popBackStack()
+                } catch (_: Exception) {
+                    // Keep fragment open on error so user can retry
                 }
             }
-            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
-        })
+        }
 
         // ── Load profiles ──
         lifecycleScope.launch {
@@ -199,7 +213,7 @@ class WorkerSettingsFragment : Fragment(R.layout.fragment_worker_settings) {
                     b.workflowLabel.text = getString(R.string.workflow_manager_no_workflows)
                 }
             } catch (_: Exception) {
-                // keep "No workflows configured" default
+                // keep \"No workflows configured\" default
             }
         }
 

@@ -389,12 +389,15 @@
     <string name="worker_settings_timeout_label">%1$s timeout</string>
     <string name="worker_settings_timeout_desc">If generation exceeds this time, the task will be automatically retried</string>
     <string name="worker_settings_timeout_unit">min</string>
+    <string name="worker_settings_apply">Apply</string>
+    <string name="worker_settings_default">Default</string>
 
     <!-- VBook Settings -->
     <string name="vbook_settings_title">VBook Generation Settings</string>
     <string name="vbook_settings_scenes_per_pass">Scenes per pass</string>
     <string name="vbook_settings_scenes_per_pass_desc">How many scenes the AI agent creates per generation pass (1-5). Larger values process more text per pass but take longer per window.</string>
-    <string name="vbook_settings_save">Save</string>
+    <string name="vbook_settings_apply">Apply</string>
+    <string name="vbook_settings_default">Default</string>
 
     <!-- Toggle chip labels -->
     <string name="toggle_on">On</string>

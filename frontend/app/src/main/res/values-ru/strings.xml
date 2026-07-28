@@ -355,12 +355,15 @@
     <string name="worker_settings_timeout_label">Таймаут %1$s</string>
     <string name="worker_settings_timeout_desc">Если генерация превышает это время, задача будет автоматически отправлена повторно</string>
     <string name="worker_settings_timeout_unit">мин</string>
+    <string name="worker_settings_apply">Применить</string>
+    <string name="worker_settings_default">По умолчанию</string>
 
     <!-- VBook Settings -->
-    <string name="vbook_settings_title">Настройки VBook</string>
+    <string name="vbook_settings_title">Настройки генерации VBook</string>
     <string name="vbook_settings_scenes_per_pass">Сцен за раз</string>
     <string name="vbook_settings_scenes_per_pass_desc">Сколько сцен AI создаёт за один проход (1-5). Большие значения обрабатывают больше текста за проход, но увеличивают время на окно.</string>
-    <string name="vbook_settings_save">Сохранить</string>
+    <string name="vbook_settings_apply">Применить</string>
+    <string name="vbook_settings_default">По умолчанию</string>
 
     <string name="toggle_on">Вкл.</string>
     <string name="toggle_off">Выкл.</string>
