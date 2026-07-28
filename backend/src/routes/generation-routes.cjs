@@ -304,7 +304,7 @@ module.exports = function(app, redis, deps) {
                     const b = book.loadBook(book_id);
                     if (b) {
                         for (const ch of b.chapters || []) {
-                            if (ch.chapter !== chapter_id) continue;
+                            if (ch.chapter_id !== chapter_id) continue;
                             for (const sc of ch.scenes || []) {
                                 if (sc.scene_id !== scene_id) continue;
                                 let order = 0;
@@ -831,7 +831,7 @@ module.exports = function(app, redis, deps) {
                 const b = book.loadBook(bookId);
                 if (b) {
                     for (const ch of b.chapters || []) {
-                        if (ch.chapter !== chapterId) continue;
+                        if (ch.chapter_id !== chapterId) continue;
                         for (const sc of ch.scenes || []) {
                             if (sc.scene_id === sceneId) {
                                 sceneType = sc.type || sc.scene_type || 'narration';
@@ -898,7 +898,7 @@ module.exports = function(app, redis, deps) {
                     const b = book.loadBook(bookId);
                     if (b) {
                         for (const ch of b.chapters || []) {
-                            if (ch.chapter !== chapterId) continue;
+                            if (ch.chapter_id !== chapterId) continue;
                             for (const sc of ch.scenes || []) {
                                 if (sc.scene_id !== sceneId) continue;
                                 let order = 0;

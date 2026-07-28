@@ -915,7 +915,7 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
 
         if (pos.chapterId != null) {
             val bd = bookData
-            val ch = bd?.chapters?.firstOrNull { it.chapter == pos.chapterId }
+            val ch = bd?.chapters?.firstOrNull { it.chapter_id == pos.chapterId }
             val sc = ch?.scenes?.firstOrNull { it.scene_id == pos.sceneId }
 
             val isSpecial = ch?.is_special == true

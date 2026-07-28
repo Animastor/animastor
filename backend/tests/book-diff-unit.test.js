@@ -68,7 +68,7 @@ function createBookDiff(overrides = {}) {
                 for (const ch of bookData.chapters) {
                     for (const sc of (ch.scenes || [])) {
                         scenes.push({
-                            chapter_id: ch.chapter,
+                            chapter_id: ch.chapter_id,
                             scene_id: sc.scene_id,
                             scene_order: sc.scene_order || 0,
                             participants: sc.participants || [],

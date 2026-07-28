@@ -180,7 +180,7 @@ class NavigateFragment : Fragment(R.layout.fragment_navigate) {
     private fun updatePositionBar(pos: ActivePosition) {
         if (binding == null) return
         if (pos.chapterId != null) {
-            val ch = bookData?.chapters?.firstOrNull { it.chapter == pos.chapterId }
+            val ch = bookData?.chapters?.firstOrNull { it.chapter_id == pos.chapterId }
             val sc = ch?.scenes?.firstOrNull { it.scene_id == pos.sceneId }
 
             val isSpecial = ch?.is_special == true
@@ -310,10 +310,10 @@ class NavigateFragment : Fragment(R.layout.fragment_navigate) {
                 "${getString(R.string.navigate_chapter)} ${chIdx + 1}"
             }
             val chItem = StructureItem.ChapterItem(
-                id = ch.chapter ?: "ch$chIdx",
+                id = ch.chapter_id ?: "ch$chIdx",
                 label = chLabel,
                 type = ch.type,
-                expanded = ch.chapter == pos.chapterId || chapters.size <= 3,
+                expanded = ch.chapter_id == pos.chapterId || chapters.size <= 3,
                 scenes = ch.scenes ?: emptyList()
             )
             items.add(chItem)
@@ -325,16 +325,16 @@ class NavigateFragment : Fragment(R.layout.fragment_navigate) {
                     val scNum = sc.display_index ?: (scIdx + 1)
                     val scLabel = if (scTitle != null) "${getString(R.string.navigate_scene)} $scNum — $scTitle"
                         else "${getString(R.string.navigate_scene)} $scNum"
-                    val isCurrentScene = ch.chapter == pos.chapterId && sc.scene_id == pos.sceneId
+                    val isCurrentScene = ch.chapter_id == pos.chapterId && sc.scene_id == pos.sceneId
                     val scItem = StructureItem.SceneItem(
                         id = sc.scene_id ?: "sc$scIdx",
                         label = scLabel,
                         type = sc.type,
                         style = sc.style,
-                        expanded = ch.chapter != null && sc.scene_id != null &&
-                                expandedScenes.contains("${ch.chapter}|${sc.scene_id}"),
+                        expanded = ch.chapter_id != null && sc.scene_id != null &&
+                                expandedScenes.contains("${ch.chapter_id}|${sc.scene_id}"),
                         units = sc.units ?: emptyList(),
-                        chapterId = ch.chapter,
+                        chapterId = ch.chapter_id,
                         sceneId = sc.scene_id
                     )
                     items.add(scItem)
@@ -352,7 +352,7 @@ class NavigateFragment : Fragment(R.layout.fragment_navigate) {
                                     isActive = isActive,
                                     unit = u,
                                     index = uIdx,
-                                    chapterId = ch.chapter,
+                                    chapterId = ch.chapter_id,
                                     sceneId = sc.scene_id
                                 )
                             )

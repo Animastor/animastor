@@ -334,7 +334,7 @@ function saveBookBundle(book, files) {
     // Save book.json with chapters_order synced to actual chapters
     const bookMeta = book.book ? JSON.parse(JSON.stringify(book.book)) : {};
     if (!bookMeta.structure) bookMeta.structure = {};
-    const chapterFilenames = (book.chapters || []).map(ch => `${ch.chapter}.json`);
+    const chapterFilenames = (book.chapters || []).map(ch => `${ch.chapter_id}.json`);
     bookMeta.structure.chapters_order = chapterFilenames;
     fs.writeFileSync(
         path.join(bookDir, 'book.json'),

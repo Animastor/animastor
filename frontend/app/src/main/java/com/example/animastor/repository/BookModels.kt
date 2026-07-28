@@ -120,7 +120,7 @@ data class VoiceEntry(
 )
 
 data class Chapter(
-    val chapter: String? = null,
+    val chapter_id: String? = null,
     val chapter_title: String? = null,
     val type: String? = null,
     val scenes: List<Scene>? = null,
@@ -264,7 +264,7 @@ data class BootstrapResponse(
 )
 
 data class LazyParseChapterItem(
-    val chapter: String? = null,
+    val chapter_id: String? = null,
     val chapter_title: String? = null,
     val chapter_index: Int = 0,
     val status: String? = null,
@@ -353,7 +353,7 @@ data class ResumeBootstrapResponse(
 )
 
 data class LazyBookChapter(
-    val chapter: String? = null,
+    val chapter_id: String? = null,
     val chapter_title: String? = null,
     val type: String? = null,
     val chapter_index: Int = 0,
@@ -555,7 +555,7 @@ data class CoverData(
 // re-deriving it by iterating the book on the client.
 fun BookData.sceneDisplayIndex(chapterId: String?, sceneId: String?): Int {
     if (chapterId == null || sceneId == null) return 0
-    val ch = chapters?.firstOrNull { it.chapter == chapterId } ?: return 0
+    val ch = chapters?.firstOrNull { it.chapter_id == chapterId } ?: return 0
     val sc = ch.scenes?.firstOrNull { it.scene_id == sceneId } ?: return 0
     return sc.display_index ?: 0
 }
@@ -563,7 +563,7 @@ fun BookData.sceneDisplayIndex(chapterId: String?, sceneId: String?): Int {
 fun BookData.unitIndex(chapterId: String?, sceneId: String?, unitOffset: Int): Int {
     if (chapterId == null || sceneId == null) return 0
     chapters?.forEach { ch ->
-        if (ch.chapter == chapterId) {
+        if (ch.chapter_id == chapterId) {
             ch.scenes?.forEach { sc ->
                 if (sc.scene_id == sceneId) return unitOffset + 1
             }

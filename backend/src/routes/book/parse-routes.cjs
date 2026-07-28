@@ -36,7 +36,7 @@ module.exports = function registerParseRoutes(app, ctx) {
                 parsed: result.parsed, window_start: result.windowStart, window_end: result.windowEnd,
                 complete: result.complete,
                 chapters: result.chapters.map(ch => ({
-                    chapter: ch.chapter, chapter_title: ch.chapter_title,
+                    chapter_id: ch.chapter_id, chapter_title: ch.chapter_title,
                     chapter_index: ch.chapter_index, status: ch.status,
                     scene_count: ch.scenes ? ch.scenes.length : 0,
                 })),

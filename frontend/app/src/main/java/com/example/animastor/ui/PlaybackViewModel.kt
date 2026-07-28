@@ -459,7 +459,7 @@ class PlaybackViewModel(
                     val allScenes = mutableListOf<SceneRef>()
                     for (ch in bookData.chapters.orEmpty()) {
                         for (sc in ch.scenes.orEmpty()) {
-                            allScenes.add(SceneRef(ch.chapter, sc.scene_id, sc.type))
+                            allScenes.add(SceneRef(ch.chapter_id, sc.scene_id, sc.type))
                         }
                     }
                     val allKeys = allScenes.map { "${it.chapterId}:${it.sceneId}" }
@@ -514,7 +514,7 @@ class PlaybackViewModel(
             if (bookData != null) {
                 for (ch in bookData.chapters.orEmpty()) {
                     for (sc in ch.scenes.orEmpty()) {
-                        val sr = SceneRef(ch.chapter, sc.scene_id, sc.type)
+                        val sr = SceneRef(ch.chapter_id, sc.scene_id, sc.type)
                         if (sc.type == "cover") coverScene = sr
                         scenes.add(sr)
                     }

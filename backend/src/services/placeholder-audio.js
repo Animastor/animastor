@@ -491,7 +491,7 @@ async function recoverMissingPlaceholders(buildId, bookId) {
         const scenes = [];
         for (const ch of draft.chapters) {
             for (const sc of (ch.scenes || [])) {
-                scenes.push({ chapter_id: ch.chapter, scene_id: sc.scene_id });
+                scenes.push({ chapter_id: ch.chapter_id, scene_id: sc.scene_id });
             }
         }
 

@@ -104,7 +104,7 @@ function lazyParseNextWindow(bookId, windowSize) {
         windowEnd: endIdx - 1,
         complete,
         chapters: parsedChapters.map(ch => ({
-            chapter: ch.chapter,
+            chapter_id: ch.chapter_id,
             chapter_title: ch.chapter_title,
             chapter_index: ch.chapter_index,
             status: ch.status,

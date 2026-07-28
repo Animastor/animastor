@@ -61,7 +61,7 @@ function auditBook(book) {
     const allScenes = [];
     for (const ch of chapters) {
         for (const sc of (ch.scenes || [])) {
-            allScenes.push({ ...sc, chapterId: ch.chapter, chapterTitle: ch.chapter_title });
+            allScenes.push({ ...sc, chapterId: ch.chapter_id, chapterTitle: ch.chapter_id_title });
         }
     }
 
@@ -111,7 +111,7 @@ function auditBook(book) {
             if (cov.ok) covOk++;
             else {
                 covFail++;
-                issues.push({ type: 'coverage', chapterId: ch.chapter, reason: cov.reason, gap: cov.gap_chars });
+                issues.push({ type: 'coverage', chapterId: ch.chapter_id, reason: cov.reason, gap: cov.gap_chars });
             }
         }
     }

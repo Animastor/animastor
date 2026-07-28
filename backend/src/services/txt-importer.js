@@ -237,7 +237,7 @@ async function bootstrapNextWindow(bookId, progress, publishProgress, redis) {
         all_done: result.all_done || false,
         cached: result.cached || false,
         chapters: result.chapter ? [{
-            chapter: result.chapter.chapter,
+            chapter_id: result.chapter.chapter_id,
             chapter_title: result.chapter.chapter_title,
             chapter_index: result.chapter.chapter_index,
             status: result.chapter.status,

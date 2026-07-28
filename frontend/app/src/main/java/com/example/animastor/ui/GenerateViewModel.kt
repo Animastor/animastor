@@ -428,9 +428,9 @@ class GenerateViewModel(
             if (bookData != null) {
                 for (ch in bookData.chapters.orEmpty()) {
                     for (sc in ch.scenes.orEmpty()) {
-                        val sr = SceneRef(ch.chapter, sc.scene_id, sc.type)
+                        val sr = SceneRef(ch.chapter_id, sc.scene_id, sc.type)
                         if (sc.type == "cover") {
-                            coverChapterId = ch.chapter
+                            coverChapterId = ch.chapter_id
                             coverSceneId = sc.scene_id
                         }
                         scenes.add(sr)
@@ -639,7 +639,7 @@ class GenerateViewModel(
                         if (bookData != null) {
                             for (ch in bookData.chapters.orEmpty()) {
                                 for (sc in ch.scenes.orEmpty()) {
-                                    val sr = SceneRef(ch.chapter, sc.scene_id, sc.type)
+                                    val sr = SceneRef(ch.chapter_id, sc.scene_id, sc.type)
                                     if (sc.type == "cover") coverScene = sr
                                     scenes.add(sr)
                                 }
@@ -704,7 +704,7 @@ class GenerateViewModel(
                         if (bookForNav != null) {
                             for (ch in bookForNav.chapters.orEmpty()) {
                                 for (sc in ch.scenes.orEmpty()) {
-                                    scenesFromTxt.add(SceneRef(ch.chapter, sc.scene_id, sc.type))
+                                    scenesFromTxt.add(SceneRef(ch.chapter_id, sc.scene_id, sc.type))
                                 }
                             }
                         }
@@ -714,7 +714,7 @@ class GenerateViewModel(
                         val firstScene = firstChapter?.scenes?.firstOrNull()
                         if (firstChapter != null && firstScene != null) {
                             SharedPositionManager.navigateTo(
-                                chapterId = firstChapter.chapter,
+                                chapterId = firstChapter.chapter_id,
                                 sceneId = firstScene.scene_id,
                                 unitIndex = 0
                             )

@@ -240,7 +240,7 @@ module.exports = function(app, redis, deps) {
             let targetChapter = null;
             let sceneIndex = -1;
             for (const ch of oldBook.chapters) {
-                if (ch.chapter === chapterId && ch.scenes) {
+                if (ch.chapter_id === chapterId && ch.scenes) {
                     for (let i = 0; i < ch.scenes.length; i++) {
                         if (ch.scenes[i].scene_id === sceneId) {
                             targetScene = ch.scenes[i];
@@ -300,7 +300,7 @@ module.exports = function(app, redis, deps) {
                 }
                 log(`[PATCH BOOK] ${bookId}/${chapterId}/${sceneId}/${unit_id}: ${Object.keys(unitFields).join(', ')}`);
             } else {
-                oldBook.chapters.find(ch => ch.chapter === chapterId).scenes[sceneIndex] = incomingScene;
+                oldBook.chapters.find(ch => ch.chapter_id === chapterId).scenes[sceneIndex] = incomingScene;
                 log(`[PATCH BOOK] ${bookId}/${chapterId}/${sceneId}: full scene replaced`);
             }
 

@@ -589,7 +589,7 @@ function detectFileFormat(buf) {
                 const chapters = draft?.chapters || [];
                 let found = false;
                 for (const ch of chapters) {
-                    if (ch.chapter === chapter_id) {
+                    if (ch.chapter_id === chapter_id) {
                         for (const sc of (ch.scenes || [])) {
                             if (sc.scene_id === scene_id) {
                                 found = true;
@@ -609,7 +609,7 @@ function detectFileFormat(buf) {
                     for (const ch of chapters) {
                         for (const sc of (ch.scenes || [])) {
                             if (sc.type !== 'cover' && sc.type !== 'chapter_intro') {
-                                allContentScenes.push({ chapter: ch.chapter, sceneId: sc.scene_id });
+                                allContentScenes.push({ chapter: ch.chapter_id, sceneId: sc.scene_id });
                             }
                         }
                     }

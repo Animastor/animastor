@@ -206,7 +206,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                 setSaveLoading(busy = false)
                 if (firstCh != null && firstSc != null) {
                     SharedPositionManager.navigateTo(
-                        chapterId = firstCh.chapter,
+                        chapterId = firstCh.chapter_id,
                         sceneId = firstSc.scene_id,
                         unitId = firstSc.units?.firstOrNull()?.id,
                         chunkId = null,
@@ -244,7 +244,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                 return@launch
             }
 
-            val nc = chapters.indexOfFirst { it.chapter == pos.chapterId }.coerceAtLeast(0)
+            val nc = chapters.indexOfFirst { it.chapter_id == pos.chapterId }.coerceAtLeast(0)
             val scenes = chapters.getOrNull(nc)?.scenes ?: emptyList()
             val ns = scenes.indexOfFirst { it.scene_id == pos.sceneId }.coerceAtLeast(0)
 
@@ -382,7 +382,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
 
     private fun loadPreviewImage(imageView: ImageView, card: MaterialCardView, unit: SceneUnit, index: Int) {
         val bookId = viewModel.bookId.takeIf { it.isNotBlank() } ?: return
-        val chId = chapters.getOrNull(currentChIndex)?.chapter ?: return
+        val chId = chapters.getOrNull(currentChIndex)?.chapter_id ?: return
         val scId = currentScene()?.scene_id ?: return
         val iuId = unit.id ?: "iu${String.format("%04d", index)}"
         lifecycleScope.launch {
@@ -416,7 +416,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
 
     private fun loadPreviewImageForScene(imageView: ImageView, card: MaterialCardView, chIndex: Int, scene: Scene?, unit: SceneUnit, index: Int) {
         val bookId = viewModel.bookId.takeIf { it.isNotBlank() } ?: return
-        val chId = chapters.getOrNull(chIndex)?.chapter ?: return
+        val chId = chapters.getOrNull(chIndex)?.chapter_id ?: return
         val scId = scene?.scene_id ?: return
         val iuId = unit.id ?: "iu${String.format("%04d", index)}"
         lifecycleScope.launch {
@@ -515,7 +515,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                     currentScIndex = prevScIndex
                     fieldValues.clear()
                     SharedPositionManager.navigateTo(
-                        chapterId = chapters.getOrNull(currentChIndex)?.chapter,
+                        chapterId = chapters.getOrNull(currentChIndex)?.chapter_id,
                         sceneId = prevSc.scene_id,
                         unitId = prevUnits.getOrNull(prevUnitIndex)?.id,
                         chunkId = null,
@@ -524,7 +524,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                     updatePositionLabel()
                     updateCarousel()
                     rebuildContent(binding?.propertyTabs?.selectedTabPosition ?: 0)
-                    val chId = chapters.getOrNull(currentChIndex)?.chapter
+                    val chId = chapters.getOrNull(currentChIndex)?.chapter_id
                     if (chId != null && prevSc.scene_id != null) {
                         playbackViewModel.seekToPosition(chId, prevSc.scene_id, prevUnitIndex, prevUnits.getOrNull(prevUnitIndex)?.id)
                     }
@@ -542,7 +542,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                     currentScIndex = prevChScenes.size - 1
                     fieldValues.clear()
                     SharedPositionManager.navigateTo(
-                        chapterId = prevCh?.chapter,
+                        chapterId = prevCh?.chapter_id,
                         sceneId = prevSc.scene_id,
                         unitId = prevUnits.getOrNull(prevUnitIndex)?.id,
                         chunkId = null,
@@ -551,7 +551,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                     updatePositionLabel()
                     updateCarousel()
                     rebuildContent(binding?.propertyTabs?.selectedTabPosition ?: 0)
-                    val chId = prevCh?.chapter
+                    val chId = prevCh?.chapter_id
                     if (chId != null && prevSc.scene_id != null) {
                         playbackViewModel.seekToPosition(chId, prevSc.scene_id, prevUnitIndex, prevUnits.getOrNull(prevUnitIndex)?.id)
                     }
@@ -565,7 +565,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                     currentScIndex = nextScIndex
                     fieldValues.clear()
                     SharedPositionManager.navigateTo(
-                        chapterId = chapters.getOrNull(currentChIndex)?.chapter,
+                        chapterId = chapters.getOrNull(currentChIndex)?.chapter_id,
                         sceneId = nextSc.scene_id,
                         unitId = nextUnits.firstOrNull()?.id,
                         chunkId = null,
@@ -574,7 +574,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                     updatePositionLabel()
                     updateCarousel()
                     rebuildContent(binding?.propertyTabs?.selectedTabPosition ?: 0)
-                    val chId = chapters.getOrNull(currentChIndex)?.chapter
+                    val chId = chapters.getOrNull(currentChIndex)?.chapter_id
                     if (chId != null && nextSc.scene_id != null) {
                         playbackViewModel.seekToPosition(chId, nextSc.scene_id, 0, nextUnits.firstOrNull()?.id)
                     }
@@ -591,7 +591,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                     currentScIndex = 0
                     fieldValues.clear()
                     SharedPositionManager.navigateTo(
-                        chapterId = nextCh?.chapter,
+                        chapterId = nextCh?.chapter_id,
                         sceneId = nextSc.scene_id,
                         unitId = nextUnits.firstOrNull()?.id,
                         chunkId = null,
@@ -600,7 +600,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                     updatePositionLabel()
                     updateCarousel()
                     rebuildContent(binding?.propertyTabs?.selectedTabPosition ?: 0)
-                    val chId = nextCh?.chapter
+                    val chId = nextCh?.chapter_id
                     if (chId != null && nextSc.scene_id != null) {
                         playbackViewModel.seekToPosition(chId, nextSc.scene_id, 0, nextUnits.firstOrNull()?.id)
                     }
@@ -617,7 +617,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                 updatePositionLabel()
                 rebuildContent(binding?.propertyTabs?.selectedTabPosition ?: 0)
                 updateTimelineSelection()
-                val chId = chapters.getOrNull(currentChIndex)?.chapter
+                val chId = chapters.getOrNull(currentChIndex)?.chapter_id
                 val scId = sc.scene_id
                 val newIndex = SharedPositionManager.current.value.unitIndex
                 if (chId != null && scId != null) {
@@ -953,7 +953,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         }
 
         // JSON order: chapter → chapter_title → scene_id → ...
-        ll.addView(readOnlyCard(ctx, "chapter", ch?.chapter ?: "—"))
+        ll.addView(readOnlyCard(ctx, "chapter_id", ch?.chapter_id ?: "—"))
         if (ch != null) {
             val chTitleKey = "chapter_title"
             if (!fieldValues.containsKey(chTitleKey)) fieldValues[chTitleKey] = ch.chapter_title ?: ""
@@ -1215,7 +1215,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                 showSaveError("No scene data")
                 return
             }
-            val chapterId = ch.chapter ?: run {
+            val chapterId = ch.chapter_id ?: run {
                 showSaveError("No chapter ID")
                 return
             }
@@ -1328,7 +1328,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
 
         val sc = currentScene() ?: return
         val ch = chapters.getOrNull(currentChIndex) ?: return
-        val chId = ch.chapter ?: ""
+        val chId = ch.chapter_id ?: ""
         val scId = sc.scene_id ?: ""
 
         try {
@@ -1383,7 +1383,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
 
         val sc = currentScene() ?: return
         val ch = chapters.getOrNull(currentChIndex) ?: return
-        val chId = ch.chapter ?: ""
+        val chId = ch.chapter_id ?: ""
         val scId = sc.scene_id ?: ""
 
         lifecycleScope.launch {
@@ -1535,7 +1535,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         try {
             val boundaries = td.units.map { TimingBoundary(it.unit_id, it.start_ms, it.end_ms) }
             val response = viewModel.repository.updateSceneTimings(
-                bookId, ch.chapter ?: "", sc.scene_id ?: "", buildId, boundaries
+                bookId, ch.chapter_id ?: "", sc.scene_id ?: "", buildId, boundaries
             )
             val responseMap = response.units.associateBy { it.unit_id }
             val updatedUnits = td.units.map { u ->

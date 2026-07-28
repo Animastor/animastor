@@ -96,7 +96,7 @@ module.exports = function(app, redis, deps) {
             let sceneData = null;
             if (sceneBook) {
                 for (const ch of sceneBook.chapters || []) {
-                    if (ch.chapter === chapterId) {
+                    if (ch.chapter_id === chapterId) {
                         for (const sc of ch.scenes || []) {
                             if (sc.scene_id === sceneId) { sceneData = sc; break; }
                         }

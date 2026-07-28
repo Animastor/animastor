@@ -18,7 +18,7 @@ async function test() {
   console.log('\n=== BUILT BOOK ===');
   console.log('Chapters:', built.chapters.length);
   built.chapters.forEach((ch, i) => {
-    console.log('Chapter', i, ':', ch.chapter, 'scenes:', ch.scenes?.length || 0);
+    console.log('Chapter', i, ':', ch.chapter_id, 'scenes:', ch.scenes?.length || 0);
     if (ch.scenes) {
       ch.scenes.forEach((sc, j) => {
         console.log('  Scene', j, ':', sc.scene_id, 'type:', sc.type, 'style:', sc.style);

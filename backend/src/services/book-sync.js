@@ -149,7 +149,7 @@ async function reconcileFromDiff(bookId, dirtyScenes, loadedBook) {
 function findSceneData(loadedBook, chapterId, sceneId) {
     if (!loadedBook?.chapters) return null;
     for (const ch of loadedBook.chapters) {
-        if (ch.chapter !== chapterId) continue;
+        if (ch.chapter_id !== chapterId) continue;
         if (!ch.scenes) continue;
         return ch.scenes.find(s => s.scene_id === sceneId) || null;
     }

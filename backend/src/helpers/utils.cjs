@@ -38,7 +38,7 @@ function collectScenes(book) {
     const chapters = book.chapters || [];
     for (let chIndex = 0; chIndex < chapters.length; chIndex++) {
         const ch = chapters[chIndex];
-        const canonicalChapterId = ch.chapter;
+        const canonicalChapterId = ch.chapter_id;
         for (let scIndex = 0; scIndex < (ch.scenes || []).length; scIndex++) {
             const scene = ch.scenes[scIndex];
             runtime.push({

@@ -57,7 +57,7 @@ function getCanonicalScenes(bookId) {
         if (!ch.scenes || !Array.isArray(ch.scenes)) continue;
         for (const sc of ch.scenes) {
             if (sc && sc.scene_id) {
-                set.add(SCENE_KEY(ch.chapter, sc.scene_id));
+                set.add(SCENE_KEY(ch.chapter_id, sc.scene_id));
             }
         }
     }
@@ -67,7 +67,7 @@ function getCanonicalScenes(bookId) {
 function getCanonicalChapters(bookId) {
     const b = bookLoader.loadBook(bookId);
     if (!b) return [];
-    return (b.chapters || []).map(ch => ch.chapter).filter(Boolean);
+    return (b.chapters || []).map(ch => ch.chapter_id).filter(Boolean);
 }
 
 function getCanonicalScene(bookId, chapterId, sceneId) {
@@ -83,7 +83,7 @@ function sceneExists(bookId, chapterId, sceneId) {
 function chapterExists(bookId, chapterId) {
     const b = bookLoader.loadBook(bookId);
     if (!b) return false;
-    return (b.chapters || []).some(ch => ch.chapter === chapterId);
+    return (b.chapters || []).some(ch => ch.chapter_id === chapterId);
 }
 
 function assertSceneExists(bookId, chapterId, sceneId) {
@@ -121,7 +121,7 @@ function listScenes(bookId) {
 function listChapters(bookId) {
     const b = loadBookJsonOrThrow(bookId);
     return (b.chapters || []).map((ch, i) => ({
-        chapter_id: ch.chapter,
+        chapter_id: ch.chapter_id,
         chapter_order: i + 1,
         type: ch.type || null,
         scene_count: Array.isArray(ch.scenes) ? ch.scenes.length : 0,
@@ -152,7 +152,7 @@ function getBookFingerprint(bookId) {
         for (const sc of ch.scenes) {
             if (!sc || !sc.scene_id) continue;
             const hash = computeSceneHash(sc);
-            if (hash) fp.set(SCENE_KEY(ch.chapter, sc.scene_id), hash);
+            if (hash) fp.set(SCENE_KEY(ch.chapter_id, sc.scene_id), hash);
         }
     }
     return fp;

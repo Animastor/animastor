@@ -304,7 +304,7 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
             return
         }
         if (pos.chapterId != null && bookData != null) {
-            val ch = bookData?.chapters?.firstOrNull { it.chapter == pos.chapterId }
+            val ch = bookData?.chapters?.firstOrNull { it.chapter_id == pos.chapterId }
             val sc = ch?.scenes?.firstOrNull { it.scene_id == pos.sceneId }
             val scIdx = sc?.display_index ?: 0
             val isSpecial = ch?.is_special == true
@@ -448,7 +448,7 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
         val bid = generateViewModel.bookId.takeIf { it.isNotBlank() }
             ?: argBookId?.takeIf { it.isNotBlank() } ?: return
         val bd = runCatching { generateViewModel.repository.getBook(bid) }.getOrNull() ?: return
-        val ch = bd.chapters?.firstOrNull { it.chapter == pos.chapterId }
+        val ch = bd.chapters?.firstOrNull { it.chapter_id == pos.chapterId }
         val sc = ch?.scenes?.firstOrNull { it.scene_id == pos.sceneId }
         val scIdx = sc?.display_index ?: 0
         val isSpecial = ch?.is_special == true
@@ -545,7 +545,7 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
                 val bookData = rawBook
                 val title = bookData.book?.title ?: bookData.manifest?.book_id ?: bookId
                 val pos = SharedPositionManager.current.value
-                val ch = bookData.chapters?.firstOrNull { it.chapter == pos.chapterId }
+                val ch = bookData.chapters?.firstOrNull { it.chapter_id == pos.chapterId }
                 val sc = ch?.scenes?.firstOrNull { it.scene_id == pos.sceneId }
                 val scIdx = sc?.display_index ?: 0
                 val uIdx = bookData.unitIndex(pos.chapterId, pos.sceneId, pos.unitIndex)
