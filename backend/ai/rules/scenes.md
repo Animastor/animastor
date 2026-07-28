@@ -12,14 +12,6 @@ As long as the location, time, and action flow do NOT change, keep it as ONE sce
 Only split when: location changes, time jumps, characters enter/exit, or the
 narrative thread clearly breaks.
 
-## ⚠️ DURATION LIMITS — HARD REQUIREMENTS
-- **Absolute maximum per scene: %SCENE_MAX_SEC% seconds** (~%SCENE_MAX_WORDS% words).
-  This is a HARD LIMIT. Every individual scene MUST be short enough to fit.
-- **Preferred / target duration: ~%SCENE_TARGET_SEC% seconds** (~%SCENE_TARGET_WORDS% words).
-  Aim for this; the hard limit is a ceiling, not a goal.
-- If a scene would exceed %SCENE_MAX_SEC%s, it MUST be split into two or more
-  shorter scenes, or shortened by keeping only essential narration.
-
 ## Scene splitting rules (in priority order)
 
 ### 0. Maximum %MAX_SCENES% scenes
@@ -29,7 +21,7 @@ the rest of the provided text unused.
 ### 1. Logical integrity (highest priority)
 Keep scenes whole. Do NOT split a scene just to increase the number of scenes.
 If the text forms one coherent narrative episode at one place and time, it is
-ONE scene regardless of length (up to the ~30s max).
+ONE scene regardless of length.
 
 ### 2. Dialogue grouping
 Multiple dialogue turns in the SAME conversation at the SAME location form ONE
@@ -44,26 +36,24 @@ Example (CORRECT — one scene):
 ```
 This is ONE dialogue scene, NOT four separate scenes.
 
-### 3. Target duration: ~20 seconds (~65 words)
-Once a scene's text reaches ~65 words, consider closing it at the end of the
-current sentence. This is a soft guideline, not a hard rule. If the narrative
-is naturally continuous, it is fine to go longer (up to the hard max).
+### 3. Duration guidance
+A scene should not normally exceed ~2 minutes of spoken narration (~400 words).
+This is a soft upper bound, not a hard limit. If a scene is approaching this
+length but is still narratively continuous (same location, time, participants),
+keep it as one scene. The video engine will automatically split it into
+manageable chunks.
 
-### 4. MAXIMUM: ~30 seconds (~95 words)
-A scene must NEVER exceed this. If adding the next sentence would cross ~95
-words, close the scene at the previous sentence end.
-
-### 5. MINIMUM: ~5 seconds (~15 words)
-A scene should rarely be shorter than this. If you have multiple tiny
-fragments at the same location (e.g., single dialogue turns), combine them
+### 4. Minimum length
+A scene should rarely be shorter than ~5 seconds (~15 words). If you have multiple
+tiny fragments at the same location (e.g., single dialogue turns), combine them
 into one scene. Exception: a single dramatic line can stand alone if it is a
 clear narrative beat (e.g., a shocking reveal in one sentence).
 
-### 6. Complete sentences (always)
+### 5. Complete sentences (always)
 Every scene MUST begin and end on a COMPLETE sentence (`.` `!` `?` `…`,
 closing quote, or end of a dialogue turn `—`). NEVER cut mid-sentence.
 
-### 7. Verbatim prefix coverage (always)
+### 6. Verbatim prefix coverage (always)
 The scenes you return must be a contiguous prefix of the provided narrative
 text: start at the first narrative word, keep scene texts in order, and do not
 skip, overlap, paraphrase, or summarize anything inside the returned scenes.
@@ -81,7 +71,6 @@ It is OK if text remains after the last returned scene.
 1. Verbatim contiguous prefix coverage for returned scenes
 2. Complete sentence boundaries
 3. Logical scene integrity (don't split what belongs together)
-4. ~20s target duration (soft guideline)
 
 ## CRITICAL: Do NOT create chapter-header scenes, typography scenes, or transition scenes
 - Chapter headings, headers, and opening cards are added PROGRAMMATICALLY by the system

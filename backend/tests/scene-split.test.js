@@ -14,10 +14,10 @@ const sourceCoverage = require('../src/services/source-coverage');
 describe('Scene Splitting (Phase A.3 revamp)', () => {
 
     describe('sequential scene-window progress', () => {
-        it('caps generated scenes at eight per window', () => {
-            expect(MAX_SCENES_PER_CHUNK).to.equal(3);
-            expect(SCENE_TARGET_SEC).to.equal(20);
-            expect(SCENE_MAX_SEC).to.equal(30);
+        it('validates scene constants reflect new narrative-driven approach', () => {
+            expect(MAX_SCENES_PER_CHUNK).to.equal(2);
+            expect(SCENE_TARGET_SEC).to.equal(60);
+            expect(SCENE_MAX_SEC).to.equal(120);
             expect(SCENE_MIN_SEC).to.equal(5);
         });
 

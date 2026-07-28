@@ -68,7 +68,8 @@ async function bootstrapWithAgent(bookId, progress, publishProgress, redis) {
     console.log(`[AGENT] Session ${sessionId} created for book ${bookId}`);
     console.log(`[CANCEL-DEBUG] bootstrapWithAgent: session=${sessionId}, bookId=${bookId}, redis=${!!redis}`);
 
-    // Read chunk_size from layer-config BEFORE getWindowText so the text budget matches
+    try {
+        // Read chunk_size from layer-config BEFORE getWindowText so the text budget matches
         const chunkSize = await _readChunkSize(redis, bookId);
         console.log(`[AGENT] bootstrapWithAgent: using chunk_size=${chunkSize} for book ${bookId}`);
 

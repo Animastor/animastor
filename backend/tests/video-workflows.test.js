@@ -26,48 +26,108 @@ describe('toValidLTXFrames', () => {
     });
 });
 
-describe('selectWorkflowGroups', () => {
-    it('returns single 1p for 1 unit', () => {
-        const g = wf.selectWorkflowGroups(1);
-        expect(g).to.deep.equal([{ count: 1, offset: 0, name: 'video-ltx-1p' }]);
+describe('selectWorkflowGroups (duration-aware)', () => {
+    // Helper: creates N mock units (only count matters, content is irrelevant)
+    function makeUnits(n) { return Array.from({ length: n }, (_, i) => ({ id: `u${i}` })); }
+
+    describe('short durations (< 5s each) — fills up to 4 per group', () => {
+        it('returns single 1p for 1 unit (3s)', () => {
+            const g = wf.selectWorkflowGroups(makeUnits(1), [3]);
+            expect(g).to.deep.equal([{ count: 1, offset: 0, name: 'video-ltx-1p' }]);
+        });
+        it('returns single 2p for 2 units (3s each)', () => {
+            const g = wf.selectWorkflowGroups(makeUnits(2), [3, 3]);
+            expect(g).to.deep.equal([{ count: 2, offset: 0, name: 'video-ltx-2p' }]);
+        });
+        it('returns single 3p for 3 units (3s each)', () => {
+            const g = wf.selectWorkflowGroups(makeUnits(3), [3, 3, 3]);
+            expect(g).to.deep.equal([{ count: 3, offset: 0, name: 'video-ltx-3p' }]);
+        });
+        it('returns single 4p for 4 units (3s each)', () => {
+            const g = wf.selectWorkflowGroups(makeUnits(4), [3, 3, 3, 3]);
+            expect(g).to.deep.equal([{ count: 4, offset: 0, name: 'video-ltx-4p' }]);
+        });
+        it('returns 4p+1p for 5 units (3s each)', () => {
+            const g = wf.selectWorkflowGroups(makeUnits(5), [3, 3, 3, 3, 3]);
+            expect(g).to.deep.equal([
+                { count: 4, offset: 0, name: 'video-ltx-4p' },
+                { count: 1, offset: 4, name: 'video-ltx-1p' }
+            ]);
+        });
+        it('returns 4p+4p for 8 units (3s each)', () => {
+            const g = wf.selectWorkflowGroups(makeUnits(8), Array(8).fill(3));
+            expect(g).to.deep.equal([
+                { count: 4, offset: 0, name: 'video-ltx-4p' },
+                { count: 4, offset: 4, name: 'video-ltx-4p' }
+            ]);
+        });
+        it('returns 4p+4p+2p for 10 units (3s each)', () => {
+            const g = wf.selectWorkflowGroups(makeUnits(10), Array(10).fill(3));
+            expect(g).to.deep.equal([
+                { count: 4, offset: 0, name: 'video-ltx-4p' },
+                { count: 4, offset: 4, name: 'video-ltx-4p' },
+                { count: 2, offset: 8, name: 'video-ltx-2p' }
+            ]);
+        });
+        it('returns empty for 0 units', () => {
+            const g = wf.selectWorkflowGroups([], []);
+            expect(g).to.deep.equal([]);
+        });
     });
-    it('returns single 2p for 2 units', () => {
-        const g = wf.selectWorkflowGroups(2);
-        expect(g).to.deep.equal([{ count: 2, offset: 0, name: 'video-ltx-2p' }]);
-    });
-    it('returns single 3p for 3 units', () => {
-        const g = wf.selectWorkflowGroups(3);
-        expect(g).to.deep.equal([{ count: 3, offset: 0, name: 'video-ltx-3p' }]);
-    });
-    it('returns single 4p for 4 units', () => {
-        const g = wf.selectWorkflowGroups(4);
-        expect(g).to.deep.equal([{ count: 4, offset: 0, name: 'video-ltx-4p' }]);
-    });
-    it('returns 4p+1p for 5 units', () => {
-        const g = wf.selectWorkflowGroups(5);
-        expect(g).to.deep.equal([
-            { count: 4, offset: 0, name: 'video-ltx-4p' },
-            { count: 1, offset: 4, name: 'video-ltx-1p' }
-        ]);
-    });
-    it('returns 4p+4p for 8 units', () => {
-        const g = wf.selectWorkflowGroups(8);
-        expect(g).to.deep.equal([
-            { count: 4, offset: 0, name: 'video-ltx-4p' },
-            { count: 4, offset: 4, name: 'video-ltx-4p' }
-        ]);
-    });
-    it('returns 4p+4p+2p for 10 units', () => {
-        const g = wf.selectWorkflowGroups(10);
-        expect(g).to.deep.equal([
-            { count: 4, offset: 0, name: 'video-ltx-4p' },
-            { count: 4, offset: 4, name: 'video-ltx-4p' },
-            { count: 2, offset: 8, name: 'video-ltx-2p' }
-        ]);
-    });
-    it('returns empty for 0 units', () => {
-        const g = wf.selectWorkflowGroups(0);
-        expect(g).to.deep.equal([]);
+
+    describe('longer durations — groups by cumulative time', () => {
+        it('splits 4×10s into 2p+2p (each group ~20s)', () => {
+            const g = wf.selectWorkflowGroups(makeUnits(4), [10, 10, 10, 10]);
+            expect(g).to.deep.equal([
+                { count: 2, offset: 0, name: 'video-ltx-2p' },
+                { count: 2, offset: 2, name: 'video-ltx-2p' }
+            ]);
+        });
+        it('splits 3×8s into 2p+1p (2×8=16 < 20, 3×8=24 > 20)', () => {
+            const g = wf.selectWorkflowGroups(makeUnits(3), [8, 8, 8]);
+            expect(g).to.deep.equal([
+                { count: 2, offset: 0, name: 'video-ltx-2p' },
+                { count: 1, offset: 2, name: 'video-ltx-1p' }
+            ]);
+        });
+        it('keeps 2×[15,5] in one group (exactly 20s)', () => {
+            const g = wf.selectWorkflowGroups(makeUnits(2), [15, 5]);
+            expect(g).to.deep.equal([
+                { count: 2, offset: 0, name: 'video-ltx-2p' }
+            ]);
+        });
+        it('splits 2×[15,10] into two 1p groups (25 > 20)', () => {
+            const g = wf.selectWorkflowGroups(makeUnits(2), [15, 10]);
+            expect(g).to.deep.equal([
+                { count: 1, offset: 0, name: 'video-ltx-1p' },
+                { count: 1, offset: 1, name: 'video-ltx-1p' }
+            ]);
+        });
+        it('places single long IU (25s) alone in 1p group', () => {
+            const g = wf.selectWorkflowGroups(makeUnits(1), [25]);
+            expect(g).to.deep.equal([{ count: 1, offset: 0, name: 'video-ltx-1p' }]);
+        });
+        it('mixed durations: [5,5,5,10,5] → 3p+2p', () => {
+            const g = wf.selectWorkflowGroups(makeUnits(5), [5, 5, 5, 10, 5]);
+            expect(g).to.deep.equal([
+                { count: 3, offset: 0, name: 'video-ltx-3p' }, // 5+5+5=15 < 20
+                { count: 2, offset: 3, name: 'video-ltx-2p' }  // 10+5=15 < 20
+            ]);
+        });
+        it('clamps sub-MIN_IU durations to 1s minimum', () => {
+            const g = wf.selectWorkflowGroups(makeUnits(4), [0.3, 0.5, 3, 3]);
+            // 0.3→1, 0.5→1, sum=2, +3=5, +3=8 < 20 → all 4 in one group
+            expect(g).to.deep.equal([
+                { count: 4, offset: 0, name: 'video-ltx-4p' }
+            ]);
+        });
+        it('uses MIN_IU_DURATION (1s) when duration is missing', () => {
+            const g = wf.selectWorkflowGroups(makeUnits(3), []);
+            // All durations default to 1s, sum=3 < 20 → 3p
+            expect(g).to.deep.equal([
+                { count: 3, offset: 0, name: 'video-ltx-3p' }
+            ]);
+        });
     });
 });
 

@@ -267,7 +267,7 @@ async function buildVideoWorkflows(sceneData, loadedBook, buildId, workflows) {
         return meta ? (meta.estimated_duration_sec || MIN_IU_DURATION) : MIN_IU_DURATION;
     }));
 
-    const groups = selectWorkflowGroups(units.length);
+    const groups = selectWorkflowGroups(units, iuDurations);
     log(`Scene has ${units.length} IU(s), split into ${groups.length} workflow group(s)`);
 
     const results = [];
@@ -379,14 +379,30 @@ function toValidLTXFrames(rawTotal) {
 }
 
 // ======================================================
-// GROUP SPLITTER
+// GROUP SPLITTER (duration-aware)
 // ======================================================
-function selectWorkflowGroups(unitCount) {
+// Groups consecutive image units into video chunks based on cumulative
+// duration rather than raw count. Target: ~20s per video chunk.
+// Max 4 units per group (model limitation of current LTX workflows).
+
+const VIDEO_CHUNK_TARGET_SEC = 20;
+
+function selectWorkflowGroups(units, iuDurations) {
     const groups = [];
     let offset = 0;
-    while (offset < unitCount) {
-        const remaining = unitCount - offset;
-        const count = Math.min(remaining, 4);
+    while (offset < units.length) {
+        let sum = 0;
+        let count = 0;
+        // Accumulate units until we hit target duration or max 4 per group.
+        // Always include at least 1 unit (even if its duration exceeds target).
+        for (let i = offset; i < units.length && count < 4; i++) {
+            const dur = Math.max(iuDurations[i] || MIN_IU_DURATION, MIN_IU_DURATION);
+            // If adding this unit would push us beyond target AND we already
+            // have at least 1 unit, start a new group.
+            if (count > 0 && sum + dur > VIDEO_CHUNK_TARGET_SEC) break;
+            sum += dur;
+            count++;
+        }
         groups.push({ offset, count, name: `video-ltx-${count}p` });
         offset += count;
     }

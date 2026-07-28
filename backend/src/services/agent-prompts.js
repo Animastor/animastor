@@ -19,13 +19,14 @@ const PROGRESS_STAGES = {
 
 const STEP_RETRIES = 3;
 
-// Scene duration targets (narration seconds). One scene ≈ SCENE_TARGET_SEC of
-// spoken audio; SCENE_MAX_SEC is a soft ceiling — scenes longer than this after
-// one repair retry are accepted (logged) rather than risking source coverage.
+// Scene duration targets (narration seconds). Scenes are now narrative units
+// (location, time, participants, logical completeness), NOT timed fragments.
+// Duration limits are soft guidance — the scene agent focuses on logical
+// completeness, and video chunking splits long scenes into ~20s chunks.
 // At ~0.3s/word (see placeholder-audio.estimateSpeechDurationSec):
-//   SCENE_TARGET_SEC 20s ≈ ~65 words, SCENE_MAX_SEC 30s ≈ ~100 words.
-const SCENE_TARGET_SEC = 20;
-const SCENE_MAX_SEC = 30;
+//   SCENE_TARGET_SEC 60s ≈ ~200 words, SCENE_MAX_SEC 120s ≈ ~400 words.
+const SCENE_TARGET_SEC = 60;
+const SCENE_MAX_SEC = 120;
 // Technical minimum scene length. Scenes shorter than ~5 seconds (~15 words)
 // cause artifacts in video generation models. If an episode is this short,
 // merge it with an adjacent scene when narratively coherent.
@@ -33,7 +34,8 @@ const SCENE_MIN_SEC = 5;
 // Upper bound on scenes produced per window.
 // This is a HARD UPPER BOUND, NOT a target — if the text naturally forms
 // fewer scenes, that is correct.
-const MAX_SCENES_PER_CHUNK = 3;
+// Reduced because scenes are now longer (2min max vs 30s).
+const MAX_SCENES_PER_CHUNK = 2;
 
 // Window size = overhead + scenes × per-scene budget.
 // This ensures text density stays constant when MAX_SCENES_PER_CHUNK changes.

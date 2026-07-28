@@ -10,10 +10,8 @@ const config = require('../../config/runtime-config');
 const { updateSession, createSession, isSessionCancelled, isBookCancelled } = require('../agent-session');
 const { PROGRESS_STAGES, MAX_WINDOW_CHARS, MAX_SCENES_PER_CHUNK, CHARS_PER_SCENE, WINDOW_OVERHEAD, computeWindowChars } = require('../agent-prompts');
 const { mergeCharacterLists } = require('../../utils/character-identity');
-const { estimateSpeechDurationSec } = require('../placeholder-audio');
 const pipelineSteps = require('./pipeline-steps');
 const textUtils = require('./text-utils');
-const { SCENE_TARGET_SEC, SCENE_MAX_SEC, SCENE_MIN_SEC } = require('../agent-prompts');
 
 /**
  * Resolve effective chunk size from options or fall back to module default.
@@ -345,22 +343,14 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
 
     await checkCancelled();
 
-    // ── Scene split with unified validation ──
+    // ── Scene split with coverage-only validation ──
+    // Duration validation is delegated to video chunking (selectWorkflowGroups).
+    // Scenes are narrative units (location, time, participants) — not timed fragments.
     const capScenes = (arr) => (arr || []).slice(0, effectiveChunkSize);
 
-    const findOversized = (arr) => arr
-        .map((s, i) => ({ i, dur: estimateSpeechDurationSec(s.text || '') }))
-        .filter(o => o.dur > SCENE_MAX_SEC);
-
-    const findUndersized = (arr) => arr
-        .map((s, i) => ({ i, dur: estimateSpeechDurationSec(s.text || '') }))
-        .filter(o => o.dur < SCENE_MIN_SEC);
-
-    const evaluate = (arr) => {
+    const evaluateCoverage = (arr) => {
         const progressInfo = resolveSceneProgress(sceneText, arr, sourceOffsetBase);
-        const oversized = progressInfo.coverage.ok ? findOversized(arr) : [];
-        const undersized = progressInfo.coverage.ok ? findUndersized(arr) : [];
-        return { progressInfo, cov: progressInfo.coverage, oversized, undersized };
+        return { progressInfo, cov: progressInfo.coverage };
     };
 
     const totalScenesEstimate = Math.min(effectiveChunkSize, Math.ceil(sceneText.length / 200) || 1);
@@ -370,96 +360,24 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
     if (!scenes || scenes.length === 0) throw new Error('AI returned no scenes');
 
     let windowScenes = scenes;
-    let { progressInfo, cov: coverage, oversized, undersized } = evaluate(windowScenes);
+    let { progressInfo, cov: coverage } = evaluateCoverage(windowScenes);
     let coverageRetryCount = 0;
 
-    if (!coverage.ok || oversized.length > 0) {
-        let repairHint;
-        if (!coverage.ok) {
-            console.warn(`[AGENT] scene coverage failed: ${coverage.reason} scene=${coverage.scene_index} gap=${coverage.gap_chars || 0}; retrying scene split`);
-            repairHint = coverage;
-        } else {
-            const preview = oversized
-                .map(o => `- scene ${o.i + 1}: ~${o.dur}s, "${(windowScenes[o.i].text || '').slice(0, 80).replace(/\n/g, ' ')}..."`)
-                .join('\n');
-            console.warn(`[AGENT] ${oversized.length} scene(s) exceed ${SCENE_MAX_SEC}s; retrying scene split for shorter scenes`);
-            repairHint = { reason: 'duration_exceeded', duration_preview: preview };
-        }
+    if (!coverage.ok) {
+        console.warn(`[AGENT] scene coverage failed: ${coverage.reason} scene=${coverage.scene_index} gap=${coverage.gap_chars || 0}; retrying scene split`);
         coverageRetryCount += 1;
-        windowScenes = capScenes(await pipelineSteps.stepCreateScenes(sessionId, sceneText, characters, locations, stepIndex, _progress, repairHint, effectiveChunkSize));
-        ({ progressInfo, cov: coverage, oversized, undersized } = evaluate(windowScenes));
+        windowScenes = capScenes(await pipelineSteps.stepCreateScenes(sessionId, sceneText, characters, locations, stepIndex, _progress, coverage, effectiveChunkSize));
+        ({ progressInfo, cov: coverage } = evaluateCoverage(windowScenes));
     }
 
     if (!coverage.ok) {
         console.warn(`[AGENT] scene coverage retry failed: ${coverage.reason}; using deterministic fallback`);
         coverageRetryCount += 1;
         windowScenes = capScenes(textUtils.buildFallbackScenes(sceneText));
-        ({ progressInfo, cov: coverage, oversized, undersized } = evaluate(windowScenes));
+        ({ progressInfo, cov: coverage } = evaluateCoverage(windowScenes));
         if (!coverage.ok) {
             throw new Error(`Scene coverage failed after fallback: ${coverage.reason}`);
         }
-    }
-
-    // ── Duration validation loop (targeted retries for oversized scenes) ──
-    // After coverage is resolved, validate each scene's estimated duration.
-    // If any scene exceeds SCENE_MAX_SEC (30s), retry the scene split with
-    // specific feedback about which scene is too long and by how much.
-    // The agent may either shorten the scene or split it into two+ scenes.
-    const MAX_DURATION_RETRIES = 3;
-    let durRetryCount = 0;
-
-    while (oversized.length > 0 && durRetryCount < MAX_DURATION_RETRIES) {
-        durRetryCount++;
-
-        const preview = oversized
-            .map(o => {
-                const snippet = (windowScenes[o.i]?.text || '').slice(0, 80).replace(/\n/g, ' ');
-                return `- scene ${o.i + 1}: ${o.dur.toFixed(1)}s (hard limit: ${SCENE_MAX_SEC}s) — "${snippet}..."`;
-            })
-            .join('\n');
-
-        console.warn(`[AGENT] ${oversized.length} scene(s) exceed ${SCENE_MAX_SEC}s (duration retry ${durRetryCount}/${MAX_DURATION_RETRIES}); retrying scene split`);
-
-        const repairHint = {
-            reason: 'duration_exceeded',
-            duration_preview: preview,
-        };
-
-        const retryScenes = capScenes(await pipelineSteps.stepCreateScenes(sessionId, sceneText, characters, locations, stepIndex, _progress, repairHint, effectiveChunkSize));
-        const retryEval = evaluate(retryScenes);
-
-        // If retry broke coverage, keep previous result and break — don't lose valid scenes
-        if (!retryEval.cov.ok) {
-            console.warn(`[AGENT] duration retry #${durRetryCount} broke source coverage — keeping previous scene split`);
-            break;
-        }
-
-        windowScenes = retryScenes;
-        ({ progressInfo, cov: coverage, oversized, undersized } = retryEval);
-    }
-
-    if (oversized.length > 0) {
-        console.warn(JSON.stringify({
-            event: 'scene_duration_over_max',
-            step_index: stepIndex,
-            max_sec: SCENE_MAX_SEC,
-            target_sec: SCENE_TARGET_SEC,
-            remaining_after_retries: durRetryCount,
-            max_retries: MAX_DURATION_RETRIES,
-            oversized: oversized.map(o => ({ scene_index: o.i, est_sec: o.dur })),
-        }));
-        if (durRetryCount >= MAX_DURATION_RETRIES) {
-            console.error(`[AGENT] DURATION LIMIT EXCEEDED after ${MAX_DURATION_RETRIES} retries — scenes are longer than ${SCENE_MAX_SEC}s. Check agent output for ${bookId || sessionId}`);
-        }
-    }
-
-    if (undersized.length > 0) {
-        console.warn(JSON.stringify({
-            event: 'scene_duration_below_min',
-            step_index: stepIndex,
-            min_sec: SCENE_MIN_SEC,
-            undersized: undersized.map(o => ({ scene_index: o.i, est_sec: o.dur })),
-        }));
     }
 
     console.log(JSON.stringify({
@@ -473,7 +391,6 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
         progress_method: progressInfo.progressMethod,
         gap_chars: coverage.gap_chars || 0,
         retry_count: coverageRetryCount,
-        duration_retry_count: durRetryCount,
     }));
 
     await checkCancelled();
