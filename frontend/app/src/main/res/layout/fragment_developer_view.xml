@@ -14,22 +14,14 @@
         app:navigationIcon="?attr/homeAsUpIndicator"
         app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent" />
-
-    <!-- Section tabs (same as Editor selector) -->
-    <FrameLayout
-        android:id="@+id/tabContainer"
-        android:layout_width="0dp"
-        android:layout_height="wrap_content"
-        android:background="?attr/colorSurfaceVariant"
-        app:layout_constraintTop_toBottomOf="@id/toolbar"
-        app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent">
 
+        <!-- TabLayout inline in toolbar (same row as back arrow) -->
         <com.google.android.material.tabs.TabLayout
             android:id="@+id/viewTabs"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
+            android:layout_width="wrap_content"
+            android:layout_height="match_parent"
+            android:layout_marginStart="8dp"
             android:background="@android:color/transparent"
             app:tabMode="fixed"
             app:tabGravity="fill"
@@ -39,7 +31,11 @@
             app:tabTextAppearance="@style/TextAppearance.Animastor.TabLabel"
             app:tabTextColor="?attr/colorOnSurfaceVariant"
             app:tabSelectedTextColor="?attr/colorSecondary"
-            app:tabBackground="?attr/colorSurfaceVariant">
+            app:tabBackground="@android:color/transparent"
+            app:tabContentStart="0dp"
+            app:tabPaddingStart="8dp"
+            app:tabPaddingEnd="8dp"
+            app:tabMinWidth="0dp">
 
             <com.google.android.material.tabs.TabItem
                 android:layout_width="wrap_content"
@@ -52,7 +48,7 @@
                 android:text="Bindings" />
 
         </com.google.android.material.tabs.TabLayout>
-    </FrameLayout>
+    </androidx.appcompat.widget.Toolbar>
 
     <com.google.android.material.progressindicator.LinearProgressIndicator
         android:id="@+id/loadingIndicator"
@@ -77,7 +73,7 @@
         android:scrollbarSize="5dp"
         android:scrollbarThumbVertical="@drawable/scrollbar_thumb"
         android:scrollbarTrackVertical="@drawable/scrollbar_track"
-        app:layout_constraintTop_toBottomOf="@id/tabContainer"
+        app:layout_constraintTop_toBottomOf="@id/toolbar"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent">
@@ -109,7 +105,7 @@
         android:scrollbarSize="5dp"
         android:scrollbarThumbVertical="@drawable/scrollbar_thumb"
         android:scrollbarTrackVertical="@drawable/scrollbar_track"
-        app:layout_constraintTop_toBottomOf="@id/tabContainer"
+        app:layout_constraintTop_toBottomOf="@id/toolbar"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent">
