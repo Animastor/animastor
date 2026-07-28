@@ -106,11 +106,12 @@
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/audioManageButton"
                         android:layout_width="wrap_content"
-                        android:layout_height="40dp"
+                        android:layout_height="42dp"
                         android:layout_marginTop="12dp"
                         android:layout_gravity="end"
                         android:text="@string/workflow_manager_manage"
                         android:textSize="14sp"
+                        android:gravity="center"
                         style="@style/Widget.Animastor.Button.Outlined" />
 
                 </LinearLayout>
@@ -163,11 +164,12 @@
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/imageManageButton"
                         android:layout_width="wrap_content"
-                        android:layout_height="40dp"
+                        android:layout_height="42dp"
                         android:layout_marginTop="12dp"
                         android:layout_gravity="end"
                         android:text="@string/workflow_manager_manage"
                         android:textSize="14sp"
+                        android:gravity="center"
                         style="@style/Widget.Animastor.Button.Outlined" />
 
                 </LinearLayout>
@@ -220,11 +222,12 @@
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/videoManageButton"
                         android:layout_width="wrap_content"
-                        android:layout_height="40dp"
+                        android:layout_height="42dp"
                         android:layout_marginTop="12dp"
                         android:layout_gravity="end"
                         android:text="@string/workflow_manager_manage"
                         android:textSize="14sp"
+                        android:gravity="center"
                         style="@style/Widget.Animastor.Button.Outlined" />
 
                 </LinearLayout>
@@ -234,10 +237,11 @@
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/reloadButton"
                 android:layout_width="match_parent"
-                android:layout_height="48dp"
+                android:layout_height="42dp"
                 android:layout_marginTop="8dp"
                 android:text="@string/workflow_manager_reload"
                 android:textSize="14sp"
+                android:gravity="center"
                 style="@style/Widget.Animastor.Button.Outlined" />
 
         </LinearLayout>

@@ -112,18 +112,20 @@
             <Button
                 android:id="@+id/clearCacheButton"
                 android:layout_width="match_parent"
-                android:layout_height="48dp"
+                android:layout_height="42dp"
                 android:layout_marginTop="4dp"
                 android:text="@string/settings_cache_clear"
+                android:gravity="center"
                 style="@style/Widget.Animastor.Button.Outlined.Error" />
 
             <Button
                 android:id="@+id/deleteVbookButton"
                 android:layout_width="match_parent"
-                android:layout_height="48dp"
+                android:layout_height="42dp"
                 android:layout_marginTop="8dp"
                 android:layout_marginBottom="20dp"
                 android:text="@string/settings_delete_vbook"
+                android:gravity="center"
                 style="@style/Widget.Animastor.Button.Outlined.Error" />
 
             <!-- Debug -->

@@ -74,7 +74,7 @@
                     <Spinner
                         android:id="@+id/profileSpinner"
                         android:layout_width="match_parent"
-                        android:layout_height="36dp"
+                        android:layout_height="40dp"
                         android:layout_marginTop="4dp"
                         android:textColor="?attr/colorOnSurface"
                         android:background="@drawable/spinner_bg"
@@ -203,11 +203,12 @@
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/workflowButton"
                         android:layout_width="wrap_content"
-                        android:layout_height="40dp"
+                        android:layout_height="42dp"
                         android:layout_marginTop="12dp"
                         android:layout_gravity="end"
                         android:text="@string/workflow_manager_manage"
                         android:textSize="14sp"
+                        android:gravity="center"
                         style="@style/Widget.Animastor.Button.Outlined" />
 
                 </LinearLayout>
