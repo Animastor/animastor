@@ -55,9 +55,6 @@ class WorkerSettingsFragment : Fragment(R.layout.fragment_worker_settings) {
         }
     }
 
-    /** Currently loaded timeout from layer-config (before user edits). */
-    private var currentTimeoutMinutes: Int = 30
-
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         binding = FragmentWorkerSettingsBinding.bind(view)
@@ -109,23 +106,22 @@ class WorkerSettingsFragment : Fragment(R.layout.fragment_worker_settings) {
                 val bookId = viewModel.bookId
                 if (bookId.isNotBlank()) {
                     val cfg = viewModel.repository.getLayerConfig(bookId)
-                    currentTimeoutMinutes = when (workerType) {
+                    val loaded = when (workerType) {
                         "audio" -> cfg.audio_timeout_minutes ?: defaultTimeout
                         "image" -> cfg.image_timeout_minutes ?: defaultTimeout
                         "video" -> cfg.video_timeout_minutes ?: defaultTimeout
                         else -> defaultTimeout
                     }
-                    val idx = timeoutOptions.indexOfFirst { it >= currentTimeoutMinutes }.coerceAtLeast(0)
+                    val idx = timeoutOptions.indexOfFirst { it >= loaded }.coerceAtLeast(0)
                     b.timeoutSpinner.setSelection(idx)
                 }
             } catch (_: Exception) {
-                currentTimeoutMinutes = defaultTimeout
+                // Keep default selection
             }
         }
 
         // ── Default button: reset timeout to factory default ──
-        b.defaultButton.setOnClickListener {
-            currentTimeoutMinutes = defaultTimeout
+        b.timeoutDefaultButton.setOnClickListener {
             val idx = timeoutOptions.indexOfFirst { it >= defaultTimeout }.coerceAtLeast(0)
             b.timeoutSpinner.setSelection(idx)
         }

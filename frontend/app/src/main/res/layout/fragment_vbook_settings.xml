@@ -28,7 +28,7 @@
         android:scrollbarThumbVertical="@drawable/scrollbar_thumb"
         android:scrollbarTrackVertical="@drawable/scrollbar_track"
         app:layout_constraintTop_toBottomOf="@id/toolbar"
-        app:layout_constraintBottom_toTopOf="@id/bottomBar"
+        app:layout_constraintBottom_toTopOf="@id/applyButton"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent">
 
@@ -61,14 +61,35 @@
                         android:textColor="?attr/colorOnSurface"
                         android:fontFamily="sans-serif-medium" />
 
-                    <Spinner
-                        android:id="@+id/chunkSizeSpinner"
+                    <LinearLayout
                         android:layout_width="match_parent"
-                        android:layout_height="48dp"
+                        android:layout_height="wrap_content"
                         android:layout_marginTop="8dp"
-                        android:textColor="?attr/colorOnSurface"
-                        android:background="@drawable/spinner_bg"
-                        android:textSize="14sp" />
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical">
+
+                        <Spinner
+                            android:id="@+id/chunkSizeSpinner"
+                            android:layout_width="0dp"
+                            android:layout_height="48dp"
+                            android:layout_weight="1"
+                            android:textColor="?attr/colorOnSurface"
+                            android:background="@drawable/spinner_bg"
+                            android:textSize="14sp" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/chunkSizeDefaultButton"
+                            style="@style/Widget.Animastor.Button.Outlined"
+                            android:layout_width="wrap_content"
+                            android:layout_height="34dp"
+                            android:layout_marginStart="8dp"
+                            android:minWidth="0dp"
+                            android:paddingHorizontal="10dp"
+                            android:text="@string/vbook_settings_default"
+                            android:textSize="11sp"
+                            app:strokeWidth="1dp" />
+
+                    </LinearLayout>
 
                     <TextView
                         android:layout_width="match_parent"
@@ -84,45 +105,23 @@
         </LinearLayout>
     </ScrollView>
 
-    <!-- ── Bottom Action Bar ── -->
-    <LinearLayout
-        android:id="@+id/bottomBar"
+    <!-- ── Bottom Action Bar (always visible) ── -->
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/applyButton"
         android:layout_width="0dp"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:paddingHorizontal="16dp"
-        android:paddingTop="8dp"
-        android:paddingBottom="20dp"
-        android:background="?attr/colorSurfaceDim"
+        android:layout_height="48dp"
+        android:layout_marginHorizontal="16dp"
+        android:layout_marginBottom="20dp"
+        android:text="@string/vbook_settings_apply"
+        android:textSize="15sp"
+        android:fontFamily="sans-serif-medium"
+        app:cornerRadius="18dp"
+        app:icon="@drawable/ic_check"
+        app:iconGravity="textStart"
+        app:iconTint="?attr/colorOnPrimary"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent">
-
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/defaultButton"
-            style="@style/Widget.Animastor.Button.Outlined"
-            android:layout_width="0dp"
-            android:layout_height="48dp"
-            android:layout_marginEnd="12dp"
-            android:layout_weight="1"
-            android:text="@string/vbook_settings_default"
-            android:textSize="14sp"
-            android:fontFamily="sans-serif-medium" />
-
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/applyButton"
-            android:layout_width="0dp"
-            android:layout_height="48dp"
-            android:layout_weight="2"
-            android:text="@string/vbook_settings_apply"
-            android:textSize="15sp"
-            android:fontFamily="sans-serif-medium"
-            app:cornerRadius="18dp"
-            app:icon="@drawable/ic_check"
-            app:iconGravity="textStart"
-            app:iconTint="?attr/colorOnPrimary"
-            style="@style/Widget.Material3.Button" />
-
-    </LinearLayout>
+        app:layout_constraintEnd_toEndOf="parent"
+        style="@style/Widget.Material3.Button" />
 
 </androidx.constraintlayout.widget.ConstraintLayout>

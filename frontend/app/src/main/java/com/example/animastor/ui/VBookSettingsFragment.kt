@@ -63,8 +63,8 @@ class VBookSettingsFragment : Fragment(R.layout.fragment_vbook_settings) {
             }
         }
 
-        // ── Default button: reset to 3 ──
-        b.defaultButton.setOnClickListener {
+        // ── Default button: reset chunk size to 3 ──
+        b.chunkSizeDefaultButton.setOnClickListener {
             b.chunkSizeSpinner.setSelection(DEFAULT_CHUNK_SIZE - 1)
         }
 
