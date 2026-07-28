@@ -16,32 +16,35 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent">
 
-        <LinearLayout
+        <com.google.android.material.tabs.TabLayout
+            android:id="@+id/viewTabs"
             android:layout_width="wrap_content"
             android:layout_height="match_parent"
-            android:orientation="horizontal"
-            android:gravity="center_vertical"
-            android:layout_marginStart="8dp">
+            android:layout_marginStart="12dp"
+            android:background="@android:color/transparent"
+            app:tabMode="fixed"
+            app:tabGravity="fill"
+            app:tabIndicatorHeight="2dp"
+            app:tabIndicatorColor="?attr/colorSecondary"
+            app:tabRippleColor="?attr/colorSecondaryContainer"
+            app:tabTextColor="?attr/colorOnSurfaceVariant"
+            app:tabSelectedTextColor="?attr/colorSecondary"
+            app:tabMinWidth="0dp"
+            app:tabPaddingStart="12dp"
+            app:tabPaddingEnd="12dp"
+            app:tabContentStart="0dp">
 
-            <com.google.android.material.chip.Chip
-                android:id="@+id/jsonChip"
+            <com.google.android.material.tabs.TabItem
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Raw JSON"
-                android:checkable="true"
-                android:checked="true"
-                style="@style/Widget.Animastor.Chip.Toggle" />
+                android:text="Raw JSON" />
 
-            <com.google.android.material.chip.Chip
-                android:id="@+id/bindingsChip"
+            <com.google.android.material.tabs.TabItem
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginStart="8dp"
-                android:text="Bindings"
-                android:checkable="true"
-                style="@style/Widget.Animastor.Chip.Toggle" />
+                android:text="Bindings" />
 
-        </LinearLayout>
+        </com.google.android.material.tabs.TabLayout>
     </androidx.appcompat.widget.Toolbar>
 
     <com.google.android.material.progressindicator.LinearProgressIndicator

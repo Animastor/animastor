@@ -47,8 +47,9 @@ class DeveloperViewFragment : Fragment(R.layout.fragment_developer_view) {
             parentFragmentManager.popBackStack()
         }
 
-        // ── Chip toggle: switch between JSON and Bindings ──
-        fun selectTab(isJson: Boolean) {
+        // ── TabLayout: switch between JSON and Bindings ──
+        fun selectTab(index: Int) {
+            val isJson = index == 0
             val showView = if (isJson) b.jsonScrollView else b.bindingsScrollView
             val hideView = if (isJson) b.bindingsScrollView else b.jsonScrollView
 
@@ -74,21 +75,15 @@ class DeveloperViewFragment : Fragment(R.layout.fragment_developer_view) {
                 .start()
         }
 
-        // Sync view visibility with chip checked state
-        b.jsonChip.post {
-            b.jsonChip.setOnCheckedChangeListener { _, isChecked ->
-                if (isChecked) {
-                    b.bindingsChip.isChecked = false
-                    selectTab(true)
-                }
+        b.viewTabs.addOnTabSelectedListener(object : com.google.android.material.tabs.TabLayout.OnTabSelectedListener {
+            override fun onTabSelected(tab: com.google.android.material.tabs.TabLayout.Tab) {
+                selectTab(tab.position)
             }
-            b.bindingsChip.setOnCheckedChangeListener { _, isChecked ->
-                if (isChecked) {
-                    b.jsonChip.isChecked = false
-                    selectTab(false)
-                }
+            override fun onTabUnselected(tab: com.google.android.material.tabs.TabLayout.Tab) {}
+            override fun onTabReselected(tab: com.google.android.material.tabs.TabLayout.Tab) {
+                selectTab(tab.position)
             }
-        }
+        })
 
         // Observe loading
         lifecycleScope.launch {
