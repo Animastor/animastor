@@ -196,7 +196,7 @@ function buildBookFromBundle(rawFiles) {
     }
 
     for (const chapter of chapters) {
-        assertCanonicalChapterId(chapter.chapter)
+        assertCanonicalChapterId(chapter.chapter_id)
         if (chapter.scenes) {
             for (const scene of chapter.scenes) {
                 assertCanonicalSceneId(scene.scene_id)
@@ -384,7 +384,7 @@ function saveBookBundle(book, files) {
 
     const activeChapterFiles = new Set();
     for (const chapter of book.chapters || []) {
-        const chapterFile = `${chapter.chapter}.json`;
+        const chapterFile = `${chapter.chapter_id}.json`;
         activeChapterFiles.add(chapterFile);
         fs.writeFileSync(
             path.join(chaptersDir, chapterFile),
@@ -563,7 +563,7 @@ function collectScenes(book) {
             const scene = chapter.scenes[scIndex];
             scenes.push({
                 book_id: book.manifest?.book_id,
-                chapter_id: chapter.chapter,
+                chapter_id: chapter.chapter_id,
                 scene_id: scene.scene_id,
                 runtime_type: 'scene',
                 scene_type: scene.type || 'narration',
@@ -628,7 +628,7 @@ function findSceneRuntimeData(loadedBook, chapterId, sceneId) {
     const bookId = loadedBook.manifest?.book_id;
 
     for (const chapter of loadedBook.chapters) {
-        if (chapter.chapter !== chapterId) continue;
+        if (chapter.chapter_id !== chapterId) continue;
 
         if (!chapter.scenes || !Array.isArray(chapter.scenes)) {
             continue;
@@ -640,7 +640,7 @@ function findSceneRuntimeData(loadedBook, chapterId, sceneId) {
                 return {
                     runtime_type: 'scene',
                     book_id: bookId,
-                    chapter_id: chapter.chapter,
+                    chapter_id: chapter.chapter_id,
                     scene_id: scene.scene_id,
                     scene_type: scene.type || 'narration',
                     location: scene.location || null,
