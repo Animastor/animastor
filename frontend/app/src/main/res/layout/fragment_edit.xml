@@ -359,12 +359,13 @@
             android:layout_width="match_parent"
             android:layout_height="48dp"
             android:text="@string/edit_save"
-            android:textSize="14sp"
+            android:textSize="15sp"
             android:fontFamily="sans-serif-medium"
-            app:cornerRadius="14dp"
+            app:cornerRadius="18dp"
             app:icon="@drawable/ic_save"
             app:iconGravity="textStart"
-            app:iconTint="?attr/colorOnPrimary" />
+            app:iconTint="?attr/colorOnPrimary"
+            style="@style/Widget.Material3.Button" />
 
     </LinearLayout>
 

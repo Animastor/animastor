@@ -152,11 +152,11 @@
     <com.google.android.material.button.MaterialButton
         android:id="@+id/acceptButton"
         android:layout_width="0dp"
-        android:layout_height="56dp"
+        android:layout_height="48dp"
         android:layout_marginHorizontal="16dp"
         android:layout_marginBottom="20dp"
-        android:text="@string/settings_accept"
-        android:textSize="16sp"
+        android:text="@string/settings_apply"
+        android:textSize="15sp"
         android:fontFamily="sans-serif-medium"
         app:cornerRadius="18dp"
         app:icon="@drawable/ic_check"
@@ -164,6 +164,7 @@
         app:iconTint="?attr/colorOnPrimary"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent" />
+        app:layout_constraintEnd_toEndOf="parent"
+        style="@style/Widget.Material3.Button" />
 
 </androidx.constraintlayout.widget.ConstraintLayout>

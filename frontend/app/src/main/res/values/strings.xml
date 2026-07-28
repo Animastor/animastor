@@ -184,7 +184,7 @@
     <string name="settings_language_en">English</string>
     <string name="settings_language_ru">Русский</string>
 
-    <string name="settings_accept">Accept</string>
+    <string name="settings_apply">Apply</string>
     <string name="action_back">Back</string>
     <string name="play_fullscreen">Fullscreen</string>
 
