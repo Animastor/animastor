@@ -36,7 +36,7 @@
             app:tabIndicatorHeight="2dp"
             app:tabIndicatorColor="?attr/colorSecondary"
             app:tabRippleColor="?attr/colorSecondaryContainer"
-            app:tabTextAppearance="@style/TextAppearance.Material3.LabelLarge"
+            app:tabTextAppearance="@style/TextAppearance.Animastor.TabLabel"
             app:tabTextColor="?attr/colorOnSurfaceVariant"
             app:tabSelectedTextColor="?attr/colorSecondary"
             app:tabBackground="?attr/colorSurfaceVariant">

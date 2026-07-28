@@ -295,6 +295,13 @@
     </style>
 
 
+    <!-- Tab label appearance (mirrors Material3 LabelLarge explicitly) -->
+    <style name="TextAppearance.Animastor.TabLabel" parent="TextAppearance.Material3.LabelLarge">
+        <item name="android:textSize">14sp</item>
+        <item name="android:fontFamily">sans-serif-medium</item>
+        <item name="android:textFontWeight">500</item>
+    </style>
+
     <!-- TabLayout -->
     <style name="Widget.Animastor.TabLayout" parent="Widget.Material3.TabLayout">
         <item name="tabTextColor">?attr/colorOnSurfaceVariant</item>
