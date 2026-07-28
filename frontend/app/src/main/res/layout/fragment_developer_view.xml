@@ -27,7 +27,7 @@
             app:tabGravity="fill"
             app:tabIndicatorHeight="2dp"
             app:tabIndicatorColor="?attr/colorSecondary"
-            app:tabRippleColor="?attr/colorSecondaryContainer"
+            app:tabRippleColor="@null"
             app:tabTextAppearance="@style/TextAppearance.Animastor.TabLabel"
             app:tabTextColor="?attr/colorOnSurfaceVariant"
             app:tabSelectedTextColor="?attr/colorSecondary"
