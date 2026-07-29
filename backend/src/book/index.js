@@ -331,11 +331,17 @@ function saveBookBundle(book, files) {
         JSON.stringify(book.manifest, null, 2)
     );
 
-    // Save book.json with chapters_order synced to actual chapters
+    // Save book.json with chapters_order synced to actual chapters.
+    // ⚠️ Only overwrite chapters_order when book.chapters is non-empty.
+    // Lazy books keep chapters as files on disk; calling saveBookBundle
+    // with an empty chapters array (e.g. from a stale GET response) would
+    // destroy the existing chapters_order and make all chapters invisible.
     const bookMeta = book.book ? JSON.parse(JSON.stringify(book.book)) : {};
     if (!bookMeta.structure) bookMeta.structure = {};
     const chapterFilenames = (book.chapters || []).map(ch => `${ch.chapter_id}.json`);
-    bookMeta.structure.chapters_order = chapterFilenames;
+    if (chapterFilenames.length > 0) {
+        bookMeta.structure.chapters_order = chapterFilenames;
+    }
     fs.writeFileSync(
         path.join(bookDir, 'book.json'),
         JSON.stringify(bookMeta, null, 2)
