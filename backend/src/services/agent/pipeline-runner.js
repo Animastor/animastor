@@ -495,6 +495,8 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
         });
     }
 
+    _debugVideoAction('after_visuals', enrichedScenes);
+
     await checkCancelled();
 
     // ── Passport reconciliation pass ──
@@ -538,6 +540,8 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
         }
     }
 
+    _debugVideoAction('after_passport', enrichedScenes);
+
     await checkCancelled();
 
     // ── Video action reconciliation pass ──
@@ -573,6 +577,8 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
             }
         }
     }
+
+    _debugVideoAction('after_video_recon', enrichedScenes);
 
     await checkCancelled();
 
@@ -617,6 +623,8 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
         }
     }
 
+    _debugVideoAction('after_storyboard', enrichedScenes);
+
     await checkCancelled();
 
     // ── Video action polish pass ──
@@ -655,10 +663,7 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
         }
     }
 
-    // ── Post-reconciliation video.action fixup ──
-    // If any unit still has video.action === image.prompt (AI failed to
-    // generate distinct temporal descriptions), derive one programmatically.
-    _fixupVideoActions(enrichedScenes);
+    _debugVideoAction('after_video_polish', enrichedScenes);
 
     return {
         characters,
@@ -671,68 +676,6 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
         nextOffset: progressInfo.nextOffset ?? coverage.next_offset,
         coverage,
     };
-}
-
-/**
- * Post-reconciliation fixup: detect units where video.action is identical
- * to image.prompt (AI failed to generate distinct temporal descriptions).
- * Derive a proper temporal/dynamic action from the unit text and type.
- */
-function _fixupVideoActions(enrichedScenes) {
-    let fixedCount = 0;
-    for (const scene of enrichedScenes) {
-        for (const unit of (scene.units || [])) {
-            const ip = unit.image?.prompt;
-            const va = unit.video?.action;
-            if (ip && va && va === ip) {
-                unit.video.action = _deriveTemporalAction(unit);
-                fixedCount++;
-            }
-        }
-    }
-    if (fixedCount > 0) {
-        console.log(`[VIDEO-FIXUP] Fixed ${fixedCount} units where video.action === image.prompt`);
-    }
-}
-
-/**
- * Derive a temporal/dynamic video.action from unit text when the AI failed to.
- * For dialogue: use speaker + line. For other types: find action verbs in text
- * or fall back to a type-appropriate camera/ambient movement description.
- */
-function _deriveTemporalAction(unit) {
-    const type = unit.type || 'perception';
-    const text = unit.text || '';
-
-    // Dialogue: use speaker identification
-    if (type === 'dialogue') {
-        const speaker = unit.audio?.speaker || 'Character';
-        const snippet = (unit.audio?.text || text).substring(0, 80).replace(/[""']/g, '');
-        return `${speaker} speaks: "${snippet}"`;
-    }
-
-    // Look for temporal action verbs in the unit text
-    const actionPat = /([А-Яа-яA-Za-z][^.]{10,80}?(?:said|say|says|walk|walked|walks|turn|turned|turns|look|looked|looks|step|stepped|steps|move|moved|moves|enter|entered|enters|leave|left|open|opened|opens|close|closed|closes|rush|rushed|rushes|approach|approached|approaches|throw|threw|throws|sit|sat|sits|stand|stood|stands|nod|nodded|nods|smile|smiled|smiles|begin|began|begins|start|started|starts|point|pointed|points|wave|waved|waves|reach|reached|reaches|grab|grabbed|grabs|take|took|takes|give|gave|gives|fall|fell|falls)[^.]{0,60})[.]/i;
-    const match = text.match(actionPat);
-    if (match) {
-        return match[1].trim() + '.';
-    }
-
-    // Type-based fallback
-    switch (type) {
-        case 'action':
-            return text.substring(0, 120);
-        case 'narration':
-            return 'Camera slowly pans across the scene';
-        case 'description':
-            return 'Subtle ambient movement, gentle stillness';
-        case 'perception':
-            return 'Character reacts with subtle expression shift';
-        case 'transition':
-            return 'Scene transitions with a slow dissolve';
-        default:
-            return 'Camera holds steady, natural movement';
-    }
 }
 
 // ======================================================
@@ -858,6 +801,8 @@ async function processCachedScenes(sessionId, scenes, characters, locations, men
         });
     }
 
+    _debugVideoAction('after_visuals', enrichedScenes);
+
     await checkCancelled();
 
     // ── Passport reconciliation pass ──
@@ -895,6 +840,8 @@ async function processCachedScenes(sessionId, scenes, characters, locations, men
         }
     }
 
+    _debugVideoAction('after_passport', enrichedScenes);
+
     await checkCancelled();
 
     // ── Video action reconciliation pass ──
@@ -927,6 +874,8 @@ async function processCachedScenes(sessionId, scenes, characters, locations, men
             }
         }
     }
+
+    _debugVideoAction('after_video_recon', enrichedScenes);
 
     await checkCancelled();
 
@@ -965,6 +914,8 @@ async function processCachedScenes(sessionId, scenes, characters, locations, men
         }
     }
 
+    _debugVideoAction('after_storyboard', enrichedScenes);
+
     await checkCancelled();
 
     // ── Video action polish pass ──
@@ -998,8 +949,7 @@ async function processCachedScenes(sessionId, scenes, characters, locations, men
         }
     }
 
-    // ── Post-reconciliation video.action fixup ──
-    _fixupVideoActions(enrichedScenes);
+    _debugVideoAction('after_video_polish', enrichedScenes);
 
     console.log(`[CACHED-SCENES] Done processing ${enrichedScenes.length} cached scenes`);
     return {
@@ -1009,6 +959,35 @@ async function processCachedScenes(sessionId, scenes, characters, locations, men
         scenes: enrichedScenes,
         allScenes: windowScenes,
     };
+}
+
+/**
+ * Debug log: compare image.prompt vs video.action for all units at a given stage.
+ * Logs count of identical pairs + sample of first matching unit.
+ * Used to trace where AI-generated video.action diverges from (or stays equal to) image.prompt.
+ */
+function _debugVideoAction(stage, enrichedScenes) {
+    let identical = 0;
+    let total = 0;
+    let sample = '';
+    for (const scene of enrichedScenes) {
+        for (const unit of (scene.units || [])) {
+            total++;
+            const ip = unit.image?.prompt;
+            const va = unit.video?.action;
+            if (ip && va && va === ip) {
+                identical++;
+                if (!sample) {
+                    const trunc = ip.length > 100 ? ip.substring(0, 97) + '...' : ip;
+                    sample = `[${unit.type || '?'}] "${trunc}"`;
+                }
+            }
+        }
+    }
+    if (total === 0) return;
+    const pct = total > 0 ? Math.round(identical / total * 100) : 0;
+    const tag = identical > 0 ? '⚠️' : '✅';
+    console.log(`[VIDEO-DEBUG] ${stage}: ${identical}/${total} units have video.action === image.prompt (${pct}%) ${tag}${sample ? ' — sample: ' + sample : ''}`);
 }
 
 module.exports = {
