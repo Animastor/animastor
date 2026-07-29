@@ -121,15 +121,9 @@ async function stepCreateScenes(sessionId, text, characters, locations, stepInde
     const charsContext = (characters || []).map(c => `- ${c.id}: ${c.name}`).join('\n') || 'None';
     const locsContext = (locations || []).map(l => `- ${l.id}: ${l.name} (${l.type || 'unknown'})`).join('\n') || 'None';
 
-    const examplesContext = imageUtils.formatExamplesForPrompt();
-    const examplesSection = examplesContext
-        ? `\n## Reference examples\n${examplesContext}\n`
-        : '';
-
     const prompt = SYSTEM_PROMPTS.scenes
         .replace('%EXISTING_CHARACTERS%', charsContext)
-        .replace('%EXISTING_LOCATIONS%', locsContext)
-        .replace('%REFERENCE_EXAMPLES%', examplesSection);
+        .replace('%EXISTING_LOCATIONS%', locsContext);
 
     let repairText = '';
     if (repairHint) {

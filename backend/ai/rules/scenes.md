@@ -110,9 +110,6 @@ It is OK if text remains after the last returned scene.
 - If the text starts with a chapter heading, IGNORE it and start from the narrative content
 - This rule applies ONLY to scene CONTENT — it does NOT affect the scene's title field (which is REQUIRED below)
 
-## Reference examples
-%REFERENCE_EXAMPLES%
-
 ## Known Characters
 %EXISTING_CHARACTERS%
 
