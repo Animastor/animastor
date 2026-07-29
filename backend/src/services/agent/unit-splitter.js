@@ -132,12 +132,14 @@ function splitByWordCount(text) {
 function emergencySplit(unit) {
     const text = unit.text || '';
     const baseType = unit.type || 'narration';
+    // Copy unit WITHOUT id — each fragment must get a unique id downstream
+    const { id: _ignoredId, ...unitFields } = unit;
 
     // Strategy 1: sentence split
     const sentences = splitBySentences(text);
     if (sentences.length > 1) {
         return sentences.map(s => ({
-            ...unit,
+            ...unitFields,
             text: s.trim(),
             type: baseType,
             // Preserve audio.speaker for dialogue — but only on first fragment
@@ -149,7 +151,7 @@ function emergencySplit(unit) {
     const clauses = splitByCommas(text);
     if (clauses.length > 1) {
         return clauses.map(c => ({
-            ...unit,
+            ...unitFields,
             text: c.trim(),
             type: baseType,
             audio: unit.audio ? { ...unit.audio, text: c.trim() } : undefined,
@@ -159,7 +161,7 @@ function emergencySplit(unit) {
     // Strategy 3: word-count split (last resort)
     const halves = splitByWordCount(text);
     return halves.map(h => ({
-        ...unit,
+        ...unitFields,
         text: h.trim(),
         type: baseType,
         audio: unit.audio ? { ...unit.audio, text: h.trim() } : undefined,
