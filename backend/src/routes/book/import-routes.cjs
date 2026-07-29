@@ -4,8 +4,39 @@
 
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 const multer = require('multer');
 const { publishProgress } = require('../../services/progress-pubsub.cjs');
+
+// ======================================================
+// FALLBACK DEDUP: scan books dir for lazy books matching file hash
+// Used when book_source PG record was already deleted (e.g. by old bug).
+// ======================================================
+function findLazyBookByHash(fileHash, booksDir) {
+    try {
+        if (!fs.existsSync(booksDir)) return null;
+        const entries = fs.readdirSync(booksDir, { withFileTypes: true });
+        for (const entry of entries) {
+            if (!entry.isDirectory()) continue;
+            const bookDir = path.join(booksDir, entry.name);
+            const sourcePath = path.join(bookDir, 'source.txt');
+            const manifestPath = path.join(bookDir, 'manifest.json');
+            if (!fs.existsSync(sourcePath) || !fs.existsSync(manifestPath)) continue;
+            try {
+                const sourceBuf = fs.readFileSync(sourcePath);
+                const sourceHash = crypto.createHash('sha256').update(sourceBuf).digest('hex');
+                if (sourceHash === fileHash) {
+                    return entry.name;
+                }
+            } catch (_) {
+                // skip unreadable books
+            }
+        }
+    } catch (_) {
+        // books dir may not exist
+    }
+    return null;
+}
 
 module.exports = function(app, redis, deps) {
     const {
@@ -141,7 +172,6 @@ app.post('/api/v1/book/import', multer().single('file'), async (req, res) => {
             });
         } else {
             // ── TXT path — same logic as /import-txt ──
-            const crypto = require('crypto');
             const fileHash = crypto.createHash('sha256').update(buf).digest('hex');
 
             const decoded = txtImporter.decodeTxtBuffer(buf);
@@ -151,6 +181,7 @@ app.post('/api/v1/book/import', multer().single('file'), async (req, res) => {
             const title = path.basename(req.file.originalname, '.txt');
 
             let existingBookId = null;
+            // ── Phase 1: PG book_source lookup ──
             try {
                 const candidates = await bookSourceRepo.findCandidateBySize(buf.length);
                 if (candidates && candidates.length > 0) {
@@ -170,6 +201,25 @@ app.post('/api/v1/book/import', multer().single('file'), async (req, res) => {
                 }
             } catch (pgErr) {
                 console.warn(`[UNIFIED-IMPORT] PG dedup check failed (non-fatal): ${pgErr.message}`);
+            }
+
+            // ── Phase 2: Fallback — scan books on disk (covers deleted book_source records) ──
+            if (!existingBookId) {
+                const diskFound = findLazyBookByHash(fileHash, lazyBook.getBooksDir());
+                if (diskFound) {
+                    const existingStatus = lazyBook.getBookStatus(diskFound);
+                    if (existingStatus && existingStatus.state) {
+                        existingBookId = diskFound;
+                        log(`[UNIFIED-IMPORT] DEDUP (disk fallback): found ${existingBookId} for hash ${fileHash}`);
+                        // Re-register PG record so next import uses fast path
+                        try {
+                            await bookSourceRepo.registerSource(fileHash, req.file.originalname, buf.length, existingBookId, 'txt');
+                            log(`[UNIFIED-IMPORT] Re-registered book_source for ${existingBookId}`);
+                        } catch (regErr) {
+                            console.warn(`[UNIFIED-IMPORT] Failed to re-register book_source (non-fatal): ${regErr.message}`);
+                        }
+                    }
+                }
             }
 
             if (existingBookId) {
@@ -395,7 +445,6 @@ function detectFileFormat(buf) {
         try {
             if (!req.file) return res.status(400).json({ error: 'file missing' });
 
-            const crypto = require('crypto');
             const fileHash = crypto.createHash('sha256').update(req.file.buffer).digest('hex');
 
             const decoded = txtImporter.decodeTxtBuffer(req.file.buffer);
@@ -405,6 +454,7 @@ function detectFileFormat(buf) {
             const title = path.basename(req.file.originalname, '.txt');
 
             let existingBookId = null;
+            // ── Phase 1: PG book_source lookup ──
             try {
                 const candidates = await bookSourceRepo.findCandidateBySize(req.file.buffer.length);
                 if (candidates && candidates.length > 0) {
@@ -424,6 +474,25 @@ function detectFileFormat(buf) {
                 }
             } catch (pgErr) {
                 console.warn(`[IMPORT-TXT] PG dedup check failed (non-fatal): ${pgErr.message}`);
+            }
+
+            // ── Phase 2: Fallback — scan books on disk (covers deleted book_source records) ──
+            if (!existingBookId) {
+                const diskFound = findLazyBookByHash(fileHash, lazyBook.getBooksDir());
+                if (diskFound) {
+                    const existingStatus = lazyBook.getBookStatus(diskFound);
+                    if (existingStatus && existingStatus.state) {
+                        existingBookId = diskFound;
+                        log(`[IMPORT-TXT] DEDUP (disk fallback): found ${existingBookId} for hash ${fileHash}`);
+                        // Re-register PG record so next import uses fast path
+                        try {
+                            await bookSourceRepo.registerSource(fileHash, req.file.originalname, req.file.buffer.length, existingBookId, 'txt');
+                            log(`[IMPORT-TXT] Re-registered book_source for ${existingBookId}`);
+                        } catch (regErr) {
+                            console.warn(`[IMPORT-TXT] Failed to re-register book_source (non-fatal): ${regErr.message}`);
+                        }
+                    }
+                }
             }
 
             if (existingBookId) {
