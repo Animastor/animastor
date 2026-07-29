@@ -52,14 +52,6 @@ prefer slightly larger scenes** over fragmenting a coherent narrative episode.
 
 ## Scene splitting rules (in priority order)
 
-### 0. Maximum scenes
-Return up to **%MAX_SCENES%** scenes. This is a soft upper bound — if the text
-naturally forms fewer narrative episodes, return fewer. Scenes beyond this
-limit are still valid and will be used in subsequent batches.
-
-This limit exists only to prevent excessive fragmentation into tiny fragments.
-It is NOT a target count. Focus on creating naturally coherent episodes.
-
 ### 1. Narrative coherence (highest priority)
 A scene is one coherent narrative episode. If the text forms a single episode
 that belongs together, keep it as ONE scene even if it contains multiple

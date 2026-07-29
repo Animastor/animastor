@@ -110,9 +110,8 @@ async function stepExtractLocations(sessionId, text, characters, stepIndex, prog
 }
 
 async function stepCreateScenes(sessionId, text, characters, locations, stepIndex, progress, repairHint, chunkSize) {
-    // High limit — AI creates natural scenes, pipeline caps to chunkSize later.
-    // Cached extra scenes are reused in the next window without re-calling AI.
-    const effectiveMaxScenes = 8;
+    // No artificial limit — AI creates natural narrative episodes.
+    // The pipeline caps to chunkSize later and caches extras.
     const _progress = progress || (() => {});
     _progress({ stage: 'creating_scenes', message: PROGRESS_STAGES.creating_scenes });
     await updateSession(sessionId, { progress_msg: PROGRESS_STAGES.creating_scenes });
@@ -130,12 +129,11 @@ async function stepCreateScenes(sessionId, text, characters, locations, stepInde
     const prompt = SYSTEM_PROMPTS.scenes
         .replace('%EXISTING_CHARACTERS%', charsContext)
         .replace('%EXISTING_LOCATIONS%', locsContext)
-        .replace('%REFERENCE_EXAMPLES%', examplesSection)
-        .replace(/%MAX_SCENES%/g, effectiveMaxScenes);
+        .replace('%REFERENCE_EXAMPLES%', examplesSection);
 
     let repairText = '';
     if (repairHint) {
-        repairText = `\n\nPrevious scene split failed source coverage validation.\nReason: ${repairHint.reason || 'unknown'}.\nMissing or problematic source fragment:\n\`\`\`\n${repairHint.gap_preview || ''}\n\`\`\`\nReturn a corrected split that starts at the first narrative word and covers a contiguous prefix of the provided text without gaps. Return at most ${effectiveMaxScenes} scenes and stop after scene ${effectiveMaxScenes}; unused tail text is allowed.`;
+        repairText = `\n\nPrevious scene split failed source coverage validation.\nReason: ${repairHint.reason || 'unknown'}.\nMissing or problematic source fragment:\n\`\`\`\n${repairHint.gap_preview || ''}\n\`\`\`\nReturn a corrected split that starts at the first narrative word and covers a contiguous prefix of the provided text without gaps. Do not skip, overlap, paraphrase, or summarize anything inside the returned scenes. Unused tail text is allowed.`;
     }
 
     const messages = [
