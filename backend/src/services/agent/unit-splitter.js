@@ -187,7 +187,12 @@ async function askAIToSplitUnit(sessionId, unit, unitIndex) {
 
     try {
         const result = await aiCaller.callAI(messages, { maxTokens: 2048 });
-        await aiCaller.logConversation(sessionId, `split-unit-${unitIndex}`, messages, JSON.stringify(result));
+        // logConversation is best-effort — don't let DB errors discard the AI result
+        try {
+            await aiCaller.logConversation(sessionId, `split-unit-${unitIndex}`, messages, JSON.stringify(result));
+        } catch (_) {
+            // Non-fatal: logConversation needs a real session UUID
+        }
         const splitUnits = result.units || [];
         if (!Array.isArray(splitUnits) || splitUnits.length < 2) {
             console.warn(`[UNIT-SPLITTER] AI returned ${splitUnits.length} units for long unit ${unitIndex} — expected >= 2`);
