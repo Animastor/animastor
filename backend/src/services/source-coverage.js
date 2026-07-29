@@ -152,7 +152,7 @@ function getLastSentenceFragment(text) {
 
     let end = t.length;
     while (end > 0 && /\s/.test(t[end - 1])) end--;
-    while (end > 0 && /["'»”)\]]/.test(t[end - 1])) end--;
+    while (end > 0 && '"\'»”)]'.indexOf(t[end - 1]) >= 0) end--;
 
     let terminal = -1;
     for (let i = end - 1; i >= 0; i--) {
@@ -232,6 +232,62 @@ function findLastSceneEndOffset(rawText, sceneText, options = {}) {
     };
 }
 
+/**
+ * Split normalized text into sentences by terminal punctuation (. ! ? …).
+ * Works on pre-normalized text (single spaces, \n preserved, no \r).
+ * Used by sentence-level relaxed coverage matching.
+ */
+function splitTextIntoNormalizedSentences(text) {
+    const t = (text || '').trim();
+    if (!t) return [];
+    const sentences = [];
+    let start = 0;
+    for (let i = 0; i < t.length; i++) {
+        const ch = t[i];
+        const isTerminal = ch === '.' || ch === '!' || ch === '?' || ch === '\u2026';
+        if (isTerminal) {
+            let j = i + 1;
+            while (j < t.length && /[.!?\u2026"'\u00bb\u201d)\]»]/.test(t[j])) j++;
+            const raw = t.slice(start, j).trim();
+            if (raw) sentences.push(raw);
+            start = j;
+            i = j - 1;
+        }
+    }
+    const tail = t.slice(start).trim();
+    if (tail) sentences.push(tail);
+    return sentences;
+}
+
+/**
+ * Try to match scene text at sentence level (relaxed).
+ * When verbatim matching fails, split scene into sentences and find each in order.
+ * Allows gaps (skipped text) between sentences within a scene.
+ */
+function trySentenceLevelMatch(normalizedSource, sceneNorm, cursor) {
+    const sentences = splitTextIntoNormalizedSentences(sceneNorm);
+    // Need at least 2 sentences to enable relaxed matching
+    if (sentences.length < 2) return null;
+
+    let sentCursor = cursor;
+    let firstPos = -1;
+    let lastEnd = -1;
+
+    for (const sent of sentences) {
+        const pos = normalizedSource.indexOf(sent, sentCursor);
+        if (pos < 0) return null; // sentence not found
+        if (firstPos < 0) firstPos = pos;
+        lastEnd = pos + sent.length;
+        sentCursor = pos + sent.length;
+    }
+
+    return {
+        firstPos,
+        lastEnd,
+        sentenceCount: sentences.length,
+    };
+}
+
 function computeSceneCoverage(rawText, sceneTexts, options = {}) {
     const sourceOffsetBase = options.sourceOffsetBase || 0;
     const normalizedSource = normalizeTextForCoverage(rawText);
@@ -241,6 +297,7 @@ function computeSceneCoverage(rawText, sceneTexts, options = {}) {
     let cursor = skipWhitespaceForward(normalizedSource, 0);
     let coveredStartOffset = null;
     let coveredSceneEndOffset = null;
+    let usedRelaxedMatching = false;
 
     for (let i = 0; i < sceneTexts.length; i++) {
         const sceneNorm = normalizeTextForCoverage(sceneTexts[i] || '').trim();
@@ -255,25 +312,41 @@ function computeSceneCoverage(rawText, sceneTexts, options = {}) {
                 covered_end_offset: coveredSceneEndOffset,
                 next_offset: coveredSceneEndOffset,
                 scene_spans: sceneSpans,
+                relaxed_matching: usedRelaxedMatching,
             };
         }
 
+        // Try verbatim matching first (fast path)
         const pos = normalizedSource.indexOf(sceneNorm, cursor);
+        let matchStart = pos;
+        let matchEnd = pos >= 0 ? pos + sceneNorm.length : -1;
+        let matchMethod = 'verbatim';
+
         if (pos < 0) {
-            return {
-                ok: false,
-                reason: 'scene_text_not_found',
-                scene_index: i,
-                gap_chars: 0,
-                gap_preview: normalizedSource.slice(cursor, cursor + 160),
-                covered_start_offset: coveredStartOffset,
-                covered_end_offset: coveredSceneEndOffset,
-                next_offset: coveredSceneEndOffset,
-                scene_spans: sceneSpans,
-            };
+            // Verbatim failed — try sentence-level relaxed matching
+            const sentMatch = trySentenceLevelMatch(normalizedSource, sceneNorm, cursor);
+            if (sentMatch) {
+                matchStart = sentMatch.firstPos;
+                matchEnd = sentMatch.lastEnd;
+                matchMethod = `sentence_level(${sentMatch.sentenceCount}sents)`;
+                usedRelaxedMatching = true;
+            } else {
+                return {
+                    ok: false,
+                    reason: 'scene_text_not_found',
+                    scene_index: i,
+                    gap_chars: 0,
+                    gap_preview: normalizedSource.slice(cursor, cursor + 160),
+                    covered_start_offset: coveredStartOffset,
+                    covered_end_offset: coveredSceneEndOffset,
+                    next_offset: coveredSceneEndOffset,
+                    scene_spans: sceneSpans,
+                    relaxed_matching: usedRelaxedMatching,
+                };
+            }
         }
 
-        const gap = normalizedSource.slice(cursor, pos);
+        const gap = normalizedSource.slice(cursor, matchStart);
         if (hasVisibleText(gap)) {
             return {
                 ok: false,
@@ -285,22 +358,36 @@ function computeSceneCoverage(rawText, sceneTexts, options = {}) {
                 covered_end_offset: coveredSceneEndOffset,
                 next_offset: coveredSceneEndOffset,
                 scene_spans: sceneSpans,
+                relaxed_matching: usedRelaxedMatching,
             };
         }
 
-        const sourceStart = sourceOffsetBase + (index.rawStarts[pos] ?? rawText.length);
-        const sourceEnd = sourceOffsetBase + (index.rawEnds[pos + sceneNorm.length - 1] ?? rawText.length);
+        const sourceStart = sourceOffsetBase + (index.rawStarts[matchStart] ?? rawText.length);
+        const sourceEnd = sourceOffsetBase + (index.rawEnds[matchEnd - 1] ?? rawText.length);
 
         if (coveredStartOffset == null) coveredStartOffset = sourceStart;
         coveredSceneEndOffset = sourceEnd;
         sceneSpans.push({
             source_start: sourceStart,
             source_end: sourceEnd,
-            normalized_start: pos,
-            normalized_end: pos + sceneNorm.length,
+            normalized_start: matchStart,
+            normalized_end: matchEnd,
+            match_method: matchMethod,
         });
 
-        cursor = skipWhitespaceForward(normalizedSource, pos + sceneNorm.length);
+        if (matchMethod !== 'verbatim') {
+            // For sentence-level match, the scene span is between first and last sentence.
+            // Log the relaxed matching for debugging.
+            console.log(JSON.stringify({
+                event: 'coverage_relaxed_match',
+                scene_index: i,
+                match_method: matchMethod,
+                first_sentence_pos: matchStart,
+                last_sentence_end: matchEnd,
+            }));
+        }
+
+        cursor = skipWhitespaceForward(normalizedSource, matchEnd);
     }
 
     const nextRawIdx = cursor >= normalizedSource.length
@@ -316,6 +403,7 @@ function computeSceneCoverage(rawText, sceneTexts, options = {}) {
         next_offset: nextRawIdx,
         gap_chars: 0,
         gap_preview: '',
+        relaxed_matching: usedRelaxedMatching,
     };
 }
 
@@ -329,5 +417,7 @@ module.exports = {
     getLastSentenceFragment,
     buildSceneEndNeedles,
     findLastSceneEndOffset,
+    splitTextIntoNormalizedSentences,
+    trySentenceLevelMatch,
     computeSceneCoverage,
 };
