@@ -264,7 +264,7 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
         const chId = chapterId();
         chFile = `${chId}.json`;
         chapterObj = {
-            chapter: chId,
+            chapter_id: chId,
             chapter_title: chapterTitle || null,
             type: 'chapter',
             chapter_index: chapterIndex,
@@ -293,7 +293,7 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
             try {
                 const bm = JSON.parse(fs.readFileSync(bookMetaPath, 'utf8'));
                 if (bm.structure?.chapters_order) {
-                    bm.structure.chapters_order.unshift(`${coverChapter.chapter}.json`);
+                    bm.structure.chapters_order.unshift(`${coverChapter.chapter_id}.json`);
                     fs.writeFileSync(bookMetaPath, JSON.stringify(bm, null, 2));
                 }
             } catch (_) {}

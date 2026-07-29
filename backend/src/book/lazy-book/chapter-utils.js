@@ -52,7 +52,7 @@ function createCoverChapter(title, author, language) {
     const sceneText = textParts.join('\n\n');
 
     return {
-        chapter: chId,
+        chapter_id: chId,
         chapter_title: 'Обложка',
         type: 'cover',
         scenes: [{
@@ -85,7 +85,7 @@ function saveCoverChapter(bookId, coverChapter) {
     const chDir = getChapterDir(bookDir);
     if (!fs.existsSync(chDir)) fs.mkdirSync(chDir, { recursive: true });
 
-    const chFile = `${coverChapter.chapter}.json`;
+    const chFile = `${coverChapter.chapter_id}.json`;
     const chPath = path.join(chDir, chFile);
     fs.writeFileSync(chPath, JSON.stringify(coverChapter, null, 2));
     console.log(`[LAZY-BOOK] Cover chapter saved to chapters/${chFile} for ${bookId}: "${coverChapter.chapter_title}"`);
