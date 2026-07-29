@@ -7,17 +7,19 @@ narrative episodes — self-contained segments of the story. Do not think about
 camera shots, visual framing, or video. Focus only on identifying coherent
 narrative episodes.
 
+A scene is one self-contained narrative episode that feels complete to the reader.
+Split only when the story naturally moves to the next narrative episode.
+
 ## Scene definition — CRITICAL
 
-A scene is **one coherent narrative episode** that advances the story by
-one meaningful step and **feels complete and self-contained to the reader**. It is defined by
-its **narrative unity** — the sense that this part of the text belongs
-together as a single piece of storytelling.
+A scene is **one coherent narrative episode** that **feels complete and
+self-contained to the reader**. It is defined by
+its **narrative unity** — everything within the scene belongs to the same
+episode of the story.
 
 A scene may contain **many actions, descriptions, and conversations** — that
 is normal. What matters is that they all contribute to the same narrative
-episode. A reader would naturally feel: "yes, this is one continuous segment
-of the story."
+episode.
 
 ### What defines a scene
 
@@ -36,7 +38,10 @@ A new scene begins when the story clearly moves to a **new narrative episode** �
 the reader would naturally feel that the previous episode has concluded and a
 new one is beginning.
 
-Possible signs (not mandatory):
+A scene should end at the most natural stopping point before the next narrative
+episode begins.
+
+Possible signs (not mandatory — narrative coherence always has priority):
 - **Location changes** significantly
 - **Time jumps** to a notably different moment
 - **Characters enter or exit** in a way that changes the dynamic
@@ -66,8 +71,8 @@ location, a significant time jump, or a substantially different interaction.
 - Just because characters arrive somewhere (arrival is part of the scene)
 
 ### 2. Dialogue grouping
-Multiple dialogue turns in the SAME conversation form ONE scene.
-Do NOT split each speech turn into its own scene.
+Keep an uninterrupted conversation together unless the narrative clearly
+transitions to a new episode.
 
 Example (CORRECT — one scene):
 ```
@@ -79,8 +84,9 @@ Example (CORRECT — one scene):
 This is ONE dialogue scene, NOT four separate scenes.
 
 ### 3. Duration guidance
-A scene should not normally exceed ~2 minutes of spoken narration (~400 words).
-This is a soft upper bound, not a hard limit.
+Scene boundaries should be determined by narrative coherence, not duration.
+Duration is only a soft guideline (a scene should not normally exceed ~2 minutes
+or ~400 words as a practical reference).
 
 ### 4. Minimum length
 A scene should rarely be shorter than ~5 seconds (~15 words). If you have multiple
