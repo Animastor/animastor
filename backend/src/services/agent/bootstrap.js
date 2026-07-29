@@ -441,6 +441,25 @@ async function bootstrapNextWindow(bookId, progress, publishProgress, redis) {
             status: allDone ? 'completed' : 'paused',
         });
 
+        // ── Clean up stale cached_scenes from old paused sessions ──
+        // After consuming the cache, null out cached_scenes in all older
+        // paused sessions so they can never be accidentally re-read even if
+        // the LIMIT 1 query somehow picks them up.
+        try {
+            const { query: cleanupQuery } = require('../../storage/postgres/database');
+            await cleanupQuery(
+                `UPDATE agent_sessions ` +
+                `SET window_data = jsonb_set(window_data, '{cached_scenes}', 'null'::jsonb) ` +
+                `WHERE book_id = $1 AND status = 'paused' AND session_id != $2 ` +
+                `AND window_data IS NOT NULL AND window_data->>'cached_scenes' IS NOT NULL`,
+                [bookId, sessionId]
+            );
+            console.log(`[AGENT] Cleaned up stale cached_scenes from old paused sessions for book ${bookId}`);
+        } catch (cleanupErr) {
+            // Best-effort — cleanup failure should not break the pipeline
+            console.warn(`[AGENT] Failed to clean up stale cached_scenes: ${cleanupErr.message}`);
+        }
+
         if (allDone) {
             lazyBook.updateBookState(bookId, lazyBook.BookState.ACTIVE);
             if (publishProgress) {
