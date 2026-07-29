@@ -359,14 +359,8 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
 
     // ── Create scenes — no artificial limit, AI creates natural narrative episodes ──
     // Extra scenes beyond effectiveChunkSize are cached for reuse in the next window.
-    // Safety cap: absolute maximum to prevent absurd results from model errors.
-    const MAX_SCENES_SAFETY = 50;
-    let aiScenes = await pipelineSteps.stepCreateScenes(sessionId, sceneText, characters, locations, stepIndex, _progress, null, effectiveChunkSize);
+    const aiScenes = await pipelineSteps.stepCreateScenes(sessionId, sceneText, characters, locations, stepIndex, _progress, null, effectiveChunkSize);
     if (!aiScenes || aiScenes.length === 0) throw new Error('AI returned no scenes');
-    if (aiScenes.length > MAX_SCENES_SAFETY) {
-        console.warn(`[AGENT] AI returned ${aiScenes.length} scenes — safety cap ${MAX_SCENES_SAFETY} applied`);
-        aiScenes.length = MAX_SCENES_SAFETY;
-    }
 
     // Split: first N for immediate processing, rest for cache
     let extraScenes = aiScenes.slice(effectiveChunkSize);
