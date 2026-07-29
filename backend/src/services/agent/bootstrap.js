@@ -118,7 +118,10 @@ async function bootstrapWithAgent(bookId, progress, publishProgress, redis) {
             throw new Error('AI returned no scenes — cannot create book');
         }
 
-        const extraScenes = [];
+        const extraScenes = result.extraScenes || [];
+        if (extraScenes.length > 0) {
+            console.log(`[AGENT] Caching ${extraScenes.length} extra scenes for next window`);
+        }
 
         const sceneConsumedOffset = result.nextOffset ?? result.coverage?.next_offset;
         if (!Number.isFinite(sceneConsumedOffset) || sceneConsumedOffset <= windowInfo.windowStartOffset) {
@@ -132,7 +135,7 @@ async function bootstrapWithAgent(bookId, progress, publishProgress, redis) {
             chapter_index: windowInfo.chapterIndex,
             total_scenes: result.allScenes.length,
             created_scenes: result.scenes.length,
-            remaining_scenes: extraScenes,
+            cached_scenes: extraScenes,
             remaining_text: actualRemaining,
             currentOffset: sceneConsumedOffset,
             windowStartOffset: windowInfo.windowStartOffset,
@@ -188,7 +191,7 @@ async function bootstrapWithAgent(bookId, progress, publishProgress, redis) {
             ...bookResult,
             session_id: sessionId,
             total_scenes_found: result.allScenes.length,
-            remaining_scenes: extraScenes.length,
+            remaining_scenes: extraScenes.length,  // deprecated, use cached_scenes
             has_more: !allDone,
         };
     } catch (err) {
@@ -304,7 +307,7 @@ async function bootstrapNextWindow(bookId, progress, publishProgress, redis) {
 
             if (prevStatus === 'paused' &&
                 (!windowData.remaining_text || windowData.remaining_text.length === 0) &&
-                (!windowData.remaining_scenes || windowData.remaining_scenes.length === 0)) {
+                (!windowData.cached_scenes || windowData.cached_scenes.length === 0)) {
                 console.log(`[AGENT] bootstrapNextWindow: paused with no remaining text/scenes, all done`);
                 return { session_id: null, cached: false, added_scenes: 0, all_done: true };
             }
@@ -369,7 +372,95 @@ async function bootstrapNextWindow(bookId, progress, publishProgress, redis) {
 
     const existingChars = windowData?.all_characters || [];
     const existingLocs = windowData?.all_locations || [];
+    const existingMentions = windowData?.all_mentions || {};
 
+    // ── Check for cached scenes first ──
+    const cachedScenes = windowData?.cached_scenes || [];
+    if (cachedScenes.length > 0) {
+        console.log(`[AGENT] bootstrapNextWindow: found ${cachedScenes.length} cached scenes, processing without AI`);
+        const chunkSize = await _readChunkSize(redis, bookId);
+        const batch = cachedScenes.slice(0, chunkSize);
+        const remaining = cachedScenes.slice(chunkSize);
+
+        const session = await createSession(bookId, 'txt_import');
+        const sessionId = session.session_id;
+
+        const bookDir = lazyBook.getBookDir(bookId);
+        const bp = lazyBook.getBookMetaPath(bookDir);
+        if (!fs.existsSync(bp)) throw new Error(`Book metadata not found: ${bookId}`);
+
+        const nextWindowIndex = (windowData?.window_index || 0) + 1;
+        const sceneOffset = windowData?.created_scenes || 0;
+
+        const result = await pipelineRunner.processCachedScenes(
+            sessionId, batch, existingChars, existingLocs, existingMentions,
+            nextWindowIndex, _progress, sceneOffset, {
+                publishProgress,
+                bookId,
+                redis,
+                chunkSize,
+            }
+        );
+
+        const structure = (windowData?.structure && windowData.structure.chapters) ? {
+            chapters: windowData.structure.chapters,
+            author: windowData.structure.author,
+            title: windowData.structure.title,
+            has_prologue: windowData.structure.has_prologue,
+            has_epilogue: windowData.structure.has_epilogue,
+            parts: windowData.structure.parts,
+            country: windowData.structure.country || null,
+            epoch: windowData.structure.epoch || null,
+        } : null;
+
+        const bookResult = lazyBook.appendToBook(bookId, {
+            characters: result.characters,
+            locations: result.locations,
+            mentions: result.mentions,
+            scenes: result.scenes,
+            maxScenes: chunkSize,
+            chapterTitle: windowData?.chapter_title || null,
+            chapterIndex: windowData?.chapter_index || 0,
+            structure: structure,
+        });
+
+        const updatedWindowData = {
+            ...windowData,
+            window_index: nextWindowIndex,
+            created_scenes: sceneOffset + result.scenes.length,
+            cached_scenes: remaining,
+        };
+
+        const noMoreCached = remaining.length === 0;
+        const hasRemainingText = !!(windowData?.remaining_text && windowData.remaining_text.length > 0);
+        const allDone = noMoreCached && !hasRemainingText;
+
+        await updateSession(sessionId, {
+            window_data: JSON.stringify(updatedWindowData),
+            progress_msg: `⟳ Обработано ${result.scenes.length} кэшированных сцен. Осталось: ${remaining.length} кэшированных`,
+            status: allDone ? 'completed' : 'paused',
+        });
+
+        if (allDone) {
+            lazyBook.updateBookState(bookId, lazyBook.BookState.ACTIVE);
+            if (publishProgress) {
+                try { publishProgress(bookId, { type: 'import_complete' }); } catch (_) {}
+            }
+        }
+
+        _progress({ stage: 'done', message: `✓ Кэшированные сцены: обработано ${result.scenes.length}. Всего: ${updatedWindowData.created_scenes}` });
+
+        return {
+            ...bookResult,
+            session_id: sessionId,
+            cached: true,
+            added_scenes: result.scenes.length,
+            remaining_cached: remaining.length,
+            all_done: allDone,
+        };
+    }
+
+    // ── No cached scenes — regular AI flow ──
     // Read chunk_size from layer-config for this book
     const chunkSize = await _readChunkSize(redis, bookId);
     console.log(`[AGENT] bootstrapNextWindow: using chunk_size=${chunkSize} for book ${bookId}`);
@@ -459,11 +550,14 @@ async function bootstrapNextWindow(bookId, progress, publishProgress, redis) {
             publishProgress,
             bookId,
             redis,
-            existingMentions: windowData?.all_mentions || {},
+            existingMentions: existingMentions,
             chunkSize,
         });
 
-        const extraScenes = [];
+        const extraScenes = result.extraScenes || [];
+        if (extraScenes.length > 0) {
+            console.log(`[AGENT] Caching ${extraScenes.length} extra scenes for next window`);
+        }
 
         const sceneConsumedOffset = result.nextOffset ?? result.coverage?.next_offset;
         if (!Number.isFinite(sceneConsumedOffset) || sceneConsumedOffset <= windowInfo.windowStartOffset) {
@@ -499,7 +593,7 @@ async function bootstrapNextWindow(bookId, progress, publishProgress, redis) {
             chapter_index: nextChapterIndex,
             total_scenes: result.allScenes.length,
             created_scenes: (windowData?.created_scenes || 0) + result.scenes.length,
-            remaining_scenes: extraScenes,
+            cached_scenes: extraScenes,
             remaining_text: actualRemaining,
             currentOffset: sceneConsumedOffset,
             windowStartOffset: windowInfo.windowStartOffset,

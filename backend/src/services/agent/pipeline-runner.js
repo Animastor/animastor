@@ -357,8 +357,14 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
     const totalScenesEstimate = Math.min(effectiveChunkSize, Math.ceil(sceneText.length / 200) || 1);
     publishVBook({ stage: 'creating_scenes', scene_index: 0, total_scenes: totalScenesEstimate, window_size: effectiveChunkSize, message: PROGRESS_STAGES.creating_scenes });
 
-    let scenes = capScenes(await pipelineSteps.stepCreateScenes(sessionId, sceneText, characters, locations, stepIndex, _progress, null, effectiveChunkSize));
-    if (!scenes || scenes.length === 0) throw new Error('AI returned no scenes');
+    // ── Create scenes with high MAX_SCENES limit (8) — AI creates natural episodes ──
+    // Extra scenes beyond effectiveChunkSize are cached for reuse in the next window.
+    const aiScenes = await pipelineSteps.stepCreateScenes(sessionId, sceneText, characters, locations, stepIndex, _progress, null, effectiveChunkSize);
+    if (!aiScenes || aiScenes.length === 0) throw new Error('AI returned no scenes');
+
+    // Split: first N for immediate processing, rest for cache
+    let extraScenes = aiScenes.slice(effectiveChunkSize);
+    let scenes = capScenes(aiScenes);
 
     let windowScenes = scenes;
     let { progressInfo, cov: coverage } = evaluateCoverage(windowScenes);
@@ -367,13 +373,16 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
     if (!coverage.ok) {
         console.warn(`[AGENT] scene coverage failed: ${coverage.reason} scene=${coverage.scene_index} gap=${coverage.gap_chars || 0}; retrying scene split`);
         coverageRetryCount += 1;
-        windowScenes = capScenes(await pipelineSteps.stepCreateScenes(sessionId, sceneText, characters, locations, stepIndex, _progress, coverage, effectiveChunkSize));
+        const retryAiScenes = await pipelineSteps.stepCreateScenes(sessionId, sceneText, characters, locations, stepIndex, _progress, coverage, effectiveChunkSize);
+        extraScenes = retryAiScenes.slice(effectiveChunkSize);
+        windowScenes = capScenes(retryAiScenes);
         ({ progressInfo, cov: coverage } = evaluateCoverage(windowScenes));
     }
 
     if (!coverage.ok) {
         console.warn(`[AGENT] scene coverage retry failed: ${coverage.reason}; using deterministic fallback`);
         coverageRetryCount += 1;
+        extraScenes = [];  // fallback scenes are deterministic — no extras
         windowScenes = capScenes(textUtils.buildFallbackScenes(sceneText));
         ({ progressInfo, cov: coverage } = evaluateCoverage(windowScenes));
         if (!coverage.ok) {
@@ -652,9 +661,283 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
         mentions,
         scenes: enrichedScenes,
         allScenes: windowScenes,
+        extraScenes,
         sceneConsumedLength: (progressInfo.nextOffset ?? coverage.next_offset) - sourceOffsetBase,
         nextOffset: progressInfo.nextOffset ?? coverage.next_offset,
         coverage,
+    };
+}
+
+// ======================================================
+// Process Cached Scenes — skip AI scene creation
+// ======================================================
+// Takes pre-built scenes (from cache) and processes them through
+// enrichment, units, visuals, and reconciliation passes.
+// Called from bootstrap when cached_scenes exist in window_data.
+
+async function processCachedScenes(sessionId, scenes, characters, locations, mentions, stepIndex, progress, baseSceneCount, options = {}) {
+    const _progress = progress || (() => {});
+    const { publishProgress, bookId, redis: redisClient } = options;
+    const sceneOffset = baseSceneCount || 0;
+    const effectiveChunkSize = _resolveChunkSize(options);
+
+    async function checkCancelled() {
+        const sessCancelled = await isSessionCancelled(sessionId);
+        if (sessCancelled) {
+            const err = new Error('Agent session was cancelled by user');
+            err.code = 'SESSION_CANCELLED';
+            throw err;
+        }
+        if (bookId) {
+            const bookCancelled = await isBookCancelled(bookId);
+            if (bookCancelled) {
+                try { await updateSession(sessionId, { status: 'cancelled' }); } catch (_) {}
+                const err = new Error('Agent session was cancelled by user');
+                err.code = 'SESSION_CANCELLED';
+                throw err;
+            }
+        }
+        let cancelledByRedis = false;
+        if (bookId && redisClient) {
+            try {
+                cancelledByRedis = !!await redisClient.sismember(`animastor:cancelled-workers:${bookId}`, 'vbook');
+            } catch (_) {}
+        }
+        if (cancelledByRedis) {
+            try { await updateSession(sessionId, { status: 'cancelled' }); } catch (_) {}
+            const err = new Error('Agent session was cancelled by user');
+            err.code = 'SESSION_CANCELLED';
+            throw err;
+        }
+    }
+
+    const publishVBook = (event) => {
+        if (publishProgress && bookId) {
+            try {
+                publishProgress(bookId, { type: 'vbook', ...event });
+            } catch (_) {}
+        }
+        if (event.window_scene_index != null && redisClient && bookId) {
+            try {
+                redisClient.set(
+                    `animastor:vbook-scene-idx:${bookId}`,
+                    String(event.window_scene_index),
+                    'EX', 3600
+                ).catch(() => {});
+            } catch (_) {}
+        }
+    };
+
+    console.log(`[CACHED-SCENES] Processing ${scenes.length} cached scenes for session ${sessionId}, book ${bookId}`);
+
+    // ── Normalize characters_present → participants ──
+    let windowScenes = scenes.map(s => ({
+        ...s,
+        participants: s.participants || s.characters_present || [],
+    }));
+
+    // ── Scene enrichment ──
+    windowScenes = await pipelineSteps.stepEnrichScenes(sessionId, windowScenes, characters, locations, stepIndex, _progress);
+
+    const enrichedScenes = [];
+    for (let si = 0; si < windowScenes.length; si++) {
+        await checkCancelled();
+        const scene = windowScenes[si];
+        const globalSceneIndex = sceneOffset + si;
+
+        const windowSceneIndex = si + 1;
+        const windowTotalScenes = windowScenes.length;
+        const windowStartScene = sceneOffset + 1;
+        const unitMsg = PROGRESS_STAGES.creating_units(globalSceneIndex);
+        publishVBook({
+            stage: 'creating_units',
+            scene_index: globalSceneIndex + 1,
+            total_scenes: sceneOffset + windowTotalScenes,
+            window_size: effectiveChunkSize,
+            window_scene_index: windowSceneIndex,
+            window_total_scenes: windowTotalScenes,
+            window_start_scene: windowStartScene,
+            message: unitMsg,
+        });
+
+        const units = await pipelineSteps.stepCreateUnits(sessionId, scene, globalSceneIndex, characters, stepIndex, _progress, mentions);
+
+        // ── Split long units (duration > 20s) ──
+        const splitUnits = await splitLongUnits(
+            sessionId, scene, units,
+            globalSceneIndex, stepIndex, _progress
+        );
+
+        const visualMsg = PROGRESS_STAGES.creating_visuals(globalSceneIndex);
+        publishVBook({
+            stage: 'creating_visuals',
+            scene_index: globalSceneIndex + 1,
+            total_scenes: sceneOffset + windowTotalScenes,
+            window_size: effectiveChunkSize,
+            window_scene_index: windowSceneIndex,
+            window_total_scenes: windowTotalScenes,
+            window_start_scene: windowStartScene,
+            message: visualMsg,
+        });
+
+        const nextScene = windowScenes[si + 1] || null;
+        const visualUnits = await pipelineSteps.stepCreateVisuals(sessionId, scene, splitUnits, globalSceneIndex, characters, locations, stepIndex, _progress, nextScene, mentions, options.promptProfiles);
+
+        enrichedScenes.push({
+            ...scene,
+            source_start: scene.source_start ?? null,
+            source_end: scene.source_end ?? null,
+            units: visualUnits,
+        });
+    }
+
+    await checkCancelled();
+
+    // ── Passport reconciliation pass ──
+    if (enrichedScenes.length > 0) {
+        const allVisualUnits = enrichedScenes.flatMap((scene, si) =>
+            (scene.units || []).map((unit, ui) => ({
+                sceneIndex: si,
+                unitIndex: ui,
+                sceneTitle: scene.title || '',
+                sceneText: scene.text || '',
+                text: unit.text,
+                type: unit.type,
+                image: unit.image || {},
+            }))
+        );
+
+        if (allVisualUnits.length >= 1) {
+            const reconciled = await pipelineSteps.stepReconcilePassports(sessionId, allVisualUnits, characters, stepIndex, _progress);
+
+            for (const rec of reconciled) {
+                const scene = enrichedScenes[rec.sceneIndex];
+                if (scene && scene.units[rec.unitIndex]) {
+                    const unit = scene.units[rec.unitIndex];
+                    if (rec.image?.prompt) {
+                        unit.image = unit.image || {};
+                        unit.image.prompt = rec.image.prompt;
+                        if (rec.image?.shot) unit.image.shot = rec.image.shot;
+                    }
+                    if (rec.video?.action) {
+                        unit.video = unit.video || {};
+                        unit.video.action = rec.video.action;
+                    }
+                }
+            }
+        }
+    }
+
+    await checkCancelled();
+
+    // ── Video action reconciliation pass ──
+    if (enrichedScenes.length > 0) {
+        const allVisualUnits = enrichedScenes.flatMap((scene, si) =>
+            (scene.units || []).map((unit, ui) => ({
+                sceneIndex: si,
+                unitIndex: ui,
+                sceneTitle: scene.title || '',
+                sceneText: scene.text || '',
+                text: unit.text,
+                type: unit.type,
+                image: unit.image || {},
+                video: unit.video || {},
+            }))
+        );
+
+        if (allVisualUnits.length >= 1) {
+            const reconciled = await pipelineSteps.stepReconcileVideoActions(sessionId, allVisualUnits, characters, stepIndex, _progress, options.promptProfiles);
+
+            for (const rec of reconciled) {
+                const scene = enrichedScenes[rec.sceneIndex];
+                if (scene && scene.units[rec.unitIndex]) {
+                    const unit = scene.units[rec.unitIndex];
+                    if (rec.video?.action) {
+                        unit.video = unit.video || {};
+                        unit.video.action = rec.video.action;
+                    }
+                }
+            }
+        }
+    }
+
+    await checkCancelled();
+
+    // ── Storyboard polish pass ──
+    if (enrichedScenes.length > 0) {
+        const allVisualUnits = enrichedScenes.flatMap((scene, si) =>
+            (scene.units || []).map((unit, ui) => ({
+                sceneIndex: si,
+                unitIndex: ui,
+                sceneTitle: scene.title || '',
+                sceneText: scene.text || '',
+                text: unit.text,
+                type: unit.type,
+                image: unit.image || {},
+            }))
+        );
+
+        if (allVisualUnits.length >= 2) {
+            const polished = await pipelineSteps.stepPolishStoryboard(sessionId, allVisualUnits, characters, locations, stepIndex, _progress, options.promptProfiles);
+
+            for (const pu of polished) {
+                const scene = enrichedScenes[pu.sceneIndex];
+                if (scene && scene.units[pu.unitIndex]) {
+                    const unit = scene.units[pu.unitIndex];
+                    if (pu.image?.prompt) {
+                        unit.image = unit.image || {};
+                        unit.image.prompt = pu.image.prompt;
+                        if (pu.image?.shot) unit.image.shot = pu.image.shot;
+                    }
+                    if (pu.video?.action) {
+                        unit.video = unit.video || {};
+                        unit.video.action = pu.video.action;
+                    }
+                }
+            }
+        }
+    }
+
+    await checkCancelled();
+
+    // ── Video action polish pass ──
+    if (enrichedScenes.length > 0) {
+        const allVisualUnits = enrichedScenes.flatMap((scene, si) =>
+            (scene.units || []).map((unit, ui) => ({
+                sceneIndex: si,
+                unitIndex: ui,
+                sceneTitle: scene.title || '',
+                sceneText: scene.text || '',
+                text: unit.text,
+                type: unit.type,
+                image: unit.image || {},
+                video: unit.video || {},
+            }))
+        );
+
+        if (allVisualUnits.length >= 2) {
+            const polished = await pipelineSteps.stepPolishVideoActions(sessionId, allVisualUnits, characters, locations, stepIndex, _progress, options.promptProfiles);
+
+            for (const pu of polished) {
+                const scene = enrichedScenes[pu.sceneIndex];
+                if (scene && scene.units[pu.unitIndex]) {
+                    const unit = scene.units[pu.unitIndex];
+                    if (pu.video?.action) {
+                        unit.video = unit.video || {};
+                        unit.video.action = pu.video.action;
+                    }
+                }
+            }
+        }
+    }
+
+    console.log(`[CACHED-SCENES] Done processing ${enrichedScenes.length} cached scenes`);
+    return {
+        characters,
+        locations,
+        mentions,
+        scenes: enrichedScenes,
+        allScenes: windowScenes,
     };
 }
 
@@ -662,4 +945,5 @@ module.exports = {
     getWindowText,
     resolveSceneProgress,
     runPipeline,
+    processCachedScenes,
 };

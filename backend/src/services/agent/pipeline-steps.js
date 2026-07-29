@@ -110,7 +110,9 @@ async function stepExtractLocations(sessionId, text, characters, stepIndex, prog
 }
 
 async function stepCreateScenes(sessionId, text, characters, locations, stepIndex, progress, repairHint, chunkSize) {
-    const effectiveMaxScenes = (chunkSize != null) ? Math.max(1, Math.min(5, chunkSize)) : MAX_SCENES_PER_CHUNK;
+    // High limit — AI creates natural scenes, pipeline caps to chunkSize later.
+    // Cached extra scenes are reused in the next window without re-calling AI.
+    const effectiveMaxScenes = 8;
     const _progress = progress || (() => {});
     _progress({ stage: 'creating_scenes', message: PROGRESS_STAGES.creating_scenes });
     await updateSession(sessionId, { progress_msg: PROGRESS_STAGES.creating_scenes });
