@@ -154,18 +154,99 @@ describe('unit-splitter', function() {
                 { text: 'Short one.', type: 'narration' },
                 { text: 'Another short one.', type: 'narration' },
             ];
-            const result = await splitLongUnits('session', {}, units, [], 0, 0, () => {});
+            const result = await splitLongUnits('session', {}, units, 0, 0, () => {});
             expect(result).to.equal(units); // same array reference
         });
 
         it('returns empty array for empty input', async () => {
-            const result = await splitLongUnits('session', {}, [], [], 0, 0, () => {});
+            const result = await splitLongUnits('session', {}, [], 0, 0, () => {});
             expect(result).to.deep.equal([]);
         });
 
         it('returns empty array for null input', async () => {
-            const result = await splitLongUnits('session', {}, null, [], 0, 0, () => {});
+            const result = await splitLongUnits('session', {}, null, 0, 0, () => {});
             expect(result).to.deep.equal([]);
+        });
+    });
+
+    describe('splitLongUnits (AI mock)', () => {
+        it('uses emergency fallback when AI returns empty (AI fails)', async () => {
+            const proxyquire = require('proxyquire');
+            const unitSplitterMock = proxyquire('../src/services/agent/unit-splitter', {
+                './ai-caller': {
+                    callAI: async () => ({ units: [] }),
+                    logConversation: async () => {},
+                },
+                '../agent-session': {
+                    updateSession: async () => {},
+                },
+            });
+
+            // ~70 words → ~21s > 20s
+            const longText = Array(70).fill('word').join(' ');
+            const units = [
+                { text: 'Short one.', type: 'narration' },
+                { text: longText, type: 'narration' },
+                { text: 'Another short.', type: 'narration' },
+            ];
+            const result = await unitSplitterMock.splitLongUnits('test-uuid', {}, units, 0, 0, () => {});
+            // Long unit should be split via emergency fallback
+            expect(result.length).to.be.above(units.length);
+        });
+
+        it('uses AI split when AI returns valid split', async () => {
+            const proxyquire = require('proxyquire');
+            const unitSplitterMock = proxyquire('../src/services/agent/unit-splitter', {
+                './ai-caller': {
+                    callAI: async () => ({
+                        units: [
+                            { text: 'First part of the long narration that goes on and on.', type: 'narration' },
+                            { text: 'Second part continuing the thought.', type: 'narration' },
+                        ],
+                    }),
+                    logConversation: async () => {},
+                },
+                '../agent-session': {
+                    updateSession: async () => {},
+                },
+            });
+
+            const longText = Array(70).fill('word').join(' ');
+            const units = [{ text: longText, type: 'narration' }];
+            const result = await unitSplitterMock.splitLongUnits('test-uuid', {}, units, 0, 0, () => {});
+            // Should use AI result: 2 units
+            expect(result).to.have.length(2);
+            expect(result[0].text).to.include('First part');
+        });
+
+        it('preserves dialogue audio.speaker via AI split', async () => {
+            const proxyquire = require('proxyquire');
+            const unitSplitterMock = proxyquire('../src/services/agent/unit-splitter', {
+                './ai-caller': {
+                    callAI: async () => ({
+                        units: [
+                            { text: 'First sentence.', type: 'dialogue' },
+                            { text: 'Second sentence.', type: 'dialogue' },
+                        ],
+                    }),
+                    logConversation: async () => {},
+                },
+                '../agent-session': {
+                    updateSession: async () => {},
+                },
+            });
+
+            const longText = Array(70).fill('word').join(' ');
+            const units = [{
+                text: longText,
+                type: 'dialogue',
+                audio: { text: longText, speaker: 'berlioz' },
+            }];
+            const result = await unitSplitterMock.splitLongUnits('test-uuid', {}, units, 0, 0, () => {});
+            expect(result).to.have.length(2);
+            // First fragment should get audio from original
+            expect(result[0].audio).to.be.ok;
+            expect(result[0].audio.speaker).to.equal('berlioz');
         });
     });
 });

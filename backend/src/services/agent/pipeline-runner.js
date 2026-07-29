@@ -432,7 +432,7 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
 
         // ── Split long units (duration > 20s) ──
         const splitUnits = await splitLongUnits(
-            sessionId, scene, units, characters,
+            sessionId, scene, units,
             globalSceneIndex, stepIndex, _progress
         );
 

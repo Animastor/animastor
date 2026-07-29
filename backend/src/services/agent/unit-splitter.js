@@ -48,6 +48,42 @@ function findLongUnits(units) {
         .filter(({ duration }) => duration > MAX_UNIT_DURATION_SEC);
 }
 
+/**
+ * Log a structured debug line with unit duration statistics.
+ * Useful for collecting data on unit sizes in production.
+ * Format is JSON-friendly for grep | jq analysis.
+ * @param {Array} units - Units array
+ * @param {string} label - Context label (e.g. "before_split", "after_split")
+ * @param {number} sceneIndex - Scene index for context
+ */
+function logDurationStats(units, label, sceneIndex) {
+    if (!units || units.length === 0) return;
+    const durations = units.map((u, i) => ({
+        index: i,
+        type: u.type || '?',
+        dur_sec: getUnitDurationSec(u.text || ''),
+        words: (u.text || '').split(/\s+/).filter(Boolean).length,
+        text_preview: (u.text || '').substring(0, 80),
+    }));
+    const totalDur = durations.reduce((s, d) => s + d.dur_sec, 0);
+    const maxDur = Math.max(...durations.map(d => d.dur_sec));
+    const avgDur = totalDur / durations.length;
+    const overLimit = durations.filter(d => d.dur_sec > MAX_UNIT_DURATION_SEC).length;
+
+    console.log(JSON.stringify({
+        event: 'iu_duration_stats',
+        scene_index: sceneIndex,
+        label,
+        unit_count: units.length,
+        total_duration_sec: Math.round(totalDur * 10) / 10,
+        avg_duration_sec: Math.round(avgDur * 10) / 10,
+        max_duration_sec: Math.round(maxDur * 10) / 10,
+        over_limit_count: overLimit,
+        over_limit_max_sec: MAX_UNIT_DURATION_SEC,
+        units: durations,
+    }));
+}
+
 // ── Emergency fallbacks (AI-agnostic) ──
 
 /**
@@ -238,19 +274,21 @@ async function splitOneUnit(sessionId, units, longIndex, longUnit) {
  * @param {string} sessionId - Agent session ID
  * @param {object} scene - The scene object
  * @param {Array<{text: string, type: string}>} units - Units created by stepCreateUnits
- * @param {Array} characters - Character list
  * @param {number} sceneIndex - Global scene index
  * @param {number} stepIndex - Pipeline step index
  * @param {function} progress - Progress callback
  * @returns {Promise<Array>} Split units (or original if none were too long)
  */
-async function splitLongUnits(sessionId, scene, units, characters, sceneIndex, stepIndex, progress) {
+async function splitLongUnits(sessionId, scene, units, sceneIndex, stepIndex, progress) {
     const _progress = progress || (() => {});
 
     if (!units || units.length === 0) {
         console.log(`[UNIT-SPLITTER] Scene ${sceneIndex}: no units to check`);
         return units || [];
     }
+
+    // Debug: log pre-split duration stats
+    logDurationStats(units, 'before_split', sceneIndex);
 
     // 1. Find long units
     const longUnits = findLongUnits(units);
@@ -286,6 +324,9 @@ async function splitLongUnits(sessionId, scene, units, characters, sceneIndex, s
         console.log(`[UNIT-SPLITTER] Scene ${sceneIndex}: all ${result.length} units OK (was ${units.length}) after split`);
     }
 
+    // Debug: log post-split duration stats (always, even if unchanged)
+    logDurationStats(result, 'after_split', sceneIndex);
+
     return result;
 }
 
@@ -293,6 +334,7 @@ module.exports = {
     splitLongUnits,
     findLongUnits,
     getUnitDurationSec,
+    logDurationStats,
     emergencySplit,
     splitBySentences,
     splitByCommas,
