@@ -208,7 +208,12 @@ module.exports = function(app, redis, deps) {
             replyText = replyText.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
             // Strip tool_call & tool_call markers that some models leak into content
             replyText = replyText.replace(/<tool_call>[\s\S]*?<\/tool_call>/g, '').trim();
-            replyText = replyText.replace(/<tool_call>/g, '').replace(/<\/tool_call>/g, '').trim();
+            replyText = replyText.replace(/<\/?tool_call[^>]*>/gi, '').trim();
+            // If after stripping, the reply is just garbage remnants (e.g. 'ool_call>'), treat as empty
+            // so the fallback message below kicks in
+            if (replyText && replyText.length < 8 && !/[\w\u0400-\u04FF]{3,}/.test(replyText)) {
+                replyText = '';
+            }
             const toolCalls = aiMessage?.tool_calls || [];
 
             // Handle tool calls
@@ -245,9 +250,13 @@ module.exports = function(app, redis, deps) {
                 try {
                     const patchResult = chatEngine.applyPatches(bookData, patches);
                     if (patchResult.result) {
-                        const bookDir = lazyBook.getBookDir(bookId);
-                        const bookPath = require('path').join(bookDir, 'book.json');
-                        fs.writeFileSync(bookPath, JSON.stringify(patchResult.result, null, 2));
+                        // Use saveBookBundle to persist all book files correctly:
+                        // - bible -> bible.json
+                        // - locations -> locations.json
+                        // - voices -> voices.json
+                        // - book -> book.json (metadata)
+                        // - chapters -> chapters/*.json
+                        book.saveBookBundle(patchResult.result);
                         log('[AI] Book updated via patches:', patches.length, 'patches applied to', bookId);
                     }
                     if (patchResult.errors.length > 0 && !lastEditError) {
