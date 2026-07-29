@@ -28,6 +28,7 @@ import com.example.animastor.repository.AiChatRequest
 import com.example.animastor.repository.AiMessage
 import com.example.animastor.repository.BookData
 import com.example.animastor.repository.ChatSessionApi
+import com.example.animastor.repository.ToolCallResult
 import com.example.animastor.repository.unitIndex
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.color.MaterialColors
@@ -650,15 +651,23 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
                 if ((sessionAtSend != null && currentSessionId != sessionAtSend) || !isAdded) return@launch
 
                 apiMessages.add(AiMessage(role = "assistant", content = response.reply))
+
+                // Build display text: use reply if non-empty, else show tool results summary
+                val displayText = if (response.reply.isNotBlank()) {
+                    response.reply
+                } else {
+                    buildToolResultMessage(response.toolResults ?: emptyList(), response.patchesApplied)
+                }
+
                 val aiMsg = if (response.bookId != null) {
                     var bookId_ = response.bookId
                     if (bookId_.contains("api/v1/book/")) {
                         bookId_ = bookId_.substringAfterLast("/api/v1/book/").substringBeforeLast("/")
                     }
                     val downloadUrl = "${com.example.animastor.BuildConfig.BASE_URL}api/v1/book/${bookId_}/download"
-                    ChatMessage(text = response.reply, isUser = false, downloadUrl = downloadUrl)
+                    ChatMessage(text = displayText, isUser = false, downloadUrl = downloadUrl)
                 } else {
-                    ChatMessage(text = response.reply, isUser = false)
+                    ChatMessage(text = displayText, isUser = false)
                 }
                 messages.add(aiMsg)
 
@@ -778,6 +787,25 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
         b.topicScrollLeft.isEnabled = canLeft
         b.topicScrollRight.alpha = if (canRight) 1.0f else 0.3f
         b.topicScrollRight.isEnabled = canRight
+    }
+
+    private fun buildToolResultMessage(toolResults: List<ToolCallResult>, patchesApplied: Int): String {
+        if (patchesApplied > 0) {
+            return "✅ Changes applied: $patchesApplied patch(es) to the book."
+        }
+        val errors = toolResults.filter { it.error != null }
+        val successes = toolResults.filter { it.result != null || it.applied != null }
+        val parts = mutableListOf<String>()
+        if (errors.isNotEmpty()) {
+            parts.addAll(errors.map { "⚠️ ${it.tool}: ${it.error}" })
+        }
+        if (successes.isNotEmpty()) {
+            parts.addAll(successes.map {
+                if (it.applied != null && it.applied > 0) "✅ ${it.tool}: ${it.applied} change(s) applied"
+                else "✅ ${it.tool}: ${it.result ?: "done"}"
+            })
+        }
+        return if (parts.isEmpty()) "🤖 Tool executed." else parts.joinToString("\n")
     }
 
     private fun scrollToBottom() {

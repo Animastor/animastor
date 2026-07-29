@@ -4,9 +4,30 @@ All notable changes to Animastor are documented here.
 
 ---
 
-## [Unreleased] — 2026-07-27
+## [Unreleased] — 2026-07-29
 
 ### Fixed
+
+- **AI Editor mode: сырые `<tool_call>` теги в чате + пустой ответ при tool calls**
+  (`backend/src/routes/ai-routes.cjs`,
+  `frontend/.../AiAssistantFragment.kt`,
+  `frontend/.../AiChatModels.kt`,
+  `frontend/.../ChatMessage.kt`):
+  - **Проблема:** AI-модели при вызове `edit_book` возвращали `content: null`
+    и `<tool_call>` маркеры. Фронтенд отображал пустую строку или сырые
+    `tool_call>` теги. `edit_book` выполнялся, но пользователь не видел ни
+    результата, ни ошибки.
+  - **Фикс (backend):** стриппинг `<tool_call>` тегов из reply; при пустом
+    content генерируется понятное сообщение (`✅ Changes applied: N patch(es)`
+    или `⚠️ Edit error: ...`). Устранена двойная валидация `applyPatches`.
+  - **Фикс (frontend AiChatModels.kt):** добавлены `toolResults` и
+    `patchesApplied` в `AiChatResponse`.
+  - **Фикс (frontend AiAssistantFragment.kt):** обработка tool_results —
+    если reply пустой, формируется сообщение из результатов вызова
+    инструментов.
+  - **Фикс (frontend ChatMessage.kt):** fallback-стриппинг `<tool_call>`
+    тегов в markdown-рендерере.
+  - Syntax check OK.
 
 - **F1: sync asset.audio → FAILED in recoverAudioOrchStates (2 missing branches)**
   (`backend/src/runtime/reconciliation-engine.js`):

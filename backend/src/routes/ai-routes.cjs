@@ -206,11 +206,15 @@ module.exports = function(app, redis, deps) {
             let replyText = aiMessage?.content || '';
             // Strip AI chain-of-thought reasoning blocks — internal, not for the UI
             replyText = replyText.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+            // Strip tool_call & tool_call markers that some models leak into content
+            replyText = replyText.replace(/<tool_call>[\s\S]*?<\/tool_call>/g, '').trim();
+            replyText = replyText.replace(/<tool_call>/g, '').replace(/<\/tool_call>/g, '').trim();
             const toolCalls = aiMessage?.tool_calls || [];
 
             // Handle tool calls
             let patches = [];
             let toolResults = [];
+            let lastEditError = null;
 
             if (toolCalls.length > 0) {
                 for (const tc of toolCalls) {
@@ -218,14 +222,17 @@ module.exports = function(app, redis, deps) {
                         try {
                             const args = JSON.parse(tc.function.arguments);
                             const patchResult = chatEngine.applyPatches(bookData, args.patches || []);
-                            patches = patchResult.result ? (args.patches || []) : [];
                             if (patchResult.errors.length > 0) {
-                                toolResults.push({ tool: 'edit_book', error: patchResult.errors.join('; ') });
+                                const errMsg = patchResult.errors.join('; ');
+                                toolResults.push({ tool: 'edit_book', error: errMsg });
+                                lastEditError = errMsg;
                             } else {
+                                patches = args.patches || [];
                                 toolResults.push({ tool: 'edit_book', applied: patches.length, book_id: bookId });
                             }
                         } catch (parseErr) {
                             toolResults.push({ tool: 'edit_book', error: parseErr.message });
+                            lastEditError = parseErr.message;
                         }
                     } else {
                         toolResults.push({ tool: tc.function.name, result: 'Tool executed (no handler)' });
@@ -236,15 +243,30 @@ module.exports = function(app, redis, deps) {
             // Save patches if any were applied
             if (patches.length > 0 && bookData) {
                 try {
-                    const updatedBook = chatEngine.applyPatches(bookData, patches).result;
-                    if (updatedBook) {
+                    const patchResult = chatEngine.applyPatches(bookData, patches);
+                    if (patchResult.result) {
                         const bookDir = lazyBook.getBookDir(bookId);
                         const bookPath = require('path').join(bookDir, 'book.json');
-                        fs.writeFileSync(bookPath, JSON.stringify(updatedBook, null, 2));
+                        fs.writeFileSync(bookPath, JSON.stringify(patchResult.result, null, 2));
                         log('[AI] Book updated via patches:', patches.length, 'patches applied to', bookId);
+                    }
+                    if (patchResult.errors.length > 0 && !lastEditError) {
+                        lastEditError = patchResult.errors.join('; ');
                     }
                 } catch (saveErr) {
                     console.error('[AI] Failed to save updated book:', saveErr.message);
+                    lastEditError = saveErr.message;
+                }
+            }
+
+            // Build a user-visible reply when the AI returned empty content but tool calls were processed
+            if (!replyText && toolCalls.length > 0) {
+                if (lastEditError) {
+                    replyText = `⚠️ Edit error: ${lastEditError}`;
+                } else if (patches.length > 0) {
+                    replyText = `✅ Changes applied: ${patches.length} patch(es) to the book.`;
+                } else {
+                    replyText = `🤖 Processed ${toolCalls.length} tool call(s).`;
                 }
             }
 

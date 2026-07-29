@@ -23,9 +23,19 @@ data class AiMessage(
     val content: String
 ) : java.io.Serializable
 
+data class ToolCallResult(
+    val tool: String,
+    val result: String? = null,
+    val error: String? = null,
+    val applied: Int? = null,
+    @SerializedName("book_id") val bookId: String? = null
+)
+
 data class AiChatResponse(
     val reply: String,
     @SerializedName("book_edited") val bookEdited: Boolean = false,
     @SerializedName("book_id") val bookId: String? = null,
-    @SerializedName("session_id") val sessionId: String? = null
+    @SerializedName("session_id") val sessionId: String? = null,
+    @SerializedName("tool_results") val toolResults: List<ToolCallResult>? = null,
+    @SerializedName("patches_applied") val patchesApplied: Int = 0
 )
