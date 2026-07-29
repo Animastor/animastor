@@ -177,18 +177,23 @@ app.post('/api/v1/book/import', multer().single('file'), async (req, res) => {
             });
         } else {
             // ── TXT path — same logic as /import-txt ──
-            const fileHash = crypto.createHash('sha256').update(buf).digest('hex');
-
             const decoded = txtImporter.decodeTxtBuffer(buf);
             if (decoded.error) return res.status(400).json({ error: decoded.error });
 
             const sourceText = decoded.text;
             const title = path.basename(req.file.originalname, '.txt');
 
+            // ⚠️ Hash MUST be computed from the DECODED text (UTF-8), NOT from the
+            // raw buffer. Source files may be in CP1251/koi8/etc — the raw bytes
+            // differ from the UTF-8 bytes written to source.txt on disk. Using the
+            // raw buffer hash would make the disk-fallback never find a match.
+            const fileHash = crypto.createHash('sha256').update(Buffer.from(sourceText, 'utf8')).digest('hex');
+            const sourceSize = Buffer.byteLength(sourceText, 'utf8');
+
             let existingBookId = null;
             // ── Phase 1: PG book_source lookup ──
             try {
-                const candidates = await bookSourceRepo.findCandidateBySize(buf.length);
+                const candidates = await bookSourceRepo.findCandidateBySize(sourceSize);
                 if (candidates && candidates.length > 0) {
                     const existing = await bookSourceRepo.findByHash(fileHash);
                     if (existing) {
@@ -213,7 +218,7 @@ app.post('/api/v1/book/import', multer().single('file'), async (req, res) => {
             // This only runs once per book — after PG record is re-registered,
             // subsequent imports use the fast PG path.
             if (!existingBookId) {
-                const diskFound = findLazyBookByHash(fileHash, lazyBook.getBooksDir(), buf.length);
+                const diskFound = findLazyBookByHash(fileHash, lazyBook.getBooksDir(), sourceSize);
                 if (diskFound) {
                     const existingStatus = lazyBook.getBookStatus(diskFound);
                     if (existingStatus && existingStatus.state) {
@@ -221,7 +226,7 @@ app.post('/api/v1/book/import', multer().single('file'), async (req, res) => {
                         log(`[UNIFIED-IMPORT] DEDUP (disk fallback): found ${existingBookId} for hash ${fileHash}`);
                         // Re-register PG record so next import uses fast path
                         try {
-                            await bookSourceRepo.registerSource(fileHash, req.file.originalname, buf.length, existingBookId, 'txt');
+                            await bookSourceRepo.registerSource(fileHash, req.file.originalname, sourceSize, existingBookId, 'txt');
                             log(`[UNIFIED-IMPORT] Re-registered book_source for ${existingBookId}`);
                         } catch (regErr) {
                             console.warn(`[UNIFIED-IMPORT] Failed to re-register book_source (non-fatal): ${regErr.message}`);
@@ -251,13 +256,13 @@ app.post('/api/v1/book/import', multer().single('file'), async (req, res) => {
             fs.writeFileSync(mp, JSON.stringify(m, null, 2));
 
             try {
-                await bookSourceRepo.registerSource(fileHash, req.file.originalname, buf.length, draft.bookId, 'txt');
+                await bookSourceRepo.registerSource(fileHash, req.file.originalname, sourceSize, draft.bookId, 'txt');
                 log(`[UNIFIED-IMPORT] Registered source: ${fileHash} → ${draft.bookId}`);
             } catch (pgErr) {
                 console.warn(`[UNIFIED-IMPORT] Failed to register source (non-fatal): ${pgErr.message}`);
             }
 
-            log(`[UNIFIED-IMPORT] RAW_IMPORTED: ${draft.bookId} (${Buffer.byteLength(sourceText, 'utf8')} bytes)`);
+            log(`[UNIFIED-IMPORT] RAW_IMPORTED: ${draft.bookId} (${sourceSize} bytes)`);
             return res.json({
                 format: 'txt',
                 book_id: draft.bookId, build_id: m.build_id, title, state: lazyBook.BookState.RAW_IMPORTED,
@@ -453,18 +458,23 @@ function detectFileFormat(buf) {
         try {
             if (!req.file) return res.status(400).json({ error: 'file missing' });
 
-            const fileHash = crypto.createHash('sha256').update(req.file.buffer).digest('hex');
-
             const decoded = txtImporter.decodeTxtBuffer(req.file.buffer);
             if (decoded.error) return res.status(400).json({ error: decoded.error });
 
             const sourceText = decoded.text;
             const title = path.basename(req.file.originalname, '.txt');
 
+            // ⚠️ Hash MUST be computed from the DECODED text (UTF-8), NOT from the
+            // raw buffer. Source files may be in CP1251/koi8/etc — the raw bytes
+            // differ from the UTF-8 bytes written to source.txt on disk. Using the
+            // raw buffer hash would make the disk-fallback never find a match.
+            const fileHash = crypto.createHash('sha256').update(Buffer.from(sourceText, 'utf8')).digest('hex');
+            const sourceSize = Buffer.byteLength(sourceText, 'utf8');
+
             let existingBookId = null;
             // ── Phase 1: PG book_source lookup ──
             try {
-                const candidates = await bookSourceRepo.findCandidateBySize(req.file.buffer.length);
+                const candidates = await bookSourceRepo.findCandidateBySize(sourceSize);
                 if (candidates && candidates.length > 0) {
                     const existing = await bookSourceRepo.findByHash(fileHash);
                     if (existing) {
@@ -489,7 +499,7 @@ function detectFileFormat(buf) {
             // This only runs once per book — after PG record is re-registered,
             // subsequent imports use the fast PG path.
             if (!existingBookId) {
-                const diskFound = findLazyBookByHash(fileHash, lazyBook.getBooksDir(), req.file.buffer.length);
+                const diskFound = findLazyBookByHash(fileHash, lazyBook.getBooksDir(), sourceSize);
                 if (diskFound) {
                     const existingStatus = lazyBook.getBookStatus(diskFound);
                     if (existingStatus && existingStatus.state) {
@@ -497,7 +507,7 @@ function detectFileFormat(buf) {
                         log(`[IMPORT-TXT] DEDUP (disk fallback): found ${existingBookId} for hash ${fileHash}`);
                         // Re-register PG record so next import uses fast path
                         try {
-                            await bookSourceRepo.registerSource(fileHash, req.file.originalname, req.file.buffer.length, existingBookId, 'txt');
+                            await bookSourceRepo.registerSource(fileHash, req.file.originalname, sourceSize, existingBookId, 'txt');
                             log(`[IMPORT-TXT] Re-registered book_source for ${existingBookId}`);
                         } catch (regErr) {
                             console.warn(`[IMPORT-TXT] Failed to re-register book_source (non-fatal): ${regErr.message}`);
@@ -526,13 +536,13 @@ function detectFileFormat(buf) {
             fs.writeFileSync(mp, JSON.stringify(m, null, 2));
 
             try {
-                await bookSourceRepo.registerSource(fileHash, req.file.originalname, req.file.buffer.length, draft.bookId, 'txt');
+                await bookSourceRepo.registerSource(fileHash, req.file.originalname, sourceSize, draft.bookId, 'txt');
                 log(`[IMPORT-TXT] Registered source: ${fileHash} → ${draft.bookId}`);
             } catch (pgErr) {
                 console.warn(`[IMPORT-TXT] Failed to register source (non-fatal): ${pgErr.message}`);
             }
 
-            log(`[IMPORT-TXT] RAW_IMPORTED: ${draft.bookId} (${Buffer.byteLength(sourceText, 'utf8')} bytes)`);
+            log(`[IMPORT-TXT] RAW_IMPORTED: ${draft.bookId} (${sourceSize} bytes)`);
             return res.json({ book_id: draft.bookId, build_id: m.build_id, title, state: lazyBook.BookState.RAW_IMPORTED });
         } catch (err) {
             console.error('IMPORT-TXT ERROR:', err);
