@@ -21,9 +21,9 @@ const PROGRESS_STAGES = {
 const STEP_RETRIES = 3;
 
 // Scene duration targets (narration seconds). Scenes are now narrative units
-// (location, time, participants, logical completeness), NOT timed fragments.
-// Duration limits are soft guidance — the scene agent focuses on logical
-// completeness, and video chunking splits long scenes into ~20s chunks.
+// (coherent episodes), NOT timed fragments.
+// Duration limits are soft guidance — the scene agent focuses on narrative
+// coherence, and video chunking splits long scenes into ~20s chunks.
 // At ~0.3s/word (see placeholder-audio.estimateSpeechDurationSec):
 //   SCENE_TARGET_SEC 60s ≈ ~200 words, SCENE_MAX_SEC 120s ≈ ~400 words.
 const SCENE_TARGET_SEC = 60;
@@ -39,8 +39,11 @@ const SCENE_MIN_SEC = 5;
 const MAX_SCENES_PER_CHUNK = 2;
 
 // Window size = overhead + scenes × per-scene budget.
-// This ensures text density stays constant when MAX_SCENES_PER_CHUNK changes.
-const CHARS_PER_SCENE = 1300;
+// CHARS_PER_SCENE calibrated for the new scene concept: a scene can be
+// up to ~2 minutes (~400 words). Russian text averages ~6.7 chars/word,
+// so 400 words ≈ 2700 chars. Round up to account for dialogue markup.
+// At ~0.3s/word: 2700 chars ≈ 400 words ≈ 120s = 2 min per scene.
+const CHARS_PER_SCENE = 2700;
 const WINDOW_OVERHEAD = 100;
 const MAX_WINDOW_CHARS = WINDOW_OVERHEAD + MAX_SCENES_PER_CHUNK * CHARS_PER_SCENE;
 
