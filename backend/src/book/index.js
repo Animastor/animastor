@@ -398,19 +398,23 @@ function saveBookBundle(book, files) {
         );
     }
 
-    // Clean up orphaned chapter files
-    try {
-        const existingFiles = fs.readdirSync(chaptersDir);
-        for (const f of existingFiles) {
-            if (!activeChapterFiles.has(f)) {
-                const fp = path.join(chaptersDir, f);
-                if (fs.statSync(fp).isFile()) {
-                    fs.unlinkSync(fp);
+    // Clean up orphaned chapter files — ONLY when we have a known chapter list.
+    // If chapters array is empty (e.g. from a stale/corrupted load), we don't know
+    // which files belong, so NEVER delete anything to avoid data loss.
+    if (chapterFilenames.length > 0) {
+        try {
+            const existingFiles = fs.readdirSync(chaptersDir);
+            for (const f of existingFiles) {
+                if (!activeChapterFiles.has(f)) {
+                    const fp = path.join(chaptersDir, f);
+                    if (fs.statSync(fp).isFile()) {
+                        fs.unlinkSync(fp);
+                    }
                 }
             }
+        } catch (e) {
+            // Ignore cleanup errors
         }
-    } catch (e) {
-        // Ignore cleanup errors
     }
 }
 

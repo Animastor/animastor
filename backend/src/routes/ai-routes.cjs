@@ -250,14 +250,27 @@ module.exports = function(app, redis, deps) {
                 try {
                     const patchResult = chatEngine.applyPatches(bookData, patches);
                     if (patchResult.result) {
-                        // Use saveBookBundle to persist all book files correctly:
-                        // - bible -> bible.json
-                        // - locations -> locations.json
-                        // - voices -> voices.json
-                        // - book -> book.json (metadata)
-                        // - chapters -> chapters/*.json
-                        book.saveBookBundle(patchResult.result);
-                        log('[AI] Book updated via patches:', patches.length, 'patches applied to', bookId);
+                        if (patchResult.result.chapters?.length > 0) {
+                            // Chapters are intact — use saveBookBundle for full multi-file save
+                            // (bible → bible.json, locations → locations.json, etc.)
+                            book.saveBookBundle(patchResult.result);
+                        } else {
+                            // ⚠️ Chapters array is empty — likely a corrupted load.
+                            // Save all files EXCEPT chapters to avoid deleting orphaned
+                            // chapter files via saveBookBundle's cleanup logic.
+                            const bookDir = lazyBook.getBookDir(bookId);
+                            const j = require('path').join;
+                            const write = (name, data) => {
+                                if (data != null) fs.writeFileSync(j(bookDir, name), JSON.stringify(data, null, 2));
+                            };
+                            write('manifest.json', patchResult.result.manifest);
+                            write('book.json', patchResult.result.book);
+                            write('bible.json', patchResult.result.bible);
+                            write('locations.json', patchResult.result.locations);
+                            write('voices.json', patchResult.result.voices);
+                            write('characters.json', patchResult.result.characters);
+                            log('[AI] Book updated (targeted save — chapters skipped):', patches.length, 'patches applied to', bookId);
+                        }
                     }
                     if (patchResult.errors.length > 0 && !lastEditError) {
                         lastEditError = patchResult.errors.join('; ');

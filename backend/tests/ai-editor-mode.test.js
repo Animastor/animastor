@@ -274,4 +274,87 @@ describe('AI Editor Mode — edit_book tool', () => {
         );
         expect(voicesContent.narrator.instruction).to.equal('Deep calm voice');
     });
+
+    // ======================================================
+    // Test 11: Bible-only patch does NOT delete chapter files
+    // ======================================================
+    it('bible-only patch does not delete chapter files', async () => {
+        // Create chapter files in chapters/ directory (as if book has real chapters)
+        const chaptersDir = path.join(bookDir, 'chapters');
+        fs.writeFileSync(path.join(chaptersDir, 'ch-aaaaaa.json'), JSON.stringify({
+            chapter_id: 'ch-aaaaaa',
+            chapter_title: 'Chapter 1',
+            scenes: []
+        }, null, 2));
+        fs.writeFileSync(path.join(chaptersDir, 'ch-bbbbbb.json'), JSON.stringify({
+            chapter_id: 'ch-bbbbbb',
+            chapter_title: 'Chapter 2',
+            scenes: []
+        }, null, 2));
+
+        // Load book — chapters_order is empty, so bookData.chapters will be empty
+        // This simulates a corrupted book.json where chapters were lost
+        const bookData = bookModule.loadBook(bookId);
+        expect(bookData.chapters).to.have.length(0); // No chapters loaded
+
+        // Verify chapter files exist on disk BEFORE save
+        expect(fs.existsSync(path.join(chaptersDir, 'ch-aaaaaa.json'))).to.be.true;
+        expect(fs.existsSync(path.join(chaptersDir, 'ch-bbbbbb.json'))).to.be.true;
+
+        // Patch only bible
+        bookData.bible.country = 'USSR';
+
+        // Save via saveBookBundle (should NOT delete chapter files because chapters is empty)
+        bookModule.saveBookBundle(bookData);
+
+        // Verify chapter files STILL exist after save
+        expect(fs.existsSync(path.join(chaptersDir, 'ch-aaaaaa.json'))).to.be.true;
+        expect(fs.existsSync(path.join(chaptersDir, 'ch-bbbbbb.json'))).to.be.true;
+    });
+
+    // ======================================================
+    // Test 12: Bible-only patch with real chapters preserves them
+    // ======================================================
+    it('bible-only patch with proper chapters_order preserves chapter files', async () => {
+        // Create chapter files in chapters/ directory
+        const chaptersDir = path.join(bookDir, 'chapters');
+        fs.writeFileSync(path.join(chaptersDir, 'ch-aaaaaa.json'), JSON.stringify({
+            chapter_id: 'ch-aaaaaa',
+            chapter_title: 'Chapter 1',
+            scenes: []
+        }, null, 2));
+        fs.writeFileSync(path.join(chaptersDir, 'ch-bbbbbb.json'), JSON.stringify({
+            chapter_id: 'ch-bbbbbb',
+            chapter_title: 'Chapter 2',
+            scenes: []
+        }, null, 2));
+
+        // Set proper chapters_order in book.json so loadBook finds them
+        const bookMetaPath = path.join(bookDir, 'book.json');
+        const bookMeta = JSON.parse(fs.readFileSync(bookMetaPath, 'utf8'));
+        bookMeta.structure.chapters_order = ['ch-aaaaaa.json', 'ch-bbbbbb.json'];
+        fs.writeFileSync(bookMetaPath, JSON.stringify(bookMeta, null, 2));
+
+        // Load book — should have chapters this time
+        const bookData = bookModule.loadBook(bookId);
+        expect(bookData.chapters).to.have.length(2);
+
+        // Create an extra UNRELATED file in chapters/ that should be cleaned up
+        fs.writeFileSync(path.join(chaptersDir, 'ch-orphan.json'), JSON.stringify({
+            chapter_id: 'ch-orphan',
+            scenes: []
+        }, null, 2));
+
+        // Patch only bible
+        bookData.bible.country = 'USSR';
+
+        // Save via saveBookBundle — should clean up orphan but keep real chapters
+        bookModule.saveBookBundle(bookData);
+
+        // Verify real chapter files still exist
+        expect(fs.existsSync(path.join(chaptersDir, 'ch-aaaaaa.json'))).to.be.true;
+        expect(fs.existsSync(path.join(chaptersDir, 'ch-bbbbbb.json'))).to.be.true;
+        // Orphan should be deleted
+        expect(fs.existsSync(path.join(chaptersDir, 'ch-orphan.json'))).to.be.false;
+    });
 });
