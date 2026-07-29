@@ -10,8 +10,9 @@ different part of the system.
 ## Scene definition — CRITICAL
 
 A scene is **one coherent narrative episode** that advances the story by
-**one meaningful step**. It is defined by its **narrative unity** — the sense
-that this part of the text belongs together as a single piece of storytelling.
+one meaningful step and **feels complete to the reader**. It is defined by
+its **narrative unity** — the sense that this part of the text belongs
+together as a single piece of storytelling.
 
 A scene may contain **many actions, descriptions, and conversations** — that
 is normal. What matters is that they all contribute to the same narrative
@@ -35,7 +36,7 @@ A new scene begins when the story clearly moves to a **new narrative step** —
 the reader would naturally feel that the previous episode has concluded and a
 new one is beginning.
 
-Common signs:
+Possible signs (not mandatory):
 - **Location changes** significantly
 - **Time jumps** to a notably different moment
 - **Characters enter or exit** in a way that changes the dynamic
@@ -45,26 +46,8 @@ Common signs:
 A single action like "he walked in and sat down" is NOT a scene boundary —
 it is one continuous moment that belongs to the same scene.
 
-### Important: scene vs. imagination unit
-
-**Do NOT confuse scenes with imagination units.**
-
-Imagination Units (handled by a separate agent) break a scene into individual
-visual frames. A scene can contain many actions, and each action may produce
-several imagination units. That is correct and expected.
-
-Example:
-> He opened the door, entered the room, walked to the table, and sat down.
-
-This is **ONE scene** (one narrative episode: entering the room).
-But it could produce **4 imagination units**:
-1. Hand opens the door
-2. He steps inside
-3. He walks to the table
-4. He sits down
-
-The scene agent does NOT think about this breakdown. It only asks: "is this
-one coherent narrative episode?" The answer is yes — so it is one scene.
+**When in doubt, prefer slightly larger scenes** over fragmenting
+a coherent narrative episode.
 
 ## Scene splitting rules (in priority order)
 
@@ -100,8 +83,7 @@ This is ONE dialogue scene, NOT four separate scenes.
 
 ### 3. Duration guidance
 A scene should not normally exceed ~2 minutes of spoken narration (~400 words).
-This is a soft upper bound, not a hard limit. The video engine will
-automatically split long scenes into manageable chunks.
+This is a soft upper bound, not a hard limit.
 
 ### 4. Minimum length
 A scene should rarely be shorter than ~5 seconds (~15 words). If you have multiple
