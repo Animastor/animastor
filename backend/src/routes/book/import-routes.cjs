@@ -12,7 +12,7 @@ const { publishProgress } = require('../../services/progress-pubsub.cjs');
 // FALLBACK DEDUP: scan books dir for lazy books matching file hash
 // Used when book_source PG record was already deleted (e.g. by old bug).
 // ======================================================
-function findLazyBookByHash(fileHash, booksDir) {
+function findLazyBookByHash(fileHash, booksDir, fileSize) {
     try {
         if (!fs.existsSync(booksDir)) return null;
         const entries = fs.readdirSync(booksDir, { withFileTypes: true });
@@ -20,9 +20,14 @@ function findLazyBookByHash(fileHash, booksDir) {
             if (!entry.isDirectory()) continue;
             const bookDir = path.join(booksDir, entry.name);
             const sourcePath = path.join(bookDir, 'source.txt');
-            const manifestPath = path.join(bookDir, 'manifest.json');
-            if (!fs.existsSync(sourcePath) || !fs.existsSync(manifestPath)) continue;
+            if (!fs.existsSync(sourcePath)) continue;
             try {
+                // Quick size filter: stat is cheap (metadata only, no data read).
+                // This eliminates 99% of books before any SHA256 computation.
+                const sourceStat = fs.statSync(sourcePath);
+                if (fileSize != null && sourceStat.size !== fileSize) continue;
+
+                // Full SHA256 verification — only runs for size-matched candidates (0-2).
                 const sourceBuf = fs.readFileSync(sourcePath);
                 const sourceHash = crypto.createHash('sha256').update(sourceBuf).digest('hex');
                 if (sourceHash === fileHash) {
@@ -204,8 +209,11 @@ app.post('/api/v1/book/import', multer().single('file'), async (req, res) => {
             }
 
             // ── Phase 2: Fallback — scan books on disk (covers deleted book_source records) ──
+            // Optimisation: pre-filter by file size (cheap stat) then by SHA256.
+            // This only runs once per book — after PG record is re-registered,
+            // subsequent imports use the fast PG path.
             if (!existingBookId) {
-                const diskFound = findLazyBookByHash(fileHash, lazyBook.getBooksDir());
+                const diskFound = findLazyBookByHash(fileHash, lazyBook.getBooksDir(), buf.length);
                 if (diskFound) {
                     const existingStatus = lazyBook.getBookStatus(diskFound);
                     if (existingStatus && existingStatus.state) {
@@ -477,8 +485,11 @@ function detectFileFormat(buf) {
             }
 
             // ── Phase 2: Fallback — scan books on disk (covers deleted book_source records) ──
+            // Optimisation: pre-filter by file size (cheap stat) then by SHA256.
+            // This only runs once per book — after PG record is re-registered,
+            // subsequent imports use the fast PG path.
             if (!existingBookId) {
-                const diskFound = findLazyBookByHash(fileHash, lazyBook.getBooksDir());
+                const diskFound = findLazyBookByHash(fileHash, lazyBook.getBooksDir(), req.file.buffer.length);
                 if (diskFound) {
                     const existingStatus = lazyBook.getBookStatus(diskFound);
                     if (existingStatus && existingStatus.state) {
