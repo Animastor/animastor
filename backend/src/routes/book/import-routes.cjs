@@ -158,13 +158,10 @@ app.post('/api/v1/book/import', multer().single('file'), async (req, res) => {
                     if (existing) {
                         const existingStatus = lazyBook.getBookStatus(existing.book_id);
                         if (existingStatus && existingStatus.state) {
-                            const completionStatus = await genSessionRepo.getBookCompletionStatus(existing.book_id);
-                            if (completionStatus !== 'completed') {
-                                existingBookId = existing.book_id;
-                            } else {
-                                await bookSourceRepo.deleteByBookId(existing.book_id);
-                                log(`[UNIFIED-IMPORT] DEDUP: completed book ${existing.book_id} — cleaning up for new import`);
-                            }
+                            // Always return existing book on dedup — even if completed.
+                            // User re-importing the same file expects to get the same book back,
+                            // not a brand new import.
+                            existingBookId = existing.book_id;
                         } else {
                             await bookSourceRepo.deleteByBookId(existing.book_id);
                             log(`[UNIFIED-IMPORT] DEDUP: book ${existing.book_id} not on disk — cleaning up reference`);
@@ -415,13 +412,10 @@ function detectFileFormat(buf) {
                     if (existing) {
                         const existingStatus = lazyBook.getBookStatus(existing.book_id);
                         if (existingStatus && existingStatus.state) {
-                            const completionStatus = await genSessionRepo.getBookCompletionStatus(existing.book_id);
-                            if (completionStatus !== 'completed') {
-                                existingBookId = existing.book_id;
-                            } else {
-                                await bookSourceRepo.deleteByBookId(existing.book_id);
-                                log(`[IMPORT-TXT] DEDUP: completed book ${existing.book_id} — cleaning up for new import`);
-                            }
+                            // Always return existing book on dedup — even if completed.
+                            // User re-importing the same file expects to get the same book back,
+                            // not a brand new import.
+                            existingBookId = existing.book_id;
                         } else {
                             await bookSourceRepo.deleteByBookId(existing.book_id);
                             log(`[IMPORT-TXT] DEDUP: book ${existing.book_id} not on disk — cleaning up reference`);
