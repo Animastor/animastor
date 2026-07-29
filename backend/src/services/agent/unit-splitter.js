@@ -237,25 +237,66 @@ function spliceUnits(units, index, splitUnits) {
  */
 async function splitOneUnit(sessionId, units, longIndex, longUnit) {
     let result = null;
+    let finalRetryCount = MAX_UNIT_SPLIT_RETRIES;
+    let outcome = 'fallback';
 
     // Try AI reprompt (up to MAX_UNIT_SPLIT_RETRIES times)
     for (let retry = 0; retry < MAX_UNIT_SPLIT_RETRIES; retry++) {
+        const attempt = retry + 1;
         result = await askAIToSplitUnit(sessionId, longUnit, longIndex);
         if (result) {
             // Verify: each split piece must be ≤ MAX_UNIT_DURATION_SEC
             const allOk = result.every(u => getUnitDurationSec(u.text) <= MAX_UNIT_DURATION_SEC);
             if (allOk) {
+                finalRetryCount = attempt;
+                outcome = 'ai_success';
+                console.log(JSON.stringify({
+                    event: 'iu_split_retry',
+                    unit_index: longIndex,
+                    retry_attempt: attempt,
+                    total_attempts: attempt,
+                    outcome: 'ai_success',
+                    split_count: result.length,
+                }));
                 return spliceUnits(units, longIndex, result);
             }
             // Some pieces are still too long — log and retry
             const longPieces = result.filter(u => getUnitDurationSec(u.text) > MAX_UNIT_DURATION_SEC);
-            console.warn(`[UNIT-SPLITTER] AI split retry ${retry + 1}: ${longPieces.length}/${result.length} pieces still > ${MAX_UNIT_DURATION_SEC}s`);
+            console.warn(`[UNIT-SPLITTER] AI split retry ${attempt}: ${longPieces.length}/${result.length} pieces still > ${MAX_UNIT_DURATION_SEC}s`);
+            console.log(JSON.stringify({
+                event: 'iu_split_retry',
+                unit_index: longIndex,
+                retry_attempt: attempt,
+                total_attempts: attempt,
+                outcome: 'still_long',
+                split_count: result.length,
+                long_pieces: longPieces.length,
+            }));
+        } else {
+            console.log(JSON.stringify({
+                event: 'iu_split_retry',
+                unit_index: longIndex,
+                retry_attempt: attempt,
+                total_attempts: attempt,
+                outcome: 'ai_failed',
+                split_count: 0,
+            }));
         }
     }
 
     // If AI failed or returned still-long pieces, use emergency fallback
-    console.warn(`[UNIT-SPLITTER] AI split failed for unit ${longIndex}, using emergency fallback`);
     const emergencyUnits = emergencySplit(longUnit);
+    console.log(JSON.stringify({
+        event: 'iu_split_retry',
+        unit_index: longIndex,
+        retry_attempt: finalRetryCount,
+        total_attempts: MAX_UNIT_SPLIT_RETRIES,
+        outcome: 'fallback',
+        split_count: emergencyUnits.length,
+        fallback_method: emergencyUnits.length > 1
+            ? (emergencyUnits[0].text !== longUnit.text ? 'sentence_split' : 'comma_or_word_split')
+            : 'none',
+    }));
     return spliceUnits(units, longIndex, emergencyUnits);
 }
 
