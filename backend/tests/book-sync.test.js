@@ -41,7 +41,7 @@ describe('Book Sync (Phase B.3)', () => {
     }
 
     it('detectChangedScenes reports added when first seen', async () => {
-        saveFixture([{ chapter: 'ch-1', scenes: [{ scene_id: 'sc-1' }] }]);
+        saveFixture([{ chapter_id: 'ch-1', scenes: [{ scene_id: 'sc-1' }] }]);
         const diff = await bookSync.detectChangedScenes(TEST_BOOK_ID);
         expect(diff.added).to.have.length(1);
         expect(diff.changed).to.have.length(0);
@@ -49,10 +49,10 @@ describe('Book Sync (Phase B.3)', () => {
     });
 
     it('detectChangedScenes reports changed when hash drifts', async () => {
-        saveFixture([{ chapter: 'ch-1', scenes: [{ scene_id: 'sc-1', text: 'a' }] }]);
+        saveFixture([{ chapter_id: 'ch-1', scenes: [{ scene_id: 'sc-1', text: 'a' }] }]);
         await bookSync.syncBook(TEST_BOOK_ID);
 
-        saveFixture([{ chapter: 'ch-1', scenes: [{ scene_id: 'sc-1', text: 'b' }] }]);
+        saveFixture([{ chapter_id: 'ch-1', scenes: [{ scene_id: 'sc-1', text: 'b' }] }]);
         const diff = await bookSync.detectChangedScenes(TEST_BOOK_ID);
         expect(diff.added).to.have.length(0);
         expect(diff.changed).to.have.length(1);
@@ -60,17 +60,17 @@ describe('Book Sync (Phase B.3)', () => {
     });
 
     it('detectChangedScenes reports removed when scene deleted from JSON', async () => {
-        saveFixture([{ chapter: 'ch-1', scenes: [{ scene_id: 'sc-1' }, { scene_id: 'sc-2' }] }]);
+        saveFixture([{ chapter_id: 'ch-1', scenes: [{ scene_id: 'sc-1' }, { scene_id: 'sc-2' }] }]);
         await bookSync.syncBook(TEST_BOOK_ID);
 
-        saveFixture([{ chapter: 'ch-1', scenes: [{ scene_id: 'sc-1' }] }]);
+        saveFixture([{ chapter_id: 'ch-1', scenes: [{ scene_id: 'sc-1' }] }]);
         const diff = await bookSync.detectChangedScenes(TEST_BOOK_ID);
         expect(diff.removed).to.have.length(1);
         expect(diff.removed[0].chapter_scene).to.equal('ch-1::sc-2');
     });
 
     it('syncBook persists hashes for new scenes', async () => {
-        saveFixture([{ chapter: 'ch-1', scenes: [{ scene_id: 'sc-1' }, { scene_id: 'sc-2' }] }]);
+        saveFixture([{ chapter_id: 'ch-1', scenes: [{ scene_id: 'sc-1' }, { scene_id: 'sc-2' }] }]);
         const r = await bookSync.syncBook(TEST_BOOK_ID);
         expect(r.added).to.equal(2);
 
@@ -85,13 +85,13 @@ describe('Book Sync (Phase B.3)', () => {
     });
 
     it('syncBook marks assets stale for changed scenes', async () => {
-        saveFixture([{ chapter: 'ch-1', scenes: [{ scene_id: 'sc-1', text: 'a' }] }]);
+        saveFixture([{ chapter_id: 'ch-1', scenes: [{ scene_id: 'sc-1', text: 'a' }] }]);
         await bookSync.syncBook(TEST_BOOK_ID);
         await sceneAssetRegistry.registerSceneAudio(TEST_BOOK_ID, 'ch-1', 'sc-1', {
             canonicalPath: '/tmp/x.mp3', duration: 1, buildId: 'b1',
         });
 
-        saveFixture([{ chapter: 'ch-1', scenes: [{ scene_id: 'sc-1', text: 'b' }] }]);
+        saveFixture([{ chapter_id: 'ch-1', scenes: [{ scene_id: 'sc-1', text: 'b' }] }]);
 
         const r = await bookSync.syncBook(TEST_BOOK_ID);
         expect(r.changed).to.equal(1);
@@ -102,12 +102,12 @@ describe('Book Sync (Phase B.3)', () => {
     });
 
     it('syncBook cancels running generation_tasks for changed scenes', async () => {
-        saveFixture([{ chapter: 'ch-1', scenes: [{ scene_id: 'sc-1', text: 'a' }] }]);
+        saveFixture([{ chapter_id: 'ch-1', scenes: [{ scene_id: 'sc-1', text: 'a' }] }]);
         await bookSync.syncBook(TEST_BOOK_ID);
         await taskRepo().createTask('t1', TEST_BOOK_ID, 'ch-1', 'sc-1', 'audio');
         await taskRepo().updateTaskStatus('t1', 'running');
 
-        saveFixture([{ chapter: 'ch-1', scenes: [{ scene_id: 'sc-1', text: 'b' }] }]);
+        saveFixture([{ chapter_id: 'ch-1', scenes: [{ scene_id: 'sc-1', text: 'b' }] }]);
         const r = await bookSync.syncBook(TEST_BOOK_ID);
         expect(r.generation_tasks_cancelled).to.equal(1);
 
@@ -116,7 +116,7 @@ describe('Book Sync (Phase B.3)', () => {
     });
 
     it('reconcileFromDiff cancels only task types invalidated by the diff', async () => {
-        const chapters = [{ chapter: 'ch-1', scenes: [{ scene_id: 'sc-1', text: 'a' }] }];
+        const chapters = [{ chapter_id: 'ch-1', scenes: [{ scene_id: 'sc-1', text: 'a' }] }];
         saveFixture(chapters);
         await bookSync.syncBook(TEST_BOOK_ID);
         await taskRepo().createTask('audio-task', TEST_BOOK_ID, 'ch-1', 'sc-1', 'audio');
@@ -139,14 +139,14 @@ describe('Book Sync (Phase B.3)', () => {
     });
 
     it('syncBook purges DB rows for scenes removed from JSON', async () => {
-        saveFixture([{ chapter: 'ch-1', scenes: [{ scene_id: 'sc-1' }, { scene_id: 'sc-2' }] }]);
+        saveFixture([{ chapter_id: 'ch-1', scenes: [{ scene_id: 'sc-1' }, { scene_id: 'sc-2' }] }]);
         await bookSync.syncBook(TEST_BOOK_ID);
         await sceneAssetRegistry.registerSceneAudio(TEST_BOOK_ID, 'ch-1', 'sc-2', {
             canonicalPath: '/tmp/y.mp3', duration: 1, buildId: 'b1',
         });
         await taskRepo().createTask('t2', TEST_BOOK_ID, 'ch-1', 'sc-2', 'audio');
 
-        saveFixture([{ chapter: 'ch-1', scenes: [{ scene_id: 'sc-1' }] }]);
+        saveFixture([{ chapter_id: 'ch-1', scenes: [{ scene_id: 'sc-1' }] }]);
         const r = await bookSync.syncBook(TEST_BOOK_ID);
         expect(r.removed).to.equal(1);
         expect(r.purged.scene_assets).to.be.gte(1);
@@ -160,7 +160,7 @@ describe('Book Sync (Phase B.3)', () => {
     });
 
     it('dryRun reports counts without modifying DB', async () => {
-        saveFixture([{ chapter: 'ch-1', scenes: [{ scene_id: 'sc-1' }] }]);
+        saveFixture([{ chapter_id: 'ch-1', scenes: [{ scene_id: 'sc-1' }] }]);
         const r = await bookSync.syncBook(TEST_BOOK_ID, { dryRun: true });
         expect(r.dry_run).to.be.true;
 
@@ -171,13 +171,13 @@ describe('Book Sync (Phase B.3)', () => {
     });
 
     it('purgeRemoved=false keeps removed-scene rows', async () => {
-        saveFixture([{ chapter: 'ch-1', scenes: [{ scene_id: 'sc-1' }, { scene_id: 'sc-2' }] }]);
+        saveFixture([{ chapter_id: 'ch-1', scenes: [{ scene_id: 'sc-1' }, { scene_id: 'sc-2' }] }]);
         await bookSync.syncBook(TEST_BOOK_ID);
         await sceneAssetRegistry.registerSceneAudio(TEST_BOOK_ID, 'ch-1', 'sc-2', {
             canonicalPath: '/tmp/z.mp3', duration: 1, buildId: 'b1',
         });
 
-        saveFixture([{ chapter: 'ch-1', scenes: [{ scene_id: 'sc-1' }] }]);
+        saveFixture([{ chapter_id: 'ch-1', scenes: [{ scene_id: 'sc-1' }] }]);
         const r = await bookSync.syncBook(TEST_BOOK_ID, { purgeRemoved: false });
         expect(r.removed).to.equal(1);
         expect(Object.keys(r.purged).length).to.equal(0);

@@ -24,11 +24,11 @@ describe('Book Source (Phase B.1)', () => {
         book.saveBookBundle(buildBook({
             bookId: TEST_BOOK_ID,
             chapters: [
-                { chapter: 'ch-aaa', scenes: [
+                { chapter_id: 'ch-aaa', scenes: [
                     { scene_id: 'sc-111', type: 'narration', text: 'one' },
                     { scene_id: 'sc-222', type: 'narration', text: 'two' },
                 ]},
-                { chapter: 'ch-bbb', scenes: [
+                { chapter_id: 'ch-bbb', scenes: [
                     { scene_id: 'sc-333', type: 'chapter_intro', text: 'three' },
                 ]},
             ],
@@ -152,11 +152,11 @@ describe('Book Source (Phase B.1)', () => {
         book.saveBookBundle(buildBook({
             bookId: TEST_BOOK_ID,
             chapters: [
-                { chapter: 'ch-aaa', scenes: [
+                { chapter_id: 'ch-aaa', scenes: [
                     { scene_id: 'sc-111', type: 'narration', text: 'one' },
                     { scene_id: 'sc-222', type: 'narration', text: 'two' },
                 ]},
-                { chapter: 'ch-bbb', scenes: [
+                { chapter_id: 'ch-bbb', scenes: [
                     { scene_id: 'sc-333', type: 'chapter_intro', text: 'three' },
                 ]},
             ],
@@ -170,11 +170,11 @@ describe('Book Source (Phase B.1)', () => {
         book.saveBookBundle(buildBook({
             bookId: TEST_BOOK_ID,
             chapters: [
-                { chapter: 'ch-aaa', scenes: [
+                { chapter_id: 'ch-aaa', scenes: [
                     { scene_id: 'sc-111', type: 'narration', text: 'one CHANGED' },
                     { scene_id: 'sc-222', type: 'narration', text: 'two' },
                 ]},
-                { chapter: 'ch-bbb', scenes: [
+                { chapter_id: 'ch-bbb', scenes: [
                     { scene_id: 'sc-333', type: 'chapter_intro', text: 'three' },
                 ]},
             ],
