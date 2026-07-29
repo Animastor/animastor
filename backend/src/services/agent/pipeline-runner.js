@@ -512,6 +512,7 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
                 text: unit.text,
                 type: unit.type,
                 image: unit.image || {},
+                video: unit.video || {},
             }))
         );
 
@@ -594,6 +595,7 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
                 text: unit.text,
                 type: unit.type,
                 image: unit.image || {},
+                video: unit.video || {},
             }))
         );
 
@@ -816,6 +818,7 @@ async function processCachedScenes(sessionId, scenes, characters, locations, men
                 text: unit.text,
                 type: unit.type,
                 image: unit.image || {},
+                video: unit.video || {},
             }))
         );
 
@@ -890,6 +893,7 @@ async function processCachedScenes(sessionId, scenes, characters, locations, men
                 text: unit.text,
                 type: unit.type,
                 image: unit.image || {},
+                video: unit.video || {},
             }))
         );
 
