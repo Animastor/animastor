@@ -11,6 +11,7 @@ const { updateSession, createSession, isSessionCancelled, isBookCancelled } = re
 const { PROGRESS_STAGES, MAX_WINDOW_CHARS, MAX_SCENES_PER_CHUNK, computeWindowChars } = require('../agent-prompts');
 const { mergeCharacterLists } = require('../../utils/character-identity');
 const pipelineSteps = require('./pipeline-steps');
+const { splitLongUnits } = require('./unit-splitter');
 const textUtils = require('./text-utils');
 
 /**
@@ -429,6 +430,12 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
 
         const units = await pipelineSteps.stepCreateUnits(sessionId, scene, globalSceneIndex, characters, stepIndex, _progress, mentions);
 
+        // ── Split long units (duration > 20s) ──
+        const splitUnits = await splitLongUnits(
+            sessionId, scene, units, characters,
+            globalSceneIndex, stepIndex, _progress
+        );
+
         // unit.participants removed — participants come from scene.participants
         // (authoritative source set during scene creation)
 
@@ -445,7 +452,7 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
         });
 
         const nextScene = windowScenes[si + 1] || null;
-        const visualUnits = await pipelineSteps.stepCreateVisuals(sessionId, scene, units, globalSceneIndex, characters, locations, stepIndex, _progress, nextScene, mentions, options.promptProfiles);
+        const visualUnits = await pipelineSteps.stepCreateVisuals(sessionId, scene, splitUnits, globalSceneIndex, characters, locations, stepIndex, _progress, nextScene, mentions, options.promptProfiles);
         const sceneSpan = coverage.scene_spans[si] || null;
         let annotatedUnits = visualUnits;
 

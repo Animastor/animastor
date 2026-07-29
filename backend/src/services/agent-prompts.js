@@ -15,6 +15,7 @@ const PROGRESS_STAGES = {
     video_action_reconciliation: '⟳ Согласовываю видеоряд с сюжетом...',
     video_action_polish: '⟳ Полирую непрерывность движений...',
     voice_generation: '⟳ Подбираю голоса для персонажей...',
+    splitting_long_units: sc => `⟳ Проверяю длительность юнитов сцены ${sc + 1}...`,
 };
 
 const STEP_RETRIES = 3;
@@ -60,6 +61,7 @@ const RULES = [
     'enrich_scenes', 'units', 'visuals', 'storyboard_polish',
     'voice_generation', 'passport_reconciliation',
     'video_action_reconciliation', 'video_action_polish',
+    'unit_splitter',
 ];
 
 for (const name of RULES) {
