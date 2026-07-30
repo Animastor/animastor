@@ -25,9 +25,8 @@ class FileFragment : Fragment(R.layout.fragment_file) {
     private val viewModel: GenerateViewModel by activityViewModels {
         GenerateViewModel.factory
     }
-    // ...
+    // Guard against re-entrant navigation after import
     private var hasSwitchedToPlay = false
-    private var hasSwitchedToAi = false
     private var pendingExportBuildId: String? = null
     private var pendingExportBookId: String? = null
     private var pendingExportType = "video"
@@ -85,7 +84,6 @@ class FileFragment : Fragment(R.layout.fragment_file) {
             }
 
             hasSwitchedToPlay = false
-            hasSwitchedToAi = false
             viewModel.importBookFromFile(tempFile)
         }.onFailure {
             Toast.makeText(requireContext(), "${getString(R.string.upload_failed)}: ${it.message}", Toast.LENGTH_SHORT).show()
@@ -277,21 +275,26 @@ class FileFragment : Fragment(R.layout.fragment_file) {
                         }
                     }
                 }
+                // ── Explicit navigation events from ViewModel ──
+                // ViewModel emits NavigationEvent when import completes;
+                // we just obey — no more guessing from importStage/phase.
+                launch {
+                    viewModel.navigationEvent.collect { event ->
+                        if (hasSwitchedToPlay) return@collect
+                        hasSwitchedToPlay = true
+                        when (event) {
+                            is GenerateViewModel.NavigationEvent.NavigateToGenerate -> {
+                                (requireActivity() as MainActivity).switchToGenerateTab()
+                            }
+                            is GenerateViewModel.NavigationEvent.NavigateToPlay -> {
+                                (requireActivity() as MainActivity).switchToPlayTab()
+                            }
+                        }
+                    }
+                }
+
                 viewModel.uiState.collect { state ->
                     val b = binding ?: return@collect
-
-                    // After TXT import completes, open Generate screen
-                    if (!hasSwitchedToAi && !hasSwitchedToPlay && state.phase == PlayerPhase.SCENE_READY && state.importStage == ImportStage.DONE) {
-                        hasSwitchedToPlay = true
-                        hasSwitchedToAi = true
-                        (requireActivity() as MainActivity).switchToGenerateTab()
-                    }
-
-                    // Only auto-switch to Play for non-TXT imports (vbook)
-                    if (!hasSwitchedToPlay && !hasSwitchedToAi && viewModel.bookId.isNotBlank() && (state.phase == PlayerPhase.IDLE || state.phase == PlayerPhase.SCENE_READY || state.phase == PlayerPhase.IMPORTING_TXT) && state.errorMessage == null) {
-                        hasSwitchedToPlay = true
-                        (requireActivity() as MainActivity).switchToPlayTab()
-                    }
 
                     val loading = state.phase == PlayerPhase.LOADING_BOOK
                         || state.phase == PlayerPhase.GENERATING

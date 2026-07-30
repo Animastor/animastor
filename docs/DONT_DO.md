@@ -23,9 +23,17 @@
 - `c80e53f` — keep previous image when IU is not generated
 - Причина: приводит к неконсистентному состоянию индекса IU и зависанию на одном кадре
 
+### 4. Двойной вызов switchToPlayTab() (NavigationEvent)
+**Запрещено:** Добавлять `setupNavigationEventObserver()` в MainActivity, который вызывает `switchToPlayTab()`, если FileFragment уже делает то же самое через `navigationEvent.collect` или `uiState.collect`.
+
+- `ddc4f1b` (revert) — NavigationEvent ломал плеер
+- Причина: `FragmentTransaction.commit()` — асинхронный. Когда `switchToPlayTab()` вызывается дважды подряд, создаются **два** PlayFragment, которые конфликтуют. Только FileFragment должен обрабатывать навигацию.
+
+**Правильный подход:** NavigationEvent должен собираться только в FileFragment, НЕ в MainActivity. MainActivity НЕ должен иметь `setupNavigationEventObserver()`.
+
 ## Кэширование
 
-### 4. Удаление clearCache в preparePlayback
+### 5. Удаление clearCache в preparePlayback
 **Запрещено:** Убирать вызов `_repository.clearCache()` в `preparePlayback()`.
 
 - `be49b84` — remove aggressive clearCache
@@ -33,31 +41,31 @@
 
 ## Изменения в подходах
 
-### 5. Удаление функций без проверки всех референсов
+### 6. Удаление функций без проверки всех референсов
 **Запрещено:** Удалять экспортированные функции, не проверив все места их вызова через code search.
 
 - `ff1809e` — удалены `unregisterAudio/Image/Video`, `saveBookJson`, `deleteBookJson`, `getBookContentHash`
 - Причина: функции могут вызываться из динамического require или через prototype chain
 
-### 6. Изменение типа поля data class с `var` на `val`
+### 7. Изменение типа поля data class с `var` на `val`
 **Запрещено:** Менять `var` на `val` в data class, если поле может обновляться из другого места (например, `IuImageItem.bitmap`).
 
 - `ffd420b` — revert включал изменение `var bitmap` → `val bitmap` в `IuImageItem`
 - Причина: field может обновляться in-place из stall-retry механизма
 
-### 7. helmet/rate-limit без тестирования совместимости с Android WebView
+### 8. helmet/rate-limit без тестирования совместимости с Android WebView
 **Запрещено:** Добавлять helmet middleware без проверки, что security-заголовки (Content-Type, CSP) совместимы с фронтендом.
 
 - `d6ac6c1` — добавлены helmet и express-rate-limit
 - Причина: helmet может блокировать заголовки, ожидаемые Android-клиентом
 
-### 8. graceful-shutdown с redis.quit() без проверки активных операций
+### 9. graceful-shutdown с redis.quit() без проверки активных операций
 **Запрещено:** Вызывать `redis.quit()` в graceful-shutdown без гарантии, что нет активных операций.
 
 - `d6ac6c1` — graceful-shutdown с redis.quit()
 - Причина: может прерывать активные генерации и приводить к потере данных
 
-### 9. Изменение уровня HTTP логгирования с BODY на HEADERS
+### 10. Изменение уровня HTTP логгирования с BODY на HEADERS
 **Запрещено:** Менять `HttpLoggingInterceptor.Level.BODY` на `LEVEL.HEADERS` в RetrofitClient.kt.
 
 - Шаг 1.2 — BODY → HEADERS
