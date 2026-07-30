@@ -898,13 +898,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                     orientation = LinearLayout.VERTICAL
                 }
 
-                inner.addView(TextView(ctx).apply {
-                    text = loc.name ?: loc.id ?: key
-                    textSize = 14f
-                    typeface = android.graphics.Typeface.DEFAULT_BOLD
-                })
-
-                inner.addView(readOnlyCard(ctx, "id", loc.id ?: key))
+                inner.addView(readOnlyCard(ctx, "id", loc.id ?: key, boldValue = true))
 
                 inner.addView(inputCard(ctx, "name", loc.name ?: "", false))
                 inner.addView(inputCard(ctx, "description", loc.description ?: "", (loc.description?.length ?: 0) > 80))
@@ -1124,7 +1118,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         }
     }
 
-    private fun readOnlyCard(ctx: Context, label: String, value: String): View {
+    private fun readOnlyCard(ctx: Context, label: String, value: String, boldValue: Boolean = false): View {
         val til = TextInputLayout(ctx).apply {
             hint = label
             isHintEnabled = true
@@ -1133,6 +1127,9 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         val et = TextInputEditText(ctx).apply {
             setText(value)
             textSize = 14f
+            if (boldValue) {
+                setTypeface(null, android.graphics.Typeface.BOLD)
+            }
             setPadding(12, 10, 12, 10)
             setTextIsSelectable(true)
             isLongClickable = true
