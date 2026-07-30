@@ -761,15 +761,9 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                     orientation = LinearLayout.VERTICAL
                 }
 
-                inner.addView(TextView(ctx).apply {
-                    text = ch.name ?: ch.id ?: "—"
-                    textSize = 14f
-                    typeface = android.graphics.Typeface.DEFAULT_BOLD
-                })
-
                 inner.addView(readOnlyCard(ctx, "id", ch.id ?: ""))
 
-                inner.addView(inputCard(ctx, "name", ch.name ?: "", false))
+                inner.addView(inputCard(ctx, "name", ch.name ?: "", false, boldValue = true))
 
                 inner.addView(inputCard(ctx, "voice_id", ch.voice_id ?: "", false))
 
@@ -1156,7 +1150,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         }
     }
 
-    private fun inputCard(ctx: Context, label: String, value: String, multiline: Boolean): View {
+    private fun inputCard(ctx: Context, label: String, value: String, multiline: Boolean, boldValue: Boolean = false): View {
         fieldValues[label] = value
         val til = TextInputLayout(ctx).apply {
             hint = label
@@ -1169,6 +1163,9 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
             if (multiline) {
                 minLines = 3
                 gravity = android.view.Gravity.TOP or android.view.Gravity.START
+            }
+            if (boldValue) {
+                setTypeface(null, android.graphics.Typeface.BOLD)
             }
             setPadding(12, 10, 12, 10)
             addTextChangedListener(simpleWatcher {
