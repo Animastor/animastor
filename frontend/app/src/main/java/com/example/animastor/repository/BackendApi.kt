@@ -110,6 +110,12 @@ interface BackendApi {
         @Body bookData: BookData
     )
 
+    @PATCH("/api/v1/book/{bookId}/metadata")
+    suspend fun patchBookMetadata(
+        @Path("bookId") bookId: String,
+        @Body request: Map<String, @JvmSuppressWildcards Any?>
+    ): GenericResponse
+
     @PATCH("/api/v1/book/{bookId}/scene/{chapterId}/{sceneId}")
     suspend fun patchScene(
         @Path("bookId") bookId: String,

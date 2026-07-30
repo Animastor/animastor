@@ -339,6 +339,77 @@ module.exports = function(app, redis, deps) {
     });
 
     // ======================================================
+    // PATCH BOOK METADATA (lightweight — only book + bible fields)
+    // ======================================================
+    // Full replace of manifest.json / bible.json with PUT /book is risky:
+    // if the frontend sends stale chapters, the entire book gets overwritten.
+    // This endpoint only touches book-level and bible-level metadata:
+    //   - book.json: title, author, language
+    //   - bible.json: country, epoch, render_rules, narrator.voice.instruction
+    // Chapters, characters, voices, locations are NOT touched.
+    //
+    app.patch('/api/v1/book/:bookId/metadata', async (req, res) => {
+        try {
+            const { bookId } = req.params;
+            const {
+                title, author, language,
+                country, epoch,
+                render_style, lighting_default,
+                narrator_instruction
+            } = req.body;
+
+            const oldBook = book.loadBook(bookId);
+            if (!oldBook) return res.status(404).json({ error: 'Book not found' });
+
+            const hasAnyField = title !== undefined || author !== undefined ||
+                language !== undefined || country !== undefined ||
+                epoch !== undefined || render_style !== undefined ||
+                lighting_default !== undefined || narrator_instruction !== undefined;
+            if (!hasAnyField) {
+                return res.status(400).json({ error: 'No metadata fields to update' });
+            }
+
+            // ── Update book.json fields ──
+            const bookMeta = oldBook.book || {};
+            if (title !== undefined) bookMeta.title = title || null;
+            if (author !== undefined) bookMeta.author = author || null;
+            if (language !== undefined) bookMeta.language = language || null;
+            oldBook.book = bookMeta;
+
+            // ── Update bible.json fields ──
+            if (!oldBook.bible) oldBook.bible = {};
+            const bib = oldBook.bible;
+            if (country !== undefined) bib.country = country || null;
+            if (epoch !== undefined) bib.epoch = epoch || null;
+
+            // render_rules
+            if (render_style !== undefined || lighting_default !== undefined) {
+                if (!bib.render_rules) bib.render_rules = {};
+                if (render_style !== undefined) bib.render_rules.style = render_style || null;
+                if (lighting_default !== undefined) bib.render_rules.lighting_default = lighting_default || null;
+            }
+
+            // narrator.voice.instruction
+            if (narrator_instruction !== undefined) {
+                if (!bib.narrator) bib.narrator = {};
+                if (!bib.narrator.voice) bib.narrator.voice = {};
+                bib.narrator.voice.instruction = narrator_instruction || null;
+            }
+
+            oldBook.bible = bib;
+
+            // Save — preserves all other files untouched
+            book.saveBookBundle(oldBook, null);
+            log(`[PATCH METADATA] ${bookId}: title=${title !== undefined} author=${author !== undefined} lang=${language !== undefined} country=${country !== undefined} epoch=${epoch !== undefined} render=${render_style !== undefined} light=${lighting_default !== undefined} narrator=${narrator_instruction !== undefined}`);
+
+            return res.json({ saved: true, book_id: bookId });
+        } catch (err) {
+            console.error('[PATCH METADATA] Error:', err.message);
+            return res.status(500).json({ error: err.message });
+        }
+    });
+
+    // ======================================================
     // GET BOOK COVER DATA
     // ======================================================
     app.get('/api/v1/book/:bookId/cover', async (req, res) => {

@@ -642,6 +642,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                 3 -> buildCharactersFields(frame)
                 4 -> buildVoicesFields(frame)
                 5 -> buildLocationsFields(frame)
+                6 -> buildGlobalFields(frame)
             }
             // Update scroll indicators after rebuilding
             updateTabScrollIndicators()
@@ -925,6 +926,96 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         parent.addView(ll)
     }
 
+    private fun buildGlobalFields(parent: ViewGroup) {
+        val ctx = parent.context
+        val bd = bookData
+
+        val ll = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, 0, 0, 8)
+        }
+
+        // ── Section: Manifest (read-only info) ──
+        val manifestSectionLabel = TextView(ctx).apply {
+            text = getString(R.string.field_book_id)
+            textSize = 14f
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            setPadding(0, 8, 0, 4)
+        }
+        ll.addView(manifestSectionLabel)
+
+        val manifest = bd?.manifest
+        if (manifest != null) {
+            ll.addView(readOnlyCard(ctx, "book_id", manifest.book_id ?: "—"))
+            ll.addView(readOnlyCard(ctx, "vbook_version", manifest.vbook_version ?: "—"))
+            ll.addView(readOnlyCard(ctx, "created_at", manifest.created_at ?: "—"))
+        } else {
+            ll.addView(readOnlyCard(ctx, "book_id", bd?.book?.book_id ?: "—"))
+        }
+
+        // ── Section: Book Metadata ──
+        val bookSectionLabel = TextView(ctx).apply {
+            text = getString(R.string.edit_tabs_global_book)
+            textSize = 14f
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            setTextColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorSecondary))
+            setPadding(0, 16, 0, 4)
+        }
+        ll.addView(bookSectionLabel)
+
+        val bookMeta = bd?.book
+        val bookKeys = listOf("title", "author", "language")
+        val bookValues = mapOf(
+            "title" to (bookMeta?.title ?: ""),
+            "author" to (bookMeta?.author ?: ""),
+            "language" to (bookMeta?.language ?: "")
+        )
+        bookKeys.forEach { key ->
+            if (!fieldValues.containsKey(key)) fieldValues[key] = bookValues[key] ?: ""
+            ll.addView(inputCard(ctx, key, fieldValues[key] ?: "", false))
+        }
+
+        // ── Section: World (Bible) ──
+        val worldSectionLabel = TextView(ctx).apply {
+            text = getString(R.string.edit_tabs_global_world)
+            textSize = 14f
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            setTextColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorSecondary))
+            setPadding(0, 16, 0, 4)
+        }
+        ll.addView(worldSectionLabel)
+
+        val bible = bd?.bible
+        val worldKeys = listOf("country", "epoch", "render_style", "lighting_default")
+        val worldValues = mapOf(
+            "country" to (bible?.country ?: ""),
+            "epoch" to (bible?.epoch ?: ""),
+            "render_style" to (bible?.render_rules?.style ?: ""),
+            "lighting_default" to (bible?.render_rules?.lighting_default ?: "")
+        )
+        worldKeys.forEach { key ->
+            if (!fieldValues.containsKey(key)) fieldValues[key] = worldValues[key] ?: ""
+            ll.addView(inputCard(ctx, key, fieldValues[key] ?: "", false))
+        }
+
+        // ── Section: Narrator Voice ──
+        val narratorSectionLabel = TextView(ctx).apply {
+            text = getString(R.string.edit_section_audio)
+            textSize = 14f
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            setTextColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorSecondary))
+            setPadding(0, 16, 0, 4)
+        }
+        ll.addView(narratorSectionLabel)
+
+        val narratorInstruction = bible?.narrator?.voice?.instruction ?: ""
+        val narratorKey = "narrator_instruction"
+        if (!fieldValues.containsKey(narratorKey)) fieldValues[narratorKey] = narratorInstruction
+        ll.addView(inputCard(ctx, narratorKey, fieldValues[narratorKey] ?: "", narratorInstruction.length > 80))
+
+        parent.addView(ll)
+    }
+
     private fun scrollTabs(direction: Int) {
         val tabLayout = binding?.propertyTabs ?: return
         val selectedTab = tabLayout.selectedTabPosition
@@ -1107,6 +1198,47 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         }
     }
 
+    private fun applyGlobalFields(bd: BookData, values: Map<String, String>): BookData {
+        // ── Book metadata ──
+        val modifiedBookMeta = bd.book?.let { meta ->
+            meta.copy(
+                title = values["title"]?.ifEmpty { null } ?: meta.title,
+                author = values["author"]?.ifEmpty { null } ?: meta.author,
+                language = values["language"]?.ifEmpty { null } ?: meta.language
+            )
+        }
+
+        // ── Bible / World ──
+        val modifiedBible = bd.bible?.let { bib ->
+            val modifiedRenderRules = bib.render_rules?.let { rr ->
+                rr.copy(
+                    style = values["render_style"]?.ifEmpty { null } ?: rr.style,
+                    lighting_default = values["lighting_default"]?.ifEmpty { null } ?: rr.lighting_default
+                )
+            } ?: RenderRules(
+                style = values["render_style"]?.ifEmpty { null },
+                lighting_default = values["lighting_default"]?.ifEmpty { null }
+            )
+
+            val modifiedNarrator = if (values.containsKey("narrator_instruction")) {
+                val instr = values["narrator_instruction"]?.ifEmpty { null }
+                Narrator(voice = VoiceConfig(instruction = instr))
+            } else bib.narrator
+
+            bib.copy(
+                country = values["country"]?.ifEmpty { null } ?: bib.country,
+                epoch = values["epoch"]?.ifEmpty { null } ?: bib.epoch,
+                render_rules = modifiedRenderRules,
+                narrator = modifiedNarrator
+            )
+        }
+
+        return bd.copy(
+            book = modifiedBookMeta,
+            bible = modifiedBible
+        )
+    }
+
     private fun applyFieldValues(scene: Scene, values: Map<String, String>): Scene {
         val s = values
         var modified = scene
@@ -1204,6 +1336,62 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
             val bookId = viewModel.bookId.takeIf { it.isNotBlank() }
             if (bookId == null) {
                 showSaveError("No bookId")
+                return
+            }
+
+            val selectedTab = binding?.propertyTabs?.selectedTabPosition ?: 0
+
+            // Global tab (6) — save book-level metadata via lightweight PATCH
+            if (selectedTab == 6) {
+                setSaveLoading(true)
+                lifecycleScope.launch {
+                    try {
+                        // Build a map of only the fields that actually changed.
+                        // - If value differs and is non-blank → put the value (set)
+                        // - If value is blank but original was non-blank → put null (clear)
+                        // - If value unchanged → skip (don't touch)
+                        val orig = bd
+                        val body = mutableMapOf<String, Any?>()
+                        fieldValues.forEach { (key, value) ->
+                            val originalValue = when (key) {
+                                "title" -> orig.book?.title ?: ""
+                                "author" -> orig.book?.author ?: ""
+                                "language" -> orig.book?.language ?: ""
+                                "country" -> orig.bible?.country ?: ""
+                                "epoch" -> orig.bible?.epoch ?: ""
+                                "render_style" -> orig.bible?.render_rules?.style ?: ""
+                                "lighting_default" -> orig.bible?.render_rules?.lighting_default ?: ""
+                                "narrator_instruction" -> orig.bible?.narrator?.voice?.instruction ?: ""
+                                else -> null
+                            }
+                            if (originalValue != null && value != originalValue) {
+                                if (value.isNotBlank()) {
+                                    body[key] = value
+                                } else {
+                                    body[key] = null  // explicitly clear the field
+                                }
+                            }
+                        }
+
+                        if (body.isEmpty()) {
+                            // Nothing actually changed — skip the save
+                            setSaveLoading(false)
+                            return@launch
+                        }
+
+                        viewModel.repository.patchBookMetadata(bookId, body)
+
+                        // Optimistic local update
+                        val modifiedBookData = applyGlobalFields(bd, fieldValues)
+                        bookData = modifiedBookData
+                        viewModel.markUnsavedChanges()
+                        setSaveLoading(false)
+                        errorText?.visibility = View.GONE
+                    } catch (e: Exception) {
+                        Log.e("EditFragment", "global save failed", e)
+                        showSaveError("${e::class.simpleName}: ${e.message ?: "unknown"}")
+                    }
+                }
                 return
             }
 

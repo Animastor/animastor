@@ -42,7 +42,8 @@ data class BookMeta(
     val book_id: String? = null,
     val version: String? = null,
     val title: String? = null,
-    val author: String? = null
+    val author: String? = null,
+    val language: String? = null
 )
 
 class BookMetaAdapter : JsonDeserializer<BookMeta> {
@@ -52,7 +53,8 @@ class BookMetaAdapter : JsonDeserializer<BookMeta> {
             book_id = obj.string("book_id"),
             version = obj.string("version"),
             title = obj.titleText(),
-            author = obj.string("author")
+            author = obj.string("author"),
+            language = obj.string("language")
         )
     }
     private fun JsonObject.string(key: String): String? =
@@ -73,7 +75,9 @@ data class Bible(
     val version: String? = null,
     val narrator: Narrator? = null,
     val locations: Map<String, Location>? = null,
-    val render_rules: RenderRules? = null
+    val render_rules: RenderRules? = null,
+    val country: String? = null,
+    val epoch: String? = null
 )
 
 data class Narrator(

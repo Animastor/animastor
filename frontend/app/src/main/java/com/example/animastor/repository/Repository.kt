@@ -212,6 +212,11 @@ class Repository(
         api.updateBook(bookId, bookData)
     }
 
+    suspend fun patchBookMetadata(bookId: String, fields: Map<String, @JvmSuppressWildcards Any?>) {
+        Log.d("Repo", "patchBookMetadata: $bookId keys=${fields.keys}")
+        api.patchBookMetadata(bookId, fields)
+    }
+
     suspend fun patchScene(bookId: String, chapterId: String, sceneId: String, body: Map<String, @JvmSuppressWildcards Any?>) {
         Log.d("Repo", "patchScene: $bookId/$chapterId/$sceneId keys=${body.keys}")
         api.patchScene(bookId, chapterId, sceneId, body)
