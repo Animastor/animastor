@@ -155,6 +155,35 @@ module.exports = function(app, redis, deps) {
     });
 
     // ======================================================
+    // GET SESSION MESSAGES (from ai_chat_sessions.messages JSON)
+    // ======================================================
+    app.get('/api/v1/ai/sessions/:id/messages', async (req, res) => {
+        try {
+            const result = await storage.postgres.query(
+                'SELECT * FROM ai_chat_sessions WHERE id = $1',
+                [req.params.id]
+            );
+            if (!result.rows.length) return res.json({ messages: [] });
+            const session = result.rows[0];
+            const msgs = typeof session.messages === 'string'
+                ? JSON.parse(session.messages)
+                : session.messages || [];
+            const formatted = msgs.map((m, i) => ({
+                id: i + 1,
+                book_id: session.book_id,
+                session_id: session.id,
+                role: m.role || 'user',
+                message: m.content || m.message || '',
+                created_at: m.timestamp || Date.now(),
+            }));
+            res.json({ messages: formatted });
+        } catch (err) {
+            console.error('[AI SESSION MESSAGES] Error:', err.message);
+            res.json({ messages: [] });
+        }
+    });
+
+    // ======================================================
     // CREATE SESSION
     // ======================================================
     app.post('/api/v1/ai/sessions', async (req, res) => {
