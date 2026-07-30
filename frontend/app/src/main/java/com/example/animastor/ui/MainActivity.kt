@@ -60,18 +60,7 @@ class MainActivity : AppCompatActivity() {
         }
         // Open as standalone fragment (toolbar button, not bottom nav)
         val current = supportFragmentManager.findFragmentByTag("AiAssistantFragment")
-        if (current != null) {
-            if (current.isVisible) return
-            // Fragment exists but is hidden (user navigated away via bottom nav) — show it
-            supportFragmentManager.beginTransaction()
-                .apply {
-                    supportFragmentManager.fragments.forEach { hide(it) }
-                }
-                .show(current)
-                .commit()
-            return
-        }
-        // No existing fragment — create new one
+        if (current != null && current.isVisible) return
         supportFragmentManager.beginTransaction()
             .add(R.id.nav_host_container, AiAssistantFragment.newInstance(createMode = createMode), "AiAssistantFragment")
             .addToBackStack(null)
@@ -155,7 +144,6 @@ class MainActivity : AppCompatActivity() {
         }
 
         setupPlaybackCoordination()
-        setupNavigationEventObserver()
 
         // Periodically refresh assets state + load layer config on book change
         lifecycleScope.launch {
@@ -263,28 +251,6 @@ class MainActivity : AppCompatActivity() {
                 }
                 if (prep.coverImage != null) {
                     playbackViewModel.setCoverImage(prep.coverImage)
-                }
-            }
-        }
-    }
-
-    /**
-     * Observe explicit navigation events from [GenerateViewModel].
-     * Handles import-complete and generation-complete navigation
-     * regardless of which fragment is currently active.
-     */
-    private fun setupNavigationEventObserver() {
-        lifecycleScope.launch {
-            viewModel.navigationEvent.collect { event ->
-                when (event) {
-                    is GenerateViewModel.NavigationEvent.NavigateToGenerate -> {
-                        Log.i("MainActivity", "NavigateToGenerate: ${event.reason}")
-                        switchToGenerateTab()
-                    }
-                    is GenerateViewModel.NavigationEvent.NavigateToPlay -> {
-                        Log.i("MainActivity", "NavigateToPlay: ${event.reason}")
-                        switchToPlayTab()
-                    }
                 }
             }
         }

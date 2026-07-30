@@ -182,17 +182,6 @@ class GenerateViewModel(
         }
     }
 
-    // ── Explicit navigation events (emitted by importBookFromFile) ─
-    // Используется вместо вывода навигации из uiState, чтобы избежать
-    // race condition между двумя collect'ами uiState в FileFragment.
-    sealed class NavigationEvent {
-        data class NavigateToGenerate(val reason: String = "") : NavigationEvent()
-        data class NavigateToPlay(val reason: String = "") : NavigationEvent()
-    }
-
-    private val _navigationEvent = MutableSharedFlow<NavigationEvent>(extraBufferCapacity = 4)
-    val navigationEvent: SharedFlow<NavigationEvent> = _navigationEvent.asSharedFlow()
-
     // ── UI State (generation/import related only) ─────────────────
 
     private val _uiState = MutableStateFlow(GenUiState())
@@ -478,11 +467,6 @@ class GenerateViewModel(
                 coverImage = cover,
                 softRefresh = true
             ))
-            // НЕ переключаем на Play — пользователь сам решит, когда переходить.
-            // PlayerState обновлён через playbackPrepared, так что при ручном
-            // переходе на Play будет актуальный контент.
-            Log.i(TAG, "applyGenerationResults: content ready — staying on current tab")
-
         }
     }
 
@@ -636,18 +620,7 @@ class GenerateViewModel(
 
         generationJob = viewModelScope.launch {
             try {
-                _uiState.update { it.copy(
-                    phase = PlayerPhase.LOADING_BOOK,
-                    errorMessage = null,
-                    // Reset import-specific fields from any previous import (e.g. TXT).
-                    // Without this, a stale importStage = DONE from a prior TXT import
-                    // would cause FileFragment's first navigation condition (which
-                    // checks phase == SCENE_READY && importStage == DONE → Generate)
-                    // to misfire on a subsequent vbook import.
-                    importStage = null,
-                    importProgress = 0f,
-                    importProgressMessages = emptyList()
-                )}
+                _uiState.update { it.copy(phase = PlayerPhase.LOADING_BOOK, errorMessage = null) }
 
                 val importRes = _repository.importBook(file)
                 val bId = importRes.book_id
@@ -706,20 +679,11 @@ class GenerateViewModel(
                         ))
 
                         _uiState.update { it.copy(phase = if (scenes.isNotEmpty()) PlayerPhase.SCENE_READY else PlayerPhase.IDLE) }
-
-                        // VBook: если есть сцены → Play, иначе → Generate
-                        if (scenes.isNotEmpty()) {
-                            _navigationEvent.tryEmit(
-                                NavigationEvent.NavigateToPlay("vbook_import_complete")
-                            )
-                        } else {
-                            _navigationEvent.tryEmit(
-                                NavigationEvent.NavigateToGenerate("vbook_no_scenes")
-                            )
-                        }
                     }
                     "txt" -> {
                         // ── TXT path (SIMPLIFIED: import only, no auto-generation) ──
+                        // build_id is owned by the backend (resolved from manifest.json).
+                        // The thin client just stores whatever the import response carries.
                         persistBuildId(importRes.build_id ?: "")
 
                         _uiState.update { it.copy(
@@ -771,21 +735,7 @@ class GenerateViewModel(
                             vbookProgress = VBookProgress(stage = VBookStage.IDLE),
                             phase = if (scenesFromTxt.isNotEmpty()) PlayerPhase.SCENE_READY else PlayerPhase.IDLE,
                         )}
-
-                        // TXT: если есть ассеты → Play (контент уже сгенерирован),
-                        // иначе → Generate (нужно запустить VBook генерацию).
-                        val txtAssets = runCatching { _repository.getAssetsState(bId) }.getOrNull()
-                        val txtHasAssets = txtAssets?.has_assets == true
-                        if (txtHasAssets) {
-                            _navigationEvent.tryEmit(
-                                NavigationEvent.NavigateToPlay("txt_reimport_has_assets")
-                            )
-                        } else {
-                            _navigationEvent.tryEmit(
-                                NavigationEvent.NavigateToGenerate("txt_import_complete")
-                            )
-                        }
-                        Log.i(TAG, "importBookFromFile (txt): ready with ${scenesFromTxt.size} scenes has_assets=$txtHasAssets")
+                        Log.i(TAG, "importBookFromFile (txt): ready with ${scenesFromTxt.size} scenes")
                     }
                     else -> {
                         throw java.io.IOException("Unknown file format: ${importRes.format}")
