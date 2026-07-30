@@ -620,7 +620,18 @@ class GenerateViewModel(
 
         generationJob = viewModelScope.launch {
             try {
-                _uiState.update { it.copy(phase = PlayerPhase.LOADING_BOOK, errorMessage = null) }
+                _uiState.update { it.copy(
+                    phase = PlayerPhase.LOADING_BOOK,
+                    errorMessage = null,
+                    // Reset import-specific fields from any previous import (e.g. TXT).
+                    // Without this, a stale importStage = DONE from a prior TXT import
+                    // would cause FileFragment's first navigation condition (which
+                    // checks phase == SCENE_READY && importStage == DONE → Generate)
+                    // to misfire on a subsequent vbook import.
+                    importStage = null,
+                    importProgress = 0f,
+                    importProgressMessages = emptyList()
+                )}
 
                 val importRes = _repository.importBook(file)
                 val bId = importRes.book_id
