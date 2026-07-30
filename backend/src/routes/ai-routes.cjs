@@ -315,6 +315,9 @@ module.exports = function(app, redis, deps) {
             // Also strip partial tool_call remnants without the opening '<' (e.g. 'tool_call>')
             replyText = replyText.replace(/tool_call[^>]*>/gi, '').trim();
             replyText = replyText.replace(/\/?tool_call\b/gi, '').trim();
+            // Catch any remaining tool_call-like fragments where leading chars may be missing
+            // (e.g. 'ool_call>' — Qwen3 sometimes outputs partial tag remnants)
+            replyText = replyText.replace(/[a-z]*_call[^>]*>/gi, '').trim();
             // Only extract tool calls from content if model didn't return structured tool_calls
             // (avoids duplicates — Qwen3 sometimes puts tool_call JSON in both places)
             const structuredToolCalls = aiMessage?.tool_calls || [];
@@ -326,8 +329,10 @@ module.exports = function(app, redis, deps) {
             }
             // If after stripping, the reply is just garbage remnants (e.g. 'ool_call>', 'tool_call>'),
             // treat as empty so the fallback message below kicks in.
-            // A remnant is considered garbage if it has no real word of 3+ letters.
-            if (replyText && replyText.length < 30 && !/[\w\u0400-\u04FF]{3,}/.test(replyText)) {
+            // A remnant is considered garbage if:
+            //   - it has no real word of 3+ letters, OR
+            //   - it contains '_call' (a tool_call-like fragment)
+            if (replyText && replyText.length < 30 && (!/[\w\u0400-\u04FF]{3,}/.test(replyText) || /_call/i.test(replyText))) {
                 replyText = '';
             }
             const toolCalls = [...contentToolCalls, ...structuredToolCalls];
