@@ -292,7 +292,7 @@ module.exports = function(app, redis, deps) {
                     tools: tools.length > 0 ? tools : undefined,
                     tool_choice: tools.length > 0 ? 'required' : undefined,
                     max_tokens: 4096,
-                    enable_thinking: false,
+                    enable_thinking: true,
                 }),
                 signal: controller.signal,
             });
@@ -488,7 +488,7 @@ module.exports = function(app, redis, deps) {
                     tools: tools.length > 0 ? tools : undefined,
                     tool_choice: tools.length > 0 ? 'required' : undefined,
                     max_tokens: 4096,
-                    enable_thinking: false,
+                    enable_thinking: true,
                     stream: true,
                 }),
                 signal: controller.signal,
@@ -715,7 +715,7 @@ module.exports = function(app, redis, deps) {
                     tools: tools.length > 0 ? tools : undefined,
                     tool_choice: tools.length > 0 ? 'required' : undefined,
                     max_tokens: 4096,
-                    enable_thinking: false,
+                    enable_thinking: true,
                 }),
             });
 
@@ -725,7 +725,9 @@ module.exports = function(app, redis, deps) {
             }
 
             const aiResponse = await response.json();
-            const replyText = aiResponse.choices?.[0]?.message?.content || '';
+            let replyText = aiResponse.choices?.[0]?.message?.content || '';
+            // Strip thinking blocks (internal reasoning, not for the UI)
+            replyText = replyText.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
 
             // Parse patches from response
             let patches = [];
