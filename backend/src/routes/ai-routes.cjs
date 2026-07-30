@@ -19,6 +19,108 @@ module.exports = function(app, redis, deps) {
     // ── Session ID counter ───────────────────────────
     let sessionIdCounter = 0;
 
+    // ── Hermesian tool call parser ──────────────────────
+    // Qwen3-32B (reasoning model) sometimes outputs tool_call as text in content
+    // instead of using the structured tool_calls field. This parser extracts those.
+    function extractToolCallsFromContent(content) {
+        if (!content) return { toolCalls: [], cleanedContent: content || '' };
+        const extracted = [];
+        let cleaned = content;
+        let idx = 0;
+        const now = Date.now();
+
+        // Pattern 1: 〖tool_call〗...〖/tool_call〗 (Hermesian bracket format)
+        cleaned = cleaned.replace(/[〖【]tool_call[〗】][\s\S]*?[〖【]\/tool_call[〗】]/g, (match) => {
+            const inner = match.replace(/[〖【]\/?tool_call[〗】]/g, '').trim();
+            const tc = _parseToolCallJson(inner, now, idx);
+            if (tc) { extracted.push(tc); idx++; }
+            return '';
+        });
+
+        // Pattern 2: Fallback — scan remaining content for any JSON object with balanced braces
+        cleaned = _extractBalancedJsonToolCalls(cleaned, extracted, now);
+
+        return { toolCalls: extracted, cleanedContent: cleaned.trim() };
+    }
+
+    function _extractBalancedJsonToolCalls(text, extracted, now) {
+        let result = '';
+        let i = 0;
+        while (i < text.length) {
+            if (text[i] === '{') {
+                let depth = 1;
+                let j = i + 1;
+                while (j < text.length && depth > 0) {
+                    if (text[j] === '{') depth++;
+                    else if (text[j] === '}') depth--;
+                    j++;
+                }
+                if (depth === 0) {
+                    const candidate = text.slice(i, j);
+                    try {
+                        const parsed = JSON.parse(candidate);
+                        const name = parsed.name || parsed.function?.name;
+                        if (name) {
+                            const args = parsed.arguments || parsed.function?.arguments || {};
+                            extracted.push({
+                                id: `call_content_${now}_${extracted.length}`,
+                                type: 'function',
+                                function: {
+                                    name,
+                                    arguments: typeof args === 'string' ? args : JSON.stringify(args)
+                                }
+                            });
+                            i = j; // skip matched part
+                            continue;
+                        }
+                    } catch (_) {}
+                }
+            }
+            result += text[i];
+            i++;
+        }
+        return result;
+    }
+
+    function _parseToolCallJson(text, now, idx) {
+        try {
+            const p = JSON.parse(text);
+            const name = p.name || p.function?.name;
+            if (name) {
+                const args = p.arguments || p.function?.arguments || {};
+                return {
+                    id: `call_content_${now}_${idx}`,
+                    type: 'function',
+                    function: {
+                        name,
+                        arguments: typeof args === 'string' ? args : JSON.stringify(args)
+                    }
+                };
+            }
+        } catch (_) {
+            // Try extracting JSON from arbitrary surrounding text
+            const m = text.match(/\{[\s\S]*\}/);
+            if (m) {
+                try {
+                    const p = JSON.parse(m[0]);
+                    const name = p.name || p.function?.name;
+                    if (name) {
+                        const args = p.arguments || p.function?.arguments || {};
+                        return {
+                            id: `call_content_${now}_${idx}`,
+                            type: 'function',
+                            function: {
+                                name,
+                                arguments: typeof args === 'string' ? args : JSON.stringify(args)
+                            }
+                        };
+                    }
+                } catch (_2) {}
+            }
+        }
+        return null;
+    }
+
     // ======================================================
     // LIST SESSIONS
     // ======================================================
@@ -185,11 +287,12 @@ module.exports = function(app, redis, deps) {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${config.OPENROUTER_API_KEY || process.env.AI_API_KEY || ''}` },
                 body: JSON.stringify({
-                    model: process.env.AI_MODEL || 'meta/llama-3.1-8b-instruct',
+                    model: process.env.AI_MODEL || 'qwen/qwen3-32b',
                     messages: apiMessages,
                     tools: tools.length > 0 ? tools : undefined,
-                    tool_choice: tools.length > 0 ? 'auto' : undefined,
+                    tool_choice: tools.length > 0 ? 'required' : undefined,
                     max_tokens: 4096,
+                    enable_thinking: false,
                 }),
                 signal: controller.signal,
             });
@@ -212,13 +315,22 @@ module.exports = function(app, redis, deps) {
             // Also strip partial tool_call remnants without the opening '<' (e.g. 'tool_call>')
             replyText = replyText.replace(/tool_call[^>]*>/gi, '').trim();
             replyText = replyText.replace(/\/?tool_call\b/gi, '').trim();
+            // Only extract tool calls from content if model didn't return structured tool_calls
+            // (avoids duplicates — Qwen3 sometimes puts tool_call JSON in both places)
+            const structuredToolCalls = aiMessage?.tool_calls || [];
+            let contentToolCalls = [];
+            if (structuredToolCalls.length === 0) {
+                const result = extractToolCallsFromContent(replyText);
+                contentToolCalls = result.toolCalls;
+                replyText = result.cleanedContent;
+            }
             // If after stripping, the reply is just garbage remnants (e.g. 'ool_call>', 'tool_call>'),
             // treat as empty so the fallback message below kicks in.
             // A remnant is considered garbage if it has no real word of 3+ letters.
             if (replyText && replyText.length < 30 && !/[\w\u0400-\u04FF]{3,}/.test(replyText)) {
                 replyText = '';
             }
-            const toolCalls = aiMessage?.tool_calls || [];
+            const toolCalls = [...contentToolCalls, ...structuredToolCalls];
 
             // Handle tool calls
             let patches = [];
@@ -366,11 +478,12 @@ module.exports = function(app, redis, deps) {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${config.OPENROUTER_API_KEY || process.env.AI_API_KEY || ''}` },
                 body: JSON.stringify({
-                    model: process.env.AI_MODEL || 'meta/llama-3.1-8b-instruct',
+                    model: process.env.AI_MODEL || 'qwen/qwen3-32b',
                     messages: apiMessages,
                     tools: tools.length > 0 ? tools : undefined,
-                    tool_choice: tools.length > 0 ? 'auto' : undefined,
+                    tool_choice: tools.length > 0 ? 'required' : undefined,
                     max_tokens: 4096,
+                    enable_thinking: false,
                     stream: true,
                 }),
                 signal: controller.signal,
@@ -592,11 +705,12 @@ module.exports = function(app, redis, deps) {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${config.OPENROUTER_API_KEY || process.env.AI_API_KEY || ''}` },
                 body: JSON.stringify({
-                    model: process.env.AI_MODEL || 'meta/llama-3.1-8b-instruct',
+                    model: process.env.AI_MODEL || 'qwen/qwen3-32b',
                     messages: apiMessages,
                     tools: tools.length > 0 ? tools : undefined,
-                    tool_choice: tools.length > 0 ? 'auto' : undefined,
+                    tool_choice: tools.length > 0 ? 'required' : undefined,
                     max_tokens: 4096,
+                    enable_thinking: false,
                 }),
             });
 
