@@ -144,6 +144,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         setupPlaybackCoordination()
+        setupNavigationEventObserver()
 
         // Periodically refresh assets state + load layer config on book change
         lifecycleScope.launch {
@@ -251,6 +252,28 @@ class MainActivity : AppCompatActivity() {
                 }
                 if (prep.coverImage != null) {
                     playbackViewModel.setCoverImage(prep.coverImage)
+                }
+            }
+        }
+    }
+
+    /**
+     * Observe explicit navigation events from [GenerateViewModel].
+     * Handles import-complete and generation-complete navigation
+     * regardless of which fragment is currently active.
+     */
+    private fun setupNavigationEventObserver() {
+        lifecycleScope.launch {
+            viewModel.navigationEvent.collect { event ->
+                when (event) {
+                    is GenerateViewModel.NavigationEvent.NavigateToGenerate -> {
+                        Log.i("MainActivity", "NavigateToGenerate: ${event.reason}")
+                        switchToGenerateTab()
+                    }
+                    is GenerateViewModel.NavigationEvent.NavigateToPlay -> {
+                        Log.i("MainActivity", "NavigateToPlay: ${event.reason}")
+                        switchToPlayTab()
+                    }
                 }
             }
         }

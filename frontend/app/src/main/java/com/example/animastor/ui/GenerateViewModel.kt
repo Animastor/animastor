@@ -478,6 +478,14 @@ class GenerateViewModel(
                 coverImage = cover,
                 softRefresh = true
             ))
+
+            // После генерации контента (VBook, GPU) — переключиться на Play,
+            // чтобы пользователь сразу видел результат. MainActivity подписан
+            // на navigationEvent и переключит таб, даже если FileFragment неактивен.
+            Log.i(TAG, "applyGenerationResults: emitting NavigateToPlay")
+            _navigationEvent.tryEmit(
+                NavigationEvent.NavigateToPlay("generation_complete")
+            )
         }
     }
 
