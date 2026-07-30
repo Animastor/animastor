@@ -775,11 +775,20 @@ class GenerateViewModel(
                             phase = if (scenesFromTxt.isNotEmpty()) PlayerPhase.SCENE_READY else PlayerPhase.IDLE,
                         )}
 
-                        // TXT: всегда на Generate (нужно генерировать контент)
-                        _navigationEvent.tryEmit(
-                            NavigationEvent.NavigateToGenerate("txt_import_complete")
-                        )
-                        Log.i(TAG, "importBookFromFile (txt): ready with ${scenesFromTxt.size} scenes")
+                        // TXT: если есть ассеты → Play (контент уже сгенерирован),
+                        // иначе → Generate (нужно запустить VBook генерацию).
+                        val txtAssets = runCatching { _repository.getAssetsState(bId) }.getOrNull()
+                        val txtHasAssets = txtAssets?.has_assets == true
+                        if (txtHasAssets) {
+                            _navigationEvent.tryEmit(
+                                NavigationEvent.NavigateToPlay("txt_reimport_has_assets")
+                            )
+                        } else {
+                            _navigationEvent.tryEmit(
+                                NavigationEvent.NavigateToGenerate("txt_import_complete")
+                            )
+                        }
+                        Log.i(TAG, "importBookFromFile (txt): ready with ${scenesFromTxt.size} scenes has_assets=$txtHasAssets")
                     }
                     else -> {
                         throw java.io.IOException("Unknown file format: ${importRes.format}")
