@@ -7,11 +7,9 @@
     android:clipChildren="false">
 
     <FrameLayout
-        android:id="@+id/messageContainer"
+        android:id="@+id/bubbleWrapper"
         android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:clipChildren="false"
-        android:clipToPadding="false">
+        android:layout_height="wrap_content">
 
         <TextView
             android:id="@+id/bubble"
@@ -19,6 +17,8 @@
             android:layout_height="wrap_content"
             android:paddingHorizontal="14dp"
             android:paddingVertical="10dp"
+            android:paddingBottom="32dp"
+            android:paddingEnd="28dp"
             android:textSize="15sp"
             android:lineSpacingExtra="3dp"
             android:maxWidth="280dp"
@@ -27,11 +27,11 @@
 
         <ImageButton
             android:id="@+id/copyButton"
-            android:layout_width="28dp"
-            android:layout_height="28dp"
+            android:layout_width="18dp"
+            android:layout_height="18dp"
             android:layout_gravity="bottom|end"
-            android:layout_marginBottom="-16dp"
-            android:layout_marginEnd="-4dp"
+            android:layout_marginEnd="8dp"
+            android:layout_marginBottom="8dp"
             android:src="@drawable/ic_content_copy"
             android:tint="?attr/colorOnSurfaceVariant"
             android:background="?attr/selectableItemBackgroundBorderless"

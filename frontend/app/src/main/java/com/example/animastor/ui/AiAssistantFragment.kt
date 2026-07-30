@@ -490,40 +490,65 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
         val bookId = generateViewModel.bookId.takeIf { it.isNotBlank() }
             ?: argBookId?.takeIf { it.isNotBlank() } ?: return
         lifecycleScope.launch {
-            val loaded = runCatching {
-                generateViewModel.repository.listSessions(bookId)
-            }.onFailure { e ->
-                Log.e(TAG, "Failed to load session list", e)
-                if (isAdded) {
-                    android.widget.Toast.makeText(requireContext(), R.string.ai_error, android.widget.Toast.LENGTH_SHORT).show()
-                }
-            }.getOrDefault(emptyList())
-            if (!isAdded) return@launch
-            sessions.clear()
-            sessions.addAll(loaded)
-            if (sessions.isEmpty()) {
-                if (isAdded) {
-                    android.widget.Toast.makeText(requireContext(), R.string.ai_no_sessions, android.widget.Toast.LENGTH_SHORT).show()
-                }
-                return@launch
-            }
-            val titles = sessions.map { s ->
-                val label = s.title.replace("\n", " ")
-                val count = " (${s.messageCount})"
-                val active = if (s.sessionId == currentSessionId) "✓ " else ""
-                "$active$label$count"
-            }.toTypedArray()
-            if (!isAdded) return@launch
-            AlertDialog.Builder(requireContext())
-                .setTitle(R.string.ai_session_list)
-                .setItems(titles) { _, which ->
-                    val selected = sessions.getOrNull(which) ?: return@setItems
-                    if (selected.sessionId != currentSessionId) {
-                        restoreSessionFromApi(selected)
+            try {
+                val loaded = runCatching {
+                    generateViewModel.repository.listSessions(bookId)
+                }.onFailure { e ->
+                    Log.e(TAG, "Failed to load session list", e)
+                    if (isAdded) {
+                        try {
+                            android.widget.Toast.makeText(requireContext(), R.string.ai_error, android.widget.Toast.LENGTH_SHORT).show()
+                        } catch (_: Exception) {}
                     }
+                }.getOrDefault(emptyList())
+                if (!isAdded) return@launch
+                sessions.clear()
+                sessions.addAll(loaded)
+                if (sessions.isEmpty()) {
+                    if (isAdded) {
+                        try {
+                            android.widget.Toast.makeText(requireContext(), R.string.ai_no_sessions, android.widget.Toast.LENGTH_SHORT).show()
+                        } catch (_: Exception) {}
+                    }
+                    return@launch
                 }
-                .setPositiveButton(android.R.string.cancel, null)
-                .show()
+                val titles = sessions.map { s ->
+                    val active = if (s.sessionId == currentSessionId) "✓ " else ""
+                    val dateStr = try {
+                        val fmt = java.text.SimpleDateFormat("dd.MM HH:mm", java.util.Locale.getDefault())
+                        fmt.format(java.util.Date(s.updatedAt.takeIf { it > 0 } ?: s.createdAt))
+                    } catch (_: Exception) { "" }
+                    val modeLabel = when (s.mode) {
+                        "conversation" -> getString(R.string.ai_mode_conversation)
+                        "edit" -> getString(R.string.ai_mode_edit)
+                        "import" -> getString(R.string.ai_mode_import)
+                        "director" -> getString(R.string.ai_mode_director)
+                        "extraction" -> getString(R.string.ai_mode_extraction)
+                        "validation" -> getString(R.string.ai_mode_validation)
+                        else -> s.mode
+                    }
+                    "$active$dateStr · $modeLabel"
+                }.toTypedArray()
+                if (!isAdded) return@launch
+                try {
+                    AlertDialog.Builder(requireContext())
+                        .setTitle(R.string.ai_session_list)
+                        .setItems(titles) { _, which ->
+                            try {
+                                val selected = sessions.getOrNull(which) ?: return@setItems
+                                if (selected.sessionId != currentSessionId) {
+                                    restoreSessionFromApi(selected)
+                                }
+                            } catch (_: Exception) {}
+                        }
+                        .setPositiveButton(android.R.string.cancel, null)
+                        .show()
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to show session list dialog", e)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "showSessionListDialog unexpected error", e)
+            }
         }
     }
 

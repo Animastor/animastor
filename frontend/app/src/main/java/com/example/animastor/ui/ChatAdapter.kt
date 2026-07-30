@@ -60,10 +60,9 @@ class ChatAdapter : ListAdapter<ChatMessage, RecyclerView.ViewHolder>(DiffCallba
     class MessageViewHolder(private val container: FrameLayout) : RecyclerView.ViewHolder(container) {
         fun bind(msg: ChatMessage) {
             val ctx = container.context
-            // Find views inside the nested FrameLayout
-            val messageContainer = container.getChildAt(0) as FrameLayout
-            val bubble = messageContainer.getChildAt(0) as TextView
-            val copyButton = messageContainer.getChildAt(1) as ImageButton
+            val wrapper = container.getChildAt(0) as FrameLayout
+            val bubble = wrapper.getChildAt(0) as TextView
+            val copyButton = wrapper.getChildAt(1) as ImageButton
 
             msg.applyMarkdownTo(bubble)
 
@@ -87,11 +86,12 @@ class ChatAdapter : ListAdapter<ChatMessage, RecyclerView.ViewHolder>(DiffCallba
                 setColor(bgColor)
             }
 
-            val lp = bubble.layoutParams as FrameLayout.LayoutParams
+            // Gravity on the wrapper, not the bubble — positions the entire group
+            val lp = wrapper.layoutParams as FrameLayout.LayoutParams
             lp.gravity = if (msg.isUser) Gravity.END else Gravity.START
-            bubble.layoutParams = lp
+            wrapper.layoutParams = lp
 
-            // ── Copy button (bottom-right) ────────────────────────
+            // ── Copy button (bottom-right corner INSIDE bubble) ────────
             copyButton.visibility = View.VISIBLE
             copyButton.setOnClickListener {
                 val clipboard = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
