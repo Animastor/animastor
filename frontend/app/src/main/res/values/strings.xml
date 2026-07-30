@@ -186,6 +186,8 @@
 
     <string name="settings_apply">Apply</string>
     <string name="action_back">Back</string>
+    <string name="action_copy">Copy</string>
+    <string name="copied_to_clipboard">Copied</string>
     <string name="play_fullscreen">Fullscreen</string>
 
     <!-- Legacy (keep for compatibility) -->

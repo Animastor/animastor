@@ -60,7 +60,18 @@ class MainActivity : AppCompatActivity() {
         }
         // Open as standalone fragment (toolbar button, not bottom nav)
         val current = supportFragmentManager.findFragmentByTag("AiAssistantFragment")
-        if (current != null && current.isVisible) return
+        if (current != null) {
+            if (current.isVisible) return
+            // Fragment exists but is hidden (user navigated away via bottom nav) — show it
+            supportFragmentManager.beginTransaction()
+                .apply {
+                    supportFragmentManager.fragments.forEach { hide(it) }
+                }
+                .show(current)
+                .commit()
+            return
+        }
+        // No existing fragment — create new one
         supportFragmentManager.beginTransaction()
             .add(R.id.nav_host_container, AiAssistantFragment.newInstance(createMode = createMode), "AiAssistantFragment")
             .addToBackStack(null)

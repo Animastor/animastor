@@ -3,18 +3,42 @@
     xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:paddingVertical="3dp">
+    android:paddingVertical="3dp"
+    android:clipChildren="false">
 
-    <TextView
-        android:id="@+id/bubble"
+    <FrameLayout
+        android:id="@+id/messageContainer"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:paddingHorizontal="14dp"
-        android:paddingVertical="10dp"
-        android:textSize="15sp"
-        android:lineSpacingExtra="3dp"
-        android:maxWidth="280dp"
-        android:textIsSelectable="true"
-        android:textColor="?attr/colorOnSurface" />
+        android:clipChildren="false"
+        android:clipToPadding="false">
+
+        <TextView
+            android:id="@+id/bubble"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:paddingHorizontal="14dp"
+            android:paddingVertical="10dp"
+            android:textSize="15sp"
+            android:lineSpacingExtra="3dp"
+            android:maxWidth="280dp"
+            android:textIsSelectable="true"
+            android:textColor="?attr/colorOnSurface" />
+
+        <ImageButton
+            android:id="@+id/copyButton"
+            android:layout_width="28dp"
+            android:layout_height="28dp"
+            android:layout_gravity="bottom|end"
+            android:layout_marginBottom="-16dp"
+            android:layout_marginEnd="-4dp"
+            android:src="@drawable/ic_content_copy"
+            android:tint="?attr/colorOnSurfaceVariant"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:visibility="gone"
+            android:contentDescription="@string/action_copy"
+            android:scaleType="center" />
+
+    </FrameLayout>
 
 </FrameLayout>

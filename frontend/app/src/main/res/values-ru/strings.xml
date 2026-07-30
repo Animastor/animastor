@@ -208,6 +208,8 @@
 
     <string name="settings_apply">Применить</string>
     <string name="action_back">Назад</string>
+    <string name="action_copy">Копировать</string>
+    <string name="copied_to_clipboard">Скопировано</string>
     <string name="file_status_opening">Открытие книги…</string>
     <string name="file_status_generating">Генерация сцен…</string>
     <string name="file_status_checking">Проверка медиа…</string>

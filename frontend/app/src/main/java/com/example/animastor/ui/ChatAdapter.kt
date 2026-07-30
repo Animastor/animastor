@@ -10,6 +10,7 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
+import android.widget.ImageButton
 import android.widget.TextView
 import android.widget.Toast
 import androidx.recyclerview.widget.DiffUtil
@@ -59,7 +60,11 @@ class ChatAdapter : ListAdapter<ChatMessage, RecyclerView.ViewHolder>(DiffCallba
     class MessageViewHolder(private val container: FrameLayout) : RecyclerView.ViewHolder(container) {
         fun bind(msg: ChatMessage) {
             val ctx = container.context
-            val bubble = container.getChildAt(0) as TextView
+            // Find views inside the nested FrameLayout
+            val messageContainer = container.getChildAt(0) as FrameLayout
+            val bubble = messageContainer.getChildAt(0) as TextView
+            val copyButton = messageContainer.getChildAt(1) as ImageButton
+
             msg.applyMarkdownTo(bubble)
 
             val density = ctx.resources.displayMetrics.density
@@ -86,13 +91,16 @@ class ChatAdapter : ListAdapter<ChatMessage, RecyclerView.ViewHolder>(DiffCallba
             lp.gravity = if (msg.isUser) Gravity.END else Gravity.START
             bubble.layoutParams = lp
 
-            // Long press to copy
-            bubble.setOnLongClickListener {
+            // ── Copy button (bottom-right) ────────────────────────
+            copyButton.visibility = View.VISIBLE
+            copyButton.setOnClickListener {
                 val clipboard = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                 clipboard.setPrimaryClip(ClipData.newPlainText("chat", msg.text))
-                Toast.makeText(ctx, "Copied", Toast.LENGTH_SHORT).show()
-                true
+                Toast.makeText(ctx, ctx.getString(R.string.copied_to_clipboard), Toast.LENGTH_SHORT).show()
             }
+
+            // ── Text is selectable via standard Android long-press (textIsSelectable=true in XML) ──
+            // No custom onLongClickListener — the default text selection handles it.
         }
     }
 

@@ -486,6 +486,7 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
     }
 
     private fun showSessionListDialog() {
+        if (!isAdded) return
         val bookId = generateViewModel.bookId.takeIf { it.isNotBlank() }
             ?: argBookId?.takeIf { it.isNotBlank() } ?: return
         lifecycleScope.launch {
@@ -497,6 +498,7 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
                     android.widget.Toast.makeText(requireContext(), R.string.ai_error, android.widget.Toast.LENGTH_SHORT).show()
                 }
             }.getOrDefault(emptyList())
+            if (!isAdded) return@launch
             sessions.clear()
             sessions.addAll(loaded)
             if (sessions.isEmpty()) {
@@ -505,13 +507,13 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
                 }
                 return@launch
             }
-            if (!isAdded) return@launch
             val titles = sessions.map { s ->
                 val label = s.title.replace("\n", " ")
                 val count = " (${s.messageCount})"
                 val active = if (s.sessionId == currentSessionId) "✓ " else ""
                 "$active$label$count"
             }.toTypedArray()
+            if (!isAdded) return@launch
             AlertDialog.Builder(requireContext())
                 .setTitle(R.string.ai_session_list)
                 .setItems(titles) { _, which ->
