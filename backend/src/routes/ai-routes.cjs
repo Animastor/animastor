@@ -209,9 +209,13 @@ module.exports = function(app, redis, deps) {
             // Strip tool_call & tool_call markers that some models leak into content
             replyText = replyText.replace(/<tool_call>[\s\S]*?<\/tool_call>/g, '').trim();
             replyText = replyText.replace(/<\/?tool_call[^>]*>/gi, '').trim();
-            // If after stripping, the reply is just garbage remnants (e.g. 'ool_call>'), treat as empty
-            // so the fallback message below kicks in
-            if (replyText && replyText.length < 8 && !/[\w\u0400-\u04FF]{3,}/.test(replyText)) {
+            // Also strip partial tool_call remnants without the opening '<' (e.g. 'tool_call>')
+            replyText = replyText.replace(/tool_call[^>]*>/gi, '').trim();
+            replyText = replyText.replace(/\/?tool_call\b/gi, '').trim();
+            // If after stripping, the reply is just garbage remnants (e.g. 'ool_call>', 'tool_call>'),
+            // treat as empty so the fallback message below kicks in.
+            // A remnant is considered garbage if it has no real word of 3+ letters.
+            if (replyText && replyText.length < 30 && !/[\w\u0400-\u04FF]{3,}/.test(replyText)) {
                 replyText = '';
             }
             const toolCalls = aiMessage?.tool_calls || [];

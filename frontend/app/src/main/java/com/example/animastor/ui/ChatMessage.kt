@@ -16,6 +16,9 @@ data class ChatMessage(
         // Strip raw tool_call markers that some AI models leak into text content
         processed = processed.replace(Regex("<tool_call>[\\s\\S]*?</tool_call>", RegexOption.IGNORE_CASE), "")
         processed = processed.replace(Regex("</?tool_call>", RegexOption.IGNORE_CASE), "")
+        // Also strip partial remnants without the opening '<' (e.g. 'tool_call>')
+        processed = processed.replace(Regex("tool_call[^>]*>", RegexOption.IGNORE_CASE), "")
+        processed = processed.replace(Regex("/?tool_call\\b", RegexOption.IGNORE_CASE), "")
 
         // Escape HTML entities first
         processed = processed.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
