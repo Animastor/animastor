@@ -287,8 +287,12 @@ class FileFragment : Fragment(R.layout.fragment_file) {
                         (requireActivity() as MainActivity).switchToGenerateTab()
                     }
 
-                    // Only auto-switch to Play for non-TXT imports (vbook)
-                    if (!hasSwitchedToPlay && !hasSwitchedToAi && viewModel.bookId.isNotBlank() && (state.phase == PlayerPhase.IDLE || state.phase == PlayerPhase.SCENE_READY || state.phase == PlayerPhase.IMPORTING_TXT) && state.errorMessage == null) {
+                    // Only auto-switch to Play for non-TXT imports (vbook).
+                    // IMPORTING_TXT is deliberately excluded: TXT import has its own
+                    // dedicated navigation logic above that opens Generate screen.
+                    // Including IMPORTING_TXT here would prematurely switch to Play
+                    // as soon as the TXT import phase is set (before import completes).
+                    if (!hasSwitchedToPlay && !hasSwitchedToAi && viewModel.bookId.isNotBlank() && (state.phase == PlayerPhase.IDLE || state.phase == PlayerPhase.SCENE_READY) && state.errorMessage == null && state.importStage != ImportStage.DONE) {
                         hasSwitchedToPlay = true
                         (requireActivity() as MainActivity).switchToPlayTab()
                     }
