@@ -355,7 +355,7 @@ module.exports = function(app, redis, deps) {
                 title, author, language,
                 country, epoch,
                 render_style, lighting_default,
-                narrator_instruction
+                narration_voice
             } = req.body;
 
             const oldBook = book.loadBook(bookId);
@@ -364,7 +364,7 @@ module.exports = function(app, redis, deps) {
             const hasAnyField = title !== undefined || author !== undefined ||
                 language !== undefined || country !== undefined ||
                 epoch !== undefined || render_style !== undefined ||
-                lighting_default !== undefined || narrator_instruction !== undefined;
+                lighting_default !== undefined || narration_voice !== undefined;
             if (!hasAnyField) {
                 return res.status(400).json({ error: 'No metadata fields to update' });
             }
@@ -374,6 +374,13 @@ module.exports = function(app, redis, deps) {
             if (title !== undefined) bookMeta.title = title || null;
             if (author !== undefined) bookMeta.author = author || null;
             if (language !== undefined) bookMeta.language = language || null;
+
+            // narration_voice lives in book.defaults.narration_voice
+            if (narration_voice !== undefined) {
+                if (!bookMeta.defaults) bookMeta.defaults = {};
+                bookMeta.defaults.narration_voice = narration_voice || null;
+            }
+
             oldBook.book = bookMeta;
 
             // ── Update bible.json fields ──
@@ -389,18 +396,11 @@ module.exports = function(app, redis, deps) {
                 if (lighting_default !== undefined) bib.render_rules.lighting_default = lighting_default || null;
             }
 
-            // narrator.voice.instruction
-            if (narrator_instruction !== undefined) {
-                if (!bib.narrator) bib.narrator = {};
-                if (!bib.narrator.voice) bib.narrator.voice = {};
-                bib.narrator.voice.instruction = narrator_instruction || null;
-            }
-
             oldBook.bible = bib;
 
             // Save — preserves all other files untouched
             book.saveBookBundle(oldBook, null);
-            log(`[PATCH METADATA] ${bookId}: title=${title !== undefined} author=${author !== undefined} lang=${language !== undefined} country=${country !== undefined} epoch=${epoch !== undefined} render=${render_style !== undefined} light=${lighting_default !== undefined} narrator=${narrator_instruction !== undefined}`);
+            log(`[PATCH METADATA] ${bookId}: title=${title !== undefined} author=${author !== undefined} lang=${language !== undefined} country=${country !== undefined} epoch=${epoch !== undefined} render=${render_style !== undefined} light=${lighting_default !== undefined} narration_voice=${narration_voice !== undefined}`);
 
             return res.json({ saved: true, book_id: bookId });
         } catch (err) {

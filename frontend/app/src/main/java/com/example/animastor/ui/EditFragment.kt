@@ -998,20 +998,20 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
             ll.addView(inputCard(ctx, key, fieldValues[key] ?: "", false))
         }
 
-        // ── Section: Narrator Voice ──
-        val narratorSectionLabel = TextView(ctx).apply {
+        // ── Section: Audio / Narration Voice ──
+        val audioSectionLabel = TextView(ctx).apply {
             text = getString(R.string.edit_section_audio)
             textSize = 14f
             typeface = android.graphics.Typeface.DEFAULT_BOLD
             setTextColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorSecondary))
             setPadding(0, 16, 0, 4)
         }
-        ll.addView(narratorSectionLabel)
+        ll.addView(audioSectionLabel)
 
-        val narratorInstruction = bible?.narrator?.voice?.instruction ?: ""
-        val narratorKey = "narrator_instruction"
-        if (!fieldValues.containsKey(narratorKey)) fieldValues[narratorKey] = narratorInstruction
-        ll.addView(inputCard(ctx, narratorKey, fieldValues[narratorKey] ?: "", narratorInstruction.length > 80))
+        val narrationVoice = bookMeta?.defaults?.narration_voice ?: ""
+        val voiceKey = "narration_voice"
+        if (!fieldValues.containsKey(voiceKey)) fieldValues[voiceKey] = narrationVoice
+        ll.addView(inputCard(ctx, voiceKey, fieldValues[voiceKey] ?: "", false))
 
         parent.addView(ll)
     }
@@ -1220,21 +1220,28 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                 lighting_default = values["lighting_default"]?.ifEmpty { null }
             )
 
-            val modifiedNarrator = if (values.containsKey("narrator_instruction")) {
-                val instr = values["narrator_instruction"]?.ifEmpty { null }
-                Narrator(voice = VoiceConfig(instruction = instr))
-            } else bib.narrator
-
             bib.copy(
                 country = values["country"]?.ifEmpty { null } ?: bib.country,
                 epoch = values["epoch"]?.ifEmpty { null } ?: bib.epoch,
-                render_rules = modifiedRenderRules,
-                narrator = modifiedNarrator
+                render_rules = modifiedRenderRules
             )
         }
 
+        // ── Defaults (narration_voice lives in book.defaults) ──
+        val modifiedDefaults = bd.book?.defaults?.let { def ->
+            def.copy(
+                narration_voice = values["narration_voice"]?.ifEmpty { null } ?: def.narration_voice
+            )
+        } ?: BookDefaults(
+            narration_voice = values["narration_voice"]?.ifEmpty { null }
+        )
+
+        val modifiedBookMeta2 = modifiedBookMeta?.let { meta ->
+            meta.copy(defaults = modifiedDefaults)
+        } ?: BookMeta(defaults = modifiedDefaults)
+
         return bd.copy(
-            book = modifiedBookMeta,
+            book = modifiedBookMeta2,
             bible = modifiedBible
         )
     }
@@ -1361,7 +1368,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                                 "epoch" -> orig.bible?.epoch ?: ""
                                 "render_style" -> orig.bible?.render_rules?.style ?: ""
                                 "lighting_default" -> orig.bible?.render_rules?.lighting_default ?: ""
-                                "narrator_instruction" -> orig.bible?.narrator?.voice?.instruction ?: ""
+                                "narration_voice" -> orig.book?.defaults?.narration_voice ?: ""
                                 else -> null
                             }
                             if (originalValue != null && value != originalValue) {

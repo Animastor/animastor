@@ -5,9 +5,9 @@
 //   1. Updates book.json fields (title, author, language)
 //   2. Updates bible.json fields (country, epoch, render_rules, narrator)
 //   3. Preserves untouched fields in both files
-//   4. Does not touch chapters, characters, locations, or voices
-//   5. Handles field clearing (null → removes the field value)
-//   6. Handles empty body gracefully (no fields to update)
+//   4. Does not touch chapters, characters, locations, or voices//  5. Handles field clearing (null → removes the field value)
+//  6. Handles empty body gracefully (no fields to update)
+//  7. Handles narration_voice (book.defaults.narration_voice)
 
 const { expect } = require('chai');
 const fs = require('fs');
@@ -36,7 +36,7 @@ describe('PATCH /api/v1/book/:bookId/metadata', () => {
             title, author, language,
             country, epoch,
             render_style, lighting_default,
-            narrator_instruction
+            narration_voice
         } = body;
 
         // Update book.json fields
@@ -44,6 +44,12 @@ describe('PATCH /api/v1/book/:bookId/metadata', () => {
         if (title !== undefined) bookMeta.title = title || null;
         if (author !== undefined) bookMeta.author = author || null;
         if (language !== undefined) bookMeta.language = language || null;
+
+        if (narration_voice !== undefined) {
+            if (!bookMeta.defaults) bookMeta.defaults = {};
+            bookMeta.defaults.narration_voice = narration_voice || null;
+        }
+
         book.book = bookMeta;
 
         // Update bible.json fields
@@ -56,12 +62,6 @@ describe('PATCH /api/v1/book/:bookId/metadata', () => {
             if (!bib.render_rules) bib.render_rules = {};
             if (render_style !== undefined) bib.render_rules.style = render_style || null;
             if (lighting_default !== undefined) bib.render_rules.lighting_default = lighting_default || null;
-        }
-
-        if (narrator_instruction !== undefined) {
-            if (!bib.narrator) bib.narrator = {};
-            if (!bib.narrator.voice) bib.narrator.voice = {};
-            bib.narrator.voice.instruction = narrator_instruction || null;
         }
 
         book.bible = bib;
@@ -107,9 +107,6 @@ describe('PATCH /api/v1/book/:bookId/metadata', () => {
                 lighting_default: 'natural',
                 character_consistency: true,
                 spatial_consistency: true,
-            },
-            narrator: {
-                voice: { instruction: 'Deep calm narrative voice' }
             },
         }, null, 2));
 
@@ -185,15 +182,15 @@ describe('PATCH /api/v1/book/:bookId/metadata', () => {
     });
 
     // ======================================================
-    // Test 4: Update narrator voice instruction
+    // Test 4: Update narration_voice in book.defaults
     // ======================================================
-    it('updates narrator voice instruction', () => {
+    it('updates narration_voice in book.defaults', () => {
         applyMetadataPatch(bookId, {
-            narrator_instruction: 'Soft whisper',
+            narration_voice: 'heroic_narrator',
         });
 
-        const bible = JSON.parse(fs.readFileSync(path.join(bookDir, 'bible.json'), 'utf8'));
-        expect(bible.narrator.voice.instruction).to.equal('Soft whisper');
+        const bookMeta = JSON.parse(fs.readFileSync(path.join(bookDir, 'book.json'), 'utf8'));
+        expect(bookMeta.defaults.narration_voice).to.equal('heroic_narrator');
     });
 
     // ======================================================
@@ -218,7 +215,7 @@ describe('PATCH /api/v1/book/:bookId/metadata', () => {
         expect(bible.country).to.equal('USSR');
         expect(bible.epoch).to.equal('1920s');                // Preserved
         expect(bible.render_rules.style).to.equal('cinematic_realism'); // Preserved
-        expect(bible.narrator.voice.instruction).to.equal('Deep calm narrative voice'); // Preserved
+        // narrator is no longer in bible — not set in this test's bible.json
     });
 
     // ======================================================
@@ -233,13 +230,13 @@ describe('PATCH /api/v1/book/:bookId/metadata', () => {
     });
 
     // ======================================================
-    // Test 8: Clear narrator instruction via null
+    // Test 8: Clear narration_voice via null
     // ======================================================
-    it('clears narrator instruction when null is sent', () => {
-        applyMetadataPatch(bookId, { narrator_instruction: null });
+    it('clears narration_voice when null is sent', () => {
+        applyMetadataPatch(bookId, { narration_voice: null });
 
-        const bible = JSON.parse(fs.readFileSync(path.join(bookDir, 'bible.json'), 'utf8'));
-        expect(bible.narrator.voice.instruction).to.be.null;
+        const bookMeta = JSON.parse(fs.readFileSync(path.join(bookDir, 'book.json'), 'utf8'));
+        expect(bookMeta.defaults.narration_voice).to.be.null;
     });
 
     // ======================================================
@@ -320,13 +317,14 @@ describe('PATCH /api/v1/book/:bookId/metadata', () => {
             epoch: 'Renaissance',
             render_style: 'vibrant',
             lighting_default: 'soft',
-            narrator_instruction: 'French accent',
+            narration_voice: 'french_narrator',
         });
 
         const bookMeta = JSON.parse(fs.readFileSync(path.join(bookDir, 'book.json'), 'utf8'));
         expect(bookMeta.title).to.equal('Full Update');
         expect(bookMeta.author).to.equal('Full Author');
         expect(bookMeta.language).to.equal('fr');
+        expect(bookMeta.defaults.narration_voice).to.equal('french_narrator');
 
         const bible = JSON.parse(fs.readFileSync(path.join(bookDir, 'bible.json'), 'utf8'));
         expect(bible.country).to.equal('France');
@@ -334,7 +332,6 @@ describe('PATCH /api/v1/book/:bookId/metadata', () => {
         expect(bible.render_rules.style).to.equal('vibrant');
         expect(bible.render_rules.lighting_default).to.equal('soft');
         expect(bible.render_rules.character_consistency).to.be.true; // Preserved
-        expect(bible.narrator.voice.instruction).to.equal('French accent');
     });
 
     // ======================================================
@@ -347,12 +344,14 @@ describe('PATCH /api/v1/book/:bookId/metadata', () => {
         // Patch should create the bible object
         applyMetadataPatch(bookId, {
             country: 'Wonderland',
-            narrator_instruction: 'Whimsical',
+            narration_voice: 'whimsical_narrator',
         });
+
+        const bookMeta = JSON.parse(fs.readFileSync(path.join(bookDir, 'book.json'), 'utf8'));
+        expect(bookMeta.defaults.narration_voice).to.equal('whimsical_narrator');
 
         const bible = JSON.parse(fs.readFileSync(path.join(bookDir, 'bible.json'), 'utf8'));
         expect(bible.country).to.equal('Wonderland');
-        expect(bible.narrator.voice.instruction).to.equal('Whimsical');
     });
 
     // ======================================================

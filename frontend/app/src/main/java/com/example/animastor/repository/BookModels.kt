@@ -37,24 +37,36 @@ data class RenderConfig(
     val resolution: String? = null
 )
 
+data class BookDefaults(
+    val narration_voice: String? = null
+)
+
 @JsonAdapter(BookMetaAdapter::class)
 data class BookMeta(
     val book_id: String? = null,
     val version: String? = null,
     val title: String? = null,
     val author: String? = null,
-    val language: String? = null
+    val language: String? = null,
+    val defaults: BookDefaults? = null
 )
 
 class BookMetaAdapter : JsonDeserializer<BookMeta> {
     override fun deserialize(json: JsonElement, typeOfT: Type, context: JsonDeserializationContext): BookMeta {
         val obj = json.asJsonObject
+        val defaultsEl = obj.get("defaults")
+        val defaults = if (defaultsEl is JsonObject) {
+            BookDefaults(
+                narration_voice = defaultsEl.string("narration_voice")
+            )
+        } else null
         return BookMeta(
             book_id = obj.string("book_id"),
             version = obj.string("version"),
             title = obj.titleText(),
             author = obj.string("author"),
-            language = obj.string("language")
+            language = obj.string("language"),
+            defaults = defaults
         )
     }
     private fun JsonObject.string(key: String): String? =
