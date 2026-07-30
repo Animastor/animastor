@@ -277,25 +277,27 @@ class FileFragment : Fragment(R.layout.fragment_file) {
                         }
                     }
                 }
+                // ── Explicit navigation events from ViewModel ──
+                // ViewModel emits NavigationEvent when import completes;
+                // we just obey — no more guessing from importStage/phase.
+                launch {
+                    viewModel.navigationEvent.collect { event ->
+                        if (hasSwitchedToPlay) return@collect
+                        hasSwitchedToPlay = true
+                        when (event) {
+                            is GenerateViewModel.NavigationEvent.NavigateToGenerate -> {
+                                hasSwitchedToAi = true
+                                (requireActivity() as MainActivity).switchToGenerateTab()
+                            }
+                            is GenerateViewModel.NavigationEvent.NavigateToPlay -> {
+                                (requireActivity() as MainActivity).switchToPlayTab()
+                            }
+                        }
+                    }
+                }
+
                 viewModel.uiState.collect { state ->
                     val b = binding ?: return@collect
-
-                    // After TXT import completes, open Generate screen
-                    if (!hasSwitchedToAi && !hasSwitchedToPlay && state.phase == PlayerPhase.SCENE_READY && state.importStage == ImportStage.DONE) {
-                        hasSwitchedToPlay = true
-                        hasSwitchedToAi = true
-                        (requireActivity() as MainActivity).switchToGenerateTab()
-                    }
-
-                    // Only auto-switch to Play for non-TXT imports (vbook).
-                    // IMPORTING_TXT is deliberately excluded: TXT import has its own
-                    // dedicated navigation logic above that opens Generate screen.
-                    // Including IMPORTING_TXT here would prematurely switch to Play
-                    // as soon as the TXT import phase is set (before import completes).
-                    if (!hasSwitchedToPlay && !hasSwitchedToAi && viewModel.bookId.isNotBlank() && (state.phase == PlayerPhase.IDLE || state.phase == PlayerPhase.SCENE_READY) && state.errorMessage == null && state.importStage != ImportStage.DONE) {
-                        hasSwitchedToPlay = true
-                        (requireActivity() as MainActivity).switchToPlayTab()
-                    }
 
                     val loading = state.phase == PlayerPhase.LOADING_BOOK
                         || state.phase == PlayerPhase.GENERATING

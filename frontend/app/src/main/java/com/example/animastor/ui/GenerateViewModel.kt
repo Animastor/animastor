@@ -182,6 +182,17 @@ class GenerateViewModel(
         }
     }
 
+    // ── Explicit navigation events (emitted by importBookFromFile) ─
+    // Используется вместо вывода навигации из uiState, чтобы избежать
+    // race condition между двумя collect'ами uiState в FileFragment.
+    sealed class NavigationEvent {
+        data class NavigateToGenerate(val reason: String = "") : NavigationEvent()
+        data class NavigateToPlay(val reason: String = "") : NavigationEvent()
+    }
+
+    private val _navigationEvent = MutableSharedFlow<NavigationEvent>(extraBufferCapacity = 4)
+    val navigationEvent: SharedFlow<NavigationEvent> = _navigationEvent.asSharedFlow()
+
     // ── UI State (generation/import related only) ─────────────────
 
     private val _uiState = MutableStateFlow(GenUiState())
@@ -690,11 +701,20 @@ class GenerateViewModel(
                         ))
 
                         _uiState.update { it.copy(phase = if (scenes.isNotEmpty()) PlayerPhase.SCENE_READY else PlayerPhase.IDLE) }
+
+                        // VBook: если есть сцены → Play, иначе → Generate
+                        if (scenes.isNotEmpty()) {
+                            _navigationEvent.tryEmit(
+                                NavigationEvent.NavigateToPlay("vbook_import_complete")
+                            )
+                        } else {
+                            _navigationEvent.tryEmit(
+                                NavigationEvent.NavigateToGenerate("vbook_no_scenes")
+                            )
+                        }
                     }
                     "txt" -> {
                         // ── TXT path (SIMPLIFIED: import only, no auto-generation) ──
-                        // build_id is owned by the backend (resolved from manifest.json).
-                        // The thin client just stores whatever the import response carries.
                         persistBuildId(importRes.build_id ?: "")
 
                         _uiState.update { it.copy(
@@ -746,6 +766,11 @@ class GenerateViewModel(
                             vbookProgress = VBookProgress(stage = VBookStage.IDLE),
                             phase = if (scenesFromTxt.isNotEmpty()) PlayerPhase.SCENE_READY else PlayerPhase.IDLE,
                         )}
+
+                        // TXT: всегда на Generate (нужно генерировать контент)
+                        _navigationEvent.tryEmit(
+                            NavigationEvent.NavigateToGenerate("txt_import_complete")
+                        )
                         Log.i(TAG, "importBookFromFile (txt): ready with ${scenesFromTxt.size} scenes")
                     }
                     else -> {
