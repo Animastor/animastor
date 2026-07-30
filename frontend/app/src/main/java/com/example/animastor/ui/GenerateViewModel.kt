@@ -478,14 +478,11 @@ class GenerateViewModel(
                 coverImage = cover,
                 softRefresh = true
             ))
+            // НЕ переключаем на Play — пользователь сам решит, когда переходить.
+            // PlayerState обновлён через playbackPrepared, так что при ручном
+            // переходе на Play будет актуальный контент.
+            Log.i(TAG, "applyGenerationResults: content ready — staying on current tab")
 
-            // После генерации контента (VBook, GPU) — переключиться на Play,
-            // чтобы пользователь сразу видел результат. MainActivity подписан
-            // на navigationEvent и переключит таб, даже если FileFragment неактивен.
-            Log.i(TAG, "applyGenerationResults: emitting NavigateToPlay")
-            _navigationEvent.tryEmit(
-                NavigationEvent.NavigateToPlay("generation_complete")
-            )
         }
     }
 
