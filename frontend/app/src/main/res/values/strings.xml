@@ -298,6 +298,19 @@
     <string name="field_clothing_base">Clothing Base</string>
     <string name="field_clothing_details">Clothing Details</string>
     <string name="field_video_tokens">Video Tokens</string>
+    <string name="field_text">Text</string>
+    <string name="field_speaker">Speaker</string>
+    <string name="field_audio_text">Audio Text</string>
+    <string name="field_shot">Shot</string>
+    <string name="field_prompt">Prompt</string>
+    <string name="field_negative">Negative</string>
+    <string name="field_action">Action</string>
+    <string name="field_chapter_title">Chapter Title</string>
+    <string name="field_scene_title">Scene Title</string>
+    <string name="field_style">Style</string>
+    <string name="field_participants">Participants</string>
+    <string name="field_voice">Voice</string>
+    <string name="field_full_text">Full Text</string>
 
     <!-- Audio Timeline -->
     <string name="timeline_play">Play scene audio</string>

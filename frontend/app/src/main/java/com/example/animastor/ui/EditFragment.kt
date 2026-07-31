@@ -677,14 +677,14 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
             setPadding(0, 16, 0, 4)
         }
         ll.addView(metaSectionLabel)
-        // id and type are read-only system fields
+        // id and type are read-only system fields (kept in JSON style)
         ll.addView(readOnlyCard(ctx, "id", u.id ?: ""))
         ll.addView(readOnlyCard(ctx, "type", u.type ?: ""))
         // text is editable
         val textKey = "text"
         val textVal = u.text ?: ""
         if (!fieldValues.containsKey(textKey)) fieldValues[textKey] = textVal
-        ll.addView(inputCard(ctx, textKey, fieldValues[textKey] ?: textVal, textVal.length > 80))
+        ll.addView(inputCard(ctx, fieldLabel(textKey), fieldValues[textKey] ?: textVal, textVal.length > 80, storeKey = textKey))
 
         // Audio section
         val audioSectionLabel = TextView(ctx).apply {
@@ -696,7 +696,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         listOf("audio.speaker", "audio.text").forEach { key ->
             val v = readUnitField(u, key)
             if (!fieldValues.containsKey(key)) fieldValues[key] = v
-            ll.addView(inputCard(ctx, key, fieldValues[key] ?: v, (key == "audio.text" && (fieldValues[key]?.length ?: 0) > 80)))
+            ll.addView(inputCard(ctx, fieldLabel(key), fieldValues[key] ?: v, (key == "audio.text" && (fieldValues[key]?.length ?: 0) > 80), storeKey = key))
         }
 
         // Image section
@@ -709,7 +709,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         listOf("image.shot", "image.prompt", "image.negative").forEach { key ->
             val v = readUnitField(u, key)
             if (!fieldValues.containsKey(key)) fieldValues[key] = v
-            ll.addView(inputCard(ctx, key, fieldValues[key] ?: v, (key == "image.prompt" && (fieldValues[key]?.length ?: 0) > 80)))
+            ll.addView(inputCard(ctx, fieldLabel(key), fieldValues[key] ?: v, (key == "image.prompt" && (fieldValues[key]?.length ?: 0) > 80), storeKey = key))
         }
 
         // Video section
@@ -722,7 +722,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         listOf("video.action").forEach { key ->
             val v = readUnitField(u, key)
             if (!fieldValues.containsKey(key)) fieldValues[key] = v
-            ll.addView(inputCard(ctx, key, fieldValues[key] ?: v, (fieldValues[key]?.length ?: 0) > 80))
+            ll.addView(inputCard(ctx, fieldLabel(key), fieldValues[key] ?: v, (fieldValues[key]?.length ?: 0) > 80, storeKey = key))
         }
 
         parent.addView(ll)
@@ -761,9 +761,10 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                     orientation = LinearLayout.VERTICAL
                 }
 
+                // id is a read-only system field (kept in JSON style)
                 inner.addView(readOnlyCard(ctx, "id", ch.id ?: ""))
 
-                inner.addView(inputCard(ctx, "name", ch.name ?: "", false, boldValue = true))
+                inner.addView(inputCard(ctx, getString(R.string.field_name), ch.name ?: "", false, boldValue = true, storeKey = "name"))
 
                 // Passport fields
                 val passport = ch.passport
@@ -797,7 +798,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                     passportKeys.forEach { key ->
                         val v = pf[key] ?: ""
                         if (!fieldValues.containsKey(key)) fieldValues[key] = v
-                        inner.addView(inputCard(ctx, key, fieldValues[key] ?: v, (v.length > 80)))
+                        inner.addView(inputCard(ctx, passportFieldLabel(key), fieldValues[key] ?: v, (v.length > 80), storeKey = key))
                     }
                 }
 
@@ -851,7 +852,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                 val instruction = entry.instruction ?: ""
                 val voiceKey = "voice.${voiceId}.instruction"
                 if (!fieldValues.containsKey(voiceKey)) fieldValues[voiceKey] = instruction
-                inner.addView(inputCard(ctx, "instruction", fieldValues[voiceKey] ?: instruction, instruction.length > 80))
+                inner.addView(inputCard(ctx, getString(R.string.field_instruction), fieldValues[voiceKey] ?: instruction, instruction.length > 80, storeKey = voiceKey))
 
                 card.addView(inner)
                 ll.addView(card)
@@ -995,7 +996,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         )
         bookKeys.forEach { key ->
             if (!fieldValues.containsKey(key)) fieldValues[key] = bookValues[key] ?: ""
-            ll.addView(inputCard(ctx, key, fieldValues[key] ?: "", false))
+            ll.addView(inputCard(ctx, fieldLabel(key), fieldValues[key] ?: "", false, storeKey = key))
         }
 
         // ── Section: World (Bible) ──
@@ -1018,7 +1019,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         )
         worldKeys.forEach { key ->
             if (!fieldValues.containsKey(key)) fieldValues[key] = worldValues[key] ?: ""
-            ll.addView(inputCard(ctx, key, fieldValues[key] ?: "", false))
+            ll.addView(inputCard(ctx, fieldLabel(key), fieldValues[key] ?: "", false, storeKey = key))
         }
 
         // ── Section: Audio / Narration Voice ──
@@ -1034,7 +1035,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         val narrationVoice = bookMeta?.defaults?.narration_voice ?: ""
         val voiceKey = "narration_voice"
         if (!fieldValues.containsKey(voiceKey)) fieldValues[voiceKey] = narrationVoice
-        ll.addView(inputCard(ctx, voiceKey, fieldValues[voiceKey] ?: "", false))
+        ll.addView(inputCard(ctx, getString(R.string.field_narrator_instruction), fieldValues[voiceKey] ?: "", false, storeKey = voiceKey))
 
         parent.addView(ll)
     }
@@ -1067,11 +1068,12 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         }
 
         // JSON order: chapter → chapter_title → scene_id → ...
+        // chapter_id / scene_id are read-only system fields (kept in JSON style)
         ll.addView(readOnlyCard(ctx, "chapter_id", ch?.chapter_id ?: "—"))
         if (ch != null) {
             val chTitleKey = "chapter_title"
             if (!fieldValues.containsKey(chTitleKey)) fieldValues[chTitleKey] = ch.chapter_title ?: ""
-            ll.addView(inputCard(ctx, chTitleKey, fieldValues[chTitleKey] ?: "", false))
+            ll.addView(inputCard(ctx, fieldLabel(chTitleKey), fieldValues[chTitleKey] ?: "", false, storeKey = chTitleKey))
         }
         ll.addView(readOnlyCard(ctx, "scene_id", sc.scene_id ?: "—"))
 
@@ -1081,7 +1083,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         editableKeys.forEach { key ->
             val v = sceneValues[key] ?: ""
             if (!fieldValues.containsKey(key)) fieldValues[key] = v
-            ll.addView(inputCard(ctx, key, fieldValues[key] ?: v, (fieldValues[key]?.length ?: 0) > 80))
+            ll.addView(inputCard(ctx, fieldLabel(key), fieldValues[key] ?: v, (fieldValues[key]?.length ?: 0) > 80, storeKey = key))
         }
         parent.addView(ll)
     }
@@ -1097,7 +1099,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         keys.forEach { key ->
             val v = sceneValues[key] ?: ""
             if (!fieldValues.containsKey(key)) fieldValues[key] = v
-            ll.addView(inputCard(ctx, key, fieldValues[key] ?: v, (fieldValues[key]?.length ?: 0) > 80))
+            ll.addView(inputCard(ctx, fieldLabel(key), fieldValues[key] ?: v, (fieldValues[key]?.length ?: 0) > 80, storeKey = key))
         }
         parent.addView(ll)
     }
@@ -1135,6 +1137,55 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
             "video.action" -> u.video?.action ?: ""
             else -> ""
         }
+    }
+
+    /**
+     * Localized hint label for an editor field key. Technical keys (id, type,
+     * *_id, *_version, created_at, location.id, ...) intentionally stay in raw
+     * JSON style — only user-facing fields are translated. The key itself is
+     * always preserved as the storeKey — labels are display-only.
+     */
+    private fun fieldLabel(key: String): String = when (key) {
+        "text" -> getString(R.string.field_text)
+        "audio.speaker" -> getString(R.string.field_speaker)
+        "audio.text" -> getString(R.string.field_audio_text)
+        "image.shot" -> getString(R.string.field_shot)
+        "image.prompt" -> getString(R.string.field_prompt)
+        "image.negative" -> getString(R.string.field_negative)
+        "video.action" -> getString(R.string.field_action)
+        "chapter_title" -> getString(R.string.field_chapter_title)
+        "scene_title" -> getString(R.string.field_scene_title)
+        "style" -> getString(R.string.field_style)
+        "env.time" -> getString(R.string.field_time)
+        "env.lighting" -> getString(R.string.field_lighting)
+        "env.weather" -> getString(R.string.field_weather)
+        "env.mood" -> getString(R.string.field_mood)
+        "env.atmosphere" -> getString(R.string.field_atmosphere)
+        "participants" -> getString(R.string.field_participants)
+        "voice" -> getString(R.string.field_voice)
+        "full_text" -> getString(R.string.field_full_text)
+        "title" -> getString(R.string.field_title)
+        "author" -> getString(R.string.field_author)
+        "language" -> getString(R.string.field_language)
+        "country" -> getString(R.string.field_country)
+        "epoch" -> getString(R.string.field_epoch)
+        "render_style" -> getString(R.string.field_render_style)
+        "lighting_default" -> getString(R.string.field_lighting_default)
+        "narration_voice" -> getString(R.string.field_narrator_instruction)
+        else -> key
+    }
+
+    /**
+     * Localized label for a passport field key (e.g.
+     * "char.<id>.passport.base_appearance" → localized Base Appearance).
+     */
+    private fun passportFieldLabel(key: String): String = when (key.substringAfterLast('.')) {
+        "base_appearance" -> getString(R.string.field_base_appearance)
+        "detailed_appearance" -> getString(R.string.field_detailed_appearance)
+        "clothing_base" -> getString(R.string.field_clothing_base)
+        "clothing_details" -> getString(R.string.field_clothing_details)
+        "video_tokens" -> getString(R.string.field_video_tokens)
+        else -> key
     }
 
     private fun markDirty() {
