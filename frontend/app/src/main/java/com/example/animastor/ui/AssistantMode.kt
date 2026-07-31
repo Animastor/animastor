@@ -19,17 +19,17 @@ enum class AssistantMode(
         descriptionRes = R.string.ai_mode_conversation_desc,
         englishTitle = "Chat"
     ),
-    IMPORT(
-        id = "import",
-        titleRes = R.string.ai_mode_import,
-        descriptionRes = R.string.ai_mode_import_desc,
-        englishTitle = "Import"
-    ),
     EDIT(
         id = "edit",
         titleRes = R.string.ai_mode_edit,
         descriptionRes = R.string.ai_mode_edit_desc,
         englishTitle = "Edit"
+    ),
+    IMPORT(
+        id = "import",
+        titleRes = R.string.ai_mode_import,
+        descriptionRes = R.string.ai_mode_import_desc,
+        englishTitle = "Import"
     ),
     DIRECTOR(
         id = "director",

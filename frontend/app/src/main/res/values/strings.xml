@@ -232,13 +232,6 @@
     <string name="ai_mode_validation_desc">Validate JSON, references, data integrity</string>
     <string name="ai_mode_switch">Mode: %1$s — %2$s</string>
     <string name="ai_position_format">You are at: %1$s / %2$s — %3$s</string>
-    <string name="ai_topic_switched">Switched to topic: %1$s</string>
-
-    <!-- AI Chat Topics -->
-    <string name="ai_topic_book">Book</string>
-    <string name="ai_topic_scene">Scene</string>
-    <string name="ai_topic_characters">Characters</string>
-    <string name="ai_topic_script">Script</string>
     <string name="ai_welcome_context">You have opened book \"%1$s\".\nCurrent position: %2$s / %3$s / %4$s\n\nWhat mode shall we work in? Chat, Edit, Director, Extract, or Validate?</string>
     <string name="ai_context_changed">Now analyzing: %1$s / %2$s / Unit %3$d</string>
 

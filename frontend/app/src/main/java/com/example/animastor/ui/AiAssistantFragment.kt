@@ -66,7 +66,6 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
 
     private val sessions = mutableListOf<ChatSessionApi>()
     private var currentSessionId: String? = null
-    private var currentTopicId = "book"
     private var currentMode = AssistantMode.default()
     private var sessionLoadJob: Job? = null
     private var welcomeJob: Job? = null
@@ -111,9 +110,8 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
         }
         b.sessionListButton.setOnClickListener { showSessionListDialog() }
 
-        // Build mode chips + topic chips
+        // Build mode chips
         buildModeChips()
-        buildTopicChips()
 
         // Mode scroll indicators
         b.modeScrollLeft.setOnClickListener {
@@ -130,22 +128,6 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
         }
         b.modeRow.viewTreeObserver.addOnScrollChangedListener { updateModeScrollIndicators() }
         b.modeRow.post { updateModeScrollIndicators() }
-
-        // Topic scroll indicators
-        b.topicScrollLeft.setOnClickListener {
-            val hsv = b.topicRow
-            val targetX = (hsv.scrollX - hsv.width * 3 / 4).coerceAtLeast(0)
-            hsv.smoothScrollTo(targetX, 0)
-        }
-        b.topicScrollRight.setOnClickListener {
-            val hsv = b.topicRow
-            val contentW = hsv.getChildAt(0)?.width ?: 0
-            val maxScroll = (contentW - hsv.width).coerceAtLeast(0)
-            val targetX = (hsv.scrollX + hsv.width * 3 / 4).coerceAtMost(maxScroll)
-            hsv.smoothScrollTo(targetX, 0)
-        }
-        b.topicRow.viewTreeObserver.addOnScrollChangedListener { updateTopicScrollIndicators() }
-        b.topicRow.post { updateTopicScrollIndicators() }
 
         if (argCreateMode && generateViewModel.bookId.isBlank()) {
             messages.clear()
@@ -204,52 +186,15 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
         binding?.modeRow?.post { updateModeScrollIndicators() }
     }
 
-    private fun buildTopicChips() {
-        val container = binding?.topicContainer ?: return
-        container.removeAllViews()
-        val ctx = container.context
-        val activeBg = themeColor(com.google.android.material.R.attr.colorPrimaryContainer)
-        val activeFg = themeColor(com.google.android.material.R.attr.colorOnPrimaryContainer)
-        val inactiveBg = themeColor(com.google.android.material.R.attr.colorSurfaceVariant)
-        val inactiveFg = themeColor(com.google.android.material.R.attr.colorOnSurfaceVariant)
-        ChatTopic.ALL.forEach { topic ->
-            val chip = LayoutInflater.from(ctx).inflate(R.layout.item_mode_chip, container, false) as MaterialButton
-            chip.text = getString(topic.titleRes)
-            val isActive = topic.id == currentTopicId
-            chip.backgroundTintList = ColorStateList.valueOf(if (isActive) activeBg else inactiveBg)
-            chip.setTextColor(if (isActive) activeFg else inactiveFg)
-            chip.iconTint = ColorStateList.valueOf(if (isActive) activeFg else inactiveFg)
-            chip.setOnClickListener {
-                switchTopic(topic.id)
-            }
-            container.addView(chip)
-        }
-        binding?.topicRow?.post { updateTopicScrollIndicators() }
-    }
-
-    private fun switchTopic(topicId: String) {
-        currentTopicId = topicId
-        buildTopicChips()
-        // Clear API messages so new system prompt takes effect
-        apiMessages.clear()
-        val topic = ChatTopic.getById(topicId)
-        val msg = ChatMessage(text = getString(R.string.ai_topic_switched, getString(topic.titleRes)), isUser = false)
-        messages.add(msg)
-        adapter.submitList(messages.toList())
-        scrollToBottom()
-    }
-
     private fun startNewSession() {
         sessionLoadJob?.cancel()
         welcomeJob?.cancel()
         messages.clear()
         apiMessages.clear()
-        currentTopicId = "book"
         currentMode = AssistantMode.default()
         currentSessionId = null
         pendingSessionId = null
         buildModeChips()
-        buildTopicChips()
         addWelcomeMessage()
         val bookId = generateViewModel.bookId.takeIf { it.isNotBlank() }
             ?: argBookId?.takeIf { it.isNotBlank() }
@@ -260,7 +205,7 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
                     val session = generateViewModel.repository.createSession(
                         bookId = bookId,
                         title = getString(R.string.ai_new_chat),
-                        topicId = currentTopicId,
+                        topicId = "book",
                         mode = currentMode.id
                     )
                     currentSessionId = session.sessionId
@@ -416,11 +361,9 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
         sessionLoadJob?.cancel()
         welcomeJob?.cancel()
         currentSessionId = session.sessionId
-        currentTopicId = if (session.topicId.isNullOrBlank()) "book" else session.topicId
         messages.clear()
         apiMessages.clear()
         adapter.submitList(messages.toList())
-        buildTopicChips()
         sessionLoadJob = viewLifecycleOwner.lifecycleScope.launch {
             if (!isAdded || binding == null) return@launch
             val msgs = runCatching {
@@ -661,7 +604,7 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
                         bookId = bid,
                         lang = lang,
                         mode = currentMode.id,
-                        topicId = currentTopicId,
+                        topicId = "book",
                         sceneId = pos.sceneId,
                         characterId = null,
                         sessionId = sessionAtSend
@@ -803,17 +746,6 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
         b.modeScrollLeft.isEnabled = canLeft
         b.modeScrollRight.alpha = if (canRight) 1.0f else 0.3f
         b.modeScrollRight.isEnabled = canRight
-    }
-
-    private fun updateTopicScrollIndicators() {
-        val b = binding ?: return
-        val hsv = b.topicRow
-        val canLeft = hsv.canScrollHorizontally(-1)
-        val canRight = hsv.canScrollHorizontally(1)
-        b.topicScrollLeft.alpha = if (canLeft) 1.0f else 0.3f
-        b.topicScrollLeft.isEnabled = canLeft
-        b.topicScrollRight.alpha = if (canRight) 1.0f else 0.3f
-        b.topicScrollRight.isEnabled = canRight
     }
 
     private fun buildToolResultMessage(toolResults: List<ToolCallResult>, patchesApplied: Int): String {
