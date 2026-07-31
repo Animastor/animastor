@@ -552,6 +552,32 @@ async function resetBook(bookId) {
 // ======================================================
 
 /**
+ * Collect a flat scene list in book order (server-computed, thin-client contract).
+ *
+ * Every client (Android, Web, ...) builds playback queues and navigation from
+ * this list instead of re-implementing chapter→scene traversal. Cover detection
+ * is also centralized: the first entry with type "cover" is the book cover.
+ *
+ * @param {Object} book - The loaded book object
+ * @returns {Array} - [{ chapter_id, scene_id, type }] in book order
+ */
+function collectSceneList(book) {
+    const list = [];
+    if (!book || !Array.isArray(book.chapters)) return list;
+    for (const ch of book.chapters) {
+        if (!ch.scenes || !Array.isArray(ch.scenes)) continue;
+        for (const sc of ch.scenes) {
+            list.push({
+                chapter_id: ch.chapter_id,
+                scene_id: sc.scene_id,
+                type: sc.type || 'narration',
+            });
+        }
+    }
+    return list;
+}
+
+/**
  * Collect all scenes from book chapters.
  * Cover is now a regular chapter (chapters[0]), no special handling needed.
  * @param {Object} book - The loaded book object
@@ -689,6 +715,7 @@ module.exports = {
     
     // Scene collection
     collectScenes,
+    collectSceneList,
     collectSceneUnits,
     findSceneRuntimeData
 };

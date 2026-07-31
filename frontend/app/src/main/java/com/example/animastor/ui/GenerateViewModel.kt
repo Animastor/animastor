@@ -19,6 +19,7 @@ import com.example.animastor.repository.LayerConfigUpdate
 import com.example.animastor.repository.ReorderChapter
 import com.example.animastor.repository.Repository
 import com.example.animastor.repository.SceneRef
+import com.example.animastor.repository.sceneRefs
 import com.example.animastor.util.MediaDecoder
 import com.example.animastor.util.SimpleDiskCache
 import java.io.File
@@ -431,21 +432,16 @@ class GenerateViewModel(
         }
 
         viewModelScope.launch {
-            // Build scene list from book JSON
+            // Thin-client: server-computed flat scene list (with legacy fallback)
             val scenes = mutableListOf<SceneRef>()
             var coverChapterId: String? = null
             var coverSceneId: String? = null
             val bookData = runCatching { _repository.getBook(bookId) }.getOrNull()
             if (bookData != null) {
-                for (ch in bookData.chapters.orEmpty()) {
-                    for (sc in ch.scenes.orEmpty()) {
-                        val sr = SceneRef(ch.chapter_id, sc.scene_id, sc.type)
-                        if (sc.type == "cover") {
-                            coverChapterId = ch.chapter_id
-                            coverSceneId = sc.scene_id
-                        }
-                        scenes.add(sr)
-                    }
+                scenes.addAll(bookData.sceneRefs())
+                scenes.firstOrNull { it.sceneType == "cover" }?.let { cover ->
+                    coverChapterId = cover.chapterId
+                    coverSceneId = cover.sceneId
                 }
             }
             if (scenes.isEmpty()) {
@@ -643,18 +639,13 @@ class GenerateViewModel(
                         persistBuildId(importRes.build_id ?: "")
                         runCatching { _repository.snapshotBook(bId) }
 
-                        // Build scene list from book JSON
+                        // Thin-client: server-computed flat scene list (with legacy fallback)
                         val bookData = runCatching { _repository.getBook(bId) }.getOrNull()
                         val scenes = mutableListOf<SceneRef>()
                         var coverScene: SceneRef? = null
                         if (bookData != null) {
-                            for (ch in bookData.chapters.orEmpty()) {
-                                for (sc in ch.scenes.orEmpty()) {
-                                    val sr = SceneRef(ch.chapter_id, sc.scene_id, sc.type)
-                                    if (sc.type == "cover") coverScene = sr
-                                    scenes.add(sr)
-                                }
-                            }
+                            scenes.addAll(bookData.sceneRefs())
+                            coverScene = scenes.firstOrNull { it.sceneType == "cover" }
                         }
 
                         val firstScene = coverScene ?: scenes.firstOrNull()
@@ -720,15 +711,11 @@ class GenerateViewModel(
                             )
                         )}
 
-                        // Build scene list from book JSON for navigation
+                        // Thin-client: server-computed flat scene list (with legacy fallback)
                         val bookForNav = runCatching { _repository.getBook(bId) }.getOrNull()
                         val scenesFromTxt = mutableListOf<SceneRef>()
                         if (bookForNav != null) {
-                            for (ch in bookForNav.chapters.orEmpty()) {
-                                for (sc in ch.scenes.orEmpty()) {
-                                    scenesFromTxt.add(SceneRef(ch.chapter_id, sc.scene_id, sc.type))
-                                }
-                            }
+                            scenesFromTxt.addAll(bookForNav.sceneRefs())
                         }
 
                         // Navigate to first scene from book JSON

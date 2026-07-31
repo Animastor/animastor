@@ -16,8 +16,40 @@ data class BookData(
     val characters: List<CharDef>? = null,
     val chapters: List<Chapter>? = null,
     val locations: Map<String, Location>? = null,
-    val voices: Map<String, VoiceEntry>? = null
+    val voices: Map<String, VoiceEntry>? = null,
+    // Flat scene list in book order, computed server-side (thin-client contract).
+    // Clients build playback queues and navigation from this list instead of
+    // re-implementing chapter→scene traversal. Cover is the first entry with
+    // type == "cover". Null/empty on legacy servers → fall back to chapters.
+    val scene_list: List<SceneListEntry>? = null
 )
+
+/**
+ * Flat scene reference in book order, provided by the backend (GET /book).
+ * Used by playback/navigation instead of client-side chapter→scene flattening.
+ */
+data class SceneListEntry(
+    val chapter_id: String? = null,
+    val scene_id: String? = null,
+    val type: String? = null
+)
+
+/**
+ * Flat scene references in book order.
+ *
+ * Primary source is the server-computed `scene_list` (thin-client contract).
+ * Falls back to local chapter→scene traversal only for legacy backends that
+ * do not provide `scene_list` yet.
+ */
+fun BookData.sceneRefs(): List<SceneRef> {
+    val flat = scene_list
+    if (!flat.isNullOrEmpty()) {
+        return flat.map { SceneRef(it.chapter_id, it.scene_id, it.type) }
+    }
+    return chapters.orEmpty().flatMap { ch ->
+        ch.scenes.orEmpty().map { SceneRef(ch.chapter_id, it.scene_id, it.type) }
+    }
+}
 
 data class Manifest(
     val vbook_version: String? = null,

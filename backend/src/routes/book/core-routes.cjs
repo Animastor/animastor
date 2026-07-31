@@ -68,6 +68,12 @@ module.exports = function(app, redis, deps) {
                 }
             }
 
+            // ── Thin-client contract: flat scene list in book order (F-thin) ──
+            // Clients build playback queues and navigation from this list instead
+            // of re-implementing chapter→scene traversal themselves. Cover is the
+            // first entry with type "cover" — detection is centralized here too.
+            bookData.scene_list = book.collectSceneList ? book.collectSceneList(bookData) : [];
+
             const buildId = bookData?.manifest?.build_id || 'default';
             try {
                 const phResult = await placeholderAudio.recoverMissingPlaceholders(buildId, bookId);

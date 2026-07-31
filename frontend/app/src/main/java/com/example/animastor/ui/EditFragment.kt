@@ -1251,24 +1251,6 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         return result
     }
 
-    /** Local passport map from the current blocks (optimistic UI update after save). */
-    private fun buildPassportFromBlocks(): Map<String, CharPassport>? {
-        val m = linkedMapOf<String, CharPassport>()
-        for (block in passportOverrideBlocks) {
-            if (!block.isUsed()) continue
-            val charId = block.charId.trim()
-            if (charId.isEmpty()) continue
-            m[charId] = CharPassport(
-                base_appearance = block.fields["base_appearance"]?.trim()?.ifEmpty { null },
-                detailed_appearance = block.fields["detailed_appearance"]?.trim()?.ifEmpty { null },
-                clothing_base = block.fields["clothing_base"]?.trim()?.ifEmpty { null },
-                clothing_details = block.fields["clothing_details"]?.trim()?.ifEmpty { null },
-                video_tokens = block.fields["video_tokens"]?.trim()?.ifEmpty { null }
-            )
-        }
-        return m.ifEmpty { null }
-    }
-
     private fun passportFieldOf(p: CharPassport?, field: String): String? = when (field) {
         "base_appearance" -> p?.base_appearance
         "detailed_appearance" -> p?.detailed_appearance
@@ -1478,140 +1460,6 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         }
     }
 
-    private fun applyGlobalFields(bd: BookData, values: Map<String, String>): BookData {
-        // ── Book metadata ──
-        val modifiedBookMeta = bd.book?.let { meta ->
-            meta.copy(
-                title = values["title"]?.ifEmpty { null } ?: meta.title,
-                author = values["author"]?.ifEmpty { null } ?: meta.author,
-                language = values["language"]?.ifEmpty { null } ?: meta.language
-            )
-        }
-
-        // ── Bible / World ──
-        val modifiedBible = bd.bible?.let { bib ->
-            val modifiedRenderRules = bib.render_rules?.let { rr ->
-                rr.copy(
-                    style = values["render_style"]?.ifEmpty { null } ?: rr.style,
-                    lighting_default = values["lighting_default"]?.ifEmpty { null } ?: rr.lighting_default
-                )
-            } ?: RenderRules(
-                style = values["render_style"]?.ifEmpty { null },
-                lighting_default = values["lighting_default"]?.ifEmpty { null }
-            )
-
-            bib.copy(
-                country = values["country"]?.ifEmpty { null } ?: bib.country,
-                epoch = values["epoch"]?.ifEmpty { null } ?: bib.epoch,
-                render_rules = modifiedRenderRules
-            )
-        }
-
-        // ── Defaults (narration_voice lives in book.defaults) ──
-        val modifiedDefaults = bd.book?.defaults?.let { def ->
-            def.copy(
-                narration_voice = values["narration_voice"]?.ifEmpty { null } ?: def.narration_voice
-            )
-        } ?: BookDefaults(
-            narration_voice = values["narration_voice"]?.ifEmpty { null }
-        )
-
-        val modifiedBookMeta2 = modifiedBookMeta?.let { meta ->
-            meta.copy(defaults = modifiedDefaults)
-        } ?: BookMeta(defaults = modifiedDefaults)
-
-        return bd.copy(
-            book = modifiedBookMeta2,
-            bible = modifiedBible
-        )
-    }
-
-    private fun applyFieldValues(scene: Scene, values: Map<String, String>): Scene {
-        val s = values
-        var modified = scene
-        s["scene_title"]?.let { modified = modified.copy(scene_title = it.ifEmpty { null }) }
-        s["type"]?.let { modified = modified.copy(type = it.ifEmpty { null }) }
-        s["style"]?.let { modified = modified.copy(style = it.ifEmpty { null }) }
-        s["location.id"]?.let {
-            val v = it.ifEmpty { null }
-            val loc = modified.location
-            modified = modified.copy(location = if (v == null && loc?.environment == null) null
-                else LocationData(id = v, environment = loc?.environment))
-        }
-        s["env.time"]?.let { v ->
-            val loc = modified.location
-            val env = (loc?.environment ?: EnvironmentData()).copy(time = v.ifEmpty { null })
-            modified = modified.copy(location = LocationData(id = loc?.id, environment = env))
-        }
-        s["env.lighting"]?.let { v ->
-            val loc = modified.location
-            val env = (loc?.environment ?: EnvironmentData()).copy(lighting = v.ifEmpty { null })
-            modified = modified.copy(location = LocationData(id = loc?.id, environment = env))
-        }
-        s["env.weather"]?.let { v ->
-            val loc = modified.location
-            val env = (loc?.environment ?: EnvironmentData()).copy(weather = v.ifEmpty { null })
-            modified = modified.copy(location = LocationData(id = loc?.id, environment = env))
-        }
-        s["env.mood"]?.let { v ->
-            val loc = modified.location
-            val env = (loc?.environment ?: EnvironmentData()).copy(mood = v.ifEmpty { null })
-            modified = modified.copy(location = LocationData(id = loc?.id, environment = env))
-        }
-        s["env.atmosphere"]?.let { v ->
-            val loc = modified.location
-            val env = (loc?.environment ?: EnvironmentData()).copy(atmosphere = v.ifEmpty { null })
-            modified = modified.copy(location = LocationData(id = loc?.id, environment = env))
-        }
-        s["participants"]?.let { v ->
-            modified = modified.copy(participants = if (v.isBlank()) null else v.split(", ").map { it.trim() })
-        }
-        s["voice"]?.let { v ->
-            val audio = modified.audio ?: AudioConfig()
-            modified = modified.copy(audio = audio.copy(voice = v.ifEmpty { null }))
-        }
-        s["full_text"]?.let { v ->
-            val audio = modified.audio ?: AudioConfig()
-            modified = modified.copy(audio = audio.copy(full_text = v.ifEmpty { null }))
-        }            // Unit-level fields
-        val sceneUnits = modified.units
-        val pos = SharedPositionManager.current.value
-        if (sceneUnits != null && pos.unitIndex < sceneUnits.size) {
-            val modifiedUnits = sceneUnits.toMutableList()
-            val u = sceneUnits[pos.unitIndex]
-            var mu = u
-            if (s.containsKey("text")) mu = mu.copy(text = s["text"]?.ifEmpty { null })
-            // Audio section
-            if (s.containsKey("audio.speaker") || s.containsKey("audio.text")) {
-                val speaker = s["audio.speaker"]?.ifEmpty { null }
-                val text = s["audio.text"]?.ifEmpty { null }
-                mu = mu.copy(audio = AudioSection(speaker = speaker, text = text))
-            }
-            // Image section — preserve non-UI fields (quality, style, lighting, character_binding)
-            if (s.containsKey("image.shot") || s.containsKey("image.prompt") || s.containsKey("image.negative")) {
-                val existing = mu.image
-                val shot = s["image.shot"]?.ifEmpty { mu.image?.shot }
-                val prompt = s["image.prompt"]?.ifEmpty { null }
-                val negative = s["image.negative"]?.ifEmpty { null }
-                mu = mu.copy(image = ImageSection(
-                    shot = shot, prompt = prompt, negative = negative,
-                    quality = existing?.quality,
-                    style = existing?.style,
-                    lighting = existing?.lighting,
-                    character_binding = existing?.character_binding
-                ))
-            }
-            // Video section
-            if (s.containsKey("video.action")) {
-                val action = s["video.action"]?.ifEmpty { null }
-                mu = mu.copy(video = VideoSection(action = action))
-            }
-            modifiedUnits[pos.unitIndex] = mu
-            modified = modified.copy(units = modifiedUnits.toList())
-        }
-        return modified
-    }
-
     private fun saveToBackend() {
         try {
             val bd = bookData
@@ -1668,9 +1516,10 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
 
                         viewModel.repository.patchBookMetadata(bookId, body)
 
-                        // Optimistic local update
-                        val modifiedBookData = applyGlobalFields(bd, fieldValues)
-                        bookData = modifiedBookData
+                        // Thin-client: re-fetch canonical book data instead of
+                        // reconstructing it locally (server is the source of truth).
+                        // A refresh failure must not be reported as a save failure.
+                        bookData = runCatching { viewModel.repository.getBook(bookId) }.getOrNull()
                         viewModel.markUnsavedChanges()
                         setSaveLoading(false)
                         errorText?.visibility = View.GONE
@@ -1710,42 +1559,10 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                             viewModel.repository.patchLocation(bookId, locId, fields)
                         }
 
-                        // Optimistic local update
-                        val modifiedLocations = (bookData?.locations ?: emptyMap()).toMutableMap()
-                        byLoc.forEach { (locId, fields) ->
-                            val existing = modifiedLocations[locId] ?: Location(id = locId)
-                            val envKeys = listOf("time", "season", "lighting", "weather", "mood", "atmosphere")
-                            val hasEnv = envKeys.any { fields.containsKey("environment.$it") }
-                            val newEnv = if (hasEnv) {
-                                val base = existing.environment ?: EnvironmentData()
-                                // Empty string → null, matching the backend's setDeep('' → null)
-                                base.copy(
-                                    time = (fields["environment.time"] as? String)?.ifEmpty { null },
-                                    season = (fields["environment.season"] as? String)?.ifEmpty { null },
-                                    lighting = (fields["environment.lighting"] as? String)?.ifEmpty { null },
-                                    weather = (fields["environment.weather"] as? String)?.ifEmpty { null },
-                                    mood = (fields["environment.mood"] as? String)?.ifEmpty { null },
-                                    atmosphere = (fields["environment.atmosphere"] as? String)?.ifEmpty { null }
-                                )
-                            } else existing.environment
-                            // storeKey-prefixed keys are always present in fieldValues,
-                            // so a missing key means "keep" — but an empty string means
-                            // "clear" (backend setDeep('' → null)). Use the raw value
-                            // without falling back to the old value, otherwise clearing
-                            // a field would be silently reverted.
-                            fun keepOrClear(fieldKey: String, old: String?): String? =
-                                if (fields.containsKey(fieldKey)) (fields[fieldKey] as? String)?.ifEmpty { null } else old
-
-                            modifiedLocations[locId] = existing.copy(
-                                name = keepOrClear("name", existing.name),
-                                description = keepOrClear("description", existing.description),
-                                visual_style = keepOrClear("visual_style", existing.visual_style),
-                                cinematic_space = keepOrClear("cinematic_space", existing.cinematic_space),
-                                environment = newEnv
-                            )
-                        }
-
-                        bookData = bookData?.copy(locations = modifiedLocations)
+                        // Thin-client: re-fetch canonical book data instead of
+                        // reconstructing it locally (server is the source of truth).
+                        // A refresh failure must not be reported as a save failure.
+                        bookData = runCatching { viewModel.repository.getBook(bookId) }.getOrNull()
                         viewModel.markUnsavedChanges()
                         setSaveLoading(false)
                         errorText?.visibility = View.GONE
@@ -1814,18 +1631,11 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                         viewModel.repository.patchScene(bookId, chapterId, sceneId, mapOf("fields" to passportFields))
                     }
 
-                    // Apply changes locally for UI consistency (optimistic update)
-                    val modifiedScene = applyFieldValues(sc, fieldValues).copy(passport = buildPassportFromBlocks())
-                    val modifiedChapters = chapters.toMutableList()
-                    val modifiedCh = if (chapterTitleValue != null || fieldValues.containsKey("chapter_title"))
-                        ch.copy(chapter_title = chapterTitleValue) else ch
-                    val scenes = modifiedCh.scenes?.toMutableList() ?: return@launch
-                    scenes[currentScIndex] = modifiedScene
-                    modifiedChapters[currentChIndex] = modifiedCh.copy(scenes = scenes.toList())
-                    val modifiedBookData = bd.copy(chapters = modifiedChapters.toList())
-
-                    bookData = modifiedBookData
-                    chapters = modifiedBookData.chapters ?: emptyList()
+                    // Thin-client: re-fetch canonical book data instead of
+                    // reconstructing it locally (server is the source of truth).
+                    // A refresh failure must not be reported as a save failure.
+                    bookData = runCatching { viewModel.repository.getBook(bookId) }.getOrNull()
+                    chapters = bookData?.chapters ?: emptyList()
                     viewModel.markUnsavedChanges()
                     setSaveLoading(false)
                     errorText?.visibility = View.GONE

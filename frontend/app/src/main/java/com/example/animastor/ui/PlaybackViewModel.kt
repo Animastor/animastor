@@ -11,6 +11,7 @@ import androidx.lifecycle.viewmodel.CreationExtras
 import com.example.animastor.network.RetrofitClient
 import com.example.animastor.repository.Repository
 import com.example.animastor.repository.SceneRef
+import com.example.animastor.repository.sceneRefs
 import com.example.animastor.util.MediaDecoder
 import com.example.animastor.util.SimpleDiskCache
 import kotlinx.coroutines.Dispatchers
@@ -456,12 +457,8 @@ class PlaybackViewModel(
             viewModelScope.launch {
                 val bookData = runCatching { _repository.getBook(bookId) }.getOrNull()
                 if (bookData != null) {
-                    val allScenes = mutableListOf<SceneRef>()
-                    for (ch in bookData.chapters.orEmpty()) {
-                        for (sc in ch.scenes.orEmpty()) {
-                            allScenes.add(SceneRef(ch.chapter_id, sc.scene_id, sc.type))
-                        }
-                    }
+                    // Thin-client: server-computed flat scene list (with legacy fallback)
+                    val allScenes = bookData.sceneRefs()
                     val allKeys = allScenes.map { "${it.chapterId}:${it.sceneId}" }
                     val newIdx = allKeys.indexOf(sceneKey)
                     if (newIdx >= 0) {
@@ -509,16 +506,11 @@ class PlaybackViewModel(
             val scenes = mutableListOf<SceneRef>()
             var coverScene: SceneRef? = null
 
-            // Build scene list from book JSON (the canonical source of truth)
+            // Thin-client: server-computed flat scene list (with legacy fallback)
             val bookData = runCatching { _repository.getBook(targetBookId) }.getOrNull()
             if (bookData != null) {
-                for (ch in bookData.chapters.orEmpty()) {
-                    for (sc in ch.scenes.orEmpty()) {
-                        val sr = SceneRef(ch.chapter_id, sc.scene_id, sc.type)
-                        if (sc.type == "cover") coverScene = sr
-                        scenes.add(sr)
-                    }
-                }
+                scenes.addAll(bookData.sceneRefs())
+                coverScene = scenes.firstOrNull { it.sceneType == "cover" }
             }
 
             Log.i(TAG, "ensureInitialized: built ${scenes.size} scenes from book JSON")
