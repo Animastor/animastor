@@ -151,10 +151,19 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
     for (const loc of (analysis.locations || [])) {
         const locId = loc.id || loc.name.toLowerCase().replace(/[^a-zа-яё0-9]+/g, '_').replace(/^_|_$/g, '');
         if (!locations[locId]) {
-            locations[locId] = {
+            const entry = {
+                name: loc.name,
                 description: loc.description || `${loc.name} — location from the source text`,
-                cinematic_space: loc.name,
+                cinematic_space: loc.cinematic_space || loc.name,
             };
+            // Global environment template — scene environments override it per-field.
+            if (loc.environment && typeof loc.environment === 'object' && Object.keys(loc.environment).length > 0) {
+                entry.environment = loc.environment;
+            }
+            locations[locId] = entry;
+        } else if (loc.name && !locations[locId].name) {
+            // Backfill missing name on existing location (first window wins)
+            locations[locId].name = loc.name;
         }
     }
 

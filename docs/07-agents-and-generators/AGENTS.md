@@ -155,7 +155,11 @@ LLM отвечает только за смысловое разбиение п�
 `stepEnrichScenes()`, который до-заполняет поля:
 - `title` — извлекается из контекста, а не из scene-creation prompt
 - `location.id` — сопоставляется с известными локациями
-- `environment` — атмосферные поля (epoch, season, atmosphere)
+- `environment` — атмосферные поля (epoch, season, atmosphere); правило «только
+  переопределения»: если поле совпадает с глобальным шаблоном локации
+  (`locations.json` → `environment`, показывается в Known Locations как
+  "default environment: ...") — агент его опускает, система подставит фоллбэк при
+  сборке промпта
 
 **Формат выхода (сцен):** `{ scenes: [{ title, text, type, participants, location, environment }] }`
 

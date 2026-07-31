@@ -78,9 +78,14 @@ function buildVideoPrompt(sceneData, loadedBook, units, iuDurations) {
         .filter(Boolean);
 
     // 2. Location / environment context
-    const env = scene.location?.environment || {};
     const locationId = scene.location?.id || '';
     const loc = loadedBook.locations?.[locationId];
+    // Location environment is a global template — the scene environment
+    // overrides it per-field (same pattern as image prompt-builder).
+    const env = {
+        ...(loc?.environment || {}),
+        ...(scene.location?.environment || {}),
+    };
 
     // 3. Storyboard per IU
     const storyboardParts = [];

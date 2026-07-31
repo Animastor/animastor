@@ -382,6 +382,72 @@ describe('Coreference — buildImagePrompt passport injection', () => {
 });
 
 // ======================================================
+// Location environment template — fallback merge (L2)
+// ======================================================
+
+describe('Location environment template — buildImagePrompt fallback', () => {
+
+    const bookPayload = {
+        characters: [],
+        locations: {
+            moscow_patriarskie: {
+                description: 'Патриаршие пруды',
+                visual_style: 'realistic',
+                environment: {
+                    time: 'warm evening',
+                    season: 'late spring',
+                    lighting: 'soft street lamps',
+                    weather: 'still warm air',
+                    mood: 'quiet and calm',
+                    atmosphere: 'calm Moscow park',
+                },
+            },
+        },
+    };
+
+    it('uses location environment as fallback when scene has no environment', () => {
+        const unit = { type: 'narration', image: { prompt: 'pond scene' } };
+        const scene = { location: { id: 'moscow_patriarskie' } };
+        const result = buildImagePrompt(unit, scene, {}, bookPayload);
+        expect(result).to.include('warm evening');
+        expect(result).to.include('late spring');
+        expect(result).to.include('soft street lamps');
+        expect(result).to.include('still warm air');
+        expect(result).to.include('quiet and calm');
+        expect(result).to.include('calm Moscow park');
+    });
+
+    it('scene environment overrides location template per-field', () => {
+        const unit = { type: 'narration', image: { prompt: 'pond scene' } };
+        const scene = {
+            location: {
+                id: 'moscow_patriarskie',
+                environment: { weather: 'heavy rain', mood: 'tense' },
+            },
+        };
+        const result = buildImagePrompt(unit, scene, {}, bookPayload);
+        // Overridden fields from scene
+        expect(result).to.include('heavy rain');
+        expect(result).to.include('tense');
+        // Inherited fields from location template
+        expect(result).to.include('warm evening');
+        expect(result).to.include('late spring');
+        expect(result).to.include('soft street lamps');
+        // Scene's overridden template fields must NOT leak
+        expect(result).to.not.include('still warm air');
+        expect(result).to.not.include('quiet and calm');
+    });
+
+    it('no location environment and no scene environment → no env fields', () => {
+        const unit = { type: 'narration', image: { prompt: 'plain shot' } };
+        const scene = { location: { id: 'unknown_place' } };
+        const result = buildImagePrompt(unit, scene, {}, { characters: [], locations: {} });
+        expect(result).to.include('plain shot');
+        expect(result).to.not.include('warm evening');
+    });
+});
+
+// ======================================================
 // isTypographyStyle / resolveVisualStyle
 // ======================================================
 

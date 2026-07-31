@@ -212,7 +212,7 @@ const CROSS_FIELDS = [
         findAffectedScenes: (allScenes, entityId) => {
             return allScenes.filter(s => s.location && s.location.id === entityId);
         },
-        label: 'Location description + visual style (bible.json)',
+        label: 'Location description + visual style + environment template (bible.json)',
         usedBy: 'buildImagePrompt → bible.locations[locationId]',
     },
 ];

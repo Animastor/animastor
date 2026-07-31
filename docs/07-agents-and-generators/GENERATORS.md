@@ -51,6 +51,9 @@ async resolveCanonicalSceneImage(outputDir, buildId, bookId, chapterId, sceneId)
   кадра (с июля 2026; `unit.participants` удалён). Сканирует `visual.prompt` на
   `character_id` и inject-ит паспорта из `characters.json`.
 - Поддержка `epoch`, `season`, `atmosphere` из `scene.location.environment`
+- `locations.json` содержит глобальный шаблон `environment` (time/season/lighting/weather/
+  mood/atmosphere) — fallback для сцен. `scene.location.environment` перекрывает его по-полю
+  (паттерн паспортов персонажей); мёрж выполняется в `buildImagePrompt()` и видео-билдере
 - Кэширование: если изображение уже существует — пропускается
 - Использует `img-qwen-image` workflow
 - Параллельная отправка нескольких IU через GPU Hub

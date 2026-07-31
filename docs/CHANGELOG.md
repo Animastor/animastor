@@ -4,6 +4,57 @@ All notable changes to Animastor are documented here.
 
 ---
 
+## [Unreleased] — 2026-07-31
+
+### Added
+
+- **Система локаций: глобальный `environment` как fallback + редактор локаций на фронте**
+  (`backend/src/image/prompt-builder.js`,
+  `backend/src/workflows/video/video-workflows.js`,
+  `backend/ai/rules/locations.md`,
+  `backend/ai/rules/enrich_scenes.md`,
+  `backend/src/services/agent/pipeline-steps.js`,
+  `backend/src/book/lazy-book/create.js`,
+  `backend/src/routes/book/core-routes.cjs`,
+  `backend/src/services/prompt-dependency-registry.js`,
+  `frontend/.../BookModels.kt`,
+  `frontend/.../EditFragment.kt`,
+  `frontend/.../BackendApi.kt`,
+  `frontend/.../Repository.kt`,
+  `frontend/.../strings.xml`, `frontend/.../values-ru/strings.xml`):
+  - **Паттерн:** у каждой локации в `locations.json` появился глобальный `environment`
+    (time, season, lighting, weather, mood, atmosphere) — шаблон типичного состояния.
+    При генерации промпта он работает как фоллбэк, а `scene.location.environment`
+    перекрывает его **по-полю** (тот же принцип, что с паспортами персонажей).
+  - **`prompt-builder.js` / `video-workflows.js`:** мёрж `locations[locId].environment`
+    + `scene.location.environment` на этапе чтения промпта (read-only, дешёвый).
+  - **`locations.md`:** агент извлекает `name` + `environment` локаций.
+  - **`enrich_scenes.md`:** правило «писать только переопределения» — если поле сцены
+    совпадает с шаблоном локации, оно опускается (система подставит фоллбэк).
+  - **`pipeline-steps.js`:** `buildLocationsContext()` показывает агенту дефолтный
+    environment каждой локации (в 4 шагах пайплайна).
+  - **`create.js`:** локации сохраняют `name` + `environment` (бэкфилл имени для
+    существующих локаций без него).
+  - **`core-routes.cjs`:** новый `PATCH /api/v1/book/:bookId/locations/:locationId`
+    с `setDeep`, `bookDiff`-reconcile и bump версий затронутых сцен — изменение
+    шаблона локации перегенерирует image+video всех её сцен.
+  - **`prompt-dependency-registry.js`:** label `bible.locations` уточнён (включает
+    `environment` локаций).
+  - **Frontend:**
+    - `BookModels.kt` — `Location.environment: EnvironmentData?`, `EnvironmentData.season`,
+      удалено мёртвое `default_mood`.
+    - `EditFragment.kt` — вкладка «Локации»: **name жирным**, секция «Окружение»
+      с 6 полями (time/season/lighting/weather/mood/atmosphere), сохранение по каждой
+      локации через `patchLocation` (ключи `loc.<id>.*`), оптимистичный апдейт
+      с корректной очисткой полей (`'' → null`).
+    - `BackendApi.kt` / `Repository.kt` — метод `patchLocation`.
+    - Строки: добавлены `field_environment/time/season/lighting/weather/mood/atmosphere`,
+      удалён `field_default_mood`.
+  - 3 новых теста на фоллбэк environment; 676 тестов проходят, frontend
+    `compileDebugKotlin` OK.
+
+---
+
 ## [Unreleased] — 2026-07-29
 
 ### Fixed

@@ -100,7 +100,13 @@
     <string name="field_description">Описание</string>
     <string name="field_visual_style">Визуальный стиль</string>
     <string name="field_cinematic_space">Кинопространство</string>
-    <string name="field_default_mood">Настроение по умолчанию</string>
+    <string name="field_environment">Окружение</string>
+    <string name="field_time">Время</string>
+    <string name="field_season">Сезон</string>
+    <string name="field_lighting">Освещение</string>
+    <string name="field_weather">Погода</string>
+    <string name="field_mood">Настроение</string>
+    <string name="field_atmosphere">Атмосфера</string>
     <string name="field_instruction">Инструкция</string>
     <string name="field_title">Название</string>
     <string name="field_author">Автор</string>

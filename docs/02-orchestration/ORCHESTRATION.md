@@ -177,6 +177,7 @@ SceneText ──┬──► Audio (mp3)
 ```
 Final Image Prompt = [renderMode] + [style] + [location_visual_style] + [location_description]
   + [env_epoch/time/season/weather/mood/atmosphere/lighting] ← scene.location.environment
+    (мёржится с locations.json → environment как fallback: сцена перекрывает шаблон по-полю)
   + [shot_type] ← unit.visual.shot
   + [character_passport] ← book.characters[id].passport (via inferCharactersFromPrompt())
   + [character_state] ← scene.state[id] || chapter.state[id]

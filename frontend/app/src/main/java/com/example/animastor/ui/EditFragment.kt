@@ -896,13 +896,50 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                     orientation = LinearLayout.VERTICAL
                 }
 
-                inner.addView(readOnlyCard(ctx, "id", loc.id ?: key, boldValue = true))
+                // Use the map key (== location id) consistently — the backend
+                // PATCH indexes locations by the locations.json map key.
+                val locId = key
+                inner.addView(readOnlyCard(ctx, "id", locId, boldValue = true))
 
-                inner.addView(inputCard(ctx, "name", loc.name ?: "", false))
-                inner.addView(inputCard(ctx, "description", loc.description ?: "", (loc.description?.length ?: 0) > 80))
-                inner.addView(inputCard(ctx, "visual_style", loc.visual_style ?: "", false))
-                inner.addView(inputCard(ctx, "cinematic_space", loc.cinematic_space ?: "", false))
-                inner.addView(inputCard(ctx, "default_mood", loc.default_mood ?: "", false))
+                // storeKey prefixes with the location id so per-location fields
+                // don't collide in the shared fieldValues map.
+                val prefix = "loc.$locId."
+                inner.addView(inputCard(ctx, getString(R.string.field_name), loc.name ?: "", false, boldValue = true, storeKey = "${prefix}name"))
+                inner.addView(inputCard(ctx, getString(R.string.field_description), loc.description ?: "", (loc.description?.length ?: 0) > 80, storeKey = "${prefix}description"))
+                inner.addView(inputCard(ctx, getString(R.string.field_visual_style), loc.visual_style ?: "", false, storeKey = "${prefix}visual_style"))
+                inner.addView(inputCard(ctx, getString(R.string.field_cinematic_space), loc.cinematic_space ?: "", false, storeKey = "${prefix}cinematic_space"))
+
+                // ── Global environment template ──
+                val env = loc.environment
+                val envLabel = TextView(ctx).apply {
+                    text = getString(R.string.field_environment)
+                    textSize = 12f
+                    typeface = android.graphics.Typeface.DEFAULT_BOLD
+                    setTextColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorSecondary))
+                    setPadding(0, 8, 0, 4)
+                }
+                inner.addView(envLabel)
+
+                val envKeys = listOf(
+                    "time" to getString(R.string.field_time),
+                    "season" to getString(R.string.field_season),
+                    "lighting" to getString(R.string.field_lighting),
+                    "weather" to getString(R.string.field_weather),
+                    "mood" to getString(R.string.field_mood),
+                    "atmosphere" to getString(R.string.field_atmosphere)
+                )
+                envKeys.forEach { (envKey, envLabelText) ->
+                    val v = when (envKey) {
+                        "time" -> env?.time ?: ""
+                        "season" -> env?.season ?: ""
+                        "lighting" -> env?.lighting ?: ""
+                        "weather" -> env?.weather ?: ""
+                        "mood" -> env?.mood ?: ""
+                        "atmosphere" -> env?.atmosphere ?: ""
+                        else -> ""
+                    }
+                    inner.addView(inputCard(ctx, envLabelText, v, v.length > 80, storeKey = "${prefix}environment.$envKey"))
+                }
 
                 card.addView(inner)
                 ll.addView(card)
@@ -1145,8 +1182,9 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         }
     }
 
-    private fun inputCard(ctx: Context, label: String, value: String, multiline: Boolean, boldValue: Boolean = false): View {
-        fieldValues[label] = value
+    private fun inputCard(ctx: Context, label: String, value: String, multiline: Boolean, boldValue: Boolean = false, storeKey: String? = null): View {
+        val key = storeKey ?: label
+        fieldValues[key] = value
         val til = TextInputLayout(ctx).apply {
             hint = label
             isHintEnabled = true
@@ -1164,7 +1202,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
             }
             setPadding(12, 10, 12, 10)
             addTextChangedListener(simpleWatcher {
-                fieldValues[label] = it
+                fieldValues[key] = it
                 markDirty()
             })
         }
@@ -1388,6 +1426,81 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                         errorText?.visibility = View.GONE
                     } catch (e: Exception) {
                         Log.e("EditFragment", "global save failed", e)
+                        showSaveError("${e::class.simpleName}: ${e.message ?: "unknown"}")
+                    }
+                }
+                return
+            }
+
+            // Locations tab (5) — save per-location fields via dedicated PATCH
+            if (selectedTab == 5) {
+                setSaveLoading(true)
+                lifecycleScope.launch {
+                    try {
+                        // Group loc.* keys from the shared fieldValues map
+                        val byLoc = mutableMapOf<String, MutableMap<String, Any?>>()
+                        fieldValues.forEach { (key, value) ->
+                            if (key.startsWith("loc.")) {
+                                val rest = key.removePrefix("loc.")
+                                val dot = rest.indexOf('.')
+                                if (dot > 0) {
+                                    val locId = rest.substring(0, dot)
+                                    val fieldKey = rest.substring(dot + 1)
+                                    byLoc.getOrPut(locId) { mutableMapOf() }[fieldKey] = value
+                                }
+                            }
+                        }
+
+                        if (byLoc.isEmpty()) {
+                            setSaveLoading(false)
+                            return@launch
+                        }
+
+                        byLoc.forEach { (locId, fields) ->
+                            viewModel.repository.patchLocation(bookId, locId, fields)
+                        }
+
+                        // Optimistic local update
+                        val modifiedLocations = (bookData?.locations ?: emptyMap()).toMutableMap()
+                        byLoc.forEach { (locId, fields) ->
+                            val existing = modifiedLocations[locId] ?: Location(id = locId)
+                            val envKeys = listOf("time", "season", "lighting", "weather", "mood", "atmosphere")
+                            val hasEnv = envKeys.any { fields.containsKey("environment.$it") }
+                            val newEnv = if (hasEnv) {
+                                val base = existing.environment ?: EnvironmentData()
+                                // Empty string → null, matching the backend's setDeep('' → null)
+                                base.copy(
+                                    time = (fields["environment.time"] as? String)?.ifEmpty { null },
+                                    season = (fields["environment.season"] as? String)?.ifEmpty { null },
+                                    lighting = (fields["environment.lighting"] as? String)?.ifEmpty { null },
+                                    weather = (fields["environment.weather"] as? String)?.ifEmpty { null },
+                                    mood = (fields["environment.mood"] as? String)?.ifEmpty { null },
+                                    atmosphere = (fields["environment.atmosphere"] as? String)?.ifEmpty { null }
+                                )
+                            } else existing.environment
+                            // storeKey-prefixed keys are always present in fieldValues,
+                            // so a missing key means "keep" — but an empty string means
+                            // "clear" (backend setDeep('' → null)). Use the raw value
+                            // without falling back to the old value, otherwise clearing
+                            // a field would be silently reverted.
+                            fun keepOrClear(fieldKey: String, old: String?): String? =
+                                if (fields.containsKey(fieldKey)) (fields[fieldKey] as? String)?.ifEmpty { null } else old
+
+                            modifiedLocations[locId] = existing.copy(
+                                name = keepOrClear("name", existing.name),
+                                description = keepOrClear("description", existing.description),
+                                visual_style = keepOrClear("visual_style", existing.visual_style),
+                                cinematic_space = keepOrClear("cinematic_space", existing.cinematic_space),
+                                environment = newEnv
+                            )
+                        }
+
+                        bookData = bookData?.copy(locations = modifiedLocations)
+                        viewModel.markUnsavedChanges()
+                        setSaveLoading(false)
+                        errorText?.visibility = View.GONE
+                    } catch (e: Exception) {
+                        Log.e("EditFragment", "locations save failed", e)
                         showSaveError("${e::class.simpleName}: ${e.message ?: "unknown"}")
                     }
                 }

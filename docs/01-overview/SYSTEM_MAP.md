@@ -67,7 +67,7 @@ TXT / VBook  →  AI-анализ (агент)  →  структура книг
      - Шаг 1 `stepExtractCharacters` → персонажи
      - Шаг 2 `stepExtractLocations` → локации
      - Шаг 3 `stepCreateScenes` → до 3 сцен из начала буфера
-     - `stepEnrichScenes` → обогащение сцен (title, location, environment)
+     - `stepEnrichScenes` → обогащение сцен (title, location, environment; сцена перекрывает глобальный шаблон локации по-полю)
      - `resolveSceneProgress` → `nextOffset` по последней созданной сцене
      - Шаг 4 `stepCreateUnits` (per-scene) → визуальные единицы (IU/кадры)
      - Шаг 5 `stepCreateVisuals` (per-scene) → визуальные промпты к кадрам

@@ -410,6 +410,70 @@ module.exports = function(app, redis, deps) {
     });
 
     // ======================================================
+    // PATCH LOCATION (targeted per-location update — name, description,
+    // environment template, etc.). Locations are cross-cutting: changes
+    // trigger image+video regeneration for all scenes referencing the location.
+    // ======================================================
+    app.patch('/api/v1/book/:bookId/locations/:locationId', async (req, res) => {
+        try {
+            const { bookId, locationId } = req.params;
+            const { fields } = req.body;
+
+            if (!fields || typeof fields !== 'object' || Object.keys(fields).length === 0) {
+                return res.status(400).json({ error: 'Provide "fields" object' });
+            }
+
+            const oldBook = book.loadBook(bookId);
+            if (!oldBook) return res.status(404).json({ error: 'Book not found' });
+
+            const bookBeforePatch = JSON.parse(JSON.stringify(oldBook));
+
+            const locations = oldBook.locations || {};
+            const loc = locations[locationId];
+            if (!loc) {
+                return res.status(404).json({ error: `Location ${locationId} not found` });
+            }
+
+            for (const [key, value] of Object.entries(fields)) {
+                // "environment.time" → location.environment.time (same pattern as scene env.*)
+                const resolvedKey = key.startsWith('environment.')
+                    ? 'environment.' + key.slice('environment.'.length)
+                    : key;
+                setDeep(loc, resolvedKey, value === '' ? null : value);
+            }
+            log(`[PATCH LOCATION] ${bookId}/${locationId}: fields=${Object.keys(fields).join(', ')}`);
+
+            book.saveBookBundle(oldBook, null);
+
+            const newBook = book.loadBook(bookId) || oldBook;
+            const diff = bookDiff.computeBookDiff(bookBeforePatch, newBook);
+
+            if (diff.dirty_scenes.length > 0) {
+                try {
+                    await storage.bookSync.reconcileFromDiff(bookId, diff.dirty_scenes, newBook);
+                    await sceneAssetsRepo.bumpSceneVersions(bookId, diff.dirty_scenes);
+                    for (const ds of diff.dirty_scenes) {
+                        const ids = ds.changes?.units?.unit_ids;
+                        if (ids && Array.isArray(ids) && ids.length > 0) {
+                            await sceneAssetsRepo.setDirtyUnitIds(bookId, ds.chapter_id, ds.scene_id, ids);
+                        }
+                    }
+                } catch (syncErr) {
+                    console.warn(`[PATCH LOCATION] PG reconcile/bump failed: ${syncErr.message}`);
+                }
+            }
+
+            return res.json({
+                saved: true, book_id: bookId, location_id: locationId,
+                dirty_scenes: diff.dirty_scenes.length,
+            });
+        } catch (err) {
+            console.error('[PATCH LOCATION] Error:', err.message);
+            return res.status(500).json({ error: err.message });
+        }
+    });
+
+    // ======================================================
     // GET BOOK COVER DATA
     // ======================================================
     app.get('/api/v1/book/:bookId/cover', async (req, res) => {

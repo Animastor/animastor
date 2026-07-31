@@ -246,7 +246,13 @@ function buildImagePrompt(iuPayload, scenePayload, chapterPayload, bookPayload) 
     }
 
     const resolvedLocation = resolveSceneLocation(scenePayload);
-    const env = resolvedLocation.environment;
+    // Location environment is a global template — the scene environment
+    // overrides it per-field (same pattern as character passports).
+    // buildImagePrompt only sees the merged result.
+    const env = {
+        ...(bookPayload?.locations?.[resolvedLocation.id]?.environment || {}),
+        ...(resolvedLocation.environment || {}),
+    };
 
     // Country: scene environment overrides bible default
     const effectiveCountry = env?.country || bookPayload?.bible?.country;

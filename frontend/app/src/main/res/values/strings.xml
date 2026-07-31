@@ -272,7 +272,13 @@
     <string name="field_description">Description</string>
     <string name="field_visual_style">Visual Style</string>
     <string name="field_cinematic_space">Cinematic Space</string>
-    <string name="field_default_mood">Default Mood</string>
+    <string name="field_environment">Environment</string>
+    <string name="field_time">Time</string>
+    <string name="field_season">Season</string>
+    <string name="field_lighting">Lighting</string>
+    <string name="field_weather">Weather</string>
+    <string name="field_mood">Mood</string>
+    <string name="field_atmosphere">Atmosphere</string>
     <string name="field_instruction">Instruction</string>
     <string name="field_title">Title</string>
     <string name="field_author">Author</string>

@@ -16,6 +16,22 @@ const {
 const { normalizeCharacterRefs } = require('../../image/image-service');
 const { extractSceneTitle, isGenericSceneTitle } = require('../../utils/scene-title-utils');
 
+/**
+ * Build the location context block for agent prompts.
+ * Includes each location's GLOBAL environment template so downstream steps
+ * (scene enrichment) can write only per-scene overrides.
+ */
+function buildLocationsContext(locations) {
+    return (locations || []).map(l => {
+        const env = l.environment || {};
+        const envParts = ['time', 'season', 'lighting', 'weather', 'mood', 'atmosphere']
+            .filter(k => env[k])
+            .map(k => `${k}: ${env[k]}`);
+        const envStr = envParts.length > 0 ? ` (default environment: ${envParts.join(', ')})` : '';
+        return `- ${l.id}: ${l.name || l.id} (${l.type || 'unknown'})${envStr}`;
+    }).join('\n') || 'None';
+}
+
 async function stepAnalyzeStructure(sessionId, sourceText, stepIndex, progress) {
     const _progress = progress || (() => {});
     _progress({ stage: 'analyzing_structure', message: PROGRESS_STAGES.analyzing_structure });
@@ -119,7 +135,7 @@ async function stepCreateScenes(sessionId, text, characters, locations, stepInde
     const step = await createStep(sessionId, 'create_scenes', stepIndex || 0);
 
     const charsContext = (characters || []).map(c => `- ${c.id}: ${c.name}`).join('\n') || 'None';
-    const locsContext = (locations || []).map(l => `- ${l.id}: ${l.name} (${l.type || 'unknown'})`).join('\n') || 'None';
+    const locsContext = buildLocationsContext(locations);
 
     const prompt = SYSTEM_PROMPTS.scenes
         .replace('%EXISTING_CHARACTERS%', charsContext)
@@ -172,7 +188,7 @@ async function stepEnrichScenes(sessionId, scenes, characters, locations, stepIn
     const step = await createStep(sessionId, 'enrich_scenes', stepIndex || 0);
 
     const charsContext = (characters || []).map(c => `- ${c.id}: ${c.name}`).join('\n') || 'None';
-    const locsContext = (locations || []).map(l => `- ${l.id}: ${l.name} (${l.type || 'unknown'})`).join('\n') || 'None';
+    const locsContext = buildLocationsContext(locations);
 
     const scenesStr = scenes.map((s, i) =>
         `Scene ${i}: title="${s.title || 'Untitled'}", type="${s.type || 'narration'}", ` +
@@ -539,7 +555,7 @@ async function stepPolishStoryboard(sessionId, allVisualUnits, characters, locat
     const step = await createStep(sessionId, 'polish_storyboard', stepIndex || 0);
 
     const charsContext = (characters || []).map(c => `- ${c.id}: ${c.name} (${c.role || 'unknown'})`).join('\n') || 'None';
-    const locsContext = (locations || []).map(l => `- ${l.id}: ${l.name} (${l.type || 'unknown'})`).join('\n') || 'None';
+    const locsContext = buildLocationsContext(locations);
 
     // Build scene context: unique scenes with full text for plot understanding
     const seenScenes = new Set();
@@ -634,7 +650,7 @@ async function stepPolishVideoActions(sessionId, allVisualUnits, characters, loc
     const step = await createStep(sessionId, 'polish_video_actions', stepIndex || 0);
 
     const charsContext = (characters || []).map(c => `- ${c.id}: ${c.name} (${c.role || 'unknown'})`).join('\n') || 'None';
-    const locsContext = (locations || []).map(l => `- ${l.id}: ${l.name} (${l.type || 'unknown'})`).join('\n') || 'None';
+    const locsContext = buildLocationsContext(locations);
 
     // Build scene context: unique scenes with full text for plot understanding
     const seenScenes = new Set();

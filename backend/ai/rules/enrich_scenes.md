@@ -21,15 +21,27 @@ You receive scenes that already have text, type, participants, and location.id. 
 Use ONLY character_ids and location_ids from the Known lists above. Never invent new ones.
 
 ## Rules for environment
-Describe each field in 2-6 words based on what the scene text implies.
+Each location has a GLOBAL default environment (listed in the Known Locations section as
+"default environment: time: ..., season: ..., ..."). This template describes the location's
+TYPICAL conditions and is used automatically as a fallback for every scene in that location.
 
-### Fields to ALWAYS fill in (describe from text):
+Your job is to OVERRIDE only what is different for THIS scene:
+- Compare the scene text with the location's default environment.
+- If a field matches the location's default — OMIT it from the scene's environment (do not repeat).
+  The system will automatically fall back to the location template.
+- If the scene text implies DIFFERENT conditions (different time of day, changed weather,
+  different mood, destructive changes, etc.) — set ONLY that field with the new value (2-6 words).
+
+### Fields (set ONLY what differs from the location's default):
 - `time`: time of day (e.g. "hot spring sunset", "early morning", "deep night")
 - `season`: season (e.g. "late spring", "early summer", "deep winter")
 - `lighting`: light quality (e.g. "golden sunset glow", "dim candlelight", "grey overcast")
 - `weather`: weather conditions (e.g. "still warm air", "cold wind", "light rain")
 - `mood`: emotional tone (e.g. "quiet intellectual", "growing tension", "peaceful melancholy")
 - `atmosphere`: overall feel (e.g. "calm surreal Moscow evening", "tense philosophical standoff")
+
+Example: if the location's default is `weather: "still warm air"` but this scene happens
+in a downpour, set `weather: "heavy rain"` and omit the fields that match the default.
 
 ### Fields to set ONLY when the text differs from the book's default:
 - `country`: set ONLY if this scene's text specifies or implies a country DIFFERENT from the book's primary setting. Leave empty for scenes in the book's default country (the system will use the global default).

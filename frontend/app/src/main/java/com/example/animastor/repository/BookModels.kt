@@ -106,7 +106,8 @@ data class Location(
     val description: String? = null,
     val visual_style: String? = null,
     val cinematic_space: String? = null,
-    val default_mood: String? = null
+    /** Global environment template — scene environments override it per-field. */
+    val environment: EnvironmentData? = null
 )
 
 data class RenderRules(
@@ -505,6 +506,7 @@ data class LocationData(
 
 data class EnvironmentData(
     val time: String? = null,
+    val season: String? = null,
     val lighting: String? = null,
     val weather: String? = null,
     val mood: String? = null,
