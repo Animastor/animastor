@@ -673,12 +673,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         }
 
         // Unit metadata section
-        val metaSectionLabel = TextView(ctx).apply {
-            text = getString(R.string.edit_section_unit)
-            textSize = 14f
-            setPadding(0, 16, 0, 4)
-        }
-        ll.addView(metaSectionLabel)
+        ll.addView(sectionLabel(ctx, getString(R.string.edit_section_unit)))
         // id is a read-only system field (kept in JSON style);
         // type is translated (user asked: "type" → "тип"/"type")
         ll.addView(readOnlyCard(ctx, "id", u.id ?: ""))
@@ -690,12 +685,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         ll.addView(inputCard(ctx, fieldLabel(textKey), fieldValues[textKey] ?: textVal, textVal.length > 80, storeKey = textKey))
 
         // Audio section
-        val audioSectionLabel = TextView(ctx).apply {
-            text = getString(R.string.edit_section_audio)
-            textSize = 14f
-            setPadding(0, 16, 0, 4)
-        }
-        ll.addView(audioSectionLabel)
+        ll.addView(sectionLabel(ctx, getString(R.string.edit_section_audio)))
         listOf("audio.speaker", "audio.text").forEach { key ->
             val v = readUnitField(u, key)
             if (!fieldValues.containsKey(key)) fieldValues[key] = v
@@ -703,12 +693,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         }
 
         // Image section
-        val imageSectionLabel = TextView(ctx).apply {
-            text = getString(R.string.edit_section_image)
-            textSize = 14f
-            setPadding(0, 16, 0, 4)
-        }
-        ll.addView(imageSectionLabel)
+        ll.addView(sectionLabel(ctx, getString(R.string.edit_section_image)))
         listOf("image.shot", "image.prompt", "image.negative").forEach { key ->
             val v = readUnitField(u, key)
             if (!fieldValues.containsKey(key)) fieldValues[key] = v
@@ -716,12 +701,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         }
 
         // Video section
-        val videoSectionLabel = TextView(ctx).apply {
-            text = getString(R.string.edit_section_video)
-            textSize = 14f
-            setPadding(0, 16, 0, 4)
-        }
-        ll.addView(videoSectionLabel)
+        ll.addView(sectionLabel(ctx, getString(R.string.edit_section_video)))
         listOf("video.action").forEach { key ->
             val v = readUnitField(u, key)
             if (!fieldValues.containsKey(key)) fieldValues[key] = v
@@ -963,13 +943,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         }
 
         // ── Section: Manifest (read-only info) ──
-        val manifestSectionLabel = TextView(ctx).apply {
-            text = getString(R.string.field_book_id)
-            textSize = 14f
-            typeface = android.graphics.Typeface.DEFAULT_BOLD
-            setPadding(0, 8, 0, 4)
-        }
-        ll.addView(manifestSectionLabel)
+        ll.addView(sectionLabel(ctx, getString(R.string.field_book_id)))
 
         val manifest = bd?.manifest
         if (manifest != null) {
@@ -981,14 +955,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         }
 
         // ── Section: Book Metadata ──
-        val bookSectionLabel = TextView(ctx).apply {
-            text = getString(R.string.edit_tabs_global_book)
-            textSize = 14f
-            typeface = android.graphics.Typeface.DEFAULT_BOLD
-            setTextColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorSecondary))
-            setPadding(0, 16, 0, 4)
-        }
-        ll.addView(bookSectionLabel)
+        ll.addView(sectionLabel(ctx, getString(R.string.edit_tabs_global_book)))
 
         val bookMeta = bd?.book
         val bookKeys = listOf("title", "author", "language")
@@ -1003,14 +970,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         }
 
         // ── Section: World (Bible) ──
-        val worldSectionLabel = TextView(ctx).apply {
-            text = getString(R.string.edit_tabs_global_world)
-            textSize = 14f
-            typeface = android.graphics.Typeface.DEFAULT_BOLD
-            setTextColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorSecondary))
-            setPadding(0, 16, 0, 4)
-        }
-        ll.addView(worldSectionLabel)
+        ll.addView(sectionLabel(ctx, getString(R.string.edit_tabs_global_world)))
 
         val bible = bd?.bible
         val worldKeys = listOf("country", "epoch", "render_style", "lighting_default")
@@ -1026,14 +986,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         }
 
         // ── Section: Audio / Narration Voice ──
-        val audioSectionLabel = TextView(ctx).apply {
-            text = getString(R.string.edit_section_audio)
-            textSize = 14f
-            typeface = android.graphics.Typeface.DEFAULT_BOLD
-            setTextColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorSecondary))
-            setPadding(0, 16, 0, 4)
-        }
-        ll.addView(audioSectionLabel)
+        ll.addView(sectionLabel(ctx, getString(R.string.edit_section_audio)))
 
         val narrationVoice = bookMeta?.defaults?.narration_voice ?: ""
         val voiceKey = "narration_voice"
