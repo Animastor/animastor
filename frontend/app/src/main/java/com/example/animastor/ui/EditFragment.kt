@@ -174,6 +174,8 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         currentChIndex = 0
         currentScIndex = 0
         fieldValues.clear()
+        passportOverrideBlocks.clear()
+        passportBlocksSceneKey = null
         val b = binding ?: return
         positionLabel()?.text = getString(R.string.navigate_no_position)
         b.errorText.visibility = View.GONE
@@ -1068,7 +1070,8 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
             setPadding(0, 0, 0, 8)
         }
 
-        // JSON order: chapter → chapter_title → scene_id → ...
+        // ── Section: General scene parameters ──
+        ll.addView(sectionLabel(ctx, getString(R.string.edit_section_scene_general)))
         // chapter_id / scene_id are read-only system fields (kept in JSON style)
         ll.addView(readOnlyCard(ctx, "chapter_id", ch?.chapter_id ?: "—"))
         if (ch != null) {
@@ -1077,16 +1080,257 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
             ll.addView(inputCard(ctx, fieldLabel(chTitleKey), fieldValues[chTitleKey] ?: "", false, storeKey = chTitleKey))
         }
         ll.addView(readOnlyCard(ctx, "scene_id", sc.scene_id ?: "—"))
-
-        // Editable scene fields
-        val editableKeys = listOf("scene_title", "type", "style", "location.id", "env.time", "env.lighting", "env.weather", "env.mood", "env.atmosphere", "participants")
-        val sceneValues = editableKeys.associateWith { key -> readField(sc, key) }
-        editableKeys.forEach { key ->
-            val v = sceneValues[key] ?: ""
+        listOf("scene_title", "type", "style").forEach { key ->
+            val v = readField(sc, key)
             if (!fieldValues.containsKey(key)) fieldValues[key] = v
             ll.addView(inputCard(ctx, fieldLabel(key), fieldValues[key] ?: v, (fieldValues[key]?.length ?: 0) > 80, storeKey = key))
         }
+
+        // ── Section: Characters (participants + scene character overrides) ──
+        ll.addView(sectionLabel(ctx, getString(R.string.edit_section_scene_characters)))
+        val participantsKey = "participants"
+        val participantsVal = readField(sc, participantsKey)
+        if (!fieldValues.containsKey(participantsKey)) fieldValues[participantsKey] = participantsVal
+        ll.addView(inputCard(ctx, fieldLabel(participantsKey), fieldValues[participantsKey] ?: participantsVal, false, storeKey = participantsKey))
+        buildPassportOverrideSection(ll, sc)
+
+        // ── Section: Location ──
+        ll.addView(sectionLabel(ctx, getString(R.string.edit_section_scene_location)))
+        listOf("location.id", "env.time", "env.lighting", "env.weather", "env.mood", "env.atmosphere").forEach { key ->
+            val v = readField(sc, key)
+            if (!fieldValues.containsKey(key)) fieldValues[key] = v
+            ll.addView(inputCard(ctx, fieldLabel(key), fieldValues[key] ?: v, (fieldValues[key]?.length ?: 0) > 80, storeKey = key))
+        }
+
         parent.addView(ll)
+    }
+
+    // ======================================================
+    // Scene Character Overrides
+    // ======================================================
+    // Per-scene passport overrides — each block binds a character id to a set of
+    // passport fields that override the GLOBAL passport for THIS scene only.
+    // A block is "used" when a character id AND at least one field are filled —
+    // used blocks auto-append a fresh empty block below. The number of used
+    // blocks is capped by the scene's participants count.
+
+    private val passportOverrideFields = listOf(
+        "base_appearance", "detailed_appearance", "clothing_base", "clothing_details", "video_tokens"
+    )
+
+    private class PassportOverrideBlock(var charId: String = "") {
+        val fields = mutableMapOf<String, String>()
+        fun isUsed(): Boolean = charId.isNotBlank() && fields.values.any { it.isNotBlank() }
+        /** Truly empty — no charId AND no field values (safe to trim away). */
+        fun isEmpty(): Boolean = charId.isBlank() && fields.values.all { it.isBlank() }
+    }
+
+    private val passportOverrideBlocks = mutableListOf<PassportOverrideBlock>()
+    private var passportBlocksSceneKey: String? = null
+
+    /** (Re)build the override blocks from the current scene on scene change. */
+    private fun ensurePassportBlocks(sc: Scene) {
+        val key = "${currentChIndex}/${currentScIndex}"
+        if (passportBlocksSceneKey == key) return
+        passportBlocksSceneKey = key
+        passportOverrideBlocks.clear()
+        (sc.passport ?: emptyMap()).forEach { (charId, p) ->
+            val block = PassportOverrideBlock(charId)
+            p.base_appearance?.let { block.fields["base_appearance"] = it }
+            p.detailed_appearance?.let { block.fields["detailed_appearance"] = it }
+            p.clothing_base?.let { block.fields["clothing_base"] = it }
+            p.clothing_details?.let { block.fields["clothing_details"] = it }
+            p.video_tokens?.let { block.fields["video_tokens"] = it }
+            passportOverrideBlocks.add(block)
+        }
+        // Always keep at least one (possibly empty) free block
+        if (passportOverrideBlocks.isEmpty()) passportOverrideBlocks.add(PassportOverrideBlock())
+    }
+
+    /** Max usable blocks = scene participants count (unlimited when empty). */
+    private fun passportOverrideLimit(sc: Scene): Int {
+        val raw = fieldValues["participants"]?.takeIf { it.isNotBlank() }
+            ?: sc.participants?.joinToString(", ") ?: ""
+        if (raw.isBlank()) return Int.MAX_VALUE
+        return raw.split(",").map { it.trim() }.count { it.isNotEmpty() }
+    }
+
+    private fun buildPassportOverrideSection(parent: ViewGroup, sc: Scene) {
+        val ctx = parent.context
+        ensurePassportBlocks(sc)
+
+        val limit = passportOverrideLimit(sc)
+        if (limit != Int.MAX_VALUE) {
+            parent.addView(TextView(ctx).apply {
+                text = getString(R.string.overrides_limit_hint, limit)
+                textSize = 12f
+                setTextColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorOnSurfaceVariant))
+                setPadding(0, 0, 0, 4)
+            })
+        }
+
+        val container = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
+        parent.addView(container)
+
+        passportOverrideBlocks.forEach { block ->
+            container.addView(buildPassportBlockCard(ctx, container, sc, block))
+        }
+        // Ensure one trailing free block after the used ones
+        if (passportOverrideBlocks.lastOrNull()?.isUsed() == true) {
+            maybeAppendPassportBlock(container, sc)
+        }
+    }
+
+    private fun buildPassportBlockCard(ctx: Context, container: LinearLayout, sc: Scene, block: PassportOverrideBlock): View {
+        val card = MaterialCardView(ctx).apply {
+            layoutParams = ViewGroup.MarginLayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).also { it.setMargins(0, 0, 0, 6) }
+            radius = 12f
+            cardElevation = 1f
+            setContentPadding(12, 8, 12, 8)
+        }
+        val inner = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
+
+        inner.addView(overrideFieldCard(ctx, getString(R.string.field_character_id), block.charId, false) { v ->
+            block.charId = v.trim()
+            maybeAppendPassportBlock(container, sc)
+            markDirty()
+        })
+
+        passportOverrideFields.forEach { field ->
+            val v = block.fields[field] ?: ""
+            inner.addView(overrideFieldCard(ctx, passportFieldLabel(field), v, v.length > 80) { newVal ->
+                block.fields[field] = newVal
+                maybeAppendPassportBlock(container, sc)
+                markDirty()
+            })
+        }
+
+        card.addView(inner)
+        return card
+    }
+
+    /** Input card that writes into a PassportOverrideBlock (no shared storeKey). */
+    private fun overrideFieldCard(ctx: Context, label: String, value: String, multiline: Boolean, onChange: (String) -> Unit): View {
+        val til = TextInputLayout(ctx).apply {
+            hint = label
+            isHintEnabled = true
+            boxBackgroundMode = TextInputLayout.BOX_BACKGROUND_OUTLINE
+        }
+        val et = TextInputEditText(ctx).apply {
+            setText(value)
+            textSize = 14f
+            if (multiline) {
+                minLines = 3
+                gravity = android.view.Gravity.TOP or android.view.Gravity.START
+            }
+            setPadding(12, 10, 12, 10)
+            addTextChangedListener(simpleWatcher { onChange(it) })
+        }
+        til.addView(et)
+        return MaterialCardView(ctx).apply {
+            layoutParams = ViewGroup.MarginLayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).also { it.setMargins(0, 0, 0, 8) }
+            radius = 12f
+            cardElevation = 2f
+            addView(til)
+        }
+    }
+
+    /**
+     * Called after every edit in an override block. Keeps the block list tidy per spec:
+     *   - trims trailing empty blocks so at most ONE free block remains;
+     *   - when the last block becomes used, appends a fresh empty block
+     *     (within the participants limit).
+     */
+    private fun maybeAppendPassportBlock(container: LinearLayout, sc: Scene) {
+        // Collapse multiple trailing TRULY-empty blocks into a single free block.
+        // Only remove blocks with no charId and no field values — never yank a block
+        // the user is currently typing into (e.g. charId filled but fields not yet).
+        while (passportOverrideBlocks.size >= 2 &&
+            passportOverrideBlocks.last().isEmpty() &&
+            passportOverrideBlocks[passportOverrideBlocks.size - 2].isEmpty()) {
+            passportOverrideBlocks.removeAt(passportOverrideBlocks.size - 1)
+            if (container.childCount > 0) container.removeViewAt(container.childCount - 1)
+        }
+        val last = passportOverrideBlocks.lastOrNull() ?: return
+        if (!last.isUsed()) return
+        val usedCount = passportOverrideBlocks.count { it.isUsed() }
+        if (usedCount >= passportOverrideLimit(sc)) return
+        passportOverrideBlocks.add(PassportOverrideBlock())
+        container.addView(buildPassportBlockCard(container.context, container, sc, passportOverrideBlocks.last()))
+    }
+
+    /**
+     * Build the flat passport.<charId>.<field> keys for the PATCH — diffed against the
+     * scene's existing overrides so cleared fields are removed server-side (setDeep '' → null).
+     */
+    private fun buildPassportOverrideFields(sc: Scene): Map<String, String> {
+        val result = mutableMapOf<String, String>()
+        val desired = linkedMapOf<String, MutableMap<String, String>>()
+        for (block in passportOverrideBlocks) {
+            if (!block.isUsed()) continue
+            val charId = block.charId.trim()
+            if (charId.isEmpty()) continue
+            val m = desired.getOrPut(charId) { mutableMapOf() }
+            for (f in passportOverrideFields) {
+                val v = block.fields[f]?.trim() ?: ""
+                if (v.isNotEmpty()) m[f] = v
+            }
+        }
+        val existing = sc.passport ?: emptyMap()
+        val allCharIds = desired.keys + existing.keys
+        for (charId in allCharIds) {
+            val want = desired[charId]
+            val have = existing[charId]
+            for (f in passportOverrideFields) {
+                val newVal = want?.get(f) ?: ""
+                val oldVal = passportFieldOf(have, f) ?: ""
+                if (newVal != oldVal) {
+                    result["passport.$charId.$f"] = newVal
+                }
+            }
+        }
+        return result
+    }
+
+    /** Local passport map from the current blocks (optimistic UI update after save). */
+    private fun buildPassportFromBlocks(): Map<String, CharPassport>? {
+        val m = linkedMapOf<String, CharPassport>()
+        for (block in passportOverrideBlocks) {
+            if (!block.isUsed()) continue
+            val charId = block.charId.trim()
+            if (charId.isEmpty()) continue
+            m[charId] = CharPassport(
+                base_appearance = block.fields["base_appearance"]?.trim()?.ifEmpty { null },
+                detailed_appearance = block.fields["detailed_appearance"]?.trim()?.ifEmpty { null },
+                clothing_base = block.fields["clothing_base"]?.trim()?.ifEmpty { null },
+                clothing_details = block.fields["clothing_details"]?.trim()?.ifEmpty { null },
+                video_tokens = block.fields["video_tokens"]?.trim()?.ifEmpty { null }
+            )
+        }
+        return m.ifEmpty { null }
+    }
+
+    private fun passportFieldOf(p: CharPassport?, field: String): String? = when (field) {
+        "base_appearance" -> p?.base_appearance
+        "detailed_appearance" -> p?.detailed_appearance
+        "clothing_base" -> p?.clothing_base
+        "clothing_details" -> p?.clothing_details
+        "video_tokens" -> p?.video_tokens
+        else -> null
+    }
+
+    private fun sectionLabel(ctx: Context, text: String): View = TextView(ctx).apply {
+        this.text = text
+        textSize = 14f
+        typeface = android.graphics.Typeface.DEFAULT_BOLD
+        setTextColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorSecondary))
+        setPadding(0, 16, 0, 4)
     }
 
     private fun buildFields(parent: ViewGroup, keys: List<String>) {
@@ -1608,8 +1852,17 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
 
                     viewModel.repository.patchScene(bookId, chapterId, sceneId, patchBody)
 
+                    // Scene character passport overrides are SCENE-level data. Because
+                    // the main PATCH above carries unit_id (which routes ALL fields to
+                    // the unit), the passport.* keys must go out in a separate PATCH
+                    // WITHOUT unit_id — the server then applies them to the scene itself.
+                    val passportFields = buildPassportOverrideFields(sc)
+                    if (passportFields.isNotEmpty()) {
+                        viewModel.repository.patchScene(bookId, chapterId, sceneId, mapOf("fields" to passportFields))
+                    }
+
                     // Apply changes locally for UI consistency (optimistic update)
-                    val modifiedScene = applyFieldValues(sc, fieldValues)
+                    val modifiedScene = applyFieldValues(sc, fieldValues).copy(passport = buildPassportFromBlocks())
                     val modifiedChapters = chapters.toMutableList()
                     val modifiedCh = if (chapterTitleValue != null || fieldValues.containsKey("chapter_title"))
                         ch.copy(chapter_title = chapterTitleValue) else ch

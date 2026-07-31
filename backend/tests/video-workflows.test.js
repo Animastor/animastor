@@ -217,6 +217,35 @@ describe('buildVideoPrompt', () => {
         expect(prompt).to.include('Sidekick: sidekick token');
     });
 
+    it('prefers scene.passport video_tokens override over global passport', () => {
+        const sceneWithOverride = {
+            ...sceneData,
+            scene: {
+                ...sceneData.scene,
+                passport: {
+                    char_hero: { video_tokens: 'hero scene override token' },
+                },
+            },
+        };
+        const prompt = wf.buildVideoPrompt(sceneWithOverride, loadedBook, units, [3, 4]);
+        expect(prompt).to.include('Hero: hero scene override token');
+        expect(prompt).not.to.include('Hero: hero token description');
+        // Sidekick unaffected — falls back to global passport
+        expect(prompt).to.include('Sidekick: sidekick token');
+    });
+
+    it('falls back to global passport when scene.passport has no override', () => {
+        const sceneNoOverride = {
+            ...sceneData,
+            scene: {
+                ...sceneData.scene,
+                passport: {},
+            },
+        };
+        const prompt = wf.buildVideoPrompt(sceneNoOverride, loadedBook, units, [3, 4]);
+        expect(prompt).to.include('Hero: hero token description');
+    });
+
     it('includes storyboard with time ranges', () => {
         const prompt = wf.buildVideoPrompt(sceneData, loadedBook, units, [3, 4]);
         expect(prompt).to.include('0.0–3.0s:');

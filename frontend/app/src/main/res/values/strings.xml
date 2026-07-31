@@ -249,6 +249,13 @@
     <string name="edit_section_image">Image</string>
     <string name="edit_section_video">Video</string>
 
+    <!-- Edit Scene Section Labels -->
+    <string name="edit_section_scene_general">General</string>
+    <string name="edit_section_scene_characters">Characters</string>
+    <string name="edit_section_scene_location">Location</string>
+    <string name="edit_section_scene_overrides">Character overrides</string>
+    <string name="overrides_limit_hint">Up to %1$d — scene participants</string>
+
     <!-- Edit Field Labels -->
     <string name="edit_field_chapter_id">Chapter ID</string>
     <string name="edit_field_scene_id">Scene ID</string>
@@ -294,6 +301,7 @@
     <string name="field_created_at">created</string>
     <string name="field_state">state</string>
     <string name="field_passport">passport</string>
+    <string name="field_character_id">character id</string>
     <string name="field_base_appearance">base appearance</string>
     <string name="field_detailed_appearance">detailed appearance</string>
     <string name="field_clothing_base">clothing base</string>

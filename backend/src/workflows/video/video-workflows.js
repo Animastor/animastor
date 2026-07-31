@@ -72,7 +72,9 @@ function buildVideoPrompt(sceneData, loadedBook, units, iuDurations) {
         .map(id => loadedBook.characters?.find(c => c.id === id))
         .filter(Boolean)
         .map(c => {
-            const tokens = c.passport?.video_tokens || '';
+            // Scene-level override: scene.passport[charId].video_tokens fully
+            // replaces the global passport token for this character in this scene.
+            const tokens = scene.passport?.[c.id]?.video_tokens || c.passport?.video_tokens || '';
             return tokens ? `${c.name}: ${tokens}` : null;
         })
         .filter(Boolean);

@@ -144,6 +144,18 @@ const SCENE_FIELDS = [
         label: 'Per-scene character state overrides',
         usedBy: 'buildCharacters → resolveState()',
     },
+
+    // ── Scene character passport overrides ────────
+    // scene.passport[charId].<field> fully replaces the corresponding
+    // global passport field for that character in this scene. Consumed by
+    // resolvePassport() (image) and video-workflows (video_tokens).
+    {
+        key: 'scene.passport',
+        layers: ['image', 'video'],
+        extract: (scene) => scene?.passport,
+        label: 'Per-scene character passport overrides',
+        usedBy: 'buildCharacters → resolvePassport(), video-workflows → video tokens',
+    },
 ];
 
 // ======================================================

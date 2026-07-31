@@ -148,6 +148,24 @@ describe('Prompt Dependency Registry', () => {
             expect(result.dirtyLayers).to.include.members(['image', 'video']);
         });
 
+        it('detects scene.passport override change → image + video (no audio)', () => {
+            const oldScene = { passport: { 'char-1': { clothing_base: 'grey coat' } } };
+            const newScene = { passport: { 'char-1': { clothing_base: 'black suit' } } };
+            const result = registry.computeSceneDirtyLayers(oldScene, newScene);
+            expect(result.dirtyLayers).to.include.members(['image', 'video']);
+            expect(result.dirtyLayers).to.not.include('audio');
+            expect(result.changes.scene_passport).to.deep.equal({ changed: true });
+        });
+
+        it('does not mark dirty when scene.passport unchanged', () => {
+            const scene = { passport: { 'char-1': { clothing_base: 'grey coat' } } };
+            const result = registry.computeSceneDirtyLayers(
+                JSON.parse(JSON.stringify(scene)),
+                JSON.parse(JSON.stringify(scene))
+            );
+            expect(result.dirtyLayers).to.deep.equal([]);
+        });
+
         it('detects units change → image + video + audio', () => {
             const oldScene = { units: [{ text: 'Hello' }] };
             const newScene = { units: [{ text: 'Hello world' }] };

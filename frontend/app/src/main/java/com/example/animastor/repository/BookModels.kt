@@ -161,6 +161,9 @@ data class Scene(
     val style: String? = null,
     val location: LocationData? = null,
     val participants: List<String>? = null,
+    /** Per-scene character passport overrides — keyed by character id.
+     *  Each entry replaces the global passport field per-field for this scene. */
+    val passport: Map<String, CharPassport>? = null,
     val audio: AudioConfig? = null,
     val units: List<SceneUnit>? = null,
     /** Server-computed display index (1-based within chapter). */

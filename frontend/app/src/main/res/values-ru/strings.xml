@@ -84,6 +84,12 @@
     <string name="edit_section_audio">Аудио</string>
     <string name="edit_section_image">Изображение</string>
     <string name="edit_section_video">Видео</string>
+    <!-- Секции сцены -->
+    <string name="edit_section_scene_general">Общие</string>
+    <string name="edit_section_scene_characters">Персонажи</string>
+    <string name="edit_section_scene_location">Локация</string>
+    <string name="edit_section_scene_overrides">Перекрытия персонажей</string>
+    <string name="overrides_limit_hint">Не более %1$d — участники сцены</string>
     <string name="edit_characters_tab">Персонажи</string>
     <string name="edit_voices_tab">Голоса</string>
     <string name="edit_locations_tab">Локации</string>
@@ -122,6 +128,7 @@
     <string name="field_created_at">создана</string>
     <string name="field_state">состояние</string>
     <string name="field_passport">паспорт</string>
+    <string name="field_character_id">id персонажа</string>
     <string name="field_base_appearance">базовая внешность</string>
     <string name="field_detailed_appearance">детальная внешность</string>
     <string name="field_clothing_base">базовая одежда</string>
