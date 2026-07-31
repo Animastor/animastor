@@ -899,7 +899,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                 // Use the map key (== location id) consistently — the backend
                 // PATCH indexes locations by the locations.json map key.
                 val locId = key
-                inner.addView(readOnlyCard(ctx, "id", locId, boldValue = true))
+                inner.addView(readOnlyCard(ctx, "id", locId))
 
                 // storeKey prefixes with the location id so per-location fields
                 // don't collide in the shared fieldValues map.
