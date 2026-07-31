@@ -54,6 +54,13 @@ async resolveCanonicalSceneImage(outputDir, buildId, bookId, chapterId, sceneId)
 - `locations.json` содержит глобальный шаблон `environment` (time/season/lighting/weather/
   mood/atmosphere) — fallback для сцен. `scene.location.environment` перекрывает его по-полю
   (паттерн паспортов персонажей); мёрж выполняется в `buildImagePrompt()` и видео-билдере
+- **Scene-level passport overrides** (`scene.passport[charId]`): `resolvePassport()`
+  берёт перекрытие сцены (base_appearance, detailed_appearance, clothing_base,
+  clothing_details) с наивысшим приоритетом над глобальным паспортом персонажа;
+  неперекрытые поля — из `characters.json`. Аналогично видео-билдер читает
+  `scene.passport[id].video_tokens` с приоритетом над глобальным. Изменение `scene.passport`
+  помечает сцену на перегенерацию image+video (`prompt-dependency-registry.js`,
+  `SCENE_FIELDS`).
 - Кэширование: если изображение уже существует — пропускается
 - Использует `img-qwen-image` workflow
 - Параллельная отправка нескольких IU через GPU Hub

@@ -8,6 +8,39 @@ All notable changes to Animastor are documented here.
 
 ### Added
 
+- **Scene Character Overrides — перекрытие паспортов персонажей на уровне сцены**
+  (`frontend/.../EditFragment.kt`, `frontend/.../BookModels.kt`,
+  `backend/src/services/prompt-dependency-registry.js`,
+  `backend/src/workflows/video/video-workflows.js`,
+  `backend/tests/scene-passport-patch.test.js`):
+  - **Паттерн:** тот же принцип, что у локаций — у сцены появилось поле
+    `passport: { <charId>: { base_appearance, detailed_appearance, clothing_base,
+    clothing_details, video_tokens } }`. При генерации `resolvePassport()` берёт
+    перекрытие сцены с наивысшим приоритетом; неперекрытые поля остаются из
+    глобального паспорта персонажа.
+  - **`prompt-dependency-registry.js`:** `scene.passport` добавлен в `SCENE_FIELDS`
+    (layers image + video, без audio) — изменение перекрытия помечает сцену на
+    перегенерацию image+video.
+  - **`video-workflows.js`:** `buildVideoPrompt` читает `scene.passport[id].video_tokens`
+    с приоритетом над глобальным `passport.video_tokens` персонажа.
+  - **Frontend (вкладка «Сцена» селектора):**
+    - Таб разделён на логические секции: **Общие** (chapter_id, chapter_title, scene_id,
+      scene_title, type, style) → **Персонажи** (participants + перекрытия) →
+      **Локация** (location.id, env.*).
+    - В секции «Персонажи» — блоки **«Перекрытия персонажей»**: поле `character id`
+      + 5 полей паспорта. Блок считается использованным, когда заполнен ID **и** хотя
+      бы одно поле — тогда ниже авто-добавляется следующий пустой блок; всегда остаётся
+      один свободный; лишние пустые схлопываются; количество заполненных блоков
+      ограничено числом участников сцены (`participants`).
+    - Сохранение: ключи `passport.<charId>.<field>` уходят **отдельным** PATCH-запросом
+      **без `unit_id`** (основной PATCH с `unit_id` маршрутизирует поля в юнит);
+      diff против текущих перекрытий сцены, очищенные поля отправляются как `''`
+      и становятся `null` на сервере (фоллбэк на глобальный паспорт); оптимистичное
+      локальное обновление без перезагрузки.
+  - **`BookModels.kt`:** `Scene.passport: Map<String, CharPassport>?`.
+  - 7 новых тестов (PATCH-флоу, bookDiff dirty layers, resolvePassport override/fallback);
+    687 тестов проходят, frontend `compileDebugKotlin` OK.
+
 - **Система локаций: глобальный `environment` как fallback + редактор локаций на фронте**
   (`backend/src/image/prompt-builder.js`,
   `backend/src/workflows/video/video-workflows.js`,

@@ -101,6 +101,13 @@ sitting), different composition — or different participants entirely.
 - **Characters** have global passports. Reference a character **by name only** — the
   appearance is pulled in automatically behind the name. Re-describe appearance **only**
   when it deviates from baseline: wounded, wet, changed clothes, dirty.
+  - **Scene-level overrides** (`scene.passport[charId]`): если у персонажа в конкретной
+    сцене изменилось что-то из паспорта (одежда, детали и т.п.), можно перекрыть только
+    эти поля на уровне сцены — например `scene.passport.hero.clothing_base =
+    "long grey coat"`. При генерации `resolvePassport()` берёт перекрытие сцены
+    с наивысшим приоритетом, остальные поля остаются из глобального паспорта;
+    очищенное поле (`'' → null`) снова падает на глобальный фоллбэк. Тот же принцип,
+    что у локаций (`locations.json` environment vs `scene.location.environment`).
 - **Locations** are defined globally. Reference a location **by name only** (e.g.
   `Patriarch Ponds`). Re-describe the location **only** when its state changed: fog,
   rain, broken windows, fire.
