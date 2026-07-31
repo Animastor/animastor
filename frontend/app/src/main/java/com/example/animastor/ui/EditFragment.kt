@@ -677,9 +677,10 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
             setPadding(0, 16, 0, 4)
         }
         ll.addView(metaSectionLabel)
-        // id and type are read-only system fields (kept in JSON style)
+        // id is a read-only system field (kept in JSON style);
+        // type is translated (user asked: "type" → "тип"/"type")
         ll.addView(readOnlyCard(ctx, "id", u.id ?: ""))
-        ll.addView(readOnlyCard(ctx, "type", u.type ?: ""))
+        ll.addView(readOnlyCard(ctx, getString(R.string.field_type), u.type ?: ""))
         // text is editable
         val textKey = "text"
         val textVal = u.text ?: ""
@@ -1146,6 +1147,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
      * always preserved as the storeKey — labels are display-only.
      */
     private fun fieldLabel(key: String): String = when (key) {
+        "type" -> getString(R.string.field_type)
         "text" -> getString(R.string.field_text)
         "audio.speaker" -> getString(R.string.field_speaker)
         "audio.text" -> getString(R.string.field_audio_text)
