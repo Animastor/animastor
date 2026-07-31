@@ -765,8 +765,6 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
 
                 inner.addView(inputCard(ctx, "name", ch.name ?: "", false, boldValue = true))
 
-                inner.addView(inputCard(ctx, "voice_id", ch.voice_id ?: "", false))
-
                 // Passport fields
                 val passport = ch.passport
                 if (passport != null) {

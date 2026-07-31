@@ -119,7 +119,6 @@ data class RenderRules(
 data class CharDef(
     val id: String? = null,
     val name: String? = null,
-    val voice_id: String? = null,
     val passport: CharPassport? = null
 )
 

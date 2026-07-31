@@ -269,7 +269,6 @@
     <string name="edit_character_voice">%1$s (character voice)</string>
     <!-- Field labels for chars/voices/locations tabs -->
     <string name="field_name">Name</string>
-    <string name="field_voice_id">Voice ID</string>
     <string name="field_description">Description</string>
     <string name="field_visual_style">Visual Style</string>
     <string name="field_cinematic_space">Cinematic Space</string>
