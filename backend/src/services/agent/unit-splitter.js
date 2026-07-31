@@ -48,42 +48,6 @@ function findLongUnits(units) {
         .filter(({ duration }) => duration > MAX_UNIT_DURATION_SEC);
 }
 
-/**
- * Log a structured debug line with unit duration statistics.
- * Useful for collecting data on unit sizes in production.
- * Format is JSON-friendly for grep | jq analysis.
- * @param {Array} units - Units array
- * @param {string} label - Context label (e.g. "before_split", "after_split")
- * @param {number} sceneIndex - Scene index for context
- */
-function logDurationStats(units, label, sceneIndex) {
-    if (!units || units.length === 0) return;
-    const durations = units.map((u, i) => ({
-        index: i,
-        type: u.type || '?',
-        dur_sec: getUnitDurationSec(u.text || ''),
-        words: (u.text || '').split(/\s+/).filter(Boolean).length,
-        text_preview: (u.text || '').substring(0, 80),
-    }));
-    const totalDur = durations.reduce((s, d) => s + d.dur_sec, 0);
-    const maxDur = Math.max(...durations.map(d => d.dur_sec));
-    const avgDur = totalDur / durations.length;
-    const overLimit = durations.filter(d => d.dur_sec > MAX_UNIT_DURATION_SEC).length;
-
-    console.log(JSON.stringify({
-        event: 'iu_duration_stats',
-        scene_index: sceneIndex,
-        label,
-        unit_count: units.length,
-        total_duration_sec: Math.round(totalDur * 10) / 10,
-        avg_duration_sec: Math.round(avgDur * 10) / 10,
-        max_duration_sec: Math.round(maxDur * 10) / 10,
-        over_limit_count: overLimit,
-        over_limit_max_sec: MAX_UNIT_DURATION_SEC,
-        units: durations,
-    }));
-}
-
 // ── Emergency fallbacks (AI-agnostic) ──
 
 /**
@@ -210,10 +174,6 @@ async function askAIToSplitUnit(sessionId, unit, unitIndex) {
         if (unit.audio) {
             valid[0].audio = { ...unit.audio };
         }
-        // Log the split for debugging
-        const totalChars = valid.reduce((s, u) => s + (u.text || '').length, 0);
-        const origChars = (unit.text || '').length;
-        console.log(`[UNIT-SPLITTER] Split unit ${unitIndex}: "${(unit.text || '').substring(0, 50)}..." → ${valid.length} units (${totalChars}/${origChars} chars)`);
         return valid;
     } catch (err) {
         console.warn(`[UNIT-SPLITTER] AI call failed for unit ${unitIndex}: ${err.message}`);
@@ -244,8 +204,6 @@ function spliceUnits(units, index, splitUnits) {
  */
 async function splitOneUnit(sessionId, units, longIndex, longUnit) {
     let result = null;
-    let finalRetryCount = MAX_UNIT_SPLIT_RETRIES;
-    let outcome = 'fallback';
 
     // Try AI reprompt (up to MAX_UNIT_SPLIT_RETRIES times)
     for (let retry = 0; retry < MAX_UNIT_SPLIT_RETRIES; retry++) {
@@ -255,55 +213,16 @@ async function splitOneUnit(sessionId, units, longIndex, longUnit) {
             // Verify: each split piece must be ≤ MAX_UNIT_DURATION_SEC
             const allOk = result.every(u => getUnitDurationSec(u.text) <= MAX_UNIT_DURATION_SEC);
             if (allOk) {
-                finalRetryCount = attempt;
-                outcome = 'ai_success';
-                console.log(JSON.stringify({
-                    event: 'iu_split_retry',
-                    unit_index: longIndex,
-                    retry_attempt: attempt,
-                    total_attempts: attempt,
-                    outcome: 'ai_success',
-                    split_count: result.length,
-                }));
                 return spliceUnits(units, longIndex, result);
             }
             // Some pieces are still too long — log and retry
             const longPieces = result.filter(u => getUnitDurationSec(u.text) > MAX_UNIT_DURATION_SEC);
             console.warn(`[UNIT-SPLITTER] AI split retry ${attempt}: ${longPieces.length}/${result.length} pieces still > ${MAX_UNIT_DURATION_SEC}s`);
-            console.log(JSON.stringify({
-                event: 'iu_split_retry',
-                unit_index: longIndex,
-                retry_attempt: attempt,
-                total_attempts: attempt,
-                outcome: 'still_long',
-                split_count: result.length,
-                long_pieces: longPieces.length,
-            }));
-        } else {
-            console.log(JSON.stringify({
-                event: 'iu_split_retry',
-                unit_index: longIndex,
-                retry_attempt: attempt,
-                total_attempts: attempt,
-                outcome: 'ai_failed',
-                split_count: 0,
-            }));
         }
     }
 
     // If AI failed or returned still-long pieces, use emergency fallback
     const emergencyUnits = emergencySplit(longUnit);
-    console.log(JSON.stringify({
-        event: 'iu_split_retry',
-        unit_index: longIndex,
-        retry_attempt: finalRetryCount,
-        total_attempts: MAX_UNIT_SPLIT_RETRIES,
-        outcome: 'fallback',
-        split_count: emergencyUnits.length,
-        fallback_method: emergencyUnits.length > 1
-            ? (emergencyUnits[0].text !== longUnit.text ? 'sentence_split' : 'comma_or_word_split')
-            : 'none',
-    }));
     return spliceUnits(units, longIndex, emergencyUnits);
 }
 
@@ -331,17 +250,12 @@ async function splitLongUnits(sessionId, scene, units, sceneIndex, stepIndex, pr
     const _progress = progress || (() => {});
 
     if (!units || units.length === 0) {
-        console.log(`[UNIT-SPLITTER] Scene ${sceneIndex}: no units to check`);
         return units || [];
     }
-
-    // Debug: log pre-split duration stats
-    logDurationStats(units, 'before_split', sceneIndex);
 
     // 1. Find long units
     const longUnits = findLongUnits(units);
     if (longUnits.length === 0) {
-        console.log(`[UNIT-SPLITTER] Scene ${sceneIndex}: all ${units.length} units within ${MAX_UNIT_DURATION_SEC}s`);
         return units;
     }
 
@@ -354,26 +268,18 @@ async function splitLongUnits(sessionId, scene, units, sceneIndex, stepIndex, pr
         console.warn(`[UNIT-SPLITTER] Failed to update session progress: ${err.message}`);
     });
 
-    console.log(`[UNIT-SPLITTER] Scene ${sceneIndex}: ${longUnits.length}/${units.length} units exceed ${MAX_UNIT_DURATION_SEC}s:`,
-        longUnits.map(({ index, duration }) => `#${index}=${duration}s`).join(', '));
-
     // 2. Split each long unit (process right-to-left so indices stay valid)
     let result = [...units];
     for (const { index } of longUnits.sort((a, b) => b.index - a.index)) {
         result = await splitOneUnit(sessionId, result, index, result[index]);
     }
 
-    // 3. Final verification: log results
+    // 3. Final verification
     const finalLong = findLongUnits(result);
     if (finalLong.length > 0) {
         console.warn(`[UNIT-SPLITTER] Scene ${sceneIndex}: ${finalLong.length}/${result.length} units STILL exceed ${MAX_UNIT_DURATION_SEC}s after split`,
             finalLong.map(({ index, duration }) => `#${index}=${duration}s`).join(', '));
-    } else {
-        console.log(`[UNIT-SPLITTER] Scene ${sceneIndex}: all ${result.length} units OK (was ${units.length}) after split`);
     }
-
-    // Debug: log post-split duration stats (always, even if unchanged)
-    logDurationStats(result, 'after_split', sceneIndex);
 
     return result;
 }
@@ -382,7 +288,6 @@ module.exports = {
     splitLongUnits,
     findLongUnits,
     getUnitDurationSec,
-    logDurationStats,
     emergencySplit,
     splitBySentences,
     splitByCommas,

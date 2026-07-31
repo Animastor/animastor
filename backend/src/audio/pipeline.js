@@ -91,8 +91,6 @@ async function buildSceneAudio(chunkPaths, finalPath, buildId = null, force = fa
     }
 
     helpers.log(`🎬 Merging ${chunkPaths.length} audio chunks with ffmpeg`);
-    const concatContent = chunkPaths.map(ch => `file '${ch}'`).join('\n');
-    helpers.log(`[DEBUG] MERGE concat order:\n${concatContent}`);
     const concatPath = createConcatFile(chunkPaths, buildId);
 
     try {
@@ -149,35 +147,31 @@ async function mergeSceneAudioChunks(redis, bookId, chapterId, sceneId, buildId,
         const finalPath = helpers.getOutputPath(buildId, `${bookId}_${chapterId}_${sceneId}.mp3`);
         const existingChunks = chunks.findExistingSceneChunks(bookId, chapterId, sceneId, buildId, expectedChunkCount);
 
-        helpers.log(`[DEBUG] MERGE: mergeSceneAudioChunks ${bookId}/${chapterId}/${sceneId}: found=${existingChunks.length} expected=${expectedChunkCount}`);
-
         if (existingChunks.length === 0) {
-            helpers.warn(`[DEBUG] MERGE: No audio chunks found for scene: ${bookId}/${chapterId}/${sceneId}`);
+            helpers.warn(`No audio chunks found for scene: ${bookId}/${chapterId}/${sceneId}`);
             return null;
         }
 
         if (expectedChunkCount && existingChunks.length !== expectedChunkCount) {
-            helpers.warn(`[DEBUG] MERGE: Not all chunks ready: found=${existingChunks.length}, expected=${expectedChunkCount}`);
+            helpers.warn(`Not all chunks ready: found=${existingChunks.length}, expected=${expectedChunkCount}`);
             return null;
         }
 
         const chunkPaths = existingChunks.map(ch => helpers.getOutputPath(buildId, `${bookId}_${chapterId}_${sceneId}_${String(ch).padStart(4, '0')}.mp3`));
 
-        // Validate all chunk files have content > 0
+        // Warn about empty chunks that would produce incomplete output
         const MIN_CHUNK_BYTES = 100;
         const emptyChunks = [];
         for (let i = 0; i < chunkPaths.length; i++) {
             let size = 0;
             try { if (fs.existsSync(chunkPaths[i])) size = fs.statSync(chunkPaths[i]).size; } catch (_) {}
-            helpers.log(`[DEBUG] MERGE: chunk ${i + 1}/${chunkPaths.length}: ${path.basename(chunkPaths[i])} = ${size} bytes`);
             if (size < MIN_CHUNK_BYTES) emptyChunks.push(i + 1);
         }
         if (emptyChunks.length > 0) {
-            helpers.warn(`[DEBUG] MERGE: ${emptyChunks.length} chunk(s) are empty — will produce incomplete output: [${emptyChunks.join(',')}]`);
+            helpers.warn(`${emptyChunks.length} chunk(s) are empty — will produce incomplete output: [${emptyChunks.join(',')}]`);
         }
 
         const result = await buildSceneAudio(chunkPaths, finalPath, buildId, true);
-        helpers.log(`[DEBUG] MERGE: buildSceneAudio result=${result ? 'ok' : 'null'}`);
         return result;
     } catch (err) {
         helpers.error(`Audio merge error: ${err.message}`);

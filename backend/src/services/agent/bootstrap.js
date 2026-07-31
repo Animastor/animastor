@@ -58,7 +58,6 @@ async function bootstrapWithAgent(bookId, progress, publishProgress, redis) {
     try {
         const { query } = require('../../storage/postgres/database');
         await query(`UPDATE agent_sessions SET status = 'failed' WHERE book_id = $1 AND status = 'cancelled'`, [bookId]);
-        console.log(`[CANCEL-DEBUG] bootstrapWithAgent: cleared stale cancelled sessions for book ${bookId}`);
     } catch (_) {
         // Best-effort — DB cleanup failure should not block generation
     }
@@ -66,7 +65,6 @@ async function bootstrapWithAgent(bookId, progress, publishProgress, redis) {
     const session = await createSession(bookId, 'txt_import');
     const sessionId = session.session_id;
     console.log(`[AGENT] Session ${sessionId} created for book ${bookId}`);
-    console.log(`[CANCEL-DEBUG] bootstrapWithAgent: session=${sessionId}, bookId=${bookId}, redis=${!!redis}`);
 
     try {
         // Read chunk_size from layer-config BEFORE getWindowText so the text budget matches
@@ -198,16 +196,13 @@ async function bootstrapWithAgent(bookId, progress, publishProgress, redis) {
         console.error(`[AGENT] Bootstrap failed: ${err.message}`);
         // Don't overwrite 'cancelled' status — user requested cancellation
         const alreadyCancelled = err.code === 'SESSION_CANCELLED' || (await isSessionCancelled(sessionId).catch(() => false));
-        console.log(`[CANCEL-DEBUG] bootstrapWithAgent CATCH: err.code=${err.code}, sessionId=${sessionId}, alreadyCancelled=${alreadyCancelled}`);
         if (!alreadyCancelled) {
-            console.log(`[CANCEL-DEBUG] bootstrapWithAgent: НЕ cancelled → status=failed`);
             await updateSession(sessionId, {
                 status: 'failed',
                 progress_msg: `Ошибка: ${err.message}`,
             }).catch(() => {});
             _progress({ stage: 'error', message: `✗ Ошибка: ${err.message}` });
         } else {
-            console.log(`[CANCEL-DEBUG] bootstrapWithAgent: cancelled → сохраняю status=cancelled, НЕ перезаписываю`);
             // Отправляем статус «Отменено» через publishProgress (progress-колбэк — no-op)
             try {
                 if (publishProgress) {
@@ -296,12 +291,10 @@ async function bootstrapNextWindow(bookId, progress, publishProgress, redis) {
 
             if (prevStatus === 'completed') {
                 console.log(`[AGENT] bootstrapNextWindow: previous session completed, all done`);
-                console.log(`[CANCEL-DEBUG] bootstrapNextWindow: prevStatus=completed — all_done, return`);
                 return { session_id: null, cached: false, added_scenes: 0, all_done: true };
             }
 
             if (prevStatus === 'cancelled') {
-                console.log(`[CANCEL-DEBUG] bootstrapNextWindow: prevStatus=cancelled — aborting, all_done`);
                 return { session_id: null, cached: false, added_scenes: 0, all_done: true };
             }
 
@@ -324,9 +317,7 @@ async function bootstrapNextWindow(bookId, progress, publishProgress, redis) {
     if (redis && bookId) {
         try {
             const isCancelled = await redis.sismember(`animastor:cancelled-workers:${bookId}`, 'vbook');
-            console.log(`[CANCEL-DEBUG] bootstrapNextWindow REDIS CHECK: bookId=${bookId}, redis.sismember(vbook)=${!!isCancelled}`);
             if (isCancelled) {
-                console.log(`[CANCEL-DEBUG] bootstrapNextWindow: 🎯 REDIS cancelled-workers:${bookId} has vbook — aborting, all_done`);
                 return { session_id: null, cached: false, added_scenes: 0, all_done: true };
             }
         } catch (redisErr) {
@@ -658,16 +649,13 @@ async function bootstrapNextWindow(bookId, progress, publishProgress, redis) {
         console.error(`[AGENT] bootstrapNextWindow failed: ${err.message}`);
         // Don't overwrite 'cancelled' status — user requested cancellation
         const alreadyCancelled = err.code === 'SESSION_CANCELLED' || (await isSessionCancelled(sessionId).catch(() => false));
-        console.log(`[CANCEL-DEBUG] bootstrapNextWindow CATCH: err.code=${err.code}, sessionId=${sessionId}, alreadyCancelled=${alreadyCancelled}`);
         if (!alreadyCancelled) {
-            console.log(`[CANCEL-DEBUG] bootstrapNextWindow: НЕ cancelled → status=failed`);
             await updateSession(sessionId, {
                 status: 'failed',
                 progress_msg: `Ошибка: ${err.message}`,
             }).catch(() => {});
             _progress({ stage: 'error', message: `✗ Ошибка: ${err.message}` });
         } else {
-            console.log(`[CANCEL-DEBUG] bootstrapNextWindow: cancelled → сохраняю status=cancelled, НЕ перезаписываю`);
             // Отправляем статус «Отменено» через publishProgress (progress-колбэк — no-op)
             try {
                 if (publishProgress) {

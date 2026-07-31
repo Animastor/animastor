@@ -169,9 +169,6 @@ async function processSingleIU(redis, unit, uIdx, sceneData, loadedBook, buildId
     }
 
     const finalPrompt = promptBuilder.buildImagePrompt(unit, sceneData.payload, sceneData.chapter, loadedBook);
-    const workflow = promptBuilder.buildIUImageWorkflow(unit, sceneData.payload, sceneData.chapter, loadedBook);
-
-    helpers.debug(`📸 IMAGE DISPATCH:\n  - final_image_prompt: ${finalPrompt}\n  - workflow_id: ${workflow?.workflow || 'unknown'}\n  - scene_id: ${chapterId}/${sceneId}\n  - iu_id: ${canonicalUnitId}`);
 
     helpers.log(`GENERATE IMAGE (IU): ${imageIUId}, unit.id: ${canonicalUnitId}`);
 
@@ -223,9 +220,8 @@ async function generateSceneIUImages(redis, sceneData, loadedBook, buildId, book
     const units = collectSceneUnits(sceneData.payload);
     const chapterId = sceneData.chapter_id;
     const sceneId = sceneData.scene_id;
-    helpers.log(`[IMG-DEBUG] generateSceneIUImages buildId=${buildId} bookId=${bookId} chapterId=${chapterId} sceneId=${sceneId}`);
     if (!buildId) {
-        helpers.error(`[IMG-DEBUG] buildId is null for ${bookId}/${chapterId}/${sceneId}!`);
+        helpers.error(`buildId is null for ${bookId}/${chapterId}/${sceneId}!`);
     }
 
     const sceneDuration = await getSceneDuration(buildId, bookId, chapterId, sceneId);

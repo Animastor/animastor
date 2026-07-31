@@ -551,7 +551,6 @@ async function dispatchStage(redis, bookId, chapterId, sceneId, stage, loadedBoo
         started_at: metadata.started_at
     });        // Step 6: Get orchestrator to perform dispatch
         try {
-            log(`[DISPATCH-DEBUG] Passing buildId=${buildId} stage=${stage} dispatchId=${dispatchId.slice(0, 20)}... to orchestrator for ${bookId}/${chapterId}/${sceneId}`);
             const orchestrator = require('../orchestration');
 
             // T4: передаём dispatchId — executor включит его в job specs для GPU Hub

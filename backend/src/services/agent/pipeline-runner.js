@@ -169,7 +169,6 @@ function resolveSceneProgress(sceneText, scenes, sourceOffsetBase) {
 }
 
 async function runPipeline(sessionId, text, existingChars, existingLocs, stepIndex, progress, baseSceneCount, options = {}) {
-    console.log(`[CANCEL-DEBUG] runPipeline START sessionId=${sessionId}, bookId=${options.bookId}, stepIndex=${stepIndex}, textLen=${text.length}, redis=${!!options.redis}`);
     const _progress = progress || (() => {});
     const { publishProgress, bookId, redis: redisClient } = options;
     const sceneOffset = baseSceneCount || 0;
@@ -194,9 +193,7 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
     async function checkCancelled() {
         // LEVEL 1: session-level DB check
         const sessCancelled = await isSessionCancelled(sessionId);
-        console.log(`[CANCEL-DEBUG] checkCancelled(sessionId=${sessionId}, bookId=${bookId}) level1(isSessionCancelled)=${sessCancelled}`);
         if (sessCancelled) {
-            console.log(`[CANCEL-DEBUG] 🎯 LEVEL 1 TRIGGERED — session ${sessionId} status=cancelled`);
             const err = new Error('Agent session was cancelled by user');
             err.code = 'SESSION_CANCELLED';
             throw err;
@@ -205,9 +202,7 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
         // LEVEL 2: book-level DB check — any cancelled session for this book
         if (bookId) {
             const bookCancelled = await isBookCancelled(bookId);
-            console.log(`[CANCEL-DEBUG] checkCancelled(sessionId=${sessionId}, bookId=${bookId}) level2(isBookCancelled)=${bookCancelled}`);
             if (bookCancelled) {
-                console.log(`[CANCEL-DEBUG] 🎯 LEVEL 2 TRIGGERED — isBookCancelled(${bookId})=true, setting session ${sessionId} to cancelled`);
                 try { await updateSession(sessionId, { status: 'cancelled' }); } catch (_) {}
                 const err = new Error('Agent session was cancelled by user');
                 err.code = 'SESSION_CANCELLED';
@@ -226,19 +221,16 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
         if (bookId && redisClient) {
             try {
                 const redisCancelled = await redisClient.sismember(`animastor:cancelled-workers:${bookId}`, 'vbook');
-                console.log(`[CANCEL-DEBUG] checkCancelled(sessionId=${sessionId}, bookId=${bookId}) level3(redis cancelled-workers)=${!!redisCancelled}`);
                 cancelledByRedis = !!redisCancelled;
             } catch (_) { /* Redis check is best-effort */ }
         }
         if (cancelledByRedis) {
-            console.log(`[CANCEL-DEBUG] 🎯 LEVEL 3 TRIGGERED — Redis cancelled-workers:${bookId} has vbook, setting session ${sessionId} to cancelled`);
             try { await updateSession(sessionId, { status: 'cancelled' }); } catch (_) {}
             const err = new Error('Agent session was cancelled by user');
             err.code = 'SESSION_CANCELLED';
             throw err;  // ← этот throw теперь НЕ может быть проглочен
         }
 
-        console.log(`[CANCEL-DEBUG] checkCancelled(sessionId=${sessionId}, bookId=${bookId}) → NOT cancelled, continuing pipeline`);
     }
     let characters = existingChars || [];
     let locations = existingLocs || [];
@@ -495,7 +487,6 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
         });
     }
 
-    _debugVideoAction('after_visuals', enrichedScenes);
 
     await checkCancelled();
 
@@ -541,7 +532,6 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
         }
     }
 
-    _debugVideoAction('after_passport', enrichedScenes);
 
     await checkCancelled();
 
@@ -579,7 +569,6 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
         }
     }
 
-    _debugVideoAction('after_video_recon', enrichedScenes);
 
     await checkCancelled();
 
@@ -625,7 +614,6 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
         }
     }
 
-    _debugVideoAction('after_storyboard', enrichedScenes);
 
     await checkCancelled();
 
@@ -665,7 +653,6 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
         }
     }
 
-    _debugVideoAction('after_video_polish', enrichedScenes);
 
     return {
         characters,
@@ -803,7 +790,6 @@ async function processCachedScenes(sessionId, scenes, characters, locations, men
         });
     }
 
-    _debugVideoAction('after_visuals', enrichedScenes);
 
     await checkCancelled();
 
@@ -843,7 +829,6 @@ async function processCachedScenes(sessionId, scenes, characters, locations, men
         }
     }
 
-    _debugVideoAction('after_passport', enrichedScenes);
 
     await checkCancelled();
 
@@ -878,7 +863,6 @@ async function processCachedScenes(sessionId, scenes, characters, locations, men
         }
     }
 
-    _debugVideoAction('after_video_recon', enrichedScenes);
 
     await checkCancelled();
 
@@ -918,7 +902,6 @@ async function processCachedScenes(sessionId, scenes, characters, locations, men
         }
     }
 
-    _debugVideoAction('after_storyboard', enrichedScenes);
 
     await checkCancelled();
 
@@ -953,7 +936,6 @@ async function processCachedScenes(sessionId, scenes, characters, locations, men
         }
     }
 
-    _debugVideoAction('after_video_polish', enrichedScenes);
 
     console.log(`[CACHED-SCENES] Done processing ${enrichedScenes.length} cached scenes`);
     return {
@@ -963,35 +945,6 @@ async function processCachedScenes(sessionId, scenes, characters, locations, men
         scenes: enrichedScenes,
         allScenes: windowScenes,
     };
-}
-
-/**
- * Debug log: compare image.prompt vs video.action for all units at a given stage.
- * Logs count of identical pairs + sample of first matching unit.
- * Used to trace where AI-generated video.action diverges from (or stays equal to) image.prompt.
- */
-function _debugVideoAction(stage, enrichedScenes) {
-    let identical = 0;
-    let total = 0;
-    let sample = '';
-    for (const scene of enrichedScenes) {
-        for (const unit of (scene.units || [])) {
-            total++;
-            const ip = unit.image?.prompt;
-            const va = unit.video?.action;
-            if (ip && va && va === ip) {
-                identical++;
-                if (!sample) {
-                    const trunc = ip.length > 100 ? ip.substring(0, 97) + '...' : ip;
-                    sample = `[${unit.type || '?'}] "${trunc}"`;
-                }
-            }
-        }
-    }
-    if (total === 0) return;
-    const pct = total > 0 ? Math.round(identical / total * 100) : 0;
-    const tag = identical > 0 ? '⚠️' : '✅';
-    console.log(`[VIDEO-DEBUG] ${stage}: ${identical}/${total} units have video.action === image.prompt (${pct}%) ${tag}${sample ? ' — sample: ' + sample : ''}`);
 }
 
 module.exports = {

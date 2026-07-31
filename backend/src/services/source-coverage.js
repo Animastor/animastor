@@ -375,18 +375,6 @@ function computeSceneCoverage(rawText, sceneTexts, options = {}) {
             match_method: matchMethod,
         });
 
-        if (matchMethod !== 'verbatim') {
-            // For sentence-level match, the scene span is between first and last sentence.
-            // Log the relaxed matching for debugging.
-            console.log(JSON.stringify({
-                event: 'coverage_relaxed_match',
-                scene_index: i,
-                match_method: matchMethod,
-                first_sentence_pos: matchStart,
-                last_sentence_end: matchEnd,
-            }));
-        }
-
         cursor = skipWhitespaceForward(normalizedSource, matchEnd);
     }
 

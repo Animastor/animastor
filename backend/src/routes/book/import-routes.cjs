@@ -747,12 +747,10 @@ function detectFileFormat(buf) {
                     ? (typeof agentSession.window_data === 'string' ? JSON.parse(agentSession.window_data) : agentSession.window_data)
                     : null;
 
-                console.log(`[CANCEL-DEBUG] trigger-next-window TXT PATH: agentSession.status=${agentSession.status}, bookId=${bookId}`);
                 if (agentSession.status === 'completed' ||
                     agentSession.status === 'cancelled' ||
                     (windowData && windowData.remaining_scenes && windowData.remaining_scenes.length === 0 && !windowData.remaining_text)) {
                     log(`[TRIGGER] all done for TXT book ${bookId} (status=${agentSession.status})`);
-                    console.log(`[CANCEL-DEBUG] trigger-next-window TXT PATH: status=${agentSession.status} → all_done, НЕ запускаю bootstrapNextWindow`);
                     return res.json({ triggered: false, all_done: true, message: 'All windows processed' });
                 }
 
@@ -762,10 +760,8 @@ function detectFileFormat(buf) {
                 // (it returns all_done=true due to Redis check, but frontend sees triggered=true and retries).
                 try {
                     const wasCancelled = await redis.sismember(`animastor:cancelled-workers:${bookId}`, 'vbook');
-                    console.log(`[CANCEL-DEBUG] trigger-next-window TXT PATH REDIS CHECK: bookId=${bookId}, redis.sismember(vbook)=${!!wasCancelled}`);
                     if (wasCancelled) {
                         log(`[TRIGGER] book ${bookId} was cancelled (vbook) — stopping trigger loop`);
-                        console.log(`[CANCEL-DEBUG] 🎯 trigger-next-window TXT PATH: cancelled-workers:${bookId} has vbook → all_done, НЕ запускаю bootstrapNextWindow`);
                         return res.json({ triggered: false, all_done: true, reason: 'cancelled', message: 'Generation stopped by user' });
                     }
                 } catch (redisErr) {
@@ -840,13 +836,10 @@ function detectFileFormat(buf) {
             }
 
             // VBook / windowGenerator path — also check cancellation
-            console.log(`[CANCEL-DEBUG] trigger-next-window VBOOK PATH: bookId=${bookId}`);
             try {
                 const wasCancelled = await redis.sismember(`animastor:cancelled-workers:${bookId}`, 'vbook');
-                console.log(`[CANCEL-DEBUG] trigger-next-window VBOOK PATH REDIS CHECK: bookId=${bookId}, redis.sismember(vbook)=${!!wasCancelled}`);
                 if (wasCancelled) {
                     log(`[TRIGGER] book ${bookId} was cancelled (vbook) — VBook path aborting`);
-                    console.log(`[CANCEL-DEBUG] 🎯 trigger-next-window VBOOK PATH: cancelled-workers:${bookId} has vbook → all_done, НЕ запускаю windowGenerator`);
                     return res.json({ triggered: false, all_done: true, reason: 'cancelled', message: 'Generation stopped by user' });
                 }
             } catch (redisErr) {

@@ -19,10 +19,6 @@ function error(msg) {
     console.error(`${logPrefix} ❌ ${msg}`);
 }
 
-function debug(msg) {
-    console.debug(`${logPrefix} 🐞 DEBUG: ${msg}`);
-}
-
 function cleanJoin(parts) {
     return parts.filter(Boolean).join(", ");
 }
@@ -121,7 +117,7 @@ const UNSAFE_MENTION_TYPES = new Set(['pronoun', 'unknown']);
 const PREVIEW_WIDTH = 240;
 
 module.exports = {
-    log, warn, error, debug,
+    log, warn, error,
     getOutputPath,
     cleanJoin,
     isPlaceholder,

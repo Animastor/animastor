@@ -258,7 +258,6 @@ async function completeChunk(redis, bookId, chapterId, sceneId, chunkIndex, buil
     const presentIndices = [];
     const missingIndices = [];
     const emptyIndices = [];
-    const chunkSizes = [];
     for (let i = 1; i <= expectedCount; i++) {
         const chunkPath = path.join(buildDir, `${bookId}_${chapterId}_${sceneId}_${pad(i)}.mp3`);
         chunkPaths.push(chunkPath);
@@ -268,12 +267,11 @@ async function completeChunk(redis, bookId, chapterId, sceneId, chunkIndex, buil
                 size = fs.statSync(chunkPath).size;
             }
         } catch (_) {}
-        chunkSizes.push(size);
         if (size >= MIN_CHUNK_BYTES) {
             presentIndices.push(i);
         } else if (size > 0 && size < MIN_CHUNK_BYTES) {
             emptyIndices.push(i);
-            warn(`[DEBUG] completeChunk: chunk ${pad(i)} exists but too small (${size} bytes) — deleting so re-dispatch can resend`);
+            warn(`completeChunk: chunk ${pad(i)} exists but too small (${size} bytes) — deleting so re-dispatch can resend`);
             try { fs.unlinkSync(chunkPath); } catch (_) {}
             // Also clear Redis dedup keys so the re-sent job isn't rejected as duplicate
             const staleChunkId = `${bookId}_${chapterId}_${sceneId}_${pad(i)}`;
@@ -283,8 +281,6 @@ async function completeChunk(redis, bookId, chapterId, sceneId, chunkIndex, buil
             missingIndices.push(i);
         }
     }
-
-    log(`[DEBUG] completeChunk ${bookId}/${chapterId}/${sceneId}: expected=${expectedCount}, present=[${presentIndices.join(',')}], empty=[${emptyIndices.join(',')}], missing=[${missingIndices.join(',')}], sizes=[${chunkSizes.join(',')}] (${Date.now() - startTime}ms)`);
 
     if (missingIndices.length > 0 || emptyIndices.length > 0) {
         // Не все чанки на месте или есть пустые — фиксируем прогресс и выходим.
@@ -314,11 +310,10 @@ async function completeChunk(redis, bookId, chapterId, sceneId, chunkIndex, buil
                 try {
                     const currentMeta = getChunk ? await getChunk(currentChunkId) : null;
                     if (currentMeta && currentMeta.padded_text) {
-                        log(`[DEBUG] TRIM: padded chunk ${i + 1}/${chunkPaths.length} (${currentChunkId}), original_text_length=${currentMeta.original_text_length}`);
                         await audio.trimPaddedSceneAudio(chunkPaths[i], currentMeta.original_text_length);
                     }
                 } catch (trimErr) {
-                    warn(`[DEBUG] TRIM failed for ${currentChunkId}: ${trimErr.message}`);
+                    warn(`TRIM failed for ${currentChunkId}: ${trimErr.message}`);
                 }
             }
         }
@@ -326,9 +321,7 @@ async function completeChunk(redis, bookId, chapterId, sceneId, chunkIndex, buil
         // Merge chunks
         let mergeSuccess = false;
         if (audio && typeof audio.mergeSceneAudioChunks === 'function') {
-            log(`[DEBUG] MERGE: calling mergeSceneAudioChunks expected=${expectedCount}`);
             const mergeResult = await audio.mergeSceneAudioChunks(redis, bookId, chapterId, sceneId, buildId, expectedCount);
-            log(`[DEBUG] MERGE: result=${mergeResult ? 'ok' : 'null'}`);
             if (mergeResult) {
                 mergeSuccess = true;
             } else if (chunkPaths.length === 1 && fs.existsSync(chunkPaths[0])) {
@@ -336,7 +329,6 @@ async function completeChunk(redis, bookId, chapterId, sceneId, chunkIndex, buil
                 const outputPath = path.join(buildDir, `${bookId}_${chapterId}_${sceneId}.mp3`);
                 if (!fs.existsSync(outputPath)) {
                     fs.copyFileSync(chunkPaths[0], outputPath);
-                    log(`[DEBUG] MERGE: single chunk fallback: ${outputPath}`);
                     mergeSuccess = true;
                 }
             }
@@ -346,7 +338,6 @@ async function completeChunk(redis, bookId, chapterId, sceneId, chunkIndex, buil
             await setDone(redis, bookId, chapterId, sceneId);
             // T7: Итог машины публикуется только через фасад
             if (orchestrator) {
-                log(`[DEBUG] MERGE: calling completeStage for ${bookId}/${chapterId}/${sceneId}`);
                 await orchestrator.completeStage(
                     redis,
                     bookId,
@@ -357,13 +348,12 @@ async function completeChunk(redis, bookId, chapterId, sceneId, chunkIndex, buil
                     dispatchId
                 );
             }
-            log(`[DEBUG] MERGE: Audio merge complete for ${bookId}/${chapterId}/${sceneId}`);
         } else {
-            warn(`[DEBUG] MERGE: merge produced no output for ${bookId}/${chapterId}/${sceneId}`);
+            warn(`merge produced no output for ${bookId}/${chapterId}/${sceneId}`);
             await setFailed(redis, bookId, chapterId, sceneId, 'merge_failed_no_output');
         }
     } catch (err) {
-        warn(`[DEBUG] MERGE: failed for ${bookId}/${chapterId}/${sceneId}: ${err.message}`);
+        warn(`merge failed for ${bookId}/${chapterId}/${sceneId}: ${err.message}`);
         await setFailed(redis, bookId, chapterId, sceneId, `merge_error:${err.message}`);
     }
 }

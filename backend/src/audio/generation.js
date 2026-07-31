@@ -491,8 +491,6 @@ async function sendPerSegmentAudio(redis, segList, sceneData, loadedBook, buildI
                 wfAudio["74"].inputs.role_name_2 = "narrator";
             }
 
-            // [DEBUG] Log actual workflow values for this dialogue chunk
-            helpers.log(`[DEBUG] Dialogue chunk prompt: id=${id} speaker=${speakerId || 'unknown'} text="${segment.text.substring(0, 80)}" c1Voice=${c1Voice ? '(set)' : '(empty)'} c2Voice=${c2Voice ? '(set)' : '(empty)'} workflow=${workflowName}`);
         } else {
             // Narration segment
             const connector = wfLoader.getConnector(workflowName);

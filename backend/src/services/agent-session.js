@@ -20,7 +20,6 @@ const ALLOWED_UPDATE_COLUMNS = {
 async function isSessionCancelled(sessionId) {
     const result = await query(`SELECT status FROM agent_sessions WHERE session_id = $1`, [sessionId]);
     const cancelled = result.rows[0]?.status === 'cancelled';
-    console.log(`[CANCEL-DEBUG] isSessionCancelled(sessionId=${sessionId}) → ${cancelled} (status=${result.rows[0]?.status})`);
     return cancelled;
 }
 
@@ -36,7 +35,6 @@ async function isBookCancelled(bookId) {
         [bookId]
     );
     const cancelled = parseInt(result.rows[0]?.cnt || '0', 10) > 0;
-    console.log(`[CANCEL-DEBUG] isBookCancelled(bookId=${bookId}) → ${cancelled} (cnt=${result.rows[0]?.cnt})`);
     return cancelled;
 }
 
@@ -47,10 +45,6 @@ async function updateSession(sessionId, updates) {
     const values = keys.map(k => updates[k]);
     values.push(Math.floor(Date.now() / 1000));
     values.push(sessionId);
-
-    if (updates.status === 'cancelled') {
-        console.log(`[CANCEL-DEBUG] updateSession(sessionId=${sessionId}) УСТАНАВЛИВАЕТ статус=cancelled`);
-    }
 
     await query(
         `UPDATE agent_sessions SET ${setClauses.join(', ')}, updated_at = $${keys.length + 1} WHERE session_id = $${keys.length + 2}`,

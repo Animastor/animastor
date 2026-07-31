@@ -228,7 +228,6 @@ function buildImagePrompt(iuPayload, scenePayload, chapterPayload, bookPayload) 
             parts.push("image quality: highly detailed, sharp typography, clean composition, professional typesetting");
         }
         const finalPrompt = helpers.cleanJoin(parts);
-        helpers.debug(`TYPOGRAPHY IU PROMPT: ${finalPrompt}`);
         return finalPrompt || 'cinematic illustration';
     }
 
@@ -269,7 +268,6 @@ function buildImagePrompt(iuPayload, scenePayload, chapterPayload, bookPayload) 
         matchedLocFromPrompt = resolveLocationFromPrompt(directPrompt, bookPayload.locations);
         if (matchedLocFromPrompt) {
             loc = matchedLocFromPrompt.data;
-            helpers.debug(`LOCATION MATCHED FROM PROMPT: ${matchedLocFromPrompt.id}`);
         }
     }
 
@@ -311,8 +309,6 @@ function buildImagePrompt(iuPayload, scenePayload, chapterPayload, bookPayload) 
 
     if (directPrompt) {
         const normalized = charUtils.normalizeCharacterRefs(directPrompt, bookPayload?.characters);
-        helpers.debug(`DIRECT PROMPT (IU): ${directPrompt}`);
-        helpers.debug(`NORMALIZED: ${normalized}`);
         parts.push(normalized);
     }
 
@@ -325,7 +321,6 @@ function buildImagePrompt(iuPayload, scenePayload, chapterPayload, bookPayload) 
     }
 
     const finalPrompt = helpers.cleanJoin(parts);
-    helpers.debug(`FINAL IMAGE PROMPT: ${finalPrompt}`);
     return finalPrompt || 'cinematic illustration';
 }
 
