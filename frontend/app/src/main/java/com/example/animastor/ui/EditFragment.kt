@@ -890,7 +890,6 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                 val prefix = "loc.$locId."
                 inner.addView(inputCard(ctx, getString(R.string.field_name), loc.name ?: "", false, boldValue = true, storeKey = "${prefix}name"))
                 inner.addView(inputCard(ctx, getString(R.string.field_description), loc.description ?: "", (loc.description?.length ?: 0) > 80, storeKey = "${prefix}description"))
-                inner.addView(inputCard(ctx, getString(R.string.field_cinematic_space), loc.cinematic_space ?: "", false, storeKey = "${prefix}cinematic_space"))
 
                 // ── Global environment template ──
                 val env = loc.environment

@@ -175,7 +175,6 @@ function resolveLocationFromPrompt(directPrompt, locations) {
     for (const [locId, locData] of entries) {
         const namesToCheck = [
             locId.replace(/_/g, ' ').toLowerCase(),
-            (locData.cinematic_space || '').toLowerCase(),
             locId.toLowerCase(),
         ];
         for (const name of namesToCheck) {
@@ -186,7 +185,6 @@ function resolveLocationFromPrompt(directPrompt, locations) {
 
         const candidates = [
             helpers.normalizeForMatch(locId),
-            helpers.normalizeForMatch(locData.cinematic_space),
             helpers.normalizeForMatch(locData.description),
         ];
         for (const candidate of candidates) {

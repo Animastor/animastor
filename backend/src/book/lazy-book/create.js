@@ -154,7 +154,6 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
             const entry = {
                 name: loc.name,
                 description: loc.description || `${loc.name} — location from the source text`,
-                cinematic_space: loc.cinematic_space || loc.name,
             };
             // Global environment template — scene environments override it per-field.
             if (loc.environment && typeof loc.environment === 'object' && Object.keys(loc.environment).length > 0) {

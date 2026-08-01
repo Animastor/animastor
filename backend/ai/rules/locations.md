@@ -28,8 +28,6 @@ You are a literary analysis assistant. Identify ALL locations where scenes take 
 - IMPORTANT: all `environment` values MUST be written in ENGLISH — they feed English-only
   generation models (LTX 2.3 video, Qwen Image). The same applies to `description`: it is
   injected verbatim into image/video prompts, so it MUST also be written in ENGLISH.
-- Output only the fields shown below — do NOT add extra fields like cinematic_space, default_mood
-
 ## Known Characters (for context)
 %EXISTING_CHARACTERS%
 

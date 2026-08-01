@@ -8,6 +8,28 @@ All notable changes to Animastor are documented here.
 
 ### Removed
 
+- **`location.cinematic_space` — мёртвый дубликат `name` убран полностью**
+  (`backend/src/book/lazy-book/create.js`,
+  `backend/src/image/prompt-builder.js`,
+  `backend/ai/rules/locations.md`,
+  `frontend/.../EditFragment.kt`, `frontend/.../BookModels.kt`,
+  `frontend/.../values/strings.xml`, `frontend/.../values-ru/strings.xml`,
+  `backend/tests/coreference-image.test.js`, `backend/tests/book-metadata-patch.test.js`):
+  - **Проблема:** `cinematic_space` всегда был равен `name` — `locations.md` запрещал LLM
+    его выдавать, а `create.js` писал его с фоллбэком `loc.cinematic_space || loc.name`.
+    Смысловой нагрузки ноль: поле не несло информации сверх имени.
+  - **Фикс:** `create.js` больше не пишет `cinematic_space`; `resolveLocationFromPrompt`
+    матчит локацию по `id` + `description` (английской, категория C) вместо
+    `cinematic_space`; поле убрано из модели `Location` (BookModels.kt), редактора
+    локаций (EditFragment.kt) и строк `field_cinematic_space`; фикстуры тестов очищены.
+  - **Строка запрета лишних полей в `locations.md` удалена целиком** (вместе с
+    `default_mood` — тоже давно мёртвое поле): LLM больше не видит имена dead-полей
+    (`visual_style`, `cinematic_space`, `default_mood`) ни в одном системном промпте —
+    упоминание несуществующих полей в запрете только «заражает» модель.
+  - Матчинг не деградировал: description теперь содержит кинематографическое описание
+    (проверено тестом `matches location via transliteration word overlap` — score ≥ 0.25
+    по id и description).
+
 - **`location.visual_style` — мёртвый код убран полностью**
   (`backend/src/image/prompt-builder.js`,
   `backend/src/services/prompt-dependency-registry.js`,

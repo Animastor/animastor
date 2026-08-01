@@ -104,7 +104,6 @@
     <!-- Field labels -->
     <string name="field_name">имя</string>
     <string name="field_description">описание</string>
-    <string name="field_cinematic_space">кинопространство</string>
     <string name="field_environment">окружение</string>
     <string name="field_type">тип</string>
     <string name="field_time">время</string>

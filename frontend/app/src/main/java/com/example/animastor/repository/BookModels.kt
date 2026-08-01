@@ -136,7 +136,6 @@ data class Location(
     val id: String? = null,
     val name: String? = null,
     val description: String? = null,
-    val cinematic_space: String? = null,
     /** Global environment template — scene environments override it per-field. */
     val environment: EnvironmentData? = null
 )

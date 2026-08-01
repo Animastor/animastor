@@ -118,8 +118,8 @@ describe('PATCH /api/v1/book/:bookId/metadata', () => {
 
         // Create locations.json
         fs.writeFileSync(path.join(bookDir, 'locations.json'), JSON.stringify({
-            main_street: { description: 'Main street in the city', cinematic_space: 'Urban' },
-            forest: { description: 'Dark forest', cinematic_space: 'Wilderness' },
+            main_street: { description: 'Main street in the city' },
+            forest: { description: 'Dark forest' },
         }, null, 2));
 
         // Create voices.json

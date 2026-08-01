@@ -185,11 +185,9 @@ describe('Coreference — resolveLocationFromPrompt', () => {
 
     const locations = {
         moscow_patriarskie_pруды: {
-            cinematic_space: 'Patriarch Ponds in Moscow, a tranquil park with a large pond surrounded by lime trees and old mansions',
-            description: 'Hot spring evening at the ponds, dry stifling heat',
+            description: 'Patriarch Ponds in Moscow, a tranquil park with a large pond surrounded by lime trees and old mansions',
         },
         pivo_i_vody_booth: {
-            cinematic_space: 'A colorfully painted wooden stall',
             description: 'Deserted alley near the ponds at sunset',
         },
     };
@@ -204,8 +202,8 @@ describe('Coreference — resolveLocationFromPrompt', () => {
 
     it('matches location via transliteration word overlap (mixed RU/EN)', () => {
         // "patriarch" prefix-matches "patriarskie" via normalizeForMatch
-        // "ponds" matches "pond" in the location's cinematic_space
-        // "moscow" matches "Moscow" in the location's cinematic_space
+        // "ponds" matches "pond" in the location's description
+        // "moscow" matches "Moscow" in the location's description
         const prompt = 'moscow patriarch ponds evening scene cinematic';
         const result = resolveLocationFromPrompt(prompt, locations);
         expect(result).to.not.be.null;
