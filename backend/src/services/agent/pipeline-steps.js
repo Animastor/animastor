@@ -12,7 +12,7 @@ const {
 } = require('../agent-session');
 const {
     PROGRESS_STAGES, SYSTEM_PROMPTS, MAX_SCENES_PER_CHUNK,
-    buildLangInstruction, buildVoiceLangHint,
+    buildLangInstruction,
 } = require('../agent-prompts');
 const { normalizeCharacterRefs } = require('../../image/image-service');
 const { extractSceneTitle, isGenericSceneTitle } = require('../../utils/scene-title-utils');
@@ -44,7 +44,7 @@ async function stepAnalyzeStructure(sessionId, sourceText, stepIndex, progress, 
     const sampleLines = lines.slice(0, 80).join('\n');
 
     const messages = [
-        { role: 'system', content: SYSTEM_PROMPTS.structure + '\n\n' + buildLangInstruction(language) },
+        { role: 'system', content: SYSTEM_PROMPTS.structure.replace('%LANGUAGE%', buildLangInstruction(language)) },
         { role: 'user', content: `Analyze the structure of this literary text. Extract author, title, parts, and chapters.\n\n\`\`\`\n${sampleLines}\n\`\`\`` },
     ];
 
@@ -80,7 +80,7 @@ async function stepExtractCharacters(sessionId, text, stepIndex, progress, langu
     const step = await createStep(sessionId, 'analyze_characters', stepIndex || 0);
 
     const messages = [
-        { role: 'system', content: SYSTEM_PROMPTS.characters + '\n\n' + buildLangInstruction(language) },
+        { role: 'system', content: SYSTEM_PROMPTS.characters.replace('%LANGUAGE%', buildLangInstruction(language)) },
         { role: 'user', content: `Extract all characters from this text:\n\n\`\`\`\n${text}\n\`\`\`` },
     ];
 
@@ -106,7 +106,9 @@ async function stepExtractLocations(sessionId, text, characters, stepIndex, prog
     const step = await createStep(sessionId, 'analyze_locations', stepIndex || 0);
 
     const charsContext = (characters || []).map(c => `- ${c.id}: ${c.name} (${c.role || 'unknown'})`).join('\n') || 'No characters yet';
-    const prompt = SYSTEM_PROMPTS.locations.replace('%EXISTING_CHARACTERS%', charsContext) + '\n\n' + buildLangInstruction(language);
+    const prompt = SYSTEM_PROMPTS.locations
+        .replace('%EXISTING_CHARACTERS%', charsContext)
+        .replace('%LANGUAGE%', buildLangInstruction(language));
 
     const messages = [
         { role: 'system', content: prompt },
@@ -140,7 +142,8 @@ async function stepCreateScenes(sessionId, text, characters, locations, stepInde
 
     const prompt = SYSTEM_PROMPTS.scenes
         .replace('%EXISTING_CHARACTERS%', charsContext)
-        .replace('%EXISTING_LOCATIONS%', locsContext) + '\n\n' + buildLangInstruction(language);
+        .replace('%EXISTING_LOCATIONS%', locsContext)
+        .replace('%LANGUAGE%', buildLangInstruction(language));
 
     let repairText = '';
     if (repairHint) {
@@ -201,7 +204,8 @@ async function stepEnrichScenes(sessionId, scenes, characters, locations, stepIn
     const enrichmentPrompt = SYSTEM_PROMPTS.enrich_scenes
         .replace('%EXISTING_CHARACTERS%', charsContext)
         .replace('%EXISTING_LOCATIONS%', locsContext)
-        .replace('%SCENES_TO_ENRICH%', scenesStr) + '\n\n' + buildLangInstruction(language);
+        .replace('%SCENES_TO_ENRICH%', scenesStr)
+        .replace('%LANGUAGE%', buildLangInstruction(language));
 
     const messages = [
         { role: 'system', content: enrichmentPrompt },
@@ -350,7 +354,8 @@ async function stepGenerateVoices(sessionId, text, characters, stepIndex, progre
 
     const prompt = SYSTEM_PROMPTS.voice_generation
         .replace('%CHARACTERS%', charsContext)
-        .replace('%TEXT%', truncatedText) + '\n\n' + buildVoiceLangHint(language);
+        .replace('%TEXT%', truncatedText)
+        .replace('%LANGUAGE%', buildLangInstruction(language));
 
     const messages = [
         { role: 'system', content: prompt },

@@ -1,77 +1,85 @@
 // ======================================================
-// Language Architecture — buildLangInstruction / resolveBookLanguage
+// Language Architecture — buildLangInstruction / resolveBookLanguage / %LANGUAGE%
 // ======================================================
 // Tests for the language helpers added to agent-prompts.js:
-//   - buildLangInstruction(lang) — "Output language" block for text-generating steps
-//   - buildVoiceLangHint(lang)   — Native <Lang> pronunciation marker for the voice step
-//   - resolveBookLanguage(draft) — book.language → defaults.language → detectLanguage → 'ru'
-//   - langName(code)             — language code → display name
+//   - buildLangInstruction(lang) — VALUE substituted for the %LANGUAGE% placeholder
+//   - resolveBookLanguage(draft)  — book.language → defaults.language → detectLanguage → 'ru'
+//   - langName(code)              — language code → display name
+// Plus placeholder wiring in ai/rules/*.md:
+//   - UI-facing rules carry "Result language: %LANGUAGE%"
+//   - GPU-facing rules carry a fixed "Result language: English (en)"
 // See docs/07-agents-and-generators/LANGUAGE_ARCHITECTURE.md
 
 const { expect } = require('chai');
 
 const {
     buildLangInstruction,
-    buildVoiceLangHint,
     resolveBookLanguage,
     langName,
+    SYSTEM_PROMPTS,
 } = require('../src/services/agent-prompts');
 
-describe('buildLangInstruction — output language block', () => {
+describe('buildLangInstruction — %LANGUAGE% value', () => {
 
-    it('returns a Russian instruction for ru', () => {
-        const block = buildLangInstruction('ru');
-        expect(block).to.include('The book is generated in Russian (ru).');
-        expect(block).to.include('scene titles (scene.title)');
-        expect(block).to.include('image.prompt, video.action');
+    it('returns the Russian value for ru', () => {
+        expect(buildLangInstruction('ru')).to.equal('Russian (ru)');
     });
 
-    it('returns an English instruction for en', () => {
-        const block = buildLangInstruction('en');
-        expect(block).to.include('The book is generated in English (en).');
+    it('returns the English value for en', () => {
+        expect(buildLangInstruction('en')).to.equal('English (en)');
     });
 
     it('handles additional languages (de)', () => {
-        const block = buildLangInstruction('de');
-        expect(block).to.include('The book is generated in German (de).');
+        expect(buildLangInstruction('de')).to.equal('German (de)');
     });
 
     it('defaults to ru when language is missing', () => {
-        expect(buildLangInstruction(undefined)).to.include('Russian (ru)');
-        expect(buildLangInstruction(null)).to.include('Russian (ru)');
-        expect(buildLangInstruction('')).to.include('Russian (ru)');
+        expect(buildLangInstruction(undefined)).to.equal('Russian (ru)');
+        expect(buildLangInstruction(null)).to.equal('Russian (ru)');
+        expect(buildLangInstruction('')).to.equal('Russian (ru)');
     });
 
     it('normalizes uppercase language codes', () => {
-        expect(buildLangInstruction('DE')).to.include('German (de)');
-    });
-
-    it('keeps AI-facing fields in English regardless of book language', () => {
-        const block = buildLangInstruction('ru');
-        expect(block).to.include('Keep AI-facing fields in ENGLISH');
-        expect(block).to.include('Never translate');
+        expect(buildLangInstruction('DE')).to.equal('German (de)');
     });
 
     it('falls back to the raw code for unknown languages', () => {
-        const block = buildLangInstruction('fi');
-        expect(block).to.include('The book is generated in fi (fi).');
+        expect(buildLangInstruction('fi')).to.equal('fi (fi)');
     });
 });
 
-describe('buildVoiceLangHint — voice step language hint', () => {
+describe('ai/rules/*.md — %LANGUAGE% placeholder wiring', () => {
 
-    it('adds a Native pronunciation marker for ru', () => {
-        const hint = buildVoiceLangHint('ru');
-        expect(hint).to.include('Native Russian pronunciation');
-        expect(hint).to.include('remain in English');
+    // UI-facing rules: their OUTPUT is user-facing text → localize via %LANGUAGE%.
+    const UI_RULES = ['structure', 'characters', 'locations', 'scenes', 'enrich_scenes'];
+
+    // GPU-facing rules: their OUTPUT feeds generation models → fixed English.
+    const GPU_RULES = ['visuals', 'storyboard_polish', 'video_action_reconciliation',
+        'video_action_polish', 'passport_reconciliation'];
+
+    it('UI rules carry the "Result language: %LANGUAGE%" line', () => {
+        for (const name of UI_RULES) {
+            expect(SYSTEM_PROMPTS[name], name).to.include('Result language: %LANGUAGE%');
+        }
     });
 
-    it('adds a Native pronunciation marker for en', () => {
-        expect(buildVoiceLangHint('en')).to.include('Native English pronunciation');
+    it('GPU rules carry a fixed "Result language: English (en)" and no placeholder', () => {
+        for (const name of GPU_RULES) {
+            expect(SYSTEM_PROMPTS[name], name).to.include('Result language: English (en)');
+            expect(SYSTEM_PROMPTS[name], name).to.not.include('%LANGUAGE%');
+        }
     });
 
-    it('defaults to Russian pronunciation when language is missing', () => {
-        expect(buildVoiceLangHint(undefined)).to.include('Native Russian pronunciation');
+    it('voice_generation has both: instructions English + TTS output language from %LANGUAGE%', () => {
+        expect(SYSTEM_PROMPTS.voice_generation).to.include('Result language: English (en)');
+        expect(SYSTEM_PROMPTS.voice_generation).to.include('TTS output language: %LANGUAGE%');
+    });
+
+    it('substituting %LANGUAGE% produces the concrete line', () => {
+        const rendered = SYSTEM_PROMPTS.scenes.replace('%LANGUAGE%', buildLangInstruction('de'));
+        expect(rendered).to.include('Result language: German (de)');
+        // GPU rules need no substitution — already fixed English
+        expect(SYSTEM_PROMPTS.visuals).to.include('Result language: English (en)');
     });
 });
 

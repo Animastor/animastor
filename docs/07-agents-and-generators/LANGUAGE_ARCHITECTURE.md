@@ -62,41 +62,56 @@
 Двухканальная модель уже реализована в коде:
 - `create.js:505-521` — `audio.full_text` отдельно от `scene.text`;
 - `entity-schema.js:269` — поле `language` в TTS-workflow;
-- `voice_generation.md` — инструкция English + «Native Russian pronunciation» для русских текстов.
+- `voice_generation.md` — инструкция English + строка `TTS output language: %LANGUAGE%` для маркера «Native <Lang> pronunciation».
 
-## 4. Механизм: `language` как параметр генерации
+## 4. Механизм: плейсхолдер `%LANGUAGE%` в правилах
 
-Промпты остаются едиными и языконезависимыми — **никаких отдельных каталогов примеров на каждый язык** (KISS). В местах, где требуется генерация пользовательского текста, агенту передаётся параметр языка:
+Промпты остаются едиными и языконезависимыми — **никаких отдельных каталогов примеров на каждый язык** (KISS). Язык подставляется прямо в файлы правил `ai/rules/*.md` через плейсхолдер `%LANGUAGE%`:
 
 ```
-Output language: {language}
-Generate the result in {language}.
+## Language
+Result language: %LANGUAGE%
 ```
 
-где `{language}` принимает значения `ru`, `en`, `de`, `es` и т.д. Современные LLM (Qwen) прекрасно понимают такие инструкции; переводы примеров не нужны — примеры демонстрируют форму, а не язык.
+На этапе сборки промпта плейсхолдер заменяется конкретным значением — например
+`Result language: German (de)`. Современные LLM (Qwen) прекрасно понимают такие инструкции;
+переводы примеров не нужны — примеры демонстрируют форму, а не язык.
+
+### Какие правила получают какую строку
+
+- **UI-facing правила** (`structure`, `characters`, `locations`, `scenes`, `enrich_scenes`) —
+  их выход (`scene.title`, имена, описания) показывается пользователю:
+  строка `Result language: %LANGUAGE%` — подставляется язык книги.
+- **GPU-facing правила** (`visuals`, `storyboard_polish`, `video_action_reconciliation`,
+  `video_action_polish`, `passport_reconciliation`) — их выход (`image.prompt`,
+  `video.action`, паспорта) кормит генерационные модели: фиксированная строка
+  `Result language: English (en)` — без плейсхолдера.
+- **`voice_generation.md`** — двухканальный TTS: инструкция голоса остаётся English
+  (`Result language: English (en)`), а строка `TTS output language: %LANGUAGE%`
+  подставляет язык книги для маркера «Native <Lang> pronunciation».
 
 ### Как это реализовано в пайплайне
 
 - **`resolveBookLanguage(draft)`** (`agent-prompts.js`) — резолвит язык книги:
   `draft.book.language || draft.book.defaults.language || detectLanguage(sourceText) || 'ru'`.
-- **`buildLangInstruction(lang)`** (`agent-prompts.js`) — возвращает блок
-  «Output language: …», который аппендится к системному промпту **только текстовых шагов**:
-  `structure`, `characters`, `locations`, `scenes`, `enrich_scenes`, `voice_generation`.
-- **`buildVoiceLangHint(lang)`** — для шага голоса: инструкция остаётся English, но язык книги
-  подставляется в маркер «Native <Lang> pronunciation».
+- **`buildLangInstruction(lang)`** (`agent-prompts.js`) — возвращает **значение** для
+  плейсхолдера, например `Russian (ru)`.
+- **`pipeline-steps.js`** — 6 текстовых шагов делают `.replace('%LANGUAGE%',
+  buildLangInstruction(language))` при сборке системного промпта. Если правила не содержат
+  плейсхолдера (GPU-шаги) — replace безопасно ничего не меняет.
 - **Проброс:** `bootstrap.js` (есть `draft`) → `runPipeline(options.language)` →
   шаги `pipeline-steps.js`.
 
-Визуальные шаги (`visuals`, `storyboard_polish`, `video_action_*`, `passport_reconciliation`)
-инструкцию языка **НЕ получают** — их выход (`image.prompt`, `video.action`) всегда English.
+Визуальные шаги параметр языка **не получают** — их выход (`image.prompt`, `video.action`)
+всегда English, и в их правилах уже зафиксировано `Result language: English (en)`.
 
 ### Правила в `ai/rules/*.md` уже соблюдают категории
 
 - `characters.md`: `appearance` MUST be ENGLISH (для LTX 2.3), `name` — in original language.
-- `voice_generation.md`: инструкция голоса — ENGLISH + «Native Russian pronunciation».
+- `voice_generation.md`: инструкция голоса — ENGLISH + «Native <Lang> pronunciation».
 - `locations.md`: `name` — in original language; `environment`-значения — English.
 - `scenes.md` / `enrich_scenes.md`: примеры названий — это примеры формы (2-6 слов), не языка;
-  язык задаётся параметром `Output language`.
+  язык задаётся строкой `Result language: %LANGUAGE%`.
 
 ## 5. Мультиязычные книги (перспектива)
 
@@ -133,11 +148,13 @@ Generate the result in {language}.
 
 1. Новое поле, попадающее в промпты моделей → **English** (категория C).
 2. Новое поле только для отображения пользователю → **локализуется** по `language` (категория B).
-3. Новый AI-шаг, генерирующий пользовательский текст → получает `language` и аппендит
-   `buildLangInstruction(lang)`.
-4. Визуальный/аудио AI-шаг → выход только English, инструкцию языка не получает.
+3. Новый AI-шаг, генерирующий пользовательский текст → добавляет в свой `.md` строку
+   `Result language: %LANGUAGE%` и заменяет плейсхолдер через
+   `.replace('%LANGUAGE%', buildLangInstruction(lang))`.
+4. Визуальный/аудио AI-шаг → в `.md` фиксированная строка `Result language: English (en)`,
+   параметр языка не получает.
 5. Новые языки добавляются **без изменения кода** — достаточно, чтобы модель знала язык
-   (map языков в `buildLangInstruction` расширяется при необходимости).
+   (map языков в `langName` расширяется при необходимости).
 
 ## 7. Будущее: AI-перевод полей редактора (архитектурная идея, низкий приоритет)
 

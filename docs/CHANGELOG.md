@@ -20,14 +20,18 @@ All notable changes to Animastor are documented here.
     (scene.title, имена, описания) — по параметру `language` из book.json. Категории
     A (контент/verbatim — не переводится), B (пользовательские — локализуются),
     C (AI-facing — English). Исключение: текст TTS (audio.full_text) — на языке книги.
-  - **`agent-prompts.js`:** новые хелперы — `buildLangInstruction(lang)` (блок
-    «Output language» для текстовых шагов), `buildVoiceLangHint(lang)` (маркер
-    «Native <Lang> pronunciation», инструкция остаётся English), `resolveBookLanguage(draft)`
+  - **`agent-prompts.js`:** новые хелперы — `buildLangInstruction(lang)` (значение для
+    плейсхолдера `%LANGUAGE%`, напр. `Russian (ru)`), `resolveBookLanguage(draft)`
     (book.language → defaults.language → detectLanguage(sourceText) → 'ru').
+  - **`ai/rules/*.md`:** UI-facing правила (structure, characters, locations, scenes,
+    enrich_scenes) получили строку `Result language: %LANGUAGE%`; GPU-facing правила
+    (visuals, storyboard_polish, video_action_*, passport_reconciliation) — фиксированную
+    `Result language: English (en)`; `voice_generation.md` — English для инструкции голоса
+    + `TTS output language: %LANGUAGE%` для маркера «Native <Lang> pronunciation».
   - **`pipeline-steps.js`:** 6 текстовых шагов (structure, characters, locations,
-    scenes, enrich_scenes, voice_generation) принимают `language` и аппендят инструкцию
-    к системному промпту. Визуальные шаги (visuals, polish, reconcile) инструкцию
-    НЕ получают — их выход всегда English.
+    scenes, enrich_scenes, voice_generation) принимают `language` и заменяют плейсхолдер
+    `%LANGUAGE%` при сборке промпта (`.replace`). Визуальные шаги (visuals, polish,
+    reconcile) параметр не получают — их выход всегда English.
   - **`pipeline-runner.js`:** `runPipeline` и `processCachedScenes` читают
     `options.language` (default 'ru') и пробрасывают в шаги.
   - **`bootstrap.js`:** `resolveBookLanguage(draft)` на входе обоих бутстрапов

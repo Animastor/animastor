@@ -98,47 +98,22 @@ function langName(lang) {
 }
 
 /**
- * Build the "Output language" instruction block for text-generating steps
- * (structure, characters, locations, scenes, enrich_scenes).
- * Appended to the SYSTEM prompt of steps whose OUTPUT is user-facing text.
- * Visual steps must NOT use this — their output stays English.
+ * Build the VALUE substituted for the %LANGUAGE% placeholder.
+ * The .md rule files carry the placeholder in context, e.g.
+ *   "## Language\nResult language: %LANGUAGE%"
+ * and the pipeline replaces %LANGUAGE% with this value at prompt build time,
+ * producing e.g. "Result language: Russian (ru)".
+ * Used ONLY in text-generating steps whose OUTPUT is user-facing text
+ * (structure, characters, locations, scenes, enrich_scenes, voice_generation).
+ * GPU-facing steps (visuals, polish, reconcile) do NOT use this placeholder —
+ * their .md files state a fixed "Result language: English (en)".
  * @param {string} lang - book language code (ru/en/de/...)
- * @returns {string}
+ * @returns {string} e.g. "Russian (ru)"
  */
 function buildLangInstruction(lang) {
     const code = (lang || 'ru').toLowerCase();
     const name = langName(code);
-    return [
-        '## Output language',
-        `The book is generated in ${name} (${code}).`,
-        '',
-        'Write ALL user-facing literary text in this language:',
-        '- scene titles (scene.title)',
-        '- character names and location names',
-        '- descriptions shown to the reader',
-        '',
-        'Keep AI-facing fields in ENGLISH regardless of the book language:',
-        '- image.prompt, video.action',
-        '- character appearance / clothing / passport fields',
-        '- location environment values',
-        '',
-        'Never translate: scene.text / unit.text (verbatim source text),',
-        'character_id / location_id identifiers.',
-    ].join('\n');
-}
-
-/**
- * Build the voice-step language hint: voice instructions stay ENGLISH,
- * but include the "Native <Lang> pronunciation" marker for the book language.
- * @param {string} lang - book language code
- * @returns {string}
- */
-function buildVoiceLangHint(lang) {
-    const code = (lang || 'ru').toLowerCase();
-    const name = langName(code);
-    return `The book's target TTS language is ${name} (${code}). ` +
-        `Include "Native ${name} pronunciation" in voice descriptions for this language. ` +
-        `Voice instructions themselves must remain in English.`;
+    return `${name} (${code})`;
 }
 
 /**
@@ -161,5 +136,5 @@ module.exports = {
     PROGRESS_STAGES, MAX_WINDOW_CHARS, STEP_RETRIES, SYSTEM_PROMPTS,
     SCENE_TARGET_SEC, SCENE_MAX_SEC, SCENE_MIN_SEC, MAX_SCENES_PER_CHUNK,
     CHARS_PER_SCENE, WINDOW_OVERHEAD, computeWindowChars,
-    LANG_NAMES, langName, buildLangInstruction, buildVoiceLangHint, resolveBookLanguage,
+    LANG_NAMES, langName, buildLangInstruction, resolveBookLanguage,
 };
