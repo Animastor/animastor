@@ -270,7 +270,6 @@
     <!-- Field labels for chars/voices/locations tabs -->
     <string name="field_name">name</string>
     <string name="field_description">description</string>
-    <string name="field_visual_style">visual style</string>
     <string name="field_cinematic_space">cinematic space</string>
     <string name="field_environment">environment</string>
     <string name="field_type">type</string>

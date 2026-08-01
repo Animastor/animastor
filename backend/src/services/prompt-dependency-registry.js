@@ -210,7 +210,7 @@ const CROSS_FIELDS = [
     // Passport changes → image+video; voice changes → audio.
     // Other fields (name, role, metadata) don't affect generation.
     // ── Location from bible.json ──────────────────
-    // bible.locations[locId].visual_style + description
+    // bible.locations[locId].description + environment template
     // are injected into the final prompt
     {
         key: 'bible.locations',
@@ -224,7 +224,7 @@ const CROSS_FIELDS = [
         findAffectedScenes: (allScenes, entityId) => {
             return allScenes.filter(s => s.location && s.location.id === entityId);
         },
-        label: 'Location description + visual style + environment template (bible.json)',
+        label: 'Location description + environment template (bible.json)',
         usedBy: 'buildImagePrompt → bible.locations[locationId]',
     },
 ];

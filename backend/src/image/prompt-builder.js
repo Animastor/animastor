@@ -271,13 +271,7 @@ function buildImagePrompt(iuPayload, scenePayload, chapterPayload, bookPayload) 
         }
     }
 
-    if (loc?.visual_style) {
-        const cleaned = loc.visual_style.replace(/\s+matching\s+narrative\s+context.*/i, '').trim();
-        if (cleaned && !helpers.isTypographyStyle(cleaned)) {
-            parts.push(cleaned);
-        }
-    }
-    if (loc?.description && loc.description !== loc?.visual_style) {
+    if (loc?.description) {
         parts.push(loc.description);
     }
 

@@ -6,6 +6,31 @@ All notable changes to Animastor are documented here.
 
 ## [Unreleased] — 2026-08-01
 
+### Removed
+
+- **`location.visual_style` — мёртвый код убран полностью**
+  (`backend/src/image/prompt-builder.js`,
+  `backend/src/services/prompt-dependency-registry.js`,
+  `frontend/.../EditFragment.kt`, `frontend/.../BookModels.kt`,
+  `frontend/.../values/strings.xml`, `frontend/.../values-ru/strings.xml`,
+  `backend/tests/coreference-image.test.js`, `docs/02-orchestration/ORCHESTRATION.md`):
+  - **Проблема:** поле `visual_style` у локаций — dead code. `locations.md` запрещает LLM
+    его выдавать (`do NOT add extra fields like visual_style, cinematic_space, default_mood`),
+    `create.js` не пишет его в `locations.json` (CHANGELOG 2026-07: «убраны поля-пустышки»).
+    Но оставались хвосты: `prompt-builder.js` читал `loc.visual_style` (ветка никогда не
+    срабатывала — чистое dead code в сборке image-промпта), а редактор локаций показывал
+    всегда пустое поле «визуальный стиль».
+  - **Фикс:** удалены `loc.visual_style`-ветка из `buildImagePrompt` (оставлен только
+    `loc.description`), поле `visual_style` из `Location` (BookModels.kt), inputCard
+    «визуальный стиль» из вкладки «Локации» (EditFragment.kt), строки `field_visual_style`
+    (values/values-ru), комментарий `bible.locations[locId].visual_style` из реестра
+    зависимостей и `[location_visual_style]` из формулы промпта в ORCHESTRATION.md,
+    фикстуры `visual_style` из тестов. Упоминание `visual_style` также убрано из
+    промпт-правила `locations.md` (строка запрета лишних полей) — LLM больше не видит
+    это поле ни в одном системном промпте.
+  - **НЕ тронут `cinematic_space`:** он жив — `create.js` пишет его с фоллбэком
+    `loc.name`, а `resolveLocationFromPrompt` использует для fuzzy-матчинга локации.
+
 ### Changed
 
 - **`location.description` теперь всегда на английском (категория C)**

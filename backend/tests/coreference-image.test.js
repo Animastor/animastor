@@ -187,7 +187,6 @@ describe('Coreference — resolveLocationFromPrompt', () => {
         moscow_patriarskie_pруды: {
             cinematic_space: 'Patriarch Ponds in Moscow, a tranquil park with a large pond surrounded by lime trees and old mansions',
             description: 'Hot spring evening at the ponds, dry stifling heat',
-            visual_style: 'cinematic realism',
         },
         pivo_i_vody_booth: {
             cinematic_space: 'A colorfully painted wooden stall',
@@ -318,7 +317,6 @@ describe('Coreference — buildImagePrompt passport injection', () => {
         locations: {
             moscow_patriarskie: {
                 description: 'Патриаршие пруды',
-                visual_style: 'realistic',
             },
         },
     };
@@ -392,7 +390,6 @@ describe('Location environment template — buildImagePrompt fallback', () => {
         locations: {
             moscow_patriarskie: {
                 description: 'Патриаршие пруды',
-                visual_style: 'realistic',
                 environment: {
                     time: 'warm evening',
                     season: 'late spring',

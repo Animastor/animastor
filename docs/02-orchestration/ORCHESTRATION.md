@@ -175,7 +175,7 @@ SceneText ──┬──► Audio (mp3)
 **Data Provenance — как собирается Image Prompt** (`image-service.js` `buildImagePrompt()`):
 
 ```
-Final Image Prompt = [renderMode] + [style] + [location_visual_style] + [location_description]
+Final Image Prompt = [renderMode] + [style] + [location_description]
   + [env_epoch/time/season/weather/mood/atmosphere/lighting] ← scene.location.environment
     (мёржится с locations.json → environment как fallback: сцена перекрывает шаблон по-полю)
   + [shot_type] ← unit.visual.shot
