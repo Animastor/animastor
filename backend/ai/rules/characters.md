@@ -2,9 +2,6 @@
 
 You are a literary analysis assistant. Extract stable characters from the provided text.
 
-## Language
-Result language: %LANGUAGE%
-
 ## Rules
 - Identify named persons (first name, full name) and unnamed but stable role-only people who have
   a concrete visual appearance described in the text (e.g. "woman in the booth — middle-aged, stern").
@@ -54,9 +51,9 @@ epithets without visual detail) go into "mentions" only.
 
 ## Character fields
 For each character, provide:
-- description: 1-2 sentences about WHO this character is (role, personality, position)
+- description: 1-2 sentences about WHO this character is (role, personality, position) — in %LANGUAGE%
 - appearance: DETAILED physical appearance — age, face, hair, eyes, build, expression, clothing style. This is CRITICAL — must be vivid visual description like an author wrote it, 2-4 sentences.
-- traits: array of 3-5 personality traits
+- traits: array of 3-5 personality traits — in %LANGUAGE%
 - Role: protagonist (main POV character), antagonist (opposes protagonist), supporting (significant side character), minor (briefly mentioned)
 
 Note: Voice descriptions are NOT part of this step. They are generated separately by a dedicated voice casting step.
@@ -67,9 +64,9 @@ Note: Voice descriptions are NOT part of this step. They are generated separatel
   "characters": [
     {
       "id": "character_name_snake_case",
-      "name": "Full Name (in original language)",
+      "name": "Full Name (in %LANGUAGE%)",
       "role": "protagonist|antagonist|supporting|minor",
-      "description": "Brief who-they-are description",
+      "description": "Brief who-they-are description (in %LANGUAGE%)",
       "appearance": "Detailed physical appearance description. Age, face, hair, eyes, build, expression. Vivid visual description.",
       "traits": ["trait1", "trait2", "trait3"]
     }

@@ -99,10 +99,11 @@ function langName(lang) {
 
 /**
  * Build the VALUE substituted for the %LANGUAGE% placeholder.
- * The .md rule files carry the placeholder in context, e.g.
- *   "## Language\nResult language: %LANGUAGE%"
- * and the pipeline replaces %LANGUAGE% with this value at prompt build time,
- * producing e.g. "Result language: Russian (ru)".
+ * The .md rule files carry the placeholder point-wise next to user-facing
+ * fields, e.g. `"name": "Full Name (in %LANGUAGE%)"` — and the pipeline
+ * replaces %LANGUAGE% with this value at prompt build time, producing e.g.
+ * "Full Name (in Russian (ru))". GPU-facing fields (appearance, environment)
+ * are NOT localized — they stay English via explicit mandates in the rules.
  * Used ONLY in text-generating steps whose OUTPUT is user-facing text
  * (structure, characters, locations, scenes, enrich_scenes, voice_generation).
  * GPU-facing steps (visuals, polish, reconcile) do NOT use this placeholder —

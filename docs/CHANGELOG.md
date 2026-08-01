@@ -23,9 +23,12 @@ All notable changes to Animastor are documented here.
   - **`agent-prompts.js`:** новые хелперы — `buildLangInstruction(lang)` (значение для
     плейсхолдера `%LANGUAGE%`, напр. `Russian (ru)`), `resolveBookLanguage(draft)`
     (book.language → defaults.language → detectLanguage(sourceText) → 'ru').
-  - **`ai/rules/*.md`:** UI-facing правила (structure, characters, locations, scenes,
-    enrich_scenes) получили строку `Result language: %LANGUAGE%`; GPU-facing правила
-    (visuals, storyboard_polish, video_action_*, passport_reconciliation) — фиксированную
+  - **`ai/rules/*.md`:** плейсхолдер `%LANGUAGE%` расставлен **точечно** у user-facing
+    полей UI-правил (structure: author/title/части/главы; characters: name/description/
+    traits; locations: name/description; scenes: title; enrich_scenes: title), а GPU-поля
+    внутри них (characters.appearance, locations.environment, enrich.environment)
+    получили явный мандат `MUST be written in ENGLISH`. GPU-facing правила (visuals,
+    storyboard_polish, video_action_*, passport_reconciliation) — фиксированная
     `Result language: English (en)`; `voice_generation.md` — English для инструкции голоса
     + `TTS output language: %LANGUAGE%` для маркера «Native <Lang> pronunciation».
   - **`pipeline-steps.js`:** 6 текстовых шагов (structure, characters, locations,

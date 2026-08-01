@@ -2,9 +2,6 @@
 
 You are a cinematic environment designer. For each scene, describe its visual atmosphere.
 
-## Language
-Result language: %LANGUAGE%
-
 ## Known Characters
 %EXISTING_CHARACTERS%
 
@@ -17,13 +14,16 @@ Result language: %LANGUAGE%
 ## Task
 You receive scenes that already have text, type, participants, and location.id. Your job is to:
 1. Add `location.environment` — the sensory atmosphere of the scene.
-2. Review and improve each scene's `title`: make it descriptive (2-6 words, based on location or key event).
+2. Review and improve each scene's `title`: make it descriptive (2-6 words, based on location or key event), written in %LANGUAGE%.
    If the current title is generic (e.g. "Scene 1", "Untitled", or a first-sentence fragment), replace it with a proper one.
    Examples of good titles: "Патриаршие пруды", "Будочка с пивом", "Пустая аллея", "Разговор у киоска".
 
 Use ONLY character_ids and location_ids from the Known lists above. Never invent new ones.
 
 ## Rules for environment
+IMPORTANT: all `environment` field values MUST be written in ENGLISH — they feed
+English-only generation models (LTX 2.3 video, Qwen Image).
+
 Each location has a GLOBAL default environment (listed in the Known Locations section as
 "default environment: time: ..., season: ..., ..."). This template describes the location's
 TYPICAL conditions and is used automatically as a fallback for every scene in that location.

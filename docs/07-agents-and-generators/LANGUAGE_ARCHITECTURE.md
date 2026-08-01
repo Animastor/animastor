@@ -66,22 +66,30 @@
 
 ## 4. Механизм: плейсхолдер `%LANGUAGE%` в правилах
 
-Промпты остаются едиными и языконезависимыми — **никаких отдельных каталогов примеров на каждый язык** (KISS). Язык подставляется прямо в файлы правил `ai/rules/*.md` через плейсхолдер `%LANGUAGE%`:
+Промпты остаются едиными и языконезависимыми — **никаких отдельных каталогов примеров на каждый язык** (KISS). Язык подставляется прямо в файлы правил `ai/rules/*.md` через плейсхолдер `%LANGUAGE%`, который ставится **точечно — рядом с user-facing полями**:
 
 ```
-## Language
-Result language: %LANGUAGE%
+"name": "Location Name (in %LANGUAGE%)"
 ```
 
 На этапе сборки промпта плейсхолдер заменяется конкретным значением — например
-`Result language: German (de)`. Современные LLM (Qwen) прекрасно понимают такие инструкции;
-переводы примеров не нужны — примеры демонстрируют форму, а не язык.
+`"name": "Location Name (in German (de))"`. Современные LLM (Qwen) прекрасно понимают такие
+инструкции; переводы примеров не нужны — примеры демонстрируют форму, а не язык.
+GPU-поля (appearance, environment) плейсхолдер не получают — им задан явный мандат English.
 
-### Какие правила получают какую строку
+### Как плейсхолдер расставлен по правилам (точечно, не глобально)
+
+Плейсхолдер `%LANGUAGE%` ставится **точечно — рядом с конкретными user-facing полями**,
+а не одной строкой на весь файл. GPU-поля внутри тех же файлов остаются English и получают
+явный мандат (по аналогии с `characters.md`):
 
 - **UI-facing правила** (`structure`, `characters`, `locations`, `scenes`, `enrich_scenes`) —
-  их выход (`scene.title`, имена, описания) показывается пользователю:
-  строка `Result language: %LANGUAGE%` — подставляется язык книги.
+  `%LANGUAGE%` стоит только у полей, которые видит пользователь:
+  - `structure.md`: `author`, `title`, имена частей и глав;
+  - `characters.md`: `name`, `description`, `traits` (а `appearance` — `MUST be ENGLISH`);
+  - `locations.md`: `name`, `description` (а `environment.*` — `MUST be ENGLISH`);
+  - `scenes.md`: `title` (а `text` — verbatim, не переводится);
+  - `enrich_scenes.md`: `title` (а `environment`-переопределения — `MUST be ENGLISH`).
 - **GPU-facing правила** (`visuals`, `storyboard_polish`, `video_action_reconciliation`,
   `video_action_polish`, `passport_reconciliation`) — их выход (`image.prompt`,
   `video.action`, паспорта) кормит генерационные модели: фиксированная строка
@@ -111,7 +119,7 @@ Result language: %LANGUAGE%
 - `voice_generation.md`: инструкция голоса — ENGLISH + «Native <Lang> pronunciation».
 - `locations.md`: `name` — in original language; `environment`-значения — English.
 - `scenes.md` / `enrich_scenes.md`: примеры названий — это примеры формы (2-6 слов), не языка;
-  язык задаётся строкой `Result language: %LANGUAGE%`.
+  язык задаётся плейсхолдером `%LANGUAGE%` у поля `title` (а `text`/`environment` — verbatim/English).
 
 ## 5. Мультиязычные книги (перспектива)
 
@@ -146,11 +154,11 @@ Result language: %LANGUAGE%
 
 ## 6. Конвенция для новых модулей
 
-1. Новое поле, попадающее в промпты моделей → **English** (категория C).
-2. Новое поле только для отображения пользователю → **локализуется** по `language` (категория B).
-3. Новый AI-шаг, генерирующий пользовательский текст → добавляет в свой `.md` строку
-   `Result language: %LANGUAGE%` и заменяет плейсхолдер через
-   `.replace('%LANGUAGE%', buildLangInstruction(lang))`.
+1. Новое поле, попадающее в промпты моделей → **English** (категория C) + явный мандат в правиле.
+2. Новое поле только для отображения пользователю → **локализуется** по `language` (категория B),
+   плейсхолдер `%LANGUAGE%` ставится точечно рядом с этим полем.
+3. Новый AI-шаг, генерирующий пользовательский текст → ставит `%LANGUAGE%` у user-facing полей
+   своего `.md` и заменяет плейсхолдер через `.replace('%LANGUAGE%', buildLangInstruction(lang))`.
 4. Визуальный/аудио AI-шаг → в `.md` фиксированная строка `Result language: English (en)`,
    параметр языка не получает.
 5. Новые языки добавляются **без изменения кода** — достаточно, чтобы модель знала язык

@@ -6,7 +6,9 @@
 //   - resolveBookLanguage(draft)  — book.language → defaults.language → detectLanguage → 'ru'
 //   - langName(code)              — language code → display name
 // Plus placeholder wiring in ai/rules/*.md:
-//   - UI-facing rules carry "Result language: %LANGUAGE%"
+//   - UI-facing rules carry "%LANGUAGE%" point-wise next to user-facing fields
+//     (name, title, description) — GPU-facing fields (appearance, environment)
+//     stay English via explicit mandates
 //   - GPU-facing rules carry a fixed "Result language: English (en)"
 // See docs/07-agents-and-generators/LANGUAGE_ARCHITECTURE.md
 
@@ -48,19 +50,36 @@ describe('buildLangInstruction — %LANGUAGE% value', () => {
     });
 });
 
-describe('ai/rules/*.md — %LANGUAGE% placeholder wiring', () => {
+describe('ai/rules/*.md — %LANGUAGE% point-wise wiring', () => {
 
-    // UI-facing rules: their OUTPUT is user-facing text → localize via %LANGUAGE%.
+    // UI-facing rules: %LANGUAGE% is placed point-wise next to USER-FACING fields
+    // (name, title, description) — GPU-facing fields inside them (appearance,
+    // environment) stay English and carry an explicit ENGLISH mandate.
     const UI_RULES = ['structure', 'characters', 'locations', 'scenes', 'enrich_scenes'];
 
-    // GPU-facing rules: their OUTPUT feeds generation models → fixed English.
+    // GPU-facing rules: their OUTPUT feeds generation models → fixed English, no placeholder.
     const GPU_RULES = ['visuals', 'storyboard_polish', 'video_action_reconciliation',
         'video_action_polish', 'passport_reconciliation'];
 
-    it('UI rules carry the "Result language: %LANGUAGE%" line', () => {
+    it('UI rules carry the %LANGUAGE% placeholder point-wise', () => {
         for (const name of UI_RULES) {
-            expect(SYSTEM_PROMPTS[name], name).to.include('Result language: %LANGUAGE%');
+            expect(SYSTEM_PROMPTS[name], name).to.include('%LANGUAGE%');
         }
+    });
+
+    it('UI rules do NOT have a blanket "Result language:" line — language is field-specific', () => {
+        for (const name of UI_RULES) {
+            expect(SYSTEM_PROMPTS[name], name).to.not.include('Result language: %LANGUAGE%');
+        }
+    });
+
+    it('GPU-facing fields inside UI rules are mandated ENGLISH', () => {
+        // characters.md — appearance feeds image/video generation
+        expect(SYSTEM_PROMPTS.characters).to.include('appearance MUST be written in ENGLISH');
+        // locations.md — environment feeds generation
+        expect(SYSTEM_PROMPTS.locations).to.include('environment` values MUST be written in ENGLISH');
+        // enrich_scenes.md — environment overrides feed generation
+        expect(SYSTEM_PROMPTS.enrich_scenes).to.include('environment` field values MUST be written in ENGLISH');
     });
 
     it('GPU rules carry a fixed "Result language: English (en)" and no placeholder', () => {
@@ -75,9 +94,9 @@ describe('ai/rules/*.md — %LANGUAGE% placeholder wiring', () => {
         expect(SYSTEM_PROMPTS.voice_generation).to.include('TTS output language: %LANGUAGE%');
     });
 
-    it('substituting %LANGUAGE% produces the concrete line', () => {
+    it('substituting %LANGUAGE% produces the concrete value', () => {
         const rendered = SYSTEM_PROMPTS.scenes.replace('%LANGUAGE%', buildLangInstruction('de'));
-        expect(rendered).to.include('Result language: German (de)');
+        expect(rendered).to.include('written in German (de)');
         // GPU rules need no substitution — already fixed English
         expect(SYSTEM_PROMPTS.visuals).to.include('Result language: English (en)');
     });

@@ -2,9 +2,6 @@
 
 You are a literary analysis assistant. Identify ALL locations where scenes take place in the provided text.
 
-## Language
-Result language: %LANGUAGE%
-
 ## Rules
 
 - Extract only PLACES: cities, streets, parks, rooms, buildings, forests, rivers, etc.
@@ -12,7 +9,7 @@ Result language: %LANGUAGE%
 - "иностранец в аллее" is a PERSON in a place (the alley), not a location — extract "аллея" or "Патриаршие пруды" instead
 - If a scene has no named location, infer it from context (e.g., "улица", "комната")
 - Type: "indoor" (inside a building/room), "outdoor" (outside), "abstract" (dreams, thoughts)
-- `name`: the location's short name in the original language (e.g. "Патриаршие пруды", "аллея на Малой Бронной")
+- `name`: the location's short name in %LANGUAGE% (user-facing — shown in the editor), e.g. "Патриаршие пруды", "аллея на Малой Бронной"
 - `environment`: the location's TYPICAL/default state — the conditions that are usually true there.
   Describe what is characteristic of this place overall (not a single moment).
   Fields (each 2-6 words):
@@ -24,6 +21,8 @@ Result language: %LANGUAGE%
   - `atmosphere`: overall typical feel (e.g. "calm Soviet-era Moscow street", "oppressive office")
   This template is used as a fallback for scenes in this location. Scenes that change
   conditions (different time of day, weather, mood) only override the fields that differ.
+- IMPORTANT: all `environment` values MUST be written in ENGLISH — they feed English-only
+  generation models (LTX 2.3 video, Qwen Image).
 - Output only the fields shown below — do NOT add extra fields like visual_style, cinematic_space, default_mood
 
 ## Known Characters (for context)
@@ -36,9 +35,9 @@ Result language: %LANGUAGE%
   "locations": [
     {
       "id": "location_name_snake_case",
-      "name": "Location Name (in original language)",
+      "name": "Location Name (in %LANGUAGE%)",
       "type": "indoor|outdoor|abstract",
-      "description": "Brief description including epoch, season, and atmosphere of the location",
+      "description": "Brief description including epoch, season, and atmosphere of the location (in %LANGUAGE%)",
       "environment": {
         "time": "typical time of day",
         "season": "typical season",
