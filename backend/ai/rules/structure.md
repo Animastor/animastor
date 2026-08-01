@@ -24,7 +24,7 @@ You are a literary analysis assistant. Analyze the provided text and extract its
 8. chapters — Array of chapters/sections in order. Each has:
    - type: "prologue" | "chapter" | "epilogue" | "introduction" | "afterword"
    - number: the chapter number (1, 2, 3...) as integer, or null for prologue/epilogue
-   - title: the chapter title text (NOT including the word "Глава" or "Chapter"), in %LANGUAGE%. Just the title.
+   - title: the chapter title text (NOT including the word "Глава" or "Chapter"), written in %LANGUAGE%. Just the title.
    - header_line: the FULL header line as it appears in the source text (e.g., "Глава 1\nНикогда не разговаривайте с неизвестными" for a multi-line header, or "Глава 1: Никогда не разговаривайте с неизвестными" for single-line)
 
 ## Output format
