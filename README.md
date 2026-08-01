@@ -11,7 +11,8 @@ AI-powered animated storytelling platform.
 | `worker`    | Background job workers (image/video)| Node.js        |
 | `gpu-hub`   | GPU compute dispatcher             | Node.js         |
 | `proxy`     | Nginx reverse proxy                | nginx           |
-| `site`      | Static landing page                | HTML            |
+| `frontends/main`   | Desktop web frontend (animastor.in)   | HTML        |
+| `frontends/mobile` | Mobile web frontend (m.animastor.in)  | HTML        |
 
 ## Quick Start
 

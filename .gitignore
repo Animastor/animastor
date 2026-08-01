@@ -33,6 +33,7 @@ backups/
 .env.local
 .env.*.local
 *.env
+.htpasswd
 
 # ========== Tooling / AI assistants ==========
 .opencode/

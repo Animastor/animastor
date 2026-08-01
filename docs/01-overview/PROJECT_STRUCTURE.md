@@ -242,8 +242,11 @@
 │   ├── docker-compose.yml
 │   └── conf/default.conf
 │
-├── site/
-│   └── index.html                               # Landing page
+├── frontends/
+│   ├── main/
+│   │   └── index.html                           # Desktop web frontend (animastor.in)
+│   └── mobile/
+│       └── index.html                           # Mobile web frontend (m.animastor.in)
 │
 ├── docs/                                        # Документация
 │   ├── 01-overview/

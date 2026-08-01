@@ -102,6 +102,8 @@ services:
       - /etc/letsencrypt:/etc/letsencrypt:ro
       - /home/sureg/net-disk:/net-disk:ro
       - /home/sureg/sureg-dev/site:/usr/share/nginx/sureg:ro
-      - ./site:/usr/share/nginx/html:ro
+      - ./frontends/main:/usr/share/nginx/frontends/main:ro
+      - ./frontends/mobile:/usr/share/nginx/frontends/mobile:ro
+      - ./proxy/conf/.htpasswd:/etc/nginx/.htpasswd:ro
     depends_on:
       - backend
