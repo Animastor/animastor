@@ -14,7 +14,7 @@ export function IconFile(props: IconProps) {
   );
 }
 
-// ic_spiral.xml — three inputs → converging lines → filled square
+// ic_generator.xml — three inputs → converging lines → filled square
 export function IconGenerate(props: IconProps) {
   return (
     <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" {...props}>
