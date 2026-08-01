@@ -87,7 +87,8 @@ GPU-поля (appearance, environment) плейсхолдер не получа�
   `%LANGUAGE%` стоит только у полей, которые видит пользователь:
   - `structure.md`: `author`, `title`, имена частей и глав;
   - `characters.md`: `name`, `description`, `traits` (а `appearance` — `MUST be ENGLISH`);
-  - `locations.md`: `name`, `description` (а `environment.*` — `MUST be ENGLISH`);
+  - `locations.md`: `name` (а `description` и `environment.*` — `MUST be ENGLISH`;
+    `description` инжектится в image/video-промпты, поэтому он тоже категория C);
   - `scenes.md`: `title` (а `text` — verbatim, не переводится; `environment`-переопределения — `MUST be ENGLISH`).
 - **GPU-facing правила** (`visuals`, `storyboard_polish`, `video_action_reconciliation`,
   `video_action_polish`, `passport_reconciliation`) — их выход (`image.prompt`,
@@ -116,7 +117,7 @@ GPU-поля (appearance, environment) плейсхолдер не получа�
 
 - `characters.md`: `appearance` MUST be ENGLISH (для LTX 2.3), `name` — in original language.
 - `voice_generation.md`: инструкция голоса — ENGLISH + «Native <Lang> pronunciation».
-- `locations.md`: `name` — in original language; `environment`-значения — English.
+- `locations.md`: `name` — in original language; `description` и `environment`-значения — English.
 - `scenes.md`: примеры названий — это примеры формы (2-6 слов), не языка;
   язык задаётся плейсхолдером `%LANGUAGE%` у поля `title` (а `text`/`environment` — verbatim/English).
 

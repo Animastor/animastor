@@ -78,6 +78,8 @@ describe('ai/rules/*.md — %LANGUAGE% point-wise wiring', () => {
         expect(SYSTEM_PROMPTS.characters).to.include('appearance MUST be written in ENGLISH');
         // locations.md — environment feeds generation
         expect(SYSTEM_PROMPTS.locations).to.include('environment` values MUST be written in ENGLISH');
+        // locations.md — description is injected verbatim into image/video prompts → English too
+        expect(SYSTEM_PROMPTS.locations).to.include('description` values MUST be written in ENGLISH');
         // scenes.md — scene environment overrides feed generation (merged from enrich_scenes.md)
         expect(SYSTEM_PROMPTS.scenes).to.include('environment` field values MUST be written in ENGLISH');
     });

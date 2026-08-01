@@ -10,6 +10,10 @@ You are a literary analysis assistant. Identify ALL locations where scenes take 
 - If a scene has no named location, infer it from context (e.g., "улица", "комната")
 - Type: "indoor" (inside a building/room), "outdoor" (outside), "abstract" (dreams, thoughts)
 - `name`: the location's short name in %LANGUAGE% (user-facing — shown in the editor), e.g. "Патриаршие пруды", "аллея на Малой Бронной"
+- `description`: brief description of the location including epoch, season, and atmosphere.
+  IMPORTANT: `description` values MUST be written in ENGLISH — they feed English-only
+  generation models (LTX 2.3 video, Qwen Image). It is used directly in image/video
+  prompts, so do NOT write it in the book's language.
 - `environment`: the location's TYPICAL/default state — the conditions that are usually true there.
   Describe what is characteristic of this place overall (not a single moment).
   Fields (each 2-6 words):
@@ -22,7 +26,8 @@ You are a literary analysis assistant. Identify ALL locations where scenes take 
   This template is used as a fallback for scenes in this location. Scenes that change
   conditions (different time of day, weather, mood) only override the fields that differ.
 - IMPORTANT: all `environment` values MUST be written in ENGLISH — they feed English-only
-  generation models (LTX 2.3 video, Qwen Image).
+  generation models (LTX 2.3 video, Qwen Image). The same applies to `description`: it is
+  injected verbatim into image/video prompts, so it MUST also be written in ENGLISH.
 - Output only the fields shown below — do NOT add extra fields like visual_style, cinematic_space, default_mood
 
 ## Known Characters (for context)
@@ -37,7 +42,7 @@ You are a literary analysis assistant. Identify ALL locations where scenes take 
       "id": "location_name_snake_case",
       "name": "Location Name (in %LANGUAGE%)",
       "type": "indoor|outdoor|abstract",
-      "description": "Brief description including epoch, season, and atmosphere of the location (in %LANGUAGE%)",
+      "description": "Brief description including epoch, season, and atmosphere of the location (in ENGLISH)",
       "environment": {
         "time": "typical time of day",
         "season": "typical season",

@@ -8,6 +8,22 @@ All notable changes to Animastor are documented here.
 
 ### Changed
 
+- **`location.description` теперь всегда на английском (категория C)**
+  (`backend/ai/rules/locations.md`,
+  `backend/tests/lang-instruction.test.js`,
+  `docs/07-agents-and-generators/LANGUAGE_ARCHITECTURE.md`):
+  - **Проблема:** `locations.md` требовал `description` в `%LANGUAGE%` (русский для
+    `language=ru`), но `description` инжектится **verbatim** в финальные промпты:
+    `prompt-builder.js` (image) и `video-workflows.js` (video). Русский текст попадал
+    в English-only модели (LTX 2.3, Qwen Image).
+  - **Фикс:** `description` переведён в категорию C — мандат
+    `description` values MUST be written in ENGLISH (вместе с `environment.*`).
+    `name` остаётся user-facing (`%LANGUAGE%`). В редакторе пользователь видит
+    английское описание — документированный трейд-офф (см. LANGUAGE_ARCHITECTURE.md,
+    раздел 7 — будущая кнопка перевода).
+  - Fallback `create.js` (`${loc.name} — location from the source text`) уже был
+    на английском — не менялся.
+
 - **Отдельный этап Scene Enrichment удалён — обогащение перенесено в разбивку сцен**
   (`backend/ai/rules/scenes.md`,
   `backend/src/services/agent/pipeline-steps.js`,
