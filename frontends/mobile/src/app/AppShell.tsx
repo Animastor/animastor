@@ -43,12 +43,14 @@ function Toolbar({ path, isSecondary }: { path: string; isSecondary: boolean }) 
   return (
     <header class="toolbar">
       <span class="toolbar__title">Animastor</span>
+      {/* AI chip — 1:1 with activity_main.xml toolbarAiButton (MaterialCardView 48x40dp,
+          radius 10dp, outline stroke, bold text in accent color) */}
       <button
-        class="toolbar__btn"
-        aria-label={t('ai')}
+        class="toolbar__ai-chip"
+        aria-label={t('toolbar_ai')}
         onClick={() => navigate('/ai')}
       >
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="22" height="22"><path d="M12 2l2 5 5 2-5 2-2 5-2-5-5-2 5-2 2-5z" /></svg>
+        {t('toolbar_ai')}
       </button>
       <button
         class="toolbar__btn"

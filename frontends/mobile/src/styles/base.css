@@ -52,6 +52,26 @@ button { font: inherit; color: inherit; }
 }
 .toolbar__btn:active { background: var(--primary-container); }
 
+/* AI chip — mirrors activity_main.xml toolbarAiButton (MaterialCardView):
+   48x40dp, cornerRadius 10dp, background colorSurface, stroke colorOutline 1dp,
+   bold 14sp text in colorSecondary (accent). */
+.toolbar__ai-chip {
+  width: 3rem;          /* 48dp */
+  height: 2.5rem;       /* 40dp */
+  border: 1px solid var(--outline);
+  border-radius: 0.625rem; /* 10dp */
+  background: var(--surface);
+  color: var(--accent);
+  font-size: 0.875rem;  /* 14sp */
+  font-weight: 700;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.toolbar__ai-chip:active { background: var(--surface-2); }
+
 /* Tab bar (BottomNavigationView) */
 .tabbar {
   height: calc(var(--tabbar-h) + var(--safe-bottom));
