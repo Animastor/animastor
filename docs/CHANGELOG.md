@@ -55,6 +55,34 @@ All notable changes to Animastor are documented here.
 
 ### Changed
 
+- **Дефолтные `country`/`epoch` книги проброшены агенту разбивки сцен; редактор сцены получил поля `env.country`/`env.epoch`**
+  (`backend/ai/rules/scenes.md`,
+  `backend/src/services/agent/pipeline-steps.js`,
+  `backend/src/services/agent/pipeline-runner.js`,
+  `backend/src/services/agent/bootstrap.js`,
+  `frontend/.../EditFragment.kt`,
+  `frontend/.../BookModels.kt`,
+  `docs/07-agents-and-generators/SYSTEM_PROMPT_RULES_MIGRATION.md`):
+  - **Проблема 1 (backend):** правило в `scenes.md` гласило «пиши `country`/`epoch`
+    только когда они отличаются от дефолта книги», но дефолт книги (`bible.country` /
+    `bible.epoch`) агенту не передавался — он должен был угадывать его из окна текста.
+  - **Фикс 1:** новый плейсхолдер `%BOOK_DEFAULT%` в `scenes.md` (секция «Book default
+    setting»). `stepCreateScenes` принимает `bookDefault` и подставляет его в промпт;
+    когда дефолт неизвестен — пишет «not specified — infer from the text».
+    `pipeline-runner.js` строит `bookDefault` из `options.country`/`options.epoch`
+    (оба вызова `stepCreateScenes` — включая retry по coverage); `bootstrap.js`
+    передаёт `country`/`epoch` из `structure` (шаг 0) в оба вызова `runPipeline`
+    (первое окно + последующие). `processCachedScenes` не вызывает `stepCreateScenes`
+    (сцены приходят из кеша) — там проброс не нужен.
+  - **Проблема 2 (frontend):** в редакторе сцены (селектор → вкладка «Сцена» → секция
+    «Локация») не было полей `env.country`/`env.epoch` — задать флешбек/другую страну
+    на уровне сцены вручную было нельзя (только глобально, вкладка «Мир»).
+  - **Фикс 2:** поля `env.country` и `env.epoch` добавлены в `buildSceneFields`
+    (список env-ключей), `readField` и `fieldLabel`; `EnvironmentData` в
+    `BookModels.kt` получил поля `country`/`epoch`. Бэкенд уже был готов:
+    `PATCH env.X → location.environment.X` (`core-routes.cjs`) и строки
+    `field_country`/`field_epoch` уже существовали.
+
 - **`location.description` теперь всегда на английском (категория C)**
   (`backend/ai/rules/locations.md`,
   `backend/tests/lang-instruction.test.js`,

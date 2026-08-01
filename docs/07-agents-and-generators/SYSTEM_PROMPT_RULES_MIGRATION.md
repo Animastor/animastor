@@ -86,6 +86,7 @@ backend/ai/rules/
 |---|---|---|
 | `%EXISTING_CHARACTERS%` | stepExtractLocations, stepCreateScenes | pipeline-steps.js |
 | `%EXISTING_LOCATIONS%` | stepCreateScenes | pipeline-steps.js |
+| `%BOOK_DEFAULT%` | stepCreateScenes | pipeline-steps.js |
 | `%MAX_SCENES%` | stepCreateScenes | pipeline-steps.js |
 | `%REFERENCE_EXAMPLES%` | stepCreateScenes | pipeline-steps.js |
 | `%SCENE_TEXT%` | stepCreateUnits | pipeline-steps.js |

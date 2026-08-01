@@ -115,6 +115,8 @@ async function bootstrapWithAgent(bookId, progress, publishProgress, redis) {
             redis,
             chunkSize,
             language,
+            country: structure.country || null,
+            epoch: structure.epoch || null,
         });
 
         if (result.scenes.length === 0) {
@@ -572,6 +574,8 @@ async function bootstrapNextWindow(bookId, progress, publishProgress, redis) {
             existingMentions: existingMentions,
             chunkSize,
             language,
+            country: structure?.country || null,
+            epoch: structure?.epoch || null,
         });
 
         const extraScenes = result.extraScenes || [];

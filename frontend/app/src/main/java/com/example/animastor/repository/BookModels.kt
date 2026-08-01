@@ -543,7 +543,10 @@ data class EnvironmentData(
     val lighting: String? = null,
     val weather: String? = null,
     val mood: String? = null,
-    val atmosphere: String? = null
+    val atmosphere: String? = null,
+    /** Per-scene override for a setting deviating from the book's default (flashbacks, travel). */
+    val country: String? = null,
+    val epoch: String? = null
 )
 
 data class AudioConfig(

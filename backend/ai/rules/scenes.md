@@ -136,6 +136,19 @@ It is OK if text remains after the last returned scene.
 - If the scene takes place at a location not in the Known Locations, infer the closest match or use the most specific location_id available.
 - `location.id` is a HARD REQUIREMENT per scene. Without it the scene is invalid — the image system has no visual environment to render.
 
+## Book default setting
+
+The book's OVERALL default country and epoch (from book-level analysis):
+
+```
+%BOOK_DEFAULT%
+```
+
+Every scene inherits this default automatically — you do NOT need to repeat it.
+Override `country`/`epoch` in a scene's environment ONLY when the scene text
+implies a setting different from this book default (e.g. a flashback to
+"19th century" in a modern-day book).
+
 ## Scene environment — override the location's global template
 
 Each Known Location above includes its GLOBAL default environment
@@ -151,8 +164,8 @@ For EACH scene, compare the scene text against the location's default template:
   weather, different mood, destructive changes, etc.) — set ONLY the fields that
 differ, with new values (2-6 words each).
 - If the scene's text gives a time period or country DIFFERENT from the book's
-default setting (e.g. a flashback to "19th century" in a modern-day book) — set
-`epoch` and/or `country` ONLY in that case.
+default setting shown above (e.g. a flashback to "19th century" in a modern-day
+book) — set `epoch` and/or `country` ONLY in that case.
 
 IMPORTANT: all `environment` field values MUST be written in ENGLISH — they feed
 English-only generation models (LTX 2.3 video, Qwen Image).

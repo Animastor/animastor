@@ -174,6 +174,14 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
     const language = options.language || 'ru';  // book language — localized user-facing text only
     const sceneOffset = baseSceneCount || 0;
 
+    // Book-level default country/epoch — passed to the scene split step so the
+    // agent knows the book's default setting and writes country/epoch overrides
+    // only for scenes that genuinely deviate (flashbacks, travel, etc.).
+    const bookDefault = {
+        country: options.country || null,
+        epoch: options.epoch || null,
+    };
+
     // Dynamic chunk size: override MAX_SCENES_PER_CHUNK from options
     const effectiveChunkSize = _resolveChunkSize(options);
     const effectiveMaxChars = (options.chunkSize != null)
@@ -352,7 +360,7 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
 
     // ── Create scenes — no artificial limit, AI creates natural narrative episodes ──
     // Extra scenes beyond effectiveChunkSize are cached for reuse in the next window.
-    const aiScenes = await pipelineSteps.stepCreateScenes(sessionId, sceneText, characters, locations, stepIndex, _progress, null, effectiveChunkSize, language);
+    const aiScenes = await pipelineSteps.stepCreateScenes(sessionId, sceneText, characters, locations, stepIndex, _progress, null, effectiveChunkSize, language, bookDefault);
     if (!aiScenes || aiScenes.length === 0) throw new Error('AI returned no scenes');
 
     // Split: first N for immediate processing, rest for cache
@@ -366,7 +374,7 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
     if (!coverage.ok) {
         console.warn(`[AGENT] scene coverage failed: ${coverage.reason} scene=${coverage.scene_index} gap=${coverage.gap_chars || 0}; retrying scene split`);
         coverageRetryCount += 1;
-        const retryAiScenes = await pipelineSteps.stepCreateScenes(sessionId, sceneText, characters, locations, stepIndex, _progress, coverage, effectiveChunkSize, language);
+        const retryAiScenes = await pipelineSteps.stepCreateScenes(sessionId, sceneText, characters, locations, stepIndex, _progress, coverage, effectiveChunkSize, language, bookDefault);
         extraScenes = retryAiScenes.slice(effectiveChunkSize);
         windowScenes = capScenes(retryAiScenes);
         ({ progressInfo, cov: coverage } = evaluateCoverage(windowScenes));

@@ -1047,7 +1047,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
 
         // ── Section: Location ──
         ll.addView(sectionLabel(ctx, getString(R.string.edit_section_scene_location)))
-        listOf("location.id", "env.time", "env.lighting", "env.weather", "env.mood", "env.atmosphere").forEach { key ->
+        listOf("location.id", "env.time", "env.lighting", "env.weather", "env.mood", "env.atmosphere", "env.country", "env.epoch").forEach { key ->
             val v = readField(sc, key)
             if (!fieldValues.containsKey(key)) fieldValues[key] = v
             ll.addView(inputCard(ctx, fieldLabel(key), fieldValues[key] ?: v, (fieldValues[key]?.length ?: 0) > 80, storeKey = key))
@@ -1295,6 +1295,8 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
             "env.weather" -> env?.weather ?: ""
             "env.mood" -> env?.mood ?: ""
             "env.atmosphere" -> env?.atmosphere ?: ""
+            "env.country" -> env?.country ?: ""
+            "env.epoch" -> env?.epoch ?: ""
             "participants" -> sc.participants?.joinToString(", ") ?: ""
             "voice" -> sc.audio?.voice ?: ""
             "full_text" -> sc.audio?.full_text ?: ""
@@ -1340,6 +1342,8 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         "env.weather" -> getString(R.string.field_weather)
         "env.mood" -> getString(R.string.field_mood)
         "env.atmosphere" -> getString(R.string.field_atmosphere)
+        "env.country" -> getString(R.string.field_country)
+        "env.epoch" -> getString(R.string.field_epoch)
         "participants" -> getString(R.string.field_participants)
         "voice" -> getString(R.string.field_voice)
         "full_text" -> getString(R.string.field_full_text)

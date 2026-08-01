@@ -159,7 +159,7 @@ async function stepExtractLocations(sessionId, text, characters, stepIndex, prog
     }
 }
 
-async function stepCreateScenes(sessionId, text, characters, locations, stepIndex, progress, repairHint, chunkSize, language) {
+async function stepCreateScenes(sessionId, text, characters, locations, stepIndex, progress, repairHint, chunkSize, language, bookDefault) {
     // No artificial limit — AI creates natural narrative episodes.
     // The pipeline caps to chunkSize later and caches extras.
     const _progress = progress || (() => {});
@@ -171,9 +171,21 @@ async function stepCreateScenes(sessionId, text, characters, locations, stepInde
     const charsContext = (characters || []).map(c => `- ${c.id}: ${c.name}`).join('\n') || 'None';
     const locsContext = buildLocationsContext(locations);
 
+    // Book-level default country/epoch (from stepAnalyzeStructure) — tells the
+    // scene split agent what the book's default setting is, so it can write
+    // country/epoch overrides ONLY for scenes that genuinely deviate (flashbacks,
+    // travel to another country, etc.). When absent, tell the agent to infer.
+    const bookDefaultParts = [];
+    if (bookDefault?.country) bookDefaultParts.push(`country: ${bookDefault.country}`);
+    if (bookDefault?.epoch) bookDefaultParts.push(`epoch: ${bookDefault.epoch}`);
+    const bookDefaultStr = bookDefaultParts.length > 0
+        ? bookDefaultParts.join('\n')
+        : 'not specified — infer the book\'s default country/epoch from the text itself';
+
     const prompt = SYSTEM_PROMPTS.scenes
         .replace('%EXISTING_CHARACTERS%', charsContext)
         .replace('%EXISTING_LOCATIONS%', locsContext)
+        .replace('%BOOK_DEFAULT%', bookDefaultStr)
         .replace('%LANGUAGE%', buildLangInstruction(language));
 
     let repairText = '';

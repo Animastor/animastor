@@ -102,6 +102,16 @@ describe('ai/rules/*.md — %LANGUAGE% point-wise wiring', () => {
         // GPU rules need no substitution — already fixed English
         expect(SYSTEM_PROMPTS.visuals).to.include('Result language: English (en)');
     });
+
+    it('scenes.md carries the %BOOK_DEFAULT% placeholder for book-level country/epoch', () => {
+        // Book default country/epoch are threaded into the scene split prompt via
+        // stepCreateScenes (bookDefault param) — assert the placeholder exists and
+        // substitutes cleanly with a concrete value.
+        expect(SYSTEM_PROMPTS.scenes).to.include('%BOOK_DEFAULT%');
+        const rendered = SYSTEM_PROMPTS.scenes.replace('%BOOK_DEFAULT%', 'country: Japan\nepoch: 19th century');
+        expect(rendered).to.include('country: Japan\nepoch: 19th century');
+        expect(rendered).to.not.include('%BOOK_DEFAULT%');
+    });
 });
 
 describe('resolveBookLanguage — book language resolution', () => {
