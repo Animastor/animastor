@@ -12,7 +12,6 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
-    target: 'es2020',
-    sourcemap: true
+    target: 'es2020'
   }
 });

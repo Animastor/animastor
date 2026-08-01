@@ -1,9 +1,11 @@
 // API client — 1:1 with BackendApi.kt endpoints under /api/v1. Provides:
 //  - fetch wrapper with base path, JSON/Blob, timeout,
-//  - replayWithBackoff (3 attempts, 1s→2→5s) like PlaybackViewModel.retryWithBackoff,
+//  - retryWithBackoff (3 attempts, 1s→2s, cap 5s) like PlaybackViewModel.retryWithBackoff,
 //  - SSE client for generation progress (ProgressStream.kt equivalent),
 //  - streaming Blob download for audio/video/image.
 const BASE = '/api/v1';
+const REQUEST_TIMEOUT_MS = 30_000; // OkHttp default read timeout
+const BLOB_TIMEOUT_MS = 120_000;   // large media downloads
 
 export class ApiError extends Error {
   status: number;
@@ -14,22 +16,49 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const res = await fetch(BASE + path, {
-    ...init,
-    headers: {
-      'Accept': 'application/json',
-      ...(init.body && !(init.body instanceof FormData) ? { 'Content-Type': 'application/json' } : {}),
-      ...(init.headers || {})
-    }
-  });
-  if (!res.ok) {
-    let msg = res.statusText;
-    try { const j = await res.json(); msg = (j as any)?.error || (j as any)?.message || msg; } catch { /* ignore */ }
-    throw new ApiError(msg, res.status);
+// Combines an external AbortSignal (caller) with an internal timeout signal.
+// `timedOut()` distinguishes the timeout abort from a caller abort.
+function withTimeout(signal: AbortSignal | null | undefined, timeoutMs: number): { signal: AbortSignal; timedOut: () => boolean; clear: () => void } {
+  const controller = new AbortController();
+  let timedOut = false;
+  const timer = setTimeout(() => { timedOut = true; controller.abort(); }, timeoutMs);
+  const onAbort = () => controller.abort();
+  if (signal) {
+    if (signal.aborted) controller.abort();
+    else signal.addEventListener('abort', onAbort, { once: true });
   }
-  if (res.status === 204) return undefined as T;
-  return (await res.json()) as T;
+  return {
+    signal: controller.signal,
+    timedOut: () => timedOut,
+    clear: () => { clearTimeout(timer); signal?.removeEventListener('abort', onAbort); }
+  };
+}
+
+async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const { signal, timedOut, clear } = withTimeout(init.signal, REQUEST_TIMEOUT_MS);
+  try {
+    const res = await fetch(BASE + path, {
+      ...init,
+      signal,
+      headers: {
+        'Accept': 'application/json',
+        ...(init.body && !(init.body instanceof FormData) ? { 'Content-Type': 'application/json' } : {}),
+        ...(init.headers || {})
+      }
+    });
+    if (!res.ok) {
+      let msg = res.statusText;
+      try { const j = await res.json(); msg = (j as any)?.error || (j as any)?.message || msg; } catch { /* ignore */ }
+      throw new ApiError(msg, res.status);
+    }
+    if (res.status === 204) return undefined as T;
+    return (await res.json()) as T;
+  } catch (e) {
+    if (timedOut()) throw new ApiError('Request timeout', 408);
+    throw e;
+  } finally {
+    clear();
+  }
 }
 
 export async function getJson<T>(path: string): Promise<T> { return request<T>(path); }
@@ -44,10 +73,32 @@ export async function patchJson<T>(path: string, body: unknown): Promise<T> {
 }
 export async function deleteJson<T>(path: string): Promise<T> { return request<T>(path, { method: 'DELETE' }); }
 
-export async function getBlob(path: string): Promise<Blob> {
-  const res = await fetch(BASE + path, { headers: { 'Accept': 'application/octet-stream' } });
-  if (!res.ok) throw new ApiError(res.statusText, res.status);
-  return res.blob();
+// Streaming Blob download: reads the body in chunks and assembles a Blob,
+// so large audio/video can be written into mediaCache progressively.
+export async function getBlob(path: string, signal?: AbortSignal): Promise<Blob> {
+  const { signal: s, timedOut, clear } = withTimeout(signal, BLOB_TIMEOUT_MS);
+  try {
+    const res = await fetch(BASE + path, { headers: { 'Accept': 'application/octet-stream' }, signal: s });
+    if (!res.ok) throw new ApiError(res.statusText, res.status);
+    if (!res.body) return res.blob();
+    const reader = res.body.getReader();
+    const chunks: BlobPart[] = [];
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        chunks.push(value); // Uint8Array chunk (fetch body reader never yields strings)
+      }
+    } finally {
+      reader.releaseLock();
+    }
+    return new Blob(chunks);
+  } catch (e) {
+    if (timedOut()) throw new ApiError('Request timeout', 408);
+    throw e;
+  } finally {
+    clear();
+  }
 }
 
 export async function postMultipart<T>(path: string, file: File | Blob, fieldName: string = 'file', filename: string = 'upload.vbook'): Promise<T> {
@@ -56,7 +107,8 @@ export async function postMultipart<T>(path: string, file: File | Blob, fieldNam
   return request<T>(path, { method: 'POST', body: fd });
 }
 
-// retryWithBackoff — numeric backoff 1s→2→5s (mirrors PlaybackViewModel: 3 attempts, maxDelay 5s).
+// retryWithBackoff — numeric backoff 1s→2s→… capped at 5s, 3 attempts total
+// (mirrors PlaybackViewModel.retryWithBackoff: attempts=3, initialDelay=1s, maxDelay=5s).
 export async function retryWithBackoff<T>(fn: () => Promise<T>, attempts = 3, initialDelayMs = 1000, maxDelayMs = 5000): Promise<T> {
   let delay = initialDelayMs;
   for (let i = 1; i < attempts; i++) {

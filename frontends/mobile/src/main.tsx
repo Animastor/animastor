@@ -23,12 +23,12 @@ function Routes() {
       <SettingsPage path="/settings" />
       <SettingsPage path="/settings/vbook" section="vbook" />
       <SettingsPage path="/settings/worker" section="worker" />
-      <PlaceholderPage path="/ai" title="ai" />
-      <PlaceholderPage path="/library" title="library" />
-      <PlaceholderPage path="/workflows" title="workflows" />
-      <PlaceholderPage path="/workflows/:name" title="workflows/:name" />
-      <PlaceholderPage path="/workflows/type/:type" title="workflows/type" />
-      <PlaceholderPage path="/dev" title="dev" />
+      <PlaceholderPage path="/ai" titleKey="ai" />
+      <PlaceholderPage path="/library" titleKey="library_title" />
+      <PlaceholderPage path="/workflows" titleKey="workflow_manager_title" />
+      <PlaceholderPage path="/workflows/:name" titleKey="workflow" />
+      <PlaceholderPage path="/workflows/type/:type" titleKey="workflow" />
+      <PlaceholderPage path="/dev" titleKey="developer_tools" />
     </Router>
   );
 }

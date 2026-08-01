@@ -2,13 +2,14 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <meta name="theme-color" content="#000000" />
   <title>Animastor Mobile</title>
   <script>
     // Apply theme before paint to avoid FOUC (mirrors Android applyTheme()).
     (function () {
       try {
+        // Keep in sync with src/app/theme.ts (PREFS key + 'auto' hour rule).
         var PREFS = 'animastor_settings';
         var p = localStorage.getItem(PREFS) ? JSON.parse(localStorage.getItem(PREFS)) : {};
         var theme = p.theme || 'auto';

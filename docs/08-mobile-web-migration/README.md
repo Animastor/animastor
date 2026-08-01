@@ -3,7 +3,9 @@
 Раздел посвящён переносу Android-приложения Animastor (`frontend/`, Kotlin) на
 мобильную веб-версию (`frontends/mobile/`, домен `https://m.animastor.in/`).
 
-> **Статус:** подготовка документации. Реализация экранов не начата.
+> **Статус:** этап 0 (каркас) завершён ✅ — `frontends/mobile` собирается
+> (`tsc --noEmit` + `vite build` + dev-server smoke — OK), Settings (тема/язык)
+> реализован; остальные экраны — заглушки (см. [TODO.md](TODO.md)).
 
 ---
 

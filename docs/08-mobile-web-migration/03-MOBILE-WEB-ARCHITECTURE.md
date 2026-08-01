@@ -37,12 +37,11 @@
 frontends/mobile/
 ├── index.html                 ← SPA-точка входа, meta viewport, тема
 ├── assets/
-│   ├── icons/                 ← SVG из res/drawable (ic_*.xml)
-│   └── fonts/
+│   └── fonts/                 ← (иконки — инлайн в src/app/icons.tsx, см. выше)
 ├── src/
 │   ├── app/                   ← shell: роутер, tab bar, toolbar, темы
 │   │   ├── router.ts          ← маршруты /file /generate /play /edit /navigate + вторичные
-│   │   ├── tabbar.ts
+│   │   ├── icons.tsx          ← инлайн-SVG таб-иконок 1:1 из res/drawable (ic_*.xml), currentColor-тинт
 │   │   ├── theme.ts           ← dark/light/auto (по часу, как в Android)
 │   │   └── i18n.ts            ← ru/en/auto, словари из strings.xml
 │   ├── pages/                 ← эквиваленты Fragment (по одному на экран)

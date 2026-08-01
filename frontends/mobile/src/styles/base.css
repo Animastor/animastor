@@ -115,7 +115,7 @@ button { font: inherit; color: inherit; }
 .settings__row + .settings__row { border-top: 1px solid var(--outline-2); }
 
 /* Segmented control */
-.seg { display: inline-flex; gap: 0.25rem; background: var(--surface-2); padding: 0.2rem; border-radius: var(--radius-pill); }
+.seg { display: inline-flex; flex-wrap: wrap; gap: 0.25rem; background: var(--surface-2); padding: 0.2rem; border-radius: var(--radius-pill); }
 .seg__btn {
   border: 0; background: transparent; color: var(--text-2);
   padding: 0.4rem 0.9rem; border-radius: var(--radius-pill);

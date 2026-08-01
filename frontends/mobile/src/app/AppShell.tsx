@@ -1,9 +1,11 @@
 import type { JSX } from 'preact';
 import { useState, useEffect } from 'preact/hooks';
 import { t } from './i18n';
-import { navigate, TAB_ROUTES } from './router';
+import { navigate, START_ROUTE, TAB_ROUTES } from './router';
 import { generationStatus } from '../state/generateStore';
 import type { GenerationStatus } from '../state/generateStore';
+import { IconFile, IconGenerate, IconPlay, IconEdit, IconMap } from './icons';
+import type { IconProps } from './icons';
 
 export function AppShell({ children }: { children: JSX.Element }) {
   const [, setPath] = useState(location.pathname);
@@ -12,21 +14,22 @@ export function AppShell({ children }: { children: JSX.Element }) {
     window.addEventListener('popstate', onPop);
     return () => window.removeEventListener('popstate', onPop);
   }, []);
-  const path = location.pathname;
+  // Normalize the start route so the File tab is active on "/".
+  const path = location.pathname === '/' ? START_ROUTE : location.pathname;
+  const isSecondary = !TAB_ROUTES.some((r) => path === r || path.startsWith(r + '/'));
 
   return (
     <div class="app-shell">
-      <Toolbar path={path} />
+      <Toolbar path={path} isSecondary={isSecondary} />
       <div class="app-content">
-        {children}
+        {isSecondary ? <div class="secondary">{children}</div> : children}
       </div>
-      <TabBar path={path} />
+      {!isSecondary && <TabBar path={path} />}
     </div>
   );
 }
 
-function Toolbar({ path }: { path: string }) {
-  const isSecondary = !TAB_ROUTES.some((r) => path === r || path.startsWith(r + '/'));
+function Toolbar({ path, isSecondary }: { path: string; isSecondary: boolean }) {
   if (isSecondary) {
     return (
       <header class="toolbar">
@@ -59,26 +62,26 @@ function Toolbar({ path }: { path: string }) {
 }
 
 function secondaryTitle(path: string): string {
-  if (path.startsWith('/settings/vbook')) return 'VBook';
-  if (path.startsWith('/settings/worker')) return 'Workers';
-  if (path.startsWith('/settings')) return t('settings');
+  if (path.startsWith('/settings/vbook')) return t('vbook_settings_title');
+  if (path.startsWith('/settings/worker')) return t('worker_settings_title');
+  if (path.startsWith('/settings')) return t('settings_title');
   if (path.startsWith('/ai')) return t('ai');
-  if (path.startsWith('/library')) return 'Library';
-  if (path.startsWith('/workflows/type')) return 'Workflow';
-  if (path.startsWith('/workflows/')) return 'Workflow';
-  if (path.startsWith('/workflows')) return 'Workflows';
-  if (path.startsWith('/dev')) return 'Developer';
+  if (path.startsWith('/library')) return t('library_title');
+  if (path.startsWith('/workflows/type')) return t('workflow');
+  if (path.startsWith('/workflows/')) return t('workflow');
+  if (path.startsWith('/workflows')) return t('workflow_manager_title');
+  if (path.startsWith('/dev')) return t('developer_tools');
   return '';
 }
 
 function TabBar({ path }: { path: string }) {
   const status: GenerationStatus = generationStatus.value;
-  const items: { route: typeof TAB_ROUTES[number]; key: 'tab_file' | 'tab_generate' | 'tab_play' | 'tab_edit' | 'tab_navigate'; icon: string }[] = [
-    { route: '/file', key: 'tab_file', icon: '/assets/icons/ic_file.svg' },
-    { route: '/generate', key: 'tab_generate', icon: '/assets/icons/ic_spiral.svg' },
-    { route: '/play', key: 'tab_play', icon: '/assets/icons/ic_play.svg' },
-    { route: '/edit', key: 'tab_edit', icon: '/assets/icons/ic_edit.svg' },
-    { route: '/navigate', key: 'tab_navigate', icon: '/assets/icons/ic_map.svg' }
+  const items: { route: typeof TAB_ROUTES[number]; key: 'tab_file' | 'tab_generate' | 'tab_play' | 'tab_edit' | 'tab_navigate'; Icon: (p: IconProps) => JSX.Element }[] = [
+    { route: '/file', key: 'tab_file', Icon: IconFile },
+    { route: '/generate', key: 'tab_generate', Icon: IconGenerate },
+    { route: '/play', key: 'tab_play', Icon: IconPlay },
+    { route: '/edit', key: 'tab_edit', Icon: IconEdit },
+    { route: '/navigate', key: 'tab_navigate', Icon: IconMap }
   ];
 
   return (
@@ -97,7 +100,7 @@ function TabBar({ path }: { path: string }) {
             aria-label={t(it.key)}
             aria-current={active ? 'page' : undefined}
           >
-            <img class={`tabbar__icon ${pulseClass}`} src={it.icon} alt="" />
+            <it.Icon class={'tabbar__icon' + (pulseClass ? ' ' + pulseClass : '')} width={24} height={24} />
             <span>{t(it.key)}</span>
           </button>
         );

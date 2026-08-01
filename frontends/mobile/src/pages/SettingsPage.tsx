@@ -7,7 +7,6 @@ import { t } from '../app/i18n';
 // /settings/worker (section="worker"). Renderer per section is added at stage 1.
 export function SettingsPage(props: { section?: string; path?: string }) {
   const { section } = props;
-  void props;
   if (section === 'vbook') return <VBookSection />;
   if (section === 'worker') return <WorkerSection />;
   return <GeneralSection />;
@@ -30,22 +29,22 @@ function GeneralSection() {
 
   return (
     <section class="page">
-      <h2 style="font-size:1rem;margin:0 0 .75rem">{t('settings')}</h2>
+      <h2 style="font-size:1rem;margin:0 0 .75rem">{t('settings_title')}</h2>
 
       <div class="settings__group">
         <div class="settings__row">
-          <span>{t('settings_theme', 'Тема')}</span>
+          <span>{t('settings_theme')}</span>
           <Segmented
             value={theme}
-            options={[['auto', t('settings_auto', 'Авто')], ['dark', t('settings_dark', 'Тёмная')], ['light', t('settings_light', 'Светлая')]]}
+            options={[['auto', t('settings_theme_auto')], ['dark', t('settings_theme_dark')], ['light', t('settings_theme_light')]]}
             onChange={(v) => onTheme(v as ThemePref)}
           />
         </div>
         <div class="settings__row">
-          <span>{t('settings_language', 'Язык')}</span>
+          <span>{t('settings_language')}</span>
           <Segmented
             value={language}
-            options={[['auto', t('settings_auto', 'Авто')], ['ru', 'Русский'], ['en', 'English']]}
+            options={[['auto', t('settings_language_auto')], ['ru', t('settings_language_ru')], ['en', t('settings_language_en')]]}
             onChange={(v) => onLang(v as 'auto' | 'ru' | 'en')}
           />
         </div>
@@ -57,7 +56,7 @@ function GeneralSection() {
 function VBookSection() {
   return (
     <section class="page page--centered">
-      <p class="page__ph">VBook — chunk size (scenes per pass)</p>
+      <p class="page__ph">{t('vbook_settings_title')}</p>
     </section>
   );
 }
@@ -65,7 +64,7 @@ function VBookSection() {
 function WorkerSection() {
   return (
     <section class="page page--centered">
-      <p class="page__ph">Worker settings · /api/v1/worker/counts</p>
+      <p class="page__ph">{t('worker_settings_title')} · /api/v1/worker/counts</p>
     </section>
   );
 }
@@ -84,4 +83,3 @@ function Segmented({ value, options, onChange }:
     </div>
   );
 }
-
