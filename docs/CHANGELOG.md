@@ -6,6 +6,42 @@ All notable changes to Animastor are documented here.
 
 ## [Unreleased] — 2026-08-01
 
+### Changed
+
+- **Отдельный этап Scene Enrichment удалён — обогащение перенесено в разбивку сцен**
+  (`backend/ai/rules/scenes.md`,
+  `backend/src/services/agent/pipeline-steps.js`,
+  `backend/src/services/agent/pipeline-runner.js`,
+  `backend/src/services/agent-prompts.js`,
+  `backend/ai/rules/enrich_scenes.md` → удалён,
+  `backend/tests/lang-instruction.test.js`):
+  - **Зачем:** `stepEnrichScenes()` дублировал работу шага разбивки: title и location.id
+    уже генерирует `stepCreateScenes()` (scenes.md: title REQUIRED, location.id REQUIRED),
+    а env-override по первым 500 символам текста сцены давал слабый сигнал без контекста
+    (сезон/погода часто задаются несколькими сценами раньше). Убран лишний LLM-проход
+    (~1 вызов на окно) и риск замены хорошего title на худший по 500 символам.
+  - **`scenes.md`:** добавлена секция «Scene environment — override the location's global
+    template»: агент разбивки получает глобальные шаблоны локаций (уже были в контексте)
+    и для каждой сцены пишет `location.environment` только для отличающихся полей
+    (правило «только переопределения», перенесено из enrich_scenes.md; значения —
+    ENGLISH, country/epoch — только при отличии от дефолта книги).
+  - **`pipeline-steps.js`:** `stepEnrichScenes` удалён; `stepCreateScenes` нормализует
+    `location.environment` (только известные поля, непустые значения) и логирует
+    `env.override=N/len` — метрика срабатывания override.
+  - **`pipeline-runner.js`:** вызовы `stepEnrichScenes` удалены из `runPipeline`
+    и `processCachedScenes` (fallback-сцены: title через `extractSceneTitle`, location null
+    обрабатывается `resolveSceneLocation` — деградация приемлема на аварийном пути).
+  - **`agent-prompts.js`:** `enrich_scenes` убран из RULES, `enriching_scenes` из
+    PROGRESS_STAGES.
+  - **`lang-instruction.test.js`:** мандат ENGLISH для `environment` проверяется на
+    `scenes.md` (вместо удалённого enrich_scenes.md).
+  - **Документация:** AGENTS.md, SYSTEM_MAP.md, DATA_FLOW.md, ARCHITECTURE.md,
+    SYSTEM_OVERVIEW.md, SCENE_PIPELINE.md, LANGUAGE_ARCHITECTURE.md,
+    SYSTEM_PROMPT_RULES_MIGRATION.md, COREFERENCE_RESOLUTION.md, DIALOGUE_TTS_PIPELINE.md
+    — упоминания enrichment-шага заменены на environment-override в шаге 3.
+  - Принцип: каждый LLM-проход должен окупаться; информация, получаемая в существующем
+    вызове, не требует отдельного этапа.
+
 ### Added
 
 - **Архитектура языков: язык книги как параметр генерации**

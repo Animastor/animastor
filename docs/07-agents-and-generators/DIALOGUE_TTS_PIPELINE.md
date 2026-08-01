@@ -14,7 +14,7 @@ AI Pipeline (runPipeline):
 3. stepGenerateVoices            — голоса для диалоговых персонажей
    ↑ LLM только что извлекла персонажей — контекст свежий, полный текст в памяти
 4. stepExtractLocations          — локации
-5. stepCreateScenes + enrich     — сцены
+5. stepCreateScenes             — сцены (title + location.id + environment-override)
 6. stepCreateUnits               — юниты со speaker: { type: "dialogue", speaker: "berlioz", text: "..." }
 7. stepCreateVisuals             — visual prompts
 8. stepReconcilePassports        — чистка промптов

@@ -406,8 +406,9 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
         participants: s.participants || s.characters_present || [],
     }));
 
-    // ── Scene enrichment ──
-    windowScenes = await pipelineSteps.stepEnrichScenes(sessionId, windowScenes, characters, locations, stepIndex, _progress, language);
+    // ── Scene enrichment merged into scene splitting (stepCreateScenes) ──
+    // Per-scene environment overrides (vs the location's global template) are
+    // produced directly by the scene split step. No separate LLM pass here.
 
     const enrichedScenes = [];
     for (let si = 0; si < windowScenes.length; si++) {
@@ -672,7 +673,7 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
 // Process Cached Scenes — skip AI scene creation
 // ======================================================
 // Takes pre-built scenes (from cache) and processes them through
-// enrichment, units, visuals, and reconciliation passes.
+// units, visuals, and reconciliation passes.
 // Called from bootstrap when cached_scenes exist in window_data.
 
 async function processCachedScenes(sessionId, scenes, characters, locations, mentions, stepIndex, progress, baseSceneCount, options = {}) {
@@ -737,8 +738,9 @@ async function processCachedScenes(sessionId, scenes, characters, locations, men
         participants: s.participants || s.characters_present || [],
     }));
 
-    // ── Scene enrichment ──
-    windowScenes = await pipelineSteps.stepEnrichScenes(sessionId, windowScenes, characters, locations, stepIndex, _progress, language);
+    // ── Scene enrichment merged into scene splitting (stepCreateScenes) ──
+    // Per-scene environment overrides (vs the location's global template) are
+    // produced directly by the scene split step. No separate LLM pass here.
 
     const enrichedScenes = [];
     for (let si = 0; si < windowScenes.length; si++) {

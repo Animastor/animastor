@@ -10,7 +10,7 @@
 //   scene-title-utils  - extractSceneTitle, isGenericSceneTitle (shared via utils/scene-title-utils.js)
 //   image-utils.js    - getFallbackImage, buildImageExemplars, formatExamplesForPrompt
 //   coreference.js    - assignUnitParticipants
-//   pipeline-steps.js - stepAnalyzeStructure, stepExtractCharacters, stepExtractLocations, stepCreateScenes, stepEnrichScenes, stepCreateUnits, stepCreateVisuals
+//   pipeline-steps.js - stepAnalyzeStructure, stepExtractCharacters, stepExtractLocations, stepCreateScenes, stepCreateUnits, stepCreateVisuals
 //   pipeline-runner.js - getWindowText, resolveSceneProgress, runPipeline
 //   bootstrap.js     - bootstrapWithAgent, bootstrapNextWindow
 

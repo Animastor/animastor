@@ -83,13 +83,12 @@ GPU-поля (appearance, environment) плейсхолдер не получа�
 а не одной строкой на весь файл. GPU-поля внутри тех же файлов остаются English и получают
 явный мандат (по аналогии с `characters.md`):
 
-- **UI-facing правила** (`structure`, `characters`, `locations`, `scenes`, `enrich_scenes`) —
+- **UI-facing правила** (`structure`, `characters`, `locations`, `scenes`) —
   `%LANGUAGE%` стоит только у полей, которые видит пользователь:
   - `structure.md`: `author`, `title`, имена частей и глав;
   - `characters.md`: `name`, `description`, `traits` (а `appearance` — `MUST be ENGLISH`);
   - `locations.md`: `name`, `description` (а `environment.*` — `MUST be ENGLISH`);
-  - `scenes.md`: `title` (а `text` — verbatim, не переводится);
-  - `enrich_scenes.md`: `title` (а `environment`-переопределения — `MUST be ENGLISH`).
+  - `scenes.md`: `title` (а `text` — verbatim, не переводится; `environment`-переопределения — `MUST be ENGLISH`).
 - **GPU-facing правила** (`visuals`, `storyboard_polish`, `video_action_reconciliation`,
   `video_action_polish`, `passport_reconciliation`) — их выход (`image.prompt`,
   `video.action`, паспорта) кормит генерационные модели: фиксированная строка
@@ -118,7 +117,7 @@ GPU-поля (appearance, environment) плейсхолдер не получа�
 - `characters.md`: `appearance` MUST be ENGLISH (для LTX 2.3), `name` — in original language.
 - `voice_generation.md`: инструкция голоса — ENGLISH + «Native <Lang> pronunciation».
 - `locations.md`: `name` — in original language; `environment`-значения — English.
-- `scenes.md` / `enrich_scenes.md`: примеры названий — это примеры формы (2-6 слов), не языка;
+- `scenes.md`: примеры названий — это примеры формы (2-6 слов), не языка;
   язык задаётся плейсхолдером `%LANGUAGE%` у поля `title` (а `text`/`environment` — verbatim/English).
 
 ## 5. Мультиязычные книги (перспектива)

@@ -51,8 +51,8 @@ Animastor — AI-powered animated storytelling platform. Система прео
 5. **Scene Window** — оконный менеджер, scope-aware, все записи через facade.
 
 ### Agent Service (AI Pipeline)
-6-шаговый AI-пайплайн анализа текста (шаг 0 + 5 шагов + enrichment):
-структура → персонажи → локации → сцены → enrichment → units → визуальные промпты.
+6-шаговый AI-пайплайн анализа текста (шаг 0 + 5 шагов):
+структура → персонажи → локации → сцены (title + location.id + environment-override) → units → визуальные промпты.
 
 Ключевое поведение (2026-07-02):
 - Backend берёт от `currentOffset` текстовый буфер 1500 символов.
@@ -96,9 +96,9 @@ TXT / VBook
          │
          ▼
 ┌─────────────────┐
-│  Agent Service  │  → 6-шаговый AI-анализ + enrichment (буфер 1500 символов, до 3 сцен)
+│  Agent Service  │  → 6-шаговый AI-анализ (буфер 1500 символов, до 3 сцен)
 │  (bootstrap)    │  → Извлечение: структура, персонажи, локации,
-└────────┬────────┘    сцены, enrichment, IU, визуальные промпты
+└────────┬────────┘    сцены (title + environment-override), IU, визуальные промпты
          │
          ▼
 ┌─────────────────┐
@@ -181,7 +181,7 @@ TXT / VBook
 | Image service | `backend/src/image/image-service.js` | Генерация изображений IU (через connector) |
 | Video service | `backend/src/video/video-service.js` | Видеогенерация (LTX), multi-image |
 | Video merge | `backend/src/video/video-merge.js` | Мерж видео + аудио через ffmpeg |
-| Agent service | `backend/src/services/agent-service.js` | AI-пайплайн (шаг 0 + 5 шагов + enrichment). Буфер 1500 символов, до 3 сцен, продвижение по `nextOffset` |
+| Agent service | `backend/src/services/agent-service.js` | AI-пайплайн (шаг 0 + 5 шагов, без отдельного enrichment). Буфер 1500 символов, до 3 сцен, продвижение по `nextOffset` |
 | TXT importer | `backend/src/services/txt-importer.js` | Импорт и парсинг TXT |
 | Window generator | `backend/src/services/window-generator.cjs` | Фоновая оконная генерация |
 | Workflow loader | `backend/src/workflows/workflow-loader.js` | Загрузчик шаблонов ComfyUI + connector loader |

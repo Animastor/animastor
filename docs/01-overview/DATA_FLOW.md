@@ -52,13 +52,13 @@ book-routes → txtImporter.bootstrapImportedText(bookId)
       → aiService.callAI() → structure { author, title, chapters }
       → Обновление book.json (author, title, structure)
     
-    → runPipeline() — 5 шагов + enrichment:
+    → runPipeline() — 5 шагов:
       → Шаг 1: stepExtractCharacters() → characters[]
       → Шаг 2: stepExtractLocations() → locations[]
       → Шаг 3: stepCreateScenes() → scenes[] (до 3 сцен из начала буфера)
+        + title, location.id, environment-override (глобальный шаблон локации vs сцена)
         → resolveSceneProgress() → nextOffset по последней созданной сцене
         → Валидация coverage (gap/overlap) + duration → при неудаче repair retry → fallback
-      → stepEnrichScenes() — обогащение сцен (title, location.environment)
       → Шаг 4: stepCreateUnits() per scene (без unit.participants — удалён)
       → Шаг 5: stepCreateVisuals() per scene (inferCharactersFromPrompt)
     

@@ -190,15 +190,17 @@
 Шаг 1: stepExtractCharacters      — персонажи
 Шаг 2: stepExtractLocations       — локации
 Шаг 3: stepCreateScenes           — сцены (до 3, из буфера ~1500 символов)
-  ↓ Enrichment
+                                      + title, location.id, environment-override
 Шаг 4: stepCreateUnits            — IU (визуальные единицы), per-scene
 Шаг 5: stepCreateVisuals          — visual-промпты, per-scene
 ```
 
 **Ключевые изменения (июнь–июль 2026):**
-- **Enrichment-шаг отделён от создания сцен** — `stepEnrichScenes()` до-заполняет
-  поля сцены (title, location, participants) из контекста, снижая нагрузку на AI-промпт
-  создания сцен.
+- **Отдельный Enrichment-шаг удалён** — title, location.id и environment-override
+  генерирует сам `stepCreateScenes()`: агент сравнивает каждую сцену с глобальным
+  шаблоном локации и пишет `location.environment` только для отличающихся полей
+  (правило «только переопределения», то же, что было в `enrich_scenes.md`).
+  Лишний LLM-проход по 500-символьным фрагментам убран.
 - **`unit.participants` удалён из всей системы** — LLM больше не генерирует
   participants для IU. `inferCharactersFromPrompt()` — единственный метод
   определения участников визуала (сканирует `visual.prompt` на character_id).

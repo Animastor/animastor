@@ -109,7 +109,7 @@ describe('Scene Cache (Phase C)', () => {
             expect(cachedScene.location.id).to.be.a('string');
         });
 
-        it('processCachedScenes processes scenes through enrichment + units + visuals', () => {
+        it('processCachedScenes processes scenes through units + visuals', () => {
             // Integration-level test: processCachedScenes needs AI calls.
             // This test verifies the module exports the function.
             const pipelineRunner = require('../src/services/agent/pipeline-runner');

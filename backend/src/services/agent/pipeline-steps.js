@@ -2,7 +2,8 @@
 // Agent Pipeline Steps
 // ======================================================
 // Individual AI pipeline steps: structure analysis, character extraction,
-// location extraction, scene creation, enrichment, unit creation, visual creation.
+// location extraction, scene creation (title + location + environment-override),
+// unit creation, visual creation.
 
 const aiCaller = require('./ai-caller');
 const imageUtils = require('./image-utils');
@@ -15,12 +16,11 @@ const {
     buildLangInstruction,
 } = require('../agent-prompts');
 const { normalizeCharacterRefs } = require('../../image/image-service');
-const { extractSceneTitle, isGenericSceneTitle } = require('../../utils/scene-title-utils');
 
 /**
  * Build the location context block for agent prompts.
- * Includes each location's GLOBAL environment template so downstream steps
- * (scene enrichment) can write only per-scene overrides.
+ * Includes each location's GLOBAL environment template so the scene split step
+ * can check the scene against it and write only per-scene overrides.
  */
 function buildLocationsContext(locations) {
     return (locations || []).map(l => {
@@ -31,6 +31,37 @@ function buildLocationsContext(locations) {
         const envStr = envParts.length > 0 ? ` (default environment: ${envParts.join(', ')})` : '';
         return `- ${l.id}: ${l.name || l.id} (${l.type || 'unknown'})${envStr}`;
     }).join('\n') || 'None';
+}
+
+// Allowed per-scene environment override fields (subset of the location template
+// + country/epoch for deviations from the book's default setting).
+const SCENE_ENV_FIELDS = ['time', 'season', 'lighting', 'weather', 'mood', 'atmosphere', 'country', 'epoch'];
+
+/**
+ * Normalize a scene's location.environment: keep ONLY known fields with
+ * non-empty string values; drop the environment object entirely if empty
+ * (including when the AI returned only hallucinated/unknown fields).
+ * Guards against hallucinated fields from the scene split step.
+ */
+function normalizeSceneEnvironment(scene) {
+    const loc = scene.location;
+    if (!loc || typeof loc !== 'object') return scene;
+    const raw = loc.environment;
+    if (!raw || typeof raw !== 'object') return scene;
+    const clean = {};
+    for (const key of SCENE_ENV_FIELDS) {
+        const v = raw[key];
+        if (typeof v === 'string' && v.trim()) clean[key] = v.trim();
+    }
+    if (Object.keys(clean).length === 0) {
+        // Nothing valid remained — drop the environment entirely (removes
+        // hallucinated junk fields and lets the location template be the
+        // fallback at prompt build time).
+        const newLoc = { ...loc };
+        delete newLoc.environment;
+        return { ...scene, location: newLoc };
+    }
+    return { ...scene, location: { ...loc, environment: clean } };
 }
 
 async function stepAnalyzeStructure(sessionId, sourceText, stepIndex, progress, language) {
@@ -157,15 +188,16 @@ async function stepCreateScenes(sessionId, text, characters, locations, stepInde
 
     try {
         const result = await aiCaller.callAI(messages, { maxTokens: 6144 });
-        const scenes = result.scenes || [];
+        const scenes = (result.scenes || []).map(normalizeSceneEnvironment);
         if (scenes.length === 0) throw new Error('AI returned no scenes');
 
         const withTitle = scenes.filter(s => s.title).length;
         const withLoc = scenes.filter(s => s.location?.id).length;
+        const withEnv = scenes.filter(s => s.location?.environment && Object.keys(s.location.environment).length > 0).length;
         const missingTitle = scenes.length - withTitle;
         const missingLoc = scenes.length - withLoc;
         const s0 = scenes[0] || {};
-        console.log(`[AGENT] Step 3 (scenes): ${scenes.length} created, title=${withTitle}/${scenes.length}, location.id=${withLoc}/${scenes.length}, s0.keys=[${Object.keys(s0).join(',')}], s0.title=${JSON.stringify(s0.title)}, s0.location=${JSON.stringify(s0.location)}`);
+        console.log(`[AGENT] Step 3 (scenes): ${scenes.length} created, title=${withTitle}/${scenes.length}, location.id=${withLoc}/${scenes.length}, env.override=${withEnv}/${scenes.length}, s0.keys=[${Object.keys(s0).join(',')}], s0.title=${JSON.stringify(s0.title)}, s0.location=${JSON.stringify(s0.location)}`);
         if (missingTitle > 0) {
             console.warn(`[AGENT] Step 3: ${missingTitle} scenes MISSING title`);
         }
@@ -179,79 +211,6 @@ async function stepCreateScenes(sessionId, text, characters, locations, stepInde
     } catch (err) {
         await failStep(step.step_id, err.message);
         throw err;
-    }
-}
-
-async function stepEnrichScenes(sessionId, scenes, characters, locations, stepIndex, progress, language) {
-    const _progress = progress || (() => {});
-    _progress({ stage: 'enriching_scenes', message: PROGRESS_STAGES.enriching_scenes });
-    await updateSession(sessionId, { progress_msg: PROGRESS_STAGES.enriching_scenes });
-
-    if (!scenes || scenes.length === 0) return scenes;
-
-    const step = await createStep(sessionId, 'enrich_scenes', stepIndex || 0);
-
-    const charsContext = (characters || []).map(c => `- ${c.id}: ${c.name}`).join('\n') || 'None';
-    const locsContext = buildLocationsContext(locations);
-
-    const scenesStr = scenes.map((s, i) =>
-        `Scene ${i}: title="${s.title || 'Untitled'}", type="${s.type || 'narration'}", ` +
-        `location_id="${s.location?.id || '?'}", ` +
-        `participants=[${(s.characters_present || s.participants || []).join(', ')}], ` +
-        `text="${(s.text || '').substring(0, 500)}..."`
-    ).join('\n');
-
-    const enrichmentPrompt = SYSTEM_PROMPTS.enrich_scenes
-        .replace('%EXISTING_CHARACTERS%', charsContext)
-        .replace('%EXISTING_LOCATIONS%', locsContext)
-        .replace('%SCENES_TO_ENRICH%', scenesStr)
-        .replace('%LANGUAGE%', buildLangInstruction(language));
-
-    const messages = [
-        { role: 'system', content: enrichmentPrompt },
-        { role: 'user', content: `Enrich these scenes:\n${scenesStr}` },
-    ];
-
-    try {
-        const result = await aiCaller.callAI(messages, { maxTokens: 4096 });
-        const enrichedList = result.scenes || [];
-
-        const enriched = scenes.map((scene, si) => {
-            const enrichment = enrichedList.find(e => e.scene_index === si);
-            if (!enrichment) return scene;
-
-            const mergedLocation = scene.location ? { ...scene.location } : {};
-            if (enrichment.location?.id && !mergedLocation.id) {
-                mergedLocation.id = enrichment.location.id;
-            }
-            if (enrichment.location?.environment) {
-                mergedLocation.environment = enrichment.location.environment;
-            }
-
-            // Scene title from enrichment (AI generates titles; fallback to extractSceneTitle)
-            let mergedTitle = scene.title;
-            if (enrichment.title && !isGenericSceneTitle(enrichment.title)) {
-                mergedTitle = enrichment.title;
-            } else if (!mergedTitle || isGenericSceneTitle(mergedTitle)) {
-                mergedTitle = extractSceneTitle(scene.text || '', si);
-            }
-
-            return {
-                ...scene,
-                title: mergedTitle,
-                location: mergedLocation,
-            };
-        });
-
-        const goodTitles = enriched.filter(s => s.title && !isGenericSceneTitle(s.title)).length;
-        await aiCaller.logConversation(sessionId, step.step_id, messages, JSON.stringify(result));
-        await completeStep(step.step_id, enriched);
-        console.log(`[AGENT] Step enrich (scenes): ${enriched.length} enriched, titles=${goodTitles}/${enriched.length}`);
-        return enriched;
-    } catch (err) {
-        await failStep(step.step_id, `Enrichment failed: ${err.message}`);
-        console.warn(`[AGENT] Scene enrichment failed, continuing with base scenes: ${err.message}`);
-        return scenes;
     }
 }
 
@@ -942,7 +901,6 @@ module.exports = {
     stepExtractCharacters,
     stepExtractLocations,
     stepCreateScenes,
-    stepEnrichScenes,
     stepCreateUnits,
     stepCreateVisuals,
     stepPolishStoryboard,

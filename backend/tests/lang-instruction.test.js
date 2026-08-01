@@ -55,7 +55,7 @@ describe('ai/rules/*.md — %LANGUAGE% point-wise wiring', () => {
     // UI-facing rules: %LANGUAGE% is placed point-wise next to USER-FACING fields
     // (name, title, description) — GPU-facing fields inside them (appearance,
     // environment) stay English and carry an explicit ENGLISH mandate.
-    const UI_RULES = ['structure', 'characters', 'locations', 'scenes', 'enrich_scenes'];
+    const UI_RULES = ['structure', 'characters', 'locations', 'scenes'];
 
     // GPU-facing rules: their OUTPUT feeds generation models → fixed English, no placeholder.
     const GPU_RULES = ['visuals', 'storyboard_polish', 'video_action_reconciliation',
@@ -78,8 +78,8 @@ describe('ai/rules/*.md — %LANGUAGE% point-wise wiring', () => {
         expect(SYSTEM_PROMPTS.characters).to.include('appearance MUST be written in ENGLISH');
         // locations.md — environment feeds generation
         expect(SYSTEM_PROMPTS.locations).to.include('environment` values MUST be written in ENGLISH');
-        // enrich_scenes.md — environment overrides feed generation
-        expect(SYSTEM_PROMPTS.enrich_scenes).to.include('environment` field values MUST be written in ENGLISH');
+        // scenes.md — scene environment overrides feed generation (merged from enrich_scenes.md)
+        expect(SYSTEM_PROMPTS.scenes).to.include('environment` field values MUST be written in ENGLISH');
     });
 
     it('GPU rules carry a fixed "Result language: English (en)" and no placeholder', () => {

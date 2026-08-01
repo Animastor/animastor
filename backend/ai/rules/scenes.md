@@ -136,7 +136,40 @@ It is OK if text remains after the last returned scene.
 - If the scene takes place at a location not in the Known Locations, infer the closest match or use the most specific location_id available.
 - `location.id` is a HARD REQUIREMENT per scene. Without it the scene is invalid — the image system has no visual environment to render.
 
-## Output format — ALL fields REQUIRED
+## Scene environment — override the location's global template
+
+Each Known Location above includes its GLOBAL default environment
+("default environment: time: ..., season: ..., ..."). This template describes the
+location's TYPICAL conditions and is used automatically as a fallback for every
+scene in that location — you do NOT need to repeat it.
+
+For EACH scene, compare the scene text against the location's default template:
+
+- If the scene's conditions MATCH the location's default — set NOTHING.
+  The system will automatically fall back to the location template.
+- If the scene text implies DIFFERENT conditions (different time of day, changed
+  weather, different mood, destructive changes, etc.) — set ONLY the fields that
+differ, with new values (2-6 words each).
+- If the scene's text gives a time period or country DIFFERENT from the book's
+default setting (e.g. a flashback to "19th century" in a modern-day book) — set
+`epoch` and/or `country` ONLY in that case.
+
+IMPORTANT: all `environment` field values MUST be written in ENGLISH — they feed
+English-only generation models (LTX 2.3 video, Qwen Image).
+
+### Environment fields (set ONLY what differs from the location's default)
+- `time`: time of day (e.g. "hot spring sunset", "early morning", "deep night")
+- `season`: season (e.g. "late spring", "early summer", "deep winter")
+- `lighting`: light quality (e.g. "golden sunset glow", "dim candlelight", "grey overcast")
+- `weather`: weather conditions (e.g. "still warm air", "cold wind", "light rain")
+- `mood`: emotional tone (e.g. "quiet intellectual", "growing tension", "peaceful melancholy")
+- `atmosphere`: overall feel (e.g. "calm surreal Moscow evening", "tense philosophical standoff")
+- `country` / `epoch`: ONLY when they differ from the book's default setting
+
+Example: if the location's default is `weather: "still warm air"` but this scene
+happens in a downpour, set `weather: "heavy rain"` and omit the fields that match.
+
+## Output format — ALL fields REQUIRED (environment OPTIONAL)
 ```json
 {
   "scenes": [
@@ -146,12 +179,20 @@ It is OK if text remains after the last returned scene.
       "type": "narration|dialogue",
       "characters_present": ["character_id_from_known_characters"],
       "location": {
-        "id": "location_id_from_known_locations"
+        "id": "location_id_from_known_locations",
+        "environment": {
+          "weather": "heavy rain",
+          "mood": "growing tension"
+        }
       }
     }
   ]
 }
 ```
+
+Note: `location.environment` is OPTIONAL — include it ONLY for fields that differ
+from the location's global template (or for country/epoch that differ from the
+book's default). Omit it entirely when the scene matches the location's default.
 
 ### title (REQUIRED — 2-6 words, descriptive, NOT the first sentence)
 Based on the key event, written in %LANGUAGE%. Examples: "У киоска с пивом", "Разговор с продавщицей", "Пустая аллея", "На скамейке".

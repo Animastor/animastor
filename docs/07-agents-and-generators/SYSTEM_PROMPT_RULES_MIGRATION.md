@@ -24,8 +24,7 @@ backend/ai/rules/
 ├── structure.md                 # Анализ структуры (author, title, chapters)
 ├── characters.md                # Извлечение персонажей
 ├── locations.md                 # Извлечение локаций
-├── scenes.md                    # Сплит текста на сцены
-├── enrich_scenes.md             # Обогащение атмосферы сцен
+├── scenes.md                    # Сплит текста на сцены + environment-override
 ├── units.md                     # Декомпозиция сцены на юниты
 ├── visuals.md                   # Создание visual prompt (image.prompt + video.action)
 ├── storyboard_polish.md         # Полировка сториборда (continuity, 180° rule)
@@ -96,7 +95,6 @@ backend/ai/rules/
 | `%CHARACTERS%` | stepPolishStoryboard, stepPolishVideoActions | pipeline-steps.js |
 | `%LOCATIONS%` | stepPolishStoryboard, stepPolishVideoActions | pipeline-steps.js |
 | `%SCENES%` | stepPolishStoryboard, stepPolishVideoActions | pipeline-steps.js |
-| `%SCENES_TO_ENRICH%` | stepEnrichScenes | pipeline-steps.js |
 | `%SCENE_MAX_SEC%` | stepCreateScenes | pipeline-steps.js |
 | `%SCENE_TARGET_SEC%` | stepCreateScenes | pipeline-steps.js |
 | `%SCENE_MIN_SEC%` | stepCreateScenes | pipeline-steps.js |

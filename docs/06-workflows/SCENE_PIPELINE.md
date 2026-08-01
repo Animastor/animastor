@@ -45,7 +45,7 @@
 | **Scene creation** | Вызов AI → получение N сцен |
 | **Capping** | Берём первые `chunkSize` (обычно 2) для немедленной обработки |
 | **Caching** | Остальные N−k сцен → `window_data.cached_scenes` в PostgreSQL |
-| **Processing** | Для каждой сцены: enrich → units → split long units → visuals → reconciliation |
+| **Processing** | Для каждой сцены: title/location.id/environment-override (в шаге создания) → units → split long units → visuals → reconciliation |
 | **Cache drain** | На следующем шаге: если есть `cached_scenes`, обрабатываем их без AI |
 | **Next window** | Когда кэш пуст и есть ещё текст → новый вызов AI |
 

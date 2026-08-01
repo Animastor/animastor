@@ -22,8 +22,7 @@ AI-агент генерации visual prompts иногда используе�
 Шаг 0: analyze_structure             — метаданные книги
 Шаг 1: analyze_characters            — персонажи
 Шаг 2: analyze_locations             — локации
-Шаг 3: create_scenes                 — сцены
-  ↓ stepEnrichScenes                  — обогащение
+Шаг 3: create_scenes                 — сцены (title + location.id + environment-override)
 Шаг 4: create_units                  — IU (без participants — удалён)
 Шаг 5: create_visual_prompts        — inferCharactersFromPrompt
 ```

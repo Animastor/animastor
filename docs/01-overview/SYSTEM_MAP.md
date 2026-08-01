@@ -7,7 +7,7 @@
 > **Источник:** Оригинальный анализ `docs-claude/01_System_Map.md`.
 > **Статус:** Актуален по состоянию на 2026-07-06.
 > Обновления:
-> - Agent pipeline: enrichment-шаг добавлен, coreference удалён, unit.participants удалён.
+> - Agent pipeline: enrichment-шаг удалён (обогащение перенесено в stepCreateScenes), coreference удалён, unit.participants удалён.
 > - Хранение: locations.json, voices.json, bible.country/epoch.
 > - Книжная структура: agent-service.js разбит на подмодули в `agent/`.
 
@@ -67,7 +67,7 @@ TXT / VBook  →  AI-анализ (агент)  →  структура книг
      - Шаг 1 `stepExtractCharacters` → персонажи
      - Шаг 2 `stepExtractLocations` → локации
      - Шаг 3 `stepCreateScenes` → до 3 сцен из начала буфера
-     - `stepEnrichScenes` → обогащение сцен (title, location, environment; сцена перекрывает глобальный шаблон локации по-полю)
+       (title + location.id + environment-override: сцена перекрывает глобальный шаблон локации по-полю)
      - `resolveSceneProgress` → `nextOffset` по последней созданной сцене
      - Шаг 4 `stepCreateUnits` (per-scene) → визуальные единицы (IU/кадры)
      - Шаг 5 `stepCreateVisuals` (per-scene) → визуальные промпты к кадрам
@@ -213,7 +213,7 @@ Redis выполняет три роли одновременно:
 
 | # | Факт в коде |
 |---|---|
-| 7.7.1 | Agent pipeline: добавлен шаг `stepEnrichScenes` после создания сцен |
+| 7.7.1 | Agent pipeline: отдельный шаг `stepEnrichScenes` удалён — title/location.id/environment-override генерирует `stepCreateScenes` |
 | 7.7.2 | `unit.participants` удалён из всей системы |
 | 7.7.3 | `coreference.js` — заглушка, шаг удалён из пайплайна |
 | 7.7.4 | `character_anchors` удалён — позиции в visual.prompt |

@@ -2,7 +2,7 @@
 
 ## Общее описание
 
-Агентная система Animastor — это **последовательный AI-пайплайн** (шаг 0 + 5 шагов + enrichment), который анализирует исходный текст книги и прогрессивно обогащает его в структурированные сцены с персонажами, локациями и визуальными описаниями.
+Агентная система Animastor — это **последовательный AI-пайплайн** (шаг 0 + 5 шагов), который анализирует исходный текст книги и прогрессивно обогащает его в структурированные сцены с персонажами, локациями и визуальными описаниями.
 
 Система использует **OpenRouter API** (конфигурируется через `AI_API_BASE_URL`).
 Модель по умолчанию: `qwen3-32b`. Единый ключ: `OPENROUTER_API_KEY`.
@@ -15,7 +15,7 @@
 
 | Файл | Роль |
 |------|------|
-| `backend/src/services/agent/pipeline-steps.js` | 6 шагов пайплайна (шаг 0 + 5) + enrichment |
+| `backend/src/services/agent/pipeline-steps.js` | 6 шагов пайплайна (шаг 0 + 5) |
 | `backend/src/services/agent/pipeline-runner.js` | Запуск пайплайна с валидацией coverage/duration |
 | `backend/src/services/agent/bootstrap.js` | Первое окно (`bootstrapWithAgent`) |
 | `backend/src/services/agent/coreference.js` | Заглушка (удалён из пайплайна) |
@@ -35,7 +35,8 @@ bootstrapWithAgent():
     Шаг 1b: stepGenerateVoices()    — голоса персонажей (выделенный шаг)
     Шаг 2: stepExtractLocations()   — локации
     Шаг 3: stepCreateScenes()       — сцены (до 3, из буфера 1500 символов)
-    stepEnrichScenes()              — обогащение сцен (title, location, env)
+                                      + title, location.id, environment-override
+                                      (глобальный шаблон локации vs сцена)
     Шаг 4: stepCreateUnits()        — IU (визуальные единицы), per-scene
     Шаг 5: stepCreateVisuals()      — промпты (image + video), per-scene
     ── Post-processing (window-level) ──
@@ -45,10 +46,11 @@ bootstrapWithAgent():
     Шаг 7b: stepPolishVideoActions   — полировка video.action (сюжет+ряд)
 ```
 
-**Важно:** `runPipeline()` состоит из 5 шагов + enrichment + voice generation + 4 post-processing шага.
+**Важно:** `runPipeline()` состоит из 5 шагов + voice generation + 4 post-processing шага.
 
 **Удалено из пайплайна:**
 - `stepResolveCoreferences` — coreference-резолюция удалена из пайплайна (июль 2026)
+- `stepEnrichScenes` — отдельный шаг обогащения удалён; title/location.id/environment-override генерирует `stepCreateScenes` (июль 2026)
 - `unit.participants` — LLM больше не генерирует participants для IU
 - `character_anchors` — позиции пишутся напрямую в visual.prompt
 
@@ -85,7 +87,7 @@ bootstrapWithAgent():
 
 ### Шаг 3: Create Scenes
 
-**Назначение:** Разбиение текста на логические сцены с участниками, локацией, окружением, временем.
+**Назначение:** Разбиение текста на логические сцены с участниками, локацией, окружением, временем. Также отвечает за title, location.id и environment-override (проверка сцены против глобального шаблона локации).
 
 **Ограничения:** До 3 сцен за один вызов (`MAX_SCENES_PER_CHUNK=3` — **жёсткий верхний предел, не целевое количество**).
 Текст для разбиения берётся из буфера `MAX_WINDOW_CHARS=1500` символов.
@@ -126,12 +128,15 @@ LLM отвечает только за смысловое разбиение п�
 (`splitIntoSentences()`) в группы ~20 сек (≈65 слов), не превышая ~30 сек.
 Если предложений нет — резерв `splitTextEvenlyByParagraphs()`.
 
-### Enrichment (stepEnrichScenes)
+### Environment-override (в шаге 3)
 
-После создания сцен запускается `stepEnrichScenes()`, который до-заполняет:
-- `title` — извлекается из контекста (не из scene-creation prompt)
-- `location.id` — сопоставляется с известными локациями
-- `environment` — epoch, season, atmosphere
+Отдельного шага обогащения **нет** — обогащение перенесено в `stepCreateScenes()`.
+Агент разбивки получает глобальные шаблоны локаций (`locations.json` → `environment`,
+показываются в Known Locations как "default environment: ...") и для каждой сцены:
+- проверяет, соответствует ли сцена глобальному шаблону локации;
+- если условий (атмосфера, погода, освещение, время суток, время года) не менял —
+  опускает поля, система подставит фоллбэк при сборке промпта;
+- если отличия есть — пишет `location.environment` только для отличающихся полей.
 
 ### Формат выхода
 
@@ -151,15 +156,12 @@ LLM отвечает только за смысловое разбиение п�
 **Детерминированный fallback:** `buildFallbackScenes()` нарезает текст
 по границам предложений (`splitIntoSentences`) в группы ~20 сек.
 
-**Enrichment (stepEnrichScenes):** После создания сцен запускается
-`stepEnrichScenes()`, который до-заполняет поля:
-- `title` — извлекается из контекста, а не из scene-creation prompt
-- `location.id` — сопоставляется с известными локациями
-- `environment` — атмосферные поля (epoch, season, atmosphere); правило «только
-  переопределения»: если поле совпадает с глобальным шаблоном локации
-  (`locations.json` → `environment`, показывается в Known Locations как
-  "default environment: ...") — агент его опускает, система подставит фоллбэк при
-  сборке промпта
+**Environment-override (в шаге 3):** `stepCreateScenes()` сравнивает каждую сцену
+с глобальным шаблоном локации (правило «только переопределения»): если поле
+совпадает с шаблоном (`locations.json` → `environment`, показывается в Known
+Locations как "default environment: ...") — агент его опускает, система
+подставит фоллбэк при сборке промпта. Отличающиеся поля пишутся в
+`location.environment`.
 
 **Формат выхода (сцен):** `{ scenes: [{ title, text, type, participants, location, environment }] }`
 

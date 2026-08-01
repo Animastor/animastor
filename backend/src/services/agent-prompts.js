@@ -7,7 +7,6 @@ const PROGRESS_STAGES = {
     extracting_chars:    '⟳ Извлекаю персонажей...',
     extracting_locs:     '⟳ Извлекаю локации...',
     creating_scenes:     '⟳ Создаю сцены...',
-    enriching_scenes:    '⟳ Обогащаю сцены атмосферой...',
     creating_units:      sc => `⟳ Создаю юниты для сцены ${sc + 1}...`,
     creating_visuals:    sc => `⟳ Создаю visual prompts для сцены ${sc + 1}...`,
     polishing_storyboard: '⟳ Согласовываю визуальный ряд сториборда...',
@@ -61,7 +60,7 @@ function computeWindowChars(chunkSize) {
 const SYSTEM_PROMPTS = {};
 const RULES = [
     'structure', 'characters', 'locations', 'scenes',
-    'enrich_scenes', 'units', 'visuals', 'storyboard_polish',
+    'units', 'visuals', 'storyboard_polish',
     'voice_generation', 'passport_reconciliation',
     'video_action_reconciliation', 'video_action_polish',
     'unit_splitter',
@@ -105,7 +104,7 @@ function langName(lang) {
  * "Full Name (in Russian (ru))". GPU-facing fields (appearance, environment)
  * are NOT localized — they stay English via explicit mandates in the rules.
  * Used ONLY in text-generating steps whose OUTPUT is user-facing text
- * (structure, characters, locations, scenes, enrich_scenes, voice_generation).
+ * (structure, characters, locations, scenes, voice_generation).
  * GPU-facing steps (visuals, polish, reconcile) do NOT use this placeholder —
  * their .md files state a fixed "Result language: English (en)".
  * @param {string} lang - book language code (ru/en/de/...)
