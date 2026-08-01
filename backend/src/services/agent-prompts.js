@@ -71,8 +71,95 @@ for (const name of RULES) {
     SYSTEM_PROMPTS[name] = aiLoader.getRule(name) || '';
 }
 
+// ── Language architecture ──────────────────────────────────────────
+// Rule (docs/07-agents-and-generators/LANGUAGE_ARCHITECTURE.md):
+//   - AI-facing fields (image.prompt, video.action, passports, env,
+//     voice instructions) are ALWAYS English, regardless of book language.
+//   - User-facing literary text (scene titles, names, descriptions) is
+//     localized per the book's `language` field.
+//   - scene.text / unit.text / audio.full_text stay VERBATIM (book language).
+// The pipeline passes `language` into the text-generating steps; visual
+// steps do NOT get it (their output is English by design).
+
+const LANG_NAMES = {
+    ru: 'Russian', en: 'English', de: 'German', es: 'Spanish', fr: 'French',
+    it: 'Italian', pt: 'Portuguese', uk: 'Ukrainian', pl: 'Polish', zh: 'Chinese',
+    ja: 'Japanese', ko: 'Korean', tr: 'Turkish', ar: 'Arabic',
+};
+
+/**
+ * Map a language code to its English display name.
+ * @param {string} lang - e.g. 'ru', 'en', 'de'
+ * @returns {string} e.g. 'Russian'
+ */
+function langName(lang) {
+    const code = (lang || 'ru').toLowerCase();
+    return LANG_NAMES[code] || code;
+}
+
+/**
+ * Build the "Output language" instruction block for text-generating steps
+ * (structure, characters, locations, scenes, enrich_scenes).
+ * Appended to the SYSTEM prompt of steps whose OUTPUT is user-facing text.
+ * Visual steps must NOT use this — their output stays English.
+ * @param {string} lang - book language code (ru/en/de/...)
+ * @returns {string}
+ */
+function buildLangInstruction(lang) {
+    const code = (lang || 'ru').toLowerCase();
+    const name = langName(code);
+    return [
+        '## Output language',
+        `The book is generated in ${name} (${code}).`,
+        '',
+        'Write ALL user-facing literary text in this language:',
+        '- scene titles (scene.title)',
+        '- character names and location names',
+        '- descriptions shown to the reader',
+        '',
+        'Keep AI-facing fields in ENGLISH regardless of the book language:',
+        '- image.prompt, video.action',
+        '- character appearance / clothing / passport fields',
+        '- location environment values',
+        '',
+        'Never translate: scene.text / unit.text (verbatim source text),',
+        'character_id / location_id identifiers.',
+    ].join('\n');
+}
+
+/**
+ * Build the voice-step language hint: voice instructions stay ENGLISH,
+ * but include the "Native <Lang> pronunciation" marker for the book language.
+ * @param {string} lang - book language code
+ * @returns {string}
+ */
+function buildVoiceLangHint(lang) {
+    const code = (lang || 'ru').toLowerCase();
+    const name = langName(code);
+    return `The book's target TTS language is ${name} (${code}). ` +
+        `Include "Native ${name} pronunciation" in voice descriptions for this language. ` +
+        `Voice instructions themselves must remain in English.`;
+}
+
+/**
+ * Resolve the effective book language from a loaded draft book.
+ * Order: book.language → defaults.language → detectLanguage(sourceText) → 'ru'.
+ * @param {{book?: object, sourceText?: string}|null} draft
+ * @returns {string}
+ */
+function resolveBookLanguage(draft) {
+    if (!draft) return 'ru';
+    const book = draft.book || {};
+    if (book.language) return book.language;
+    if (book.defaults && book.defaults.language) return book.defaults.language;
+    // parser.js is dependency-free — safe to require directly (no circular import).
+    const { detectLanguage } = require('../book/lazy-book/parser');
+    return detectLanguage(draft.sourceText || '') || 'ru';
+}
+
 module.exports = {
     PROGRESS_STAGES, MAX_WINDOW_CHARS, STEP_RETRIES, SYSTEM_PROMPTS,
     SCENE_TARGET_SEC, SCENE_MAX_SEC, SCENE_MIN_SEC, MAX_SCENES_PER_CHUNK,
     CHARS_PER_SCENE, WINDOW_OVERHEAD, computeWindowChars,
+    LANG_NAMES, langName, buildLangInstruction, buildVoiceLangHint, resolveBookLanguage,
 };

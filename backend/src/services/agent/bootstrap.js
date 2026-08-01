@@ -11,7 +11,7 @@ const config = require('../../config/runtime-config');
 const sourceCoverage = require('../source-coverage');
 const { updateSession, createSession, isSessionCancelled } = require('../agent-session');
 const layerConfig = require('../layer-config');
-const { PROGRESS_STAGES, MAX_SCENES_PER_CHUNK } = require('../agent-prompts');
+const { PROGRESS_STAGES, MAX_SCENES_PER_CHUNK, resolveBookLanguage } = require('../agent-prompts');
 const pipelineSteps = require('./pipeline-steps');
 const pipelineRunner = require('./pipeline-runner');
 const textUtils = require('./text-utils');
@@ -36,6 +36,10 @@ async function bootstrapWithAgent(bookId, progress, publishProgress, redis) {
     const _progress = progress || (() => {});
     const draft = lazyBook.loadDraftBook(bookId);
     if (!draft || !draft.sourceText) throw new Error(`Book ${bookId} not found`);
+
+    // Book language — localizes only user-facing text (titles, names); AI-facing fields stay English.
+    const language = resolveBookLanguage(draft);
+    console.log(`[AGENT] bootstrapWithAgent: language=${language} for book ${bookId}`);
 
     if (draft.manifest?.state === lazyBook.BookState.BOOTSTRAPPED) {
         console.log(`[AGENT] ${bookId} already BOOTSTRAPPED, skipping`);
@@ -75,7 +79,7 @@ async function bootstrapWithAgent(bookId, progress, publishProgress, redis) {
         console.log(`[FIRST-WINDOW] currentOffset=${windowInfo.currentOffset}, chapterIndex=${windowInfo.chapterIndex}, chapterTitle="${windowInfo.chapterTitle}", textLen=${windowInfo.text.length}`);
 
         _progress({ stage: 'analyzing_structure', message: PROGRESS_STAGES.analyzing_structure });
-        const structure = await pipelineSteps.stepAnalyzeStructure(sessionId, windowInfo.text, 0, _progress);
+        const structure = await pipelineSteps.stepAnalyzeStructure(sessionId, windowInfo.text, 0, _progress, language);
 
         if (structure.author || structure.title) {
             _progress({ stage: 'saving', message: `⟳ Обновляю метаданные: ${structure.title ? `«${structure.title}»` : ''} ${structure.author ? `(${structure.author})` : ''}` });
@@ -110,6 +114,7 @@ async function bootstrapWithAgent(bookId, progress, publishProgress, redis) {
             bookId,
             redis,
             chunkSize,
+            language,
         });
 
         if (result.scenes.length === 0) {
@@ -276,6 +281,9 @@ async function bootstrapNextWindow(bookId, progress, publishProgress, redis) {
     const draft = lazyBook.loadDraftBook(bookId);
     if (!draft || !draft.sourceText) throw new Error(`Book ${bookId} not found`);
 
+    // Book language — localizes only user-facing text (titles, names); AI-facing fields stay English.
+    const language = resolveBookLanguage(draft);
+
     let windowData = null;
     try {
         const { query } = require('../../storage/postgres/database');
@@ -390,6 +398,7 @@ async function bootstrapNextWindow(bookId, progress, publishProgress, redis) {
                 bookId,
                 redis,
                 chunkSize,
+                language,
             }
         );
 
@@ -562,6 +571,7 @@ async function bootstrapNextWindow(bookId, progress, publishProgress, redis) {
             redis,
             existingMentions: existingMentions,
             chunkSize,
+            language,
         });
 
         const extraScenes = result.extraScenes || [];

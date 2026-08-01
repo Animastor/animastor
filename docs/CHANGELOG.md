@@ -4,6 +4,40 @@ All notable changes to Animastor are documented here.
 
 ---
 
+## [Unreleased] — 2026-08-01
+
+### Added
+
+- **Архитектура языков: язык книги как параметр генерации**
+  (`docs/07-agents-and-generators/LANGUAGE_ARCHITECTURE.md`,
+  `backend/src/services/agent-prompts.js`,
+  `backend/src/services/agent/pipeline-steps.js`,
+  `backend/src/services/agent/pipeline-runner.js`,
+  `backend/src/services/agent/bootstrap.js`):
+  - **Правило (RFC, docs/LANGUAGE_ARCHITECTURE.md):** все данные, используемые как вход
+    AI-моделей (image.prompt, video.action, паспорта персонажей, environment, voice/TTS
+    инструкции), всегда хранятся на английском. Локализуются только user-facing поля
+    (scene.title, имена, описания) — по параметру `language` из book.json. Категории
+    A (контент/verbatim — не переводится), B (пользовательские — локализуются),
+    C (AI-facing — English). Исключение: текст TTS (audio.full_text) — на языке книги.
+  - **`agent-prompts.js`:** новые хелперы — `buildLangInstruction(lang)` (блок
+    «Output language» для текстовых шагов), `buildVoiceLangHint(lang)` (маркер
+    «Native <Lang> pronunciation», инструкция остаётся English), `resolveBookLanguage(draft)`
+    (book.language → defaults.language → detectLanguage(sourceText) → 'ru').
+  - **`pipeline-steps.js`:** 6 текстовых шагов (structure, characters, locations,
+    scenes, enrich_scenes, voice_generation) принимают `language` и аппендят инструкцию
+    к системному промпту. Визуальные шаги (visuals, polish, reconcile) инструкцию
+    НЕ получают — их выход всегда English.
+  - **`pipeline-runner.js`:** `runPipeline` и `processCachedScenes` читают
+    `options.language` (default 'ru') и пробрасывают в шаги.
+  - **`bootstrap.js`:** `resolveBookLanguage(draft)` на входе обоих бутстрапов
+    (первое + последующие окна, cached scenes) → `language` в options.
+  - Никаких каталогов примеров на каждый язык — KISS, новые языки добавляются
+    без изменения кода.
+  - Тесты проходят, syntax check OK.
+
+---
+
 ## [Unreleased] — 2026-07-31
 
 ### Added

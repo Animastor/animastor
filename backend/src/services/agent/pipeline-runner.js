@@ -171,6 +171,7 @@ function resolveSceneProgress(sceneText, scenes, sourceOffsetBase) {
 async function runPipeline(sessionId, text, existingChars, existingLocs, stepIndex, progress, baseSceneCount, options = {}) {
     const _progress = progress || (() => {});
     const { publishProgress, bookId, redis: redisClient } = options;
+    const language = options.language || 'ru';  // book language — localized user-facing text only
     const sceneOffset = baseSceneCount || 0;
 
     // Dynamic chunk size: override MAX_SCENES_PER_CHUNK from options
@@ -264,7 +265,7 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
 
     publishVBook({ stage: 'analyzing', scene_index: 0, total_scenes: 0, window_size: effectiveChunkSize, message: PROGRESS_STAGES.analyzing_structure });
 
-    const charResult = await pipelineSteps.stepExtractCharacters(sessionId, text, stepIndex, _progress);
+    const charResult = await pipelineSteps.stepExtractCharacters(sessionId, text, stepIndex, _progress, language);
     let mentions = options.existingMentions || {};
     if (!charResult || !charResult.characters || charResult.characters.length === 0) {
         console.warn('[AGENT] No characters extracted from window, keeping existing set');
@@ -292,7 +293,7 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
     // In subsequent windows, skips characters that already have meaningful voices
     // and only generates for newly discovered characters.
     if (characters.length > 0) {
-        const voiceResult = await pipelineSteps.stepGenerateVoices(sessionId, text, characters, stepIndex, _progress);
+        const voiceResult = await pipelineSteps.stepGenerateVoices(sessionId, text, characters, stepIndex, _progress, language);
         if (voiceResult && voiceResult.voices) {
             const voiced = Object.keys(voiceResult.voices).length;
             console.log(`[AGENT] Voice generation: ${voiced} characters got voice descriptions`);
@@ -303,7 +304,7 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
 
     publishVBook({ stage: 'extracting_chars', scene_index: 0, total_scenes: 0, window_size: effectiveChunkSize, message: PROGRESS_STAGES.extracting_chars });
 
-    const newLocations = await pipelineSteps.stepExtractLocations(sessionId, text, characters, stepIndex, _progress);
+    const newLocations = await pipelineSteps.stepExtractLocations(sessionId, text, characters, stepIndex, _progress, language);
     if (!newLocations || newLocations.length === 0) {
         console.warn('[AGENT] No locations extracted from window, keeping existing set');
         locations = existingLocs.length > 0
@@ -351,7 +352,7 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
 
     // ── Create scenes — no artificial limit, AI creates natural narrative episodes ──
     // Extra scenes beyond effectiveChunkSize are cached for reuse in the next window.
-    const aiScenes = await pipelineSteps.stepCreateScenes(sessionId, sceneText, characters, locations, stepIndex, _progress, null, effectiveChunkSize);
+    const aiScenes = await pipelineSteps.stepCreateScenes(sessionId, sceneText, characters, locations, stepIndex, _progress, null, effectiveChunkSize, language);
     if (!aiScenes || aiScenes.length === 0) throw new Error('AI returned no scenes');
 
     // Split: first N for immediate processing, rest for cache
@@ -365,7 +366,7 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
     if (!coverage.ok) {
         console.warn(`[AGENT] scene coverage failed: ${coverage.reason} scene=${coverage.scene_index} gap=${coverage.gap_chars || 0}; retrying scene split`);
         coverageRetryCount += 1;
-        const retryAiScenes = await pipelineSteps.stepCreateScenes(sessionId, sceneText, characters, locations, stepIndex, _progress, coverage, effectiveChunkSize);
+        const retryAiScenes = await pipelineSteps.stepCreateScenes(sessionId, sceneText, characters, locations, stepIndex, _progress, coverage, effectiveChunkSize, language);
         extraScenes = retryAiScenes.slice(effectiveChunkSize);
         windowScenes = capScenes(retryAiScenes);
         ({ progressInfo, cov: coverage } = evaluateCoverage(windowScenes));
@@ -406,7 +407,7 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
     }));
 
     // ── Scene enrichment ──
-    windowScenes = await pipelineSteps.stepEnrichScenes(sessionId, windowScenes, characters, locations, stepIndex, _progress);
+    windowScenes = await pipelineSteps.stepEnrichScenes(sessionId, windowScenes, characters, locations, stepIndex, _progress, language);
 
     const enrichedScenes = [];
     for (let si = 0; si < windowScenes.length; si++) {
@@ -677,6 +678,7 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
 async function processCachedScenes(sessionId, scenes, characters, locations, mentions, stepIndex, progress, baseSceneCount, options = {}) {
     const _progress = progress || (() => {});
     const { publishProgress, bookId, redis: redisClient } = options;
+    const language = options.language || 'ru';  // book language — localized user-facing text only
     const sceneOffset = baseSceneCount || 0;
     const effectiveChunkSize = _resolveChunkSize(options);
 
@@ -736,7 +738,7 @@ async function processCachedScenes(sessionId, scenes, characters, locations, men
     }));
 
     // ── Scene enrichment ──
-    windowScenes = await pipelineSteps.stepEnrichScenes(sessionId, windowScenes, characters, locations, stepIndex, _progress);
+    windowScenes = await pipelineSteps.stepEnrichScenes(sessionId, windowScenes, characters, locations, stepIndex, _progress, language);
 
     const enrichedScenes = [];
     for (let si = 0; si < windowScenes.length; si++) {
