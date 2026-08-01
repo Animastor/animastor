@@ -1,0 +1,22 @@
+/* Light "cozy cinema hall" theme (Theme.Animastor.CinemaLight) */
+[data-theme="light"] {
+  --bg: #F0EBE0;
+  --surface: #FAF7F0;
+  --surface-2: #F0E9DE;
+  --surface-dim: #E6DFD3;
+  --text: #2C2418;
+  --text-2: #6B6258;
+  --text-disabled: #A89F94;
+  --primary-container: #F5E0E2;
+  --accent-container: #F5EDD6;
+  --error-container: #FCE4E7;
+  --outline: #CEC5B8;
+  --outline-2: #E2DACD;
+  --scrim: rgba(160,152,128,0.5);
+  --missing-bg: rgba(230,223,211,0.8);
+  --subtitle-bg: rgba(0,0,0,0.73);
+  --worker-panel-on: #D8CFBF;
+  --worker-panel-off: #E6DFD3;
+
+  --theme-color: #E6DFD3;
+}

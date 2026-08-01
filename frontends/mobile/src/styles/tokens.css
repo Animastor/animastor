@@ -1,0 +1,42 @@
+/* Design tokens: !attr/ shape / widget-scale derived from res/values/colors.xml
+   and themes.xml. Shared (theme-independent) values; per-theme overrides in
+   theme-dark.css / theme-light.css via [data-theme="..."]. */
+
+:root {
+  /* Shared colors (cinema_* SHARED — same in both themes) */
+  --primary: #6E1F2A;
+  --primary-pressed: #8B2E3D;
+  --on-primary: #F2E9DC;
+  --accent: #C9A15A;
+  --accent-dim: #A6833E;
+  --on-accent: #12110F;
+  --error: #CF6679;
+  --cancel: #E55353;
+  --success: #6B9E6B;
+  --warning: #D4A84B;
+  --warning-container: #3D3018;
+
+  /* Radii (ShapeAppearance.Animastor.Small/Medium/Large, dp → rem @16px base) */
+  --radius-sm: 0.75rem;   /* 12dp */
+  --radius-md: 1.125rem;  /* 18dp */
+  --radius-lg: 1.75rem;   /* 28dp */
+  --radius-pill: 999px;
+
+  /* Elevation (Material 3 dark uses shadows sparingly; we use box-shadow) */
+  --elev-1: 0 1px 2px rgba(0,0,0,.20), 0 1px 3px rgba(0,0,0,.12);
+  --elev-2: 0 1px 5px rgba(0,0,0,.20), 0 2px 8px rgba(0,0,0,.12);
+  --elev-3: 0 6px 20px rgba(0,0,0,.25), 0 8px 28px rgba(0,0,0,.16);
+
+  /* Typography (sans-serif-medium preserved) */
+  --font-base: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --fs-caption: 0.6875rem;   /* 11sp */
+  --fs-body: 0.9375rem;     /* 15sp */
+  --fs-subtitle: 1rem;       /* 16sp */
+  --fs-title: 1.5rem;
+
+  /* Layout */
+  --tabbar-h: 3.5rem;
+  --toolbar-h: 3.25rem;
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-top: env(safe-area-inset-top, 0px);
+}

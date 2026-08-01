@@ -83,6 +83,20 @@
 
 ---
 
+## 📱 Миграция Android → Mobile Web — `08-mobile-web-migration/`
+
+| Документ | Описание |
+|---|---|
+| [`README.md`](08-mobile-web-migration/README.md) | Обзор раздела + основное правило проекта (веб-версия = Android по дизайну/UX) |
+| [`01-MIGRATION-STRATEGY.md`](08-mobile-web-migration/01-MIGRATION-STRATEGY.md) | Общая стратегия переноса Android UI на Mobile Web |
+| [`02-DESIGN-PRESERVATION-PRINCIPLES.md`](08-mobile-web-migration/02-DESIGN-PRESERVATION-PRINCIPLES.md) | Принципы сохранения дизайна/расположения/сценариев |
+| [`03-MOBILE-WEB-ARCHITECTURE.md`](08-mobile-web-migration/03-MOBILE-WEB-ARCHITECTURE.md) | Предлагаемая архитектура `frontends/mobile/` |
+| [`04-MAPPING-TABLES.md`](08-mobile-web-migration/04-MAPPING-TABLES.md) | Таблицы Screen→Page, Component→Web Component, токены `cinema_*`, API, i18n |
+| [`05-SCREEN-IMPLEMENTATION-ORDER.md`](08-mobile-web-migration/05-SCREEN-IMPLEMENTATION-ORDER.md) | План переноса экранов (простые → сложные) |
+| [`06-RISKS-AND-ALTERNATIVES.md`](08-mobile-web-migration/06-RISKS-AND-ALTERNATIVES.md) | Компоненты высокого риска + альтернативы. Экран Play — детально |
+
+---
+
 ## 🗂 База знаний (корень `docs/`)
 
 | Документ | Описание |
@@ -158,6 +172,15 @@ docs/
 ├── 07-agents-and-generators/          ← AI-агенты и генераторы
 │   ├── AGENTS.md
 │   └── GENERATORS.md
+│
+├── 08-mobile-web-migration/           ← миграция Android → Mobile Web (m.animastor.in)
+│   ├── README.md
+│   ├── 01-MIGRATION-STRATEGY.md
+│   ├── 02-DESIGN-PRESERVATION-PRINCIPLES.md
+│   ├── 03-MOBILE-WEB-ARCHITECTURE.md
+│   ├── 04-MAPPING-TABLES.md
+│   ├── 05-SCREEN-IMPLEMENTATION-ORDER.md
+│   └── 06-RISKS-AND-ALTERNATIVES.md
 │
 └── 99-archive/                        ← устаревшие документы
     ├── LLM_AUDIT_CONTEXT.md

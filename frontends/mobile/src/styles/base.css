@@ -1,0 +1,124 @@
+* { box-sizing: border-box; }
+html, body, #app { height: 100%; margin: 0; }
+body {
+  font-family: var(--font-base);
+  background: var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior-y: none;
+}
+button { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+#app {
+  display: flex;
+  flex-direction: column;
+  min-height: 100dvh;
+  padding-top: var(--safe-top);
+  padding-bottom: var(--safe-bottom);
+}
+
+.app-shell {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.app-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  position: relative;
+}
+
+/* Toolbar */
+.toolbar {
+  height: var(--toolbar-h);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0 0.75rem;
+  background: var(--surface);
+  border-bottom: 1px solid var(--outline-2);
+  z-index: 5;
+}
+.toolbar__title { font-weight: 600; font-size: var(--fs-subtitle); flex: 1; }
+.toolbar__btn {
+  background: transparent; border: 0; color: var(--text-2);
+  width: 2.5rem; height: 2.5rem; border-radius: var(--radius-sm);
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.toolbar__btn:active { background: var(--primary-container); }
+
+/* Tab bar (BottomNavigationView) */
+.tabbar {
+  height: calc(var(--tabbar-h) + var(--safe-bottom));
+  padding-bottom: var(--safe-bottom);
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  background: var(--surface);
+  border-top: 1px solid var(--outline-2);
+  box-shadow: var(--elev-3);
+  z-index: 5;
+}
+.tabbar__item {
+  border: 0; background: transparent; color: var(--text-2);
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 2px; font-size: 0.6875rem; min-height: 0; padding: 0;
+}
+.tabbar__item--active { color: var(--primary); }
+.tabbar__icon { width: 1.5rem; height: 1.5rem; }
+.tabbar__pulse { animation: tab-pulse 1.6s infinite ease-in-out; }
+.tabbar__pulse--error { animation: tab-pulse 1.2s infinite ease-in-out; color: var(--error); }
+.tabbar__pulse--success { color: var(--success); }
+@keyframes tab-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+/* Generic page */
+.page {
+  flex: 1; display: flex; flex-direction: column;
+  padding: 1rem;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.page--centered { align-items: center; justify-content: center; text-align: center; }
+.page__ph { color: var(--text-2); font-size: var(--fs-body); }
+
+/* Secondary route (overlay above tabs) */
+.secondary {
+  position: absolute; inset: 0;
+  background: var(--bg);
+  display: flex; flex-direction: column;
+  z-index: 10;
+}
+.secondary .page { overflow-y: auto; }
+
+/* Settings */
+.settings__group {
+  background: var(--surface);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  border: 1px solid var(--outline-2);
+}
+.settings__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.875rem 1rem;
+  font-size: var(--fs-body);
+}
+.settings__row + .settings__row { border-top: 1px solid var(--outline-2); }
+
+/* Segmented control */
+.seg { display: inline-flex; gap: 0.25rem; background: var(--surface-2); padding: 0.2rem; border-radius: var(--radius-pill); }
+.seg__btn {
+  border: 0; background: transparent; color: var(--text-2);
+  padding: 0.4rem 0.9rem; border-radius: var(--radius-pill);
+  font-size: 0.8125rem; min-height: 2rem;
+}
+.seg__btn--active { background: var(--primary); color: var(--on-primary); }

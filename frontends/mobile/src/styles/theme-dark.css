@@ -1,0 +1,22 @@
+/* Dark "cinema hall" theme — point of entry (Theme.Animastor.CinemaDark) */
+[data-theme="dark"] {
+  --bg: #12110F;
+  --surface: #1B1816;
+  --surface-2: #25211E;
+  --surface-dim: #161412;
+  --text: #F2E9DC;
+  --text-2: #B8AFA3;
+  --text-disabled: #6B655C;
+  --primary-container: #4A141C;
+  --accent-container: #3A2E1A;
+  --error-container: #4A1C22;
+  --outline: #3D3833;
+  --outline-2: #2D2925;
+  --scrim: rgba(12,10,8,0.5);
+  --missing-bg: rgba(22,20,18,0.8);
+  --subtitle-bg: rgba(0,0,0,0.73);
+  --worker-panel-on: #2D2A26;
+  --worker-panel-off: #25211E;
+
+  --theme-color: #12110F; /* <meta theme-color> */
+}
