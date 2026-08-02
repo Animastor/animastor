@@ -2,9 +2,10 @@
 //  - Position bar (include_position_bar) → /navigate on tap; label from
 //    bookData + ActivePosition, unitCount shown on the right.
 //  - Unit carousel: prev/current/next cards with IU previews
-//    (GET /preview/...?build_id=), height = cardWidth × image ratio (Android
-//    loadPreviewImage parity — explicit px so portrait images get portrait
-//    cards and never crop inside cover-fit), "Не сгенерировано" overlay.
+//    (GET /preview/...?build_id=); the img sits in normal flow (width:100%,
+//    height:auto) so its own aspect ratio sets the card height — portrait
+//    images always get portrait cards (Android loadPreviewImage parity),
+//    "Не сгенерировано" overlay.
 //  - Audio timeline panel: play/stop (scene audio via /scene/.../audio), the
 //    WaveformView canvas (lib/waveform.tsx, R10) with draggable range handles,
 //    and a reset-to-original button. Drag preview is local; PUT /timings on
@@ -1307,9 +1308,9 @@ export function EditPage(props: { path?: string }) {
           <IconChevronUp width={16} height={16} />
         </button>
         <div class="edit-carousel">
-          <CarouselCard kind="prev" bid={bid} bld={bld} item={carousel.prev} visible={!carouselCollapsed} onClick={() => carousel.prev && navigateUnit(-1)} />
-          <CarouselCard kind="current" bid={bid} bld={bld} item={carousel.current} visible={!carouselCollapsed} onClick={() => openZoom(carousel.current)} />
-          <CarouselCard kind="next" bid={bid} bld={bld} item={carousel.next} visible={!carouselCollapsed} onClick={() => carousel.next && navigateUnit(1)} />
+          <CarouselCard kind="prev" bid={bid} bld={bld} item={carousel.prev} onClick={() => carousel.prev && navigateUnit(-1)} />
+          <CarouselCard kind="current" bid={bid} bld={bld} item={carousel.current} onClick={() => openZoom(carousel.current)} />
+          <CarouselCard kind="next" bid={bid} bld={bld} item={carousel.next} onClick={() => carousel.next && navigateUnit(1)} />
         </div>
       </div>
 
@@ -1425,60 +1426,24 @@ function dirtyIndicatorText(dirty: { changed?: number; added?: number; removed?:
   return `Dirty: ${parts.join(', ')}`;
 }
 
-// ── Carousel card — preview image + ratio-based height + missing overlay ──
-function CarouselCard({ kind, bid, bld, item, onClick, visible }: {
+// ── Carousel card — preview image + missing overlay. The card's height is
+// driven by the <img> itself (block, width:100%, height:auto): the browser
+// preserves the image's own aspect ratio natively, so portrait images always
+// get portrait cards — exactly like Android loadPreviewImage (hDp = cardWDp
+// × h/w), but with zero JS measurement/races. Missing images fall back to the
+// card's 140dp min-height. ──
+function CarouselCard({ kind, bid, bld, item, onClick }: {
   kind: 'prev' | 'current' | 'next';
   bid: string;
   bld: string;
   item: { unit: BookUnit | null; index: number; chapterId: string | null; sceneId: string | null } | null;
   onClick: () => void;
-  visible: boolean;
 }) {
-  const cardRef = useRef<HTMLDivElement | null>(null);
-  // Size is paired with the unit id it was computed from, so a stale ratio can
-  // never be applied to a different unit after navigation (and a missing new
-  // image falls back to the 140dp default instead of keeping the old height).
-  const [size, setSize] = useState<{ unitId: string; ratio: number } | null>(null);
   const isCurrent = kind === 'current';
   const unit = item?.unit ?? null;
-  const itemKey = item && unit ? unitId(unit, item.index) : '';
-
-  // Reset per item change — drop the size so the card falls back to its
-  // 140dp default until the new image reports its ratio.
-  useEffect(() => {
-    setSize(null);
-    const el = cardRef.current;
-    if (el) { el.style.height = ''; }
-  }, [item?.unit?.id ?? '', item?.index ?? -1]);
-
-  // Card height = width × image aspect ratio (Android loadPreviewImage:
-  // hDp = cardWDp * bmp.height / bmp.width). Explicit pixel height computed
-  // from the ACTUAL rendered width — portrait images always get portrait
-  // cards, so object-fit: cover never crops them (browser-independent; no
-  // aspect-ratio-on-flex quirks). Re-applied when the card becomes visible
-  // again (carousel expanded) and on window resize; while collapsed
-  // (display:none) clientWidth is 0, so the previous size is kept and restored
-  // exactly on re-expand. Fallback 140dp before the ratio arrives (Android
-  // XML default 140dp; current = match_parent ≈ 140dp).
-  useEffect(() => {
-    const el = cardRef.current;
-    if (!el || !size || size.unitId !== itemKey || !visible) return;
-    const applySize = () => {
-      const w = el.clientWidth;
-      if (w <= 0) return;
-      el.style.height = `${Math.round(w * size.ratio)}px`;
-    };
-    const raf = requestAnimationFrame(applySize);
-    window.addEventListener('resize', applySize);
-    return () => {
-      cancelAnimationFrame(raf);
-      window.removeEventListener('resize', applySize);
-    };
-  }, [size, itemKey, visible]);
 
   return (
     <div
-      ref={cardRef}
       class={`edit-unit-card edit-unit-card--${kind}${!item ? ' edit-unit-card--hidden' : ''}`}
       role={unit ? 'button' : undefined}
       tabIndex={unit ? 0 : -1}
@@ -1494,7 +1459,6 @@ function CarouselCard({ kind, bid, bld, item, onClick, visible }: {
           unitId={unitId(unit, item.index)}
           isCurrent={isCurrent}
           label={isCurrent && unit ? `${t('navigate_unit')} ${item.index + 1}` : null}
-          onRatio={(r) => setSize({ unitId: itemKey, ratio: r })}
         />
       ) : isCurrent ? (
         <span class="edit-unit-card__icon"><IconImageOff width={28} height={28} /></span>
@@ -1504,9 +1468,9 @@ function CarouselCard({ kind, bid, bld, item, onClick, visible }: {
 }
 
 // Unit preview — loads GET /preview/...?build_id=; fallback ic_image_off +
-// "Не сгенерировано" overlay (showPreviewMissing); reports aspect ratio for the
-// side-card height (loadPreviewImage).
-function UnitPreview({ bid, bld, chapterId, sceneId, unitId, isCurrent, label, onRatio }: {
+// "Не сгенерировано" overlay (showPreviewMissing). The <img> is in normal
+// flow (not absolute) so its natural aspect ratio sets the card height.
+function UnitPreview({ bid, bld, chapterId, sceneId, unitId, isCurrent, label }: {
   bid: string;
   bld: string;
   chapterId: string;
@@ -1514,7 +1478,6 @@ function UnitPreview({ bid, bld, chapterId, sceneId, unitId, isCurrent, label, o
   unitId: string;
   isCurrent: boolean;
   label: string | null;
-  onRatio: (r: number) => void;
 }) {
   const [failed, setFailed] = useState(false);
   useEffect(() => { setFailed(false); }, [unitId]);
@@ -1536,10 +1499,6 @@ function UnitPreview({ bid, bld, chapterId, sceneId, unitId, isCurrent, label, o
         alt=""
         loading="lazy"
         decoding="async"
-        onLoad={(e) => {
-          const img = e.currentTarget;
-          if (img.naturalWidth > 0) onRatio(img.naturalHeight / img.naturalWidth);
-        }}
         onError={() => setFailed(true)}
       />
       {isCurrent && label && <span class="edit-unit-card__label">{label}</span>}

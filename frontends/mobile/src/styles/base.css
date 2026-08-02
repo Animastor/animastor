@@ -1195,27 +1195,31 @@ button { font: inherit; color: inherit; }
   border: 1px solid var(--outline-2);
   cursor: pointer;
   flex: 1; /* weight 1 */
-  height: 8.75rem; /* 140dp default (overridden by image ratio) */
+  min-height: 8.75rem; /* 140dp floor while the image loads / missing */
   min-width: 0;
 }
 .edit-unit-card--current {
   /* Web deviation: weight 1.2 instead of Android's 1.5 — the browser UI
      leaves less viewport than Android, so the central card is ~20% smaller
      overall (two 10% steps per user feedback); still 20% wider than the side
-     cards (1.2 vs 1.0) so the active unit stays clearly emphasized. Height
-     follows the ratio via clientWidth, so both shrink together. */
+     cards (1.2 vs 1.0) so the active unit stays clearly emphasized. The
+     height is driven by the image itself (img in normal flow), so both
+     dimensions scale together with the aspect ratio. */
   flex: 1.2;
   border-radius: 1rem; /* 16dp */
   background: var(--nav-scene-bg); /* colorSurfaceVariant */
   box-shadow: var(--elev-1);
-  height: 8.75rem; /* 140dp default (overridden by image ratio) */
+  min-height: 8.75rem; /* 140dp floor */
 }
 .edit-unit-card--hidden { visibility: hidden; }
 .edit-unit-card:active { filter: brightness(0.92); }
 .edit-unit-card__img {
-  position: absolute; inset: 0;
-  width: 100%; height: 100%;
-  object-fit: cover;
+  /* In normal flow so the image's own aspect ratio sets the card height
+     (Android loadPreviewImage parity: portrait stays portrait, no cropping;
+     the box always matches the intrinsic ratio, so object-fit is irrelevant). */
+  display: block;
+  width: 100%;
+  height: auto;
 }
 .edit-unit-card__icon {
   position: absolute; inset: 0;
