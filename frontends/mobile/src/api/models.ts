@@ -281,7 +281,16 @@ export interface BookScene {
   scene_title?: string | null;
   display_index?: number | null;
   type?: string | null;
-  units?: { id?: string | null; type?: string | null; text?: string | null }[] | null;
+  style?: string | null;
+  units?: BookUnit[] | null;
+}
+
+// SceneUnit.kt equivalent (Navigate tree leaf)
+export interface BookUnit {
+  id?: string | null;
+  type?: string | null;
+  text?: string | null;
+  participants?: string[] | null;
 }
 
 // ─────────────────────────────────────────────────────

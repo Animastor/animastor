@@ -347,6 +347,20 @@ X-Frame-Options/CSP источника) или рендер содержимог
 
 ---
 
+## 14. Отклонения этапа 5 (Navigate)
+
+| Отклонение | Причина | Альтернатива |
+|---|---|---|
+| Drag-reorder сцен (ItemTouchHelper) НЕ перенесён | Android дергает сцены внутри главы и шлёт `POST /book/{id}/reorder`; бэкенд **не реализует** этот роут (проверено: в `backend/src/routes/*` нет `/reorder`) — в Android фича фактически молча ломается (404). План этапа 5 (05 §5.1) reorder не требует | дерево остаётся read-only по порядку; при появлении роута — `HTML5 drag&drop` (pointer-события), отдельным этапом |
+| Раскрытие/сворачивание глав — персистентно (Set collapsedChapters) | Android клик по главе делает `item.expanded = !item.expanded` и тут же `rebuildStructure()`, который пересоздаёт элементы по жёсткому правилу (`ch.chapter_id == pos.chapterId \| chapters.size <= 3`) — ручной toggle теряется (no-op-баг Android) | веб хранит явный collapsed-set поверх правила; текущая глава и ≤3 глав по умолчанию раскрыты |
+| Preview-миниатюры — `<img loading="lazy">` на `GET /preview/{book}/{ch}/{sc}/{iu}?build_id=` вместо `getIuPreview` + `decodeByteArray` | браузерный ленивый загрузчик + HTTP-кэш; Android грузит байты и декодирует в памяти (RecyclerView виртуализация) | `onError` → `ic_image_off` (как `setImageResource(ic_image_off)`); те же 44dp centerCrop |
+| Scroll к активному юниту — `scrollIntoView({block:'nearest'})` | аналог `smoothScrollToPosition` (минимальный скролл только если элемент вне вьюпорта) | тот же триггер: после каждого rebuild структуры |
+| Position-bar на /navigate — только label, unitCount не выводится | Android `NavigateFragment.updatePositionBar` не трогает `unitCount` (остаётся GONE) | 1:1 — контракт `gen-posbar__units` готов для страниц, где он нужен (Generate) |
+| Оверлей `missingIuPosition` на Play — упрощённый (сообщение + координаты) | `showMissingChunkOverlay` требует cover-image и media viewport плеера — это этап 7 | стаб-оверлей на `--missing-bg`; полная версия придёт вместе с плеером |
+| `getTextIndex`/`getChaptersSummary` не используются | Android `NavigateFragment` строит дерево из `getBook` (chapters→scenes→units), эндпоинты text-index/summary ему не нужны | 1:1 — дерево из `GET /book/{id}` |
+
+---
+
 ## 8. Правило обновления этого документа
 
 1. Любое отклонение в коде **обязано** быть занесено сюда до реализации в виде

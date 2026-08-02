@@ -19,6 +19,12 @@
   --worker-panel-on: #332F2A;
   --worker-panel-off: #3E3933;
   --posbar-gradient: linear-gradient(180deg, #2E2A26, #242120);
+  /* Scene/unit panels in the Navigate TOC — EXACT Android values
+     (BookStructureAdapter): scenes colorSurfaceVariant #25211E, units
+     colorSurface #1B1816 (active: colorSecondaryContainer #3A2E1A via
+     --accent-container), on the page bg colorSurfaceDim #161412 (--surface-dim). */
+  --nav-scene-bg: #25211E;
+  --nav-unit-bg: #1B1816;
 
   --theme-color: #12110F; /* <meta theme-color> */
 }

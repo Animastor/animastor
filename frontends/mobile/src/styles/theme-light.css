@@ -19,6 +19,10 @@
   --worker-panel-on: #E3DACB;
   --worker-panel-off: #F2EDE3;
   --posbar-gradient: linear-gradient(180deg, #F5F0E6, #E7DED0);
+  /* Scene/unit panels in the Navigate TOC — light theme keeps the card tone
+     slightly above the page (#F0EBE0); the hairline border does the separation. */
+  --nav-scene-bg: #F4EFE5;
+  --nav-unit-bg: #FAF7F0;
 
   --theme-color: #E6DFD3;
 }

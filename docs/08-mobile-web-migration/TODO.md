@@ -89,7 +89,29 @@
 
 ## Этап 5 — Navigate (карта-закладки → seek)
 
-- [ ] **Navigate** (`/navigate`) — дерево глав→сцен→юнитов → `positionStore.navigateTo()` + `router.push('/play')` + `playbackStore.seekToPosition()` (refresh book JSON если нет → `missingIuPosition` overlay)
+- [x] **Navigate** (`/navigate`) — дерево глав→сцен→юнитов → `positionStore.navigateTo()` + `router.push('/play')` + `playbackStore.seekToPosition()` (refresh book JSON если нет → `missingIuPosition` overlay)
+
+### Завершение этапа 5 (2026-08-02) ✅
+
+- Дерево 1:1 с `fragment_navigate.xml` + `BookStructureAdapter`: position-bar
+  (label-only, `updatePositionBar` 1:1: special-главы Cover/Prologue,
+  `display_number`-префикс, «Глава N — Заголовок»), loading-индикатор,
+  empty-state, список глав→сцен→юнитов.
+- Лейблы: главы — accent/bold/15sp (indent 8), сцены — `… — type (style)` /
+  `… (type)` на surfaceVariant (indent 24), юниты — `[type] Unit N — текст`
+  13sp + активный (accent bold + secondaryContainer).
+- Авто-раскрытие текущей сцены по позиции (`expandedScenes` следует за
+  `positionStore`, `lastPositionKey`), раскрытие глав по правилу
+  «текущая глава или ≤3 глав».
+- Preview-миниатюры юнитов: `<img loading=lazy>` → `GET /preview/{…}?build_id=`
+  (эквивалент `getIuPreview`), fallback `ic_image_off` на ошибке.
+- Клик по юниту: `positionStore.navigateTo` + `playbackStore.seekToPosition`
+  (1:1 с `PlaybackViewModel.seekToPosition`: refresh book JSON если сцены нет в
+  очереди → `missingIuPosition`) + переход на `/play` (`switchToPlayTab`).
+- `PlayPage` показывает overlay `missingIuPosition` («Не сгенерировано», как
+  `showMissingChunkOverlay`) — каркас плеера на этапе 7.
+- Перезагрузка дерева при `playbackPrepared` (генерация завершена).
+- Отклонения и решения — [`06-RISKS-AND-ALTERNATIVES.md`](06-RISKS-AND-ALTERNATIVES.md) §14.
 
 ## Этап 6 — Edit (таймлайн + waveform)
 

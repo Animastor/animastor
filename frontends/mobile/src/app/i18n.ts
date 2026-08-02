@@ -203,6 +203,10 @@ const dict = {
     navigate_unit: 'Модуль',
     navigate_no_position: 'Позиция не выбрана',
     navigate_units_count: '{0} модулей',
+    navigate_empty: 'Книга не загружена',
+    navigate_cover: 'Обложка',
+    navigate_prologue: 'Пролог',
+    navigate_scene_type: 'сцена',
     // Generate (strings.xml ru)
     generate_global_section: 'Общее',
     generate_all: 'Генерировать всё',
@@ -448,6 +452,10 @@ const dict = {
     navigate_unit: 'Unit',
     navigate_no_position: 'No position selected',
     navigate_units_count: '{0} units',
+    navigate_empty: 'No book loaded',
+    navigate_cover: 'Cover',
+    navigate_prologue: 'Prologue',
+    navigate_scene_type: 'scene',
     // Generate (strings.xml en)
     generate_global_section: 'Global',
     generate_all: 'Generate All',

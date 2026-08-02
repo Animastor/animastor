@@ -178,6 +178,22 @@
 Приёмка: переход из Navigate в Play делает seek в нужный юнит; при отсутствии
 сцены показывается overlay «не сгенерировано» (как `showMissingChunkOverlay`).
 
+### Завершение этапа 5 (2026-08-02) ✅
+
+- 5.1 Navigate (`/navigate`) — 1:1 с `fragment_navigate.xml` +
+  `BookStructureAdapter` (главы/сцены/юниты): position-bar (`updatePositionBar`
+  с Cover/Prologue и `display_number`), loading, empty-state, лейблы глав/сцен/
+  юнитов (включая `— type (style)` для сцен и `[type]` для юнитов),
+  авто-раскрытие текущей сцены, preview-миниатюры через `GET /preview`
+  (`getIuPreview`-эквивалент, fallback `ic_image_off`).
+- Клик по юниту → `positionStore.navigateTo` + `playbackStore.seekToPosition`
+  (полная логика: сцена в очереди → pendingExternalSeek; сцены нет → refresh
+  book JSON → `missingIuPosition`) → `router.push('/play')`.
+- `PlayPage` показывает оверлей `missingIuPosition` («Не сгенерировано», как
+  `showMissingChunkOverlay`) — полноценный плеер остаётся этапу 7.
+- Перезагрузка дерева по `playbackPrepared` (генерация завершена).
+- Отклонения — [`06-RISKS-AND-ALTERNATIVES.md`](06-RISKS-AND-ALTERNATIVES.md) §14.
+
 ---
 
 ## Этап 6 — Edit (таймлайн + waveform)
