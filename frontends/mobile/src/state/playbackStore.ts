@@ -442,6 +442,10 @@ export async function seekToPosition(chapterId: string, sceneId: string, unitInd
     missingIuPosition.value = null;
     pendingExternalSeek.value = { chapterId, sceneId, unitId, chunkId: sceneKey, unitIndex };
     uiState.value = { ...uiState.value, currentIndex: idx };
+    // Android parity (PlaybackViewModel.kt: currentIndex = idx): the internal
+    // engine index must move too — executePendingSeek/playNext read THIS var,
+    // and without it the player would start from the old (beginning) scene.
+    currentIndex = idx;
     return;
   }
 
@@ -461,6 +465,8 @@ export async function seekToPosition(chapterId: string, sceneId: string, unitInd
       missingIuPosition.value = null;
       pendingExternalSeek.value = { chapterId, sceneId, unitId, chunkId: sceneKey, unitIndex };
       uiState.value = { ...uiState.value, currentIndex: newIdx, sceneCount: allScenes.length };
+      // Android parity (PlaybackViewModel.kt: currentIndex = newIdx after refresh).
+      currentIndex = newIdx;
     } else {
       missingIuPosition.value = { chapterId, sceneId, unitId, chunkId: null, unitIndex };
       pendingExternalSeek.value = null;
@@ -482,10 +488,17 @@ export function executePendingSeek(): void {
   if (!seek) return;
   pendingExternalSeek.value = null;
 
-  if (currentIndex >= sceneQueue.value.length) {
+  // Derive the index from the seek itself (chunkId IS the scene key) instead of
+  // trusting the module-level currentIndex — restoreSavedPositionIfAny on Play
+  // mount can clobber it between seekToPosition and here, which would play the
+  // restored scene instead of the selected one (web hardening; Android runs the
+  // same look-up when refreshing the queue).
+  const sceneIdx = sceneQueue.value.findIndex((s) => sceneKeyOf(s) === seek.chunkId);
+  if (sceneIdx < 0) {
     playSceneQueue();
     return;
   }
+  currentIndex = sceneIdx;
   missingIuPosition.value = null;
   isExecutingExternalSeek = true;
   currentUnitIndex = seek.unitIndex;

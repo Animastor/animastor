@@ -10,7 +10,7 @@ import { useSignalEffect } from '@preact/signals';
 import { t } from '../app/i18n';
 import {
   uiState, bookId, missingIuPosition, coverImage, previewImage, currentIuBlobUrl,
-  subtitleText, iuMissing, videoVisible,
+  subtitleText, iuMissing, videoVisible, pendingExternalSeek,
   layerAudio, layerImage, layerVideo, layerSubtitles,
   handlePlayButton, pauseIfPlaying, checkPendingExternalSeek, ensureInitialized,
   attachVideo, detachVideo, restoreSavedPositionIfAny, sceneQueueSize,
@@ -94,6 +94,15 @@ export function PlayPage(props: { path?: string }) {
       pauseIfPlaying();
     };
   }, []);
+
+  // ── Android observeExternalNavigation: execute a pending external seek as
+  //    soon as it becomes available. The mount effect above runs once, but
+  //    seekToPosition's async branch (scene missing from the queue → book JSON
+  //    refresh) can set pendingExternalSeek AFTER mount — without this the seek
+  //    would sit forever and the player would show the beginning instead. ──
+  useSignalEffect(() => {
+    if (pendingExternalSeek.value) checkPendingExternalSeek();
+  });
 
   // ── Fullscreen (toggleFullscreen) — media container, hides controls via CSS. ──
   useEffect(() => {
