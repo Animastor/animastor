@@ -51,7 +51,41 @@
 
 ## Этап 4 — Generate (прогресс и координация)
 
-- [ ] **Generate** (`/generate`) — SSE-прогресс, статус по scope (`/progress-panel`), чипы режимов/тем/воркеров, индикатор статуса на tab-иконке (running/error/success + авто-сброс), emits `playbackPrepared` → `playbackStore.preparePlayback()`
+- [x] **Generate** (`/generate`) — SSE-прогресс, статус по scope (`/progress-panel`), чипы режимов/тем/воркеров, индикатор статуса на tab-иконке (running/error/success + авто-сброс), emits `playbackPrepared` → `playbackStore.preparePlayback()`
+
+### Завершение этапа 4 (2026-08-02) ✅
+
+- 4 секции воркеров (VBook/Audio/Image/Video) 1:1 с `fragment_generate.xml`:
+  header-строка (акцент-бар, икона, счётчик `Worker counts`, шестерёнка
+  настроек, toggle-чип Вкл./Выкл.), прогресс-ряды `item_worker_progress`,
+  кнопки Generate/Stop. `updateHeaderPanelStyle`/`updateToggleText` перенесены.
+- Worker counts poll 5s (`/worker/counts`) → `updateSectionHeader`: икона
+  error (генерит, нужен, но 0 воркеров), active (пульс `gen-pulse` 1.6s),
+  normal, off (перечёркнутая).
+- Прогресс-панель poll 1.5s (`/progress-panel`) → `computeProgressRows` 1:1:
+  new-gen gate (анти-флеш stale 100%), monotonic floor, 10s done-window,
+  все-cancelled скрытие, финализация (SUCCESS + `playbackPrepared` soft
+  refresh). VBook-ряд из SSE + `/agent-status` poll (2s, 5min timeout).
+- Таймер 500ms (заморозка done-рядов / live-подсчёт активных), как
+  `refreshTimerDisplay`.
+- Запуск генерации: Generate All → scope dialog → VBook; Audio/Image/Video →
+  scope dialog (`DialogGenerateScope`, позиция-зависимые опции disabled без
+  позиции) → `POST /regenerate {worker_types, scope, chapter_id, scene_id}`;
+  VBook → `bootstrap`/`bootstrap-next-window` + poll `/agent-status`.
+  Stop All → `/cancel-generation`; Stop секции → `/cancel-worker {type}`;
+  stop ряда → popup «Отменить» (`worker_stop_menu_cancel`) →
+  `/cancel-worker {type, task_id}`.
+- SSE `/progress-stream` (ProgressEvent: vbook/import_complete/generation_complete)
+  с reconnect-экспонентой 1s→2s→4s→8s→15s и epoch-guard;
+  `import_complete` завершает VBook-поллер раньше.
+- `checkAndRestoreGenerationState` (2.5s после mount) — восстановление
+  активной генерации после restart backend (R11).
+- Индикатор на tab-иконке: RUNNING/ERROR/SUCCESS → цвет+пульс (`tabbar__pulse*`),
+  SUCCESS авто-сброс 22s (как `updateNavIconStatus`), сброс при входе на
+  Generate без активной работы.
+- `playbackPrepared` → `playbackStore.wirePlaybackCoordination()`
+  (`setupPlaybackCoordination`): `preparePlayback`/`refreshContent(softRefresh)`.
+- Отклонения и решения — [`06-RISKS-AND-ALTERNATIVES.md`](06-RISKS-AND-ALTERNATIVES.md) §13.
 
 ## Этап 5 — Navigate (карта-закладки → seek)
 

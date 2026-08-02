@@ -5,6 +5,7 @@ import { t, tf } from '../app/i18n';
 import type { StrKey } from '../app/i18n';
 import { getJson, putJson } from '../api/client';
 import { bookId } from '../state/generateStore';
+import { workerType } from '../app/routeState';
 import { navigate } from '../app/router';
 import type { Route } from '../app/router';
 
@@ -228,7 +229,9 @@ const COUNT_ROWS: { key: WorkerType | 'vbook'; activeKey: 'active_audio' | 'acti
 ];
 
 function WorkerSection() {
-  const [type, setType] = useState<WorkerType>('audio');
+  // WorkerSettingsFragment.newInstance(type, label) equivalent — Generate
+  // sets routeState.workerType before navigating (stage 4).
+  const [type, setType] = useState<WorkerType>(workerType.value ?? 'audio');
   const [cfg, setCfg] = useState<LayerConfig | null>(null);
   const [profiles, setProfiles] = useState<ConnectorProfiles | null>(null);
   const [grouped, setGrouped] = useState<ConnectorGrouped | null>(null);

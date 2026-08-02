@@ -1,8 +1,10 @@
-// PlaybackViewModel equivalent (stub, phase 0). Player engine wiring arrives at
+// PlaybackViewModel equivalent (stub, phases 0/4). Player engine wiring arrives at
 // stage 7. Here we expose the public state shape (PlaybackUiState + scene queue)
-// so the shell and Navigate/Edit can depend on the fixed API surface.
+// and the playback coordinator (MainActivity.setupPlaybackCoordination) so the
+// shell and Navigate/Edit/Generate can depend on the fixed API surface.
 import { signal } from '@preact/signals';
 import type { SceneRef } from './generateStore';
+import { onPlaybackPrepared } from './generateStore';
 
 export type PlayerPhase =
   | 'IDLE' | 'LOADING_BOOK' | 'GENERATING' | 'DOWNLOADING'
@@ -42,6 +44,16 @@ export function preparePlayback(bId: string, bBuild: string, scenes: SceneRef[])
   };
 }
 
+// Soft refresh after generation completes (PlaybackViewModel.refreshContent):
+// same book, potentially new scenes/build — keep current playback position.
+// Stage 7 expands this into the full soft-refresh pipeline.
+export function refreshContent(bId: string, bBuild: string, scenes: SceneRef[]): void {
+  bookId.value = bId;
+  buildId.value = bBuild;
+  sceneQueue.value = scenes;
+  uiState.value = { ...uiState.value, sceneCount: scenes.length };
+}
+
 export function seekToPosition(_chapterId: string, _sceneId: string, _unitIndex: number): void {
   // Implemented at stage 5/7 (refresh book JSON if scene missing → missingIuPosition overlay).
 }
@@ -51,4 +63,23 @@ export function closeBook(): void {
   buildId.value = '';
   sceneQueue.value = [];
   uiState.value = { ...initial };
+}
+
+// ── Playback coordinator (MainActivity.setupPlaybackCoordination) ──
+// Observes generateStore.playbackPrepared and forwards to preparePlayback or
+// refreshContent depending on softRefresh. Wired once from main.tsx.
+let wired = false;
+export function wirePlaybackCoordination(): void {
+  if (wired) return;
+  wired = true;
+  onPlaybackPrepared((prep) => {
+    if (prep.softRefresh) {
+      refreshContent(prep.bookId, prep.buildId, prep.scenes);
+    } else {
+      preparePlayback(prep.bookId, prep.buildId, prep.scenes);
+    }
+    if (prep.coverImage != null) {
+      // stage 7: setCoverImage(prep.coverImage)
+    }
+  });
 }

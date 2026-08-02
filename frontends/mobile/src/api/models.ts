@@ -362,3 +362,158 @@ export function unitIndex(book: BookData | null, chapterId: string | null, scene
   }
   return 0;
 }
+
+// ─────────────────────────────────────────────────────
+// Generate screen (stage 4) — worker counts / progress panel /
+// agent status / layer config / regenerate
+// ─────────────────────────────────────────────────────
+
+// GET /worker/counts — WorkerCounts.kt
+export interface WorkerCounts {
+  audio: number;
+  image: number;
+  video: number;
+  vbook: number;
+  active_audio: number;
+  active_image: number;
+  active_video: number;
+  active_vbook: number;
+  active_scenes: number;
+}
+
+// GET /book/{id}/progress-panel — ProgressPanelResponse/ProgressTask
+export interface ProgressPanelResponse {
+  book_id?: string | null;
+  tasks: ProgressTask[];
+  overall_percent: number;
+  any_incomplete: boolean;
+}
+
+export interface ProgressTask {
+  task_id?: string | null;
+  type: string;
+  scope: string;
+  chapter_id?: string | null;
+  scene_id?: string | null;
+  scene_label?: string | null;
+  chapter_label?: string | null;
+  end_scene_label?: string | null;
+  end_chapter_label?: string | null;
+  target_count: number;
+  started_at?: number | null;
+  ready: number;
+  total: number;
+  percent: number;
+  done: boolean;
+  visible: boolean;
+  indeterminate: boolean;
+  cancelled: boolean;
+}
+
+// GET /book/{id}/agent-status — AgentStatusResponse
+export interface AgentStatusResponse {
+  active: boolean;
+  session_id?: string | null;
+  session_status?: string | null;
+  progress_msg?: string | null;
+  source_type?: string | null;
+  window_index?: number | null;
+  created_scenes?: number | null;
+  total_scenes?: number | null;
+  remaining_cached?: number | null;
+  window_size?: number | null;
+  window_start_scene?: number | null;
+  window_total_scenes?: number | null;
+  window_scene_index?: number | null;
+  step_type?: string | null;
+}
+
+// GET/PUT /book/{id}/layer-config — LayerConfigResponse / LayerConfigUpdate
+export interface LayerConfigResponse {
+  book_id?: string | null;
+  audio_enabled: boolean;
+  image_enabled: boolean;
+  video_enabled: boolean;
+  vbook_enabled: boolean;
+  chunk_size: number;
+  audio_timeout_minutes?: number | null;
+  image_timeout_minutes?: number | null;
+  video_timeout_minutes?: number | null;
+}
+
+export interface LayerConfigUpdate {
+  audio_enabled?: boolean | null;
+  image_enabled?: boolean | null;
+  video_enabled?: boolean | null;
+  vbook_enabled?: boolean | null;
+  chunk_size?: number | null;
+  audio_timeout_minutes?: number | null;
+  image_timeout_minutes?: number | null;
+  video_timeout_minutes?: number | null;
+}
+
+// GET /book/{id}/status — BookStatus (lazy book; served camelCase by backend)
+export interface BookStatus {
+  bookId?: string | null;
+  state?: string | null;
+  source?: string | null;
+  title?: string | null;
+  author?: string | null;
+  language?: string | null;
+  hasSource?: boolean;
+  hasCharacters?: boolean;
+  hasBible?: boolean;
+  totalChapters?: number;
+  parsedChapters?: number;
+  totalScenes?: number;
+  parsedScenes?: number;
+  characterCount?: number;
+  locationCount?: number;
+  sourceSize?: number;
+  updatedAt?: string | null;
+  ready?: boolean;
+}
+
+// POST /book/{id}/regenerate — RegenerateRequest / RegenerateResponse
+export interface RegenerateRequest {
+  new_book?: BookData | null;
+  rebuild_all?: boolean;
+  worker_types?: string[] | null;
+  scope?: string | null;
+  chapter_id?: string | null;
+  scene_id?: string | null;
+}
+
+export interface RegenerateResponse {
+  book_id?: string | null;
+  build_id?: string | null;
+  message?: string | null;
+  dirty_scenes?: { chapter_id?: string; scene_id?: string; reason?: string; dirty_layers?: string[] }[] | null;
+  marked?: number;
+  scope?: string | null;
+  tasks?: { task_id: string; type: string; target_count: number }[];
+}
+
+// POST /book/{id}/cancel-worker — CancelWorkerRequest
+export interface CancelWorkerRequest {
+  type?: string | null;
+  task_id?: string | null;
+}
+
+// SSE /book/{id}/progress-stream — ProgressEvent (ProgressStream.kt)
+export interface ProgressEvent {
+  type?: string;
+  layer?: string;
+  chapterId?: string | null;
+  sceneId?: string | null;
+  ready?: number | null;
+  // VBook fields (type == "vbook")
+  stage?: string | null;
+  scene_index?: number | null;
+  total_scenes?: number | null;
+  window_size?: number | null;
+  window_scene_index?: number | null;
+  window_total_scenes?: number | null;
+  window_start_scene?: number | null;
+  message?: string | null;
+}

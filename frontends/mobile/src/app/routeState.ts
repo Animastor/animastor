@@ -10,3 +10,6 @@ export const devConnector = signal<string | null>(null);
 
 /** editMode flag for /workflows/:name (WorkflowDetailsFragment.newInstance(..., editMode)). */
 export const detailsEditMode = signal(false);
+
+/** Worker type for /settings/worker (WorkerSettingsFragment.newInstance(type, label)). */
+export const workerType = signal<'audio' | 'image' | 'video'>('audio');

@@ -9,14 +9,16 @@
   --text-disabled: #A89F94;
   --primary-container: #F5E0E2;
   --accent-container: #F5EDD6;
+  --on-accent-container: #A6833E; /* colorOnSecondaryContainer = cinema_accent_dim */
   --error-container: #FCE4E7;
   --outline: #CEC5B8;
   --outline-2: #E2DACD;
   --scrim: rgba(160,152,128,0.5);
   --missing-bg: rgba(230,223,211,0.8);
   --subtitle-bg: rgba(0,0,0,0.73);
-  --worker-panel-on: #D8CFBF;
-  --worker-panel-off: #E6DFD3;
+  --worker-panel-on: #E3DACB;
+  --worker-panel-off: #F2EDE3;
+  --posbar-gradient: linear-gradient(180deg, #F5F0E6, #E7DED0);
 
   --theme-color: #E6DFD3;
 }

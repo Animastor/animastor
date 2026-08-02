@@ -145,6 +145,28 @@
 `Play` автоматически готов играть (через `playbackPrepared`), статус-иконка
 корректно пульсирует и авто-сбрасывается.
 
+### Завершение этапа 4 (2026-08-02) ✅
+
+- 4.1 Generate (`/generate`) — 1:1 с `fragment_generate.xml`:
+  position-bar (→ `/navigate`), Global-секция (Generate All / Stop All),
+  4 секции воркеров (VBook/Audio/Image/Video) с header-строкой
+  (акцент-бар/икона/счётчик/gear → настройки/toggle-чип), прогресс-рядами и
+  кнопками Generate/Stop. Toggle-чипы персистятся в `PUT /layer-config`.
+- Прогресс: `computeProgressRows` (порт из `GenerateViewModel`): new-gen gate,
+  monotonic floor, 10s done-window, all-cancelled, финализация SUCCESS;
+  VBook-ряд из `/agent-status` poll (2s) + SSE `import_complete`.
+- Движки: worker counts poll 5s; progress-panel poll 1.5s; timer 500ms;
+  `checkAndRestoreGenerationState` 2.5s после mount (R11).
+- Действия: `POST /regenerate` (scope+worker_types), `bootstrap`/
+  `bootstrap-next-window` (VBook), `/cancel-generation`, `/cancel-worker
+  {type|task_id}`. Scope-диалог 1:1 (`DialogGenerateScope`), позиционные
+  опции disabled без `positionStore`.
+- Координация: `playbackStore.wirePlaybackCoordination()` =
+  `setupPlaybackCoordination` (preparePlayback / refreshContent по softRefresh);
+  `applyGenerationResults` эмитит soft-refresh после завершения.
+- Tab-иконка: RUNNING/ERROR/SUCCESS пульс (`tabbar__pulse*`) + авто-сброс 22s.
+  Отклонения — [`06-RISKS-AND-ALTERNATIVES.md`](06-RISKS-AND-ALTERNATIVES.md) §13.
+
 ---
 
 ## Этап 5 — Navigate (карта-закладки → seek)

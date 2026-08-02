@@ -15,6 +15,11 @@ import { WorkflowDetailsPage } from './pages/WorkflowDetailsPage';
 import { DeveloperViewPage } from './pages/DeveloperViewPage';
 import { AiAssistantPage } from './pages/AiAssistantPage';
 import { applyTheme, applyLanguage } from './app/theme';
+import { wirePlaybackCoordination } from './state/playbackStore';
+
+// MainActivity.setupPlaybackCoordination() equivalent — forwards
+// generateStore.playbackPrepared to PlaybackViewModel (stage 4).
+wirePlaybackCoordination();
 
 function Routes() {
   return (

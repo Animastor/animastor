@@ -330,6 +330,23 @@ X-Frame-Options/CSP источника) или рендер содержимог
 
 ---
 
+## 13. Отклонения этапа 4 (Generate)
+
+| Отклонение | Причина | Альтернатива |
+|---|---|---|
+| Прогресс: poll `/progress-panel` (1.5s) как основной источник + SSE `/progress-stream` advisory (не наоборот) | Android держит и SSE (`ProgressStream`), и поллер 1.5s (reconcile/fallback); на вебе fetch-per-frame проще, SSE — push-ускорение для VBook (`import_complete` завершает поллер раньше) | `computeProgressRows` вызывается из поллера; SSE-события обновляют `vbookProgress`/флаги (R11-монотонность через monotonic floor в сторе) |
+| `checkAndRestoreGenerationState` — 2.5s после mount (не при старте activity) | GenerateFragment делает `delay(2_500)` до вызова, чтобы backend успел startup recovery | тот же таймаут в `useEffect` |
+| «Generate All» запускает только VBook и показывает toast «Generate All: слои (scope)» | 1:1 с Android `onGenerateAllClicked` (scope-диалог → `onGenerateVBookClicked()` + toast; GPU-слои не запускаются) | воспроизведено буквально |
+| Тост «… generation started» — англоязычные хардкоды | в Android это хардкоды в коде (не strings.xml): «VBook generation started» и т.п. | те же строки в toast |
+| Кнопка Stop на ряду — popup-меню «Отменить» (`worker_stop_menu_cancel`) поверх ряда вместо `PopupMenu` c gravity END | PopupMenu требует нативной привязки к view; эквивалент — модальный popup с одним пунктом | подсветка ряда не переносится (в Android — `row.setBackgroundColor` при открытии), popup закрывается по клику вне |
+| VBook-ряд: сообщение-стадия (`progress_msg`) показывается как label вместо «Analyzing…» | в Android `label = stageMsg ?: vbookLabel` (эта же логика) | 1:1 |
+| `applyGenerationResults` не грузит cover bitmap | Android `loadCoverBitmap` + retry нужен для cover-дисплея плеера (этап 7) | `PlaybackPrepared.coverImage` остаётся undefined до этапа 7; soft-refresh эмитится со сценами |
+| Индикатор на tab-иконке — CSS-пульс, а не `ObjectAnimator` | §7: `ObjectAnimator pulse → CSS @keyframes` | `tabbar__pulse` (1.6s) / `--error` (1.2s) / `--success`; авто-сброс SUCCESS через 22s таймер (как `updateNavIconStatus`) |
+| Настройки воркера (gear): `/settings/worker` открывается с типом через `routeState.workerType`, а не отдельными фрагментами | WorkerSettingsFragment.newInstance(type, label) — аргумент фрагмента; веб-маршрут один (этап 1) | `workerType` signal выставляется перед navigate; `WorkerSection` инициализируется этим типом |
+| VBook-поллер завершает цикл по 2 «inactive» подряд / 5min safety timeout | Android `pollVBookProgress`: maxInactive=2, maxPollTimeMs=5min | 1:1 |
+
+---
+
 ## 8. Правило обновления этого документа
 
 1. Любое отклонение в коде **обязано** быть занесено сюда до реализации в виде
