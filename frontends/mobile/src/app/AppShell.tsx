@@ -36,7 +36,7 @@ function Toolbar({ path, isSecondary }: { path: string; isSecondary: boolean }) 
         <button class="toolbar__btn" aria-label={t('back')} onClick={() => history.back()}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="24" height="24"><path d="M15 18l-6-6 6-6" /></svg>
         </button>
-        <span class="toolbar__title">{secondaryTitle(path)}</span>
+        <span class="toolbar__title toolbar__title--secondary">{secondaryTitle(path)}</span>
       </header>
     );
   }

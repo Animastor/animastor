@@ -44,7 +44,32 @@ button { font: inherit; color: inherit; }
   border-bottom: 1px solid var(--outline-2);
   z-index: 5;
 }
-.toolbar__title { font-weight: 600; font-size: var(--fs-subtitle); flex: 1; }
+.toolbar__title {
+  /* Android activity_main.xml logo TextView (NOT the default Toolbar title):
+     textColor = ?attr/colorSecondary → cinema_accent (--accent, GOLD),
+     textSize 20sp, letterSpacing 0.08, fontFamily sans-serif-medium (500),
+     textStyle normal. */
+  color: var(--accent);     /* colorSecondary → gold #C9A15A */
+  font-weight: 500;         /* sans-serif-medium */
+  font-size: 1.25rem;       /* 20sp */
+  letter-spacing: 0.08em;   /* Android letterSpacing 0.08 (em units) */
+  line-height: 1.5rem;      /* ~24px = 20sp × 1.2 default Android line height */
+  flex: 1;
+  min-width: 0; /* allow the flex item to shrink so ellipsis actually kicks in */
+  overflow: hidden;
+  text-overflow: ellipsis; /* Android Toolbar ellipsizes long titles */
+  white-space: nowrap;
+}
+/* Secondary screens (back arrow + screen title): Android fragment toolbars use
+   app:titleTextColor="?attr/colorOnSurface" (NOT gold) — so override the gold
+   logo color back to --text, and keep the compact pre-migration look (16px/600). */
+.toolbar__title--secondary {
+  color: var(--text); /* colorOnSurface — fragment toolbars are not gold */
+  font-size: 1rem; /* 16px */
+  font-weight: 600;
+  line-height: 1.25rem;
+  letter-spacing: normal;
+}
 .toolbar__btn {
   background: transparent; border: 0; color: var(--text-2);
   width: 2.5rem; height: 2.5rem; border-radius: var(--radius-sm);
@@ -62,8 +87,10 @@ button { font: inherit; color: inherit; }
   border-radius: 0.625rem; /* 10dp */
   background: var(--surface);
   color: var(--accent);
+  /* Mirrors activity_main.xml toolbarAiButton TextView: 14sp, textStyle bold,
+     textColor colorSecondary (accent). */
   font-size: 0.875rem;  /* 14sp */
-  font-weight: 700;
+  font-weight: 700;     /* bold */
   line-height: 1;
   display: inline-flex;
   align-items: center;
