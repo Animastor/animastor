@@ -1070,13 +1070,14 @@ button { font: inherit; color: inherit; }
 }
 .edit-posbar { flex-shrink: 0; }
 
-/* Unit carousel — 3 cards, weights 1.5 : 1 : 1 like fragment_edit.xml.
-   Card heights are set per-card from each image's aspect ratio (Android
-   loadPreviewImage: hDp = cardWDp * h/w) — the current card is 1.5× wider
-   and proportionally taller, portrait images keep their proportions. */
+/* Unit carousel — 3 cards like fragment_edit.xml carouselRow
+   (android:gravity="center" — cards vertically centered on one axis; card
+   heights are set per-card from each image's aspect ratio, Android
+   loadPreviewImage: hDp = cardWDp * h/w). The current card is wider and
+   proportionally taller; portrait images keep their proportions. */
 .edit-carousel {
   display: flex;
-  align-items: flex-start; /* cards keep their own heights (wrap_content) */
+  align-items: center; /* gravity="center": card centers on the same line */
   gap: 0.5rem; /* 8dp between cards (4dp margin each side, like fragment_edit.xml) */
   flex-shrink: 0;
 }
@@ -1092,7 +1093,10 @@ button { font: inherit; color: inherit; }
   min-width: 0;
 }
 .edit-unit-card--current {
-  flex: 1.5; /* weight 1.5 */
+  /* Web deviation: weight 1.35 instead of Android's 1.5 — the browser UI
+     leaves less viewport than Android, so the central card was ~10% too big;
+     height follows the ratio via clientWidth, so both shrink together. */
+  flex: 1.35;
   border-radius: 1rem; /* 16dp */
   background: var(--nav-scene-bg); /* colorSurfaceVariant */
   box-shadow: var(--elev-1);
