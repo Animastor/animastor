@@ -114,6 +114,25 @@
 Приёмка: импорт книги → `Generate` видит книгу; экспорт/скчивание работают;
 повторный выбор уже открытой книги не ломает состояние (как `pendingExportBookId`).
 
+### Завершение этапа 3 (2026-08-02) ✅
+
+- 3.1 File (`/file`) — 3 карточки 1:1 с `fragment_file.xml`: Import from Device
+  (`<input type=file>` + drag-drop → `POST /book/import`, статус импорта из
+  `importProgressMessages.take(4)` / фаз `file_status_*`), Create New Book
+  (`closeBook()` + → `/ai` в create-режиме), Library (→ `/library`).
+- Скачивание: 4 карточки (book/storyboard/audio/video) с теми же правилами
+  enabled, что в Android (`!exporting && bookId` для .vbook;
+  `!exporting && bookId && buildId && SCENE_READY/PLAYING` для остальных);
+  загрузка через fetch-Blob → `<a download>` (эквивалент CreateDocument),
+  прогресс по Content-Length, статусы `export_preparing*` → `export_progress` →
+  `export_saved` (3s) → очистка.
+- Импорт (vbook/txt) завершается `navigationEvent` → `/play`|`/generate` по
+  сценам и `has_assets` (логика `importBookFromFile` 1:1), `generateStore.loadBook()`
+  выставлен — `Generate`/`Play` увидят книгу (сами экраны — этапы 4/7).
+- Deep link `?book=<id>`/`?open=<id>` — книга грузится с сервера по id
+  (`GET /book/{id}`), параметр снимается после обработки. Отклонения —
+  [`06-RISKS-AND-ALTERNATIVES.md`](06-RISKS-AND-ALTERNATIVES.md) §12.
+
 ---
 
 ## Этап 4 — Generate (прогресс и координация)

@@ -75,7 +75,9 @@ export async function deleteJson<T>(path: string): Promise<T> { return request<T
 
 // Streaming Blob download: reads the body in chunks and assembles a Blob,
 // so large audio/video can be written into mediaCache progressively.
-export async function getBlob(path: string, signal?: AbortSignal): Promise<Blob> {
+// onProgress (0..1) is derived from Content-Length when the server sends it
+// (mirrors Repository.streamToFile progress callbacks for exports).
+export async function getBlob(path: string, signal?: AbortSignal, onProgress?: (progress: number) => void): Promise<Blob> {
   const { signal: s, timedOut, clear } = withTimeout(signal, BLOB_TIMEOUT_MS);
   try {
     const res = await fetch(BASE + path, { headers: { 'Accept': 'application/octet-stream' }, signal: s });
@@ -83,11 +85,15 @@ export async function getBlob(path: string, signal?: AbortSignal): Promise<Blob>
     if (!res.body) return res.blob();
     const reader = res.body.getReader();
     const chunks: BlobPart[] = [];
+    const total = Number(res.headers.get('Content-Length')) || 0;
+    let received = 0;
     try {
       for (;;) {
         const { value, done } = await reader.read();
         if (done) break;
         chunks.push(value); // Uint8Array chunk (fetch body reader never yields strings)
+        received += value.length;
+        if (total > 0 && onProgress) onProgress(Math.min(1, received / total));
       }
     } finally {
       reader.releaseLock();

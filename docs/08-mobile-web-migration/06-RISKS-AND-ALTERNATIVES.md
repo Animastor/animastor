@@ -316,6 +316,20 @@ X-Frame-Options/CSP источника) или рендер содержимог
 
 ---
 
+## 12. Отклонения этапа 3 (File)
+
+| Отклонение | Причина | Альтернатива |
+|---|---|---|
+| Deep link `?book=<id>`/`?open=<id>` грузит книгу с сервера (`GET /book/{id}`), а не «импортирует файл» | `ACTION_VIEW` доставляет байты файла; для веб-ссылки файл уже на сервере — загрузка по id эквивалентна сценарию | `openBookById` следует той же навигационной логике, что `importBookFromFile` (vbook/txt: Play при сценах, Play при `has_assets`); параметр снимается из URL после обработки (deep-link обрабатывается один раз на mount; onNewIntent-аналог для same-document не требуется) |
+| Drag-drop импорта на карточке Import | Android — только системный picker; docs (02 §2.3, 04 §2.3) явно требуют drag-drop | `onDragOver/onDrop` + подсветка `.file-card--drag` |
+| Экспорт: fetch-Blob → `<a download>` вместо CreateDocument+OkHttp streamToFile | нет SAF content-URI в вебе | загрузка через `URL.createObjectURL`; прогресс из `Content-Length` (getBlob onProgress); статусы 1:1 (`export_*` → `export_progress` → `export_saved` 3s → clear) |
+| Импорт без кэширования файла в cacheDir | Android копирует URI→temp-файл перед `importBookFromFile`; в вебе `File` уже в памяти | `postMultipart` сразу; ошибочные форматы возвращают `error` из `/book/import` → `errorMessage` в статус-тексте |
+| `coverImage` в `playbackPrepared` не грузится при импорте | Play (этап 7) ещё заглушка; Android `loadCoverBitmap` нужен для кувер-дисплея плеера | `PlaybackPrepared.coverImage` остаётся undefined до этапа 7; контракт готов |
+| «Список книг» = Library (animastor.in) | серверного эндпоинта списка книг нет, в Android FileFragment списка тоже нет — каталог книг живёт на сайте | карточка Library → `/library` (iframe) |
+| Deep-link навигация — через `navigationEvent` (store), не через немедленный `switchToPlayTab` | Android `handleVBookIntent` зовёт `switchToPlayTab()` до завершения импорта, а затем `NavigationEvent` может увести на Generate; веб ждёт результат импорта и идёт сразу на верную вкладку (без двойного переключения) | один `navigationEvent` → `/play` или `/generate` |
+
+---
+
 ## 8. Правило обновления этого документа
 
 1. Любое отклонение в коде **обязано** быть занесено сюда до реализации в виде

@@ -260,9 +260,11 @@ export interface SessionMessageApi {
 // ─────────────────────────────────────────────────────
 
 export interface BookData {
-  manifest?: { book_id?: string | null } | null;
+  manifest?: { book_id?: string | null; build_id?: string | null } | null;
   book?: { title?: string | null; book_id?: string | null } | null;
   chapters?: BookChapter[] | null;
+  /** Server-computed flat scene list (thin-client contract) — preferred over traversal. */
+  scene_list?: { chapter_id?: string | null; scene_id?: string | null; type?: string | null }[] | null;
 }
 
 export interface BookChapter {
@@ -278,8 +280,75 @@ export interface BookScene {
   scene_id?: string | null;
   scene_title?: string | null;
   display_index?: number | null;
+  type?: string | null;
   units?: { id?: string | null; type?: string | null; text?: string | null }[] | null;
 }
+
+// ─────────────────────────────────────────────────────
+// Book import / export (File screen, stage 3)
+// ─────────────────────────────────────────────────────
+
+export interface ImportResponse {
+  format: 'vbook' | 'txt';
+  book_id: string;
+  build_id?: string | null;
+  title?: string | null;
+  state?: string | null;
+  chapter_count?: number;
+  scene_count?: number;
+  was_existing?: boolean;
+  dedup?: boolean;
+}
+
+export interface AssetsStateResponse {
+  book_id?: string | null;
+  scope?: string | null;
+  total_chunks?: number;
+  audio_ready?: number;
+  image_ready?: number;
+  video_ready?: number;
+  has_audio?: boolean;
+  has_image?: boolean;
+  has_video?: boolean;
+  all_audio_ready?: boolean;
+  all_image_ready?: boolean;
+  all_video_ready?: boolean;
+  has_assets?: boolean;
+  scope_total?: number;
+  scope_audio_ready?: number;
+  scope_audio_ready_real?: number;
+  scope_image_ready?: number;
+  scope_video_ready?: number;
+  scope_all_audio_ready?: boolean;
+}
+
+// Flat scene list in book order — port of BookData.sceneRefs() (BookModels.kt):
+// prefers the server-computed scene_list, falls back to chapter→scene traversal
+// (scene type comes from the scene itself, like the Android fallback).
+export interface SceneRef {
+  chapterId: string;
+  sceneId: string;
+  sceneType?: string;
+}
+
+export function sceneRefs(book: BookData): SceneRef[] {
+  const flat = book.scene_list;
+  if (flat && flat.length) {
+    return flat.map((f) => ({
+      chapterId: f.chapter_id ?? '',
+      sceneId: f.scene_id ?? '',
+      sceneType: f.type ?? undefined,
+    }));
+  }
+  const out: SceneRef[] = [];
+  for (const ch of book.chapters ?? []) {
+    for (const sc of ch.scenes ?? []) {
+      out.push({ chapterId: ch.chapter_id ?? '', sceneId: sc.scene_id ?? '', sceneType: sc.type ?? undefined });
+    }
+  }
+  return out;
+}
+
 
 // unitIndex() equivalent — Android returns unitOffset+1 when the scene exists.
 export function unitIndex(book: BookData | null, chapterId: string | null, sceneId: string | null, unitOffset: number): number {

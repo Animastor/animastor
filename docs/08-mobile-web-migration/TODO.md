@@ -33,7 +33,21 @@
 
 ## Этап 3 — File (импорт/экспорт)
 
-- [ ] **File** (`/file`) — импорт `.vbook`/txt (`POST /book/import` multipart), список книг, экспорт/скачивание, deep link `?book=`
+- [x] **File** (`/file`) — импорт `.vbook`/txt (`POST /book/import` multipart), список книг, экспорт/скачивание, deep link `?book=`
+
+### Завершение этапа 3 (2026-08-02) ✅
+
+- Импорт: карточки Import/Create/Library 1:1 с `fragment_file.xml`; `<input type=file>`
+  (`accept=".vbook,.epub,text/plain,.txt"`) + drag-drop → `POST /book/import`
+  multipart; статус импорта как в Android (статус-текст из `importProgressMessages.take(4)`,
+  фазы `file_status_*`); по завершении — `navigationEvent` → `/play` или `/generate`
+  (логика `importBookFromFile`: vbook → Play при сценах, txt → Play при `has_assets`).
+- Скачивание: `GET /book/{id}/download` (.vbook — только bookId), `/storyboard`,
+  `/audio`, `/export` (нужны bookId+buildId+фаза SCENE_READY/PLAYING);
+  прогресс из Content-Length (`getBlob` onProgress), статусы `export_*`/`export_saved`.
+- Deep link `?book=<id>` (и `?open=<id>`) — загрузка книги с сервера (`GET /book/{id}`),
+  параметр снимается после обработки; подробнее — [`06-RISKS-AND-ALTERNATIVES.md`](06-RISKS-AND-ALTERNATIVES.md) §12.
+- Отклонения и решения — [`06-RISKS-AND-ALTERNATIVES.md`](06-RISKS-AND-ALTERNATIVES.md) §12.
 
 ## Этап 4 — Generate (прогресс и координация)
 

@@ -152,3 +152,51 @@ export function IconChevronRight(props: IconProps) {
     </svg>
   );
 }
+
+// ── Stage 3 icons (File screen) — recoded 1:1 from res/drawable ──
+
+// ic_folder_outline.xml — import from device
+export function IconFolder(props: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor" aria-hidden="true" {...props}>
+      <path d="M10 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z" />
+    </svg>
+  );
+}
+
+// ic_image.xml — download storyboard
+export function IconImage(props: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor" aria-hidden="true" {...props}>
+      <path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z" />
+    </svg>
+  );
+}
+
+// ic_volume_up.xml — download audio
+export function IconVolumeUp(props: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor" aria-hidden="true" {...props}>
+      <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z" />
+    </svg>
+  );
+}
+
+// ic_video_outline.xml — download video
+export function IconVideo(props: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor" aria-hidden="true" {...props}>
+      <path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z" />
+    </svg>
+  );
+}
+
+// ic_library.xml — library card (Android tint is white on primary; web tints
+// via currentColor in .file-card__icon like the other stage-3 icons)
+export function IconLibrary(props: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor" aria-hidden="true" {...props}>
+      <path d="M4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm16-4H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H8V4h12v12zM10 9h8v2h-8zm0 3h4v2h-4zm0-6h8v2h-8z" />
+    </svg>
+  );
+}
