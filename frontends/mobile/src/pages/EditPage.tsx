@@ -498,8 +498,17 @@ export function EditPage(props: { path?: string }) {
       // p.seekTo(unit.start_ms.toInt()) — clamp to the seekable duration.
       const durSec = a.duration && isFinite(a.duration) ? a.duration : Number.MAX_SAFE_INTEGER;
       const seekSec = Math.max(0, Math.min(startMs / 1000, durSec));
-      try { a.currentTime = seekSec; } catch { /* not seekable yet — play from 0 */ }
-      void a.play().catch(() => {});
+      const applySeek = () => { try { a.currentTime = seekSec; } catch { /* not seekable yet */ } };
+      applySeek();
+      void a.play().then(() => {
+        // Belt & suspenders: a few browsers reset currentTime when play() begins
+        // (or the first seek was issued before data was buffered). Now that the
+        // backend answers Range requests with 206, re-apply the seek once playback
+        // is actually running so the range plays from its start marker.
+        if (Math.abs((a.currentTime || 0) - seekSec) > 0.25) {
+          try { a.currentTime = seekSec; } catch { /* ignore */ }
+        }
+      }).catch(() => {});
       setIsPlaying(true);
       if (rafId.current != null) cancelAnimationFrame(rafId.current);
       const tick = () => {

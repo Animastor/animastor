@@ -618,8 +618,7 @@ module.exports = function(app, redis, deps) {
             const files = fs.readdirSync(dir).filter(f => f.startsWith(prefix) && f.endsWith('.mp4'));
             if (!files.length) return res.status(404).json({ error: 'video not ready' });
             const filePath = path.join(dir, files[0]);
-            res.setHeader('Content-Type', 'video/mp4');
-            fs.createReadStream(filePath).pipe(res);
+            streamFileWithRange(req, res, filePath, 'video/mp4');
         } catch (err) {
             res.status(500).json({ error: err.message });
         }
@@ -628,15 +627,56 @@ module.exports = function(app, redis, deps) {
     // ======================================================
     // SCENE AUDIO
     // ======================================================
+    /**
+     * Stream a media file with HTTP Range support (206 Partial Content).
+     * The browser <audio>/<video> engine seeks (currentTime = X) by issuing
+     * Range requests; without 206 handling the seek silently fails and playback
+     * restarts from position 0. This broke the Edit-page waveform range playback
+     * (unit start→end markers) and the Play-page seek bar — Android's MediaPlayer
+     * buffers the whole file and seeks internally, so it never hit this.
+     */
+    function streamFileWithRange(req, res, filePath, contentType) {
+        const fileSize = fs.statSync(filePath).size;
+        res.setHeader('Content-Type', contentType);
+        res.setHeader('Accept-Ranges', 'bytes');
+
+        const range = req.headers.range;
+        if (range) {
+            const match = /^bytes=(\d*)-(\d*)$/.exec(range);
+            if (!match) {
+                res.status(416).setHeader('Content-Range', `bytes */${fileSize}`).end();
+                return;
+            }
+            let start = match[1] ? parseInt(match[1], 10) : 0;
+            let end = match[2] ? parseInt(match[2], 10) : fileSize - 1;
+            if (match[1] === '' && match[2] !== '') {
+                // Suffix range "bytes=-N" — last N bytes.
+                start = Math.max(0, fileSize - parseInt(match[2], 10));
+                end = fileSize - 1;
+            }
+            if (start >= fileSize || start > end) {
+                res.status(416).setHeader('Content-Range', `bytes */${fileSize}`).end();
+                return;
+            }
+            end = Math.min(end, fileSize - 1);
+            res.status(206);
+            res.setHeader('Content-Range', `bytes ${start}-${end}/${fileSize}`);
+            res.setHeader('Content-Length', end - start + 1);
+            fs.createReadStream(filePath, { start, end }).pipe(res);
+            return;
+        }
+
+        res.setHeader('Content-Length', fileSize);
+        fs.createReadStream(filePath).pipe(res);
+    }
+
     app.get('/api/v1/scene/:bookId/:chapterId/:sceneId/audio', async (req, res) => {
         try {
             const { bookId, chapterId, sceneId } = req.params;
             const buildId = getEffectiveBuildId(bookId, req.query.build_id, log);
             const audioPath = path.join(OUTPUT_DIR, buildId, `${bookId}_${chapterId}_${sceneId}.mp3`);
             if (!fs.existsSync(audioPath)) return res.status(404).json({ error: 'audio not ready' });
-            res.setHeader('Content-Type', 'audio/mpeg');
-            res.setHeader('Accept-Ranges', 'bytes');
-            fs.createReadStream(audioPath).pipe(res);
+            streamFileWithRange(req, res, audioPath, 'audio/mpeg');
         } catch (err) {
             res.status(500).json({ error: err.message });
         }
@@ -774,8 +814,7 @@ module.exports = function(app, redis, deps) {
             const files = fs.readdirSync(dir).filter(f => f.startsWith(prefix) && f.endsWith('.mp4'));
             if (!files.length) return res.status(404).json({ error: 'video not ready' });
             const filePath = path.join(dir, files[0]);
-            res.setHeader('Content-Type', 'video/mp4');
-            fs.createReadStream(filePath).pipe(res);
+            streamFileWithRange(req, res, filePath, 'video/mp4');
         } catch (err) {
             res.status(500).json({ error: err.message });
         }
