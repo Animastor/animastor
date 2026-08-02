@@ -294,7 +294,7 @@ const dict = {
     timeline_reset: 'Сбросить тайминги',
     // Edit panels (web: collapsible carousel/waveform panels)
     edit_carousel_title: 'Карусель изображений',
-    edit_waveform_title: 'Waveform редактора',
+    edit_waveform_title: 'Waveform редактор',
     edit_collapse: 'Свернуть',
     edit_expand: 'Развернуть',
     edit_close: 'Закрыть',
