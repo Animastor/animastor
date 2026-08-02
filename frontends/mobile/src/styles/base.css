@@ -1181,13 +1181,14 @@ button { font: inherit; color: inherit; }
    heights are set per-card from each image's aspect ratio, Android
    loadPreviewImage: hDp = cardWDp * h/w). The current card is wider and
    proportionally taller; portrait images keep their proportions.
-   Web deviation: 10% side insets shrink every card window ~20% (both dims
-   scale together — the height is image-ratio driven), per user tuning. */
+   Web deviation: 6% side insets + a wide 20dp gap spread the cards across
+   the row (the ~20% smaller windows stay, but the space is redistributed so
+   cards aren't bunched in the center), per user tuning. */
 .edit-carousel {
   display: flex;
   align-items: center; /* gravity="center": card centers on the same line */
-  gap: 0.5rem; /* 8dp between cards (4dp margin each side, like fragment_edit.xml) */
-  padding: 0 10%; /* ~20% smaller windows, centered */
+  gap: 1.25rem; /* 20dp — cards spread apart, not bunched in the center */
+  padding: 0 6%; /* windows stay ~20% smaller, sides less empty */
   flex-shrink: 0;
 }
 .edit-unit-card {
