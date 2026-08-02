@@ -1118,29 +1118,30 @@ button { font: inherit; color: inherit; }
 }
 .edit-posbar { flex-shrink: 0; }
 
-/* Collapsible panels (web deviation — Edit carousel + waveform live in
-   titled panels with a collapse chevron in the top-right corner; collapsed
-   state leaves a thin title strip, like a MaterialCardView header row). */
+/* Collapsible panels (web deviation — Edit carousel + waveform). Expanded:
+   zero extra layout — a small collapse chevron floats in the top-right corner
+   (absolutely positioned, no height cost); the content keeps its own chrome
+   exactly as before. Collapsed: a thin title strip that re-expands on tap. */
 .edit-panel {
+  position: relative;
   flex-shrink: 0;
-  border-radius: var(--radius-sm);
-  background: var(--nav-scene-bg); /* colorSurfaceVariant */
-  border: 1px solid var(--outline-2);
-  overflow: hidden;
 }
-.edit-panel__head {
+/* Thin title strip — visible only in the collapsed state */
+.edit-panel__strip {
+  display: none;
   width: 100%;
-  display: flex; align-items: center; justify-content: space-between;
+  align-items: center; justify-content: space-between;
   gap: 0.5rem;
-  padding: 0.5rem 0.625rem;
-  border: 0; background: transparent;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--outline-2); border-radius: var(--radius-sm);
+  background: var(--nav-scene-bg); /* colorSurfaceVariant */
   color: var(--text-2);
   font-size: 0.8125rem; /* 13sp labelMedium */
   font-weight: 600;
   cursor: pointer;
 }
-.edit-panel__head:hover { background: var(--surface-dim); }
-.edit-panel__head:active { background: var(--surface-dim); }
+.edit-panel__strip:hover { background: var(--surface-dim); }
+.edit-panel__strip:active { background: var(--surface-dim); }
 .edit-panel__title {
   min-width: 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -1148,11 +1149,32 @@ button { font: inherit; color: inherit; }
 .edit-panel__chev {
   flex-shrink: 0;
   display: inline-flex; align-items: center; justify-content: center;
-  width: 1.75rem; height: 1.75rem;
+  width: 1.5rem; height: 1.5rem;
   border-radius: var(--radius-pill);
   color: var(--text-2);
 }
-.edit-panel__body { padding: 0 0.5rem 0.5rem; }
+/* Collapsed state: show the strip, hide content + floating button */
+.edit-panel--collapsed .edit-panel__strip { display: flex; }
+.edit-panel--collapsed .edit-carousel,
+.edit-panel--collapsed .edit-timeline { display: none; }
+.edit-panel--collapsed .edit-panel__collapse { display: none; }
+/* Small collapse button in the top-right corner (expanded only). 24px and
+   tucked under the corner so it sits above the reset button's empty padding
+   (44dp buttons are vertically centered in the 88dp panel — the chevron only
+   grazes their top padding, never the icon). */
+.edit-panel__collapse {
+  position: absolute; top: 0.25rem; right: 0.375rem;
+  z-index: 3;
+  width: 1.5rem; height: 1.5rem;
+  border: 0; border-radius: var(--radius-pill);
+  background: rgba(0, 0, 0, 0.55); /* scrim — readable over images/panels */
+  color: #fff;
+  display: inline-flex; align-items: center; justify-content: center;
+  cursor: pointer;
+  box-shadow: var(--elev-1);
+}
+.edit-panel__collapse:hover { background: rgba(0, 0, 0, 0.72); }
+.edit-panel__collapse:active { background: rgba(0, 0, 0, 0.85); }
 
 /* Unit carousel — 3 cards like fragment_edit.xml carouselRow
    (android:gravity="center" — cards vertically centered on one axis; card
@@ -1211,11 +1233,16 @@ button { font: inherit; color: inherit; }
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 
-/* Audio timeline panel — row content inside .edit-panel (panel provides the
-   MaterialCardView chrome; this keeps the play/waveform/reset row layout). */
+/* Audio timeline panel (MaterialCardView 12dp, colorSurfaceVariant) — its own
+   chrome is kept exactly as before the collapse feature; the collapse chevron
+   floats above the top-right corner without affecting the row layout. */
 .edit-timeline {
   display: flex; align-items: center;
   gap: 0.25rem;
+  padding: 0.5rem;
+  border-radius: var(--radius-sm);
+  background: var(--nav-scene-bg); /* colorSurfaceVariant */
+  border: 1px solid var(--outline-2);
   flex-shrink: 0;
 }
 .edit-timeline__btn {

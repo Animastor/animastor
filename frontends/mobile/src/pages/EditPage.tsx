@@ -1291,56 +1291,56 @@ export function EditPage(props: { path?: string }) {
         {hasUnits && <span class="gen-posbar__units">{unitCountText}</span>}
       </button>
 
-      {/* Unit carousel — collapsible panel (web deviation: frees vertical space
-          for the editor; header collapses to a title strip, current card
-          opens the full-size image). */}
-      <div class="edit-panel">
-        <button class="edit-panel__head" type="button" aria-expanded={!carouselCollapsed} aria-label={carouselCollapsed ? t('edit_expand') : t('edit_collapse')} onClick={() => setCarouselCollapsed((v) => !v)}>
+      {/* Unit carousel — collapsible panel (web deviation: frees vertical
+          space for the editor). Expanded = original carousel + a small
+          collapse chevron floating in its top-right corner (zero extra
+          height). Collapsed = thin title strip that re-expands on tap.
+          The carousel stays mounted (hidden via CSS) so image sizes restore
+          exactly; current card opens the full-size image. */}
+      <div class={'edit-panel' + (carouselCollapsed ? ' edit-panel--collapsed' : '')}>
+        <button class="edit-panel__strip" type="button" aria-expanded={!carouselCollapsed} onClick={() => setCarouselCollapsed(false)}>
           <span class="edit-panel__title">{t('edit_carousel_title')}</span>
-          <span class="edit-panel__chev" aria-hidden="true">
-            {carouselCollapsed ? <IconChevronDown width={18} height={18} /> : <IconChevronUp width={18} height={18} />}
-          </span>
+          <span class="edit-panel__chev" aria-hidden="true"><IconChevronDown width={18} height={18} /></span>
         </button>
-        {!carouselCollapsed && (
-          <div class="edit-panel__body">
-            <div class="edit-carousel">
-              <CarouselCard kind="prev" bid={bid} bld={bld} item={carousel.prev} onClick={() => carousel.prev && navigateUnit(-1)} />
-              <CarouselCard kind="current" bid={bid} bld={bld} item={carousel.current} onClick={() => openZoom(carousel.current)} />
-              <CarouselCard kind="next" bid={bid} bld={bld} item={carousel.next} onClick={() => carousel.next && navigateUnit(1)} />
-            </div>
-          </div>
-        )}
+        <button class="edit-panel__collapse" type="button" aria-label={t('edit_collapse')} onClick={() => setCarouselCollapsed(true)}>
+          <IconChevronUp width={16} height={16} />
+        </button>
+        <div class="edit-carousel">
+          <CarouselCard kind="prev" bid={bid} bld={bld} item={carousel.prev} onClick={() => carousel.prev && navigateUnit(-1)} />
+          <CarouselCard kind="current" bid={bid} bld={bld} item={carousel.current} onClick={() => openZoom(carousel.current)} />
+          <CarouselCard kind="next" bid={bid} bld={bld} item={carousel.next} onClick={() => carousel.next && navigateUnit(1)} />
+        </div>
       </div>
 
-      {/* Audio timeline panel — collapsible (same web deviation) */}
+      {/* Audio timeline panel — collapsible (same web deviation). Collapsing
+          stops playback so audio never plays without the visible waveform. */}
       {timelineVisible && (
-        <div class="edit-panel">
-          <button class="edit-panel__head" type="button" aria-expanded={!timelineCollapsed} aria-label={timelineCollapsed ? t('edit_expand') : t('edit_collapse')} onClick={() => { if (!timelineCollapsed) stopPlaybackInternal(); setTimelineCollapsed((v) => !v); }}>
+        <div class={'edit-panel' + (timelineCollapsed ? ' edit-panel--collapsed' : '')}>
+          <button class="edit-panel__strip" type="button" aria-expanded={!timelineCollapsed} onClick={() => setTimelineCollapsed(false)}>
             <span class="edit-panel__title">{t('edit_waveform_title')}</span>
-            <span class="edit-panel__chev" aria-hidden="true">
-              {timelineCollapsed ? <IconChevronDown width={18} height={18} /> : <IconChevronUp width={18} height={18} />}
-            </span>
+            <span class="edit-panel__chev" aria-hidden="true"><IconChevronDown width={18} height={18} /></span>
           </button>
-          {!timelineCollapsed && (
-            <div class="edit-panel__body">
-              <button class="edit-timeline__btn" type="button" aria-label={isPlaying ? t('timeline_stop') : t('timeline_play')} onClick={togglePlayback}>
-                {isPlaying ? <IconStop width={22} height={22} /> : <IconPlay width={22} height={22} />}
-              </button>
-              <div class="edit-timeline__wave">
-                <Waveform
-                  peaks={waveformData?.peaks ?? []}
-                  durationMs={Math.round((waveformData?.duration_sec ?? 0) * 1000)}
-                  selection={selection}
-                  playbackSignal={playbackPos}
-                  onRangeChange={handleRangeChange}
-                  onRangeChangeEnd={handleRangeChangeEnd}
-                />
-              </div>
-              <button class="edit-timeline__btn" type="button" aria-label={t('timeline_reset')} onClick={resetCurrentUnitTiming}>
-                <IconReset width={22} height={22} />
-              </button>
+          <button class="edit-panel__collapse" type="button" aria-label={t('edit_collapse')} onClick={() => { stopPlaybackInternal(); setTimelineCollapsed(true); }}>
+            <IconChevronUp width={16} height={16} />
+          </button>
+          <div class="edit-timeline">
+            <button class="edit-timeline__btn" type="button" aria-label={isPlaying ? t('timeline_stop') : t('timeline_play')} onClick={togglePlayback}>
+              {isPlaying ? <IconStop width={22} height={22} /> : <IconPlay width={22} height={22} />}
+            </button>
+            <div class="edit-timeline__wave">
+              <Waveform
+                peaks={waveformData?.peaks ?? []}
+                durationMs={Math.round((waveformData?.duration_sec ?? 0) * 1000)}
+                selection={selection}
+                playbackSignal={playbackPos}
+                onRangeChange={handleRangeChange}
+                onRangeChangeEnd={handleRangeChangeEnd}
+              />
             </div>
-          )}
+            <button class="edit-timeline__btn" type="button" aria-label={t('timeline_reset')} onClick={resetCurrentUnitTiming}>
+              <IconReset width={22} height={22} />
+            </button>
+          </div>
         </div>
       )}
 
@@ -1437,23 +1437,26 @@ function CarouselCard({ kind, bid, bld, item, onClick }: {
   const isCurrent = kind === 'current';
   const unit = item?.unit ?? null;
 
-  // Reset per item change.
+  // Reset per item change — clear the ratio and inline sizing so the card
+  // falls back to its 140dp default until the new image reports its ratio.
   useEffect(() => {
     setRatio(null);
+    const el = cardRef.current;
+    if (el) { el.style.aspectRatio = ''; el.style.height = ''; }
   }, [item?.unit?.id ?? '', item?.index ?? -1]);
 
-  // Card height = card width × image aspect ratio (Android loadPreviewImage:
-  // hDp = cardWDp * bmp.height / bmp.width) — applied to ALL cards, current
-  // included, so portrait images get tall portrait cards instead of being
-  // cropped inside a stretched container. Fallback 140dp before the ratio
-  // arrives (Android XML default 140dp; current = match_parent ≈ 140dp).
+  // Card height = width × image aspect ratio (Android loadPreviewImage:
+  // hDp = cardWDp * bmp.height / bmp.width). Applied as CSS aspect-ratio with
+  // height:auto so the height ALWAYS derives from the card's flex width —
+  // no clientWidth measurement, so collapse/expand and re-renders restore the
+  // exact original card sizes. Fallback 140dp before the ratio arrives
+  // (Android XML default 140dp; current = match_parent ≈ 140dp).
   useEffect(() => {
     const el = cardRef.current;
     if (!el || !ratio || !item) return;
-    const w = el.clientWidth;
-    if (w <= 0) return;
-    el.style.height = `${Math.round(w * ratio)}px`;
-  }, [ratio, isCurrent, item]);
+    el.style.aspectRatio = String(ratio);
+    el.style.height = 'auto';
+  }, [ratio, item]);
 
   return (
     <div
