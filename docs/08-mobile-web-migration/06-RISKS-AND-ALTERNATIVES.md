@@ -299,6 +299,23 @@ X-Frame-Options/CSP источника) или рендер содержимог
 
 ---
 
+## 11. Отклонения этапа 2 (Workflows/Dev/AI)
+
+| Отклонение | Причина | Альтернатива |
+|---|---|---|
+| WorkflowManager читает `/connectors/grouped` вместо `/workflows` + `/workflows/summary` | Android `WorkflowManagerFragment` построен на `getConnectorsGrouped()` (F12: серверные активные счётчики, subtitle = первый коннектор); `/workflows/summary` Android-фрагменты не используют | 3 карточки из grouped-ответа 1:1 с Android |
+| `editMode`/connector для `/dev` передаются через модульный store (`routeState.ts`), а не query-параметр | preact-router матчит полный URL (pathname + search), поэтому `/workflows/:name?edit=1` загрязняет `:name`, а `/dev?connector=…` не матчится вовсе | сигналы `detailsEditMode`/`devConnector` — аналог fragment-аргументов Bundle |
+| `detailsEditMode` НЕ сбрасывается на unmount | сброс ломал back-навигацию (details→dev→back терял edit-режим, т.к. `useState(() => …)` инициализируется один раз); все точки входа выставляют его заново перед navigate | значение живёт до следующего явного перехода (допустимый stale на прямых deep-link) |
+| Правка биндинга/гайд-ноды — радиосписок совместимых нод вместо ActivityResult | Android использует кастомный диалог с RadioGroup поверх `dialog_edit_parameter` | модал с радиосписком из `workflow.nodeTypes` (фильтр по expectedClass) |
+| Add Workflow — `<input type=file>` + `File.text()` + `JSON.parse` вместо OpenDocument+OkHttp | веб-эквивалент OpenDocument; имя из поля `name` или guess из имени файла (как в Android `guessConnectorName`) | форма-фидбэк через toast |
+| Voice input в AI — Web Speech API (`webkitSpeechRecognition`) | аналог `SpeechRecognizer`; на десктопных браузерах без поддержки — тост «недоступно» | ru-RU/en-US по языку интерфейса |
+| Markdown-рендер бабблов — `dangerouslySetInnerHTML` с портом `applyMarkdownTo` + `sanitizeUrl` | Android использует `Html.fromHtml` (платформенный санитайзер); веб требует ручной фильтр | экранирование `&<>` + запрет `javascript:/data:/vbscript:` и кавычек в href |
+| Guide-ноды заголовок — ключ `workflow_guide_nodes` | Android хардкодит «Guide Image Nodes» в коде (нет в strings.xml) | добавлен ru/en ключ |
+| Распознавание речи/сессии при отсутствии книги: AI показывает welcome (create-mode) | Android при пустом bookId показывает `ai_creation_welcome` | 1:1 поведение |
+| Удаление сессии через `confirm()` | Android — отдельный диалог/кнопка | нативный `confirm` для web |
+
+---
+
 ## 8. Правило обновления этого документа
 
 1. Любое отклонение в коде **обязано** быть занесено сюда до реализации в виде

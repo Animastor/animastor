@@ -324,3 +324,372 @@ button { font: inherit; color: inherit; }
 }
 .settings__nav-row:active { background: var(--surface-2); }
 .settings__nav-row .chev { color: var(--text-2); flex-shrink: 0; }
+
+/* ════════════════════════════════════════════════════
+   Stage 2 — Workflows / Developer / AI screens
+   ════════════════════════════════════════════════════ */
+
+/* LinearProgressIndicator (indeterminate) */
+.progress {
+  height: 4px; overflow: hidden; border-radius: 2px;
+  background: var(--surface-2); position: relative; flex-shrink: 0;
+}
+.progress__bar {
+  position: absolute; inset: 0;
+  background: var(--accent);
+  animation: progress-indeterminate 1.2s infinite cubic-bezier(0.4, 0, 0.2, 1);
+  transform-origin: left;
+}
+@keyframes progress-indeterminate {
+  0% { transform: translateX(-100%) scaleX(0.4); }
+  50% { transform: translateX(0%) scaleX(0.4); }
+  100% { transform: translateX(100%) scaleX(0.4); }
+}
+
+/* errorText (colorError) */
+.wf-error {
+  color: var(--error); font-size: 0.875rem; margin: 0 0 0.5rem;
+}
+
+/* ── Workflow Manager (fragment_workflow_manager.xml) ── */
+.wf-page { gap: 0.75rem; }
+.wf-card__title {
+  font-size: 1rem; font-weight: 500; /* sans-serif-medium */
+  color: var(--text); margin: 0;
+}
+.wf-card__subtitle {
+  font-size: 0.8125rem; color: var(--text-2); margin-top: 0.25rem;
+}
+.wf-card__count {
+  font-size: 0.8125rem; color: var(--text); margin-top: 0.75rem;
+}
+.wf-card__manage {
+  align-self: flex-end; margin-top: 0.75rem;
+}
+
+/* ── Workflow Type List (fragment_workflow_type_list.xml) ── */
+.wf-page--list { padding-bottom: 0; }
+.wf-page__footer {
+  margin-top: auto;
+  padding: 0.75rem 0 calc(0.75rem + var(--safe-bottom));
+  position: sticky; bottom: 0; background: var(--bg);
+}
+.wf-entry { cursor: pointer; }
+.wf-entry__row {
+  display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;
+}
+.wf-entry__label {
+  font-size: 0.9375rem; font-weight: 700; color: var(--text);
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.wf-entry__connector {
+  font-size: 0.75rem; color: var(--text-2); margin: 0.25rem 0 0;
+}
+.wf-entry__actions { margin-top: 0.75rem; }
+.wf-entry__details { height: 2.375rem; }
+
+/* Status badges */
+.wf-status {
+  font-size: 0.75rem; font-weight: 700; flex-shrink: 0;
+}
+.wf-status--ok { color: var(--success); }
+.wf-status--error { color: var(--error); }
+.wf-status--accent { color: var(--accent); }
+.wf-status--muted { color: var(--text-2); }
+
+/* ── Switch (SwitchMaterial) ── */
+.switch {
+  width: 3.25rem; height: 2rem; border-radius: var(--radius-pill);
+  background: var(--surface-2); border: 2px solid var(--outline);
+  position: relative; cursor: pointer; transition: background .18s, border-color .18s;
+  padding: 0; flex-shrink: 0;
+}
+.switch__thumb {
+  position: absolute; top: 50%; left: 0.125rem;
+  width: 1.25rem; height: 1.25rem; border-radius: 50%;
+  background: var(--text-2);
+  transform: translateY(-50%); transition: left .18s, background .18s;
+}
+.switch--on { background: var(--accent); border-color: var(--accent); }
+.switch--on .switch__thumb { left: calc(100% - 1.375rem); background: var(--on-accent); }
+
+/* ── Tabs (Widget.Animastor.TabLayout: selected colorSecondary, 3dp indicator) ── */
+.tabs {
+  display: flex; border-bottom: 1px solid var(--outline-2); flex-shrink: 0;
+  background: var(--surface); border-radius: var(--radius-md) var(--radius-md) 0 0;
+}
+.tabs__item {
+  flex: 1; border: 0; background: transparent; color: var(--text-2);
+  font-size: 0.8125rem; font-weight: 600; letter-spacing: 0.01em;
+  padding: 0.75rem 0.25rem; position: relative; min-height: 2.75rem;
+}
+.tabs__item--active { color: var(--accent); }
+.tabs__item--active::after {
+  content: ''; position: absolute; left: 12%; right: 12%; bottom: 0;
+  height: 3px; background: var(--accent); border-radius: 2px 2px 0 0;
+}
+
+/* ── Workflow Details (fragment_workflow_details.xml + tab content) ── */
+.wf-header__row {
+  display: flex; align-items: center; justify-content: space-between; gap: 0.75rem;
+  padding: 0.25rem 0;
+}
+.wf-header__row > span { font-size: 0.75rem; color: var(--text-2); }
+.wf-header__row > b { font-size: 0.75rem; color: var(--text); text-align: right; }
+.wf-header__row--wrap > b { overflow-wrap: anywhere; }
+.wf-hash {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.6875rem; color: var(--text-2);
+}
+/* Toolbar action chip — the "</>" dev chip, added to the secondary toolbar by
+   pages via titleStore.setSecondaryAction. 1:1 with the Android chip
+   (WorkflowDetailsFragment: b.toolbar.addView(devChip), gravity END, marginEnd
+   16): Material3 Chip, chipMinHeight 32dp, all corners 12dp, stroke 1.5dp,
+   text 13sp medium. */
+.toolbar__chip {
+  height: 2rem;              /* 32dp — M3 chip height */
+  min-width: 2.25rem;
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 0 0.75rem;        /* horizontal only; height fixed at 32dp */
+  border: 1.5px solid var(--accent); background: transparent; color: var(--accent);
+  border-radius: 0.75rem;    /* 12dp */
+  font-size: 0.8125rem;      /* 13sp */
+  font-weight: 500;          /* M3 chip text (labelLarge) is medium, not bold */
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+  /* Android marginEnd 16dp; toolbar row padding is 12px, so +4px = 16dp */
+  margin-right: 0.25rem;
+}
+.toolbar__chip:active { background: var(--accent-container); }
+.wf-tab-content {
+  display: flex; flex-direction: column; gap: 0.5rem; padding-top: 0.75rem;
+}
+.wf-empty {
+  color: var(--text-2); font-size: 0.875rem; text-align: center; padding: 2rem 0;
+}
+.wf-guide-header {
+  color: var(--accent); font-size: 0.8125rem; font-weight: 700; margin-top: 0.5rem;
+}
+.wf-binding { padding: 0.875rem 1rem; }
+.wf-binding__top {
+  display: flex; align-items: center; gap: 0.5rem;
+}
+.wf-binding__label {
+  font-size: 0.9375rem; font-weight: 700; color: var(--text);
+  flex: 1; min-width: 0;
+}
+.wf-binding__edit { height: 2.125rem; padding: 0 0.5rem; font-size: 0.6875rem; }
+.wf-binding__edit-link {
+  border: 0; background: transparent; color: var(--accent);
+  font-size: 0.8125rem; font-weight: 600; cursor: pointer; padding: 0.25rem;
+}
+.wf-binding__value {
+  font-size: 0.8125rem; color: var(--text-2); margin: 0.125rem 0 0;
+  overflow-wrap: anywhere;
+}
+.wf-binding__info {
+  font-size: 0.75rem; color: var(--text-2); margin: 0.25rem 0 0;
+  overflow-wrap: anywhere;
+}
+
+/* ── Dialogs (dialog_edit_parameter.xml + node picker) ── */
+.modal-backdrop {
+  position: fixed; inset: 0; z-index: 100;
+  background: var(--scrim);
+  display: flex; align-items: center; justify-content: center;
+  padding: 1.5rem;
+}
+.modal {
+  background: var(--surface); border: 1px solid var(--outline-2);
+  border-radius: var(--radius-md); box-shadow: var(--elev-3);
+  width: 100%; max-width: 26rem; max-height: 80vh;
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.modal__title {
+  font-size: 1rem; font-weight: 700; color: var(--text);
+  padding: 1rem 1.25rem 0.25rem;
+}
+.modal__body { padding: 0.75rem 1.25rem; overflow-y: auto; }
+.modal__footer {
+  display: flex; gap: 0.5rem; justify-content: flex-end;
+  padding: 0.75rem 1.25rem 1.25rem;
+}
+.wf-dialog__label { font-size: 0.8125rem; color: var(--text); margin: 0 0 0.25rem; }
+.wf-dialog__info { font-size: 0.75rem; color: var(--text-2); margin: 0 0 0.75rem; }
+.wf-dialog__input { width: 100%; flex: none; }
+.wf-node-list { display: flex; flex-direction: column; gap: 0.375rem; max-height: 50vh; overflow-y: auto; }
+.wf-node {
+  display: flex; align-items: center; gap: 0.5rem;
+  background: var(--surface-2); border: 1px solid transparent;
+  border-radius: var(--radius-sm); padding: 0.625rem 0.75rem;
+  cursor: pointer; font-size: 0.8125rem;
+}
+.wf-node--on { border-color: var(--accent); }
+.wf-node input { accent-color: var(--accent); }
+
+/* ── Toast ── */
+.toast-root {
+  position: fixed; left: 0; right: 0; bottom: calc(var(--safe-bottom) + 5.5rem);
+  display: flex; justify-content: center; z-index: 200; pointer-events: none;
+}
+.toast {
+  background: var(--text); color: var(--bg);
+  border-radius: var(--radius-pill); padding: 0.625rem 1.25rem;
+  font-size: 0.8125rem; box-shadow: var(--elev-2);
+  opacity: 0; transform: translateY(0.5rem); transition: opacity .2s, transform .2s;
+}
+.toast--show { opacity: 1; transform: translateY(0); }
+
+/* ── Developer View (fragment_developer_view.xml) ── */
+.dev-json {
+  background: var(--surface-2); border-radius: var(--radius-sm);
+  padding: 0.75rem; margin-top: 0.75rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.6875rem; line-height: 1.5; color: var(--text);
+  overflow-x: auto; white-space: pre; user-select: text;
+}
+.dev-row { padding: 0.75rem 1rem; }
+
+/* ── AI Assistant (fragment_ai_assistant.xml) ── */
+.ai-page {
+  flex: 1; display: flex; flex-direction: column; min-height: 0;
+  background: var(--surface);
+}
+.ai-header {
+  display: flex; align-items: center; gap: 0.25rem;
+  padding: 0.5rem 0.5rem 0;
+}
+/* Position bar — now a flex item IN the header row between the session-list
+   and new-chat buttons, 1:1 with fragment_ai_assistant.xml (0dp positionBar on
+   the top row, constrained between the two buttons).
+   NOTE: kept a block container (no display:flex) because text-overflow:ellipsis
+   only applies to block containers; vertical centering via line-height 40px
+   (same as the toolbar buttons). */
+.ai-posbar {
+  flex: 1; min-width: 0; align-self: stretch;
+  background: var(--surface-2); border-radius: 0.75rem;
+  color: var(--accent); font-size: 0.8125rem; font-weight: 500;
+  line-height: 2.5rem; /* 40dp — matches the header buttons, centers the text */
+  text-align: center;
+  padding: 0 0.5rem;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ai-mode-row {
+  display: flex; align-items: center; gap: 0.25rem;
+  padding: 0.5rem 0.5rem 0.25rem;
+}
+.ai-mode-scroll {
+  border: 0; background: transparent; color: var(--text-2);
+  width: 1.75rem; height: 2.25rem; display: inline-flex;
+  align-items: center; justify-content: center; flex-shrink: 0;
+}
+.ai-mode-scroll:disabled { opacity: 0.3; }
+.ai-mode-scroll-x {
+  display: flex; gap: 0.5rem; overflow-x: auto; scrollbar-width: none;
+  flex: 1; min-width: 0; padding: 0.125rem 0;
+}
+.ai-mode-scroll-x::-webkit-scrollbar { display: none; }
+.chip--mode {
+  display: inline-flex; align-items: center; gap: 0.375rem;
+  height: 2.5rem; min-width: 5.5rem; padding: 0 1rem;
+  border: 0; border-radius: 1.25rem; /* 20dp */
+  background: var(--surface-2); color: var(--text-2);
+  font-size: 0.8125rem; font-weight: 500; flex-shrink: 0; cursor: pointer;
+}
+.chip--mode-active { background: var(--primary); color: var(--on-primary); }
+
+/* Message list */
+.ai-list {
+  flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch;
+  padding: 0.5rem 0.75rem; display: flex; flex-direction: column;
+}
+.ai-bubble-wrap {
+  display: flex; margin: 0.2rem 0; width: 100%;
+}
+.ai-bubble-wrap--user { justify-content: flex-end; }
+.ai-bubble-wrap--bot { justify-content: flex-start; }
+.ai-bubble {
+  position: relative; max-width: 17.5rem; /* 280dp */
+  padding: 0.625rem 0.875rem 2.25rem; /* bottom room for copy button */
+  font-size: 0.9375rem; line-height: 1.45;
+}
+.ai-bubble--user {
+  background: var(--accent-container); color: var(--text);
+  border-radius: 1rem 1rem 0.25rem 1rem;
+}
+.ai-bubble--bot {
+  background: var(--surface-2); color: var(--text);
+  border-radius: 1rem 1rem 1rem 0.25rem;
+}
+.ai-bubble__text { overflow-wrap: anywhere; }
+.ai-bubble__text pre {
+  background: var(--surface-dim); padding: 0.5rem; border-radius: 0.5rem;
+  overflow-x: auto; font-size: 0.75rem; margin: 0.375rem 0;
+}
+.ai-bubble__text code { font-family: ui-monospace, monospace; font-size: 0.8125rem; }
+.ai-bubble__text a { color: var(--accent); }
+.ai-bubble__text blockquote {
+  border-left: 3px solid var(--outline); padding-left: 0.5rem;
+  margin: 0.25rem 0; color: var(--text-2);
+}
+.ai-bubble__text ul { margin: 0.25rem 0; padding-left: 1.25rem; }
+.ai-bubble__dl {
+  display: block; color: var(--accent); font-size: 0.75rem; font-weight: 600;
+  margin-top: 0.375rem;
+}
+.ai-bubble__copy {
+  position: absolute; right: 0.5rem; bottom: 0.25rem;
+  border: 0; background: transparent; color: var(--text-2); opacity: 0.45;
+  padding: 0.25rem; display: inline-flex; cursor: pointer;
+}
+.ai-bubble__copy:active { opacity: 1; }
+.ai-bubble--typing {
+  display: flex; align-items: center; gap: 0.3125rem;
+  height: 2.5rem; padding: 0 1rem 0; min-width: 3.75rem;
+}
+.ai-typing-dot {
+  width: 0.5rem; height: 0.5rem; border-radius: 50%;
+  background: var(--text-2); animation: ai-typing 1.2s infinite ease-in-out;
+}
+.ai-typing-dot:nth-child(2) { animation-delay: 0.2s; }
+.ai-typing-dot:nth-child(3) { animation-delay: 0.4s; }
+@keyframes ai-typing {
+  0%, 100% { opacity: 0.25; }
+  50% { opacity: 1; }
+}
+
+/* Input bar (56dp, surfaceContainer) */
+.ai-input {
+  display: flex; align-items: center; gap: 0.25rem;
+  padding: 0.375rem 0.5rem calc(0.375rem + var(--safe-bottom));
+  border-top: 1px solid var(--outline-2); background: var(--surface-2);
+}
+.ai-input__btn {
+  width: 2.5rem; height: 2.5rem; flex-shrink: 0;
+  border: 0; background: transparent; color: var(--text-2);
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.ai-input__btn--send { color: var(--accent); }
+.ai-input__btn:disabled { opacity: 0.35; }
+.ai-input__field {
+  flex: 1; min-width: 0; height: 3rem; border: 0; background: transparent;
+  color: var(--text); font-size: 0.9375rem; padding: 0 0.5rem;
+}
+.ai-input__field::placeholder { color: var(--text-2); }
+
+/* Session list dialog */
+.ai-session-list { display: flex; flex-direction: column; gap: 0.375rem; }
+.ai-session {
+  display: flex; align-items: center; justify-content: space-between; gap: 0.75rem;
+  background: var(--surface-2); border: 1px solid transparent;
+  border-radius: var(--radius-sm); padding: 0.625rem 0.75rem; cursor: pointer;
+}
+.ai-session--active { border-color: var(--accent); }
+.ai-session__info { display: flex; flex-direction: column; gap: 0.125rem; min-width: 0; }
+.ai-session__info b { font-size: 0.8125rem; color: var(--text); }
+.ai-session__info span { font-size: 0.75rem; color: var(--text-2); }
+.ai-session__del {
+  border: 0; background: transparent; color: var(--error);
+  font-size: 0.75rem; cursor: pointer; padding: 0.25rem; flex-shrink: 0;
+}

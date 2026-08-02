@@ -75,6 +75,34 @@
 работает; чат отправляет/принимает сообщения, показывает typing, переключает
 режимы, список сессий создаётся/редактируется/удаляется.
 
+### Завершение этапа 2 (2026-08-02) ✅
+
+- 2.1 WorkflowManager (`/workflows`) — 3 карточки audio/image/video из
+  `/connectors/grouped` (F12: активные счётчики серверные), subtitle = первый
+  коннектор, кнопка Reload → `POST /connectors/reload`. `/workflows/summary`
+  НЕ используется (Android-фрагмент тоже не использует — менеджер построен на
+  grouped-коннекторах, см. §11).
+- 2.2 WorkflowDetails (`/workflows/:name`) — header-карточка (connector/type/
+  status/hash/version/nodes), 4 таба (Inputs/Outputs/Parameters/Compatibility),
+  edit-режим (`routeState.detailsEditMode`, как fragment-аргумент editMode),
+  правка параметров через диалог (`PUT /connectors/{name}/parameters`),
+  в edit-режиме — смарт-пикер нод для биндингов/гайд-нод
+  (`PUT /connectors/{name}/bindings`), dev-чип `</>` → `/dev`.
+- 2.3 WorkflowTypeList (`/workflows/type/:type`) — список коннекторов типа из
+  `/connectors/grouped`, enable/disable switch (`PUT .../status`), статус-бейджи,
+  Details → `/workflows/:name` (disabled → edit-режим), Add Workflow — чтение
+  JSON-файла и `POST /connectors` (имя из `name` или guess из имени файла).
+- 2.4 DeveloperView (`/dev`) — табы Raw JSON (`/connectors/{name}/raw`,
+  pretty-print) / Bindings (плоская таблица inputs/outputs/parameters с
+  multi-binding-разворотом), переход по dev-чипу с `routeState.devConnector`.
+- 2.5 AiAssistant (`/ai`) — чат 1:1: сессии (`/ai/sessions?book_id=`, restore,
+  create, delete), 6 mode-чипов (AssistantMode), typing-индикатор, position-bar
+  (из `positionStore` + book), markdown-бабблы (порт `applyMarkdownTo`),
+  копирование, download-ссылка при `book_id` в ответе, discard ответа при
+  смене сессии, голосовой ввод через Web Speech API (fallback — тост).
+
+Отклонения и решения — [`06-RISKS-AND-ALTERNATIVES.md`](06-RISKS-AND-ALTERNATIVES.md) §11.
+
 ---
 
 ## Этап 3 — File (импорт/экспорт)

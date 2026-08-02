@@ -18,11 +18,18 @@
 
 ## Этап 2 — Сетевые списки/детали (без плеера и генерации)
 
-- [ ] **WorkflowManager** (`/workflows`) — список + сводка (`/workflows`, `/workflows/summary`)
-- [ ] **WorkflowDetails** (`/workflows/:name`) — детали + hash + узлы
-- [ ] **WorkflowTypeList** (`/workflows/type/:type`) — узлы по типу
-- [ ] **DeveloperView** (`/dev`) — коннектор: параметры/биндинги/совместимость
-- [ ] **AiAssistant** (`/ai`) — чат с сессиями/историей, режимы, typing
+- [x] **WorkflowManager** (`/workflows`) — карточки audio/image/video + активные счётчики из `/connectors/grouped` (F12), Reload → `/connectors/reload`
+- [x] **WorkflowDetails** (`/workflows/:name`) — header-карточка + 4 таба (Inputs/Outputs/Parameters/Compatibility), edit-режим (`?edit` → `routeState.detailsEditMode`), правка параметров (`PUT /connectors/{name}/parameters`) и биндингов/гайд-нод (`PUT .../bindings`), dev-чип `</>`
+- [x] **WorkflowTypeList** (`/workflows/type/:type`) — список коннекторов типа, enable-переключатель (`PUT .../status`), кнопка Details, Add Workflow (JSON-файл → `POST /connectors`)
+- [x] **DeveloperView** (`/dev`) — табы Raw JSON (`/connectors/{name}/raw`) / Bindings (из ConnectorDetail), переход по dev-чипу с `routeState.devConnector`
+- [x] **AiAssistant** (`/ai`) — чат: сессии (`/ai/sessions*`), 6 режимов (AssistantMode), typing-индикатор, position-bar, markdown-бабблы, копирование, голосовой ввод (Web Speech API)
+
+### Завершение этапа 2 (2026-08-02) ✅
+
+- Все 5 экранов реализованы; `tsc --noEmit` + `vite build` — OK; code-review пройден.
+- Отклонения и решения — [`06-RISKS-AND-ALTERNATIVES.md`](06-RISKS-AND-ALTERNATIVES.md) §11.
+
+---
 
 ## Этап 3 — File (импорт/экспорт)
 

@@ -9,7 +9,11 @@ import { EditPage } from './pages/EditPage';
 import { NavigatePage } from './pages/NavigatePage';
 import { SettingsPage } from './pages/SettingsPage';
 import { LibraryPage } from './pages/LibraryPage';
-import { PlaceholderPage } from './pages/PlaceholderPage';
+import { WorkflowsPage } from './pages/WorkflowsPage';
+import { WorkflowTypeListPage } from './pages/WorkflowTypeListPage';
+import { WorkflowDetailsPage } from './pages/WorkflowDetailsPage';
+import { DeveloperViewPage } from './pages/DeveloperViewPage';
+import { AiAssistantPage } from './pages/AiAssistantPage';
 import { applyTheme, applyLanguage } from './app/theme';
 
 function Routes() {
@@ -24,12 +28,14 @@ function Routes() {
       <SettingsPage path="/settings" />
       <SettingsPage path="/settings/vbook" section="vbook" />
       <SettingsPage path="/settings/worker" section="worker" />
-      <PlaceholderPage path="/ai" titleKey="ai" />
+      <AiAssistantPage path="/ai" />
       <LibraryPage path="/library" />
-      <PlaceholderPage path="/workflows" titleKey="workflow_manager_title" />
-      <PlaceholderPage path="/workflows/:name" titleKey="workflow" />
-      <PlaceholderPage path="/workflows/type/:type" titleKey="workflow" />
-      <PlaceholderPage path="/dev" titleKey="developer_tools" />
+      <WorkflowsPage path="/workflows" />
+      {/* Declare the more specific type route BEFORE /:name (preact-router
+          matches in declaration order) */}
+      <WorkflowTypeListPage path="/workflows/type/:type" />
+      <WorkflowDetailsPage path="/workflows/:name" />
+      <DeveloperViewPage path="/dev" />
     </Router>
   );
 }

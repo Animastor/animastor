@@ -2,6 +2,7 @@ import type { JSX } from 'preact';
 import { useState, useEffect } from 'preact/hooks';
 import { t } from './i18n';
 import { navigate, START_ROUTE, TAB_ROUTES } from './router';
+import { secondaryTitle, secondaryAction } from './titleStore';
 import { generationStatus } from '../state/generateStore';
 import type { GenerationStatus } from '../state/generateStore';
 import { IconFile, IconGenerate, IconPlay, IconEdit, IconMap } from './icons';
@@ -30,13 +31,28 @@ export function AppShell({ children }: { children: JSX.Element }) {
 }
 
 function Toolbar({ path, isSecondary }: { path: string; isSecondary: boolean }) {
+  // The AI assistant draws its own header row (back/session-list/new-chat) 1:1
+  // with fragment_ai_assistant.xml — no standard toolbar, like the Android screen.
+  if (path.startsWith('/ai')) return null;
   if (isSecondary) {
+    // Pages may override the title and add a trailing action chip (e.g. the "</>"
+    // dev chip on WorkflowDetails) — mirroring Android fragments calling
+    // b.toolbar.title = ... / b.toolbar.addView(devChip).
+    const title = secondaryTitle.value ?? secondaryTitleByPath(path);
+    const action = secondaryAction.value;
     return (
       <header class="toolbar">
         <button class="toolbar__btn" aria-label={t('back')} onClick={() => history.back()}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="24" height="24"><path d="M15 18l-6-6 6-6" /></svg>
         </button>
-        <span class="toolbar__title toolbar__title--secondary">{secondaryTitle(path)}</span>
+        <span class="toolbar__title toolbar__title--secondary">{title}</span>
+        {action && (
+          <button
+            class="toolbar__chip"
+            aria-label={action.ariaLabel ?? action.label}
+            onClick={action.onClick}
+          >{action.label}</button>
+        )}
       </header>
     );
   }
@@ -63,7 +79,7 @@ function Toolbar({ path, isSecondary }: { path: string; isSecondary: boolean }) 
   );
 }
 
-function secondaryTitle(path: string): string {
+function secondaryTitleByPath(path: string): string {
   if (path.startsWith('/settings/vbook')) return t('vbook_settings_title');
   if (path.startsWith('/settings/worker')) return t('worker_settings_title');
   if (path.startsWith('/settings')) return t('settings_title');
