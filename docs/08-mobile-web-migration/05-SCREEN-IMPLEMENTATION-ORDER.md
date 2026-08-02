@@ -205,6 +205,23 @@
 Приёмка: waveform рисуется идентично; правка таймингов сохраняется и влияет на
 разбиение IU-cycling в Play; layer-config персистится.
 
+### Завершение этапа 6 (2026-08-02) ✅
+
+- 6.1 Edit (`/edit`) — 1:1 с `fragment_edit.xml` + `EditFragment.kt`:
+  position-bar (label + unitCount, tap → `/navigate`), карусель юнитов
+  (prev/current/next previews, aspect-ratio высоты карточек, оверлей
+  «Не сгенерировано»), аудио-таймлайн (playback `<audio>` + waveform Canvas
+  `lib/waveform.tsx` + reset), 7 скроллящихся property-табов, контент-область,
+  Save + dirty-индикатор (`dirtySummary` из `/regenerate` summary) + error.
+- Тайминги: `GET/PUT /scene/{b}/{ch}/{sc}/timings` + `GET /waveform`
+  (параллельно), drag-preview → server cascade по отпусканию (N2), Reset →
+  оригинальные границы, `GET /scene/.../audio` для плейбека. Seek по юниту →
+  `playbackStore.seekToPosition` + `positionStore` (переход в Play).
+- layer-config не используется самим Edit-экраном: `GET/PUT /book/{id}/layer-config`
+  уже реализован на VBookSettings (этап 1) и Generate (этап 4); Android-фрагмент
+  Edit тоже не трогает layer-config.
+- Отклонения — [`06-RISKS-AND-ALTERNATIVES.md`](06-RISKS-AND-ALTERNATIVES.md) §15.
+
 ---
 
 ## Этап 7 — Play (мультиплеер) — финальный, высший риск

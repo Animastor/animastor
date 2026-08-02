@@ -227,6 +227,25 @@ const CROSS_FIELDS = [
         label: 'Location description + environment template (bible.json)',
         usedBy: 'buildImagePrompt → bible.locations[locationId]',
     },
+    // ── Book-level TTS voice config ──────────────────
+    // book.voices[voiceId].instruction is consumed by audio/generation.js and
+    // audio/segments.js (TTS instructions for any scene). Voice config is
+    // book-global, so ANY instruction change marks every scene's audio dirty.
+    {
+        key: 'book.voices',
+        layers: ['audio'],
+        entitySource: (book) => {
+            const v = book?.voices || {};
+            return Object.entries(v).map(([id, data]) => ({ id, ...(data || {}) }));
+        },
+        entityId: (v) => v.id,
+        isChanged: (oldEntity, newEntity) => {
+            return (oldEntity?.instruction || '') !== (newEntity?.instruction || '');
+        },
+        findAffectedScenes: (allScenes) => allScenes,
+        label: 'TTS voice instruction (book.voices)',
+        usedBy: 'audio-service → TTS voice instructions',
+    },
 ];
 
 // ======================================================

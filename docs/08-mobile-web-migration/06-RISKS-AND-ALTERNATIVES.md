@@ -361,6 +361,22 @@ X-Frame-Options/CSP источника) или рендер содержимог
 
 ---
 
+## 15. Отклонения этапа 6 (Edit)
+
+| Отклонение | Причина | Альтернатива |
+|---|---|---|
+| Сохранение полей — маршрутизация ПО ТАБАМ вместо «все fieldValues + unit_id» | Android `saveToBackend` шлёт единый `fields` (все вкладки) + `unit_id` при наличии юнита в позиции — сервер (`PATCH scene`) тогда применяет ВСЕ ключи к юниту (`setDeep(unit, …)`), т.е. сценарию/аудио-поля уходят в юнит; на вкладке Audio ключи `voice`/`full_text` пишутся в `scene.voice`/`scene.full_text`, которые пайплайн не читает (читает `scene.audio.*`). Это не 1:1-поведение, а баг Android | Scene-таб → только scene-ключи (+`chapter_title`), Unit-таб → unit-ключи + `unit_id`, Audio-таб → `audio.voice`/`audio.full_text`, Locations → `/locations/{id}`, Global → `/metadata` |
+| Вкладки Characters/Voices — редактируемые, сохраняются через НОВЫЕ эндпоинты `PATCH /book/{id}/characters/{charId}` и `PATCH /book/{id}/voices/{voiceId}` | Android-сохранение этих вкладок сломано: ключи `name`/`char.<id>.passport.*`/`voice.<id>.instruction` коллизируют в общем `fieldValues` и уходят тем же `PATCH scene` в текущий юнит (мусор, никогда не персистится). Бэкенд добавил точечные PATCH-роуты (поля → `setDeep` на объекте персонажа/голоса, diff→reconcile→version-bump как у location-PATCH); в `prompt-dependency-registry` добавлен cross-поле `book.voices` (audio-layer), чтобы правка инструкции голоса помечала сцены dirty | веб шлёт `fields` по каждому изменённому персонажу/голосу; поля `name`/`passport.*`/`instruction`; Save активен на обоих табах. Android-баг зафиксирован, веб его чинит |
+| Плейбек таймлайна — `<audio>` (src `/scene/.../audio?build_id=`), не MediaPlayer+temp-файл | нет MediaPlayer в вебе; стриминг браузера эквивалентен загрузке байтов в файл (этап 7, вариант A) | `new Audio(url)` + `currentTime = start_ms/1000` + rAF-курсор; стоп по `end_ms`/`duration` |
+| Playhead waveform'а — через `Signal<number>` (`@preact/signals`), не через React-state | Android пишет курсор каждые 50ms в `invalidate()`; React-state per frame ре-рендерит всю страницу | signal-подписка в `lib/waveform.tsx` перерисовывает только canvas (эквивалент invalidate) |
+| Waveform: touchSlop 24 CSS-px + pointer events вместо 24f raw-px + MotionEvent | Android-координаты масштабируются плотностью (~66px на 2.75x); CSS-px при том же dpr эквивалентны; pointer capture заменяет `requestDisallowInterceptTouchEvent` | `setPointerCapture` + клампинг −50/+50ms и `totalDurationMs` как в `WaveformView.kt` |
+| Карусель: высоты карточек по aspect-ratio изображения через `clientWidth` + ResizeObserver | Android: `cardWDp = availDp*weight/3.5; hDp = cardWDp*h/w` и `layoutParams.height` | текущая карточка stretch, боковые — 140dp → ratio-высота после загрузки превью; оверлей-лейблы «Не сгенерировано» как `showPreviewMissing` |
+| layer-config НЕ используется на Edit | `GET/PUT /book/{id}/layer-config` уже реализован на VBookSettings (этап 1) и Generate (этап 4); Android-`EditFragment` тоже не трогает layer-config (пункт плана — артефакт) | перенос не требуется; персистенция layer-config покрыта этапами 1/4 |
+| Dirty-индикатор — `dirtySummary` из ответа `/regenerate` (`res.summary`, серверный diff) | Android: `_dirtySummary.value = res.summary` в `startGeneration`, очистка на import/close | сигнал `dirtySummary` в `generateStore` + «Save *» при локальных правках; `hasUnsavedChanges`/`markUnsavedChanges` не переносится (нет web-потребителя — exit-confirm отсутствует) |
+| Заголовок «Модуль N/M» в Units-табе | Android `buildUnitFields` не выводит заголовок (номер юнита виден на карусели) | мелкий caption над полями юнита (улучшение читаемости, не влияет на логику) |
+
+---
+
 ## 8. Правило обновления этого документа
 
 1. Любое отклонение в коде **обязано** быть занесено сюда до реализации в виде

@@ -11,7 +11,7 @@
 import { signal } from '@preact/signals';
 import { getJson, postJson, postMultipart, putJson, sse } from '../api/client';
 import type {
-  AssetsStateResponse, BookData, BookStatus, ImportResponse, LayerConfigResponse,
+  AssetsStateResponse, BookData, BookStatus, DiffSummary, ImportResponse, LayerConfigResponse,
   ProgressPanelResponse, ProgressTask, RegenerateResponse, WorkerCounts, ProgressEvent,
 } from '../api/models';
 import { sceneRefs } from '../api/models';
@@ -54,6 +54,12 @@ export function loadBook(id: string, build: string = ''): void {
   bookId.value = id;
   buildId.value = build;
 }
+
+// ── Edit dirty indicator (GenerateViewModel.dirtySummary) ──
+// Populated from the /regenerate response summary (server-computed book diff) and
+// cleared on import/close — EditPage shows "Dirty: N changed…" while set.
+export const dirtySummary = signal<DiffSummary | null>(null);
+export function setDirtySummary(s: DiffSummary | null): void { dirtySummary.value = s; }
 
 // ═══════════════════════════════════════════════════════════════
 //  FILE SCREEN STATE (stage 3) — 1:1 with the GenUiState slice
@@ -560,6 +566,7 @@ export async function startGeneration(req: GenerationRequest): Promise<Generatio
     });
     if (res.build_id) buildId.value = res.build_id;
     phase.value = 'SCENE_READY';
+    dirtySummary.value = res.summary ?? null;
     const dirty = res.dirty_scenes?.length ?? 0;
     void refreshAssetsState();
     return { ok: true, dirty, scope: res.scope ?? req.scope };
@@ -752,6 +759,7 @@ export async function importBookFromFile(file: File): Promise<void> {
   vbookPollToken++;
   isRegenerating.value = false;
   importCompleteReceived = false;
+  dirtySummary.value = null;
   phase.value = 'LOADING_BOOK';
   errorMessage.value = null;
   importMessages.value = [];
@@ -803,6 +811,7 @@ export async function openBookById(param: string): Promise<void> {
   vbookPollToken++;
   isRegenerating.value = false;
   importCompleteReceived = false;
+  dirtySummary.value = null;
   phase.value = 'LOADING_BOOK';
   errorMessage.value = null;
   importMessages.value = [];
@@ -836,6 +845,7 @@ export function closeBook(): void {
   errorMessage.value = null;
   importMessages.value = [];
   navigationEvent.value = null;
+  dirtySummary.value = null;
   clearVBookProgress();
   clearPosition();
 }

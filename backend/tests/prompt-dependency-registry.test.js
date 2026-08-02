@@ -251,16 +251,33 @@ describe('Prompt Dependency Registry', () => {
     });
 
     describe('getCrossFields', () => {
-        it('returns 3 cross-cutting fields', () => {
+        it('returns 4 cross-cutting fields', () => {
             const fields = registry.getCrossFields();
-            expect(fields).to.have.length(3);
+            expect(fields).to.have.length(4);
         });
 
-        it('includes characters.passport, characters.voice, bible.locations', () => {
+        it('includes characters.passport, characters.voice, bible.locations, book.voices', () => {
             const keys = registry.getCrossFields().map(f => f.key);
             expect(keys).to.include('characters.passport');
             expect(keys).to.include('characters.voice');
             expect(keys).to.include('bible.locations');
+            expect(keys).to.include('book.voices');
+        });
+
+        describe('book.voices entitySource', () => {
+            it('extracts voices map entries with id from book', () => {
+                const field = registry.getCrossFields().find(f => f.key === 'book.voices');
+                const book = { voices: { narrator: { instruction: 'a' }, dialogue: { instruction: 'b' } } };
+                const entities = field.entitySource(book);
+                expect(entities).to.have.length(2);
+                expect(entities[0].id).to.equal('narrator');
+            });
+
+            it('isChanged compares instruction strings', () => {
+                const field = registry.getCrossFields().find(f => f.key === 'book.voices');
+                expect(field.isChanged({ instruction: 'x' }, { instruction: 'y' })).to.equal(true);
+                expect(field.isChanged({ instruction: 'x' }, { instruction: 'x' })).to.equal(false);
+            });
         });
 
         describe('characters.passport entitySource', () => {

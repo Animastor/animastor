@@ -256,13 +256,84 @@ export interface SessionMessageApi {
 }
 
 // ─────────────────────────────────────────────────────
-// Book (subset used by AI position bar)
+// Book — full models for Navigate (stage 5) and Edit (stage 6).
+// 1:1 with BookModels.kt / SceneUnit.kt / CharPassport.kt etc.
 // ─────────────────────────────────────────────────────
 
+export interface BookManifest {
+  book_id?: string | null;
+  build_id?: string | null;
+  vbook_version?: string | null;
+  created_at?: string | null;
+}
+
+export interface BookMeta {
+  title?: string | null;
+  author?: string | null;
+  language?: string | null;
+  book_id?: string | null;
+  defaults?: { narration_voice?: string | null } | null;
+}
+
+export interface BookBible {
+  country?: string | null;
+  epoch?: string | null;
+  render_rules?: { style?: string | null; lighting_default?: string | null } | null;
+  locations?: Record<string, BookLocation> | null;
+}
+
+export interface SceneEnvironment {
+  time?: string | null;
+  season?: string | null;
+  lighting?: string | null;
+  weather?: string | null;
+  mood?: string | null;
+  atmosphere?: string | null;
+  country?: string | null;
+  epoch?: string | null;
+}
+
+export interface SceneLocation {
+  id?: string | null;
+  environment?: SceneEnvironment | null;
+}
+
+export interface SceneAudio {
+  voice?: string | null;
+  full_text?: string | null;
+}
+
+export interface CharPassport {
+  base_appearance?: string | null;
+  detailed_appearance?: string | null;
+  clothing_base?: string | null;
+  clothing_details?: string | null;
+  video_tokens?: string | null;
+}
+
+export interface UnitAudio {
+  speaker?: string | null;
+  text?: string | null;
+}
+
+export interface UnitImage {
+  shot?: string | null;
+  prompt?: string | null;
+  negative?: string | null;
+}
+
+export interface UnitVideo {
+  action?: string | null;
+}
+
 export interface BookData {
-  manifest?: { book_id?: string | null; build_id?: string | null } | null;
-  book?: { title?: string | null; book_id?: string | null } | null;
+  manifest?: BookManifest | null;
+  book?: BookMeta | null;
+  bible?: BookBible | null;
   chapters?: BookChapter[] | null;
+  characters?: BookCharacter[] | null;
+  voices?: Record<string, BookVoiceEntry> | null;
+  locations?: Record<string, BookLocation> | null;
   /** Server-computed flat scene list (thin-client contract) — preferred over traversal. */
   scene_list?: { chapter_id?: string | null; scene_id?: string | null; type?: string | null }[] | null;
 }
@@ -282,15 +353,48 @@ export interface BookScene {
   display_index?: number | null;
   type?: string | null;
   style?: string | null;
+  location?: SceneLocation | null;
+  audio?: SceneAudio | null;
+  participants?: string[] | null;
+  /** Per-scene character passport overrides (scene.passport map). */
+  passport?: Record<string, CharPassport> | null;
   units?: BookUnit[] | null;
 }
 
-// SceneUnit.kt equivalent (Navigate tree leaf)
+// SceneUnit.kt equivalent (Navigate tree leaf + Edit fields)
 export interface BookUnit {
   id?: string | null;
   type?: string | null;
   text?: string | null;
   participants?: string[] | null;
+  audio?: UnitAudio | null;
+  image?: UnitImage | null;
+  video?: UnitVideo | null;
+}
+
+export interface BookCharacter {
+  id?: string | null;
+  name?: string | null;
+  passport?: CharPassport | null;
+}
+
+export interface BookVoiceEntry {
+  instruction?: string | null;
+}
+
+export interface BookLocationEnvironment {
+  time?: string | null;
+  season?: string | null;
+  lighting?: string | null;
+  weather?: string | null;
+  mood?: string | null;
+  atmosphere?: string | null;
+}
+
+export interface BookLocation {
+  name?: string | null;
+  description?: string | null;
+  environment?: BookLocationEnvironment | null;
 }
 
 // ─────────────────────────────────────────────────────
@@ -498,9 +602,20 @@ export interface RegenerateResponse {
   build_id?: string | null;
   message?: string | null;
   dirty_scenes?: { chapter_id?: string; scene_id?: string; reason?: string; dirty_layers?: string[] }[] | null;
+  /** Server-computed book diff (DiffSummary.kt) — feeds the Edit dirty indicator. */
+  summary?: DiffSummary | null;
   marked?: number;
   scope?: string | null;
   tasks?: { task_id: string; type: string; target_count: number }[];
+}
+
+// DiffSummary.kt — counts reported after a regenerate/import (book diff).
+export interface DiffSummary {
+  total_scenes_old?: number;
+  total_scenes_new?: number;
+  changed?: number;
+  added?: number;
+  removed?: number;
 }
 
 // POST /book/{id}/cancel-worker — CancelWorkerRequest
@@ -525,4 +640,53 @@ export interface ProgressEvent {
   window_total_scenes?: number | null;
   window_start_scene?: number | null;
   message?: string | null;
+}
+
+// ─────────────────────────────────────────────────────
+// Edit screen (stage 6) — scene timeline + waveform
+// 1:1 with TimelineModels.kt
+// ─────────────────────────────────────────────────────
+
+// GET /scene/{b}/{ch}/{sc}/waveform — WaveformData/WaveformPeak
+export interface WaveformPeak {
+  pos: number;
+  neg: number;
+}
+
+export interface WaveformData {
+  peaks: WaveformPeak[];
+  duration_sec: number;
+  peak_count: number;
+}
+
+// GET /scene/{b}/{ch}/{sc}/timings — SceneTiming/IuTimingBoundary
+export interface IuTimingBoundary {
+  unit_id: string;
+  scene_order: number;
+  start_ms: number | null;
+  end_ms: number | null;
+  estimated_duration_sec?: number;
+  text_proportion?: number;
+}
+
+export interface SceneTiming {
+  units: IuTimingBoundary[];
+  total_duration_ms: number;
+}
+
+// PUT /scene/{b}/{ch}/{sc}/timings — TimingsUpdateRequest/Response
+export interface TimingBoundary {
+  unit_id: string;
+  start_ms: number;
+  end_ms: number;
+}
+
+export interface TimingsUpdateRequest {
+  build_id: string;
+  units: TimingBoundary[];
+}
+
+export interface TimingsUpdateResponse {
+  units: TimingBoundary[];
+  recalculated: boolean;
 }

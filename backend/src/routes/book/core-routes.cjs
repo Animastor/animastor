@@ -480,6 +480,119 @@ module.exports = function(app, redis, deps) {
     });
 
     // ======================================================
+    // PATCH BOOK CHARACTER (name + passport) — targeted edit.
+    // The Android EditFragment renders these editable but its save path
+    // routes char.*/voice.* keys into the scene object (setDeep junk) —
+    // this endpoint makes character/voice edits actually persist (06 §15).
+    // ======================================================
+    app.patch('/api/v1/book/:bookId/characters/:characterId', async (req, res) => {
+        try {
+            const { bookId, characterId } = req.params;
+            const { fields } = req.body;
+
+            if (!fields || typeof fields !== 'object' || Object.keys(fields).length === 0) {
+                return res.status(400).json({ error: 'Provide "fields" object' });
+            }
+
+            const oldBook = book.loadBook(bookId);
+            if (!oldBook) return res.status(404).json({ error: 'Book not found' });
+
+            const char = (oldBook.characters || []).find(c => c && c.id === characterId);
+            if (!char) {
+                return res.status(404).json({ error: `Character ${characterId} not found` });
+            }
+
+            const bookBeforePatch = JSON.parse(JSON.stringify(oldBook));
+
+            for (const [key, value] of Object.entries(fields)) {
+                // "passport.base_appearance" → char.passport.base_appearance
+                setDeep(char, key, value === '' ? null : value);
+            }
+            log(`[PATCH CHARACTER] ${bookId}/${characterId}: fields=${Object.keys(fields).join(', ')}`);
+
+            book.saveBookBundle(oldBook, null);
+
+            const newBook = book.loadBook(bookId) || oldBook;
+            const diff = bookDiff.computeBookDiff(bookBeforePatch, newBook);
+
+            if (diff.dirty_scenes.length > 0) {
+                try {
+                    await storage.bookSync.reconcileFromDiff(bookId, diff.dirty_scenes, newBook);
+                    await sceneAssetsRepo.bumpSceneVersions(bookId, diff.dirty_scenes);
+                    for (const ds of diff.dirty_scenes) {
+                        const ids = ds.changes?.units?.unit_ids;
+                        if (ids && Array.isArray(ids) && ids.length > 0) {
+                            await sceneAssetsRepo.setDirtyUnitIds(bookId, ds.chapter_id, ds.scene_id, ids);
+                        }
+                    }
+                } catch (syncErr) {
+                    console.warn(`[PATCH CHARACTER] PG reconcile/bump failed: ${syncErr.message}`);
+                }
+            }
+
+            return res.json({
+                saved: true, book_id: bookId, character_id: characterId,
+                dirty_scenes: diff.dirty_scenes.length,
+            });
+        } catch (err) {
+            console.error('[PATCH CHARACTER] Error:', err.message);
+            return res.status(500).json({ error: err.message });
+        }
+    });
+
+    // ======================================================
+    // PATCH BOOK VOICE (instruction) — targeted edit.
+    // ======================================================
+    app.patch('/api/v1/book/:bookId/voices/:voiceId', async (req, res) => {
+        try {
+            const { bookId, voiceId } = req.params;
+            const { fields } = req.body;
+
+            if (!fields || typeof fields !== 'object' || Object.keys(fields).length === 0) {
+                return res.status(400).json({ error: 'Provide "fields" object' });
+            }
+
+            const oldBook = book.loadBook(bookId);
+            if (!oldBook) return res.status(404).json({ error: 'Book not found' });
+
+            const voices = oldBook.voices || {};
+            const voice = voices[voiceId];
+            if (!voice) {
+                return res.status(404).json({ error: `Voice ${voiceId} not found` });
+            }
+
+            const bookBeforePatch = JSON.parse(JSON.stringify(oldBook));
+
+            for (const [key, value] of Object.entries(fields)) {
+                setDeep(voice, key, value === '' ? null : value);
+            }
+            log(`[PATCH VOICE] ${bookId}/${voiceId}: fields=${Object.keys(fields).join(', ')}`);
+
+            book.saveBookBundle(oldBook, null);
+
+            const newBook = book.loadBook(bookId) || oldBook;
+            const diff = bookDiff.computeBookDiff(bookBeforePatch, newBook);
+
+            if (diff.dirty_scenes.length > 0) {
+                try {
+                    await storage.bookSync.reconcileFromDiff(bookId, diff.dirty_scenes, newBook);
+                    await sceneAssetsRepo.bumpSceneVersions(bookId, diff.dirty_scenes);
+                } catch (syncErr) {
+                    console.warn(`[PATCH VOICE] PG reconcile/bump failed: ${syncErr.message}`);
+                }
+            }
+
+            return res.json({
+                saved: true, book_id: bookId, voice_id: voiceId,
+                dirty_scenes: diff.dirty_scenes.length,
+            });
+        } catch (err) {
+            console.error('[PATCH VOICE] Error:', err.message);
+            return res.status(500).json({ error: err.message });
+        }
+    });
+
+    // ======================================================
     // GET BOOK COVER DATA
     // ======================================================
     app.get('/api/v1/book/:bookId/cover', async (req, res) => {

@@ -115,7 +115,36 @@
 
 ## Этап 6 — Edit (таймлайн + waveform)
 
-- [ ] **Edit** (`/edit`) — таймлайн сцен/юнитов, waveform (`getSceneWaveform` → Canvas), IU-предпросмотр, `GET/PUT /scene/.../timings`, `GET/PUT /book/{id}/layer-config`, переход в Play по seek
+- [x] **Edit** (`/edit`) — таймлайн сцен/юнитов, waveform (`getSceneWaveform` → Canvas), IU-предпросмотр, `GET/PUT /scene/.../timings`, `GET/PUT /book/{id}/layer-config`, переход в Play по seek
+
+### Завершение этапа 6 (2026-08-02) ✅
+
+- Layout 1:1 с `fragment_edit.xml`: position-bar (label + unitCount, tap →
+  `/navigate`), unit-карусель prev/current/next (preview `GET /preview` +
+  aspect-ratio высоты карточек как в Android, оверлей «Не сгенерировано»),
+  аудио-таймлайн-панель (Play/Stop + waveform + Reset), 7 скроллящихся
+  property-табов со стрелками (дефолт — Unit, как в Android), контент-область,
+  кнопка Save (48dp, radius 18dp), dirty-индикатор, error-текст, empty-state.
+- Waveform: `lib/waveform.tsx` — Canvas-порт `WaveformView.kt` (R10): бары по
+  peaks, selection + перетаскиваемые handle'ы (touchSlop 24, клампинг −50ms/
+  +50ms), playhead с треугольником, тайм-лейблы `M:SS.d`, «No waveform data».
+- Тайминги: параллельная загрузка `GET /waveform` + `GET /timings` (как
+  `loadTimelineData`), `computeInitialTimings` (clamp в длительность аудио),
+  drag-preview локально (N2) → `PUT /scene/.../timings` по отпусканию,
+  ответ сервера перезаписывает границы; Reset возвращает оригинальные
+  тайминги и сохраняет.
+- Плейбек: `<audio>` (src `/scene/.../audio?build_id=`) + rAF-курсор по
+  `currentTime` (playhead через signal — без ре-рендера страницы), стоп по
+  `end_ms`/длительности, icon play↔stop.
+- Карусель навигации: `navigateUnit(±1)` 1:1 (переходы между сценами/главами)
+  → `positionStore.navigateTo` + `playbackStore.seekToPosition` (переход в Play
+  по seek, как требуется планом).
+- Сохранение полей: по табам (Scene/Audio/Unit/Locations/Global), passport
+  overrides отдельным PATCH без `unit_id`; после сохранения — re-fetch
+  `GET /book/{id}` (thin-client).
+- Dirty-индикатор: `dirtySummary` из ответа `/regenerate` (`res.summary`,
+  серверный diff) + «Save *» при локальных правках.
+- Отклонения и решения — [`06-RISKS-AND-ALTERNATIVES.md`](06-RISKS-AND-ALTERNATIVES.md) §15.
 
 ## Этап 7 — Play (мультиплеер) — высший риск
 
