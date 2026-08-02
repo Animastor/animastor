@@ -15,11 +15,14 @@ import { WorkflowDetailsPage } from './pages/WorkflowDetailsPage';
 import { DeveloperViewPage } from './pages/DeveloperViewPage';
 import { AiAssistantPage } from './pages/AiAssistantPage';
 import { applyTheme, applyLanguage } from './app/theme';
-import { wirePlaybackCoordination } from './state/playbackStore';
+import { wirePlaybackCoordination, wirePlaybackLifecycle } from './state/playbackStore';
 
 // MainActivity.setupPlaybackCoordination() equivalent — forwards
 // generateStore.playbackPrepared to PlaybackViewModel (stage 4).
 wirePlaybackCoordination();
+// PlayFragment.onPause/onResume equivalent — pause on document.hidden, save /
+// restore playback position via sessionStorage (stage 7, 06 §1.8).
+wirePlaybackLifecycle();
 
 function Routes() {
   return (

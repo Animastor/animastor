@@ -89,11 +89,11 @@ Android → Web. Правило проекта: отклонение допус�
 | C | `MediaSource` Extensions (MSE) + адаптивный плейлист | стриминг segments, low latency | требует серверной адаптации формата; не все кодеки |
 | D | Один `<audio>` + `onended` → swap `src` | простота | явный gap (нагрузка decode) |
 
-**Принято:** начать с **A** (два `<audio>`, ранний switch −200ms, как в
-`PlayFragment.kt:893`); если щелчки недопустимы на целевых устройствах —
-переходить на **B** для аудио-дорожки с декодированием следующей сцены в
-`AudioBuffer` и планированием через `AudioContext.currentTime`. Решение
-фиксируется здесь по итогам прототипа (этап 7.3).
+**Принято (этап 7):** **A** — два `<audio>` с ранним switch −200ms
+(`sceneTransitionPending` в RAF-цикле IU-cycling, как `PlayFragment.kt:893`);
+fallback на нативный `ended` при отсутствии заchain'енного следующего
+источника. Если щелчки окажутся неприемлемы на целевых устройствах — переход
+на **B** (Web Audio `AudioBufferSourceNode`) остаётся открытым.
 
 ### 1.3. R3 — IU-cycling по позиции аудио
 
@@ -296,6 +296,11 @@ X-Frame-Options/CSP источника) или рендер содержимог
 | Без открытой книги — уведомление + Apply disabled | Android молча выходит (no-op); веб требует объяснения состояния | `.settings-page__notice` + disabled кнопка |
 | Library: WebView → `<iframe src="https://animastor.in">` + ссылка «Открыть в браузере» | R13: источник контролируем мы; iframe допустим; на случай блокировки CSP — fallback-ссылка | iframe + external link |
 | Вход в Library добавлен на File-заглушку (аналог `libraryCard`) | Android открывает Library из FileFragment | кнопка на `FilePage` (станет нативной при этапе 3) |
+| Server URL — read-only поле с `location.origin` | Android предзаполняет `BuildConfig.BASE_URL` (editable, но значение нигде не читается — поле декоративное); веб same-origin (`/api/v1`) и не может переключать сервер | read-only `input` + §14-подобная пометка; изменяемый сервер не переносится (нет установочного конфига) |
+| `clearCacheButton`/`deleteVbookButton` — реализованы 1:1 с `SettingsFragment.kt` (branch no-book → toast «Cleared N cached files»/«No book open»; иначе AlertDialog-подтверждение) | TODO этапа 1 закрыл только Theme/Language; кнопки «Удалить Сториборд»/«Удалить vBook» оставались не покрытыми | `DELETE /book/{id}/cache` + `clearMediaCache` + `closePlayerBook` + `resetProgressState` (структура книги сохраняется); `DELETE /book/{id}` + `clearMediaCache` + `closeBook()` обоих сторов |
+| AlertDialog → `Modal` (`lib/ui`) | AlertDialog отсутствует в вебе; `Modal` уже используется Workflow/AI | title+message+OK/Cancel в модалке; backdrop-click закрывает (Android default) |
+| Debug-блок выводит `App: Animastor Web / Server: <origin>` | Android: `App: ${VERSION_NAME}\nServer: ${BASE_URL}`; веб-версия не имеет VERSION_NAME | статичная строка + origin |
+| Apply (acceptButton) — сохраняет тему/язык и уходит назад | Android: сохранить + `recreate()` при изменении, иначе `popBackStack()`; веб применяет тему/язык live | `writePrefs` + `history.back()` (fallback `START_ROUTE`) |
 
 ---
 
@@ -374,6 +379,24 @@ X-Frame-Options/CSP источника) или рендер содержимог
 | layer-config НЕ используется на Edit | `GET/PUT /book/{id}/layer-config` уже реализован на VBookSettings (этап 1) и Generate (этап 4); Android-`EditFragment` тоже не трогает layer-config (пункт плана — артефакт) | перенос не требуется; персистенция layer-config покрыта этапами 1/4 |
 | Dirty-индикатор — `dirtySummary` из ответа `/regenerate` (`res.summary`, серверный diff) | Android: `_dirtySummary.value = res.summary` в `startGeneration`, очистка на import/close | сигнал `dirtySummary` в `generateStore` + «Save *» при локальных правках; `hasUnsavedChanges`/`markUnsavedChanges` не переносится (нет web-потребителя — exit-confirm отсутствует) |
 | Заголовок «Модуль N/M» в Units-табе | Android `buildUnitFields` не выводит заголовок (номер юнита виден на карусели) | мелкий caption над полями юнита (улучшение читаемости, не влияет на логику) |
+
+---
+
+## 16. Отклонения этапа 7 (Play, мультиплеер)
+
+| Отклонение | Причина | Альтернатива |
+|---|---|---|
+| `MediaPlayer`×3 → 2×`<audio>` + 1×`<video>` (все риски R2–R5 закрыты вариантами A) | нет `MediaPlayer` в вебе (R1) | §1.2 A: ранний switch −200ms; §1.3 A: RAF-цикл; §1.4 A: `<video>` с `object-fit: contain`; §1.5: `currentTime = ms/1000` |
+| Движок плеера живёт в `playbackStore` (модульный, аудио-элементы в скрытом host-div на `document.body`), а не в компоненте | переключение вкладок размонтирует страницы (preact-router); Android `Fragment.hide/show` сохраняет фрагмент и `MediaPlayer` | аудио-элементы создаются лениво и переживают mount/unmount PlayPage; `<video>` принят из DOM PlayPage (`attachVideo`/`detachVideo`) и пересоздаётся при повторном mount |
+| Пауза при любом unmount PlayPage (включая вторичные маршруты: Settings/AI) | аналог `onHiddenChanged` для скрытых вкладок; в вебе вторичный экран покрывает вкладки | `pauseIfPlaying()` в cleanup mount-эффекта (PLAYING → пауза; PAUSED остаётся) |
+| Пауза по `document.hidden` + сохранение позиции в sessionStorage (`pagehide` → `pageshow`/mount) | R8: `onPause`/`onResume`; rotation-флаг не нужен, но ветка сохранённой позиции сохранена | `wirePlaybackLifecycle` + `restoreSavedPositionIfAny` (needsRotationResume + pendingSeekPositionMs; Play возобновляет с позиции) |
+| `theater_curtains` — CSS-градиент вместо drawable | в Android-проекте ассета `R.drawable.theater_curtains` **нет** (код ловит исключение при загрузке) | `.play-curtains` (repeating-linear-gradient бордовых складок) показывается только пока не было cover |
+| `hasDisplayedCover`/`persistedImage` — не хранятся | cover-URL и currentIuBlobUrl — сигналы в сторе, переживают переключение вкладок (эквивалент persistedImage на rotation); `hasDisplayedCover` выводится из наличия coverImage | curtain's-гейт = `coverImage != null` |
+| previewImage не выводится (нет веб-продюсера) | Android `setPreviewImage` зовёт FileFragment при импорте; веб-импорт не грузит preview-битмап | сигнал готов; imgSrc = preview при SCENE_READY, иначе текущий IU |
+| Stale-fetch guard (`sceneEpoch` + `needsContentRefresh`-дискard в playNext) | Android имеет гонку: in-flight `fetchSceneData` может прийти после seek/refresh и доставить старую сцену; веб-страховка без изменения контракта | `bumpSceneEpoch()` в refreshContent/executePendingSeek/closeBook; emit с устаревшим epoch отменяется (URL revoke) |
+| Fullscreen на media-контейнер (Fullscreen API) вместо расширения в ConstraintLayout | R9: нет constraint-параметров | `mediaContainer.requestFullscreen()`; layerbar/btn скрыты самим fullscreen (элементы вне контейнера) |
+| Video `ended` → слой скрывается; sync без 50ms-хака | R4: `syncVideoFrame` с паузой через 50ms — workaround состояния MediaPlayer | `video.currentTime = audio.currentTime` при старте сцены; `ended` → `videoVisible=false` |
+| `closeBook()` (generateStore) дополнительно вызывает `closePlayerBook()` | Android `MainActivity.closeBook()` сбрасывает ОБА ViewModel (Generate + Playback) | runtime-only circular import (вызов в теле функции — live binding безопасен) |
 
 ---
 

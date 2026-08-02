@@ -34,17 +34,13 @@ export async function putMedia(
 
 // Mirrors Repository.clearCache() / PlaybackViewModel clearCache on buildId change.
 // When buildId is omitted, wipes the entire media cache (matches Repository.clearCache()).
-export async function clearCache(buildId?: string): Promise<void> {
+// Returns the number of entries deleted (SettingsFragment toast "Cleared N cached files").
+export async function clearCache(buildId?: string): Promise<number> {
   const cache = await openCache();
-  if (!buildId) {
-    const keys = await cache.keys();
-    await Promise.all(keys.map((k) => cache.delete(k)));
-    return;
-  }
   const keys = await cache.keys();
-  await Promise.all(
-    keys
-      .filter((k) => k.url.includes(`/${buildId}/`))
-      .map((k) => cache.delete(k))
-  );
+  const targets = buildId
+    ? keys.filter((k) => k.url.includes(`/${buildId}/`))
+    : keys;
+  await Promise.all(targets.map((k) => cache.delete(k)));
+  return targets.length;
 }

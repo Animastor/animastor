@@ -3,13 +3,15 @@
 Раздел посвящён переносу Android-приложения Animastor (`frontend/`, Kotlin) на
 мобильную веб-версию (`frontends/mobile/`, домен `https://m.animastor.in/`).
 
-> **Статус:** этапы 0–6 завершены ✅ — `frontends/mobile` собирается
+> **Статус:** этапы 0–7 завершены ✅ — `frontends/mobile` собирается
 > (`tsc --noEmit` + `vite build` + dev-server smoke — OK). Реализованы:
 > каркас (shell/тема/i18n/API-клиент/кэш), Settings/VBookSettings/
 > WorkerSettings/Library (этап 1), WorkflowManager/WorkflowDetails/
 > WorkflowTypeList/DeveloperView/AiAssistant (этап 2), File (этап 3),
-> Generate (этап 4), Navigate (этап 5), Edit (этап 6). Остальное — см.
-> [TODO.md](TODO.md).
+> Generate (этап 4), Navigate (этап 5), Edit (этап 6), Play (этап 7 —
+> мультиплеер: очередь сцен, gapless 2×`<audio>`, видео-оверлей, IU-cycling,
+> seek, soft-refresh, lifecycle). Осталось: снять Basic Auth с
+> `m.animastor.in` перед публичным запуском — см. [TODO.md](TODO.md).
 
 ---
 

@@ -302,6 +302,41 @@ button { font: inherit; color: inherit; }
   font-size: 0.8125rem; padding: 0 0.75rem; flex-shrink: 0;
 }
 .btn--outlined:active { background: var(--surface-2); }
+/* Widget.Animastor.Button.Outlined.Error — stroke + text cinema_error
+   (--error), ripple cinema_error_container (--error-container), 42dp height
+   inherited from .btn--outlined. Used for the Settings clear/delete buttons. */
+.btn--error {
+  color: var(--error);
+  border-color: var(--error);
+  width: 100%;
+}
+.btn--error:active { background: var(--error-container); }
+
+/* Settings: stacked group with a 13sp bold section label (Android TextView
+   letterSpacing 0.06 + bold onSurface) above a full-width control. */
+.settings__group--stack { padding: 0.875rem 1rem; display: flex; flex-direction: column; gap: 0.5rem; }
+.settings__label {
+  font-size: 0.8125rem; /* 13sp */
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--text);
+}
+/* TextInputEditText equivalent — outlineVariant underline hint onSurfaceVariant. */
+.settings__input {
+  width: 100%; height: 2.75rem;
+  background: transparent; color: var(--text);
+  border: 0; border-bottom: 1px solid var(--outline);
+  font-size: 0.875rem; padding: 0 0.25rem;
+}
+.settings__input:focus-visible { outline: none; border-bottom-color: var(--accent); }
+.settings__input[readonly] { color: var(--text-2); cursor: default; }
+/* debugInfo TextView — 11sp onSurfaceVariant, monospace for URLs. */
+.settings__debug {
+  margin: 0; padding: 0;
+  font-size: 0.6875rem; /* 11sp */
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: var(--text-2); white-space: pre-line;
+}
 
 /* Library (LibraryFragment: toolbar + WebView → iframe) */
 .library-page {
@@ -1022,15 +1057,6 @@ button { font: inherit; color: inherit; }
   display: inline-flex; align-items: center; justify-content: center;
 }
 
-/* Missing-IU overlay on Play (showMissingChunkOverlay) — stage 5 stub */
-.play-missing {
-  display: flex; flex-direction: column; align-items: center; gap: 0.375rem;
-  max-width: 18rem; padding: 1.5rem 2rem;
-  border-radius: var(--radius-md);
-  background: var(--missing-bg);
-  border: 1px solid var(--outline-2);
-}
-
 /* ── Edit screen (stage 6) — 1:1 with fragment_edit.xml ── */
 .edit-page {
   padding: 0.75rem 0.5rem 0.5rem;
@@ -1288,3 +1314,218 @@ button { font: inherit; color: inherit; }
   padding: 2rem;
   pointer-events: none;
 }
+
+/* ── Play screen (stage 7) — 1:1 with fragment_play.xml ── */
+/* Media viewport (colorSurfaceDim), layer bar (colorSurface), big play button
+   (Widget.Animastor.Button 56dp / radius 18dp), progress (4dp, outlineVariant
+   track / colorSecondary indicator), status (11sp onSurfaceVariant).
+   The fullscreen media container covers the screen via the Fullscreen API, so
+   the layerbar/meta/button below are naturally hidden (plus explicit rules for
+   robustness). */
+.page--play {
+  padding: 0;
+  overflow: hidden;
+  background: var(--surface-dim);
+}
+.play-media {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--surface-dim);
+}
+/* All media layers fill the viewport; object-fit: contain = centerInside /
+   centerCrop for curtains (letterbox anchored to the fullscreen button). */
+.play-layer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.play-cover { z-index: 1; }
+.play-result { z-index: 1; }
+.play-video { z-index: 2; }
+
+/* Theater curtains fallback (R.drawable.theater_curtains is absent from the
+   Android project — runtime-caught; web approximation, see 06 §16). */
+.play-curtains {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background:
+    linear-gradient(180deg, rgba(0,0,0,0) 0%, rgba(0,0,0,.28) 100%),
+    repeating-linear-gradient(90deg,
+      #3d151c 0 16px, #4e1d25 16px 32px, #341218 32px 48px, #571f28 48px 64px);
+}
+
+/* Dark scrim overlay for cinema letterbox effect (previewOverlay) */
+.play-scrim {
+  position: absolute;
+  inset: 0;
+  background: var(--scrim);
+  z-index: 3;
+}
+
+/* placeholderText — centered 15sp colorOnSurface */
+.play-placeholder {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text);
+  font-size: var(--fs-body);
+  text-align: center;
+  padding: 2rem;
+  z-index: 3;
+  pointer-events: none;
+}
+
+/* iuMissingOverlay — "Не сгенерировано", cinema_missing_bg, uppercase 14sp */
+.play-iu-missing {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 4;
+  pointer-events: none;
+}
+.play-iu-missing span {
+  padding: 1rem 1.5rem;
+  border-radius: var(--radius-sm);
+  background: var(--missing-bg);
+  color: var(--text);
+  font-size: 0.875rem; /* 14sp */
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+/* Subtitle layer — current unit text (subtitle_background, white 16sp) */
+.play-subtitle {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  margin: 0;
+  padding: 0.875rem 1.5rem 1.25rem; /* 14/24/20dp */
+  background: var(--subtitle-bg);
+  color: #fff;
+  font-size: 1rem; /* 16sp */
+  line-height: 1.4;
+  text-align: center;
+  z-index: 4;
+}
+
+/* Fullscreen toggle — 44dp round, bg_player_control (#B3000000 + 33% white
+   stroke), anchored to the displayed image bounds via transform. */
+.play-fs {
+  position: absolute;
+  right: 0.875rem;  /* 14dp */
+  bottom: 0.875rem; /* 14dp */
+  width: 2.75rem;   /* 44dp */
+  height: 2.75rem;  /* 44dp */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 1px solid rgba(255,255,255,.2);
+  background: rgba(0,0,0,.70);
+  color: #fff;
+  cursor: pointer;
+  z-index: 5;
+  will-change: transform;
+}
+
+/* Layer Controls — cinema console (Widget.Animastor.Chip.Layer: 48dp icon
+   chip, 1.5dp stroke, checked = colorSecondaryContainer + accent tint). */
+.play-layerbar {
+  display: flex;
+  gap: 0.5rem; /* 8dp */
+  padding: 0.625rem 0.75rem; /* 10dp 12dp */
+  background: var(--surface);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.play-layerbar::-webkit-scrollbar { display: none; }
+.chip--layer {
+  width: 3rem;   /* 48dp */
+  height: 3rem;  /* 48dp */
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border-radius: 50%;
+  border: 1.5px solid var(--outline-2);
+  background: var(--surface-2);
+  color: var(--text-2);
+  cursor: pointer;
+  transition: background-color .15s ease, border-color .15s ease, color .15s ease;
+}
+.chip--layer--on {
+  background: var(--accent-container);
+  border-color: var(--accent);
+  color: var(--on-accent-container);
+}
+.chip--layer:active { transform: scale(.94); }
+
+/* Progress (LinearProgressIndicator 4dp) + status row */
+.play-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0 1rem;
+  min-height: 1.25rem;
+}
+.play-progress {
+  flex: 1;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--outline-2);
+  overflow: hidden;
+  position: relative;
+}
+.play-progress__bar {
+  position: absolute;
+  inset: 0;
+  background: var(--accent);
+  animation: play-indeterminate 1.2s ease-in-out infinite;
+  transform-origin: left;
+}
+@keyframes play-indeterminate {
+  0% { transform: translateX(-100%); }
+  50% { transform: translateX(0%); }
+  100% { transform: translateX(100%); }
+}
+.play-status {
+  color: var(--text-2);
+  font-size: 0.6875rem; /* 11sp */
+  white-space: nowrap;
+}
+
+/* Big velvet play button — 56dp, radius 18dp, icon textStart */
+.play-btn {
+  height: 3.5rem; /* 56dp */
+  margin: 0 1rem 1.25rem 1rem; /* 16dp sides, 20dp bottom */
+  border-radius: var(--radius-md); /* 18dp */
+  border: 0;
+  background: var(--primary);
+  color: var(--on-primary);
+  font-size: 1rem; /* 16sp */
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  cursor: pointer;
+}
+.play-btn:disabled { opacity: .4; cursor: default; }
+
+/* Fullscreen state (mostly covered by the Fullscreen API — the layerbar/meta/
+   button live outside the fullscreened media container) */
+.play-page--fs .play-layerbar,
+.play-page--fs .play-meta,
+.play-page--fs .play-btn { display: none; }

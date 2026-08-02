@@ -17,6 +17,9 @@ import type {
 import { sceneRefs } from '../api/models';
 import type { SceneRef } from '../api/models';
 import { navigateTo, clearPosition } from './positionStore';
+// Runtime-only circular import (MainActivity.closeBook resets BOTH ViewModels —
+// GenerateViewModel + PlaybackViewModel; the player is released here too).
+import { closeBook as closePlayerBook } from './playbackStore';
 
 export type GenerationStatus = 'IDLE' | 'RUNNING' | 'ERROR' | 'SUCCESS';
 export type VBookStage = 'IDLE' | 'ANALYZING' | 'CREATING_SCENES' | 'COMPLETED';
@@ -193,7 +196,10 @@ let generationCompleted = false;
 let newGenerationPending = false;
 let importCompleteReceived = false;
 
-function resetProgressState(): void {
+/** Clear in-flight generation tracking (GenerateViewModel.resetProgressState).
+ *  Used by the Settings clear-storyboard flow — the book stays open, only the
+ *  progress-panel tracking and playback state are reset. */
+export function resetProgressState(): void {
   taskCompletedAt.clear();
   taskReadyFloor.clear();
   taskFrozenElapsed.clear();
@@ -848,4 +854,5 @@ export function closeBook(): void {
   dirtySummary.value = null;
   clearVBookProgress();
   clearPosition();
+  closePlayerBook();
 }

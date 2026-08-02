@@ -276,3 +276,50 @@ export function IconSave(props: IconProps) {
     </svg>
   );
 }
+
+// ── Stage 7 icons (Play screen) — recoded 1:1 from res/drawable ──
+
+// ic_pause.xml — two vertical bars (big play button pause state)
+export function IconPause(props: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor" aria-hidden="true" {...props}>
+      <path d="M6 4h4v16H6V4zM14 4h4v16h-4V4z" />
+    </svg>
+  );
+}
+
+// ic_subtitles.xml — closed-caption box (layer chip on)
+export function IconSubtitles(props: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor" aria-hidden="true" {...props}>
+      <path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zM6 12h4v2H6v-2zM14 14H6v-2h8v2zM18 10h-4V8h4v2zM10 10H6V8h4v2z" />
+    </svg>
+  );
+}
+
+// ic_subtitles_off.xml — captions with slash (layer chip off)
+export function IconSubtitlesOff(props: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor" aria-hidden="true" {...props}>
+      <path d="M20 4H6.83l10 10H20v2h-5.17l4.73 4.73L20 19.54V6c0-1.1-.9-2-2-2zM3.27 2L2 3.27 4 5.27V18c0 1.1.9 2 2 2h12.73l3.73 3.73L21.46 22 3.27 2zM6 12h4v2H6v-2zM14 14H6v-2h8v2zM10 10H6V8h4v2z" />
+    </svg>
+  );
+}
+
+// ic_fullscreen.xml — expand to corners (fullscreen toggle)
+export function IconFullscreen(props: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor" aria-hidden="true" {...props}>
+      <path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z" />
+    </svg>
+  );
+}
+
+// ic_fullscreen_exit.xml — collapse back (fullscreen active)
+export function IconFullscreenExit(props: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor" aria-hidden="true" {...props}>
+      <path d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z" />
+    </svg>
+  );
+}

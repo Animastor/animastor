@@ -148,7 +148,45 @@
 
 ## Этап 7 — Play (мультиплеер) — высший риск
 
-- [ ] **Play** (`/play`) — UI-каркас (`fragment_play.xml` 1:1); `playbackStore` (`PlaybackUiState`, `sceneQueue`, preloadCache, layer toggles, `needsContentRefresh`); движок: 2×`<audio>` (gapless −200ms) + `<video>` overlay + IU-cycling (RAF по `currentTime`) + silent IU-режим + seek по `unitIndex` (sum `durationMs`) + `preloadAhead(3)` retry/backoff + `fetchSceneData` (status→audio→video→IU) + soft-refresh; seek/навигация (`seekToPosition`/`executePendingSeek`/`missingIuPosition`); lifecycle (Page Visibility, sessionStorage savedPosition). Антипаттерны `DONT_DO.md` не воспроизводить.
+- [x] **Play** (`/play`) — UI-каркас (`fragment_play.xml` 1:1); `playbackStore` (`PlaybackUiState`, `sceneQueue`, preloadCache, layer toggles, `needsContentRefresh`); движок: 2×`<audio>` (gapless −200ms) + `<video>` overlay + IU-cycling (RAF по `currentTime`) + silent IU-режим + seek по `unitIndex` (sum `durationMs`) + `preloadAhead(3)` retry/backoff + `fetchSceneData` (status→audio→video→IU) + soft-refresh; seek/навигация (`seekToPosition`/`executePendingSeek`/`missingIuPosition`); lifecycle (Page Visibility, sessionStorage savedPosition). Антипаттерны `DONT_DO.md` не воспроизводить.
+
+### Завершение этапа 7 (2026-08-02) ✅
+
+- `playbackStore` — полный порт `PlaybackViewModel` + движка `PlayFragment`:
+  очередь сцен (sceneRefs → `ch:sc`), `currentIndex`/`currentUnitIndex`,
+  `preparePlayback` (clearCache при смене buildId, DONT_DO #5) и
+  `refreshContent` (soft refresh: needsContentRefresh, PLAYING→SCENE_READY +
+  stopAll, PAUSED остаётся), `playSceneQueue`/`resumeFromCurrentScene`/
+  `resumePlayback`/`pausePlayback`, `handlePlaybackError`/`handleNullPlayer`,
+  `executePendingSeek` (DOWNLOADING→playNext), `ensureInitialized` +
+  `loadCoverIntoState` (5× retry 1s→5s как loadCoverBitmap).
+- Движок (модульные элементы, переживают переключение вкладок): 2 `<audio>`
+  в скрытом host-div (первый → `preloadNext` → chain) + `<video>`, принятый из
+  PlayPage. Gapless-переход −200ms через RAF (`sceneTransitionPending`,
+  `switchToNextPlayer`), fallback — нативный `ended` (`onTrackEnd`).
+- `fetchSceneData`: `/scene/.../status` → audio/video/storyboard → каждый IU
+  (`/iu-image`), параллельно; retryWithBackoff(3, 1s→2→5s) в playNext;
+  Blob-кэш Cache API (`mediaCache`, ключ `${buildId}_${sceneKey}` +
+  `kind`, IU — `ch:sc:unit`), clearCache по смене buildId и в refreshContent.
+- IU-cycling: RAF по `audio.currentTime` + bisect суммы `duration_ms` (R3 A),
+  silent-режим для сцен без аудио (Cover) — таймер `duration_ms`; `showIu`
+  показывает плэйсхолдер при `NOT_GENERATED` без skip'а индекса (DONT_DO #3),
+  аудио никогда не ждёт картинку (DONT_DO #1).
+- PlayPage — `fragment_play.xml` 1:1: media-вьюпорт (curtains/cover/result/
+  video/scrim/placeholder/`iuMissing`/subtitle), 4 layer-чипа (audio → volume,
+  image → видимость, video → overlay, subtitles), big-play-button (56dp/18dp,
+  PLAY↔PAUSE), progress (indeterminate), status (11sp), fullscreen-кнопка
+  (44dp, anchorFullscreenToImage: letterbox-перевод + подъём над субтитрами),
+  Fullscreen API на media-контейнер.
+- Lifecycle (R8): пауза по `document.hidden` (`onPause`), сохранение позиции
+  в sessionStorage на `pagehide`, восстановление (`needsRotationResume` +
+  `pendingSeekPositionMs`) на `pageshow`/mount (reload) — `wirePlaybackLifecycle`.
+- Seek из Navigate/Edit: `seekToPosition` → `pendingExternalSeek` → на mount
+  PlayPage `checkPendingExternalSeek` (pendingLoad → плейер подготовлен на
+  позиции и поставлен на паузу, как `executePendingSeek` в Android);
+  `missingIuPosition` → overlay «Не сгенерировано» 1:1.
+- Отклонения и решения — [`06-RISKS-AND-ALTERNATIVES.md`](06-RISKS-AND-ALTERNATIVES.md) §16.
+- `tsc --noEmit` + `vite build` — OK; code-review пройден.
 
 ## Финал
 

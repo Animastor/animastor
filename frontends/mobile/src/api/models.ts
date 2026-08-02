@@ -690,3 +690,45 @@ export interface TimingsUpdateResponse {
   units: TimingBoundary[];
   recalculated: boolean;
 }
+
+// ─────────────────────────────────────────────────────
+// Play screen (stage 7) — scene status + storyboard
+// 1:1 with LayerConfig.kt (SceneStatusResponse) and StoryboardResponse.kt
+// ─────────────────────────────────────────────────────
+
+// GET /scene/{b}/{ch}/{sc}/status — SceneStatusResponse
+export interface SceneStatusResponse {
+  book_id?: string | null;
+  chapter_id?: string | null;
+  scene_id?: string | null;
+  build_id?: string | null;
+  scene_type?: string | null;
+  audio_ready: boolean;
+  video_ready: boolean;
+  image_ready: boolean;
+}
+
+// GET /scene/{b}/{ch}/{sc}/storyboard — StoryboardResponse/IuItem
+export interface StoryboardResponse {
+  chunk_id: string;
+  book_id?: string | null;
+  chapter_id?: string | null;
+  scene_id?: string | null;
+  build_id: string;
+  scene_type?: string | null;
+  ius: StoryboardIu[];
+}
+
+export interface StoryboardIu {
+  unit_id: string;
+  scene_id?: string | null;
+  text?: string | null;
+  text_proportion?: number | null;
+  estimated_duration_sec?: number | null;
+  audio_file?: string | null;
+  start_ms?: number | null;
+  end_ms?: number | null;
+  /** Server-computed playback duration (interval → estimate → default); the
+   *  client never re-derives it (N1). */
+  duration_ms?: number | null;
+}

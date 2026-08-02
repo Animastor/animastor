@@ -239,6 +239,32 @@
 seek из Navigate/Edit работает; soft-refresh после регенерации работает; пауза/
 возобновление/полный экран работают; `DONT_DO.md`-антипаттерны не воспроизведены.
 
+### Завершение этапа 7 (2026-08-02) ✅
+
+- 7.1 Подэкра — `playbackStore` (порт `PlaybackViewModel` + движка
+  `PlayFragment`): `PlaybackUiState` (+chunkSequence), `sceneQueue` (`ch:sc`),
+  `currentIndex`/`currentUnitIndex`, preloadCache (`${buildId}_${sceneKey}`),
+  layer toggles, `needsContentRefresh`/`needsRotationResume`,
+  `savedPlaybackPositionMs`/`pendingSeekPositionMs` (sessionStorage), `coverImage`.
+- 7.2 UI `PlayPage` = `fragment_play.xml` 1:1: media-вьюпорт (curtains/cover/
+  result/video/scrim/placeholder/iuMissing/subtitle/fullscreen), layer-bar
+  (4 чипа 48dp, `.chip--layer`), big-play-button (56dp, radius 18dp,
+  PLAY↔PAUSE), progress 4dp, status 11sp. Fullscreen API на media-контейнер
+  + anchorFullscreenToImage (letterbox + подъём над субтитрами).
+- 7.3 Движок: 2 `<audio>` (первый + `preloadNext`, gapless −200ms через
+  `sceneTransitionPending`/RAF, fallback `ended`) + `<video>` overlay;
+  IU-cycling RAF по `currentTime` (bisect суммы `durationMs`), silent-режим
+  для Cover (таймер); seek по `unitIndex` (`currentTime = seekMs/1000`, R5);
+  `preloadAhead(3)` параллельно + retryWithBackoff; `fetchSceneData`
+  (status→audio→video→IU); soft-refresh + `needsContentRefresh` (R6).
+- 7.4 Seek/навигация: `seekToPosition` (refresh book JSON при отсутствии →
+  `missingIuPosition`), `executePendingSeek` (pendingLoad → плейер
+  подготовлен/пауза), восстановление позиции (`pagehide` → sessionStorage →
+  `pageshow`/mount, `needsRotationResume`).
+- 7.5 Lifecycle: пауза по `document.hidden` (как `onPause`), сохранение/
+  восстановление позиции, release ресурсов при closeBook/tab-свитч.
+- Отклонения — [`06-RISKS-AND-ALTERNATIVES.md`](06-RISKS-AND-ALTERNATIVES.md) §16.
+
 ---
 
 ## Резюме порядка

@@ -1,17 +1,33 @@
-// PlaybackViewModel equivalent (stub, phases 0/4/5). Player engine wiring arrives at
-// stage 7. Here we expose the public state shape (PlaybackUiState + scene queue)
-// and the playback coordinator (MainActivity.setupPlaybackCoordination) so the
-// shell and Navigate/Edit/Generate can depend on the fixed API surface.
-// Stage 5 adds seekToPosition (refresh book JSON when the scene is missing →
-// missingIuPosition overlay) consumed by Navigate/Edit and shown by PlayPage.
+// PlaybackViewModel + player engine equivalent (stage 7 — Play, the final screen).
+//
+// Houses the whole player subsystem that in Android is split between
+// PlaybackViewModel.kt (queue/preload/fetch/phase state) and PlayFragment.kt
+// (the MediaPlayer trio + IU cycling). On the web both halves are module-scoped
+// so they survive tab switches (Android Fragment.hide/show): the two <audio>
+// elements live in a hidden host div appended to <body>, the <video> element is
+// adopted from PlayPage and re-attached on mount.
+//
+// Key ports (1:1 with the Android source, deviations in docs/06 §16):
+//  - scene queue + currentIndex/currentUnitIndex (PlaybackViewModel)
+//  - preloadAhead(3) with parallel fetch + retryWithBackoff (3, 1s→2→5s)
+//  - fetchSceneData: status → audio/video/IU (parallel) + mediaCache (Cache API)
+//  - gapless: two <audio> + early switch −200ms (06 §1.2 variant A)
+//  - IU cycling on requestAnimationFrame over audio.currentTime (06 §1.3 A),
+//    silent-IU timer mode for scenes without audio (Cover)
+//  - soft refresh (needsContentRefresh) + clearCache on buildId change
+//  - lifecycle: pause on document.hidden, position save/restore via
+//    sessionStorage on pagehide/pageshow (06 §1.8)
+//  - DONT_DO.md: no IU stall/retry, no skip-IU-by-null-bitmap, no rewrite of
+//    the sliding-window preload, single navigation source (FileFragment only).
 import { signal } from '@preact/signals';
-import { getJson } from '../api/client';
-import type { BookData } from '../api/models';
+import { getBlob, getJson, retryWithBackoff } from '../api/client';
+import type { BookData, SceneStatusResponse, StoryboardResponse } from '../api/models';
 import { sceneRefs } from '../api/models';
 import { navigateTo } from './positionStore';
 import type { ActivePosition } from './positionStore';
 import { onPlaybackPrepared } from './generateStore';
 import type { SceneRef } from './generateStore';
+import { getMedia, putMedia, clearCache as clearMediaCache } from '../cache/mediaCache';
 
 export type PlayerPhase =
   | 'IDLE' | 'LOADING_BOOK' | 'GENERATING' | 'DOWNLOADING'
@@ -23,10 +39,12 @@ export interface PlaybackUiState {
   sceneCount: number;
   currentIndex: number;
   currentUnitIndex: number;
+  /** Monotonic delivery counter — PlaybackUiState.chunkSequence equivalent. */
+  chunkSequence: number;
 }
 
 const initial: PlaybackUiState = {
-  phase: 'IDLE', errorMessage: null, sceneCount: 0, currentIndex: 0, currentUnitIndex: 0
+  phase: 'IDLE', errorMessage: null, sceneCount: 0, currentIndex: 0, currentUnitIndex: 0, chunkSequence: 0
 };
 
 export const uiState = signal<PlaybackUiState>(initial);
@@ -35,49 +53,391 @@ export const buildId = signal('');
 export const sceneQueue = signal<SceneRef[]>([]);
 
 // ── External seek (PlaybackViewModel.pendingExternalSeek / missingIuPosition) ──
-// Stage 5: Navigate/Edit set these; PlayFragment (stage 7) executes the seek and
-// the Play screen shows the missing-IU overlay while missingIuPosition is set.
 export const missingIuPosition = signal<ActivePosition | null>(null);
 export const pendingExternalSeek = signal<ActivePosition | null>(null);
+
+// ── Layer toggles (fragment_play.xml layer chips) ──
 export const layerAudio = signal(true);
 export const layerImage = signal(true);
 export const layerVideo = signal(true);
 export const layerSubtitles = signal(true);
 
+// ── Display state consumed by PlayPage (fragment collectors) ──
+export const coverImage = signal<string | null>(null);      // blob URL (state.coverImage)
+export const previewImage = signal<string | null>(null);    // blob URL (state.previewImage)
+export const currentIuSequence = signal<IuImageItem[] | null>(null);
+export const currentIuBlobUrl = signal<string | null>(null); // resultImage src
+export const subtitleText = signal<string | null>(null);     // subtitleText TextView
+export const iuMissing = signal(false);                      // iuMissingOverlay visible
+export const enginePaused = signal(false);                   // fragment.isPaused mirror
+export const videoVisible = signal(false);                   // videoSurface visibility
+
+// ── IuImageItem / IuStatus / PreloadedScene (GenerateViewModel.kt:1564) ──
+export type IuStatus = 'READY' | 'NOT_GENERATED' | 'FAILED';
+export interface IuImageItem {
+  blobUrl: string | null;
+  durationMs: number;
+  unitId: string | null;
+  text: string | null;
+  status: IuStatus;
+}
+export interface PreloadedScene {
+  audio: Blob;
+  audioUrl: string;
+  video: Blob | null;
+  videoUrl: string | null;
+  iuSequence: IuImageItem[];
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  INTERNAL ENGINE STATE (PlayFragment.kt fields)
+// ═══════════════════════════════════════════════════════════════
+
+const PRELOAD_AHEAD = 3;
+const SAVED_POS_KEY = 'animastor:playbackPosition';
+
+let currentIndex = 0;                 // PlaybackViewModel.currentIndex
+let currentUnitIndex = 0;             // PlaybackViewModel.currentUnitIndex
+let currentIuIndex = 0;               // fragment.currentIuIndex
+let isPaused = false;                 // fragment.isPaused
+let pendingLoad = false;              // fragment.pendingLoad
+let sceneTransitionPending = false;   // fragment.sceneTransitionPending
+let nextChainReady = false;           // fragment.nextChainReady
+let needsContentRefresh = false;      // PlaybackViewModel.needsContentRefresh
+let needsRotationResume = false;      // PlaybackViewModel.needsRotationResume
+let savedPlaybackPositionMs = 0;      // PlaybackViewModel.savedPlaybackPositionMs
+let pendingSeekPositionMs = -1;       // PlaybackViewModel.pendingSeekPositionMs
+let isExecutingExternalSeek = false;
+let currentVolume = 1;                // fragment.currentVolume
+let sceneSeqCounter = 0;              // PlaybackViewModel.sceneSeqCounter
+let lastProcessedSceneSequence = 0;
+let videoEnded = false;
+
+const preloadCache = new Map<string, PreloadedScene>();      // `${buildId}_${sceneKey}`
+let preloadJobToken = 0;             // stale-preload guard
+let sceneEpoch = 0;                  // stale-fetch guard (discard emits after reset)
+let activeScene: PreloadedScene | null = null; // last delivered scene (URL GC)
+
+// Media elements (fragment MediaPlayers) — audio lives in a hidden host,
+// video is adopted from the PlayPage DOM tree.
+let engineHost: HTMLDivElement | null = null;
+let currentPlayer: HTMLAudioElement | null = null;
+let nextPlayer: HTMLAudioElement | null = null;
+let videoEl: HTMLVideoElement | null = null;
+let videoBlobUrl: string | null = null;
+let iuRafId = 0;
+let silentTimer: number | null = null;
+
+interface SavedPosition {
+  bookId: string;
+  buildId: string;
+  index: number;
+  posMs: number;
+}
+let pendingPositionRestore: SavedPosition | null = null;
+
+// ═══════════════════════════════════════════════════════════════
+//  HELPERS
+// ═══════════════════════════════════════════════════════════════
+
+function sceneKeyOf(ref: SceneRef): string { return `${ref.chapterId}:${ref.sceneId}`; }
+function enc(s: string): string { return encodeURIComponent(s); }
+function scenePath(chId: string, scId: string, kind: string): string {
+  return `/scene/${enc(bookId.value)}/${enc(chId)}/${enc(scId)}/${kind}?build_id=${enc(buildId.value)}`;
+}
+function iuPath(chId: string, scId: string, unitId: string): string {
+  return `/iu-image/${enc(bookId.value)}/${enc(chId)}/${enc(scId)}/${enc(unitId)}?build_id=${enc(buildId.value)}`;
+}
+function currentSceneRef(): SceneRef | undefined { return sceneQueue.value[currentIndex]; }
+export function currentChapterId(): string | null { return currentSceneRef()?.chapterId ?? null; }
+export function currentSceneId(): string | null { return currentSceneRef()?.sceneId ?? null; }
+export function getCurrentSceneKey(): string | null {
+  const ref = currentSceneRef();
+  return ref ? sceneKeyOf(ref) : null;
+}
+export const currentSceneIndex = (): number => currentIndex;
+export const sceneQueueSize = (): number => sceneQueue.value.length;
+
+function revokeSceneUrls(scene: PreloadedScene): void {
+  URL.revokeObjectURL(scene.audioUrl);
+  if (scene.videoUrl) URL.revokeObjectURL(scene.videoUrl);
+  for (const iu of scene.iuSequence) if (iu.blobUrl) URL.revokeObjectURL(iu.blobUrl);
+}
+
+// Revokes cached object URLs unless they are still referenced by the current
+// IU sequence (currentIuSequence may outlive a cache entry after soft refresh).
+function clearPreloadCache(): void {
+  const live = new Set(currentIuSequence.value?.map((i) => i.blobUrl).filter(Boolean));
+  for (const scene of preloadCache.values()) {
+    if (!live.has(scene.audioUrl)) URL.revokeObjectURL(scene.audioUrl);
+    if (scene.videoUrl && !live.has(scene.videoUrl)) URL.revokeObjectURL(scene.videoUrl);
+    for (const iu of scene.iuSequence) if (iu.blobUrl && !live.has(iu.blobUrl)) URL.revokeObjectURL(iu.blobUrl);
+  }
+  preloadCache.clear();
+}
+
+function bumpSceneEpoch(): void { sceneEpoch++; }
+
+// ═══════════════════════════════════════════════════════════════
+//  PUBLIC API — activity coordinator / PlayPage
+// ═══════════════════════════════════════════════════════════════
+
+/** Start playback from the beginning, or refresh content for the same book
+ *  (PlaybackViewModel.preparePlayback). Clears media cache when the build
+ *  changed (DONT_DO #5 — never remove). */
 export function preparePlayback(bId: string, bBuild: string, scenes: SceneRef[]): void {
+  const prevBookId = bookId.value;
+  const prevBuildId = buildId.value;
+  const savedIndex = currentIndex < scenes.length ? currentIndex : 0;
+
+  bumpSceneEpoch();
+  clearPreloadCache();
   bookId.value = bId;
   buildId.value = bBuild;
   sceneQueue.value = scenes;
+  currentIndex = prevBookId === bId && savedIndex < scenes.length ? savedIndex : 0;
+  currentUnitIndex = 0;
+
+  // New book → drop the previous book's cover/preview so a failed cover load
+  // never leaves the old book's art on screen (web hardening; Android keeps
+  // the stale bitmap in its state flow until setCoverImage replaces it).
+  if (prevBookId !== bId) {
+    if (coverImage.value) URL.revokeObjectURL(coverImage.value);
+    coverImage.value = null;
+    if (previewImage.value) URL.revokeObjectURL(previewImage.value);
+    previewImage.value = null;
+  }
+
+  if (prevBuildId !== bBuild || prevBookId !== bId) {
+    void clearMediaCache();
+  }
+  uiState.value = {
+    ...initial,
+    phase: scenes.length ? 'SCENE_READY' : 'IDLE',
+    sceneCount: scenes.length,
+    currentIndex,
+  };
+  missingIuPosition.value = null;
+  pendingExternalSeek.value = null;
+}
+
+/** Soft refresh after regeneration (PlaybackViewModel.refreshContent): keeps
+ *  position/phase while PAUSED or PLAYING, sets needsContentRefresh so the next
+ *  resume re-fetches the current scene; full reset otherwise. */
+export function refreshContent(bId: string, bBuild: string, scenes: SceneRef[]): void {
+  const sceneKeys = scenes.map(sceneKeyOf);
+  const currentKey = getCurrentSceneKey();
+  const newIndex = currentKey ? sceneKeys.indexOf(currentKey) : -1;
+
+  bumpSceneEpoch();
+  clearPreloadCache();
+  bookId.value = bId;
+  buildId.value = bBuild;
+  sceneQueue.value = scenes;
+  currentIndex = newIndex >= 0 ? newIndex : 0;
+
+  // Backend updates content in-place — always clear the cache so the next
+  // fetch hits the network and returns freshly generated content.
+  void clearMediaCache();
+
+  const phase = uiState.value.phase;
+  if (phase === 'PLAYING' || phase === 'PAUSED') {
+    needsContentRefresh = true;
+    pendingSeekPositionMs = -1;
+    stopAll();
+    uiState.value = {
+      ...uiState.value,
+      phase: 'SCENE_READY',
+      sceneCount: scenes.length,
+      currentIndex,
+    };
+    return;
+  }
   uiState.value = {
     ...uiState.value,
     phase: scenes.length ? 'SCENE_READY' : 'IDLE',
     sceneCount: scenes.length,
-    currentIndex: 0,
-    currentUnitIndex: 0
+    currentIndex,
   };
 }
 
-// Soft refresh after generation completes (PlaybackViewModel.refreshContent):
-// same book, potentially new scenes/build — keep current playback position.
-// Stage 7 expands this into the full soft-refresh pipeline.
-export function refreshContent(bId: string, bBuild: string, scenes: SceneRef[]): void {
-  bookId.value = bId;
-  buildId.value = bBuild;
-  sceneQueue.value = scenes;
-  uiState.value = { ...uiState.value, sceneCount: scenes.length };
+/** Set the cover image (PlaybackViewModel.setCoverImage). */
+export function setCoverImage(blob: Blob): void {
+  if (coverImage.value) URL.revokeObjectURL(coverImage.value);
+  coverImage.value = URL.createObjectURL(blob);
+}
+export function setPreviewImage(blobUrl: string | null): void {
+  previewImage.value = blobUrl;
 }
 
-/**
- * External seek from Navigate/Edit — 1:1 with PlaybackViewModel.seekToPosition:
- *  - scene in queue → set pendingExternalSeek + move currentIndex (player runs it).
- *  - scene NOT in queue → refresh the queue from book JSON (generation may have
- *    changed the book since the queue was built); if still missing → set
- *    missingIuPosition so Play shows the "not generated" overlay.
- *  - no book at all → missingIuPosition directly.
- */
+/** Ensure the player is initialized for a book (PlaybackViewModel.ensureInitialized):
+ *  fetch book JSON → preparePlayback → load cover from the first (cover) scene. */
+export async function ensureInitialized(targetBookId: string, targetBuildId: string): Promise<void> {
+  if (bookId.value && bookId.value === targetBookId) return;
+  try {
+    const bookData = await getJson<BookData>(`/book/${enc(targetBookId)}`);
+    const scenes = sceneRefs(bookData);
+    const coverScene = scenes.find((s) => s.sceneType === 'cover');
+    preparePlayback(targetBookId, targetBuildId, scenes);
+    const first = coverScene ?? scenes[0];
+    if (first) void loadCoverIntoState(first.chapterId, first.sceneId);
+    if (pendingPositionRestore && pendingPositionRestore.bookId === targetBookId) {
+      const saved = pendingPositionRestore;
+      pendingPositionRestore = null;
+      applyRestoredPosition(saved);
+    }
+  } catch (e) {
+    console.warn('ensureInitialized failed:', (e as Error).message);
+  }
+}
+
+/** Cover via first scene's first IU image (PlaybackViewModel.loadCoverIntoState),
+ *  with the same ~5× retry/backoff as loadCoverBitmap (PLAYER_STATE.md §3). */
+async function loadCoverIntoState(chapterId: string | null, sceneId: string | null): Promise<void> {
+  if (!chapterId || !sceneId || !bookId.value) return;
+  try {
+    const blob = await retryWithBackoff(async () => {
+      const sb = await getJson<StoryboardResponse>(`/scene/${enc(bookId.value)}/${enc(chapterId)}/${enc(sceneId)}/storyboard?build_id=${enc(buildId.value)}`);
+      const iu = sb.ius?.[0];
+      if (!iu) throw new Error('no IU');
+      return await getBlob(iuPath(chapterId, sceneId, iu.unit_id));
+    }, 5, 1000, 5000);
+    if (blob.size > 0) setCoverImage(blob);
+  } catch {
+    /* cover stays unset — curtains fallback */
+  }
+}
+
+/** PlaybackViewModel.playSceneQueue — restart from the beginning. */
+export function playSceneQueue(): void {
+  if (sceneQueue.value.length === 0) return;
+  uiState.value = { ...uiState.value, errorMessage: null };
+  missingIuPosition.value = null;
+  currentIuSequence.value = null;
+  currentUnitIndex = 0;
+  lastProcessedSceneSequence = 0;
+  currentIndex = 0;
+  bumpSceneEpoch();
+  preloadAhead(true);
+  playNext();
+}
+
+/** PlaybackViewModel.resumeFromCurrentScene — used by the rotation-resume and
+ *  SCENE_READY-with-position branches of the play button. */
+export function resumeFromCurrentScene(): void {
+  needsRotationResume = false;
+  if (sceneQueue.value.length === 0) return;
+  if (needsContentRefresh) {
+    pendingSeekPositionMs = -1;
+    savedPlaybackPositionMs = 0;
+    needsContentRefresh = false;
+    void clearMediaCache();
+  } else {
+    pendingSeekPositionMs = savedPlaybackPositionMs;
+  }
+  clearPreloadCache();
+  preloadAhead(true);
+  playNext();
+}
+
+export function rotationRecovery(): void {
+  needsRotationResume = true;
+  uiState.value = { ...uiState.value, phase: 'SCENE_READY' };
+}
+
+/** Pause playback (PlaybackViewModel.pausePlayback + fragment.pausePlayback). */
+export function pausePlayback(): void {
+  isPaused = true;
+  enginePaused.value = true;
+  try { currentPlayer?.pause(); } catch { /* ignore */ }
+  try { videoEl?.pause(); } catch { /* ignore */ }
+  uiState.value = { ...uiState.value, phase: 'PAUSED' };
+}
+
+/** Resume playback; when needsContentRefresh is set, re-fetch the current scene
+ *  (releases stale players first — PLAYER_STATE.md §2). */
+export function resumePlayback(): void {
+  if (needsContentRefresh) {
+    needsContentRefresh = false;
+    stopAll();
+    uiState.value = { ...uiState.value, phase: 'DOWNLOADING' };
+    playNext();
+    return;
+  }
+  isPaused = false;
+  enginePaused.value = false;
+  showCurrentIu();
+  playAudio(currentPlayer);
+  if (videoEl && videoBlobUrl && !videoEnded) {
+    try { void videoEl.play().catch(() => { }); } catch { /* ignore */ }
+  }
+  uiState.value = { ...uiState.value, phase: 'PLAYING' };
+  startIuCycling();
+}
+
+/** Handle a media error (PlaybackViewModel.handlePlaybackError). */
+export function handlePlaybackError(errorMsg: string): void {
+  stopAll();
+  uiState.value = { ...uiState.value, phase: 'SCENE_READY', errorMessage: errorMsg };
+}
+
+/** Handle a null player (PlaybackViewModel.handleNullPlayer). */
+export function handleNullPlayer(sceneKey: string): void {
+  stopAll();
+  uiState.value = { ...uiState.value, phase: 'SCENE_READY', errorMessage: `Audio playback failed for ${sceneKey}` };
+}
+
+/** Big play button (fragment onViewCreated playButton click — 1:1 branches). */
+export function handlePlayButton(): void {
+  const phase = uiState.value.phase;
+  if (phase === 'PLAYING' && currentPlayer == null) {
+    resumeFromCurrentScene();
+  } else if (phase === 'PLAYING' && !isPaused) {
+    pausePlayback();
+  } else if (phase === 'PLAYING' && isPaused) {
+    resumePlayback();
+  } else if (phase === 'PAUSED') {
+    resumePlayback();
+  } else if (phase === 'SCENE_READY' && needsRotationResume) {
+    resumeFromCurrentScene();
+  } else if (phase === 'SCENE_READY') {
+    if (currentIndex >= sceneQueue.value.length) playSceneQueue();
+    else if (currentIndex > 0) resumeFromCurrentScene();
+    else playSceneQueue();
+  } else if (phase === 'IDLE' && sceneQueue.value.length > 0) {
+    playSceneQueue();
+  }
+}
+
+/** Fragment.onHiddenChanged(hidden=true) — pause when the Play tab is left. */
+export function pauseIfPlaying(): void {
+  const phase = uiState.value.phase;
+  if (phase === 'PLAYING' && !isPaused) {
+    if (currentPlayer == null && currentIuSequence.value != null) {
+      cancelIuCycling();
+      isPaused = true;
+      enginePaused.value = true;
+    } else {
+      pausePlayback();
+    }
+  }
+}
+
+/** Fragment.checkPendingExternalSeek — executed on PlayPage mount. */
+export function checkPendingExternalSeek(): void {
+  if (pendingExternalSeek.value) {
+    pendingLoad = true;
+    stopAll();
+    executePendingSeek();
+  }
+}
+
+/** PlaybackViewModel.seekToPosition (external seek from Navigate/Edit):
+ *  scene in queue → pendingExternalSeek; scene missing → refresh queue from
+ *  book JSON; still missing → missingIuPosition overlay. */
 export async function seekToPosition(chapterId: string, sceneId: string, unitIndex: number, unitId: string | null = null): Promise<void> {
   const sceneKey = `${chapterId}:${sceneId}`;
-  const idx = sceneQueue.value.findIndex((s) => `${s.chapterId}:${s.sceneId}` === sceneKey);
+  const idx = sceneQueue.value.findIndex((s) => sceneKeyOf(s) === sceneKey);
   if (idx >= 0) {
     missingIuPosition.value = null;
     pendingExternalSeek.value = { chapterId, sceneId, unitId, chunkId: sceneKey, unitIndex };
@@ -91,12 +451,10 @@ export async function seekToPosition(chapterId: string, sceneId: string, unitInd
     pendingExternalSeek.value = null;
     return;
   }
-
-  // Refresh scene queue from book JSON (PlaybackViewModel.kt:449 path).
   try {
-    const bookData = await getJson<BookData>(`/book/${encodeURIComponent(bId)}`);
+    const bookData = await getJson<BookData>(`/book/${enc(bId)}`);
     const allScenes = sceneRefs(bookData);
-    const allKeys = allScenes.map((s) => `${s.chapterId}:${s.sceneId}`);
+    const allKeys = allScenes.map(sceneKeyOf);
     const newIdx = allKeys.indexOf(sceneKey);
     if (newIdx >= 0) {
       sceneQueue.value = allScenes;
@@ -113,36 +471,745 @@ export async function seekToPosition(chapterId: string, sceneId: string, unitInd
   }
 }
 
-/** Execute the pending external seek (PlaybackViewModel.executePendingSeek).
- *  Stage 5 applies position + state only; the audio engine (stage 7) fills in
- *  the actual DOWNLOADING→PLAYING pipeline. */
-export function executePendingSeek(): void {
-  const seek = pendingExternalSeek.value;
-  if (!seek) return;
-  pendingExternalSeek.value = null;
-  if (seek.chapterId && seek.sceneId) {
-    navigateTo({ ...seek });
-  }
-  missingIuPosition.value = null;
-  uiState.value = { ...uiState.value, currentUnitIndex: seek.unitIndex, phase: 'SCENE_READY' };
-}
-
 export function clearMissingIu(): void {
   missingIuPosition.value = null;
 }
 
+/** PlaybackViewModel.executePendingSeek — full pipeline (phase DOWNLOADING →
+ *  playNext); the caller sets pendingLoad so the fresh player stays paused. */
+export function executePendingSeek(): void {
+  const seek = pendingExternalSeek.value;
+  if (!seek) return;
+  pendingExternalSeek.value = null;
+
+  if (currentIndex >= sceneQueue.value.length) {
+    playSceneQueue();
+    return;
+  }
+  missingIuPosition.value = null;
+  isExecutingExternalSeek = true;
+  currentUnitIndex = seek.unitIndex;
+  navigateTo({ ...seek });
+  needsContentRefresh = false;
+  bumpSceneEpoch();
+  uiState.value = { ...uiState.value, phase: 'DOWNLOADING', currentUnitIndex: seek.unitIndex };
+  clearPreloadCache();
+  preloadAhead(true);
+  playNext();
+}
+
+/** PlaybackViewModel.closeBook + clearPlaybackState. */
 export function closeBook(): void {
+  bumpSceneEpoch();
+  stopAll();
+  clearPreloadCache();
+  if (coverImage.value) URL.revokeObjectURL(coverImage.value);
+  if (previewImage.value) URL.revokeObjectURL(previewImage.value);
   bookId.value = '';
   buildId.value = '';
   sceneQueue.value = [];
   missingIuPosition.value = null;
   pendingExternalSeek.value = null;
+  coverImage.value = null;
+  previewImage.value = null;
+  currentIuSequence.value = null;
+  currentIuBlobUrl.value = null;
+  subtitleText.value = null;
+  iuMissing.value = false;
+  currentIndex = 0;
+  currentUnitIndex = 0;
+  currentIuIndex = 0;
+  sessionStorage.removeItem(SAVED_POS_KEY);
+  navigateTo({ chapterId: null, sceneId: null, unitId: null, chunkId: null, unitIndex: 0 });
   uiState.value = { ...initial };
 }
 
+// ── Layer toggles (fragment layer chip listeners) ──
+export function setLayerAudio(v: boolean): void {
+  layerAudio.value = v;
+  currentVolume = v ? 1 : 0;
+  if (currentPlayer) currentPlayer.volume = currentVolume;
+  if (nextPlayer) nextPlayer.volume = currentVolume;
+  if (videoEl) videoEl.volume = currentVolume;
+}
+export function setLayerImage(v: boolean): void {
+  layerImage.value = v;
+  updateLayers();
+  if (v) {
+    const ius = currentIuSequence.value;
+    if (ius && ius.length && currentIuIndex < ius.length) showIu(ius[currentIuIndex]);
+  }
+}
+export function setLayerVideo(v: boolean): void {
+  layerVideo.value = v;
+  updateLayers();
+}
+export function setLayerSubtitles(v: boolean): void {
+  layerSubtitles.value = v;
+  updateSubtitleVisibility();
+}
+
+// ── Video element adoption (PlayPage mounts/unmounts) ──
+export function attachVideo(el: HTMLVideoElement): void {
+  detachVideo();
+  videoEl = el;
+  el.addEventListener('ended', onVideoEnded);
+  if (videoBlobUrl) {
+    el.src = videoBlobUrl;
+    const cur = currentPlayer?.currentTime ?? 0;
+    if (cur > 0) { try { el.currentTime = cur; } catch { /* not ready */ } }
+    if (!isPaused && uiState.value.phase === 'PLAYING') {
+      try { void el.play().catch(() => { }); } catch { /* ignore */ }
+    }
+  }
+  updateLayers();
+}
+export function detachVideo(): void {
+  if (videoEl) {
+    videoEl.removeEventListener('ended', onVideoEnded);
+    try { videoEl.pause(); } catch { /* ignore */ }
+    videoEl.removeAttribute('src');
+    videoEl = null;
+  }
+  updateLayers();
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  INTERNAL — playback logic (PlaybackViewModel internals)
+// ═══════════════════════════════════════════════════════════════
+
+function playNext(): void {
+  if (currentIndex >= sceneQueue.value.length) {
+    currentIndex = 0;
+    cancelIuCycling();
+    uiState.value = { ...uiState.value, phase: 'SCENE_READY', currentIndex: 0 };
+    return;
+  }
+  const ref = sceneQueue.value[currentIndex];
+  const sceneKey = sceneKeyOf(ref);
+  const chId = ref.chapterId ?? '';
+  const scId = ref.sceneId ?? '';
+
+  if (!isExecutingExternalSeek) {
+    currentUnitIndex = 0;
+    navigateTo({ chapterId: chId, sceneId: scId, unitId: null, chunkId: sceneKey, unitIndex: 0 });
+  }
+  isExecutingExternalSeek = false;
+
+  const cached = preloadCache.get(`${buildId.value}_${sceneKey}`);
+  if (cached) {
+    preloadCache.delete(`${buildId.value}_${sceneKey}`);
+    emitScene(cached);
+    preloadAhead();
+    return;
+  }
+
+  uiState.value = { ...uiState.value, phase: 'DOWNLOADING' };
+  const epoch = sceneEpoch;
+  void retryWithBackoff(() => fetchSceneData(sceneKey), 3, 1000, 5000)
+    .then((data) => {
+      if (epoch !== sceneEpoch) { revokeSceneUrls(data); return; }
+      if (needsContentRefresh) { revokeSceneUrls(data); return; }
+      previewImage.value = null;
+      emitScene(data);
+      preloadAhead();
+    })
+    .catch((e: unknown) => {
+      if (epoch !== sceneEpoch) return;
+      const msg = `Scene ${sceneKey}: ${(e as Error).message}`;
+      uiState.value = { ...uiState.value, phase: 'SCENE_READY', errorMessage: msg };
+    });
+}
+
+function emitScene(scene: PreloadedScene): void {
+  const seq = ++sceneSeqCounter;
+  uiState.value = {
+    ...uiState.value,
+    phase: 'PLAYING',
+    chunkSequence: seq,
+    errorMessage: null,
+    currentIndex,
+  };
+  processPendingScene(scene);
+  // The previous scene's object URLs are no longer displayed (handleChunk/
+  // handleSilentChunk replaced currentIuSequence / released the players) —
+  // revoke them so long playthroughs don't accumulate blob URLs.
+  const prev = activeScene;
+  activeScene = scene;
+  if (prev && prev !== scene) revokeSceneUrls(prev);
+}
+
+/** Fragment observeState collector equivalent: PLAYING + new chunk sequence →
+ *  handleChunk (audio) or handleSilentChunk (silent scene, e.g. Cover). */
+function processPendingScene(scene: PreloadedScene): void {
+  if (uiState.value.chunkSequence <= lastProcessedSceneSequence) return;
+  lastProcessedSceneSequence = uiState.value.chunkSequence;
+  if (scene.audio.size > 0) {
+    handleChunk(scene);
+  } else if (scene.iuSequence.length > 0) {
+    handleSilentChunk(scene.iuSequence);
+  }
+}
+
+/** Preload 3 scenes ahead (PRELOAD_AHEAD=3), parallel fetch, single attempt
+ *  each (PlaybackViewModel.preloadAhead). Chained mid-scene via the
+ *  observePreloadCompletion equivalent. */
+function preloadAhead(includeCurrent = false): void {
+  const bld = buildId.value;
+  if (!bld) return;
+  const token = ++preloadJobToken;
+  const start = includeCurrent ? 0 : 1;
+  const scenesToPreload: SceneRef[] = [];
+  for (let offset = start; offset <= PRELOAD_AHEAD; offset++) {
+    const ref = sceneQueue.value[currentIndex + offset];
+    if (!ref) break;
+    if (!preloadCache.has(`${bld}_${sceneKeyOf(ref)}`)) scenesToPreload.push(ref);
+  }
+  if (scenesToPreload.length === 0) return;
+
+  void Promise.all(scenesToPreload.map(async (ref) => {
+    const key = `${bld}_${sceneKeyOf(ref)}`;
+    try {
+      const data = await fetchSceneData(sceneKeyOf(ref));
+      if (token !== preloadJobToken) { revokeSceneUrls(data); return; }
+      preloadCache.set(key, data);
+      // observePreloadCompletion: if a player is running with no chained next,
+      // attach the freshly preloaded scene for a gapless −200ms switch.
+      if (currentPlayer && !nextChainReady && nextPlayer == null) preloadAheadAudio();
+    } catch {
+      /* load on demand via playNext */
+    }
+  }));
+}
+
+/** fetchSceneData: status → audio/video/IU in parallel; throws when audio isn't
+ *  ready (retryWithBackoff in playNext re-tries). Media blobs go through the
+ *  Cache API keyed `${buildId}_${sceneKey}` (SimpleDiskCache equivalent). */
+async function fetchSceneData(sceneKey: string): Promise<PreloadedScene> {
+  const [chId, scId] = sceneKey.split(':', 2);
+  const status = await getJson<SceneStatusResponse>(scenePath(chId, scId, 'status')).catch(() => null);
+  if (!status || !status.audio_ready) {
+    throw new Error(`Audio not ready for ${sceneKey}`);
+  }
+
+  const [audioBlob, videoBlob, iuSequence] = await Promise.all([
+    getSceneAudioBlob(chId, scId, sceneKey),
+    status.video_ready ? getSceneVideoBlob(chId, scId, sceneKey) : Promise.resolve(null),
+    fetchIuSequence(chId, scId),
+  ]);
+  return {
+    audio: audioBlob,
+    audioUrl: URL.createObjectURL(audioBlob),
+    video: videoBlob,
+    videoUrl: videoBlob ? URL.createObjectURL(videoBlob) : null,
+    iuSequence,
+  };
+}
+
+async function getSceneAudioBlob(chId: string, scId: string, sceneKey: string): Promise<Blob> {
+  const bld = buildId.value;
+  const cached = await getMedia(bld, sceneKey, 'audio');
+  if (cached) return cached;
+  try {
+    const blob = await getBlob(scenePath(chId, scId, 'audio'));
+    void putMedia(bld, sceneKey, 'audio', blob);
+    return blob;
+  } catch {
+    // Android Repository.getSceneAudio failure → byteArrayOf() → silent scene
+    // (timer-based IU cycling via handleSilentChunk). Match that instead of
+    // hard-erroring the whole scene.
+    return new Blob([]);
+  }
+}
+async function getSceneVideoBlob(chId: string, scId: string, sceneKey: string): Promise<Blob | null> {
+  const bld = buildId.value;
+  const cached = await getMedia(bld, sceneKey, 'video');
+  if (cached) return cached;
+  try {
+    const blob = await getBlob(scenePath(chId, scId, 'video'));
+    void putMedia(bld, sceneKey, 'video', blob);
+    return blob;
+  } catch {
+    return null;
+  }
+}
+
+/** fetchIuSequence: storyboard → each IU image blob (placeholder on failure,
+ *  never skip the index — DONT_DO #3). */
+async function fetchIuSequence(chapterId: string, sceneId: string): Promise<IuImageItem[]> {
+  try {
+    const sb = await getJson<StoryboardResponse>(scenePath(chapterId, sceneId, 'storyboard'));
+    if (!sb.ius || sb.ius.length === 0) return [];
+    return await Promise.all(sb.ius.map(async (iu) => {
+      const durationMs = iu.duration_ms ?? 200; // N1: server-computed; floor fallback
+      const text = iu.text ?? null;
+      try {
+        const blob = await getIuImageBlob(chapterId, sceneId, iu.unit_id);
+        return { blobUrl: URL.createObjectURL(blob), durationMs, unitId: iu.unit_id ?? null, text, status: 'READY' as IuStatus };
+      } catch {
+        return { blobUrl: null, durationMs, unitId: iu.unit_id ?? null, text, status: 'NOT_GENERATED' as IuStatus };
+      }
+    }));
+  } catch {
+    return [];
+  }
+}
+
+async function getIuImageBlob(chId: string, scId: string, unitId: string): Promise<Blob> {
+  const bld = buildId.value;
+  const key = `${chId}:${scId}:${unitId}`;
+  const cached = await getMedia(bld, key, 'iu');
+  if (cached) return cached;
+  const blob = await getBlob(iuPath(chId, scId, unitId));
+  void putMedia(bld, key, 'iu', blob);
+  return blob;
+}
+
+/** tryPreloadNextScene / getPreloadedScene. */
+function getPreloadedScene(index: number): PreloadedScene | null {
+  const ref = sceneQueue.value[index];
+  if (!ref) return null;
+  return preloadCache.get(`${buildId.value}_${sceneKeyOf(ref)}`) ?? null;
+}
+function tryPreloadNextScene(): PreloadedScene | null {
+  return getPreloadedScene(currentIndex + 1);
+}
+
+/** onAudioCompleted — advance to the next scene. */
+function onAudioCompleted(): void {
+  currentIndex++;
+  playNext();
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  ENGINE — fragment MediaPlayer management (PlayFragment.kt)
+// ═══════════════════════════════════════════════════════════════
+
+function ensureHost(): HTMLDivElement {
+  if (!engineHost) {
+    engineHost = document.createElement('div');
+    engineHost.style.cssText = 'position:fixed;width:0;height:0;overflow:hidden;opacity:0;pointer-events:none;';
+    document.body.appendChild(engineHost);
+  }
+  return engineHost;
+}
+
+function createAudio(url: string): HTMLAudioElement {
+  const el = new Audio();
+  el.preload = 'auto';
+  el.volume = currentVolume;
+  el.src = url;
+  ensureHost().appendChild(el);
+  return el;
+}
+function playAudio(el: HTMLAudioElement | null): void {
+  if (!el) return;
+  try { void el.play().catch(() => { }); } catch { /* ignore */ }
+}
+function pauseAudio(el: HTMLAudioElement | null): void {
+  if (!el) return;
+  try { el.pause(); } catch { /* ignore */ }
+}
+function seekAudio(el: HTMLAudioElement, ms: number): void {
+  try { el.currentTime = ms / 1000; } catch { /* ignore */ }
+}
+
+/** Release an audio element (fragment MediaPlayer.release equivalent): drop
+ *  listeners, unload src and remove it from the hidden host so elements don't
+ *  accumulate while the queue plays. */
+function releaseAudioEl(el: HTMLAudioElement | null): void {
+  if (!el) return;
+  el.removeEventListener('ended', onTrackEnd);
+  el.removeEventListener('error', onAudioError);
+  try { el.pause(); } catch { /* ignore */ }
+  el.removeAttribute('src');
+  try { el.load(); } catch { /* ignore */ }
+  el.remove();
+}
+
+/** handleChunk — deliver a scene with audio: set IU sequence, create the first
+ *  player or chain the next one, seek to the target unit (sum of durationMs). */
+function handleChunk(scene: PreloadedScene): void {
+  if (scene.videoUrl) playVideoOverlay(scene.videoUrl);
+
+  // Seek offset from unitIndex if navigating externally (PlayFragment.kt:573).
+  const ius = scene.iuSequence;
+  const targetUnit = currentUnitIndex;
+  const seekToUnit = targetUnit > 0 && ius.length > 0 && targetUnit < ius.length ? targetUnit : 0;
+  let seekMs = 0;
+  for (let i = 0; i < seekToUnit; i++) seekMs += ius[i].durationMs;
+
+  currentIuSequence.value = ius;
+  currentIuIndex = seekToUnit;
+  uiState.value = { ...uiState.value, currentUnitIndex: seekToUnit };
+  if (ius.length > 0) {
+    showIu(ius[seekToUnit]);
+  } else {
+    showIuMissing();
+    updateSubtitleIfEnabled(null);
+  }
+
+  if (nextChainReady && currentPlayer) {
+    nextChainReady = false;
+    preloadAheadAudio();
+    sceneTransitionPending = true;
+    return;
+  }
+
+  if (currentPlayer == null) {
+    const el = createAudio(scene.audioUrl);
+    el.addEventListener('ended', onTrackEnd);
+    el.addEventListener('error', onAudioError);
+    currentPlayer = el;
+
+    if (pendingLoad) {
+      pendingLoad = false;
+      isPaused = true;
+      enginePaused.value = true;
+      pauseAudio(el);
+      uiState.value = { ...uiState.value, phase: 'PAUSED' };
+    } else {
+      playAudio(el);
+    }
+    if (seekMs > 0) {
+      seekAudio(el, seekMs);
+    } else if (pendingSeekPositionMs > 0) {
+      seekAudio(el, pendingSeekPositionMs);
+      pendingSeekPositionMs = -1;
+    }
+    if (currentPlayer) startIuCycling();
+    else if (ius.length > 0) startSilentIuCycling();
+    preloadAheadAudio();
+  } else {
+    preloadNext(scene);
+    sceneTransitionPending = true;
+    startIuCycling();
+  }
+  updateLayers();
+}
+
+/** handleSilentChunk — no audio: release players, timer-based IU cycling. */
+function handleSilentChunk(ius: IuImageItem[]): void {
+  stopAll();
+  currentIuSequence.value = ius;
+  currentIuIndex = 0;
+  uiState.value = { ...uiState.value, currentUnitIndex: 0 };
+  if (ius.length > 0) {
+    showIu(ius[0]);
+  }
+  isPaused = false;
+  enginePaused.value = false;
+  startSilentIuCycling();
+  updateLayers();
+}
+
+/** preloadAheadAudio — chain the next scene's audio (gapless option A). */
+function preloadAheadAudio(): void {
+  const next = tryPreloadNextScene();
+  if (!next) return;
+  preloadNext(next);
+  nextChainReady = true;
+  sceneTransitionPending = true;
+}
+
+/** preloadNext — (re)create nextPlayer with the given scene audio. */
+function preloadNext(scene: PreloadedScene): void {
+  releaseAudioEl(nextPlayer);
+  if (scene.audio.size === 0) {
+    nextPlayer = null;
+    return;
+  }
+  const el = createAudio(scene.audioUrl);
+  el.addEventListener('ended', onTrackEnd);
+  el.addEventListener('error', onAudioError);
+  nextPlayer = el;
+}
+
+/** startIuCycling — RAF over audio.currentTime vs cumulative durationMs
+ *  (06 §1.3 A; DONT_DO #1/#3: never stall audio for an image, never skip IU). */
+function startIuCycling(): void {
+  cancelIuCycling();
+  const tick = () => {
+    iuRafId = requestAnimationFrame(tick);
+    const ius = currentIuSequence.value;
+    const player = currentPlayer;
+    if (!ius || ius.length === 0 || !player) return;
+    if (isPaused) return;
+
+    const pos = player.currentTime * 1000;
+    const dur = (player.duration && isFinite(player.duration) ? player.duration : 0) * 1000;
+    if (dur <= 0) return;
+
+    // Early gapless switch −200ms before scene end (PlayFragment.kt:893).
+    // Gate on nextPlayer: after a promotion the flag can briefly stay true with
+    // nextPlayer already consumed (DOWNLOADING window) — never advance twice.
+    if (pos >= dur - 200 && sceneTransitionPending && nextPlayer != null) {
+      sceneTransitionPending = false;
+      switchToNextPlayer();
+      return;
+    }
+
+    let cumulative = 0;
+    let idx = 0;
+    for (let i = 0; i < ius.length; i++) {
+      cumulative += ius[i].durationMs;
+      if (pos < cumulative) { idx = i; break; }
+    }
+    if (idx >= ius.length) idx = ius.length - 1;
+    if (idx === 0 && currentIuIndex !== 0) return;
+    if (idx !== currentIuIndex) {
+      currentIuIndex = idx;
+      if (isPaused) return;
+      uiState.value = { ...uiState.value, currentUnitIndex: idx };
+      const item = ius[idx];
+      showIu(item);
+      navigateTo({
+        chapterId: currentChapterId(),
+        sceneId: currentSceneId(),
+        unitId: item.unitId,
+        chunkId: getCurrentSceneKey(),
+        unitIndex: idx,
+      });
+    }
+  };
+  iuRafId = requestAnimationFrame(tick);
+}
+
+/** startSilentIuCycling — timer-based cycling for scenes without audio. */
+function startSilentIuCycling(): void {
+  cancelIuCycling();
+  const loop = () => {
+    if (isPaused) { silentTimer = window.setTimeout(loop, 500); return; }
+    const ius = currentIuSequence.value;
+    if (!ius || ius.length === 0) { silentTimer = window.setTimeout(loop, 500); return; }
+    if (currentIuIndex >= ius.length) { silentTimer = window.setTimeout(loop, 500); return; }
+    // No images at all → idle-poll slowly (still never stalls anything).
+    if (ius.every((it) => it.status !== 'READY' && !it.blobUrl)) {
+      silentTimer = window.setTimeout(loop, 5000);
+      return;
+    }
+    const dur = ius[currentIuIndex].durationMs;
+    silentTimer = window.setTimeout(() => {
+      if (isPaused || ius !== currentIuSequence.value) return;
+      const nextIdx = (currentIuIndex + 1) % ius.length;
+      currentIuIndex = nextIdx;
+      uiState.value = { ...uiState.value, currentUnitIndex: nextIdx };
+      showIu(ius[nextIdx]);
+      navigateTo({
+        chapterId: currentChapterId(),
+        sceneId: currentSceneId(),
+        unitId: ius[nextIdx].unitId,
+        chunkId: getCurrentSceneKey(),
+        unitIndex: nextIdx,
+      });
+    }, dur);
+  };
+  loop();
+}
+
+function cancelIuCycling(): void {
+  if (iuRafId) cancelAnimationFrame(iuRafId);
+  iuRafId = 0;
+  if (silentTimer != null) clearTimeout(silentTimer);
+  silentTimer = null;
+}
+
+/** switchToNextPlayer — promote nextPlayer at the −200ms early switch. */
+function switchToNextPlayer(): void {
+  currentIuIndex = 0;
+  subtitleText.value = null;
+  releaseAudioEl(currentPlayer);
+  currentPlayer = nextPlayer;
+  nextPlayer = null;
+  if (currentPlayer) {
+    if (isPaused) pauseAudio(currentPlayer);
+    else playAudio(currentPlayer);
+    startIuCycling();
+  }
+  onAudioCompleted();
+}
+
+/** onTrackEnd — natural end of the current audio: promote next, or show the
+ *  cover-only state at the end of the queue. */
+function onTrackEnd(): void {
+  cancelIuCycling();
+  releaseAudioEl(currentPlayer);
+  currentPlayer = nextPlayer;
+  nextPlayer = null;
+  if (currentPlayer) {
+    currentIuIndex = 0;
+    subtitleText.value = null;
+    if (isPaused) pauseAudio(currentPlayer);
+    else playAudio(currentPlayer);
+    startIuCycling();
+  } else {
+    showCoverOnly();
+  }
+  onAudioCompleted();
+}
+
+/** Audio element error — reset to SCENE_READY so the user can retry. */
+function onAudioError(): void {
+  isPaused = false;
+  enginePaused.value = false;
+  handlePlaybackError('Audio playback error');
+}
+
+function showCurrentIu(): void {
+  const ius = currentIuSequence.value;
+  if (!ius || ius.length === 0) return;
+  const idx = Math.max(0, Math.min(currentUnitIndex, ius.length - 1));
+  showIu(ius[idx]);
+}
+
+function showIu(item: IuImageItem): void {
+  // Image and subtitle are updated INDEPENDENTLY (Android: showIuImage(item)
+  // + updateSubtitleIfEnabled(item.text) are separate calls). A unit whose
+  // image is missing/not-generated still shows its subtitle when the subtitles
+  // layer is on — hiding the text with the image was a web bug (subtitle would
+  // only appear after toggling the chip, because updateSubtitleVisibility reads
+  // the text directly from the sequence bypassing image readiness).
+  if (item.blobUrl && item.status === 'READY') {
+    currentIuBlobUrl.value = item.blobUrl;
+    iuMissing.value = false;
+  } else {
+    currentIuBlobUrl.value = null;
+    iuMissing.value = true;
+  }
+  updateSubtitleIfEnabled(item.text);
+}
+
+function showIuMissing(): void {
+  currentIuBlobUrl.value = null;
+  iuMissing.value = true;
+}
+
+function showCoverOnly(): void {
+  currentIuBlobUrl.value = null;
+  iuMissing.value = false;
+  subtitleText.value = null;
+}
+
+function updateSubtitleIfEnabled(text: string | null): void {
+  subtitleText.value = layerSubtitles.value && text != null ? text : null;
+}
+
+function updateSubtitleVisibility(): void {
+  const ius = currentIuSequence.value;
+  const text = layerSubtitles.value && ius && currentIuIndex < ius.length ? ius[currentIuIndex].text : null;
+  subtitleText.value = text ?? null;
+}
+
+/** updateLayers — videoSurface visibility (image layer handled in render). */
+function updateLayers(): void {
+  videoVisible.value = !!videoEl && !!videoBlobUrl && !videoEnded && layerVideo.value;
+}
+
+/** playVideoOverlay — load the scene video on the adopted <video> element,
+ *  synced to the audio position (R4, no 50ms hack). */
+function playVideoOverlay(url: string): void {
+  videoBlobUrl = url;
+  videoEnded = false;
+  if (!videoEl) { updateLayers(); return; }
+  videoEl.src = url;
+  const cur = currentPlayer?.currentTime ?? 0;
+  if (cur > 0) { try { videoEl.currentTime = cur; } catch { /* ignore */ } }
+  if (!isPaused && !pendingLoad && uiState.value.phase === 'PLAYING') {
+    try { void videoEl.play().catch(() => { }); } catch { /* ignore */ }
+  }
+  updateLayers();
+}
+
+function onVideoEnded(): void {
+  videoEnded = true;
+  updateLayers();
+}
+
+/** stopAll — fragment.stopAll(): release players, reset engine flags. */
+export function stopAll(): void {
+  cancelIuCycling();
+  currentIuSequence.value = null;
+  currentIuBlobUrl.value = null;
+  subtitleText.value = null;
+  iuMissing.value = false;
+  currentIuIndex = 0;
+  sceneTransitionPending = false;
+  nextChainReady = false;
+  releaseAudioEl(currentPlayer);
+  currentPlayer = null;
+  releaseAudioEl(nextPlayer);
+  nextPlayer = null;
+  if (videoEl) {
+    try { videoEl.pause(); } catch { /* ignore */ }
+    videoEl.removeAttribute('src');
+  }
+  videoBlobUrl = null;
+  videoEnded = false;
+  isPaused = false;
+  enginePaused.value = false;
+  updateLayers();
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  LIFECYCLE — Page Visibility + position persistence (06 §1.8)
+// ═══════════════════════════════════════════════════════════════
+
+function savePlaybackPosition(): void {
+  const posMs = currentPlayer ? Math.round(currentPlayer.currentTime * 1000) : 0;
+  if (posMs <= 0 && uiState.value.phase !== 'PLAYING') return;
+  try {
+    sessionStorage.setItem(SAVED_POS_KEY, JSON.stringify({
+      bookId: bookId.value,
+      buildId: buildId.value,
+      index: currentIndex,
+      posMs,
+    } satisfies SavedPosition));
+  } catch { /* storage unavailable */ }
+}
+
+function applyRestoredPosition(saved: SavedPosition): void {
+  savedPlaybackPositionMs = saved.posMs;
+  needsRotationResume = true;
+  pendingSeekPositionMs = saved.posMs;
+  stopAll();
+  currentIndex = Math.min(saved.index, Math.max(0, sceneQueue.value.length - 1));
+  uiState.value = { ...uiState.value, phase: 'SCENE_READY', currentIndex, currentUnitIndex: 0 };
+}
+
+/** Restore a saved playback position (pagehide → pageshow / fresh load).
+ *  Call from PlayPage on mount; pageshow listener covers bfcache restores. */
+export function restoreSavedPositionIfAny(): void {
+  let saved: SavedPosition | null = null;
+  try {
+    const raw = sessionStorage.getItem(SAVED_POS_KEY);
+    if (!raw) return;
+    sessionStorage.removeItem(SAVED_POS_KEY);
+    saved = JSON.parse(raw) as SavedPosition;
+  } catch { return; }
+  if (!saved || !saved.bookId) return;
+  if (bookId.value === saved.bookId) {
+    applyRestoredPosition(saved);
+  } else if (!bookId.value) {
+    // Fresh reload — ensureInitialized (from PlayPage mount) applies it.
+    pendingPositionRestore = saved;
+    void ensureInitialized(saved.bookId, saved.buildId);
+  }
+}
+
+/** Wire lifecycle listeners once from main.tsx (onPause/onResume equivalent). */
+export function wirePlaybackLifecycle(): void {
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) pauseIfPlaying();
+  });
+  window.addEventListener('pagehide', () => {
+    savePlaybackPosition();
+  });
+  window.addEventListener('pageshow', () => {
+    restoreSavedPositionIfAny();
+  });
+}
+
 // ── Playback coordinator (MainActivity.setupPlaybackCoordination) ──
-// Observes generateStore.playbackPrepared and forwards to preparePlayback or
-// refreshContent depending on softRefresh. Wired once from main.tsx.
 let wired = false;
 export function wirePlaybackCoordination(): void {
   if (wired) return;
@@ -154,7 +1221,7 @@ export function wirePlaybackCoordination(): void {
       preparePlayback(prep.bookId, prep.buildId, prep.scenes);
     }
     if (prep.coverImage != null) {
-      // stage 7: setCoverImage(prep.coverImage)
+      setCoverImage(prep.coverImage);
     }
   });
 }

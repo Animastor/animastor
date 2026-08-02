@@ -3,10 +3,13 @@ import { applyTheme, applyLanguage, readPrefs, writePrefs } from '../app/theme';
 import type { ThemePref } from '../app/theme';
 import { t, tf } from '../app/i18n';
 import type { StrKey } from '../app/i18n';
-import { getJson, putJson } from '../api/client';
-import { bookId } from '../state/generateStore';
+import { getJson, putJson, deleteJson } from '../api/client';
+import { bookId, resetProgressState, closeBook as closeGenerateBook } from '../state/generateStore';
+import { closeBook as closePlayerBook } from '../state/playbackStore';
+import { clearCache as clearMediaCache } from '../cache/mediaCache';
+import { Modal, toast } from '../lib/ui';
 import { workerType } from '../app/routeState';
-import { navigate } from '../app/router';
+import { navigate, START_ROUTE } from '../app/router';
 import type { Route } from '../app/router';
 
 // SettingsPage covers: /settings (general), /settings/vbook (section="vbook"),
@@ -20,7 +23,8 @@ export function SettingsPage(props: { section?: string; path?: string }) {
 }
 
 // ─────────────────────────────────────────────────────────────
-// /settings — General (theme + language) — stage 0
+// /settings — General (theme + language + server + clear/delete + debug)
+// 1:1 with SettingsFragment + fragment_settings.xml (stage 1).
 // ─────────────────────────────────────────────────────────────
 
 function GeneralSection() {
@@ -28,6 +32,8 @@ function GeneralSection() {
   const [theme, setTheme] = useState<ThemePref>(prefs.theme ?? 'auto');
   const [language, setLanguage] = useState<'auto' | 'ru' | 'en'>(prefs.language ?? 'auto');
   const [, setLanguageTick] = useState(0);
+  const [confirm, setConfirm] = useState<null | { kind: 'clear' | 'delete'; message: string }>(null);
+  const [busy, setBusy] = useState(false);
 
   const onTheme = useCallback((v: ThemePref) => {
     setTheme(v); writePrefs({ theme: v }); applyTheme(v);
@@ -38,35 +44,150 @@ function GeneralSection() {
     setLanguageTick((n) => n + 1);
   }, []);
 
+  // Server URL — web is same-origin (BASE = "/api/v1"), so this mirrors the
+  // read-only BuildConfig.BASE_URL display Android pre-fills. §14 deviation:
+  // not editable because the web app cannot switch servers per-install.
+  const serverUrl = typeof location !== 'undefined' ? location.origin : '';
+  const debugText = `App: Animastor Web\nServer: ${serverUrl}`;
+
+  // clearCacheButton — Android: no book → Repository.clearCache() + toast;
+  // book open → confirm dialog → clearBookCache + clearCache + player reset
+  // + resetProgressState (book structure stays intact, Navigator keeps it).
+  const onClearCache = () => {
+    if (!bookId.value) {
+      void clearMediaCache()
+        .then((n) => toast(tf('settings_cache_cleared_local', n)))
+        .catch((e) => toast(tf('ai_error', (e as Error).message), 4000));
+      return;
+    }
+    setConfirm({ kind: 'clear', message: t('settings_cache_clear_confirm') });
+  };
+
+  // deleteVbookButton — Android: no book → toast "No book open"; book open →
+  // confirm dialog → deleteBook + clearCache + close both ViewModels.
+  const onDeleteVbook = () => {
+    if (!bookId.value) {
+      toast(t('settings_no_book_open'));
+      return;
+    }
+    setConfirm({ kind: 'delete', message: t('settings_delete_vbook_confirm') });
+  };
+
+  const runConfirm = async () => {
+    if (!confirm || busy) return;
+    const currentBook = bookId.value;
+    if (!currentBook) { setConfirm(null); return; } // book closed while dialog up
+    setBusy(true);
+    try {
+      if (confirm.kind === 'clear') {
+        // DELETE /book/:id/cache — generated assets only; structure preserved.
+        await deleteJson(`/book/${encodeURIComponent(currentBook)}/cache`);
+        await clearMediaCache();
+        closePlayerBook();       // playbackViewModel.closeBook()
+        resetProgressState();    // viewModel.resetProgressState()
+        toast(t('settings_cache_cleared'));
+      } else {
+        await deleteJson(`/book/${encodeURIComponent(currentBook)}`);
+        await clearMediaCache();
+        closeGenerateBook();     // resets generate + playback (closeBook both)
+        toast(t('settings_delete_vbook_done'));
+      }
+    } catch (e) {
+      toast(tf('ai_error', (e as Error).message), 4000);
+    } finally {
+      setBusy(false);
+      setConfirm(null);
+    }
+  };
+
+  // acceptButton — Android: save theme/lang prefs + recreate() (popBackStack
+  // if unchanged). Web applies theme/lang live, so Apply just persists and pops.
+  const onApply = () => {
+    writePrefs({ theme, language });
+    if (history.length > 1) history.back();
+    else navigate(START_ROUTE);
+  };
+
   return (
-    <section class="page">
-      <h2 style="font-size:1rem;margin:0 0 .75rem">{t('settings_title')}</h2>
-
-      <div class="settings__group">
-        <div class="settings__row">
-          <span>{t('settings_theme')}</span>
-          <Segmented
-            value={theme}
-            options={[['auto', t('settings_theme_auto')], ['dark', t('settings_theme_dark')], ['light', t('settings_theme_light')]]}
-            onChange={(v) => onTheme(v as ThemePref)}
-          />
+    <section class="page settings-page">
+      <div class="settings-page__scroll">
+        {/* Theme / Language */}
+        <div class="settings__group">
+          <div class="settings__row">
+            <span>{t('settings_theme')}</span>
+            <Segmented
+              value={theme}
+              options={[['auto', t('settings_theme_auto')], ['dark', t('settings_theme_dark')], ['light', t('settings_theme_light')]]}
+              onChange={(v) => onTheme(v as ThemePref)}
+            />
+          </div>
+          <div class="settings__row">
+            <span>{t('settings_language')}</span>
+            <Segmented
+              value={language}
+              options={[['auto', t('settings_language_auto')], ['ru', t('settings_language_ru')], ['en', t('settings_language_en')]]}
+              onChange={(v) => onLang(v as 'auto' | 'ru' | 'en')}
+            />
+          </div>
         </div>
-        <div class="settings__row">
-          <span>{t('settings_language')}</span>
-          <Segmented
-            value={language}
-            options={[['auto', t('settings_language_auto')], ['ru', t('settings_language_ru')], ['en', t('settings_language_en')]]}
-            onChange={(v) => onLang(v as 'auto' | 'ru' | 'en')}
-          />
+
+        {/* Server — settings_server + serverUrlInput (read-only, §14) */}
+        <div class="settings__group settings__group--stack">
+          <span class="settings__label">{t('settings_server')}</span>
+          <input class="settings__input" value={serverUrl} readOnly aria-label={t('settings_server')} />
+        </div>
+
+        {/* VBook / Worker — 1:1 with VBookSettingsFragment / WorkerSettingsFragment,
+            which Android opens from GenerateFragment's gear icons. Placed ABOVE the
+            destructive Cache/Storyboard buttons per user request. */}
+        <div class="settings__group">
+          <NavRow label={t('vbook_settings_title')} onClick={() => navigate('/settings/vbook')} />
+          <NavRow label={t('worker_settings_title')} onClick={() => navigate('/settings/worker')} />
+        </div>
+
+        {/* Cache / Storyboard — settings_cache + clearCacheButton + deleteVbookButton
+            (Widget.Animastor.Button.Outlined.Error, 42dp, match_parent). */}
+        <div class="settings__group settings__group--stack">
+          <span class="settings__label">{t('settings_cache')}</span>
+          <button class="btn btn--outlined btn--error" onClick={onClearCache} disabled={busy}>
+            {t('settings_cache_clear')}
+          </button>
+          <button class="btn btn--outlined btn--error" onClick={onDeleteVbook} disabled={busy}>
+            {t('settings_delete_vbook')}
+          </button>
+        </div>
+
+        {/* Debug — settings_debug + debugInfo (11sp onSurfaceVariant) */}
+        <div class="settings__group settings__group--stack">
+          <span class="settings__label">{t('settings_debug')}</span>
+          <pre class="settings__debug">{debugText}</pre>
         </div>
       </div>
 
-      {/* VBook / Worker — 1:1 with VBookSettingsFragment / WorkerSettingsFragment,
-          which Android opens from GenerateFragment's gear icons. */}
-      <div class="settings__group" style="margin-top:1rem">
-        <NavRow label={t('vbook_settings_title')} onClick={() => navigate('/settings/vbook')} />
-        <NavRow label={t('worker_settings_title')} onClick={() => navigate('/settings/worker')} />
+      {/* acceptButton — pinned footer like VBook/Worker sections */}
+      <div class="settings-page__footer">
+        <button class="btn btn--block" onClick={onApply} disabled={busy}>
+          {t('settings_apply')}
+        </button>
       </div>
+
+      {/* AlertDialog — DialogDeleteVbookBinding (title + message + OK/Cancel) */}
+      {confirm && (
+        <Modal
+          title={confirm.kind === 'clear' ? t('settings_cache_clear') : t('settings_delete_vbook')}
+          onClose={() => { if (!busy) setConfirm(null); }}
+        >
+          <p class="settings-page__notice" style="white-space:pre-line;margin:0">{confirm.message}</p>
+          <div class="modal__footer">
+            <button class="btn btn--outlined" onClick={() => { if (!busy) setConfirm(null); }} disabled={busy}>
+              {t('dialog_cancel')}
+            </button>
+            <button class="btn" onClick={runConfirm} disabled={busy}>
+              {busy ? t('play_loading') : t('dialog_ok')}
+            </button>
+          </div>
+        </Modal>
+      )}
     </section>
   );
 }
