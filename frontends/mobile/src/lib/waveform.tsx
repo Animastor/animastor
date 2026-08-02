@@ -153,7 +153,7 @@ export function Waveform(props: WaveformProps) {
       }
     }
 
-    // ── Playhead ──
+    // ── Playhead (WaveformView.drawPlayhead: 2.5f white line + 8px triangle) ──
     if (playbackPositionMs >= 0 && durationMs > 0) {
       const px = drawLeft + msToX(playbackPositionMs);
       ctx.strokeStyle = '#FFFFFF';
@@ -168,8 +168,7 @@ export function Waveform(props: WaveformProps) {
       ctx.lineTo(px - tri, -tri);
       ctx.lineTo(px + tri, -tri);
       ctx.closePath();
-      ctx.fillStyle = '#FFFFFF';
-      ctx.fill();
+      ctx.stroke(); // outline, like Android's three drawLine calls (clipped at top)
     }
 
     // ── Time labels ──
@@ -195,11 +194,14 @@ export function Waveform(props: WaveformProps) {
   useEffect(() => { draw(); }, [draw]);
 
   // Redraw per signal tick (playback rAF loop) without re-rendering the page.
+  // The signal value must be written into playbackRef (which draw() reads) —
+  // signal ticks alone never re-render, so without this the playhead would
+  // stay at -1 and never appear (WaveformView.setPlaybackPosition equivalent).
   const playbackSignal = props.playbackSignal;
   useEffect(() => {
     if (!playbackSignal) return;
     return effect(() => {
-      void playbackSignal.value;
+      playbackRef.current = playbackSignal.value;
       draw();
     });
   }, [draw, playbackSignal]);
