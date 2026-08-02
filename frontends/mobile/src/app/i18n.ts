@@ -292,6 +292,12 @@ const dict = {
     timeline_play: 'Воспроизвести аудио сцены',
     timeline_stop: 'Остановить воспроизведение',
     timeline_reset: 'Сбросить тайминги',
+    // Edit panels (web: collapsible carousel/waveform panels)
+    edit_carousel_title: 'Карусель изображений',
+    edit_waveform_title: 'Waveform редактора',
+    edit_collapse: 'Свернуть',
+    edit_expand: 'Развернуть',
+    edit_close: 'Закрыть',
     // Generate (strings.xml ru)
     generate_global_section: 'Общее',
     generate_all: 'Генерировать всё',
@@ -626,6 +632,12 @@ const dict = {
     timeline_play: 'Play scene audio',
     timeline_stop: 'Stop playback',
     timeline_reset: 'Reset timings',
+    // Edit panels (web: collapsible carousel/waveform panels)
+    edit_carousel_title: 'Image Carousel',
+    edit_waveform_title: 'Waveform Editor',
+    edit_collapse: 'Collapse',
+    edit_expand: 'Expand',
+    edit_close: 'Close',
     // Generate (strings.xml en)
     generate_global_section: 'Global',
     generate_all: 'Generate All',

@@ -39,7 +39,7 @@ import {
 import { navigateTo, position as positionSignal } from '../state/positionStore';
 import { seekToPosition } from '../state/playbackStore';
 import { Waveform } from '../lib/waveform';
-import { IconChevronLeft, IconChevronRight, IconImageOff, IconPlay, IconReset, IconSave, IconStop } from '../app/icons';
+import { IconChevronDown, IconChevronLeft, IconChevronRight, IconChevronUp, IconClose, IconImageOff, IconPlay, IconReset, IconSave, IconStop } from '../app/icons';
 
 // ── Tabs (propertyTabs) — default to Unit (index 2) like EditFragment ──
 const TABS = ['edit_scene', 'edit_audio', 'edit_units_tab', 'edit_characters_tab', 'edit_voices_tab', 'edit_locations_tab', 'edit_global_tab'] as const;
@@ -174,6 +174,12 @@ export function EditPage(props: { path?: string }) {
   // (React setState is async; Android mutated a plain var).
   const timingDataRef = useRef<SceneTiming | null>(null);
   const [timelineVisible, setTimelineVisible] = useState(false);
+  // Collapsible panels (web deviation — frees vertical space for the editor).
+  const [carouselCollapsed, setCarouselCollapsed] = useState(false);
+  const [timelineCollapsed, setTimelineCollapsed] = useState(false);
+  // Full-size image zoom dialog (opens from the current carousel card).
+  const [zoom, setZoom] = useState<{ url: string; label: string } | null>(null);
+  const [zoomFailed, setZoomFailed] = useState(false);
   const [selection, setSelection] = useState<{ startMs: number; endMs: number } | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const originalTimings = useRef<Record<string, [number, number]>>({});
@@ -1254,6 +1260,29 @@ export function EditPage(props: { path?: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentChIndex, currentScIndex, bookData, positionSignal.value]);
 
+  // ── Full-size image zoom (opens from the current carousel card) ──
+  // Uses the original IU image (/iu-image) rather than the downscaled preview
+  // (preview is a capped PNG; the zoom shows the full render).
+  const openZoom = useCallback((item: CarouselItem | null) => {
+    if (!item || !item.chapterId || !item.sceneId || !item.unit) return;
+    const url = `/api/v1/iu-image/${encodeURIComponent(bid)}/${encodeURIComponent(item.chapterId)}/${encodeURIComponent(item.sceneId)}/${encodeURIComponent(unitId(item.unit, item.index))}?build_id=${encodeURIComponent(bld)}`;
+    setZoomFailed(false);
+    setZoom({ url, label: `${t('navigate_unit')} ${item.index + 1}` });
+  }, [bid, bld]);
+
+  // Zoom dialog: Escape closes it + locks body scroll while open.
+  useEffect(() => {
+    if (!zoom) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setZoom(null); };
+    window.addEventListener('keydown', onKey);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [zoom]);
+
   return (
     <section class="page edit-page">
       {/* Position bar — tappable → Navigate */}
@@ -1262,32 +1291,56 @@ export function EditPage(props: { path?: string }) {
         {hasUnits && <span class="gen-posbar__units">{unitCountText}</span>}
       </button>
 
-      {/* Unit carousel */}
-      <div class="edit-carousel">
-        <CarouselCard kind="prev" bid={bid} bld={bld} item={carousel.prev} onClick={() => carousel.prev && navigateUnit(-1)} />
-        <CarouselCard kind="current" bid={bid} bld={bld} item={carousel.current} onClick={() => { /* no-op — shows current */ }} />
-        <CarouselCard kind="next" bid={bid} bld={bld} item={carousel.next} onClick={() => carousel.next && navigateUnit(1)} />
+      {/* Unit carousel — collapsible panel (web deviation: frees vertical space
+          for the editor; header collapses to a title strip, current card
+          opens the full-size image). */}
+      <div class="edit-panel">
+        <button class="edit-panel__head" type="button" aria-expanded={!carouselCollapsed} aria-label={carouselCollapsed ? t('edit_expand') : t('edit_collapse')} onClick={() => setCarouselCollapsed((v) => !v)}>
+          <span class="edit-panel__title">{t('edit_carousel_title')}</span>
+          <span class="edit-panel__chev" aria-hidden="true">
+            {carouselCollapsed ? <IconChevronDown width={18} height={18} /> : <IconChevronUp width={18} height={18} />}
+          </span>
+        </button>
+        {!carouselCollapsed && (
+          <div class="edit-panel__body">
+            <div class="edit-carousel">
+              <CarouselCard kind="prev" bid={bid} bld={bld} item={carousel.prev} onClick={() => carousel.prev && navigateUnit(-1)} />
+              <CarouselCard kind="current" bid={bid} bld={bld} item={carousel.current} onClick={() => openZoom(carousel.current)} />
+              <CarouselCard kind="next" bid={bid} bld={bld} item={carousel.next} onClick={() => carousel.next && navigateUnit(1)} />
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* Audio timeline panel */}
+      {/* Audio timeline panel — collapsible (same web deviation) */}
       {timelineVisible && (
-        <div class="edit-timeline">
-          <button class="edit-timeline__btn" type="button" aria-label={isPlaying ? t('timeline_stop') : t('timeline_play')} onClick={togglePlayback}>
-            {isPlaying ? <IconStop width={22} height={22} /> : <IconPlay width={22} height={22} />}
+        <div class="edit-panel">
+          <button class="edit-panel__head" type="button" aria-expanded={!timelineCollapsed} aria-label={timelineCollapsed ? t('edit_expand') : t('edit_collapse')} onClick={() => { if (!timelineCollapsed) stopPlaybackInternal(); setTimelineCollapsed((v) => !v); }}>
+            <span class="edit-panel__title">{t('edit_waveform_title')}</span>
+            <span class="edit-panel__chev" aria-hidden="true">
+              {timelineCollapsed ? <IconChevronDown width={18} height={18} /> : <IconChevronUp width={18} height={18} />}
+            </span>
           </button>
-          <div class="edit-timeline__wave">
-            <Waveform
-              peaks={waveformData?.peaks ?? []}
-              durationMs={Math.round((waveformData?.duration_sec ?? 0) * 1000)}
-              selection={selection}
-              playbackSignal={playbackPos}
-              onRangeChange={handleRangeChange}
-              onRangeChangeEnd={handleRangeChangeEnd}
-            />
-          </div>
-          <button class="edit-timeline__btn" type="button" aria-label={t('timeline_reset')} onClick={resetCurrentUnitTiming}>
-            <IconReset width={22} height={22} />
-          </button>
+          {!timelineCollapsed && (
+            <div class="edit-panel__body">
+              <button class="edit-timeline__btn" type="button" aria-label={isPlaying ? t('timeline_stop') : t('timeline_play')} onClick={togglePlayback}>
+                {isPlaying ? <IconStop width={22} height={22} /> : <IconPlay width={22} height={22} />}
+              </button>
+              <div class="edit-timeline__wave">
+                <Waveform
+                  peaks={waveformData?.peaks ?? []}
+                  durationMs={Math.round((waveformData?.duration_sec ?? 0) * 1000)}
+                  selection={selection}
+                  playbackSignal={playbackPos}
+                  onRangeChange={handleRangeChange}
+                  onRangeChangeEnd={handleRangeChangeEnd}
+                />
+              </div>
+              <button class="edit-timeline__btn" type="button" aria-label={t('timeline_reset')} onClick={resetCurrentUnitTiming}>
+                <IconReset width={22} height={22} />
+              </button>
+            </div>
+          )}
         </div>
       )}
 
@@ -1342,6 +1395,23 @@ export function EditPage(props: { path?: string }) {
 
       {/* Empty state */}
       {!bid && !loading && <div class="edit-empty">{t('no_book_loaded')}</div>}
+
+      {/* Full-size image zoom dialog (backdrop click / Escape / X closes) */}
+      {zoom && (
+        <div class="zoom-backdrop" role="presentation" onClick={() => setZoom(null)}>
+          <div class="zoom" role="dialog" aria-modal="true" aria-label={zoom.label} onClick={(e) => e.stopPropagation()}>
+            {zoomFailed ? (
+              <span class="zoom__fallback"><IconImageOff width={40} height={40} /> {t('iu_not_generated')}</span>
+            ) : (
+              <img class="zoom__img" src={zoom.url} alt={zoom.label} onError={() => setZoomFailed(true)} />
+            )}
+            <span class="zoom__label">{zoom.label}</span>
+          </div>
+          <button class="zoom__close" type="button" aria-label={t('edit_close')} onClick={() => setZoom(null)}>
+            <IconClose width={20} height={20} />
+          </button>
+        </div>
+      )}
     </section>
   );
 }

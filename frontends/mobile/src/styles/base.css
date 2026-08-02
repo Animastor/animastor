@@ -817,6 +817,54 @@ button { font: inherit; color: inherit; }
 .wf-node--on { border-color: var(--accent); }
 .wf-node input { accent-color: var(--accent); }
 
+/* ── Full-size image zoom dialog (Edit carousel) ── */
+.zoom-backdrop {
+  position: fixed; inset: 0; z-index: 150;
+  background: var(--scrim);
+  display: flex; align-items: center; justify-content: center;
+  padding: 2rem;
+  animation: zoom-fade .15s ease-out;
+}
+.zoom {
+  position: relative;
+  max-width: 100%; max-height: 100%;
+  display: flex; align-items: center; justify-content: center;
+  animation: zoom-pop .18s ease-out;
+}
+.zoom__img {
+  max-width: 100%; max-height: 86vh;
+  border-radius: var(--radius-sm);
+  box-shadow: var(--elev-3);
+  object-fit: contain;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+.zoom__fallback {
+  display: inline-flex; flex-direction: column; align-items: center; gap: 0.5rem;
+  color: var(--text-2);
+  font-size: 0.8125rem;
+}
+.zoom__label {
+  position: absolute; left: 0; right: 0; bottom: -1.75rem;
+  text-align: center;
+  color: var(--text);
+  font-size: 0.8125rem; font-weight: 500;
+  text-shadow: 0 1px 3px rgba(0,0,0,.6);
+  pointer-events: none;
+}
+.zoom__close {
+  position: absolute; top: 0.5rem; right: 0.5rem;
+  width: 2.5rem; height: 2.5rem;
+  border: 0; border-radius: var(--radius-pill);
+  background: var(--surface-dim); color: var(--text);
+  display: inline-flex; align-items: center; justify-content: center;
+  cursor: pointer;
+  box-shadow: var(--elev-1);
+}
+.zoom__close:active { background: var(--outline-2); }
+@keyframes zoom-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes zoom-pop { from { opacity: 0; transform: scale(.96); } to { opacity: 1; transform: scale(1); } }
+
 /* ── Toast ── */
 .toast-root {
   position: fixed; left: 0; right: 0; bottom: calc(var(--safe-bottom) + 5.5rem);
@@ -1070,6 +1118,42 @@ button { font: inherit; color: inherit; }
 }
 .edit-posbar { flex-shrink: 0; }
 
+/* Collapsible panels (web deviation — Edit carousel + waveform live in
+   titled panels with a collapse chevron in the top-right corner; collapsed
+   state leaves a thin title strip, like a MaterialCardView header row). */
+.edit-panel {
+  flex-shrink: 0;
+  border-radius: var(--radius-sm);
+  background: var(--nav-scene-bg); /* colorSurfaceVariant */
+  border: 1px solid var(--outline-2);
+  overflow: hidden;
+}
+.edit-panel__head {
+  width: 100%;
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.5rem 0.625rem;
+  border: 0; background: transparent;
+  color: var(--text-2);
+  font-size: 0.8125rem; /* 13sp labelMedium */
+  font-weight: 600;
+  cursor: pointer;
+}
+.edit-panel__head:hover { background: var(--surface-dim); }
+.edit-panel__head:active { background: var(--surface-dim); }
+.edit-panel__title {
+  min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.edit-panel__chev {
+  flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 1.75rem; height: 1.75rem;
+  border-radius: var(--radius-pill);
+  color: var(--text-2);
+}
+.edit-panel__body { padding: 0 0.5rem 0.5rem; }
+
 /* Unit carousel — 3 cards like fragment_edit.xml carouselRow
    (android:gravity="center" — cards vertically centered on one axis; card
    heights are set per-card from each image's aspect ratio, Android
@@ -1093,10 +1177,12 @@ button { font: inherit; color: inherit; }
   min-width: 0;
 }
 .edit-unit-card--current {
-  /* Web deviation: weight 1.35 instead of Android's 1.5 — the browser UI
-     leaves less viewport than Android, so the central card was ~10% too big;
-     height follows the ratio via clientWidth, so both shrink together. */
-  flex: 1.35;
+  /* Web deviation: weight 1.2 instead of Android's 1.5 — the browser UI
+     leaves less viewport than Android, so the central card is ~20% smaller
+     overall (two 10% steps per user feedback); still 20% wider than the side
+     cards (1.2 vs 1.0) so the active unit stays clearly emphasized. Height
+     follows the ratio via clientWidth, so both shrink together. */
+  flex: 1.2;
   border-radius: 1rem; /* 16dp */
   background: var(--nav-scene-bg); /* colorSurfaceVariant */
   box-shadow: var(--elev-1);
@@ -1125,14 +1211,11 @@ button { font: inherit; color: inherit; }
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 
-/* Audio timeline panel (MaterialCardView 12dp, colorSurfaceVariant) */
+/* Audio timeline panel — row content inside .edit-panel (panel provides the
+   MaterialCardView chrome; this keeps the play/waveform/reset row layout). */
 .edit-timeline {
   display: flex; align-items: center;
   gap: 0.25rem;
-  padding: 0.5rem;
-  border-radius: var(--radius-sm);
-  background: var(--nav-scene-bg); /* colorSurfaceVariant */
-  border: 1px solid var(--outline-2);
   flex-shrink: 0;
 }
 .edit-timeline__btn {
