@@ -1372,11 +1372,14 @@ function CarouselCard({ kind, bid, bld, item, onClick }: {
     setRatio(null);
   }, [item?.unit?.id ?? '', item?.index ?? -1]);
 
-  // Side card height: aspect-ratio from the loaded image (Android hDp =
-  // cardWDp * h/w), fallback 140dp; the current card stretches to the container.
+  // Card height = card width × image aspect ratio (Android loadPreviewImage:
+  // hDp = cardWDp * bmp.height / bmp.width) — applied to ALL cards, current
+  // included, so portrait images get tall portrait cards instead of being
+  // cropped inside a stretched container. Fallback 140dp before the ratio
+  // arrives (Android XML default 140dp; current = match_parent ≈ 140dp).
   useEffect(() => {
     const el = cardRef.current;
-    if (!el || isCurrent || !ratio || !item) return;
+    if (!el || !ratio || !item) return;
     const w = el.clientWidth;
     if (w <= 0) return;
     el.style.height = `${Math.round(w * ratio)}px`;
