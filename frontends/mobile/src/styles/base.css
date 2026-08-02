@@ -72,7 +72,14 @@ button { font: inherit; color: inherit; }
 }
 .toolbar__ai-chip:active { background: var(--surface-2); }
 
-/* Tab bar (BottomNavigationView) */
+/* Tab bar (BottomNavigationView) — 1:1 with Widget.Animastor.BottomNavigation
+   + @color/bottom_nav_tint.xml:
+     backgroundTint  = colorSurface
+     itemIconTint / itemTextColor (unchecked) = colorOnSurfaceVariant (--text-2)
+     checked = colorSecondary → cinema_accent (--accent, GOLD) for icon AND label
+     active indicator pill = colorPrimary (Widget.Animastor.BottomNavIndicator,
+                             ShapeAppearance.Small 12dp) — anchored to the icon
+                             box so it never overlaps the label. */
 .tabbar {
   height: calc(var(--tabbar-h) + var(--safe-bottom));
   padding-bottom: var(--safe-bottom);
@@ -84,12 +91,51 @@ button { font: inherit; color: inherit; }
   z-index: 5;
 }
 .tabbar__item {
-  border: 0; background: transparent; color: var(--text-2);
+  position: relative;
+  border: 0; background: transparent; color: var(--text-2); /* unchecked: colorOnSurfaceVariant */
   display: flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: 2px; font-size: 0.6875rem; min-height: 0; padding: 0;
+  /* 8dp icon→label gap: the 32dp pill is centered on the 24dp icon and extends
+     4dp below it, so pill bottom → label top gets a clean ~4dp — a legibility
+     margin slightly above M3's near-flush label (visual separation there comes
+     from includeFontPadding=false). */
+  gap: 0.5rem;
+  /* TextAppearance.Animastor.TabLabel (parent TextAppearance.Material3.LabelLarge):
+     textSize 14sp, fontFamily sans-serif-medium (Roboto Medium), textFontWeight 500.
+     Web: system-ui resolves to Roboto on Android; 0.875rem = 14sp. */
+  font-size: 0.875rem; /* 14sp */
+  font-weight: 500;
+  letter-spacing: 0.01em;  /* M3 LabelLarge tracking */
+  line-height: 1.25rem;    /* 20sp — M3 LabelLarge line height (14sp + 6sp extra) */
+  min-height: 0; padding: 0;
 }
-.tabbar__item--active { color: var(--primary); }
-.tabbar__icon { width: 1.5rem; height: 1.5rem; }
+/* Icon box hosts the M3 active-indicator pill; pill is centered on the icon
+   (top:50%/left:50% + translate) so it can never overlap the label below. */
+.tabbar__icon-box { position: relative; display: inline-flex; }
+.tabbar__icon { width: 1.5rem; height: 1.5rem; position: relative; z-index: 1; }
+.tabbar__label { position: relative; z-index: 1; }
+/* Active indicator pill: colorPrimary (#6E1F2A), fixed 64x32dp, 12dp radius.
+   M3 indicator geometry is fixed regardless of the icon width, so NO max-width:
+   calc(100% …) here would resolve against the 24px icon-box and squash the pill. */
+.tabbar__item--active .tabbar__icon-box::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 4rem;   /* 64dp */
+  height: 2rem;  /* 32dp */
+  border-radius: var(--radius-sm); /* 12dp */
+  background: var(--primary);
+  z-index: 0;
+}
+/* checked: icon AND label turn GOLD (colorSecondary = cinema_accent), like
+   @color/bottom_nav_tint.xml state_checked. */
+.tabbar__item--active { color: var(--accent); }
+/* Press feedback ≈ itemRippleColor = colorPrimaryContainer (soft radial, no JS) */
+.tabbar__item:active {
+  background: radial-gradient(circle, var(--primary-container) 0%, transparent 72%);
+  border-radius: var(--radius-sm); /* keep the gradient's corners soft */
+}
 .tabbar__pulse { animation: tab-pulse 1.6s infinite ease-in-out; }
 .tabbar__pulse--error { animation: tab-pulse 1.2s infinite ease-in-out; color: var(--error); }
 .tabbar__pulse--success { color: var(--success); }
@@ -142,3 +188,112 @@ button { font: inherit; color: inherit; }
   font-size: 0.8125rem; min-height: 2rem;
 }
 .seg__btn--active { background: var(--primary); color: var(--on-primary); }
+.seg--block { display: flex; }
+.seg--block .seg__btn { flex: 1; }
+
+/* ── Stage 1: settings pages (VBook / Worker) ── */
+/* Mirrors fragment_vbook_settings.xml / fragment_worker_settings.xml:
+   scroll area above a pinned bottom action bar. */
+.settings-page { padding: 0; }
+/* Higher specificity than `.secondary .page { overflow-y: auto }` so the
+   outer container never scrolls — only .settings-page__scroll does. */
+.secondary .settings-page { overflow: hidden; }
+.settings-page__scroll {
+  flex: 1; min-height: 0; /* allow shrinking so the footer stays pinned */
+  overflow-y: auto; -webkit-overflow-scrolling: touch;
+  padding: 1rem; display: flex; flex-direction: column; gap: 0.75rem;
+}
+.settings-page__footer {
+  padding: 0.75rem 1rem calc(0.75rem + var(--safe-bottom));
+  border-top: 1px solid var(--outline-2);
+  background: var(--surface);
+}
+.settings-page__error {
+  color: var(--error); font-size: var(--fs-caption);
+  margin: 0 0 0.5rem;
+}
+.settings-page__notice {
+  color: var(--text-2); font-size: 0.875rem;
+  background: var(--surface-2); border: 1px dashed var(--outline);
+  border-radius: var(--radius-sm); padding: 0.75rem 1rem;
+}
+
+/* MaterialCardView (Widget.Animastor.Card) */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--outline-2);
+  border-radius: var(--radius-md); /* 16dp ≈ 18dp token */
+  box-shadow: var(--elev-1);
+  padding: 1.25rem; /* 20dp */
+  display: flex; flex-direction: column;
+}
+.card__title {
+  font-size: 0.8125rem; /* 13sp */
+  font-weight: 700; letter-spacing: 0.06em;
+  color: var(--text); margin: 0 0 0.5rem;
+}
+.card__label {
+  font-size: 0.8125rem; font-weight: 700; color: var(--text);
+  margin: 0.75rem 0 0.25rem;
+}
+.card__hint {
+  font-size: 0.75rem; /* 12sp */
+  color: var(--text-2); margin-top: 0.5rem; line-height: 1.4;
+}
+.card__hint--wrap { white-space: pre-line; }
+.card__row { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.25rem; }
+.card__row--between { justify-content: space-between; }
+.card__value { font-size: 0.875rem; color: var(--text); font-weight: 600; }
+
+/* Spinner → <select> (Widget.Animastor: match_parent/weight=1 width, 40dp height) */
+/* flex: 1 0 auto — grow fills the row width inside .card__row, but flex-basis: auto
+   keeps the height from collapsing when the select is a direct child of the
+   column-flex .card (flex: 1 would set flex-basis 0% on the vertical axis and
+   squash the 40dp height to min-content, unlike Android's fixed 40dp). */
+.select {
+  flex: 1 0 auto; min-width: 0; height: 2.5rem; /* 40dp */
+  background: var(--surface-2); color: var(--text);
+  border: 1px solid var(--outline); border-radius: var(--radius-sm);
+  font-size: 0.875rem; padding: 0 0.5rem;
+}
+.select:disabled { opacity: 0.6; }
+
+/* MaterialButton */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 0.4rem;
+  height: 3rem; /* 48dp */ padding: 0 1rem;
+  border: 0; border-radius: var(--radius-md); /* 18dp */
+  background: var(--primary); color: var(--on-primary);
+  font-size: 0.9375rem; font-weight: 500; cursor: pointer;
+}
+.btn:active { background: var(--primary-pressed); }
+.btn:disabled { opacity: 0.5; }
+.btn--block { width: 100%; }
+.btn--outlined {
+  background: transparent; color: var(--text);
+  border: 1px solid var(--outline); height: 2.625rem; /* 42dp */
+  font-size: 0.8125rem; padding: 0 0.75rem; flex-shrink: 0;
+}
+.btn--outlined:active { background: var(--surface-2); }
+
+/* Library (LibraryFragment: toolbar + WebView → iframe) */
+.library-page {
+  flex: 1; display: flex; flex-direction: column; min-height: 0;
+  background: var(--surface);
+}
+.library-page__frame { flex: 1; width: 100%; border: 0; min-height: 0; }
+.library-page__open {
+  text-align: center; padding: 0.5rem 1rem calc(0.5rem + var(--safe-bottom));
+  color: var(--accent); font-size: 0.8125rem; text-decoration: none;
+  border-top: 1px solid var(--outline-2); background: var(--surface);
+}
+
+/* Settings nav rows (VBook / Worker links from /settings) */
+.settings__nav-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 0.75rem;
+  width: 100%; padding: 0.875rem 1rem;
+  background: transparent; border: 0; color: var(--text);
+  font-size: var(--fs-body); text-align: left; cursor: pointer;
+}
+.settings__nav-row:active { background: var(--surface-2); }
+.settings__nav-row .chev { color: var(--text-2); flex-shrink: 0; }

@@ -286,6 +286,19 @@ X-Frame-Options/CSP источника) или рендер содержимог
 
 ---
 
+## 9. Отклонения этапа 1 (Settings/VBook/Worker/Library)
+
+| Отклонение | Причина | Альтернатива |
+|---|---|---|
+| `WorkerSettingsFragment` (3 отдельных фрагмента по типу воркера) → один маршрут `/settings/worker` с segmented control audio/image/video | веб-маршрут один; Android-навигация по аргументам `worker_type` не имеет прямого URL-эквивалента | сегмент-переключатель типа на странице; содержимое идентично фрагменту (профиль/таймаут/workflow) |
+| Карточка «Воркеры» (`/worker/counts`) добавлена в WorkerSettings | TODO этапа 1 явно указывает `/worker/counts` как API экрана; Android показывает counts только на Generate | read-only сводка доступность/активность по типам |
+| Профиль в WorkerSettings — read-only `select` без сохранения | в Android профиль определяется активными workflow-коннекторами и не персистится из этого экрана (Apply сохраняет только таймаут) | select из `/connectors/profiles` + подпись «Determined by active workflow connectors» |
+| Без открытой книги — уведомление + Apply disabled | Android молча выходит (no-op); веб требует объяснения состояния | `.settings-page__notice` + disabled кнопка |
+| Library: WebView → `<iframe src="https://animastor.in">` + ссылка «Открыть в браузере» | R13: источник контролируем мы; iframe допустим; на случай блокировки CSP — fallback-ссылка | iframe + external link |
+| Вход в Library добавлен на File-заглушку (аналог `libraryCard`) | Android открывает Library из FileFragment | кнопка на `FilePage` (станет нативной при этапе 3) |
+
+---
+
 ## 8. Правило обновления этого документа
 
 1. Любое отклонение в коде **обязано** быть занесено сюда до реализации в виде

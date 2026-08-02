@@ -42,6 +42,23 @@
 Приёмка: визуально и текстово совпадает с `fragment_*.xml`; тема/язык реально
 переключают shell; сохранение настроек в localStorage (= `SharedPreferences`).
 
+### Завершение этапа 1 (2026-08-02) ✅
+
+- 1.1 Settings — готово на этапе 0 (тема/язык), добавлены nav-строки VBook/Worker.
+- 1.2 VBookSettings (`/settings/vbook`) — `select` 1..5, «Default» → 3, Apply →
+  `PUT /book/{id}/layer-config {chunk_size}`, `GET` при открытии. Без открытой
+  книги — уведомление + Apply disabled (в Android — тихий no-op).
+- 1.3 WorkerSettings (`/settings/worker`) — один маршрут на 3 типа воркера
+  (segmented control audio/image/video вместо 3 отдельных фрагментов Android):
+  карточка «Воркеры» (`/worker/counts`), профиль (`/connectors/profiles`),
+  таймаут (`layer-config` GET/PUT, диапазоны как в Android), workflow
+  (`/connectors/grouped` → активные коннекторы), кнопка «Manage» →
+  `/workflows/type/:type`. Apply сохраняет только таймаут (как в Android).
+- 1.4 Library (`/library`) — `iframe` → `https://animastor.in` + ссылка «Открыть
+  в браузере»; вход из File-вкладки (аналог `libraryCard`).
+
+Отклонения и решения — [`06-RISKS-AND-ALTERNATIVES.md`](06-RISKS-AND-ALTERNATIVES.md) §5, §9.
+
 ---
 
 ## Этап 2 — Сетевые списки/детали (без плеера и генерации)

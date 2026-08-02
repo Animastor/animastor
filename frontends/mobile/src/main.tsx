@@ -8,6 +8,7 @@ import { PlayPage } from './pages/PlayPage';
 import { EditPage } from './pages/EditPage';
 import { NavigatePage } from './pages/NavigatePage';
 import { SettingsPage } from './pages/SettingsPage';
+import { LibraryPage } from './pages/LibraryPage';
 import { PlaceholderPage } from './pages/PlaceholderPage';
 import { applyTheme, applyLanguage } from './app/theme';
 
@@ -24,7 +25,7 @@ function Routes() {
       <SettingsPage path="/settings/vbook" section="vbook" />
       <SettingsPage path="/settings/worker" section="worker" />
       <PlaceholderPage path="/ai" titleKey="ai" />
-      <PlaceholderPage path="/library" titleKey="library_title" />
+      <LibraryPage path="/library" />
       <PlaceholderPage path="/workflows" titleKey="workflow_manager_title" />
       <PlaceholderPage path="/workflows/:name" titleKey="workflow" />
       <PlaceholderPage path="/workflows/type/:type" titleKey="workflow" />

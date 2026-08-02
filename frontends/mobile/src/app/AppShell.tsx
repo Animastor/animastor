@@ -102,8 +102,10 @@ function TabBar({ path }: { path: string }) {
             aria-label={t(it.key)}
             aria-current={active ? 'page' : undefined}
           >
-            <it.Icon class={'tabbar__icon' + (pulseClass ? ' ' + pulseClass : '')} width={24} height={24} />
-            <span>{t(it.key)}</span>
+            <span class="tabbar__icon-box">
+              <it.Icon class={'tabbar__icon' + (pulseClass ? ' ' + pulseClass : '')} width={24} height={24} />
+            </span>
+            <span class="tabbar__label">{t(it.key)}</span>
           </button>
         );
       })}

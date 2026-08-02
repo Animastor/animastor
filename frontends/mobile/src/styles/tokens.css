@@ -35,7 +35,7 @@
   --fs-title: 1.5rem;
 
   /* Layout */
-  --tabbar-h: 3.5rem;
+  --tabbar-h: 5rem; /* 80dp — Material 3 BottomNavigationView (labeled) height */
   --toolbar-h: 3.25rem;
   --safe-bottom: env(safe-area-inset-bottom, 0px);
   --safe-top: env(safe-area-inset-top, 0px);

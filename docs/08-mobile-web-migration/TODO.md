@@ -12,9 +12,9 @@
 ## Этап 1 — Простейшие статичные/диалоговые экраны
 
 - [x] **Settings** (`/settings`) — тема dark/light/auto + язык ru/en/auto (segmented control, `localStorage` = `SharedPreferences`), через `applyTheme`/`applyLanguage`. VBook/Worker секции — заглушки в том же файле.
-- [ ] **VBookSettings** (`/settings/vbook`) — chunk size (scenes per pass)
-- [ ] **WorkerSettings** (`/settings/worker`) — `/worker/counts`
-- [ ] **Library** (`/library`) — iframe справки/релиз-ноутсов
+- [x] **VBookSettings** (`/settings/vbook`) — chunk size (scenes per pass), layer-config `GET/PUT`
+- [x] **WorkerSettings** (`/settings/worker`) — `/worker/counts`, профили (`/connectors/profiles`), таймауты (layer-config), workflow (`/connectors/grouped`)
+- [x] **Library** (`/library`) — iframe справки/релиз-ноутсов (`animastor.in`)
 
 ## Этап 2 — Сетевые списки/детали (без плеера и генерации)
 
