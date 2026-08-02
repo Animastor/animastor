@@ -467,7 +467,10 @@ export function EditPage(props: { path?: string }) {
     void saveTimings();
   }, [saveTimings]);
 
-  // ── Playback (startPlayback/stopPlayback/togglePlayback) ──
+  // ── Playback (startPlayback/stopPlayback/togglePlayback) — 1:1 with
+  // EditFragment: seek to unit.start_ms, start(), tick every frame and stop at
+  // unit.end_ms (Android: `if (cur >= unit.end_ms || cur >= audioDurationMs)
+  // stopPlayback()`, plus setOnCompletionListener { stopPlayback() }). ──
   const startPlayback = useCallback(() => {
     const bId = bookIdSignal.value;
     const bBuild = buildIdSignal.value;
@@ -478,6 +481,9 @@ export function EditPage(props: { path?: string }) {
     if (!bId || !bBuild || !sc || !ch || !unit) return;
     const chId = ch.chapter_id ?? '';
     const scId = sc.scene_id ?? '';
+    // Range to play — the current unit's timing boundary on the scene timeline.
+    const startMs = unit.start_ms ?? 0;
+    const endMs = unit.end_ms ?? 0;
 
     if (!audioEl.current) {
       const a = new Audio(`/api/v1/scene/${encodeURIComponent(bId)}/${encodeURIComponent(chId)}/${encodeURIComponent(scId)}/audio?build_id=${encodeURIComponent(bBuild)}`);
@@ -485,8 +491,14 @@ export function EditPage(props: { path?: string }) {
       audioEl.current = a;
     }
     const a = audioEl.current;
+    // MediaPlayer.setOnCompletionListener { stopPlayback() }.
+    a.onended = () => stopPlaybackInternal();
+
     const play = () => {
-      a.currentTime = (unit.start_ms ?? 0) / 1000;
+      // p.seekTo(unit.start_ms.toInt()) — clamp to the seekable duration.
+      const durSec = a.duration && isFinite(a.duration) ? a.duration : Number.MAX_SAFE_INTEGER;
+      const seekSec = Math.max(0, Math.min(startMs / 1000, durSec));
+      try { a.currentTime = seekSec; } catch { /* not seekable yet — play from 0 */ }
       void a.play().catch(() => {});
       setIsPlaying(true);
       if (rafId.current != null) cancelAnimationFrame(rafId.current);
@@ -497,7 +509,7 @@ export function EditPage(props: { path?: string }) {
           ? audioEl.current.duration * 1000
           : Number.POSITIVE_INFINITY;
         playbackPos.value = cur;
-        if (cur >= (unit.end_ms ?? 0) || cur >= dur) {
+        if ((endMs > 0 && cur >= endMs) || cur >= dur) {
           stopPlaybackInternal();
           return;
         }
@@ -505,10 +517,16 @@ export function EditPage(props: { path?: string }) {
       };
       rafId.current = requestAnimationFrame(tick);
     };
-    if (a.readyState >= 2) {
+    // readyState >= 1 (HAVE_METADATA) ⇒ seekable; a metadata race (readyState
+    // landing on 1 before the listener attaches) would otherwise skip play().
+    if (a.readyState >= 1) {
       play();
     } else {
-      a.addEventListener('loadedmetadata', play, { once: true });
+      const onReady = () => {
+        a.removeEventListener('loadedmetadata', onReady);
+        play();
+      };
+      a.addEventListener('loadedmetadata', onReady);
       a.addEventListener('error', () => stopPlaybackInternal(), { once: true });
       a.load();
     }

@@ -52,7 +52,45 @@ export function emitPlaybackPrepared(prep: PlaybackPrepared): void {
   playbackPreparedListeners.forEach((f) => f(prep));
 }
 
-export function resetGenerationStatus(): void { generationStatus.value = 'IDLE'; }
+// ── Nav-icon generation status (MainActivity.updateNavIconStatus port) ──
+// SUCCESS is self-clearing: pulse green ~12s (8 × 1.5s), hold solid green ~10s,
+// then auto-reset to IDLE — matching Android's finite pulse animator + the
+// autoResetJob delay(1500*8 + 10_000) in updateNavIconStatus.
+const SUCCESS_PULSE_MS = 12_000;
+const SUCCESS_HOLD_MS = 10_000;
+let navStatusTimer: ReturnType<typeof setTimeout> | null = null;
+
+function clearNavStatusTimer(): void {
+  if (navStatusTimer != null) {
+    clearTimeout(navStatusTimer);
+    navStatusTimer = null;
+  }
+}
+
+function setGenerationStatus(status: GenerationStatus): void {
+  clearNavStatusTimer();
+  generationStatus.value = status;
+  if (status === 'SUCCESS') {
+    navStatusTimer = setTimeout(() => {
+      navStatusTimer = null;
+      if (generationStatus.value === 'SUCCESS') resetGenerationStatus();
+    }, SUCCESS_PULSE_MS + SUCCESS_HOLD_MS);
+  }
+}
+
+/** Re-arm the SUCCESS auto-reset countdown — Android re-runs updateNavIconStatus
+ *  from the bottom-nav layout-change listener on every tab switch, which
+ *  restarts the 12s pulse + 10s hold. No-op unless the status is SUCCESS. */
+export function rearmSuccessStatusTimer(): void {
+  if (generationStatus.value !== 'SUCCESS') return;
+  clearNavStatusTimer();
+  navStatusTimer = setTimeout(() => {
+    navStatusTimer = null;
+    if (generationStatus.value === 'SUCCESS') resetGenerationStatus();
+  }, SUCCESS_PULSE_MS + SUCCESS_HOLD_MS);
+}
+
+export function resetGenerationStatus(): void { setGenerationStatus('IDLE'); }
 export function loadBook(id: string, build: string = ''): void {
   bookId.value = id;
   buildId.value = build;
@@ -403,7 +441,7 @@ export function computeProgressRows(
     if (vbookProg?.stage === 'COMPLETED') {
       vbookProgress.value = { ...vbookProgress.value, stage: 'IDLE' };
     }
-    generationStatus.value = 'SUCCESS';
+    setGenerationStatus('SUCCESS');
     isRegenerating.value = false;
     void applyGenerationResults();
     return { kind: 'hidden' };
@@ -557,7 +595,7 @@ export type GenerationResult =
 export async function startGeneration(req: GenerationRequest): Promise<GenerationResult> {
   const bId = bookId.value;
   if (!bId) return { ok: false, message: 'No book' };
-  generationStatus.value = 'RUNNING';
+  setGenerationStatus('RUNNING');
   isRegenerating.value = true;
   newGenerationPending = true;
   if (timerStartedAt <= 0) startTimer();
@@ -577,7 +615,7 @@ export async function startGeneration(req: GenerationRequest): Promise<Generatio
     void refreshAssetsState();
     return { ok: true, dirty, scope: res.scope ?? req.scope };
   } catch (e) {
-    generationStatus.value = 'ERROR';
+    setGenerationStatus('ERROR');
     return { ok: false, message: (e as Error).message };
   }
 }
@@ -588,7 +626,7 @@ let vbookPollToken = 0;
 export async function startVBookGeneration(): Promise<void> {
   const bid = bookId.value;
   if (!bid) return;
-  generationStatus.value = 'RUNNING';
+  setGenerationStatus('RUNNING');
   newGenerationPending = true;
   vbookProgress.value = { stage: 'ANALYZING', sceneIndex: -1, scenesInWindow: 1, totalScenes: null, windowIndex: 0, message: null };
   startTimer();
@@ -651,7 +689,7 @@ async function pollVBookProgress(bId: string, token: number): Promise<void> {
     }
   }
   if (token !== vbookPollToken) return;
-  generationStatus.value = 'SUCCESS';
+  setGenerationStatus('SUCCESS');
   if (!isRegenerating.value) stopTimer();
   await applyGenerationResults();
 }
@@ -683,7 +721,7 @@ export async function applyGenerationResults(): Promise<void> {
 export async function cancelGeneration(): Promise<void> {
   const bId = bookId.value;
   if (!bId) return;
-  generationStatus.value = 'IDLE';
+  setGenerationStatus('IDLE');
   newGenerationPending = false;
   stopTimer();
   stopProgressStream();
@@ -739,7 +777,7 @@ export async function checkAndRestoreGenerationState(): Promise<void> {
     if (hasActiveWorkers) {
       console.log('checkAndRestoreGenerationState: active workers found — restoring generation state');
       isRegenerating.value = hasActiveGpuTasks;
-      generationStatus.value = 'RUNNING';
+      setGenerationStatus('RUNNING');
       if (timerStartedAt <= 0) startTimer();
       startProgressStream(currentBookId);
       resetProgressState();
@@ -845,7 +883,7 @@ export function closeBook(): void {
   stopProgressStream();
   stopTimer();
   isRegenerating.value = false;
-  generationStatus.value = 'IDLE';
+  setGenerationStatus('IDLE');
   loadBook('', '');
   phase.value = 'IDLE';
   errorMessage.value = null;

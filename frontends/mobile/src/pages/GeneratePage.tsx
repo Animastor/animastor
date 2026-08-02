@@ -448,6 +448,10 @@ function WorkerSection({ label, iconActive, iconInactive, state, enabled, onTogg
 function WorkerRow({ row, onStop }: { row: TaskRow; onStop: () => void }) {
   const elapsed = row.frozen ? row.elapsedSeconds : liveElapsedSeconds();
   const name = scopedTaskLabel(row);
+  // Android renderTaskRowsToSections: workerCount = countText ?: "${ready}/${total}"
+  // (GPU workers have no server countText → shows the ready/total chunk counter,
+  // e.g. "2/5" — same format as progress_vbook_scenes). Hidden for indeterminate.
+  const countText = row.countText ?? (row.total > 0 ? `${row.ready}/${row.total}` : null);
   if (row.cancelled) {
     return (
       <div class="gen-row">
@@ -476,7 +480,7 @@ function WorkerRow({ row, onStop }: { row: TaskRow; onStop: () => void }) {
       <div class="gen-row">
         <div class="gen-row__line">
           <span class="gen-row__name gen-row__name--done">{t('generation_done')} — {name}</span>
-          {row.countText != null && <span class="gen-row__count gen-row__count--done">{row.countText}</span>}
+          {countText != null && <span class="gen-row__count gen-row__count--done">{countText}</span>}
           <span class="gen-row__pct gen-row__pct--done">100%</span>
           <span class="gen-row__timer">{formatTimerText(elapsed)}</span>
         </div>
@@ -488,7 +492,7 @@ function WorkerRow({ row, onStop }: { row: TaskRow; onStop: () => void }) {
     <div class="gen-row">
       <div class="gen-row__line">
         <span class="gen-row__name">{name}</span>
-        {row.countText != null && <span class="gen-row__count">{row.countText}</span>}
+        {countText != null && <span class="gen-row__count">{countText}</span>}
         <span class="gen-row__pct">{row.percent}%</span>
         <span class="gen-row__timer">{formatTimerText(elapsed)}</span>
         <button class="gen-row__stop" aria-label={t('worker_stop_desc')} onClick={onStop}>

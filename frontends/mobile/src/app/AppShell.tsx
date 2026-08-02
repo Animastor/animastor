@@ -3,7 +3,7 @@ import { useState, useEffect } from 'preact/hooks';
 import { t } from './i18n';
 import { navigate, START_ROUTE, TAB_ROUTES } from './router';
 import { secondaryTitle, secondaryAction } from './titleStore';
-import { generationStatus } from '../state/generateStore';
+import { generationStatus, rearmSuccessStatusTimer } from '../state/generateStore';
 import type { GenerationStatus } from '../state/generateStore';
 import { IconFile, IconGenerate, IconPlay, IconEdit, IconMap } from './icons';
 import type { IconProps } from './icons';
@@ -18,6 +18,12 @@ export function AppShell({ children }: { children: JSX.Element }) {
   // Normalize the start route so the File tab is active on "/".
   const path = location.pathname === '/' ? START_ROUTE : location.pathname;
   const isSecondary = !TAB_ROUTES.some((r) => path === r || path.startsWith(r + '/'));
+  // MainActivity layout-change listener re-applies the SUCCESS pulse on tab
+  // switches (restarting the 12s pulse + 10s hold) — re-arm the countdown here.
+  useEffect(() => {
+    if (generationStatus.value === 'SUCCESS') rearmSuccessStatusTimer();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [path]);
 
   return (
     <div class="app-shell">
