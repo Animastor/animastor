@@ -1498,15 +1498,20 @@ button { font: inherit; color: inherit; }
   z-index: 3;
 }
 
-/* placeholderText — centered 15sp colorOnSurface */
+/* placeholderText — centered 15sp, color cinema_text_primary #F2E9DC (Android
+   fragment_play.xml: textSize 15sp, textColor @color/cinema_text_primary, no
+   background — text sits directly on the dark theater-curtains backdrop).
+   Fixed color (NOT var(--text)): the media viewport is the dark cinema
+   backdrop in BOTH themes, so the light-theme --text (#2C2418) would be
+   unreadable over it — Android uses the same single color everywhere. */
 .play-placeholder {
   position: absolute;
   inset: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--text);
-  font-size: var(--fs-body);
+  color: #F2E9DC; /* cinema_text_primary */
+  font-size: var(--fs-body); /* 15sp — matches Android placeholderText */
   text-align: center;
   padding: 2rem;
   z-index: 3;
