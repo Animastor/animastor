@@ -166,8 +166,9 @@ button { font: inherit; color: inherit; }
 .tabbar__pulse { animation: tab-pulse 1.6s infinite ease-in-out; }
 .tabbar__pulse--error { animation: tab-pulse 1.2s infinite ease-in-out; color: var(--error); }
 /* SUCCESS — finite pulse like MainActivity: 8 × 1.5s = 12s pulse green, then
-   solid green for ~10s; generateStore rearmSuccessStatusTimer resets to IDLE
-   after the full 22s (pulse + hold). */
+   solid green for ~10s. generateStore auto-resets the nav status to IDLE after
+   the full 22s (pulse + hold), anchored to the SUCCESS timestamp with a
+   self-healing watchdog — no re-arm on tab switches. */
 .tabbar__pulse--success { animation: tab-pulse 1.5s 8 ease-in-out; color: var(--success); }
 @keyframes tab-pulse {
   0%, 100% { opacity: 1; }

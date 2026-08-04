@@ -58,7 +58,14 @@ export function emitPlaybackPrepared(prep: PlaybackPrepared): void {
 // autoResetJob delay(1500*8 + 10_000) in updateNavIconStatus.
 const SUCCESS_PULSE_MS = 12_000;
 const SUCCESS_HOLD_MS = 10_000;
+const SUCCESS_TOTAL_MS = SUCCESS_PULSE_MS + SUCCESS_HOLD_MS;
 let navStatusTimer: ReturnType<typeof setTimeout> | null = null;
+let navWatchdog: ReturnType<typeof setInterval> | null = null;
+/** Wall-clock time of the last SUCCESS set. The auto-reset deadline is anchored
+ *  to this timestamp (not to "now" at each arming), so tab-switch navigation or
+ *  a re-armed one-shot timer can never push the SUCCESS → IDLE transition
+ *  indefinitely into the future. */
+let successSince = 0;
 
 function clearNavStatusTimer(): void {
   if (navStatusTimer != null) {
@@ -67,27 +74,43 @@ function clearNavStatusTimer(): void {
   }
 }
 
-function setGenerationStatus(status: GenerationStatus): void {
-  clearNavStatusTimer();
-  generationStatus.value = status;
-  if (status === 'SUCCESS') {
-    navStatusTimer = setTimeout(() => {
-      navStatusTimer = null;
-      if (generationStatus.value === 'SUCCESS') resetGenerationStatus();
-    }, SUCCESS_PULSE_MS + SUCCESS_HOLD_MS);
-  }
-}
-
-/** Re-arm the SUCCESS auto-reset countdown — Android re-runs updateNavIconStatus
- *  from the bottom-nav layout-change listener on every tab switch, which
- *  restarts the 12s pulse + 10s hold. No-op unless the status is SUCCESS. */
-export function rearmSuccessStatusTimer(): void {
-  if (generationStatus.value !== 'SUCCESS') return;
+function armNavResetTimer(): void {
   clearNavStatusTimer();
   navStatusTimer = setTimeout(() => {
     navStatusTimer = null;
     if (generationStatus.value === 'SUCCESS') resetGenerationStatus();
-  }, SUCCESS_PULSE_MS + SUCCESS_HOLD_MS);
+  }, SUCCESS_TOTAL_MS);
+}
+
+/** Self-healing SUCCESS watchdog: even if the one-shot timer above is cleared
+ *  or throttled, the icon returns to IDLE within ~1s after the 22s pulse+hold
+ *  window elapsed (foreground; in a background tab browsers clamp intervals, so
+ *  it self-heals as soon as timers resume — exactly when the user can see the
+ *  icon again). The green indicator can never be left stuck. */
+function ensureNavWatchdog(): void {
+  if (navWatchdog != null) return;
+  navWatchdog = setInterval(() => {
+    if (generationStatus.value !== 'SUCCESS') return;
+    if (Date.now() - successSince >= SUCCESS_TOTAL_MS) resetGenerationStatus();
+  }, 1000);
+}
+
+function setGenerationStatus(status: GenerationStatus): void {
+  clearNavStatusTimer();
+  generationStatus.value = status;
+  if (status === 'SUCCESS') {
+    successSince = Date.now();
+    armNavResetTimer();
+    ensureNavWatchdog();
+  } else {
+    successSince = 0;
+    // Watchdog is only needed while SUCCESS is on screen; stop it when the
+    // status leaves SUCCESS so it is not left ticking forever in the module.
+    if (navWatchdog != null) {
+      clearInterval(navWatchdog);
+      navWatchdog = null;
+    }
+  }
 }
 
 export function resetGenerationStatus(): void { setGenerationStatus('IDLE'); }
@@ -438,6 +461,16 @@ export function computeProgressRows(
   if (rows.length === 0) {
     taskCompletedAt.clear();
     isRegenerating.value = false;
+    // A restored/straggler generation that finished while this page was closed
+    // may leave the nav icon pulsing RUNNING with nothing actually in flight —
+    // clear it. Only fires when the backend reports nothing incomplete AND no
+    // VBook agent is active: a live restored generation whose panel is
+    // transiently empty between windows must keep its RUNNING pulse.
+    if (generationStatus.value === 'RUNNING'
+      && !panel?.any_incomplete
+      && vbookProgress.value.stage === 'IDLE') {
+      setGenerationStatus('IDLE');
+    }
     return { kind: 'hidden' };
   }
 
