@@ -426,7 +426,12 @@ module.exports = function(app, redis, deps) {
             const coverCh = (loadedBook.chapters || []).find(ch => ch.type === 'cover');
             if (coverCh && coverCh.scenes && coverCh.scenes.length > 0 && requestedTypeSet.has('image')) {
                 const coverScene = coverCh.scenes[0];
-                const coverChapterId = coverCh.chapter;
+                // Legacy chapters (parse.js) carry the id in `chapter`; modern
+                // lazy-book chapters (chapter-utils.js) use `chapter_id`. Reading
+                // only `chapter` made coverChapterId undefined for modern books →
+                // the cover never reached createTasks (targetsForType skips scenes
+                // without chapter_id) and was silently dropped from generation.
+                const coverChapterId = coverCh.chapter_id ?? coverCh.chapter;
                 const coverSceneId = coverScene.scene_id;
                 const alreadyDirty = filteredDirty.some(d => d.chapter_id === coverChapterId && d.scene_id === coverSceneId);
                 if (!alreadyDirty && filteredDirty.length > 0) {

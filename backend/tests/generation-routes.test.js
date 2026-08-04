@@ -200,4 +200,215 @@ describe('Generation routes independent commands', () => {
         expect(events.indexOf('reset:image')).to.be.lessThan(events.indexOf('task:image'));
         expect(events.indexOf('task:image')).to.be.lessThan(events.indexOf('activate:ch-2/scene-b'));
     });
+
+    it('prepends the cover scene (chapter_id field) to dirty scenes when images are generated', async () => {
+        const redis = createMockRedis();
+        const resetCalls = [];
+
+        stub('../src/storage/postgres/repositories/scene-assets-repo', {
+            setDirtyUnitIds: async () => {},
+        });
+        stub('../src/storage/postgres/repositories/task-repo', {
+            createTask: async () => {},
+            updateTaskStatus: async () => {},
+        });
+        stub('../src/runtime/runtime-scheduler', {
+            addSceneToActiveIndex: async () => {},
+            clearBookFromActiveIndex: async () => {},
+        });
+        stub('../src/runtime/scene-window', {
+            clearCancelFlag: async () => {},
+        });
+
+        const handlers = new Map();
+        const app = {
+            post(path, handler) { handlers.set(path, handler); },
+            get() {},
+            put() {},
+        };
+        // Modern lazy-book format: cover chapter carries `chapter_id` (NOT `chapter`).
+        const loadedBook = {
+            manifest: { build_id: 'build-1' },
+            chapters: [
+                {
+                    chapter_id: 'ch-cover',
+                    chapter_title: 'Обложка',
+                    type: 'cover',
+                    scenes: [{ scene_id: 'sc-cover', scene_title: 'Cover', type: 'cover', units: [{ id: 'u-1' }] }],
+                },
+                { chapter_id: 'ch-1', type: 'chapter', scenes: [{ scene_id: 'scene-a', units: [{ id: 'u-2' }] }] },
+            ],
+        };
+        const allScenes = [
+            { chapter_id: 'ch-cover', scene_id: 'sc-cover', payload: { units: [] } },
+            { chapter_id: 'ch-1', scene_id: 'scene-a', payload: { units: [] } },
+        ];
+        const deps = {
+            config: { HUB_URL: 'http://gpu-hub.invalid', OUTPUT_DIR: '/tmp/cover-test-output' },
+            book: {
+                loadBook: () => loadedBook,
+                collectScenes: () => allScenes,
+            },
+            layerConfig: {
+                get: async () => ({ audio_enabled: true, image_enabled: true, video_enabled: true }),
+                set: async () => ({}),
+            },
+            bookDiff: {
+                filterDirtyScenesByScope: (dirty, scope, chapterId, sceneId) => {
+                    if (scope !== 'current_scene') return dirty;
+                    return dirty.filter(item =>
+                        item.chapter_id === chapterId && item.scene_id === sceneId
+                    );
+                },
+            },
+            storage: {},
+            orchestrator: {
+                resetScenes: async (_redis, _bookId, _buildId, scenes, _cfg, _options) => {
+                    resetCalls.push({ scenes });
+                    return { marked: scenes.length, reset_scenes: scenes.length };
+                },
+            },
+            runtime: {
+                sceneWindow: { clearCancelFlag: async () => {}, setCancelFlag: async () => {}, slideWindow: async () => ({}) },
+                scheduler: { addSceneToActiveIndex: async () => {}, clearBookFromActiveIndex: async () => {} },
+            },
+            utils: { log: () => {} },
+        };
+        require('../src/routes/book/generation-routes.cjs')(app, redis, deps);
+        const handler = handlers.get('/api/v1/book/:bookId/regenerate');
+
+        const response = createResponse();
+        await handler({
+            params: { bookId: 'cover-route-book' },
+            body: {
+                scope: 'current_scene',
+                chapter_id: 'ch-1',
+                scene_id: 'scene-a',
+                worker_types: ['image'],
+                rebuild_all: true,
+            },
+        }, response);
+
+        expect(response.statusCode).to.equal(200);
+
+        // Cover scene must be prepended to the dirty scenes with a REAL chapter_id
+        // (not undefined) — this is the regression: reading coverCh.chapter only
+        // worked for legacy `chapter`-field books and silently dropped modern ones.
+        expect(resetCalls).to.have.length(1);
+        expect(resetCalls[0].scenes[0]).to.deep.include({
+            chapter_id: 'ch-cover',
+            scene_id: 'sc-cover',
+            reason: 'cover',
+        });
+        expect(resetCalls[0].scenes[0].dirty_layers).to.include('image');
+
+        // The image task must include the cover as a target with chapter_id set.
+        const tasks = await generationProgress.listTasks(redis, 'cover-route-book');
+        const imageTask = tasks.find(task => task.type === 'image');
+        expect(imageTask, 'image task should exist').to.exist;
+        expect(imageTask.targets).to.deep.include({ chapter_id: 'ch-cover', scene_id: 'sc-cover' });
+        expect(imageTask.targets).to.deep.include({ chapter_id: 'ch-1', scene_id: 'scene-a' });
+    });
+
+    it('still prepends the cover scene for legacy books carrying the `chapter` field', async () => {
+        const redis = createMockRedis();
+        const resetCalls = [];
+
+        stub('../src/storage/postgres/repositories/scene-assets-repo', {
+            setDirtyUnitIds: async () => {},
+        });
+        stub('../src/storage/postgres/repositories/task-repo', {
+            createTask: async () => {},
+            updateTaskStatus: async () => {},
+        });
+        stub('../src/runtime/runtime-scheduler', {
+            addSceneToActiveIndex: async () => {},
+            clearBookFromActiveIndex: async () => {},
+        });
+        stub('../src/runtime/scene-window', {
+            clearCancelFlag: async () => {},
+        });
+
+        const handlers = new Map();
+        const app = {
+            post(path, handler) { handlers.set(path, handler); },
+            get() {},
+            put() {},
+        };
+        // Legacy parse.js format: chapter id lives in the `chapter` field.
+        const loadedBook = {
+            manifest: { build_id: 'build-1' },
+            chapters: [
+                {
+                    chapter: 'ch-cover',
+                    chapter_title: 'Обложка',
+                    type: 'cover',
+                    scenes: [{ scene_id: 'sc-cover', scene_title: 'Cover', type: 'cover', units: [{ id: 'u-1' }] }],
+                },
+                { chapter: 'ch-1', type: 'chapter', scenes: [{ scene_id: 'scene-a', units: [{ id: 'u-2' }] }] },
+            ],
+        };
+        const allScenes = [
+            { chapter_id: 'ch-cover', scene_id: 'sc-cover', payload: { units: [] } },
+            { chapter_id: 'ch-1', scene_id: 'scene-a', payload: { units: [] } },
+        ];
+        const deps = {
+            config: { HUB_URL: 'http://gpu-hub.invalid', OUTPUT_DIR: '/tmp/cover-test-output' },
+            book: {
+                loadBook: () => loadedBook,
+                collectScenes: () => allScenes,
+            },
+            layerConfig: {
+                get: async () => ({ audio_enabled: true, image_enabled: true, video_enabled: true }),
+                set: async () => ({}),
+            },
+            bookDiff: {
+                filterDirtyScenesByScope: (dirty, scope, chapterId, sceneId) => {
+                    if (scope !== 'current_scene') return dirty;
+                    return dirty.filter(item =>
+                        item.chapter_id === chapterId && item.scene_id === sceneId
+                    );
+                },
+            },
+            storage: {},
+            orchestrator: {
+                resetScenes: async (_redis, _bookId, _buildId, scenes, _cfg, _options) => {
+                    resetCalls.push({ scenes });
+                    return { marked: scenes.length, reset_scenes: scenes.length };
+                },
+            },
+            runtime: {
+                sceneWindow: { clearCancelFlag: async () => {}, setCancelFlag: async () => {}, slideWindow: async () => ({}) },
+                scheduler: { addSceneToActiveIndex: async () => {}, clearBookFromActiveIndex: async () => {} },
+            },
+            utils: { log: () => {} },
+        };
+        require('../src/routes/book/generation-routes.cjs')(app, redis, deps);
+        const handler = handlers.get('/api/v1/book/:bookId/regenerate');
+
+        const response = createResponse();
+        await handler({
+            params: { bookId: 'cover-route-legacy-book' },
+            body: {
+                scope: 'current_scene',
+                chapter_id: 'ch-1',
+                scene_id: 'scene-a',
+                worker_types: ['image'],
+                rebuild_all: true,
+            },
+        }, response);
+
+        expect(response.statusCode).to.equal(200);
+        expect(resetCalls).to.have.length(1);
+        expect(resetCalls[0].scenes[0]).to.deep.include({
+            chapter_id: 'ch-cover',
+            scene_id: 'sc-cover',
+            reason: 'cover',
+        });
+
+        const tasks = await generationProgress.listTasks(redis, 'cover-route-legacy-book');
+        const imageTask = tasks.find(task => task.type === 'image');
+        expect(imageTask, 'image task should exist').to.exist;
+        expect(imageTask.targets).to.deep.include({ chapter_id: 'ch-cover', scene_id: 'sc-cover' });
+    });
 });

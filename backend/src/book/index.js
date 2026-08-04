@@ -568,7 +568,8 @@ function collectSceneList(book) {
         if (!ch.scenes || !Array.isArray(ch.scenes)) continue;
         for (const sc of ch.scenes) {
             list.push({
-                chapter_id: ch.chapter_id,
+                // chapter_id for modern lazy-book chapters, `chapter` for legacy.
+                chapter_id: ch.chapter_id ?? ch.chapter,
                 scene_id: sc.scene_id,
                 type: sc.type || 'narration',
             });
@@ -599,7 +600,8 @@ function collectScenes(book) {
             const scene = chapter.scenes[scIndex];
             scenes.push({
                 book_id: book.manifest?.book_id,
-                chapter_id: chapter.chapter_id,
+                // chapter_id for modern lazy-book chapters, `chapter` for legacy.
+                chapter_id: chapter.chapter_id ?? chapter.chapter,
                 scene_id: scene.scene_id,
                 runtime_type: 'scene',
                 scene_type: scene.type || 'narration',
@@ -676,7 +678,7 @@ function findSceneRuntimeData(loadedBook, chapterId, sceneId) {
                 return {
                     runtime_type: 'scene',
                     book_id: bookId,
-                    chapter_id: chapter.chapter_id,
+                    chapter_id: chapter.chapter_id ?? chapter.chapter,
                     scene_id: scene.scene_id,
                     scene_type: scene.type || 'narration',
                     location: scene.location || null,

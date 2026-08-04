@@ -33,7 +33,10 @@ module.exports = function(app, redis, deps) {
     function resolveLabels(bookData, chapterId, sceneId) {
         if (!bookData || !chapterId) return { scene_label: null, chapter_label: null };
 
-        const ch = (bookData.chapters || []).find(c => c.chapter === chapterId);
+        // Modern lazy-book chapters use `chapter_id`; legacy parse.js chapters
+        // use `chapter`. Match either so scene/chapter labels (incl. Cover)
+        // resolve for both formats.
+        const ch = (bookData.chapters || []).find(c => (c.chapter_id ?? c.chapter) === chapterId);
         if (!ch) return { scene_label: null, chapter_label: null };
 
         // Chapter label: "Chapter 2" or chapter_title or both

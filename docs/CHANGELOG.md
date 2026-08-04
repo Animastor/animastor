@@ -197,6 +197,30 @@ All notable changes to Animastor are documented here.
     (SUCCESS/refresh не срабатывают ложно).
   - `tsc --noEmit` + `vite build` — OK.
 
+- **Генерация обложки не запускалась для современных книг (mobile web vs Android расхождение)**
+  (`backend/src/routes/book/generation-routes.cjs`,
+  `backend/src/routes/book/chunks-routes.cjs`,
+  `backend/src/routes/book/progress-panel.cjs`,
+  `backend/src/book/index.js`,
+  `backend/src/services/chat-engine.cjs`,
+  `backend/src/services/source-coverage-audit.js`,
+  `backend/tests/generation-routes.test.js`):
+  - **Проблема:** при генерации изображений выбранной сцены, если обложка книги отсутствует, её
+    генерация не запускалась: не появлялась отдельная строка статуса/прогресса обложки на экране
+    «Генератор». Расхождение с Android (там обложка генерировалась) объясняется форматом книги:
+    современные lazy-book главы (chapter-utils.js/create.js) хранят id в поле `chapter_id`, а
+    legacy parse.js-главы — в поле `chapter`.
+  - **Причина:** cover check в `/regenerate` читал только `coverCh.chapter` → для современных книг
+    `coverChapterId = undefined` → обложка добавлялась в dirty scenes с `chapter_id: undefined` →
+    `targetsForType` отфильтровывал сцену без chapter_id → задача для обложки вообще не создавалась.
+    Android выглядел «работающим», потому что тестировался на книгах legacy-формата с полем `chapter`.
+  - **Фикс (бэкенд — единое поведение для всех клиентов):** нормализация поля id главы
+    `chapter_id ?? chapter` во всех местах чтения глав книги: cover check `/regenerate`,
+    cover-подсчёт в `chunks-routes` (assets-state scope), `resolveLabels` в progress-panel (метки
+    сцен, включая Cover), `collectScenes`/`collectSceneList` (book/index.js), контекст позиции в
+    chat-engine, source-coverage-audit.
+  - 2 новых regression-теста (modern `chapter_id` + legacy `chapter`); 723 теста проходят.
+
 - **Кнопка «Генератор» в нижней навигации: зелёная индикация SUCCESS больше не зависает навсегда**
   (`frontends/mobile/src/state/generateStore.ts`,
   `frontends/mobile/src/app/AppShell.tsx`):

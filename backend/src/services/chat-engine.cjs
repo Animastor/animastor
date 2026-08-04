@@ -46,11 +46,15 @@ module.exports = function(config) {
             try {
                 const chapters = bookData.chapters || [];
                 // If chapterId is not provided, find the chapter that contains sceneId
+                // Modern lazy-book chapters carry `chapter_id`; legacy parse.js
+                // chapters carry `chapter`. Normalize so position context resolves
+                // for both formats.
+                const chIdOf = c => c.chapter_id ?? c.chapter;
                 const resolvedChapterId = chapterId || (sceneId
-                    ? chapters.find(c => c.scenes?.some(s => s.scene_id === sceneId))?.chapter
+                    ? chIdOf(chapters.find(c => c.scenes?.some(s => s.scene_id === sceneId)))
                     : null);
                 if (!resolvedChapterId) return positionContext;
-                const ch = chapters.find(c => c.chapter === resolvedChapterId);
+                const ch = chapters.find(c => chIdOf(c) === resolvedChapterId);
                 const isSpecial = ch?.type === 'cover' || ch?.type === 'prologue';
                 const chTitle = ch?.chapter_title || '';
                 let chName = chapterId;

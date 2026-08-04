@@ -181,7 +181,9 @@ module.exports = function(app, redis, deps) {
                         const coverCh = book.loadBook(bookId)?.chapters?.find(ch => ch.type === 'cover');
                         if (coverCh && coverCh.scenes && coverCh.scenes.length > 0) {
                             const coverScene = coverCh.scenes[0];
-                            const coverChapterId = coverCh.chapter;
+                            // chapter_id for modern lazy-book chapters, `chapter`
+                            // for legacy parse.js chapters (see generation-routes.cjs).
+                            const coverChapterId = coverCh.chapter_id ?? coverCh.chapter;
                             const coverSceneId = coverScene.scene_id;
                             const rows = await iuRepo.getImageUnitsForScene(buildId, bookId, coverChapterId, coverSceneId);
                             if (rows.length > 0) {

@@ -13,7 +13,8 @@ function collectNarrativeScenes(draft) {
             const text = sceneText(scene);
             if (!text.trim()) continue;
             out.push({
-                chapter_id: chapter.chapter,
+                // chapter_id for modern lazy-book chapters, `chapter` for legacy.
+                chapter_id: chapter.chapter_id ?? chapter.chapter,
                 scene_id: scene.scene_id,
                 title: scene.scene_title || scene.title || null,
                 source_start: scene.source_start,
