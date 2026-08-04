@@ -145,8 +145,8 @@ function enc(s: string): string { return encodeURIComponent(s); }
 function scenePath(chId: string, scId: string, kind: string): string {
   return `/scene/${enc(bookId.value)}/${enc(chId)}/${enc(scId)}/${kind}?build_id=${enc(buildId.value)}`;
 }
-function iuPath(chId: string, scId: string, unitId: string): string {
-  return `/iu-image/${enc(bookId.value)}/${enc(chId)}/${enc(scId)}/${enc(unitId)}?build_id=${enc(buildId.value)}`;
+function iuPath(bId: string, bld: string, chId: string, scId: string, unitId: string): string {
+  return `/iu-image/${enc(bId)}/${enc(chId)}/${enc(scId)}/${enc(unitId)}?build_id=${enc(bld)}`;
 }
 function currentSceneRef(): SceneRef | undefined { return sceneQueue.value[currentIndex]; }
 export function currentChapterId(): string | null { return currentSceneRef()?.chapterId ?? null; }
@@ -292,17 +292,28 @@ export async function ensureInitialized(targetBookId: string, targetBuildId: str
 }
 
 /** Cover via first scene's first IU image (PlaybackViewModel.loadCoverIntoState),
- *  with the same ~5× retry/backoff as loadCoverBitmap (PLAYER_STATE.md §3). */
+ *  with the same ~5× retry/backoff as loadCoverBitmap (PLAYER_STATE.md §3).
+ *  Called from the coordinator on every prepare (book open + generation
+ *  completion) so a cover that was missing at open time replaces the curtains
+ *  as soon as it becomes available — no manual page refresh needed. */
 async function loadCoverIntoState(chapterId: string | null, sceneId: string | null): Promise<void> {
-  if (!chapterId || !sceneId || !bookId.value) return;
+  if (!chapterId || !sceneId) return;
+  // Capture the book/build at call time: a retry that outlives a book switch
+  // must fetch the SAME book's cover and never clobber the new book's cover
+  // with a stale async result (Android ties this to one book via the VM scope).
+  const bId = bookId.value;
+  const bld = buildId.value;
+  if (!bId) return;
   try {
     const blob = await retryWithBackoff(async () => {
-      const sb = await getJson<StoryboardResponse>(`/scene/${enc(bookId.value)}/${enc(chapterId)}/${enc(sceneId)}/storyboard?build_id=${enc(buildId.value)}`);
+      const sb = await getJson<StoryboardResponse>(`/scene/${enc(bId)}/${enc(chapterId)}/${enc(sceneId)}/storyboard?build_id=${enc(bld)}`);
       const iu = sb.ius?.[0];
       if (!iu) throw new Error('no IU');
-      return await getBlob(iuPath(chapterId, sceneId, iu.unit_id));
+      return await getBlob(iuPath(bId, bld, chapterId, sceneId, iu.unit_id));
     }, 5, 1000, 5000);
-    if (blob.size > 0) setCoverImage(blob);
+    // bookId+buildId guard: a stale async result for a previous book/build must
+    // never clobber the current book's cover (Android ties this to one VM scope).
+    if (blob.size > 0 && bookId.value === bId && buildId.value === bld) setCoverImage(blob);
   } catch {
     /* cover stays unset — curtains fallback */
   }
@@ -773,7 +784,7 @@ async function getIuImageBlob(chId: string, scId: string, unitId: string): Promi
   const key = `${chId}:${scId}:${unitId}`;
   const cached = await getMedia(bld, key, 'iu');
   if (cached) return cached;
-  const blob = await getBlob(iuPath(chId, scId, unitId));
+  const blob = await getBlob(iuPath(bookId.value, bld, chId, scId, unitId));
   void putMedia(bld, key, 'iu', blob);
   return blob;
 }
@@ -1235,6 +1246,16 @@ export function wirePlaybackCoordination(): void {
     }
     if (prep.coverImage != null) {
       setCoverImage(prep.coverImage);
+    } else {
+      // Android parity (GenerateViewModel.loadCoverBitmap +
+      // PlaybackViewModel.loadCoverIntoState): the cover is (re)loaded from the
+      // first scene even when the preparation payload carries no bitmap — at
+      // book open AND on generation completion. A failed load (cover not
+      // generated yet) leaves the curtains fallback up; a later success
+      // replaces them — and a new book without a cover falls back to the
+      // curtains again (preparePlayback drops the previous book's cover).
+      const coverScene = prep.scenes.find((s) => s.sceneType === 'cover') ?? prep.scenes[0];
+      if (coverScene) void loadCoverIntoState(coverScene.chapterId, coverScene.sceneId);
     }
   });
 }

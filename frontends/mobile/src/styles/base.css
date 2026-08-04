@@ -1475,16 +1475,19 @@ button { font: inherit; color: inherit; }
 .play-result { z-index: 1; }
 .play-video { z-index: 2; }
 
-/* Theater curtains fallback (R.drawable.theater_curtains is absent from the
-   Android project — runtime-caught; web approximation, see 06 §16). */
+/* Theater curtains fallback — the SAME asset Android ships
+   (res/drawable-nodpi/theater_curtains.png), copied to public/ (identical
+   md5). Rendered with centerCrop parity: background-size: cover. Shown only
+   while no cover is available (PlayFragment.showCurtains gate: no cover AND no
+   result/preview image). */
 .play-curtains {
   position: absolute;
   inset: 0;
   z-index: 0;
-  background:
-    linear-gradient(180deg, rgba(0,0,0,0) 0%, rgba(0,0,0,.28) 100%),
-    repeating-linear-gradient(90deg,
-      #3d151c 0 16px, #4e1d25 16px 32px, #341218 32px 48px, #571f28 48px 64px);
+  background-image: url('/theater_curtains.png'); /* Android: scaleType centerCrop */
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
 }
 
 /* Dark scrim overlay for cinema letterbox effect (previewOverlay) */

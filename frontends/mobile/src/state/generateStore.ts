@@ -751,7 +751,9 @@ async function pollVBookProgress(bId: string, token: number): Promise<void> {
  * Apply whatever generation results are available — refresh the player with the
  * latest scenes (soft refresh). Port of applyGenerationResults: builds the scene
  * list from book JSON, emits playbackPrepared with softRefresh=true.
- * Cover image loading is skipped on web — stage 7 wires cover into the player.
+ * The cover bitmap is fetched by the playback coordinator (loadCoverIntoState)
+ * on this soft refresh — the Android loadCoverBitmap equivalent — so a cover
+ * that finishes generating replaces the theater-curtains fallback automatically.
  */
 export async function applyGenerationResults(): Promise<void> {
   if (!isRegenerating.value) stopTimer();
