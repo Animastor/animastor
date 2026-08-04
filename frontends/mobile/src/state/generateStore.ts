@@ -227,6 +227,12 @@ function stopTimer(): void {
 
 // ── Worker progress panel tracking (computeProgressRows state) ──
 const COMPLETED_TASK_DISPLAY_MS = 10_000;
+// Tolerance for comparing server task started_at against the client session
+// clock (Date.now()): absorbs small client/server clock skew so a task that
+// legitimately started right after the user clicked Generate is never wrongly
+// classified as stale. Safe against the reported flash: the no-session branch
+// (timerStartedAt <= 0) still suppresses every done row on fresh page open.
+const STALE_DONE_TOLERANCE_MS = 3_000;
 const taskReadyFloor = new Map<string, number>();
 const taskCompletedAt = new Map<string, number>();
 const taskFrozenElapsed = new Map<string, number>();
@@ -323,8 +329,22 @@ export function computeProgressRows(
     if (sw.total <= 0) return;
     const taskKey = sw.task_id ?? `legacy:${sw.type}`;
     const ready = Math.max(sw.ready, taskReadyFloor.get(taskKey) ?? 0);
-    taskReadyFloor.set(taskKey, ready);
     const done = sw.done || (ready >= sw.total && ready > 0);
+    // STALE-DONE GATE — the backend keeps recently-completed tasks in the panel
+    // for ~30s (TERMINAL_RETENTION_MS) and can report a task whose assets are all
+    // ready as done. On page open these done rows from a PREVIOUS generation must
+    // NOT flash as fresh green 100% bars: only work that started within the current
+    // session (timerStartedAt) may render its "Done" state. Rows started before
+    // the session (or with no session at all) are skipped before they reach the
+    // ready-floor / completedAt maps, so they can never look freshly finished.
+    // (Complementary to the newGenerationPending gate, which covers stale rows
+    // right after starting a NEW generation from this page.)
+    const staleDone = done && !sw.cancelled && (
+      timerStartedAt <= 0 ||
+      (sw.started_at != null && sw.started_at + STALE_DONE_TOLERANCE_MS < timerStartedAt)
+    );
+    if (staleDone) return;
+    taskReadyFloor.set(taskKey, ready);
     if (done && !sw.cancelled && !taskCompletedAt.has(taskKey)) taskCompletedAt.set(taskKey, now);
     const frozen = done && !taskFrozenElapsed.has(taskKey);
     const elapsedSeconds: number = done

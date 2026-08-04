@@ -1081,6 +1081,16 @@ class GenerateViewModel(
 
     private val COMPLETED_TASK_DISPLAY_MS = 10_000L
 
+    /**
+     * Tolerance for comparing server task started_at against the client session
+     * clock (System.currentTimeMillis()): absorbs small client/server clock skew
+     * so a task that legitimately started right after the user started generation
+     * is never wrongly classified as stale. Safe against the reported flash: the
+     * no-session branch (timerStartedAt <= 0) still suppresses every done row on
+     * fresh screen open.
+     */
+    private val STALE_DONE_TOLERANCE_MS = 3_000L
+
     /** Floor per generation task — prevents progress rollback. */
     private val taskReadyFloor = ConcurrentHashMap<String, Int>()
 
@@ -1262,8 +1272,21 @@ class GenerateViewModel(
             if (sw.total <= 0) return
             val taskKey = sw.task_id ?: "legacy:${sw.type}"
             val ready = maxOf(sw.ready, taskReadyFloor[taskKey] ?: 0)
-            taskReadyFloor[taskKey] = ready
             val done = sw.done || (ready >= sw.total && ready > 0)
+            // STALE-DONE GATE (identical to mobile web) — the backend keeps
+            // recently-completed tasks in the panel for ~30s (TERMINAL_RETENTION_MS)
+            // and can report a task whose assets are all ready as done. On screen
+            // open these done rows from a PREVIOUS generation must NOT flash as
+            // fresh green 100% bars: only work that started within the current
+            // session (timerStartedAt) may render its "Done" state. Rows started
+            // before the session (or with no session at all) are skipped before
+            // they reach the ready-floor / completedAt maps.
+            val sessionStarted = timerStartedAt > 0L
+            val staleDone = done && !sw.cancelled &&
+                (!sessionStarted ||
+                    (sw.started_at != null && sw.started_at + STALE_DONE_TOLERANCE_MS < timerStartedAt))
+            if (staleDone) return
+            taskReadyFloor[taskKey] = ready
             if (done && !sw.cancelled && !taskCompletedAt.containsKey(taskKey)) {
                 taskCompletedAt[taskKey] = now
             }
