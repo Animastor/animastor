@@ -291,6 +291,9 @@ module.exports = function(app, redis, deps) {
                         unit_id: r.unit_id, scene_id: r.scene_id, text: r.text,
                         text_proportion: r.text_proportion, estimated_duration_sec: r.estimated_duration_sec,
                         audio_file: r.scene_audio_file,
+                        // Note: start_ms=0 maps to null here, but unlike the
+                        // timings GET route this is self-corrected by the pgMap
+                        // merge below (rows with end_ms>0 override the nulls).
                         start_ms: r.start_ms != null && (Number(r.start_ms) || 0) > 0 ? Number(r.start_ms) : null,
                         end_ms: r.end_ms != null && (Number(r.end_ms) || 0) > 0 ? Number(r.end_ms) : null,
                     }));
@@ -701,6 +704,9 @@ module.exports = function(app, redis, deps) {
                         unit_id: r.unit_id, scene_id: r.scene_id, text: r.text,
                         text_proportion: r.text_proportion, estimated_duration_sec: r.estimated_duration_sec,
                         audio_file: r.scene_audio_file,
+                        // Note: start_ms=0 maps to null here, but unlike the
+                        // timings GET route this is self-corrected by the pgMap
+                        // merge below (rows with end_ms>0 override the nulls).
                         start_ms: r.start_ms != null && (Number(r.start_ms) || 0) > 0 ? Number(r.start_ms) : null,
                         end_ms: r.end_ms != null && (Number(r.end_ms) || 0) > 0 ? Number(r.end_ms) : null,
                     }));
@@ -922,8 +928,13 @@ module.exports = function(app, redis, deps) {
                 if (pgRows && pgRows.length > 0) {
                     ius = pgRows.map(r => ({
                         unit_id: r.unit_id, scene_order: r.scene_order || 0,
-                        start_ms: r.start_ms != null && (Number(r.start_ms) || 0) > 0 ? Number(r.start_ms) : null,
-                        end_ms: r.end_ms != null && (Number(r.end_ms) || 0) > 0 ? Number(r.end_ms) : null,
+                        // start_ms=0 is VALID — the first unit of every scene starts
+                        // at 0. Treating it as null made needsCompute true on every
+                        // GET, and the recompute-all path (5a401fb) then wiped the
+                        // user-saved timings right after PUT. Rows that were never
+                        // timed are 0/0 and still fail the end>start check below.
+                        start_ms: r.start_ms != null ? Number(r.start_ms) : null,
+                        end_ms: r.end_ms != null ? Number(r.end_ms) : null,
                         estimated_duration_sec: r.estimated_duration_sec || 0,
                         text_proportion: r.text_proportion || 0,
                     }));
@@ -1044,11 +1055,32 @@ module.exports = function(app, redis, deps) {
             let cursorMs = 0;
 
             for (const unit of sorted) {
-                const preferredStart = unit.start_ms;
-                const preferredEnd = unit.end_ms;
-                const startMs = Math.max(preferredStart, cursorMs);
-                let endMs = Math.max(startMs + 50, preferredEnd);
+                const preferredStart = unit.start_ms ?? 0;
+                const preferredEnd = unit.end_ms ?? 0;
+                let endMs = Math.max(preferredStart + 50, preferredEnd);
                 if (sceneDurationMs > 0 && endMs > sceneDurationMs) endMs = sceneDurationMs;
+                // Gapless boundary model: the handles are SHARED boundaries — the
+                // right handle of a unit is the left handle of the next one. When a
+                // unit would start AFTER the previous unit ended (a gap — e.g. the
+                // user dragged the shared boundary earlier and the next unit's start
+                // didn't follow), pull the start back to the previous unit's end so
+                // the timeline stays gapless and the next unit's left handle tracks
+                // the drag. Net effect: every non-first unit starts exactly where
+                // the previous one ends, so a client that reports a later start for
+                // a non-first unit (didn't cascade a shared boundary) is corrected
+                // server-side. cursorMs === 0 marks the FIRST unit — its left edge
+                // may intentionally sit after 0 (lead-in silence), so its preferred
+                // start is kept.
+                let startMs = Math.max(preferredStart, cursorMs);
+                if (cursorMs > 0 && preferredStart > cursorMs) {
+                    startMs = cursorMs;
+                }
+                // Clamp the start so the interval is never zero-width or inverted
+                // (e.g. a handle dragged to the very end of the audio). A saved
+                // row with start >= end would make the next GET treat the whole
+                // scene as needsCompute and recompute ALL timings from text
+                // proportions — discarding the user's edits.
+                startMs = Math.min(startMs, Math.max(0, endMs - 50));
                 recalculated.push({ unit_id: unit.unit_id, start_ms: startMs, end_ms: endMs });
                 cursorMs = endMs;
             }

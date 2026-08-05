@@ -1869,21 +1869,28 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         b.timelineWaveform.clearPlaybackPosition()
     }
 
-    // N2: local drag PREVIEW only. Moves the dragged unit and keeps the previous
-    // boundary contiguous so the handle tracks the finger smoothly. The full cascade
-    // (shift downstream units, enforce min gap, clamp to scene duration) is the
-    // server's job — it recalculates authoritatively in PUT /timings on release
-    // (see saveTimings), and the returned units overwrite this preview. We no longer
-    // re-derive that business logic on the client.
+    // N2: local drag PREVIEW only. Moves the dragged unit and keeps BOTH
+    // neighboring boundaries contiguous so the handle tracks the finger smoothly:
+    // the left handle is also the previous unit's end, the right handle is also the
+    // next unit's start. The full cascade (shift downstream units, enforce min gap,
+    // clamp to scene duration) is the server's job — it recalculates
+    // authoritatively in PUT /timings on release (see saveTimings), and the
+    // returned units overwrite this preview.
     private fun handleRangeChange(startMs: Long, endMs: Long) {
         val td = timingData ?: return
         val pos = SharedPositionManager.current.value
         val updated = td.units.toMutableList()
         if (pos.unitIndex in updated.indices) {
             updated[pos.unitIndex] = updated[pos.unitIndex].copy(start_ms = startMs, end_ms = endMs)
+            // The handles are SHARED boundaries: the left handle is also the
+            // previous unit's end, the right handle is also the next unit's start.
             if (pos.unitIndex > 0) {
                 val prev = updated[pos.unitIndex - 1]
                 updated[pos.unitIndex - 1] = prev.copy(end_ms = startMs)
+            }
+            if (pos.unitIndex + 1 < updated.size) {
+                val next = updated[pos.unitIndex + 1]
+                updated[pos.unitIndex + 1] = next.copy(start_ms = endMs)
             }
             timingData = td.copy(units = updated)
         }

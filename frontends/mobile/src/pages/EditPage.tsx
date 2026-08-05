@@ -419,7 +419,10 @@ export function EditPage(props: { path?: string }) {
     const idx = positionSignal.value.unitIndex;
     const units = td.units.map((u, i) => {
       if (i === idx) return { ...u, start_ms: startMs, end_ms: endMs };
+      // The handles are SHARED boundaries: the left handle is also the previous
+      // unit's end, the right handle is also the next unit's start.
       if (i === idx - 1) return { ...u, end_ms: startMs };
+      if (i === idx + 1) return { ...u, start_ms: endMs };
       return u;
     });
     const td2 = { ...td, units };
