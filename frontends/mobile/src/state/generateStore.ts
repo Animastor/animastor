@@ -9,7 +9,7 @@
 // Stage 4 adds the Generate screen slice: layer config, worker counts, VBook
 // progress, task-aware progress panel, and generation start/cancel actions.
 import { signal } from '@preact/signals';
-import { getJson, postJson, postMultipart, putJson, sse } from '../api/client';
+import { getJson, postJson, postJsonLong, postMultipart, putJson, sse } from '../api/client';
 import type {
   AssetsStateResponse, BookData, BookStatus, DiffSummary, ImportResponse, LayerConfigResponse,
   ProgressPanelResponse, ProgressTask, RegenerateResponse, WorkerCounts, ProgressEvent,
@@ -689,15 +689,31 @@ export async function startVBookGeneration(): Promise<void> {
   try {
     const status = await getJson<BookStatus>(`/book/${encodeURIComponent(bid)}/status`).catch(() => null);
     const needsBootstrap = status?.ready !== true;
+    // These routes BLOCK for the whole AI window (minutes) — a 30s default
+    // timeout would abort them client-side while the backend keeps generating,
+    // freezing the progress block and timer. Use the long timeout (15 min,
+    // matching the Android OkHttp config).
     if (needsBootstrap) {
-      await postJson(`/book/${encodeURIComponent(bid)}/bootstrap`);
+      await postJsonLong(`/book/${encodeURIComponent(bid)}/bootstrap`);
     } else {
-      await postJson(`/book/${encodeURIComponent(bid)}/bootstrap-next-window`);
+      await postJsonLong(`/book/${encodeURIComponent(bid)}/bootstrap-next-window`);
     }
     await pollVBookProgress(bid, token);
   } catch (e) {
     if (token !== vbookPollToken) return;
     console.warn('startVBookGeneration failed:', (e as Error).message);
+    // A client-side abort (timeout/network blip) does NOT stop the backend
+    // agent — the bootstrap route keeps processing the window. Before tearing
+    // the progress UI down, reconcile with the real agent state: if it is still
+    // running, keep the block + timer alive and let the poller track it to
+    // completion. Only tear down on a genuine failure (no active session).
+    try {
+      const status = await getJson<{ active: boolean }>(`/book/${encodeURIComponent(bid)}/agent-status`);
+      if (status.active) {
+        await pollVBookProgress(bid, token);
+        return;
+      }
+    } catch { /* agent-status unavailable — fall through to teardown */ }
     clearVBookProgress();
     stopTimer();
   }
@@ -706,15 +722,23 @@ export async function startVBookGeneration(): Promise<void> {
 async function pollVBookProgress(bId: string, token: number): Promise<void> {
   let consecutiveInactive = 0;
   const maxInactive = 2;
-  const maxPollMs = 5 * 60 * 1000;
+  // Safety net against a stuck backend (agent-status reports active forever).
+  // NOT a generation deadline: the loop terminates on its own once the agent
+  // reports inactive twice. Long multi-window runs must never be cut short by
+  // this cap, so it sits far above any realistic generation.
+  const maxPollMs = 60 * 60 * 1000;
   const startTime = Date.now();
+  let safetyCapTripped = false;
   while (consecutiveInactive < maxInactive) {
     if (token !== vbookPollToken) return;
     if (importCompleteReceived) {
       vbookProgress.value = { ...vbookProgress.value, stage: 'COMPLETED' };
       break;
     }
-    if (Date.now() - startTime > maxPollMs) break;
+    if (Date.now() - startTime > maxPollMs) {
+      safetyCapTripped = true;
+      break;
+    }
     await new Promise((r) => setTimeout(r, 2000));
     if (token !== vbookPollToken) return;
     try {
@@ -742,6 +766,25 @@ async function pollVBookProgress(bId: string, token: number): Promise<void> {
     }
   }
   if (token !== vbookPollToken) return;
+  // If the safety cap tripped, probe the real agent state before deciding: a
+  // still-running agent must NOT be finalised (SUCCESS + stopTimer would freeze
+  // the timer mid-generation) — the 1.5s panel poll + checkVBookAgentStatus keep
+  // tracking it. But if the agent actually finished (backend stuck reporting
+  // active), finalise normally so the generation is not left dangling.
+  if (safetyCapTripped) {
+    console.warn('pollVBookProgress: safety cap reached — probing agent state');
+    try {
+      const status = await getJson<{ active: boolean }>(`/book/${encodeURIComponent(bId)}/agent-status`);
+      if (!status.active) {
+        setGenerationStatus('SUCCESS');
+        if (!isRegenerating.value) stopTimer();
+        await applyGenerationResults();
+        return;
+      }
+    } catch { /* leave UI alive */ }
+    console.warn('pollVBookProgress: agent still active after safety cap — leaving UI alive');
+    return;
+  }
   setGenerationStatus('SUCCESS');
   if (!isRegenerating.value) stopTimer();
   await applyGenerationResults();

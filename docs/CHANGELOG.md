@@ -35,7 +35,66 @@ All notable changes to Animastor are documented here.
   - Проверки: `node --check` + E2E-смоук эндпоинта (200, payload верный); web
     `tsc --noEmit` + `vite build` OK; Android `compileDebugKotlin` OK.
 
+### Changed
+
+- **Video Reconciliation стал точечным: запускается только для юнитов, где `video.action` — статичная копия `image.prompt`**
+  (`backend/src/services/agent/pipeline-steps.js`,
+  `backend/src/services/agent/pipeline-runner.js`,
+  `backend/ai/rules/visuals.md`,
+  `backend/tests/video-action-reconciliation.test.js` (новый)):
+  - **Проблема:** `stepReconcileVideoActions` прогонял LLM по ВСЕМ юнитам окна на каждом
+    прогоне, даже когда агент visuals уже сформировал самостоятельный `video.action`
+    (правила в `visuals.md` это позволяют). Лишний LLM-вызов + риск переписывания хороших
+    экшенов. И не было детерминированной гарантии: если reconciliation-шаг падал или
+    пропускался, статичная копия (fallback `video.action = image.prompt` из
+    `stepCreateVisuals` и passport/storyboard-пассов) могла дожить до GPU.
+  - **Фикс (pipeline-steps.js):** новые детерминированные хелперы `isStaticActionCopy` /
+    `needsVideoActionReconciliation` — нормализованное равенство или полное включение
+    (`action === prompt`, либо один целиком содержит другой). Перефразированный экшен
+    считается самостоятельным результатом агента и НЕ трогается. `stepReconcileVideoActions`
+    отправляет модели ТОЛЬКО такие юниты (плюс пустые экшены — правило «Empty → GENERATE»):
+    копий нет → шаг пропускается без AI-вызова и без записи шага; мёрж применяется только
+    к отправленным юнитам (галлюцинированные юниты модели не могут перезаписать авторские
+    экшены).
+  - **Фикс (pipeline-runner.js):** детерминированный финальный sweep после video-action
+    polish — если в окне осталась копия/пустой экшен (транзиентный сбой первого прохода,
+    повторная копия из polish-пасса), reconciliation запускается ещё раз. Степ сам
+    фильтрует — при чистом окне это дешёвый no-op без AI-вызова.
+  - **visuals.md:** добавлена секция «video.action — write it independently» (позитивная
+    формулировка, парные примеры static prompt → motion action) — чтобы агент чаще
+    генерировал `video.action` сам, и reconciliation не требовался.
+  - 13 новых тестов; весь mocha-сьют (745) проходит.
+
 ### Fixed
+
+- **Web: блок статуса/прогресса VBook не исчезает и таймер не застывает — 30-секундный таймаут веб-клиента обрывал блокирующий POST /bootstrap**
+  (`frontends/mobile/src/api/client.ts`,
+  `frontends/mobile/src/state/generateStore.ts`):
+  - **Проблема (репродукция: книга `ba_1785944053477`, TXT без описаний персонажей):**
+    на мобильном web во время генерации VBook на одном из первых этапов (сборка персонажей)
+    блок статус/прогресс полностью исчезал, на следующем этапе (сборка локаций) появлялся
+    снова, но таймер застывал на ~30 секундах. На Android тот же текст работал корректно.
+  - **Причина:** web-клиент применяет ко ВСЕМ запросам таймаут `REQUEST_TIMEOUT_MS = 30 000`
+    (комментарий «OkHttp default read timeout»), а Android OkHttp сконфигурирован на
+    `readTimeout=15 min` / `callTimeout=15 min`. Эндпоинты `POST /bootstrap` и
+    `POST /bootstrap-next-window` **блокирующие** — обрабатывают всё окно AI-пайплайна
+    (персонажи, локации, сцены, юниты, визуалы, пассы) синхронно, по несколько минут.
+    Через 30 с браузер обрывал fetch → catch в `startVBookGeneration` вызывал
+    `clearVBookProgress()` + `stopTimer()`: блок исчезал, таймер застывал на ~30 с, а бэкенд
+    продолжал генерацию. SSE-события следующего шага затем «воскрешали» блок
+    (`handleProgressEvent` → `vbookProgress` ANALYZING), но таймер (timerStartedAt=-1) уже
+    не перезапускался. Персонаж `unknown` — штатный fallback пайплайна при пустом результате
+    извлечения персонажей (не причина бага).
+  - **Фикс (client.ts):** `request()`/`postJson()` принимают опциональный `timeoutMs`;
+    новый `postJsonLong()` + `LONG_REQUEST_TIMEOUT_MS = 15 мин` (зеркало Android OkHttp).
+  - **Фикс (generateStore.ts):** `startVBookGeneration` вызывает `/bootstrap` и
+    `/bootstrap-next-window` через `postJsonLong` — таймаут больше не срабатывает в середине
+    окна. В catch добавлен reconcile: перед teardown проверяется `/agent-status` — если агент
+    всё ещё активен, UI остаётся живым и `pollVBookProgress` доводит прогресс до конца
+    (защита от любых сетевых обрывов). В `pollVBookProgress` safety-cap увеличен 5 мин → 60 мин
+    и сделан не активностным дедлайном: если кап достигнут при активном агенте, SUCCESS/
+    stopTimer/applyGenerationResults НЕ выполняются (их доведёт панельный poll).
+  - Проверки: `tsc --noEmit` + `vite build` — OK.
 
 - **Полировка сториборда больше не «съедает» невидимую часть промпта: обрезка 200/300/150 символов убрана, добавлен лимит-потолок и валидация при сохранении**
   (`backend/src/services/agent-prompts.js`,

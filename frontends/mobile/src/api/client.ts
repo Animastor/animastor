@@ -5,6 +5,11 @@
 //  - streaming Blob download for audio/video/image.
 const BASE = '/api/v1';
 const REQUEST_TIMEOUT_MS = 30_000; // OkHttp default read timeout
+// Long-running endpoints (POST /bootstrap, /bootstrap-next-window) block for the
+// WHOLE AI pipeline window (minutes). Mirrors the Android OkHttp config
+// (readTimeout = 15 MINUTES) — the 30s default would abort these mid-window and
+// freeze the client-side progress/timer while the backend keeps generating.
+const LONG_REQUEST_TIMEOUT_MS = 15 * 60_000;
 const BLOB_TIMEOUT_MS = 120_000;   // large media downloads
 
 export class ApiError extends Error {
@@ -34,8 +39,8 @@ function withTimeout(signal: AbortSignal | null | undefined, timeoutMs: number):
   };
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const { signal, timedOut, clear } = withTimeout(init.signal, REQUEST_TIMEOUT_MS);
+async function request<T>(path: string, init: RequestInit = {}, timeoutMs: number = REQUEST_TIMEOUT_MS): Promise<T> {
+  const { signal, timedOut, clear } = withTimeout(init.signal, timeoutMs);
   try {
     const res = await fetch(BASE + path, {
       ...init,
@@ -62,8 +67,12 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 }
 
 export async function getJson<T>(path: string): Promise<T> { return request<T>(path); }
-export async function postJson<T>(path: string, body?: unknown): Promise<T> {
-  return request<T>(path, { method: 'POST', body: body ? JSON.stringify(body) : undefined });
+export async function postJson<T>(path: string, body?: unknown, timeoutMs?: number): Promise<T> {
+  return request<T>(path, { method: 'POST', body: body ? JSON.stringify(body) : undefined }, timeoutMs);
+}
+// Long-running POST (blocking bootstrap/bootstrap-next-window).
+export async function postJsonLong<T>(path: string, body?: unknown): Promise<T> {
+  return postJson<T>(path, body, LONG_REQUEST_TIMEOUT_MS);
 }
 export async function putJson<T>(path: string, body: unknown): Promise<T> {
   return request<T>(path, { method: 'PUT', body: JSON.stringify(body) });
