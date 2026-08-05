@@ -894,8 +894,12 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         val pos = SharedPositionManager.current.value
         val idx = pos.unitIndex.coerceIn(0, units.size - 1)
         val timing = timingData?.units?.getOrNull(idx)
-        val durMs = if (timing != null) (timing.end_ms - timing.start_ms).coerceAtLeast(0) else 0L
-        val durSec = String.format(Locale.US, "%.1f", durMs / 1000.0)
+        // Match the waveform labels exactly (they truncate tenths — WaveformView
+        // formatMs uses ms % 1000 / 100), so the header duration equals what the
+        // user reads as end − start on the waveform. Rounding here caused a 0.1 gap.
+        val durTenths = if (timing != null)
+            (timing.end_ms / 100 - timing.start_ms / 100).coerceAtLeast(0) else 0L
+        val durSec = String.format(Locale.US, "%.1f", durTenths / 10.0)
         title.text = getString(R.string.edit_unit_label, idx + 1, units.size)
         dur.text = getString(R.string.edit_unit_duration, durSec)
     }

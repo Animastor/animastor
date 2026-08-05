@@ -1039,13 +1039,18 @@ export function EditPage(props: { path?: string }) {
     // Duration = the current unit's timing (end − start); this builder re-runs
     // on every render, so it tracks waveform drags live.
     const unitTiming = timingDataRef.current?.units?.[idx];
-    const durMs = unitTiming ? Math.max(0, (unitTiming.end_ms ?? 0) - (unitTiming.start_ms ?? 0)) : 0;
+    // Match the waveform labels exactly (they truncate tenths — formatMs uses
+    // Math.floor(ms % 1000 / 100)), so the header duration equals what the
+    // user reads as end − start on the waveform. Rounding here caused a 0.1 gap.
+    const durTenths = unitTiming
+      ? Math.max(0, Math.floor((unitTiming.end_ms ?? 0) / 100) - Math.floor((unitTiming.start_ms ?? 0) / 100))
+      : 0;
     out.push(
       <div class="edit-section edit-section--row">
         <span>{tf('edit_unit_label', idx + 1, units.length)}</span>
         <span class="edit-section__meta">
           <IconClock width={14} height={14} />
-          {tf('edit_unit_duration', (durMs / 1000).toFixed(1))}
+          {tf('edit_unit_duration', (durTenths / 10).toFixed(1))}
         </span>
       </div>
     );
