@@ -13,6 +13,7 @@ const {
 } = require('../agent-session');
 const {
     PROGRESS_STAGES, SYSTEM_PROMPTS, MAX_SCENES_PER_CHUNK,
+    IMAGE_PROMPT_MAX_CHARS, UNIT_TEXT_MAX_CHARS, SCENE_TEXT_MAX_CHARS,
     buildLangInstruction,
 } = require('../agent-prompts');
 const { normalizeCharacterRefs } = require('../../image/image-service');
@@ -31,6 +32,33 @@ function buildLocationsContext(locations) {
         const envStr = envParts.length > 0 ? ` (default environment: ${envParts.join(', ')})` : '';
         return `- ${l.id}: ${l.name || l.id} (${l.type || 'unknown'})${envStr}`;
     }).join('\n') || 'None';
+}
+
+// ── Out-of-format prompt guard ──────────────────────────────────────
+// Work items (image.prompt / video.action) longer than IMAGE_PROMPT_MAX_CHARS are
+// excluded from reconciliation/polish passes AND never overwritten by their
+// results: a model that only sees a fragment would silently rewrite the unseen
+// part. See agent-prompts.js for the policy.
+function inPromptRange(u) {
+    return (u.image?.prompt || '').length <= IMAGE_PROMPT_MAX_CHARS;
+}
+function inActionRange(u) {
+    return (u.video?.action || '').length <= IMAGE_PROMPT_MAX_CHARS;
+}
+
+// Format one unit for reconciliation/polish agents. JSON encoding keeps the row
+// unambiguous when unit text / prompts contain quotes or newlines.
+function unitRow(u) {
+    return JSON.stringify({
+        scene_index: u.sceneIndex,
+        unit_index: u.unitIndex,
+        scene_title: u.sceneTitle || '',
+        type: u.type || 'unknown',
+        text: (u.text || '').substring(0, UNIT_TEXT_MAX_CHARS),
+        shot: u.image?.shot || 'unknown',
+        prompt: u.image?.prompt || '',
+        action: u.video?.action || '',
+    });
 }
 
 // Allowed per-scene environment override fields (subset of the location template
@@ -370,6 +398,14 @@ async function stepReconcilePassports(sessionId, allVisualUnits, characters, ste
         return allVisualUnits || [];
     }
 
+    // Exclude out-of-format prompts (legacy values / stray pastes) — see inPromptRange.
+    const polishable = allVisualUnits.filter(inPromptRange);
+    const excludedCount = allVisualUnits.length - polishable.length;
+    if (polishable.length === 0) {
+        console.log(`[AGENT] Step passport (reconciliation): skipped — all ${allVisualUnits.length} unit(s) have out-of-format prompts (>${IMAGE_PROMPT_MAX_CHARS} chars)`);
+        return allVisualUnits;
+    }
+
     const step = await createStep(sessionId, 'reconcile_passports', stepIndex || 0);
 
     // Build passport context: only characters that have actual passport data
@@ -395,11 +431,7 @@ async function stepReconcilePassports(sessionId, allVisualUnits, characters, ste
             `  clothing_details: ${clothingDetails.substring(0, 200)}`;
     }).join('\n') || 'None';
 
-    const unitsStr = allVisualUnits.map((u, i) =>
-        `Unit ${i}: scene_index=${u.sceneIndex}, unit_index=${u.unitIndex}, scene_title="${u.sceneTitle || ''}", ` +
-        `type="${u.type || 'unknown'}", shot="${u.image?.shot || 'unknown'}", ` +
-        `prompt="${(u.image?.prompt || '').substring(0, 300)}"`
-    ).join('\n');
+    const unitsStr = polishable.map(unitRow).join('\n');
 
     const prompt = SYSTEM_PROMPTS.passport_reconciliation
         .replace('%CHARACTERS%', charsContext)
@@ -407,7 +439,7 @@ async function stepReconcilePassports(sessionId, allVisualUnits, characters, ste
 
     const messages = [
         { role: 'system', content: prompt },
-        { role: 'user', content: `Reconcile these ${allVisualUnits.length} visual units against character passports:\n\n${unitsStr}` },
+        { role: 'user', content: `Reconcile these ${polishable.length} visual units against character passports:\n\n${unitsStr}` },
     ];
 
     try {
@@ -417,7 +449,7 @@ async function stepReconcilePassports(sessionId, allVisualUnits, characters, ste
         // Merge AI results back, preserving original fields and only updating visual.prompt
         const merged = allVisualUnits.map((original, i) => {
             const rec = reconciled.find(r => r.scene_index === original.sceneIndex && r.unit_index === original.unitIndex);
-            if (rec && rec.image?.prompt) {
+            if (rec && rec.image?.prompt && inPromptRange(original)) {
                 const mergedPrompt = rec.image.prompt || original.image?.prompt;
                 return {
                     ...original,
@@ -442,7 +474,7 @@ async function stepReconcilePassports(sessionId, allVisualUnits, characters, ste
             const orig = allVisualUnits[i];
             return m.image?.prompt !== orig.image?.prompt;
         }).length;
-        console.log(`[AGENT] Step passport (reconciliation): ${merged.length} units, ${changedCount} deduped`);
+        console.log(`[AGENT] Step passport (reconciliation): ${polishable.length} units reviewed, ${excludedCount} excluded (prompt >${IMAGE_PROMPT_MAX_CHARS} chars), ${changedCount} changed`);
 
         return merged;
     } catch (err) {
@@ -462,13 +494,17 @@ async function stepReconcileVideoActions(sessionId, allVisualUnits, characters, 
         return allVisualUnits || [];
     }
 
+    // Exclude out-of-format video actions (legacy values / stray pastes) — see inActionRange.
+    const polishable = allVisualUnits.filter(inActionRange);
+    const excludedCount = allVisualUnits.length - polishable.length;
+    if (polishable.length === 0) {
+        console.log(`[AGENT] Step video_action_reconciliation: skipped — all ${allVisualUnits.length} unit(s) have out-of-format actions (>${IMAGE_PROMPT_MAX_CHARS} chars)`);
+        return allVisualUnits;
+    }
+
     const step = await createStep(sessionId, 'reconcile_video_actions', stepIndex || 0);
 
-    const unitsStr = allVisualUnits.map((u, i) =>
-        `Unit ${i}: scene_index=${u.sceneIndex}, unit_index=${u.unitIndex}, type="${u.type || 'unknown'}", ` +
-        `image.prompt="${(u.image?.prompt || '').substring(0, 200)}", ` +
-        `video.action="${(u.video?.action || '').substring(0, 200)}"`
-    ).join('\n');
+    const unitsStr = polishable.map(unitRow).join('\n');
 
     // Inject video prompt profile if available
     let videoReconPrompt = SYSTEM_PROMPTS.video_action_reconciliation;
@@ -481,7 +517,7 @@ async function stepReconcileVideoActions(sessionId, allVisualUnits, characters, 
 
     const messages = [
         { role: 'system', content: videoReconPrompt },
-        { role: 'user', content: `Fix video.action for these ${allVisualUnits.length} units — ensure each describes temporal/dynamic change only, not static composition:\n\n${unitsStr}` },
+        { role: 'user', content: `Fix video.action for these ${polishable.length} units — ensure each describes temporal/dynamic change only, not static composition:\n\n${unitsStr}` },
     ];
 
     try {
@@ -491,7 +527,7 @@ async function stepReconcileVideoActions(sessionId, allVisualUnits, characters, 
         // Merge AI results back, preserving original fields and only updating video.action
         const merged = allVisualUnits.map((original, i) => {
             const rec = reconciled.find(r => r.scene_index === original.sceneIndex && r.unit_index === original.unitIndex);
-            if (rec && rec.video?.action) {
+            if (rec && rec.video?.action && inActionRange(original)) {
                 return {
                     ...original,
                     video: {
@@ -509,7 +545,7 @@ async function stepReconcileVideoActions(sessionId, allVisualUnits, characters, 
             const orig = allVisualUnits[i];
             return m.video?.action !== orig.video?.action;
         }).length;
-        console.log(`[AGENT] Step video_action_reconciliation: ${merged.length} units, ${changedCount} actions fixed`);
+        console.log(`[AGENT] Step video_action_reconciliation: ${polishable.length} units reviewed, ${excludedCount} excluded (action >${IMAGE_PROMPT_MAX_CHARS} chars), ${changedCount} actions fixed`);
 
         return merged;
     } catch (err) {
@@ -529,6 +565,14 @@ async function stepPolishStoryboard(sessionId, allVisualUnits, characters, locat
         return allVisualUnits || [];
     }
 
+    // Exclude out-of-format prompts (legacy values / stray pastes) — see inPromptRange.
+    const polishable = allVisualUnits.filter(inPromptRange);
+    const excludedCount = allVisualUnits.length - polishable.length;
+    if (polishable.length < 2) {
+        console.log(`[AGENT] Step 6 (storyboard polish): skipped — ${polishable.length} in-format unit(s) remain after excluding ${excludedCount} with prompt >${IMAGE_PROMPT_MAX_CHARS} chars, need >= 2`);
+        return allVisualUnits;
+    }
+
     const step = await createStep(sessionId, 'polish_storyboard', stepIndex || 0);
 
     const charsContext = (characters || []).map(c => `- ${c.id}: ${c.name} (${c.role || 'unknown'})`).join('\n') || 'None';
@@ -541,15 +585,13 @@ async function stepPolishStoryboard(sessionId, allVisualUnits, characters, locat
         const key = `${u.sceneIndex}:${u.sceneTitle}`;
         if (!seenScenes.has(key) && u.sceneText) {
             seenScenes.add(key);
-            const truncated = u.sceneText.length > 1200 ? u.sceneText.substring(0, 1200) + '...' : u.sceneText;
+            const truncated = u.sceneText.length > SCENE_TEXT_MAX_CHARS ? u.sceneText.substring(0, SCENE_TEXT_MAX_CHARS) + '...' : u.sceneText;
             scenesParts.push(`--- Scene ${u.sceneIndex}: "${u.sceneTitle || 'Untitled'}" ---\n${truncated}\n`);
         }
     }
     const scenesStr = scenesParts.join('\n');
 
-    const unitsStr = allVisualUnits.map((u, i) =>
-        `Unit ${i}: scene_index=${u.sceneIndex}, unit_index=${u.unitIndex}, scene_title="${u.sceneTitle || ''}", type="${u.type || 'unknown'}", shot="${u.image?.shot || 'unknown'}", prompt="${(u.image?.prompt || '').substring(0, 200)}"`
-    ).join('\n');
+    const unitsStr = polishable.map(unitRow).join('\n');
 
     let polishPrompt = SYSTEM_PROMPTS.storyboard_polish;
 
@@ -569,7 +611,7 @@ async function stepPolishStoryboard(sessionId, allVisualUnits, characters, locat
 
     const messages = [
         { role: 'system', content: prompt },
-        { role: 'user', content: `Review and polish these ${allVisualUnits.length} visual units for storyboard continuity:\n\n${unitsStr}` },
+        { role: 'user', content: `Review and polish these ${polishable.length} visual units for storyboard continuity:\n\n${unitsStr}` },
     ];
 
     try {
@@ -579,7 +621,7 @@ async function stepPolishStoryboard(sessionId, allVisualUnits, characters, locat
         // Merge AI results back, preserving original fields and only updating visual
         const merged = allVisualUnits.map((original, i) => {
             const polished = polishedUnits.find(p => p.scene_index === original.sceneIndex && p.unit_index === original.unitIndex);
-            if (polished && polished.image?.prompt) {
+            if (polished && polished.image?.prompt && inPromptRange(original)) {
                 const mergedPrompt = polished.image.prompt || original.image?.prompt;
                 return {
                     ...original,
@@ -604,7 +646,7 @@ async function stepPolishStoryboard(sessionId, allVisualUnits, characters, locat
             const orig = allVisualUnits[i];
             return m.image?.prompt !== orig.image?.prompt || m.image?.shot !== orig.image?.shot;
         }).length;
-        console.log(`[AGENT] Step 6 (storyboard polish): ${merged.length} units reviewed, ${changedCount} modified`);
+        console.log(`[AGENT] Step 6 (storyboard polish): ${polishable.length} units reviewed, ${excludedCount} excluded (prompt >${IMAGE_PROMPT_MAX_CHARS} chars), ${changedCount} modified`);
 
         return merged;
     } catch (err) {
@@ -624,6 +666,14 @@ async function stepPolishVideoActions(sessionId, allVisualUnits, characters, loc
         return allVisualUnits || [];
     }
 
+    // Exclude out-of-format video actions (legacy values / stray pastes) — see inActionRange.
+    const polishable = allVisualUnits.filter(inActionRange);
+    const excludedCount = allVisualUnits.length - polishable.length;
+    if (polishable.length < 2) {
+        console.log(`[AGENT] Step video_action_polish: skipped — ${polishable.length} in-format unit(s) remain after excluding ${excludedCount} with action >${IMAGE_PROMPT_MAX_CHARS} chars, need >= 2`);
+        return allVisualUnits;
+    }
+
     const step = await createStep(sessionId, 'polish_video_actions', stepIndex || 0);
 
     const charsContext = (characters || []).map(c => `- ${c.id}: ${c.name} (${c.role || 'unknown'})`).join('\n') || 'None';
@@ -636,17 +686,13 @@ async function stepPolishVideoActions(sessionId, allVisualUnits, characters, loc
         const key = `${u.sceneIndex}:${u.sceneTitle}`;
         if (!seenScenes.has(key) && u.sceneText) {
             seenScenes.add(key);
-            const truncated = u.sceneText.length > 1200 ? u.sceneText.substring(0, 1200) + '...' : u.sceneText;
+            const truncated = u.sceneText.length > SCENE_TEXT_MAX_CHARS ? u.sceneText.substring(0, SCENE_TEXT_MAX_CHARS) + '...' : u.sceneText;
             scenesParts.push(`--- Scene ${u.sceneIndex}: "${u.sceneTitle || 'Untitled'}" ---\n${truncated}\n`);
         }
     }
     const scenesStr = scenesParts.join('\n');
 
-    const unitsStr = allVisualUnits.map((u, i) =>
-        `Unit ${i}: scene_index=${u.sceneIndex}, unit_index=${u.unitIndex}, type="${u.type || 'unknown'}", ` +
-        `image.prompt="${(u.image?.prompt || '').substring(0, 150)}", ` +
-        `video.action="${(u.video?.action || '').substring(0, 150)}"`
-    ).join('\n');
+    const unitsStr = polishable.map(unitRow).join('\n');
 
     let polishPrompt = SYSTEM_PROMPTS.video_action_polish;
 
@@ -666,7 +712,7 @@ async function stepPolishVideoActions(sessionId, allVisualUnits, characters, loc
 
     const messages = [
         { role: 'system', content: prompt },
-        { role: 'user', content: `Review and polish video.actions for continuity and narrative consistency across these ${allVisualUnits.length} units:\n\n${unitsStr}` },
+        { role: 'user', content: `Review and polish video.actions for continuity and narrative consistency across these ${polishable.length} units:\n\n${unitsStr}` },
     ];
 
     try {
@@ -676,7 +722,7 @@ async function stepPolishVideoActions(sessionId, allVisualUnits, characters, loc
         // Merge AI results back, preserving original fields and only updating video.action
         const merged = allVisualUnits.map((original, i) => {
             const polished = polishedUnits.find(p => p.scene_index === original.sceneIndex && p.unit_index === original.unitIndex);
-            if (polished && polished.video?.action) {
+            if (polished && polished.video?.action && inActionRange(original)) {
                 return {
                     ...original,
                     video: {
@@ -694,7 +740,7 @@ async function stepPolishVideoActions(sessionId, allVisualUnits, characters, loc
             const orig = allVisualUnits[i];
             return m.video?.action !== orig.video?.action;
         }).length;
-        console.log(`[AGENT] Step video_action_polish: ${merged.length} units reviewed, ${changedCount} actions polished`);
+        console.log(`[AGENT] Step video_action_polish: ${polishable.length} units reviewed, ${excludedCount} excluded (action >${IMAGE_PROMPT_MAX_CHARS} chars), ${changedCount} actions polished`);
 
         return merged;
     } catch (err) {

@@ -4,6 +4,39 @@ All notable changes to Animastor are documented here.
 
 ---
 
+## [Unreleased] — 2026-08-05
+
+### Fixed
+
+- **Полировка сториборда больше не «съедает» невидимую часть промпта: обрезка 200/300/150 символов убрана, добавлен лимит-потолок и валидация при сохранении**
+  (`backend/src/services/agent-prompts.js`,
+  `backend/src/services/agent/pipeline-steps.js`,
+  `backend/src/routes/book/core-routes.cjs`):
+  - **Проблема:** шаги реконсиляции/полировки (`storyboard_polish`, `passport_reconciliation`,
+    `video_action_reconciliation`, `video_action_polish`) показывали модели только первые
+    200/300/150 символов `image.prompt`, а результат модели **целиком заменял** оригинал.
+    Модель физически не могла «сохранить основную композицию» (правило `storyboard_polish.md`):
+    невидимые ~78% промпта переписывались по тексту сцены. Как только промпт превышал лимит
+    (ручной ввод, богатое описание) — детали (свет, окружение, одежда, реквизит) тихо терялись.
+  - **Политика (agent-prompts.js):** `IMAGE_PROMPT_MAX_CHARS = 2000` (потолок промпта/экшена),
+    `UNIT_TEXT_MAX_CHARS = 500` (verbatim текст юнита), `SCENE_TEXT_MAX_CHARS = 2700`
+    (полный текст сцены — сцена ≤120с ≈ 2700 симв ограничена дизайном).
+  - **Фикс (pipeline-steps.js):** в 4 шагах промпты передаются **целиком** (JSON-строки:
+    scene_index, unit_index, scene_title, type, verbatim text, shot, prompt, action — кавычки
+    и переносы больше не ломают формат); текст сцены 1200 → 2700. Промпты/экшены длиннее
+    потолка (legacy или случайная вставка) **исключаются из запроса к модели** и **никогда не
+    перезаписываются** её результатом (guard в мерже). Логи: `N reviewed, M excluded (prompt
+    >2000 chars)`.
+  - **Фикс (core-routes.cjs):** валидация длины при сохранении — `PATCH scene` (dotted keys
+    `image.prompt`/`visual.prompt`/`video.action`, nested `image: {prompt}`, full scene replace)
+    и `PUT /book` (полная замена) возвращают 400 с понятным сообщением при промпте длиннее
+    потолка. Простыня ловится на границе «нажал Сохранить» с сообщением, а не молча внутри
+    пайплайна.
+  - Проверки: syntax check OK; функциональный тест (мок AI + БД) — out-of-format юнит не
+    перезаписывается, in-format получает результат модели; 108 точечных тестов проходят.
+
+---
+
 ## [Unreleased] — 2026-08-01
 
 ### Removed

@@ -49,8 +49,8 @@ Consider ALL the following Visual Units as sequential keyframes of ONE film (a s
 ## Known Locations
 %LOCATIONS%
 
-## Scene texts (контекст сюжета)
-Тексты сцен даны для понимания происходящего. Можешь использовать их для дополнения и корректировки image.prompt: добавлять детали из текста сцены, уточнять действия персонажей, атмосферу, жесты, взгляды. Но не переписывай prompt полностью — сохраняй основную композицию, character_id и базовое описание кадра.
+## Scene texts (plot context)
+Scene texts are provided to help you understand what is happening. You may use them to supplement and adjust image.prompt: add details from the scene text, clarify character actions, atmosphere, gestures, and gazes. Do NOT rewrite the prompt entirely — keep the main composition, character_id, and the basic frame description.
 %SCENES%
 
 ## Input units to polish

@@ -9,6 +9,42 @@ const { restoreSceneChunkStatus } = require('../../orchestration/scene-restorati
 const { setDeep, findUnitInScene } = require('./scene-patch-utils.cjs');
 const { recoverMissingRedisChunks } = require('./recover-chunks.cjs');
 const sourceCoverageAudit = require('../../services/source-coverage-audit');
+const { IMAGE_PROMPT_MAX_CHARS } = require('../../services/agent-prompts');
+
+// ── Editor-save prompt guard ─────────────────────────────────────────
+// A frame prompt (image.prompt / video.action) longer than the ceiling is almost
+// always a stray paste ("collected a wall of text and hit Save"). Reject it at the
+// boundary with a clear message instead of silently truncating — truncation would
+// let downstream polish passes rewrite the unseen part (see the
+// IMAGE_PROMPT_MAX_CHARS policy in agent-prompts.js).
+const PROMPT_PATH_KEYS = new Set(['image.prompt', 'visual.prompt', 'video.action']);
+
+function promptLengthError(field, value) {
+    return `Field "${field}" is ${value.length} chars — exceeds the ${IMAGE_PROMPT_MAX_CHARS}-char limit for a frame prompt. It looks like a large text block was pasted in; please shorten it.`;
+}
+
+function assertPromptLength(field, value) {
+    if (typeof value === 'string' && value.length > IMAGE_PROMPT_MAX_CHARS) {
+        const err = new Error(promptLengthError(field, value));
+        err.statusCode = 400;
+        throw err;
+    }
+}
+
+function findOversizedPromptInScene(sceneObj) {
+    const units = sceneObj && Array.isArray(sceneObj.units) ? sceneObj.units : [];
+    for (let i = 0; i < units.length; i++) {
+        const u = units[i] || {};
+        for (const field of PROMPT_PATH_KEYS) {
+            const [a, b] = field.split('.');
+            const val = u[a] && u[a][b];
+            if (typeof val === 'string' && val.length > IMAGE_PROMPT_MAX_CHARS) {
+                return { path: `units[${i}].${field}`, length: val.length };
+            }
+        }
+    }
+    return null;
+}
 
 module.exports = function(app, redis, deps) {
     const {
@@ -177,6 +213,18 @@ module.exports = function(app, redis, deps) {
                 }
             }
 
+            // Editor-save guard: reject full-book saves carrying an oversized frame
+            // prompt (stray paste) — otherwise polish passes would later rewrite the
+            // unseen part of it (see the IMAGE_PROMPT_MAX_CHARS policy).
+            for (const ch of (updatedBookData.chapters || [])) {
+                for (const sc of (ch.scenes || [])) {
+                    const oversized = findOversizedPromptInScene(sc);
+                    if (oversized) {
+                        return res.status(400).json({ error: promptLengthError(`chapters[${ch.chapter_id}].${oversized.path}`, oversized) });
+                    }
+                }
+            }
+
             book.saveBookBundle(updatedBookData, null);
             log(`[UPDATE BOOK] ${bookId}: ${updatedBookData.chapters?.length || 0} chapters saved`);
 
@@ -272,6 +320,16 @@ module.exports = function(app, redis, deps) {
                     if (!unit) {
                         return res.status(404).json({ error: `Unit ${unit_id} not found in scene` });
                     }
+                    // Validate both dotted keys ("image.prompt") and nested objects
+                    // (image: { prompt: ... }) before applying.
+                    for (const [key, value] of Object.entries(fields)) {
+                        if (PROMPT_PATH_KEYS.has(key)) assertPromptLength(key, value);
+                    }
+                    for (const field of PROMPT_PATH_KEYS) {
+                        const [a, b] = field.split('.');
+                        const v = fields[a] && fields[a][b];
+                        if (v !== undefined) assertPromptLength(field, v);
+                    }
                     for (const [key, value] of Object.entries(fields)) {
                         setDeep(unit, key, value === '' ? null : value);
                     }
@@ -280,6 +338,7 @@ module.exports = function(app, redis, deps) {
                     for (const [key, value] of Object.entries(fields)) {
                         // scene_title → scene_title, location.id → location.id, env.time → location.environment.time
                         const resolvedKey = key.startsWith('env.') ? 'location.environment.' + key.slice(4) : key;
+                        if (PROMPT_PATH_KEYS.has(resolvedKey)) assertPromptLength(resolvedKey, value);
                         setDeep(targetScene, resolvedKey, value === '' ? null : value);
                         // Special handling for participants (comma-separated string → array)
                         if (key === 'participants' && typeof value === 'string') {
@@ -301,11 +360,25 @@ module.exports = function(app, redis, deps) {
                 if (Object.keys(unitFields).length === 0) {
                     return res.status(400).json({ error: 'No unit fields to update' });
                 }
+                // Validate frame-prompt fields (dotted keys like "image.prompt" and
+                // nested objects like image: { prompt: ... }) before applying.
+                for (const [key, value] of Object.entries(unitFields)) {
+                    if (PROMPT_PATH_KEYS.has(key)) assertPromptLength(key, value);
+                }
+                for (const field of PROMPT_PATH_KEYS) {
+                    const [a, b] = field.split('.');
+                    const v = unitFields[a] && unitFields[a][b];
+                    if (v !== undefined) assertPromptLength(field, v);
+                }
                 for (const [key, value] of Object.entries(unitFields)) {
                     setDeep(unit, key, value);
                 }
                 log(`[PATCH BOOK] ${bookId}/${chapterId}/${sceneId}/${unit_id}: ${Object.keys(unitFields).join(', ')}`);
             } else {
+                const oversized = findOversizedPromptInScene(incomingScene);
+                if (oversized) {
+                    return res.status(400).json({ error: promptLengthError(oversized.path, oversized) });
+                }
                 oldBook.chapters.find(ch => ch.chapter_id === chapterId).scenes[sceneIndex] = incomingScene;
                 log(`[PATCH BOOK] ${bookId}/${chapterId}/${sceneId}: full scene replaced`);
             }
@@ -340,7 +413,7 @@ module.exports = function(app, redis, deps) {
             });
         } catch (err) {
             console.error('[PATCH BOOK] Error:', err.message);
-            return res.status(500).json({ error: err.message });
+            return res.status(err.statusCode || 500).json({ error: err.message });
         }
     });
 

@@ -56,6 +56,21 @@ function computeWindowChars(chunkSize) {
     return WINDOW_OVERHEAD + scenes * CHARS_PER_SCENE;
 }
 
+// ── Prompt length policy ─────────────────────────────────────────────
+// A frame prompt (image.prompt / video.action) longer than the ceiling is
+// treated as OUT OF FORMAT: either a legacy value or a stray paste from the
+// editor. Such prompts are rejected at the save boundary (core-routes.cjs)
+// and are NEVER sent to the reconciliation/polish passes — a model that only
+// sees a fragment would silently rewrite the unseen part, destroying content
+// the user may have typed deliberately.
+// Normal AI-generated prompts are ~150–200 chars; the ~2×-text worst case is
+// ~900 chars; 2000 leaves generous headroom while bounding the AI context.
+const IMAGE_PROMPT_MAX_CHARS = 2000;
+// Verbatim unit text shown to reconciliation/polish agents (a 20s unit ≈ 450 chars).
+const UNIT_TEXT_MAX_CHARS = 500;
+// Full scene text is passed to polish passes (a scene is ≤ 120s ≈ 2700 chars by design).
+const SCENE_TEXT_MAX_CHARS = 2700;
+
 // ── Load SYSTEM_PROMPTS from ai/rules/*.md ──
 const SYSTEM_PROMPTS = {};
 const RULES = [
@@ -136,5 +151,6 @@ module.exports = {
     PROGRESS_STAGES, MAX_WINDOW_CHARS, STEP_RETRIES, SYSTEM_PROMPTS,
     SCENE_TARGET_SEC, SCENE_MAX_SEC, SCENE_MIN_SEC, MAX_SCENES_PER_CHUNK,
     CHARS_PER_SCENE, WINDOW_OVERHEAD, computeWindowChars,
+    IMAGE_PROMPT_MAX_CHARS, UNIT_TEXT_MAX_CHARS, SCENE_TEXT_MAX_CHARS,
     LANG_NAMES, langName, buildLangInstruction, resolveBookLanguage,
 };
