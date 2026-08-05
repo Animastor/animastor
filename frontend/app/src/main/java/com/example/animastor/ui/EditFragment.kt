@@ -55,8 +55,9 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
     private var isPlaying = false
     private var playbackJob: Job? = null
     private var timelineDirty = false
-    /** Units-tab section header («Модуль 2/5 • 8.4 с») — live-updated on timing changes. */
+    /** Units-tab section header — «Модуль 2/5» left, clock + duration right, live-updated. */
     private var unitHeaderLabel: TextView? = null
+    private var unitHeaderDuration: TextView? = null
     /** Collapsible panels (web parity) — carousel + waveform collapse to a thin title strip. */
     private var carouselCollapsed = false
     private var timelineCollapsed = false
@@ -216,6 +217,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         timingData = null
         originalTimings = null
         unitHeaderLabel = null
+        unitHeaderDuration = null
         setCarouselCollapsed(false)
         setTimelineCollapsed(false)
     }
@@ -786,10 +788,59 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
             setPadding(0, 0, 0, 8)
         }
 
-        // Unit metadata section — header shows the module counter (2/5) and the
-        // current unit's duration from timings (end − start), live-updated.
-        val header = sectionLabel(ctx, getString(R.string.edit_section_unit)) as TextView
-        unitHeaderLabel = header
+        // Unit metadata section — balanced header: module counter (2/5) on the
+        // left, clock icon + duration (end − start from timings) on the right,
+        // live-updated on timing changes (web parity).
+        val header = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            setPadding(0, 16, 0, 4)
+        }
+        val title = TextView(ctx).apply {
+            textSize = 14f
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            setTextColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorSecondary))
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        val meta = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply {
+                val dm = resources.displayMetrics
+                marginStart = (4 * dm.density + 0.5f).toInt()
+            }
+        }
+        val clock = ImageView(ctx).apply {
+            setImageResource(R.drawable.ic_clock)
+            val dm = resources.displayMetrics
+            val sz = (14 * dm.density + 0.5f).toInt()
+            layoutParams = LinearLayout.LayoutParams(sz, sz)
+            imageTintList = android.content.res.ColorStateList.valueOf(
+                MaterialColors.getColor(this, com.google.android.material.R.attr.colorSecondary)
+            )
+            importantForAccessibility = android.view.View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }
+        val dur = TextView(ctx).apply {
+            textSize = 14f
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            setTextColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorSecondary))
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply {
+                val dm = resources.displayMetrics
+                marginStart = (2 * dm.density + 0.5f).toInt()
+            }
+        }
+        meta.addView(clock)
+        meta.addView(dur)
+        header.addView(title)
+        header.addView(meta)
+        unitHeaderLabel = title
+        unitHeaderDuration = dur
         ll.addView(header)
         updateUnitHeaderLabel()
         // id is a read-only system field (kept in JSON style);
@@ -833,7 +884,8 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
      *  the current unit's timing (end − start) and is recomputed on every timing
      *  change (drag preview, save, reset, reload). */
     private fun updateUnitHeaderLabel() {
-        val label = unitHeaderLabel ?: return
+        val title = unitHeaderLabel ?: return
+        val dur = unitHeaderDuration ?: return
         val sc = currentScene() ?: return
         val units = sc.units ?: emptyList()
         if (units.isEmpty()) return
@@ -842,8 +894,8 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         val timing = timingData?.units?.getOrNull(idx)
         val durMs = if (timing != null) (timing.end_ms - timing.start_ms).coerceAtLeast(0) else 0L
         val durSec = String.format(Locale.US, "%.1f", durMs / 1000.0)
-        label.text = getString(R.string.edit_unit_label, idx + 1, units.size) + " " +
-            getString(R.string.edit_unit_duration, durSec)
+        title.text = getString(R.string.edit_unit_label, idx + 1, units.size)
+        dur.text = getString(R.string.edit_unit_duration, durSec)
     }
 
     private fun buildCharactersFields(parent: ViewGroup) {

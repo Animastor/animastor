@@ -1323,6 +1323,19 @@ button { font: inherit; color: inherit; }
   color: var(--accent); /* colorSecondary */
   padding: 1rem 0 0.25rem;
 }
+/* Unit header — title left, duration right (balanced edges) */
+.edit-section--row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.edit-section__meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  white-space: nowrap;
+}
 /* Field cards (TextInputLayout outline in MaterialCardView 12dp) */
 .edit-field {
   display: flex; flex-direction: column;

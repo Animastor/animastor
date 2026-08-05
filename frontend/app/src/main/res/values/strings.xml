@@ -238,7 +238,7 @@
     <!-- Edit Section Labels -->
     <string name="edit_section_id">ID</string>
     <string name="edit_section_unit">Unit</string>
-    <string name="edit_unit_duration">• %1$s s</string>
+    <string name="edit_unit_duration">%1$s s</string>
     <string name="edit_carousel_title">Image Carousel</string>
     <string name="edit_waveform_title">Waveform Editor</string>
     <string name="edit_collapse">Collapse</string>

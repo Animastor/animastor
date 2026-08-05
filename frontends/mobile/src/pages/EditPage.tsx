@@ -41,7 +41,7 @@ import {
 import { navigateTo, position as positionSignal } from '../state/positionStore';
 import { seekToPosition } from '../state/playbackStore';
 import { Waveform } from '../lib/waveform';
-import { IconChevronDown, IconChevronLeft, IconChevronRight, IconChevronUp, IconClose, IconImageOff, IconPlay, IconReset, IconSave, IconStop } from '../app/icons';
+import { IconChevronDown, IconChevronLeft, IconChevronRight, IconChevronUp, IconClock, IconClose, IconImageOff, IconPlay, IconReset, IconSave, IconStop } from '../app/icons';
 
 // ── Tabs (propertyTabs) — default to Unit (index 2) like EditFragment ──
 const TABS = ['edit_scene', 'edit_audio', 'edit_units_tab', 'edit_characters_tab', 'edit_voices_tab', 'edit_locations_tab', 'edit_global_tab'] as const;
@@ -1035,12 +1035,20 @@ export function EditPage(props: { path?: string }) {
     const u = units[idx];
     if (!u) return [];
     const out: JSX.Element[] = [];
-    // Counter + current unit duration merged into the section header (one line,
-    // no duplicate "Модуль"). Duration = the current unit's timing (end − start);
-    // this builder re-runs on every render, so it tracks waveform drags live.
+    // Counter on the left, duration on the right — balanced section header.
+    // Duration = the current unit's timing (end − start); this builder re-runs
+    // on every render, so it tracks waveform drags live.
     const unitTiming = timingDataRef.current?.units?.[idx];
     const durMs = unitTiming ? Math.max(0, (unitTiming.end_ms ?? 0) - (unitTiming.start_ms ?? 0)) : 0;
-    out.push(sectionLabel(`${tf('edit_unit_label', idx + 1, units.length)} ${tf('edit_unit_duration', (durMs / 1000).toFixed(1))}`));
+    out.push(
+      <div class="edit-section edit-section--row">
+        <span>{tf('edit_unit_label', idx + 1, units.length)}</span>
+        <span class="edit-section__meta">
+          <IconClock width={14} height={14} />
+          {tf('edit_unit_duration', (durMs / 1000).toFixed(1))}
+        </span>
+      </div>
+    );
     out.push(readonlyField('id', u.id ?? ''));
     out.push(readonlyField(t('field_type'), u.type ?? ''));
     const textKey = 'text';
