@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/zoomBackdrop"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#99000000"
+    android:clickable="true"
+    android:focusable="true">
+
+    <!-- Enlarged image — max-height 86vh via padding + fitCenter -->
+    <ImageView
+        android:id="@+id/zoomImage"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:padding="32dp"
+        android:scaleType="fitCenter"
+        android:adjustViewBounds="true"
+        android:importantForAccessibility="yes"
+        android:clickable="false" />
+
+    <!-- Fallback when the full image isn't generated -->
+    <LinearLayout
+        android:id="@+id/zoomFallback"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:orientation="vertical"
+        android:gravity="center"
+        android:visibility="gone">
+
+        <ImageView
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:src="@drawable/ic_image_off"
+            android:tint="?attr/colorOnSurfaceVariant"
+            android:importantForAccessibility="no" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/iu_not_generated"
+            android:textSize="13sp"
+            android:textColor="?attr/colorOnSurfaceVariant" />
+    </LinearLayout>
+
+    <!-- Label under the image -->
+    <TextView
+        android:id="@+id/zoomLabel"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|center_horizontal"
+        android:layout_marginBottom="24dp"
+        android:textColor="#FFFFFF"
+        android:textSize="13sp"
+        android:fontFamily="sans-serif-medium"
+        android:shadowColor="#99000000"
+        android:shadowRadius="4"
+        android:shadowDy="1" />
+
+    <!-- Close button — top right -->
+    <ImageButton
+        android:id="@+id/zoomClose"
+        android:layout_width="40dp"
+        android:layout_height="40dp"
+        android:layout_gravity="top|end"
+        android:layout_margin="12dp"
+        android:background="@drawable/bg_collapse_btn"
+        android:src="@drawable/ic_close"
+        android:contentDescription="@string/edit_close"
+        android:scaleType="center"
+        android:padding="10dp" />
+
+</FrameLayout>
