@@ -55,6 +55,30 @@ All notable changes to Animastor are documented here.
 
 ### Changed
 
+- **Промпт-правило `visuals.md` переписано в позитивной формулировке — убраны отрицания и «оборонительные» ходы**
+  (`backend/ai/rules/visuals.md`,
+  `docs/07-agents-and-generators/IMAGINATION_UNIT.md`,
+  `docs/07-agents-and-generators/IMAGINATION_UNIT_VERIFICATION.md`):
+  - **Проблема:** секция «Core philosophy» строилась через противопоставления:
+    «not a character», «not necessarily with people», «do NOT invent any»,
+    «Never pad a character-less frame». Для LLM это создаёт конкурирующие инструкции
+    (информационный шум): каждое «не делай X» усиливает X в контексте модели.
+  - **Фикс:** дефиниция Imagination Unit переписана позитивно — «the complete visual
+    image a reader forms in their mind», с перечислением возможных образов
+    (characters, groups, landscapes, architecture, interiors, objects, memories, dreams,
+    imagined visions, symbolic scenes). Ветка «есть участники → character_id / нет
+    участников → описать сам образ» переформулирована без запретов.
+    «The guiding question»: вместо «do NOT answer what is happening» — «describe the
+    visible frame, not the plot». «Character-less units»: убрано «do not add people»
+    (избыточно после новой дефиниции).
+  - **НЕ тронуты** Character rules, STRICT RULE, FORBIDDEN content, Grounding — там
+    отрицания несут инварианты пайплайна: `image.prompt` сканируется регуляркой на
+    `character_id`, и по нему инжектятся паспорта персонажей.
+  - **Проверки:** `node backend/scripts/dryrun-visuals-iu.js` — 14/14 PASS,
+    ALL CHECKS PASSED (якорные фразы `Core philosophy`, `no participants`,
+    `WHO exactly is in the frame`, `Character-less units`, `generic collective nouns`
+    сохранены). Весь mocha-сьют (723 теста) проходит.
+
 - **Дефолтные `country`/`epoch` книги проброшены агенту разбивки сцен; редактор сцены получил поля `env.country`/`env.epoch`**
   (`backend/ai/rules/scenes.md`,
   `backend/src/services/agent/pipeline-steps.js`,

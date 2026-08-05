@@ -9,31 +9,26 @@ reader's head as they read a fragment.
 The image prompt (`unit.image.prompt`) must therefore describe **the visual scene**,
 not the text. It describes the picture the model should draw.
 
-## Core philosophy — the system is built around the IMAGE, not the character
+## Core philosophy — the unit is a VISUAL IMAGE
 
-The unit is a **visual image**, not necessarily a character. We do not build the system
-around heroes; we build it around the picture that forms in the reader's mind. Sometimes
-that picture is made of characters — sometimes it is only the surrounding world, or even
-a purely symbolic image. A unit may be:
+An Imagination Unit is the complete visual image a reader forms in their mind while
+reading the unit text. It may depict characters, groups of people, landscapes,
+architecture, interiors, objects, memories, dreams, imagined visions, symbolic scenes, or
+any other visual moment suggested by the narrative.
 
-- a landscape
-- architecture
-- an interior
-- an object
-- a memory
-- a dream
-- an imagined vision
-- a symbolic or abstract image
+Build the prompt around this complete image, preserving its atmosphere, composition, and
+the important visual details of the text.
 
 The rule, stated plainly:
 
-- **If participants are present** → name them as concretely as possible (see below).
-- **If there are no participants** → do **not** invent any. Fully describe the visual
-  image the viewer should see.
+- **When the unit has participants** → identify them by `character_id`, as concretely as
+  possible (see below).
+- **When the unit has no participants** → describe the visual image itself in full — its
+  subject, setting, light, colour, texture, and mood.
 
 The character rules that follow apply **only to units that actually contain people**. A
-character-less frame (landscape, object, dream, symbol) should never be padded with
-generic people just to have someone in it.
+character-less frame (landscape, object, dream, symbol) is described on its own terms,
+without padding it with generic people.
 
 ## The independence principle
 
@@ -63,10 +58,14 @@ the previous unit.
 
 ## The guiding question
 
-In each Imagination Unit, do not answer *"what is happening?"*. Answer:
+In each Imagination Unit, describe the **visible frame, not the plot**. When the frame
+contains people, answer:
 
-> **Who exactly is in the frame, where exactly is each participant, and what exactly is
-> each of them doing right now?**
+> **Who exactly is in the frame by `character_id`, and what exactly is each of them doing
+> right now?**
+
+For a character-less frame, answer instead: **what exactly does the viewer see, and in
+what light and mood?**
 
 The fewer vague words ("they", "people", "men", "the writers", "pedestrians", "crowd")
 and the more concrete named participants and stable visual anchors, the more stable and
@@ -130,8 +129,8 @@ exactly as with the named participants' base composition.
 
 ## Character-less units — landscape, object, interior, memory, dream, symbol
 
-When a unit has **no participants**, do not add people. Describe the image itself in
-full: subject, setting, light, colour, texture, mood.
+When a unit has **no participants**, describe the image itself in full: subject, setting,
+light, colour, texture, mood.
 
 - ✓ `empty bench on a quiet path at patriarch_ponds, still water reflecting golden sunset, no people, calm surreal mood`
 - ✓ `a worn leather manuscript on a dark table, warm candlelight, dust motes, symbolic literary atmosphere`

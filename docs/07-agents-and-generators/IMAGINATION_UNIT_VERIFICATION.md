@@ -5,7 +5,7 @@ These confirm the self-contained Imagination Unit doctrine is correctly wired in
 visuals step. Run from the repo root: `/home/sureg/animastor`.
 
 The full checklist was executed on 2026-07-03 and passed green (harness prints
-`ALL CHECKS PASSED`, 12/12). Everything below is read-only or a local dry-run — no DB,
+`ALL CHECKS PASSED`, 14/14). Everything below is read-only or a local dry-run — no DB,
 no LLM, no network, no writes.
 
 ---
@@ -47,21 +47,23 @@ node backend/scripts/dryrun-visuals-iu.js
 ```
 
 **Expect:** the assembled system prompt is printed, then three fallback lines, then an
-`ASSERTIONS` block ending with `ALL CHECKS PASSED` (exit code 0). All 12 assertions must
+`ASSERTIONS` block ending with `ALL CHECKS PASSED` (exit code 0). All 14 assertions must
 read `PASS`:
 
 1. `CONTEXT has location name` — `%CONTEXT%` contains `patriarch_ponds`
-2. `CONTEXT has berlioz anchor` — `position: left, pose: sitting, orientation: right`
-3. `CONTEXT has bezdomny anchor` — `position: right, pose: sitting, orientation: left`
+2. `CONTEXT has berlioz` — `%CONTEXT%` contains `berlioz: Mikhail Berlioz`
+3. `CONTEXT has bezdomny` — `%CONTEXT%` contains `bezdomny: Ivan Bezdomny`
 4. `prompt bans generic nouns` — rules contain "generic collective nouns"
 5. `prompt has guiding question` — contains "WHO exactly is in the frame"
 6. `prompt has stable-extras rule` — contains "CONCRETE, REPEATABLE anchor"
-7. `fallback is pronoun-free & named` — fallback === `Mikhail Berlioz and Ivan Bezdomny at patriarch_ponds, cinematic shot`
+7. `fallback is pronoun-free & named` — fallback === `berlioz and bezdomny at patriarch_ponds, cinematic shot`
 8. `few-shot exemplar block injected` — assembled prompt contains "Worked example"
-9. `exemplar block is doctrine-clean` — no pronouns/generic nouns in the exemplars
-10. `image-first philosophy present` — contains "Core philosophy" and "no participants"
-11. `character-less unit guidance present` — contains "Character-less units"
-12. `character rules scoped to when-people-present` — contains "apply ONLY when the unit actually contains people"
+9. `image-first philosophy present` — contains "Core philosophy" and "no participants"
+10. `character-less unit guidance present` — contains "Character-less units"
+11. `character rules scoped to when-people-present` — contains "apply ONLY when the unit actually contains people"
+12. `output format uses image section` — contains `"image"`
+13. `output format uses video section` — contains `"video"`
+14. `exemplar block is doctrine-clean` — no pronouns/generic nouns in the exemplars
 
 If any assertion says `FAIL`, note which number and the printed prompt — that pinpoints
 the regression.
@@ -72,9 +74,10 @@ the regression.
 
 In the printed `ASSEMBLED SYSTEM PROMPT`, confirm the section order and content:
 
-- [ ] **Core philosophy** section appears first, stating the unit is a visual image (may
-      be landscape/object/dream/symbol), with the "HAS participants → name them / NO
-      participants → do not invent" branch.
+- [ ] **Core philosophy** section appears first, defining the unit as the complete visual
+      image a reader forms (may be landscape/object/dream/symbol), with the "unit has
+      participants → character_id / unit has no participants → describe the image itself
+      in full" branch.
 - [ ] **Character rules** heading reads "apply ONLY when the unit actually contains people".
 - [ ] The WRONG/RIGHT examples are present (`two men are sitting on a bench` → `berlioz
       sitting on the left and bezdomny sitting on the right...`).
@@ -140,7 +143,7 @@ step 3's checklist item for the Character-less section is the relevant verificat
 ## Pass criteria (summary)
 
 - [ ] Step 1: both `node -c` pass.
-- [ ] Step 2: harness prints `ALL CHECKS PASSED` (12/12).
+- [ ] Step 2: harness prints `ALL CHECKS PASSED` (14/14).
 - [ ] Step 3: assembled prompt section order/content correct.
 - [ ] Step 4: grep for pronouns/generic nouns in examples is empty; all example JSON parse.
 - [ ] Step 5: no un-substituted `%...%` placeholders in the assembled prompt.
