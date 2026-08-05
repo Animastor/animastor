@@ -11,6 +11,7 @@ const { updateSession, createSession, isSessionCancelled, isBookCancelled } = re
 const { PROGRESS_STAGES, MAX_WINDOW_CHARS, MAX_SCENES_PER_CHUNK, computeWindowChars } = require('../agent-prompts');
 const { mergeCharacterLists } = require('../../utils/character-identity');
 const pipelineSteps = require('./pipeline-steps');
+const { needsVideoActionReconciliation } = pipelineSteps;
 const { splitLongUnits } = require('./unit-splitter');
 const textUtils = require('./text-utils');
 
@@ -664,6 +665,46 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
     }
 
 
+    await checkCancelled();
+
+    // ── Final video.action sweep (deterministic) ──
+    // Any unit that STILL carries a static copy of image.prompt (or an empty
+    // action) gets one more reconciliation attempt — e.g. when the first pass
+    // failed transiently or a polish pass re-created a copy. The step filters
+    // itself, so when nothing is a copy it returns immediately without an AI call.
+    if (enrichedScenes.length > 0) {
+        const allVisualUnits = enrichedScenes.flatMap((scene, si) =>
+            (scene.units || []).map((unit, ui) => ({
+                sceneIndex: si,
+                unitIndex: ui,
+                sceneTitle: scene.title || '',
+                sceneText: scene.text || '',
+                text: unit.text,
+                type: unit.type,
+                image: unit.image || {},
+                video: unit.video || {},
+            }))
+        );
+
+        const remainingCopies = allVisualUnits.filter(needsVideoActionReconciliation);
+        if (remainingCopies.length > 0) {
+            console.log(`[AGENT] Final video.action sweep: ${remainingCopies.length} unit(s) still static copies/empty — running reconciliation`);
+            const reconciled = await pipelineSteps.stepReconcileVideoActions(sessionId, allVisualUnits, characters, stepIndex, _progress, options.promptProfiles);
+
+            for (const rec of reconciled) {
+                const scene = enrichedScenes[rec.sceneIndex];
+                if (scene && scene.units[rec.unitIndex]) {
+                    const unit = scene.units[rec.unitIndex];
+                    if (rec.video?.action) {
+                        unit.video = unit.video || {};
+                        unit.video.action = rec.video.action;
+                    }
+                }
+            }
+        }
+    }
+
+
     return {
         characters,
         locations,
@@ -942,6 +983,46 @@ async function processCachedScenes(sessionId, scenes, characters, locations, men
                     if (pu.video?.action) {
                         unit.video = unit.video || {};
                         unit.video.action = pu.video.action;
+                    }
+                }
+            }
+        }
+    }
+
+
+    await checkCancelled();
+
+    // ── Final video.action sweep (deterministic) ──
+    // Any unit that STILL carries a static copy of image.prompt (or an empty
+    // action) gets one more reconciliation attempt — e.g. when the first pass
+    // failed transiently or a polish pass re-created a copy. The step filters
+    // itself, so when nothing is a copy it returns immediately without an AI call.
+    if (enrichedScenes.length > 0) {
+        const allVisualUnits = enrichedScenes.flatMap((scene, si) =>
+            (scene.units || []).map((unit, ui) => ({
+                sceneIndex: si,
+                unitIndex: ui,
+                sceneTitle: scene.title || '',
+                sceneText: scene.text || '',
+                text: unit.text,
+                type: unit.type,
+                image: unit.image || {},
+                video: unit.video || {},
+            }))
+        );
+
+        const remainingCopies = allVisualUnits.filter(needsVideoActionReconciliation);
+        if (remainingCopies.length > 0) {
+            console.log(`[AGENT] Final video.action sweep: ${remainingCopies.length} unit(s) still static copies/empty — running reconciliation`);
+            const reconciled = await pipelineSteps.stepReconcileVideoActions(sessionId, allVisualUnits, characters, stepIndex, _progress, options.promptProfiles);
+
+            for (const rec of reconciled) {
+                const scene = enrichedScenes[rec.sceneIndex];
+                if (scene && scene.units[rec.unitIndex]) {
+                    const unit = scene.units[rec.unitIndex];
+                    if (rec.video?.action) {
+                        unit.video = unit.video || {};
+                        unit.video.action = rec.video.action;
                     }
                 }
             }

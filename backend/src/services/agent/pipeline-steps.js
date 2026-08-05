@@ -46,6 +46,39 @@ function inActionRange(u) {
     return (u.video?.action || '').length <= IMAGE_PROMPT_MAX_CHARS;
 }
 
+// ── Static-copy guard for video.action ───────────────────────────────
+// The visuals step falls back to image.prompt when the agent omits
+// video.action, and the passport/storyboard passes re-use the prompt when the
+// action is empty. Such units are STATIC COPIES — a video model fed the static
+// composition would just re-render a still frame. Detection is deliberately
+// strict (normalized equality OR full containment): a substantially reworded
+// action is treated as an independent agent result and is NEVER touched.
+function normalizeForCompare(s) {
+    return (s || '')
+        .toLowerCase()
+        .replace(/[^a-z0-9\u0400-\u04ff\s]/gi, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function isStaticActionCopy(imagePrompt, action) {
+    const p = normalizeForCompare(imagePrompt);
+    const a = normalizeForCompare(action);
+    if (!p || !a) return false;
+    if (p === a) return true;
+    if (p.length < 15 || a.length < 15) return false;
+    return p.includes(a) || a.includes(p);
+}
+
+// Units that Video Reconciliation MUST process: actions that are empty (rule:
+// "Empty → GENERATE from unit text + type") or static copies of image.prompt.
+// Anything else is an independent agent result and must stay untouched.
+function needsVideoActionReconciliation(u) {
+    const action = (u.video?.action || '').trim();
+    if (!action) return true; // empty — rule: "Empty → GENERATE from unit text + type"
+    return isStaticActionCopy(u.image?.prompt || '', action);
+}
+
 // Format one unit for reconciliation/polish agents. JSON encoding keeps the row
 // unambiguous when unit text / prompts contain quotes or newlines.
 function unitRow(u) {
@@ -486,8 +519,6 @@ async function stepReconcilePassports(sessionId, allVisualUnits, characters, ste
 
 async function stepReconcileVideoActions(sessionId, allVisualUnits, characters, stepIndex, progress, promptProfiles) {
     const _progress = progress || (() => {});
-    _progress({ stage: 'video_action_reconciliation', message: PROGRESS_STAGES.video_action_reconciliation });
-    await updateSession(sessionId, { progress_msg: PROGRESS_STAGES.video_action_reconciliation });
 
     if (!allVisualUnits || allVisualUnits.length === 0) {
         console.log(`[AGENT] Step video_action_reconciliation: skipped — no units`);
@@ -502,9 +533,24 @@ async function stepReconcileVideoActions(sessionId, allVisualUnits, characters, 
         return allVisualUnits;
     }
 
+    // Reconcile ONLY units whose action is not an independent agent result:
+    // empty actions (rule: "Empty → GENERATE") and static copies of
+    // image.prompt (created by the fallbacks in stepCreateVisuals and the
+    // passport/storyboard passes). Actions that differ from the prompt are
+    // agent-authored — leave them untouched and spend no LLM call on them.
+    const candidates = polishable.filter(needsVideoActionReconciliation);
+    const keptAuthored = polishable.length - candidates.length;
+    if (candidates.length === 0) {
+        console.log(`[AGENT] Step video_action_reconciliation: skipped — all ${polishable.length} video.actions are agent-authored (distinct from image.prompt)`);
+        return allVisualUnits;
+    }
+
+    _progress({ stage: 'video_action_reconciliation', message: PROGRESS_STAGES.video_action_reconciliation });
+    await updateSession(sessionId, { progress_msg: PROGRESS_STAGES.video_action_reconciliation });
+
     const step = await createStep(sessionId, 'reconcile_video_actions', stepIndex || 0);
 
-    const unitsStr = polishable.map(unitRow).join('\n');
+    const unitsStr = candidates.map(unitRow).join('\n');
 
     // Inject video prompt profile if available
     let videoReconPrompt = SYSTEM_PROMPTS.video_action_reconciliation;
@@ -517,15 +563,19 @@ async function stepReconcileVideoActions(sessionId, allVisualUnits, characters, 
 
     const messages = [
         { role: 'system', content: videoReconPrompt },
-        { role: 'user', content: `Fix video.action for these ${polishable.length} units — ensure each describes temporal/dynamic change only, not static composition:\n\n${unitsStr}` },
+        { role: 'user', content: `Fix video.action for these ${candidates.length} units — ensure each describes temporal/dynamic change only, not static composition:\n\n${unitsStr}` },
     ];
 
     try {
         const result = await aiCaller.callAI(messages, { maxTokens: 4096 });
         const reconciled = result.units || [];
 
-        // Merge AI results back, preserving original fields and only updating video.action
-        const merged = allVisualUnits.map((original, i) => {
+        // Merge AI results back ONLY for the units that were sent. Agent-authored
+        // actions never enter the merge — even if the model hallucinates extra
+        // units, they cannot overwrite untouched actions.
+        const sentKeys = new Set(candidates.map(u => `${u.sceneIndex}:${u.unitIndex}`));
+        const merged = allVisualUnits.map((original) => {
+            if (!sentKeys.has(`${original.sceneIndex}:${original.unitIndex}`)) return original;
             const rec = reconciled.find(r => r.scene_index === original.sceneIndex && r.unit_index === original.unitIndex);
             if (rec && rec.video?.action && inActionRange(original)) {
                 return {
@@ -545,7 +595,7 @@ async function stepReconcileVideoActions(sessionId, allVisualUnits, characters, 
             const orig = allVisualUnits[i];
             return m.video?.action !== orig.video?.action;
         }).length;
-        console.log(`[AGENT] Step video_action_reconciliation: ${polishable.length} units reviewed, ${excludedCount} excluded (action >${IMAGE_PROMPT_MAX_CHARS} chars), ${changedCount} actions fixed`);
+        console.log(`[AGENT] Step video_action_reconciliation: ${candidates.length} units reviewed, ${keptAuthored} agent-authored kept, ${excludedCount} excluded (action >${IMAGE_PROMPT_MAX_CHARS} chars), ${changedCount} actions fixed`);
 
         return merged;
     } catch (err) {
@@ -966,4 +1016,7 @@ module.exports = {
     stepReconcileVideoActions,
     stepPolishVideoActions,
     stepGenerateVoices,
+    // Deterministic static-copy guards (used by pipeline-runner's final sweep)
+    isStaticActionCopy,
+    needsVideoActionReconciliation,
 };

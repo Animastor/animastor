@@ -60,6 +60,19 @@ When the Characters in scene list below contains character_ids, you MUST use tho
 - Each unit MUST have non-empty image.prompt and video.action.
 - Shot types: wide (landscape/group), medium (two people/waist-up), close (face/detail), detail (object/hand), environment (setting focus), reaction (character's emotional response)
 
+## video.action — write it independently
+`image.prompt` and `video.action` are TWO different fields. Write `video.action` from scratch as a SHORT (3–15 words, one clause) description of what CHANGES during the unit — gestures, movement, camera motion, environmental animation, dialogue delivery. Do NOT reuse the static composition:
+
+- `image.prompt` = the STILL: who is in frame, how arranged, setting, light.
+- `video.action` = the MOTION: what moves or changes while the frame plays.
+
+Paired examples:
+- `image.prompt`: "mikhail_berlioz and ivan_ponyrev sitting on a bench, golden sunset" → `video.action`: "ivan_ponyrev leans forward, gesturing animatedly as he speaks"
+- `image.prompt`: "empty bench on a quiet path, still water reflecting golden sunset" → `video.action`: "slow camera push toward the bench, leaves drifting across the frame"
+- `image.prompt`: "a worn leather manuscript on a dark table, warm candlelight" → `video.action`: "candle flame flickers, dust motes swirling in the light"
+
+If the unit has no real motion (a pure still), the video.action should be a minimal camera movement, not a re-description of the frame. For dialogue units the speaker is derived automatically — describe only the visible delivery (gestures, leans, pauses).
+
 ## FORBIDDEN content — NEVER include ANY of these in the prompt
 - NEVER write meta-commentary like "No specific location mentioned", "the scene is set in", "this is a description of", "it appears that", "the story is about". Write ONLY the concrete visual description.
 - NEVER reference other units with phrases like "as described in Unit 1", "as seen in previous frame", "continuing from earlier", "same character as before". The image model sees each prompt independently.
