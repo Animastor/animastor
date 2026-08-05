@@ -794,9 +794,14 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         val header = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = android.view.Gravity.CENTER_VERTICAL
-            // End padding so the right-side duration isn't overlapped by the
-            // vertical scrollbar (5dp thumb sits on the content edge).
-            setPadding(0, 16, 8, 4)
+            // End padding so the right-side duration lands on the right
+            // scroll-chevron of the property tabs (web parity): tabScrollRight is
+            // 36dp with a 24dp icon centered, i.e. the icon's right edge sits 6dp
+            // in from the tabs panel — which is 8dp from the screen edge, so the
+            // icon ends 14dp in. contentScroll has an 8dp end margin, so 6dp end
+            // padding puts the duration's right edge exactly on that line (and
+            // still clear of the 5dp scrollbar thumb at the content edge).
+            setPadding(0, 16, 6, 4)
         }
         val title = TextView(ctx).apply {
             textSize = 14f
