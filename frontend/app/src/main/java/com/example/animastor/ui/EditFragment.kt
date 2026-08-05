@@ -794,7 +794,9 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         val header = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = android.view.Gravity.CENTER_VERTICAL
-            setPadding(0, 16, 0, 4)
+            // End padding so the right-side duration isn't overlapped by the
+            // vertical scrollbar (5dp thumb sits on the content edge).
+            setPadding(0, 16, 8, 4)
         }
         val title = TextView(ctx).apply {
             textSize = 14f
