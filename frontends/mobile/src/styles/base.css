@@ -1315,7 +1315,7 @@ button { font: inherit; color: inherit; }
   min-height: 0;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
-  padding: 0.125rem 0.25rem 0.5rem;
+  padding: 0.125rem 0.5rem 0.5rem; /* right 0.5rem — clear of the scrollbar */
 }
 .edit-section {
   font-size: 0.875rem; /* 14sp */
