@@ -34,6 +34,41 @@ button { font: inherit; color: inherit; }
 /* Firefox parity (thin ≈ 5-8px, accent thumb on outline-variant track) */
 * { scrollbar-width: thin; scrollbar-color: var(--accent) var(--outline-2); }
 
+/* Touch devices (phones / tablets / touch laptops): the native scrollbar is an
+   overlay that fades right after scrolling stops, and CSS scrollbar styling is
+   ignored — so hide it and let lib/scrollbar.ts paint a persistent
+   Android-style indicator (fixed overlay, visible only while overflowing). */
+@media (pointer: coarse) {
+  *::-webkit-scrollbar:vertical { width: 0; }
+  *::-webkit-scrollbar:horizontal { height: 0; }
+  * { scrollbar-width: none; }
+}
+
+/* JS-drawn persistent scroll indicator (see lib/scrollbar.ts) — a fixed,
+   pointer-transparent overlay at each scroll container's right edge. Track =
+   colorOutlineVariant (--outline-2), thumb = colorSecondary/cinema_accent
+   (--accent), 5px wide, 3px radius; opacity is toggled by the module and it is
+   never shown when the content fits. z-index 140 sits above modal content
+   (backdrops 100 / popups 90) so indicators show inside dialogs too, while
+   staying below full-screen overlays (zoom 150, toasts 200). */
+.vs-ind {
+  position: fixed;
+  top: 0; left: 0;
+  width: 5px;
+  background: var(--outline-2);
+  border-radius: 3px;
+  pointer-events: none;
+  z-index: 140;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+.vs-thumb {
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  background: var(--accent);
+  border-radius: 3px;
+}
+
 #app {
   display: flex;
   flex-direction: column;

@@ -16,6 +16,7 @@ import { DeveloperViewPage } from './pages/DeveloperViewPage';
 import { AiAssistantPage } from './pages/AiAssistantPage';
 import { applyTheme, applyLanguage } from './app/theme';
 import { wirePlaybackCoordination, wirePlaybackLifecycle } from './state/playbackStore';
+import { initScrollbar } from './lib/scrollbar';
 
 // MainActivity.setupPlaybackCoordination() equivalent — forwards
 // generateStore.playbackPrepared to PlaybackViewModel (stage 4).
@@ -64,3 +65,6 @@ function Root() {
 }
 
 render(<Root />, document.getElementById('app')!);
+// Persistent Android-style scroll indicator on touch devices (the native
+// mobile scrollbar is an overlay and fades after scrolling). No-op on desktop.
+initScrollbar();
