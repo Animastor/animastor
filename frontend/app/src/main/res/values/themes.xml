@@ -53,6 +53,7 @@
         <item name="colorOnSurface">@color/cinema_text_primary</item>
         <item name="colorSurfaceVariant">@color/cinema_surface_variant</item>
         <item name="colorOnSurfaceVariant">@color/cinema_text_secondary</item>
+        <item name="waveformTimingText">@color/cinema_waveform_timing</item>
         <item name="colorSurfaceDim">@color/cinema_surface_dim</item>
         <item name="colorSurfaceBright">@color/cinema_surface_variant</item>
 
@@ -105,6 +106,7 @@
         <item name="colorOnSurface">@color/cinema_light_text_primary</item>
         <item name="colorSurfaceVariant">@color/cinema_light_surface_variant</item>
         <item name="colorOnSurfaceVariant">@color/cinema_light_text_secondary</item>
+        <item name="waveformTimingText">@color/cinema_light_waveform_timing</item>
         <item name="colorSurfaceDim">@color/cinema_light_surface_dim</item>
         <item name="colorSurfaceBright">@color/cinema_light_surface</item>
 

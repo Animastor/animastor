@@ -11,6 +11,7 @@
     <color name="cinema_text_primary">#F2E9DC</color>
     <color name="cinema_text_secondary">#B8AFA3</color>
     <color name="cinema_text_disabled">#6B655C</color>
+    <color name="cinema_waveform_timing">#F2E9DC</color>
     <color name="cinema_primary_container">#4A141C</color>
     <color name="cinema_accent_container">#3A2E1A</color>
     <color name="cinema_scrim">#800C0A08</color>
@@ -31,6 +32,7 @@
     <color name="cinema_light_text_primary">#2C2418</color>
     <color name="cinema_light_text_secondary">#6B6258</color>
     <color name="cinema_light_text_disabled">#A89F94</color>
+    <color name="cinema_light_waveform_timing">#C9A15A</color>
     <color name="cinema_light_primary_container">#F5E0E2</color>
     <color name="cinema_light_accent_container">#F5EDD6</color>
     <color name="cinema_light_scrim">#80A09880</color>

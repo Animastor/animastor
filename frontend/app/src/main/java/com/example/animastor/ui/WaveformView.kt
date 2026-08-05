@@ -5,11 +5,13 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.RectF
 import android.util.AttributeSet
+import android.util.TypedValue
 import android.view.MotionEvent
 import android.view.View
 import androidx.core.content.ContextCompat
 import com.example.animastor.R
 import com.example.animastor.repository.WaveformPeak
+import com.google.android.material.color.MaterialColors
 
 class WaveformView @JvmOverloads constructor(
     context: Context,
@@ -46,16 +48,27 @@ class WaveformView @JvmOverloads constructor(
     }
 
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0xCCFFFFFF.toInt()
+        color = themeTextColor()
         textSize = 24f
         textAlign = Paint.Align.CENTER
     }
 
     private val timeTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0x99FFFFFF.toInt()
-        textSize = 20f
+        color = themeTextColor()
+        // 14sp — matches the edit content field text ("table under the tabs").
+        textSize = TypedValue.applyDimension(
+            TypedValue.COMPLEX_UNIT_SP, 14f, resources.displayMetrics
+        )
         textAlign = Paint.Align.CENTER
     }
+
+    /** Waveform label color from the active theme (waveformTimingText): near-white
+     *  in dark, accent gold #C9A15A in light (active property-tab text). */
+    private fun themeTextColor(): Int = MaterialColors.getColor(
+        context,
+        R.attr.waveformTimingText,
+        0xFFF2E9DC.toInt()
+    )
 
     private val selectionBorderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = 0x55FFB74D.toInt()
@@ -203,11 +216,24 @@ class WaveformView @JvmOverloads constructor(
         val endLabel = formatMs(selectionEndMs)
 
         val labelY = h - 6f
-        timeTextPaint.textAlign = Paint.Align.LEFT
-        canvas.drawText(startLabel, selLeft + 6f, labelY, timeTextPaint)
+        val w = width.toFloat()
 
+        // Start label: outside the range, to the left of its left border
+        // (right-aligned). Clamped so it never falls off the left edge when the
+        // range is expanded over the whole audio.
         timeTextPaint.textAlign = Paint.Align.RIGHT
-        canvas.drawText(endLabel, selRight - 6f, labelY, timeTextPaint)
+        val startX = Math.max(selLeft - 6f, timeTextPaint.measureText(startLabel))
+        canvas.drawText(startLabel, startX, labelY, timeTextPaint)
+
+        // End label: outside the range, to the right of its right border
+        // (left-aligned). Clamped so it never falls off the right edge when the
+        // range is expanded over the whole audio.
+        timeTextPaint.textAlign = Paint.Align.LEFT
+        val endX = Math.max(
+            Math.min(selRight + 6f, w - timeTextPaint.measureText(endLabel)),
+            startX
+        )
+        canvas.drawText(endLabel, endX, labelY, timeTextPaint)
 
         val totalLabel = formatMs(totalDurationMs)
         timeTextPaint.textAlign = Paint.Align.LEFT

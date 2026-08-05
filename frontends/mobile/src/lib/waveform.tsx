@@ -3,14 +3,16 @@
 // fill + border, draggable start/end handles, white playhead with top triangle,
 // time labels (start/end/total in M:SS.d), and a "No waveform data" fallback.
 //
-// The Android paints are hardcoded colors (not theme attributes) — kept as-is:
+// The Android paints are hardcoded colors (not theme attributes) — kept as-is;
+// text paints follow the active theme (Android attr waveformTimingText; web
+// waveformTextColor() — canvas can't resolve CSS var() reliably on all browsers):
 //   waveform   0x8890CAF9  → rgba(144,202,249,.53)
 //   selection  0x3390CAF9  → rgba(144,202,249,.20)
 //   sel border 0x55FFB74D  → rgba(255,183,77,.33)
 //   handle     #FFB74D
 //   playhead   #FFFFFF
-//   text       0xCCFFFFFF  → rgba(255,255,255,.80)
-//   time text  0x99FFFFFF  → rgba(255,255,255,.60)
+//   text       #F2E9DC (dark) / #C9A15A (light — active tab accent)
+//   time text  #F2E9DC (dark) / #C9A15A (light — active tab accent); 14px (14sp)
 //
 // Deviation (06 §15): Android touch coordinates are raw px (scaled by density);
 // here CSS px with the same 24px touchSlop (≈ the Android value at ~1x density).
@@ -51,6 +53,17 @@ function formatMs(ms: number): string {
   const seconds = totalSec % 60;
   const millis = Math.floor(ms % 1000 / 100);
   return `${minutes}:${String(seconds).padStart(2, '0')}.${millis}`;
+}
+
+/**
+ * Waveform label color, per active theme. Canvas fillStyle can't resolve CSS
+ * var() reliably on all mobile browsers — an invalid color is silently ignored
+ * and the previous fillStyle is reused (e.g. the orange #FFB74D handle fill), so
+ * we use explicit hexes instead of CSS custom properties.
+ */
+function waveformTextColor(): string {
+  // Light theme: gold accent #C9A15A — the active property-tab text color.
+  return document.documentElement.dataset.theme === 'light' ? '#C9A15A' : '#F2E9DC';
 }
 
 export function Waveform(props: WaveformProps) {
@@ -96,7 +109,7 @@ export function Waveform(props: WaveformProps) {
 
     // ── Waveform bars ──
     if (!peaks || peaks.length === 0) {
-      ctx.fillStyle = 'var(--text-2)';
+      ctx.fillStyle = waveformTextColor();
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.font = `500 12px system-ui, sans-serif`; // textNoData 24sp ≈ 9px @1x
@@ -176,15 +189,24 @@ export function Waveform(props: WaveformProps) {
       const startLabel = formatMs(selection.startMs);
       const endLabel = formatMs(selection.endMs);
       const totalLabel = formatMs(durationMs);
-      // Secondary text color from the design system (--text-2): warm gray that
-      // stays legible on both themes over the blue waveform bars.
-      ctx.fillStyle = 'var(--text-2)';
-      ctx.font = '11px system-ui, sans-serif'; // timeText 20sp ≈ 7px @1x
+      // Waveform label color: near-white in dark, muted warm brown in light —
+      // readable but not loud on the bars (see waveformTextColor()).
+      ctx.fillStyle = waveformTextColor();
+      ctx.font = '14px system-ui, sans-serif'; // 14sp — edit-field input text (table under tabs)
       ctx.textBaseline = 'alphabetic';
-      ctx.textAlign = 'left';
-      ctx.fillText(startLabel, selLeft + 6, h - 7);
+      // Start label: outside the range, left of its left border (right-aligned),
+      // clamped so it never falls off the left edge at full range.
       ctx.textAlign = 'right';
-      ctx.fillText(endLabel, selRight - 6, h - 7);
+      const startX = Math.max(selLeft - 6, ctx.measureText(startLabel).width);
+      ctx.fillText(startLabel, startX, h - 7);
+      // End label: outside the range, right of its right border (left-aligned),
+      // clamped so it never falls off the right edge at full range.
+      ctx.textAlign = 'left';
+      const endX = Math.max(
+        Math.min(selRight + 6, w - ctx.measureText(endLabel).width),
+        startX,
+      );
+      ctx.fillText(endLabel, endX, h - 7);
       ctx.textAlign = 'left';
       ctx.fillText(totalLabel, drawLeft + 2, 14);
     }

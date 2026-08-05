@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Waveform timing label text color, per theme: near-white in dark,
+         accent gold (active tab text) in light. -->
+    <attr name="waveformTimingText" format="color" />
+</resources>
