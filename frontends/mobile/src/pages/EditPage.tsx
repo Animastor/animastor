@@ -1035,8 +1035,12 @@ export function EditPage(props: { path?: string }) {
     const u = units[idx];
     if (!u) return [];
     const out: JSX.Element[] = [];
-    // Counter merged into the section header (one line, no duplicate "Модуль").
-    out.push(sectionLabel(tf('edit_unit_label', idx + 1, units.length)));
+    // Counter + current unit duration merged into the section header (one line,
+    // no duplicate "Модуль"). Duration = the current unit's timing (end − start);
+    // this builder re-runs on every render, so it tracks waveform drags live.
+    const unitTiming = timingDataRef.current?.units?.[idx];
+    const durMs = unitTiming ? Math.max(0, (unitTiming.end_ms ?? 0) - (unitTiming.start_ms ?? 0)) : 0;
+    out.push(sectionLabel(`${tf('edit_unit_label', idx + 1, units.length)} ${tf('edit_unit_duration', (durMs / 1000).toFixed(1))}`));
     out.push(readonlyField('id', u.id ?? ''));
     out.push(readonlyField(t('field_type'), u.type ?? ''));
     const textKey = 'text';

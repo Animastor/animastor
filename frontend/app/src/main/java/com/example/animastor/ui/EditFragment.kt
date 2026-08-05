@@ -28,6 +28,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.io.File
+import java.util.Locale
 
 class EditFragment : Fragment(R.layout.fragment_edit) {
 
@@ -54,6 +55,8 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
     private var isPlaying = false
     private var playbackJob: Job? = null
     private var timelineDirty = false
+    /** Units-tab section header («Модуль 2/5 • 8.4 с») — live-updated on timing changes. */
+    private var unitHeaderLabel: TextView? = null
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
@@ -194,6 +197,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         waveformData = null
         timingData = null
         originalTimings = null
+        unitHeaderLabel = null
     }
 
     private fun loadBookAndAutoPosition() {
@@ -672,8 +676,12 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
             setPadding(0, 0, 0, 8)
         }
 
-        // Unit metadata section
-        ll.addView(sectionLabel(ctx, getString(R.string.edit_section_unit)))
+        // Unit metadata section — header shows the module counter (2/5) and the
+        // current unit's duration from timings (end − start), live-updated.
+        val header = sectionLabel(ctx, getString(R.string.edit_section_unit)) as TextView
+        unitHeaderLabel = header
+        ll.addView(header)
+        updateUnitHeaderLabel()
         // id is a read-only system field (kept in JSON style);
         // type is translated (user asked: "type" → "тип"/"type")
         ll.addView(readOnlyCard(ctx, "id", u.id ?: ""))
@@ -709,6 +717,23 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         }
 
         parent.addView(ll)
+    }
+
+    /** Units-tab header text: «Модуль {idx}/{total} • {dur} с» — the duration is
+     *  the current unit's timing (end − start) and is recomputed on every timing
+     *  change (drag preview, save, reset, reload). */
+    private fun updateUnitHeaderLabel() {
+        val label = unitHeaderLabel ?: return
+        val sc = currentScene() ?: return
+        val units = sc.units ?: emptyList()
+        if (units.isEmpty()) return
+        val pos = SharedPositionManager.current.value
+        val idx = pos.unitIndex.coerceIn(0, units.size - 1)
+        val timing = timingData?.units?.getOrNull(idx)
+        val durMs = if (timing != null) (timing.end_ms - timing.start_ms).coerceAtLeast(0) else 0L
+        val durSec = String.format(Locale.US, "%.1f", durMs / 1000.0)
+        label.text = getString(R.string.edit_unit_label, idx + 1, units.size) + " " +
+            getString(R.string.edit_unit_duration, durSec)
     }
 
     private fun buildCharactersFields(parent: ViewGroup) {
@@ -1732,6 +1757,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                 b.timelineWaveform.setPeaks(wd.peaks)
                 b.timelineWaveform.setDurationMs(audioDurationMs)
                 updateTimelineSelection()
+                updateUnitHeaderLabel()
                 b.timelinePanel.isVisible = true
 
                 stopPlayback()
@@ -1893,6 +1919,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                 updated[pos.unitIndex + 1] = next.copy(start_ms = endMs)
             }
             timingData = td.copy(units = updated)
+            updateUnitHeaderLabel()
         }
     }
 
@@ -1921,6 +1948,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                 if (r != null) u.copy(start_ms = r.start_ms, end_ms = r.end_ms) else u
             }
             timingData = td.copy(units = updatedUnits)
+            updateUnitHeaderLabel()
             updateTimelineSelection()
             timelineDirty = false
         } catch (e: Exception) {
@@ -1938,6 +1966,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
             val origPair = orig[unit.unit_id] ?: return
             updated[pos.unitIndex] = unit.copy(start_ms = origPair.first, end_ms = origPair.second)
             timingData = td.copy(units = updated)
+            updateUnitHeaderLabel()
             updateTimelineSelection()
         }
 

@@ -238,6 +238,8 @@
     <!-- Edit Section Labels -->
     <string name="edit_section_id">ID</string>
     <string name="edit_section_unit">Unit</string>
+    <string name="edit_unit_label">Unit %1$d/%2$d</string>
+    <string name="edit_unit_duration">• %1$s s</string>
     <string name="edit_section_audio">Audio</string>
     <string name="edit_section_image">Image</string>
     <string name="edit_section_video">Video</string>
