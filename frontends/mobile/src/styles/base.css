@@ -1393,6 +1393,11 @@ button { font: inherit; color: inherit; }
   align-items: center;
   gap: 0.25rem;
   white-space: nowrap;
+  /* 8px end inset — Android EditFragment header setPadding(0,16,8,4) parity,
+     and it lands the duration's right edge on the right scroll-chevron SVG of
+     the property tabs (chevron is 20px centered in the 36px button → its right
+     edge sits 8px in from the button, i.e. 16px from the page edge). */
+  margin-right: 0.5rem;
 }
 /* Field cards (TextInputLayout outline in MaterialCardView 12dp) */
 .edit-field {
