@@ -89,13 +89,11 @@ const dict = {
     settings_delete_vbook_confirm: 'Удалить всю книгу (vBook) и все связанные данные (сториборд, Redis, база данных) с сервера? Это действие необратимо.',
     settings_delete_vbook_done: 'vBook удалён',
     settings_debug: 'Отладка',
-    settings_apply: 'Применить',
     settings_no_book_open: 'Книга не открыта',
     dialog_ok: 'OK',
     // VBook Settings (strings.xml ru)
     vbook_settings_scenes_per_pass: 'Сцен за раз',
     vbook_settings_scenes_per_pass_desc: 'Сколько сцен AI создаёт за один проход (1-5). Большие значения обрабатывают больше текста за проход, но увеличивают время на окно.',
-    vbook_settings_apply: 'Применить',
     vbook_settings_default: 'По умолчанию',
     // Worker Settings (strings.xml ru)
     worker_settings_title_audio: 'Настройки генерации аудио',
@@ -105,7 +103,6 @@ const dict = {
     worker_settings_timeout_label: 'Таймаут {0}',
     worker_settings_timeout_desc: 'Если генерация превышает это время, задача будет автоматически отправлена повторно',
     worker_settings_timeout_unit: 'мин',
-    worker_settings_apply: 'Применить',
     worker_settings_default: 'По умолчанию',
     settings_prompt_profiles: 'Профили промптов',
     settings_audio_profile: 'Аудио профиль',
@@ -430,13 +427,11 @@ const dict = {
     settings_delete_vbook_confirm: 'Delete the entire book (vBook) and all associated data (storyboard, Redis, database) from the server? This cannot be undone.',
     settings_delete_vbook_done: 'vBook deleted',
     settings_debug: 'Debug',
-    settings_apply: 'Apply',
     settings_no_book_open: 'No book open',
     dialog_ok: 'OK',
     // VBook Settings (strings.xml en)
     vbook_settings_scenes_per_pass: 'Scenes per pass',
     vbook_settings_scenes_per_pass_desc: 'How many scenes the AI agent creates per generation pass (1-5). Larger values process more text per pass but take longer per window.',
-    vbook_settings_apply: 'Apply',
     vbook_settings_default: 'Default',
     // Worker Settings (strings.xml en)
     worker_settings_title_audio: 'Audio Generation Settings',
@@ -446,7 +441,6 @@ const dict = {
     worker_settings_timeout_label: '{0} timeout',
     worker_settings_timeout_desc: 'If generation exceeds this time, the task will be automatically retried',
     worker_settings_timeout_unit: 'min',
-    worker_settings_apply: 'Apply',
     worker_settings_default: 'Default',
     settings_prompt_profiles: 'Prompt Profiles',
     settings_audio_profile: 'Audio Profile',

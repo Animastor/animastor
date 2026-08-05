@@ -28,7 +28,7 @@
         android:scrollbarThumbVertical="@drawable/scrollbar_thumb"
         android:scrollbarTrackVertical="@drawable/scrollbar_track"
         app:layout_constraintTop_toBottomOf="@id/toolbar"
-        app:layout_constraintBottom_toTopOf="@id/applyButton"
+        app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent">
 
@@ -216,24 +216,5 @@
 
         </LinearLayout>
     </ScrollView>
-
-    <!-- ── Bottom Action Bar (always visible) ── -->
-    <com.google.android.material.button.MaterialButton
-        android:id="@+id/applyButton"
-        android:layout_width="0dp"
-        android:layout_height="48dp"
-        android:layout_marginHorizontal="16dp"
-        android:layout_marginBottom="20dp"
-        android:text="@string/worker_settings_apply"
-        android:textSize="15sp"
-        android:fontFamily="sans-serif-medium"
-        app:cornerRadius="18dp"
-        app:icon="@drawable/ic_check"
-        app:iconGravity="textStart"
-        app:iconTint="?attr/colorOnPrimary"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent"
-        style="@style/Widget.Material3.Button" />
 
 </androidx.constraintlayout.widget.ConstraintLayout>

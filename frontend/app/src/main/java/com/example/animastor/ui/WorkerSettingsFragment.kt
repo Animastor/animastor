@@ -100,6 +100,34 @@ class WorkerSettingsFragment : Fragment(R.layout.fragment_worker_settings) {
         timeoutAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
         b.timeoutSpinner.adapter = timeoutAdapter
 
+        // ── Instant apply (web parity): the timeout selection IS the save, no
+        // Apply button. The flag suppresses the synthetic onItemSelected fired
+        // by the load's setSelection; it flips only AFTER the load settles so
+        // opening the screen never writes the just-loaded value back.
+        var initialized = false
+        b.timeoutSpinner.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: android.widget.AdapterView<*>?, v: View?, position: Int, id: Long) {
+                if (!initialized || timeoutField == null) return
+                val selectedMinutes = timeoutOptions.getOrElse(position) { defaultTimeout }
+                lifecycleScope.launch {
+                    try {
+                        val bookId = viewModel.bookId
+                        if (bookId.isBlank()) return@launch
+                        val update = when (timeoutField) {
+                            "audio_timeout_minutes" -> LayerConfigUpdate(audio_timeout_minutes = selectedMinutes)
+                            "image_timeout_minutes" -> LayerConfigUpdate(image_timeout_minutes = selectedMinutes)
+                            "video_timeout_minutes" -> LayerConfigUpdate(video_timeout_minutes = selectedMinutes)
+                            else -> return@launch
+                        }
+                        viewModel.repository.putLayerConfig(bookId, update)
+                    } catch (_: Exception) {
+                        // Stay on screen; retry on next change
+                    }
+                }
+            }
+            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
+        }
+
         // Load current timeout value from layer-config
         lifecycleScope.launch {
             try {
@@ -117,37 +145,15 @@ class WorkerSettingsFragment : Fragment(R.layout.fragment_worker_settings) {
                 }
             } catch (_: Exception) {
                 // Keep default selection
+            } finally {
+                initialized = true // load settled — user changes now persist
             }
         }
 
-        // ── Default button: reset timeout to factory default ──
+        // ── Default button: reset timeout to factory default (saved instantly) ──
         b.timeoutDefaultButton.setOnClickListener {
             val idx = timeoutOptions.indexOfFirst { it >= defaultTimeout }.coerceAtLeast(0)
             b.timeoutSpinner.setSelection(idx)
-        }
-
-        // ── Apply button: save timeout to layer-config and close ──
-        b.applyButton.setOnClickListener {
-            lifecycleScope.launch {
-                try {
-                    val bookId = viewModel.bookId
-                    if (bookId.isNotBlank() && timeoutField != null) {
-                        val selectedMinutes = timeoutOptions.getOrElse(
-                            b.timeoutSpinner.selectedItemPosition
-                        ) { defaultTimeout }
-                        val update = when (timeoutField) {
-                            "audio_timeout_minutes" -> LayerConfigUpdate(audio_timeout_minutes = selectedMinutes)
-                            "image_timeout_minutes" -> LayerConfigUpdate(image_timeout_minutes = selectedMinutes)
-                            "video_timeout_minutes" -> LayerConfigUpdate(video_timeout_minutes = selectedMinutes)
-                            else -> return@launch
-                        }
-                        viewModel.repository.putLayerConfig(bookId, update)
-                    }
-                    parentFragmentManager.popBackStack()
-                } catch (_: Exception) {
-                    // Keep fragment open on error so user can retry
-                }
-            }
         }
 
         // ── Load profiles ──

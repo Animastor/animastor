@@ -38,6 +38,28 @@ class VBookSettingsFragment : Fragment(R.layout.fragment_vbook_settings) {
             parentFragmentManager.popBackStack()
         }
 
+        // ── Instant apply (web parity): the selection IS the save, no Apply
+        // button. The flag suppresses the synthetic onItemSelected fired by the
+        // load's setSelection; it flips only AFTER the load settles so opening
+        // the screen never writes the just-loaded value back to the server.
+        var initialized = false
+        b.chunkSizeSpinner.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: android.widget.AdapterView<*>?, v: View?, position: Int, id: Long) {
+                if (!initialized) return
+                val selectedValue = (b.chunkSizeSpinner.selectedItem as? Int) ?: DEFAULT_CHUNK_SIZE
+                lifecycleScope.launch {
+                    try {
+                        val bookId = viewModel.bookId
+                        if (bookId.isBlank()) return@launch
+                        viewModel.repository.putLayerConfig(bookId, LayerConfigUpdate(chunk_size = selectedValue))
+                    } catch (e: Exception) {
+                        // Stay on screen so the user sees the selection; retry on next change
+                    }
+                }
+            }
+            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
+        }
+
         // ── Load current chunk_size from layer-config ──
         lifecycleScope.launch {
             try {
@@ -60,30 +82,14 @@ class VBookSettingsFragment : Fragment(R.layout.fragment_vbook_settings) {
                 adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
                 b.chunkSizeSpinner.adapter = adapter
                 b.chunkSizeSpinner.setSelection(DEFAULT_CHUNK_SIZE - 1)
+            } finally {
+                initialized = true // load settled — user changes now persist
             }
         }
 
-        // ── Default button: reset chunk size to 3 ──
+        // ── Default button: reset chunk size to 3 (saved instantly via listener) ──
         b.chunkSizeDefaultButton.setOnClickListener {
             b.chunkSizeSpinner.setSelection(DEFAULT_CHUNK_SIZE - 1)
-        }
-
-        // ── Apply button: save and close ──
-        b.applyButton.setOnClickListener {
-            lifecycleScope.launch {
-                try {
-                    val bookId = viewModel.bookId
-                    if (bookId.isBlank()) return@launch
-
-                    val selectedValue = (b.chunkSizeSpinner.selectedItem as? Int) ?: DEFAULT_CHUNK_SIZE
-                    viewModel.repository.putLayerConfig(bookId, LayerConfigUpdate(
-                        chunk_size = selectedValue
-                    ))
-                    parentFragmentManager.popBackStack()
-                } catch (e: Exception) {
-                    // Keep fragment open on error so user can retry
-                }
-            }
         }
     }
 

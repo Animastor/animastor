@@ -57,6 +57,36 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
         b.languageSpinner.adapter = langAdapter
         b.languageSpinner.setSelection(langValues.indexOf(currentLang))
 
+        // Instant apply (web parity): the selection IS the confirmation. Theme and
+        // language persist + recreate immediately, so there is no Apply button.
+        // The flag suppresses the synthetic onItemSelected fired by setSelection.
+        var initialized = false
+        view.post { initialized = true }
+        b.themeSpinner.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: android.widget.AdapterView<*>?, v: View?, position: Int, id: Long) {
+                if (!initialized) return
+                val selected = themeValues[position]
+                if (selected != currentTheme) {
+                    prefs.edit().putString(PREFS_THEME, selected).apply()
+                    // Post: recreate after the dropdown window finishes tearing down
+                    view.post { requireActivity().recreate() }
+                }
+            }
+            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
+        }
+        b.languageSpinner.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: android.widget.AdapterView<*>?, v: View?, position: Int, id: Long) {
+                if (!initialized) return
+                val selected = langValues[position]
+                if (selected != currentLang) {
+                    prefs.edit().putString(PREFS_LANG, selected).apply()
+                    // Post: recreate after the dropdown window finishes tearing down
+                    view.post { requireActivity().recreate() }
+                }
+            }
+            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
+        }
+
         b.serverUrlInput.setText(BuildConfig.BASE_URL)
         b.debugInfo.text = "App: ${BuildConfig.VERSION_NAME}\nServer: ${BuildConfig.BASE_URL}"
 
@@ -161,21 +191,6 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
 
         b.toolbar.setNavigationOnClickListener {
             parentFragmentManager.popBackStack()
-        }
-
-        b.acceptButton.setOnClickListener {
-            val selectedTheme = themeValues[b.themeSpinner.selectedItemPosition]
-            val selectedLang = langValues[b.languageSpinner.selectedItemPosition]
-            val changed = selectedTheme != currentTheme || selectedLang != currentLang
-            if (changed) {
-                prefs.edit()
-                    .putString(PREFS_THEME, selectedTheme)
-                    .putString(PREFS_LANG, selectedLang)
-                    .apply()
-                requireActivity().recreate()
-            } else {
-                parentFragmentManager.popBackStack()
-            }
         }
     }
 

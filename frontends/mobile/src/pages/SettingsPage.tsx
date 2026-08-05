@@ -9,7 +9,7 @@ import { closeBook as closePlayerBook } from '../state/playbackStore';
 import { clearCache as clearMediaCache } from '../cache/mediaCache';
 import { Modal, toast } from '../lib/ui';
 import { workerType } from '../app/routeState';
-import { navigate, START_ROUTE } from '../app/router';
+import { navigate } from '../app/router';
 import type { Route } from '../app/router';
 
 // SettingsPage covers: /settings (general), /settings/vbook (section="vbook"),
@@ -100,14 +100,6 @@ function GeneralSection() {
     }
   };
 
-  // acceptButton — Android: save theme/lang prefs + recreate() (popBackStack
-  // if unchanged). Web applies theme/lang live, so Apply just persists and pops.
-  const onApply = () => {
-    writePrefs({ theme, language });
-    if (history.length > 1) history.back();
-    else navigate(START_ROUTE);
-  };
-
   return (
     <section class="page settings-page">
       <div class="settings-page__scroll">
@@ -164,12 +156,8 @@ function GeneralSection() {
         </div>
       </div>
 
-      {/* acceptButton — pinned footer like VBook/Worker sections */}
-      <div class="settings-page__footer">
-        <button class="btn btn--block" onClick={onApply} disabled={busy}>
-          {t('settings_apply')}
-        </button>
-      </div>
+      {/* Instant apply (web parity): theme/language already apply live on
+          selection — no Apply button. Back navigates out. */}
 
       {/* AlertDialog — DialogDeleteVbookBinding (title + message + OK/Cancel) */}
       {confirm && (
@@ -215,13 +203,6 @@ type LayerConfig = {
 
 const DEFAULT_CHUNK_SIZE = 3;
 
-// Android pops the back stack after Apply; on a deep-link entry there is no
-// history to pop, so fall back to the Settings hub to avoid leaving the app.
-function goBackToSettings() {
-  if (history.length > 1) history.back();
-  else navigate('/settings');
-}
-
 function VBookSection() {
   const [chunk, setChunk] = useState(DEFAULT_CHUNK_SIZE);
   const [error, setError] = useState('');
@@ -243,15 +224,16 @@ function VBookSection() {
     return () => { alive = false; };
   }, [currentBook]);
 
-  const onApply = async () => {
+  // Instant apply: the selection IS the save. No Apply button.
+  const saveChunk = async (value: number) => {
     if (!currentBook || saving) return;
     setSaving(true); setError('');
     try {
-      await putJson(`/book/${encodeURIComponent(currentBook)}/layer-config`, { chunk_size: chunk });
-      goBackToSettings(); // = parentFragmentManager.popBackStack()
+      await putJson(`/book/${encodeURIComponent(currentBook)}/layer-config`, { chunk_size: value });
     } catch (e) {
       setError((e as Error).message);
-      setSaving(false); // keep page open so user can retry
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -265,24 +247,26 @@ function VBookSection() {
             <select
               class="select"
               value={chunk}
-              disabled={!currentBook}
+              disabled={!currentBook || saving}
               aria-label={t('vbook_settings_scenes_per_pass')}
-              onChange={(e) => setChunk(Number((e.target as HTMLSelectElement).value))}
+              onChange={(e) => {
+                const v = Number((e.target as HTMLSelectElement).value);
+                setChunk(v);
+                void saveChunk(v);
+              }}
             >
               {[1, 2, 3, 4, 5].map((n) => <option key={n} value={n}>{n}</option>)}
             </select>
-            <button class="btn btn--outlined" onClick={() => setChunk(DEFAULT_CHUNK_SIZE)}>
+            <button class="btn btn--outlined" disabled={!currentBook || saving} onClick={() => {
+              setChunk(DEFAULT_CHUNK_SIZE);
+              void saveChunk(DEFAULT_CHUNK_SIZE);
+            }}>
               {t('vbook_settings_default')}
             </button>
           </div>
           <p class="card__hint">{t('vbook_settings_scenes_per_pass_desc')}</p>
+          {error && <p class="settings-page__error">{error}</p>}
         </div>
-      </div>
-      <div class="settings-page__footer">
-        {error && <p class="settings-page__error">{error}</p>}
-        <button class="btn btn--block" onClick={onApply} disabled={!currentBook || saving}>
-          {saving ? t('play_loading') : t('vbook_settings_apply')}
-        </button>
       </div>
     </section>
   );
@@ -409,17 +393,18 @@ function WorkerSection() {
     ? activeConnectors.map((c) => `${c.label} (${c.workflow})`).join('\n')
     : t('workflow_manager_no_workflows');
 
-  const onApply = async () => {
+  // Instant apply: the timeout selection IS the save. No Apply button.
+  const saveTimeout = async (minutes: number) => {
     if (!currentBook || saving) return;
     setSaving(true); setError('');
     try {
       await putJson(`/book/${encodeURIComponent(currentBook)}/layer-config`, {
-        [TIMEOUT_FIELD[type]]: timeoutOptions[selectedTimeoutIdx],
+        [TIMEOUT_FIELD[type]]: minutes,
       });
-      goBackToSettings(); // = popBackStack
     } catch (e) {
       setError((e as Error).message);
-      setSaving(false); // keep page open so user can retry
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -481,18 +466,27 @@ function WorkerSection() {
             <select
               class="select"
               value={timeoutOptions[selectedTimeoutIdx]}
+              disabled={!currentBook || saving}
               aria-label={tf('worker_settings_timeout_label', t(WORKER_TITLE[type]))}
-              onChange={(e) => setTimeoutMinutes(Number((e.target as HTMLSelectElement).value))}
+              onChange={(e) => {
+                const v = Number((e.target as HTMLSelectElement).value);
+                setTimeoutMinutes(v);
+                void saveTimeout(v);
+              }}
             >
               {timeoutOptions.map((m) => (
                 <option key={m} value={m}>{m} {t('worker_settings_timeout_unit')}</option>
               ))}
             </select>
-            <button class="btn btn--outlined" onClick={() => setTimeoutMinutes(TIMEOUT_DEFAULT[type])}>
+            <button class="btn btn--outlined" disabled={!currentBook || saving} onClick={() => {
+              setTimeoutMinutes(TIMEOUT_DEFAULT[type]);
+              void saveTimeout(TIMEOUT_DEFAULT[type]);
+            }}>
               {t('worker_settings_default')}
             </button>
           </div>
           <p class="card__hint">{t('worker_settings_timeout_desc')}</p>
+          {error && <p class="settings-page__error">{error}</p>}
         </div>
 
         {/* ── Workflow ── */}
@@ -506,13 +500,6 @@ function WorkerSection() {
             {t('workflow_manager_manage')}
           </button>
         </div>
-      </div>
-
-      <div class="settings-page__footer">
-        {error && <p class="settings-page__error">{error}</p>}
-        <button class="btn btn--block" onClick={onApply} disabled={!currentBook || saving}>
-          {saving ? t('play_loading') : t('worker_settings_apply')}
-        </button>
       </div>
     </section>
   );
