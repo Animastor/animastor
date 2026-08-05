@@ -1436,6 +1436,14 @@ button { font: inherit; color: inherit; }
   text-align: left;
   line-height: 1.35;
 }
+/* Backend-served frame-prompt char counter (image.prompt / video.action). */
+.edit-field__counter {
+  font-size: 0.6875rem; /* 11sp */
+  color: var(--text-2);
+  text-align: right;
+  margin-top: 0.25rem;
+  user-select: none;
+}
 
 /* Group cards (characters / voices / locations) */
 .edit-card {

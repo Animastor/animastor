@@ -31,7 +31,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks'
 import { useSignal } from '@preact/signals';
 import { getJson, patchJson, postJson, putJson } from '../api/client';
 import type {
-  BookChapter, BookData, BookScene, BookUnit, CharPassport, SceneTiming, WaveformData,
+  AppConfig, BookChapter, BookData, BookScene, BookUnit, CharPassport, SceneTiming, WaveformData,
 } from '../api/models';
 import { t, tf } from '../app/i18n';
 import { navigate } from '../app/router';
@@ -161,11 +161,16 @@ export function EditPage(props: { path?: string }) {
   const [posLabel, setPosLabel] = useState(t('navigate_no_position'));
   const [unitCountText, setUnitCountText] = useState('');
   const [hasUnits, setHasUnits] = useState(false);
+  // Backend-served frame-prompt limit (image.prompt / video.action) — fetched once.
+  const [imagePromptMaxChars, setImagePromptMaxChars] = useState<number | undefined>(undefined);
 
   // Field values shared across tabs for the current scene (fieldValues map).
   const fieldValues = useRef<Record<string, string>>({});
   const [saveDirty, setSaveDirty] = useState(false);
   const saveDirtyRef = useRef(false);
+  // Forces the per-field char counter to re-render on EVERY keystroke: markDirty
+  // early-returns once saveDirty is set, so the counter cannot rely on it.
+  const [counterTick, setCounterTick] = useState(0);
   const [saveBusy, setSaveBusy] = useState(false);
   const [saveText, setSaveText] = useState<string>(t('edit_save'));
   const [errorText, setErrorText] = useState<string | null>(null);
@@ -302,6 +307,16 @@ export function EditPage(props: { path?: string }) {
       }
     }
   }, [positionSignal.value, loadAndSync, clearEditor]);
+
+  // ── Backend editor limits (imagePromptMaxChars) — fetched once on mount ──
+  useEffect(() => {
+    void getJson<AppConfig>('/config')
+      .then((cfg) => {
+        const v = cfg.limits?.image_prompt_max_chars;
+        if (typeof v === 'number' && v > 0) setImagePromptMaxChars(v);
+      })
+      .catch(() => { /* limit stays undefined → fields render without a counter */ });
+  }, []);
 
   // ── Reload on book change / playbackPrepared (generation completion) ──
   useEffect(() => {
@@ -973,8 +988,9 @@ export function EditPage(props: { path?: string }) {
 
   const sectionLabel = (text: string): JSX.Element => <div class="edit-section">{text}</div>;
 
-  const inputCard = (label: string, value: string, multiline: boolean, storeKey: string): JSX.Element => {
+  const inputCard = (label: string, value: string, multiline: boolean, storeKey: string, maxLength?: number): JSX.Element => {
     if (!(storeKey in fieldValues.current)) fieldValues.current[storeKey] = value;
+    const currentLen = (fieldValues.current[storeKey] ?? '').length;
     return (
       <div class="edit-field" key={storeKey}>
         <label class="edit-field__label">{label}</label>
@@ -982,16 +998,21 @@ export function EditPage(props: { path?: string }) {
           <textarea
             class="edit-field__input edit-field__input--area"
             rows={4}
+            maxLength={maxLength}
             defaultValue={fieldValues.current[storeKey]}
-            onInput={(e) => { fieldValues.current[storeKey] = (e.target as HTMLTextAreaElement).value; markDirty(); }}
+            onInput={(e) => { fieldValues.current[storeKey] = (e.target as HTMLTextAreaElement).value; setCounterTick((t) => t + 1); markDirty(); }}
           />
         ) : (
           <input
             class="edit-field__input"
             type="text"
+            maxLength={maxLength}
             defaultValue={fieldValues.current[storeKey]}
-            onInput={(e) => { fieldValues.current[storeKey] = (e.target as HTMLInputElement).value; markDirty(); }}
+            onInput={(e) => { fieldValues.current[storeKey] = (e.target as HTMLInputElement).value; setCounterTick((t) => t + 1); markDirty(); }}
           />
+        )}
+        {maxLength !== undefined && (
+          <div class="edit-field__counter" data-counter-version={counterTick}>{currentLen}/{maxLength}</div>
         )}
       </div>
     );
@@ -1065,10 +1086,10 @@ export function EditPage(props: { path?: string }) {
     });
     out.push(sectionLabel(t('edit_section_image')));
     ['image.shot', 'image.prompt', 'image.negative'].forEach((key) => {
-      out.push(inputCard(fieldLabel(key), readUnitField(u, key), key === 'image.prompt' && (fieldValues.current[key]?.length ?? 0) > 80, key));
+      out.push(inputCard(fieldLabel(key), readUnitField(u, key), key === 'image.prompt' && (fieldValues.current[key]?.length ?? 0) > 80, key, key === 'image.prompt' ? imagePromptMaxChars : undefined));
     });
     out.push(sectionLabel(t('edit_section_video')));
-    out.push(inputCard(fieldLabel('video.action'), readUnitField(u, 'video.action'), (fieldValues.current['video.action']?.length ?? 0) > 80, 'video.action'));
+    out.push(inputCard(fieldLabel('video.action'), readUnitField(u, 'video.action'), (fieldValues.current['video.action']?.length ?? 0) > 80, 'video.action', imagePromptMaxChars));
     return out;
   };
 

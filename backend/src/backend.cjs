@@ -156,6 +156,9 @@ require('./routes/debug-routes.cjs')(app, redis, {
 require('./routes/connector-routes.cjs')(app, redis, routeDeps);
 require('./routes/workflow-routes.cjs')(app, redis, routeDeps);
 
+// Editor limits / app config
+require('./routes/config-routes.cjs')(app, redis, routeDeps);
+
 // ======================================================
 // PROMETHEUS METRICS
 // ======================================================

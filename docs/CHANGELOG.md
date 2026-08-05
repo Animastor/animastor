@@ -6,6 +6,35 @@ All notable changes to Animastor are documented here.
 
 ## [Unreleased] — 2026-08-05
 
+### Added
+
+- **Лимит промпта кадра (2000 симв) в редакторе Android и web — значение приходит с бэкенда**
+  (`backend/src/routes/config-routes.cjs` (новый),
+  `backend/src/backend.cjs`,
+  `frontend/app/src/main/java/com/example/animastor/repository/AppConfig.kt` (новый),
+  `frontend/app/src/main/java/com/example/animastor/repository/BackendApi.kt`,
+  `frontend/app/src/main/java/com/example/animastor/repository/Repository.kt`,
+  `frontend/app/src/main/java/com/example/animastor/ui/EditFragment.kt`,
+  `frontends/mobile/src/api/models.ts`,
+  `frontends/mobile/src/pages/EditPage.tsx`,
+  `frontends/mobile/src/styles/base.css`):
+  - **`GET /api/v1/config`** (новый роут) отдаёт `{ limits: { image_prompt_max_chars: 2000 } }`
+    из `IMAGE_PROMPT_MAX_CHARS` — редакторы enforce тот же потолок, что сервер валидирует
+    при сохранении (`core-routes.cjs`). Контракт `{ limits: {...} }` задуман расширяемым:
+    если лимит станет пользовательской настройкой (Settings), эндпоинт прочитает его из
+    хранилища настроек, а клиенты не изменятся.
+  - **Android (EditFragment):** поле `image.prompt` и `video.action` получили live-счётчик
+    `N/2000` (Material `setCounterEnabled`/`setCounterMaxLength`) и жёсткий фильтр длины
+    (`InputFilter.LengthFilter`). `setText` идёт ДО назначения фильтра — legacy-промпты
+    длиннее лимита не обрезаются при отображении, счётчик покажет превышение, сервер
+    отклонит сохранение. Конфиг фетчится один раз при создании фрагмента; если ответ
+    пришёл после первой сборки — текущая вкладка пересобирается (fieldValues сохраняются).
+  - **Web (EditPage):** `maxLength` + счётчик `N/2000` под полем; отдельный `counterTick`
+    гарантирует ре-рендер счётчика на каждый ввод (markDirty early-return не тянет
+    рендер после первого символа). Стиль `.edit-field__counter` в base.css.
+  - Проверки: `node --check` + E2E-смоук эндпоинта (200, payload верный); web
+    `tsc --noEmit` + `vite build` OK; Android `compileDebugKotlin` OK.
+
 ### Fixed
 
 - **Полировка сториборда больше не «съедает» невидимую часть промпта: обрезка 200/300/150 символов убрана, добавлен лимит-потолок и валидация при сохранении**

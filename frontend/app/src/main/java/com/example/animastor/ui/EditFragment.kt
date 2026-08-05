@@ -43,6 +43,8 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
     private var currentChIndex = 0
     private var currentScIndex = 0
     private val fieldValues = mutableMapOf<String, String>()
+    /** Backend-served frame-prompt limit (image.prompt / video.action) — fetched once. */
+    private var imagePromptMaxChars: Int? = null
     private var errorText: TextView? = null
     private var dirtyIndicator: TextView? = null
 
@@ -140,6 +142,19 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
 
         observePosition()
         observeViewModel()
+
+        // Backend-served editor limits (frame-prompt char limit). The fetch races
+        // with the first loadAndSync — if it lands after the first build, rebuild
+        // the current tab so the counter shows up (fieldValues are preserved).
+        lifecycleScope.launch {
+            val limit = runCatching {
+                viewModel.repository.getConfig().limits?.image_prompt_max_chars
+            }.getOrNull()
+            if (limit != null && limit > 0 && imagePromptMaxChars == null) {
+                imagePromptMaxChars = limit
+                binding?.let { rebuildContent(it.propertyTabs.selectedTabPosition ?: 0) }
+            }
+        }
     }
 
     private fun observePosition() {
@@ -876,7 +891,8 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         listOf("image.shot", "image.prompt", "image.negative").forEach { key ->
             val v = readUnitField(u, key)
             if (!fieldValues.containsKey(key)) fieldValues[key] = v
-            ll.addView(inputCard(ctx, fieldLabel(key), fieldValues[key] ?: v, (key == "image.prompt" && (fieldValues[key]?.length ?: 0) > 80), storeKey = key))
+            ll.addView(inputCard(ctx, fieldLabel(key), fieldValues[key] ?: v, (key == "image.prompt" && (fieldValues[key]?.length ?: 0) > 80), storeKey = key,
+                maxLength = if (key == "image.prompt") imagePromptMaxChars else null))
         }
 
         // Video section
@@ -884,7 +900,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         listOf("video.action").forEach { key ->
             val v = readUnitField(u, key)
             if (!fieldValues.containsKey(key)) fieldValues[key] = v
-            ll.addView(inputCard(ctx, fieldLabel(key), fieldValues[key] ?: v, (fieldValues[key]?.length ?: 0) > 80, storeKey = key))
+            ll.addView(inputCard(ctx, fieldLabel(key), fieldValues[key] ?: v, (fieldValues[key]?.length ?: 0) > 80, storeKey = key, maxLength = imagePromptMaxChars))
         }
 
         parent.addView(ll)
@@ -1617,13 +1633,20 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         }
     }
 
-    private fun inputCard(ctx: Context, label: String, value: String, multiline: Boolean, boldValue: Boolean = false, storeKey: String? = null): View {
+    private fun inputCard(ctx: Context, label: String, value: String, multiline: Boolean, boldValue: Boolean = false, storeKey: String? = null, maxLength: Int? = null): View {
         val key = storeKey ?: label
         fieldValues[key] = value
         val til = TextInputLayout(ctx).apply {
             hint = label
             isHintEnabled = true
             boxBackgroundMode = TextInputLayout.BOX_BACKGROUND_OUTLINE
+            // Backend-served frame-prompt limit (image.prompt / video.action): live
+            // character counter + hard length filter — the user sees the limit
+            // before pressing Save (the server rejects over-limit saves).
+            if (maxLength != null) {
+                setCounterEnabled(true)
+                setCounterMaxLength(maxLength)
+            }
         }
         val et = TextInputEditText(ctx).apply {
             setText(value)
@@ -1634,6 +1657,9 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
             }
             if (boldValue) {
                 setTypeface(null, android.graphics.Typeface.BOLD)
+            }
+            if (maxLength != null) {
+                filters = arrayOf(android.text.InputFilter.LengthFilter(maxLength))
             }
             setPadding(12, 10, 12, 10)
             addTextChangedListener(simpleWatcher {

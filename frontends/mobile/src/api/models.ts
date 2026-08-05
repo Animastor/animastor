@@ -732,3 +732,16 @@ export interface StoryboardIu {
    *  client never re-derives it (N1). */
   duration_ms?: number | null;
 }
+
+/**
+ * GET /api/v1/config — backend-served editor limits. Served from the backend so
+ * the editor enforces the SAME value the server validates on save; if it later
+ * becomes a user setting, the endpoint reads it from a settings store and this
+ * model stays unchanged.
+ */
+export interface AppConfig {
+  limits?: {
+    /** Max chars for a frame prompt (image.prompt / video.action). */
+    image_prompt_max_chars?: number;
+  };
+}

@@ -404,6 +404,11 @@ class Repository(
         return api.getWorkerCounts()
     }
 
+    suspend fun getConfig(): AppConfig {
+        Log.d("Repo", "getConfig")
+        return api.getConfig()
+    }
+
     suspend fun clearBookCache(bookId: String) {
         api.clearBookCache(bookId)
     }

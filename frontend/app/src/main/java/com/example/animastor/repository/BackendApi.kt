@@ -94,6 +94,9 @@ interface BackendApi {
     @GET("/api/v1/worker/counts")
     suspend fun getWorkerCounts(): WorkerCounts
 
+    @GET("/api/v1/config")
+    suspend fun getConfig(): AppConfig
+
     @GET("/api/v1/book/{bookId}/cover")
     suspend fun getBookCover(
         @Path("bookId") bookId: String
