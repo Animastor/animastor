@@ -19,12 +19,12 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent" />
 
-    <!-- Unit carousel -->
+    <!-- Unit carousel panel (collapsible — web parity: thin title strip when
+         collapsed, chevron button floating top-right when expanded) -->
     <FrameLayout
         android:id="@+id/carouselContainer"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
-        android:minHeight="100dp"
         android:layout_marginStart="8dp"
         android:layout_marginEnd="8dp"
         android:layout_marginTop="8dp"
@@ -32,6 +32,53 @@
         app:layout_constraintTop_toBottomOf="@id/positionBar"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent">
+
+        <!-- Collapsed strip — title + chevron, tap to expand -->
+        <LinearLayout
+            android:id="@+id/carouselStrip"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:paddingVertical="10dp"
+            android:paddingHorizontal="12dp"
+            android:background="@drawable/bg_edit_strip"
+            android:clickable="true"
+            android:focusable="true"
+            android:foreground="?attr/selectableItemBackground"
+            android:visibility="gone">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/edit_carousel_title"
+                android:textSize="13sp"
+                android:textColor="?attr/colorOnSurfaceVariant"
+                android:fontFamily="sans-serif-medium"
+                android:singleLine="true"
+                android:ellipsize="end" />
+
+            <ImageView
+                android:layout_width="18dp"
+                android:layout_height="18dp"
+                android:src="@drawable/ic_chevron_down"
+                android:tint="?attr/colorOnSurfaceVariant"
+                android:importantForAccessibility="no" />
+        </LinearLayout>
+
+        <!-- Collapse chevron — floating top-right while expanded -->            <ImageButton
+                android:id="@+id/carouselCollapseButton"
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:layout_gravity="top|end"
+                android:layout_marginTop="2dp"
+                android:layout_marginEnd="4dp"
+                android:background="@drawable/bg_collapse_btn"
+                android:src="@drawable/ic_chevron_up"
+                android:contentDescription="@string/edit_collapse"
+                android:scaleType="center"
+                android:padding="4dp" />
 
         <LinearLayout
             android:id="@+id/carouselRow"
@@ -47,7 +94,7 @@
                 android:layout_width="0dp"
                 android:layout_height="140dp"
                 android:layout_weight="1"
-                android:layout_marginEnd="4dp"
+                android:layout_marginEnd="10dp"
                 android:clickable="true"
                 android:focusable="true"
                 android:foreground="?attr/selectableItemBackground"
@@ -87,14 +134,14 @@
                 android:id="@+id/currentUnitCard"
                 android:layout_width="0dp"
                 android:layout_height="match_parent"
-                android:layout_weight="1.5"
+                android:layout_weight="1.2"
                 android:clickable="true"
                 android:focusable="true"
                 android:foreground="?attr/selectableItemBackground"
                 app:cardCornerRadius="16dp"
                 app:cardElevation="2dp"
                 app:cardBackgroundColor="?attr/colorSurfaceVariant"
-                android:layout_marginHorizontal="4dp">
+                android:layout_marginHorizontal="10dp">
 
                 <FrameLayout
                     android:layout_width="match_parent"
@@ -127,7 +174,7 @@
                 android:layout_width="0dp"
                 android:layout_height="140dp"
                 android:layout_weight="1"
-                android:layout_marginStart="4dp"
+                android:layout_marginStart="10dp"
                 android:clickable="true"
                 android:focusable="true"
                 android:foreground="?attr/selectableItemBackground"
@@ -165,7 +212,7 @@
         </LinearLayout>
     </FrameLayout>
 
-    <!-- Audio Timeline Panel -->
+    <!-- Audio Timeline Panel (collapsible — web parity) -->
     <com.google.android.material.card.MaterialCardView
         android:id="@+id/timelinePanel"
         android:layout_width="0dp"
@@ -181,43 +228,97 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent">
 
-        <LinearLayout
+        <FrameLayout
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center_vertical"
-            android:padding="8dp">
+            android:layout_height="wrap_content">
 
+            <!-- Collapsed strip — title + chevron, tap to expand -->
+            <LinearLayout
+                android:id="@+id/timelineStrip"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:paddingVertical="10dp"
+                android:paddingHorizontal="12dp"
+                android:background="@drawable/bg_edit_strip"
+                android:clickable="true"
+                android:focusable="true"
+                android:foreground="?attr/selectableItemBackground"
+                android:visibility="gone">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="@string/edit_waveform_title"
+                    android:textSize="13sp"
+                    android:textColor="?attr/colorOnSurfaceVariant"
+                    android:fontFamily="sans-serif-medium"
+                    android:singleLine="true"
+                    android:ellipsize="end" />
+
+                <ImageView
+                    android:layout_width="18dp"
+                    android:layout_height="18dp"
+                    android:src="@drawable/ic_chevron_down"
+                    android:tint="?attr/colorOnSurfaceVariant"
+                    android:importantForAccessibility="no" />
+            </LinearLayout>
+
+            <!-- Collapse chevron — floating top-right while expanded -->
             <ImageButton
-                android:id="@+id/timelinePlayButton"
-                android:layout_width="44dp"
-                android:layout_height="44dp"
-                android:background="?attr/selectableItemBackgroundBorderless"
-                android:src="@drawable/ic_play"
-                android:contentDescription="@string/timeline_play"
-                android:tint="?attr/colorSecondary"
-                android:scaleType="fitCenter"
-                android:padding="8dp" />
+                android:id="@+id/timelineCollapseButton"
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:layout_gravity="top|end"
+                android:layout_marginTop="2dp"
+                android:layout_marginEnd="4dp"
+                android:background="@drawable/bg_collapse_btn"
+                android:src="@drawable/ic_chevron_up"
+                android:contentDescription="@string/edit_collapse"
+                android:scaleType="center"
+                android:padding="4dp" />
 
-            <com.example.animastor.ui.WaveformView
-                android:id="@+id/timelineWaveform"
-                android:layout_width="0dp"
-                android:layout_height="72dp"
-                android:layout_weight="1"
-                android:layout_marginHorizontal="4dp" />
+            <LinearLayout
+                android:id="@+id/timelineRow"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:padding="8dp">
 
-            <ImageButton
-                android:id="@+id/timelineResetButton"
-                android:layout_width="44dp"
-                android:layout_height="44dp"
-                android:background="?attr/selectableItemBackgroundBorderless"
-                android:src="@drawable/ic_reset"
-                android:contentDescription="@string/timeline_reset"
-                android:tint="?attr/colorSecondary"
-                android:scaleType="fitCenter"
-                android:padding="8dp" />
+                <ImageButton
+                    android:id="@+id/timelinePlayButton"
+                    android:layout_width="44dp"
+                    android:layout_height="44dp"
+                    android:background="?attr/selectableItemBackgroundBorderless"
+                    android:src="@drawable/ic_play"
+                    android:contentDescription="@string/timeline_play"
+                    android:tint="?attr/colorSecondary"
+                    android:scaleType="fitCenter"
+                    android:padding="8dp" />
 
-        </LinearLayout>
+                <com.example.animastor.ui.WaveformView
+                    android:id="@+id/timelineWaveform"
+                    android:layout_width="0dp"
+                    android:layout_height="72dp"
+                    android:layout_weight="1"
+                    android:layout_marginHorizontal="4dp" />
+
+                <ImageButton
+                    android:id="@+id/timelineResetButton"
+                    android:layout_width="44dp"
+                    android:layout_height="44dp"
+                    android:background="?attr/selectableItemBackgroundBorderless"
+                    android:src="@drawable/ic_reset"
+                    android:contentDescription="@string/timeline_reset"
+                    android:tint="?attr/colorSecondary"
+                    android:scaleType="fitCenter"
+                    android:padding="8dp" />
+
+            </LinearLayout>
+        </FrameLayout>
     </com.google.android.material.card.MaterialCardView>
 
     <!-- Section tabs with scroll indicators -->

@@ -57,6 +57,11 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
     private var timelineDirty = false
     /** Units-tab section header («Модуль 2/5 • 8.4 с») — live-updated on timing changes. */
     private var unitHeaderLabel: TextView? = null
+    /** Collapsible panels (web parity) — carousel + waveform collapse to a thin title strip. */
+    private var carouselCollapsed = false
+    private var timelineCollapsed = false
+    /** Full-size image zoom dialog (web parity) — dismissed on fragment teardown. */
+    private var zoomDialog: android.app.Dialog? = null
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
@@ -103,10 +108,23 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
             false // don't consume — let TabLayout handle the touch normally
         }
 
-        // Carousel navigation
-        b.currentUnitCard.setOnClickListener { }  // no-op, shows current
+        // Carousel navigation — current card opens the full-size image zoom
+        b.currentUnitCard.setOnClickListener { showImageZoom() }
         b.prevUnitCard.setOnClickListener { navigateUnit(-1) }
         b.nextUnitCard.setOnClickListener { navigateUnit(1) }
+
+        // Collapsible panels (web parity)
+        b.carouselStrip.setOnClickListener { setCarouselCollapsed(false) }
+        b.carouselCollapseButton.setOnClickListener { setCarouselCollapsed(true) }
+        b.timelineStrip.setOnClickListener { setTimelineCollapsed(false) }
+        b.timelineCollapseButton.setOnClickListener {
+            // Collapsing stops playback so audio never plays without the visible waveform
+            stopPlayback()
+            setTimelineCollapsed(true)
+        }
+
+        // Web parity: 6% side insets on the carousel row
+        applyCarouselPadding()
 
         b.timelinePlayButton.setOnClickListener { togglePlayback() }
         b.timelineResetButton.setOnClickListener { resetCurrentUnitTiming() }
@@ -198,6 +216,8 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         timingData = null
         originalTimings = null
         unitHeaderLabel = null
+        setCarouselCollapsed(false)
+        setTimelineCollapsed(false)
     }
 
     private fun loadBookAndAutoPosition() {
@@ -304,6 +324,88 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         uc?.visibility = if (totalUnits > 0) View.VISIBLE else View.GONE
     }
 
+    /** Collapsed panels (web parity): thin title strip, tap to re-expand. */
+    private fun setCarouselCollapsed(collapsed: Boolean) {
+        carouselCollapsed = collapsed
+        val b = binding ?: return
+        b.carouselStrip.visibility = if (collapsed) View.VISIBLE else View.GONE
+        b.carouselRow.visibility = if (collapsed) View.GONE else View.VISIBLE
+        b.carouselCollapseButton.visibility = if (collapsed) View.GONE else View.VISIBLE
+    }
+
+    private fun setTimelineCollapsed(collapsed: Boolean) {
+        timelineCollapsed = collapsed
+        val b = binding ?: return
+        b.timelineStrip.visibility = if (collapsed) View.VISIBLE else View.GONE
+        b.timelineRow.visibility = if (collapsed) View.GONE else View.VISIBLE
+        b.timelineCollapseButton.visibility = if (collapsed) View.GONE else View.VISIBLE
+    }
+
+    /** Web parity: carousel row has 6% side insets (like `.edit-carousel { padding: 0 6% }`).
+     *  Relative to the row's own width (screen minus the 8dp panel margins), not the screen. */
+    private fun applyCarouselPadding() {
+        val b = binding ?: return
+        val dm = resources.displayMetrics
+        val rowDp = dm.widthPixels / dm.density - 16f
+        val insetPx = (rowDp * 0.06f * dm.density).toInt()
+        b.carouselRow.setPadding(insetPx, 0, insetPx, 0)
+    }
+
+    /** Full-size image zoom dialog (web parity) — opens from the current carousel card. */
+    private fun showImageZoom() {
+        val pos = SharedPositionManager.current.value
+        val idx = pos.unitIndex
+        val sc = currentScene() ?: return
+        val units = sc.units ?: emptyList()
+        val current = units.getOrNull(idx) ?: return
+        val bookId = viewModel.bookId.takeIf { it.isNotBlank() } ?: return
+        val chId = chapters.getOrNull(currentChIndex)?.chapter_id ?: return
+        val scId = sc.scene_id ?: return
+        val iuId = current.id ?: "iu${String.format("%04d", idx)}"
+
+        val dialog = android.app.Dialog(requireContext())
+        dialog.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE)
+        dialog.setContentView(R.layout.dialog_edit_zoom)
+        val wnd = dialog.window
+        wnd?.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT))
+        // Web parity: no extra dim behind the opaque scrim backdrop
+        wnd?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+        wnd?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+
+        val img = dialog.findViewById<ImageView>(R.id.zoomImage)
+        val fallback = dialog.findViewById<View>(R.id.zoomFallback)
+        val label = dialog.findViewById<TextView>(R.id.zoomLabel)
+        label.text = "${getString(R.string.navigate_unit)} ${idx + 1}"
+        dialog.findViewById<View>(R.id.zoomBackdrop)?.setOnClickListener { dialog.dismiss() }
+        dialog.findViewById<View>(R.id.zoomClose)?.setOnClickListener { dialog.dismiss() }
+        dialog.findViewById<View>(R.id.zoomImage)?.setOnClickListener { /* consume — no dismiss on image tap */ }
+        dialog.setOnDismissListener { if (zoomDialog === dialog) zoomDialog = null }
+
+        zoomDialog = dialog
+        dialog.show()
+        lifecycleScope.launch {
+            val bytes = try {
+                viewModel.repository.getIuImage(bookId, chId, scId, iuId, viewModel.buildId)
+            } catch (_: Exception) {
+                null
+            }
+            if (bytes == null) {
+                fallback.visibility = View.VISIBLE
+                img.visibility = View.GONE
+                return@launch
+            }
+            val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+            if (bmp != null) {
+                img.setImageBitmap(bmp)
+                fallback.visibility = View.GONE
+                img.visibility = View.VISIBLE
+            } else {
+                fallback.visibility = View.VISIBLE
+                img.visibility = View.GONE
+            }
+        }
+    }
+
     private fun updateCarousel() {
         val b = binding ?: return
         val pos = SharedPositionManager.current.value
@@ -406,11 +508,15 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                 hidePreviewMissing(card)
                 val dm = resources.displayMetrics
                 val scrDp = dm.widthPixels / dm.density
-                val availDp = scrDp - 32f
-                val weight = if (card.id == R.id.currentUnitCard) 1.5f else 1.0f
-                val cardWDp = availDp * weight / 3.5f
+                // Web parity: 6% side insets, 20dp gaps, weights 1/1.2/1.
+                // Row width = screen minus 8dp panel margins on each side.
+                val availDp = (scrDp - 16f) * 0.88f - 40f
+                val weight = if (card.id == R.id.currentUnitCard) 1.2f else 1.0f
+                val cardWDp = availDp * weight / 3.2f
                 val hDp = cardWDp * bmp.height / bmp.width
-                val hPx = (hDp * dm.density + 0.5f).toInt()
+                // Web parity: min-height 140dp floor on every card
+                val minHPx = (140 * dm.density + 0.5f).toInt()
+                val hPx = maxOf((hDp * dm.density + 0.5f).toInt(), minHPx)
                 val lp = card.layoutParams
                 lp.height = hPx
                 card.layoutParams = lp
@@ -440,11 +546,15 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                 hidePreviewMissing(card)
                 val dm = resources.displayMetrics
                 val scrDp = dm.widthPixels / dm.density
-                val availDp = scrDp - 32f
-                val weight = if (card.id == R.id.currentUnitCard) 1.5f else 1.0f
-                val cardWDp = availDp * weight / 3.5f
+                // Web parity: 6% side insets, 20dp gaps, weights 1/1.2/1.
+                // Row width = screen minus 8dp panel margins on each side.
+                val availDp = (scrDp - 16f) * 0.88f - 40f
+                val weight = if (card.id == R.id.currentUnitCard) 1.2f else 1.0f
+                val cardWDp = availDp * weight / 3.2f
                 val hDp = cardWDp * bmp.height / bmp.width
-                val hPx = (hDp * dm.density + 0.5f).toInt()
+                // Web parity: min-height 140dp floor on every card
+                val minHPx = (140 * dm.density + 0.5f).toInt()
+                val hPx = maxOf((hDp * dm.density + 0.5f).toInt(), minHPx)
                 val lp = card.layoutParams
                 lp.height = hPx
                 card.layoutParams = lp
@@ -1713,6 +1823,8 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         mediaPlayer = null
         audioFile?.delete()
         audioFile = null
+        zoomDialog?.dismiss()
+        zoomDialog = null
         binding = null
         super.onDestroyView()
     }
@@ -1759,6 +1871,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                 updateTimelineSelection()
                 updateUnitHeaderLabel()
                 b.timelinePanel.isVisible = true
+                setTimelineCollapsed(timelineCollapsed) // re-apply collapsed strip state
 
                 stopPlayback()
                 mediaPlayer?.release()
