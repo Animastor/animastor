@@ -247,28 +247,16 @@ export function NavigatePage(props: { path?: string }) {
     if (item.kind === 'chapter') {
       const id = item.chapterId;
       if (id == null) return;
-      const currentlyExpanded = chapterExpanded.get(id)
-        ?? (id === positionSignal.value.chapterId || (bookData?.chapters?.length ?? 0) <= 3);
-      const willExpand = !currentlyExpanded;
       setChapterExpanded((prev) => {
         const next = new Map(prev);
-        next.set(id, willExpand);
+        const currentlyExpanded = next.get(id)
+          ?? (id === positionSignal.value.chapterId || (bookData?.chapters?.length ?? 0) <= 3);
+        next.set(id, !currentlyExpanded);
         return next;
       });
-      // Expand/collapse the chapter's scenes together with the chapter so the
-      // unit buttons are immediately visible (Android parity).
-      const chapter = bookData?.chapters?.find((ch) => ch.chapter_id === id);
-      if (chapter) {
-        setExpandedScenes((prev) => {
-          const next = new Set(prev);
-          for (const sc of chapter.scenes ?? []) {
-            if (sc.scene_id == null) continue;
-            const key = `${id}|${sc.scene_id}`;
-            if (willExpand) next.add(key); else next.delete(key);
-          }
-          return next;
-        });
-      }
+      // Chapter tap only expands/collapses the chapter — its scenes stay
+      // collapsed (only the current-position scene stays expanded); unit
+      // buttons appear after tapping a scene (1:1 with NavigateFragment).
     } else if (item.kind === 'scene') {
       const key = item.chapterId != null && item.sceneId != null ? `${item.chapterId}|${item.sceneId}` : null;
       if (key == null) return;

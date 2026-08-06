@@ -75,16 +75,7 @@ class NavigateFragment : Fragment(R.layout.fragment_navigate) {
                 }
                 is StructureItem.ChapterItem -> {
                     if (item.chapterId != null) {
-                        val willExpand = !item.expanded
-                        chapterExpandedOverrides[item.chapterId] = willExpand
-                        // Expand/collapse the chapter's scenes together with the
-                        // chapter so unit buttons are immediately visible (web parity).
-                        for (sc in item.scenes) {
-                            if (sc.scene_id != null) {
-                                val key = "${item.chapterId}|${sc.scene_id}"
-                                if (willExpand) expandedScenes.add(key) else expandedScenes.remove(key)
-                            }
-                        }
+                        chapterExpandedOverrides[item.chapterId] = !item.expanded
                     }
                     rebuildStructure()
                 }
