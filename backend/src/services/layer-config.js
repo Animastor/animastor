@@ -114,7 +114,7 @@ function isValidScope(value) {
  * can never drift apart.
  */
 async function getChunkSize(redis, bookId) {
-    const { MAX_SCENES_PER_CHUNK } = require('../agent-prompts');
+    const { MAX_SCENES_PER_CHUNK } = require('./agent-prompts');
     try {
         if (redis && bookId) {
             const cfg = await get(redis, bookId);
