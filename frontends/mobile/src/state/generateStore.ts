@@ -777,6 +777,25 @@ async function pollVBookProgress(bId: string, token: number): Promise<void> {
       if (isAgentActive && status.progress_msg != null) {
         consecutiveInactive = 0;
         updateVBookProgress(status);
+        // Between windows: a paused session has finished the current window but
+        // the source still has text/scenes pending. Auto-advance to the next
+        // window instead of sitting on "Обрабатываю следующие окна..." forever.
+        // /bootstrap-next-window BLOCKS until the window is processed (SSE keeps
+        // streaming progress during the call) and returns all_done:true when
+        // there is nothing left — one "Generate VBook" click then processes ALL
+        // remaining windows.
+        if (status.session_status === 'paused') {
+          try {
+            const next = await postJsonLong<{ all_done?: boolean }>(`/book/${encodeURIComponent(bId)}/bootstrap-next-window`);
+            if (next.all_done) {
+              vbookProgress.value = { ...vbookProgress.value, stage: 'COMPLETED' };
+              break;
+            }
+          } catch (e) {
+            console.warn('pollVBookProgress: bootstrap-next-window failed:', (e as Error).message);
+            consecutiveInactive++;
+          }
+        }
       } else if (!isAgentActive) {
         consecutiveInactive++;
         if (status.progress_msg != null) updateVBookProgress(status);

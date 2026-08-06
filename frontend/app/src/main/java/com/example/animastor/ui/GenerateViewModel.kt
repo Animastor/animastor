@@ -561,6 +561,26 @@ class GenerateViewModel(
                 if (isAgentActive && status.progress_msg != null) {
                     consecutiveInactive = 0
                     updateVBookProgress(status)
+                    // Between windows: paused = current window done, more work
+                    // pending — auto-advance to the next window instead of
+                    // stalling on "Обрабатываю следующие окна..." forever.
+                    // bootstrapNextWindow blocks until the window is processed;
+                    // all_done=true means nothing is left — one Generate click
+                    // then processes ALL remaining windows.
+                    if (status.session_status == "paused") {
+                        try {
+                            val next = _repository.bootstrapNextWindow(bId)
+                            if (next.all_done) {
+                                _uiState.update { state ->
+                                    state.copy(vbookProgress = state.vbookProgress?.copy(stage = VBookStage.COMPLETED))
+                                }
+                                break
+                            }
+                        } catch (e: Exception) {
+                            consecutiveInactive++
+                            Log.w(TAG, "[VBookPoll] bootstrap-next-window failed: ${e.message}")
+                        }
+                    }
                 } else if (!isAgentActive) {
                     consecutiveInactive++
                     if (status.progress_msg != null) {
