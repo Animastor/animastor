@@ -535,7 +535,11 @@ class GenerateViewModel(
         while (consecutiveInactive < maxInactive) {
             if (_importCompleteReceived) {
                 Log.i(TAG, "[VBookPoll] import_complete SSE received — marking completed")
-                _uiState.update { it.copy(vbookProgress = VBookProgress(stage = VBookStage.COMPLETED)) }
+                // Preserve the last-known window counters: the completed row
+                // must show the real final counter (e.g. "3/3"), not "1/1".
+                _uiState.update { state ->
+                    state.copy(vbookProgress = state.vbookProgress?.copy(stage = VBookStage.COMPLETED))
+                }
                 break
             }
             if (System.currentTimeMillis() - startTime > maxPollTimeMs) {
@@ -555,7 +559,12 @@ class GenerateViewModel(
                         updateVBookProgress(status)
                     }
                     if (consecutiveInactive >= maxInactive) {
-                        _uiState.update { it.copy(vbookProgress = VBookProgress(stage = VBookStage.COMPLETED)) }
+                        // Preserve the last-known window counters so the
+                        // completed row shows the real final counter (e.g.
+                        // "3/3"), not "1/1".
+                        _uiState.update { state ->
+                            state.copy(vbookProgress = state.vbookProgress?.copy(stage = VBookStage.COMPLETED))
+                        }
                     }
                 } else {
                     // active=true but no message — agent between steps
@@ -794,9 +803,11 @@ class GenerateViewModel(
                 Log.i(TAG, "[POLL] import_complete SSE received — exiting early")
                 // Backend reported all windows done via SSE, but we still need
                 // to mark VBook as completed since poller owns that transition.
-                _uiState.update { it.copy(
-                    vbookProgress = VBookProgress(stage = VBookStage.COMPLETED)
-                )}
+                // Preserve the last-known window counters so the completed row
+                // shows the real final counter (e.g. "3/3"), not "1/1".
+                _uiState.update { state ->
+                    state.copy(vbookProgress = state.vbookProgress?.copy(stage = VBookStage.COMPLETED))
+                }
                 break
             }
             if (System.currentTimeMillis() - startTime > maxPollTimeMs) {
@@ -831,9 +842,12 @@ class GenerateViewModel(
                         updateVBookProgress(status)
                     }
                     if (consecutiveInactive >= maxInactive) {
-                        _uiState.update { it.copy(
-                            vbookProgress = VBookProgress(stage = VBookStage.COMPLETED)
-                        )}
+                        // Preserve the last-known window counters so the
+                        // completed row shows the real final counter (e.g.
+                        // "3/3"), not "1/1".
+                        _uiState.update { state ->
+                            state.copy(vbookProgress = state.vbookProgress?.copy(stage = VBookStage.COMPLETED))
+                        }
                     }
                 } else {
                     // active=true but progress_msg=null — agent between steps, don't count as inactive
@@ -875,10 +889,21 @@ class GenerateViewModel(
                 if (current != null) {
                     when (current.stage) {
                         VBookStage.ANALYZING, VBookStage.CREATING_SCENES -> {
-                            // Agent just finished, transition to COMPLETED
-                            _uiState.update { it.copy(
-                                vbookProgress = VBookProgress(stage = VBookStage.COMPLETED)
-                            )}
+                            // Agent just finished — re-read the now-saved window
+                            // counters (window_total_scenes from window_data)
+                            // before marking COMPLETED, so the final counter
+                            // reflects the real window size (e.g. "3/3", or
+                            // "2/2" for a partial final window), not the
+                            // mid-pipeline estimate. Then preserve those
+                            // counters through the COMPLETED transition instead
+                            // of replacing VBookProgress with a fresh object
+                            // (which would reset the counter to "1/1").
+                            if (status.progress_msg != null) {
+                                updateVBookProgress(status)
+                            }
+                            _uiState.update { state ->
+                                state.copy(vbookProgress = state.vbookProgress?.copy(stage = VBookStage.COMPLETED))
+                            }
                         }
                         VBookStage.COMPLETED -> { /* keep */ }
                         VBookStage.IDLE -> { /* keep idle */ }
@@ -1344,14 +1369,26 @@ class GenerateViewModel(
                 val vbookElapsed = taskFrozenElapsed.getOrPut("vbook") {
                     if (timerStartedAt > 0L) (now - timerStartedAt) / 1000L else 0L
                 }
+                // Preserve the final window counter (e.g. "3/3") instead of
+                // resetting to "1/1": derive ready/total from the last known
+                // window state. When no scene-level index was ever reported,
+                // show the full window count (best available estimate).
+                val finalTotal = vbookProgress.scenesInWindow.coerceAtLeast(1)
+                val hasSceneProgress = vbookProgress.sceneIndex >= 0 && vbookProgress.scenesInWindow > 0
+                val finalReady = if (hasSceneProgress) {
+                    (vbookProgress.sceneIndex + 1).coerceAtMost(finalTotal)
+                } else {
+                    finalTotal
+                }
                 rows.add(TaskRow(
                     taskId = "vbook",
                     type = "vbook",
                     label = labels.vbookLabel,
-                    ready = 1,
-                    total = 1,
+                    ready = finalReady,
+                    total = finalTotal,
                     percent = 100,
                     done = true,
+                    countText = labels.vbookScenesFormat(finalReady, finalTotal),
                     elapsedSeconds = vbookElapsed
                 ))
             } else {

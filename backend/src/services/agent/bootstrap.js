@@ -11,25 +11,18 @@ const config = require('../../config/runtime-config');
 const sourceCoverage = require('../source-coverage');
 const { updateSession, createSession, isSessionCancelled } = require('../agent-session');
 const layerConfig = require('../layer-config');
-const { PROGRESS_STAGES, MAX_SCENES_PER_CHUNK, resolveBookLanguage } = require('../agent-prompts');
+const { PROGRESS_STAGES, resolveBookLanguage } = require('../agent-prompts');
 const pipelineSteps = require('./pipeline-steps');
 const pipelineRunner = require('./pipeline-runner');
 const textUtils = require('./text-utils');
 
 /**
- * Read chunk_size from Redis layer-config for the given book.
- * Falls back to MAX_SCENES_PER_CHUNK (3) if not set or not available.
+ * Read chunk_size from Redis layer-config for the given book (default 3).
+ * Shared with /agent-status (layerConfig.getChunkSize) so the actual window
+ * size the pipeline processes always matches the one the frontend displays.
  */
 async function _readChunkSize(redis, bookId) {
-    try {
-        if (redis && bookId) {
-            const cfg = await layerConfig.get(redis, bookId);
-            if (cfg && cfg.chunk_size >= 1 && cfg.chunk_size <= 5) {
-                return cfg.chunk_size;
-            }
-        }
-    } catch (_) {}
-    return MAX_SCENES_PER_CHUNK;
+    return layerConfig.getChunkSize(redis, bookId);
 }
 
 async function bootstrapWithAgent(bookId, progress, publishProgress, redis) {
@@ -429,6 +422,11 @@ async function bootstrapNextWindow(bookId, progress, publishProgress, redis) {
         const updatedWindowData = {
             ...windowData,
             window_index: nextWindowIndex,
+            // total_scenes is the scene count for the CURRENT window (the
+            // cached batch actually processed here), not the previous AI
+            // window — otherwise /agent-status reports a stale total and the
+            // frontend counter shows e.g. "2/3" after the batch finishes.
+            total_scenes: result.scenes.length,
             created_scenes: sceneOffset + result.scenes.length,
             cached_scenes: remaining,
         };

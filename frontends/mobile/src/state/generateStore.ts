@@ -415,11 +415,20 @@ export function computeProgressRows(
     if (vbookProg.stage === 'COMPLETED') {
       if (!taskCompletedAt.has('vbook')) taskCompletedAt.set('vbook', now);
       if (!taskFrozenElapsed.has('vbook')) taskFrozenElapsed.set('vbook', vbookElapsed);
+      // Preserve the final window counter (e.g. "3/3") instead of resetting to
+      // "1/1": derive ready/total from the last known window state. When no
+      // scene-level index was ever reported, show the full window count (best
+      // available estimate).
+      const finalTotal = Math.max(1, vbookProg.scenesInWindow);
+      const hasSceneProgress = vbookProg.sceneIndex >= 0 && vbookProg.scenesInWindow > 0;
+      const finalReady = hasSceneProgress
+        ? Math.min(vbookProg.sceneIndex + 1, finalTotal)
+        : finalTotal;
       rows.push({
         taskId: 'vbook', type: 'vbook', label: labels.vbookLabel, scope: 'whole_book',
         chapterId: null, sceneId: null, sceneLabel: null, chapterLabel: null,
         endSceneLabel: null, endChapterLabel: null,
-        ready: 1, total: 1, percent: 100, done: true, countText: null,
+        ready: finalReady, total: finalTotal, percent: 100, done: true, countText: null,
         indeterminate: false, cancelled: false,
         elapsedSeconds: taskFrozenElapsed.get('vbook') ?? vbookElapsed, frozen: true,
       });
@@ -553,7 +562,12 @@ export async function checkVBookAgentStatus(): Promise<VBookProgress> {
     } else if (!status.active) {
       const current = vbookProgress.value;
       if (current.stage === 'ANALYZING' || current.stage === 'CREATING_SCENES') {
-        vbookProgress.value = { ...current, stage: 'COMPLETED' };
+        // The agent just finished — re-read the now-saved window counters
+        // (window_total_scenes from window_data) before marking COMPLETED, so
+        // the final counter reflects the real window size (e.g. "3/3", or
+        // "2/2" for a partial final window), not the mid-pipeline estimate.
+        if (status.progress_msg != null) updateVBookProgress(status);
+        vbookProgress.value = { ...vbookProgress.value, stage: 'COMPLETED' };
       }
     }
   } catch { /* keep current */ }

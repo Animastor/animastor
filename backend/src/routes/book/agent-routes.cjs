@@ -31,7 +31,8 @@ module.exports = function(app, redis, deps) {
             if (Number.isFinite(idx) && idx > 0) {
                 const totalVal = toFiniteNumber(total);
                 // When total is null (window_data not yet saved), return null
-                // so the frontend falls back to window_size (MAX_SCENES_PER_CHUNK).
+                // so the frontend falls back to window_size (the per-book
+                // configured chunk size reported in the base response).
                 return {
                     window_start_scene: totalVal != null ? Math.max(1, (toFiniteNumber(created) || 0) - totalVal + 1) : null,
                     window_total_scenes: totalVal,
@@ -57,6 +58,13 @@ module.exports = function(app, redis, deps) {
     app.get('/api/v1/book/:bookId/agent-status', async (req, res) => {
         try {
             const { bookId } = req.params;
+
+            // Per-book configured chunk size (shared with bootstrap via
+            // layerConfig.getChunkSize) — used as the window_size fallback so
+            // the frontend scene counter shows the real window size (e.g.
+            // "3/3") instead of the hardcoded MAX_SCENES_PER_CHUNK (2) while
+            // window_data isn't saved yet during the pipeline.
+            let configuredWindowSize = await layerConfig.getChunkSize(redis, bookId);
 
             const agentResult = await storage.postgres.query(`
                 SELECT session_id, status as session_status, progress_msg,
@@ -89,7 +97,7 @@ module.exports = function(app, redis, deps) {
                 active: false, session_id: null, session_status: null,
                 progress_msg: null, source_type: null, window_index: null,
                 created_scenes: null, total_scenes: null, remaining_cached: null,
-                window_size: MAX_SCENES_PER_CHUNK,
+                window_size: configuredWindowSize,
                 window_start_scene: null, window_total_scenes: null, window_scene_index: null,
                 step_type: stepType,
                 ...extra,

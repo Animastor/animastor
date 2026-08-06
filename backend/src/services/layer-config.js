@@ -105,6 +105,27 @@ function isValidScope(value) {
     return Object.values(SCOPES).includes(value);
 }
 
+/**
+ * Per-book VBook window size (scenes per pass) — the effective chunk size the
+ * AI pipeline actually uses. Reads layer-config chunk_size (1..5) and falls
+ * back to MAX_SCENES_PER_CHUNK when unset/unavailable. Single source of truth
+ * shared by bootstrap._readChunkSize (what the pipeline processes) and the
+ * /agent-status route (what the frontend progress counter displays) so the two
+ * can never drift apart.
+ */
+async function getChunkSize(redis, bookId) {
+    const { MAX_SCENES_PER_CHUNK } = require('../agent-prompts');
+    try {
+        if (redis && bookId) {
+            const cfg = await get(redis, bookId);
+            if (cfg && cfg.chunk_size >= 1 && cfg.chunk_size <= 5) {
+                return cfg.chunk_size;
+            }
+        }
+    } catch (_) { /* best-effort */ }
+    return MAX_SCENES_PER_CHUNK;
+}
+
 module.exports = {
     SCOPES,
     DEFAULTS,
@@ -113,4 +134,5 @@ module.exports = {
     set,
     normalize,
     isValidScope,
+    getChunkSize,
 };
