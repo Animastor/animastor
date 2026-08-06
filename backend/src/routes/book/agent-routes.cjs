@@ -157,25 +157,17 @@ module.exports = function(app, redis, deps) {
                         remainingCached = Array.isArray(windowData.cached_scenes) ? windowData.cached_scenes.length : 0;
                     } catch (e) { /* ignore */ }
                 }
-                // A 'paused' session with unprocessed source text or cached scenes
-                // is BETWEEN windows: the agent is still working, so report it as
-                // ACTIVE. Treating paused as finished made the frontends finalize
-                // COMPLETED (green 100% row) between windows, freezing the counter
-                // on the last window's value (e.g. "1/1") while more windows were
-                // still pending. Only a session with nothing left (or a
-                // completed/failed/cancelled session) is truly inactive.
-                let hasRemainingWork = false;
-                if (windowData) {
-                    const remText = typeof windowData.remaining_text === 'string' ? windowData.remaining_text.trim() : '';
-                    const cached = Array.isArray(windowData.cached_scenes) ? windowData.cached_scenes : [];
-                    hasRemainingWork = remText.length > 0 || cached.length > 0;
-                }
-                const sessionActive = agentRow.session_status === 'running'
-                    || (agentRow.session_status === 'paused' && hasRemainingWork);
+                // A 'paused' session means the CURRENT WINDOW is complete and the
+                // agent is idle, waiting for the user to trigger the next window
+                // manually ("Генерировать далее" → /bootstrap-next-window). The
+                // session is therefore NOT active: the frontend must finalize the
+                // window (green "3/3, 100%") and let the user continue. Only a
+                // genuinely running session is active. The window counters are
+                // still returned so the final row shows the REAL window size.
                 const vbookSceneIdx = await redis.get(`animastor:vbook-scene-idx:${bookId}`);
                 const windowProgressMeta = buildWindowProgressMeta(createdScenes, totalScenes, vbookSceneIdx);
                 return res.json(baseResponse({
-                    active: sessionActive, session_id: agentRow.session_id,
+                    active: agentRow.session_status === 'running', session_id: agentRow.session_id,
                     session_status: agentRow.session_status, progress_msg: agentRow.progress_msg || 'Working...',
                     source_type: agentRow.source_type, window_index: windowIndex,
                     created_scenes: createdScenes, total_scenes: totalScenes, remaining_cached: remainingCached,

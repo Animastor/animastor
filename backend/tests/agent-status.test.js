@@ -69,7 +69,7 @@ function makeAgentRow(status, windowData) {
 }
 
 describe('Agent status — paused session between windows', () => {
-    it('reports paused-with-remaining-text as ACTIVE (agent still working)', async () => {
+    it('reports paused-with-remaining-text as INACTIVE (window complete, awaiting manual next)', async () => {
         const res = await createHarness({
             agentRow: makeAgentRow('paused', {
                 window_index: 0,
@@ -81,13 +81,14 @@ describe('Agent status — paused session between windows', () => {
         })('book-1');
 
         expect(res.statusCode).to.equal(200);
-        expect(res.body.active).to.equal(true);
+        expect(res.body.active).to.equal(false);
         expect(res.body.session_status).to.equal('paused');
-        // Real final-window counters are still exposed for the frontend counter.
+        // Real final-window counters are still exposed for the frontend counter
+        // (green "3/3" when the user finalizes the window).
         expect(res.body.window_total_scenes).to.equal(3);
     });
 
-    it('reports paused-with-cached-scenes as ACTIVE', async () => {
+    it('reports paused-with-cached-scenes as INACTIVE, remaining_cached from cached_scenes', async () => {
         const res = await createHarness({
             agentRow: makeAgentRow('paused', {
                 window_index: 1,
@@ -98,7 +99,7 @@ describe('Agent status — paused session between windows', () => {
             }),
         })('book-2');
 
-        expect(res.body.active).to.equal(true);
+        expect(res.body.active).to.equal(false);
         expect(res.body.remaining_cached).to.equal(2);
     });
 

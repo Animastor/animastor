@@ -557,12 +557,13 @@ export async function checkVBookAgentStatus(): Promise<VBookProgress> {
       window_scene_index?: number | null; created_scenes?: number | null;
       window_start_scene?: number | null; total_scenes?: number | null; window_index?: number | null;
     }>(`/book/${encodeURIComponent(bid)}/agent-status`);
-    // 'paused' = between windows — still active, do NOT mark COMPLETED yet
-    // (green 100% would freeze on the last window's counter, e.g. "1/1").
-    const isAgentActive = status.active || status.session_status === 'paused';
-    if (isAgentActive && status.progress_msg != null) {
+    // 'paused' = the CURRENT window finished and the agent is idle, waiting for
+    // the user to press "Генерировать далее" (manual continuation) — that is a
+    // terminal state for this window, so it counts as inactive and finalizes
+    // COMPLETED with the real window counter (e.g. "3/3", not "1/1").
+    if (status.active && status.progress_msg != null) {
       updateVBookProgress(status);
-    } else if (!isAgentActive) {
+    } else if (!status.active) {
       const current = vbookProgress.value;
       if (current.stage === 'ANALYZING' || current.stage === 'CREATING_SCENES') {
         // The agent just finished — re-read the now-saved window counters
@@ -726,8 +727,9 @@ export async function startVBookGeneration(): Promise<void> {
     // completion. Only tear down on a genuine failure (no active session).
     try {
       const status = await getJson<{ active: boolean; session_status?: string | null }>(`/book/${encodeURIComponent(bid)}/agent-status`);
-      // 'paused' = between windows — the agent is still working; keep the UI
-      // alive instead of tearing the progress block down mid-run.
+      // Keep the UI alive if the agent is still running, or if the window
+      // already finished (paused) — pollVBookProgress finalizes a paused
+      // window immediately with the real counter (green "3/3").
       if (status.active || status.session_status === 'paused') {
         await pollVBookProgress(bid, token);
         return;
@@ -767,36 +769,19 @@ async function pollVBookProgress(bId: string, token: number): Promise<void> {
         window_scene_index?: number | null; created_scenes?: number | null;
         window_start_scene?: number | null; total_scenes?: number | null; window_index?: number | null;
       }>(`/book/${encodeURIComponent(bId)}/agent-status`);
-      // A 'paused' agent session is BETWEEN windows — the agent is still working
-      // (more windows pending), so it must NOT count as inactive. Only a truly
-      // inactive session (completed/failed/cancelled, or paused with nothing
-      // left) finalizes the generation — otherwise the green 100% row appears
-      // prematurely with the last window's counter (e.g. "1/1" instead of the
-      // real final state).
-      const isAgentActive = status.active || status.session_status === 'paused';
-      if (isAgentActive && status.progress_msg != null) {
+      // 'paused' = the current window is complete; the agent is idle, waiting
+      // for the user to press "Генерировать далее" (manual continuation — one
+      // window per click). Finalize this window immediately with the real
+      // counter (e.g. "3/3") — never auto-advance to the next window.
+      if (status.session_status === 'paused') {
+        if (status.progress_msg != null) updateVBookProgress(status);
+        vbookProgress.value = { ...vbookProgress.value, stage: 'COMPLETED' };
+        break;
+      }
+      if (status.active && status.progress_msg != null) {
         consecutiveInactive = 0;
         updateVBookProgress(status);
-        // Between windows: a paused session has finished the current window but
-        // the source still has text/scenes pending. Auto-advance to the next
-        // window instead of sitting on "Обрабатываю следующие окна..." forever.
-        // /bootstrap-next-window BLOCKS until the window is processed (SSE keeps
-        // streaming progress during the call) and returns all_done:true when
-        // there is nothing left — one "Generate VBook" click then processes ALL
-        // remaining windows.
-        if (status.session_status === 'paused') {
-          try {
-            const next = await postJsonLong<{ all_done?: boolean }>(`/book/${encodeURIComponent(bId)}/bootstrap-next-window`);
-            if (next.all_done) {
-              vbookProgress.value = { ...vbookProgress.value, stage: 'COMPLETED' };
-              break;
-            }
-          } catch (e) {
-            console.warn('pollVBookProgress: bootstrap-next-window failed:', (e as Error).message);
-            consecutiveInactive++;
-          }
-        }
-      } else if (!isAgentActive) {
+      } else if (!status.active) {
         consecutiveInactive++;
         if (status.progress_msg != null) updateVBookProgress(status);
         if (consecutiveInactive >= maxInactive) {
@@ -819,9 +804,9 @@ async function pollVBookProgress(bId: string, token: number): Promise<void> {
   if (safetyCapTripped) {
     console.warn('pollVBookProgress: safety cap reached — probing agent state');
     try {
-      const status = await getJson<{ active: boolean; session_status?: string | null }>(`/book/${encodeURIComponent(bId)}/agent-status`);
-      // Paused-with-remaining = between windows: still alive, do NOT finalize.
-      if (!status.active && status.session_status !== 'paused') {
+      const status = await getJson<{ active: boolean }>(`/book/${encodeURIComponent(bId)}/agent-status`);
+      if (!status.active) {
+        vbookProgress.value = { ...vbookProgress.value, stage: 'COMPLETED' };
         setGenerationStatus('SUCCESS');
         if (!isRegenerating.value) stopTimer();
         await applyGenerationResults();

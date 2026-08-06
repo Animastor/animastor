@@ -285,6 +285,24 @@ async function bootstrapNextWindow(bookId, progress, publishProgress, redis) {
     // Book language — localizes only user-facing text (titles, names); AI-facing fields stay English.
     const language = resolveBookLanguage(draft);
 
+    // ── Clear stale cancellation state so a MANUAL continuation works ──
+    // This route is only ever triggered by the user explicitly pressing
+    // "Генерировать далее" (or "Генератор VBook" on a ready book) — which is
+    // intent to CONTINUE. A previous 'cancelled' session (Stop pressed earlier)
+    // must not silently block the new window: pipeline checkCancelled LEVEL 2
+    // kills a session when ANY session of the book has status='cancelled', and
+    // LEVEL 3 checks the Redis cancelled-workers key. Mirror the cleanup
+    // bootstrapWithAgent already does for the first window.
+    try {
+        const { query } = require('../../storage/postgres/database');
+        await query(`UPDATE agent_sessions SET status = 'failed' WHERE book_id = $1 AND status = 'cancelled'`, [bookId]);
+    } catch (_) { /* best-effort */ }
+    try {
+        if (redis && bookId) {
+            await redis.srem(`animastor:cancelled-workers:${bookId}`, 'vbook');
+        }
+    } catch (_) { /* best-effort */ }
+
     let windowData = null;
     try {
         const { query } = require('../../storage/postgres/database');
@@ -303,9 +321,8 @@ async function bootstrapNextWindow(bookId, progress, publishProgress, redis) {
                 return { session_id: null, cached: false, added_scenes: 0, all_done: true };
             }
 
-            if (prevStatus === 'cancelled') {
-                return { session_id: null, cached: false, added_scenes: 0, all_done: true };
-            }
+            // NB: prevStatus can never be 'cancelled' here — the cleanup at the
+            // top of this function flips cancelled -> failed before the lookup.
 
             if (prevStatus === 'paused' &&
                 (!windowData.remaining_text || windowData.remaining_text.length === 0) &&
