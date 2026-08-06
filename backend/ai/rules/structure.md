@@ -56,9 +56,16 @@ bare narrative paragraph must NOT be forced into a structure.
 
 - **title** — the work's title. Only for candidates in the head of the
   document. When the line is "Title. Author" on one line, split them.
+  The title may also be glued to the author's name WITHOUT a separator
+  ("За пределами алгоритмов С. А. Хабаров") — split at the full name.
   If no title exists, omit the field.
 - **author** — a person's name (initials allowed: "С.А. Хабаров", "J.R.R.
   Tolkien"). Only for head candidates. If no author exists, omit.
+  Answer the explicit question: **is there a person's full name here?**
+  A name whose surname regularly appears in the narrative text belongs to
+  a CHARACTER, not the author — the program verifies this, so do not guess.
+  A name INSIDE the title text ("Жизнь Хабарова") is part of the title,
+  not an author.
 - **has_prologue / has_epilogue** — true only if the corresponding element
   was actually found.
 - **parts** — part/section headers (e.g. "ЧАСТЬ ПЕРВАЯ") with their order.

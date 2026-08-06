@@ -160,7 +160,12 @@ function extractCandidates(sourceText) {
         if (numbered || romanNumeral) score += 0.2;
         if (lm.text.length <= 60) score += 0.15;
         if (words.length >= 1 && words.length <= 12) score += 0.1;
-        if (sentencePunct) score -= 0.4;
+        // Terminal/hard punctuation usually means prose, not a heading — BUT an
+        // ALL-CAPS line ("ПОРА! ПОРА!", "ШИЗОФРЕНИЯ, КАК И БЫЛО СКАЗАНО") is the
+        // classic "shouting" chapter heading of Russian editions, so the
+        // penalty is much smaller there — otherwise such headers glued to the
+        // "Глава N" line (no blank line) would never reach the strong set.
+        if (sentencePunct) score -= allCaps ? 0.15 : 0.4;
         if (prefixDash) score -= 0.35;
         if (lm.text.length > 100) score -= 0.2;
         if (lm.text.length < 2) score -= 0.3;
@@ -197,8 +202,12 @@ function extractCandidates(sourceText) {
     }
 
     // Strong boundaries: likely chapter/part boundaries (not head-zone, not dialogue).
+    // A date range like "1929 — 1940" at the end of the book is colophon data,
+    // never a chapter heading.
+    const DATE_RANGE_RE = /^\d{4}\s*[\u2014\u2013-]\s*\d{4}$/;
     const strong = candidates.filter(c =>
         !c.prefixDash &&
+        !DATE_RANGE_RE.test(c.text) &&
         (c.headingLikelihood >= 0.55 || (c.keyword && c.headingLikelihood >= 0.3))
     );
 
@@ -216,6 +225,65 @@ function extractCandidates(sourceText) {
 
 const INITIAL_TOKEN_RE = /^[A-ZА-ЯЁ](?:\.[A-ZА-ЯЁ]?)+$/;  // "С.", "С.А.", "S.A."
 const NAME_TOKEN_RE = /^[A-ZА-ЯЁ][a-zа-яё]{1,24}$/;       // "Хабаров", "Ivanov"
+
+// ── Author surname ↔ narrative frequency check ───────────────────
+// The agent answers "is there a full name?" for the very first line. The
+// PROGRAM then verifies that answer against the text: if the surname from
+// that name regularly appears in the narrative, it is a CHARACTER, not the
+// author ("Жизнь Хабарова" is a title whose surname sits inside the title
+// text — never an author line). A real author's surname virtually never
+// appears in the book's own prose. This is a supplementary signal, not an
+// absolute rule.
+const AUTHOR_SURNAME_MIN_HITS = 2;
+
+/**
+ * "С.А. Хабаров" / "С. А. Хабаров" / "Хабаров С.А." → "Хабаров".
+ * The surname is the last non-initial capitalized word. null when the name
+ * has no word-like token (pure initials) or the token is not a name.
+ */
+function extractSurname(authorText) {
+    const tokens = String(authorText || '').trim().replace(/[.!?…]+$/, '').split(/\s+/).filter(Boolean);
+    let surname = null;
+    for (const tok of tokens) {
+        const clean = tok.replace(/[,.;:]+$/g, '');
+        if (INITIAL_TOKEN_RE.test(clean)) continue;
+        if (NAME_TOKEN_RE.test(clean)) surname = clean;
+    }
+    return surname;
+}
+
+/**
+ * Count capitalized occurrences of the surname inside the narrative text,
+ * allowing Russian declension endings (Хабаров → Хабарова/Хабарову/Хабаровым).
+ * Case-sensitive on purpose: proper names are capitalized in prose, so common
+ * lowercase words do not match. JS \b is ASCII-only, hence explicit boundaries.
+ */
+function countSurnameInText(text, surname) {
+    if (!surname || !text) return 0;
+    // Root-normalize: drop a trailing vowel so that "Хабарова" (genitive in a
+    // title) matches narrative "Хабаров", and vice versa. "Булгаков" stays.
+    let root = String(surname).trim();
+    if (/[аяуюеоыиэ]$/i.test(root)) root = root.slice(0, -1);
+    if (root.length < 2) return 0;
+    const esc = root.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp('(^|[^A-Za-zА-Яа-яЁё])' + esc + '[a-zа-яё]{0,6}(?=$|[^A-Za-zА-Яа-яЁё])', 'g');
+    let count = 0;
+    while (re.exec(text)) count++;
+    return count;
+}
+
+/**
+ * True when the author candidate's surname regularly appears in the narrative
+ * (the text AFTER narrativeStartOffset, i.e. after the head/title lines).
+ * Offsets are exclusive of the head line itself, so the author name on the
+ * title line is never counted.
+ */
+function isAuthorSurnameACharacter(sourceText, authorText, narrativeStartOffset) {
+    const surname = extractSurname(authorText);
+    if (!surname) return false;
+    const narrative = String(sourceText || '').slice(narrativeStartOffset || 0);
+    return countSurnameInText(narrative, surname) >= AUTHOR_SURNAME_MIN_HITS;
+}
 
 function looksLikeAuthorName(text) {
     const t = String(text || '').trim().replace(/[.!?…]+$/, '');
@@ -235,12 +303,57 @@ function looksLikeAuthorName(text) {
     return initials + fullWords === tokens.length;
 }
 
-// Split a first line like "За пределами алгоритмов. С.А. Хабаров."
-// into { title, author }. Tries the LAST ". " / "— " / "– " / "- " separator
-// whose tail looks like a person name. Returns null when no author is found.
+// Index in `tokens` where a trailing person-name suffix starts, or -1.
+// A valid suffix is 2-4 trailing tokens, all initials/capitalized words, with
+// >= 1 initial AND >= 1 full word, and at least one title token before it.
+// The initial requirement is what keeps "Жизнь Хабарова" (a bare capitalized
+// word inside the title) from being misread as an author line.
+function trailingFullNameIndex(tokens) {
+    let end = tokens.length;
+    let initials = 0;
+    let fullWords = 0;
+    while (end > 0) {
+        const tok = String(tokens[end - 1]);
+        const clean = tok.replace(/[,.;:]+$/g, '');
+        // Initials are detected on the RAW token ("А." — the period is part of
+        // the initial); full words on the punctuation-stripped token.
+        if (INITIAL_TOKEN_RE.test(tok)) { initials++; end--; continue; }
+        if (NAME_TOKEN_RE.test(clean)) { fullWords++; end--; continue; }
+        break;
+    }
+    const runLen = tokens.length - end;
+    if (runLen < 2 || fullWords === 0 || initials === 0) return -1;
+    if (end === 0) return -1; // the whole line is just a name — no title to keep
+    return end;
+}
+
+// Split a first line like "За пределами алгоритмов. С.А. Хабаров." — or the
+// no-separator variant "За пределами алгоритмов С. А. Хабаров" — into
+// { title, author }. The name suffix must sit at the END of the line (a name
+// glued inside the title text, "Жизнь Хабарова", is not an author). Returns
+// null when no author is found.
 function splitTitleAuthor(line) {
     const text = String(line || '').trim();
     if (!text || text.length > 100) return null;
+
+    // (A) No-separator "Title ФИО" one-liner: "Title С. А. Хабаров".
+    // The title part must be WEIGHTY (>= 3 words): a short head like "Звали
+    // его" from a narrative first line "Звали его Д. И. Иванов" must not be
+    // split — it is a sentence, not a title+author line.
+    const tokens = text.split(/\s+/).filter(Boolean);
+    if (tokens.length >= 3) {
+        const nameIdx = trailingFullNameIndex(tokens);
+        if (nameIdx > 0) {
+            const headTokens = tokens.slice(0, nameIdx);
+            const head = headTokens.join(' ').replace(/[.!?…\s]+$/, '').trim();
+            const author = tokens.slice(nameIdx).join(' ').replace(/[.!?…]+$/, '').trim();
+            if (headTokens.length >= 3 && head.length >= 2 && looksLikeAuthorName(author)) {
+                return { title: head, author };
+            }
+        }
+    }
+
+    // (B) Separator-based: "Title. Author." / "Title — Author" / "Title - Author".
     const seps = [];
     const re = /(?:\.\s+|\u2014\s+|\u2013\s+|\-\s+)/g;
     let m;
@@ -286,7 +399,7 @@ function sanitizeChapterNumber(n) {
  * Returns a cleaned copy or null. Drops unanchorable elements, enforces
  * shape rules, and rewrites line_text anchors to real candidate ids.
  */
-function sanitizeStructure(aiResult, candidates) {
+function sanitizeStructure(aiResult, candidates, sourceText) {
     if (!aiResult || typeof aiResult !== 'object') return null;
     const byId = new Map(candidates.map(c => [c.id, c]));
     const sanitized = { ...aiResult };
@@ -320,7 +433,13 @@ function sanitizeStructure(aiResult, candidates) {
         const a = sanitizeAuthorName(sanitized.author.text);
         const line = anchoredLine(sanitized.author);
         if (!a || !line || !textConsistentWithLine(a, line.text)) delete sanitized.author;
-        else sanitized.author = { ...sanitized.author, text: a };
+        else if (sourceText && isAuthorSurnameACharacter(sourceText, a, line.endOffset)) {
+            // The agent said "there is a full name", but the program verified the
+            // surname regularly appears in the narrative — it is a character.
+            delete sanitized.author;
+        } else {
+            sanitized.author = { ...sanitized.author, text: a };
+        }
     }
     if (sanitized.title && sanitized.author &&
         sanitized.title.text.trim().toLowerCase() === sanitized.author.text.trim().toLowerCase()) {
@@ -373,6 +492,59 @@ function sanitizeStructure(aiResult, candidates) {
     }
 
     return sanitized;
+}
+
+// ── Chapter-template learning ────────────────────────────────────
+// If the first confident boundaries are keyword-headed chapters ("Глава N"),
+// the remaining chapters are expected to follow the SAME template. Standalone
+// strong lines WITHOUT a structural keyword are then decorative/poster text
+// inside a chapter (e.g. the theatre poster "ПРОФЕССОР ВОЛАНД" in Мастер и
+// Маргарита), not chapter boundaries. When the template does not fire, all
+// strong candidates stay — the behavior is unchanged.
+//
+// The poster drop is scoped on purpose so a real unkeyworded chapter (interlude,
+// "Вместо эпилога", unnumbered section in a mixed-style book) is never
+// swallowed. A line is a decorative poster when it is (a) glued close below a
+// keyword header, or (b) the head of a multi-line ALL-CAPS block — a theatre
+// poster is several short CAPS lines in a row ("ПРОФЕССОР ВОЛАНД" followed by
+// "Сеансы черной магии с полным ее разоблачением"), and in Мастер и Маргарита
+// it sits 28 lines below "Глава 10", so distance alone cannot catch it.
+const POSTER_DISTANCE_LINES = 4;
+function learnKeywordTemplate(boundaries) {
+    const anchors = boundaries.filter(b =>
+        b.keyword === 'chapter' && b.keywordRest && extractNumber(b.keywordRest.trim()) != null
+    ).slice(0, 3);
+    return anchors.length >= 2;
+}
+function applyKeywordTemplate(merged, sourceText) {
+    const isPoster = (b) => {
+        let prevKw = null;
+        for (let i = merged.indexOf(b) - 1; i >= 0; i--) {
+            if (merged[i].keyword !== null) { prevKw = merged[i]; break; }
+        }
+        if (!prevKw) return false;                 // no keyword anchor before → real boundary
+        // (a) glued close under a keyword header → decorative continuation
+        if (b.lineIndex - prevKw.lineIndex <= POSTER_DISTANCE_LINES) return true;
+        // (b) multi-line poster block: the very next paragraph is ONE short
+        //     line that is NOT a prose sentence (no terminal period) — the
+        //     poster continues ("ПРОФЕССОР ВОЛАНД" + "Сеансы черной магии...").
+        //     Real posters often mix ALL-CAPS and title-case lines. The
+        //     paragraph AFTER that must be long prose (>= 120 chars) — the
+        //     poster block is heading + short caption + blank + prose. A real
+        //     unkeyworded chapter whose first paragraph is a short period-less
+        //     line is indistinguishable here (documented trade-off; the LLM
+        //     merge path can still classify the line when the LLM sees it).
+        if (b.nextParagraphLines === 1 && b.nextParagraphLength <= 60 &&
+            !/[.!?…]$/.test(String(b.nextParagraphPreview).trim())) {
+            // The caption line must be followed (after a blank) by LONG prose:
+            // paras[0] = the short caption, paras[1] = the chapter prose.
+            const rest = String(sourceText || '').slice(b.endOffset).trim();
+            const paras = rest.split(/\n\s*\n/).map(p => p.trim()).filter(p => p.length > 0);
+            if (paras.length >= 2 && paras[1].length >= 120) return true;
+        }
+        return false;
+    };
+    return merged.filter(b => b.keyword !== null || !isPoster(b));
 }
 
 // ── Number extraction ────────────────────────────────────────────
@@ -428,6 +600,28 @@ function buildDeterministicMap(sourceText) {
     // Title: first non-empty line if short and clean, and the doc has real content.
     const first = head[0];
 
+    // ── Inverted title page: AUTHOR on the first line, TITLE on the second ──
+    // Classical Russian editions: "Михаил Афанасиевич Булгаков" then, a few
+    // blank lines later, "Мастер и Маргарита". The author line is a full name
+    // WITHOUT initials (name + patronymic + surname); the title line is not a
+    // name. Requires >= 3 name words so a two-word title like "Анна Каренина"
+    // is never misread as an author, and the surname-frequency check still
+    // applies: an author whose surname appears in the narrative is a character.
+    const second = head[1];
+    const firstIsFullName = first && !first.keyword && !first.prefixDash &&
+        !first.sentencePunctuation && first.length <= 45 &&
+        first.blankLinesAfter >= 1 &&
+        looksLikeAuthorName(first.text) &&
+        first.text.split(/\s+/).filter(Boolean).length >= 3;
+    const secondLooksLikeTitle = second && !second.keyword && !second.prefixDash &&
+        second.length <= 90 && second.lineIndex > first.lineIndex &&
+        !looksLikeAuthorName(second.text);
+    if (firstIsFullName && secondLooksLikeTitle &&
+        !isAuthorSurnameACharacter(sourceText, first.text, first.endOffset)) {
+        author = { text: first.text, source: 'detect', candidateId: first.id };
+        title = { text: second.text, source: 'detect', candidateId: second.id };
+    }
+
     // Same-line "Title. Author" pattern (e.g. "За пределами алгоритмов. С.А. Хабаров.").
     let sameLine = null;
     if (first && !first.keyword && !first.prefixDash) sameLine = splitTitleAuthor(first.text);
@@ -439,11 +633,17 @@ function buildDeterministicMap(sourceText) {
     const isConfidentTitle = first && !first.sentencePunctuation &&
         (first.wordCount >= 3 || firstParagraphLen >= 60 || nonEmptyCount >= 8);
 
-    if (first && nonEmptyCount >= 2 && first.length <= 90 && !first.keyword && !first.prefixDash) {
-        if (sameLine) {
+    if (!author && first && nonEmptyCount >= 2 && first.length <= 90 && !first.keyword && !first.prefixDash) {
+        if (sameLine && !isAuthorSurnameACharacter(sourceText, sameLine.author, first.endOffset)) {
             title = { text: sameLine.title, source: 'detect', candidateId: first.id };
             author = { text: sameLine.author, source: 'detect', candidateId: first.id };
-        } else if (isConfidentTitle) {
+        } else if (sameLine && isConfidentTitle) {
+            // The split name regularly appears in the narrative → it is a
+            // CHARACTER, not an author ("За пределами алгоритмов С.А. Хабаров"
+            // where Хабаров is a character in the story). Keep the clean split
+            // title, drop only the author.
+            title = { text: sameLine.title, source: 'detect', candidateId: first.id };
+        } else if (!sameLine && isConfidentTitle) {
             title = { text: first.text, source: 'detect', candidateId: first.id };
         }
     }
@@ -451,21 +651,26 @@ function buildDeterministicMap(sourceText) {
     // Author on a separate line: short metadata-like name (initials allowed).
     // Separated from the content below by a blank line (a name glued directly
     // to the story's first paragraph is likely narrative, not metadata).
-    const second = head[1];
+    // The surname-frequency check applies here too: a surname that regularly
+    // appears in the narrative is a character, not the author.
     if (title && !author && second && second.lineIndex > first.lineIndex &&
         second.length <= 45 && !second.keyword &&
         !second.sentencePunctuation &&
         second.blankLinesAfter >= 1 &&
-        looksLikeAuthorName(second.text)) {
+        looksLikeAuthorName(second.text) &&
+        !isAuthorSurnameACharacter(sourceText, second.text, second.endOffset)) {
         author = { text: second.text, source: 'detect', candidateId: second.id };
     }
 
     // End of the head zone: skip title/author lines (and blanks) from content.
+    // The head zone ends after the LAST head line — on an inverted title page
+    // the title sits BELOW the author line.
     let headEndLine = -1;
-    if (author) headEndLine = author.candidateId
-        ? (candidates.find(c => c.id === author.candidateId) || {}).lineIndex
-        : -1;
-    else if (title) headEndLine = (candidates.find(c => c.id === title.candidateId) || {}).lineIndex;
+    for (const candId of [title && title.candidateId, author && author.candidateId]) {
+        if (!candId) continue;
+        const c = candidates.find(x => x.id === candId);
+        if (c && c.lineIndex > headEndLine) headEndLine = c.lineIndex;
+    }
 
     const headEndOffset = headEndLine >= 0
         ? lineMeta[headEndLine].endOffset
@@ -475,19 +680,35 @@ function buildDeterministicMap(sourceText) {
     const isHeadLine = (c) => headEndLine >= 0 && c.lineIndex <= headEndLine;
     let boundaries = strong.filter(c => !isHeadLine(c));
 
-    // Merge multi-line headers: two adjacent candidate lines → one header.
-    // The second line becomes the title of the first.
+    // Merge multi-line headers: "Глава 1" + (blank lines) + "ЗАГОЛОВОК" is ONE
+    // header — the ALL-CAPS title line becomes the title of the numbered line.
+    // Classical Russian editions put a blank line between the number and the
+    // title, so the continuation may sit up to 2 blank lines below. ALL-CAPS
+    // lines are titles even with punctuation inside ("ШИЗОФРЕНИЯ, КАК И БЫЛО
+    // СКАЗАНО", "ПОРА! ПОРА!"); only non-CAPS lines need to be punctuation-free.
+    const keywordTemplate = learnKeywordTemplate(boundaries);
     const merged = [];
     for (const b of boundaries) {
         const prev = merged[merged.length - 1];
-        if (prev && b.lineIndex === prev.lineIndex + 1 && b.blankLinesBefore === 0) {
+        const isContinuation = prev && !prev.titleLine &&
+            b.lineIndex - prev.lineIndex <= 3 &&
+            b.blankLinesBefore <= 2 &&
+            b.length >= 2 && b.length <= 60 &&
+            (b.allCaps || !b.sentencePunctuation) &&
+            (b.allCaps || b.headingLikelihood >= 0.4) &&
+            b.followedByLongParagraph &&
+            prev.headingLikelihood >= 0.55;
+        if (isContinuation) {
             prev.titleLine = b;
             prev.adjacent = true;
         } else {
             merged.push({ ...b, titleLine: null, adjacent: false });
         }
     }
-    boundaries = merged;
+    // Template: keyword-headed chapters → standalone non-keyword strong lines
+    // (posters, decorative ALL-CAPS) are NOT boundaries. Merged titleLines are
+    // already absorbed into their keyword headers and survive.
+    boundaries = keywordTemplate ? applyKeywordTemplate(merged, sourceText) : merged;
 
     // ── Classify each boundary into a segment ───────────────────
     const segments = [];
@@ -523,8 +744,10 @@ function buildDeterministicMap(sourceText) {
             titleText = b.keywordRest || null;
         }
 
-        // Adjacent second line is the title when the rest is empty.
-        if (!titleText && b.titleLine) titleText = b.titleLine.text;
+        // Adjacent second line is the title when the rest is empty — or when the
+        // header itself carried no keyword-derived title (a bare ALL-CAPS line
+        // like "ПРОФЕССОР ВОЛАНД" whose title is the line below it).
+        if (b.titleLine && (titleText === b.text || !titleText)) titleText = b.titleLine.text;
         if (titleText && titleText.length > 120) titleText = titleText.slice(0, 120).trim();
 
         const number = (segType === 'chapter') ? (nextNum++) : null;
@@ -588,15 +811,19 @@ function buildDeterministicMap(sourceText) {
     }
 
     // Trim: segments must be non-empty and never overlap.
+    // Part headers ("ЧАСТЬ ПЕРВАЯ") are DECORATIVE: they split the reading order
+    // but are not functional chapters. No segment is created for them — the
+    // header line falls between two chapters and is dropped from content.
     const clean = [];
     for (const s of segments) {
         if (s.endOffset <= s.startOffset) continue;
+        if (s.type === 'part') continue;
         clean.push(s);
     }
 
     const hasPrologue = clean.some(s => s.type === 'prologue');
     const hasEpilogue = clean.some(s => s.type === 'epilogue');
-    const parts = clean.filter(s => s.type === 'part').map((s, i) => ({
+    const parts = segmentInfos.filter(s => s.type === 'part').map((s, i) => ({
         name: s.title || s.headerLine || `Часть ${i + 1}`,
         order: i + 1,
     }));
@@ -635,7 +862,9 @@ function mergeAiDecisions(sourceText, aiResult) {
     const byId = new Map(candidates.map(c => [c.id, c]));
 
     // ── Hallucination guard runs BEFORE anything is applied ──
-    const cleanedAi = sanitizeStructure(aiResult, candidates) || {};
+    // sourceText enables the surname-frequency check: the agent's "author" is
+    // kept only when the surname does NOT regularly appear in the narrative.
+    const cleanedAi = sanitizeStructure(aiResult, candidates, sourceText) || {};
 
     const findCandidate = (el) => {
         if (el.candidate_id && byId.has(el.candidate_id)) return byId.get(el.candidate_id);
@@ -806,7 +1035,10 @@ function mergeAiDecisions(sourceText, aiResult) {
         rebuilt[i].endOffset = endOffset;
     }
 
-    const cleanSegs = rebuilt.filter(s => s.endOffset > s.startOffset);
+    // Part headers are decorative (no functional chapter): their segments are
+    // dropped, but the part info is kept when the LLM reported it.
+    const partSegs = rebuilt.filter(s => s.type === 'part' && s.endOffset > s.startOffset);
+    const cleanSegs = rebuilt.filter(s => s.endOffset > s.startOffset && s.type !== 'part');
 
     // Number chapters in order if the LLM didn't provide numbers.
     let autoNum = 1;
@@ -822,7 +1054,7 @@ function mergeAiDecisions(sourceText, aiResult) {
             .filter(p => p && typeof p.name === 'string' && p.name.trim()
                 && srcLower.includes(p.name.trim().toLowerCase())) // must exist in the text
             .map((p, i) => ({ name: p.name.trim(), order: typeof p.order === 'number' ? p.order : i + 1 }))
-        : cleanSegs.filter(s => s.type === 'part').map((s, i) => ({
+        : partSegs.map((s, i) => ({
             name: s.title || s.headerLine || `Часть ${i + 1}`, order: i + 1,
         }));
 
@@ -869,7 +1101,10 @@ module.exports = {
     mapToStructureChapters,
     analyzeStructure,
     sanitizeStructure,
+    isAuthorSurnameACharacter,
     // internals exposed for tests
     _extractNumber: extractNumber,
     _romanToInt: romanToInt,
+    _extractSurname: extractSurname,
+    _countSurnameInText: countSurnameInText,
 };

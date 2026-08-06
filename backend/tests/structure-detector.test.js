@@ -317,6 +317,246 @@ describe('structure-detector (v2)', () => {
         });
     });
 
+    describe('surname-frequency check (character vs author)', () => {
+        it('splits a no-separator "Title ФИО" first line', () => {
+            const t = 'За пределами алгоритмов С. А. Хабаров\n\nПролог. Мир на переломе эпох\n\n' +
+                'Первая половина XXI века стала временем стремительного научного прогресса. Искусственный интеллект научился решать задачи, которые ещё недавно считались исключительно человеческими. Биотехнологии приблизились к лечению неизлечимых болезней, робототехника изменила промышленность.';
+            const map = sd.buildDeterministicMap(t);
+            expect(map.title.text).to.equal('За пределами алгоритмов');
+            expect(map.author.text).to.equal('С. А. Хабаров');
+        });
+
+        it('splits a no-separator line with glued initials', () => {
+            const t = 'За пределами алгоритмов С.А. Хабаров\n\nПролог. Мир на переломе эпох\n\n' +
+                'Первая половина XXI века стала временем стремительного научного прогресса. Искусственный интеллект научился решать задачи, которые ещё недавно считались исключительно человеческими.';
+            const map = sd.buildDeterministicMap(t);
+            expect(map.title.text).to.equal('За пределами алгоритмов');
+            expect(map.author.text).to.equal('С.А. Хабаров');
+        });
+
+        it('rejects an author whose surname appears in the narrative (character)', () => {
+            // "Жизнь Хабарова" — the surname sits INSIDE the title text AND
+            // appears in the narrative: it is a character, not an author. The
+            // narrative paragraph is long enough to make the line a confident
+            // title.
+            const t = 'Жизнь Хабарова\n\nХабаров открыл глаза. Хабаров не помнил, как оказался здесь. Доктор Хабаров, известный нейрохирург, присел на край кровати и долго молчал, не зная, с чего начать разговор.';
+            const map = sd.buildDeterministicMap(t);
+            expect(map.title.text).to.equal('Жизнь Хабарова');
+            expect(map.author).to.equal(null);
+        });
+
+        it('keeps an author whose surname is absent from the narrative', () => {
+            const t = 'За пределами алгоритмов\n\nС.А. Хабаров\n\nПролог. Мир на переломе эпох\n\n' +
+                'Первая половина XXI века стала временем стремительного научного прогресса. Искусственный интеллект научился решать задачи, которые ещё недавно считались исключительно человеческими. Никто не знал, куда заведёт этот путь.';
+            const map = sd.buildDeterministicMap(t);
+            expect(map.author.text).to.equal('С.А. Хабаров');
+        });
+
+        it('handles Russian declension when counting the surname', () => {
+            expect(sd._countSurnameInText('Хабаров улыбнулся. Рядом стоял сын Хабарова.', 'Хабаров')).to.equal(2);
+            expect(sd._countSurnameInText('книга о Хабарове и его открытиях', 'Хабаров')).to.equal(1);
+            expect(sd._countSurnameInText('Обычный текст без фамилий.', 'Хабаров')).to.equal(0);
+        });
+
+        it('mergeAiDecisions drops an agent author whose surname appears in the narrative', () => {
+            const src = 'За пределами алгоритмов. С.А. Хабаров.\n\nПролог\n\nХабаров пришёл в себя. Хабаров не помнил вчерашнего вечера. Инспектор Хабаров достал блокнот.';
+            const ids = candidateIds(src);
+            const ai = {
+                title: { text: 'За пределами алгоритмов', candidate_id: ids[src.split('\n')[0]], confidence: 0.95 },
+                author: { text: 'С.А. Хабаров', candidate_id: ids[src.split('\n')[0]], confidence: 0.8 },
+                elements: [],
+            };
+            const map = sd.mergeAiDecisions(src, ai);
+            // The author is dropped, and the CLEAN split title survives (not the
+            // whole line with the character name glued to it).
+            expect(map.author).to.equal(null);
+            expect(map.title.text).to.equal('За пределами алгоритмов');
+        });
+
+        it('no-initials "Title Имя Фамилия" is NOT split deterministically (name may be inside the title)', () => {
+            // "За пределами алгоритмов Иван Петров" — two name words without
+            // initials. The deterministic path deliberately requires an initial
+            // (otherwise "Жизнь Хабарова" would split into Жизнь + Хабарова).
+            // The LLM path handles name+surname; here the whole line is a title.
+            const t = 'За пределами алгоритмов Иван Петров\n\nПролог. Мир на переломе эпох\n\nПервая половина XXI века стала временем стремительного научного прогресса. Искусственный интеллект научился решать задачи, которые ещё недавно считались исключительно человеческими.';
+            const map = sd.buildDeterministicMap(t);
+            expect(map.title.text).to.equal('За пределами алгоритмов Иван Петров');
+            expect(map.author).to.equal(null);
+        });
+
+        it('keeps an agent author whose surname never appears in the narrative', () => {
+            const ids = candidateIds(BOOK);
+            const titleLine = BOOK.split('\n')[0];
+            const map = sd.mergeAiDecisions(BOOK, {
+                title: { text: 'За пределами алгоритмов', candidate_id: ids[titleLine], confidence: 0.95 },
+                author: { text: 'С.А. Хабаров', candidate_id: ids[titleLine], confidence: 0.8 },
+                elements: [],
+            });
+            expect(map.author.text).to.equal('С.А. Хабаров');
+        });
+    });
+
+    describe('chapter-template learning (Мастер и Маргарита style)', () => {
+        // Русское издание: автор первой строкой, название ниже, "Глава N" +
+        // ALL-CAPS заголовок отдельной строкой, афиша внутри главы, диапазон
+        // годов в конце книги.
+        const MIM = [
+            'Михаил Афанасиевич Булгаков',
+            '',
+            'Мастер и Маргарита',
+            '',
+            'ЧАСТЬ ПЕРВАЯ',
+            '',
+            'Глава 1',
+            'НИКОГДА НЕ РАЗГОВАРИВАЙТЕ С НЕИЗВЕСТНЫМИ',
+            '',
+            'Однажды весною, в час небывало жаркого заката, в Москве, на Патриарших прудах, появились два гражданина. Первый из них, одетый в летнюю серенькую пару, был маленького роста, упитан, лыс, свою приличную шляпу пирожком нёс в руке, а на хорошо выбритом лице его помещались сверхъестественных размеров очки в чёрной роговой оправе.',
+            'Второй был плечистый, рыжеватый, вихрастый молодой человек в заломленной на затылок клетчатой кепке — из-под неё выбивался белый, очень высокий чуб.',
+            '— Позвольте, а вы кто такой? — сердито спросил Иван и, попятившись, спрятал молоток за спину.',
+            '',
+            'Глава 10',
+            'ВЕСТИ ИЗ ЯЛТЫ',
+            '',
+            'ПРОФЕССОР ВОЛАНД',
+            'В тот же день, к вечеру, в Москве распространилась весть о том, что сеанс чёрной магии окончился скандалом, а столица потрясена небывалым происшествием.',
+            '',
+            'Глава 30',
+            'ПОРА! ПОРА!',
+            '',
+            '— Ты меня отпускаешь уже? — прошептал мастер. — Нет, я подожду тебя, и мы уйдём вместе.',
+            '',
+            'ЭПИЛОГ',
+            '',
+            'В течение многих лет, во всех концах страны, произносились разговоры о нечистой силе, появившейся в Москве. Люди рассказывали, что никакой нечистой силы не было вовсе.',
+            '',
+            '1929 — 1940',
+        ].join('\n');
+
+        let map;
+        before(() => { map = sd.buildDeterministicMap(MIM); });
+
+        it('inverted title page: author on first line, title below', () => {
+            expect(map.title.text).to.equal('Мастер и Маргарита');
+            expect(map.author.text).to.equal('Михаил Афанасиевич Булгаков');
+        });
+
+        it('detects the epilogue', () => {
+            expect(map.hasEpilogue).to.equal(true);
+        });
+
+        it('parts are decorative — no part segments', () => {
+            expect(map.segments.filter(s => s.type === 'part').length).to.equal(0);
+        });
+
+        it('multi-line headers merge: keyword line + ALL-CAPS title line, even with comma/!', () => {
+            const byHeader = Object.fromEntries(map.segments.map(s => [s.headerLine, s]));
+            expect(byHeader['Глава 1'].title).to.equal('НИКОГДА НЕ РАЗГОВАРИВАЙТЕ С НЕИЗВЕСТНЫМИ');
+            expect(byHeader['Глава 10'].title).to.equal('ВЕСТИ ИЗ ЯЛТЫ');
+            expect(byHeader['Глава 30'].title).to.equal('ПОРА! ПОРА!');
+        });
+
+        it('template fires: poster text without a keyword is not a chapter', () => {
+            // "ПРОФЕССОР ВОЛАНД" is an interior poster inside Глава 10 — the
+            // chapter template ("Глава N" + ALL-CAPS title) proves it is not a
+            // boundary, so it must NOT appear as a headerLine.
+            const headers = map.segments.map(s => s.headerLine);
+            expect(headers).to.not.include('ПРОФЕССОР ВОЛАНД');
+            expect(map.segments.filter(s => s.type === 'chapter').length).to.equal(3);
+        });
+
+        it('date range at the end of the book is not a chapter', () => {
+            const headers = map.segments.map(s => s.headerLine);
+            expect(headers).to.not.include('1929 — 1940');
+        });
+
+        it('chapter numbers continue in reading order', () => {
+            const chapters = map.segments.filter(s => s.type === 'chapter');
+            expect(chapters.map(s => s.number)).to.deep.equal([1, 2, 3]);
+        });
+
+        it('far-away multi-line poster (real MiM aфиша) is still dropped', () => {
+            // Реальная афиша Мастера и Маргариты: постер "ПРОФЕССОР ВОЛАНД"
+            // стоит НЕ рядом с "Глава N" (в реальной книге — 28 строк ниже),
+            // а за ним идёт вторая короткая строка афиши (не абзац, без точки).
+            // Признак (a) не сработает, но (b) — многострочный постер — должен.
+            const poster = [
+                'Глава 1',
+                'ПЕРВАЯ ГЛАВА',
+                '',
+                'Утро началось с дождя. Город ещё спал, когда раздался первый звонок. На столе остывал чай, а за окном медленно светлело небо.',
+                'К полудню тучи рассеялись, и солнце залило улицы. Люди выходили из домов, щурились и улыбались друг другу.',
+                'Вечером вновь пошёл дождь, но это уже никого не волновало — день удался. И только в театре Варьете готовились к вечернему представлению.',
+                'Варенуха, отойдя от афиши, наброшенной им на макет, полюбовался на неё и приказал кассирше продавать билеты, не глядя на звонки.',
+                'Кассирша, выслушав приказание, захлопотала и понеслась в кассу, а Варенуха, потирая руки, заглянул в будку, где уже собиралась публика.',
+                '',
+                'Сегодня и ежедневно в театре Варьете сверх программы:',
+                '',
+                'ПРОФЕССОР ВОЛАНД',
+                '',
+                'Сеансы черной магии с полным ее разоблачением',
+                '',
+                'Варенуха, отойдя от афиши, наброшенной им на макет, полюбовался на неё. Всё было в порядке.',
+                'Он приказал кассирше не задерживать публику и сам вышел на улицу, где уже толпился народ.',
+                '',
+                'Глава 2',
+                'ВТОРАЯ ГЛАВА',
+                '',
+                'Наутро город выглядел иначе. Вчерашний дождь смыл пыль, и воздух стал прозрачным, как стекло.',
+                'Они встретились на вокзале ровно в девять. Поезд уже подавали, и проводница нетерпеливо поглядывала на часы.',
+            ].join('\n');
+            const m = sd.buildDeterministicMap(poster);
+            const headers = m.segments.map(s => s.headerLine);
+            expect(headers).to.not.include('ПРОФЕССОР ВОЛАНД');
+            expect(headers).to.not.include('Сеансы черной магии с полным ее разоблачением');
+            expect(m.segments.filter(s => s.type === 'chapter').length).to.equal(2);
+        });
+
+        it('mixed-style book: a far-away unkeyworded section stays a chapter (distance-scoped drop)', () => {
+            // Первые главы — keyword-style ("Глава 1" + ALL-CAPS). Позже в книге
+            // идёт НЕнумерованная секция далеко от заголовка предыдущей главы
+            // — постер-фильтр не должен её проглотить (она не "приклеена" к
+            // keyword-заголовку).
+            const mixed = [
+                'Глава 1',
+                'ПЕРВЫЙ ДЕНЬ',
+                '',
+                'Утро началось с дождя. Город ещё спал, когда раздался первый звонок. На столе остывал чай, а за окном медленно светлело небо.',
+                'К полудню тучи рассеялись, и солнце залило улицы. Люди выходили из домов, щурились и улыбались друг другу.',
+                'Вечером вновь пошёл дождь, но это уже никого не волновало — день удался.',
+                '',
+                'Глава 2',
+                'ВТОРОЙ ДЕНЬ',
+                '',
+                'Наутро город выглядел иначе. Вчерашний дождь смыл пыль, и воздух стал прозрачным, как стекло.',
+                'Они встретились на вокзале ровно в девять. Поезд уже подавали, и проводница нетерпеливо поглядывала на часы.',
+                'Разговор не клеился, но молчание было тёплым и совсем не тягостным.',
+                '',
+                'ВМЕСТО ЭПИЛОГА',
+                '',
+                'Прошло десять лет. Те, кто помнил те два дня, рассказывали о них по-разному, но сходились в главном: всё началось с дождя.',
+                'Город изменился, люди изменились, и только старый вокзал стоял на прежнем месте.',
+                'История не закончилась — она просто стала чьей-то памятью.',
+            ].join('\n');
+            const m = sd.buildDeterministicMap(mixed);
+            const headers = m.segments.map(s => s.headerLine);
+            // Постер-фильтр (template) сработал для "Глава 1/2", но дальняя
+            // ненумерованная секция сохранилась как отдельная глава.
+            expect(headers).to.include('ВМЕСТО ЭПИЛОГА');
+            expect(m.segments.filter(s => s.type === 'chapter').length).to.equal(3);
+        });
+
+        it('without the template (no keyword chapters) standalone ALL-CAPS lines still split', () => {
+            // Книга без слова "Глава": ALL-CAPS заголовки сами по себе — границы.
+            const plain = 'Начало истории. Первые строки этого романа о том, как всё начиналось и что произошло дальше.\n\n' +
+                'ПЕРВАЯ ЧАСТЬ\n\nТекст первой части этого романа, достаточно длинный, чтобы считаться уверенным абзацем повествования о событиях того времени.\n\n' +
+                'ВТОРАЯ ЧАСТЬ\n\nТекст второй части, тоже длинный и самостоятельный, рассказывает о том, что случилось потом с героями этой истории.';
+            const m = sd.buildDeterministicMap(plain);
+            const chapters = m.segments.filter(s => s.type === 'chapter');
+            expect(chapters.length).to.be.at.least(2);
+            expect(chapters[0].title).to.equal('ПЕРВАЯ ЧАСТЬ');
+        });
+    });
+
     describe('buildSegmentIntro (typography scenes)', () => {
         it('prologue → «Пролог» + title, narrator-voiced', () => {
             const intro = chapterUtils.buildSegmentIntro(
