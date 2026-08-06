@@ -221,7 +221,11 @@ button { font: inherit; color: inherit; }
   background: radial-gradient(circle, var(--primary-container) 0%, transparent 72%);
   border-radius: var(--radius-sm); /* keep the gradient's corners soft */
 }
-.tabbar__pulse { animation: tab-pulse 1.6s infinite ease-in-out; }
+/* RUNNING — gold pulse like MainActivity.updateNavIconStatus: tint =
+   cinema_accent (--accent) + ObjectAnimator alpha 1→0.35→1, 1600ms infinite.
+   The explicit color matters when the Generate tab is NOT active — otherwise
+   the icon would pulse in the unselected gray instead of gold. */
+.tabbar__pulse { animation: tab-pulse 1.6s infinite ease-in-out; color: var(--accent); }
 .tabbar__pulse--error { animation: tab-pulse 1.2s infinite ease-in-out; color: var(--error); }
 /* SUCCESS — finite pulse like MainActivity: 8 × 1.5s = 12s pulse green, then
    solid green for ~10s. generateStore auto-resets the nav status to IDLE after
