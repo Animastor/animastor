@@ -41,6 +41,12 @@ class NavigateFragment : Fragment(R.layout.fragment_navigate) {
 
     private var bookData: BookData? = null
     private val expandedScenes = mutableSetOf<String>()
+    // Persistent user overrides for chapter expansion (chapterId → explicitly
+    // expanded/collapsed). Absent entries follow the default rule below. Without
+    // this map the manual toggle is lost: rebuildStructure() recomputed `expanded`
+    // from the hard rule on every click (06 §14 no-op bug) — chapters in a book
+    // with more than 3 chapters could never be expanded by tap.
+    private val chapterExpandedOverrides = mutableMapOf<String, Boolean>()
     private var lastPositionKey: String? = null
     private var isLoading = false
     private val adapter = BookStructureAdapter(
@@ -68,7 +74,18 @@ class NavigateFragment : Fragment(R.layout.fragment_navigate) {
                     rebuildStructure()
                 }
                 is StructureItem.ChapterItem -> {
-                    item.expanded = !item.expanded
+                    if (item.chapterId != null) {
+                        val willExpand = !item.expanded
+                        chapterExpandedOverrides[item.chapterId] = willExpand
+                        // Expand/collapse the chapter's scenes together with the
+                        // chapter so unit buttons are immediately visible (web parity).
+                        for (sc in item.scenes) {
+                            if (sc.scene_id != null) {
+                                val key = "${item.chapterId}|${sc.scene_id}"
+                                if (willExpand) expandedScenes.add(key) else expandedScenes.remove(key)
+                            }
+                        }
+                    }
                     rebuildStructure()
                 }
             }
@@ -309,12 +326,20 @@ class NavigateFragment : Fragment(R.layout.fragment_navigate) {
             } else {
                 "${getString(R.string.navigate_chapter)} ${chIdx + 1}"
             }
+            val chKey = ch.chapter_id
+            val defaultExpanded = chKey == pos.chapterId || chapters.size <= 3
+            val expanded = if (chKey != null && chapterExpandedOverrides.containsKey(chKey)) {
+                chapterExpandedOverrides[chKey] == true
+            } else {
+                defaultExpanded
+            }
             val chItem = StructureItem.ChapterItem(
                 id = ch.chapter_id ?: "ch$chIdx",
                 label = chLabel,
                 type = ch.type,
-                expanded = ch.chapter_id == pos.chapterId || chapters.size <= 3,
-                scenes = ch.scenes ?: emptyList()
+                expanded = expanded,
+                scenes = ch.scenes ?: emptyList(),
+                chapterId = ch.chapter_id
             )
             items.add(chItem)
 
@@ -425,7 +450,8 @@ sealed interface StructureItem {
         val label: String,
         val type: String?,
         var expanded: Boolean,
-        val scenes: List<Scene>
+        val scenes: List<Scene>,
+        val chapterId: String? = null
     ) : StructureItem
 
     data class SceneItem(

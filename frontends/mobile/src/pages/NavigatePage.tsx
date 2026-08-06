@@ -84,7 +84,11 @@ export function NavigatePage(props: { path?: string }) {
     const p = positionSignal.value;
     return p.chapterId && p.sceneId ? new Set([`${p.chapterId}|${p.sceneId}`]) : new Set();
   });
-  const [collapsedChapters, setCollapsedChapters] = useState<Set<string>>(new Set());
+  // Chapter expansion: user override map (chapterId → explicitly expanded/collapsed).
+  // Entries absent from the map follow the default rule below. A collapsed-only set
+  // could never expand a default-collapsed chapter in a book with >3 chapters — the
+  // same no-op toggle bug Android has (06 §14). The map fixes both directions.
+  const [chapterExpanded, setChapterExpanded] = useState<Map<string, boolean>>(new Map());
   const [items, setItems] = useState<NavItem[]>([]);
   const [posLabel, setPosLabel] = useState(t('navigate_no_position'));
   const listRef = useRef<HTMLDivElement | null>(null);
@@ -140,16 +144,18 @@ export function NavigatePage(props: { path?: string }) {
   }, [positionSignal.value]);
 
   // ── Build the structure items (rebuildStructure) ──
-  const buildStructure = useCallback((data: BookData, pos: ActivePosition, scenes: Set<string>, collapsed: Set<string>): NavItem[] => {
+  const buildStructure = useCallback((data: BookData, pos: ActivePosition, scenes: Set<string>, chapterExp: Map<string, boolean>): NavItem[] => {
     const chapters = data.chapters ?? [];
     const out: NavItem[] = [];
     chapters.forEach((ch, chIdx) => {
       const chapterId = ch.chapter_id ?? null;
       const label = chapterLabel(ch, chIdx);
-      // Android rule: current chapter or ≤3 chapters are expanded; web keeps a
-      // persistent user toggle on top (collapsed set) — 06 §14.
-      const expanded = !(chapterId != null && collapsed.has(chapterId))
-        && (chapterId === pos.chapterId || chapters.length <= 3);
+      // Default rule: current chapter or ≤3 chapters are expanded (Android parity).
+      // The user override map wins over the default in both directions — 06 §14.
+      const defaultExpanded = chapterId === pos.chapterId || chapters.length <= 3;
+      const expanded = chapterId != null
+        ? (chapterExp.get(chapterId) ?? defaultExpanded)
+        : defaultExpanded;
       out.push({ kind: 'chapter', id: chapterId ?? `ch${chIdx}`, label, expanded, chapterId });
       if (!expanded) return;
       (ch.scenes ?? []).forEach((sc, scIdx) => {
@@ -187,9 +193,9 @@ export function NavigatePage(props: { path?: string }) {
 
   useEffect(() => {
     if (!bookData) { setItems([]); return; }
-    setItems(buildStructure(bookData, positionSignal.value, expandedScenes, collapsedChapters));
+    setItems(buildStructure(bookData, positionSignal.value, expandedScenes, chapterExpanded));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bookData, positionSignal.value, expandedScenes, collapsedChapters, buildStructure]);
+  }, [bookData, positionSignal.value, expandedScenes, chapterExpanded, buildStructure]);
 
   // ── Position bar label (updatePositionBar) ──
   useEffect(() => {
@@ -241,11 +247,28 @@ export function NavigatePage(props: { path?: string }) {
     if (item.kind === 'chapter') {
       const id = item.chapterId;
       if (id == null) return;
-      setCollapsedChapters((prev) => {
-        const next = new Set(prev);
-        if (next.has(id)) next.delete(id); else next.add(id);
+      const currentlyExpanded = chapterExpanded.get(id)
+        ?? (id === positionSignal.value.chapterId || (bookData?.chapters?.length ?? 0) <= 3);
+      const willExpand = !currentlyExpanded;
+      setChapterExpanded((prev) => {
+        const next = new Map(prev);
+        next.set(id, willExpand);
         return next;
       });
+      // Expand/collapse the chapter's scenes together with the chapter so the
+      // unit buttons are immediately visible (Android parity).
+      const chapter = bookData?.chapters?.find((ch) => ch.chapter_id === id);
+      if (chapter) {
+        setExpandedScenes((prev) => {
+          const next = new Set(prev);
+          for (const sc of chapter.scenes ?? []) {
+            if (sc.scene_id == null) continue;
+            const key = `${id}|${sc.scene_id}`;
+            if (willExpand) next.add(key); else next.delete(key);
+          }
+          return next;
+        });
+      }
     } else if (item.kind === 'scene') {
       const key = item.chapterId != null && item.sceneId != null ? `${item.chapterId}|${item.sceneId}` : null;
       if (key == null) return;
