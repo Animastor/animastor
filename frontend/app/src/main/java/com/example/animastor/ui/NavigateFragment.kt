@@ -401,6 +401,12 @@ class NavigateFragment : Fragment(R.layout.fragment_navigate) {
         super.onHiddenChanged(hidden)
         if (!hidden) {
             lastPositionKey = null
+            // Chapters collapse back to the default rule (current chapter or ≤3
+            // chapters expanded) on re-entry — the fragment instance survives tab
+            // switches, so the override map must be reset explicitly. Scenes are
+            // already reset via lastPositionKey=null below; web parity: the web
+            // page remounts on entry and starts with an empty override map.
+            chapterExpandedOverrides.clear()
             loadBook()
         }
     }
