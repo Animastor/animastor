@@ -152,7 +152,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
             }.getOrNull()
             if (limit != null && limit > 0 && imagePromptMaxChars == null) {
                 imagePromptMaxChars = limit
-                binding?.let { rebuildContent(it.propertyTabs.selectedTabPosition ?: 0) }
+                binding?.let { rebuildContent(it.propertyTabs.selectedTabPosition.coerceAtLeast(0)) }
             }
         }
     }
