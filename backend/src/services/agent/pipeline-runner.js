@@ -22,17 +22,23 @@ function _resolveChunkSize(options) {
     return Math.max(1, Math.min(5, (options && options.chunkSize) || MAX_SCENES_PER_CHUNK));
 }
 
-function getWindowText(sourceText, existingChars, existingLocs, windowIndex, startOffset, chunkSize) {
+function getWindowText(sourceText, existingChars, existingLocs, windowIndex, startOffset, chunkSize, options = {}) {
     const maxWindowChars = (chunkSize != null)
         ? computeWindowChars(chunkSize)
         : MAX_WINDOW_CHARS;
-    const chapters = lazyBook.splitIntoChapters(sourceText);
+
+    // Chapter map: AI-refined segments when available (persisted in
+    // window_data.structure.segments), otherwise the deterministic map.
+    const chapterMap = Array.isArray(options.chapterMap) && options.chapterMap.length > 0
+        ? options.chapterMap
+        : lazyBook.splitIntoChapters(sourceText);
+    const segments = chapterMap;
 
     if (startOffset === undefined || startOffset === null) {
         if (windowIndex === 0) {
             const firstChapter = lazyBook.firstMeaningfulChapter
-                ? lazyBook.firstMeaningfulChapter(chapters, sourceText)
-                : (chapters[0] || null);
+                ? lazyBook.firstMeaningfulChapter(segments, sourceText)
+                : (segments[0] || null);
 
             if (firstChapter) {
                 const chStart = firstChapter.startOffset || 0;
@@ -55,13 +61,13 @@ function getWindowText(sourceText, existingChars, existingLocs, windowIndex, sta
     }
 
     if (startOffset >= sourceText.length) {
-        const lastIdx = chapters.length > 0 ? chapters.length - 1 : 0;
+        const lastIdx = segments.length > 0 ? segments.length - 1 : 0;
         return {
             text: '',
             chapterIndex: lastIdx,
             remainingText: '',
             fullChapter: '',
-            chapterTitle: chapters[lastIdx]?.title || null,
+            chapterTitle: segments[lastIdx]?.title || null,
             currentOffset: startOffset,
             windowStartOffset: startOffset,
         };
@@ -75,7 +81,20 @@ function getWindowText(sourceText, existingChars, existingLocs, windowIndex, sta
         );
     }
 
-    let endPos = Math.min(startOffset + maxWindowChars, sourceText.length);
+    // Locate the chapter/segment containing the window start. A window NEVER
+    // crosses a chapter boundary — the end is clamped to the segment end.
+    let chIdx = 0;
+    for (let ci = 0; ci < segments.length; ci++) {
+        const chStart = segments[ci].startOffset || 0;
+        const chEnd = segments[ci].endOffset || sourceText.length;
+        if (startOffset >= chStart && startOffset < chEnd) {
+            chIdx = ci;
+            break;
+        }
+    }
+    const segEnd = segments[chIdx]?.endOffset || sourceText.length;
+
+    let endPos = Math.min(startOffset + maxWindowChars, segEnd);
     let windowText = sourceText.substring(startOffset, endPos);
 
     const skipLen = sourceCoverage.findNarrativeStartOffset(windowText);
@@ -106,25 +125,19 @@ function getWindowText(sourceText, existingChars, existingLocs, windowIndex, sta
     const newOffset = endPos;
     const remaining = sourceText.substring(newOffset).trim();
 
-    let chIdx = 0;
-    for (let ci = 0; ci < chapters.length; ci++) {
-        const chStart = chapters[ci].startOffset || 0;
-        const chEnd = chapters[ci].endOffset || sourceText.length;
-        if (actualStart >= chStart && actualStart < chEnd) {
-            chIdx = ci;
-            break;
-        }
-    }
-
-    const chTitle = chapters[chIdx]?.title || null;
+    const chTitle = segments[chIdx]?.title || null;
+    const chType = segments[chIdx]?.type || 'chapter';
+    const chNumber = segments[chIdx]?.number ?? null;
 
     const aiText = lazyBook.injectChapterMarkers(windowText.trim());
 
-    console.log(`[WINDOW] getWindowText: startOffset=${startOffset}, skipLen=${skipLen}, actualStart=${actualStart}, endPos=${endPos}, newOffset=${newOffset}, chIdx=${chIdx}, chTitle="${chTitle}", textLen=${windowText.trim().length}, sourceLen=${sourceText.length}`);
+    console.log(`[WINDOW] getWindowText: startOffset=${startOffset}, skipLen=${skipLen}, actualStart=${actualStart}, endPos=${endPos}, newOffset=${newOffset}, chIdx=${chIdx}, chType=${chType}, chTitle="${chTitle}", textLen=${windowText.trim().length}, sourceLen=${sourceText.length}`);
 
     return {
         text: aiText,
         chapterIndex: chIdx,
+        chapterType: chType,
+        chapterNumber: chNumber,
         remainingText: remaining,
         fullChapter: windowText,
         chapterTitle: chTitle,

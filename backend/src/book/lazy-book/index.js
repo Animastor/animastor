@@ -78,6 +78,7 @@ module.exports = {
     createChapterIntroScene: chapterUtilsModule.createChapterIntroScene,
     createCoverChapter: chapterUtilsModule.createCoverChapter,
     saveCoverChapter: chapterUtilsModule.saveCoverChapter,
+    buildSegmentIntro: chapterUtilsModule.buildSegmentIntro,
     extractSceneTitle: chapterUtilsModule.extractSceneTitle,
     isGenericSceneTitle: chapterUtilsModule.isGenericSceneTitle,
 

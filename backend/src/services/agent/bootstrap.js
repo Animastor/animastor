@@ -68,11 +68,17 @@ async function bootstrapWithAgent(bookId, progress, publishProgress, redis) {
         const chunkSize = await _readChunkSize(redis, bookId);
         console.log(`[AGENT] bootstrapWithAgent: using chunk_size=${chunkSize} for book ${bookId}`);
 
-        const windowInfo = pipelineRunner.getWindowText(draft.sourceText, [], [], 0, undefined, chunkSize);
-        console.log(`[FIRST-WINDOW] currentOffset=${windowInfo.currentOffset}, chapterIndex=${windowInfo.chapterIndex}, chapterTitle="${windowInfo.chapterTitle}", textLen=${windowInfo.text.length}`);
+        // ── v2: structure is analyzed BEFORE window slicing. The program
+        // finds candidate lines, the LLM classifies them, and the resulting
+        // chapter map drives window boundaries (see TXT_IMPORT_STRUCTURE_V2.md).
+        const structureDetector = require('../structure-detector');
+        const { candidates } = structureDetector.extractCandidates(draft.sourceText);
 
         _progress({ stage: 'analyzing_structure', message: PROGRESS_STAGES.analyzing_structure });
-        const structure = await pipelineSteps.stepAnalyzeStructure(sessionId, windowInfo.text, 0, _progress, language);
+        const structure = await pipelineSteps.stepAnalyzeStructure(sessionId, draft.sourceText, 0, _progress, language, { candidates });
+
+        const windowInfo = pipelineRunner.getWindowText(draft.sourceText, [], [], 0, undefined, chunkSize, { chapterMap: structure.segments });
+        console.log(`[FIRST-WINDOW] currentOffset=${windowInfo.currentOffset}, chapterIndex=${windowInfo.chapterIndex}, chapterType=${windowInfo.chapterType}, chapterTitle="${windowInfo.chapterTitle}", textLen=${windowInfo.text.length}`);
 
         if (structure.author || structure.title) {
             _progress({ stage: 'saving', message: `⟳ Обновляю метаданные: ${structure.title ? `«${structure.title}»` : ''} ${structure.author ? `(${structure.author})` : ''}` });
@@ -82,10 +88,10 @@ async function bootstrapWithAgent(bookId, progress, publishProgress, redis) {
                 const bookMeta = JSON.parse(fs.readFileSync(bp, 'utf8'));
                 if (structure.author) bookMeta.author = structure.author;
                 if (structure.title) bookMeta.title = structure.title;
-                if (structure.parts && structure.parts.length > 0) {
+                if ((structure.parts && structure.parts.length > 0) || (structure.segments && structure.segments.length > 0)) {
                     bookMeta.structure.has_prologue = !!structure.has_prologue;
                     bookMeta.structure.has_epilogue = !!structure.has_epilogue;
-                    bookMeta.structure.parts = structure.parts;
+                    if (structure.parts) bookMeta.structure.parts = structure.parts;
                 }
                 fs.writeFileSync(bp, JSON.stringify(bookMeta, null, 2));
                 console.log(`[AGENT] Book metadata updated: author=${structure.author}, title=${structure.title}`);
@@ -404,6 +410,7 @@ async function bootstrapNextWindow(bookId, progress, publishProgress, redis) {
             has_prologue: windowData.structure.has_prologue,
             has_epilogue: windowData.structure.has_epilogue,
             parts: windowData.structure.parts,
+            segments: windowData.structure.segments,
             country: windowData.structure.country || null,
             epoch: windowData.structure.epoch || null,
         } : null;
@@ -484,7 +491,21 @@ async function bootstrapNextWindow(bookId, progress, publishProgress, redis) {
     const chunkSize = await _readChunkSize(redis, bookId);
     console.log(`[AGENT] bootstrapNextWindow: using chunk_size=${chunkSize} for book ${bookId}`);
 
-    const windowInfo = pipelineRunner.getWindowText(draft.sourceText, existingChars, existingLocs, 1, currentOffset, chunkSize);
+    // Restore the AI-refined chapter map from the previous window so windows
+    // keep following the same boundaries (v2 structure architecture).
+    const structure = (windowData?.structure && windowData.structure.chapters) ? {
+        chapters: windowData.structure.chapters,
+        author: windowData.structure.author,
+        title: windowData.structure.title,
+        has_prologue: windowData.structure.has_prologue,
+        has_epilogue: windowData.structure.has_epilogue,
+        parts: windowData.structure.parts,
+        segments: windowData.structure.segments,
+        country: windowData.structure.country || null,
+        epoch: windowData.structure.epoch || null,
+    } : null;
+
+    const windowInfo = pipelineRunner.getWindowText(draft.sourceText, existingChars, existingLocs, 1, currentOffset, chunkSize, { chapterMap: structure?.segments });
 
     // Guard: windowStartOffset должен быть >= currentOffset (минимум)
     // Если он значительно меньше — агент пошёл назад, abort.
@@ -551,17 +572,6 @@ async function bootstrapNextWindow(bookId, progress, publishProgress, redis) {
 
         const nextWindowIndex = (windowData?.window_index || 0) + 1;
         const nextChapterIndex = windowInfo.chapterIndex;
-
-        const structure = (windowData?.structure && windowData.structure.chapters) ? {
-            chapters: windowData.structure.chapters,
-            author: windowData.structure.author,
-            title: windowData.structure.title,
-            has_prologue: windowData.structure.has_prologue,
-            has_epilogue: windowData.structure.has_epilogue,
-            parts: windowData.structure.parts,
-            country: windowData.structure.country || null,
-            epoch: windowData.structure.epoch || null,
-        } : null;
 
         const result = await pipelineRunner.runPipeline(sessionId, windowInfo.text, existingChars, existingLocs, nextWindowIndex, _progress, (windowData?.created_scenes || 0), {
             rawWindowText: windowInfo.fullChapter,

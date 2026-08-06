@@ -6,8 +6,34 @@ const fs = require('fs');
 const path = require('path');
 const { BookState, SceneStatus, UnitType, DEFAULT_WINDOW_SIZE } = require('./constants');
 const { getBookDir, getChapterDir, getBookMetaPath, chapterId, sceneId, unitId } = require('./paths');
-const { splitIntoChapters, splitIntoScenes, splitIntoUnits } = require('./parser');
+const { splitIntoChapters, splitIntoScenes, splitIntoUnits, detectLanguage } = require('./parser');
+const chapterUtils = require('./chapter-utils');
 const draft = require('./draft');
+
+// Typography intro scene for the lazy-parse path — mirrors the AI path so
+// every chapter (incl. prologue) starts with a narrator-voiced title card.
+function buildLazyChapterIntro(chInfo, language) {
+    const introData = chapterUtils.buildSegmentIntro(
+        { type: chInfo.type, title: chInfo.title, number: chInfo.number, label: chInfo.label },
+        language
+    );
+    if (!introData || !introData.text) return null;
+    return {
+        scene_id: sceneId(),
+        scene_title: introData.scene_title,
+        type: 'chapter_intro',
+        style: introData.style || 'soviet_book_page',
+        participants: [],
+        audio: { voice: 'narrator', full_text: introData.text },
+        units: [{
+            id: unitId(),
+            type: 'typography',
+            text: introData.text,
+            participants: [],
+            image: { shot: 'wide', prompt: `${introData.scene_title} title page typography, book style` },
+        }],
+    };
+}
 
 function lazyParseNextWindow(bookId, windowSize) {
     const d = draft.loadDraftBook(bookId);
@@ -54,13 +80,15 @@ function lazyParseNextWindow(bookId, windowSize) {
 
         const chObj = {
             chapter: chId,
-            chapter_title: chInfo.title,
-            type: /пролог|prologue/i.test(chInfo.title) ? 'prologue'
-                : /эпилог|epilogue/i.test(chInfo.title) ? 'epilogue' : 'chapter',
+            chapter_title: chInfo.title || null,
+            type: chInfo.type || 'chapter',
             chapter_index: ci,
             status: SceneStatus.PARSED,
             scenes: [],
         };
+
+        const introScene = buildLazyChapterIntro(chInfo, d.book?.language || detectLanguage(d.sourceText));
+        if (introScene) chObj.scenes.push(introScene);
 
         for (let si = 0; si < sceneTexts.length; si++) {
             const sceneText = sceneTexts[si];
@@ -144,12 +172,15 @@ function lazyParseChapter(bookId, chapterIndex) {
 
     const chObj = {
         chapter: chId,
-        chapter_title: chInfo.title,
-        type: /пролог|prologue/i.test(chInfo.title) ? 'prologue' : 'chapter',
+        chapter_title: chInfo.title || null,
+        type: chInfo.type || 'chapter',
         chapter_index: chapterIndex,
         status: SceneStatus.PARSED,
         scenes: [],
     };
+
+    const introScene = buildLazyChapterIntro(chInfo, d.book?.language || detectLanguage(d.sourceText));
+    if (introScene) chObj.scenes.push(introScene);
 
     for (const sceneText of sceneTexts) {
         const units = splitIntoUnits(sceneText);

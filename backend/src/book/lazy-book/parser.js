@@ -65,92 +65,72 @@ function injectChapterMarkers(text) {
     return result.join('\n');
 }
 
-function splitIntoChapters(text) {
-    const lines = text.split('\n');
+// ======================================================
+// Chapter splitting — v2 (structure-detector based)
+// ======================================================
+// splitIntoChapters now delegates to the deterministic structure map
+// (docs/04-planning/TXT_IMPORT_STRUCTURE_V2.md): the program finds
+// candidates, builds a canonical chapter map, and the pipeline consumes
+// the same map for window slicing and chapter materialization.
+//
+// The legacy array contract is preserved:
+//   { title, startLine, endLine, startOffset, endOffset, length }
+// plus new fields: { type, label, number }.
 
-    const chapterRe = /^(?:Глава|Chapter)\s*\d+\s*[.:]?\s*$/i;
-    const chapterWithTitleRe = /^(?:Глава|Chapter)\s*[.:]?\s*(.+)$/i;
-    const prologueRe = /^(?:Пролог|Prologue|Эпилог|Epilogue|Введение|Introduction|Предисловие|Preface|Послесловие|Afterword)$/i;
-    // ALL-CAPS chapter heading (for books without explicit "Глава" markers)
-    const allCapsHeadingRe = /^\[ГЛАВА:\s+(.+)\]$/;
+const structureDetector = require('../../services/structure-detector');
 
-    const chapters = [];
-    let curStart = 0;
-    let curTitle = null;
-
+function offsetToLine(lines, offset) {
+    let acc = 0;
     for (let i = 0; i < lines.length; i++) {
-        const line = lines[i].trim();
-        if (!line) continue;
+        const lineEnd = acc + lines[i].length;
+        if (offset < lineEnd) return i;
+        acc = lineEnd + 1;
+    }
+    return Math.max(0, lines.length - 1);
+}
 
-        let match;
-        if ((match = prologueRe.exec(line))) {
-            if (curTitle !== null) {
-                chapters.push({ title: curTitle, startLine: curStart, endLine: i - 1 });
-            }
-            curStart = i;
-            curTitle = match[0];
-        } else if ((match = chapterRe.exec(line))) {
-            // Multi-line header: "Глава 1" followed by title on the next line
-            if (curTitle !== null) {
-                chapters.push({ title: curTitle, startLine: curStart, endLine: i - 1 });
-            }
-            curStart = i;
-            // Look ahead for the title on the next non-empty line
-            let titleLine = '';
-            for (let j = i + 1; j < lines.length; j++) {
-                const nextLine = lines[j].trim();
-                if (!nextLine) continue;
-                // If next line is another header, stop
-                if (chapterRe.test(nextLine) || chapterWithTitleRe.test(nextLine) || prologueRe.test(nextLine) || allCapsHeadingRe.test(nextLine)) break;
-                titleLine = nextLine;
-                break;
-            }
-            curTitle = titleLine || line;
-        } else if ((match = chapterWithTitleRe.exec(line))) {
-            // Single-line header: "Глава 1: Никогда не разговаривайте с неизвестными"
-            if (curTitle !== null) {
-                chapters.push({ title: curTitle, startLine: curStart, endLine: i - 1 });
-            }
-            curStart = i;
-            curTitle = match[1] ? match[1].trim() : line;
-        } else if ((match = allCapsHeadingRe.exec(line))) {
-            // Detected injected [ГЛАВА: TITLE] marker — treat as chapter boundary
-            if (curTitle !== null) {
-                chapters.push({ title: curTitle, startLine: curStart, endLine: i - 1 });
-            }
-            curStart = i + 1; // content starts after marker line
-            curTitle = match[1].trim();
-        }
+function splitIntoChapters(text) {
+    const map = structureDetector.buildDeterministicMap(text);
+    const lines = text.split('\n');
+    const chapters = [];
+
+    for (const seg of map.segments) {
+        const startOffset = seg.startOffset || 0;
+        const endOffset = Math.max(startOffset, seg.endOffset || text.length);
+        const startLine = offsetToLine(lines, startOffset);
+        const endLine = offsetToLine(lines, Math.max(startOffset, endOffset - 1));
+
+        // 'body'/'poem' segments become plain chapters WITHOUT a structural label.
+        const isPlain = seg.type === 'body' || seg.type === 'poem';
+        const type = isPlain ? 'chapter' : seg.type;
+        const title = isPlain ? null : (seg.title || seg.label || null);
+
+        chapters.push({
+            title,
+            type,
+            label: isPlain ? null : (seg.label || null),
+            number: seg.number ?? null,
+            startLine,
+            endLine,
+            startOffset,
+            endOffset,
+            length: endOffset - startOffset,
+        });
     }
 
-    if (curTitle !== null) {
-        chapters.push({ title: curTitle, startLine: curStart, endLine: lines.length - 1 });
-    }
-
+    // Safety net: never return an empty chapter list.
     if (chapters.length === 0) {
-        const parts = text.split(/\n\s*\n\s*\n+/);
-        if (parts.length >= 2) {
-            let offset = 0;
-            for (let pi = 0; pi < Math.min(parts.length, 10); pi++) {
-                const pLines = parts[pi].split('\n');
-                chapters.push({
-                    title: `Chapter ${pi + 1}`,
-                    startLine: offset,
-                    endLine: offset + pLines.length - 1,
-                });
-                offset += pLines.length + 2;
-            }
-        } else {
-            chapters.push({ title: 'Chapter 1', startLine: 0, endLine: lines.length - 1 });
-        }
-    }
-
-    for (const ch of chapters) {
-        const startOff = lines.slice(0, ch.startLine).join('\n').length;
-        const endOff = lines.slice(0, ch.endLine + 1).join('\n').length;
-        ch.startOffset = startOff;
-        ch.endOffset = endOff;
-        ch.length = endOff - startOff;
+        chapters.push({
+            title: null,
+            type: 'chapter',
+            label: null,
+            number: null,
+            startLine: 0,
+            endLine: Math.max(0, lines.length - 1),
+            startOffset: 0,
+            endOffset: text.length,
+            length: text.length,
+        });
     }
 
     return chapters;

@@ -1,4 +1,4 @@
-const CHAPTER_HEADER_RE = /^(?:глава|chapter|часть|part|пролог|prologue|эпилог|epilogue)/i;
+const CHAPTER_HEADER_RE = /^(?:глава|chapter|часть|part|пролог|prologue|эпилог|epilogue|введение|introduction|предисловие|preface|послесловие|afterword|приложение|appendix)/i;
 
 function looksLikeChapterTitle(line) {
     const text = (line || '').trim();

@@ -42,7 +42,8 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
     if (!d) throw new Error(`Book ${bookId} not found`);
     if (!d.sourceText) throw new Error(`Book ${bookId} has no source text`);
 
-    const { sourceText, book: bookMeta } = d;
+    let bookMeta = d.book;
+    const sourceText = d.sourceText;
     const language = bookMeta.language || detectLanguage(sourceText);
     if (!bookMeta.language) bookMeta.language = language;
 
@@ -60,6 +61,16 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
                 chapters: structure.chapters,
             },
         });
+        // updateBookMetadata's guards skip already-set title/author — but the
+        // draft title is the FILENAME ("test.txt"), which must be overridden
+        // by the real detected title (same behavior as bootstrap.js).
+        const freshMeta = JSON.parse(fs.readFileSync(getBookMetaPath(bookDir), 'utf8'));
+        if (structure.title) freshMeta.title = structure.title;
+        if (structure.author) freshMeta.author = structure.author;
+        fs.writeFileSync(getBookMetaPath(bookDir), JSON.stringify(freshMeta, null, 2));
+        // Re-read: the final chapters_order write below must not clobber the
+        // metadata update above with the stale in-memory copy.
+        bookMeta = JSON.parse(fs.readFileSync(getBookMetaPath(bookDir), 'utf8'));
     }
 
     let existingCharacters = [];
@@ -290,21 +301,28 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
         });
 
     if (isFirstWindow && !hasCoverChapter) {
-        const coverTitle = structure?.title || bookMeta.title || 'Imported Book';
-        const coverAuthor = structure?.author || bookMeta.author || null;
-        const coverChapter = chapterUtils.createCoverChapter(coverTitle, coverAuthor, language);
-        chapterUtils.saveCoverChapter(bookId, coverChapter);
-        console.log(`[LAZY-BOOK] Cover chapter saved for ${bookId}`);
+        // Cover ONLY when a REAL title was detected by the structure analysis
+        // (v2: "find what exists"). Never the filename-derived bookMeta.title —
+        // a book without a title simply has no cover chapter.
+        const coverTitle = structure?.title || null;
+        const coverAuthor = structure?.author || null;
+        if (coverTitle) {
+            const coverChapter = chapterUtils.createCoverChapter(coverTitle, coverAuthor, language);
+            chapterUtils.saveCoverChapter(bookId, coverChapter);
+            console.log(`[LAZY-BOOK] Cover chapter saved for ${bookId}`);
 
-        const bookMetaPath = getBookMetaPath(bookDir);
-        if (fs.existsSync(bookMetaPath)) {
-            try {
-                const bm = JSON.parse(fs.readFileSync(bookMetaPath, 'utf8'));
-                if (bm.structure?.chapters_order) {
-                    bm.structure.chapters_order.unshift(`${coverChapter.chapter_id}.json`);
-                    fs.writeFileSync(bookMetaPath, JSON.stringify(bm, null, 2));
-                }
-            } catch (_) {}
+            const bookMetaPath = getBookMetaPath(bookDir);
+            if (fs.existsSync(bookMetaPath)) {
+                try {
+                    const bm = JSON.parse(fs.readFileSync(bookMetaPath, 'utf8'));
+                    if (bm.structure?.chapters_order) {
+                        bm.structure.chapters_order.unshift(`${coverChapter.chapter_id}.json`);
+                        fs.writeFileSync(bookMetaPath, JSON.stringify(bm, null, 2));
+                    }
+                } catch (_) {}
+            }
+        } else {
+            console.log(`[LAZY-BOOK] No cover chapter — no title detected for ${bookId}`);
         }
     }
 
@@ -320,66 +338,37 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
         chapterObj.scenes.splice(oldIntroIdx, 1);
     }
 
-    // ── Build clean chapter title (no prefix) ──
-    let cleanChapterTitle = null;
-    if (structure && structure.chapters && structure.chapters.length > 0) {
-        const chapterInfo = windowConfig.chapterIndex < structure.chapters.length
-            ? structure.chapters[windowConfig.chapterIndex]
-            : null;
-        if (chapterInfo) {
-            const chTitleRaw = chapterInfo.title || '';
-            if (chTitleRaw.length > 0) {
-                cleanChapterTitle = chTitleRaw;
-            }
+    // ── Segment info from the v2 chapter map ──
+    // structure.chapters is aligned by index with the segments and carries
+    // { type, number, title, label, header_line }. It drives the chapter
+    // type, the title, and the typography intro scene.
+    const segInfo = (structure && structure.chapters && windowConfig.chapterIndex < structure.chapters.length)
+        ? structure.chapters[windowConfig.chapterIndex]
+        : null;
+
+    const segType = (segInfo?.type && segInfo.type !== 'body') ? segInfo.type : 'chapter';
+    chapterObj.type = segType;
+
+    // Chapter title: prologue/epilogue → label («Пролог») always wins,
+    // chapter → clean title («Земля»), plain body → null (no forced structure).
+    if (segInfo?.label && segType !== 'chapter') {
+        chapterObj.chapter_title = segInfo.label;
+    } else if (chapterObj && !chapterObj.chapter_title) {
+        if (segInfo?.title) {
+            chapterObj.chapter_title = segInfo.title;
+        } else if (chapterTitle) {
+            chapterObj.chapter_title = chapterTitle;
         }
     }
-    if (!cleanChapterTitle) {
-        cleanChapterTitle = chapterTitle || null;
-    }
-    if (chapterObj && !chapterObj.chapter_title) {
-        chapterObj.chapter_title = cleanChapterTitle;
-    }
 
-    // ── Create chapter_intro metadata ──
+    // ── Typography intro metadata from the segment ──
+    // buildSegmentIntro returns null for body/poem — unstructured text gets
+    // NO "Глава 1" title card (find what exists, don't force a structure).
     if (!chapterObj.intro) {
-        let introData = null;
-
-        function buildIntroFromTitle(rawTitle, chNum, lang) {
-            const clean = (rawTitle || '').replace(/^(?:Глава|Chapter)\s*\d+\s*[.:]?\s*/i, '').trim();
-            if (clean) {
-                return {
-                    text: lang === 'ru' ? `Глава ${chNum}\n${clean}` : `Chapter ${chNum}\n${clean}`,
-                    scene_title: lang === 'ru' ? `Глава ${chNum}` : `Chapter ${chNum}`,
-                    style: 'soviet_book_page',
-                };
-            }
-            return null;
-        }
-
-        if (structure && structure.chapters && structure.chapters.length > 0) {
-            const chapterInfo = windowConfig.chapterIndex < structure.chapters.length
-                ? structure.chapters[windowConfig.chapterIndex]
-                : null;
-            if (chapterInfo) {
-                const chNum = chapterInfo.number || (windowConfig.chapterIndex + 1);
-                const chTitle = chapterInfo.title || '';
-                if (chTitle) {
-                    introData = buildIntroFromTitle(chTitle, chNum, language);
-                }
-            }
-        }
-
-        if (!introData) {
-            const chNum = (chapterIndex || 0) + 1;
-            const fallbackTitle = chapterTitle || (language === 'ru' ? `Глава ${chNum}` : `Chapter ${chNum}`);
-            introData = buildIntroFromTitle(fallbackTitle, chNum, language)
-                || {
-                    text: language === 'ru' ? `Глава ${chNum}` : `Chapter ${chNum}`,
-                    scene_title: language === 'ru' ? `Глава ${chNum}` : `Chapter ${chNum}`,
-                    style: 'soviet_book_page',
-                };
-        }
-
+        const introData = chapterUtils.buildSegmentIntro(
+            segInfo || (chapterTitle ? { type: 'chapter', title: chapterTitle } : null),
+            language
+        );
         if (introData) {
             chapterObj.intro = introData;
         }

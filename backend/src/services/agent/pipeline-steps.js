@@ -125,42 +125,99 @@ function normalizeSceneEnvironment(scene) {
     return { ...scene, location: { ...loc, environment: clean } };
 }
 
-async function stepAnalyzeStructure(sessionId, sourceText, stepIndex, progress, language) {
+async function stepAnalyzeStructure(sessionId, sourceText, stepIndex, progress, language, options = {}) {
     const _progress = progress || (() => {});
     _progress({ stage: 'analyzing_structure', message: PROGRESS_STAGES.analyzing_structure });
     await updateSession(sessionId, { progress_msg: PROGRESS_STAGES.analyzing_structure });
 
     const step = await createStep(sessionId, 'analyze_structure', stepIndex || 0);
 
-    const lines = sourceText.split('\n');
-    const sampleLines = lines.slice(0, 80).join('\n');
+    // ── Candidates: the program finds suspicious lines, the LLM classifies ──
+    const structureDetector = require('../structure-detector');
+    const { candidates } = options.candidates
+        ? { candidates: options.candidates }
+        : structureDetector.extractCandidates(sourceText);
+
+    const headBlock = candidates
+        .filter(c => c.inHeadBlock)
+        .sort((a, b) => a.lineIndex - b.lineIndex)
+        .slice(0, 15)
+        .map(c => `${c.lineIndex + 1}: ${c.text}`)
+        .join('\n');
+
+    const candidatePayload = candidates
+        .filter(c => c.keyword || c.headingLikelihood >= 0.3)
+        .slice(0, 60)
+        .map(c => ({
+            id: c.id,
+            line: c.text,
+            next_paragraph: c.nextParagraphPreview || null,
+        }));
+
+    const userPrompt = [
+        'Analyze the structure of this text. For each candidate line decide:',
+        '- What are these short lines? Book title? Author? (for lines at the very top)',
+        '- Prologue + its title? Chapter + its title? Part? Epilogue?',
+        '- Or is it just an ordinary heading / narrative line (reject)?',
+        'Find what ACTUALLY exists — do NOT invent a structure for a poem,',
+        'a fragment, or a few sentences.',
+        '',
+        '## Head of the document',
+        '```',
+        headBlock || '(no head lines)',
+        '```',
+        '',
+        '## Candidate lines (short standalone lines with the paragraph below)',
+        '```json',
+        JSON.stringify(candidatePayload, null, 1),
+        '```',
+    ].join('\n');
 
     const messages = [
         { role: 'system', content: SYSTEM_PROMPTS.structure.replace('%LANGUAGE%', buildLangInstruction(language)) },
-        { role: 'user', content: `Analyze the structure of this literary text. Extract author, title, parts, and chapters.\n\n\`\`\`\n${sampleLines}\n\`\`\`` },
+        { role: 'user', content: userPrompt },
     ];
+
+    // Deterministic fallback map — used on AI failure AND as the backbone.
+    const fallbackMap = structureDetector.buildDeterministicMap(sourceText);
+    const fallbackStructure = {
+        author: fallbackMap.author?.text || null,
+        title: fallbackMap.title?.text || null,
+        has_prologue: fallbackMap.hasPrologue,
+        has_epilogue: fallbackMap.hasEpilogue,
+        parts: fallbackMap.parts || [],
+        chapters: structureDetector.mapToStructureChapters(fallbackMap),
+        segments: fallbackMap.segments || [],
+        country: null,
+        epoch: null,
+    };
 
     try {
         const result = await aiCaller.callAI(messages, { maxTokens: 4096 });
+        // Merge LLM decisions into the deterministic map, then project to the
+        // structure contract. sanitizeStructure inside mergeAiDecisions drops
+        // unanchorable/hallucinated answers (confidence, anchor, shape checks).
+        const map = structureDetector.analyzeStructure(sourceText, result);
         const structure = {
-            author: result.author || null,
-            title: result.title || null,
-            has_prologue: !!result.has_prologue,
-            has_epilogue: !!result.has_epilogue,
-            parts: Array.isArray(result.parts) ? result.parts : [],
-            chapters: Array.isArray(result.chapters) ? result.chapters : [],
+            author: map.author?.text || null,
+            title: map.title?.text || null,
+            has_prologue: map.hasPrologue,
+            has_epilogue: map.hasEpilogue,
+            parts: map.parts || [],
+            chapters: structureDetector.mapToStructureChapters(map),
+            segments: map.segments || [],
             country: result.country || null,
             epoch: result.epoch || null,
         };
 
         await aiCaller.logConversation(sessionId, step.step_id, messages, JSON.stringify(result));
         await completeStep(step.step_id, structure);
-        console.log(`[AGENT] Step 0 (structure): author=${structure.author ? '✓' : '✗'}, title=${structure.title ? '✓' : '✗'}, ${structure.chapters.length} chapters, ${structure.parts.length} parts`);
+        console.log(`[AGENT] Step 0 (structure): title=${structure.title ? `«${structure.title}»` : '✗'}, author=${structure.author ? `«${structure.author}»` : '✗'}, ${structure.segments.length} segments (${structure.segments.map(s => s.type).join(',')})`);
         return structure;
     } catch (err) {
         await failStep(step.step_id, err.message);
-        console.error(`[AGENT] Step 0 (structure) FAILED: ${err.message}`);
-        return { author: null, title: null, country: null, epoch: null, has_prologue: false, has_epilogue: false, parts: [], chapters: [] };
+        console.error(`[AGENT] Step 0 (structure) FAILED: ${err.message} — using deterministic structure map`);
+        return fallbackStructure;
     }
 }
 
