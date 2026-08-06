@@ -531,6 +531,7 @@ class GenerateViewModel(
         val maxInactive = 2
         val maxPollTimeMs = 5 * 60 * 1000L
         val startTime = System.currentTimeMillis()
+        var safetyCapTripped = false
 
         while (consecutiveInactive < maxInactive) {
             if (_importCompleteReceived) {
@@ -543,6 +544,7 @@ class GenerateViewModel(
                 break
             }
             if (System.currentTimeMillis() - startTime > maxPollTimeMs) {
+                safetyCapTripped = true
                 Log.w(TAG, "[VBookPoll] safety timeout (${maxPollTimeMs}ms)")
                 break
             }
@@ -550,10 +552,16 @@ class GenerateViewModel(
             try {
                 val status = _repository.getAgentStatus(bId)
 
-                if (status.active && status.progress_msg != null) {
+                // 'paused' = between windows: the agent is still working, so it
+                // must NOT count as inactive — otherwise the green 100% row
+                // finalizes prematurely with the last window's counter (e.g.
+                // "1/1") while more windows are still pending.
+                val isAgentActive = status.active || status.session_status == "paused"
+
+                if (isAgentActive && status.progress_msg != null) {
                     consecutiveInactive = 0
                     updateVBookProgress(status)
-                } else if (!status.active) {
+                } else if (!isAgentActive) {
                     consecutiveInactive++
                     if (status.progress_msg != null) {
                         updateVBookProgress(status)
@@ -574,6 +582,27 @@ class GenerateViewModel(
                 consecutiveInactive++
                 Log.w(TAG, "[VBookPoll] failed: ${e.message} (x$consecutiveInactive)")
                 delay(3000)
+            }
+        }
+
+        // If the safety cap tripped, probe the real agent state before deciding:
+        // a still-working agent (running, or paused between windows) must NOT be
+        // finalised — SUCCESS + stopTimer would freeze the timer mid-generation.
+        // The 1.5s panel poll (checkVBookAgentStatus) keeps tracking it instead.
+        if (safetyCapTripped) {
+            Log.w(TAG, "[VBookPoll] safety cap reached — probing agent state")
+            try {
+                val status = _repository.getAgentStatus(bId)
+                if (!status.active && status.session_status != "paused") {
+                    _generationStatus.value = GenerationStatus.SUCCESS
+                    if (!_isRegenerating.value) stopTimer()
+                    applyGenerationResults()
+                } else {
+                    Log.w(TAG, "[VBookPoll] agent still active after safety cap — leaving UI alive")
+                }
+                return
+            } catch (e: Exception) {
+                Log.w(TAG, "[VBookPoll] safety-cap probe failed: ${e.message}")
             }
         }
 
@@ -817,7 +846,10 @@ class GenerateViewModel(
             delay(2000)
             try {
                 val status = _repository.getAgentStatus(bId)
-                if (status.active && status.progress_msg != null) {
+                // 'paused' = between windows: the agent is still working, so it
+                // must NOT count as inactive (premature green 100% "1/1").
+                val isAgentActive = status.active || status.session_status == "paused"
+                if (isAgentActive && status.progress_msg != null) {
                     // Agent actively running with a message — reset inactivity counter
                     consecutiveInactive = 0
                     val currentMsg = status.progress_msg
@@ -829,7 +861,7 @@ class GenerateViewModel(
                         lastProgressMsg = currentMsg
                     }
                     updateVBookProgress(status)
-                } else if (!status.active) {
+                } else if (!isAgentActive) {
                     // Agent truly inactive — count consecutively, transition to COMPLETED
                     consecutiveInactive++
                     if (status.progress_msg != null && status.progress_msg != lastProgressMsg) {
@@ -881,10 +913,13 @@ class GenerateViewModel(
         val bid = bookId.takeIf { it.isNotBlank() } ?: return VBookProgress(stage = VBookStage.IDLE)
         return try {
             val status = _repository.getAgentStatus(bid)
-            if (status.active && status.progress_msg != null) {
+            // 'paused' = between windows: the agent is still working — do NOT
+            // mark COMPLETED (green 100% would freeze on "1/1" mid-run).
+            val isAgentActive = status.active || status.session_status == "paused"
+            if (isAgentActive && status.progress_msg != null) {
                 // ── Update the GPU-style progress panel (no chat messages for subsequent windows) ──
                 updateVBookProgress(status)
-            } else if (!status.active) {
+            } else if (!isAgentActive) {
                 val current = _uiState.value.vbookProgress
                 if (current != null) {
                     when (current.stage) {

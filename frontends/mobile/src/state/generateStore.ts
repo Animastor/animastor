@@ -552,14 +552,17 @@ export async function checkVBookAgentStatus(): Promise<VBookProgress> {
   if (!bid) return vbookProgress.value;
   try {
     const status = await getJson<{
-      active: boolean; progress_msg?: string | null; step_type?: string | null;
+      active: boolean; session_status?: string | null; progress_msg?: string | null; step_type?: string | null;
       window_total_scenes?: number | null; window_size?: number | null;
       window_scene_index?: number | null; created_scenes?: number | null;
       window_start_scene?: number | null; total_scenes?: number | null; window_index?: number | null;
     }>(`/book/${encodeURIComponent(bid)}/agent-status`);
-    if (status.active && status.progress_msg != null) {
+    // 'paused' = between windows — still active, do NOT mark COMPLETED yet
+    // (green 100% would freeze on the last window's counter, e.g. "1/1").
+    const isAgentActive = status.active || status.session_status === 'paused';
+    if (isAgentActive && status.progress_msg != null) {
       updateVBookProgress(status);
-    } else if (!status.active) {
+    } else if (!isAgentActive) {
       const current = vbookProgress.value;
       if (current.stage === 'ANALYZING' || current.stage === 'CREATING_SCENES') {
         // The agent just finished — re-read the now-saved window counters
@@ -722,8 +725,10 @@ export async function startVBookGeneration(): Promise<void> {
     // running, keep the block + timer alive and let the poller track it to
     // completion. Only tear down on a genuine failure (no active session).
     try {
-      const status = await getJson<{ active: boolean }>(`/book/${encodeURIComponent(bid)}/agent-status`);
-      if (status.active) {
+      const status = await getJson<{ active: boolean; session_status?: string | null }>(`/book/${encodeURIComponent(bid)}/agent-status`);
+      // 'paused' = between windows — the agent is still working; keep the UI
+      // alive instead of tearing the progress block down mid-run.
+      if (status.active || status.session_status === 'paused') {
         await pollVBookProgress(bid, token);
         return;
       }
@@ -757,15 +762,22 @@ async function pollVBookProgress(bId: string, token: number): Promise<void> {
     if (token !== vbookPollToken) return;
     try {
       const status = await getJson<{
-        active: boolean; progress_msg?: string | null; step_type?: string | null;
+        active: boolean; session_status?: string | null; progress_msg?: string | null; step_type?: string | null;
         window_total_scenes?: number | null; window_size?: number | null;
         window_scene_index?: number | null; created_scenes?: number | null;
         window_start_scene?: number | null; total_scenes?: number | null; window_index?: number | null;
       }>(`/book/${encodeURIComponent(bId)}/agent-status`);
-      if (status.active && status.progress_msg != null) {
+      // A 'paused' agent session is BETWEEN windows — the agent is still working
+      // (more windows pending), so it must NOT count as inactive. Only a truly
+      // inactive session (completed/failed/cancelled, or paused with nothing
+      // left) finalizes the generation — otherwise the green 100% row appears
+      // prematurely with the last window's counter (e.g. "1/1" instead of the
+      // real final state).
+      const isAgentActive = status.active || status.session_status === 'paused';
+      if (isAgentActive && status.progress_msg != null) {
         consecutiveInactive = 0;
         updateVBookProgress(status);
-      } else if (!status.active) {
+      } else if (!isAgentActive) {
         consecutiveInactive++;
         if (status.progress_msg != null) updateVBookProgress(status);
         if (consecutiveInactive >= maxInactive) {
@@ -788,8 +800,9 @@ async function pollVBookProgress(bId: string, token: number): Promise<void> {
   if (safetyCapTripped) {
     console.warn('pollVBookProgress: safety cap reached — probing agent state');
     try {
-      const status = await getJson<{ active: boolean }>(`/book/${encodeURIComponent(bId)}/agent-status`);
-      if (!status.active) {
+      const status = await getJson<{ active: boolean; session_status?: string | null }>(`/book/${encodeURIComponent(bId)}/agent-status`);
+      // Paused-with-remaining = between windows: still alive, do NOT finalize.
+      if (!status.active && status.session_status !== 'paused') {
         setGenerationStatus('SUCCESS');
         if (!isRegenerating.value) stopTimer();
         await applyGenerationResults();
