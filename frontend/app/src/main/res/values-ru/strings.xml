@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Анимастор</string>
+    <!-- The app name is a brand: always shown as "Animastor" (Latin) regardless
+         of the UI language — see task: toolbar/launcher must not localize it. -->
+    <string name="app_name">Animastor</string>
 
     <!-- Bottom Navigation -->
     <string name="tab_file">ФАЙЛ</string>

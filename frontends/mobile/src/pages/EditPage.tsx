@@ -333,6 +333,46 @@ export function EditPage(props: { path?: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bid, loadAndSync]);
 
+  // ── Auto-position when a book is loaded but no position is selected yet
+  //    (EditFragment.loadBookAndAutoPosition parity): a fresh generation can
+  //    finish with the position still unset — the RAW_IMPORTED book had no
+  //    scenes at import time, so importBookFromFile navigated to null and the
+  //    editor would otherwise stay empty. Anchor at the first chapter's first
+  //    scene, unit 0, exactly like Android EditFragment. applyGenerationResults
+  //    also sets the position on generation completion, so this fallback only
+  //    fires when the editor is opened directly with a loaded book + null
+  //    position (mount or book change).
+  const loadBookAndAutoPosition = useCallback(async () => {
+    const bId = bookIdSignal.value;
+    if (!bId) return;
+    try {
+      const bd = await getJson<BookData>(`/book/${encodeURIComponent(bId)}`);
+      // Race guard: the user may have picked a position elsewhere while the
+      // fetch was in flight — never clobber a newer choice.
+      if (positionSignal.value.chapterId != null) return;
+      const chs = bd.chapters ?? [];
+      const firstCh = chs[0];
+      const firstSc = firstCh?.scenes?.[0];
+      if (firstCh && firstSc) {
+        navigateTo({
+          chapterId: firstCh.chapter_id ?? null,
+          sceneId: firstSc.scene_id ?? null,
+          unitId: firstSc.units?.[0]?.id ?? null,
+          chunkId: null,
+          unitIndex: 0,
+        });
+      }
+    } catch { /* keep the empty state (no book data to position on) */ }
+  }, []);
+
+  useEffect(() => {
+    const p = positionSignal.value;
+    if (p.chapterId == null && bookIdSignal.value) {
+      void loadBookAndAutoPosition();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bid, loadBookAndAutoPosition]);
+
   // ── Position label (updatePositionLabel) + unit count ──
   useEffect(() => {
     const p = positionSignal.value;

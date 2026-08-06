@@ -227,11 +227,21 @@ button { font: inherit; color: inherit; }
    the icon would pulse in the unselected gray instead of gold. */
 .tabbar__pulse { animation: tab-pulse 1.6s infinite ease-in-out; color: var(--accent); }
 .tabbar__pulse--error { animation: tab-pulse 1.2s infinite ease-in-out; color: var(--error); }
-/* SUCCESS — finite pulse like MainActivity: 8 × 1.5s = 12s pulse green, then
-   solid green for ~10s. generateStore auto-resets the nav status to IDLE after
-   the full 22s (pulse + hold), anchored to the SUCCESS timestamp with a
-   self-healing watchdog — no re-arm on tab switches. */
-.tabbar__pulse--success { animation: tab-pulse 1.5s 8 ease-in-out; color: var(--success); }
+/* SUCCESS — finite pulse like MainActivity.updateNavIconStatus: ObjectAnimator
+   alpha 1→0.45→1, 1500ms, repeatCount 7 → 8 cycles = 12s pulse green, then
+   solid green for ~10s. Written as explicit longhand animation-* properties so
+   the 8×1.5s = 12s intent survives any CSS minifier / shorthand parsing (a
+   broken shorthand would leave the icon permanently solid green).
+   generateStore auto-resets the nav status to IDLE after the full 22s
+   (pulse + hold), anchored to the SUCCESS timestamp with a self-healing
+   watchdog — no re-arm on tab switches. */
+.tabbar__pulse--success {
+  animation-name: tab-pulse;
+  animation-duration: 1.5s;
+  animation-timing-function: ease-in-out;
+  animation-iteration-count: 8; /* 8 × 1.5s = 12s pulse, then solid green */
+  color: var(--success);
+}
 @keyframes tab-pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.35; }

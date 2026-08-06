@@ -6,6 +6,51 @@ All notable changes to Animastor are documented here.
 
 ## [Unreleased] — 2026-08-06
 
+### Fixed
+
+- **Название приложения всегда «Animastor» (латиницей), независимо от языка UI**
+  (`frontend/app/src/main/res/values-ru/strings.xml`):
+  - **Проблема:** в русской локали Android тулбар (и иконка лаунчера) показывали
+    «Анимастор» — `values-ru/strings.xml` переопределял `app_name`. Веб уже хардкодит
+    «Animastor» (AppShell toolbar), расхождение было только на Android.
+  - **Фикс:** значение `app_name` в `values-ru/strings.xml` заменено на «Animastor»
+    (бренд не локализуется). Остальные русские строки не тронуты.
+
+- **Кнопка «Генератор» в нижней навигации: зелёный SUCCESS-пульс определён явными longhand-свойствами**
+  (`frontends/mobile/src/styles/base.css`):
+  - **Проблема:** пользователь видел сплошной зелёный сразу после генерации — без
+    12-секундной пульсации (как в бандлах до фикса eb24853: `--success { color }` без
+    animation). Текущий исходник уже содержал корректный пульс (`animation: tab-pulse
+    1.5s 8 ease-in-out`), но одна скрытая поломка shorthand (минификатор/браузер)
+    вернула бы «сплошной зелёный» без каких-либо ошибок.
+  - **Фикс:** правило `tabbar__pulse--success` переписано на явные longhand-свойства
+    (`animation-name/duration/timing-function/iteration-count: 8`) — намерение
+    «8 × 1.5s = 12s пульс, затем 10s сплошной» теперь самодокументируемое и не зависит
+    от разбора shorthand. RUNNING/ERROR (infinite) оставлены как были.
+  - **Проверка:** e2e в headless Chrome на реальном бандле: RUNNING — золотой пульс
+    (1.6s infinite), SUCCESS — зелёный пульс 8 итераций (opacity 1→0.35→1 каждые 1.5s,
+    ~12s), затем сплошной зелёный (opacity 1) до авто-сброса в IDLE через 22s
+    (таймер + watchdog generateStore). Если пользователь видел сплошной зелёный
+    сразу — это устаревший бандл/кэш: dist пересобран.
+
+- **Пустой редактор сразу после генерации: позиция не была установлена на первый юнит**
+  (`frontends/mobile/src/state/generateStore.ts`,
+  `frontends/mobile/src/pages/EditPage.tsx`):
+  - **Проблема:** после завершения НОВОЙ генерации вкладка «Редактор» открывалась пустой
+    (idle), пока пользователь не выбрал позицию в плеере/навигаторе. Причина:
+    RAW_IMPORTED книга на момент импорта не имела сцен, поэтому `importBookFromFile`
+    навигировал на `null`-позицию; после генерации `applyGenerationResults` позицию не
+    выставлял, а EditPage грузит содержимое только при `chapterId + sceneId`.
+  - **Фикс (generateStore.applyGenerationResults):** если после генерации позиция не
+    выбрана (`position.chapterId == null`), устанавливается первый юнит первой сцены
+    (cover-first, как в `importBookFromFile`/Android `importBookFromFile`).
+  - **Фикс (EditPage):** паритет с Android `EditFragment.loadBookAndAutoPosition` — если
+    редактор открыт при загруженной книге и null-позиции (mount / смена книги), он сам
+    навигирует на первую сцену первого chapter, unit 0. Вместе это покрывает и сценарий
+    «сразу на Редактор после генерации», и прямой вход в редактор без выбора позиции.
+  - **Проверка:** e2e в headless Chrome: после генерации переход на /edit показывает
+    «Chapter 1 / Scene 1 — Scene 1 / Unit 1» и поля юнита; `tsc --noEmit` + `vite build` OK.
+
 ### Added
 
 - **TXT-импорт v2: структура книги определяется как «кандидаты → LLM → карта глав», а не «окно → глава»**

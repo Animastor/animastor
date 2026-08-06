@@ -16,7 +16,7 @@ import type {
 } from '../api/models';
 import { sceneRefs } from '../api/models';
 import type { SceneRef } from '../api/models';
-import { navigateTo, clearPosition } from './positionStore';
+import { navigateTo, clearPosition, position } from './positionStore';
 // Runtime-only circular import (MainActivity.closeBook resets BOTH ViewModels —
 // GenerateViewModel + PlaybackViewModel; the player is released here too).
 import { closeBook as closePlayerBook } from './playbackStore';
@@ -839,6 +839,18 @@ export async function applyGenerationResults(): Promise<void> {
     if (scenes.length === 0) {
       console.warn('applyGenerationResults: book has 0 scenes — skipping playback refresh');
       return;
+    }
+    // Android parity (EditFragment.loadBookAndAutoPosition): a fresh generation
+    // can finish with NO position selected — the RAW_IMPORTED book had no scenes
+    // at import time, so importBookFromFile navigated to null. Without a position
+    // the Edit screen would open empty (it only loads when chapterId+sceneId are
+    // set). When nothing is selected yet, anchor the position at the very
+    // beginning of the visual book (cover-first, same as importBookFromFile).
+    if (!position.value.chapterId) {
+      const first = scenes.find((s) => s.sceneType === 'cover') ?? scenes[0] ?? null;
+      if (first) {
+        navigateTo({ chapterId: first.chapterId, sceneId: first.sceneId, unitId: null, chunkId: null, unitIndex: 0 });
+      }
     }
     emitPlaybackPrepared({ bookId: bid, buildId: buildId.value, scenes, softRefresh: true });
   } catch (e) {
