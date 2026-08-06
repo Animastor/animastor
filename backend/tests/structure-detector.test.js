@@ -557,6 +557,81 @@ describe('structure-detector (v2)', () => {
         });
     });
 
+    describe('inverted title page with initials author (С.А. Хабаров)', () => {
+        // Реальный кейс ba_1786022092582: автор первой строкой (инициалы +
+        // фамилия — 2 токена), название ниже с декоративной точкой.
+        const INVERTED = [
+            'С.А. Хабаров',
+            '',
+            'За пределами алгоритмов.',
+            '',
+            'Пролог. Мир на переломе эпох',
+            '',
+            'Первая половина XXI века стала временем стремительного научного прогресса. Искусственный интеллект научился решать задачи, которые ещё недавно считались исключительно человеческими. Биотехнологии приблизились к лечению неизлечимых болезней, робототехника изменила промышленность, а космические проекты вновь стали частью повседневной жизни.',
+            'Но очень быстро чудеса перестали казаться чудесами. Люди привыкли к ним так же, как когда-то привыкли к электричеству, интернету и смартфонам.',
+            '',
+            'Глава 1. Земля',
+            '',
+            'Юра, инженер по искусственному интеллекту, всё чаще замечал странный парадокс: чем совершеннее становились технологии, тем реже человек пытался понять самого себя.',
+            'Светлана, исследователь когнитивной инженерии, пришла к похожему выводу. Она изучала, как человек способен осознанно менять собственные мыслительные привычки.',
+        ].join('\n');
+
+        it('initials+surname first line is the AUTHOR, the title line below wins (trailing period stripped)', () => {
+            const map = sd.buildDeterministicMap(INVERTED);
+            expect(map.title.text).to.equal('За пределами алгоритмов');
+            expect(map.author.text).to.equal('С.А. Хабаров');
+            expect(map.hasPrologue).to.equal(true);
+            expect(map.segments[0].title).to.equal('Мир на переломе эпох');
+        });
+
+        it('a two-word title without initials is NOT misread as an author', () => {
+            const t = 'Анна Каренина\n\nВсе счастливые семьи похожи друг на друга, каждая несчастливая семья несчастлива по-своему. Всё смешалось в доме Облонских, и этот длинный абзац делает первую строку уверенным названием.';
+            const map = sd.buildDeterministicMap(t);
+            expect(map.title.text).to.equal('Анна Каренина');
+            expect(map.author).to.equal(null);
+        });
+
+        it('mergeAiDecisions anchors an LLM title that drops the trailing period', () => {
+            const ids = candidateIds(INVERTED);
+            const titleLine = 'За пределами алгоритмов.';
+            const ai = {
+                // LLM вернула название БЕЗ декоративной точки — якорь должен
+                // найтись через нормализацию пунктуации, а не быть выброшенным.
+                title: { text: 'За пределами алгоритмов', candidate_id: ids[titleLine], confidence: 0.95 },
+                author: { text: 'С.А. Хабаров', candidate_id: ids['С.А. Хабаров'], confidence: 0.9 },
+                elements: [],
+            };
+            const map = sd.mergeAiDecisions(INVERTED, ai);
+            expect(map.title.text).to.equal('За пределами алгоритмов');
+            expect(map.author.text).to.equal('С.А. Хабаров');
+        });
+
+        it('sanitizeStructure anchors title line_text without the trailing period', () => {
+            const out = sd.sanitizeStructure({
+                title: { text: 'За пределами алгоритмов', line_text: 'За пределами алгоритмов', confidence: 0.95 },
+                elements: [],
+            }, sd.extractCandidates(INVERTED).candidates);
+            expect(out.title.text).to.equal('За пределами алгоритмов');
+        });
+
+        it('only the trailing PERIOD is stripped — meaningful ?/!/… in a title survives', () => {
+            const t = 'А.И. Герцен\n\nКто виноват?\n\nВсе счастливые семьи похожи друг на друга. Этот длинный абзац повествования нужен, чтобы вторая строка осталась уверенным кандидатом на название, а не прозой.';
+            const map = sd.buildDeterministicMap(t);
+            expect(map.title.text).to.equal('Кто виноват?');
+            expect(map.author.text).to.equal('А.И. Герцен');
+        });
+
+        it('epigraph attribution above a title is treated as an inverted title page (documented trade-off)', () => {
+            // «К. Симонов» + название — структурно неотличимо от инвертированного
+            // титула; детерминированный путь даёт автор+название (название
+            // восстанавливается корректно), LLM-мерж может переопределить автора.
+            const t = 'К. Симонов\n\nМоя книга\n\nЭто длинный абзац первой главы, достаточно большой, чтобы быть уверенным повествованием после титульных строк.';
+            const map = sd.buildDeterministicMap(t);
+            expect(map.title.text).to.equal('Моя книга');
+            expect(map.author.text).to.equal('К. Симонов');
+        });
+    });
+
     describe('buildSegmentIntro (typography scenes)', () => {
         it('prologue → «Пролог» + title, narrator-voiced', () => {
             const intro = chapterUtils.buildSegmentIntro(

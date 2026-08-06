@@ -414,7 +414,12 @@ function sanitizeStructure(aiResult, candidates, sourceText) {
         let cand = field.candidate_id ? byId.get(field.candidate_id) : null;
         if (!cand && field.line_text && typeof field.line_text === 'string') {
             const lt = String(field.line_text).trim();
-            cand = candidates.find(c => c.text.trim().toLowerCase() === lt.toLowerCase()) || null;
+            const ltNorm = lt.replace(/[.!?…]+$/, '');
+            cand = candidates.find(c => c.text.trim().toLowerCase() === lt.toLowerCase())
+                // LLMs routinely drop a decorative trailing period from the line
+                // they anchor to — match the punctuation-stripped forms too.
+                || candidates.find(c => c.text.trim().toLowerCase().replace(/[.!?…]+$/, '') === ltNorm.toLowerCase())
+                || null;
         }
         return cand;
     };
@@ -603,23 +608,40 @@ function buildDeterministicMap(sourceText) {
     // ── Inverted title page: AUTHOR on the first line, TITLE on the second ──
     // Classical Russian editions: "Михаил Афанасиевич Булгаков" then, a few
     // blank lines later, "Мастер и Маргарита". The author line is a full name
-    // WITHOUT initials (name + patronymic + surname); the title line is not a
-    // name. Requires >= 3 name words so a two-word title like "Анна Каренина"
-    // is never misread as an author, and the surname-frequency check still
-    // applies: an author whose surname appears in the narrative is a character.
+    // WITH or WITHOUT initials (name + patronymic + surname, or the equally
+    // common initials + surname "С.А. Хабаров"); the title line is not a name.
+    // For 2-word lines an INITIALS token is the decisive signal — a two-word
+    // title like "Анна Каренина" (no initials) is never misread as an author.
+    // The surname-frequency check still applies: an author whose surname
+    // appears in the narrative is a character.
+    //
+    // TRADE-OFF (documented): an EPIGRAPH attribution at the very top
+    // ("К. Симонов\n\nМоя книга") is indistinguishable from an inverted title
+    // page by pure structure — both are a short name line above a non-name
+    // line. The deterministic path treats it as author+title (the title is
+    // recovered correctly); the LLM merge can still override the author when
+    // it sees the full head block.
     const second = head[1];
+    const firstWords = first ? first.text.split(/\s+/).filter(Boolean) : [];
+    const firstHasInitial = firstWords.some(tok => INITIAL_TOKEN_RE.test(tok));
     const firstIsFullName = first && !first.keyword && !first.prefixDash &&
         !first.sentencePunctuation && first.length <= 45 &&
         first.blankLinesAfter >= 1 &&
         looksLikeAuthorName(first.text) &&
-        first.text.split(/\s+/).filter(Boolean).length >= 3;
+        (firstHasInitial || firstWords.length >= 3);
     const secondLooksLikeTitle = second && !second.keyword && !second.prefixDash &&
         second.length <= 90 && second.lineIndex > first.lineIndex &&
         !looksLikeAuthorName(second.text);
     if (firstIsFullName && secondLooksLikeTitle &&
         !isAuthorSurnameACharacter(sourceText, first.text, first.endOffset)) {
         author = { text: first.text, source: 'detect', candidateId: first.id };
-        title = { text: second.text, source: 'detect', candidateId: second.id };
+        // The title line often carries a decorative trailing period in source
+        // files ("За пределами алгоритмов.") — strip a terminal period just
+        // like splitTitleAuthor strips the halves of a "Title. Author"
+        // one-liner. Only PERIODS are stripped, never ?/!/…: «Кто виноват?»
+        // keeps its question mark.
+        const cleanTitle = second.text.replace(/\.+$/, '').trim() || second.text;
+        title = { text: cleanTitle, source: 'detect', candidateId: second.id };
     }
 
     // Same-line "Title. Author" pattern (e.g. "За пределами алгоритмов. С.А. Хабаров.").
