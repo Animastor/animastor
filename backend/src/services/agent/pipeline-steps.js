@@ -11,6 +11,7 @@ const promptProfileLoader = require('../prompt-profile-loader');
 const {
     createStep, completeStep, failStep, updateSession,
 } = require('../agent-session');
+const { estimateSpeechDurationSec } = require('../placeholder-audio');
 const {
     PROGRESS_STAGES, SYSTEM_PROMPTS, MAX_SCENES_PER_CHUNK,
     IMAGE_PROMPT_MAX_CHARS, UNIT_TEXT_MAX_CHARS, SCENE_TEXT_MAX_CHARS,
@@ -81,6 +82,9 @@ function needsVideoActionReconciliation(u) {
 
 // Format one unit for reconciliation/polish agents. JSON encoding keeps the row
 // unambiguous when unit text / prompts contain quotes or newlines.
+// estimated_duration_sec = the module's play time — a pre-TTS speech estimate
+// (same heuristic the unit-splitter and video chunking use; real audio refines
+// it later). Lets the polish agents pace actions to plausibly fill the time.
 function unitRow(u) {
     return JSON.stringify({
         scene_index: u.sceneIndex,
@@ -88,6 +92,7 @@ function unitRow(u) {
         scene_title: u.sceneTitle || '',
         type: u.type || 'unknown',
         text: (u.text || '').substring(0, UNIT_TEXT_MAX_CHARS),
+        estimated_duration_sec: estimateSpeechDurationSec(u.text),
         shot: u.image?.shot || 'unknown',
         prompt: u.image?.prompt || '',
         action: u.video?.action || '',
@@ -824,7 +829,7 @@ async function stepPolishVideoActions(sessionId, allVisualUnits, characters, loc
 
     const messages = [
         { role: 'system', content: prompt },
-        { role: 'user', content: `Review and polish video.actions for continuity and narrative consistency across these ${polishable.length} units:\n\n${unitsStr}` },
+        { role: 'user', content: `Review and polish video.actions for continuity, narrative consistency, and timing realism across these ${polishable.length} units. Each unit's estimated_duration_sec is the module's play time — the action must plausibly fill it:\n\n${unitsStr}` },
     ];
 
     try {
@@ -978,8 +983,10 @@ async function stepCreateVisuals(sessionId, scene, units, sceneIndex, characters
 
     const contextStr = contextParts.join('\n');
 
+    // estimated_duration_sec — the module's play time (speech-duration heuristic)
+    // — lets the visuals agent align video.action with the available time.
     const unitsStr = units.map((u, i) =>
-        `Unit ${i + 1}: text="${(u.text || '').substring(0, 300)}", type="${u.type || 'perception'}"`
+        `Unit ${i + 1}: text="${(u.text || '').substring(0, 300)}", type="${u.type || 'perception'}", estimated_duration_sec=${estimateSpeechDurationSec(u.text)}`
     ).join('\n');
 
     // Inject prompt profiles if available — model-specific rules for image & video

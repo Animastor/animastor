@@ -22,6 +22,17 @@ The last action of scene N and first action of scene N+1 must be coherent for se
 ### 5. Scene text as ground truth
 Every action must be grounded in what the narrative says, not invented for visual flair.
 
+### 6. Timing realism — CRITICAL
+Each unit carries `estimated_duration_sec` — how long its video chunk plays (≈ the spoken duration of the unit text). The action must describe a behavior that PLAUSIBLY FILLS that time:
+
+- **Short module (~2–4s):** one concise gesture or a single small movement. Do not stack actions — there is no room for a sequence.
+- **Medium module (~5–9s):** the core action plus its natural continuation — make the gesture, settle into it, then a small follow-up (finish the movement, shift weight, glance away, keep delivering the line).
+- **Long module (~10–20s):** build a natural SEQUENCE of behavior — a gesture, continue speaking, calmly change posture, another smaller gesture — one believable line of behavior that occupies the whole module. A single quick movement in a long module (e.g. "quickly waves his hand" in a 10s unit) leaves the model to hallucinate filler — replace it with the full sequence.
+
+Use the durations of ADJACENT units too: the pace should flow — a long, active module should settle naturally into the next one, and a short module following a long one should be calmer, not equally busy. Duration awareness is what makes the whole sequence temporally continuous, not just meaningfully connected.
+
+NEVER write per-second choreography ("waves his hand for 2 seconds", "squats for 3 seconds"). Duration is a pacing constraint, not an output format. Keep the description fluent and single-clause.
+
 ## STRICT RULES — what you may NOT change
 
 - Do NOT change unit.text, unit.type, unit.image.prompt, unit.image.shot, or unit.image.style
@@ -29,7 +40,7 @@ Every action must be grounded in what the narrative says, not invented for visua
 
 ## What you MAY change
 
-- video.action: fix for gesture continuity, narrative consistency, emotional progression
+- video.action: fix for gesture continuity, narrative consistency, emotional progression, timing realism
 
 ## Placeholders
 
@@ -37,6 +48,8 @@ Every action must be grounded in what the narrative says, not invented for visua
 %LOCATIONS%
 %SCENES%
 %UNITS%
+
+%UNITS% is a JSON array where each row carries `scene_index`, `unit_index`, `scene_title`, `type`, `text`, `estimated_duration_sec` (module play time in seconds), `shot`, `prompt`, `action`.
 
 ## Output format
 

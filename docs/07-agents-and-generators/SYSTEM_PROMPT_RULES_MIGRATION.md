@@ -31,7 +31,7 @@ backend/ai/rules/
 ├── voice_generation.md          # Генерация голосов персонажей
 ├── passport_reconciliation.md   # Сверка image.prompt с паспортами
 ├── video_action_reconciliation.md # Исправление video.action (temporal only)
-├── video_action_polish.md       # Полировка video.action (gesture continuity)
+├── video_action_polish.md       # Полировка video.action (gesture continuity + timing realism)
 ```
 
 > 8 старых `-*.md` файлов (dead code) удалены.
@@ -119,6 +119,15 @@ backend/ai/rules/
 - **Граница ввода:** `PATCH /book/.../scene` и `PUT /book` возвращают 400 при промпте
   > 2000 символов — «человек случайно вставил простыню и нажал Сохранить» ловится с
   понятным сообщением, а не молча внутри пайплайна.
+- **`estimated_duration_sec` (2026-08-06)** — в каждую JSON-строку юнита
+  (`unitRow`) добавлена длительность модуля: речевая эвристика
+  `estimateSpeechDurationSec(unit.text)` (~0.3с/слово, мин 2с — та же, что у
+  юнит-сплиттера и видеочанкинга; на момент polish-пасса юниты ещё не персистятся
+  в `image_units`, поэтому реальный `estimated_duration_sec` из БД недоступен).
+  Поле читают `video_action_polish.md` (чек «Timing realism»),
+  `video_action_reconciliation.md` (секция «Timing») и `visuals.md` (мягкая
+  рекомендация «Align the motion with it»); формат строк юнитов в
+  `stepCreateVisuals` синхронизирован с `scripts/dryrun-visuals-iu.js`.
 
 Константы: `backend/src/services/agent-prompts.js`.
 

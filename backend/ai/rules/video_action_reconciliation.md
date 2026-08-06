@@ -35,6 +35,10 @@ Many video.action fields contain static descriptions copied from image.prompt. T
 
 3–15 words per action. One clause. Short.
 
+## Timing
+
+Each unit row carries `estimated_duration_sec` — the module's play time (≈ the spoken duration of the unit text). Let it guide the pace: a short module (~2–4s) gets one concise gesture, a long module (~10–20s) gets a natural sequence (gesture → continue → posture change → smaller follow-up). NEVER write per-second choreography ("waves his hand for 2 seconds").
+
 ## How to handle current video.action
 
 - Already a proper temporal description → KEEP unchanged

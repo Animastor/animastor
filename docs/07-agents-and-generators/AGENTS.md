@@ -39,11 +39,12 @@ bootstrapWithAgent():
                                       (глобальный шаблон локации vs сцена)
     Шаг 4: stepCreateUnits()        — IU (визуальные единицы), per-scene
     Шаг 5: stepCreateVisuals()      — промпты (image + video), per-scene
+                                      (вход юнитов несёт estimated_duration_sec)
     ── Post-processing (window-level) ──
     Шаг 6a: stepReconcilePassports   — сверка image.prompt с паспортами
-    Шаг 6b: stepReconcileVideoActions — фикс video.action (temporal only)
+    Шаг 6b: stepReconcileVideoActions — фикс video.action (temporal only + тайминг)
     Шаг 7a: stepPolishStoryboard     — полировка image.prompt (continuity)
-    Шаг 7b: stepPolishVideoActions   — полировка video.action (сюжет+ряд)
+    Шаг 7b: stepPolishVideoActions   — полировка video.action (сюжет+ряд+тайминг)
 ```
 
 **Важно:** `runPipeline()` состоит из 5 шагов + voice generation + 4 post-processing шага.
@@ -188,6 +189,15 @@ Locations как "default environment: ...") — агент его опуска�
 - `image.prompt` — статическая композиция (кто где, как расположены)
 - `video.action` — динамическое изменение (жесты, движения, camera motion)
 
+**Тайминг (2026-08-06):** каждая строка юнита во входе шага несёт
+`estimated_duration_sec` — длительность модуля (речевая эвристика
+`estimateSpeechDurationSec`, ~0.3с/слово, мин 2с; та же, что у юнит-сплиттера
+и видеочанкинга). Агент мягко согласует `video.action` с доступным временем:
+короткий модуль (~2–4с) — один быстрый жест, длинный (~10–20с) — полное
+поведение (жест, пауза, небольшое продолжение). Финальный темп доводит
+`stepPolishVideoActions`; формат строки синхронизирован с
+`scripts/dryrun-visuals-iu.js`.
+
 ### Шаг 6a: Reconcile Passports
 
 **Назначение:** Удаление семантических дубликатов из `image.prompt`,
@@ -198,7 +208,9 @@ Locations как "default environment: ...") — агент его опуска�
 
 **Назначение:** Исправление `video.action` — удаление static composition
 (которая должна быть только в `image.prompt`), оставление только temporal/dynamic
-описаний (жесты, движение, camera motion, delivery cues).
+описаний (жесты, движение, camera motion, delivery cues). Для пустых `video.action`
+действие генерируется с нуля; секция «Timing» промпта учитывает
+`estimated_duration_sec` модуля при подборе темпа (без посекундной хореографии).
 
 ### Шаг 7a: Polish Storyboard
 
@@ -213,6 +225,12 @@ Locations как "default environment: ...") — агент его опуска�
 - Соответствие сюжету (проверка по scene text)
 - Эмоциональная дуга (gradual escalation)
 - Кросс-сценные переходы
+- Timing realism (2026-08-06) — действие правдоподобно заполняет длительность
+  модуля (`estimated_duration_sec` в каждой JSON-строке юнита): короткий модуль —
+  один жест, длинный — естественная последовательность (жест → продолжает говорить →
+  смена позы → ещё один жест); длительности соседних модулей учитываются совместно
+  (временная непрерывность). Явный запрет посекундной хореографии
+  («2 секунды машет рукой») — время это ориентир темпа, а не формат вывода.
 
 Итоговый поток:
 ```

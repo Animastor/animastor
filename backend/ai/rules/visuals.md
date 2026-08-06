@@ -73,6 +73,8 @@ Paired examples:
 
 If the unit has no real motion (a pure still), the video.action should be a minimal camera movement, not a re-description of the frame. For dialogue units the speaker is derived automatically — describe only the visible delivery (gestures, leans, pauses).
 
+Each input unit line carries its approximate play time (`estimated_duration_sec`). Align the motion with it: a short unit (~2–4s) suits one quick gesture or a small camera move; a long unit (~10–20s) suits a fuller behavior — a gesture, a pause, a smaller follow-up. Write the action naturally; the polish pass will refine the pacing later.
+
 ## FORBIDDEN content — NEVER include ANY of these in the prompt
 - NEVER write meta-commentary like "No specific location mentioned", "the scene is set in", "this is a description of", "it appears that", "the story is about". Write ONLY the concrete visual description.
 - NEVER reference other units with phrases like "as described in Unit 1", "as seen in previous frame", "continuing from earlier", "same character as before". The image model sees each prompt independently.

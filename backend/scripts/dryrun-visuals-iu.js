@@ -63,7 +63,7 @@ try {
 }
 
 const contextStr = buildContext(scene, characters);
-const unitsStr = units.map((u, i) => `Unit ${i + 1}: text="${(u.text || '').substring(0, 200)}", type="${u.type || 'perception'}"`).join('\n');
+const unitsStr = units.map((u, i) => `Unit ${i + 1}: text="${(u.text || '').substring(0, 200)}", type="${u.type || 'perception'}", estimated_duration_sec=${require('../src/services/placeholder-audio').estimateSpeechDurationSec(u.text)}`).join('\n');
 const finalPrompt = SYSTEM_PROMPTS.visuals
     .replace('%CONTEXT%', contextStr)
     .replace('%EXAMPLES%', exemplars || '')
