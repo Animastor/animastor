@@ -530,17 +530,18 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
 
     fs.writeFileSync(path.join(chDir, chFile), JSON.stringify(chapterObj, null, 2));
 
-    const existingFiles = fs.readdirSync(chDir).filter(f => f.endsWith('.json')).sort();
-    const coverIdx = existingFiles.findIndex(f => {
+    // chapters_order must reflect the READING order (cover, prologue index 0,
+    // chapters 1..N), NOT the filename order — hex chapter IDs are random.
+    // Sort by chapter_index: cover first (no index), then by index ascending.
+    const chapterSortKey = (f) => {
         try {
             const ch = JSON.parse(fs.readFileSync(path.join(chDir, f), 'utf8'));
-            return ch.type === 'cover';
-        } catch (_) { return false; }
-    });
-    if (coverIdx > 0) {
-        const coverFile = existingFiles.splice(coverIdx, 1)[0];
-        existingFiles.unshift(coverFile);
-    }
+            if (ch.type === 'cover') return -1;
+            return ch.chapter_index ?? Number.MAX_SAFE_INTEGER;
+        } catch (_) { return Number.MAX_SAFE_INTEGER; }
+    };
+    const existingFiles = fs.readdirSync(chDir).filter(f => f.endsWith('.json'))
+        .sort((a, b) => chapterSortKey(a) - chapterSortKey(b));
     bookMeta.structure.chapters_order = existingFiles;
     fs.writeFileSync(getBookMetaPath(bookDir), JSON.stringify(bookMeta, null, 2));
 

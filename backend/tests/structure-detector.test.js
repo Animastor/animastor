@@ -174,6 +174,46 @@ describe('structure-detector (v2)', () => {
             expect(map.segments.filter(s => s.type === 'chapter').length).to.be.at.least(2);
         });
 
+        it('rejects a hallucinated author anchored to the title line (no author in source)', () => {
+            const ids = candidateIds(BOOK);
+            const titleLine = BOOK.split('\n')[0]; // "За пределами алгоритмов. С.А. Хабаров."
+            const hallucinated = {
+                title: { text: 'За пределами алгоритмов', candidate_id: ids[titleLine], confidence: 0.95 },
+                // LLM invented an author and anchored it to the SAME line as the
+                // title — the line text does not contain the author name.
+                author: { text: 'Пётр Иванов', candidate_id: ids[titleLine], confidence: 0.8 },
+                elements: [],
+            };
+            const map = sd.mergeAiDecisions(BOOK, hallucinated);
+            // Deterministic backbone detected the REAL author from the line split.
+            expect(map.title.text).to.equal('За пределами алгоритмов');
+            expect(map.author.text).to.equal('С.А. Хабаров');
+        });
+
+        it('rejects an invented author when the book has no author at all', () => {
+            const noAuthorBook = 'За пределами алгоритмов\n\nПролог. Мир на переломе эпох\n\nПервая половина XXI века стала временем стремительного научного прогресса. Искусственный интеллект научился решать задачи, которые ещё недавно считались исключительно человеческими. Биотехнологии приблизились к лечению неизлечимых болезней, робототехника изменила промышленность, а космические проекты вновь стали частью повседневной жизни.\nНо очень быстро чудеса перестали казаться чудесами. Люди привыкли к ним так же, как когда-то привыкли к электричеству, интернету и смартфонам.\nПри этом сам мир не стал спокойнее. Военные конфликты продолжались, общества всё сильнее разделялись, а алгоритмы всё чаще определяли, какие новости увидит человек, во что он поверит и с кем окажется по одну сторону очередного спора.';
+            const ids = candidateIds(noAuthorBook);
+            const hallucinated = {
+                title: { text: 'За пределами алгоритмов', candidate_id: ids['За пределами алгоритмов'], confidence: 0.95 },
+                author: { text: 'С.А. Хабаров', candidate_id: ids['За пределами алгоритмов'], confidence: 0.8 },
+                elements: [],
+            };
+            const map = sd.mergeAiDecisions(noAuthorBook, hallucinated);
+            expect(map.title.text).to.equal('За пределами алгоритмов');
+            expect(map.author).to.equal(null);
+        });
+
+        it('keeps author when the line is a real "Title. Author" one-liner', () => {
+            const ids = candidateIds(BOOK);
+            const titleLine = BOOK.split('\n')[0];
+            const map = sd.mergeAiDecisions(BOOK, {
+                title: { text: 'За пределами алгоритмов', candidate_id: ids[titleLine], confidence: 0.95 },
+                author: { text: 'С.А. Хабаров', candidate_id: ids[titleLine], confidence: 0.8 },
+                elements: [],
+            });
+            expect(map.author.text).to.equal('С.А. Хабаров');
+        });
+
         it('sanitizeStructure drops a title that looks like a full sentence', () => {
             const ids = candidateIds(BOOK);
             const out = sd.sanitizeStructure({

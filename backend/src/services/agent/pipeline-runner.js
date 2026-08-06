@@ -92,6 +92,27 @@ function getWindowText(sourceText, existingChars, existingLocs, windowIndex, sta
             break;
         }
     }
+
+    // If the window start lands at the very tail of a segment (only whitespace
+    // /header remains before its boundary — e.g. the previous window's last
+    // scene ended a few chars before the segment end), advance to the next
+    // segment instead of producing an empty window that would make the caller
+    // believe the book is fully processed.
+    while (chIdx + 1 < segments.length) {
+        const segEndHere = segments[chIdx]?.endOffset || sourceText.length;
+        const tailProbe = sourceText.substring(startOffset, segEndHere);
+        // Skip segments whose remaining tail carries no narrative text
+        // (whitespace or header lines only) — nothing meaningful to process.
+        const narrStart = sourceCoverage.findNarrativeStartOffset(tailProbe);
+        const hasNarrative = narrStart < tailProbe.length && tailProbe.substring(narrStart).trim().length > 0;
+        if (hasNarrative) break;
+        chIdx += 1;
+        const nextSegStart = segments[chIdx]?.startOffset || 0;
+        if (nextSegStart > startOffset) {
+            startOffset = nextSegStart;
+        }
+    }
+
     const segEnd = segments[chIdx]?.endOffset || sourceText.length;
 
     let endPos = Math.min(startOffset + maxWindowChars, segEnd);

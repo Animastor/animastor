@@ -291,14 +291,35 @@ function sanitizeStructure(aiResult, candidates) {
     const byId = new Map(candidates.map(c => [c.id, c]));
     const sanitized = { ...aiResult };
 
+    // Anchored line lookup shared by title/author: the value must be anchored
+    // to a real candidate line (candidate_id or verbatim line_text) AND be
+    // consistent with that line's text — "Title. Author" one-liners anchor the
+    // author to the same line as the title, so containment (either direction)
+    // is the consistency rule. Anything else is a hallucination.
+    const anchoredLine = (field) => {
+        if (!field || typeof field !== 'object') return null;
+        let cand = field.candidate_id ? byId.get(field.candidate_id) : null;
+        if (!cand && field.line_text && typeof field.line_text === 'string') {
+            const lt = String(field.line_text).trim();
+            cand = candidates.find(c => c.text.trim().toLowerCase() === lt.toLowerCase()) || null;
+        }
+        return cand;
+    };
+    const textConsistentWithLine = (text, lineText) => {
+        if (!text || !lineText) return false;
+        return text === lineText || lineText.includes(text) || text.includes(lineText);
+    };
+
     if (sanitized.title && typeof sanitized.title === 'object' && sanitized.title.text) {
         const t = sanitizeTitleLike(sanitized.title.text);
-        if (!t) delete sanitized.title;
+        const line = anchoredLine(sanitized.title);
+        if (!t || !line || !textConsistentWithLine(t, line.text)) delete sanitized.title;
         else sanitized.title = { ...sanitized.title, text: t };
     }
     if (sanitized.author && typeof sanitized.author === 'object' && sanitized.author.text) {
         const a = sanitizeAuthorName(sanitized.author.text);
-        if (!a) delete sanitized.author;
+        const line = anchoredLine(sanitized.author);
+        if (!a || !line || !textConsistentWithLine(a, line.text)) delete sanitized.author;
         else sanitized.author = { ...sanitized.author, text: a };
     }
     if (sanitized.title && sanitized.author &&
@@ -647,7 +668,10 @@ function mergeAiDecisions(sourceText, aiResult) {
                 (baseVal.text === text || cand.text.includes(baseVal.text))) {
                 return { ...baseVal, source: 'ai' };
             }
-            return { text: cand.text, source: 'ai', candidateId: cand.id };
+            // Use the LLM-provided text (already anchored + sanitized), NOT the
+            // full candidate line: for a "Title. Author" one-liner the line text
+            // is the whole line, not the author.
+            return { text, source: 'ai', candidateId: cand.id };
         }
         // Unanchored: only accept an EXACT match of the base value.
         if (baseVal && baseVal.text === text) return { ...baseVal, source: 'ai' };
