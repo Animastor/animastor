@@ -104,9 +104,11 @@ GPU-поля (appearance, environment) плейсхолдер не получа�
   `draft.book.language || draft.book.defaults.language || detectLanguage(sourceText) || 'ru'`.
 - **`buildLangInstruction(lang)`** (`agent-prompts.js`) — возвращает **значение** для
   плейсхолдера, например `Russian (ru)`.
-- **`pipeline-steps.js`** — 6 текстовых шагов делают `.replace('%LANGUAGE%',
-  buildLangInstruction(language))` при сборке системного промпта. Если правила не содержат
-  плейсхолдера (GPU-шаги) — replace безопасно ничего не меняет.
+- **`fillLang(template, lang)`** (`agent-prompts.js`) — заменяет **все** вхождения
+  `%LANGUAGE%` в шаблоне (split/join, а не `.replace` — тот заменяет только первое,
+  а `characters.md` содержит плейсхолдер 4 раза, `locations.md` — 2).
+- **`pipeline-steps.js`** — текстовые шаги собирают системный промпт через `fillLang(...)`.
+  Если правила не содержат плейсхолдера (GPU-шаги) — подмена безопасно ничего не меняет.
 - **Проброс:** `bootstrap.js` (есть `draft`) → `runPipeline(options.language)` →
   шаги `pipeline-steps.js`.
 
@@ -115,7 +117,10 @@ GPU-поля (appearance, environment) плейсхолдер не получа�
 
 ### Правила в `ai/rules/*.md` уже соблюдают категории
 
-- `characters.md`: `appearance` MUST be ENGLISH (для LTX 2.3), `name` — in original language.
+- `characters.md`: `appearance`/`clothes`/`video_tokens` MUST be ENGLISH (для LTX 2.3) —
+  мандат продублирован **инлайн** в описании каждого поля (не только в конце файла), чтобы
+  агент не «заражался» языком соседних user-facing полей (`name`/`description`/`traits` —
+  in original language).
 - `voice_generation.md`: инструкция голоса — ENGLISH + «Native <Lang> pronunciation».
 - `locations.md`: `name` — in original language; `description` и `environment`-значения — English.
 - `scenes.md`: примеры названий — это примеры формы (2-6 слов), не языка;
@@ -158,7 +163,9 @@ GPU-поля (appearance, environment) плейсхолдер не получа�
 2. Новое поле только для отображения пользователю → **локализуется** по `language` (категория B),
    плейсхолдер `%LANGUAGE%` ставится точечно рядом с этим полем.
 3. Новый AI-шаг, генерирующий пользовательский текст → ставит `%LANGUAGE%` у user-facing полей
-   своего `.md` и заменяет плейсхолдер через `.replace('%LANGUAGE%', buildLangInstruction(lang))`.
+   своего `.md` и заменяет плейсхолдер через `fillLang(template, lang)` (все вхождения).
+   Если в правиле есть GPU-поля (категория C), их EN-мандат дублируется **инлайн**,
+   в описании самого поля (по образцу `characters.md`).
 4. Визуальный/аудио AI-шаг → в `.md` фиксированная строка `Result language: English (en)`,
    параметр языка не получает.
 5. Новые языки добавляются **без изменения кода** — достаточно, чтобы модель знала язык

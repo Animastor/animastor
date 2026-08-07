@@ -52,10 +52,10 @@ epithets without visual detail) go into "mentions" only.
 ## Character fields
 For each character, provide TWO separate visual fields — appearance and clothes:
 - description: 1-2 sentences about WHO this character is (role, personality, position) — in %LANGUAGE%
-- appearance: DETAILED PHYSICAL appearance ONLY — age, face, hair, eyes, build, expression. DO NOT include clothing here — clothing belongs in the separate `clothes` field below. This is CRITICAL — must be a vivid visual description like an author wrote it, 2-4 sentences.
-- clothes: What the character WEARS — clothing, attire, and accessories (suit, hat, coat, boots, glasses, etc.), 1-2 sentences. Must not repeat anything already in `appearance`.
+- appearance: DETAILED PHYSICAL appearance ONLY — age, face, hair, eyes, build, expression. DO NOT include clothing here — clothing belongs in the separate `clothes` field below. This is CRITICAL — must be a vivid visual description like an author wrote it, 2-4 sentences. **MUST be written in ENGLISH (en)** — it is injected verbatim into English-only image/video prompts, so never write it in the book's language, even if the source text is in another language.
+- clothes: What the character WEARS — clothing, attire, and accessories (suit, hat, coat, boots, glasses, etc.), 1-2 sentences. Must not repeat anything already in `appearance`. **MUST be written in ENGLISH (en)** — same reason: it feeds English-only image/video models.
 - traits: array of 3-5 personality traits — in %LANGUAGE%
-- video_tokens: OPTIONAL. An array of 1–4 SHORT, maximally visible visual features of this character.
+- video_tokens: OPTIONAL. An array of 1–4 SHORT, maximally visible visual features of this character. **All features MUST be written in ENGLISH (en).**
   This is NOT a description — it is a set of anchors a video model can spot on a reference image
   and use to bind motion instructions to the right character. Each feature is a short phrase
   (1–4 words): "tie", "round glasses", "bald head", "long hair", "beard", "red jacket",
@@ -80,10 +80,10 @@ Note: Voice descriptions are NOT part of this step. They are generated separatel
       "name": "Full Name (in %LANGUAGE%)",
       "role": "protagonist|antagonist|supporting|minor",
       "description": "Brief who-they-are description (in %LANGUAGE%)",
-      "appearance": "Detailed PHYSICAL appearance only: age, face, hair, eyes, build, expression. NO clothing.",
-      "clothes": "Clothing and accessories: suit, hat, coat, boots, glasses, etc. No repetition of appearance.",
+      "appearance": "Detailed PHYSICAL appearance only: age, face, hair, eyes, build, expression. NO clothing. (in ENGLISH)",
+      "clothes": "Clothing and accessories: suit, hat, coat, boots, glasses, etc. No repetition of appearance. (in ENGLISH)",
       "traits": ["trait1", "trait2", "trait3"],
-      "video_tokens": ["tie", "round glasses"]  // optional, 1-4 short visual anchors
+      "video_tokens": ["tie", "round glasses"]  // optional, 1-4 short visual anchors (in ENGLISH)
     }
   ],
   "mentions": {

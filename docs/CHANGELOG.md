@@ -66,6 +66,35 @@ All notable changes to Animastor are documented here.
     (production-форма deps, отсутствие `deps.utils` вовсе, HTTP-вызов `/api/v1/books` на реальном
     express) — теперь регистрация покрыта тестом, а не только docker'ом.
 
+- **GPU-поля паспорта персонажей получали русский текст: `%LANGUAGE%` заменялся только в первом вхождении, а EN-мандат стоял только в конце `characters.md`**
+  (`backend/ai/rules/characters.md`,
+  `backend/src/services/agent-prompts.js`,
+  `backend/src/services/agent/pipeline-steps.js`,
+  `backend/tests/lang-instruction.test.js` (+6 тестов),
+  `docs/07-agents-and-generators/LANGUAGE_ARCHITECTURE.md`):
+  - **Проблема (книга `royallib_com_1786082999587`):** агент выдал `passport.appearance` /
+    `passport.clothes` на русском, хотя эти поля идут в English-only генерационные модели
+    (LTX 2.3, Qwen-Image). Две системные причины:
+    1. `%LANGUAGE%` (→ `Russian (ru)`) стоял в `characters.md` **4 раза** (description,
+       traits, name/description в JSON-примере), а `pipeline-steps.js` подменял его
+       через `.replace()` — JS-метод с строковым паттерном заменяет **только первое
+       вхождение**. Агент видел смесь: одно поле «in Russian (ru)», остальные — сырой
+       `%LANGUAGE%`. В `locations.md` плейсхолдер тоже был 2 раза (заменялся один).
+    2. Мандат «appearance MUST be written in ENGLISH» стоял **в самом конце файла**,
+       за блоком JSON-примера, а рядом с `appearance`/`clothes`/`video_tokens` локального
+       указания языка не было — агент «заражался» языком соседних user-facing полей
+       (`description` — in Russian (ru)) и исходным текстом книги.
+  - **Фикс 1 (`agent-prompts.js`):** новый `fillLang(template, lang)` — split/join по
+    `%LANGUAGE%` заменяет **все** вхождения. `pipeline-steps.js` (structure, characters,
+    locations, scenes, voice_generation) собирает промпт через `fillLang`.
+  - **Фикс 2 (`characters.md`):** EN-мандат продублирован **инлайн** в описании каждого
+    GPU-поля: `appearance`/`clothes` — «**MUST be written in ENGLISH (en)** — it is
+    injected verbatim into English-only image/video prompts»; `video_tokens` — «**All
+    features MUST be written in ENGLISH (en)**» (по образцу `locations.md`, где мандат
+    стоит рядом с полем — поэтому локации не страдали). JSON-пример размечен «(in ENGLISH)».
+  - Проверки: 6 новых тестов `fillLang` (все вхождения в characters/locations/structure,
+    шаблон без плейсхолдера, null/undefined); весь mocha-сьют (853) проходит.
+
 - **`ERR_ERL_UNEXPECTED_X_FORWARDED_FOR` от express-rate-limit в каждом запросе через nginx-прокси**
   (`backend/src/backend.cjs`):
   - **Проблема:** nginx (docker-compose proxy) проксирует запросы и проставляет

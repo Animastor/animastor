@@ -18,6 +18,7 @@ const {
     buildLangInstruction,
     resolveBookLanguage,
     langName,
+    fillLang,
     SYSTEM_PROMPTS,
 } = require('../src/services/agent-prompts');
 
@@ -47,6 +48,47 @@ describe('buildLangInstruction — %LANGUAGE% value', () => {
 
     it('falls back to the raw code for unknown languages', () => {
         expect(buildLangInstruction('fi')).to.equal('fi (fi)');
+    });
+});
+
+describe('fillLang — replaces EVERY %LANGUAGE% occurrence', () => {
+
+    it('replaces all occurrences, not just the first', () => {
+        const template = 'a %LANGUAGE% b %LANGUAGE% c %LANGUAGE%';
+        const rendered = fillLang(template, 'ru');
+        expect(rendered).to.equal('a Russian (ru) b Russian (ru) c Russian (ru)');
+        expect(rendered).to.not.include('%LANGUAGE%');
+    });
+
+    it('leaves no raw placeholder in characters.md (4 occurrences)', () => {
+        const rendered = fillLang(SYSTEM_PROMPTS.characters, 'ru');
+        const count = (rendered.match(/%LANGUAGE%/g) || []).length;
+        expect(count).to.equal(0);
+        const expected = buildLangInstruction('ru');
+        const occurrences = (rendered.match(new RegExp(expected.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []).length;
+        expect(occurrences).to.equal(4);
+    });
+
+    it('replaces all occurrences in locations.md (2 occurrences)', () => {
+        const rendered = fillLang(SYSTEM_PROMPTS.locations, 'de');
+        expect(rendered).to.not.include('%LANGUAGE%');
+        const occurrences = (rendered.match(/German \(de\)/g) || []).length;
+        expect(occurrences).to.equal(2);
+    });
+
+    it('handles templates without the placeholder', () => {
+        expect(fillLang('no placeholder here', 'ru')).to.equal('no placeholder here');
+    });
+
+    it('returns empty string for null/undefined templates', () => {
+        expect(fillLang(null, 'ru')).to.equal('');
+        expect(fillLang(undefined, 'ru')).to.equal('');
+    });
+
+    it('structure.md renders its single occurrence', () => {
+        const rendered = fillLang(SYSTEM_PROMPTS.structure, 'ru');
+        expect(rendered).to.not.include('%LANGUAGE%');
+        expect(rendered).to.include('Russian (ru)');
     });
 });
 

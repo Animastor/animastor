@@ -115,9 +115,10 @@ function langName(lang) {
  * Build the VALUE substituted for the %LANGUAGE% placeholder.
  * The .md rule files carry the placeholder point-wise next to user-facing
  * fields, e.g. `"name": "Full Name (in %LANGUAGE%)"` — and the pipeline
- * replaces %LANGUAGE% with this value at prompt build time, producing e.g.
- * "Full Name (in Russian (ru))". GPU-facing fields (appearance, environment)
- * are NOT localized — they stay English via explicit mandates in the rules.
+ * replaces EVERY %LANGUAGE% with this value at prompt build time (see
+ * fillLang), producing e.g. "Full Name (in Russian (ru))". GPU-facing fields
+ * (appearance, environment) are NOT localized — they stay English via explicit
+ * mandates in the rules.
  * Used ONLY in text-generating steps whose OUTPUT is user-facing text
  * (structure, characters, locations, scenes, voice_generation).
  * GPU-facing steps (visuals, polish, reconcile) do NOT use this placeholder —
@@ -129,6 +130,22 @@ function buildLangInstruction(lang) {
     const code = (lang || 'ru').toLowerCase();
     const name = langName(code);
     return `${name} (${code})`;
+}
+
+/**
+ * Substitute ALL occurrences of %LANGUAGE% in a rule template with the
+ * language instruction value (e.g. "Russian (ru)").
+ * String.prototype.replace with a plain-string pattern replaces only the FIRST
+ * match — and some rules carry the placeholder more than once (characters.md
+ * has 4, locations.md has 2). Leaving the raw placeholder in the prompt leaks
+ * template syntax to the agent and, worse, couples the EN mandates with an
+ * unresolved token. split/join replaces every occurrence.
+ * @param {string} template - .md rule content containing %LANGUAGE%
+ * @param {string} lang - book language code (ru/en/de/...)
+ * @returns {string} template with every %LANGUAGE% replaced
+ */
+function fillLang(template, lang) {
+    return String(template || '').split('%LANGUAGE%').join(buildLangInstruction(lang));
 }
 
 /**
@@ -152,5 +169,5 @@ module.exports = {
     SCENE_TARGET_SEC, SCENE_MAX_SEC, SCENE_MIN_SEC, MAX_SCENES_PER_CHUNK,
     CHARS_PER_SCENE, WINDOW_OVERHEAD, computeWindowChars,
     IMAGE_PROMPT_MAX_CHARS, UNIT_TEXT_MAX_CHARS, SCENE_TEXT_MAX_CHARS,
-    LANG_NAMES, langName, buildLangInstruction, resolveBookLanguage,
+    LANG_NAMES, langName, buildLangInstruction, fillLang, resolveBookLanguage,
 };
