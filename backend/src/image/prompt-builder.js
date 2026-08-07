@@ -45,24 +45,16 @@ function resolvePassport(c, chapter, scene) {
     // Любое поле, заданное здесь, ПОЛНОСТЬЮ замещает соответствующее глобальное поле.
     const sceneOverride = scene?.passport?.[c.id] || {};
     return {
-        base_appearance: sceneOverride.base_appearance ?? resolveField("base_appearance", globalP, chapterP, sceneV),
-        detailed_appearance: sceneOverride.detailed_appearance ?? resolveField("detailed_appearance", globalP, chapterP, sceneV),
-        clothing_base: sceneOverride.clothing_base ?? resolveField("clothing_base", globalP, chapterP, sceneV),
-        clothing_details: sceneOverride.clothing_details ?? resolveField("clothing_details", globalP, chapterP, sceneV),
+        appearance: sceneOverride.appearance ?? resolveField("appearance", globalP, chapterP, sceneV),
+        clothes: sceneOverride.clothes ?? resolveField("clothes", globalP, chapterP, sceneV),
     };
 }
 
 function buildCharacterPassport(p) {
     if (!p) return { appearance: "", clothing: "" };
-    const appearance = [
-        p.base_appearance && !helpers.isPlaceholder(p.base_appearance) ? p.base_appearance : null,
-        p.detailed_appearance && !helpers.isPlaceholder(p.detailed_appearance) ? p.detailed_appearance : null,
-    ].filter(Boolean).join(" ");
-    const clothing = [
-        p.clothing_base && !helpers.isPlaceholder(p.clothing_base) ? p.clothing_base : null,
-        p.clothing_details && !helpers.isPlaceholder(p.clothing_details) ? p.clothing_details : null,
-    ].filter(Boolean).join(" ");
-    return { appearance: appearance.trim(), clothing: clothing.trim() };
+    const appearance = p.appearance && !helpers.isPlaceholder(p.appearance) ? p.appearance : null;
+    const clothing = p.clothes && !helpers.isPlaceholder(p.clothes) ? p.clothes : null;
+    return { appearance: (appearance || "").trim(), clothing: (clothing || "").trim() };
 }
 
 function resolveState(c, chapter, scene) {
@@ -114,7 +106,9 @@ function buildCharacters(scenePayload, unit, chapter, book) {
         const state = resolveState(c, chapter, scenePayload);
         let desc;
         if (appearance) {
-            desc = appearance;
+            // appearance is a full description that may end with '.', so strip the
+            // trailing punctuation before appending clothing to avoid "…expression., a suit".
+            desc = clothing ? appearance.replace(/[\s.;:!?]+$/, '') : appearance;
             if (clothing) desc += ", " + clothing;
         } else {
             desc = c.name || c.id;

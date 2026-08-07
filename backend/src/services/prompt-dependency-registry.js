@@ -168,9 +168,8 @@ const SCENE_FIELDS = [
 
 const CROSS_FIELDS = [
     // ── Character passport ─────────────────────────
-    // passport.base_appearance, detailed_appearance,
-    // clothing_base, clothing_details → ALL merged into
-    // "consistent character appearance: ..." in prompt
+    // passport.appearance + passport.clothes → merged into
+    // "id: appearance, clothes" in the final image prompt
     {
         key: 'characters.passport',
         layers: ['image', 'video'],
@@ -259,10 +258,8 @@ function extractPassport(char) {
     if (!char) return null;
     const p = char.passport || {};
     return {
-        base_appearance: p.base_appearance,
-        detailed_appearance: p.detailed_appearance,
-        clothing_base: p.clothing_base,
-        clothing_details: p.clothing_details,
+        appearance: p.appearance,
+        clothes: p.clothes,
     };
 }
 

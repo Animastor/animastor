@@ -6,6 +6,33 @@ All notable changes to Animastor are documented here.
 
 ## [Unreleased] — 2026-08-06
 
+### Changed
+
+- **Паспорт персонажа упрощён: 4 поля → 2** (`characters.json` → `passport.*`):
+  - Было: `base_appearance`, `detailed_appearance`, `clothing_base`, `clothing_details`
+    (базовое и детальное описания практически совпадали — оба попадали в итоговый промпт,
+    раздувая его и дублируя информацию).
+  - Стало: `appearance`, `clothes` (+ `video_tokens` остаётся без изменений). Глобальный
+    паспорт по определению базовый, поэтому детализация/изменения делаются только через
+    scene-level overrides: `scene.passport[charId].{appearance, clothes}`.
+  - Код: `buildImagePrompt` → `resolvePassport`/`buildCharacterPassport`
+    (`backend/src/image/prompt-builder.js`), `extractPassport`
+    (`prompt-dependency-registry.js`), агентский пайплайн (voices / passport-reconciliation
+    / visuals в `pipeline-steps.js`), `lazy-book/create.js` (пишет `appearance`+`clothes`
+    из полей агента), `core-routes.cjs` (PUT-merge / PATCH character).
+  - Разделение «внешность/одежда» делает АГЕНТ (`ai/rules/characters.md` — отдельные
+    поля `appearance` и `clothes`); программа только проверяет результат и заполняет
+    безопасные дефолты, без regex-эвристик (regex-split удалён).
+  - Фронтенды: `CharPassport` (web `models.ts` + Android `BookModels.kt`), редакторы
+    passport-перекрытий (`EditPage.tsx`, `EditFragment.kt`), строки `field_appearance` /
+    `field_clothes` (i18n web + strings.xml ru/en).
+  - AI-правила: `ai/rules/passport_reconciliation.md`, пример `ai/examples/characters.json`.
+  - Примечание: существующие книги со старым форматом паспортов перегенерируются
+    пользователем (старые поля `base_appearance`/`detailed_appearance`/`clothing_*`
+    кодом больше не читаются). ВАЖНО: scene-level перекрытия `scene.passport[charId]`
+    в старом формате (`clothing_base` и т.п.) тоже игнорируются до перегенерации —
+    старые сцены потеряют такие перекрытия молча.
+
 ### Fixed
 
 - **Название приложения всегда «Animastor» (латиницей), независимо от языка UI**

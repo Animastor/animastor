@@ -2,6 +2,12 @@
 // Lazy Book — Appearance Fragmentation
 // ======================================================
 
+// Clothing-span matcher used by extractClothing.
+// Matches "wearing/dressed in …" phrases plus explicit clothing-item phrases
+// (EN + RU).
+const CLOTHING_RE = /((?:wearing|dressed in|in a|in an|clad in|adorned in|wore|wears|wearing a|dressed|clothed|attired|outfitted|одет(?:ый|ая|ые)?\s+в|надет(?:а|о|ы)?|облачен(?:а|о|ы)?|носит(?:а|о)?)\s+[^.,;!?]{3,60})|([^.,;!?]{3,60}(?:suit|shirt|coat|dress|hat|jacket|tie|shoes|boots|uniform|robe|cloak|outfit|sweater|vest|hoodie|pants|jeans|skirt|scarf|gloves|belt|cape|gown|tunic|armor|crown|necklace|ring)[^.,;!?]{0,40})|((?:костюм|пиджак|брюк|шляп|кепк|фуражк|рубашк|сорочк|галстук|пальто|плать|ботинк|сапог|халат|куртк|сюртук|жилет|френч|шинел|мундир|плащ|шарф|перчатк|ремень|пояс|кепка|фуражка)[^.,;!?]{0,40})/gi;
+
+
 function fragmentAppearanceForVideo(appearance, charName) {
     if (!appearance || appearance.length < 5) {
         return `${charName.toLowerCase()} character, distinctive appearance`;
@@ -96,9 +102,7 @@ function extractClothing(appearance) {
         };
     }
 
-    const clothingRe = /((?:wearing|dressed in|in a|in an|clad in|adorned in|wore|wears|wearing a|dressed|clothed|attired|outfitted)\s+[^.,;!?]{3,60})|([^.,;!?]{3,60}(?:suit|shirt|coat|dress|hat|jacket|tie|shoes|boots|uniform|robe|cloak|outfit|sweater|vest|hoodie|pants|jeans|skirt|scarf|gloves|belt|cape|gown|tunic|armor|crown|necklace|ring)[^.,;!?]{0,40})|((?:костюм|пиджак|брюк|шляп|кепк|фуражк|рубашк|сорочк|галстук|пальто|плать|ботинк|сапог|халат|куртк|сюртук|жилет|френч|шинел|мундир|плащ|шарф|перчатк|ремень|пояс|кепка|фуражка)[^.,;!?]{0,40})/gi;
-
-    const matches = appearance.match(clothingRe);
+    const matches = appearance.match(CLOTHING_RE);
 
     if (matches && matches.length > 0) {
         const cleanMatches = matches

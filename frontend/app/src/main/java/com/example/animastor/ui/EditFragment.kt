@@ -981,17 +981,13 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                     val charId = ch.id ?: "char_unknown"
                     val passportPrefix = "char.${charId}.passport"
                     val passportKeys = listOf(
-                        "${passportPrefix}.base_appearance",
-                        "${passportPrefix}.detailed_appearance",
-                        "${passportPrefix}.clothing_base",
-                        "${passportPrefix}.clothing_details",
+                        "${passportPrefix}.appearance",
+                        "${passportPrefix}.clothes",
                         "${passportPrefix}.video_tokens"
                     )
                     val pf = mapOf(
-                        "${passportPrefix}.base_appearance" to (passport.base_appearance ?: ""),
-                        "${passportPrefix}.detailed_appearance" to (passport.detailed_appearance ?: ""),
-                        "${passportPrefix}.clothing_base" to (passport.clothing_base ?: ""),
-                        "${passportPrefix}.clothing_details" to (passport.clothing_details ?: ""),
+                        "${passportPrefix}.appearance" to (passport.appearance ?: ""),
+                        "${passportPrefix}.clothes" to (passport.clothes ?: ""),
                         "${passportPrefix}.video_tokens" to (passport.video_tokens ?: "")
                     )
 
@@ -1283,7 +1279,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
     // blocks is capped by the scene's participants count.
 
     private val passportOverrideFields = listOf(
-        "base_appearance", "detailed_appearance", "clothing_base", "clothing_details", "video_tokens"
+        "appearance", "clothes", "video_tokens"
     )
 
     private class PassportOverrideBlock(var charId: String = "") {
@@ -1304,10 +1300,8 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         passportOverrideBlocks.clear()
         (sc.passport ?: emptyMap()).forEach { (charId, p) ->
             val block = PassportOverrideBlock(charId)
-            p.base_appearance?.let { block.fields["base_appearance"] = it }
-            p.detailed_appearance?.let { block.fields["detailed_appearance"] = it }
-            p.clothing_base?.let { block.fields["clothing_base"] = it }
-            p.clothing_details?.let { block.fields["clothing_details"] = it }
+            p.appearance?.let { block.fields["appearance"] = it }
+            p.clothes?.let { block.fields["clothes"] = it }
             p.video_tokens?.let { block.fields["video_tokens"] = it }
             passportOverrideBlocks.add(block)
         }
@@ -1467,10 +1461,8 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
     }
 
     private fun passportFieldOf(p: CharPassport?, field: String): String? = when (field) {
-        "base_appearance" -> p?.base_appearance
-        "detailed_appearance" -> p?.detailed_appearance
-        "clothing_base" -> p?.clothing_base
-        "clothing_details" -> p?.clothing_details
+        "appearance" -> p?.appearance
+        "clothes" -> p?.clothes
         "video_tokens" -> p?.video_tokens
         else -> null
     }
@@ -1577,13 +1569,11 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
 
     /**
      * Localized label for a passport field key (e.g.
-     * "char.<id>.passport.base_appearance" → localized Base Appearance).
+     * "char.<id>.passport.appearance" → localized Appearance).
      */
     private fun passportFieldLabel(key: String): String = when (key.substringAfterLast('.')) {
-        "base_appearance" -> getString(R.string.field_base_appearance)
-        "detailed_appearance" -> getString(R.string.field_detailed_appearance)
-        "clothing_base" -> getString(R.string.field_clothing_base)
-        "clothing_details" -> getString(R.string.field_clothing_details)
+        "appearance" -> getString(R.string.field_appearance)
+        "clothes" -> getString(R.string.field_clothes)
         "video_tokens" -> getString(R.string.field_video_tokens)
         else -> key
     }

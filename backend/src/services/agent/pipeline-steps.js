@@ -441,7 +441,7 @@ async function stepGenerateVoices(sessionId, text, characters, stepIndex, progre
         `- ${c.id}: ${c.name}\n` +
         `  role: ${c.role || 'unknown'}\n` +
         `  description: ${(c.description || '').substring(0, 300)}\n` +
-        `  appearance: ${(c.appearance || c.passport?.base_appearance || c.passport?.detailed_appearance || '').substring(0, 400)}\n` +
+        `  appearance: ${(c.appearance || c.passport?.appearance || '').substring(0, 400)}\n` +
         `  traits: ${(c.traits || []).slice(0, 5).join(', ') || 'none'}\n` +
         `  current_voice: ${c.voice || '(none)'}`
     ).join('\n');
@@ -509,26 +509,21 @@ async function stepReconcilePassports(sessionId, allVisualUnits, characters, ste
     const step = await createStep(sessionId, 'reconcile_passports', stepIndex || 0);
 
     // Build passport context: only characters that have actual passport data
-    // Characters from the agent pipeline have `appearance` field (not passport.*),
-    // while characters loaded from characters.json have `passport.*`. Handle both.
+    // Characters from the agent pipeline have `appearance`/`clothes` fields (not
+    // passport.*), while characters loaded from characters.json have `passport.*`.
+    // Handle both shapes.
     const charsWithPassport = (characters || []).filter(c =>
-        c.passport?.base_appearance || c.passport?.detailed_appearance ||
-        c.passport?.clothing_base || c.passport?.clothing_details ||
-        c.appearance
+        c.passport?.appearance || c.passport?.clothes || c.appearance || c.clothes
     );
     const charsContext = charsWithPassport.map(c => {
         const p = c.passport || {};
-        // Agent-pipeline characters have `appearance` (not passport.*).
+        // Agent-pipeline characters have `appearance`/`clothes` (not passport.*).
         // Map to passport-like fields so the reconciliation AI can compare.
-        const baseAppearance = p.base_appearance || c.appearance || c.description || '(none)';
-        const detailedAppearance = p.detailed_appearance || c.appearance || '(none)';
-        const clothingBase = p.clothing_base || '(none)';
-        const clothingDetails = p.clothing_details || '(none)';
+        const appearance = p.appearance || c.appearance || c.description || '(none)';
+        const clothes = p.clothes || c.clothes || '(none)';
         return `- ${c.id}: ${c.name || c.id}\n` +
-            `  base_appearance: ${baseAppearance}\n` +
-            `  detailed_appearance: ${detailedAppearance.substring(0, 200)}\n` +
-            `  clothing_base: ${clothingBase}\n` +
-            `  clothing_details: ${clothingDetails.substring(0, 200)}`;
+            `  appearance: ${appearance.substring(0, 400)}\n` +
+            `  clothes: ${clothes.substring(0, 200)}`;
     }).join('\n') || 'None';
 
     const unitsStr = polishable.map(unitRow).join('\n');
@@ -884,9 +879,7 @@ async function stepCreateVisuals(sessionId, scene, units, sceneIndex, characters
     if (season) contextParts.push(`Season: ${season}`);
 
     function hasPassportAppearance(ch) {
-        return !!(ch.passport?.base_appearance || ch.passport?.detailed_appearance ||
-                  ch.passport?.clothing_base || ch.passport?.clothing_details ||
-                  ch.appearance);
+        return !!(ch.passport?.appearance || ch.passport?.clothes || ch.appearance || ch.clothes);
     }
 
     function displayName(ch) {

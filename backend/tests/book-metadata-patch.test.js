@@ -112,8 +112,8 @@ describe('PATCH /api/v1/book/:bookId/metadata', () => {
 
         // Create characters.json (to verify it's NOT touched)
         fs.writeFileSync(path.join(bookDir, 'characters.json'), JSON.stringify([
-            { id: 'hero', name: 'Hero', passport: { base_appearance: 'Tall, dark hair' } },
-            { id: 'sidekick', name: 'Sidekick', passport: { base_appearance: 'Short, glasses' } },
+            { id: 'hero', name: 'Hero', passport: { appearance: 'Tall, dark hair' } },
+            { id: 'sidekick', name: 'Sidekick', passport: { appearance: 'Short, glasses' } },
         ], null, 2));
 
         // Create locations.json
@@ -262,7 +262,7 @@ describe('PATCH /api/v1/book/:bookId/metadata', () => {
         const chars = JSON.parse(fs.readFileSync(path.join(bookDir, 'characters.json'), 'utf8'));
         expect(chars).to.have.length(2);
         expect(chars[0].id).to.equal('hero');
-        expect(chars[0].passport.base_appearance).to.equal('Tall, dark hair');
+        expect(chars[0].passport.appearance).to.equal('Tall, dark hair');
     });
 
     // ======================================================

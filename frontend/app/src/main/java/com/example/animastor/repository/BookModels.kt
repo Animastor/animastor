@@ -154,10 +154,8 @@ data class CharDef(
 )
 
 data class CharPassport(
-    val base_appearance: String? = null,
-    val detailed_appearance: String? = null,
-    val clothing_base: String? = null,
-    val clothing_details: String? = null,
+    val appearance: String? = null,
+    val clothes: String? = null,
     val video_tokens: String? = null
 )
 

@@ -12,8 +12,8 @@ Each IU has an image.prompt written by the scene director. Separately, each char
 For each IU, compare the image.prompt against the passports of the characters that appear in it. Remove any descriptions that semantically duplicate passport data. Keep ONLY what is unique to THIS frame:
 
 ### REMOVE (semantic duplicates of passport)
-- Physical appearance: face, build, age, hair, eyes — already in passport.base_appearance / detailed_appearance
-- Clothing items: suit, shirt, tie, hat, shoes — already in passport.clothing_base / clothing_details
+- Physical appearance: face, build, age, hair, eyes — already in passport.appearance
+- Clothing items: suit, shirt, tie, hat, shoes — already in passport.clothes
 - Permanent accessories: glasses, rings, watches, canes — already in passport
 - Any description of how a character "looks" generally — the passport covers that
 
@@ -28,7 +28,7 @@ For each IU, compare the image.prompt against the passports of the characters th
 
 ## Critical rules
 - This is SEMANTIC comparison, not text matching. "Wearing a dark suit" in image.prompt should be removed if passport says "dark suit". "Holding his hat" should be kept ONLY IF the passport says he wears a hat AND this is a deliberate action of removing/holding it (a temporary change). If the passport says nothing about a hat, "holding his hat" is NEW information — keep it.
-- The passport has FOUR fields: base_appearance (face, build, age), detailed_appearance (more detail), clothing_base, clothing_details (attire, accessories). Consider ALL four when checking for duplicates.
+- The passport has TWO fields: appearance (face, build, age, hair, eyes, ...) and clothes (attire, accessories). Consider BOTH when checking for duplicates.
 - Do NOT change position, pose, gaze, action, or temporary descriptions — only remove what's redundant with the passport.
 - Do NOT add new descriptions — only remove.
 - Do NOT change unit.text, unit.type, or unit.image.

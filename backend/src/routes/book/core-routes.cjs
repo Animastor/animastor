@@ -173,8 +173,7 @@ module.exports = function(app, redis, deps) {
                             if (oldChar && oldChar.passport) {
                                 const ip = incomingChar.passport;
                                 const hasPassportData = ip && (
-                                    ip.base_appearance || ip.detailed_appearance ||
-                                    ip.clothing_base || ip.clothing_details
+                                    ip.appearance || ip.clothes
                                 );
                                 if (!hasPassportData) {
                                     mergedCount++;
@@ -578,7 +577,7 @@ module.exports = function(app, redis, deps) {
             const bookBeforePatch = JSON.parse(JSON.stringify(oldBook));
 
             for (const [key, value] of Object.entries(fields)) {
-                // "passport.base_appearance" → char.passport.base_appearance
+                // "passport.appearance" → char.passport.appearance
                 setDeep(char, key, value === '' ? null : value);
             }
             log(`[PATCH CHARACTER] ${bookId}/${characterId}: fields=${Object.keys(fields).join(', ')}`);

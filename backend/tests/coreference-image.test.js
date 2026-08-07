@@ -236,8 +236,8 @@ describe('Coreference — buildCharacters from scene.participants', () => {
 
     const book = {
         characters: [
-            { id: 'mikhail_aleksandrovich_berlioz', name: 'Михаил Александрович Берлиоз', passport: { base_appearance: 'Маленького роста, упитан, лыс' } },
-            { id: 'ivan_nikolaevich_ponyrev', name: 'Иван Николаевич Понырев', passport: { base_appearance: 'Плечистый, рыжеватый, вихрастый' } },
+            { id: 'mikhail_aleksandrovich_berlioz', name: 'Михаил Александрович Берлиоз', passport: { appearance: 'Маленького роста, упитан, лыс' } },
+            { id: 'ivan_nikolaevich_ponyrev', name: 'Иван Николаевич Понырев', passport: { appearance: 'Плечистый, рыжеватый, вихрастый' } },
         ],
     };
 
@@ -277,10 +277,8 @@ describe('Coreference — buildCharacters from scene.participants', () => {
                 id: 'berlioz',
                 name: 'Берлиоз',
                 passport: {
-                    base_appearance: 'Маленького роста',
-                    detailed_appearance: 'лысый',
-                    clothing_base: 'летний серый костюм',
-                    clothing_details: 'шляпа пирожком',
+                    appearance: 'Маленького роста',
+                    clothes: 'летний серый костюм',
                 },
             }],
         };
@@ -288,7 +286,7 @@ describe('Coreference — buildCharacters from scene.participants', () => {
         const unit = { visual: { prompt: 'berlioz sitting on bench' } };
         const result = buildCharacters(scene, unit, {}, bookDetailed);
         expect(result).to.have.lengthOf(1);
-        expect(result[0]).to.equal('berlioz: Маленького роста лысый, летний серый костюм шляпа пирожком');
+        expect(result[0]).to.equal('berlioz: Маленького роста, летний серый костюм');
     });
 
     it('deduplicates participant IDs', () => {
@@ -309,8 +307,8 @@ describe('Coreference — buildImagePrompt passport injection', () => {
 
     const bookPayload = {
         characters: [
-            { id: 'berlioz', name: 'Берлиоз', passport: { base_appearance: 'маленького роста' } },
-            { id: 'bezdomny', name: 'Бездомный', passport: { base_appearance: 'плечистый рыжий' } },
+            { id: 'berlioz', name: 'Берлиоз', passport: { appearance: 'маленького роста' } },
+            { id: 'bezdomny', name: 'Бездомный', passport: { appearance: 'плечистый рыжий' } },
         ],
         locations: {
             moscow_patriarskie: {

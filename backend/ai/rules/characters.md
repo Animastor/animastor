@@ -50,11 +50,17 @@ Characters that do NOT match criterion 1 or 2 (role-only references, aliases,
 epithets without visual detail) go into "mentions" only.
 
 ## Character fields
-For each character, provide:
+For each character, provide TWO separate visual fields — appearance and clothes:
 - description: 1-2 sentences about WHO this character is (role, personality, position) — in %LANGUAGE%
-- appearance: DETAILED physical appearance — age, face, hair, eyes, build, expression, clothing style. This is CRITICAL — must be vivid visual description like an author wrote it, 2-4 sentences.
+- appearance: DETAILED PHYSICAL appearance ONLY — age, face, hair, eyes, build, expression. DO NOT include clothing here — clothing belongs in the separate `clothes` field below. This is CRITICAL — must be a vivid visual description like an author wrote it, 2-4 sentences.
+- clothes: What the character WEARS — clothing, attire, and accessories (suit, hat, coat, boots, glasses, etc.), 1-2 sentences. Must not repeat anything already in `appearance`.
 - traits: array of 3-5 personality traits — in %LANGUAGE%
 - Role: protagonist (main POV character), antagonist (opposes protagonist), supporting (significant side character), minor (briefly mentioned)
+
+Why two fields: `appearance` and `clothes` are injected into the image prompt as
+"<id>: appearance, clothes". If they overlap (clothing repeated inside appearance),
+the prompt duplicates the same words. Keep them strictly separated: appearance =
+body/face only, clothes = attire only.
 
 Note: Voice descriptions are NOT part of this step. They are generated separately by a dedicated voice casting step.
 
@@ -67,7 +73,8 @@ Note: Voice descriptions are NOT part of this step. They are generated separatel
       "name": "Full Name (in %LANGUAGE%)",
       "role": "protagonist|antagonist|supporting|minor",
       "description": "Brief who-they-are description (in %LANGUAGE%)",
-      "appearance": "Detailed physical appearance description. Age, face, hair, eyes, build, expression. Vivid visual description.",
+      "appearance": "Detailed PHYSICAL appearance only: age, face, hair, eyes, build, expression. NO clothing.",
+      "clothes": "Clothing and accessories: suit, hat, coat, boots, glasses, etc. No repetition of appearance.",
       "traits": ["trait1", "trait2", "trait3"]
     }
   ],
@@ -79,8 +86,12 @@ Note: Voice descriptions are NOT part of this step. They are generated separatel
 }
 ```
 
-IMPORTANT CRITICAL — appearance MUST be written in ENGLISH because it is used as input for an English-only video generation model (LTX 2.3). Describe the character's looks in clear English, even if the source text is in another language.
+IMPORTANT CRITICAL — appearance MUST be written in ENGLISH because it is used as
+input for an English-only video generation model (LTX 2.3). The same applies to
+clothes: both fields feed English-only generation models (LTX 2.3, Qwen-Image).
+Describe the character's looks in clear English, even if the source text is in another language.
 
-IMPORTANT: appearance must be a RICH visual description of what the character LOOKS like — not their biography. This is used for image generation.
+IMPORTANT: appearance must be a RICH visual description of what the character LOOKS
+like — not their biography. This is used for image generation.
 
 Return ONLY valid JSON. If no characters with visual appearance exist, return { "characters": [], "mentions": {} }.

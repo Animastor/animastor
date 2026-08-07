@@ -249,7 +249,7 @@ describe('Book Diff — Cross-cutting dependencies', () => {
     it('detects character passport changes and marks scenes', () => {
         const oldBook = {
             characters: [
-                { id: 'hero', passport: { base_appearance: 'tall' } },
+                { id: 'hero', passport: { appearance: 'tall' } },
             ],
             chapters: [{
                 chapter: 'ch-1',
@@ -258,7 +258,7 @@ describe('Book Diff — Cross-cutting dependencies', () => {
         };
         const newBook = {
             characters: [
-                { id: 'hero', passport: { base_appearance: 'short' } },
+                { id: 'hero', passport: { appearance: 'short' } },
             ],
             chapters: [{
                 chapter: 'ch-1',
@@ -329,8 +329,8 @@ describe('Book Diff — Cross-cutting dependencies', () => {
     it('character change affects all scenes referencing that character', () => {
         const oldBook = {
             characters: [
-                { id: 'hero', passport: { base_appearance: 'tall' } },
-                { id: 'sidekick', passport: { base_appearance: 'short' } },
+                { id: 'hero', passport: { appearance: 'tall' } },
+                { id: 'sidekick', passport: { appearance: 'short' } },
             ],
             chapters: [{
                 chapter: 'ch-1',
@@ -343,8 +343,8 @@ describe('Book Diff — Cross-cutting dependencies', () => {
         };
         const newBook = {
             characters: [
-                { id: 'hero', passport: { base_appearance: 'very tall' } },  // changed
-                { id: 'sidekick', passport: { base_appearance: 'short' } },  // unchanged
+                { id: 'hero', passport: { appearance: 'very tall' } },  // changed
+                { id: 'sidekick', passport: { appearance: 'short' } },  // unchanged
             ],
             chapters: [{
                 chapter: 'ch-1',
@@ -365,7 +365,7 @@ describe('Book Diff — Cross-cutting dependencies', () => {
 
     it('new character is detected', () => {
         const oldBook = {
-            characters: [{ id: 'hero', passport: { base_appearance: 'tall' } }],
+            characters: [{ id: 'hero', passport: { appearance: 'tall' } }],
             chapters: [{
                 chapter: 'ch-1',
                 scenes: [{ scene_id: 'sc-1', participants: ['hero', 'sidekick'] }],
@@ -373,8 +373,8 @@ describe('Book Diff — Cross-cutting dependencies', () => {
         };
         const newBook = {
             characters: [
-                { id: 'hero', passport: { base_appearance: 'tall' } },
-                { id: 'sidekick', passport: { base_appearance: 'short' } },  // new
+                { id: 'hero', passport: { appearance: 'tall' } },
+                { id: 'sidekick', passport: { appearance: 'short' } },  // new
             ],
             chapters: [{
                 chapter: 'ch-1',
@@ -390,8 +390,8 @@ describe('Book Diff — Cross-cutting dependencies', () => {
     it('removed character marks scenes', () => {
         const oldBook = {
             characters: [
-                { id: 'hero', passport: { base_appearance: 'tall' } },
-                { id: 'sidekick', passport: { base_appearance: 'short' } },
+                { id: 'hero', passport: { appearance: 'tall' } },
+                { id: 'sidekick', passport: { appearance: 'short' } },
             ],
             chapters: [{
                 chapter: 'ch-1',
@@ -399,7 +399,7 @@ describe('Book Diff — Cross-cutting dependencies', () => {
             }],
         };
         const newBook = {
-            characters: [{ id: 'hero', passport: { base_appearance: 'tall' } }],  // sidekick removed
+            characters: [{ id: 'hero', passport: { appearance: 'tall' } }],  // sidekick removed
             chapters: [{
                 chapter: 'ch-1',
                 scenes: [{ scene_id: 'sc-1', participants: ['hero', 'sidekick'] }],
@@ -411,7 +411,7 @@ describe('Book Diff — Cross-cutting dependencies', () => {
 
     it('unchanged book produces no dirty scenes', () => {
         const book = {
-            characters: [{ id: 'hero', passport: { base_appearance: 'tall' } }],
+            characters: [{ id: 'hero', passport: { appearance: 'tall' } }],
             locations: { forest: { description: 'Dark' } },
             chapters: [{
                 chapter: 'ch-1',

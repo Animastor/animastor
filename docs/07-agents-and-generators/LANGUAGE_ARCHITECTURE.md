@@ -44,7 +44,7 @@
 - системные инструкции (промпты `ai/rules/*.md`)
 - `image.prompt`, `video.action`
 - инструкции и описания для TTS (voice instruction) — с маркером «Native <Lang> pronunciation»
-- паспорта персонажей (`passport.*`: `base_appearance`, `detailed_appearance`, `clothing_base`, `clothing_details`, `video_tokens`)
+- паспорта персонажей (`passport.*`: `appearance`, `clothes`, `video_tokens`)
 - описания локаций (`locations.json`) и значения `environment.*` (`time`, `season`, `lighting`, `weather`, `mood`, `atmosphere`)
 - любые другие поля, попадающие в промпты моделей
 

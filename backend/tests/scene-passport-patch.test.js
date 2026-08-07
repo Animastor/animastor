@@ -153,8 +153,8 @@ describe('Scene PATCH — scene.passport overrides', () => {
                 id: 'hero',
                 name: 'Hero',
                 passport: {
-                    base_appearance: 'Tall, dark hair',
-                    clothing_base: 'dark suit',
+                    appearance: 'Tall, dark hair',
+                    clothes: 'dark suit',
                     video_tokens: 'global video tokens',
                 },
             },
@@ -203,14 +203,14 @@ describe('Scene PATCH — scene.passport overrides', () => {
     // ======================================================
     it('applies passport.<charId>.<field> keys to scene.passport', () => {
         applySceneFieldsPatch({
-            'passport.hero.clothing_base': 'long grey coat',
+            'passport.hero.clothes': 'long grey coat',
         });
 
         const book = bookModule.loadBook(bookId);
         const scene = book.chapters[0].scenes[0];
-        expect(scene.passport.hero.clothing_base).to.equal('long grey coat');
+        expect(scene.passport.hero.clothes).to.equal('long grey coat');
         // Other passport fields untouched — override is per-field
-        expect(scene.passport.hero.base_appearance).to.be.undefined;
+        expect(scene.passport.hero.appearance).to.be.undefined;
     });
 
     // ======================================================
@@ -218,16 +218,16 @@ describe('Scene PATCH — scene.passport overrides', () => {
     // ======================================================
     it('applies multiple override fields for one character', () => {
         applySceneFieldsPatch({
-            'passport.hero.clothing_base': 'long grey coat',
-            'passport.hero.clothing_details': 'hat in hand',
+            'passport.hero.appearance': 'tall and thin',
+            'passport.hero.clothes': 'long grey coat',
             'passport.hero.video_tokens': 'scene override tokens',
         });
 
         const book = bookModule.loadBook(bookId);
         const scene = book.chapters[0].scenes[0];
         expect(scene.passport.hero).to.deep.equal({
-            clothing_base: 'long grey coat',
-            clothing_details: 'hat in hand',
+            appearance: 'tall and thin',
+            clothes: 'long grey coat',
             video_tokens: 'scene override tokens',
         });
     });
@@ -237,13 +237,13 @@ describe('Scene PATCH — scene.passport overrides', () => {
     // ======================================================
     it('clears a previously-set override when empty string is sent', () => {
         // First set the override
-        applySceneFieldsPatch({ 'passport.hero.clothing_base': 'long grey coat' });
+        applySceneFieldsPatch({ 'passport.hero.clothes': 'long grey coat' });
         // Then clear it — the frontend sends '' for removed values
-        applySceneFieldsPatch({ 'passport.hero.clothing_base': '' });
+        applySceneFieldsPatch({ 'passport.hero.clothes': '' });
 
         const book = bookModule.loadBook(bookId);
         const scene = book.chapters[0].scenes[0];
-        expect(scene.passport.hero.clothing_base).to.be.null;
+        expect(scene.passport.hero.clothes).to.be.null;
     });
 
     // ======================================================
@@ -251,7 +251,7 @@ describe('Scene PATCH — scene.passport overrides', () => {
     // ======================================================
     it('bookDiff detects scene.passport change → image + video dirty', () => {
         const { diff } = applySceneFieldsPatch({
-            'passport.hero.clothing_base': 'long grey coat',
+            'passport.hero.clothes': 'long grey coat',
         });
 
         expect(diff.dirty_scenes).to.have.length(1);
@@ -264,9 +264,9 @@ describe('Scene PATCH — scene.passport overrides', () => {
     // Test 5: no dirty scenes when nothing changed
     // ======================================================
     it('produces no dirty scenes when the override is unchanged', () => {
-        applySceneFieldsPatch({ 'passport.hero.clothing_base': 'long grey coat' });
+        applySceneFieldsPatch({ 'passport.hero.clothes': 'long grey coat' });
         // Same value again → no diff
-        const { diff } = applySceneFieldsPatch({ 'passport.hero.clothing_base': 'long grey coat' });
+        const { diff } = applySceneFieldsPatch({ 'passport.hero.clothes': 'long grey coat' });
         expect(diff.dirty_scenes).to.have.length(0);
     });
 
@@ -278,16 +278,15 @@ describe('Scene PATCH — scene.passport overrides', () => {
         const hero = book.characters.find(c => c.id === 'hero');
         const scene = {
             scene_id: SCENE_ID,
-            passport: { hero: { clothing_base: 'long grey coat' } },
+            passport: { hero: { clothes: 'long grey coat' } },
         };
 
         const resolved = promptBuilder.resolvePassport(hero, {}, scene);
 
         // Overridden field → scene value
-        expect(resolved.clothing_base).to.equal('long grey coat');
+        expect(resolved.clothes).to.equal('long grey coat');
         // Non-overridden fields → global passport
-        expect(resolved.base_appearance).to.equal('Tall, dark hair');
-        expect(resolved.detailed_appearance).to.equal('');
+        expect(resolved.appearance).to.equal('Tall, dark hair');
     });
 
     // ======================================================
@@ -298,10 +297,10 @@ describe('Scene PATCH — scene.passport overrides', () => {
         const hero = book.characters.find(c => c.id === 'hero');
         const scene = {
             scene_id: SCENE_ID,
-            passport: { hero: { clothing_base: null } },  // '' → null on the server
+            passport: { hero: { clothes: null } },  // '' → null on the server
         };
 
         const resolved = promptBuilder.resolvePassport(hero, {}, scene);
-        expect(resolved.clothing_base).to.equal('dark suit');  // global fallback
+        expect(resolved.clothes).to.equal('dark suit');  // global fallback
     });
 });

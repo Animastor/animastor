@@ -297,10 +297,8 @@
     <string name="field_state">state</string>
     <string name="field_passport">passport</string>
     <string name="field_character_id">character id</string>
-    <string name="field_base_appearance">base appearance</string>
-    <string name="field_detailed_appearance">detailed appearance</string>
-    <string name="field_clothing_base">clothing base</string>
-    <string name="field_clothing_details">clothing details</string>
+    <string name="field_appearance">appearance</string>
+    <string name="field_clothes">clothes</string>
     <string name="field_video_tokens">video tokens</string>
     <string name="field_text">text</string>
     <string name="field_speaker">speaker</string>

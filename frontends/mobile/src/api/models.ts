@@ -304,10 +304,8 @@ export interface SceneAudio {
 }
 
 export interface CharPassport {
-  base_appearance?: string | null;
-  detailed_appearance?: string | null;
-  clothing_base?: string | null;
-  clothing_details?: string | null;
+  appearance?: string | null;
+  clothes?: string | null;
   video_tokens?: string | null;
 }
 

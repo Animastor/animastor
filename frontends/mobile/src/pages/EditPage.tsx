@@ -54,7 +54,7 @@ const VOICES_TAB = 4;
 const LOCATIONS_TAB = 5;
 const GLOBAL_TAB = 6;
 
-const PASSPORT_OVERRIDE_FIELDS = ['base_appearance', 'detailed_appearance', 'clothing_base', 'clothing_details', 'video_tokens'];
+const PASSPORT_OVERRIDE_FIELDS = ['appearance', 'clothes', 'video_tokens'];
 
 interface OverrideBlock {
   charId: string;
@@ -99,10 +99,8 @@ function fieldLabel(key: string): string {
 
 function passportFieldLabel(key: string): string {
   switch (key) {
-    case 'base_appearance': return t('field_base_appearance');
-    case 'detailed_appearance': return t('field_detailed_appearance');
-    case 'clothing_base': return t('field_clothing_base');
-    case 'clothing_details': return t('field_clothing_details');
+    case 'appearance': return t('field_appearance');
+    case 'clothes': return t('field_clothes');
     case 'video_tokens': return t('field_video_tokens');
     default: return key;
   }

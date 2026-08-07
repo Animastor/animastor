@@ -115,6 +115,10 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
             continue;
         }
 
+        // The AGENT (ai/rules/characters.md) is responsible for separating the
+        // physical appearance from the clothes. The program ONLY validates the
+        // agent's output and fills safe defaults — it never re-splits text with
+        // heuristics, so appearance and clothes never overlap or get mangled.
         const rawAppearance = ch.appearance || ch.description || null;
 
         let appearanceDesc;
@@ -124,13 +128,16 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
             appearanceDesc = rawAppearance;
         }
 
-        const baseMatch = appearanceDesc.match(/^[^.!?]+[.!?]?/);
-        const baseAppearance = baseMatch ? baseMatch[0].trim() : appearanceDesc;
-        const detailedAppearance = appearanceDesc;
+        // clothes comes from the agent as its own field. An empty string is fine —
+        // the prompt builder appends clothing only when it is non-empty.
+        const clothes = (typeof ch.clothes === 'string' && ch.clothes.trim())
+            ? ch.clothes.trim()
+            : '';
 
-        const videoTokens = appearance.fragmentAppearanceForVideo(appearanceDesc, ch.name);
-
-        const { clothingBase, clothingDetails } = appearance.extractClothing(appearanceDesc);
+        const videoTokens = appearance.fragmentAppearanceForVideo(
+            clothes ? `${appearanceDesc}, ${clothes}` : appearanceDesc,
+            ch.name
+        );
 
         const voiceInstruction = ch.voice
             ? ch.voice
@@ -145,10 +152,8 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
             name: ch.name,
             role: ch.role || 'minor',
             passport: {
-                base_appearance: baseAppearance,
-                detailed_appearance: detailedAppearance,
-                clothing_base: clothingBase,
-                clothing_details: clothingDetails,
+                appearance: appearanceDesc,
+                clothes,
                 video_tokens: videoTokens || `${ch.name.toLowerCase()} character, period clothing, distinctive appearance`,
             },
             voice: {
@@ -212,7 +217,9 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
 
     const passportChars = mergedCharacters.filter(c => {
         const p = c.passport || {};
-        const appearanceText = p.base_appearance || p.detailed_appearance || '';
+        // A character counts as visually described when it has EITHER a real
+        // appearance OR real clothes (the agent may provide one without the other).
+        const appearanceText = p.appearance || p.clothes || '';
         const hasRealAppearance = appearanceText.length > 8 &&
             !/character from the story|period-appropriate|as described in/i.test(appearanceText);
         return hasRealAppearance;

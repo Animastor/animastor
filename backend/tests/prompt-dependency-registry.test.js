@@ -44,18 +44,14 @@ describe('Prompt Dependency Registry', () => {
         it('extracts passport fields from a character', () => {
             const char = {
                 passport: {
-                    base_appearance: 'tall',
-                    detailed_appearance: 'blue eyes',
-                    clothing_base: 'robe',
-                    clothing_details: 'gold trim',
+                    appearance: 'tall',
+                    clothes: 'robe',
                 },
             };
             const result = registry.extractPassport(char);
             expect(result).to.deep.equal({
-                base_appearance: 'tall',
-                detailed_appearance: 'blue eyes',
-                clothing_base: 'robe',
-                clothing_details: 'gold trim',
+                appearance: 'tall',
+                clothes: 'robe',
             });
         });
 
@@ -64,11 +60,10 @@ describe('Prompt Dependency Registry', () => {
         });
 
         it('defaults missing passport fields', () => {
-            const char = { passport: { base_appearance: 'tall' } };
+            const char = { passport: { appearance: 'tall' } };
             const result = registry.extractPassport(char);
-            expect(result.base_appearance).to.equal('tall');
-            expect(result.detailed_appearance).to.be.undefined;
-            expect(result.clothing_base).to.be.undefined;
+            expect(result.appearance).to.equal('tall');
+            expect(result.clothes).to.be.undefined;
         });
     });
 
@@ -294,15 +289,15 @@ describe('Prompt Dependency Registry', () => {
 
             it('isChanged detects passport differences', () => {
                 const field = registry.getCrossFields().find(f => f.key === 'characters.passport');
-                const oldChar = { passport: { base_appearance: 'tall' } };
-                const newChar = { passport: { base_appearance: 'short' } };
+                const oldChar = { passport: { appearance: 'tall' } };
+                const newChar = { passport: { appearance: 'short' } };
                 expect(field.isChanged(oldChar, newChar)).to.be.true;
             });
 
             it('isChanged ignores non-passport fields', () => {
                 const field = registry.getCrossFields().find(f => f.key === 'characters.passport');
-                const oldChar = { name: 'Alice', passport: { base_appearance: 'tall' } };
-                const newChar = { name: 'Alice', passport: { base_appearance: 'tall' } };
+                const oldChar = { name: 'Alice', passport: { appearance: 'tall' } };
+                const newChar = { name: 'Alice', passport: { appearance: 'tall' } };
                 expect(field.isChanged(oldChar, newChar)).to.be.false;
             });
 

@@ -135,10 +135,8 @@
     <string name="field_state">состояние</string>
     <string name="field_passport">паспорт</string>
     <string name="field_character_id">id персонажа</string>
-    <string name="field_base_appearance">базовая внешность</string>
-    <string name="field_detailed_appearance">детальная внешность</string>
-    <string name="field_clothing_base">базовая одежда</string>
-    <string name="field_clothing_details">детали одежды</string>
+    <string name="field_appearance">внешность</string>
+    <string name="field_clothes">одежда</string>
     <string name="field_video_tokens">видео-токены</string>
     <string name="field_text">текст</string>
     <string name="field_speaker">говорящий</string>
