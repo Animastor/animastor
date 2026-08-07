@@ -17,7 +17,11 @@ function fragmentAppearanceForVideo(appearance, charName) {
 
     const fragments = [];
 
-    const ageBuildRe = /(\d+[-\s]year[-\s]old|young|middle[-\s]aged|elderly|old|teen|child|\bkid\b|toddler|infant|adult)|(?:thin|slim|stocky|muscular|strong|heavy|overweight|obese|frail|petite|broad|wide|narrow|tall|short|average|athletic|lean|buff|chubby|plump|curvy|slender|small|large)/i;
+    // BOTH alternatives must be capturing groups: the replacement string is
+    // '$1 $2', and a non-capturing second group makes $2 resolve to the literal
+    // text "$2" (JS keeps unknown $n as-is) — leaking "$2 stature..." into
+    // video_tokens. Group 1 = age phrase, group 2 = build word.
+    const ageBuildRe = /(\d+[-\s]year[-\s]old|young|middle[-\s]aged|elderly|old|teen|child|\bkid\b|toddler|infant|adult)|(thin|slim|stocky|muscular|strong|heavy|overweight|obese|frail|petite|broad|wide|narrow|tall|short|average|athletic|lean|buff|chubby|plump|curvy|slender|small|large)/i;
     for (const s of sentences) {
         const match = s.match(ageBuildRe);
         if (match) {
