@@ -10,6 +10,11 @@ narrative episodes.
 A scene is one self-contained narrative episode that feels complete to the reader.
 Split only when the story naturally moves to the next narrative episode.
 
+## Scene titles — REQUIRED for every scene
+For EVERY scene you create, you MUST also invent a short descriptive name for it
+(2-6 words, based on the scene's key event, written in %LANGUAGE%). This is part
+of forming the scene — a scene is never born without its own name.
+
 ## Scene definition — CRITICAL
 
 A scene is **one coherent narrative episode** that **feels complete and
@@ -109,12 +114,16 @@ It is OK if text remains after the last returned scene.
    story clearly moves to a new narrative episode
 4. Duration and minimum length — advisory only
 
-## CRITICAL: Do NOT create chapter-header scenes, typography scenes, or transition scenes
-- Chapter headings, headers, and opening cards are added PROGRAMMATICALLY by the system
-- Do NOT include the chapter name, "Глава N", "Chapter N", or any chapter-level typography in scene text
-- Start scenes directly with the narrative content — no "title card" transitions
-- If the text starts with a chapter heading, IGNORE it and start from the narrative content
-- This rule applies ONLY to scene CONTENT — it does NOT affect the scene's title field (which is REQUIRED below)
+## Input text cleanup — stray chapter headings
+Occasionally the input text may contain a line that is actually a chapter heading
+from the book's original layout ("Глава 7", "Chapter 7", "Часть II", an ALL-CAPS
+heading, a page number, or other typography). Treat such a line as a technical
+artifact of the input — NOT narrative:
+- Skip it — never copy a heading line into any scene's text.
+- Never make a heading the subject of a scene.
+- Scenes always start with the actual narrative content.
+Chapter openings and typography are produced by the system itself — you never need
+to describe them. Never create bridge/transition scenes either.
 
 ## Known Characters
 %EXISTING_CHARACTERS%

@@ -139,8 +139,11 @@ describe('ai/rules/*.md — %LANGUAGE% point-wise wiring', () => {
     });
 
     it('substituting %LANGUAGE% produces the concrete value', () => {
-        const rendered = SYSTEM_PROMPTS.scenes.replace('%LANGUAGE%', buildLangInstruction('de'));
-        expect(rendered).to.include('written in German (de)');
+        const rendered = fillLang(SYSTEM_PROMPTS.scenes, 'de');
+        // scenes.md now carries the placeholder TWICE (scene-titles section + output format)
+        expect(rendered).to.not.include('%LANGUAGE%');
+        const occurrences = (rendered.match(/German \(de\)/g) || []).length;
+        expect(occurrences).to.equal(2);
         // GPU rules need no substitution — already fixed English
         expect(SYSTEM_PROMPTS.visuals).to.include('Result language: English (en)');
     });
