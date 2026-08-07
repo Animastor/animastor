@@ -232,17 +232,32 @@ button { font: inherit; color: inherit; }
    solid green for ~10s. Written as explicit longhand animation-* properties so
    the 8×1.5s = 12s intent survives any CSS minifier / shorthand parsing (a
    broken shorthand would leave the icon permanently solid green).
+   The keyframes are deliberately named tab-pulse-SUCCESS (not tab-pulse): a CSS
+   animation does NOT restart when only its iteration count changes — RUNNING's
+   infinite `tab-pulse` has been cycling for minutes during generation, and when
+   SUCCESS caps it at 8 iterations the current iteration already exceeds the cap,
+   so the animation just ends and the icon snaps to solid green. A distinct name
+   forces a clean restart with the full 8×1.5s = 12s pulse — the web equivalent
+   of Android creating a brand-new ObjectAnimator on every status change.
    generateStore auto-resets the nav status to IDLE after the full 22s
    (pulse + hold), anchored to the SUCCESS timestamp with a self-healing
    watchdog — no re-arm on tab switches. */
 .tabbar__pulse--success {
-  animation-name: tab-pulse;
+  animation-name: tab-pulse-success;
   animation-duration: 1.5s;
   animation-timing-function: ease-in-out;
   animation-iteration-count: 8; /* 8 × 1.5s = 12s pulse, then solid green */
   color: var(--success);
 }
 @keyframes tab-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+/* Same opacity keyframes under a separate name so entering SUCCESS restarts the
+   animation (see comment above) — duplicating the 2 keyframes is the price of a
+   guaranteed restart; the animation-name change tab-pulse → tab-pulse-success
+   is what restarts it. */
+@keyframes tab-pulse-success {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.35; }
 }
