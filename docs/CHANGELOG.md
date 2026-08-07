@@ -125,6 +125,28 @@ All notable changes to Animastor are documented here.
   - Проверки: весь mocha-сьют (853) проходит; блок очистки не содержит слов
     title/name (проверено скриптом).
 
+- **`scenes.md`: тональные отрицания переписаны позитивно — «не думай о камере» убрано, здоровые инварианты сохранены**
+  (`backend/ai/rules/scenes.md`):
+  - **Проблема:** вводный блок («Think like a literary editor, **not** a film
+    director. **Do not** think about camera shots... **Focus only** on...»),
+    «**Do NOT split** just because...», «Split **only** when», «you do NOT need
+    to repeat it» — оборонительные формулировки, которые в контексте модели
+    «заражают» её лишним контекстом: каждое «не делай X» усиливает X
+    (тот же паттерн, что уже был вычищен из `visuals.md`).
+  - **Фикс:** все тональные отрицания переписаны в позитивной форме — интро
+    теперь «Think like a literary editor reading a manuscript... Follow the
+    events, the characters, and the natural flow of the prose»; «Do NOT split
+    just because» → «Keep together — these all belong to one scene»;
+    «Split only when» → «Split when»; «you do NOT need to repeat it» →
+    «Every scene inherits this default automatically».
+  - **НЕ тронуты здоровые запреты/инварианты пайплайна:** verbatim prefix
+    coverage («do not skip, overlap, paraphrase»), «NEVER cut mid-sentence»,
+    «NEVER leave characters_present empty», «ZERO EXCEPTIONS» на `location.id`,
+    EN-мандат `environment` values, «NEVER: first sentence / Scene N / Untitled»
+    для title — их проверяет программа (coverage-валидатор, ретраи, редактор).
+  - Проверки: скрипт-чек (8 тональных фраз ушли, 7 инвариантов на месте,
+    `%LANGUAGE%`/`%BOOK_DEFAULT%` целы); весь mocha-сьют (853) проходит.
+
 - **`ERR_ERL_UNEXPECTED_X_FORWARDED_FOR` от express-rate-limit в каждом запросе через nginx-прокси**
   (`backend/src/backend.cjs`):
   - **Проблема:** nginx (docker-compose proxy) проксирует запросы и проставляет
