@@ -593,6 +593,17 @@ class Repository(
         return api.getBookStatus(bookId)
     }
 
+    /**
+     * Books that exist on the server, newest first (GET /api/v1/books).
+     * Used by session restore: a fresh install / cold start can pick the most
+     * recent book instead of showing the empty state.
+     */
+    suspend fun getRecentBooks(): List<RecentBook> {
+        return runCatching {
+            api.getRecentBooks().books
+        }.getOrDefault(emptyList())
+    }
+
     suspend fun getTextIndex(bookId: String): TextIndex {
         Log.d("Repo", "getTextIndex: $bookId")
         return api.getTextIndex(bookId)

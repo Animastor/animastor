@@ -1073,6 +1073,111 @@ class GenerateViewModel(
         }
     }
 
+    /**
+     * Restore the last-opened book session after a cold start.
+     *
+     * Previously MainActivity wiped the persisted bookId on every cold start
+     * ("drop any persisted session"), so the app forgot the open book whenever
+     * the process restarted. Now we keep it and validate it against the server:
+     *   1. The persisted book_id (from SharedPreferences) — if it still exists
+     *      on the server, restore it.
+     *   2. Otherwise fall back to the most recent book known to the server
+     *      (GET /api/v1/books) — this covers books imported/opened from the
+     *      web app or another device, which this client has never seen.
+     * The player is warmed with the book's scenes so Play/Navigate/Edit work
+     * immediately (same payload as the vbook import path).
+     *
+     * @return true if a book was restored.
+     */
+    suspend fun restoreBookSession(): Boolean {
+        val savedId = bookId.takeIf { it.isNotBlank() }
+        val restoredBuildId = buildId.takeIf { it.isNotBlank() }
+        var candidateId: String? = null
+        var candidateBuildId: String? = null
+
+        // 1. Validate the persisted book id against the server.
+        if (savedId != null) {
+            val status = try {
+                _repository.getLazyBookStatus(savedId)
+            } catch (e: java.io.IOException) {
+                // Server unreachable — keep the persisted book optimistically
+                // (a transient network blip must not hide the open book). The
+                // prefs are never wiped, so this self-heals on the next launch.
+                Log.w(TAG, "restoreBookSession: server unreachable, keeping $savedId optimistically")
+                savedId
+            } catch (e: Exception) {
+                // 404 or other — the book is gone from the server.
+                Log.w(TAG, "restoreBookSession: saved book $savedId no longer on server")
+                null
+            }
+            if (status != null) {
+                candidateId = savedId
+                candidateBuildId = restoredBuildId
+            }
+        }
+
+        // 2. Fallback: the most recent book known to the server.
+        if (candidateId == null) {
+            val recent = runCatching { _repository.getRecentBooks() }.getOrDefault(emptyList())
+            recent.firstOrNull()?.let { r ->
+                if (r.book_id.isNotBlank()) {
+                    candidateId = r.book_id
+                    candidateBuildId = r.build_id ?: restoredBuildId
+                    Log.i(TAG, "restoreBookSession: picked most recent server book ${r.book_id} (${r.state ?: "?"})")
+                }
+            }
+        }
+
+        val bid = candidateId ?: return false
+        persistBookId(bid)
+        val restoreBuild = candidateBuildId?.takeIf { it.isNotBlank() } ?: restoredBuildId
+        if (restoreBuild != null) persistBuildId(restoreBuild)
+
+        // 3. Warm the player + position so Play/Navigate/Edit work immediately.
+        viewModelScope.launch {
+            val bookData = runCatching { _repository.getBook(bid) }.getOrNull()
+            val bookBuild = bookData?.manifest?.build_id?.takeIf { it.isNotBlank() }
+            if (bookBuild != null) persistBuildId(bookBuild)
+            if (bookData != null) {
+                // A user import / .vbook intent may have opened another book
+                // while we were restoring — never clobber it with a stale
+                // warmup payload for the old book.
+                if (bookId != bid) return@launch
+                val scenes = bookData.sceneRefs()
+                val coverScene = scenes.firstOrNull { it.sceneType == "cover" }
+                val first = coverScene ?: scenes.firstOrNull()
+                if (first != null) {
+                    SharedPositionManager.navigateTo(
+                        chapterId = first.chapterId,
+                        sceneId = first.sceneId,
+                        unitIndex = 0
+                    )
+                }
+                // Load the cover exactly like the import path, so a restored
+                // book shows its art instead of the curtains.
+                val cover = if (coverScene != null && imageEnabled) {
+                    loadCoverBitmap(coverScene.chapterId, coverScene.sceneId)
+                } else null
+                _playbackPrepared.tryEmit(PlaybackPreparation(
+                    bookId = bid,
+                    buildId = buildId,
+                    scenes = scenes,
+                    coverImage = cover
+                ))
+                _uiState.update {
+                    it.copy(
+                        phase = if (scenes.isNotEmpty()) PlayerPhase.SCENE_READY else PlayerPhase.IDLE,
+                        errorMessage = null
+                    )
+                }
+                Log.i(TAG, "restoreBookSession: restored $bid with ${scenes.size} scenes cover=${cover != null}")
+            } else {
+                Log.w(TAG, "restoreBookSession: book $bid restored, but GET /book failed")
+            }
+        }
+        return true
+    }
+
     fun clearBookCache() {
         if (bookId.isBlank()) return
         viewModelScope.launch {

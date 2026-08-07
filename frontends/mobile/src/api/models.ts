@@ -586,6 +586,23 @@ export interface BookStatus {
   ready?: boolean;
 }
 
+// GET /api/v1/books — RecentBook / RecentBooksResponse (session restore across clients)
+export interface RecentBook {
+  book_id: string;
+  build_id?: string | null;
+  title?: string | null;
+  state?: string | null;
+  source_type?: string | null;
+  file_hash?: string | null;
+  updated_at?: number;
+  parsed_chapters?: number;
+  total_scenes?: number;
+}
+
+export interface RecentBooksResponse {
+  books: RecentBook[];
+}
+
 // POST /book/{id}/regenerate — RegenerateRequest / RegenerateResponse
 export interface RegenerateRequest {
   new_book?: BookData | null;

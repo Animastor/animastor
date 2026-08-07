@@ -328,6 +328,9 @@ interface BackendApi {
         @Path("bookId") bookId: String
     ): BookStatus
 
+    @GET("/api/v1/books")
+    suspend fun getRecentBooks(): RecentBooksResponse
+
     @POST("/api/v1/book/{bookId}/trigger-next-window")
     suspend fun triggerNextWindow(
         @Path("bookId") bookId: String,

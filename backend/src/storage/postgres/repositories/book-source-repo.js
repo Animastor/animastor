@@ -63,6 +63,20 @@ async function findCandidateBySize(fileSize) {
 }
 
 /**
+ * List the most recently imported source records (newest first).
+ * Used by GET /api/v1/books so any client can discover which books exist on
+ * the server (e.g. a book imported from the web app, then opened on Android).
+ */
+async function listRecent(limit = 20) {
+    const safeLimit = Math.max(1, Math.min(Number(limit) || 20, 100));
+    const result = await query(
+        `SELECT * FROM book_source ORDER BY created_at DESC LIMIT $1`,
+        [safeLimit]
+    );
+    return result.rows;
+}
+
+/**
  * Delete a source record by book_id (when book is deleted).
  */
 async function deleteByBookId(bookId) {
@@ -74,5 +88,6 @@ module.exports = {
     findByHash,
     findByBookId,
     findCandidateBySize,
+    listRecent,
     deleteByBookId,
 };

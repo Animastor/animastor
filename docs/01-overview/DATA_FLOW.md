@@ -321,3 +321,47 @@ book-sync.js:syncBook(bookId)
   → markGenerationTasksStale() — cancel для changed scenes
   → purgeRemovedSceneRows() — DELETE orphan rows
 ```
+
+---
+
+## Сценарий 11: Восстановление сессии книги между клиентами
+
+**Запросы:** `GET /api/v1/books` (список книг на сервере), `GET /api/v1/book/:bookId/status` (валидация)
+
+**Проблема, которую решает:** открытая книга была привязана к одному клиенту —
+Android стирал `bookId` при каждом холодном старте, мобильный веб держал его только
+в памяти, а сервер не умел «отдать» список книг. Книга, импортированная на вебе,
+не появлялась на Android.
+
+**Источник правды — сервер:** связка SHA-256 TXT → `book_id` живёт в PG-таблице
+`book_source` (регистрируется при импорте, используется для дедупликации).
+`GET /api/v1/books` (`recent-books-routes.cjs`) отдаёт последние книги: записи из
+PG `book_source` (для каждой — статус из `lazy-book` манифеста: state/title/build_id)
++ скан директории `data/books/` для vbook-импортов без PG-записи; сортировка по
+`updated_at`, лимит 20. Строки с книгами, которых больше нет на диске, отбрасываются.
+
+**Клиентское восстановление (зеркально на Android и web):**
+```
+Холодный старт клиента
+  → 1. Сохранённый book_id (Android: SharedPreferences / web: localStorage)
+       → GET /book/:id/status — валидация на сервере
+         → 200 → восстановить эту книгу
+         → 404/иная ошибка → шаг 2
+  → 2. Fallback: GET /api/v1/books → первая (самая свежая) книга
+       → книга найдена → сохранить book_id/build_id локально
+  → 3. Прогрев плеера: GET /book/:id → сцены + обложка
+       → emit playbackPrepared (без авто-навигации по вкладкам)
+  → Сервер недоступен → держим сохранённый id оптимистично (prefs/localStorage
+    не чистятся, восстановится при следующем запуске)
+```
+
+**Защита от гонок:** если за время восстановления пользователь открыл другую книгу
+(deep-link `?book=…` на web, `.vbook` ACTION_VIEW на Android), тёплый эмит старой
+книги отбрасывается (guard после fetch). Явное закрытие книги (`closeBook`/«Создать
+новую книгу», «Удалить vBook») по-прежнему чистит сохранённый id.
+
+**Участвующие компоненты:**
+1. `recent-books-routes.cjs` → `GET /api/v1/books`
+2. `book-source-repo.js:listRecent()` → PG `book_source`
+3. `GenerateViewModel.restoreBookSession()` (Android) / `generateStore.restoreBookSession()` (web)
+4. `MainActivity` (Android) / `main.tsx` (web) — вызов при холодном старте

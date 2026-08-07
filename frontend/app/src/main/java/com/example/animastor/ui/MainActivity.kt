@@ -121,13 +121,6 @@ class MainActivity : AppCompatActivity() {
         setContentView(binding.root)
 
         if (savedInstanceState == null) {
-            // Cold start: drop any persisted session so Navigate/Edit start empty.
-            // (On config change savedInstanceState != null and we keep the session.)
-            viewModel.closeBook()
-            playbackViewModel.closeBook()
-        }
-
-        if (savedInstanceState == null) {
             supportFragmentManager.beginTransaction()
                 .add(R.id.nav_host_container, FileFragment(), "FileFragment")
                 .commit()
@@ -144,6 +137,25 @@ class MainActivity : AppCompatActivity() {
         }
 
         setupPlaybackCoordination()
+
+        if (savedInstanceState == null) {
+            // Cold start: keep the persisted book session and re-validate it
+            // against the server (falling back to the most recent server book,
+            // e.g. one imported from the web app). Previously this wiped the
+            // persisted bookId on every cold start, so the app forgot which
+            // book was open whenever the process restarted.
+            // (On config change savedInstanceState != null and we keep the
+            // in-memory session untouched.)
+            lifecycleScope.launch {
+                val restored = viewModel.restoreBookSession()
+                if (restored) {
+                    // Belt-and-braces: the coordinator already received the
+                    // playbackPrepared payload from restoreBookSession; this is
+                    // a no-op if the player is already initialized.
+                    playbackViewModel.ensureInitialized(viewModel.bookId, viewModel.buildId)
+                }
+            }
+        }
 
         // Periodically refresh assets state + load layer config on book change
         lifecycleScope.launch {

@@ -248,6 +248,27 @@ data class BookStatus(
     val ready: Boolean = false
 )
 
+// ======================================================
+// Recent Books (GET /api/v1/books — session restore across clients)
+// ======================================================
+
+/** One entry of GET /api/v1/books: a book that exists on the server. */
+data class RecentBook(
+    val book_id: String = "",
+    val build_id: String? = null,
+    val title: String? = null,
+    val state: String? = null,
+    val source_type: String? = null,
+    val file_hash: String? = null,
+    val updated_at: Long = 0,
+    val parsed_chapters: Int = 0,
+    val total_scenes: Int = 0
+)
+
+data class RecentBooksResponse(
+    val books: List<RecentBook> = emptyList()
+)
+
 data class TextIndexChapter(
     val index: Int = 0,
     val title: String? = null,

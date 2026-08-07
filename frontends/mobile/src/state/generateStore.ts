@@ -12,7 +12,7 @@ import { signal } from '@preact/signals';
 import { getJson, postJson, postJsonLong, postMultipart, putJson, sse } from '../api/client';
 import type {
   AssetsStateResponse, BookData, BookStatus, DiffSummary, ImportResponse, LayerConfigResponse,
-  ProgressPanelResponse, ProgressTask, RegenerateResponse, WorkerCounts, ProgressEvent,
+  ProgressPanelResponse, ProgressTask, RecentBooksResponse, RegenerateResponse, WorkerCounts, ProgressEvent,
 } from '../api/models';
 import { sceneRefs } from '../api/models';
 import type { SceneRef } from '../api/models';
@@ -114,9 +114,30 @@ function setGenerationStatus(status: GenerationStatus): void {
 }
 
 export function resetGenerationStatus(): void { setGenerationStatus('IDLE'); }
+
+// ── Persisted book session (localStorage) ──
+// The open book survives a page reload / app restart: loadBook() writes it,
+// closeBook() clears it, and restoreBookSession() (called from main.tsx on
+// boot) re-validates it against the server and falls back to the most recent
+// server book (GET /api/v1/books) — so a book imported on another device (e.g.
+// the web app) shows up here too. Mirrors SharedPreferences bookId/buildId on
+// Android (GenerateViewModel.persistBookId).
+const BOOK_STORE_KEY = 'animastor:currentBook';
+
+function persistBookSession(id: string, build: string): void {
+  try {
+    localStorage.setItem(BOOK_STORE_KEY, JSON.stringify({ id, build }));
+  } catch { /* storage unavailable */ }
+}
+function clearBookSession(): void {
+  try { localStorage.removeItem(BOOK_STORE_KEY); } catch { /* ignore */ }
+}
+
 export function loadBook(id: string, build: string = ''): void {
   bookId.value = id;
   buildId.value = build;
+  if (id) persistBookSession(id, build);
+  else clearBookSession();
 }
 
 // ── Edit dirty indicator (GenerateViewModel.dirtySummary) ──
@@ -986,6 +1007,74 @@ export async function importBookFromFile(file: File): Promise<void> {
 //  bytes, then follow the same importBookFromFile navigation logic. §12.
 // ═══════════════════════════════════════════════════════════════
 
+/**
+ * Restore the last-opened book on boot (GenerateViewModel.restoreBookSession).
+ * Reads the persisted session from localStorage, validates it against the
+ * server, and falls back to the most recent server book (GET /api/v1/books) so
+ * a book imported/opened from another client shows up here too. Loads the book
+ * data + warms the player via playbackPrepared, without emitting a navigation
+ * event (the user stays on the current tab — same as Android).
+ *
+ * No-op when a book is already open (import or ?book= deep link raced ahead).
+ *
+ * @returns true if a book was restored.
+ */
+export async function restoreBookSession(): Promise<boolean> {
+  if (bookId.value) return false;
+
+  // 1. Persisted session.
+  let id: string | null = null;
+  let bld = '';
+  try {
+    const raw = localStorage.getItem(BOOK_STORE_KEY);
+    if (raw) {
+      const p = JSON.parse(raw) as { id?: string; build?: string };
+      if (p.id) { id = p.id; bld = p.build ?? ''; }
+    }
+  } catch { /* ignore */ }
+
+  // 2. Validate against the server.
+  if (id) {
+    const ok = await getJson<BookStatus>(`/book/${encodeURIComponent(id)}/status`)
+      .then(() => true)
+      .catch(() => false);
+    if (!ok) id = null;
+  }
+
+  // 3. Fallback: most recent book known to the server.
+  if (!id) {
+    try {
+      const res = await getJson<RecentBooksResponse>('/books');
+      const first = res.books?.[0];
+      if (first?.book_id) { id = first.book_id; bld = first.build_id ?? ''; }
+    } catch { /* offline — nothing to restore */ }
+  }
+  if (!id) return false;
+  // A deep link / import may have opened a book while we were validating.
+  if (bookId.value) return false;
+
+  loadBook(id, bld);
+  try {
+    const bookData = await getJson<BookData>(`/book/${encodeURIComponent(id)}`);
+    const bId = bookData.manifest?.book_id || id;
+    // A ?book= deep link / import may have opened another book while we were
+    // fetching — never clobber it with the restored session.
+    if (bookId.value && bookId.value !== id) return false;
+    loadBook(bId, bookData.manifest?.build_id || bld);
+    const scenes = sceneRefs(bookData);
+    const first = scenes.find((s) => s.sceneType === 'cover') ?? scenes[0] ?? null;
+    navigateTo({ chapterId: first?.chapterId ?? null, sceneId: first?.sceneId ?? null, unitIndex: 0 });
+    emitPlaybackPrepared({ bookId: bId, buildId: buildId.value, scenes });
+    phase.value = scenes.length ? 'SCENE_READY' : 'IDLE';
+    return true;
+  } catch (e) {
+    // Book vanished between validation and load — drop the stale session.
+    console.warn('restoreBookSession: load failed, clearing session:', (e as Error).message);
+    loadBook('', '');
+    return false;
+  }
+}
+
 export async function openBookById(param: string): Promise<void> {
   let id = decodeURIComponent(param).trim();
   // tolerate copy-pasted download URLs (…/book/<id>/download → last segment)
@@ -1025,7 +1114,7 @@ export function closeBook(): void {
   stopTimer();
   isRegenerating.value = false;
   setGenerationStatus('IDLE');
-  loadBook('', '');
+  loadBook('', ''); // also clears the persisted session
   phase.value = 'IDLE';
   errorMessage.value = null;
   importMessages.value = [];

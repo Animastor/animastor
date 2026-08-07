@@ -16,6 +16,7 @@ import { DeveloperViewPage } from './pages/DeveloperViewPage';
 import { AiAssistantPage } from './pages/AiAssistantPage';
 import { applyTheme, applyLanguage } from './app/theme';
 import { wirePlaybackCoordination, wirePlaybackLifecycle } from './state/playbackStore';
+import { restoreBookSession } from './state/generateStore';
 import { initScrollbar } from './lib/scrollbar';
 
 // MainActivity.setupPlaybackCoordination() equivalent — forwards
@@ -24,6 +25,10 @@ wirePlaybackCoordination();
 // PlayFragment.onPause/onResume equivalent — pause on document.hidden, save /
 // restore playback position via sessionStorage (stage 7, 06 §1.8).
 wirePlaybackLifecycle();
+// MainActivity cold-start session restore equivalent — reopen the last book
+// (validated against the server, falling back to the most recent server book)
+// so a page reload / new device keeps the open book.
+void restoreBookSession();
 
 function Routes() {
   return (

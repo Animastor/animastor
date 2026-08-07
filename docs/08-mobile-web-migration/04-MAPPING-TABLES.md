@@ -38,6 +38,7 @@
 | `FragmentTransaction.hide/show` по тегам | сохранение состояния страницы (storы на уровне shell, не размонтировать DOM) |
 | `supportFragmentManager.beginTransaction().add(...).addToBackStack(null)` | secondary-маршруты с back stack |
 | `toolbar` + `settingsButton` + `toolbarAiButton` | общий `Toolbar` (+ кнопки `Settings`/`AI`) |
+| Холодный старт: `MainActivity.onCreate` → `GenerateViewModel.restoreBookSession()` — SharedPreferences `bookId`/`buildId`, валидация `GET /book/{id}/status` + fallback `GET /api/v1/books`, прогрев плеера | Старт: `main.tsx` → `generateStore.restoreBookSession()` — localStorage `animastor:currentBook`, та же валидация + fallback (без авто-навигации) |
 | `switchToPlayTab/GenerateTab/NavigateTab/AiTab` | программная навигация `router.push('/play'\|...)` |
 
 ### 2.2. UI-виджеты
@@ -117,7 +118,7 @@
 
 | Группа | Примеры путей | Используется экранами |
 |---|---|---|
-| Book | `/book/{id}` (GET/PUT/DELETE), `/book/{id}/import`, `/cover`, `/metadata`, `/export`, `/download`, `/storyboard`, `/audio`, `/diff`, `/regenerate`, `/cancel-generation`, `/cancel-worker`, `/snapshot`, `/reorder`, `/cache`, `/status`, `/assets-state`, `/layer-config`, `/bootstrap*`, `/resume-bootstrap`, `/trigger-next-window`, `/progress-panel`, `/generation-state`, `/text-index`, `/preliminary`, `/chapters-summary`, `/lazy-parse*`, `/source`, `/agent-status` | File, Generate, Edit, Settings |
+| Book | `/book/{id}` (GET/PUT/DELETE), `/book/{id}/import`, `/cover`, `/metadata`, `/export`, `/download`, `/storyboard`, `/audio`, `/diff`, `/regenerate`, `/cancel-generation`, `/cancel-worker`, `/snapshot`, `/reorder`, `/cache`, `/status`, `/assets-state`, `/layer-config`, `/bootstrap*`, `/resume-bootstrap`, `/trigger-next-window`, `/progress-panel`, `/generation-state`, `/text-index`, `/preliminary`, `/chapters-summary`, `/lazy-parse*`, `/source`, `/agent-status`; **`/books`** (список последних книг на сервере — восстановление сессии) | File, Generate, Edit, Settings |
 | Scene (таймлайн) | `/scene/{book}/{ch}/{sc}/audio\|image\|video\|storyboard\|status\|waveform\|timings` (GET; timings PUT) | Play, Edit |
 | Chunk (legacy) | `/chunk/{id}`, `/chunk/{id}/audio\|image\|video\|storyboard` | legacy-пути |
 | IU | `/iu-image/{book}/{ch}/{sc}/{iu}`, `/preview/{book}/{ch}/{sc}/{iu}` | Play, Edit |

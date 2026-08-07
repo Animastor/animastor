@@ -50,6 +50,9 @@ module.exports = function(app, redis, deps) {
         log: deps.utils.log,
     });
 
+    // Recent books list (session restore across clients)
+    require('./book/recent-books-routes.cjs')(app, redis, deps);
+
     // Already-extracted sub-registrars (kept as-is)
     const registerStatusRoutes = require('./book/status-routes.cjs');
     const registerParseRoutes = require('./book/parse-routes.cjs');

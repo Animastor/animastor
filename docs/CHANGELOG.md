@@ -4,6 +4,61 @@ All notable changes to Animastor are documented here.
 
 ---
 
+## [Unreleased] — 2026-08-07
+
+### Added
+
+- **Восстановление сессии книги между клиентами: сервер отдаёт список книг, клиенты запоминают и восстанавливают открытую книгу**
+  (`backend/src/routes/book/recent-books-routes.cjs` (новый),
+  `backend/src/routes/book-routes.cjs`,
+  `backend/src/storage/postgres/repositories/book-source-repo.js` (`listRecent`),
+  `backend/tests/recent-books.test.js` (новый, 6 тестов),
+  `frontend/.../GenerateViewModel.kt` (`restoreBookSession`),
+  `frontend/.../MainActivity.kt`,
+  `frontend/.../BackendApi.kt`, `Repository.kt`, `BookModels.kt`,
+  `frontends/mobile/src/state/generateStore.ts` (`restoreBookSession`),
+  `frontends/mobile/src/main.tsx`, `frontends/mobile/src/api/models.ts`):
+  - **Проблема:** каждая книга открывалась только на одном клиенте: Android-фронт
+    при холодном старте намеренно стирал `bookId`/`buildId`, поэтому после
+    перезапуска процесса показывал «Начните генерацию…»; мобильный веб хранил
+    `bookId` только в памяти — после обновления страницы всё терялось; сервер не
+    имел эндпоинта «какие книги есть на сервере», поэтому один клиент не мог
+    узнать о книге, импортированной/открытой другим (веб → Android).
+  - **Архитектура:** источник правды — сервер. Связка SHA-256 TXT → `book_id` уже
+    жила в PG-таблице `book_source` (дедупликация при импорте). Добавлен
+    **`GET /api/v1/books`** — последние книги на сервере (PG `book_source` + скан
+    диска для vbook-импортов, с `state`, `title`, `build_id`, `updated_at`;
+    сортировка по активности, лимит 20).
+  - **Android:** убран сброс сессии при холодном старте; новый
+    `GenerateViewModel.restoreBookSession()` валидирует сохранённый id через сервер,
+    при отсутствии/удалении книги — берёт самую свежую с сервера и прогревает плеер
+    (сцены + обложка, как при импорте). При недоступности сервера id держится
+    оптимистично (prefs не чистятся — самовосстановление при следующем запуске).
+  - **Web:** `bookId`/`buildId` персистятся в `localStorage`
+    (`animastor:currentBook`), `restoreBookSession()` вызывается при старте из
+    `main.tsx`: валидация → fallback на `/api/v1/books` → прогрев плеера, без
+    авто-навигации по вкладкам.
+  - Защита от гонок: тёплый эмит не перезатирает книгу, открытую deep-link'ом
+    (`?book=…`) / импортом в тот же момент (guard после fetch на обеих платформах).
+  - Проверки: весь mocha-сьют (844) + 6 новых тестов, web `tsc --noEmit`, Android
+    `compileDebugKotlin` — OK.
+
+### Fixed
+
+- **Android: приложение больше не «забывает» открытую книгу после перезапуска процесса**
+  (`frontend/app/src/main/java/com/example/animastor/ui/MainActivity.kt`):
+  - **Проблема:** `MainActivity.onCreate` при `savedInstanceState == null` вызывал
+    `viewModel.closeBook()` + `playbackViewModel.closeBook()` — стирал `bookId`/
+    `buildId` из SharedPreferences при каждом холодном старте (свайп из «недавних»,
+    перезагрузка телефона, «Остановить» в настройках). Механизм восстановления из
+    prefs (`GenerateViewModel.init`) был фактически мёртвым кодом: `init`
+    восстанавливал id, `onCreate` тут же его стирал.
+  - **Фикс:** блок сброса удалён; вместо него — `restoreBookSession()` (см. выше).
+    Явное закрытие книги («Создать новую книгу», «Удалить vBook», «Очистить кэш»)
+    по-прежнему чистит id — это намеренное действие пользователя.
+
+---
+
 ## [Unreleased] — 2026-08-06
 
 ### Changed
