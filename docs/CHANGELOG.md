@@ -12,7 +12,7 @@ All notable changes to Animastor are documented here.
   (`backend/src/routes/book/recent-books-routes.cjs` (новый),
   `backend/src/routes/book-routes.cjs`,
   `backend/src/storage/postgres/repositories/book-source-repo.js` (`listRecent`),
-  `backend/tests/recent-books.test.js` (новый, 6 тестов),
+  `backend/tests/recent-books.test.js` (новый, 9 тестов: 6 логики + 3 регрессионных на регистрацию роута),
   `frontend/.../GenerateViewModel.kt` (`restoreBookSession`),
   `frontend/.../MainActivity.kt`,
   `frontend/.../BackendApi.kt`, `Repository.kt`, `BookModels.kt`,
@@ -40,7 +40,7 @@ All notable changes to Animastor are documented here.
     авто-навигации по вкладкам.
   - Защита от гонок: тёплый эмит не перезатирает книгу, открытую deep-link'ом
     (`?book=…`) / импортом в тот же момент (guard после fetch на обеих платформах).
-  - Проверки: весь mocha-сьют (844) + 6 новых тестов, web `tsc --noEmit`, Android
+  - Проверки: весь mocha-сьют (844) + 9 новых тестов, web `tsc --noEmit`, Android
     `compileDebugKotlin` — OK.
 
 ### Fixed
@@ -56,6 +56,25 @@ All notable changes to Animastor are documented here.
   - **Фикс:** блок сброса удалён; вместо него — `restoreBookSession()` (см. выше).
     Явное закрытие книги («Создать новую книгу», «Удалить vBook», «Очистить кэш»)
     по-прежнему чистит id — это намеренное действие пользователя.
+
+- **Бэкенд падал при старте после добавления `/api/v1/books`: `TypeError: log is not a function`**
+  (`backend/src/routes/book/recent-books-routes.cjs`):
+  - **Проблема:** регистрация роута доставала `log` из корня `deps`, но в production-форме
+    `routeDeps` (`backend.cjs`) логгер живёт в `deps.utils.log`. Краш ловился только в рантайме
+    (синтаксис-проверки и unit-тесты логики его не видели) — контейнер уходил в crash-loop.
+  - **Фикс:** `const log = (deps.utils && deps.utils.log) || (() => {});` + 3 регрессионных теста
+    (production-форма deps, отсутствие `deps.utils` вовсе, HTTP-вызов `/api/v1/books` на реальном
+    express) — теперь регистрация покрыта тестом, а не только docker'ом.
+
+- **`ERR_ERL_UNEXPECTED_X_FORWARDED_FOR` от express-rate-limit в каждом запросе через nginx-прокси**
+  (`backend/src/backend.cjs`):
+  - **Проблема:** nginx (docker-compose proxy) проксирует запросы и проставляет
+    `X-Forwarded-For`, а у express `trust proxy` был выключен — express-rate-limit v8 бросал
+    `ERR_ERL_UNEXPECTED_X_FORWARDED_FOR` на каждый проксированный запрос (запросы проходили,
+    но логи засорялись).
+  - **Фикс:** `app.set('trust proxy', 1)` сразу после создания app, ДО подключения
+    helmet/rate-limit — express доверяет только непосредственно предыдущему hop (nginx),
+    и `req.ip`/rate-limit используют реальный IP клиента.
 
 ---
 

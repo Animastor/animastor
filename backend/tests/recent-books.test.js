@@ -3,7 +3,8 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const { collectRecentBooks } = require('../src/routes/book/recent-books-routes.cjs');
+const registerRecentBooksRoutes = require('../src/routes/book/recent-books-routes.cjs');
+const { collectRecentBooks } = registerRecentBooksRoutes;
 
 describe('Recent Books (GET /api/v1/books)', () => {
     let tmpDir;
@@ -117,5 +118,56 @@ describe('Recent Books (GET /api/v1/books)', () => {
         const books = await collectRecentBooks(deps);
         expect(books).to.have.length(1);
         expect(books[0].book_id).to.equal('ready-42');
+    });
+});
+
+describe('Recent Books route registration (production-shaped deps)', () => {
+    // Regression: the route used to crash the container at startup with
+    // `TypeError: log is not a function` because `log` lives in `deps.utils.log`,
+    // not at the root of `deps`. These tests mirror the real deps shape from
+    // backend.cjs routeDeps so the crash is caught by CI, not by docker.
+    function makeRegistrationDeps({ withUtils = true } = {}) {
+        const deps = {
+            bookSourceRepo: { listRecent: async () => [] },
+            lazyBook: {
+                getBooksDir: () => '/tmp/animastor-no-books-dir',
+                getBookStatus: () => null,
+                loadDraftBook: () => null,
+            },
+        };
+        if (withUtils) deps.utils = { log: () => {} };
+        return deps;
+    }
+
+    it('registers /api/v1/books without throwing when log is in deps.utils', () => {
+        const registered = [];
+        const app = { get: (p) => { registered.push(p); } };
+        expect(() => registerRecentBooksRoutes(app, {}, makeRegistrationDeps())).not.to.throw();
+        expect(registered).to.include('/api/v1/books');
+    });
+
+    it('does not throw even when deps.utils is absent (defensive log fallback)', () => {
+        const registered = [];
+        const app = { get: (p) => { registered.push(p); } };
+        expect(() => registerRecentBooksRoutes(app, {}, makeRegistrationDeps({ withUtils: false })))
+            .not.to.throw();
+        expect(registered).to.include('/api/v1/books');
+    });
+
+    it('serves GET /api/v1/books over HTTP with the production-shaped deps', async () => {
+        const express = require('express');
+        const app = express();
+        registerRecentBooksRoutes(app, {}, makeRegistrationDeps());
+
+        const server = app.listen(0);
+        const { port } = server.address();
+        try {
+            const res = await fetch(`http://127.0.0.1:${port}/api/v1/books`);
+            expect(res.status).to.equal(200);
+            const body = await res.json();
+            expect(body.books).to.deep.equal([]);
+        } finally {
+            server.close();
+        }
     });
 });

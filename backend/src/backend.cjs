@@ -53,6 +53,13 @@ const crypto = require('crypto');
 const redis = new Redis({ host: 'redis', port: 6379 });
 const app = express();
 
+// Trust the single reverse proxy (nginx in docker-compose) so express-rate-limit
+// and req.ip use the real client IP from X-Forwarded-For. Without this,
+// express-rate-limit v8 throws ERR_ERL_UNEXPECTED_X_FORWARDED_FOR on every
+// proxied request (the header is present but trust proxy is false).
+// 1 = trust only the immediately preceding hop (nginx) — nothing else.
+app.set('trust proxy', 1);
+
 // Security headers
 const helmet = require('helmet');
 app.use(helmet());
