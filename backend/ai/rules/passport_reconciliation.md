@@ -37,6 +37,28 @@ For each IU, compare the image.prompt against the passports of the characters th
 ## Known Characters (passports)
 %CHARACTERS%
 
+## Video tokens disambiguation (per scene)
+Below, each scene lists its participants and their CURRENT video_tokens — 1-4 short,
+highly visible visual features chosen at passport creation (e.g. "tie", "round glasses",
+"bald head", "red jacket"). Video models use these tokens to bind motion instructions
+to the right character on a reference image, so within ONE scene the token SETS of
+different participants must not overlap where avoidable.
+
+For every scene with 2+ participants:
+- Compare each participant's features against the other participants' features.
+- If two participants share a feature (e.g. both have "tie"), REPLACE that feature for
+  ONE of them with a different distinctive feature that IS present in that character's
+  passport (appearance/clothes listed above).
+- Keep 1-4 features per participant. Prefer short, concrete, visible features.
+  Do NOT invent features absent from the passport. Do NOT use names, actions, or
+  abstract qualities.
+- If a participant's token set does not conflict, leave it unchanged.
+- Return tokens for EVERY participant of every scene listed below, even when unchanged.
+  The system writes them only when they differ, so returning the current tokens is safe.
+
+Scene participants with current tokens:
+%SCENE_VIDEO_TOKENS%
+
 ## Input units to reconcile
 %UNITS%
 
@@ -52,8 +74,19 @@ For each IU, compare the image.prompt against the passports of the characters th
         "prompt": "Cleaned prompt — frame-specific descriptions only"
       }
     }
+  ],
+  "video_tokens": [
+    {
+      "scene_index": 0,
+      "tokens": {
+        "character_id": ["tie", "round glasses"],
+        "other_character_id": ["red jacket"]
+      }
+    }
   ]
 }
 ```
 
-Return ONLY valid JSON. Do NOT add or remove units. Return exactly the same number of units as received.
+Return ONLY valid JSON. Do NOT add or remove units. Return exactly the same number of
+units as received. video_tokens must include every scene with 2+ participants from the
+list above; scenes with fewer participants or missing from the list should be omitted.

@@ -7,7 +7,6 @@
 // (EN + RU).
 const CLOTHING_RE = /((?:wearing|dressed in|in a|in an|clad in|adorned in|wore|wears|wearing a|dressed|clothed|attired|outfitted|одет(?:ый|ая|ые)?\s+в|надет(?:а|о|ы)?|облачен(?:а|о|ы)?|носит(?:а|о)?)\s+[^.,;!?]{3,60})|([^.,;!?]{3,60}(?:suit|shirt|coat|dress|hat|jacket|tie|shoes|boots|uniform|robe|cloak|outfit|sweater|vest|hoodie|pants|jeans|skirt|scarf|gloves|belt|cape|gown|tunic|armor|crown|necklace|ring)[^.,;!?]{0,40})|((?:костюм|пиджак|брюк|шляп|кепк|фуражк|рубашк|сорочк|галстук|пальто|плать|ботинк|сапог|халат|куртк|сюртук|жилет|френч|шинел|мундир|плащ|шарф|перчатк|ремень|пояс|кепка|фуражка)[^.,;!?]{0,40})/gi;
 
-
 function fragmentAppearanceForVideo(appearance, charName) {
     if (!appearance || appearance.length < 5) {
         return `${charName.toLowerCase()} character, distinctive appearance`;
@@ -136,7 +135,45 @@ function extractClothing(appearance) {
     };
 }
 
+/**
+ * Sanitize an agent-provided video_tokens list: keep only short, non-empty
+ * strings, at most 4 features. Returns null when nothing usable remains.
+ * The AGENT (characters.md / passport_reconciliation.md) picks these features;
+ * the program only validates them.
+ * @param {*} tokens - array of short visual features (agent output)
+ * @returns {string[]|null}
+ */
+function sanitizeVideoTokens(tokens) {
+    if (!Array.isArray(tokens)) return null;
+    const clean = tokens
+        .map(t => (typeof t === 'string' ? t.trim() : ''))
+        // Features are 1-4 words per the agent instructions — cap length AND
+        // word count so a multi-sentence "feature" never slips through.
+        .filter(t => t.length >= 2 && t.length <= 60 && t.split(/\s+/).length <= 6)
+        .slice(0, 4);
+    return clean.length > 0 ? clean : null;
+}
+
+/**
+ * Render video_tokens (array of short features, or a legacy string) as one
+ * comma-joined prompt fragment. Accepts both the new array format and the
+ * old string format for backward compatibility.
+ * @param {*} tokens
+ * @returns {string}
+ */
+function tokensToString(tokens) {
+    if (Array.isArray(tokens)) {
+        return tokens
+            .map(t => (typeof t === 'string' ? t.trim() : ''))
+            .filter(Boolean)
+            .join(', ');
+    }
+    return typeof tokens === 'string' ? tokens.trim() : '';
+}
+
 module.exports = {
     fragmentAppearanceForVideo,
     extractClothing,
+    sanitizeVideoTokens,
+    tokensToString,
 };

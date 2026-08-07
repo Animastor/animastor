@@ -22,6 +22,39 @@ function _resolveChunkSize(options) {
     return Math.max(1, Math.min(5, (options && options.chunkSize) || MAX_SCENES_PER_CHUNK));
 }
 
+/**
+ * Write scene-level video_tokens (chosen by the passport-reconciliation agent
+ * for uniqueness within a scene — stage 2 of the video_tokens scheme) into
+ * scene.passport. Only writes when the agent's tokens actually differ from the
+ * current effective tokens (existing scene override, or the global passport
+ * token) — keeps scene data minimal and regeneration deterministic.
+ */
+function applySceneVideoTokens(enrichedScenes, videoTokens, characters) {
+    if (!videoTokens || videoTokens.length === 0) return;
+    const globalTokens = new Map((characters || []).map(c => [c.id, c.passport?.video_tokens || c.video_tokens || null]));
+    for (const row of videoTokens) {
+        const scene = enrichedScenes[row.scene_index];
+        if (!scene) continue;
+        let scenePassport = scene.passport || {};
+        let changed = false;
+        const participants = scene.participants || [];
+        for (const [charId, tokens] of Object.entries(row.tokens)) {
+            // Guard: only participants of THIS scene get overrides — a
+            // hallucinated token for a non-participant would otherwise win over
+            // the global token at render time.
+            if (!participants.includes(charId)) continue;
+            const current = scenePassport[charId]?.video_tokens ?? globalTokens.get(charId) ?? null;
+            if (JSON.stringify(current) === JSON.stringify(tokens)) continue;
+            scenePassport = {
+                ...scenePassport,
+                [charId]: { ...(scenePassport[charId] || {}), video_tokens: tokens },
+            };
+            changed = true;
+        }
+        if (changed) scene.passport = scenePassport;
+    }
+}
+
 function getWindowText(sourceText, existingChars, existingLocs, windowIndex, startOffset, chunkSize, options = {}) {
     const maxWindowChars = (chunkSize != null)
         ? computeWindowChars(chunkSize)
@@ -554,7 +587,7 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
 
         if (allVisualUnits.length >= 1) {
 
-            const reconciled = await pipelineSteps.stepReconcilePassports(sessionId, allVisualUnits, characters, stepIndex, _progress);
+            const { units: reconciled, videoTokens } = await pipelineSteps.stepReconcilePassports(sessionId, allVisualUnits, characters, stepIndex, _progress, enrichedScenes);
 
             // Map results back into enrichedScenes
             for (const rec of reconciled) {
@@ -574,6 +607,11 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
                     }
                 }
             }
+
+            // Stage 2 of the video_tokens scheme: persist the agent-chosen
+            // scene-level tokens (scene.passport[charId].video_tokens) — only
+            // when they differ from the current effective tokens.
+            applySceneVideoTokens(enrichedScenes, videoTokens, characters);
         }
     }
 
@@ -896,7 +934,7 @@ async function processCachedScenes(sessionId, scenes, characters, locations, men
         );
 
         if (allVisualUnits.length >= 1) {
-            const reconciled = await pipelineSteps.stepReconcilePassports(sessionId, allVisualUnits, characters, stepIndex, _progress);
+            const { units: reconciled, videoTokens } = await pipelineSteps.stepReconcilePassports(sessionId, allVisualUnits, characters, stepIndex, _progress, enrichedScenes);
 
             for (const rec of reconciled) {
                 const scene = enrichedScenes[rec.sceneIndex];
@@ -913,6 +951,11 @@ async function processCachedScenes(sessionId, scenes, characters, locations, men
                     }
                 }
             }
+
+            // Stage 2 of the video_tokens scheme: persist the agent-chosen
+            // scene-level tokens (scene.passport[charId].video_tokens) — only
+            // when they differ from the current effective tokens.
+            applySceneVideoTokens(enrichedScenes, videoTokens, characters);
         }
     }
 
@@ -1079,4 +1122,6 @@ module.exports = {
     resolveSceneProgress,
     runPipeline,
     processCachedScenes,
+    // Exported for tests
+    applySceneVideoTokens,
 };

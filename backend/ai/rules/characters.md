@@ -55,6 +55,13 @@ For each character, provide TWO separate visual fields — appearance and clothe
 - appearance: DETAILED PHYSICAL appearance ONLY — age, face, hair, eyes, build, expression. DO NOT include clothing here — clothing belongs in the separate `clothes` field below. This is CRITICAL — must be a vivid visual description like an author wrote it, 2-4 sentences.
 - clothes: What the character WEARS — clothing, attire, and accessories (suit, hat, coat, boots, glasses, etc.), 1-2 sentences. Must not repeat anything already in `appearance`.
 - traits: array of 3-5 personality traits — in %LANGUAGE%
+- video_tokens: OPTIONAL. An array of 1–4 SHORT, maximally visible visual features of this character.
+  This is NOT a description — it is a set of anchors a video model can spot on a reference image
+  and use to bind motion instructions to the right character. Each feature is a short phrase
+  (1–4 words): "tie", "round glasses", "bald head", "long hair", "beard", "red jacket",
+  "white shirt", "hat", "walking cane", "backpack". Prefer distinctive, high-contrast,
+  concrete details — NOT abstract qualities ("mysterious aura") and NOT the character's name.
+  If the character has no clearly distinctive features, OMIT the field entirely.
 - Role: protagonist (main POV character), antagonist (opposes protagonist), supporting (significant side character), minor (briefly mentioned)
 
 Why two fields: `appearance` and `clothes` are injected into the image prompt as
@@ -75,7 +82,8 @@ Note: Voice descriptions are NOT part of this step. They are generated separatel
       "description": "Brief who-they-are description (in %LANGUAGE%)",
       "appearance": "Detailed PHYSICAL appearance only: age, face, hair, eyes, build, expression. NO clothing.",
       "clothes": "Clothing and accessories: suit, hat, coat, boots, glasses, etc. No repetition of appearance.",
-      "traits": ["trait1", "trait2", "trait3"]
+      "traits": ["trait1", "trait2", "trait3"],
+      "video_tokens": ["tie", "round glasses"]  // optional, 1-4 short visual anchors
     }
   ],
   "mentions": {
@@ -90,6 +98,7 @@ IMPORTANT CRITICAL — appearance MUST be written in ENGLISH because it is used 
 input for an English-only video generation model (LTX 2.3). The same applies to
 clothes: both fields feed English-only generation models (LTX 2.3, Qwen-Image).
 Describe the character's looks in clear English, even if the source text is in another language.
+video_tokens are also fed to the English-only video model — write them in ENGLISH too.
 
 IMPORTANT: appearance must be a RICH visual description of what the character LOOKS
 like — not their biography. This is used for image generation.

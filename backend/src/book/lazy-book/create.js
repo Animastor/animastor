@@ -134,10 +134,21 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
             ? ch.clothes.trim()
             : '';
 
-        const videoTokens = appearance.fragmentAppearanceForVideo(
-            clothes ? `${appearanceDesc}, ${clothes}` : appearanceDesc,
-            ch.name
-        );
+        // video_tokens — stage 1 of the two-stage scheme: the AGENT
+        // (ai/rules/characters.md) picks 1-4 short, highly visible visual
+        // features per character (e.g. "tie", "round glasses", "bald head").
+        // The program only sanitizes that list (trim, cap at 4) and falls back
+        // to the deterministic fragment when the agent gave nothing. Uniqueness
+        // against other scene participants is handled LATER by the passport
+        // reconciliation step (stage 2), which writes scene.passport overrides.
+        let videoTokens = appearance.sanitizeVideoTokens(ch.video_tokens);
+        if (!videoTokens) {
+            const frag = appearance.fragmentAppearanceForVideo(
+                clothes ? `${appearanceDesc}, ${clothes}` : appearanceDesc,
+                ch.name
+            );
+            videoTokens = frag ? [frag] : [];
+        }
 
         const voiceInstruction = ch.voice
             ? ch.voice
@@ -154,7 +165,9 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
             passport: {
                 appearance: appearanceDesc,
                 clothes,
-                video_tokens: videoTokens || `${ch.name.toLowerCase()} character, period clothing, distinctive appearance`,
+                video_tokens: videoTokens.length > 0
+                    ? videoTokens
+                    : [`${ch.name.toLowerCase()} character, period clothing, distinctive appearance`],
             },
             voice: {
                 instruction: voiceInstruction,
@@ -524,6 +537,11 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
             style: sceneStyle,
             participants: allParticipants,
             location: aiScene.location || undefined,
+            // scene.passport[charId] — scene-level character passport overrides
+            // (e.g. video_tokens chosen by the passport-reconciliation agent).
+            // Must be passed through explicitly — the scene constructor does not
+            // copy unknown fields.
+            passport: aiScene.passport || undefined,
             source_start: aiScene.source_start ?? null,
             source_end: aiScene.source_end ?? null,
             audio: audioConfig,

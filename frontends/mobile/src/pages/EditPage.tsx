@@ -692,7 +692,9 @@ export function EditPage(props: { path?: string }) {
     Object.entries(passport).forEach(([charId, p]) => {
       const fields: Record<string, string> = {};
       PASSPORT_OVERRIDE_FIELDS.forEach((f) => {
-        const v = p ? (p as CharPassport)[f as keyof CharPassport] : undefined;
+        const raw = p ? (p as CharPassport)[f as keyof CharPassport] : undefined;
+        // video_tokens may be an array of features (agent scheme) — render as text.
+        const v = typeof raw === 'string' ? raw : Array.isArray(raw) ? raw.join(', ') : (raw ?? '');
         if (v) fields[f] = v;
       });
       blocks.push({ charId, fields });

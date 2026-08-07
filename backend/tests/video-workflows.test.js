@@ -234,6 +234,36 @@ describe('buildVideoPrompt', () => {
         expect(prompt).to.include('Sidekick: sidekick token');
     });
 
+    it('joins array video_tokens (new agent format) into a comma list', () => {
+        const bookWithArrays = {
+            ...loadedBook,
+            characters: [
+                { id: 'char_hero', name: 'Hero', passport: { video_tokens: ['tie', 'round glasses'] } },
+                { id: 'char_sidekick', name: 'Sidekick', passport: { video_tokens: ['red jacket'] } },
+            ],
+        };
+        const prompt = wf.buildVideoPrompt(sceneData, bookWithArrays, units, [3, 4]);
+        expect(prompt).to.include('Hero: tie, round glasses');
+        expect(prompt).to.include('Sidekick: red jacket');
+    });
+
+    it('falls back to global token when a scene override collides with another participant', () => {
+        const collidingScene = {
+            ...sceneData,
+            scene: {
+                ...sceneData.scene,
+                passport: {
+                    char_hero: { video_tokens: ['tie'] },
+                    char_sidekick: { video_tokens: ['tie'] }, // collision with hero
+                },
+            },
+        };
+        const prompt = wf.buildVideoPrompt(collidingScene, loadedBook, units, [3, 4]);
+        // Hero keeps the scene override; sidekick falls back to its global token
+        expect(prompt).to.include('Hero: tie');
+        expect(prompt).to.include('Sidekick: sidekick token');
+    });
+
     it('falls back to global passport when scene.passport has no override', () => {
         const sceneNoOverride = {
             ...sceneData,
@@ -320,6 +350,50 @@ describe('buildVideoWorkflows', () => {
         );
         expect(result.success).to.be.false;
         expect(result.reason).to.equal('no_units');
+    });
+});
+
+describe('buildCharLines (video token resolution)', () => {
+    it('renders array tokens and legacy string tokens', () => {
+        const book = {
+            characters: [
+                { id: 'a', name: 'A', passport: { video_tokens: ['tie', 'glasses'] } },
+                { id: 'b', name: 'B', passport: { video_tokens: 'red jacket' } },
+            ],
+        };
+        const lines = wf.buildCharLines(['a', 'b'], book, {});
+        expect(lines).to.deep.equal(['A: tie, glasses', 'B: red jacket']);
+    });
+
+    it('drops the second line when both scene and global tokens collide', () => {
+        const book = {
+            characters: [
+                { id: 'a', name: 'A', passport: { video_tokens: 'same token' } },
+                { id: 'b', name: 'B', passport: { video_tokens: 'same token' } },
+            ],
+        };
+        const lines = wf.buildCharLines(['a', 'b'], book, {});
+        expect(lines).to.have.length(1);
+        expect(lines[0]).to.include('A: same token');
+    });
+
+    it('skips participants without tokens', () => {
+        const book = {
+            characters: [
+                { id: 'a', name: 'A', passport: {} },
+            ],
+        };
+        expect(wf.buildCharLines(['a'], book, {})).to.deep.equal([]);
+    });
+
+    it('prefers scene override over global token', () => {
+        const book = {
+            characters: [
+                { id: 'a', name: 'A', passport: { video_tokens: 'global token' } },
+            ],
+        };
+        const scene = { passport: { a: { video_tokens: ['scene token'] } } };
+        expect(wf.buildCharLines(['a'], book, scene)).to.deep.equal(['A: scene token']);
     });
 });
 

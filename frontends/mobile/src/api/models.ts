@@ -306,7 +306,8 @@ export interface SceneAudio {
 export interface CharPassport {
   appearance?: string | null;
   clothes?: string | null;
-  video_tokens?: string | null;
+  // video_tokens: legacy string OR array of 1-4 short visual features (agent scheme)
+  video_tokens?: string | string[] | null;
 }
 
 export interface UnitAudio {

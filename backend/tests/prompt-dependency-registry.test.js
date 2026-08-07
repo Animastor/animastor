@@ -46,12 +46,14 @@ describe('Prompt Dependency Registry', () => {
                 passport: {
                     appearance: 'tall',
                     clothes: 'robe',
+                    video_tokens: ['tie'],
                 },
             };
             const result = registry.extractPassport(char);
             expect(result).to.deep.equal({
                 appearance: 'tall',
                 clothes: 'robe',
+                video_tokens: ['tie'],
             });
         });
 
@@ -64,6 +66,15 @@ describe('Prompt Dependency Registry', () => {
             const result = registry.extractPassport(char);
             expect(result.appearance).to.equal('tall');
             expect(result.clothes).to.be.undefined;
+            expect(result.video_tokens).to.be.undefined;
+        });
+
+        it('detects video_tokens change as a passport difference', () => {
+            const field = registry.getCrossFields().find(f => f.key === 'characters.passport');
+            expect(field.isChanged(
+                { passport: { appearance: 'tall', video_tokens: ['tie'] } },
+                { passport: { appearance: 'tall', video_tokens: ['red jacket'] } }
+            )).to.be.true;
         });
     });
 

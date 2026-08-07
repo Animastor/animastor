@@ -156,8 +156,17 @@ data class CharDef(
 data class CharPassport(
     val appearance: String? = null,
     val clothes: String? = null,
-    val video_tokens: String? = null
+    // video_tokens may be a legacy string OR an array of 1-4 short visual
+    // features (agent-driven scheme) — Gson deserializes the array to a List.
+    val video_tokens: Any? = null
 )
+
+/** Render video_tokens (string | array of features) as editable text. */
+fun CharPassport.videoTokensAsText(): String = when (val t = video_tokens) {
+    is String -> t
+    is List<*> -> t.filterIsInstance<String>().joinToString(", ")
+    else -> ""
+}
 
 data class VoiceEntry(
     val instruction: String? = null

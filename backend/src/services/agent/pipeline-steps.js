@@ -18,6 +18,7 @@ const {
     buildLangInstruction,
 } = require('../agent-prompts');
 const { normalizeCharacterRefs } = require('../../image/image-service');
+const { sanitizeVideoTokens, tokensToString } = require('../../book/lazy-book/appearance');
 
 /**
  * Build the location context block for agent prompts.
@@ -488,14 +489,78 @@ async function stepGenerateVoices(sessionId, text, characters, stepIndex, progre
     }
 }
 
-async function stepReconcilePassports(sessionId, allVisualUnits, characters, stepIndex, progress) {
+/**
+ * Resolve the effective video tokens for a character in a scene: the scene-level
+ * override (scene.passport[charId].video_tokens) wins, then the global passport
+ * token, then the top-level agent field. Returns the raw value (array | string).
+ */
+function effectiveSceneTokens(scene, c) {
+    const sceneTok = scene?.passport?.[c.id]?.video_tokens;
+    if (sceneTok) return sceneTok;
+    return c.passport?.video_tokens || c.video_tokens || null;
+}
+
+/**
+ * Build the per-scene participants block for the passport-reconciliation prompt
+ * (stage 2 of the video_tokens scheme). Only scenes with 2+ participants that
+ * HAVE tokens are listed — cross-character uniqueness matters only there.
+ * The agent sees each participant's current tokens + passport so it can
+ * re-pick colliding features and keep the rest.
+ */
+function buildSceneTokensContext(scenes, characters) {
+    const charMap = new Map((characters || []).map(c => [c.id, c]));
+    const parts = [];
+    (scenes || []).forEach((scene, si) => {
+        const rows = (scene.participants || [])
+            .map(id => ({ id, ch: charMap.get(id), tokens: charMap.has(id) ? effectiveSceneTokens(scene, charMap.get(id)) : null }))
+            .filter(r => r.ch && r.tokens && tokensToString(r.tokens));
+        if (rows.length < 2) return;
+        const lines = rows.map(r => {
+            const p = r.ch.passport || {};
+            const appearance = (p.appearance || r.ch.appearance || '').substring(0, 180);
+            const clothes = (p.clothes || r.ch.clothes || '').substring(0, 120);
+            const ref = [];
+            if (appearance) ref.push(`appearance="${appearance}"`);
+            if (clothes) ref.push(`clothes="${clothes}"`);
+            const refStr = ref.length > 0 ? ` ${ref.join(' ')}` : '';
+            return `  - ${r.id} (${r.ch.name || r.id}): current_tokens="${tokensToString(r.tokens)}"${refStr}`;
+        });
+        parts.push(`Scene ${si}${scene.title ? ` "${scene.title}"` : ''}:`);
+        parts.push(...lines);
+    });
+    return parts.join('\n') || 'None';
+}
+
+/**
+ * Parse the agent's `video_tokens` response rows into a sanitized list.
+ * Accepts scene_index as number OR numeric string (LLMs frequently emit
+ * strings); drops rows with unusable tokens or unknown scenes.
+ * @param {*} rawRows - result.video_tokens from the reconciliation agent
+ * @returns {{scene_index: number, tokens: Object<string, string[]>}[]}
+ */
+function parseSceneVideoTokens(rawRows) {
+    if (!Array.isArray(rawRows)) return [];
+    return rawRows
+        .filter(r => r && r.tokens && typeof r.tokens === 'object' && !Array.isArray(r.tokens) && Number.isInteger(Number(r.scene_index)))
+        .map(r => {
+            const tokens = {};
+            for (const [charId, t] of Object.entries(r.tokens)) {
+                const cleaned = sanitizeVideoTokens(t);
+                if (cleaned) tokens[charId] = cleaned;
+            }
+            return { scene_index: Number(r.scene_index), tokens };
+        })
+        .filter(r => Object.keys(r.tokens).length > 0);
+}
+
+async function stepReconcilePassports(sessionId, allVisualUnits, characters, stepIndex, progress, scenes) {
     const _progress = progress || (() => {});
     _progress({ stage: 'passport_reconciliation', message: PROGRESS_STAGES.passport_reconciliation });
     await updateSession(sessionId, { progress_msg: PROGRESS_STAGES.passport_reconciliation });
 
     if (!allVisualUnits || allVisualUnits.length === 0) {
         console.log(`[AGENT] Step passport (reconciliation): skipped — no units`);
-        return allVisualUnits || [];
+        return { units: allVisualUnits || [], videoTokens: [] };
     }
 
     // Exclude out-of-format prompts (legacy values / stray pastes) — see inPromptRange.
@@ -503,7 +568,7 @@ async function stepReconcilePassports(sessionId, allVisualUnits, characters, ste
     const excludedCount = allVisualUnits.length - polishable.length;
     if (polishable.length === 0) {
         console.log(`[AGENT] Step passport (reconciliation): skipped — all ${allVisualUnits.length} unit(s) have out-of-format prompts (>${IMAGE_PROMPT_MAX_CHARS} chars)`);
-        return allVisualUnits;
+        return { units: allVisualUnits, videoTokens: [] };
     }
 
     const step = await createStep(sessionId, 'reconcile_passports', stepIndex || 0);
@@ -528,8 +593,14 @@ async function stepReconcilePassports(sessionId, allVisualUnits, characters, ste
 
     const unitsStr = polishable.map(unitRow).join('\n');
 
+    // Stage 2 of the video_tokens scheme: per-scene participants with their
+    // current tokens + passports, so the agent can re-pick colliding features
+    // and make tokens maximally distinct within each scene.
+    const sceneTokensContext = buildSceneTokensContext(scenes, characters);
+
     const prompt = SYSTEM_PROMPTS.passport_reconciliation
         .replace('%CHARACTERS%', charsContext)
+        .replace('%SCENE_VIDEO_TOKENS%', sceneTokensContext)
         .replace('%UNITS%', unitsStr);
 
     const messages = [
@@ -540,6 +611,10 @@ async function stepReconcilePassports(sessionId, allVisualUnits, characters, ste
     try {
         const result = await aiCaller.callAI(messages, { maxTokens: 4096 });
         const reconciled = result.units || [];
+
+        // Stage 2 output: per-scene adjusted video tokens. Sanitize: keep only
+        // integer scene indexes, string-array tokens (1-4 short features).
+        const videoTokens = parseSceneVideoTokens(result.video_tokens);
 
         // Merge AI results back, preserving original fields and only updating visual.prompt
         const merged = allVisualUnits.map((original, i) => {
@@ -563,19 +638,19 @@ async function stepReconcilePassports(sessionId, allVisualUnits, characters, ste
         });
 
         await aiCaller.logConversation(sessionId, step.step_id, messages, JSON.stringify(result));
-        await completeStep(step.step_id, { units: merged.length });
+        await completeStep(step.step_id, { units: merged.length, video_tokens: videoTokens.length });
 
         const changedCount = merged.filter((m, i) => {
             const orig = allVisualUnits[i];
             return m.image?.prompt !== orig.image?.prompt;
         }).length;
-        console.log(`[AGENT] Step passport (reconciliation): ${polishable.length} units reviewed, ${excludedCount} excluded (prompt >${IMAGE_PROMPT_MAX_CHARS} chars), ${changedCount} changed`);
+        console.log(`[AGENT] Step passport (reconciliation): ${polishable.length} units reviewed, ${excludedCount} excluded (prompt >${IMAGE_PROMPT_MAX_CHARS} chars), ${changedCount} changed, ${videoTokens.length} scene(s) got video tokens`);
 
-        return merged;
+        return { units: merged, videoTokens };
     } catch (err) {
         await failStep(step.step_id, `Passport reconciliation failed: ${err.message}`);
         console.warn(`[AGENT] Step passport (reconciliation) FAILED, keeping original units: ${err.message}`);
-        return allVisualUnits;
+        return { units: allVisualUnits, videoTokens: [] };
     }
 }
 
@@ -1078,6 +1153,10 @@ module.exports = {
     stepReconcileVideoActions,
     stepPolishVideoActions,
     stepGenerateVoices,
+    // Video-token helpers (stage 2) — exported for tests
+    effectiveSceneTokens,
+    buildSceneTokensContext,
+    parseSceneVideoTokens,
     // Deterministic static-copy guards (used by pipeline-runner's final sweep)
     isStaticActionCopy,
     needsVideoActionReconciliation,

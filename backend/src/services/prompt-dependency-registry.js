@@ -185,8 +185,8 @@ const CROSS_FIELDS = [
         findAffectedScenes: (allScenes, entityId) => {
             return allScenes.filter(s => sceneReferencesCharacter(s, entityId));
         },
-        label: 'Character passport (appearance, clothing)',
-        usedBy: 'buildCharacters → resolvePassport()',
+        label: 'Character passport (appearance, clothes, video_tokens)',
+        usedBy: 'buildCharacters → resolvePassport(), video-workflows → video tokens',
     },
     // ── Character voice ───────────────────────────
     // voice settings affect TTS only — no visual impact
@@ -260,6 +260,9 @@ function extractPassport(char) {
     return {
         appearance: p.appearance,
         clothes: p.clothes,
+        // video_tokens feed the video prompt (video-workflows). Global token
+        // changes must also invalidate video dependencies.
+        video_tokens: p.video_tokens,
     };
 }
 

@@ -10,7 +10,7 @@
 //   status.js       - getBookStatus, getChaptersSummary
 //   create.js       - createFromAnalysis, appendToBook, createOrAppendScenes
 //   chapter-utils.js - createChapterIntroScene, createCoverChapter, saveCoverChapter, extractSceneTitle, isGenericSceneTitle
-//   appearance.js   - fragmentAppearanceForVideo, extractClothing
+//   appearance.js   - fragmentAppearanceForVideo, extractClothing, sanitizeVideoTokens, tokensToString
 //   metadata.js     - updateBookMetadata
 //   constants.js    - BookState, SceneStatus, SourceType, UnitType, DEFAULT_WINDOW_SIZE (existing)
 //   paths.js        - getBookDir, getSourcePath, getManifestPath, etc. (existing)
@@ -85,6 +85,8 @@ module.exports = {
     // Appearance
     fragmentAppearanceForVideo: appearanceModule.fragmentAppearanceForVideo,
     extractClothing: appearanceModule.extractClothing,
+    sanitizeVideoTokens: appearanceModule.sanitizeVideoTokens,
+    tokensToString: appearanceModule.tokensToString,
 
     // Metadata
     updateBookMetadata: metadataModule.updateBookMetadata,

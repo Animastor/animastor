@@ -988,7 +988,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                     val pf = mapOf(
                         "${passportPrefix}.appearance" to (passport.appearance ?: ""),
                         "${passportPrefix}.clothes" to (passport.clothes ?: ""),
-                        "${passportPrefix}.video_tokens" to (passport.video_tokens ?: "")
+                        "${passportPrefix}.video_tokens" to passport.videoTokensAsText()
                     )
 
                     passportKeys.forEach { key ->
@@ -1302,7 +1302,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
             val block = PassportOverrideBlock(charId)
             p.appearance?.let { block.fields["appearance"] = it }
             p.clothes?.let { block.fields["clothes"] = it }
-            p.video_tokens?.let { block.fields["video_tokens"] = it }
+            if (p.video_tokens != null) block.fields["video_tokens"] = p.videoTokensAsText()
             passportOverrideBlocks.add(block)
         }
         // Always keep at least one (possibly empty) free block
@@ -1463,7 +1463,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
     private fun passportFieldOf(p: CharPassport?, field: String): String? = when (field) {
         "appearance" -> p?.appearance
         "clothes" -> p?.clothes
-        "video_tokens" -> p?.video_tokens
+        "video_tokens" -> p?.videoTokensAsText()
         else -> null
     }
 

@@ -8,6 +8,7 @@
 
 const book = require('../../book');
 const wfLoader = require('../workflow-loader');
+const { tokensToString } = require('../../book/lazy-book/appearance');
 
 const logPrefix = '[WF-VIDEO]';
 
@@ -59,6 +60,55 @@ async function readIUMetadata(buildId, bookId, chapterId, sceneId, unitId) {
     return null;
 }
 
+// ── Video token resolution ──────────────────────────────────────────
+// video_tokens are 1-4 SHORT visual features per character, chosen by the AI
+// agent (characters.md → global passport) and refined per scene by passport
+// reconciliation (scene.passport[charId].video_tokens — a FULL override).
+// This module only renders them (array | legacy string) and guards against
+// exact duplicates within a scene.
+
+/**
+ * Comparison key for the duplicate guard: feature ORDER must not matter, so an
+ * array token is sorted before joining. Legacy string tokens are used as-is.
+ */
+function tokenKey(tokens) {
+    if (Array.isArray(tokens)) {
+        return tokens.map(t => (typeof t === 'string' ? t.trim() : '')).filter(Boolean).sort().join(', ');
+    }
+    return tokensToString(tokens);
+}
+
+/**
+ * Build "Name: tokens" lines for the video prompt. A scene override fully
+ * replaces the global token. Duplicate guard: if two participants in the SAME
+ * scene resolve to the same feature SET (an agent collision — order-insensitive),
+ * the second one falls back to its global passport token; if that also collides,
+ * the line is dropped rather than emitting an ambiguous reference.
+ */
+function buildCharLines(participants, loadedBook, scene) {
+    const used = new Set();
+    const lines = [];
+    for (const id of participants) {
+        const c = loadedBook.characters?.find(ch => ch.id === id);
+        if (!c) continue;
+        const sceneTokens = scene?.passport?.[c.id]?.video_tokens;
+        const globalTokens = c.passport?.video_tokens;
+        const sceneStr = tokensToString(sceneTokens);
+        const globalStr = tokensToString(globalTokens);
+        let chosen = sceneStr ? sceneTokens : globalTokens;
+        let final = sceneStr || globalStr;
+        if (final && used.has(tokenKey(chosen))) {
+            // Scene token collides — try the global one instead.
+            chosen = globalTokens;
+            final = globalStr;
+        }
+        if (!final || used.has(tokenKey(chosen))) continue;
+        used.add(tokenKey(chosen));
+        lines.push(`${c.name}: ${final}`);
+    }
+    return lines;
+}
+
 // ======================================================
 // VIDEO PROMPT BUILDER
 // ======================================================
@@ -68,16 +118,7 @@ function buildVideoPrompt(sceneData, loadedBook, units, iuDurations) {
 
     // 1. Characters with video tokens
     const participants = scene.participants || [];
-    const charLines = participants
-        .map(id => loadedBook.characters?.find(c => c.id === id))
-        .filter(Boolean)
-        .map(c => {
-            // Scene-level override: scene.passport[charId].video_tokens fully
-            // replaces the global passport token for this character in this scene.
-            const tokens = scene.passport?.[c.id]?.video_tokens || c.passport?.video_tokens || '';
-            return tokens ? `${c.name}: ${tokens}` : null;
-        })
-        .filter(Boolean);
+    const charLines = buildCharLines(participants, loadedBook, scene);
 
     // 2. Location / environment context
     const locationId = scene.location?.id || '';
@@ -425,6 +466,7 @@ module.exports = {
     buildVideoPrompt,
     buildVideoNegativePrompt,
     buildVideoPromptLegacy,
+    buildCharLines,
     motionFromState,
     buildCamera,
     selectWorkflowGroups,
