@@ -20,7 +20,7 @@ const os = require('os');
 
 const bookModule = require('../src/book/index');
 const config = require('../src/config/runtime-config');
-const { setDeep } = require('../src/routes/book/scene-patch-utils.cjs');
+const { setDeep, normalizeFieldValue } = require('../src/routes/book/scene-patch-utils.cjs');
 const promptBuilder = require('../src/image/prompt-builder');
 
 const ORIG_BOOKS_DIR = config.BOOKS_DIR;
@@ -189,7 +189,7 @@ describe('Scene PATCH — scene.passport overrides', () => {
 
         for (const [key, value] of Object.entries(fields)) {
             const resolvedKey = key.startsWith('env.') ? 'location.environment.' + key.slice(4) : key;
-            setDeep(targetScene, resolvedKey, value === '' ? null : value);
+            setDeep(targetScene, resolvedKey, normalizeFieldValue(resolvedKey, value));
         }
 
         bookModule.saveBookBundle(oldBook, null);
@@ -228,7 +228,7 @@ describe('Scene PATCH — scene.passport overrides', () => {
         expect(scene.passport.hero).to.deep.equal({
             appearance: 'tall and thin',
             clothes: 'long grey coat',
-            video_tokens: 'scene override tokens',
+            video_tokens: ['scene override tokens'],
         });
     });
 
@@ -290,7 +290,49 @@ describe('Scene PATCH — scene.passport overrides', () => {
     });
 
     // ======================================================
-    // Test 7: resolvePassport falls back to global after a clear
+    // Test 7: video_tokens comma-joined text → array (agent scheme format),
+    // even when the editor sends commas WITHOUT a trailing space (the exact
+    // regression from the user report: "bald head,large black glasses,...")
+    // ======================================================
+    it('splits comma-joined video_tokens into an array on save', () => {
+        applySceneFieldsPatch({
+            'passport.hero.video_tokens': 'bald head,large black glasses,gray suit,trembling hands',
+        });
+
+        const book = bookModule.loadBook(bookId);
+        const scene = book.chapters[0].scenes[0];
+        expect(scene.passport.hero.video_tokens).to.deep.equal([
+            'bald head', 'large black glasses', 'gray suit', 'trembling hands',
+        ]);
+    });
+
+    // ======================================================
+    // Test 8: video_tokens with proper "a, b, c" spacing also splits cleanly
+    // ======================================================
+    it('splits video_tokens with standard ", " spacing into an array', () => {
+        applySceneFieldsPatch({
+            'passport.hero.video_tokens': 'red beard, cowboy jacket, white jeans',
+        });
+
+        const book = bookModule.loadBook(bookId);
+        const scene = book.chapters[0].scenes[0];
+        expect(scene.passport.hero.video_tokens).to.deep.equal(['red beard', 'cowboy jacket', 'white jeans']);
+    });
+
+    // ======================================================
+    // Test 9: empty video_tokens string clears the override (null)
+    // ======================================================
+    it('clears video_tokens override when empty string is sent', () => {
+        applySceneFieldsPatch({ 'passport.hero.video_tokens': 'old token' });
+        applySceneFieldsPatch({ 'passport.hero.video_tokens': '' });
+
+        const book = bookModule.loadBook(bookId);
+        const scene = book.chapters[0].scenes[0];
+        expect(scene.passport.hero.video_tokens).to.be.null;
+    });
+
+    // ======================================================
+    // Test 10: resolvePassport falls back to global after a clear
     // ======================================================
     it('resolvePassport falls back to global passport once the override is cleared', () => {
         const book = bookModule.loadBook(bookId);

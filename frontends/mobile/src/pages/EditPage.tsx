@@ -106,6 +106,14 @@ function passportFieldLabel(key: string): string {
   }
 }
 
+// Render a passport field value as editable text. video_tokens may be an array
+// of features (agent scheme) or a legacy string — String([...]) would join
+// WITHOUT a space ("a,b"), so arrays are joined explicitly with ", ".
+function passportFieldText(p: CharPassport | null | undefined, f: string): string {
+  const raw = p ? (p as CharPassport)[f as keyof CharPassport] : undefined;
+  return typeof raw === 'string' ? raw : Array.isArray(raw) ? raw.join(', ') : (raw ?? '');
+}
+
 // ── readField / readUnitField ports ──
 function readField(sc: BookScene, key: string): string {
   const env = sc.location?.environment;
@@ -769,7 +777,7 @@ export function EditPage(props: { path?: string }) {
       const have = existing[charId];
       PASSPORT_OVERRIDE_FIELDS.forEach((f) => {
         const newVal = want?.[f] ?? '';
-        const oldVal = have ? String((have as CharPassport)[f as keyof CharPassport] ?? '') : '';
+        const oldVal = have ? passportFieldText(have as CharPassport, f) : '';
         if (newVal !== oldVal) {
           result[`passport.${charId}.${f}`] = newVal;
         }
@@ -881,7 +889,7 @@ export function EditPage(props: { path?: string }) {
           Object.entries(fields).forEach(([k, v]) => {
             const oldVal = k === 'name'
               ? (orig?.name ?? '')
-              : String((orig?.passport as CharPassport | null)?.[k as keyof CharPassport] ?? '');
+              : passportFieldText(orig?.passport as CharPassport | null, k);
             if (v !== oldVal) changed[k] = v;
           });
           if (Object.keys(changed).length === 0) continue;
@@ -1148,7 +1156,7 @@ export function EditPage(props: { path?: string }) {
           {inputCard(t('field_name'), ch.name ?? '', false, `char.${charId}.name`)}
           <div class="edit-section">{t('field_passport')}</div>
           {PASSPORT_OVERRIDE_FIELDS.map((f) => {
-            const v = String((ch.passport as CharPassport | null)?.[f as keyof CharPassport] ?? '');
+            const v = passportFieldText(ch.passport as CharPassport | null, f);
             return inputCard(passportFieldLabel(f), v, v.length > 80, `char.${charId}.passport.${f}`);
           })}
         </div>

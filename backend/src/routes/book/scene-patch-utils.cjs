@@ -16,6 +16,22 @@ function setDeep(obj, path, value) {
     current[keys[keys.length - 1]] = value;
 }
 
+// Normalize a dotted-path PATCH value before setDeep(). The editors (web + Android)
+// render video_tokens as one comma-joined text field, but the agent scheme stores
+// them as an ARRAY of features (characters.json / scene.passport). Split the string
+// back into an array so the format never degrades on save. Empty string → null
+// (delete field, matching the value === '' ? null pattern elsewhere).
+function normalizeFieldValue(key, value) {
+    if (value === '') return null;
+    if (value !== null && value !== undefined
+        && typeof value === 'string'
+        && key.endsWith('video_tokens')) {
+        const parts = value.split(',').map(s => s.trim()).filter(s => s.length > 0);
+        return parts.length > 0 ? parts : null;
+    }
+    return value;
+}
+
 // Find a unit by id within a scene (searches scene.units and dialogue_blocks[].units).
 function findUnitInScene(scene, unitId) {
     const search = (units) => {
@@ -39,4 +55,4 @@ function findUnitInScene(scene, unitId) {
     return null;
 }
 
-module.exports = { setDeep, findUnitInScene };
+module.exports = { setDeep, findUnitInScene, normalizeFieldValue };

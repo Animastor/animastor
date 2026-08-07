@@ -6,7 +6,7 @@ const path = require('path');
 const fs = require('fs');
 const sceneAssetsRepo = require('../../storage/postgres/repositories/scene-assets-repo');
 const { restoreSceneChunkStatus } = require('../../orchestration/scene-restoration');
-const { setDeep, findUnitInScene } = require('./scene-patch-utils.cjs');
+const { setDeep, findUnitInScene, normalizeFieldValue } = require('./scene-patch-utils.cjs');
 const { recoverMissingRedisChunks } = require('./recover-chunks.cjs');
 const sourceCoverageAudit = require('../../services/source-coverage-audit');
 const { IMAGE_PROMPT_MAX_CHARS } = require('../../services/agent-prompts');
@@ -338,7 +338,9 @@ module.exports = function(app, redis, deps) {
                         // scene_title → scene_title, location.id → location.id, env.time → location.environment.time
                         const resolvedKey = key.startsWith('env.') ? 'location.environment.' + key.slice(4) : key;
                         if (PROMPT_PATH_KEYS.has(resolvedKey)) assertPromptLength(resolvedKey, value);
-                        setDeep(targetScene, resolvedKey, value === '' ? null : value);
+                        // video_tokens (passport.*.video_tokens) is edited as comma-joined text —
+                        // normalizeFieldValue splits it back into an array (agent scheme format).
+                        setDeep(targetScene, resolvedKey, normalizeFieldValue(resolvedKey, value));
                         // Special handling for participants (comma-separated string → array)
                         if (key === 'participants' && typeof value === 'string') {
                             setDeep(targetScene, 'participants', value ? value.split(', ').map(s => s.trim()) : null);
@@ -578,7 +580,8 @@ module.exports = function(app, redis, deps) {
 
             for (const [key, value] of Object.entries(fields)) {
                 // "passport.appearance" → char.passport.appearance
-                setDeep(char, key, value === '' ? null : value);
+                // "passport.video_tokens" — comma-joined text from the editor → array
+                setDeep(char, key, normalizeFieldValue(key, value));
             }
             log(`[PATCH CHARACTER] ${bookId}/${characterId}: fields=${Object.keys(fields).join(', ')}`);
 
