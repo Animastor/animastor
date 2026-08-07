@@ -115,7 +115,8 @@ async function collectRecentBooks({ bookSourceRepo, lazyBook, limit = DEFAULT_LI
 }
 
 module.exports = function registerRecentBooksRoutes(app, _redis, deps) {
-    const { bookSourceRepo, lazyBook, log } = deps;
+    const { bookSourceRepo, lazyBook } = deps;
+    const log = (deps.utils && deps.utils.log) || (() => {});
 
     app.get('/api/v1/books', async (req, res) => {
         try {
