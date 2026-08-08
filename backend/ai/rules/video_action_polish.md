@@ -22,6 +22,14 @@ The last action of scene N and first action of scene N+1 must be coherent for se
 ### 5. Scene text as ground truth
 Every action must be grounded in what the narrative says, not invented for visual flair.
 
+### 5b. Identity anchors — CRITICAL
+When a character acts in an action, name them by their EXACT character_id from
+the Characters list (%CHARACTERS%) — never by display name, pronoun, or generic
+noun ("the two men", "woman", "Mikhail's", "he", "his", "both characters").
+The video prompt maps storyboard lines to identity anchors BY character_id —
+generic wording breaks that mapping. WRONG: "slow push-in to Mikhail's glasses"
+→ RIGHT: "slow push-in to mikhail_berlioz's glasses".
+
 ### 6. Timing realism — CRITICAL
 Each unit carries `estimated_duration_sec` — how long its video chunk plays (≈ the spoken duration of the unit text). The action must describe a behavior that PLAUSIBLY FILLS that time:
 

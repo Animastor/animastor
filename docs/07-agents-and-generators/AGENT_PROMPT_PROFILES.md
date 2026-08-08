@@ -197,6 +197,15 @@ ai/profiles/{type}/{profileName}.json  →  встроенный дефолт
 - `storyboard` — построчные таймированные сегменты `start–end s: описание`.
 - `renderInfo` — футер `24fps; render mode`.
 
+Детерминированная гарантия идентичности (в `buildVideoPrompt`): перед сборкой
+сториборда `video.action` нормализуется через `normalizeCharacterRefs` (имена →
+character_id, включая притяжательные формы вроде "Mikhail's glasses" →
+"mikhail_berlioz's glasses"), а общие групповые обороты ("the two men", "both
+characters") заменяются на in-frame character_id из `image.prompt` этого же юнита
+(`anchorGroupRefs`). Правило «пиши только по character_id» живёт в рулсах
+(`visuals.md`, `video_action_polish.md`, `video_action_reconciliation.md`), а не в
+скиллах — скилл описывает только специфику модели.
+
 Профили: `ai/profiles/video/ltx-2.3.json`
 (выбирается через `connector.profile.videoProfile`). У LTX секции не подавляются
 (`suppressSections` пуст) — его скилл управляет тем, КАК пишется `video.action`,

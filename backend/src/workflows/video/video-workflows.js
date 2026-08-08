@@ -12,6 +12,7 @@ const profileOverride = require('../../services/profile-override');
 const { tokensToString } = require('../../book/lazy-book/appearance');
 const { resolveAssembly, DEFAULT_VIDEO_DEFAULTS } = require('../../image/assembly-profile');
 const { normalizeCharacterRefs } = require('../../image/character-utils');
+const { escapeRegExp } = require('../../image/helpers');
 
 const logPrefix = '[WF-VIDEO]';
 
@@ -114,6 +115,62 @@ function buildCharLines(participants, loadedBook, scene) {
     return lines;
 }
 
+// ── Generic group-reference anchoring ────────────────────────────────
+// The video model maps storyboard lines to identity anchors by character_id.
+// When an agent writes a generic plural noun ("the two men", "both
+// characters") instead of the ids, the mapping breaks — the model sees an
+// unknown new person. Deterministic repair at build time: if the action
+// contains NO character_id but the unit's OWN image.prompt names the in-frame
+// participants, substitute those ids for the group nouns. Character-less
+// units (landscape/object/title) have no ids in the prompt → never touched.
+
+function containsCharacterId(text, ids) {
+    if (!text || !ids?.length) return false;
+    return ids.some(id => {
+        const re = new RegExp(`(?<![\\p{L}\\p{N}_])${escapeRegExp(id)}(?![\\p{L}\\p{N}_])`, 'iu');
+        return re.test(text);
+    });
+}
+
+/**
+ * Deterministic identity anchor for a storyboard line. Replaces generic
+ * plural group nouns with the character_ids the unit's image.prompt puts in
+ * frame. Pronouns ("they"/"them") are rewritten ONLY when every scene
+ * participant is in frame — otherwise they stay (ambiguous subset reference).
+ * @param {string} action - normalized storyboard action text
+ * @param {string[]} inFrameIds - character_ids present in the unit image.prompt
+ * @param {string[]} allParticipants - scene.participants
+ * @returns {string}
+ */
+function anchorGroupRefs(action, inFrameIds, allParticipants) {
+    if (!action) return action;
+    if (inFrameIds.length < 2) return action;
+    // Already anchored to ANY scene participant (even one not in this unit's
+    // frame) — don't touch it.
+    if (containsCharacterId(action, allParticipants)) return action;
+
+    const joined = inFrameIds.join(' and ');
+    let out = action
+        .replace(/\bthe two of them\b/gi, joined)
+        .replace(/\bthe two men\b/gi, joined)
+        .replace(/\bboth characters\b/gi, joined)
+        .replace(/\bthe characters\b/gi, joined)
+        .replace(/\bthe men\b/gi, joined)
+        .replace(/\bthe two\b/gi, joined)
+        .replace(/\bboth of them\b/gi, joined);
+
+    // "they"/"them" are rewritten ONLY when (a) the whole scene group is in
+    // frame (unambiguous) AND (b) the action STILL has no character_id after
+    // the group-noun replacements above — otherwise the nouns already anchored
+    // it and pronouns resolve naturally ("…between mikhail_berlioz and
+    // ivan_ponyrev as they arrive").
+    const allInFrame = allParticipants.length > 0 && inFrameIds.length === allParticipants.length;
+    if (allInFrame && !containsCharacterId(out, allParticipants)) {
+        out = out.replace(/\bthey\b/gi, joined).replace(/\bthem\b/gi, joined);
+    }
+    return out;
+}
+
 // ======================================================
 // VIDEO PROMPT BUILDER (assembly-profile driven)
 // ======================================================
@@ -184,8 +241,15 @@ function buildVideoPrompt(sceneData, loadedBook, units, iuDurations, profileName
         // Video-specific action (temporal change) — prefer video.action, fallback
         // to image prompt. Character references are normalized to character_ids
         // (same as the image directPrompt path) so the video model can map the
-        // motion to the identity anchors in the characters section.
-        const action = normalizeCharacterRefs(unit.video?.action || prompt, loadedBook.characters);
+        // motion to the identity anchors in the characters section. Then generic
+        // group nouns ("the two men", "both characters") are deterministically
+        // anchored to the in-frame ids named by the unit's own image.prompt.
+        const actionText = normalizeCharacterRefs(unit.video?.action || prompt, loadedBook.characters);
+        const promptNorm = normalizeCharacterRefs(prompt || '', loadedBook.characters);
+        const inFrameIds = participants.filter(id =>
+            new RegExp(`(?<![\\p{L}\\p{N}_])${escapeRegExp(id)}(?![\\p{L}\\p{N}_])`, 'i').test(promptNorm)
+        );
+        const action = anchorGroupRefs(actionText, inFrameIds, participants);
 
         if (shot) {
             descParts.push(`${shot.replace(/_/g, ' ')} shot`);
@@ -527,6 +591,8 @@ module.exports = {
     buildVideoPromptLegacy,
     videoProfileNameFromConnector,
     buildCharLines,
+    anchorGroupRefs,
+    containsCharacterId,
     motionFromState,
     buildCamera,
     selectWorkflowGroups,

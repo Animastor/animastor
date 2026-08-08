@@ -314,6 +314,78 @@ describe('buildVideoPrompt', () => {
         expect(prompt).to.include('char_hero stands at the gate');
         expect(prompt).to.include('char_sidekick approaches from behind');
     });
+
+    it('normalizes display names in video.action to character_ids', () => {
+        const actionUnits = [
+            { id: 'u1', image: { shot: 'detail', prompt: 'Hero stands at the gate' }, video: { action: 'slow push-in to Hero\'s glasses' } },
+        ];
+        const prompt = wf.buildVideoPrompt(sceneData, loadedBook, actionUnits, [3]);
+        expect(prompt).to.include('slow push-in to char_hero\'s glasses');
+    });
+
+    it('anchors generic group nouns to the in-frame character_ids from image.prompt', () => {
+        const groupUnits = [
+            {
+                id: 'u1',
+                image: { shot: 'wide', prompt: 'Hero and Sidekick at the gate' },
+                video: { action: 'slow wide shot pan between the two men as they arrive' },
+            },
+        ];
+        const prompt = wf.buildVideoPrompt(sceneData, loadedBook, groupUnits, [3]);
+        // Group noun is anchored; the pronoun stays natural (already resolved by the ids).
+        expect(prompt).to.include('slow wide shot pan between char_hero and char_sidekick as they arrive');
+        expect(prompt).not.to.include('as char_hero and char_sidekick arrive');
+    });
+
+    it('leaves landscape/title actions without in-frame ids untouched', () => {
+        const noIdUnits = [
+            { id: 'u1', image: { shot: 'wide', prompt: 'Empty park bench at sunset' }, video: { action: 'slow 180 pan revealing empty benches' } },
+        ];
+        const prompt = wf.buildVideoPrompt(sceneData, loadedBook, noIdUnits, [3]);
+        expect(prompt).to.include('slow 180 pan revealing empty benches');
+        // The storyboard line must stay untouched — no group anchor injected.
+        expect(prompt).not.to.include('char_hero and char_sidekick');
+    });
+});
+
+describe('anchorGroupRefs (deterministic identity anchor)', () => {
+    const ids = ['mikhail_berlioz', 'ivan_ponyrev'];
+
+    it('replaces "the two men" with both ids', () => {
+        const out = wf.anchorGroupRefs('pan between the two men as they arrive', ids, ids);
+        expect(out).to.include('pan between mikhail_berlioz and ivan_ponyrev');
+    });
+
+    it('replaces "both characters"', () => {
+        const out = wf.anchorGroupRefs('slow orbit showing both characters', ids, ids);
+        expect(out).to.equal('slow orbit showing mikhail_berlioz and ivan_ponyrev');
+    });
+
+    it('rewrites pure they/them when the whole scene group is in frame', () => {
+        const out = wf.anchorGroupRefs('slow dolly as they turn', ids, ids);
+        expect(out).to.equal('slow dolly as mikhail_berlioz and ivan_ponyrev turn');
+    });
+
+    it('keeps pronouns natural after a group noun was already anchored', () => {
+        const out = wf.anchorGroupRefs('pan between the two men as they arrive', ids, ids);
+        expect(out).to.equal('pan between mikhail_berlioz and ivan_ponyrev as they arrive');
+    });
+
+    it('keeps pronouns when only a subset is in frame (ambiguous)', () => {
+        const subset = ['mikhail_berlioz'];
+        const out = wf.anchorGroupRefs('slow dolly as they turn', subset, ids);
+        expect(out).to.equal('slow dolly as they turn');
+    });
+
+    it('leaves actions that already contain a character_id untouched', () => {
+        const out = wf.anchorGroupRefs('mikhail_berlioz raises his hand', ids, ids);
+        expect(out).to.equal('mikhail_berlioz raises his hand');
+    });
+
+    it('returns action unchanged when fewer than 2 ids are in frame', () => {
+        const out = wf.anchorGroupRefs('the two men walk', ['mikhail_berlioz'], ids);
+        expect(out).to.equal('the two men walk');
+    });
 });
 
 describe('buildVideoNegativePrompt', () => {

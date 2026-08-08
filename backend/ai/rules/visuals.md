@@ -86,11 +86,21 @@ Paired examples:
 
 If the unit has no real motion (a pure still), the video.action should be a minimal camera movement, not a re-description of the frame. For dialogue units the speaker is derived automatically — describe only the visible delivery (gestures, leans, pauses).
 
+## STRICT RULE — video.action ALWAYS uses character_id, never generic wording
 When the motion involves characters, reference them by EXACT character_id —
-never generic nouns or pronouns ("the two men", "they", "the men", "the
-characters"). The video prompt lists identity anchors as `character_id: tokens`
-and the video model maps each storyboard line to them by id — generic wording
-breaks that mapping.
+never generic nouns, pronouns, or display names. The video prompt lists
+identity anchors as `character_id: tokens` and the video model maps each
+storyboard line to them BY id — generic wording breaks that mapping.
+
+  WRONG: "the two men as they arrive" / "both characters" / "woman crosses
+  her arms" / "Mikhail's glasses" / "he turns" / "Ivan's cap" / "his hand".
+  RIGHT: "mikhail_berlioz and ivan_ponyrev as they arrive" /
+  "zhenshchina_v_budochke crosses her arms" / "slow push-in to
+  mikhail_berlioz's glasses" / "ivan_ponyrev tilts his cap".
+
+This applies to the ACTION as a whole: it must name the acting characters by
+id (or their possessive forms derived from the id, e.g. "mikhail_berlioz's").
+Only camera/env-only actions that involve no person may skip ids.
 
 Each input unit line carries its approximate play time (`estimated_duration_sec`). Align the motion with it: a short unit (~2–4s) suits one quick gesture or a small camera move; a long unit (~10–20s) suits a fuller behavior — a gesture, a pause, a smaller follow-up. Write the action naturally; the polish pass will refine the pacing later.
 

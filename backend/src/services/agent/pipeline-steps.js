@@ -21,6 +21,22 @@ const { normalizeCharacterRefs } = require('../../image/image-service');
 const { sanitizeVideoTokens, tokensToString } = require('../../book/lazy-book/appearance');
 
 /**
+ * Normalize names/aliases → character_id in an AI-written visual text.
+ * Two passes: (1) character-name aliases (incl. Latin transliterations, so
+ * "Mikhail's glasses" → "mikhail_berlioz's glasses"), (2) role/title mention
+ * aliases (the mentions map) when present. Applied at EVERY AI merge point so
+ * a later pass can never re-introduce display names into stored fields.
+ */
+function normalizeVisualText(text, characters, mentions) {
+    if (!text) return text;
+    let out = normalizeCharacterRefs(text, characters);
+    if (mentions && typeof mentions === 'object' && Object.keys(mentions).length > 0) {
+        out = normalizeCharacterRefs(out, characters, mentions);
+    }
+    return out;
+}
+
+/**
  * Build the location context block for agent prompts.
  * Includes each location's GLOBAL environment template so the scene split step
  * can check the scene against it and write only per-scene overrides.
@@ -634,7 +650,7 @@ async function stepReconcilePassports(sessionId, allVisualUnits, characters, ste
         const merged = allVisualUnits.map((original, i) => {
             const rec = reconciled.find(r => r.scene_index === original.sceneIndex && r.unit_index === original.unitIndex);
             if (rec && rec.image?.prompt && inPromptRange(original)) {
-                const mergedPrompt = rec.image.prompt || original.image?.prompt;
+                const mergedPrompt = normalizeVisualText(rec.image.prompt || original.image?.prompt, characters);
                 return {
                     ...original,
                     image: {
@@ -644,7 +660,7 @@ async function stepReconcilePassports(sessionId, allVisualUnits, characters, ste
                         negative: rec.image?.negative || original.image?.negative,
                     },
                     video: {
-                        action: original.video?.action || mergedPrompt,
+                        action: normalizeVisualText(original.video?.action || mergedPrompt, characters),
                     },
                 };
             }
@@ -703,10 +719,18 @@ async function stepReconcileVideoActions(sessionId, allVisualUnits, characters, 
 
     const unitsStr = candidates.map(unitRow).join('\n');
 
+    // Identity context: the characters list (id: name) so the reconciliation
+    // agent can anchor its actions to exact character_ids instead of generic
+    // nouns ("the two men", "woman", "Mikhail's").
+    const charsContext = (characters || []).map(c => `- ${c.id}: ${c.name} (${c.role || 'unknown'})`).join('\n') || 'None';
+
     // Inject the video skill when a profile is configured (there is no
     // 'default' skill): the motion-first rules for the active video model live
     // in skills/video/{ltx-2.3,...}.md.
     let videoReconPrompt = SYSTEM_PROMPTS.video_action_reconciliation;
+    if (videoReconPrompt.includes('%CHARACTERS%')) {
+        videoReconPrompt = videoReconPrompt.replace('%CHARACTERS%', charsContext);
+    }
     const videoSkill = promptProfileLoader.buildSkillSection('video', promptProfiles?.videoProfile || null);
     if (videoSkill) {
         videoReconPrompt = `${videoSkill}\n\n${videoReconPrompt}`;
@@ -732,7 +756,7 @@ async function stepReconcileVideoActions(sessionId, allVisualUnits, characters, 
                 return {
                     ...original,
                     video: {
-                        action: rec.video.action,
+                        action: normalizeVisualText(rec.video.action, characters),
                     },
                 };
             }
@@ -821,7 +845,7 @@ async function stepPolishStoryboard(sessionId, allVisualUnits, characters, locat
         const merged = allVisualUnits.map((original, i) => {
             const polished = polishedUnits.find(p => p.scene_index === original.sceneIndex && p.unit_index === original.unitIndex);
             if (polished && polished.image?.prompt && inPromptRange(original)) {
-                const mergedPrompt = polished.image.prompt || original.image?.prompt;
+                const mergedPrompt = normalizeVisualText(polished.image.prompt || original.image?.prompt, characters);
                 return {
                     ...original,
                     image: {
@@ -831,7 +855,7 @@ async function stepPolishStoryboard(sessionId, allVisualUnits, characters, locat
                         negative: polished.image?.negative || original.image?.negative,
                     },
                     video: {
-                        action: original.video?.action || mergedPrompt,
+                        action: normalizeVisualText(original.video?.action || mergedPrompt, characters),
                     },
                 };
             }
@@ -924,7 +948,7 @@ async function stepPolishVideoActions(sessionId, allVisualUnits, characters, loc
                 return {
                     ...original,
                     video: {
-                        action: polished.video.action,
+                        action: normalizeVisualText(polished.video.action, characters),
                     },
                 };
             }
@@ -1103,8 +1127,8 @@ async function stepCreateVisuals(sessionId, scene, units, sceneIndex, characters
             if (vu && imageSection) {
                 // Participants come from scene.participants (set during scene creation).
                 // Character IDs in prompt are normalized via normalizeCharacterRefs.
-                let prompt = normalizeCharacterRefs(imageSection.prompt, characters, mentions);
-                const action = vu.video?.action || prompt;                    const result = { ...u };
+                let prompt = normalizeVisualText(imageSection.prompt, characters, mentions);
+                const action = normalizeVisualText(vu.video?.action || prompt, characters, mentions);                    const result = { ...u };
                 result.image = {
                     shot: imageSection.shot || (u.type === 'dialogue' ? 'medium' : 'wide'),
                     prompt,

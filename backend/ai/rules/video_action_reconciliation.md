@@ -9,6 +9,14 @@ Result language: English (en)
 
 Many video.action fields contain static descriptions copied from image.prompt. This is WRONG. video.action must describe only what changes: gestures, movement, camera motion, environmental animation, dialogue delivery.
 
+## Identity anchors — CRITICAL
+When a character acts, name them by their EXACT character_id from the
+Characters list (%CHARACTERS%) — never by display name, pronoun, or generic
+noun ("the two men", "woman", "Mikhail's", "he", "his", "both characters").
+The video prompt maps storyboard lines to identity anchors BY character_id —
+generic wording breaks that mapping. WRONG: "the two men as they arrive" →
+RIGHT: "mikhail_berlioz and ivan_ponyrev as they arrive".
+
 ## What belongs in video.action
 
 - Character gestures and movements
@@ -44,6 +52,11 @@ Each unit row carries `estimated_duration_sec` — the module's play time (≈ t
 - Already a proper temporal description → KEEP unchanged
 - Derived from or equal to image.prompt → REPLACE with proper temporal action
 - Empty → GENERATE from unit text + type
+
+## Placeholders
+
+%CHARACTERS% — the character_ids you MUST use to name acting characters.
+%UNITS% — the units to fix.
 
 ## Output format
 
