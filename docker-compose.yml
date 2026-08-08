@@ -65,8 +65,9 @@ services:
       - ./workflow.json:/workflow.json:ro
       - ./data/output:/data/output
       - ./data/books:/data/books
-      - ./data/workflows:/data/workflows
-      - ./data/connectors:/data/connectors
+      # AI tree: workflows, connectors, skills, rules, examples, profiles —
+      # mounted live so AI config edits take effect without an image rebuild.
+      - ./backend/ai:/app/ai
       - ./backend/src:/app/src
       - ./backend/tests:/app/tests
     depends_on:

@@ -1,8 +1,9 @@
 // ======================================================
 // Workflow Loader — v2.0.0 (Connector-aware)
 // ======================================================
-// Loads ComfyUI JSON workflows from /data/workflows/
-// and their corresponding connectors from /data/connectors/.
+// Loads ComfyUI JSON workflows and their corresponding connectors from the AI
+// tree (backend/ai/workflows + backend/ai/connectors), alongside skills, rules
+// and assembly profiles.
 //
 // The connector layer abstracts workflow internals (nodeId, fields)
 // so backend code never references them directly.
@@ -11,7 +12,7 @@ const fs = require('fs');
 const path = require('path');
 const connectorLoader = require('./connector-loader');
 
-const WF_DIR = "/data/workflows";
+const WF_DIR = process.env.WF_DIR || path.join(__dirname, '../../ai/workflows');
 const logPrefix = '[WORKFLOWS]';
 
 const workflows = {};
@@ -61,7 +62,7 @@ function loadWorkflows() {
         }
         if (missingConnectors.length > 0) {
             const msg = `Missing connectors for workflows: ${missingConnectors.join(', ')}. ` +
-                `Every workflow must have a matching connector file in /data/connectors/.`;
+                `Every workflow must have a matching connector file in the connectors dir (${connectorLoader.getConnectorsDir()}).`;
             console.error(`${logPrefix} ❌ FATAL: ${msg}`);
             throw new Error(msg);
         }

@@ -60,6 +60,9 @@ When the Characters in scene list below contains character_ids, you MUST use tho
 - Each unit MUST have non-empty image.prompt and video.action.
 - Shot types: wide (landscape/group), medium (two people/waist-up), close (face/detail), detail (object/hand), environment (setting focus), reaction (character's emotional response)
 
+## Prompt composition order — defined by the injected skill
+The injected Prompt Profile skill defines this frame's composition order and model-specific rules — follow it. Global context (style, epoch, country, location, time, season, lighting, mood) and character passports that the profile assigns to the system are added programmatically — do not repeat them in your prompt.
+
 ## video.action — write it independently
 `image.prompt` and `video.action` are TWO different fields. Write `video.action` from scratch as a SHORT (3–15 words, one clause) description of what CHANGES during the unit — gestures, movement, camera motion, environmental animation, dialogue delivery. Do NOT reuse the static composition:
 

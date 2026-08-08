@@ -15,7 +15,7 @@ keyword-style prompts, Qwen benefits from:
 
 Write a complete, natural sentence describing the frame.
 
-### Composition-first ordering:
+### Composition-first ordering (your sentence):
 
 1. **Subject & position** — who is in frame, where are they
 2. **Background & environment** — what surrounds them
@@ -23,6 +23,15 @@ Write a complete, natural sentence describing the frame.
 4. **Mood & atmosphere** — emotional tone
 5. **Style** — visual style (cinematic, illustration, etc.)
 6. **Shot type** — wide, medium, close-up
+
+### Division of labor with the system (Qwen assembly profile)
+
+The system wraps your sentence with global context (country, epoch, location,
+time, season, weather), character passports, and quality — and does NOT repeat
+style, lighting, mood, or shot type. That is why YOUR sentence MUST carry
+lighting, color, mood, style, and shot type explicitly, in that order at the
+end (steps 3–6 above). Do not re-add country, epoch, location, time, season,
+weather, or character passports — the system supplies them.
 
 ### Example:
 

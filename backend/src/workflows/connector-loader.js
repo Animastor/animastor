@@ -9,7 +9,7 @@
 // to specific node IDs and fields within a ComfyUI workflow.
 //
 // Key responsibilities:
-//   1. Load connectors from data/connectors/ directory
+//   1. Load connectors from the AI tree (backend/ai/connectors)
 //   2. Validate connector structure and field completeness
 //   3. Validate workflow ↔ connector compatibility via hash
 //   4. Provide lookup API for backend code
@@ -20,7 +20,7 @@ const path = require('path');
 const crypto = require('crypto');
 const entitySchema = require('./entity-schema');
 
-const CONNECTOR_DIR = '/data/connectors';
+const CONNECTOR_DIR = process.env.CONNECTOR_DIR || path.join(__dirname, '../../ai/connectors');
 const logPrefix = '[CONNECTOR]';
 
 // In-memory registry
@@ -130,6 +130,14 @@ function validateConnector(connector, connectorName) {
  * Load all connectors from disk and validate them.
  * Returns { connectors, warnings, errors }.
  */
+/**
+ * Resolve the active connectors directory (for diagnostics/messages).
+ * @returns {string}
+ */
+function getConnectorsDir() {
+    return CONNECTOR_DIR;
+}
+
 function loadConnectors() {
   const loaded = {};
   const warnings = [];
@@ -894,6 +902,7 @@ module.exports = {
   // Lookup
   getConnector,
   getConnectorByName,
+  getConnectorsDir,
   getAllConnectors,
   getConnectorsByType,
   getConnectorStatuses,

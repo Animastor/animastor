@@ -25,8 +25,29 @@ function applyImageValue(wf, entityKey, value) {
   return false;
 }
 
+/**
+ * Pure helper (testable): extract the image assembly-profile name from a
+ * connector object. Falls back to 'default' when no connector/profile exists.
+ * @param {object|null} connector
+ * @returns {string}
+ */
+function imageProfileNameFromConnector(connector) {
+    return connector?.profile?.imageProfile || 'default';
+}
+
+/**
+ * Resolve the image assembly-profile name from the image workflow's connector
+ * (e.g. "qwen-image" via conn-image-generation.json), defaulting to "default".
+ * @returns {string}
+ */
+function resolveImageProfileName() {
+    return imageProfileNameFromConnector(wfLoader.getConnector(WORKFLOW_NAME));
+}
+
 module.exports = {
     getImageNodeId,
     applyImageValue,
+    imageProfileNameFromConnector,
+    resolveImageProfileName,
     WORKFLOW_NAME,
 };

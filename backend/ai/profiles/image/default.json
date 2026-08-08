@@ -1,0 +1,30 @@
+{
+  "profile": "default",
+  "type": "image",
+  "model": "generic",
+  "workflow": "img-qwen-image",
+  "skill": "image/default",
+  "assembly": {
+    "sections": [
+      "renderMode",
+      "visualStyle",
+      "country",
+      "epoch",
+      "location",
+      "time",
+      "season",
+      "weather",
+      "mood",
+      "lighting",
+      "atmosphere",
+      "shot",
+      "characters",
+      "directPrompt",
+      "quality"
+    ],
+    "defaults": {
+      "quality": "image quality: highly detailed, sharp focus",
+      "negativeBase": "blurry, low quality, artifacts"
+    }
+  }
+}

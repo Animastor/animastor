@@ -11,6 +11,7 @@ const cache = {
     rules: { data: null, mtime: 0 },
     skills: { data: null, mtime: 0 },
     examples: { data: null, mtime: 0 },
+    profiles: { data: null, mtime: 0 },
     all: { data: null, mtime: 0 },
 };
 
@@ -73,6 +74,42 @@ function loadJsonDir(subdir) {
         }
     }
     return result;
+}
+
+/**
+ * Recursively walk a directory, collecting .json files (parsed).
+ * Keys are relative to baseDir, without the .json extension.
+ * Example: profiles/image/qwen-image.json → key "image/qwen-image".
+ */
+function walkJsonDir(dirPath, baseDir) {
+    const result = {};
+    if (!fs.existsSync(dirPath)) return result;
+    const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+    for (const entry of entries) {
+        const fullPath = path.join(dirPath, entry.name);
+        if (entry.isDirectory()) {
+            Object.assign(result, walkJsonDir(fullPath, baseDir));
+        } else if (entry.name.endsWith('.json')) {
+            const relPath = path.relative(baseDir, fullPath);
+            const key = relPath.replace(/\.json$/, '');
+            try {
+                result[key] = JSON.parse(fs.readFileSync(fullPath, 'utf-8'));
+            } catch (e) {
+                console.warn(`[AI-Loader] Failed to parse ${fullPath}: ${e.message}`);
+            }
+        }
+    }
+    return result;
+}
+
+/**
+ * Read all .json files from a directory recursively, return as { key: parsed }.
+ * Example: loadJsonDirRecursive('profiles') returns
+ *   { "image/default": {...}, "image/qwen-image": {...} }
+ */
+function loadJsonDirRecursive(subdir) {
+    const dir = path.join(AI_DIR, subdir);
+    return walkJsonDir(dir, dir);
 }
 
 /**
@@ -141,6 +178,7 @@ function getAll() {
             rules: getRules(),
             skills: getSkills(),
             examples: getExamples(),
+            profiles: getAssemblyProfiles(),
         };
         cache.all.mtime = Date.now();
     }
@@ -172,6 +210,28 @@ function getSkillNames() {
     return Object.keys(getSkills());
 }
 
+function getAssemblyProfiles() {
+    if (!isCacheValid(cache.profiles)) {
+        cache.profiles.data = loadJsonDirRecursive('profiles');
+        cache.profiles.mtime = Date.now();
+    }
+    return cache.profiles.data;
+}
+
+/**
+ * Get a specific assembly profile by key ("type/name", e.g. "image/qwen-image").
+ * Assembly profiles are MACHINE-READABLE programmatic prompt-assembly configs
+ * (section order, defaults, suppressed sections) — distinct from the LLM-facing
+ * markdown skills loaded via getSkill().
+ */
+function getAssemblyProfile(name) {
+    return getAssemblyProfiles()[name] || null;
+}
+
+function getAssemblyProfileNames() {
+    return Object.keys(getAssemblyProfiles());
+}
+
 function invalidateCache() {
     Object.keys(cache).forEach(k => { cache[k].data = null; cache[k].mtime = 0; });
 }
@@ -185,5 +245,8 @@ module.exports = {
     getSkill,
     getExample,
     getSkillNames,
+    getAssemblyProfiles,
+    getAssemblyProfile,
+    getAssemblyProfileNames,
     invalidateCache,
 };

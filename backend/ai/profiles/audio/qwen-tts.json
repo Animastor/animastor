@@ -1,0 +1,16 @@
+{
+  "profile": "qwen-tts",
+  "type": "audio",
+  "model": "Qwen3-TTS",
+  "workflow": "tts-qwen-*",
+  "skill": "audio/qwen-tts",
+  "assembly": {
+    "sections": [
+      "voiceInstruction",
+      "defaultInstruct"
+    ],
+    "defaults": {
+      "defaultInstruct": ""
+    }
+  }
+}

@@ -238,7 +238,7 @@ async function startServer() {
         log('[STARTUP] Workflows loaded');
     } catch (wfErr) {
         console.error('[FATAL] Workflow loading failed:', wfErr.message);
-        console.error('[FATAL] Every workflow must have a matching connector in /data/connectors/.');
+        console.error('[FATAL] Every workflow must have a matching connector in the AI connectors dir.');
         console.error('[FATAL] Starting the server without valid workflows would cause silent failures.');
         process.exit(1);
     }

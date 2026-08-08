@@ -1,0 +1,17 @@
+{
+  "profile": "ltx-2.3",
+  "type": "video",
+  "model": "LTX-2.3",
+  "workflow": "video-ltx-*",
+  "skill": "video/ltx-2.3",
+  "assembly": {
+    "sections": [
+      "characters",
+      "storyboard",
+      "renderInfo"
+    ],
+    "defaults": {
+      "negativeBase": "blurry, low quality, still frame, jitter, flicker, artifacts"
+    }
+  }
+}

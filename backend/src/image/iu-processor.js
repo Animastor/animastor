@@ -12,8 +12,9 @@ const jobSchema = require('../runtime/job-schema');
 const wfLoader = require('../workflows/workflow-loader');
 const helpers = require('./helpers');
 const promptBuilder = require('./prompt-builder');
+const assemblyProfile = require('./assembly-profile');
 const registry = require('./registry');
-const { applyImageValue } = require('./connector-utils');
+const { applyImageValue, resolveImageProfileName } = require('./connector-utils');
 const { collectSceneUnits } = require('./registry');
 
 async function saveIUMetadata(buildId, bookId, chapterId, sceneId, unit, sceneDuration, fullText, sceneOrder) {
@@ -168,12 +169,17 @@ async function processSingleIU(redis, unit, uIdx, sceneData, loadedBook, buildId
         helpers.warn(`Failed to save IU metadata for ${unit.id}: ${err.message}`);
     }
 
-    const finalPrompt = promptBuilder.buildImagePrompt(unit, sceneData.payload, sceneData.chapter, loadedBook);
+    // Assembly profile for the image workflow — resolved from the connector's
+    // profile.imageProfile (e.g. "qwen-image"), defaulting to "default".
+    const imageProfileName = resolveImageProfileName();
+    const assemblyCfg = assemblyProfile.resolveAssembly('image', imageProfileName);
 
-    helpers.log(`GENERATE IMAGE (IU): ${imageIUId}, unit.id: ${canonicalUnitId}`);
+    const finalPrompt = promptBuilder.buildImagePrompt(unit, sceneData.payload, sceneData.chapter, loadedBook, { profile: imageProfileName });
+
+    helpers.log(`GENERATE IMAGE (IU): ${imageIUId}, unit.id: ${canonicalUnitId}, profile: ${imageProfileName}`);
 
     const wfImg = wfLoader.getWorkflow('img-qwen-image');
-    const baseNegative = 'blurry, low quality, artifacts';
+    const baseNegative = assemblyCfg.defaults.negativeBase || 'blurry, low quality, artifacts';
     const customNegative = promptBuilder.resolveNegativePrompt(unit, sceneData.payload);
 
     applyImageValue(wfImg, 'positivePrompt', finalPrompt);

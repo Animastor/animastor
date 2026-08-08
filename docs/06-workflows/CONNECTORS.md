@@ -28,7 +28,7 @@ The system is divided into three layers:
                    │ reads
 ┌──────────────────▼───────────────────────────────┐
 │              Connector Files                      │
-│  data/connectors/                                 │
+│  backend/ai/connectors/                                 │
 │  conn-image-generation.json                       │
 │  conn-tts-narration.json                          │
 │  conn-tts-dialogue.json                           │
@@ -37,7 +37,7 @@ The system is divided into three layers:
                    │ maps to
 ┌──────────────────▼───────────────────────────────┐
 │                Workflow Layer                     │
-│  data/workflows/                                  │
+│  backend/ai/workflows/                                  │
 │  img-qwen-image.json                              │
 │  tts-qwen-narrator.json                           │
 │  video-ltx-1p.json ... video-ltx-4p.json         │
@@ -48,10 +48,10 @@ The system is divided into three layers:
 
 | Component | Path |
 |-----------|------|
-| Connector files | `data/connectors/conn-*.json` |
+| Connector files | `backend/ai/connectors/conn-*.json` |
 | Connector loader | `backend/src/workflows/connector-loader.js` |
 | Entity schema | `backend/src/workflows/entity-schema.js` |
-| Workflow files | `data/workflows/*.json` |
+| Workflow files | `backend/ai/workflows/*.json` |
 | Workflow loader | `backend/src/workflows/workflow-loader.js` |
 
 ## How It Works
@@ -59,9 +59,9 @@ The system is divided into three layers:
 ### Startup Flow
 
 1. `backend/src/backend.cjs` calls `wfLoader.loadWorkflows()`
-2. `workflow-loader.js` loads all JSON workflow files from `data/workflows/`
+2. `workflow-loader.js` loads all JSON workflow files from `backend/ai/workflows/`
 3. `workflow-loader.js` then calls `connectorLoader.initialize(workflows)`
-4. `connector-loader.js` loads all connector files from `data/connectors/`
+4. `connector-loader.js` loads all connector files from `backend/ai/connectors/`
 5. Each connector is validated against its workflow (node class check, hash check)
 6. Warnings are emitted for any incompatibilities
 
@@ -251,18 +251,18 @@ If `compatibility.nodeClasses` is present:
 
 ### Step 1: Create Workflow File
 
-Place a ComfyUI workflow JSON in `data/workflows/`:
+Place a ComfyUI workflow JSON in `backend/ai/workflows/`:
 
 ```bash
-data/workflows/my-new-workflow.json
+backend/ai/workflows/my-new-workflow.json
 ```
 
 ### Step 2: Create Connector File
 
-Create a corresponding connector in `data/connectors/`:
+Create a corresponding connector in `backend/ai/connectors/`:
 
 ```bash
-data/connectors/conn-my-new-workflow.json
+backend/ai/connectors/conn-my-new-workflow.json
 ```
 
 ### Minimal Connector Example
@@ -383,7 +383,7 @@ For workflows that support varying numbers of inputs (like LTX video 1p/2p/3p/4p
 1. **After modifying a workflow**, regenerate its hash:
    ```javascript
    const cl = require('./backend/src/workflows/connector-loader');
-   const wf = require('./data/workflows/my-workflow.json');
+   const wf = require('./app/ai/workflows/my-workflow.json');
    console.log(cl.computeWorkflowHash(wf));
    ```
    Update `workflowHash` in the connector file.

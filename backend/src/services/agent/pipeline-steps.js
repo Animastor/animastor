@@ -415,7 +415,7 @@ async function stepCreateUnits(sessionId, scene, sceneIndex, characters, stepInd
     }
 }
 
-async function stepGenerateVoices(sessionId, text, characters, stepIndex, progress, language) {
+async function stepGenerateVoices(sessionId, text, characters, stepIndex, progress, language, promptProfiles) {
     const _progress = progress || (() => {});
     _progress({ stage: 'voice_generation', message: PROGRESS_STAGES.voice_generation });
     await updateSession(sessionId, { progress_msg: PROGRESS_STAGES.voice_generation });
@@ -455,8 +455,17 @@ async function stepGenerateVoices(sessionId, text, characters, stepIndex, progre
         ? (text || '').substring(0, 8000) + '...'
         : (text || '');
 
+    // Inject the audio/TTS skill ALWAYS ('default' when no profile is
+    // configured): the voice-instruction authoring rules for the active TTS
+    // model live in skills/audio/{default|qwen-tts}.md.
+    let voicePrompt = SYSTEM_PROMPTS.voice_generation;
+    const audioSkill = promptProfileLoader.buildSkillSection('audio', promptProfiles?.audioProfile || 'default');
+    if (audioSkill) {
+        voicePrompt = `${audioSkill}\n\n${voicePrompt}`;
+    }
+
     const prompt = fillLang(
-        SYSTEM_PROMPTS.voice_generation
+        voicePrompt
             .replace('%CHARACTERS%', charsContext)
             .replace('%TEXT%', truncatedText),
         language
@@ -694,13 +703,12 @@ async function stepReconcileVideoActions(sessionId, allVisualUnits, characters, 
 
     const unitsStr = candidates.map(unitRow).join('\n');
 
-    // Inject video prompt profile if available
+    // Inject the video skill ALWAYS ('default' when no profile is configured):
+    // the generic motion-first rules live in skills/video/default.md.
     let videoReconPrompt = SYSTEM_PROMPTS.video_action_reconciliation;
-    if (promptProfiles?.videoProfile) {
-        const skillSection = promptProfileLoader.buildSkillSection('video', promptProfiles.videoProfile);
-        if (skillSection) {
-            videoReconPrompt = `${skillSection}\n\n${videoReconPrompt}`;
-        }
+    const videoSkill = promptProfileLoader.buildSkillSection('video', promptProfiles?.videoProfile || 'default');
+    if (videoSkill) {
+        videoReconPrompt = `${videoSkill}\n\n${videoReconPrompt}`;
     }
 
     const messages = [
@@ -787,12 +795,10 @@ async function stepPolishStoryboard(sessionId, allVisualUnits, characters, locat
 
     let polishPrompt = SYSTEM_PROMPTS.storyboard_polish;
 
-    // Inject image prompt profile if available (for shot type, style rules)
-    if (promptProfiles?.imageProfile) {
-        const skillSection = promptProfileLoader.buildSkillSection('image', promptProfiles.imageProfile);
-        if (skillSection) {
-            polishPrompt = `${skillSection}\n\n${polishPrompt}`;
-        }
+    // Inject image prompt profile (falls back to 'default' like stepCreateVisuals)
+    const imageSkill = promptProfileLoader.buildSkillSection('image', promptProfiles?.imageProfile || 'default');
+    if (imageSkill) {
+        polishPrompt = `${imageSkill}\n\n${polishPrompt}`;
     }
 
     const prompt = polishPrompt
@@ -888,12 +894,11 @@ async function stepPolishVideoActions(sessionId, allVisualUnits, characters, loc
 
     let polishPrompt = SYSTEM_PROMPTS.video_action_polish;
 
-    // Inject video prompt profile if available (for motion rules, camera vocabulary)
-    if (promptProfiles?.videoProfile) {
-        const skillSection = promptProfileLoader.buildSkillSection('video', promptProfiles.videoProfile);
-        if (skillSection) {
-            polishPrompt = `${skillSection}\n\n${polishPrompt}`;
-        }
+    // Inject the video skill ALWAYS ('default' when no profile is configured)
+    // — motion rules, camera vocabulary (skills/video/default.md).
+    const videoSkill = promptProfileLoader.buildSkillSection('video', promptProfiles?.videoProfile || 'default');
+    if (videoSkill) {
+        polishPrompt = `${videoSkill}\n\n${polishPrompt}`;
     }
 
     const prompt = polishPrompt
@@ -1062,19 +1067,17 @@ async function stepCreateVisuals(sessionId, scene, units, sceneIndex, characters
         `Unit ${i + 1}: text="${(u.text || '').substring(0, 300)}", type="${u.type || 'perception'}", estimated_duration_sec=${estimateSpeechDurationSec(u.text)}`
     ).join('\n');
 
-    // Inject prompt profiles if available — model-specific rules for image & video
+    // Inject prompt profile skills — model-specific rules for image & video.
+    // BOTH skills ALWAYS resolve ('default' when nothing is configured): the
+    // image composition order lives in skills/image/default.md and the generic
+    // motion rules in skills/video/default.md — not duplicated in visuals.md.
     let visualsPrompt = SYSTEM_PROMPTS.visuals;
-    if (promptProfiles) {
-        const imageSkill = promptProfiles.imageProfile
-            ? promptProfileLoader.buildSkillSection('image', promptProfiles.imageProfile)
-            : '';
-        const videoSkill = promptProfiles.videoProfile
-            ? promptProfileLoader.buildSkillSection('video', promptProfiles.videoProfile)
-            : '';
-        const skillBlock = [imageSkill, videoSkill].filter(Boolean).join('\n');
-        if (skillBlock) {
-            visualsPrompt = `${skillBlock}\n\n${visualsPrompt}`;
-        }
+    const imageProfileName = promptProfiles?.imageProfile || 'default';
+    const imageSkill = promptProfileLoader.buildSkillSection('image', imageProfileName);
+    const videoSkill = promptProfileLoader.buildSkillSection('video', promptProfiles?.videoProfile || 'default');
+    const skillBlock = [imageSkill, videoSkill].filter(Boolean).join('\n');
+    if (skillBlock) {
+        visualsPrompt = `${skillBlock}\n\n${visualsPrompt}`;
     }
 
     const prompt = visualsPrompt

@@ -335,6 +335,69 @@ describe('buildVideoNegativePrompt', () => {
         const result = wf.buildVideoNegativePrompt({ scene: {} }, [{ id: 'iu-a8d4f90c' }]);
         expect(result).to.equal('blurry, low quality, still frame, jitter, flicker, artifacts');
     });
+
+    it('uses the profile negativeBase when provided', () => {
+        const result = wf.buildVideoNegativePrompt(
+            { scene: {} },
+            [{ id: 'iu-a8d4f90c', image: { negative: 'warped face' } }],
+            'custom model base'
+        );
+        expect(result).to.equal('warped face, custom model base');
+    });
+});
+
+describe('videoProfileNameFromConnector', () => {
+    it('reads the video profile from the connector profile field', () => {
+        expect(wf.videoProfileNameFromConnector({ profile: { videoProfile: 'ltx-2.3' } })).to.equal('ltx-2.3');
+    });
+
+    it('falls back to default when the connector has no profile', () => {
+        expect(wf.videoProfileNameFromConnector({})).to.equal('default');
+        expect(wf.videoProfileNameFromConnector(null)).to.equal('default');
+    });
+});
+
+describe('buildVideoPrompt — assembly profile driven', () => {
+    // Scene fixture (same shape as the other buildVideoPrompt tests)
+    const sceneData = {
+        book_id: 'b1',
+        chapter_id: 'ch1',
+        scene_id: 'sc1',
+        scene: {
+            participants: ['char_hero'],
+            location: { id: 'loc_castle', environment: { time: 'night', weather: 'clear', mood: 'mysterious' } },
+            visual: { render: 'cinematic_realism' },
+        },
+        chapter: { title: 'The Beginning' },
+    };
+    const loadedBook = {
+        manifest: { title: 'Adventure Story', render: { mode: 'cinematic_realism' } },
+        characters: [
+            { id: 'char_hero', name: 'Hero', passport: { video_tokens: 'hero token description' } },
+        ],
+        locations: { 'loc_castle': { description: 'an ancient castle' } },
+    };
+    const units = [{ id: 'u1', image: { shot: 'wide', prompt: 'Hero stands at the gate' } }];
+
+    it('ltx-2.3 profile output is identical to the default (no suppressed sections)', () => {
+        const a = wf.buildVideoPrompt(sceneData, loadedBook, units, [3]);
+        const b = wf.buildVideoPrompt(sceneData, loadedBook, units, [3], 'ltx-2.3');
+        expect(b).to.equal(a);
+    });
+
+    it('unknown profile behaves exactly like the default', () => {
+        const a = wf.buildVideoPrompt(sceneData, loadedBook, units, [3]);
+        const b = wf.buildVideoPrompt(sceneData, loadedBook, units, [3], 'does-not-exist');
+        expect(b).to.equal(a);
+    });
+
+    it('keeps the classic structure: characters → storyboard → render info', () => {
+        const prompt = wf.buildVideoPrompt(sceneData, loadedBook, units, [3], 'ltx-2.3');
+        const lines = prompt.split('\n\n');
+        expect(lines[0]).to.include('Hero: hero token description');
+        expect(lines[1]).to.include('0.0–3.0s:');
+        expect(lines[2]).to.include('24fps');
+    });
 });
 
 describe('buildVideoWorkflows', () => {

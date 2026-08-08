@@ -6,9 +6,12 @@
 // and JSON patch application.
 
 const fs = require('fs');
+const path = require('path');
 
 module.exports = function(config) {
-    const AI_PROFILE_PATH = process.env.AI_PROFILE_PATH || '/data/ai-assistant-profile.md';
+    // AI assistant profile lives in the AI tree (backend/ai), alongside rules,
+    // skills, profiles, workflows and connectors. Env override for exotic setups.
+    const AI_PROFILE_PATH = process.env.AI_PROFILE_PATH || path.join(__dirname, '../../ai/ai-assistant-profile.md');
     const AI_API_BASE_URL = process.env.AI_API_BASE_URL || 'https://integrate.api.nvidia.com/v1';
 
     // ── Mode-specific system prompts ──────────────────

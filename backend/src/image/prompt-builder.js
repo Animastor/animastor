@@ -6,6 +6,7 @@
 
 const helpers = require('./helpers');
 const charUtils = require('./character-utils');
+const assembly = require('./assembly-profile');
 
 function resolveRenderMode(scene, book) {
     if (scene?.visual?.render) {
@@ -198,7 +199,82 @@ function resolveLocationFromPrompt(directPrompt, locations) {
     return null;
 }
 
-function buildImagePrompt(iuPayload, scenePayload, chapterPayload, bookPayload) {
+// ======================================================
+// Final image prompt assembly — driven by the selected ASSEMBLY PROFILE.
+//
+// The ORDER of sections, the SUPPRESSED sections, and the DEFAULTS (quality,
+// negative base) come from ai/profiles/{type}/{profileName}.json, resolved by
+// assembly-profile.resolveAssembly(). With no profile configured the built-in
+// default applies — the pipeline's baseline "general → specific" order:
+//
+//   1. Global context:  render mode → visual style → country → epoch →
+//                       location description → time/season/weather/mood →
+//                       lighting → atmosphere
+//   2. Shot:            before the objects — the frame is chosen first
+//   3. Characters:      ONE semantic block per participant
+//   4. Action / spatial:the AI-authored unit.image.prompt (inserted as a block)
+//   5. Fine details:    image quality LAST
+//
+// Model-specific profiles (e.g. qwen-image) SUPPRESS wrapper sections that the
+// model's LLM-facing skill carries inside its own image.prompt sentence (Qwen
+// writes style/lighting/mood/shot itself, so the wrapper does not repeat them).
+//
+// NOTE: typography/title-card units assemble via a separate, simpler branch and
+// are NOT profile-driven.
+// ======================================================
+
+// One emitter per assembly section name. Each receives the build context (see
+// buildSectionCtx) plus the resolved profile defaults, and returns a string,
+// an array of strings, or null.
+const IMAGE_SECTIONS = {
+    renderMode: ({ renderMode }) => (renderMode ? `style ${renderMode.replace(/_/g, " ")}` : null),
+    visualStyle: ({ visualStyle }) => visualStyle || null,
+    country: ({ env, bookPayload }) => (env?.country || bookPayload?.bible?.country) || null,
+    epoch: ({ env, bookPayload }) => (env?.epoch || bookPayload?.bible?.epoch) || null,
+    location: ({ loc }) => loc?.description || null,
+    time: ({ env }) => env?.time || null,
+    season: ({ env }) => env?.season || null,
+    weather: ({ env }) => env?.weather || null,
+    mood: ({ env }) => env?.mood || null,
+    lighting: ({ iuPayload, scenePayload, env }) =>
+        resolveImageField(iuPayload, 'lighting')
+        || scenePayload?.visual?.lighting
+        || env?.lighting
+        || null,
+    atmosphere: ({ env }) => env?.atmosphere || null,
+    shot: ({ iuPayload }) => buildShotPrompt(iuPayload),
+    characters: ({ scenePayload, iuPayload, chapterPayload, bookPayload }) =>
+        buildCharacters(scenePayload, iuPayload, chapterPayload, bookPayload),
+    directPrompt: ({ directPrompt, bookPayload }) =>
+        directPrompt ? charUtils.normalizeCharacterRefs(directPrompt, bookPayload?.characters) : null,
+    quality: ({ iuPayload, scenePayload, defaults }) => {
+        if (resolveImageField(iuPayload, 'quality')) return `image quality: ${resolveImageField(iuPayload, 'quality')}`;
+        if (scenePayload?.visual?.quality) return `image quality: ${scenePayload.visual.quality}`;
+        return defaults.quality || 'image quality: highly detailed, sharp focus';
+    },
+};
+
+function buildSectionCtx(iuPayload, scenePayload, chapterPayload, bookPayload) {
+    const directPrompt = resolveImageField(iuPayload, 'prompt');
+    const renderMode = resolveRenderMode(scenePayload, bookPayload);
+    const visualStyle = resolveVisualStyle(iuPayload, scenePayload, bookPayload);
+    const resolvedLocation = resolveSceneLocation(scenePayload);
+    // Location environment is a global template — the scene environment
+    // overrides it per-field (same pattern as character passports).
+    // buildImagePrompt only sees the merged result.
+    const env = {
+        ...(bookPayload?.locations?.[resolvedLocation.id]?.environment || {}),
+        ...(resolvedLocation.environment || {}),
+    };
+    let loc = bookPayload?.locations?.[resolvedLocation.id];
+    if (!loc && directPrompt && bookPayload?.locations) {
+        const matched = resolveLocationFromPrompt(directPrompt, bookPayload.locations);
+        if (matched) loc = matched.data;
+    }
+    return { iuPayload, scenePayload, chapterPayload, bookPayload, directPrompt, renderMode, visualStyle, env, loc };
+}
+
+function buildImagePrompt(iuPayload, scenePayload, chapterPayload, bookPayload, options = {}) {
     if (!bookPayload) {
         helpers.error("buildImagePrompt: bookPayload is undefined");
         return "cinematic illustration";
@@ -223,87 +299,20 @@ function buildImagePrompt(iuPayload, scenePayload, chapterPayload, bookPayload) 
         return finalPrompt || 'cinematic illustration';
     }
 
-    const parts = [];
-    const directPrompt = resolveImageField(iuPayload, 'prompt');
-
-    const renderMode = resolveRenderMode(scenePayload, bookPayload);
-    if (renderMode) {
-        parts.push(`style ${renderMode.replace(/_/g, " ")}`);
-    }
-
-    const visualStyle = resolveVisualStyle(iuPayload, scenePayload, bookPayload);
-    if (visualStyle) {
-        parts.push(visualStyle);
-    }
-
-    const resolvedLocation = resolveSceneLocation(scenePayload);
-    // Location environment is a global template — the scene environment
-    // overrides it per-field (same pattern as character passports).
-    // buildImagePrompt only sees the merged result.
-    const env = {
-        ...(bookPayload?.locations?.[resolvedLocation.id]?.environment || {}),
-        ...(resolvedLocation.environment || {}),
+    const assemblyCfg = assembly.resolveAssembly('image', options.profile);
+    const ctx = {
+        ...buildSectionCtx(iuPayload, scenePayload, chapterPayload, bookPayload),
+        defaults: assemblyCfg.defaults,
     };
 
-    // Country: scene environment overrides bible default
-    const effectiveCountry = env?.country || bookPayload?.bible?.country;
-    if (effectiveCountry) parts.push(effectiveCountry);
-
-    // Epoch: scene environment overrides bible default
-    const effectiveEpoch = env?.epoch || bookPayload?.bible?.epoch;
-    if (effectiveEpoch) parts.push(effectiveEpoch);
-
-    let loc = bookPayload?.locations?.[resolvedLocation.id];
-    let matchedLocFromPrompt = null;
-
-    if (!loc && directPrompt && bookPayload?.locations) {
-        matchedLocFromPrompt = resolveLocationFromPrompt(directPrompt, bookPayload.locations);
-        if (matchedLocFromPrompt) {
-            loc = matchedLocFromPrompt.data;
-        }
-    }
-
-    if (loc?.description) {
-        parts.push(loc.description);
-    }
-
-    if (env?.time) parts.push(env.time);
-    if (env?.time) parts.push(env.time);
-    if (env?.season) parts.push(env.season);
-    if (env?.weather) parts.push(env.weather);
-    if (env?.mood) parts.push(env.mood);
-
-    if (resolveImageField(iuPayload, 'lighting')) {
-        parts.push(resolveImageField(iuPayload, 'lighting'));
-    } else if (scenePayload?.visual?.lighting) {
-        parts.push(scenePayload.visual.lighting);
-    } else if (env?.lighting) {
-        parts.push(env.lighting);
-    }
-
-    if (env?.atmosphere) {
-        parts.push(env.atmosphere);
-    }
-
-    const shotPrompt = buildShotPrompt(iuPayload);
-    if (shotPrompt) {
-        parts.push(shotPrompt);
-    }
-
-    const charParts = buildCharacters(scenePayload, iuPayload, chapterPayload, bookPayload);
-    parts.push(...charParts);
-
-    if (directPrompt) {
-        const normalized = charUtils.normalizeCharacterRefs(directPrompt, bookPayload?.characters);
-        parts.push(normalized);
-    }
-
-    if (resolveImageField(iuPayload, 'quality')) {
-        parts.push(`image quality: ${resolveImageField(iuPayload, 'quality')}`);
-    } else if (scenePayload?.visual?.quality) {
-        parts.push(`image quality: ${scenePayload.visual.quality}`);
-    } else {
-        parts.push("image quality: highly detailed, sharp focus");
+    const parts = [];
+    for (const sectionName of assemblyCfg.sections) {
+        if (assemblyCfg.suppress.has(sectionName)) continue;
+        const emit = IMAGE_SECTIONS[sectionName];
+        if (!emit) continue; // unknown section name → skip safely (forward compat)
+        const value = emit(ctx);
+        if (Array.isArray(value)) parts.push(...value.filter(Boolean));
+        else if (value) parts.push(value);
     }
 
     const finalPrompt = helpers.cleanJoin(parts);
@@ -312,7 +321,7 @@ function buildImagePrompt(iuPayload, scenePayload, chapterPayload, bookPayload) 
 
 function buildIUImageWorkflow(iuPayload, scenePayload, chapterPayload, bookPayload) {
     const renderMode = iuPayload.render || scenePayload.render || bookPayload.render?.mode || 'standard';
-    const baseNegative = 'blurry, low quality, artifacts';
+    const baseNegative = assembly.resolveAssembly('image').defaults.negativeBase || 'blurry, low quality, artifacts';
     const customNegative = resolveNegativePrompt(iuPayload, scenePayload);
 
     return {
@@ -331,7 +340,7 @@ function generateIUImageWorkflow(unit, scenePayload, chapterPayload, bookPayload
     const renderMode = unit.render || scenePayload.render || bookPayload.render?.mode;
     if (renderMode === 'none') return null;
 
-    const baseNegative = 'blurry, low quality, artifacts';
+    const baseNegative = assembly.resolveAssembly('image').defaults.negativeBase || 'blurry, low quality, artifacts';
     const customNegative = resolveNegativePrompt(unit, scenePayload);
 
     return {

@@ -39,8 +39,19 @@ function getAudioNodeId(workflowName, entityKey) {
   return null;
 }
 
+/**
+ * Pure helper (testable): extract the audio assembly-profile name from a
+ * connector object. Falls back to 'default' when no connector/profile exists.
+ * @param {object|null} connector
+ * @returns {string}
+ */
+function audioProfileNameFromConnector(connector) {
+    return connector?.profile?.audioProfile || 'default';
+}
+
 module.exports = {
     isFFmpegAvailable,
     applyAudioValue,
     getAudioNodeId,
+    audioProfileNameFromConnector,
 };

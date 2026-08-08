@@ -42,14 +42,14 @@ TXT / VBook  →  AI-анализ (агент)  →  структура книг
 | **Agent Service (AI-пайплайн)** | `backend/src/services/agent-service.js` + `agent/` | Пайплайн разбит на подмодули: bootstrap, pipeline-runner, pipeline-steps, coreference (stub). |
 | **AI-чат** | `backend/src/services/chat-engine.cjs` | Tool-based ассистент (режимы chat/edit/director/import/...). |
 | **Генераторы** | `backend/src/{audio,image,video}/*` | Сборка ComfyUI-workflow и отправка задач на GPU. |
-| **Workflow / Connector слой** | `backend/src/workflows/*`, `services/workflow-manager.js`, `data/workflows/`, `data/connectors/` | Загрузка и адаптация JSON-шаблонов ComfyUI; коннекторы как декларативные описания задач. |
+| **Workflow / Connector слой** | `backend/src/workflows/*`, `services/workflow-manager.js`, `backend/ai/workflows/`, `backend/ai/connectors/` | Загрузка и адаптация JSON-шаблонов ComfyUI; коннекторы как декларативные описания задач. |
 | **GPU Hub** | `gpu-hub/gpu-hub.js` | Очереди задач в Redis, раздача воркерам, requeue по таймауту, возврат результата в backend. |
 | **GPU Worker** | `worker/worker/worker.js` | ESM-воркер: polling Hub → ComfyUI → результат (base64 / fallback с диска). |
 | **Storage** | `backend/src/storage/*`, `book/*` | PostgreSQL (25 таблиц), Redis (runtime), файловая система (книги multi-file, ассеты). |
 | **Frontend** | `frontend/app/...` (Kotlin) | Single-activity, фрагменты: файлы/библиотека/редактор/плеер/навигация/AI/настройки. |
 
 **Подсистемы, недопредставленные в обзорной документации, но реально присутствующие в коде:**
-- **Connectors** — `connector-loader.js`, `routes/connector-routes.cjs` (13 эндпоинтов), `data/connectors/conn-*.json`. Отдельный декларативный слой описания задач генерации.
+- **Connectors** — `connector-loader.js`, `routes/connector-routes.cjs` (13 эндпоинтов), `backend/ai/connectors/conn-*.json`. Отдельный декларативный слой описания задач генерации.
 - **Workflow Manager** — `services/workflow-manager.js` (~19 КБ), `routes/workflow-routes.cjs` (4 эндпоинта).
 - **Startup Recovery** — `services/startup-recovery.js` (~12 КБ) — отдельный от `startup-resume.js` модуль восстановления состояния из PG/диска на старте.
 
@@ -138,7 +138,7 @@ Android-плеер (`PlaybackViewModel` + `SceneAudioPlayer` на ExoPlayer/Medi
   - `voices.json` — все голоса персонажей (отдельно от bible)
   - `bible.json` — включает `country` и `epoch` для image-промптов
 - **Ассеты:** `data/output/<buildId>/` → `*.mp3`, `*.png`, `*.mp4`.
-- **Шаблоны:** `data/workflows/*.json` (ComfyUI), `data/connectors/conn-*.json` (декларации задач).
+- **Шаблоны:** `backend/ai/workflows/*.json` (ComfyUI), `backend/ai/connectors/conn-*.json` (декларации задач).
 
 ### 4.4 Кто за что отвечает (фактическая модель)
 

@@ -7,6 +7,8 @@ const path = require('path');
 const gpu = require('../runtime/gpu-dispatcher');
 const jobSchema = require('../runtime/job-schema');
 const wfLoader = require('../workflows/workflow-loader');
+const { resolveAssembly } = require('../image/assembly-profile');
+const { audioProfileNameFromConnector } = require('./connector-utils');
 const helpers = require('./helpers');
 const validation = require('./validation');
 const chunks = require('./chunks');
@@ -15,6 +17,18 @@ const ffmpeg = require('./ffmpeg');
 
 const WORKFLOW_NARRATION = 'tts-qwen-narrator';
 const WORKFLOW_DIALOGUE = 'tts-qwen-dialogue';
+
+/**
+ * Resolve the active audio assembly profile (ai/profiles/audio/{profile}.json).
+ * The profile name comes from the TTS connector's profile.audioProfile
+ * ('qwen-tts'), with a 'default' fallback. Its defaults drive programmatic
+ * values like the dialogue workflow's defaultInstruct.
+ * @returns {object} — normalized assembly { profileName, type, sections, suppress, defaults }
+ */
+function resolveAudioAssembly() {
+    const connector = wfLoader.getConnector(WORKFLOW_DIALOGUE) || wfLoader.getConnector(WORKFLOW_NARRATION);
+    return resolveAssembly('audio', audioProfileNameFromConnector(connector));
+}
 
 // ══════════════════════════════════════════════════════
 //  MERGED DIALOGUE WORKFLOW
@@ -32,7 +46,9 @@ const WORKFLOW_DIALOGUE = 'tts-qwen-dialogue';
 // speaker-ов, а не только для первых двух.
 // ══════════════════════════════════════════════════════
 
-function buildMergedDialogueWorkflow(segments, loadedBook) {
+function buildMergedDialogueWorkflow(segList, loadedBook) {
+    // NOTE: the parameter is named segList (NOT segments) — 'segments' is the
+    // module-level require('./segments') used below for narratorVoice().
     const wfAudio = wfLoader.getWorkflow(WORKFLOW_DIALOGUE);
     if (!wfAudio) {
         helpers.error('buildMergedDialogueWorkflow: base workflow not found');
@@ -44,7 +60,7 @@ function buildMergedDialogueWorkflow(segments, loadedBook) {
     const scriptLines = [];
     const speakerRegex = /^([a-z0-9_]+):\s/;
 
-    for (const seg of segments) {
+    for (const seg of segList) {
         if (seg.segment_type !== 'dialogue') continue;
         const match = seg.text.match(speakerRegex);
         const speakerId = match ? match[1] : null;
@@ -71,19 +87,20 @@ function buildMergedDialogueWorkflow(segments, loadedBook) {
         return null;
     }
 
-    helpers.log(`🎭 Merged dialogue: ${speakerCount} speaker(s), ${segments.length} segment(s)`);
+    helpers.log(`🎭 Merged dialogue: ${speakerCount} speaker(s), ${segList.length} segment(s)`);
 
     // ── 2. Build script node (node 108) ──
+    // default_instruct comes from the active audio assembly profile
+    // (ai/profiles/audio/{profile}.json → assembly.defaults.defaultInstruct).
     wfAudio["108"].inputs = {
         script,
-        default_instruct: ""
+        default_instruct: resolveAudioAssembly().defaults.defaultInstruct || ""
     };
 
     // ── 3. Map speaker → static node IDs ──
     // speaker 0 → 71(VoiceDesign) + 73(ClonePrompt)
     // speaker 1 → 80(VoiceDesign) + 81(ClonePrompt)
     // speaker 2 → 82(VoiceDesign) + 83(ClonePrompt)
-    const voiceDesignIds = [71, 80, 82];
     const clonePromptIds = [73, 81, 83];
 
     // Update VoiceDesign nodes with actual voice instructions.
@@ -454,12 +471,13 @@ async function sendPerSegmentAudio(redis, segList, sceneData, loadedBook, buildI
         if (isDialogue) {
             // Dialogue → Qwen3TTSAdvancedDialogue
             const connector = wfLoader.getConnector(workflowName);
+            const defaultInstruct = resolveAudioAssembly().defaults.defaultInstruct || "";
             if (connector) {
                 const cl = require('../workflows/connector-loader');
                 cl.setValue(wfAudio, connector, 'dialogueScript', segment.text);
-                cl.setValue(wfAudio, connector, 'defaultInstruct', "");
+                cl.setValue(wfAudio, connector, 'defaultInstruct', defaultInstruct);
             } else {
-                wfAudio["108"].inputs = { script: segment.text, default_instruct: "" };
+                wfAudio["108"].inputs = { script: segment.text, default_instruct: defaultInstruct };
             }
 
             // ⚡ Определяем speaker из segment.text (формат: "speaker_id: текст")
@@ -604,6 +622,7 @@ module.exports = {
     mergeBookAudio,
     trimPaddedSceneAudio,
     buildMergedDialogueWorkflow,
+    resolveAudioAssembly,
     WORKFLOW_NARRATION,
     WORKFLOW_DIALOGUE,
 };

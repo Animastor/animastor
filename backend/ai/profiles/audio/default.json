@@ -1,0 +1,16 @@
+{
+  "profile": "default",
+  "type": "audio",
+  "model": "generic",
+  "workflow": "tts-qwen-*",
+  "skill": "audio/default",
+  "assembly": {
+    "sections": [
+      "voiceInstruction",
+      "defaultInstruct"
+    ],
+    "defaults": {
+      "defaultInstruct": ""
+    }
+  }
+}

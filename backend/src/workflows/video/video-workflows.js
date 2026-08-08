@@ -9,6 +9,7 @@
 const book = require('../../book');
 const wfLoader = require('../workflow-loader');
 const { tokensToString } = require('../../book/lazy-book/appearance');
+const { resolveAssembly, DEFAULT_VIDEO_DEFAULTS } = require('../../image/assembly-profile');
 
 const logPrefix = '[WF-VIDEO]';
 
@@ -110,15 +111,42 @@ function buildCharLines(participants, loadedBook, scene) {
 }
 
 // ======================================================
-// VIDEO PROMPT BUILDER
+// VIDEO PROMPT BUILDER (assembly-profile driven)
 // ======================================================
-function buildVideoPrompt(sceneData, loadedBook, units, iuDurations) {
+// The final video prompt is assembled from SECTIONS in the order defined by the
+// active assembly profile (ai/profiles/video/{profile}.json):
+//   characters → storyboard → renderInfo  (default / ltx-2.3)
+// Sections suppressed by the profile are skipped; defaults (negativeBase) also
+// come from the profile. Default output is byte-identical to the pre-profile
+// builder.
+
+/**
+ * Pure helper (testable): extract the video assembly-profile name from a
+ * connector object. Falls back to 'default' when no connector/profile exists.
+ * @param {object|null} connector
+ * @returns {string}
+ */
+function videoProfileNameFromConnector(connector) {
+    return connector?.profile?.videoProfile || 'default';
+}
+
+/**
+ * Build the final video prompt for a workflow group.
+ * @param {object} sceneData — { book_id, chapter_id, scene_id, scene, chapter }
+ * @param {object} loadedBook — book with characters + locations
+ * @param {Array} units — image units of this workflow group
+ * @param {Array<number>} iuDurations — per-unit durations (seconds)
+ * @param {string} [profileName] — assembly profile name ('ltx-2.3', 'default', ...)
+ * @returns {string}
+ */
+function buildVideoPrompt(sceneData, loadedBook, units, iuDurations, profileName) {
     const scene = sceneData.scene || sceneData.payload || {};
-    const chapterData = sceneData.chapter || {};
+    const assembly = resolveAssembly('video', profileName);
 
     // 1. Characters with video tokens
     const participants = scene.participants || [];
     const charLines = buildCharLines(participants, loadedBook, scene);
+    const charactersSection = charLines.length > 0 ? charLines.join(' ') : '';
 
     // 2. Location / environment context
     const locationId = scene.location?.id || '';
@@ -175,18 +203,26 @@ function buildVideoPrompt(sceneData, loadedBook, units, iuDurations) {
         storyboardParts.push(line);
     }
 
-    const promptParts = [];
-    if (charLines.length > 0) {
-        promptParts.push(charLines.join(' '));
-        promptParts.push('');
-    }
-    promptParts.push(storyboardParts.join('\n'));
-    promptParts.push('');
-
+    // 4. Render info footer
     const renderMode = scene.visual?.render || loadedBook?.manifest?.render?.mode || '';
-    promptParts.push(`${VIDEO_FPS}fps${renderMode ? `; ${renderMode.replace(/_/g, ' ')}` : ''}`);
+    const renderInfo = `${VIDEO_FPS}fps${renderMode ? `; ${renderMode.replace(/_/g, ' ')}` : ''}`;
 
-    return promptParts.join('\n');
+    // 5. Assemble sections in profile order (skip suppressed). Emitters return
+    //    '' for empty/unknown sections, so the join stays clean (equivalent to
+    //    the pre-profile blank-line structure).
+    const sectionEmitters = {
+        characters: () => charactersSection,
+        storyboard: () => storyboardParts.join('\n'),
+        renderInfo: () => renderInfo,
+    };
+
+    const parts = [];
+    for (const section of assembly.sections) {
+        if (assembly.suppress.has(section)) continue;
+        const rendered = sectionEmitters[section]?.() || '';
+        if (rendered) parts.push(rendered);
+    }
+    return parts.join('\n\n');
 }
 
 function resolveNegativePrompt(unit, scene) {
@@ -200,9 +236,17 @@ function resolveNegativePrompt(unit, scene) {
         || '';
 }
 
-function buildVideoNegativePrompt(sceneData, units) {
+/**
+ * Build the workflow's negative prompt: per-unit custom negatives + the base
+ * negative from the active assembly profile (default: still-frame/jitter guard).
+ * @param {object} sceneData
+ * @param {Array} units
+ * @param {string} [negativeBase] — profile defaults.negativeBase (optional)
+ * @returns {string}
+ */
+function buildVideoNegativePrompt(sceneData, units, negativeBase) {
     const scene = sceneData.scene || sceneData.payload || {};
-    const baseNegative = 'blurry, low quality, still frame, jitter, flicker, artifacts';
+    const baseNegative = negativeBase || DEFAULT_VIDEO_DEFAULTS.negativeBase;
     const customNegatives = units
         .map(unit => resolveNegativePrompt(unit, scene))
         .filter(Boolean);
@@ -226,6 +270,10 @@ function buildWorkflowForGroup(groupInfo, units, iuDurations, sceneData, loadedB
     const wf = JSON.parse(JSON.stringify(baseWorkflow));
     const connector = getConnector(workflowName);
     const cl = require('../connector-loader');
+    // Assembly profile drives final prompt structure + negative base.
+    // Resolved from the connector's profile.videoProfile ('ltx-2.3'), with a
+    // 'default' fallback when the connector has no profile field.
+    const assembly = resolveAssembly('video', videoProfileNameFromConnector(connector));
 
     // Resolve guide nodes from the workflow (sorted by node ID for consistent ordering)
     const guideNodeIds = Object.entries(wf)
@@ -281,11 +329,11 @@ function buildWorkflowForGroup(groupInfo, units, iuDurations, sceneData, loadedB
     cl.setValue(wf, connector, 'outputFilenamePrefix', prefixValue);
 
     // 5. Set positive prompt via connector
-    const prompt = buildVideoPrompt(sceneData, loadedBook, units, iuDurations);
+    const prompt = buildVideoPrompt(sceneData, loadedBook, units, iuDurations, assembly.profileName);
     cl.setValue(wf, connector, 'positivePrompt', prompt);
 
-    // 6. Set negative prompt via connector
-    cl.setValue(wf, connector, 'negativePrompt', buildVideoNegativePrompt(sceneData, units));
+    // 6. Set negative prompt via connector (base negative from the profile)
+    cl.setValue(wf, connector, 'negativePrompt', buildVideoNegativePrompt(sceneData, units, assembly.defaults.negativeBase));
 
     log(`Built ${workflowName} workflow: ${units.length} IU(s), ${totalFrames} total frames`);
 
@@ -466,6 +514,7 @@ module.exports = {
     buildVideoPrompt,
     buildVideoNegativePrompt,
     buildVideoPromptLegacy,
+    videoProfileNameFromConnector,
     buildCharLines,
     motionFromState,
     buildCamera,

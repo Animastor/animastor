@@ -69,8 +69,8 @@ Animastor — AI-powered animated storytelling platform. Система прео
 GPU-воркеры (ESM-модули), выполняющие генерацию через ComfyUI: image (SD), audio (TTS), video (LTX). Поддержка multi-image assets.
 
 ### Workflow Loader + Connector System
-- **Workflow Loader** — загружает JSON-шаблоны ComfyUI из `/data/workflows/`
-- **Connector System** — декларативный слой абстракции, внешняя карта nodeId → entity. Файлы в `/data/connectors/`. Устраняет hardcoded node ID из кода бэкенда.
+- **Workflow Loader** — загружает JSON-шаблоны ComfyUI из `/app/ai/workflows/`
+- **Connector System** — декларативный слой абстракции, внешняя карта nodeId → entity. Файлы в `/app/ai/connectors/`. Устраняет hardcoded node ID из кода бэкенда.
 - **Entity Schema** (`entity-schema.js`) — все типы данных, которыми обмениваются backend и ComfyUI
 
 ### Storage

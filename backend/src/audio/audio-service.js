@@ -34,6 +34,7 @@ module.exports = {
     isFFmpegAvailable: connectorUtils.isFFmpegAvailable,
     applyAudioValue: connectorUtils.applyAudioValue,
     getAudioNodeId: connectorUtils.getAudioNodeId,
+    audioProfileNameFromConnector: connectorUtils.audioProfileNameFromConnector,
 
     // ffmpeg
     runFFmpegMerge: ffmpeg.runFFmpegMerge,

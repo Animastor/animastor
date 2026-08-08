@@ -64,7 +64,7 @@ Defined in `backend/src/workflows/entity-schema.js`, this is the canonical dicti
 **Version:** v1.0.0
 
 **Responsibilities:**
-1. Load connectors from `data/connectors/` directory
+1. Load connectors from `backend/ai/connectors/` directory
 2. Validate connector structure and field completeness
 3. Validate workflow ↔ connector compatibility via hash
 4. Provide lookup API for backend code

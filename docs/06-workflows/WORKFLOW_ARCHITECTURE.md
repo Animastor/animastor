@@ -21,14 +21,14 @@ The system is evolving from a simple file-based loader to a **three-layer archit
 ```
 ┌─────────────────────────────────────────────────────┐
 │                   Workflow Layer                     │
-│  data/workflows/*.json                              │
+│  backend/ai/workflows/*.json                              │
 │  (LoadImageNode, CLIPTextEncode, KSampler, etc.)   │
 └────────────────────┬────────────────────────────────┘
                      │ loads at startup
 ┌────────────────────▼────────────────────────────────┐
 │              Workflow Loader (v2.0.0)               │
 │  backend/src/workflows/workflow-loader.js           │
-│  - Scans /data/workflows/*.json                     │
+│  - Scans /app/ai/workflows/*.json                     │
 │  - Registers: workflows[name] = template            │
 │  - Computes hashes for compatibility checks         │
 │  - Returns deep clones via getWorkflow(name)        │
@@ -56,14 +56,14 @@ The system is evolving from a simple file-based loader to a **three-layer archit
 |--------|--------|
 | **File** | `backend/src/workflows/workflow-loader.js` |
 | **Version** | v2.0.0 (Connector-aware) |
-| **Directory** | `/data/workflows/` |
+| **Directory** | `/app/ai/workflows/` |
 | **Filter** | `*.json` excluding `old_*` prefix |
 | **Storage** | In-memory `workflows` object + `workflowHashes` map |
 | **API** | `loadWorkflows()`, `getWorkflow(name)`, `getConnector(name)`, `getWorkflowHash(name)` |
 | **Clone method** | `JSON.parse(JSON.stringify(template))` |
 
 **Loading flow:**
-1. Scan `/data/workflows/*.json` at startup  
+1. Scan `/app/ai/workflows/*.json` at startup  
 2. Parse each JSON → store as `workflows[nameWithoutExt]`  
 3. Compute SHA-256 hash for each workflow  
 4. Load and initialize connectors via `connectorLoader.initialize(workflows)`  
@@ -89,13 +89,13 @@ Each builder:
 
 | Workflow Name | Type | File | Used By |
 |--------------|------|------|---------|
-| `tts-qwen-narrator` | Audio | `data/workflows/tts-qwen-narrator.json` | Narration TTS |
-| `tts-qwen-dialogue` | Audio | `data/workflows/tts-qwen-dialogue.json` | Dialogue TTS |
-| `img-qwen-image` | Image | `data/workflows/img-qwen-image.json` | Image generation |
-| `video-ltx-1p` | Video | `data/workflows/video-ltx-1p.json` | Single-image video |
-| `video-ltx-2p` | Video | `data/workflows/video-ltx-2p.json` | Two-image video |
-| `video-ltx-3p` | Video | `data/workflows/video-ltx-3p.json` | Three-image video |
-| `video-ltx-4p` | Video | `data/workflows/video-ltx-4p.json` | Four-image video |
+| `tts-qwen-narrator` | Audio | `backend/ai/workflows/tts-qwen-narrator.json` | Narration TTS |
+| `tts-qwen-dialogue` | Audio | `backend/ai/workflows/tts-qwen-dialogue.json` | Dialogue TTS |
+| `img-qwen-image` | Image | `backend/ai/workflows/img-qwen-image.json` | Image generation |
+| `video-ltx-1p` | Video | `backend/ai/workflows/video-ltx-1p.json` | Single-image video |
+| `video-ltx-2p` | Video | `backend/ai/workflows/video-ltx-2p.json` | Two-image video |
+| `video-ltx-3p` | Video | `backend/ai/workflows/video-ltx-3p.json` | Three-image video |
+| `video-ltx-4p` | Video | `backend/ai/workflows/video-ltx-4p.json` | Four-image video |
 
 ---
 
@@ -127,7 +127,7 @@ Each builder:
 │  ComfyUI workflow nodes.                               │
 │                                                        │
 │  Responsibilities:                                     │
-│  - Load connectors from data/connectors/               │
+│  - Load connectors from backend/ai/connectors/               │
 │  - Validate connector structure                        │
 │  - Check workflow ↔ connector compatibility (hash)     │
 │  - Resolve entity keys → nodeId + field paths          │
@@ -137,7 +137,7 @@ Each builder:
                        │ reads
 ┌──────────────────────▼────────────────────────────────┐
 │                  Connector Files                        │
-│  data/connectors/conn-*.json                           │
+│  backend/ai/connectors/conn-*.json                           │
 │                                                        │
 │  Per-workflow configuration files that describe:       │
 │  - Metadata (label, description, type, version)        │
@@ -148,7 +148,7 @@ Each builder:
                        │ maps to
 ┌──────────────────────▼────────────────────────────────┐
 │                   Workflow Layer                        │
-│  data/workflows/*.json                                 │
+│  backend/ai/workflows/*.json                                 │
 │                                                        │
 │  Raw ComfyUI workflow JSON templates.                  │
 │  Should never be referenced directly by backend code.  │

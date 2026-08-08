@@ -397,7 +397,7 @@ NEW → DIRTY → PENDING → GENERATING → READY | FAILED | PLACEHOLDER
 ## 7. Workflow System
 
 ### 7.1 Workflow Loader (`backend/src/workflows/workflow-loader.js`)
-**Ответственность:** Загрузка JSON-шаблонов ComfyUI из `/data/workflows/`.
+**Ответственность:** Загрузка JSON-шаблонов ComfyUI из `/app/ai/workflows/`.
 
 **Входы:** Имя workflow.
 **Выходы:** Клон шаблона JSON.

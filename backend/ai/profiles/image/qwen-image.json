@@ -1,0 +1,38 @@
+{
+  "profile": "qwen-image",
+  "type": "image",
+  "model": "Qwen2.5-VL",
+  "workflow": "img-qwen-image",
+  "skill": "image/qwen-image",
+  "assembly": {
+    "sections": [
+      "renderMode",
+      "visualStyle",
+      "country",
+      "epoch",
+      "location",
+      "time",
+      "season",
+      "weather",
+      "mood",
+      "lighting",
+      "atmosphere",
+      "shot",
+      "characters",
+      "directPrompt",
+      "quality"
+    ],
+    "suppressSections": [
+      "renderMode",
+      "visualStyle",
+      "mood",
+      "lighting",
+      "atmosphere",
+      "shot"
+    ],
+    "defaults": {
+      "quality": "image quality: highly detailed, sharp focus",
+      "negativeBase": "blurry, low quality, artifacts"
+    }
+  }
+}

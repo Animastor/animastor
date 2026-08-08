@@ -25,29 +25,18 @@
 │   │           ├── ch-00000001.json             #   главы
 │   │           └── ...
 │   ├── output/<buildId>/                        # Сгенерированные файлы (MP3, PNG, MP4)
-│   └── workflows/                               # Шаблоны ComfyUI (.json)
-│       ├── tts-qwen-narrator.json               #   TTS наррация
-│       ├── tts-qwen-dialogue.json               #   TTS диалоги
-│       ├── img-qwen-image.json                  #   Изображения
-│       ├── video-ltx-1p.json                    #   Видео (1 персонаж)
-│       ├── video-ltx-2p.json                    #   Видео (2 персонажа)
-│       ├── video-ltx-3p.json                    #   Видео (3 персонажа)
-│       └── video-ltx-4p.json                    #   Видео (4 персонажа)
-│   └── connectors/                              # Декларативные описания задач
-│       ├── conn-image-generation.json
-│       ├── conn-tts-narration.json
-│       ├── conn-tts-dialogue.json
-│       ├── conn-video-1p.json
-│       ├── conn-video-2p.json
-│       ├── conn-video-3p.json
-│       └── conn-video-4p.json
 │
 ├── backend/
 │   ├── Dockerfile
 │   ├── package.json
-│   ├── config/
-│   │   └── ai-assistant-profile.md              # Профиль AI-ассистента
-│   ├── ai/                                      # База знаний AI
+│   ├── ai/                                      # Вся конфигурация AI-системы
+│   │   ├── ai-assistant-profile.md              # Профиль AI-ассистента (чат)
+│   │   ├── workflows/                           # Шаблоны ComfyUI (.json)
+│   │   │   └── img-qwen-image, tts-qwen-*, video-ltx-1p..4p
+│   │   ├── connectors/                          # Декларативные описания задач
+│   │   │   └── conn-*.json
+│   │   ├── profiles/                            # Программные профили сборки промптов
+│   │   │   └── image/{default,qwen-image}.json
 │   │   ├── examples/                            # JSON-примеры для few-shot
 │   │   │   ├── book_example.json
 │   │   │   ├── character_example.json
@@ -55,8 +44,8 @@
 │   │   │   ├── import_example.json
 │   │   │   ├── location_example.json
 │   │   │   └── scene_example.json
-│   │   ├── rules/                               # Правила (8 md-файлов)
-│   │   └── skills/                              # Навыки (8 md-файлов, не в промптах)
+│   │   ├── rules/                               # Правила (md, SYSTEM_PROMPTS)
+│   │   └── skills/                              # Скиллы промптинга моделей (md)
 │   ├── scripts/
 │   │   ├── audit-scenes.js                      # Аудит длительности/покрытия сцен
 │   │   ├── dryrun-visuals-iu.js                 # Сухой прогон визуалов
@@ -120,8 +109,10 @@
 │   │   ├── image/                               # [DECOMPOSED] Изображения
 │   │   │   ├── index.js
 │   │   │   ├── image-service.js
-│   │   │   ├── prompt-builder.js                #   Сборка визуальных промптов
-│   │   │   └── iu-processor.js                  #   Обработка IU
+│   │   │   ├── prompt-builder.js                #   Сборка визуальных промптов (по профилю)
+│   │   │   ├── assembly-profile.js              #   Резолвер программных профилей сборки
+│   │   │   ├── connector-utils.js               #   Инъекция в ComfyUI-воркфлоу
+│   │   │   ├── iu-processor.js                  #   Обработка IU
 │   │   ├── video/                               # [DECOMPOSED] Видео
 │   │   │   ├── index.js
 │   │   │   ├── video-service.js

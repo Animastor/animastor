@@ -369,7 +369,7 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
     // In subsequent windows, skips characters that already have meaningful voices
     // and only generates for newly discovered characters.
     if (characters.length > 0) {
-        const voiceResult = await pipelineSteps.stepGenerateVoices(sessionId, text, characters, stepIndex, _progress, language);
+        const voiceResult = await pipelineSteps.stepGenerateVoices(sessionId, text, characters, stepIndex, _progress, language, options.promptProfiles);
         if (voiceResult && voiceResult.voices) {
             const voiced = Object.keys(voiceResult.voices).length;
             console.log(`[AGENT] Voice generation: ${voiced} characters got voice descriptions`);

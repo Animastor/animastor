@@ -441,6 +441,87 @@ describe('Location environment template — buildImagePrompt fallback', () => {
 });
 
 // ======================================================
+// Prompt composition order — general → specific
+// ======================================================
+
+// The pipeline's DEFAULT assembly order (general → specific). Model-specific
+// Prompt Profile skills may refine the AI-authored image.prompt CONTENT (step 4)
+// — this wrapper order itself has no per-model override hook yet.
+describe('buildImagePrompt — default composition order (general → specific)', () => {
+
+    const bookPayload = {
+        characters: [
+            { id: 'berlioz', name: 'Берлиоз', passport: { appearance: 'short and stout', clothes: 'gray summer suit' } },
+            { id: 'bezdomny', name: 'Бездомный', passport: { appearance: 'broad-shouldered, ginger hair' } },
+        ],
+        locations: {
+            moscow_patriarskie: {
+                description: 'Patriarch Ponds in Moscow',
+                environment: { time: 'warm evening', season: 'summer' },
+            },
+        },
+    };
+
+    const unit = {
+        type: 'narration',
+        image: { prompt: 'berlioz and bezdomny sitting on a bench near the pond, arguing', shot: 'close' },
+    };
+
+    const scene = {
+        participants: ['berlioz', 'bezdomny'],
+        visual: { render: 'cinematic' },
+        location: { id: 'moscow_patriarskie' },
+        state: { berlioz: 'arguing loudly' },
+    };
+
+    it('orders sections from general to specific', () => {
+        const result = buildImagePrompt(unit, scene, {}, bookPayload);
+
+        const idx = (s) => result.indexOf(s);
+        // 1. global context: style → location → env
+        // 2. shot before characters
+        // 3. characters before the AI direct prompt
+        // 4. fine details / quality last
+        const sections = [
+            'style cinematic',
+            'Patriarch Ponds in Moscow',
+            'warm evening',
+            'close shot',
+            'berlioz:',
+            'berlioz and bezdomny sitting',
+            'image quality',
+        ];
+        // Every section must be PRESENT — otherwise indexOf returns -1 and the
+        // ordering chain below can still pass while a section is silently dropped.
+        sections.forEach((s) => expect(idx(s)).to.be.greaterThan(-1));
+        for (let i = 1; i < sections.length; i++) {
+            expect(idx(sections[i])).to.be.greaterThan(idx(sections[i - 1]));
+        }
+    });
+
+    it('keeps each character as ONE contiguous block (id + appearance + clothes + state)', () => {
+        const result = buildImagePrompt(unit, scene, {}, bookPayload);
+        expect(result).to.include('berlioz: short and stout, gray summer suit, arguing loudly');
+        expect(result).to.include('bezdomny: broad-shouldered, ginger hair');
+    });
+
+    it('emits env.time exactly once (regression: duplicate push)', () => {
+        const result = buildImagePrompt(unit, scene, {}, bookPayload);
+        expect(result.match(/warm evening/g)).to.have.lengthOf(1);
+    });
+
+    it('shot comes before characters even when the direct prompt mentions a shot word', () => {
+        const unitWithShotWord = {
+            ...unit,
+            image: { ...unit.image, prompt: 'berlioz and bezdomny sitting, close framing' },
+        };
+        const result = buildImagePrompt(unitWithShotWord, scene, {}, bookPayload);
+        expect(result.indexOf('close shot')).to.be.greaterThan(-1);
+        expect(result.indexOf('close framing')).to.be.greaterThan(result.indexOf('close shot'));
+    });
+});
+
+// ======================================================
 // isTypographyStyle / resolveVisualStyle
 // ======================================================
 
