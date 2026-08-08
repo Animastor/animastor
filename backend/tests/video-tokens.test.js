@@ -189,6 +189,6 @@ describe('buildCharLines duplicate guard (order-insensitive)', () => {
         };
         const lines = wf.buildCharLines(['a', 'b'], book, scene);
         // a keeps its scene override; b falls back to its global token
-        expect(lines).to.deep.equal(['A: tie, red jacket', 'B: blue shirt']);
+        expect(lines).to.deep.equal(['a: tie, red jacket.', 'b: blue shirt.']);
     });
 });

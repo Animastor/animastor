@@ -193,7 +193,7 @@ ai/profiles/{type}/{profileName}.json  →  встроенный дефолт
 }
 ```
 
-- `characters` — блок `Name: video_tokens` (якоря идентичности персонажей).
+- `characters` — блок `character_id: video_tokens` (якоря идентичности персонажей — по id, как в image-промпте).
 - `storyboard` — построчные таймированные сегменты `start–end s: описание`.
 - `renderInfo` — футер `24fps; render mode`.
 

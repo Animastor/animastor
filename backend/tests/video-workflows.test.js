@@ -211,10 +211,10 @@ describe('buildVideoPrompt', () => {
         }
     ];
 
-    it('includes character video_tokens', () => {
+    it('includes character video_tokens keyed by character_id', () => {
         const prompt = wf.buildVideoPrompt(sceneData, loadedBook, units, [3, 4]);
-        expect(prompt).to.include('Hero: hero token description');
-        expect(prompt).to.include('Sidekick: sidekick token');
+        expect(prompt).to.include('char_hero: hero token description.');
+        expect(prompt).to.include('char_sidekick: sidekick token.');
     });
 
     it('prefers scene.passport video_tokens override over global passport', () => {
@@ -228,10 +228,10 @@ describe('buildVideoPrompt', () => {
             },
         };
         const prompt = wf.buildVideoPrompt(sceneWithOverride, loadedBook, units, [3, 4]);
-        expect(prompt).to.include('Hero: hero scene override token');
-        expect(prompt).not.to.include('Hero: hero token description');
+        expect(prompt).to.include('char_hero: hero scene override token.');
+        expect(prompt).not.to.include('char_hero: hero token description');
         // Sidekick unaffected — falls back to global passport
-        expect(prompt).to.include('Sidekick: sidekick token');
+        expect(prompt).to.include('char_sidekick: sidekick token.');
     });
 
     it('joins array video_tokens (new agent format) into a comma list', () => {
@@ -243,8 +243,8 @@ describe('buildVideoPrompt', () => {
             ],
         };
         const prompt = wf.buildVideoPrompt(sceneData, bookWithArrays, units, [3, 4]);
-        expect(prompt).to.include('Hero: tie, round glasses');
-        expect(prompt).to.include('Sidekick: red jacket');
+        expect(prompt).to.include('char_hero: tie, round glasses.');
+        expect(prompt).to.include('char_sidekick: red jacket.');
     });
 
     it('falls back to global token when a scene override collides with another participant', () => {
@@ -260,8 +260,8 @@ describe('buildVideoPrompt', () => {
         };
         const prompt = wf.buildVideoPrompt(collidingScene, loadedBook, units, [3, 4]);
         // Hero keeps the scene override; sidekick falls back to its global token
-        expect(prompt).to.include('Hero: tie');
-        expect(prompt).to.include('Sidekick: sidekick token');
+        expect(prompt).to.include('char_hero: tie.');
+        expect(prompt).to.include('char_sidekick: sidekick token.');
     });
 
     it('falls back to global passport when scene.passport has no override', () => {
@@ -273,7 +273,7 @@ describe('buildVideoPrompt', () => {
             },
         };
         const prompt = wf.buildVideoPrompt(sceneNoOverride, loadedBook, units, [3, 4]);
-        expect(prompt).to.include('Hero: hero token description');
+        expect(prompt).to.include('char_hero: hero token description.');
     });
 
     it('includes storyboard with time ranges', () => {
@@ -306,13 +306,13 @@ describe('buildVideoPrompt', () => {
             ]
         };
         const prompt = wf.buildVideoPrompt(sceneData, bookNoTokens, [units[0]], [3]);
-        expect(prompt).not.to.include('Hero:');
+        expect(prompt).not.to.include('char_hero:');
     });
 
-    it('uses image.prompt as the IU visual text', () => {
+    it('uses image.prompt as the IU visual text (names normalized to character_ids)', () => {
         const prompt = wf.buildVideoPrompt(sceneData, loadedBook, units, [3, 4]);
-        expect(prompt).to.include('Hero stands at the gate');
-        expect(prompt).to.include('Sidekick approaches from behind');
+        expect(prompt).to.include('char_hero stands at the gate');
+        expect(prompt).to.include('char_sidekick approaches from behind');
     });
 });
 
@@ -394,7 +394,7 @@ describe('buildVideoPrompt — assembly profile driven', () => {
     it('keeps the classic structure: characters → storyboard → render info', () => {
         const prompt = wf.buildVideoPrompt(sceneData, loadedBook, units, [3], 'ltx-2.3');
         const lines = prompt.split('\n\n');
-        expect(lines[0]).to.include('Hero: hero token description');
+        expect(lines[0]).to.include('char_hero: hero token description.');
         expect(lines[1]).to.include('0.0–3.0s:');
         expect(lines[2]).to.include('24fps');
     });
@@ -425,7 +425,7 @@ describe('buildCharLines (video token resolution)', () => {
             ],
         };
         const lines = wf.buildCharLines(['a', 'b'], book, {});
-        expect(lines).to.deep.equal(['A: tie, glasses', 'B: red jacket']);
+        expect(lines).to.deep.equal(['a: tie, glasses.', 'b: red jacket.']);
     });
 
     it('drops the second line when both scene and global tokens collide', () => {
@@ -437,7 +437,7 @@ describe('buildCharLines (video token resolution)', () => {
         };
         const lines = wf.buildCharLines(['a', 'b'], book, {});
         expect(lines).to.have.length(1);
-        expect(lines[0]).to.include('A: same token');
+        expect(lines[0]).to.include('a: same token.');
     });
 
     it('skips participants without tokens', () => {
@@ -456,7 +456,7 @@ describe('buildCharLines (video token resolution)', () => {
             ],
         };
         const scene = { passport: { a: { video_tokens: ['scene token'] } } };
-        expect(wf.buildCharLines(['a'], book, scene)).to.deep.equal(['A: scene token']);
+        expect(wf.buildCharLines(['a'], book, scene)).to.deep.equal(['a: scene token.']);
     });
 });
 

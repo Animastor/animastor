@@ -11,6 +11,7 @@ const wfLoader = require('../workflow-loader');
 const profileOverride = require('../../services/profile-override');
 const { tokensToString } = require('../../book/lazy-book/appearance');
 const { resolveAssembly, DEFAULT_VIDEO_DEFAULTS } = require('../../image/assembly-profile');
+const { normalizeCharacterRefs } = require('../../image/character-utils');
 
 const logPrefix = '[WF-VIDEO]';
 
@@ -81,11 +82,12 @@ function tokenKey(tokens) {
 }
 
 /**
- * Build "Name: tokens" lines for the video prompt. A scene override fully
- * replaces the global token. Duplicate guard: if two participants in the SAME
- * scene resolve to the same feature SET (an agent collision — order-insensitive),
- * the second one falls back to its global passport token; if that also collides,
- * the line is dropped rather than emitting an ambiguous reference.
+ * Build "character_id: tokens." lines for the video prompt. A scene override
+ * fully replaces the global token. Duplicate guard: if two participants in the
+ * SAME scene resolve to the same feature SET (an agent collision —
+ * order-insensitive), the second one falls back to its global passport token;
+ * if that also collides, the line is dropped rather than emitting an
+ * ambiguous reference.
  */
 function buildCharLines(participants, loadedBook, scene) {
     const used = new Set();
@@ -106,7 +108,8 @@ function buildCharLines(participants, loadedBook, scene) {
         }
         if (!final || used.has(tokenKey(chosen))) continue;
         used.add(tokenKey(chosen));
-        lines.push(`${c.name}: ${final}`);
+        // Trailing period guard: legacy string tokens may already end with '.'
+        lines.push(`${c.id}: ${final.replace(/[.\s]+$/, '')}.`);
     }
     return lines;
 }
@@ -116,7 +119,7 @@ function buildCharLines(participants, loadedBook, scene) {
 // ======================================================
 // The final video prompt is assembled from SECTIONS in the order defined by the
 // active assembly profile (ai/profiles/video/{profile}.json):
-//   characters → storyboard → renderInfo  (default / ltx-2.3)
+//   characters → storyboard → renderInfo  (ltx-2.3)
 // Sections suppressed by the profile are skipped; defaults (negativeBase) also
 // come from the profile. Default output is byte-identical to the pre-profile
 // builder.
@@ -145,10 +148,12 @@ function buildVideoPrompt(sceneData, loadedBook, units, iuDurations, profileName
     const scene = sceneData.scene || sceneData.payload || {};
     const assembly = resolveAssembly('video', profileName);
 
-    // 1. Characters with video tokens
+    // 1. Characters with video tokens — one identity anchor per line (each
+    //    "character_id: tokens." block on its own line for readability; newline
+    //    is just a separator for the video model, like the storyboard lines).
     const participants = scene.participants || [];
     const charLines = buildCharLines(participants, loadedBook, scene);
-    const charactersSection = charLines.length > 0 ? charLines.join(' ') : '';
+    const charactersSection = charLines.length > 0 ? charLines.join('\n') : '';
 
     // 2. Location / environment context
     const locationId = scene.location?.id || '';
@@ -176,8 +181,11 @@ function buildVideoPrompt(sceneData, loadedBook, units, iuDurations, profileName
         // Image section (canonical) — shot, prompt from image section
         const shot = unit.image?.shot;
         const prompt = unit.image?.prompt;
-        // Video-specific action (temporal change) — prefer video.action, fallback to image prompt
-        const action = unit.video?.action || prompt;
+        // Video-specific action (temporal change) — prefer video.action, fallback
+        // to image prompt. Character references are normalized to character_ids
+        // (same as the image directPrompt path) so the video model can map the
+        // motion to the identity anchors in the characters section.
+        const action = normalizeCharacterRefs(unit.video?.action || prompt, loadedBook.characters);
 
         if (shot) {
             descParts.push(`${shot.replace(/_/g, ' ')} shot`);
@@ -195,7 +203,7 @@ function buildVideoPrompt(sceneData, loadedBook, units, iuDurations, profileName
             descParts.push(action);
             // Derived active speaker: if dialogue unit has audio.speaker, add speaking behaviour
             if (unit.type === 'dialogue' && unit.audio?.speaker) {
-                descParts.push(`${unit.audio.speaker} speaking with lip movement`);
+                descParts.push(`${normalizeCharacterRefs(unit.audio.speaker, loadedBook.characters)} speaking with lip movement`);
             }
         } else if (prompt) {
             descParts.push(prompt);
