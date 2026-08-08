@@ -20,7 +20,8 @@ import kotlinx.coroutines.launch
  * Accepts [ARG_WORKER_TYPE] and [ARG_WORKER_LABEL] as fragment arguments.
  * Opened from GenerateFragment's gear icon buttons.
  *
- * Changes are saved explicitly via the Apply button (no auto-save).
+ * Both the profile and the timeout are saved INSTANTLY on selection
+ * (web parity) — there is no Apply button.
  */
 class WorkerSettingsFragment : Fragment(R.layout.fragment_worker_settings) {
 
@@ -209,7 +210,7 @@ class WorkerSettingsFragment : Fragment(R.layout.fragment_worker_settings) {
                         "audio" -> "qwen-tts"
                         "image" -> "qwen-image"
                         "video" -> "ltx-2.3"
-                        else -> "default"
+                        else -> "" // unreachable — workerType is always audio/image/video
                     }
                 )
                 val adapter = ArrayAdapter(requireContext(), android.R.layout.simple_spinner_item, fallback)
