@@ -170,7 +170,8 @@ async function processSingleIU(redis, unit, uIdx, sceneData, loadedBook, buildId
     }
 
     // Assembly profile for the image workflow — resolved from the connector's
-    // profile.imageProfile (e.g. "qwen-image"), defaulting to "default".
+    // profile.imageProfile (e.g. "qwen-image"); falls back to the built-in
+    // assembly when unset (there is no 'default' profile).
     const imageProfileName = resolveImageProfileName();
     const assemblyCfg = assemblyProfile.resolveAssembly('image', imageProfileName);
 

@@ -9,11 +9,12 @@
 //
 // Resolution chain (per type):
 //   1. ai/profiles/{type}/{profileName}.json  — the selected profile
-//   2. ai/profiles/{type}/default.json        — type-level default
-//   3. Built-in DEFAULT_* constants           — hardcoded fallback (= default.json)
+//   2. Built-in DEFAULT_* constants           — hardcoded fallback (used when
+//      no profile is configured or the named profile file is missing)
 //
 // The built-in fallback guarantees backward compatibility: when no profile file
-// exists, assembly behaves exactly like the pre-profile pipeline.
+// exists, assembly behaves exactly like the pre-profile pipeline. There is no
+// 'default' profile file — real profiles only.
 
 const aiLoader = require('../services/ai-loader');
 
@@ -82,14 +83,12 @@ function normalizeAssembly(profile, type, profileName) {
 /**
  * Resolve the assembly config for a profile type + name.
  * @param {string} type — 'image' | 'video' | 'audio'
- * @param {string} [profileName] — 'qwen-image', 'ltx-2.3', 'default', ...
+ * @param {string} [profileName] — 'qwen-image', 'ltx-2.3', ...
  * @returns {{ profileName: string, type: string, sections: string[], suppress: Set<string>, defaults: object }}
  */
 function resolveAssembly(type, profileName) {
-    const name = (profileName && profileName !== 'default') ? profileName : 'default';
-    const profile = aiLoader.getAssemblyProfile(`${type}/${name}`)
-        || aiLoader.getAssemblyProfile(`${type}/default`)
-        || null;
+    const name = (profileName && profileName !== 'default') ? profileName : null;
+    const profile = name ? aiLoader.getAssemblyProfile(`${type}/${name}`) || null : null;
     return normalizeAssembly(profile, type, name);
 }
 

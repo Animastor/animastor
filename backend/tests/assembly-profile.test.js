@@ -33,7 +33,7 @@ describe('Assembly profile resolver', () => {
         expect(cfg.defaults.negativeBase).to.equal('blurry, low quality, artifacts');
     });
 
-    it('resolves default profile with no suppression and default order', () => {
+    it("treats 'default' as the built-in fallback (no default profile on disk)", () => {
         const cfg = resolveAssembly('image', 'default');
         expect(cfg.suppress.size).to.equal(0);
         expect(cfg.sections[0]).to.equal('renderMode');
@@ -57,7 +57,7 @@ describe('Assembly profile resolver', () => {
         expect(cfg.defaults).to.deep.equal(DEFAULT_IMAGE_DEFAULTS);
     });
 
-    it('resolves the audio default profile with audio-specific sections', () => {
+    it("resolves audio assembly via the built-in fallback ('default' no longer exists)", () => {
         const cfg = resolveAssembly('audio', 'default');
         expect(cfg.sections).to.deep.equal(DEFAULT_AUDIO_SECTIONS);
         expect(cfg.defaults).to.deep.equal(DEFAULT_AUDIO_DEFAULTS);
@@ -78,7 +78,7 @@ describe('Assembly profile resolver', () => {
         expect(cfg.defaults).to.deep.equal(DEFAULT_AUDIO_DEFAULTS);
     });
 
-    it('resolves the video default profile with video-specific sections', () => {
+    it("resolves video assembly via the built-in fallback ('default' no longer exists)", () => {
         const cfg = resolveAssembly('video', 'default');
         expect(cfg.sections).to.deep.equal(DEFAULT_VIDEO_SECTIONS);
         expect(cfg.suppress.size).to.equal(0);
@@ -106,9 +106,9 @@ describe('Image profile name from connector', () => {
         expect(imageProfileNameFromConnector({ profile: { imageProfile: 'qwen-image' } })).to.equal('qwen-image');
     });
 
-    it('falls back to default when the connector has no profile', () => {
-        expect(imageProfileNameFromConnector({})).to.equal('default');
-        expect(imageProfileNameFromConnector(null)).to.equal('default');
+    it('returns null when the connector has no profile (built-in assembly applies)', () => {
+        expect(imageProfileNameFromConnector({})).to.equal(null);
+        expect(imageProfileNameFromConnector(null)).to.equal(null);
     });
 });
 

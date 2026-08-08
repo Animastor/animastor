@@ -10,9 +10,10 @@
 // (setRedis → loadFromRedis), so assembly-time reads are synchronous.
 //
 // Resolution:
-//   override (user choice)  →  connector's profile.{type}Profile  →  null
-// 'default' is a valid override: it selects ai/profiles/{type}/default.json
-// and injects skills/{type}/default.md instead of the model-specific ones.
+//   override (user choice, must be a profile present on disk)  →  connector's
+//   profile.{type}Profile  →  null (no skill injected; built-in assembly).
+// There is NO 'default' profile — only real model profiles (qwen-image,
+// ltx-2.3, qwen-tts). Clearing an override (null) restores the connector default.
 
 const wfLoader = require('../workflows/workflow-loader');
 
@@ -98,13 +99,14 @@ function connectorProfileName(type) {
 
 /**
  * Resolve the ACTIVE prompt profiles for the agent pipeline (skill injection).
- * User override wins; otherwise the connector's profile; finally 'default'.
- * @returns {{ audioProfile: string, imageProfile: string, videoProfile: string }}
+ * User override wins; otherwise the connector's profile; finally null (no
+ * model-specific skill is injected and assembly falls back to the built-ins).
+ * @returns {{ audioProfile: string|null, imageProfile: string|null, videoProfile: string|null }}
  */
 function resolvePromptProfiles() {
     const result = {};
     for (const type of TYPES) {
-        result[`${type}Profile`] = getOverride(type) || connectorProfileName(type) || 'default';
+        result[`${type}Profile`] = getOverride(type) || connectorProfileName(type) || null;
     }
     return result;
 }

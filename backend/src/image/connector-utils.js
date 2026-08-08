@@ -28,19 +28,21 @@ function applyImageValue(wf, entityKey, value) {
 
 /**
  * Pure helper (testable): extract the image assembly-profile name from a
- * connector object. Falls back to 'default' when no connector/profile exists.
+ * connector object. Returns null when no connector/profile exists — callers
+ * fall back to the built-in assembly then (there is no 'default' profile).
  * @param {object|null} connector
- * @returns {string}
+ * @returns {string|null}
  */
 function imageProfileNameFromConnector(connector) {
-    return connector?.profile?.imageProfile || 'default';
+    return connector?.profile?.imageProfile || null;
 }
 
 /**
  * Resolve the image assembly-profile name. A user override (global settings
  * choice) wins; otherwise the image workflow's connector profile
- * (e.g. "qwen-image" via conn-image-generation.json); finally "default".
- * @returns {string}
+ * (e.g. "qwen-image" via conn-image-generation.json); finally null (built-in
+ * assembly).
+ * @returns {string|null}
  */
 function resolveImageProfileName() {
     return profileOverride.getOverride('image')

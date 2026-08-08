@@ -41,12 +41,13 @@ function getAudioNodeId(workflowName, entityKey) {
 
 /**
  * Pure helper (testable): extract the audio assembly-profile name from a
- * connector object. Falls back to 'default' when no connector/profile exists.
+ * connector object. Returns null when no connector/profile exists — callers
+ * fall back to the built-in assembly then (there is no 'default' profile).
  * @param {object|null} connector
- * @returns {string}
+ * @returns {string|null}
  */
 function audioProfileNameFromConnector(connector) {
-    return connector?.profile?.audioProfile || 'default';
+    return connector?.profile?.audioProfile || null;
 }
 
 module.exports = {

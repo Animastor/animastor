@@ -41,17 +41,17 @@ describe('profile-override (unit)', () => {
     });
 
     it('setOverride stores the choice and resolvePromptProfiles honors it', async () => {
-        await profileOverride.setOverride('image', 'default');
-        expect(profileOverride.getOverride('image')).to.equal('default');
-        expect(profileOverride.resolvePromptProfiles().imageProfile).to.equal('default');
+        await profileOverride.setOverride('image', 'qwen-image');
+        expect(profileOverride.getOverride('image')).to.equal('qwen-image');
+        expect(profileOverride.resolvePromptProfiles().imageProfile).to.equal('qwen-image');
         // Other types stay connector-derived
         expect(profileOverride.resolvePromptProfiles().audioProfile).to.equal('qwen-tts');
         expect(profileOverride.resolvePromptProfiles().videoProfile).to.equal('ltx-2.3');
     });
 
     it('clearing an override falls back to the connector profile', async () => {
-        await profileOverride.setOverride('video', 'default');
-        expect(profileOverride.resolvePromptProfiles().videoProfile).to.equal('default');
+        await profileOverride.setOverride('video', 'ltx-2.3');
+        expect(profileOverride.resolvePromptProfiles().videoProfile).to.equal('ltx-2.3');
         await profileOverride.setOverride('video', '');
         expect(profileOverride.resolvePromptProfiles().videoProfile).to.equal('ltx-2.3');
     });
@@ -99,10 +99,11 @@ describe('Connector profile routes', () => {
         expect(body.profiles.audio).to.equal('qwen-tts');
         expect(body.profiles.image).to.equal('qwen-image');
         expect(body.profiles.video).to.equal('ltx-2.3');
-        // options lists the selectable profiles from skill files (incl. default)
+        // options lists the selectable profiles from skill files — real profiles
+        // only ('default' was removed)
         for (const type of ['audio', 'image', 'video']) {
             expect(Array.isArray(body.options[type])).to.be.true;
-            expect(body.options[type]).to.include('default');
+            expect(body.options[type]).to.not.include('default');
         }
     });
 
@@ -110,16 +111,16 @@ describe('Connector profile routes', () => {
         const put = await fetch(`${srv.base}/api/v1/connectors/profiles`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ type: 'image', profile: 'default' }),
+            body: JSON.stringify({ type: 'image', profile: 'qwen-image' }),
         });
         expect(put.status).to.equal(200);
         const putBody = await put.json();
         expect(putBody.ok).to.be.true;
-        expect(putBody.profiles.image).to.equal('default');
+        expect(putBody.profiles.image).to.equal('qwen-image');
 
         const res = await fetch(`${srv.base}/api/v1/connectors/profiles`);
         const body = await res.json();
-        expect(body.profiles.image).to.equal('default');
+        expect(body.profiles.image).to.equal('qwen-image');
         expect(body.profiles.audio).to.equal('qwen-tts');
     });
 
@@ -127,10 +128,10 @@ describe('Connector profile routes', () => {
         await fetch(`${srv.base}/api/v1/connectors/profiles`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ type: 'video', profile: 'default' }),
+            body: JSON.stringify({ type: 'video', profile: 'ltx-2.3' }),
         });
         let res = await fetch(`${srv.base}/api/v1/connectors/profiles`);
-        expect((await res.json()).profiles.video).to.equal('default');
+        expect((await res.json()).profiles.video).to.equal('ltx-2.3');
 
         const clear = await fetch(`${srv.base}/api/v1/connectors/profiles`, {
             method: 'PUT',
@@ -152,12 +153,14 @@ describe('Connector profile routes', () => {
         expect(res.status).to.equal(400);
     });
 
-    it('PUT rejects profiles not present on disk', async () => {
-        const res = await fetch(`${srv.base}/api/v1/connectors/profiles`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ type: 'image', profile: 'does-not-exist' }),
-        });
-        expect(res.status).to.equal(400);
+    it('PUT rejects profiles not present on disk (incl. the removed "default")', async () => {
+        for (const profile of ['does-not-exist', 'default']) {
+            const res = await fetch(`${srv.base}/api/v1/connectors/profiles`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ type: 'image', profile }),
+            });
+            expect(res.status, `profile ${profile}`).to.equal(400);
+        }
     });
 });

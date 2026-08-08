@@ -22,7 +22,8 @@ const WORKFLOW_DIALOGUE = 'tts-qwen-dialogue';
 /**
  * Resolve the active audio assembly profile (ai/profiles/audio/{profile}.json).
  * A user override (global settings choice) wins; otherwise the TTS connector's
- * profile.audioProfile ('qwen-tts'), with a 'default' fallback. Its defaults
+ * profile.audioProfile ('qwen-tts'); falls back to the built-in audio
+ * assembly when unset (there is no 'default' profile). Its defaults
  * drive programmatic values like the dialogue workflow's defaultInstruct.
  * @returns {object} — normalized assembly { profileName, type, sections, suppress, defaults }
  */

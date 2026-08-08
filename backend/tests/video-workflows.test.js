@@ -351,9 +351,9 @@ describe('videoProfileNameFromConnector', () => {
         expect(wf.videoProfileNameFromConnector({ profile: { videoProfile: 'ltx-2.3' } })).to.equal('ltx-2.3');
     });
 
-    it('falls back to default when the connector has no profile', () => {
-        expect(wf.videoProfileNameFromConnector({})).to.equal('default');
-        expect(wf.videoProfileNameFromConnector(null)).to.equal('default');
+    it('returns null when the connector has no profile (built-in assembly applies)', () => {
+        expect(wf.videoProfileNameFromConnector({})).to.equal(null);
+        expect(wf.videoProfileNameFromConnector(null)).to.equal(null);
     });
 });
 

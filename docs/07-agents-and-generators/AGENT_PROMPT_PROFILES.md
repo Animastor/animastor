@@ -34,20 +34,21 @@ Agent Pipeline — перед генерацией промпта читает �
 ```
 backend/ai/skills/
 ├── video/
-│   ├── default.md          # Универсальные правила motion-first (базлайн)
 │   ├── ltx-2.3.md          # LTX 2.3 Image-to-Video prompting rules
 │   ├── ltx-2.4.md          # (будущее) LTX 2.4 prompting rules
 │   ├── veo.md              # (будущее) Veo prompting rules
 │   └── kling.md            # (будущее) Kling prompting rules
 ├── image/
-│   ├── default.md          # Дефолтный порядок композиции «от общего к частному»
 │   ├── qwen-image.md       # Qwen Image prompting rules
 │   ├── flux.md             # (будущее) Flux prompting rules
 │   └── sdxl.md             # (будущее) SDXL prompting rules
 ├── audio/
-│   ├── default.md          # Универсальный TTS-базлайн (voice-инструкции + текст)
 │   ├── qwen-tts.md         # Qwen TTS prompting rules
 │   └── fish-speech.md      # (будущее) Fish Speech prompting rules
+
+> Профилей/скиллов `default` НЕТ — только реальные профили моделей. Если профиль
+> не задан (ни override, ни у коннектора), скилл не инжектится, а сборка идёт по
+> встроенному фолбэку в `assembly-profile.js`.
 ├── (существующие общие скиллы)
 │   ├── camera_language.md
 │   ├── composition.md
@@ -164,14 +165,13 @@ const result = await runPipeline(sessionId, text, chars, locs, stepIndex, progre
 Цепочка резолва (fallback):
 
 ```
-ai/profiles/{type}/{profileName}.json  →  ai/profiles/{type}/default.json  →  встроенный дефолт
+ai/profiles/{type}/{profileName}.json  →  встроенный дефолт
 ```
 
 Встроенный дефолт = прежний зашитый порядок «от общего к частному» (обратная
 совместимость). Резолвит `backend/src/image/assembly-profile.js`; `buildImagePrompt`
-собирает секции по профилю. Для скиллов действует `skills/{type}/default.md` —
-дефолтный порядок композиции вынесен из `visuals.md` в скилл и инжектится всегда
-(фолбэк `'default'` в `stepCreateVisuals`, когда профиль не задан).
+собирает секции по профилю. Скиллов/профилей `default` НЕТ: без профиля скилл не
+инжектится в `stepCreateVisuals`, а сборка идёт по встроенному порядку.
 
 ### 4.5 Assembly Profile — видео (дополнение)
 
@@ -197,13 +197,13 @@ ai/profiles/{type}/{profileName}.json  →  ai/profiles/{type}/default.json  →
 - `storyboard` — построчные таймированные сегменты `start–end s: описание`.
 - `renderInfo` — футер `24fps; render mode`.
 
-Профили: `ai/profiles/video/default.json` и `ai/profiles/video/ltx-2.3.json`
+Профили: `ai/profiles/video/ltx-2.3.json`
 (выбирается через `connector.profile.videoProfile`). У LTX секции не подавляются
 (`suppressSections` пуст) — его скилл управляет тем, КАК пишется `video.action`,
 а не что исключать из обёртки. `buildVideoPrompt` собирает секции по профилю;
-`negativeBase` берётся из `assembly.defaults`. Видео-скилл (`video/ltx-2.3` или
-`video/default`) инжектится всегда — в `stepCreateVisuals`, `stepReconcileVideoActions`
-и `stepPolishVideoActions` (фолбэк `'default'`), как и image-скилл.
+`negativeBase` берётся из `assembly.defaults`. Видео-скилл (`video/ltx-2.3`) инжектится
+в `stepCreateVisuals`, `stepReconcileVideoActions`
+и `stepPolishVideoActions`, когда профиль задан (как и image-скилл).
 
 ### 4.6 Assembly Profile — аудио (дополнение)
 
@@ -233,10 +233,9 @@ ai/profiles/{type}/{profileName}.json  →  ai/profiles/{type}/default.json  →
   (node 108 `default_instruct`). Программно берётся из `assembly.defaults` в
   `generation.js` (раньше был захардкожен `""`).
 
-Профили: `ai/profiles/audio/default.json` и `ai/profiles/audio/qwen-tts.json`
-(выбирается через `connector.profile.audioProfile`). Аудио-скилл (`audio/qwen-tts`
-или `audio/default`) инжектится всегда в `stepGenerateVoices` (фолбэк `'default'`) —
-раньше `qwen-tts.md` нигде не использовался.
+Профили: `ai/profiles/audio/qwen-tts.json`
+(выбирается через `connector.profile.audioProfile`).Аудио-скилл (`audio/qwen-tts`) инжектится в `stepGenerateVoices`, когда профиль
+задан — раньше `qwen-tts.md` нигде не использовался.
 
 ## 5. Изменения во Frontend
 

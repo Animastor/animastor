@@ -27,9 +27,9 @@ describe('audioProfileNameFromConnector', () => {
         expect(audioProfileNameFromConnector({ profile: { audioProfile: 'qwen-tts' } })).to.equal('qwen-tts');
     });
 
-    it('falls back to default when the connector has no profile', () => {
-        expect(audioProfileNameFromConnector({})).to.equal('default');
-        expect(audioProfileNameFromConnector(null)).to.equal('default');
+    it('returns null when the connector has no profile (built-in assembly applies)', () => {
+        expect(audioProfileNameFromConnector({})).to.equal(null);
+        expect(audioProfileNameFromConnector(null)).to.equal(null);
     });
 });
 

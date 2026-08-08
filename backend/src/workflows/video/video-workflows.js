@@ -123,12 +123,13 @@ function buildCharLines(participants, loadedBook, scene) {
 
 /**
  * Pure helper (testable): extract the video assembly-profile name from a
- * connector object. Falls back to 'default' when no connector/profile exists.
+ * connector object. Returns null when no connector/profile exists — callers
+ * fall back to the built-in assembly then (there is no 'default' profile).
  * @param {object|null} connector
- * @returns {string}
+ * @returns {string|null}
  */
 function videoProfileNameFromConnector(connector) {
-    return connector?.profile?.videoProfile || 'default';
+    return connector?.profile?.videoProfile || null;
 }
 
 /**
@@ -137,7 +138,7 @@ function videoProfileNameFromConnector(connector) {
  * @param {object} loadedBook — book with characters + locations
  * @param {Array} units — image units of this workflow group
  * @param {Array<number>} iuDurations — per-unit durations (seconds)
- * @param {string} [profileName] — assembly profile name ('ltx-2.3', 'default', ...)
+ * @param {string} [profileName] — assembly profile name ('ltx-2.3', ...)
  * @returns {string}
  */
 function buildVideoPrompt(sceneData, loadedBook, units, iuDurations, profileName) {
@@ -273,8 +274,8 @@ function buildWorkflowForGroup(groupInfo, units, iuDurations, sceneData, loadedB
     const cl = require('../connector-loader');
     // Assembly profile drives final prompt structure + negative base.
     // A user override (global settings choice) wins; otherwise the connector's
-    // profile.videoProfile ('ltx-2.3'), with a 'default' fallback when the
-    // connector has no profile field.
+    // profile.videoProfile ('ltx-2.3'); when neither is set the built-in
+    // video assembly applies.
     const assembly = resolveAssembly('video', profileOverride.getOverride('video') || videoProfileNameFromConnector(connector));
 
     // Resolve guide nodes from the workflow (sorted by node ID for consistent ordering)
