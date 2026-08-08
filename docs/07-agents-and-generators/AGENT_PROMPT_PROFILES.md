@@ -148,9 +148,18 @@ const result = await runPipeline(sessionId, text, chars, locs, stepIndex, progre
 
 - `ai/skills/{type}/{profile}.md` — как агент ПИШЕТ `image.prompt`/`video.action` (контент).
 - `ai/profiles/{type}/{profile}.json` — как КОД собирает финальный промпт:
-  порядок секций (`assembly.sections`), подавленные секции (`assembly.suppressSections` —
-  то, что модель пишет сама, напр. style/lighting/mood/shot для Qwen) и дефолты
+  порядок секций (`assembly.sections`), опционально подавленные секции
+  (`assembly.suppressSections` — механизм для будущих профилей; сейчас не
+  используется: qwen-image больше не подавляет style/lighting/mood/shot, wrapper
+  всегда собирает их из структурированных полей и environment) и дефолты
   (`assembly.defaults` — quality, negativeBase).
+
+> Разделение ответственности (2026-08): `visual.md` — что делает визуальный агент
+> (общий уровень), скилл `{type}/{profile}.md` — как конкретная модель пишет ядро
+> (`image.prompt` / `video.action`), профиль + wrapper — как технически собрать
+> итоговый запрос. Агент пишет ТОЛЬКО ядро; shot/style/mood/lighting/atmosphere
+> добавляются программно из структурированных полей и environment в порядке,
+> заданном профилем.
 
 Цепочка резолва (fallback):
 

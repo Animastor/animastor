@@ -3,9 +3,9 @@
 // ======================================================
 // Resolves MACHINE-READABLE prompt-assembly profiles from ai/profiles/**/*.json.
 // A profile drives how the programmatic builder (buildImagePrompt) assembles the
-// final prompt: the ORDER of sections, which sections are suppressed (because the
-// model's LLM-facing skill carries them inside its own sentence), and DEFAULTS
-// (quality, negative base).
+// final prompt: the ORDER of sections, optional SUPPRESSED sections (a per-profile
+// mechanism — currently unused by every shipped profile: the wrapper always
+// assembles the full prompt), and DEFAULTS (quality, negative base).
 //
 // Resolution chain (per type):
 //   1. ai/profiles/{type}/{profileName}.json  — the selected profile

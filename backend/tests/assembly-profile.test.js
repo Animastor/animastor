@@ -21,19 +21,14 @@ const { imageProfileNameFromConnector } = require('../src/image/connector-utils'
 
 describe('Assembly profile resolver', () => {
 
-    it('resolves qwen-image profile with the expected suppression set', () => {
+    it('resolves qwen-image profile with no suppressed sections', () => {
         const cfg = resolveAssembly('image', 'qwen-image');
         expect(cfg.profileName).to.equal('qwen-image');
         expect(cfg.sections).to.have.lengthOf(15);
-        // Qwen writes style/lighting/mood/shot inside its own sentence —
-        // the wrapper must NOT repeat them.
-        for (const name of ['renderMode', 'visualStyle', 'mood', 'lighting', 'atmosphere', 'shot']) {
-            expect(cfg.suppress.has(name), `suppress should contain ${name}`).to.be.true;
-        }
-        // Context, characters, direct prompt and quality stay in the wrapper.
-        for (const name of ['characters', 'directPrompt', 'quality', 'location', 'time']) {
-            expect(cfg.suppress.has(name), `suppress should NOT contain ${name}`).to.be.false;
-        }
+        // The qwen skill governs ONLY the core sentence; the wrapper assembles
+        // every section (shot/style/mood/lighting/atmosphere included) from
+        // structured fields and the environment — nothing is suppressed.
+        expect(cfg.suppress.size).to.equal(0);
         expect(cfg.defaults.quality).to.include('highly detailed');
         expect(cfg.defaults.negativeBase).to.equal('blurry, low quality, artifacts');
     });
@@ -159,12 +154,13 @@ describe('buildImagePrompt — assembly profile driven', () => {
         expect(result).to.include('image quality');
     });
 
-    it('qwen-image profile suppresses style/lighting/mood/shot (the model writes them)', () => {
+    it('qwen-image profile assembles the full wrapper (shot/style/lighting/mood from data)', () => {
         const result = buildImagePrompt(unit, scene, {}, bookPayload, { profile: 'qwen-image' });
-        expect(result).to.not.include('style cinematic');
-        expect(result).to.not.include('soft street lamps');
-        expect(result).to.not.include('quiet and calm');
-        expect(result).to.not.include('close shot');
+        // The wrapper always adds the full wrapper from structured fields + env.
+        expect(result).to.include('style cinematic');
+        expect(result).to.include('soft street lamps');
+        expect(result).to.include('quiet and calm');
+        expect(result).to.include('close shot');
         // context, characters, direct prompt, quality remain
         expect(result).to.include('Patriarch Ponds in Moscow');
         expect(result).to.include('warm evening');

@@ -130,7 +130,10 @@ function buildShotPrompt(unit) {
     if (shot) {
         return `${shot.replace(/_/g, " ")} shot`;
     }
-    return null;
+    // Safety net: the pipeline normally fills image.shot on every unit, but if
+    // it is ever missing the wrapper must still emit a shot (and never silently
+    // drop the section for a profile that assembles the full wrapper).
+    return 'wide shot';
 }
 
 function resolveNegativePrompt(unit, scenePayload) {
@@ -212,12 +215,17 @@ function resolveLocationFromPrompt(directPrompt, locations) {
 //                       lighting → atmosphere
 //   2. Shot:            before the objects — the frame is chosen first
 //   3. Characters:      ONE semantic block per participant
-//   4. Action / spatial:the AI-authored unit.image.prompt (inserted as a block)
+//   4. Action / spatial:the AI-authored unit.image.prompt — the CORE written
+//                       by the agent (inserted as a block)
 //   5. Fine details:    image quality LAST
 //
-// Model-specific profiles (e.g. qwen-image) SUPPRESS wrapper sections that the
-// model's LLM-facing skill carries inside its own image.prompt sentence (Qwen
-// writes style/lighting/mood/shot itself, so the wrapper does not repeat them).
+// Division of labor: the agent writes ONLY the core sentence (directPrompt);
+// the wrapper assembles every other section from structured fields (image.shot,
+// image.style) and the environment (time/season/weather/mood/lighting) plus
+// character passports. suppressSections is an OPTIONAL per-profile mechanism —
+// currently no image profile suppresses anything (qwen-image used to suppress
+// style/lighting/mood/shot on the assumption the skill made the agent write
+// them itself; that assumption was dropped because it silently lost data).
 //
 // NOTE: typography/title-card units assemble via a separate, simpler branch and
 // are NOT profile-driven.

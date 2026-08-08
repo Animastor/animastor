@@ -22,14 +22,6 @@
       "directPrompt",
       "quality"
     ],
-    "suppressSections": [
-      "renderMode",
-      "visualStyle",
-      "mood",
-      "lighting",
-      "atmosphere",
-      "shot"
-    ],
     "defaults": {
       "quality": "image quality: highly detailed, sharp focus",
       "negativeBase": "blurry, low quality, artifacts"
