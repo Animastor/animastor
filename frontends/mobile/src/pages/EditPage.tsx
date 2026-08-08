@@ -1039,10 +1039,16 @@ export function EditPage(props: { path?: string }) {
   const inputCard = (label: string, value: string, multiline: boolean, storeKey: string, maxLength?: number): JSX.Element => {
     if (!(storeKey in fieldValues.current)) fieldValues.current[storeKey] = value;
     const currentLen = (fieldValues.current[storeKey] ?? '').length;
+    // Values containing line breaks MUST use a multiline textarea — a single-line
+    // <input type="text"> strips "\n" on render ("С.А. Хабаров\n\nЗа пределами
+    // алгоритмов" glues into "ХабаровЗа…"), and an edit would save the stripped
+    // value back, destroying TTS paragraph breaks. Length alone (the old
+    // heuristic) missed short multiline texts like book covers.
+    const useTextarea = multiline || (fieldValues.current[storeKey] ?? '').includes('\n');
     return (
       <div class="edit-field" key={storeKey}>
         <label class="edit-field__label">{label}</label>
-        {multiline ? (
+        {useTextarea ? (
           <textarea
             class="edit-field__input edit-field__input--area"
             rows={4}
