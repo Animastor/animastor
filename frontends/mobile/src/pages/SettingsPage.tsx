@@ -408,6 +408,21 @@ function WorkerSection() {
     }
   };
 
+  // Instant apply: the profile selection IS the save (global override).
+  // PUT /connectors/profiles persists it; the backend honors it in prompt
+  // assembly + skill injection. No Apply button.
+  const saveProfile = async (profile: string) => {
+    if (saving) return;
+    setSaving(true); setError('');
+    try {
+      await putJson('/connectors/profiles', { type, profile });
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <section class="page settings-page">
       <div class="settings-page__scroll">
@@ -425,6 +440,9 @@ function WorkerSection() {
             >{t(label)}</button>
           ))}
         </div>
+
+        {/* Save errors from any card (profile/timeout) surface here, above all cards */}
+        {error && <p class="settings-page__error">{error}</p>}
 
         {/* ── Workers (availability) — /worker/counts ── */}
         <div class="card">
@@ -451,11 +469,16 @@ function WorkerSection() {
             class="select"
             value={displayProfile}
             aria-label={t(PROFILE_LABEL[type])}
-            onChange={(e) => setProfileName((e.target as HTMLSelectElement).value)}
+            disabled={saving}
+            onChange={(e) => {
+              const v = (e.target as HTMLSelectElement).value;
+              setProfileName(v);
+              void saveProfile(v);
+            }}
           >
             {profileOptions.map((o) => <option key={o} value={o}>{o}</option>)}
           </select>
-          <p class="card__hint">{t('settings_profiles_determined_by_workflow')}</p>
+          <p class="card__hint">{t('settings_profiles_saved_and_applied')}</p>
         </div>
 
         {/* ── Timeout ── */}
@@ -486,7 +509,6 @@ function WorkerSection() {
             </button>
           </div>
           <p class="card__hint">{t('worker_settings_timeout_desc')}</p>
-          {error && <p class="settings-page__error">{error}</p>}
         </div>
 
         {/* ── Workflow ── */}

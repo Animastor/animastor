@@ -266,3 +266,17 @@ data class ProfileOptions(
     val image: List<String> = emptyList(),
     val video: List<String> = emptyList()
 )
+
+/**
+ * User profile choice — persisted via PUT /api/v1/connectors/profiles.
+ * profile == null clears the override → the connector-derived profile wins.
+ */
+data class UpdateProfileRequest(
+    val type: String,
+    val profile: String? = null
+)
+
+data class UpdateProfileResponse(
+    val ok: Boolean = false,
+    val profiles: PromptProfiles? = null
+)

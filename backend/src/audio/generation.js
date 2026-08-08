@@ -8,6 +8,7 @@ const gpu = require('../runtime/gpu-dispatcher');
 const jobSchema = require('../runtime/job-schema');
 const wfLoader = require('../workflows/workflow-loader');
 const { resolveAssembly } = require('../image/assembly-profile');
+const profileOverride = require('../services/profile-override');
 const { audioProfileNameFromConnector } = require('./connector-utils');
 const helpers = require('./helpers');
 const validation = require('./validation');
@@ -20,14 +21,14 @@ const WORKFLOW_DIALOGUE = 'tts-qwen-dialogue';
 
 /**
  * Resolve the active audio assembly profile (ai/profiles/audio/{profile}.json).
- * The profile name comes from the TTS connector's profile.audioProfile
- * ('qwen-tts'), with a 'default' fallback. Its defaults drive programmatic
- * values like the dialogue workflow's defaultInstruct.
+ * A user override (global settings choice) wins; otherwise the TTS connector's
+ * profile.audioProfile ('qwen-tts'), with a 'default' fallback. Its defaults
+ * drive programmatic values like the dialogue workflow's defaultInstruct.
  * @returns {object} — normalized assembly { profileName, type, sections, suppress, defaults }
  */
 function resolveAudioAssembly() {
     const connector = wfLoader.getConnector(WORKFLOW_DIALOGUE) || wfLoader.getConnector(WORKFLOW_NARRATION);
-    return resolveAssembly('audio', audioProfileNameFromConnector(connector));
+    return resolveAssembly('audio', profileOverride.getOverride('audio') || audioProfileNameFromConnector(connector));
 }
 
 // ══════════════════════════════════════════════════════

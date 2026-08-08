@@ -10,6 +10,7 @@ import com.example.animastor.R
 import com.example.animastor.databinding.FragmentWorkerSettingsBinding
 import com.example.animastor.network.RetrofitClient
 import com.example.animastor.repository.LayerConfigUpdate
+import com.example.animastor.repository.UpdateProfileRequest
 import kotlinx.coroutines.launch
 
 /**
@@ -156,6 +157,29 @@ class WorkerSettingsFragment : Fragment(R.layout.fragment_worker_settings) {
             b.timeoutSpinner.setSelection(idx)
         }
 
+        // ── Profile — instant apply (web parity): the selection IS the save via
+        // PUT /api/v1/connectors/profiles (global override). The flag suppresses
+        // the synthetic onItemSelected fired by the load's setSelection; it
+        // flips only AFTER the load settles so opening the screen never writes
+        // the just-loaded value back.
+        var profileInitialized = false
+        b.profileSpinner.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: android.widget.AdapterView<*>?, v: View?, position: Int, id: Long) {
+                if (!profileInitialized) return
+                val selected = parent?.getItemAtPosition(position)?.toString() ?: return
+                lifecycleScope.launch {
+                    try {
+                        RetrofitClient.api.putConnectorProfile(
+                            UpdateProfileRequest(workerType, selected)
+                        )
+                    } catch (_: Exception) {
+                        // Stay on screen; retry on next change
+                    }
+                }
+            }
+            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
+        }
+
         // ── Load profiles ──
         lifecycleScope.launch {
             try {
@@ -191,6 +215,8 @@ class WorkerSettingsFragment : Fragment(R.layout.fragment_worker_settings) {
                 val adapter = ArrayAdapter(requireContext(), android.R.layout.simple_spinner_item, fallback)
                 adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
                 b.profileSpinner.adapter = adapter
+            } finally {
+                profileInitialized = true // load settled — user changes now persist
             }
         }
 

@@ -9,6 +9,12 @@ module.exports = function(app, redis, deps) {
     const { wfManager } = deps;
     const { log } = deps.utils || { log: console.log };
 
+    // Prompt-profile override store: user settings-choice per type (audio/image/
+    // video). Attach Redis so selections persist across restarts; the cache is
+    // primed from Redis best-effort (assembly-time reads stay synchronous).
+    const profileOverride = require('../services/profile-override');
+    profileOverride.setRedis(redis);
+
     // ⚠️ IMPORTANT: Static routes MUST be defined BEFORE parameterized routes (:name).
     // Express matches routes top-to-bottom — /grouped would match as :name otherwise.
 
@@ -130,6 +136,68 @@ module.exports = function(app, redis, deps) {
     });
 
     // ======================================================
+    // GET PROMPT PROFILES — effective (override-aware) profiles + options by type
+    // ======================================================
+    // Response shape:
+    //   profiles[type] — the CURRENT effective profile name (user override wins,
+    //     else the first profile declared by a connector of this type, else null)
+    //   options[type]   — array of selectable profile names (skills present on disk)
+    // Static — MUST be before GET /:name, otherwise "profiles" matches as a name.
+    app.get('/api/v1/connectors/profiles', async (req, res) => {
+        try {
+            const profileLoader = require('../services/prompt-profile-loader');
+            const profiles = { audio: null, image: null, video: null };
+
+            for (const type of ['audio', 'image', 'video']) {
+                // Effective = user override wins, else the connector-derived
+                // profile of this type's canonical workflow (e.g. "qwen-image"),
+                // else null. Connector-derived name comes from the RAW connector
+                // (getConnectorsGrouped() only exposes summaries without profile).
+                profiles[type] = profileOverride.getOverride(type)
+                    || profileOverride.connectorProfileName(type)
+                    || null;
+            }
+
+            // Include available profile options from skill files
+            const options = profileLoader.listAvailableProfiles();
+
+            res.json({ profiles, options });
+        } catch (err) {
+            console.error('[CONNECTORS] Profiles error:', err.message);
+            res.status(500).json({ error: err.message });
+        }
+    });
+
+    // ======================================================
+    // PUT PROMPT PROFILE — persist a user's profile choice for one type
+    // ======================================================
+    // Body: { type: 'audio'|'image'|'video', profile: '<name>|null' }
+    // A null/empty profile clears the override → connector-derived profile wins.
+    app.put('/api/v1/connectors/profiles', async (req, res) => {
+        try {
+            const { type, profile } = req.body || {};
+            if (!['audio', 'image', 'video'].includes(type)) {
+                return res.status(400).json({ error: 'type must be one of audio|image|video' });
+            }
+
+            const profileLoader = require('../services/prompt-profile-loader');
+            const available = profileLoader.listAvailableProfiles()[type] || [];
+            if (profile && !available.includes(profile)) {
+                return res.status(400).json({
+                    error: `Unknown ${type} profile "${profile}". Available: ${available.join(', ') || '(none)'}`,
+                });
+            }
+
+            const overrides = await profileOverride.setOverride(type, profile || null);
+            log(`[PROFILE-OVERRIDE] ${type} profile set to ${profile || '(connector default)'}`);
+            res.json({ ok: true, profiles: overrides });
+        } catch (err) {
+            console.error('[CONNECTORS] Set profile error:', err.message);
+            res.status(500).json({ error: err.message });
+        }
+    });
+
+    // ======================================================
     // GET CONNECTOR DETAIL (parameterized — must be after all static routes)
     // ======================================================
     app.get('/api/v1/connectors/:name', async (req, res) => {
@@ -225,41 +293,6 @@ module.exports = function(app, redis, deps) {
             res.json(result);
         } catch (err) {
             console.error('[CONNECTORS] Status error:', err.message);
-            res.status(500).json({ error: err.message });
-        }
-    });
-
-    // ======================================================
-    // GET PROMPT PROFILES — active profiles + available options by type
-    // ======================================================
-    app.get('/api/v1/connectors/profiles', async (req, res) => {
-        try {
-            const result = wfManager.getConnectorsGrouped();
-            const profiles = { audio: null, image: null, video: null };
-
-            for (const type of ['audio', 'image', 'video']) {
-                const connectors = result[type] || [];
-                // Collect unique profiles from all connectors of this type
-                const profileSet = new Set();
-                for (const conn of connectors) {
-                    if (conn.profile) {
-                        if (conn.profile.audioProfile) profileSet.add(conn.profile.audioProfile);
-                        if (conn.profile.imageProfile) profileSet.add(conn.profile.imageProfile);
-                        if (conn.profile.videoProfile) profileSet.add(conn.profile.videoProfile);
-                    }
-                }
-                if (profileSet.size > 0) {
-                    profiles[type] = Array.from(profileSet).join(', ');
-                }
-            }
-
-            // Include available profile options from skill files
-            const profileLoader = require('../services/prompt-profile-loader');
-            const options = profileLoader.listAvailableProfiles();
-
-            res.json({ profiles, options });
-        } catch (err) {
-            console.error('[CONNECTORS] Profiles error:', err.message);
             res.status(500).json({ error: err.message });
         }
     });

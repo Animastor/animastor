@@ -15,6 +15,7 @@ const { PROGRESS_STAGES, resolveBookLanguage } = require('../agent-prompts');
 const pipelineSteps = require('./pipeline-steps');
 const pipelineRunner = require('./pipeline-runner');
 const textUtils = require('./text-utils');
+const profileOverride = require('../profile-override');
 
 /**
  * Read chunk_size from Redis layer-config for the given book (default 3).
@@ -116,6 +117,7 @@ async function bootstrapWithAgent(bookId, progress, publishProgress, redis) {
             language,
             country: structure.country || null,
             epoch: structure.epoch || null,
+            promptProfiles: profileOverride.resolvePromptProfiles(),
         });
 
         if (result.scenes.length === 0) {
@@ -417,6 +419,7 @@ async function bootstrapNextWindow(bookId, progress, publishProgress, redis) {
                 redis,
                 chunkSize,
                 language,
+                promptProfiles: profileOverride.resolvePromptProfiles(),
             }
         );
 
@@ -601,6 +604,7 @@ async function bootstrapNextWindow(bookId, progress, publishProgress, redis) {
             language,
             country: structure?.country || null,
             epoch: structure?.epoch || null,
+            promptProfiles: profileOverride.resolvePromptProfiles(),
         });
 
         const extraScenes = result.extraScenes || [];

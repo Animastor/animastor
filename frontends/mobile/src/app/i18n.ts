@@ -109,6 +109,7 @@ const dict = {
     settings_image_profile: 'Профиль изображений',
     settings_video_profile: 'Видео профиль',
     settings_profiles_determined_by_workflow: 'Определяется активными workflow-коннекторами',
+    settings_profiles_saved_and_applied: 'Выбор сохраняется и применяется при генерации',
     workflow_manager_no_workflows: 'Нет настроенных Workflow',
     workflow_manager_manage: 'Управление',
     // Worker counts (web-дополнение)
@@ -445,6 +446,7 @@ const dict = {
     settings_image_profile: 'Image Profile',
     settings_video_profile: 'Video Profile',
     settings_profiles_determined_by_workflow: 'Determined by active workflow connectors',
+    settings_profiles_saved_and_applied: 'Your selection is saved and applied during generation',
     workflow_manager_no_workflows: 'No workflows configured',
     workflow_manager_manage: 'Manage',
     // Worker counts (web-only addition)

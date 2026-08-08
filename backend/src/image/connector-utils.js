@@ -3,6 +3,7 @@
 // ======================================================
 
 const wfLoader = require('../workflows/workflow-loader');
+const profileOverride = require('../services/profile-override');
 
 const WORKFLOW_NAME = 'img-qwen-image';
 
@@ -36,12 +37,14 @@ function imageProfileNameFromConnector(connector) {
 }
 
 /**
- * Resolve the image assembly-profile name from the image workflow's connector
- * (e.g. "qwen-image" via conn-image-generation.json), defaulting to "default".
+ * Resolve the image assembly-profile name. A user override (global settings
+ * choice) wins; otherwise the image workflow's connector profile
+ * (e.g. "qwen-image" via conn-image-generation.json); finally "default".
  * @returns {string}
  */
 function resolveImageProfileName() {
-    return imageProfileNameFromConnector(wfLoader.getConnector(WORKFLOW_NAME));
+    return profileOverride.getOverride('image')
+        || imageProfileNameFromConnector(wfLoader.getConnector(WORKFLOW_NAME));
 }
 
 module.exports = {

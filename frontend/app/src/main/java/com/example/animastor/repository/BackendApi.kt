@@ -435,6 +435,11 @@ interface BackendApi {
     @GET("/api/v1/connectors/profiles")
     suspend fun getConnectorProfiles(): ConnectorProfilesResponse
 
+    @PUT("/api/v1/connectors/profiles")
+    suspend fun putConnectorProfile(
+        @Body body: UpdateProfileRequest
+    ): UpdateProfileResponse
+
     @PUT("/api/v1/connectors/{name}/status")
     suspend fun putConnectorStatus(
         @Path("name") name: String,

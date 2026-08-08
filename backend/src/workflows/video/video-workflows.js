@@ -8,6 +8,7 @@
 
 const book = require('../../book');
 const wfLoader = require('../workflow-loader');
+const profileOverride = require('../../services/profile-override');
 const { tokensToString } = require('../../book/lazy-book/appearance');
 const { resolveAssembly, DEFAULT_VIDEO_DEFAULTS } = require('../../image/assembly-profile');
 
@@ -271,9 +272,10 @@ function buildWorkflowForGroup(groupInfo, units, iuDurations, sceneData, loadedB
     const connector = getConnector(workflowName);
     const cl = require('../connector-loader');
     // Assembly profile drives final prompt structure + negative base.
-    // Resolved from the connector's profile.videoProfile ('ltx-2.3'), with a
-    // 'default' fallback when the connector has no profile field.
-    const assembly = resolveAssembly('video', videoProfileNameFromConnector(connector));
+    // A user override (global settings choice) wins; otherwise the connector's
+    // profile.videoProfile ('ltx-2.3'), with a 'default' fallback when the
+    // connector has no profile field.
+    const assembly = resolveAssembly('video', profileOverride.getOverride('video') || videoProfileNameFromConnector(connector));
 
     // Resolve guide nodes from the workflow (sorted by node ID for consistent ordering)
     const guideNodeIds = Object.entries(wf)
