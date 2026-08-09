@@ -41,17 +41,8 @@ cd frontend
 ./gradlew clean assembleDebug
 
 echo
-echo "Copying APK..."
-
-cp app/build/outputs/apk/debug/app-debug.apk \
-   /home/sureg/net-disk/app-debug.apk
-
-echo
 echo "=================================="
 echo " Finished"
 echo "=================================="
 echo
 
-echo "APK download URL:"
-echo "https://animastor.in/net-disk/app-debug.apk"
-echo
