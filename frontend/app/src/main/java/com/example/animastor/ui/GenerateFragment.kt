@@ -371,6 +371,12 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
             val updated = viewModel.checkVBookAgentStatus()
             if (updated.stage != VBookStage.IDLE) updated else vbookProg
         } else null
+        // Window finished (green 100% row displayed): refresh the button label so
+        // it offers "Next" (start the next window) during the COMPLETED display
+        // instead of "Generate VBook".
+        if (vbookToShow?.stage == VBookStage.COMPLETED) {
+            updateVBookButtonText()
+        }
         val panelState = viewModel.computeProgressRows(panel, vbookToShow, labels)
 
         when (panelState) {
@@ -636,7 +642,12 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
         val hasExistingContent = bookData?.chapters?.orEmpty()?.any { ch ->
             ch.scenes?.orEmpty()?.isNotEmpty() == true
         } == true
-        if (hasExistingContent && !viewModel.isRegenerating.value) {
+        // Manual per-window mode: while a window's green COMPLETED row is shown
+        // the session is still regenerating (isRegenerating stays true until the
+        // row's 10s display window finalises it) — the button must still offer
+        // "Next" (start the next window, fresh timer) during that display.
+        val vbookWindowDone = viewModel.uiState.value.vbookProgress?.stage == VBookStage.COMPLETED
+        if (hasExistingContent && (!viewModel.isRegenerating.value || vbookWindowDone)) {
             b.generateVBookButton.text = getString(R.string.generate_vbook_next)
         } else {
             b.generateVBookButton.text = getString(R.string.generate_vbook)

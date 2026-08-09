@@ -221,7 +221,11 @@ export function GeneratePage(props: { path?: string }) {
 
   // ── VBook button text (updateVBookButtonText) ──
   const hasExistingContent = bookData?.chapters?.some((ch) => (ch.scenes?.length ?? 0) > 0) === true;
-  const vbookBtnText = hasExistingContent && !isRegenerating.value ? t('generate_vbook_next') : t('generate_vbook');
+  // Manual per-window mode: while a window's green COMPLETED row is shown the
+  // session is still regenerating (isRegenerating stays true until the row's
+  // 10s display window finalises it) — the button must still offer "Next"
+  // (start the next window, fresh timer) during that display.
+  const vbookBtnText = hasExistingContent && (!isRegenerating.value || vbookProgress.value.stage === 'COMPLETED') ? t('generate_vbook_next') : t('generate_vbook');
 
   // ── Rows per section container (renderTaskRowsToSections) ──
   const rowsFor = (type: WorkerType): TaskRow[] => {

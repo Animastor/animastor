@@ -229,6 +229,14 @@ class GenerateViewModel(
 
     private var generationJob: Job? = null
 
+    /**
+     * Monotonic token for VBook poll generations: incremented on every
+     * startVBookGeneration so a cancelled/superseded poll loop (or its failure
+     * handler) can detect it is stale and never touch the UI or timer of a
+     * newer session. Mirrors the mobile web's vbookPollToken.
+     */
+    private var vbookPollToken = 0
+
     // ── Layer defaults ────────────────────────────────────────────
 
     var imageEnabled: Boolean = true
@@ -490,16 +498,30 @@ class GenerateViewModel(
         val bid = bookId.takeIf { it.isNotBlank() } ?: return
         Log.i(TAG, "startVBookGeneration: $bid")
         _generationStatus.value = GenerationStatus.RUNNING
+        // Mark the session regenerating (mirrors startGeneration) so the shared
+        // wall-clock timer is NOT stopped when the VBook agent finishes — both
+        // while audio/image/video stages are still running, and in the pure-VBook
+        // flow at the end of each window. Without this, stopTimer() in
+        // pollVBookProgress/applyGenerationResults ran BEFORE the frozen elapsed
+        // of the green COMPLETED row was computed, so the 100% row showed
+        // 00:00:00 instead of the real window time — the reported "timer shows
+        // zeros at 100%" bug. (The timer is stopped later by the normal
+        // finalise path ~10s after the completed row appears.)
+        _isRegenerating.value = true
 
         // Don't reset _generationCompleted here — let _newGenerationPending
         // gate the UI until VBook progress or server workers appear.
         _newGenerationPending = true
         _uiState.update { it.copy(vbookProgress = VBookProgress(stage = VBookStage.ANALYZING)) }
+        // Manual per-window mode: one click = one window = one generation. The
+        // timer always starts fresh for the new window (no survival across
+        // windows); the previous window's finalise already stopped it.
         startTimer()
         startProgressStream(bid)
         _importCompleteReceived = false
 
         generationJob?.cancel()
+        val token = ++vbookPollToken
         generationJob = viewModelScope.launch {
             runCatching {
                 val status = runCatching { _repository.getLazyBookStatus(bid) }.getOrNull()
@@ -512,11 +534,32 @@ class GenerateViewModel(
                     _repository.bootstrapNextWindow(bid)
                 }
             }.onSuccess {
-                pollVBookProgress(bid)
+                pollVBookProgress(bid, token)
             }.onFailure { e ->
+                // A superseded generation (new startVBookGeneration / import /
+                // cancel) cancelled this job — its failure must not tear down
+                // the UI or timer of the newer session.
+                if (token != vbookPollToken) return@onFailure
                 Log.w(TAG, "startVBookGeneration failed: ${e.message}")
-                _uiState.update { it.copy(vbookProgress = VBookProgress(stage = VBookStage.IDLE)) }
-                stopTimer()
+                // A client-side abort (OkHttp timeout / network blip) does NOT
+                // stop the backend agent — the bootstrap route keeps processing
+                // the window. Reconcile with the real agent state before tearing
+                // the UI down: if it is still running (or the window already
+                // finished, paused), keep the progress block + timer alive and
+                // let the poller track it to completion. Only tear down on a
+                // genuine failure (no active session). Mirrors the mobile web.
+                val agentStillAlive = runCatching {
+                    val st = _repository.getAgentStatus(bid)
+                    st.active || st.session_status == "paused"
+                }.getOrDefault(false)
+                if (agentStillAlive) {
+                    Log.i(TAG, "startVBookGeneration: agent still active after client-side failure — keeping UI alive")
+                    pollVBookProgress(bid, token)
+                } else {
+                    Log.w(TAG, "startVBookGeneration: no active agent session — tearing down")
+                    _uiState.update { it.copy(vbookProgress = VBookProgress(stage = VBookStage.IDLE)) }
+                    stopTimer()
+                }
             }
         }
     }
@@ -526,14 +569,21 @@ class GenerateViewModel(
      * Updates [vbookProgress] for the Generate screen progress display.
      * Exits early when SSE import_complete event arrives.
      */
-    private suspend fun pollVBookProgress(bId: String) {
+    private suspend fun pollVBookProgress(bId: String, token: Int) {
         var consecutiveInactive = 0
         val maxInactive = 2
-        val maxPollTimeMs = 5 * 60 * 1000L
+        // Safety net against a stuck backend (agent-status reports active
+        // forever). NOT a generation deadline: the loop terminates on its own
+        // once the agent reports inactive twice. Long single-window runs (the
+        // reported multi-minute stages) must never be cut short by this cap, so
+        // it sits far above any realistic generation — matching the mobile web.
+        val maxPollTimeMs = 60 * 60 * 1000L
         val startTime = System.currentTimeMillis()
         var safetyCapTripped = false
 
         while (consecutiveInactive < maxInactive) {
+            // A newer generation superseded this poll — leave its UI alone.
+            if (token != vbookPollToken) return
             if (_importCompleteReceived) {
                 Log.i(TAG, "[VBookPoll] import_complete SSE received — marking completed")
                 // Preserve the last-known window counters: the completed row
@@ -588,11 +638,16 @@ class GenerateViewModel(
                     consecutiveInactive = 0
                 }
             } catch (e: Exception) {
+                // Never swallow cancellation — a cancelled poll must exit via the
+                // token guard (or propagate), not continue to stopTimer() below.
+                if (e is CancellationException) throw e
                 consecutiveInactive++
                 Log.w(TAG, "[VBookPoll] failed: ${e.message} (x$consecutiveInactive)")
                 delay(3000)
             }
         }
+        // A newer generation superseded this poll while it was running.
+        if (token != vbookPollToken) return
 
         // If the safety cap tripped, probe the real agent state before deciding:
         // a still-working agent (running, or paused between windows) must NOT be
@@ -614,6 +669,8 @@ class GenerateViewModel(
                 }
                 return
             } catch (e: Exception) {
+                // Never swallow cancellation (same reason as the poll loop above).
+                if (e is CancellationException) throw e
                 Log.w(TAG, "[VBookPoll] safety-cap probe failed: ${e.message}")
             }
         }
@@ -668,7 +725,14 @@ class GenerateViewModel(
         // чтобы избежать двух прогресс-баров при повторном открытии.
         resetProgressState()
         _uiState.update { it.copy(vbookProgress = VBookProgress(stage = VBookStage.IDLE)) }
+        // A new import starts a fresh session: invalidate any in-flight VBook
+        // poll job (so its failure handler can never touch the new UI) and stop
+        // the previous session's timer explicitly — the old implicit stop came
+        // from the cancelled job's teardown, which the token guard now suppresses.
+        vbookPollToken++
         generationJob?.cancel()
+        generationJob = null
+        stopTimer()
         hasUnsavedChanges = false
         _dirtySummary.value = null
         _dirtyScenes.value = emptyList()
@@ -950,7 +1014,7 @@ class GenerateViewModel(
                                 state.copy(vbookProgress = state.vbookProgress?.copy(stage = VBookStage.COMPLETED))
                             }
                         }
-                        VBookStage.COMPLETED -> { /* keep */ }
+                        VBookStage.COMPLETED -> { /* keep — the 10s display window finalises the session normally */ }
                         VBookStage.IDLE -> { /* keep idle */ }
                     }
                 }
@@ -1202,6 +1266,9 @@ class GenerateViewModel(
     }
 
     fun closeBook() {
+        // Invalidate any in-flight VBook poll job so its failure handler can
+        // never touch the fresh state (mirrors the mobile web closeBook).
+        vbookPollToken++
         generationJob?.cancel()
         _generationStatus.value = GenerationStatus.IDLE
         stopTimer()  // 🕐 закрыли книгу — сбрасываем таймер
@@ -1358,9 +1425,14 @@ class GenerateViewModel(
         Log.i(TAG, "cancelTask: type=$type taskId=$taskId bookId=$bookId")
         if (bookId.isBlank()) return
 
-        // If VBook was cancelled, clear its progress immediately and stop the poller
+        // If VBook was cancelled, clear its progress immediately and stop the poller.
+        // Also bump vbookPollToken so the cancelled poll job's failure handler
+        // sees a stale token and returns early — it must NOT run stopTimer()
+        // while parallel GPU stages are still generating (that would freeze the
+        // session timer and freeze later GPU done rows at 00:00:00).
         if (type == "vbook") {
             _uiState.update { it.copy(vbookProgress = VBookProgress(stage = VBookStage.IDLE)) }
+            vbookPollToken++
             generationJob?.cancel()
             generationJob = null
         }

@@ -719,8 +719,16 @@ export async function startVBookGeneration(): Promise<void> {
   const bid = bookId.value;
   if (!bid) return;
   setGenerationStatus('RUNNING');
+  // VBook is part of the same generation session as the GPU stages — mark the
+  // session regenerating (mirrors startGeneration) so the shared wall-clock
+  // timer is NOT stopped when the VBook agent finishes while audio/image/video
+  // stages are still running (Android GenerateViewModel fix, 1:1 parity).
+  isRegenerating.value = true;
   newGenerationPending = true;
   vbookProgress.value = { stage: 'ANALYZING', sceneIndex: -1, scenesInWindow: 1, totalScenes: null, windowIndex: 0, message: null };
+  // Manual per-window mode: one click = one window = one generation. The timer
+  // always starts fresh for the new window (no survival across windows); the
+  // previous window's finalise already stopped it.
   startTimer();
   startProgressStream(bid);
   importCompleteReceived = false;
