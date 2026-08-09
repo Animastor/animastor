@@ -19,7 +19,7 @@
 
 const path = require('path');
 const fs = require('fs');
-const { findUnverifiedSnakeTokens } = require('../src/utils/snake-guard');
+const { findCanonicalId, snakeTokensInText, KNOWN_NON_CHARACTER_SNAKE, hasMixedScript, isSnakeLike } = require('../src/utils/snake-guard');
 
 const BOOKS_DIR = process.env.BOOKS_DIR || '/data/books';
 const PASS = '\x1b[32m✓\x1b[0m';
@@ -94,13 +94,25 @@ function auditUnit(unit, scene, ctx) {
     const hasCharId = ctx.charIds.size > 0 && [...ctx.charIds].some(id =>
         wordRegex(id).test(action) || wordRegex(id).test(prompt));
 
-    // 1. Invented snake_case ids (context poisoning) — shared snake-guard
+    // 1. Invented / chimera snake_case ids — shared snake-guard (one source of
+    // truth with the pipeline repair step and the write barrier).
+    //    INVENTED — no confident relation to the registry (context poisoning).
+    //    CHIMERA  — confidently matches a known id but differs by script/typo/
+    //               transliteration ("mikhail_berлиоз" → "mikhail_berlioz").
     const knownIds = [...ctx.charIds, ...ctx.locIds];
     for (const field of [['video.action', action], ['image.prompt', prompt]]) {
         const [label, text] = field;
         if (!text) continue;
-        for (const token of findUnverifiedSnakeTokens(text, knownIds)) {
-            findings.push({ level: 'FAIL', where, msg: `INVENTED id "${token}" in ${label} (not in character list)` });
+        for (const token of snakeTokensInText(text)) {
+            const low = token.toLowerCase();
+            if (ctx.charIds.has(low) || ctx.locIds.has(low)) continue;        // exact valid id
+            if (KNOWN_NON_CHARACTER_SNAKE.has(low)) continue;                 // technical/object word
+            const canonical = findCanonicalId(token, knownIds);
+            if (canonical && canonical.toLowerCase() !== low) {
+                findings.push({ level: 'FAIL', where, msg: `CHIMERA id "${token}" in ${label} -> should be "${canonical}" (script/transliteration variant)` });
+            } else if (!canonical) {
+                findings.push({ level: 'FAIL', where, msg: `INVENTED id "${token}" in ${label} (not in character list)` });
+            }
         }
     }
 
@@ -151,6 +163,36 @@ function main() {
             for (const u of sc.units || []) {
                 unitsSeen++;
                 all.push(...auditUnit(u, sc, ctx));
+            }
+        }
+    }
+
+    // Mixed-script registry ids ("patriarshie_pруды") — the chimera class in the
+    // registries themselves. The write barrier normalizes them on creation, so
+    // a surviving one means the fix did not run.
+    const dir = path.join(BOOKS_DIR, targetBookId);
+    for (const id of ctx.charIds) {
+        if (hasMixedScript(id)) all.push({ level: 'FAIL', where: 'characters.json', msg: `mixed-script (latin+cyrillic) id "${id}" — should be normalized` });
+    }
+    for (const id of ctx.locIds) {
+        if (hasMixedScript(id)) all.push({ level: 'FAIL', where: 'locations.json', msg: `mixed-script (latin+cyrillic) id "${id}" — should be normalized` });
+    }
+
+    // mentions.json — alias targets must resolve to a real character id
+    const mentionsPath = path.join(dir, 'mentions.json');
+    if (fs.existsSync(mentionsPath)) {
+        const mentions = JSON.parse(fs.readFileSync(mentionsPath, 'utf8')) || {};
+        for (const [alias, target] of Object.entries(mentions)) {
+            const low = String(target).toLowerCase();
+            if (ctx.charIds.has(low)) continue;
+            // Natural-designation targets ("женщина в будочке") are not ids —
+            // only snake-shaped targets are checked for chimeras/inventions.
+            if (!isSnakeLike(target)) continue;
+            const canonical = findCanonicalId(target, ctx.charIds);
+            if (canonical) {
+                all.push({ level: 'FAIL', where: 'mentions.json', msg: `CHIMERA mention "${alias}" -> ${target} should be "${canonical}"` });
+            } else {
+                all.push({ level: 'FAIL', where: 'mentions.json', msg: `INVENTED mention target "${target}" for "${alias}" (not in characters.json)` });
             }
         }
     }

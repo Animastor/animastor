@@ -19,7 +19,7 @@ const {
 } = require('../agent-prompts');
 const { normalizeCharacterRefs } = require('../../image/image-service');
 const { sanitizeVideoTokens, tokensToString } = require('../../book/lazy-book/appearance');
-const { findUnverifiedSnakeTokens } = require('../../utils/snake-guard');
+const { findUnverifiedSnakeTokens, canonicalizeText } = require('../../utils/snake-guard');
 
 /**
  * Normalize names/aliases → character_id in an AI-written visual text.
@@ -1285,6 +1285,30 @@ function mergeRepairResults(allVisualUnits, flagged, repaired, characters, known
 }
 
 /**
+ * Deterministically align chimera snake tokens (mixed-script / typo /
+ * transliteration variant / noise suffix of a known id) to the canonical
+ * registry id — in-range fields only (out-of-format prompts are never touched).
+ * Pure, exported for tests. Returns { unit, changed }.
+ */
+function canonicalizeVisualUnit(u, knownIds) {
+    const next = { ...u };
+    let changed = false;
+    if (inPromptRange(u) && u.image?.prompt) {
+        const p = canonicalizeText(u.image.prompt, knownIds);
+        if (p !== u.image.prompt) { next.image = { ...u.image, prompt: p }; changed = true; }
+    }
+    if (inActionRange(u) && u.video?.action) {
+        const a = canonicalizeText(u.video.action, knownIds);
+        if (a !== u.video.action) { next.video = { ...u.video, action: a }; changed = true; }
+    }
+    if (u.audio?.speaker) {
+        const sp = canonicalizeText(u.audio.speaker, knownIds);
+        if (sp !== u.audio.speaker) { next.audio = { ...u.audio, speaker: sp }; changed = true; }
+    }
+    return changed ? { unit: next, changed: true } : { unit: u, changed: false };
+}
+
+/**
  * Write repair-step results back into enriched scenes (in place). Covers
  * image.prompt, video.action AND audio.speaker — a reassembled speaker must
  * reach the book, not only the step's return value.
@@ -1324,10 +1348,18 @@ async function stepRepairFantasyIds(sessionId, allVisualUnits, characters, locat
         ...(locations || []).map(l => l.id).filter(Boolean),
     ];
 
+    // Deterministic canonicalization FIRST: a chimera snake token (mixed-script,
+    // wrong transliteration, trailing underscore, 1-2 char typo, noise suffix)
+    // is aligned to the CANONICAL registry id WITHOUT any LLM call. Only tokens
+    // with NO confident match are flagged for LLM reassembly below.
+    const prepared = allVisualUnits.map(u => canonicalizeVisualUnit(u, knownIds));
+    const autoFixed = prepared.filter(c => c.changed).length;
+    const baseUnits = prepared.map(c => c.unit);
+
     // Deterministic scan of in-range prompts/actions only (out-of-format
     // prompts are user-edited/legacy and never touched — see inPromptRange).
     const flagged = [];
-    for (const u of allVisualUnits) {
+    for (const u of baseUnits) {
         const tokens = [];
         if (inPromptRange(u)) tokens.push(...findUnverifiedSnakeTokens(u.image?.prompt || '', knownIds));
         if (inActionRange(u)) tokens.push(...findUnverifiedSnakeTokens(u.video?.action || '', knownIds));
@@ -1337,8 +1369,12 @@ async function stepRepairFantasyIds(sessionId, allVisualUnits, characters, locat
     }
 
     if (flagged.length === 0) {
-        console.log(`[AGENT] Step fantasy_snake_repair: skipped — no unverified snake_case ids in ${allVisualUnits.length} units`);
-        return allVisualUnits;
+        if (autoFixed === 0) {
+            console.log(`[AGENT] Step fantasy_snake_repair: skipped — no unverified snake_case ids in ${allVisualUnits.length} units`);
+            return allVisualUnits;
+        }
+        console.log(`[AGENT] Step fantasy_snake_repair: ${autoFixed} unit(s) auto-canonicalized, none need LLM repair`);
+        return baseUnits;
     }
 
     _progress({ stage: 'fantasy_snake_repair', message: PROGRESS_STAGES.fantasy_snake_repair });
@@ -1363,11 +1399,11 @@ async function stepRepairFantasyIds(sessionId, allVisualUnits, characters, locat
     try {
         const result = await aiCaller.callAI(messages, { maxTokens: 4096 });
         const repaired = result.units || [];
-        const { units: merged, changed, stillBad } = mergeRepairResults(allVisualUnits, flagged, repaired, characters, knownIds);
+        const { units: merged, changed, stillBad } = mergeRepairResults(baseUnits, flagged, repaired, characters, knownIds);
 
         await aiCaller.logConversation(sessionId, step.step_id, messages, JSON.stringify(result));
         await completeStep(step.step_id, { units: merged.length });
-        console.log(`[AGENT] Step fantasy_snake_repair: ${flagged.length} unit(s) flagged (${flagged.reduce((n, f) => n + f.tokens.length, 0)} fantasy ids), ${changed} reassembled, ${stillBad} still unverified (kept original)`);
+        console.log(`[AGENT] Step fantasy_snake_repair: ${autoFixed} auto-canonicalized, ${flagged.length} unit(s) flagged (${flagged.reduce((n, f) => n + f.tokens.length, 0)} fantasy ids), ${changed} reassembled, ${stillBad} still unverified (kept original)`);
         return merged;
     } catch (err) {
         await failStep(step.step_id, err.message);
@@ -1400,4 +1436,5 @@ module.exports = {
     repairRow,
     mergeRepairResults,
     applyRepairToScenes,
+    canonicalizeVisualUnit,
 };

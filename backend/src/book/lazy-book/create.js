@@ -8,7 +8,7 @@ const { BookState, SceneStatus } = require('./constants');
 const { getBookDir, getChapterDir, getBookMetaPath, getCharactersPath, getMentionsPath, getBiblePath, getLocationsPath, getVoicesPath, chapterId, sceneId, unitId } = require('./paths');
 const { detectLanguage } = require('./parser');
 const { findCanonicalCharacter, isGenericCharacter } = require('../../utils/character-identity');
-const { sanitizeParticipants } = require('../../utils/snake-guard');
+const { sanitizeParticipants, findCanonicalId, canonicalizeMixedScriptId, isFantasySnakeToken } = require('../../utils/snake-guard');
 const draft = require('./draft');
 const metadata = require('./metadata');
 const chapterUtils = require('./chapter-utils');
@@ -90,7 +90,13 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
             // Load existing locations from separate file
             const locPath = getLocationsPath(bookDir);
             if (fs.existsSync(locPath)) {
-                existingLocations = JSON.parse(fs.readFileSync(locPath, 'utf8'));
+                const raw = JSON.parse(fs.readFileSync(locPath, 'utf8'));
+                // Migrate mixed-script keys (pre-chimera-guard data) to their
+                // canonical latin form so new windows link locations correctly.
+                existingLocations = {};
+                for (const [id, entry] of Object.entries(raw)) {
+                    existingLocations[canonicalizeMixedScriptId(id)] = entry;
+                }
             }
         } catch (e) {
             console.warn(`[LAZY-BOOK] Failed to load existing locations: ${e.message}`);
@@ -104,7 +110,22 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
     const defaultVoiceEn = 'A mature male voice. Deep, calm, reflective. Native English pronunciation.';
 
     for (const ch of (analysis.characters || [])) {
-        const charId = ch.id || ch.name.toLowerCase().replace(/[^a-zа-яё0-9]+/g, '_').replace(/^_|_$/g, '');
+        // Chimera id (mixed-script / wrong transliteration / typo / noise suffix)
+        // that CONFIDENTLY matches an existing character → align to the canonical
+        // registry id; never create a duplicate key for the same person.
+        const charId = (() => {
+            const rawId = ch.id || ch.name.toLowerCase().replace(/[^a-zа-яё0-9]+/g, '_').replace(/^_|_$/g, '');
+            const mixed = canonicalizeMixedScriptId(rawId);
+            // Registry-write path: NO fuzzy tier (fuzzy:false) — a wrong fuzzy
+            // merge here would DROP a genuinely distinct character. Only
+            // normalized-equality (mixed-script/translit) and suffix variants
+            // are aligned; typo-level variants go to the prompt repair step.
+            const canonical = findCanonicalId(mixed, mergedCharacters.map(c => c.id), { fuzzy: false });
+            if (canonical && canonical.toLowerCase() !== mixed.toLowerCase()) {
+                console.warn(`[LAZY-BOOK] Character id "${mixed}" canonicalized to "${canonical}"`);
+            }
+            return canonical || mixed;
+        })();
         if (existingIds.has(charId)) continue;
         if (isGenericCharacter({ ...ch, id: charId })) {
             console.warn(`[LAZY-BOOK] Skipping generic character without stable context: ${charId}`);
@@ -188,7 +209,11 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
 
     let locations = { ...existingLocations };
     for (const loc of (analysis.locations || [])) {
-        const locId = loc.id || loc.name.toLowerCase().replace(/[^a-zа-яё0-9]+/g, '_').replace(/^_|_$/g, '');
+        const rawLocId = loc.id || loc.name.toLowerCase().replace(/[^a-zа-яё0-9]+/g, '_').replace(/^_|_$/g, '');
+        // Mixed-script location ids ("patriarshie_pруды") are chimeras — normalize
+        // to a pure latin snake id. Scene.location.id references are canonicalized
+        // through the same function below, so ids stay consistent across the book.
+        const locId = canonicalizeMixedScriptId(rawLocId);
         if (!locations[locId]) {
             const entry = {
                 name: loc.name,
@@ -229,9 +254,30 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
             mergedMentions = JSON.parse(fs.readFileSync(mPath, 'utf8'));
         }
     } catch (_) {}
+    // Chimera barrier for mentions: the alias target must be a real character id
+    // (or confidently canonicalize to one). A mention pointing at a chimera id
+    // ("mikhail_berлиоз") is aligned to the canonical id; a mention pointing at a
+    // non-existent character is dropped — a broken alias never enters the book.
+    const mentionCharIds = new Set(mergedCharacters.map(c => c.id).filter(Boolean));
+    const mentionLowerIds = new Set([...mentionCharIds].map(id => id.toLowerCase()));
     if (analysis.mentions && typeof analysis.mentions === 'object') {
         for (const [alias, charId] of Object.entries(analysis.mentions)) {
-            if (!mergedMentions[alias]) mergedMentions[alias] = charId;
+            if (mergedMentions[alias]) continue;
+            const target = String(charId);
+            const low = target.toLowerCase();
+            if (mentionLowerIds.has(low)) {
+                mergedMentions[alias] = target;
+            } else {
+                const canonical = findCanonicalId(target, mentionCharIds);
+                if (canonical) {
+                    console.warn(`[LAZY-BOOK] Mention "${alias}" → ${target} canonicalized to ${canonical}`);
+                    mergedMentions[alias] = canonical;
+                } else if (isFantasySnakeToken(target, mentionCharIds)) {
+                    console.warn(`[LAZY-BOOK] Dropping mention "${alias}" → ${target} — no such character in characters.json`);
+                } else {
+                    mergedMentions[alias] = target; // natural designation target — keep
+                }
+            }
         }
     }
     if (Object.keys(mergedMentions).length > 0) {
@@ -483,9 +529,9 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
         const sceneParticipants = sanitizeParticipants(
             aiScene.characters_present || aiScene.participants || [],
             knownParticipantIds,
-            {
-                onDrop: (p) => console.warn(`[LAZY-BOOK] Dropped fantasy participant "${p}" in scene "${(aiScene.title || '').slice(0, 40)}" — not in characters.json`),
-            }
+            {            onDrop: (p) => console.warn(`[LAZY-BOOK] Dropped fantasy participant "${p}" in scene "${(aiScene.title || '').slice(0, 40)}" — not in characters.json`),
+            onReplace: (from, to) => console.warn(`[LAZY-BOOK] Participant "${from}" → canonical id "${to}" in scene "${(aiScene.title || '').slice(0, 40)}"`),
+        }
         );
         for (const p of sceneParticipants) {
             if (!allParticipants.includes(p)) allParticipants.push(p);
@@ -567,7 +613,11 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
             type: isDialogue ? 'dialogue' : 'narration',
             style: sceneStyle,
             participants: allParticipants,
-            location: aiScene.location || undefined,
+            location: (() => {
+                if (!aiScene.location) return undefined;
+                if (!aiScene.location.id) return aiScene.location;
+                return { ...aiScene.location, id: canonicalizeMixedScriptId(aiScene.location.id) };
+            })(),
             // scene.passport[charId] — scene-level character passport overrides
             // (e.g. video_tokens chosen by the passport-reconciliation agent).
             // Must be passed through explicitly — the scene constructor does not

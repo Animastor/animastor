@@ -1,6 +1,13 @@
 const { expect } = require('chai');
 const snakeGuard = require('../src/utils/snake-guard');
-const { findUnverifiedSnakeTokens, isFantasySnakeToken, sanitizeParticipants } = snakeGuard;
+const {
+    findUnverifiedSnakeTokens,
+    isFantasySnakeToken,
+    sanitizeParticipants,
+    findCanonicalId,
+    canonicalizeText,
+    canonicalizeMixedScriptId,
+} = snakeGuard;
 
 // ── Pure detection (src/utils/snake-guard.js) ──────────────────────────
 
@@ -37,11 +44,11 @@ describe('snake-guard — fantasy snake_case id detection', () => {
             .to.deep.equal([]);
     });
 
-    it('skips snake tokens that are prefix-variants of a real id', () => {
+    it('flags chimeras (prefix-variants of real ids) as unverified — they are auto-fixed later', () => {
         expect(findUnverifiedSnakeTokens('mikhail_berlio gestures', ['mikhail_berlioz']))
-            .to.deep.equal([]);
+            .to.deep.equal(['mikhail_berlio']);
         expect(findUnverifiedSnakeTokens('anna_smirnova_extra arrives', knownIds))
-            .to.deep.equal([]);
+            .to.deep.equal(['anna_smirnova_extra']);
     });
 
     it('dedupes repeated tokens', () => {
@@ -78,6 +85,73 @@ describe('snake-guard — fantasy snake_case id detection', () => {
         );
         expect(out).to.deep.equal(['anna_smirnova']);
         expect(dropped).to.deep.equal(['zhenshchina_v_budochke']);
+    });
+
+    it('sanitizeParticipants replaces chimeras via onReplace and drops fantasy via onDrop', () => {
+        const replaced = [];
+        const dropped = [];
+        const out = sanitizeParticipants(
+            ['anna_smirnova', 'zhenshchina_v_budochke', 'mikhail_berлиоз', 'женщина в будочке'],
+            ['anna_smirnova', 'mikhail_berlioz'],
+            { onReplace: (f, t) => replaced.push([f, t]), onDrop: (p) => dropped.push(p) }
+        );
+        expect(out).to.deep.equal(['anna_smirnova', 'mikhail_berlioz', 'женщина в будочке']);
+        expect(replaced).to.deep.equal([['mikhail_berлиоз', 'mikhail_berlioz']]);
+        expect(dropped).to.deep.equal(['zhenshchina_v_budochke']);
+    });
+});
+
+describe('findCanonicalId — chimera resolution', () => {
+    it('resolves mixed-script ids (mikhail_berлиоз → mikhail_berlioz)', () => {
+        expect(findCanonicalId('mikhail_berлиоз', ['mikhail_berlioz'])).to.equal('mikhail_berlioz');
+    });
+
+    it('resolves trailing-underscore ids (mihail_bulgakov_ → mihail_bulgakov)', () => {
+        expect(findCanonicalId('mihail_bulgakov_', ['mihail_bulgakov'])).to.equal('mihail_bulgakov');
+    });
+
+    it('resolves y/iy transliteration variants (mihail_bulgakoviy → mihail_bulgakov)', () => {
+        expect(findCanonicalId('mihail_bulgakoviy', ['mihail_bulgakov'])).to.equal('mihail_bulgakov');
+    });
+
+    it('resolves 1-2 char typos (ivan_ponerov → ivan_ponyrev)', () => {
+        expect(findCanonicalId('ivan_ponerov', ['ivan_ponyrev'])).to.equal('ivan_ponyrev');
+    });
+
+    it('resolves noise-suffix ids (anna_smirnova_extra → anna_smirnova)', () => {
+        expect(findCanonicalId('anna_smirnova_extra', ['anna_smirnova'])).to.equal('anna_smirnova');
+    });
+
+    it('returns null when there is no confident match (true fantasy)', () => {
+        expect(findCanonicalId('zhenshchina_v_budochke', ['anna_smirnova', 'boris_volkov'])).to.equal(null);
+    });
+
+    it('returns null on ambiguous equidistant candidates', () => {
+        expect(findCanonicalId('mihail_bulgakovv', ['mihail_bulgakov', 'mihail_bulgakova'])).to.equal(null);
+    });
+});
+
+describe('canonicalizeText / canonicalizeMixedScriptId', () => {
+    it('aligns chimera tokens and preserves possessives', () => {
+        expect(canonicalizeText("mikhail_berлиоз's glasses", ['mikhail_berlioz']))
+            .to.equal("mikhail_berlioz's glasses");
+        expect(canonicalizeText('ivan_ponerov arrives', ['ivan_ponyrev']))
+            .to.equal('ivan_ponyrev arrives');
+    });
+
+    it('leaves known ids, whitelist and natural text untouched', () => {
+        expect(canonicalizeText('anna_smirnova sits on a park bench, close_up', ['anna_smirnova', 'boris_volkov']))
+            .to.equal('anna_smirnova sits on a park bench, close_up');
+        expect(canonicalizeText('they walk along the alley', ['anna_smirnova']))
+            .to.equal('they walk along the alley');
+        expect(canonicalizeText(null, ['anna_smirnova'])).to.equal(null);
+    });
+
+    it('canonicalizeMixedScriptId normalizes mixed ids but keeps pure ones', () => {
+        expect(canonicalizeMixedScriptId('patriarshie_pруды')).to.equal('patriarshie_prudy');
+        expect(canonicalizeMixedScriptId('kiosk_at_patriarshie_pруды')).to.equal('kiosk_at_patriarshie_prudy');
+        expect(canonicalizeMixedScriptId('city_park')).to.equal('city_park');
+        expect(canonicalizeMixedScriptId('патриаршие_пруды')).to.equal('патриаршие_пруды');
     });
 });
 
@@ -246,6 +320,38 @@ describe('stepRepairFantasyIds (hybrid snake repair)', () => {
         expect(result[0].video.action).to.equal('the kiosk saleswoman turns away');
         expect(result[1].image.prompt).to.equal('boris_volkov reading a newspaper');
         expect(result[1].video.action).to.equal('boris_volkov turns a page');
+    });
+
+    it('auto-canonicalizes chimera ids deterministically (no LLM call)', async () => {
+        let aiCalled = 0;
+        const { mod, calls } = loadModule({
+            callAI: async () => { aiCalled += 1; return { units: [] }; },
+        });
+        const chars = CHARACTERS.concat([{ id: 'mikhail_berlioz', name: 'Mikhail Berlioz' }]);
+        const input = [unit({
+            image: { shot: 'medium', prompt: 'mikhail_berлиоз raises his hand' },
+            video: { action: 'mikhail_berлиоз waves' },
+        })];
+        const result = await mod.stepRepairFantasyIds('sess', input, chars, LOCATIONS, 0, () => {});
+
+        expect(aiCalled).to.equal(0);
+        expect(calls.createStep).to.equal(0);
+        expect(result[0].image.prompt).to.equal('mikhail_berlioz raises his hand');
+        expect(result[0].video.action).to.equal('mikhail_berlioz waves');
+    });
+
+    it('canonicalizeVisualUnit fixes prompt/action/speaker chimeras in range', () => {
+        const { mod } = loadModule({});
+        const u = unit({
+            image: { shot: 'medium', prompt: 'mikhail_berлиоз raises his hand' },
+            video: { action: 'mikhail_berлиоз waves' },
+            audio: { speaker: 'mikhail_berлиоз' },
+        });
+        const { unit: out, changed } = mod.canonicalizeVisualUnit(u, ['mikhail_berlioz', 'city_park']);
+        expect(changed).to.equal(true);
+        expect(out.image.prompt).to.equal('mikhail_berlioz raises his hand');
+        expect(out.video.action).to.equal('mikhail_berlioz waves');
+        expect(out.audio.speaker).to.equal('mikhail_berlioz');
     });
 
     it('fixes a fantasy audio.speaker id alongside the prompt', async () => {
