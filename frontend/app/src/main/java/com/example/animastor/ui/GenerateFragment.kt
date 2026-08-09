@@ -336,10 +336,11 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
             icon.setImageResource(iconInactiveRes)
         }
         icon.imageTintList = android.content.res.ColorStateList.valueOf(tint)
-        // Label color: error/gold states stay synced with the icon (generation
-        // behavior unchanged); base states follow the panel enabled state
-        // (workerLabelColor) so an OFF panel's label reads as muted secondary.
-        label.setTextColor(if (tint == errorColor || tint == activeColor) tint else workerLabelColor(isEnabled))
+        // The label is a stable text element: it always keeps the panel-state
+        // color (workerLabelColor — ON readable, OFF muted) and never pulses or
+        // highlights during generation. Only the icon shows error/active (gold
+        // pulse) states — matching the mobile web behavior (icon = activity).
+        label.setTextColor(workerLabelColor(isEnabled))
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -763,8 +764,8 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
     /** Base label color for the worker panel header — same principle in both
      *  themes (shared secondary tone when enabled, muted when disabled):
      *  dark ON #B8AFA3 / OFF #989084, light ON #6B6258 / OFF #8E867A.
-     *  Error/active (gold) states override this in updateSectionHeader —
-     *  generation behavior untouched. */
+     *  Applied always, including during generation: the label stays a stable
+     *  text element — only the icon carries error/active (gold pulse) states. */
     private fun workerLabelColor(isEnabled: Boolean): Int {
         val ctx = requireContext()
         return if (!isDarkTheme()) {
