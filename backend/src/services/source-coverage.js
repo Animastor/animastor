@@ -4,14 +4,13 @@ function looksLikeChapterTitle(line) {
     const text = (line || '').trim();
     if (!text || CHAPTER_HEADER_RE.test(text) || text.length > 120) return false;
 
-    const letters = text.match(/[A-Za-zА-Яа-яЁё]/g) || [];
-    if (letters.length === 0) return false;
+    // Strong signal: an all-caps multi-word line is a heading ("НИКОГДА НЕ
+    // РАЗГОВАРИВАЙТЕ С НЕИЗВЕСТНЫМИ"). Shared with findNarrativeStartOffset
+    // so the all-caps rule lives in exactly one place.
+    if (isAllCapsHeading(text)) return true;
 
-    const upperLetters = text.match(/[A-ZА-ЯЁ]/g) || [];
-    const isAllCaps = upperLetters.length === letters.length;
-    if (isAllCaps && text.split(/\s+/).length >= 2) return true;
-
-    // Short standalone title/subtitle lines normally do not contain sentence punctuation.
+    // Weak signal: short standalone title/subtitle lines normally do not
+    // contain sentence punctuation.
     return text.length <= 80
         && !/[.!?…]$/.test(text)
         && !/[,:;—–-]/.test(text)
@@ -89,6 +88,20 @@ function rawOffsetToNormalizedIndex(index, rawOffset) {
     return lo;
 }
 
+// All-caps multi-word line = a chapter/part NAME heading (e.g.
+// "НИКОГДА НЕ РАЗГОВАРИВАЙТЕ С НЕИЗВЕСТНЫМИ"). Distinct from
+// looksLikeChapterTitle's weak branch (short no-punctuation lines) so a real
+// first narrative sentence like "Он встал и вышел" is never mistaken for a
+// heading — only unambiguous all-caps titles qualify as a standalone header.
+function isAllCapsHeading(line) {
+    const text = (line || '').trim();
+    if (!text || text.length > 120) return false;
+    const letters = text.match(/[A-Za-zА-Яа-яЁё]/g) || [];
+    if (letters.length === 0) return false;
+    const upperLetters = text.match(/[A-ZА-ЯЁ]/g) || [];
+    return upperLetters.length === letters.length && text.split(/\s+/).length >= 2;
+}
+
 function findNarrativeStartOffset(rawText) {
     const lines = (rawText || '').split('\n');
     let skipLen = 0;
@@ -101,23 +114,43 @@ function findNarrativeStartOffset(rawText) {
 
     if (i >= lines.length) return skipLen;
 
+    // A window may open DIRECTLY with the chapter NAME heading (the v2
+    // structure map can split "Глава 1" and its all-caps name "НИКОГДА НЕ
+    // РАЗГОВАРИВАЙТЕ С НЕИЗВЕСТНЫМИ" into separate segments, so the window
+    // text begins at the name line). Without this, the heading stays in the
+    // window, the scene AI (correctly) does not include it in any scene, and
+    // coverage fails with gap_in_source — silently discarding the AI scene
+    // split (and its titles) for the deterministic fallback.
     const first = lines[i].trim();
-    if (!CHAPTER_HEADER_RE.test(first)) {
+    if (!CHAPTER_HEADER_RE.test(first) && !isAllCapsHeading(first)) {
         return skipLen;
     }
 
+    // Skip the whole header CHAIN: keyword lines ("ЧАСТЬ ПЕРВАЯ", "Глава 1")
+    // and all-caps name lines ("НИКОГДА НЕ РАЗГОВАРИВАЙТЕ С НЕИЗВЕСТНЫМИ")
+    // continue the chain freely. A WEAK title-like line ("Глава 1\nНазвание")
+    // is consumed only ONCE right after a strong header — never several
+    // consecutive short narrative sentences ("Глава 1\nОн встал\nОн вышел"
+    // would otherwise eat real text as fake headings).
     skipLen += lines[i].length + 1;
     i++;
-
-    while (i < lines.length && !lines[i].trim()) {
-        skipLen += lines[i].length + 1;
-        i++;
-    }
-
-    if (i >= lines.length) return skipLen;
-
-    const next = lines[i].trim();
-    if (looksLikeChapterTitle(next)) {
+    let weakAllowed = true;
+    while (i < lines.length) {
+        const line = lines[i].trim();
+        if (!line) {
+            skipLen += lines[i].length + 1;
+            i++;
+            continue;
+        }
+        let isHeader = false;
+        if (CHAPTER_HEADER_RE.test(line) || isAllCapsHeading(line)) {
+            isHeader = true;
+            weakAllowed = true; // a strong header re-opens the weak slot
+        } else if (weakAllowed && looksLikeChapterTitle(line)) {
+            isHeader = true;
+            weakAllowed = false; // weak line consumed — stop after this
+        }
+        if (!isHeader) break;
         skipLen += lines[i].length + 1;
         i++;
     }
@@ -401,6 +434,7 @@ module.exports = {
     skipWhitespaceForward,
     rawOffsetToNormalizedIndex,
     looksLikeChapterTitle,
+    isAllCapsHeading,
     findNarrativeStartOffset,
     getLastSentenceFragment,
     buildSceneEndNeedles,
