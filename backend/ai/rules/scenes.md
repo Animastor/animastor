@@ -135,7 +135,10 @@ to describe them. Never create bridge/transition scenes either.
 - You MUST list EVERY character that appears or is mentioned in this scene's text in `characters_present`.
 - This is a HARD REQUIREMENT. These IDs are used by the image generation system to inject character passports (appearance, clothing) into the image prompt.
 - If a character is described in the text — even just named — they MUST be in `characters_present`.
-- Use the exact character_id from the Known Characters list above.
+- Use the exact character_id from the Known Characters list above. ONLY known characters belong here.
+- A person who merely SPEAKS in the scene but is NOT a character (no passport — e.g. an unnamed
+  "женщина в будочке") must NOT be listed here and must NOT receive an invented character_id.
+  They remain an unnamed participant; the audio system gives them a default voice automatically.
 - NEVER leave `characters_present` empty if the text mentions any named person.
 
 ## CRITICAL: EVERY scene MUST have location.id. ZERO EXCEPTIONS.

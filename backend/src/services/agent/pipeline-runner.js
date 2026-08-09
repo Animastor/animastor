@@ -16,6 +16,29 @@ const { splitLongUnits } = require('./unit-splitter');
 const textUtils = require('./text-utils');
 
 /**
+ * Project enriched scenes into the flat visual-unit list consumed by the
+ * reconciliation / polish / repair steps (scene_index, unit_index, text,
+ * image, video, ...).
+ */
+function flatVisualUnits(enrichedScenes) {
+    return (enrichedScenes || []).flatMap((scene, si) =>
+        (scene.units || []).map((unit, ui) => ({
+            sceneIndex: si,
+            unitIndex: ui,
+            sceneTitle: scene.title || '',
+            sceneText: scene.text || '',
+            text: unit.text,
+            type: unit.type,
+            image: unit.image || {},
+            video: unit.video || {},
+            // audio.speaker — used by the fantasy-snake repair step so a
+            // hallucinated speaker id can be reassembled like a prompt id.
+            audio: unit.audio || null,
+        }))
+    );
+}
+
+/**
  * Resolve effective chunk size from options or fall back to module default.
  */
 function _resolveChunkSize(options) {
@@ -777,6 +800,21 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
     }
 
 
+    await checkCancelled();
+
+    // ── Fantasy snake_case id repair (final visual barrier) ──
+    // Any unit whose image.prompt / video.action still references a snake_case
+    // id NOT in characters.json (a hallucinated character) is reassembled by
+    // the agent from the unit text — the natural designation is restored
+    // ("женщина в будочке") instead of the invented id. Runs after all polish
+    // passes so no later step can re-introduce a fantasy id.
+    if (enrichedScenes.length > 0) {
+        const allVisualUnits = flatVisualUnits(enrichedScenes);
+        const repaired = await pipelineSteps.stepRepairFantasyIds(sessionId, allVisualUnits, characters, locations, stepIndex, _progress);
+        pipelineSteps.applyRepairToScenes(enrichedScenes, repaired);
+    }
+
+
     return {
         characters,
         locations,
@@ -1104,6 +1142,19 @@ async function processCachedScenes(sessionId, scenes, characters, locations, men
                 }
             }
         }
+    }
+
+
+    await checkCancelled();
+
+    // ── Fantasy snake_case id repair (final visual barrier) ──
+    // Same as in runPipeline: reassemble units referencing snake_case ids that
+    // are not in characters.json — restore the natural designation from the
+    // unit text instead of the invented id.
+    if (enrichedScenes.length > 0) {
+        const allVisualUnits = flatVisualUnits(enrichedScenes);
+        const repaired = await pipelineSteps.stepRepairFantasyIds(sessionId, allVisualUnits, characters, locations, stepIndex, _progress);
+        pipelineSteps.applyRepairToScenes(enrichedScenes, repaired);
     }
 
 

@@ -58,14 +58,19 @@ function buildMergedDialogueWorkflow(segList, loadedBook) {
     }
 
     // ── 1. Collect all speakers and voice instructions ──
+    // The speaker label is any text before the first ": " — a character_id
+    // (mikhail_berlioz) OR a natural designation of an episodic speaker
+    // ("женщина в будочке"). Episodic speakers keep their natural label as the
+    // role name and get the narrator voice as fallback — they are NOT
+    // characters and must never be forced into a snake_case id.
     const speakers = new Map(); // speakerId → voiceInstruction
     const scriptLines = [];
-    const speakerRegex = /^([a-z0-9_]+):\s/;
+    const speakerRegex = /^([^:\n]+?):\s/;
 
     for (const seg of segList) {
         if (seg.segment_type !== 'dialogue') continue;
         const match = seg.text.match(speakerRegex);
-        const speakerId = match ? match[1] : null;
+        const speakerId = match ? match[1].trim() : null;
         if (speakerId && !speakers.has(speakerId)) {
             const vi = loadedBook?.voices?.[speakerId]?.instruction
                 || loadedBook?.characters?.find(x => x.id === speakerId)?.voice?.instruction
@@ -482,9 +487,12 @@ async function sendPerSegmentAudio(redis, segList, sceneData, loadedBook, buildI
                 wfAudio["108"].inputs = { script: segment.text, default_instruct: defaultInstruct };
             }
 
-            // ⚡ Определяем speaker из segment.text (формат: "speaker_id: текст")
-            const speakerMatch = segment.text.match(/^([a-z0-9_]+):\s/);
-            const speakerId = speakerMatch ? speakerMatch[1] : null;
+            // ⚡ Определяем speaker из segment.text (формат: "speaker: текст")
+            // speaker = character_id ИЛИ естественное обозначение эпизодического
+            // участника ("женщина в будочке") — он остаётся как есть, без
+            // принудительного snake_case id; голос по умолчанию = narrator.
+            const speakerMatch = segment.text.match(/^([^:\n]+?):\s/);
+            const speakerId = speakerMatch ? speakerMatch[1].trim() : null;
 
             const speakerVoice = speakerId ? voiceForCharacter(speakerId, loadedBook) : "";
             const narratorVi = segments.narratorVoice(sceneData.payload, loadedBook);

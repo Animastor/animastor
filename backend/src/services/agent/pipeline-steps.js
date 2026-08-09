@@ -19,6 +19,7 @@ const {
 } = require('../agent-prompts');
 const { normalizeCharacterRefs } = require('../../image/image-service');
 const { sanitizeVideoTokens, tokensToString } = require('../../book/lazy-book/appearance');
+const { findUnverifiedSnakeTokens } = require('../../utils/snake-guard');
 
 /**
  * Normalize names/aliases → character_id in an AI-written visual text.
@@ -436,9 +437,18 @@ async function stepGenerateVoices(sessionId, text, characters, stepIndex, progre
     _progress({ stage: 'voice_generation', message: PROGRESS_STAGES.voice_generation });
     await updateSession(sessionId, { progress_msg: PROGRESS_STAGES.voice_generation });
 
-    const viableChars = (characters || []).filter(c => c.id && c.name);
+    // Only REAL characters get voice profiles. A character must have an actual
+    // appearance description (the entry criterion in characters.md). A
+    // dialogue-only participant without a described appearance is NOT a
+    // character — no voice is invented for them; the audio pipeline assigns a
+    // default voice automatically.
+    const hasRealAppearance = (c) => {
+        const app = (c.passport?.appearance || c.appearance || c.description || '').trim();
+        return app.length > 0 && !/character from the story|period-appropriate|as described in|не опис|no descr|unknown|unclear/i.test(app);
+    };
+    const viableChars = (characters || []).filter(c => c.id && c.name && hasRealAppearance(c));
     if (viableChars.length === 0) {
-        console.log('[AGENT] Step voice_generation: skipped — no characters to generate voices for');
+        console.log('[AGENT] Step voice_generation: skipped — no characters with described appearance to generate voices for');
         return { voices: {} };
     }
 
@@ -1175,6 +1185,197 @@ async function stepCreateVisuals(sessionId, scene, units, sceneIndex, characters
     }
 }
 
+// ── Fantasy snake_case id repair (hybrid barrier) ───────────────────
+// Detection is deterministic (snake-guard): a snake_case token in
+// image.prompt / video.action that is NOT a known character/location id is a
+// hallucination. Recovery is LLM-based: the flagged unit (with its source text)
+// is sent to the agent, which reassembles the prompt using the person's natural
+// designation from the book text — language-aware, never transliterated.
+// Runs as the FINAL visual step so no later polish pass can re-introduce a
+// fantasy id. Out-of-format prompts (user-edited/legacy) are never touched.
+
+function repairRow(u, tokens) {
+    return JSON.stringify({
+        scene_index: u.sceneIndex,
+        unit_index: u.unitIndex,
+        type: u.type || 'unknown',
+        text: (u.text || '').substring(0, UNIT_TEXT_MAX_CHARS),
+        prompt: u.image?.prompt || '',
+        action: u.video?.action || '',
+        speaker: u.audio?.speaker || null,
+        fantasy_ids: tokens,
+    });
+}
+
+/**
+ * Pure merge of repair-agent results back into the unit list. Exported for tests.
+ * Only flagged units can change; only fields the agent actually reassembled are
+ * applied (each clean per-field). Then a WHOLE-UNIT residual scan runs (in-range
+ * fields only): if ANY unverified snake token remains — a partial fix, where the
+ * agent fixed one field but left the other — the unit is REVERTED to the
+ * original entirely and counted as stillBad, so a partially-fixed unit never
+ * reaches the book.
+ * @param {Object[]} allVisualUnits
+ * @param {{unit: Object, tokens: string[]}[]} flagged
+ * @param {Object[]} repaired - agent rows { scene_index, unit_index, image?, video?, audio? }
+ * @param {Object[]} characters
+ * @param {Iterable<string>} knownIds
+ * @returns {{units: Object[], changed: number, stillBad: number}}
+ */
+function mergeRepairResults(allVisualUnits, flagged, repaired, characters, knownIds) {
+    const flaggedKeys = new Set(flagged.map(f => `${f.unit.sceneIndex}:${f.unit.unitIndex}`));
+    let changed = 0;
+    let stillBad = 0;
+    const units = allVisualUnits.map(original => {
+        if (!flaggedKeys.has(`${original.sceneIndex}:${original.unitIndex}`)) return original;
+        const rec = repaired.find(r =>
+            Number(r?.scene_index) === original.sceneIndex && Number(r?.unit_index) === original.unitIndex
+        );
+        if (!rec) {
+            // Flagged unit got no repair row (truncated/partial agent response) —
+            // make the gap visible instead of silently leaving the unit bad.
+            stillBad++;
+            console.warn(`[AGENT] fantasy_snake_repair: unit ${original.sceneIndex}:${original.unitIndex} flagged but the agent returned no repair row — keeping original`);
+            return original;
+        }
+        const next = { ...original };
+        let unitChanged = false;
+
+        // Apply each returned field ONLY when the agent's fix itself is clean.
+        if (rec.image?.prompt && inPromptRange(original)) {
+            const p = normalizeVisualText(rec.image.prompt, characters);
+            if (findUnverifiedSnakeTokens(p, knownIds).length === 0) {
+                next.image = { ...(original.image || {}), prompt: p };
+                unitChanged = true;
+            }
+        }
+        if (rec.video?.action && inActionRange(original)) {
+            const a = normalizeVisualText(rec.video.action, characters);
+            if (findUnverifiedSnakeTokens(a, knownIds).length === 0) {
+                next.video = { ...(original.video || {}), action: a };
+                unitChanged = true;
+            }
+        }
+        // Speaker fix is applied only when the unit originally HAD audio — a
+        // narration unit must never gain an audio.speaker by accident.
+        if (rec.audio?.speaker && original.audio) {
+            const sp = String(rec.audio.speaker).trim();
+            if (sp && findUnverifiedSnakeTokens(sp, knownIds).length === 0) {
+                next.audio = { ...original.audio, speaker: sp };
+                unitChanged = true;
+            }
+        }
+
+        // Whole-unit residual scan — partial fixes revert the whole unit.
+        // Out-of-format fields are never scanned (they were never touched).
+        const residual = [];
+        if (inPromptRange(original) && findUnverifiedSnakeTokens(next.image?.prompt || '', knownIds).length > 0) residual.push('prompt');
+        if (inActionRange(original) && findUnverifiedSnakeTokens(next.video?.action || '', knownIds).length > 0) residual.push('action');
+        if (next.audio?.speaker && findUnverifiedSnakeTokens(next.audio.speaker, knownIds).length > 0) residual.push('speaker');
+
+        if (residual.length > 0) {
+            stillBad++;
+            console.warn(`[AGENT] fantasy_snake_repair: unit ${original.sceneIndex}:${original.unitIndex} still has unverified ids in ${residual.join(', ')} — reverting to original`);
+            return original;
+        }
+        if (unitChanged) changed++;
+        return next;
+    });
+    return { units, changed, stillBad };
+}
+
+/**
+ * Write repair-step results back into enriched scenes (in place). Covers
+ * image.prompt, video.action AND audio.speaker — a reassembled speaker must
+ * reach the book, not only the step's return value.
+ * @param {Object[]} enrichedScenes
+ * @param {Object[]} repaired - merged units from stepRepairFantasyIds
+ */
+function applyRepairToScenes(enrichedScenes, repaired) {
+    for (const ru of (repaired || [])) {
+        const scene = enrichedScenes?.[ru.sceneIndex];
+        if (scene && scene.units[ru.unitIndex]) {
+            const unit = scene.units[ru.unitIndex];
+            if (ru.image?.prompt) {
+                unit.image = unit.image || {};
+                unit.image.prompt = ru.image.prompt;
+                if (ru.image?.shot) unit.image.shot = ru.image.shot;
+            }
+            if (ru.video?.action) {
+                unit.video = unit.video || {};
+                unit.video.action = ru.video.action;
+            }
+            if (ru.audio?.speaker && unit.audio) {
+                unit.audio.speaker = ru.audio.speaker;
+            }
+        }
+    }
+}
+
+async function stepRepairFantasyIds(sessionId, allVisualUnits, characters, locations, stepIndex, progress) {
+    const _progress = progress || (() => {});
+    if (!allVisualUnits || allVisualUnits.length === 0) {
+        console.log('[AGENT] Step fantasy_snake_repair: skipped — no units');
+        return allVisualUnits || [];
+    }
+
+    const knownIds = [
+        ...(characters || []).map(c => c.id).filter(Boolean),
+        ...(locations || []).map(l => l.id).filter(Boolean),
+    ];
+
+    // Deterministic scan of in-range prompts/actions only (out-of-format
+    // prompts are user-edited/legacy and never touched — see inPromptRange).
+    const flagged = [];
+    for (const u of allVisualUnits) {
+        const tokens = [];
+        if (inPromptRange(u)) tokens.push(...findUnverifiedSnakeTokens(u.image?.prompt || '', knownIds));
+        if (inActionRange(u)) tokens.push(...findUnverifiedSnakeTokens(u.video?.action || '', knownIds));
+        if (u.audio?.speaker) tokens.push(...findUnverifiedSnakeTokens(u.audio.speaker, knownIds));
+        const unique = [...new Set(tokens.map(t => t.toLowerCase()))];
+        if (unique.length > 0) flagged.push({ unit: u, tokens: unique });
+    }
+
+    if (flagged.length === 0) {
+        console.log(`[AGENT] Step fantasy_snake_repair: skipped — no unverified snake_case ids in ${allVisualUnits.length} units`);
+        return allVisualUnits;
+    }
+
+    _progress({ stage: 'fantasy_snake_repair', message: PROGRESS_STAGES.fantasy_snake_repair });
+    await updateSession(sessionId, { progress_msg: PROGRESS_STAGES.fantasy_snake_repair });
+
+    const step = await createStep(sessionId, 'repair_fantasy_snakes', stepIndex || 0);
+
+    const charsContext = (characters || []).map(c => `- ${c.id}: ${c.name || c.id}`).join('\n') || 'None';
+    const locsContext = (locations || []).map(l => `- ${l.id}: ${l.name || l.id}`).join('\n') || 'None';
+    const unitsStr = flagged.map(f => repairRow(f.unit, f.tokens)).join('\n');
+
+    const prompt = SYSTEM_PROMPTS.fantasy_snake_repair
+        .replace('%CHARACTERS%', charsContext)
+        .replace('%LOCATIONS%', locsContext)
+        .replace('%UNITS%', unitsStr);
+
+    const messages = [
+        { role: 'system', content: prompt },
+        { role: 'user', content: `Reassemble the ${flagged.length} unit(s) that reference fantasy snake_case ids:\n\n${unitsStr}` },
+    ];
+
+    try {
+        const result = await aiCaller.callAI(messages, { maxTokens: 4096 });
+        const repaired = result.units || [];
+        const { units: merged, changed, stillBad } = mergeRepairResults(allVisualUnits, flagged, repaired, characters, knownIds);
+
+        await aiCaller.logConversation(sessionId, step.step_id, messages, JSON.stringify(result));
+        await completeStep(step.step_id, { units: merged.length });
+        console.log(`[AGENT] Step fantasy_snake_repair: ${flagged.length} unit(s) flagged (${flagged.reduce((n, f) => n + f.tokens.length, 0)} fantasy ids), ${changed} reassembled, ${stillBad} still unverified (kept original)`);
+        return merged;
+    } catch (err) {
+        await failStep(step.step_id, err.message);
+        console.warn(`[AGENT] Step fantasy_snake_repair FAILED, keeping original units: ${err.message}`);
+        return allVisualUnits;
+    }
+}
+
 module.exports = {
     stepAnalyzeStructure,
     stepExtractCharacters,
@@ -1186,6 +1387,7 @@ module.exports = {
     stepReconcilePassports,
     stepReconcileVideoActions,
     stepPolishVideoActions,
+    stepRepairFantasyIds,
     stepGenerateVoices,
     // Video-token helpers (stage 2) — exported for tests
     effectiveSceneTokens,
@@ -1194,4 +1396,8 @@ module.exports = {
     // Deterministic static-copy guards (used by pipeline-runner's final sweep)
     isStaticActionCopy,
     needsVideoActionReconciliation,
+    // Fantasy snake repair helpers (pure — exported for tests)
+    repairRow,
+    mergeRepairResults,
+    applyRepairToScenes,
 };

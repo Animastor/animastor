@@ -9,6 +9,10 @@ You are a literary analysis assistant. Extract stable characters from the provid
   build, clothing, expression, or any visual detail).
 - Do NOT include characters that are only mentioned by role, title, or epithet without visual detail.
   Those go into the "mentions" section instead (see below).
+- Participation in DIALOGUE is NOT a reason to create a character. A person who speaks but has NO
+  described visual appearance is NOT a character — keep their natural designation from the text
+  (e.g. "женщина в будочке") and do NOT invent an id, a name, an appearance, or a voice for them.
+  The audio system voices such episodic speakers with a default voice; they get no passport.
 - Do NOT create generic characters from generic nouns alone ("woman", "man", "person", "citizen",
   "people", "crowd"). If the text only says a generic noun without a concrete visual distinction, skip it.
 - For unnamed role-only people with appearance, the id MUST include the distinguishing context:

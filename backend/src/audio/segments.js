@@ -25,7 +25,9 @@ function splitTextIntoChunks(text, maxChars = 250) {
 function splitDialogueIntoChunks(text, maxChars = 250) {
     if (!text?.trim()) return [];
     text = text.replace(/\r/g, "").trim();
-    const lines = text.match(/[a-z0-9_]+:\s.*?(?=\n[a-z0-9_]+:|$)/gis) || [text];
+    // Speaker label = any text before the first ": " — character_id OR natural
+    // designation of an episodic speaker ("женщина в будочке", "продавец").
+    const lines = text.match(/[^:\n]+:\s.*?(?=\n[^:\n]+:|$)/gis) || [text];
     const chunks = [];
     let current = "";
     for (const rawLine of lines) {

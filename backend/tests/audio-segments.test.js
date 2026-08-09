@@ -102,6 +102,14 @@ describe('Audio Segments', () => {
             expect(result[0]).to.match(/^ivan:/);
             expect(result[1]).to.match(/^maria:/);
         });
+
+        it('keeps natural-designation speakers (Cyrillic, spaces) as labels', () => {
+            const text = 'женщина в будочке: ' + 'A'.repeat(200) + '\n' + 'anna_smirnova: ' + 'B'.repeat(100);
+            const result = splitDialogueIntoChunks(text, 250);
+            expect(result).to.have.length(2);
+            expect(result[0]).to.match(/^женщина в будочке:/);
+            expect(result[1]).to.match(/^anna_smirnova:/);
+        });
     });
 
     // ═══════════════════════════════════════════════════════
@@ -364,6 +372,22 @@ describe('Audio Segments', () => {
             expect(segments[0].segment_type).to.equal('dialogue');
             expect(segments[0].text).to.equal('zhenshchina: Нарзану нету');
             // dialogue segments should NOT have padded flag (not applicable)
+        });
+
+        it('keeps natural designation of an episodic speaker (no snake_case forced)', () => {
+            const entry = {
+                runtime_type: 'scene',
+                scene_type: 'dialogue',
+                payload: {
+                    units: [{
+                        type: 'dialogue',
+                        text: '— Дайте воды, — попросила женщина в будочке.',
+                        audio: { text: 'Дайте воды', speaker: 'женщина в будочке' }
+                    }]
+                }
+            };
+            const segments = buildSegments(entry);
+            expect(segments.some(s => s.segment_type === 'dialogue' && s.text === 'женщина в будочке: Дайте воды')).to.equal(true);
         });
 
         it('generates hybrid for Pattern A (post-dialogue narration)', () => {

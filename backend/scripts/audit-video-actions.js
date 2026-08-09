@@ -19,6 +19,7 @@
 
 const path = require('path');
 const fs = require('fs');
+const { findUnverifiedSnakeTokens } = require('../src/utils/snake-guard');
 
 const BOOKS_DIR = process.env.BOOKS_DIR || '/data/books';
 const PASS = '\x1b[32m✓\x1b[0m';
@@ -46,14 +47,9 @@ function hasAnyWord(text, words) {
     return words.some(w => hasWord(text, w));
 }
 
-// Snake_case token look like an id: [a-z][a-z0-9]+_[a-z0-9_]+ (optionally + 's)
-const SNAKE_RE = /(?<![\p{L}\p{N}_])([a-z][a-z0-9]+(?:_[a-z0-9]+)+)('s)?(?![\p{L}\p{N}_])/gu;
-// Known non-character snake tokens that legitimately appear in text
-const ALLOWED_SNAKE = new Set([
-    'character_id', 'scene_index', 'unit_index', 'scene_title', 'estimated_duration_sec',
-    'video_tokens', 'image_prompt', 'full_text', 'chapter_id', 'scene_id', 'unit_id',
-    'book_id', 'audio_text', 'medium_close', 'medium_shot', 'close_up', 'wide_shot',
-]);
+// Snake_case token detection lives in src/utils/snake-guard.js — the SAME source
+// of truth used by the pipeline repair step (stepRepairFantasyIds) and the
+// lazy-book write barrier. Keeps audit and pipeline in lockstep.
 
 function loadBook(bookId) {
     const dir = path.join(BOOKS_DIR, bookId);
@@ -98,15 +94,12 @@ function auditUnit(unit, scene, ctx) {
     const hasCharId = ctx.charIds.size > 0 && [...ctx.charIds].some(id =>
         wordRegex(id).test(action) || wordRegex(id).test(prompt));
 
-    // 1. Invented snake_case ids (context poisoning)
+    // 1. Invented snake_case ids (context poisoning) — shared snake-guard
+    const knownIds = [...ctx.charIds, ...ctx.locIds];
     for (const field of [['video.action', action], ['image.prompt', prompt]]) {
         const [label, text] = field;
         if (!text) continue;
-        for (const m of text.matchAll(SNAKE_RE)) {
-            const token = m[1];
-            if (ctx.charIds.has(token) || ctx.locIds.has(token) || ALLOWED_SNAKE.has(token)) continue;
-            // skip if token is a substring-prefix of a real id (e.g. anna vs anna_smirnova)
-            if ([...ctx.charIds].some(id => id.startsWith(token + '_') || token.startsWith(id + '_'))) continue;
+        for (const token of findUnverifiedSnakeTokens(text, knownIds)) {
             findings.push({ level: 'FAIL', where, msg: `INVENTED id "${token}" in ${label} (not in character list)` });
         }
     }

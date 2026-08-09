@@ -8,6 +8,7 @@ const { BookState, SceneStatus } = require('./constants');
 const { getBookDir, getChapterDir, getBookMetaPath, getCharactersPath, getMentionsPath, getBiblePath, getLocationsPath, getVoicesPath, chapterId, sceneId, unitId } = require('./paths');
 const { detectLanguage } = require('./parser');
 const { findCanonicalCharacter, isGenericCharacter } = require('../../utils/character-identity');
+const { sanitizeParticipants } = require('../../utils/snake-guard');
 const draft = require('./draft');
 const metadata = require('./metadata');
 const chapterUtils = require('./chapter-utils');
@@ -107,6 +108,15 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
         if (existingIds.has(charId)) continue;
         if (isGenericCharacter({ ...ch, id: charId })) {
             console.warn(`[LAZY-BOOK] Skipping generic character without stable context: ${charId}`);
+            continue;
+        }
+        // Dialogue participation is NOT a character criterion: without a
+        // described appearance a person is not a character (characters.md).
+        // Skip here so no id/name/default-voice/passport is invented for them.
+        // (The agent may still extract one — this guard enforces the rule.)
+        const rawAppearanceCheck = ch.appearance || ch.description || null;
+        if (!rawAppearanceCheck || /не опис|no descr|unknown|unclear/i.test(rawAppearanceCheck)) {
+            console.warn(`[LAZY-BOOK] Skipping character without described appearance: ${charId} — not a character`);
             continue;
         }
         const canonical = findCanonicalCharacter({ ...ch, id: charId }, mergedCharacters);
@@ -266,8 +276,15 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
     // Add/update voices for characters from the current window.
     // stepGenerateVoices sets ch.voice as a STRING (voices[id].instruction),
     // not as { instruction: string }. Handle both formats.
+    // ONLY characters that keep a real passport (passportChars — described
+    // appearance/clothes) get a voice entry. A dialogue-only participant
+    // without a described appearance is NOT a character: it must not get an
+    // orphan voice (no id in characters.json). The audio pipeline falls back
+    // to a default voice for such speakers automatically.
+    const passportIds = new Set(passportChars.map(c => c.id));
     for (const ch of (analysis.characters || [])) {
         if (!ch.id) continue;
+        if (!passportIds.has(ch.id)) continue;
         const vi = typeof ch.voice === 'string' ? ch.voice : ch.voice?.instruction;
         if (vi) {
             voices[ch.id] = { instruction: vi };
@@ -455,7 +472,21 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
         const isDialogue = cleanUnits.some(u => u.type === 'dialogue' || u.type === 'dialectic');
 
         const allParticipants = [];
-        const sceneParticipants = aiScene.characters_present || aiScene.participants || [];
+        // Write barrier (hybrid safety net): a participant whose value is a
+        // snake_case id NOT in characters.json is a hallucination (e.g.
+        // "zhenshchina_v_budochke" instead of «женщина в будочке»). It must
+        // never enter the book: known ids and natural designations are kept,
+        // fantasy ids are dropped. The pipeline repair step already reassembles
+        // the visual prompts — this filter guarantees the STRUCTURED field
+        // stays clean even if a fantasy id survives the LLM passes.
+        const knownParticipantIds = new Set(mergedCharacters.map(c => c.id).filter(Boolean));
+        const sceneParticipants = sanitizeParticipants(
+            aiScene.characters_present || aiScene.participants || [],
+            knownParticipantIds,
+            {
+                onDrop: (p) => console.warn(`[LAZY-BOOK] Dropped fantasy participant "${p}" in scene "${(aiScene.title || '').slice(0, 40)}" — not in characters.json`),
+            }
+        );
         for (const p of sceneParticipants) {
             if (!allParticipants.includes(p)) allParticipants.push(p);
         }

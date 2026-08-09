@@ -37,6 +37,10 @@ You are a literary analysis assistant. Decompose the provided scene text into vi
 ## Important: audio.speaker field for dialogue units
 - For ALL units with type="dialogue", you MUST supply the `audio.speaker` field with the exact character_id of who is speaking, and the `audio.text` field with the dialogue line text.
 - Use only character_ids from the Known Characters list above.
+- If the speaker is NOT in the Known Characters list (an unnamed episodic participant — e.g.
+  "женщина в будочке", "продавец", "прохожий"): keep their NATURAL designation from the text
+  as `speaker`. Do NOT invent a snake_case id, a name, or a passport for them — they are NOT a
+  character. The system assigns a default voice for them automatically.
 - Example: If Анна says "Дайте воды", write `{ "text": "Дайте воды", "type": "dialogue", "audio": { "text": "Дайте воды", "speaker": "anna_smirnova" } }`.
 - For narration, perception, description, action, transition, or any non-dialogue type, do NOT include the audio field.
 

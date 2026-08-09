@@ -13,6 +13,7 @@ const PROGRESS_STAGES = {
     passport_reconciliation: '⟳ Сверяю описания с паспортами персонажей...',
     video_action_reconciliation: '⟳ Согласовываю видеоряд с сюжетом...',
     video_action_polish: '⟳ Полирую непрерывность движений...',
+    fantasy_snake_repair: '⟳ Восстанавливаю естественные обозначения персонажей...',
     voice_generation: '⟳ Подбираю голоса для персонажей...',
     splitting_long_units: sc => `⟳ Проверяю длительность юнитов сцены ${sc + 1}...`,
 };
@@ -78,7 +79,7 @@ const RULES = [
     'units', 'visuals', 'storyboard_polish',
     'voice_generation', 'passport_reconciliation',
     'video_action_reconciliation', 'video_action_polish',
-    'unit_splitter',
+    'unit_splitter', 'fantasy_snake_repair',
 ];
 
 for (const name of RULES) {
