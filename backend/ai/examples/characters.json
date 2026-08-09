@@ -1,38 +1,29 @@
 [
   {
-    "id": "author",
-    "name": "Author",
+    "id": "anna_smirnova",
+    "name": "Anna Smirnova",
     "passport": {
-      "appearance": "thin intellectual eastern European man, 1930s Russian writer, elegant restrained presence, intelligent and observant, about 42 years old, narrow oval face, high forehead, refined soft cheekbones, long straight elegant nose, thin lips, intelligent grey eyes with subtle ironic gaze, dark brown hair combed back with slight receding hairline, pale skin, calm thoughtful expression",
-      "clothes": "dark suit, white shirt, narrow tie, neat and minimal appearance",
-      "video_tokens": ["dark suit", "narrow tie", "pale skin"]
+      "appearance": "tall elegant woman in her mid-thirties, newspaper editor, composed and observant presence, sharp intelligent face, grey-green eyes, dark brown hair in a neat low bun, calm focused expression",
+      "clothes": "beige trench coat over a dark dress, small round glasses, low heels",
+      "video_tokens": ["round glasses", "low bun", "trench coat"]
     }
   },
   {
-    "id": "berlioz",
-    "name": "Mikhail Berlioz",
+    "id": "boris_volkov",
+    "name": "Boris Volkov",
     "passport": {
-      "appearance": "slim intellectual man, 1930s Moscow editor, composed and rational presence, Soviet intellectual archetype, around 40 years old, narrow intellectual face, intelligent grey eyes, dark brown hair neatly combed back with slight receding hairline, clean-shaven, calm composed expression",
-      "clothes": "light summer suit, neat shirt, loosened tie, top button unbuttoned, slightly relaxed appearance due to heat",
-      "video_tokens": ["light summer suit", "loosened tie"]
+      "appearance": "young poet in his late twenties, energetic and impulsive presence, strong build, lively brown eyes, short tousled dark hair, expressive face with quick-changing emotions",
+      "clothes": "loose grey shirt, worn leather jacket, red scarf, open collar",
+      "video_tokens": ["red scarf", "tousled hair", "leather jacket"]
     }
   },
   {
-    "id": "bezdomny",
-    "name": "Ivan Bezdomny",
+    "id": "dmitry_orekhov",
+    "name": "Dmitry Orekhov",
     "passport": {
-      "appearance": "young strong energetic man, Soviet poet, impulsive and emotionally driven presence, naive but passionate character, unstable inner state, mid 20s, strong build, simple open face, lively brown eyes, short slightly messy dark hair, clean-shaven, expressive face with quick-changing emotions, restless and slightly unfocused gaze",
-      "clothes": "loose shirt, slightly wrinkled, open collar due to heat, informal look, mildly disordered appearance reflecting emotional agitation",
-      "video_tokens": ["messy dark hair", "open-collar shirt", "strong build"]
-    }
-  },
-  {
-    "id": "woland",
-    "name": "Woland",
-    "passport": {
-      "appearance": "mysterious foreign intellectual man, aristocratic and unsettling presence, dark charismatic figure with hidden supernatural authority, around 50 years old, tall and lean, pale face with sharp refined features, penetrating mismatched eyes — one dark and one greenish-grey, thin ironic smile, black hair with traces of grey, elegant posture, gaze both amused and dangerous",
-      "clothes": "expensive black suit perfectly tailored, dark waistcoat, white shirt, black tie, polished shoes, subtle silver cane with dark handle, immaculate appearance despite summer heat",
-      "video_tokens": ["black suit", "silver cane", "mismatched eyes"]
+      "appearance": "tall lean man around forty-five, calm reserved presence, pale face with sharp refined features, thin ironic smile, black hair with traces of grey",
+      "clothes": "dark long coat, black hat, silver walking cane, polished shoes",
+      "video_tokens": ["black hat", "silver cane", "long dark coat"]
     }
   }
 ]

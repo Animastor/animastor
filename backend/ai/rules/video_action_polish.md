@@ -27,8 +27,8 @@ When a character acts in an action, name them by their EXACT character_id from
 the Characters list (%CHARACTERS%) — never by display name, pronoun, or generic
 noun ("the two men", "woman", "Mikhail's", "he", "his", "both characters").
 The video prompt maps storyboard lines to identity anchors BY character_id —
-generic wording breaks that mapping. WRONG: "slow push-in to Mikhail's glasses"
-→ RIGHT: "slow push-in to mikhail_berlioz's glasses".
+generic wording breaks that mapping. WRONG: "slow push-in to Anna's glasses"
+→ RIGHT: "slow push-in to anna_smirnova's glasses".
 
 ### 6. Timing realism — CRITICAL
 Each unit carries `estimated_duration_sec` — how long its video chunk plays (≈ the spoken duration of the unit text). The action must describe a behavior that PLAUSIBLY FILLS that time:

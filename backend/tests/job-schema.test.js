@@ -18,10 +18,10 @@ describe('job-schema (единый контракт job_id)', () => {
 
     describe('parseJobId — audio chunk', () => {
         it('parses bookId with underscores', () => {
-            const p = jobSchema.parseJobId('master_margarita_demo_ch-ce87_sc-6c4e_0003:audio');
+            const p = jobSchema.parseJobId('evening_city_demo_ch-ce87_sc-6c4e_0003:audio');
             expect(p).to.deep.include({
                 kind: 'audio_chunk',
-                bookId: 'master_margarita_demo',
+                bookId: 'evening_city_demo',
                 chapterId: 'ch-ce87',
                 sceneId: 'sc-6c4e',
                 chunkIndex: '0003',

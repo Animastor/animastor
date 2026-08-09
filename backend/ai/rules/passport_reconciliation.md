@@ -32,7 +32,7 @@ For each IU, compare the image.prompt against the passports of the characters th
 - Do NOT change position, pose, gaze, action, or temporary descriptions — only remove what's redundant with the passport.
 - Do NOT add new descriptions — only remove.
 - Do NOT change unit.text, unit.type, or unit.image.
-- Pay special attention to parenthetical descriptions like "mikhail_berlioz (small, round glasses)". If these describe appearance/clothing/accessories already covered by the passport, REMOVE the parenthetical content entirely. Keep only the character_id.
+- Pay special attention to parenthetical descriptions like "anna_smirnova (small, round glasses)". If these describe appearance/clothing/accessories already covered by the passport, REMOVE the parenthetical content entirely. Keep only the character_id.
 
 ## Known Characters (passports)
 %CHARACTERS%

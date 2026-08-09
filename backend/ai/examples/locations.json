@@ -3,8 +3,8 @@
     "description": "abstract symbolic literary cinematic space",
     "cinematic_space": "abstract literary cinematic environment, soft darkness, subtle reflections, symbolic cinematic void"
   },
-  "patriarch_ponds": {
-    "description": "Patriarch Ponds, Moscow, 1930s",
-    "cinematic_space": "quiet Moscow park near pond, benches, trees, reflective water, warm evening openness"
+  "city_park": {
+    "description": "City park pond, modern city evening",
+    "cinematic_space": "quiet city park near a pond, benches, old linden trees, reflective water, warm evening openness"
   }
 }

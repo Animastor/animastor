@@ -13,15 +13,15 @@
       "character_anchors": null,
       "audio": {
         "voice": "narrator",
-        "full_text": "Мастер и Маргарита. Михаил Афанасьевич Булгаков."
+        "full_text": "Вечер в городе. М. Демин."
       },
       "units": [
         {
           "id": "iu-a8d4f90c",
           "type": "typography",
-          "text": "Мастер и Маргарита. Михаил Афанасьевич Булгаков.",
+          "text": "Вечер в городе. М. Демин.",
           "image": {
-            "prompt": "full frame soviet book cover design, vertical composition, minimalist dark soviet aesthetic, elegant typography, cinematic mood",
+            "prompt": "full frame modern book cover design, vertical composition, minimalist warm evening aesthetic, elegant typography, cinematic mood",
             "quality": "highly detailed, sharp typography, clean composition"
           }
         }

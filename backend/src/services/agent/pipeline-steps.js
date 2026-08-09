@@ -389,7 +389,7 @@ async function stepCreateUnits(sessionId, scene, sceneIndex, characters, stepInd
     const knownIds = new Set((characters || []).map(c => c.id).filter(Boolean));
     const mentionsContext = (mentions && typeof mentions === 'object' && Object.keys(mentions).length > 0)
         ? '\n## Role/title → character_id mappings\n' +
-          'When the text refers to a character by role or title (e.g. "редактор", "глава МАССОЛИТ", "прозрачный гражданин"),\n' +
+          'When the text refers to a character by role or title (e.g. "редактор", "глава журнала", "незнакомец в плаще"),\n' +
           'use the mapped character_id below. If a role references an id NOT in the Known Characters list,\n' +
           'describe the character literarily in natural language instead:\n' +
           Object.entries(mentions)
@@ -1080,7 +1080,7 @@ async function stepCreateVisuals(sessionId, scene, units, sceneIndex, characters
             contextParts.push('', '## Alias → character_id mappings');
             contextParts.push('When the scene text refers to a character by a nickname, role, or epithet, use the mapped character_id below:');
             contextParts.push(...mentionLines);
-            contextParts.push('Example: if text says "Бездомный" and mapping says "бездомный" → ivan_ponyrev, write "ivan_ponyrev" in the prompt.');
+            contextParts.push('Example: if text says "редактор" and mapping says "редактор" → anna_smirnova, write "anna_smirnova" in the prompt.');
         }
     }
 

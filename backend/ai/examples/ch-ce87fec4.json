@@ -18,7 +18,7 @@
           "type": "typography",
           "text": "Пролог.",
           "image": {
-            "prompt": "full frame cinematic title page, vertical composition, dark minimalist soviet literary aesthetic, elegant typography",
+            "prompt": "full frame cinematic title page, vertical composition, dark minimalist literary aesthetic, elegant typography",
             "quality": "highly detailed, sharp typography, clean composition"
           }
         }
@@ -26,81 +26,51 @@
     },
     {
       "scene_id": "sc-6c4ea9f6",
-      "scene_title": "Голос автора",
+      "scene_title": "Город вечером",
       "type": "narration",
       "location": {
-        "id": "symbolic_space",
+        "id": "city_park",
         "environment": {
-          "time": "timeless literary evening",
-          "lighting": "soft dim cinematic light",
-          "weather": "still abstract atmosphere",
-          "mood": "philosophical reflection",
-          "atmosphere": "quiet surreal literary space"
+          "time": "warm spring evening",
+          "lighting": "soft golden sunset light",
+          "weather": "still warm air",
+          "mood": "quiet contemplative",
+          "atmosphere": "calm city evening"
         }
       },
-      "participants": [
-        "author"
-      ],
       "audio": {
-        "voice": "author",
-        "full_text": "Рукописи не горят. Но горит время — и в его огне вспыхивают странные истории. В тёплый вечер, среди спокойной воды и ленивого света, иногда появляется то, чему трудно дать имя. И тогда становится ясно: мир устроен гораздо сложнее, чем кажется."
+        "voice": "narrator",
+        "full_text": "В этот час город медленно затихал. Улицы пустели, и только редкие прохожие спешили домой, когда солнце опускалось за крыши."
       },
       "units": [
         {
-          "id": "iu-af6b21c6",
-          "type": "talking_head",
-          "text": "Рукописи не горят.",
-          "audio": {
-            "text": "Рукописи не горят."
-          },
-          "image": {
-            "shot": "close",
-            "prompt": "close-up of author sitting, facing camera, intimate framing"
-          },
-          "video": {
-            "action": "author speaking with subtle hand gesture, lip movement"
-          }
-        },
-        {
-          "id": "iu-8eb1d48a",
-          "type": "transition",
-          "text": "Но горит время — и в его огне вспыхивают странные истории.",
-          "audio": {
-            "text": "Но горит время — и в его огне вспыхивают странные истории."
-          },
-          "image": {
-            "prompt": "author, dark abstract fire, symbolic burning time, surreal cinematic transition, glowing embers in darkness"
-          },
-          "video": {
-            "action": "slow abstract flame movement, embers drifting upward in darkness"
-          }
-        },
-        {
-          "id": "iu-64a636c5",
+          "id": "iu-7c3b9d10",
           "type": "perception",
-          "text": "В тёплый вечер, среди спокойной воды и ленивого света, иногда появляется то, чему трудно дать имя.",
+          "text": "В этот час город медленно затихал.",
           "audio": {
-            "text": "В тёплый вечер, среди спокойной воды и ленивого света, иногда появляется то, чему трудно дать имя."
+            "text": "В этот час город медленно затихал."
           },
           "image": {
-            "prompt": "warm evening atmosphere over calm water, soft reflections, mysterious peaceful mood"
+            "shot": "wide",
+            "prompt": "empty city avenue at dusk, warm golden light, long soft shadows, quiet evening atmosphere"
           },
           "video": {
-            "action": "gentle water ripples, soft reflections shifting on the surface"
+            "action": "slow camera pan across the avenue, light gradually shifting to warm tones"
           }
         },
         {
-          "id": "iu-8a836c12",
+          "id": "iu-8f4a1c22",
           "type": "perception",
-          "text": "И тогда становится ясно: мир устроен гораздо сложнее, чем кажется.",
+          "text": "Улицы пустели, и только редкие прохожие спешили домой, когда солнце опускалось за крыши.",
           "audio": {
-            "text": "И тогда становится ясно: мир устроен гораздо сложнее, чем кажется."
+            "text": "Улицы пустели, и только редкие прохожие спешили домой, когда солнце опускалось за крыши."
           },
           "image": {
-            "prompt": "subtle surreal tension emerging from darkness, philosophical cinematic atmosphere, quiet unsettling mood"
+            "shot": "environment",
+            "prompt": "quiet street with a few distant pedestrians, sun setting behind rooftops, golden haze"
           },
           "video": {
-            "action": "darkness slowly deepening, subtle shadows moving, unsettling atmospheric shift"
+            "action": "sunlight fading, distant figures moving slowly, dust motes in the air"
           }
         }
       ]

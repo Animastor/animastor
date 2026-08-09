@@ -1,21 +1,21 @@
 {
   "chapter_id": "ch-319c798a",
-  "chapter_title": "Патриаршие пруды",
+  "chapter_title": "Встреча у пруда",
   "scenes": [
     {
       "scene_id": "sc-5c10f05f",
-      "scene_title": "Патриаршие пруды",
+      "scene_title": "Встреча у пруда",
       "type": "chapter_intro",
       "style": "soviet_book_page",
       "audio": {
         "voice": "narrator",
-        "full_text": "Глава первая. Патриаршие пруды."
+        "full_text": "Глава первая. Встреча у пруда."
       },
       "units": [
         {
           "id": "iu-6de2005f",
           "type": "typography",
-          "text": "Глава первая. Патриаршие пруды.",
+          "text": "Глава первая. Встреча у пруда.",
           "image": {
             "prompt": "full frame soviet literary title page, vertical composition, slightly aged paper texture, minimalist book design, elegant centered cyrillic typography, quiet literary atmosphere",
             "quality": "sharp typography, clean composition, detailed paper texture"
@@ -25,29 +25,29 @@
     },
     {
       "scene_id": "sc-63c47a84",
-      "scene_title": "Вечер на Патриарших",
+      "scene_title": "Разговор в парке",
       "type": "narration",
       "location": {
-        "id": "patriarch_ponds",
+        "id": "city_park",
         "environment": {
           "time": "warm spring evening",
           "lighting": "golden sunset light",
           "weather": "still warm air",
           "mood": "quiet intellectual atmosphere",
-          "atmosphere": "calm surreal Moscow evening"
+          "atmosphere": "calm city evening by the pond"
         }
       },
       "participants": [
-        "berlioz",
-        "bezdomny"
+        "anna_smirnova",
+        "boris_volkov"
       ],
       "character_anchors": {
-        "berlioz": {
+        "anna_smirnova": {
           "position": "left",
           "pose": "sitting",
           "orientation": "right"
         },
-        "bezdomny": {
+        "boris_volkov": {
           "position": "right",
           "pose": "sitting",
           "orientation": "left"
@@ -55,19 +55,19 @@
       },
       "audio": {
         "voice": "narrator",
-        "full_text": "Был жаркий весенний вечер в Москве. Воздух стоял неподвижно, наполненный золотым светом заходящего солнца. На Патриарших прудах на скамейке сидели двое: редактор Берлиоз и поэт Иван Бездомный. Они вели разговор о религии, негромко, но с заметной убеждённостью."
+        "full_text": "Был тёплый весенний вечер в городе. Воздух стоял неподвижно, наполненный золотым светом заходящего солнца. На скамейке у пруда сидели двое: редактор Анна Смирнова и поэт Борис Волков. Они обсуждали статью, негромко, но с заметным увлечением."
       },
       "units": [
         {
           "id": "iu-27550fca",
           "type": "perception",
-          "text": "Был жаркий весенний вечер в Москве.",
+          "text": "Был тёплый весенний вечер в городе.",
           "audio": {
-            "text": "Был жаркий весенний вечер в Москве."
+            "text": "Был тёплый весенний вечер в городе."
           },
           "image": {
             "shot": "wide",
-            "prompt": "berlioz sitting on the left, bezdomny sitting on the right, warm golden sunset"
+            "prompt": "anna_smirnova sitting on the left, boris_volkov sitting on the right, warm golden sunset"
           },
           "video": {
             "action": "subtle natural movement, warm golden sunset light shifting"
@@ -82,7 +82,7 @@
           },
           "image": {
             "shot": "environment",
-            "prompt": "berlioz sitting on the left, bezdomny sitting on the right, still glowing air and sunlight"
+            "prompt": "anna_smirnova sitting on the left, boris_volkov sitting on the right, still glowing air and sunlight"
           },
           "video": {
             "action": "still scene, subtle dust motes in golden light, gentle breeze"
@@ -91,14 +91,14 @@
         {
           "id": "iu-38d6e6ea",
           "type": "perception",
-          "text": "На Патриарших прудах на скамейке сидели двое: редактор Берлиоз и поэт Иван Бездомный.",
+          "text": "На скамейке у пруда сидели двое: редактор Анна Смирнова и поэт Борис Волков.",
           "audio": {
-            "text": "На Патриарших прудах на скамейке сидели двое: редактор Берлиоз и поэт Иван Бездомный."
+            "text": "На скамейке у пруда сидели двое: редактор Анна Смирнова и поэт Борис Волков."
           },
           "image": {
             "shot": "medium",
             "character_binding": true,
-            "prompt": "berlioz sitting on the left, bezdomny sitting on the right"
+            "prompt": "anna_smirnova sitting on the left, boris_volkov sitting on the right"
           },
           "video": {
             "action": "both sitting calmly, subtle breathing and natural stillness"
@@ -107,114 +107,114 @@
         {
           "id": "iu-f1e661d6",
           "type": "perception",
-          "text": "Они вели разговор о религии, негромко, но с заметной убеждённостью.",
+          "text": "Они обсуждали статью, негромко, но с заметным увлечением.",
           "audio": {
-            "text": "Они вели разговор о религии, негромко, но с заметной убеждённостью."
+            "text": "Они обсуждали статью, негромко, но с заметным увлечением."
           },
           "image": {
             "shot": "medium_close",
             "character_binding": true,
-            "prompt": "berlioz sitting on the left, bezdomny sitting on the right, calm conversation"
+            "prompt": "anna_smirnova sitting on the left, boris_volkov sitting on the right, calm conversation"
           },
           "video": {
-            "action": "berlioz gesturing calmly while speaking, bezdomny listening intently, subtle facial expressions"
+            "action": "anna_smirnova gesturing calmly while speaking, boris_volkov listening intently, subtle facial expressions"
           }
         }
       ]
     },
     {
       "scene_id": "sc-78955ce1",
-      "scene_title": "Появление Воланда",
+      "scene_title": "Появление незнакомца",
       "type": "narration",
       "location": {
-        "id": "patriarch_ponds",
+        "id": "city_park",
         "environment": {
           "time": "late sunset",
           "lighting": "cooler fading sunlight",
-          "weather": "strange cool air emerging",
-          "mood": "growing philosophical tension",
-          "atmosphere": "subtle supernatural unease"
+          "weather": "evening cool air emerging",
+          "mood": "growing curiosity",
+          "atmosphere": "quiet evening pause"
         }
       },
       "participants": [
-        "berlioz",
-        "bezdomny",
-        "woland"
+        "anna_smirnova",
+        "boris_volkov",
+        "dmitry_orekhov"
       ],
       "character_anchors": {
-        "berlioz": {
+        "anna_smirnova": {
           "position": "left",
           "orientation": "right"
         },
-        "bezdomny": {
+        "boris_volkov": {
           "position": "right",
           "orientation": "left"
         },
-        "woland": {
+        "dmitry_orekhov": {
           "position": "background"
         }
       },
       "audio": {
         "voice": "narrator",
-        "full_text": "Разговор становился всё более напряжённым. Бездомный говорил с жаром, а Берлиоз отвечал спокойно и уверенно. Солнце уже клонилось к закату, и в воздухе появилась странная прохлада. В это время неподалёку возник третий человек."
+        "full_text": "Разговор становился всё более оживлённым. Борис говорил с жаром, а Анна отвечала спокойно и уверенно. Солнце уже клонилось к закату, и в воздухе появилась вечерняя прохлада. В это время неподалёку остановился третий человек."
       },
       "units": [
         {
           "id": "iu-a74f9f09",
           "type": "perception",
-          "text": "Разговор становился всё более напряжённым.",
+          "text": "Разговор становился всё более оживлённым.",
           "audio": {
-            "text": "Разговор становился всё более напряжённым."
+            "text": "Разговор становился всё более оживлённым."
           },
           "image": {
-            "prompt": "berlioz on the left, bezdomny on the right, woland on the background, tension rising between berlioz and bezdomny"
+            "prompt": "anna_smirnova on the left, boris_volkov on the right, dmitry_orekhov on the background, tension rising between anna_smirnova and boris_volkov"
           },
           "video": {
-            "action": "both leaning forward, tension in body language, woland observing from background"
+            "action": "both leaning forward, energy in body language, dmitry_orekhov observing from background"
           }
         },
         {
           "id": "iu-4c804090",
           "type": "perception",
-          "text": "Бездомный говорил с жаром, а Берлиоз отвечал спокойно и уверенно.",
+          "text": "Борис говорил с жаром, а Анна отвечала спокойно и уверенно.",
           "audio": {
-            "text": "Бездомный говорил с жаром, а Берлиоз отвечал спокойно и уверенно."
+            "text": "Борис говорил с жаром, а Анна отвечала спокойно и уверенно."
           },
           "image": {
             "character_binding": true,
-            "prompt": "berlioz on the left, bezdomny on the right, woland on the background, contrast between emotional bezdomny and calm berlioz"
+            "prompt": "anna_smirnova on the left, boris_volkov on the right, dmitry_orekhov on the background, contrast between emotional boris_volkov and calm anna_smirnova"
           },
           "video": {
-            "action": "bezdomny gesticulating passionately, berlioz remaining still and composed, woland watching silently"
+            "action": "boris_volkov gesticulating passionately, anna_smirnova remaining still and composed, dmitry_orekhov watching silently"
           }
         },
         {
           "id": "iu-009bd7b9",
           "type": "perception",
-          "text": "Солнце уже клонилось к закату, и в воздухе появилась странная прохлада.",
+          "text": "Солнце уже клонилось к закату, и в воздухе появилась вечерняя прохлада.",
           "audio": {
-            "text": "Солнце уже клонилось к закату, и в воздухе появилась странная прохлада."
+            "text": "Солнце уже клонилось к закату, и в воздухе появилась вечерняя прохлада."
           },
           "image": {
-            "prompt": "berlioz on the left, bezdomny on the right, woland on the background, sun lowering, cooler tones emerging"
+            "prompt": "anna_smirnova on the left, boris_volkov on the right, dmitry_orekhov on the background, sun lowering, cooler tones emerging"
           },
           "video": {
-            "action": "golden light fading to cooler blue tones, shadows lengthening, subtle supernatural chill in the air"
+            "action": "golden light fading to cooler blue tones, shadows lengthening, subtle evening chill in the air"
           }
         },
         {
           "id": "iu-8e4de386",
           "type": "perception",
-          "text": "В это время неподалёку возник третий человек.",
+          "text": "В это время неподалёку остановился третий человек.",
           "audio": {
-            "text": "В это время неподалёку возник третий человек."
+            "text": "В это время неподалёку остановился третий человек."
           },
           "image": {
             "character_binding": true,
-            "prompt": "berlioz on the left, bezdomny on the right, woland on the background, distant mysterious figure"
+            "prompt": "anna_smirnova on the left, boris_volkov on the right, dmitry_orekhov on the background, distant mysterious figure"
           },
           "video": {
-            "action": "woland slowly approaching from the background, both berlioz and bezdomny turning to notice him"
+            "action": "dmitry_orekhov slowly approaching from the background, both anna_smirnova and boris_volkov turning to notice him"
           }
         }
       ]
@@ -224,7 +224,7 @@
       "scene_title": "Спор",
       "type": "narration",
       "location": {
-        "id": "patriarch_ponds",
+        "id": "city_park",
         "environment": {
           "time": "early evening",
           "lighting": "soft fading daylight",
@@ -234,14 +234,14 @@
         }
       },
       "participants": [
-        "berlioz",
-        "bezdomny"
+        "anna_smirnova",
+        "boris_volkov"
       ],
       "character_anchors": {
-        "berlioz": {
+        "anna_smirnova": {
           "position": "left"
         },
-        "bezdomny": {
+        "boris_volkov": {
           "position": "right"
         }
       },
@@ -258,7 +258,7 @@
             "text": "Спокойный разговор окончательно перешёл в спор."
           },
           "image": {
-            "prompt": "berlioz on the left, bezdomny on the right, emotional transition from calm to conflict"
+            "prompt": "anna_smirnova on the left, boris_volkov on the right, emotional transition from calm to conflict"
           },
           "video": {
             "action": "both characters' postures tensing, voices rising, shift from calm to heated debate"
@@ -268,145 +268,145 @@
     },
     {
       "scene_id": "sc-ecda63be",
-      "scene_title": "Доказательства",
+      "scene_title": "Диалог",
       "type": "dialogue",
       "location": {
-        "id": "patriarch_ponds",
+        "id": "city_park",
         "environment": {
           "time": "late warm evening",
           "lighting": "dim sunset glow",
           "weather": "warm stagnant air",
-          "mood": "heated philosophical argument",
-          "atmosphere": "quiet supernatural observation"
+          "mood": "heated argument",
+          "atmosphere": "quiet evening observation"
         }
       },
       "participants": [
-        "berlioz",
-        "bezdomny",
-        "woland"
+        "anna_smirnova",
+        "boris_volkov",
+        "dmitry_orekhov"
       ],
       "character_anchors": {
-        "berlioz": {
+        "anna_smirnova": {
           "position": "left"
         },
-        "bezdomny": {
+        "boris_volkov": {
           "position": "right"
         },
-        "woland": {
+        "dmitry_orekhov": {
           "position": "background"
         }
       },
       "audio": {
         "voice": "dialogue",
-        "full_text": "— Но ведь Иисуса не существовало!\n— Вы повторяете распространённое заблуждение.\n— Это не заблуждение, а очевидный факт!\n— Факты требуют доказательств, Иван.\n— Да какие ещё доказательства нужны?\n— История — сложная наука. Нельзя делать выводы сгоряча."
+        "full_text": "— Но статья ведь никуда не годится!\n— Ты просто не дал мне её дочитать.\n— Я прочитал достаточно, чтобы понять.\n— Тогда объясни, что именно не так.\n— Всё не так. Начни заново.\n— Хорошо. Завтра поговорим спокойно."
       },
       "units": [
         {
           "id": "iu-7858cd7e",
           "type": "dialogue",
-          "speaker": "bezdomny",
-          "text": "Но ведь Иисуса не существовало!",
+          "speaker": "boris_volkov",
+          "text": "Но статья ведь никуда не годится!",
           "audio": {
-            "speaker": "bezdomny",
-            "text": "Но ведь Иисуса не существовало!"
+            "speaker": "boris_volkov",
+            "text": "Но статья ведь никуда не годится!"
           },
           "image": {
             "shot": "close",
             "character_binding": true,
-            "prompt": "close-up of bezdomny sitting on the right, facing berlioz on the left"
+            "prompt": "close-up of boris_volkov sitting on the right, facing anna_smirnova on the left"
           },
           "video": {
-            "action": "bezdomny leaning forward emotionally, gesturing while speaking with lip movement"
+            "action": "boris_volkov leaning forward emotionally, gesturing while speaking with lip movement"
           }
         },
         {
           "id": "iu-ac4df088",
           "type": "dialogue",
-          "speaker": "berlioz",
-          "text": "Вы повторяете распространённое заблуждение.",
+          "speaker": "anna_smirnova",
+          "text": "Ты просто не дал мне её дочитать.",
           "audio": {
-            "speaker": "berlioz",
-            "text": "Вы повторяете распространённое заблуждение."
+            "speaker": "anna_smirnova",
+            "text": "Ты просто не дал мне её дочитать."
           },
           "image": {
             "shot": "close",
             "character_binding": true,
-            "prompt": "close-up of berlioz sitting on the left, speaking to bezdomny on the right"
+            "prompt": "close-up of anna_smirnova sitting on the left, speaking to boris_volkov on the right"
           },
           "video": {
-            "action": "berlioz responding calmly, slight authoritative gesture, speaking with lip movement"
+            "action": "anna_smirnova responding calmly, slight authoritative gesture, speaking with lip movement"
           }
         },
         {
           "id": "iu-fc1e1761",
           "type": "dialogue",
-          "speaker": "bezdomny",
-          "text": "Это не заблуждение, а очевидный факт!",
+          "speaker": "boris_volkov",
+          "text": "Я прочитал достаточно, чтобы понять.",
           "audio": {
-            "speaker": "bezdomny",
-            "text": "Это не заблуждение, а очевидный факт!"
+            "speaker": "boris_volkov",
+            "text": "Я прочитал достаточно, чтобы понять."
           },
           "image": {
             "shot": "close",
             "character_binding": true,
-            "prompt": "close-up of bezdomny sitting on the right, facing berlioz, agitated expression"
+            "prompt": "close-up of boris_volkov sitting on the right, facing anna_smirnova, agitated expression"
           },
           "video": {
-            "action": "bezdomny becoming more agitated, leaning further forward, emphatic gestures"
+            "action": "boris_volkov becoming more agitated, leaning further forward, emphatic gestures"
           }
         },
         {
           "id": "iu-a580b0f5",
           "type": "dialogue",
-          "speaker": "berlioz",
-          "text": "Факты требуют доказательств, Иван.",
+          "speaker": "anna_smirnova",
+          "text": "Тогда объясни, что именно не так.",
           "audio": {
-            "speaker": "berlioz",
-            "text": "Факты требуют доказательств, Иван."
+            "speaker": "anna_smirnova",
+            "text": "Тогда объясни, что именно не так."
           },
           "image": {
             "shot": "close",
             "character_binding": true,
-            "prompt": "close-up of berlioz sitting on the left, controlled intellectual expression"
+            "prompt": "close-up of anna_smirnova sitting on the left, controlled intellectual expression"
           },
           "video": {
-            "action": "berlioz maintaining calm composure, slight professorial gesture, speaking with lip movement"
+            "action": "anna_smirnova maintaining calm composure, slight professorial gesture, speaking with lip movement"
           }
         },
         {
           "id": "iu-f9d35fb2",
           "type": "dialogue",
-          "speaker": "bezdomny",
-          "text": "Да какие ещё доказательства нужны?",
+          "speaker": "boris_volkov",
+          "text": "Всё не так. Начни заново.",
           "audio": {
-            "speaker": "bezdomny",
-            "text": "Да какие ещё доказательства нужны?"
+            "speaker": "boris_volkov",
+            "text": "Всё не так. Начни заново."
           },
           "image": {
             "shot": "close",
             "character_binding": true,
-            "prompt": "close-up of bezdomny sitting on the right, frustration rising"
+            "prompt": "close-up of boris_volkov sitting on the right, frustration rising"
           },
           "video": {
-            "action": "bezdomny's frustration peaking, throwing hands up in exasperation, speaking with lip movement"
+            "action": "boris_volkov's frustration peaking, throwing hands up in exasperation, speaking with lip movement"
           }
         },
         {
           "id": "iu-b409c20f",
           "type": "dialogue",
-          "speaker": "berlioz",
-          "text": "История — сложная наука. Нельзя делать выводы сгоряча.",
+          "speaker": "anna_smirnova",
+          "text": "Хорошо. Завтра поговорим спокойно.",
           "audio": {
-            "speaker": "berlioz",
-            "text": "История — сложная наука. Нельзя делать выводы сгоряча."
+            "speaker": "anna_smirnova",
+            "text": "Хорошо. Завтра поговорим спокойно."
           },
           "image": {
             "shot": "close",
             "character_binding": true,
-            "prompt": "close-up of berlioz sitting on the left, final calm statement, woland watching from background"
+            "prompt": "close-up of anna_smirnova sitting on the left, final calm statement, dmitry_orekhov watching from background"
           },
           "video": {
-            "action": "berlioz making a definitive concluding gesture, speaking with lip movement, woland observing silently in the background"
+            "action": "anna_smirnova making a definitive concluding gesture, speaking with lip movement, dmitry_orekhov observing silently in the background"
           }
         }
       ]

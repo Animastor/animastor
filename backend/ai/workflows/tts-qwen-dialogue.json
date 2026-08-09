@@ -2,7 +2,7 @@
   "71": {
     "inputs": {
       "text": "Это тестовое предложение для согласования голоса.",
-      "voice_instruction": "A calm, warm male voice of a thoughtful Russian writer. \nLow and soft, gentle and reflective, with quiet интеллигент depth. \nSlow, careful speech with natural pauses. \nWhen speaking to Margarita, the voice becomes warmer and more alive, tender and intimate.",
+      "voice_instruction": "A calm, warm male voice of a thoughtful Russian writer. \nLow and soft, gentle and reflective, with quiet интеллигент depth. \nSlow, careful speech with natural pauses. \nWhen the interlocutor is a close friend, the voice becomes warmer and more alive, tender and intimate.",
       "language": "Russian",
       "output_mode": "Concatenate (Merge)",
       "seed": 588760720740241,
@@ -44,9 +44,9 @@
   },
   "74": {
     "inputs": {
-      "role_name_1": "Master",
-      "role_name_2": "Margo",
-      "role_name_3": "Role3",
+      "role_name_1": "Speaker1",
+      "role_name_2": "Speaker2",
+      "role_name_3": "Speaker3",
       "prompt_1": [
         "73",
         0
@@ -220,7 +220,7 @@
   },
   "108": {
     "inputs": {
-      "script": "Master: Марго… ты пришла. Я думал, мир уже забыл обо мне.\nMargo: Мир может забыть, но я — никогда. Я искала тебя повсюду.\nMaster: У меня ничего не осталось… ни дома, ни имени, даже моей книги.\nMargo: У тебя осталась правда, которую ты написал… и у тебя есть я.\nMaster: Иногда мне кажется, что ночь добрее дня.\nMargo: Пусть тогда ночь сохранит нас. Мы не будем бояться её вместе.\nMaster: Ты говоришь так, будто покой возможен.\nMargo: С тобой… он уже есть.",
+      "script": "Анна: Борис… ты пришёл. Я думала, ты уже забыл обо мне.\nБорис: Забыть можно, но я — не забыл. Я искал тебя повсюду.\nАнна: У меня ничего не осталось… ни прежней жизни, ни имени.\nБорис: У тебя осталась правда, которую ты написала… и у тебя есть я.\nАнна: Иногда мне кажется, что ночь добрее дня.\nБорис: Пусть тогда ночь сохранит нас. Мы не будем бояться её вместе.\nАнна: Ты говоришь так, будто покой возможен.\nБорис: С тобой… он уже есть.",
       "default_instruct": ""
     },
     "class_type": "Qwen3TTSScriptProcessor",

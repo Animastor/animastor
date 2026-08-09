@@ -2,16 +2,13 @@
   "narrator": {
     "instruction": "A mature Russian male voice. Deep, calm, reflective, slightly melancholic. Slow literary narration, soft authority, philosophical tone. Native Russian pronunciation."
   },
-  "author": {
-    "instruction": "A mature Russian male voice. Deep, calm, reflective, slightly melancholic. Slow literary narration, soft authority, philosophical tone. Native Russian pronunciation."
+  "anna_smirnova": {
+    "instruction": "A mature Russian female voice. Medium pitch, confident and controlled. Calm, rational, intellectually sharp."
   },
-  "berlioz": {
-    "instruction": "A mature Russian male voice. Medium-low pitch, confident and controlled. Calm, rational, intellectually sharp."
+  "boris_volkov": {
+    "instruction": "A young Russian male voice. Energetic, fast, emotionally charged, sometimes impulsive, speaking with conviction."
   },
-  "bezdomny": {
-    "instruction": "A young Russian male voice. Energetic, fast, emotionally charged, sometimes unstable, speaking with conviction but lacking full control."
-  },
-  "woland": {
-    "instruction": "A mature male voice with subtle foreign accent. Calm, deep, hypnotic, ironic and composed. Speaks slowly with absolute confidence and hidden menace. Sophisticated intellectual tone."
+  "dmitry_orekhov": {
+    "instruction": "A mature male voice. Calm, deep, unhurried, slightly ironic. Speaks slowly with quiet confidence."
   }
 }

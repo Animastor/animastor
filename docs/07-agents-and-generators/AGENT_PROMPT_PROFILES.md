@@ -199,8 +199,8 @@ ai/profiles/{type}/{profileName}.json  →  встроенный дефолт
 
 Детерминированная гарантия идентичности (в `buildVideoPrompt`): перед сборкой
 сториборда `video.action` нормализуется через `normalizeCharacterRefs` (имена →
-character_id, включая притяжательные формы вроде "Mikhail's glasses" →
-"mikhail_berlioz's glasses"), а общие групповые обороты ("the two men", "both
+character_id, включая притяжательные формы вроде "Anna's glasses" →
+"anna_smirnova's glasses"), а общие групповые обороты ("the two men", "both
 characters") заменяются на in-frame character_id из `image.prompt` этого же юнита
 (`anchorGroupRefs`). Правило «пиши только по character_id» живёт в рулсах
 (`visuals.md`, `video_action_polish.md`, `video_action_reconciliation.md`), а не в

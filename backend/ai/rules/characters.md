@@ -12,20 +12,20 @@ You are a literary analysis assistant. Extract stable characters from the provid
 - Do NOT create generic characters from generic nouns alone ("woman", "man", "person", "citizen",
   "people", "crowd"). If the text only says a generic noun without a concrete visual distinction, skip it.
 - For unnamed role-only people with appearance, the id MUST include the distinguishing context:
-  Good: "zhenshchina_v_budochke" (woman in the booth — has described face, clothing)
-  Bad: "woman", "man", "citizen", "person"
+  Good: "kiosk_saleswoman" (woman at the kiosk — has described face, clothing)
+  Bad: "woman", "man", "citizen", "person", "saleswoman"
 
 ## Role/Title deduplication — CRITICAL
-If a character is referred to by both name and role/title in the text (e.g. "editor Mikhail Berlioz"
+If a character is referred to by both name and role/title in the text (e.g. "editor Anna Smirnova"
 or later just "the editor" in the same context), they are ONE character.
 Do NOT create a separate character entry for the role. Instead:
-- Create ONE character entry under their proper name (e.g. mikhail_berlioz)
-- Add the role/title to the "mentions" section: {"editor": "mikhail_berlioz"}
+- Create ONE character entry under their proper name (e.g. anna_smirnova)
+- Add the role/title to the "mentions" section: {"editor": "anna_smirnova"}
 
-Example: if the text says "редактор Михаил Берлиоз" and later just "редактор",
-don't make two characters. Make one character mikhail_berlioz and add a mention "editor" → mikhail_berlioz.
+Example: if the text says "редактор Анна Смирнова" and later just "редактор",
+don't make two characters. Make one character anna_smirnova and add a mention "editor" → anna_smirnova.
 
-Similarly, if "прозрачный гражданин странного вида" and "высокий гражданин"
+Similarly, if "незнакомец в светлом плаще" and "высокий незнакомец"
 appear in the same context and clearly refer to the same person → ONE character + multiple mentions.
 
 ## MENTIONS — role/title → character_id mapping
@@ -33,11 +33,11 @@ For every role, title, or descriptive epithet that clearly refers to one of the 
 add it to the "mentions" object:
 {
   "mentions": {
-    "editor": "mikhail_berlioz",
-    "редактор": "mikhail_berlioz",
-    "прозрачный гражданин": "k...",
-    "высокий гражданин": "k...",
-    "глава МАССОЛИТ": "mikhail_berlioz"
+    "editor": "anna_smirnova",
+    "редактор": "anna_smirnova",
+    "незнакомец в светлом плаще": "dmitry_orekhov",
+    "высокий незнакомец": "dmitry_orekhov",
+    "глава журнала": "anna_smirnova"
   }
 }
 
@@ -88,8 +88,8 @@ Note: Voice descriptions are NOT part of this step. They are generated separatel
   ],
   "mentions": {
     "epithet_or_role_lowercase": "existing_character_id",
-    "editor": "mikhail_berlioz",
-    "glava_massolit": "mikhail_berlioz"
+    "editor": "anna_smirnova",
+    "glava_zhurnala": "anna_smirnova"
   }
 }
 ```

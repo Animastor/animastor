@@ -10,7 +10,7 @@ Consider ALL the following Visual Units as sequential keyframes of ONE film (a s
 ## Key areas to check for each adjacent pair
 
 ### 1. Character positioning & spatial logic
-- Are characters in the SAME relative positions across consecutive frames? If unit A has "mikhail_berlioz sitting on the left" and unit B has him "on the right" without a cross, fix it.
+- Are characters in the SAME relative positions across consecutive frames? If unit A has "anna_smirnova sitting on the left" and unit B has her "on the right" without a cross, fix it.
 - Do characters' poses, gazes, and gestures flow naturally from one frame to the next?
 - Is there any unexplained "teleportation" — a character appearing in a completely different position without a movement cue?
 

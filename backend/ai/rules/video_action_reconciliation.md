@@ -15,7 +15,7 @@ Characters list (%CHARACTERS%) — never by display name, pronoun, or generic
 noun ("the two men", "woman", "Mikhail's", "he", "his", "both characters").
 The video prompt maps storyboard lines to identity anchors BY character_id —
 generic wording breaks that mapping. WRONG: "the two men as they arrive" →
-RIGHT: "mikhail_berlioz and ivan_ponyrev as they arrive".
+RIGHT: "anna_smirnova and boris_volkov as they arrive".
 
 ## What belongs in video.action
 

@@ -1,8 +1,8 @@
 {
-  "book_id": "master_margarita_demo",
+  "book_id": "evening_city_demo",
   "version": "3.0",
-  "title": "Master and Margarita",
-  "author": "Mikhail Bulgakov",
+  "title": "Вечер в городе",
+  "author": "М. Демин",
   "structure": {
     "has_prologue": true,
     "chapters_order": [

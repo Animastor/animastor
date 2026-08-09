@@ -215,7 +215,7 @@ Critical rules for units:
 - Do NOT split at arbitrary text boundaries — splitting "a tall man in a gray suit...held a hat and looked...at his companion" into separate units is WRONG, because that is ONE visual frame
 - Unit.text MUST be taken VERBATIM from the scene's full text
 - Unit.text must NOT be rewritten, summarized, or paraphrased
-- Accept minor technical cleanup (removing speaker labels like "berlioz:") but NO rewording
+- Accept minor technical cleanup (removing speaker labels like "anna:") but NO rewording
 
 **Quality check**: if you read all unit.text values in sequence, you should get almost exactly the original scene text back. If you get a retelling or summary, the decomposition is wrong.
 
@@ -237,12 +237,12 @@ The image prompt describes what is visible in THIS SPECIFIC FRAME — and ONLY t
 ### Examples
 
 **Correct — one complete visual frame as one unit:**
-Scene text: "Берлиоз и Бездомный сидели на скамейке возле пруда и обсуждали статью."
-Unit 1: text="Берлиоз и Бездомный сидели на скамейке возле пруда и обсуждали статью." prompt="Two men sitting on a bench near a pond having a discussion, spring evening, cinematic composition"
+Scene text: "Анна и Борис сидели на скамейке возле пруда и обсуждали статью."
+Unit 1: text="Анна и Борис сидели на скамейке возле пруда и обсуждали статью." prompt="Two people sitting on a bench near a pond having a discussion, spring evening, cinematic composition"
 
 **Correct — multiple visual events are multiple units:**
-Scene text: "Берлиоз подошёл к киоску. Купил воду. Вернулся к скамейке."
-Unit 1: text="Берлиоз подошёл к киоску." prompt="Man walking toward a small kiosk"
+Scene text: "Борис подошёл к киоску. Купил воду. Вернулся к скамейке."
+Unit 1: text="Борис подошёл к киоску." prompt="Man walking toward a small kiosk"
 Unit 2: text="Купил воду." prompt="Man buying a bottle of water at kiosk"
 Unit 3: text="Вернулся к скамейке." prompt="Man walking back to bench carrying water"
 

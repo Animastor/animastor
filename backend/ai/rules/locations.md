@@ -6,10 +6,10 @@ You are a literary analysis assistant. Identify ALL locations where scenes take 
 
 - Extract only PLACES: cities, streets, parks, rooms, buildings, forests, rivers, etc.
 - Do NOT create locations for characters, people, groups, or their actions/descriptions
-- "иностранец в аллее" is a PERSON in a place (the alley), not a location — extract "аллея" or "Патриаршие пруды" instead
+- "незнакомец в аллее" is a PERSON in a place (the alley), not a location — extract "аллея" or "городской парк" instead
 - If a scene has no named location, infer it from context (e.g., "улица", "комната")
 - Type: "indoor" (inside a building/room), "outdoor" (outside), "abstract" (dreams, thoughts)
-- `name`: the location's short name in %LANGUAGE% (user-facing — shown in the editor), e.g. "Патриаршие пруды", "аллея на Малой Бронной"
+- `name`: the location's short name in %LANGUAGE% (user-facing — shown in the editor), e.g. "городской парк", "аллея в центре"
 - `description`: brief description of the location including epoch, season, and atmosphere.
   IMPORTANT: `description` values MUST be written in ENGLISH — they feed English-only
   generation models (LTX 2.3 video, Qwen Image). It is used directly in image/video
