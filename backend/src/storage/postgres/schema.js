@@ -364,7 +364,8 @@ CREATE TABLE IF NOT EXISTS agent_steps (
                         'collect_character_candidates','resolve_character_mentions',
                         'generate_voices',
                         'polish_storyboard','reconcile_passports',
-                        'reconcile_video_actions','polish_video_actions'
+                        'reconcile_video_actions','polish_video_actions',
+                        'repair_fantasy_snakes'
                     )),
     step_index      INTEGER NOT NULL DEFAULT 0,
     scene_index     INTEGER, -- NULL for whole-chapter steps, scene index for per-scene steps
@@ -536,10 +537,11 @@ async function runMigrations() {
         }
     }
 
-    // Add 'analyze_structure' to agent_steps step_type check constraint
+    // Keep agent_steps step_type check constraint in sync with the pipeline.
+    // Latest addition: 'repair_fantasy_snakes' (stepRepairFantasyIds — the final
+    // visual barrier against hallucinated snake_case ids). PostgreSQL doesn't
+    // support ALTER CONSTRAINT to add new values to CHECK — drop and recreate.
     try {
-        // PostgreSQL doesn't support ALTER CONSTRAINT to add new values to CHECK.
-        // We drop and recreate the constraint.
         await query(`ALTER TABLE agent_steps DROP CONSTRAINT IF EXISTS agent_steps_step_type_check`);
         await query(`ALTER TABLE agent_steps ADD CONSTRAINT agent_steps_step_type_check
             CHECK (step_type IN (
@@ -549,9 +551,10 @@ async function runMigrations() {
                 'collect_character_candidates','resolve_character_mentions',
                 'generate_voices',
                 'polish_storyboard','reconcile_passports',
-                'reconcile_video_actions','polish_video_actions'
+                'reconcile_video_actions','polish_video_actions',
+                'repair_fantasy_snakes'
             ))`);
-        console.log('[PG] Updated agent_steps step_type check constraint (added video_action steps)');
+        console.log('[PG] Updated agent_steps step_type check constraint (added repair_fantasy_snakes)');
     } catch (err) {
         if (!err.message.includes('does not exist')) {
             console.error('[PG] Failed to update step_type constraint:', err.message);
