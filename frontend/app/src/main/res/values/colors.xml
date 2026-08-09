@@ -49,6 +49,15 @@
     <color name="cinema_light_worker_panel_on">#D8CFBF</color>
     <color name="cinema_light_worker_panel_off">#E6DFD3</color>
 
+    <!-- Worker panel header labels — dark: ON #B8AFA3 (cinema_text_secondary),
+         OFF #989084 (muted); light: ON #6B6258 (cinema_light_text_secondary),
+         OFF #8E867A (muted). Same hexes as the worker-label-on/off vars in
+         mobile web. -->
+    <color name="cinema_worker_label_on">#B8AFA3</color>
+    <color name="cinema_worker_label_off">#989084</color>
+    <color name="cinema_light_worker_label_on">#6B6258</color>
+    <color name="cinema_light_worker_label_off">#8E867A</color>
+
     <!--
     ============================================================
     SHARED — не меняются между темами

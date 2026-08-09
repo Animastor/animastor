@@ -55,22 +55,22 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
         // ── Toggle chips — save listener refs for later state restoration ──
         val vbookToggleListener = CompoundButton.OnCheckedChangeListener { _, checked ->
             viewModel.setVBookEnabled(checked)
-            updateHeaderPanelStyle(b.vbookHeaderRow, b.vbookAccentBar, checked)
+            updateHeaderPanelStyle(b.vbookHeaderRow, b.vbookAccentBar, b.vbookLabel, checked)
             updateToggleText(b.vbookToggle, checked)
         }
         val audioToggleListener = CompoundButton.OnCheckedChangeListener { _, checked ->
             viewModel.setAudioEnabled(checked)
-            updateHeaderPanelStyle(b.audioHeaderRow, b.audioAccentBar, checked)
+            updateHeaderPanelStyle(b.audioHeaderRow, b.audioAccentBar, b.audioLabel, checked)
             updateToggleText(b.audioToggle, checked)
         }
         val imageToggleListener = CompoundButton.OnCheckedChangeListener { _, checked ->
             viewModel.setImageEnabled(checked)
-            updateHeaderPanelStyle(b.imageHeaderRow, b.imageAccentBar, checked)
+            updateHeaderPanelStyle(b.imageHeaderRow, b.imageAccentBar, b.imageLabel, checked)
             updateToggleText(b.imageToggle, checked)
         }
         val videoToggleListener = CompoundButton.OnCheckedChangeListener { _, checked ->
             viewModel.setVideoEnabled(checked)
-            updateHeaderPanelStyle(b.videoHeaderRow, b.videoAccentBar, checked)
+            updateHeaderPanelStyle(b.videoHeaderRow, b.videoAccentBar, b.videoLabel, checked)
             updateToggleText(b.videoToggle, checked)
         }
 
@@ -89,10 +89,10 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
         // Without this, when no book is loaded the header row backgrounds are never styled
         // because loadLayerConfig() (which triggers layerConfigLoadedFlow → updateHeaderPanelStyle)
         // is only called from MainActivity when bookId is non-blank.
-        updateHeaderPanelStyle(b.vbookHeaderRow, b.vbookAccentBar, b.vbookToggle.isChecked)
-        updateHeaderPanelStyle(b.audioHeaderRow, b.audioAccentBar, b.audioToggle.isChecked)
-        updateHeaderPanelStyle(b.imageHeaderRow, b.imageAccentBar, b.imageToggle.isChecked)
-        updateHeaderPanelStyle(b.videoHeaderRow, b.videoAccentBar, b.videoToggle.isChecked)
+        updateHeaderPanelStyle(b.vbookHeaderRow, b.vbookAccentBar, b.vbookLabel, b.vbookToggle.isChecked)
+        updateHeaderPanelStyle(b.audioHeaderRow, b.audioAccentBar, b.audioLabel, b.audioToggle.isChecked)
+        updateHeaderPanelStyle(b.imageHeaderRow, b.imageAccentBar, b.imageLabel, b.imageToggle.isChecked)
+        updateHeaderPanelStyle(b.videoHeaderRow, b.videoAccentBar, b.videoLabel, b.videoToggle.isChecked)
 
         // ── Header rows (tap to toggle) ──
         b.vbookHeaderRow.setOnClickListener { b.vbookToggle.performClick() }
@@ -135,16 +135,16 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
             viewModel.layerConfigLoadedFlow.collect { loaded ->
                 if (loaded) {
                     setToggleChecked(b.vbookToggle, viewModel.vbookEnabled(), vbookToggleListener)
-                    updateHeaderPanelStyle(b.vbookHeaderRow, b.vbookAccentBar, viewModel.vbookEnabled())
+                    updateHeaderPanelStyle(b.vbookHeaderRow, b.vbookAccentBar, b.vbookLabel, viewModel.vbookEnabled())
 
                     setToggleChecked(b.audioToggle, viewModel.audioEnabled(), audioToggleListener)
-                    updateHeaderPanelStyle(b.audioHeaderRow, b.audioAccentBar, viewModel.audioEnabled())
+                    updateHeaderPanelStyle(b.audioHeaderRow, b.audioAccentBar, b.audioLabel, viewModel.audioEnabled())
 
                     setToggleChecked(b.imageToggle, viewModel.imageEnabled, imageToggleListener)
-                    updateHeaderPanelStyle(b.imageHeaderRow, b.imageAccentBar, viewModel.imageEnabled)
+                    updateHeaderPanelStyle(b.imageHeaderRow, b.imageAccentBar, b.imageLabel, viewModel.imageEnabled)
 
                     setToggleChecked(b.videoToggle, viewModel.videoEnabled(), videoToggleListener)
-                    updateHeaderPanelStyle(b.videoHeaderRow, b.videoAccentBar, viewModel.videoEnabled())
+                    updateHeaderPanelStyle(b.videoHeaderRow, b.videoAccentBar, b.videoLabel, viewModel.videoEnabled())
                 }
             }
         }
@@ -193,7 +193,7 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
                         labelFormat = R.string.generate_section_vbook,
                         isGenerating = isGenerating,
                         isNeeded = true,
-                        isEnabled = viewModel.vbookEnabled(),
+                        isEnabled = b.vbookToggle.isChecked,
                         normalColor = normalColor,
                         activeColor = activeColor,
                         errorColor = errorColor
@@ -210,7 +210,7 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
                         labelFormat = R.string.generate_section_audio,
                         isGenerating = isGenerating,
                         isNeeded = mode == "storyboard" || mode == "full" || mode == "image_only",
-                        isEnabled = viewModel.audioEnabled(),
+                        isEnabled = b.audioToggle.isChecked,
                         normalColor = normalColor,
                         activeColor = activeColor,
                         errorColor = errorColor
@@ -227,7 +227,7 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
                         labelFormat = R.string.generate_section_image,
                         isGenerating = isGenerating,
                         isNeeded = mode == "storyboard" || mode == "full" || mode == "image_only",
-                        isEnabled = viewModel.imageEnabled,
+                        isEnabled = b.imageToggle.isChecked,
                         normalColor = normalColor,
                         activeColor = activeColor,
                         errorColor = errorColor
@@ -244,7 +244,7 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
                         labelFormat = R.string.generate_section_video,
                         isGenerating = isGenerating,
                         isNeeded = mode == "full",
-                        isEnabled = viewModel.videoEnabled(),
+                        isEnabled = b.videoToggle.isChecked,
                         normalColor = normalColor,
                         activeColor = activeColor,
                         errorColor = errorColor
@@ -336,7 +336,10 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
             icon.setImageResource(iconInactiveRes)
         }
         icon.imageTintList = android.content.res.ColorStateList.valueOf(tint)
-        label.setTextColor(tint)
+        // Label color: error/gold states stay synced with the icon (generation
+        // behavior unchanged); base states follow the panel enabled state
+        // (workerLabelColor) so an OFF panel's label reads as muted secondary.
+        label.setTextColor(if (tint == errorColor || tint == activeColor) tint else workerLabelColor(isEnabled))
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -746,29 +749,49 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
         return if (target.isNullOrBlank()) taskRow.label else "${taskRow.label} · $target"
     }
 
+    /** Theme detection (mirrors the old inline check): the app uses setTheme()
+     *  (not system uiMode), so inspect the resolved colorSurface brightness:
+     *  dark → #1B1816, light → #FAF7F0. */
+    private fun isDarkTheme(): Boolean {
+        val surfaceColor = MaterialColors.getColor(requireContext(), com.google.android.material.R.attr.colorSurface, 0)
+        val brightness = android.graphics.Color.red(surfaceColor) +
+            android.graphics.Color.green(surfaceColor) +
+            android.graphics.Color.blue(surfaceColor)
+        return brightness < 384 // threshold between dark (~73) and light (~737)
+    }
+
+    /** Base label color for the worker panel header — same principle in both
+     *  themes (shared secondary tone when enabled, muted when disabled):
+     *  dark ON #B8AFA3 / OFF #989084, light ON #6B6258 / OFF #8E867A.
+     *  Error/active (gold) states override this in updateSectionHeader —
+     *  generation behavior untouched. */
+    private fun workerLabelColor(isEnabled: Boolean): Int {
+        val ctx = requireContext()
+        return if (!isDarkTheme()) {
+            ctx.getColor(if (isEnabled) R.color.cinema_light_worker_label_on else R.color.cinema_light_worker_label_off)
+        } else {
+            ctx.getColor(if (isEnabled) R.color.cinema_worker_label_on else R.color.cinema_worker_label_off)
+        }
+    }
+
     /**
      * Style a worker section header row as a unified interactive panel.
      *
      * When [isEnabled]:
      *   - Accent bar turns gold (cinema_accent) — clear active indicator
      *   - Background gets a slightly darker shade than the inactive panel
+     *   - Label takes the readable secondary tone (workerLabelColor)
      * When disabled:
      *   - Accent bar dims to outline variant — subtle, unobtrusive
      *   - Background stays at the default neutral shade
+     *   - Label becomes muted
      *
      * Gold is reserved for accent elements (bar, label, icon) and no longer
      * used for the panel background, so the gold accents remain visually distinct.
      */
-    private fun updateHeaderPanelStyle(headerRow: View, accentBar: View, isEnabled: Boolean) {
+    private fun updateHeaderPanelStyle(headerRow: View, accentBar: View, label: TextView, isEnabled: Boolean) {
         val ctx = requireContext()
-        // Detect theme by checking the resolved colorSurface brightness.
-        // The app uses setTheme() (not system uiMode), so we inspect the
-        // actual resolved attribute: dark → #1B1816, light → #FAF7F0.
-        val surfaceColor = MaterialColors.getColor(ctx, com.google.android.material.R.attr.colorSurface, 0)
-        val brightness = android.graphics.Color.red(surfaceColor) +
-            android.graphics.Color.green(surfaceColor) +
-            android.graphics.Color.blue(surfaceColor)
-        val isDark = brightness < 384 // threshold between dark (~73) and light (~737)
+        val isDark = isDarkTheme()
 
         val accentColor = if (isEnabled) {
             ctx.getColor(R.color.cinema_accent)
@@ -782,6 +805,7 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
         }
 
         accentBar.setBackgroundColor(accentColor)
+        label.setTextColor(workerLabelColor(isEnabled))
 
         // Rounded corner background — 12dp matches ShapeAppearance.Small,
         // creating a nested rounded look inside the 18dp card.

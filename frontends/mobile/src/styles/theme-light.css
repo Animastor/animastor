@@ -18,6 +18,12 @@
   --subtitle-bg: rgba(0,0,0,0.73);
   --worker-panel-on: #E3DACB;
   --worker-panel-off: #F2EDE3;
+  /* Worker panel labels — same principle as dark: ON = #6B6258
+     (cinema_light_text_secondary — readable secondary), OFF = #8E867A (muted,
+     luminance midpoint to disabled #A89F94). Same hexes as
+     cinema_light_worker_label_on/off in Android colors.xml. */
+  --worker-label-on: #6B6258;
+  --worker-label-off: #8E867A;
   --posbar-gradient: linear-gradient(180deg, #F5F0E6, #E7DED0);
   /* Scene/unit panels in the Navigate TOC — light theme keeps the card tone
      slightly above the page (#F0EBE0); the hairline border does the separation. */

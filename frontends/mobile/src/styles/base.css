@@ -563,10 +563,15 @@ button { font: inherit; color: inherit; }
   0%, 100% { opacity: 1; }
   50% { opacity: 0.4; }
 }
+/* Label color is tied to the panel state (workerLabelColor): base = OFF panel
+   (muted #989084), .gen-header--on = readable secondary #B8AFA3 — same hexes
+   as Android cinema_worker_label_off/on. Generation/active/error icon sync is
+   unchanged (icon-only gold/red pulse). */
 .gen-header__label {
   flex: 1; min-width: 0; font-size: 0.9375rem; /* 15sp */ font-weight: 500;
-  color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  color: var(--worker-label-off); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+.gen-header--on .gen-header__label { color: var(--worker-label-on); }
 .gen-header__gear {
   border: 0; background: transparent; color: var(--text-2);
   width: 2rem; height: 2rem; display: inline-flex; align-items: center;
