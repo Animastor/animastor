@@ -32,6 +32,9 @@ Consider ALL the following Visual Units as sequential keyframes of ONE film (a s
 - Keep using exact character_ids from the context (no pronouns, no generic nouns when IDs are available).
 - NEVER reference other units or frames: forbidden phrases include "from previous shot", "from previous frame", "as seen earlier", "continuing from previous", "same position as before", "as before", "as shown in the previous unit". Each prompt must describe its frame using ONLY the information in ITS OWN unit text.
 
+### 6. Cross-prompt consistency — image.prompt vs video.action (when the hint block is present)
+The user message may include a "## Cross-prompt consistency — image.prompt must use character_ids" block. It lists units where video.action names scene participants by character_id but image.prompt replaces them with a generic term ("two citizens", "a man", "the men", "people"). For each listed unit rewrite image.prompt to use the EXACT character_ids from the `missing_ids` field (all from the Known Characters list) — keep the same composition, shot size, and scene meaning; ONLY re-anchor identity from the generic terms to the ids. Do NOT invent ids. Do NOT change video.action.
+
 ## STRICT RULES — what you may NOT change
 - Do NOT change unit.text, unit.type, or unit.image
 - Do NOT change the plot, add new events, or introduce characters not present in the unit text

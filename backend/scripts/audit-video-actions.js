@@ -14,12 +14,17 @@
 //   3. WARN — display-name possessive forms ("Mikhail's glasses") instead of the id.
 //   4. INFO — standalone pronouns (he/she/his/her/they/them) with participants in
 //      the scene but no character_id in the action (may be legit for extras).
+//   5. WARN — cross-prompt (HARD, asymmetric): video.action names participants
+//      by id but image.prompt replaces them with a generic term ("two citizens")
+//      — video IDs ⊆ image IDs is a hard rule.
+//      INFO — cross-prompt (SOFT): image.prompt shows participants that
+//      video.action doesn't name — normal when only a subset moves.
 //
 // Exit code 0 when no FAIL/WARN; 1 otherwise.
 
 const path = require('path');
 const fs = require('fs');
-const { findCanonicalId, snakeTokensInText, KNOWN_NON_CHARACTER_SNAKE, hasMixedScript, isSnakeLike } = require('../src/utils/snake-guard');
+const { findCanonicalId, snakeTokensInText, KNOWN_NON_CHARACTER_SNAKE, hasMixedScript, isSnakeLike, GROUP_NOUNS, PRONOUNS, findCrossPromptGaps } = require('../src/utils/snake-guard');
 
 const BOOKS_DIR = process.env.BOOKS_DIR || '/data/books';
 const PASS = '\x1b[32m✓\x1b[0m';
@@ -31,13 +36,11 @@ function wordRegex(word) {
 }
 
 // ── Word-boundary matching only ──────────────────────────────────────
-// Group-noun list mirrors anchorGroupRefs in src/workflows/video/video-workflows.js
-// (source of truth for the deterministic repair) — keep both in sync.
-const GROUP_NOUNS = [
-    'the two of them', 'the two men', 'both characters', 'the characters',
-    'the men', 'the two', 'both of them', 'the women', 'these two',
-];
-const PRONOUNS = ['he', 'him', 'his', 'she', 'her', 'they', 'them'];
+// Group nouns / pronouns now come from src/utils/snake-guard.js — the SAME
+// source of truth used by the pipeline cross-prompt consistency check
+// (stepPolishStoryboard / stepPolishVideoActions). Keep the lists there.
+// (anchorGroupRefs in src/workflows/video/video-workflows.js still holds its own
+// smaller deterministic-repair list for build-time action anchoring.)
 
 function hasWord(text, word) {
     return wordRegex(word).test(text);
@@ -139,6 +142,30 @@ function auditUnit(unit, scene, ctx) {
         const hit = PRONOUNS.find(w => hasWord(action, w));
         if (hit) {
             findings.push({ level: 'INFO', where, msg: `pronoun "${hit}" in video.action, participants=${participants.join(',')}, no character_id` });
+        }
+    }
+
+    // 5. Cross-prompt consistency — ASYMMETRIC (same detector as the polish
+    //    steps). HARD: video.action names mikhail_berlioz + ivan_ponyrev but
+    //    image.prompt says "two citizens" → WARN (image.prompt must be fixed).
+    //    SOFT: image.prompt shows ids that video.action doesn't animate → INFO
+    //    only — a video may animate a subset of the frame.
+    for (const gap of findCrossPromptGaps(unit, participants, ctx.charIds)) {
+        if (gap.severity === 'hard') {
+            const genericPart = gap.generic_terms.length > 0
+                ? `generic "${gap.generic_terms.join(', ')}" instead of ids`
+                : 'omits ids';
+            findings.push({
+                level: 'WARN',
+                where,
+                msg: `CROSS-PROMPT image.prompt: ${genericPart} [${gap.missing_ids.join(', ')}] (named in video.action)`,
+            });
+        } else {
+            findings.push({
+                level: 'INFO',
+                where,
+                msg: `CROSS-PROMPT (soft, not an error) video.action: doesn't name ids [${gap.missing_ids.join(', ')}] that image.prompt shows — ok if only a subset moves`,
+            });
         }
     }
 

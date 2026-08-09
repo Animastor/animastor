@@ -7,6 +7,9 @@ const {
     findCanonicalId,
     canonicalizeText,
     canonicalizeMixedScriptId,
+    findKnownIdsInText,
+    findGenericPersonTerms,
+    findCrossPromptGaps,
 } = snakeGuard;
 
 // ── Pure detection (src/utils/snake-guard.js) ──────────────────────────
@@ -462,5 +465,236 @@ describe('stepRepairFantasyIds (hybrid snake repair)', () => {
         expect(stillBad).to.equal(1);
         expect(units[0].image.prompt).to.equal('zhenshchina_v_budochke hands a glass of water');
         expect(units[0].video.action).to.equal('zhenshchina_v_budochke turns away');
+    });
+});
+
+// ── Cross-prompt consistency (image.prompt ↔ video.action) ─────────────
+
+describe('findKnownIdsInText / findGenericPersonTerms', () => {
+    const ids = ['mikhail_berlioz', 'ivan_ponyrev', 'kiosk_saleswoman'];
+
+    it('finds candidate ids incl. possessive forms, case-insensitive', () => {
+        expect(findKnownIdsInText("mikhail_berlioz's glasses", ids)).to.deep.equal(['mikhail_berlioz']);
+        expect(findKnownIdsInText('Ivan_Ponyrev approaches', ids)).to.deep.equal(['ivan_ponyrev']);
+        expect(findKnownIdsInText('no ids here', ids)).to.deep.equal([]);
+    });
+
+    it('matches group nouns like "two citizens" and ordinary "the men"', () => {
+        const g = findGenericPersonTerms('Two citizens under a blistering sunset', ids);
+        expect(g.map(t => t.toLowerCase())).to.include('two citizens');
+        expect(findGenericPersonTerms('the two men as they arrive', ids).map(t => t.toLowerCase()))
+            .to.include('the two men');
+    });
+
+    it('suppresses pronouns when a known id is present in the same field', () => {
+        // "ivan_ponyrev raises his hand" — the id anchors the clause, not anonymization
+        expect(findGenericPersonTerms('ivan_ponyrev raises his hand', ids)).to.deep.equal([]);
+        // fully anonymous field — pronouns count
+        expect(findGenericPersonTerms('he turns away from her', ids)).to.include('he');
+    });
+
+    it('does not match fragments inside words', () => {
+        expect(findGenericPersonTerms('heat rises over the city', ids)).to.deep.equal([]);
+    });
+
+    it('does not match fragments inside snake tokens (two_people_walk)', () => {
+        expect(findGenericPersonTerms('two_people_walk along the alley', ids)).to.deep.equal([]);
+    });
+
+    it('covers extended person terms (a passerby, the other man, companions)', () => {
+        const g = findGenericPersonTerms('a passerby turns, the other man follows, two companions approach', ids);
+        const low = g.map(t => t.toLowerCase());
+        expect(low).to.include('a passerby');
+        expect(low).to.include('the other man');
+        expect(low).to.include('two companions');
+    });
+});
+
+describe('findCrossPromptGaps — the "two citizens" control case', () => {
+    const knownIds = ['mikhail_berlioz', 'ivan_ponyrev', 'kiosk_saleswoman'];
+    const participants = ['mikhail_berlioz', 'ivan_ponyrev', 'kiosk_saleswoman'];
+
+    it('HARD: flags image.prompt that anonymizes participants named in video.action', () => {
+        const unit = {
+            image: { prompt: 'Two citizens under a blistering sunset: one center-left in a summer suit, one center-right in a checkered cap' },
+            video: { action: 'Slow pan from left (mikhail_berlioz entering with hat) to right (ivan_ponyrev approaching), heat shimmer intensifying' },
+        };
+        const gaps = findCrossPromptGaps(unit, participants, knownIds);
+        expect(gaps).to.have.length(1);
+        expect(gaps[0].direction).to.equal('prompt');
+        expect(gaps[0].severity).to.equal('hard');
+        expect(gaps[0].missing_ids).to.deep.equal(['mikhail_berlioz', 'ivan_ponyrev']);
+        expect(gaps[0].generic_terms.map(t => t.toLowerCase())).to.include('two citizens');
+    });
+
+    it('SOFT (not an error): video.action may name only a subset of image.prompt ids', () => {
+        const unit = {
+            image: { prompt: 'mikhail_berlioz and ivan_ponyrev at the pond' },
+            video: { action: 'the two men as they arrive' },
+        };
+        const gaps = findCrossPromptGaps(unit, participants, knownIds);
+        expect(gaps).to.have.length(1);
+        expect(gaps[0].direction).to.equal('action');
+        expect(gaps[0].severity).to.equal('soft');
+        expect(gaps[0].missing_ids).to.deep.equal(['mikhail_berlioz', 'ivan_ponyrev']);
+    });
+
+    it('HARD: flags image.prompt that OMITS an id video.action names, even without a generic term', () => {
+        const unit = {
+            image: { prompt: 'mikhail_berlioz standing at the pond' },
+            video: { action: 'mikhail_berlioz and ivan_ponyrev approaching from opposite sides' },
+        };
+        const gaps = findCrossPromptGaps(unit, participants, knownIds);
+        expect(gaps).to.have.length(1);
+        expect(gaps[0].direction).to.equal('prompt');
+        expect(gaps[0].severity).to.equal('hard');
+        expect(gaps[0].missing_ids).to.deep.equal(['ivan_ponyrev']);
+        expect(gaps[0].generic_terms).to.deep.equal([]);
+    });
+
+    it('SOFT: action animating only one of two prompt participants is NORMAL, not a gap at all', () => {
+        const unit = {
+            image: { prompt: 'mikhail_berlioz and ivan_ponyrev sitting on a bench' },
+            video: { action: 'mikhail_berlioz leans forward, gesturing' },
+        };
+        // action names mikhail only (no generic term) — completely normal
+        expect(findCrossPromptGaps(unit, participants, knownIds)).to.deep.equal([]);
+    });
+
+    it('no gap when both fields use the same ids', () => {
+        const unit = {
+            image: { prompt: 'mikhail_berlioz and ivan_ponyrev sitting on a bench' },
+            video: { action: 'mikhail_berlioz gestures, ivan_ponyrev nods' },
+        };
+        expect(findCrossPromptGaps(unit, participants, knownIds)).to.deep.equal([]);
+    });
+
+    it('no gap for background extras — generic term without a missing participant id', () => {
+        const unit = {
+            image: { prompt: 'mikhail_berlioz at the pond, an elderly man reading a newspaper near the path' },
+            video: { action: 'mikhail_berlioz raises his hat' },
+        };
+        // only mikhail is named in either field; the extra has no id anywhere
+        expect(findCrossPromptGaps(unit, participants, knownIds)).to.deep.equal([]);
+    });
+
+    it('no gap when one field legitimately shows only a subset (no generic term in the other)', () => {
+        const unit = {
+            image: { prompt: 'mikhail_berlioz and ivan_ponyrev sitting on a bench' },
+            video: { action: 'ivan_ponyrev leans forward' }, // names only one, but no generic term
+        };
+        expect(findCrossPromptGaps(unit, participants, knownIds)).to.deep.equal([]);
+    });
+
+    it('ignores ids that are not scene participants (fantasy handled elsewhere)', () => {
+        const unit = {
+            image: { prompt: 'Two strangers by the pond' },
+            video: { action: 'the_other_guy and random_woman walk past' },
+        };
+        // "the_other_guy"/"random_woman" are not participants — no cross-prompt gap
+        expect(findCrossPromptGaps(unit, ['mikhail_berlioz'], knownIds)).to.deep.equal([]);
+    });
+
+    it('no gap for character-less landscape units', () => {
+        const unit = {
+            image: { prompt: 'empty bench on a quiet path, still water reflecting golden sunset, no people' },
+            video: { action: 'slow camera push toward the bench, leaves drifting' },
+        };
+        expect(findCrossPromptGaps(unit, participants, knownIds)).to.deep.equal([]);
+    });
+
+    it('handles units without participants / without fields', () => {
+        expect(findCrossPromptGaps({}, [], knownIds)).to.deep.equal([]);
+        expect(findCrossPromptGaps(null, participants, knownIds)).to.deep.equal([]);
+    });
+});
+
+describe('buildCrossPromptHints (pipeline polish wiring)', () => {
+    it('emits ONLY hard gaps (prompt direction) — the soft direction is never a hint', () => {
+        const { mod } = loadModule({});
+        const units = [
+            {
+                sceneIndex: 1, unitIndex: 3, sceneTitle: 'Pond', sceneText: '',
+                text: 'появились два гражданина', type: 'narration',
+                participants: ['mikhail_berlioz', 'ivan_ponyrev'],
+                image: { prompt: 'Two citizens under a blistering sunset' },
+                video: { action: 'Slow pan from left (mikhail_berlioz entering) to right (ivan_ponyrev approaching)' },
+                audio: null,
+            },
+            {
+                sceneIndex: 1, unitIndex: 4, sceneTitle: 'Pond', sceneText: '',
+                text: 'Иван шагнул вперёд', type: 'narration',
+                participants: ['mikhail_berlioz', 'ivan_ponyrev'],
+                image: { prompt: 'mikhail_berlioz and ivan_ponyrev sitting on a bench' },
+                video: { action: 'the two men as they arrive' },
+                audio: null,
+            },
+        ];
+        const chars = [{ id: 'mikhail_berlioz' }, { id: 'ivan_ponyrev' }];
+        // hard gap (prompt direction) IS emitted
+        const promptHints = mod.buildCrossPromptHints(units, chars);
+        expect(promptHints).to.have.length(1);
+        expect(promptHints[0]).to.deep.include({ scene_index: 1, unit_index: 3 });
+        expect(promptHints[0].missing_ids).to.include.members(['mikhail_berlioz', 'ivan_ponyrev']);
+
+        // the action-side gap (unit 4) is SOFT — NEVER emitted as a hint
+        expect(promptHints.map(h => h.unit_index)).to.not.include(4);
+    });
+
+    it('returns empty when units carry no participants', () => {
+        const { mod } = loadModule({});
+        const units = [{
+            sceneIndex: 0, unitIndex: 0, sceneTitle: '', sceneText: '',
+            text: 'x', type: 'narration', participants: [],
+            image: { prompt: 'Two citizens' }, video: { action: 'mikhail_berlioz enters' }, audio: null,
+        }];
+        expect(mod.buildCrossPromptHints(units, CHARACTERS, 'prompt')).to.deep.equal([]);
+    });
+
+    it('stillMissingIds flags missing ids even when the generic term is gone', () => {
+        const { mod } = loadModule({});
+        const knownIds = ['mikhail_berlioz', 'ivan_ponyrev'];
+        const participants = ['mikhail_berlioz', 'ivan_ponyrev'];
+        // agent removed "Two citizens" but still wrote no ids
+        const u = {
+            participants,
+            image: { prompt: 'one in a summer suit, one in a checkered cap entering from opposite sides' },
+            video: { action: 'Slow pan from left (mikhail_berlioz entering) to right (ivan_ponyrev approaching)' },
+        };
+        expect(mod.stillMissingIds(u, participants, knownIds, 'prompt'))
+            .to.deep.equal(['mikhail_berlioz', 'ivan_ponyrev']);
+        // after the fix names the ids — resolved
+        u.image.prompt = 'mikhail_berlioz and ivan_ponyrev entering from opposite sides';
+        expect(mod.stillMissingIds(u, participants, knownIds, 'prompt')).to.deep.equal([]);
+    });
+
+    it('stepPolishStoryboard injects the cross-prompt hint block into the user message', async () => {
+        let sentUser = '';
+        const { mod } = loadModule({
+            callAI: async (messages) => {
+                sentUser = messages[1].content;
+                return { units: [] };
+            },
+        });
+        const chars = [{ id: 'mikhail_berlioz', name: 'Mikhail Berlioz' }, { id: 'ivan_ponyrev', name: 'Ivan Ponyrev' }];
+        const units = [
+            {
+                sceneIndex: 0, unitIndex: 0, sceneTitle: 'Pond', sceneText: 'text', text: 't1', type: 'narration',
+                participants: ['mikhail_berlioz', 'ivan_ponyrev'],
+                image: { shot: 'wide', prompt: 'Two citizens under a blistering sunset' },
+                video: { action: 'Slow pan (mikhail_berlioz entering) to (ivan_ponyrev approaching)' },
+            },
+            {
+                sceneIndex: 0, unitIndex: 1, sceneTitle: 'Pond', sceneText: 'text', text: 't2', type: 'narration',
+                participants: ['mikhail_berlioz', 'ivan_ponyrev'],
+                image: { shot: 'wide', prompt: 'mikhail_berlioz and ivan_ponyrev sitting on a bench' },
+                video: { action: 'ivan_ponyrev leans forward' },
+            },
+        ];
+        await mod.stepPolishStoryboard('sess', units, chars, [], 0, () => {}, {});
+        expect(sentUser).to.include('Cross-prompt consistency — image.prompt must use character_ids');
+        expect(sentUser).to.include('missing_ids');
+        expect(sentUser).to.include('mikhail_berlioz');
+        expect(sentUser).to.include('Two citizens');
     });
 });

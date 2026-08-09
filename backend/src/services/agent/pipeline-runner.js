@@ -30,6 +30,7 @@ function flatVisualUnits(enrichedScenes) {
             text: unit.text,
             type: unit.type,
             image: unit.image || {},
+            participants: scene.participants || [],
             video: unit.video || {},
             // audio.speaker — used by the fantasy-snake repair step so a
             // hallucinated speaker id can be reassembled like a prompt id.
@@ -604,6 +605,9 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
                 text: unit.text,
                 type: unit.type,
                 image: unit.image || {},
+                // scene participants — for the cross-prompt consistency check
+                // (image.prompt ↔ video.action generic-term gaps)
+                participants: scene.participants || [],
                 video: unit.video || {},
             }))
         );
@@ -654,6 +658,9 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
                 text: unit.text,
                 type: unit.type,
                 image: unit.image || {},
+                // scene participants — for the cross-prompt consistency check
+                // (image.prompt ↔ video.action generic-term gaps)
+                participants: scene.participants || [],
                 video: unit.video || {},
             }))
         );
@@ -690,6 +697,9 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
                 text: unit.text,
                 type: unit.type,
                 image: unit.image || {},
+                // scene participants — for the cross-prompt consistency check
+                // (image.prompt ↔ video.action generic-term gaps)
+                participants: scene.participants || [],
                 video: unit.video || {},
             }))
         );
@@ -736,6 +746,9 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
                 text: unit.text,
                 type: unit.type,
                 image: unit.image || {},
+                // scene participants — for the cross-prompt consistency check
+                // (image.prompt ↔ video.action generic-term gaps)
+                participants: scene.participants || [],
                 video: unit.video || {},
             }))
         );
@@ -777,6 +790,9 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
                 text: unit.text,
                 type: unit.type,
                 image: unit.image || {},
+                // scene participants — for the cross-prompt consistency check
+                // (image.prompt ↔ video.action generic-term gaps)
+                participants: scene.participants || [],
                 video: unit.video || {},
             }))
         );
@@ -967,6 +983,9 @@ async function processCachedScenes(sessionId, scenes, characters, locations, men
                 text: unit.text,
                 type: unit.type,
                 image: unit.image || {},
+                // scene participants — for the cross-prompt consistency check
+                // (image.prompt ↔ video.action generic-term gaps)
+                participants: scene.participants || [],
                 video: unit.video || {},
             }))
         );
@@ -1011,6 +1030,9 @@ async function processCachedScenes(sessionId, scenes, characters, locations, men
                 text: unit.text,
                 type: unit.type,
                 image: unit.image || {},
+                // scene participants — for the cross-prompt consistency check
+                // (image.prompt ↔ video.action generic-term gaps)
+                participants: scene.participants || [],
                 video: unit.video || {},
             }))
         );
@@ -1045,6 +1067,9 @@ async function processCachedScenes(sessionId, scenes, characters, locations, men
                 text: unit.text,
                 type: unit.type,
                 image: unit.image || {},
+                // scene participants — for the cross-prompt consistency check
+                // (image.prompt ↔ video.action generic-term gaps)
+                participants: scene.participants || [],
                 video: unit.video || {},
             }))
         );
@@ -1084,6 +1109,9 @@ async function processCachedScenes(sessionId, scenes, characters, locations, men
                 text: unit.text,
                 type: unit.type,
                 image: unit.image || {},
+                // scene participants — for the cross-prompt consistency check
+                // (image.prompt ↔ video.action generic-term gaps)
+                participants: scene.participants || [],
                 video: unit.video || {},
             }))
         );
@@ -1122,6 +1150,9 @@ async function processCachedScenes(sessionId, scenes, characters, locations, men
                 text: unit.text,
                 type: unit.type,
                 image: unit.image || {},
+                // scene participants — for the cross-prompt consistency check
+                // (image.prompt ↔ video.action generic-term gaps)
+                participants: scene.participants || [],
                 video: unit.video || {},
             }))
         );

@@ -19,7 +19,7 @@ const {
 } = require('../agent-prompts');
 const { normalizeCharacterRefs } = require('../../image/image-service');
 const { sanitizeVideoTokens, tokensToString } = require('../../book/lazy-book/appearance');
-const { findUnverifiedSnakeTokens, canonicalizeText } = require('../../utils/snake-guard');
+const { findUnverifiedSnakeTokens, canonicalizeText, findCrossPromptGaps, participantFieldIds } = require('../../utils/snake-guard');
 
 /**
  * Normalize names/aliases → character_id in an AI-written visual text.
@@ -111,10 +111,56 @@ function unitRow(u) {
         type: u.type || 'unknown',
         text: (u.text || '').substring(0, UNIT_TEXT_MAX_CHARS),
         estimated_duration_sec: estimateSpeechDurationSec(u.text),
+        participants: u.participants || [],
         shot: u.image?.shot || 'unknown',
         prompt: u.image?.prompt || '',
         action: u.video?.action || '',
     });
+}
+
+/**
+ * Cross-prompt consistency hints for storyboard polish. ASYMMETRIC: only the
+ * HARD direction is actionable — participants video.action names by id must be
+ * concretized in image.prompt (video IDs ⊆ image IDs). The reverse direction
+ * (image IDs ⊄ video IDs) is a soft heuristic, never an error: a video may
+ * animate only a subset of the people shown in the still.
+ * @param {Object[]} allVisualUnits
+ * @param {Object[]} characters
+ * @returns {Object[]} hint rows { scene_index, unit_index, generic_terms, missing_ids, ids_in_other_field }
+ */
+function buildCrossPromptHints(allVisualUnits, characters) {
+    const knownIds = (characters || []).map(c => c.id).filter(Boolean);
+    const hints = [];
+    for (const u of allVisualUnits || []) {
+        for (const g of findCrossPromptGaps(u, u.participants || [], knownIds)) {
+            if (g.direction !== 'prompt' || g.severity !== 'hard') continue;
+            hints.push({
+                scene_index: u.sceneIndex,
+                unit_index: u.unitIndex,
+                generic_terms: g.generic_terms,
+                missing_ids: g.missing_ids,
+                ids_in_other_field: g.ids_in_other,
+            });
+        }
+    }
+    return hints;
+}
+
+/**
+ * Post-polish re-validation: are the participant ids the OTHER field names still
+ * absent from the field this step polishes? Stronger than the generic-term check
+ * — the agent was told to add EXACT ids, so their absence means the fix did not
+ * land, even when the generic term was removed.
+ * @param {Object} unit
+ * @param {string[]} participants - scene.participants
+ * @param {Iterable<string>} knownIds - registry ids
+ * @param {'prompt'|'action'} direction - field this step polishes
+ * @returns {string[]} participant ids still missing from the polished field
+ */
+function stillMissingIds(unit, participants, knownIds, direction) {
+    const { idsInPrompt, idsInAction } = participantFieldIds(unit, participants, knownIds);
+    if (direction === 'prompt') return idsInAction.filter(id => !idsInPrompt.includes(id));
+    return idsInPrompt.filter(id => !idsInAction.includes(id));
 }
 
 // Allowed per-scene environment override fields (subset of the location template
@@ -842,9 +888,23 @@ async function stepPolishStoryboard(sessionId, allVisualUnits, characters, locat
         .replace('%SCENES%', scenesStr || '(no scene text available)')
         .replace('%UNITS%', unitsStr);
 
+    // Cross-prompt consistency hints (HARD direction only): units whose
+    // video.action names participants by id while image.prompt does not
+    // concretely identify them (generic term like "two citizens", or simply
+    // omitted). The polish agent re-anchors image.prompt to the ids — the only
+    // field this step may change. Only in-range units are hinted — out-of-format
+    // prompts can never be merged back, so listing them would only produce
+    // unresolved noise.
+    const promptHints = buildCrossPromptHints(polishable, characters);
+    const crossHintsBlock = promptHints.length > 0
+        ? '\n\n## Cross-prompt consistency — image.prompt must use character_ids\n' +
+          `These ${promptHints.length} unit(s) name scene participants by character_id in their video.action, but image.prompt does not concretely identify them (a generic term like \"two citizens\", or simply omitted). For each listed unit rewrite image.prompt to use the EXACT character_ids from the missing_ids field (all from the Known Characters list) — keep the same composition, shot and scene meaning, only re-anchor identity to the ids. Do NOT invent ids; do NOT change video.action.\n` +
+          JSON.stringify(promptHints)
+        : '';
+
     const messages = [
         { role: 'system', content: prompt },
-        { role: 'user', content: `Review and polish these ${polishable.length} visual units for storyboard continuity:\n\n${unitsStr}` },
+        { role: 'user', content: `Review and polish these ${polishable.length} visual units for storyboard continuity:\n\n${unitsStr}${crossHintsBlock}` },
     ];
 
     try {
@@ -872,6 +932,25 @@ async function stepPolishStoryboard(sessionId, allVisualUnits, characters, locat
             return original;
         });
 
+        // Cross-prompt re-validation: flagged units must now NAME the missing ids
+        // in image.prompt (the agent was told the exact ids — their absence means
+        // the fix did not land, even if the generic term was removed). Unresolved
+        // units are counted + logged (they stay in the book, visible as WARN in
+        // the audit) — never silently treated as fixed.
+        const flaggedKeys = new Set(promptHints.map(h => `${h.scene_index}:${h.unit_index}`));
+        const hintByKey = new Map(promptHints.map(h => [`${h.scene_index}:${h.unit_index}`, h]));
+        const knownIds = (characters || []).map(c => c.id).filter(Boolean);
+        let unresolved = 0;
+        for (const m of merged) {
+            if (!flaggedKeys.has(`${m.sceneIndex}:${m.unitIndex}`)) continue;
+            const stillMissing = stillMissingIds(m, m.participants || [], knownIds, 'prompt');
+            if (stillMissing.length > 0) {
+                unresolved++;
+                const wasGeneric = hintByKey.get(`${m.sceneIndex}:${m.unitIndex}`)?.generic_terms.join(', ') || '';
+                console.warn(`[AGENT] Step 6 (storyboard polish): cross-prompt gap UNRESOLVED for unit ${m.sceneIndex}:${m.unitIndex} — image.prompt still lacks ids (${stillMissing.join(', ')}) named in video.action${wasGeneric ? ` (was generic: ${wasGeneric})` : ''}`);
+            }
+        }
+
         await aiCaller.logConversation(sessionId, step.step_id, messages, JSON.stringify(result));
         await completeStep(step.step_id, { units: merged.length });
 
@@ -879,7 +958,7 @@ async function stepPolishStoryboard(sessionId, allVisualUnits, characters, locat
             const orig = allVisualUnits[i];
             return m.image?.prompt !== orig.image?.prompt || m.image?.shot !== orig.image?.shot;
         }).length;
-        console.log(`[AGENT] Step 6 (storyboard polish): ${polishable.length} units reviewed, ${excludedCount} excluded (prompt >${IMAGE_PROMPT_MAX_CHARS} chars), ${changedCount} modified`);
+        console.log(`[AGENT] Step 6 (storyboard polish): ${polishable.length} units reviewed, ${excludedCount} excluded (prompt >${IMAGE_PROMPT_MAX_CHARS} chars), ${changedCount} modified${unresolved > 0 ? `, ${unresolved} cross-prompt gap(s) unresolved` : ''}`);
 
         return merged;
     } catch (err) {
@@ -942,6 +1021,11 @@ async function stepPolishVideoActions(sessionId, allVisualUnits, characters, loc
         .replace('%SCENES%', scenesStr || '(no scene text available)')
         .replace('%UNITS%', unitsStr);
 
+    // NOTE: no cross-prompt hints here by design — the check is ASYMMETRIC.
+    // Only "video IDs ⊆ image IDs" is a hard rule (handled by storyboard
+    // polish). The reverse (image.prompt names participants that video.action
+    // does not animate) is normal — a video may animate only a subset of the
+    // frame; the rest stay passive/background.
     const messages = [
         { role: 'system', content: prompt },
         { role: 'user', content: `Review and polish video.actions for continuity, narrative consistency, and timing realism across these ${polishable.length} units. Each unit's estimated_duration_sec is the module's play time — the action must plausibly fill it:\n\n${unitsStr}` },
@@ -1437,4 +1521,7 @@ module.exports = {
     mergeRepairResults,
     applyRepairToScenes,
     canonicalizeVisualUnit,
+    // Cross-prompt consistency helpers (pure — exported for tests)
+    buildCrossPromptHints,
+    stillMissingIds,
 };

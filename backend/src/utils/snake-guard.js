@@ -60,12 +60,207 @@ const KNOWN_NON_CHARACTER_SNAKE = new Set([
     'railway_track', 'front_seat', 'back_seat', 'car_seat', 'steering_wheel',
 ]);
 
+// ── Cross-prompt consistency (generic person references) ─────────────
+// image.prompt and video.action describe the SAME unit. When one field names a
+// scene participant by character_id and the other replaces them with a generic
+// designation ("two citizens", "a man", "the men"), the generic field is
+// under-specified — the still frame and the motion would show different people.
+// The cross-prompt check flags this so the polish pass can re-anchor the
+// under-specified field to the ids named by the other field.
+//
+// Design rules (conservative):
+//   - Group/indefinite person nouns ALWAYS count as generic — they denote a
+//     person or people as a collective that could (and per the visuals rules
+//     SHOULD) be named by id when the other field does name it.
+//   - Pronouns count ONLY when the field carries NO character id at all. A
+//     pronoun after a named id ("ivan_ponyrev raises his hand") resolves
+//     naturally — the id anchors the clause, that is not anonymization.
+//   - Background extras never trigger: the trigger requires the OTHER field to
+//     name a participant id that THIS field is missing, and extras are never
+//     named by id anywhere.
+
+const GROUP_NOUNS = [
+    'the two of them', 'the two men', 'both characters', 'the characters',
+    'the two citizens', 'two citizens', 'the citizens', 'a citizen',
+    'the two people', 'two people', 'the people', 'people', 'both people',
+    'the two men', 'two men', 'the men', 'men', 'a man', 'the man',
+    'the two women', 'two women', 'the women', 'women', 'a woman', 'the woman',
+    'the two figures', 'two figures', 'both figures', 'the figures',
+    'a figure', 'figures', 'the pair', 'a pair', 'both of them',
+    'the two strangers', 'two strangers', 'the strangers', 'strangers',
+    'a stranger', 'the stranger', 'the two', 'these two',
+    'one person', 'a person', 'the person', 'persons',
+    'the girl', 'a girl', 'the boy', 'a boy', 'the kid', 'a kid',
+    'the old man', 'an old man', 'the old woman', 'an old woman',
+    'the elderly man', 'an elderly man', 'the elderly woman', 'an elderly woman',
+    'the lady', 'a lady', 'the gentleman', 'a gentleman',
+    'a passerby', 'the passerby', 'passersby', 'passers-by', 'the pedestrians',
+    'pedestrians', 'a pedestrian', 'pedestrian', 'the crowd', 'a crowd',
+    'the crowd of people', 'a crowd of people',
+    'a group of people', 'the group of people', 'a group of men', 'the group of men',
+    'the group', 'a group',
+    'the couple', 'a couple', 'someone', 'somebody', 'anyone', 'anybody',
+    'everyone', 'everybody',
+    'the other man', 'the second man', 'the third man', 'the other woman', 'the second woman',
+    'two companions', 'the two companions', 'the companions', 'companions',
+    'the pair of men', 'a pair of men', 'a couple of men',
+    'two brothers', 'the two brothers', 'the brothers',
+    'two sisters', 'the two sisters', 'the sisters',
+    'the children', 'two children', 'a child', 'the child',
+    'the kids', 'two kids',
+    'the onlookers', 'onlookers', 'the bystanders', 'bystanders',
+];
+
+const PRONOUNS = ['he', 'him', 'his', 'she', 'her', 'hers', 'they', 'them', 'their', 'theirs'];
+
+function escapeRegExp(s) {
+    return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// Lookbehind/lookahead include underscore so snake tokens never leak fragments
+// ("two_people_walk" must not match "people").
+const GENERIC_NOUN_RE = new RegExp(
+    `(?<![\\p{L}\\p{N}_])(?:${GROUP_NOUNS.slice().sort((a, b) => b.length - a.length).map(escapeRegExp).join('|')})(?![\\p{L}\\p{N}_])`,
+    'gi'
+);
+
 function normalizeKnownIds(knownIds) {
     const out = new Set();
     for (const id of (knownIds || [])) {
         if (id) out.add(String(id).toLowerCase());
     }
     return out;
+}
+
+/**
+ * Which of the candidate ids appear in a text (case-insensitive, word-boundary
+ * aware — "mikhail_berlioz's glasses" matches "mikhail_berlioz").
+ * @param {string} text
+ * @param {Iterable<string>} candidateIds
+ * @returns {string[]} matched ids (original casing of the candidates)
+ */
+function findKnownIdsInText(text, candidateIds) {
+    if (!text) return [];
+    const out = [];
+    for (const id of (candidateIds || [])) {
+        if (!id) continue;
+        const re = new RegExp(`(?<![\\p{L}\\p{N}_])${escapeRegExp(id)}(?![\\p{L}\\p{N}_])`, 'i');
+        if (re.test(String(text))) out.push(id);
+    }
+    return out;
+}
+
+/**
+ * Generic person references in a field: group/indefinite person nouns always;
+ * pronouns only when the field carries NO candidate id (see design rules above).
+ * @param {string} text
+ * @param {Iterable<string>} knownIds - ids present in the field suppress pronouns
+ * @returns {string[]} distinct matched generic terms (original case)
+ */
+function findGenericPersonTerms(text, knownIds) {
+    if (!text) return [];
+    const s = String(text);
+    const hits = [];
+    const seen = new Set();
+    for (const m of s.matchAll(GENERIC_NOUN_RE)) {
+        const low = m[0].toLowerCase();
+        if (seen.has(low)) continue;
+        seen.add(low);
+        hits.push(m[0]);
+    }
+    if (findKnownIdsInText(s, knownIds).length === 0) {
+        for (const w of PRONOUNS) {
+            const m = s.match(new RegExp(`\\b${w}\\b`, 'i'));
+            if (m && !seen.has(m[0].toLowerCase())) {
+                seen.add(m[0].toLowerCase());
+                hits.push(m[0]);
+            }
+        }
+    }
+    return hits;
+}
+
+/**
+ * Participant ids each field of a unit names. Only ids that are BOTH scene
+ * participants AND registry ids are candidates (natural designations like
+ * "женщина в будочке" can never appear as ids). Shared by findCrossPromptGaps
+ * and the pipeline's stillMissingIds — keeps the candidate rule in one place.
+ * @param {Object} unit - { image: { prompt }, video: { action } }
+ * @param {string[]} participants - scene.participants
+ * @param {Iterable<string>} knownIds - registry ids (characters)
+ * @returns {{idsInPrompt: string[], idsInAction: string[], candidateIds: string[]}}
+ */
+function participantFieldIds(unit, participants, knownIds) {
+    const known = normalizeKnownIds(knownIds);
+    const candidateIds = (participants || []).filter(id => known.has(String(id).toLowerCase()));
+    return {
+        idsInPrompt: findKnownIdsInText(String(unit?.image?.prompt || ''), candidateIds),
+        idsInAction: findKnownIdsInText(String(unit?.video?.action || ''), candidateIds),
+        candidateIds,
+    };
+}
+
+/**
+ * Cross-prompt consistency gaps for one unit. ASYMMETRIC by design:
+ *
+ *   HARD (direction 'prompt') — video IDs ⊆ image IDs. Every participant that
+ *   video.action names by id must ALSO be concretely identified in image.prompt:
+ *   the still must show the people the motion animates. The check is a PURE
+ *   subset rule — no generic term is required to fire: omitting the id is itself
+ *   the error (generic_terms is then empty, the hint just names the ids).
+ *
+ *   SOFT (direction 'action') — image IDs ⊆ video IDs is NOT required: a video
+ *   may animate only a subset of the people shown in the still (the rest stay
+ *   passive/background, auto-animated by the model). Reported for diagnostics
+ *   only — never treated as an error (a generic term is required here so pure
+ *   subset differences never produce noise).
+ *
+ * Only ids that are BOTH scene participants AND registry ids (characters.json)
+ * are candidates — a random chimera id can never become the basis for fixing
+ * the other prompt.
+ *
+ * @param {Object} unit - { image: { prompt }, video: { action } }
+ * @param {string[]} participants - scene.participants
+ * @param {Iterable<string>} knownIds - registry ids (characters)
+ * @returns {Array<{direction: 'prompt'|'action', severity: 'hard'|'soft', missing_ids: string[], generic_terms: string[], ids_in_other: string[], ids_in_this: string[]}>}
+ */
+function findCrossPromptGaps(unit, participants, knownIds) {
+    const prompt = String(unit?.image?.prompt || '');
+    const action = String(unit?.video?.action || '');
+    const { idsInPrompt, idsInAction, candidateIds } = participantFieldIds(unit, participants, knownIds);
+    const gaps = [];
+
+    // HARD — image.prompt under-specified: action names participants the prompt
+    // does not concretely identify. Pure subset rule — generic term NOT required.
+    const promptMissing = idsInAction.filter(id => !idsInPrompt.includes(id));
+    if (promptMissing.length > 0) {
+        gaps.push({
+            direction: 'prompt',
+            severity: 'hard',
+            missing_ids: promptMissing,
+            generic_terms: findGenericPersonTerms(prompt, candidateIds),
+            ids_in_other: idsInAction,
+            ids_in_this: idsInPrompt,
+        });
+    }
+
+    // SOFT — video.action names only a subset: prompt shows participants the
+    // action does not animate (legit when the rest are passive/background).
+    const actionMissing = idsInPrompt.filter(id => !idsInAction.includes(id));
+    if (actionMissing.length > 0) {
+        const generics = findGenericPersonTerms(action, candidateIds);
+        if (generics.length > 0) {
+            gaps.push({
+                direction: 'action',
+                severity: 'soft',
+                missing_ids: actionMissing,
+                generic_terms: generics,
+                ids_in_other: idsInPrompt,
+                ids_in_this: idsInAction,
+            });
+        }
+    }
+    return gaps;
 }
 
 function originalsList(knownIds) {
@@ -320,6 +515,8 @@ function sanitizeParticipants(participants, knownIds, options = {}) {
 module.exports = {
     SNAKE_TOKEN_RE,
     KNOWN_NON_CHARACTER_SNAKE,
+    GROUP_NOUNS,
+    PRONOUNS,
     snakeTokensInText,
     hasMixedScript,
     findCanonicalId,
@@ -330,4 +527,8 @@ module.exports = {
     canonicalizeMixedScriptId,
     isSnakeLike,
     sanitizeParticipants,
+    findKnownIdsInText,
+    findGenericPersonTerms,
+    findCrossPromptGaps,
+    participantFieldIds,
 };

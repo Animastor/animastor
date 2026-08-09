@@ -30,6 +30,12 @@ The video prompt maps storyboard lines to identity anchors BY character_id —
 generic wording breaks that mapping. WRONG: "slow push-in to Anna's glasses"
 → RIGHT: "slow push-in to anna_smirnova's glasses".
 
+### 5c. Cross-prompt consistency — video.action may animate a SUBSET of image.prompt
+This is NOT an error. image.prompt may show several participants by id while
+video.action names only one — only that one moves, the rest stay passive in
+frame and are auto-animated by the model. NEVER force video.action to name
+every id from image.prompt.
+
 ### 6. Timing realism — CRITICAL
 Each unit carries `estimated_duration_sec` — how long its video chunk plays (≈ the spoken duration of the unit text). The action must describe a behavior that PLAUSIBLY FILLS that time:
 
