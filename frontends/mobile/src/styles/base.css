@@ -533,9 +533,9 @@ button { font: inherit; color: inherit; }
 .gen-btn--global { flex: 1; height: 3.25rem; } /* 52dp */
 
 /* Header row — updateHeaderPanelStyle: GradientDrawable cornerRadius 12dp.
-   Solid bg via --worker-panel-off/on — lightened web-palette grays: OFF = light
-   gray strip (always visible), ON = slightly darker but well lighter than the
-   original Android values; gold stays reserved for the accent bar. */
+   Solid bg via --worker-panel-off/on — EXACT Android dark-theme values
+   (OFF = cinema_worker_panel_off #25211E, ON = cinema_worker_panel_on
+   #2D2A26); gold stays reserved for the accent bar. */
 .gen-header {
   display: flex; align-items: center; gap: 0.625rem;
   padding: 0.375rem 0.25rem; /* 6dp top/bottom, 4dp start/end */

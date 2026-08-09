@@ -16,8 +16,11 @@
   --scrim: rgba(12,10,8,0.5);
   --missing-bg: rgba(22,20,18,0.8);
   --subtitle-bg: rgba(0,0,0,0.73);
-  --worker-panel-on: #332F2A;
-  --worker-panel-off: #3E3933;
+  /* Worker panel header — EXACT Android values (GenerateFragment
+     updateHeaderPanelStyle): ON = cinema_worker_panel_on #2D2A26,
+     OFF = cinema_worker_panel_off #25211E. */
+  --worker-panel-on: #2D2A26;
+  --worker-panel-off: #25211E;
   --posbar-gradient: linear-gradient(180deg, #2E2A26, #242120);
   /* Scene/unit panels in the Navigate TOC — EXACT Android values
      (BookStructureAdapter): scenes colorSurfaceVariant #25211E, units
