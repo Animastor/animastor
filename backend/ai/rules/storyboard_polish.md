@@ -40,7 +40,7 @@ The user message may include a "## Cross-prompt consistency — image.prompt mus
 - Do NOT change the plot, add new events, or introduce characters not present in the unit text
 - Do NOT add new units or remove existing ones
 - Do NOT change character_ids — use ONLY the IDs provided in the Known Characters section below
-- Do NOT re-describe character appearance from passports — that is handled globally
+- Do NOT re-describe character appearance from passports — that is handled globally. Never append appearance/parenthetical notes after a character_id (e.g. "anna_smirnova (short, round glasses)"): the passport is injected automatically behind the id, and repeating it creates duplicate/contradictory anchors. Frame position after an id is fine ("berlioz_mikhail_aleksandrovich (left)"), appearance is not.
 
 ## What you MAY change
 - image.prompt: rephrase for continuity, fix positioning, adjust shot size, smooth transitions

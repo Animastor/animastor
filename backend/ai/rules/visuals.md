@@ -45,7 +45,29 @@ When the frame contains people, answer: "WHO exactly is in the frame by characte
     Unit B: "anna_smirnova and boris_volkov are sitting on a bench. boris_volkov gesturing while speaking."
     Unit C: "anna_smirnova looking at boris_volkov, both sitting on a bench."
   Do NOT write "They are talking" or "They continue the conversation" — the model would build a completely new scene with different people, poses, and framing.
-- Reference characters BY character_id. Their appearance (passport) is supplied globally behind the id — do NOT re-describe it. Never add parenthetical descriptions after a character_id like "anna_smirnova (short, round glasses)" — the id alone is sufficient. Re-describe a character's appearance ONLY when it deviates from baseline (wounded, wet, changed clothes, dirty). Describe sub-locations within the scene (e.g. "on a bench", "by the pond", "approaching the booth") for spatial context.
+- Reference characters BY character_id. Their appearance (passport) is supplied globally behind the id — do NOT re-describe it. Re-describe a character's appearance ONLY when it deviates from baseline (wounded, wet, changed clothes, dirty). Describe sub-locations within the scene (e.g. "on a bench", "by the pond", "approaching the booth") for spatial context.
+
+## STRICT RULE — NEVER re-describe a character's appearance
+A character's appearance and clothes live in the passport and are injected
+AUTOMATICALLY behind the id by the system — the image model already sees them.
+Do NOT repeat them in the prompt. "Round glasses", "bald", "grey suit",
+"disheveled hair", "authoritative stance" — all of this is passport or
+interpretation the model already receives; repeating it is noise that can even
+CONFLICT with the passport (e.g. passport says "black-rimmed glasses", the
+prompt says "round glasses" — the model now has two contradictory anchors).
+
+  WRONG: "berlioz_mikhail_aleksandrovich (left, round glasses)" — the id already
+         carries the passport; "round glasses" duplicates/contradicts it.
+  WRONG: "boris_volkov (right, disheveled hair)" — hair is in the passport.
+  RIGHT: "berlioz_mikhail_aleksandrovich on the left, ponyrev_ivan_nikolaevich
+         on the right" — position only, no appearance.
+
+Position within the frame IS allowed — it is composition, not identity:
+  OK: "berlioz_mikhail_aleksandrovich (left)" / "anna_smirnova (center frame)"
+  OK: "boris_volkov on the right".
+Re-describe appearance ONLY when it deviates from the passport baseline for
+THIS unit (wounded, wet, changed clothes, dirty, an object in hand) — in plain
+words, not as a token list.
 - Background/extras need no global passport, but describe each as a CONCRETE, REPEATABLE anchor, not a vague mass. Avoid "people walking in the park", "crowd", "pedestrians". Prefer "an elderly man reading a newspaper near the path", "a young couple walking along the pond", "a woman feeding pigeons", "two children playing near the water". When the same extras appear in adjacent units, REPEAT their description verbatim so the model keeps them visually continuous.
 
 ## STRICT RULE — ALWAYS write character_id, never generic noun
