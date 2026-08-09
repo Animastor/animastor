@@ -25,6 +25,18 @@ designation, derived from the unit's source text. Never keep or invent a snake_c
 - If the unit carries an `audio.speaker` that is a fantasy id, reassemble it the same way:
   the natural designation of the speaker ("the kiosk saleswoman").
 
+## Mandatory completeness (IMPORTANT)
+A flagged unit is reassembled ONLY when EVERY field is returned. A partial unit —
+with `image.prompt` but WITHOUT `video.action` — is a FAILURE and is discarded
+entirely: the fantasy id that hides in the omitted field would otherwise stay in
+final video prompts.
+- Return a FULL object for EVERY input unit: `image.prompt`, `video.action` AND
+  `audio.speaker` (when the unit has audio).
+- Scan EVERY field for the fantasy ids listed in `fantasy_ids` — they can be
+  present in any of the three fields, not only in the prompt.
+- Fields that need no change are copied VERBATIM from the input (still include
+  them in the output object — never omit a field).
+
 ## Output format
 Return ONLY valid JSON — one entry per input unit:
 ```json
@@ -40,8 +52,8 @@ Return ONLY valid JSON — one entry per input unit:
   ]
 }
 ```
-Include `image.prompt`, `video.action` and/or `audio.speaker` only for the fields you actually
-reassembled. Never change scene_index / unit_index.
+ALWAYS include all three fields (`image.prompt`, `video.action`, `audio.speaker` when the unit
+has audio) for every unit, copying unchanged ones verbatim. Never change scene_index / unit_index.
 
 ## Known character ids
 %CHARACTERS%

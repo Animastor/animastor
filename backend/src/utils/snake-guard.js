@@ -454,6 +454,28 @@ function canonicalizeText(text, knownIds, options = {}) {
 }
 
 /**
+ * Deterministic last-resort: explode every INVENTED snake token into its
+ * readable word form ("kiosk_saleswoman" → "kiosk saleswoman") so a fantasy
+ * id can never reach the book even when the LLM reassembly failed. Known ids,
+ * whitelisted vocabulary and chimeras (aligned earlier by canonicalizeText)
+ * are left untouched. Preserves the trailing "'s" possessive.
+ * @param {string} text
+ * @param {Iterable<string>} knownIds
+ * @param {{whitelist?: Iterable<string>}} [options]
+ * @returns {string}
+ */
+function desnakeifyText(text, knownIds, options = {}) {
+    if (!text) return text;
+    return String(text).replace(SNAKE_TOKEN_RE, (full, token) => {
+        const c = classifySnakeToken(token, knownIds, options);
+        if (c && c.kind === 'invented') {
+            return token.replace(/_/g, ' ') + full.slice(token.length);
+        }
+        return full;
+    });
+}
+
+/**
  * Normalize a MIXED-script id (latin + cyrillic) to a pure latin snake id —
  * "patriarshie_pруды" → "patriarshie_prudy". Pure-latin and pure-cyrillic ids
  * are left untouched (they are internally consistent, not chimeras).
@@ -524,6 +546,7 @@ module.exports = {
     findUnverifiedSnakeTokens,
     isFantasySnakeToken,
     canonicalizeText,
+    desnakeifyText,
     canonicalizeMixedScriptId,
     isSnakeLike,
     sanitizeParticipants,

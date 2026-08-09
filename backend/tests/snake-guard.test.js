@@ -6,6 +6,7 @@ const {
     sanitizeParticipants,
     findCanonicalId,
     canonicalizeText,
+    desnakeifyText,
     canonicalizeMixedScriptId,
     findKnownIdsInText,
     findGenericPersonTerms,
@@ -150,6 +151,25 @@ describe('canonicalizeText / canonicalizeMixedScriptId', () => {
         expect(canonicalizeText(null, ['anna_smirnova'])).to.equal(null);
     });
 
+    it('desnakeifyText explodes invented ids into plain words, keeps known/whitelist/chimeras', () => {
+        const knownIds = ['anna_smirnova', 'boris_volkov', 'city_park'];
+        // invented → plain words (the kiosk_saleswoman control case)
+        expect(desnakeifyText('kiosk_saleswoman at counter with downturned face', knownIds))
+            .to.equal('kiosk saleswoman at counter with downturned face');
+        expect(desnakeifyText('kiosk_saleswoman frowns while speaking', knownIds))
+            .to.equal('kiosk saleswoman frowns while speaking');
+        // known ids and whitelisted vocabulary stay untouched
+        expect(desnakeifyText('anna_smirnova close_up of city_park', knownIds))
+            .to.equal('anna_smirnova close_up of city_park');
+        // chimeras (already aligned by canonicalizeText upstream) are not exploded —
+        // canonicalizeText handles them first, so desnakeify only sees invented tokens
+        expect(desnakeifyText('mikhail_berлиоз raises his hand', ['mikhail_berlioz']))
+            .to.equal('mikhail_berлиоз raises his hand');
+        // empty/null passthrough
+        expect(desnakeifyText('', knownIds)).to.equal('');
+        expect(desnakeifyText(null, knownIds)).to.equal(null);
+    });
+
     it('canonicalizeMixedScriptId normalizes mixed ids but keeps pure ones', () => {
         expect(canonicalizeMixedScriptId('patriarshie_pруды')).to.equal('patriarshie_prudy');
         expect(canonicalizeMixedScriptId('kiosk_at_patriarshie_pруды')).to.equal('kiosk_at_patriarshie_prudy');
@@ -259,7 +279,7 @@ describe('stepRepairFantasyIds (hybrid snake repair)', () => {
         expect(result).to.equal(input);
     });
 
-    it('rejects a repair that STILL contains an unverified id — keeps the original', async () => {
+    it('falls back to plain words when the repair STILL contains an invented id (never keeps it)', async () => {
         const { mod, calls } = loadModule({
             callAI: async () => ({
                 units: [{
@@ -273,8 +293,11 @@ describe('stepRepairFantasyIds (hybrid snake repair)', () => {
         const input = [unit()];
         const result = await mod.stepRepairFantasyIds('sess', input, CHARACTERS, LOCATIONS, 0, () => {});
 
-        expect(result[0].image.prompt).to.equal('zhenshchina_v_budochke hands a glass of water'); // original kept
-        expect(result[0].video.action).to.equal('zhenshchina_v_budochke turns away');
+        // the LLM kept the fantasy id — the deterministic fallback keeps the
+        // LLM's draft and explodes its invented id into plain words instead of
+        // reverting the whole unit (both residual fields are desnakeified)
+        expect(result[0].image.prompt).to.equal('zhenshchina v budochke stands by the booth');
+        expect(result[0].video.action).to.equal('zhenshchina v budochke turns away');
         expect(calls.completeStep).to.equal(1);
     });
 
@@ -396,7 +419,7 @@ describe('stepRepairFantasyIds (hybrid snake repair)', () => {
         expect(units[0].video.action).to.equal('the kiosk saleswoman turns away');
     });
 
-    it('mergeRepairResults REVERTS a partial fix (residual id remains in the other field)', () => {
+    it('mergeRepairResults falls back to plain words on a partial fix (residual id in the other field)', () => {
         const { mod } = loadModule({});
         const input = [unit()];
         const flagged = [{ unit: input[0], tokens: ['zhenshchina_v_budochke'] }];
@@ -406,14 +429,37 @@ describe('stepRepairFantasyIds (hybrid snake repair)', () => {
             unit_index: 0,
             image: { prompt: 'the kiosk saleswoman hands a glass of water' },
         }];
-        const { units, changed, stillBad } = mod.mergeRepairResults(
+        const { units, changed, stillBad, fallbackFixed } = mod.mergeRepairResults(
             input, flagged, repaired, CHARACTERS, ['anna_smirnova', 'boris_volkov', 'city_park']
         );
-        expect(changed).to.equal(0);
-        expect(stillBad).to.equal(1);
-        // the whole unit is reverted — nothing partially-fixed reaches the book
-        expect(units[0].image.prompt).to.equal('zhenshchina_v_budochke hands a glass of water');
-        expect(units[0].video.action).to.equal('zhenshchina_v_budochke turns away');
+        expect(changed).to.equal(1);
+        expect(fallbackFixed).to.equal(1);
+        expect(stillBad).to.equal(0);
+        // LLM's clean prompt is kept; the residual action is deterministically
+        // desnakeified — a fantasy id NEVER reaches the book
+        expect(units[0].image.prompt).to.equal('the kiosk saleswoman hands a glass of water');
+        expect(units[0].video.action).to.equal('zhenshchina v budochke turns away');
+    });
+
+    it('mergeRepairResults falls back when the agent fix itself still carries an invented id', () => {
+        const { mod } = loadModule({});
+        const input = [unit()];
+        const flagged = [{ unit: input[0], tokens: ['zhenshchina_v_budochke'] }];
+        const repaired = [{
+            scene_index: 0,
+            unit_index: 0,
+            image: { prompt: 'kiosk_saleswoman stands by the booth' },   // dirty — not applied
+            video: { action: 'the kiosk saleswoman turns away' },          // clean — applied
+        }];
+        const { units, changed, stillBad, fallbackFixed } = mod.mergeRepairResults(
+            input, flagged, repaired, CHARACTERS, ['anna_smirnova', 'boris_volkov', 'city_park']
+        );
+        expect(changed).to.equal(1);
+        expect(fallbackFixed).to.equal(1);
+        expect(stillBad).to.equal(0);
+        // clean LLM fix kept; the dirty LLM draft is kept but desnakeified
+        expect(units[0].image.prompt).to.equal('kiosk saleswoman stands by the booth');
+        expect(units[0].video.action).to.equal('the kiosk saleswoman turns away');
     });
 
     it('applyRepairToScenes writes image, video AND audio.speaker back into scenes', () => {
@@ -448,23 +494,49 @@ describe('stepRepairFantasyIds (hybrid snake repair)', () => {
         expect(scenes[0].units[0].audio).to.equal(undefined);
     });
 
-    it('mergeRepairResults rejects fixes that still carry an unverified id', () => {
+    it('mergeRepairResults does not replace a real field with a whitespace-only draft', () => {
         const { mod } = loadModule({});
-        const input = [unit()];
+        const input = [unit({
+            video: { action: 'zhenshchina_v_budochke turns away' },
+        })];
         const flagged = [{ unit: input[0], tokens: ['zhenshchina_v_budochke'] }];
         const repaired = [{
             scene_index: 0,
             unit_index: 0,
-            image: { prompt: 'still_bad_id stands by the booth' },
-            video: { action: 'the kiosk saleswoman turns away' },
+            image: { prompt: 'the kiosk saleswoman hands a glass of water' },
+            video: { action: '   ' }, // whitespace draft — must not replace the real action
         }];
         const { units, changed, stillBad } = mod.mergeRepairResults(
             input, flagged, repaired, CHARACTERS, ['anna_smirnova', 'boris_volkov', 'city_park']
         );
+        // the non-empty guard rejects the blank draft → fallback can't clean the
+        // action → whole unit reverts, keeping the real (if imperfect) fields
         expect(changed).to.equal(0);
         expect(stillBad).to.equal(1);
         expect(units[0].image.prompt).to.equal('zhenshchina_v_budochke hands a glass of water');
         expect(units[0].video.action).to.equal('zhenshchina_v_budochke turns away');
+    });
+
+    it('mergeRepairResults keeps a clean LLM fix when the only residual field is out-of-format', () => {
+        const { mod } = loadModule({});
+        const outOfRange = unit({
+            video: { action: 'x'.repeat(5000) + ' zhenshchina_v_budochke turns away' }, // > IMAGE_PROMPT_MAX_CHARS
+        });
+        const flagged = [{ unit: outOfRange, tokens: ['zhenshchina_v_budochke'] }];
+        // an out-of-range action (never touched by the repair step) is not scanned
+        // — so a unit whose ONLY residual is out-of-format keeps the LLM fix
+        const repaired = [{
+            scene_index: 0,
+            unit_index: 0,
+            image: { prompt: 'the kiosk saleswoman hands a glass of water' },
+        }];
+        const { units, changed, stillBad } = mod.mergeRepairResults(
+            [outOfRange], flagged, repaired, CHARACTERS, ['anna_smirnova', 'boris_volkov', 'city_park']
+        );
+        // prompt was fixed; out-of-format action is out of scope for the step
+        expect(changed).to.equal(1);
+        expect(stillBad).to.equal(0);
+        expect(units[0].image.prompt).to.equal('the kiosk saleswoman hands a glass of water');
     });
 });
 

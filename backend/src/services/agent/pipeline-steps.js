@@ -19,7 +19,7 @@ const {
 } = require('../agent-prompts');
 const { normalizeCharacterRefs } = require('../../image/image-service');
 const { sanitizeVideoTokens, tokensToString } = require('../../book/lazy-book/appearance');
-const { findUnverifiedSnakeTokens, canonicalizeText, findCrossPromptGaps, participantFieldIds } = require('../../utils/snake-guard');
+const { findUnverifiedSnakeTokens, canonicalizeText, desnakeifyText, findCrossPromptGaps, participantFieldIds } = require('../../utils/snake-guard');
 
 /**
  * Normalize names/aliases → character_id in an AI-written visual text.
@@ -1296,20 +1296,22 @@ function repairRow(u, tokens) {
  * Only flagged units can change; only fields the agent actually reassembled are
  * applied (each clean per-field). Then a WHOLE-UNIT residual scan runs (in-range
  * fields only): if ANY unverified snake token remains — a partial fix, where the
- * agent fixed one field but left the other — the unit is REVERTED to the
- * original entirely and counted as stillBad, so a partially-fixed unit never
- * reaches the book.
+ * agent fixed one field but left the other — the residual fields fall through to
+ * the deterministic desnakeify fallback (the LLM draft is kept and its invented
+ * ids exploded into plain words). Only a unit that even the fallback cannot
+ * clean is reverted entirely and counted as stillBad.
  * @param {Object[]} allVisualUnits
  * @param {{unit: Object, tokens: string[]}[]} flagged
  * @param {Object[]} repaired - agent rows { scene_index, unit_index, image?, video?, audio? }
  * @param {Object[]} characters
  * @param {Iterable<string>} knownIds
- * @returns {{units: Object[], changed: number, stillBad: number}}
+ * @returns {{units: Object[], changed: number, stillBad: number, fallbackFixed: number}}
  */
 function mergeRepairResults(allVisualUnits, flagged, repaired, characters, knownIds) {
     const flaggedKeys = new Set(flagged.map(f => `${f.unit.sceneIndex}:${f.unit.unitIndex}`));
     let changed = 0;
     let stillBad = 0;
+    let fallbackFixed = 0;
     const units = allVisualUnits.map(original => {
         if (!flaggedKeys.has(`${original.sceneIndex}:${original.unitIndex}`)) return original;
         const rec = repaired.find(r =>
@@ -1325,17 +1327,18 @@ function mergeRepairResults(allVisualUnits, flagged, repaired, characters, known
         const next = { ...original };
         let unitChanged = false;
 
-        // Apply each returned field ONLY when the agent's fix itself is clean.
+        // Apply each returned field ONLY when the agent's fix itself is clean
+        // (and non-empty — a whitespace draft must not wipe a real field).
         if (rec.image?.prompt && inPromptRange(original)) {
             const p = normalizeVisualText(rec.image.prompt, characters);
-            if (findUnverifiedSnakeTokens(p, knownIds).length === 0) {
+            if (p.trim() && findUnverifiedSnakeTokens(p, knownIds).length === 0) {
                 next.image = { ...(original.image || {}), prompt: p };
                 unitChanged = true;
             }
         }
         if (rec.video?.action && inActionRange(original)) {
             const a = normalizeVisualText(rec.video.action, characters);
-            if (findUnverifiedSnakeTokens(a, knownIds).length === 0) {
+            if (a.trim() && findUnverifiedSnakeTokens(a, knownIds).length === 0) {
                 next.video = { ...(original.video || {}), action: a };
                 unitChanged = true;
             }
@@ -1350,7 +1353,8 @@ function mergeRepairResults(allVisualUnits, flagged, repaired, characters, known
             }
         }
 
-        // Whole-unit residual scan — partial fixes revert the whole unit.
+        // Whole-unit residual scan — a partially-fixed unit is NOT reverted;
+        // residual fields fall through to the deterministic desnakeify below.
         // Out-of-format fields are never scanned (they were never touched).
         const residual = [];
         if (inPromptRange(original) && findUnverifiedSnakeTokens(next.image?.prompt || '', knownIds).length > 0) residual.push('prompt');
@@ -1358,14 +1362,66 @@ function mergeRepairResults(allVisualUnits, flagged, repaired, characters, known
         if (next.audio?.speaker && findUnverifiedSnakeTokens(next.audio.speaker, knownIds).length > 0) residual.push('speaker');
 
         if (residual.length > 0) {
+            // Last-resort deterministic fallback: the LLM's draft (even if dirty)
+            // carries the model's best rewrite — take its field content and
+            // explode any remaining invented snake token into plain words
+            // ("kiosk_saleswoman" → "kiosk saleswoman") instead of reverting to
+            // the original. A fantasy id must never reach the book, and the
+            // model's plain-word designation ("kiosk saleswoman") is always
+            // better than both the hallucinated id and a raw transliteration of
+            // the original. Only the residual fields are touched; every other
+            // field keeps the LLM's fix. Reverts only if even this cannot clean
+            // the field (unlikely — desnakeifyText removes every invented token).
+            const fb = { ...next };
+            let fallbackChanged = false;
+            if (residual.includes('prompt') && fb.image) {
+                const base = rec.image?.prompt || fb.image.prompt || '';
+                const p = normalizeVisualText(desnakeifyText(base, knownIds), characters);
+                // non-empty guard: a draft that desnakeifies to an empty field
+                // must not replace a real (if imperfect) original
+                if (p.trim() && findUnverifiedSnakeTokens(p, knownIds).length === 0) {
+                    fb.image = { ...fb.image, prompt: p };
+                    fallbackChanged = true;
+                }
+            }
+            if (residual.includes('action') && fb.video) {
+                const base = rec.video?.action || fb.video.action || '';
+                const a = normalizeVisualText(desnakeifyText(base, knownIds), characters);
+                if (a.trim() && findUnverifiedSnakeTokens(a, knownIds).length === 0) {
+                    fb.video = { ...fb.video, action: a };
+                    fallbackChanged = true;
+                }
+            }
+            if (residual.includes('speaker') && fb.audio) {
+                const base = rec.audio?.speaker || fb.audio.speaker || '';
+                const sp = String(desnakeifyText(base, knownIds)).trim();
+                if (sp && findUnverifiedSnakeTokens(sp, knownIds).length === 0) {
+                    fb.audio = { ...fb.audio, speaker: sp };
+                    fallbackChanged = true;
+                }
+            }
+            if (fallbackChanged) {
+                const fixed = [];
+                if (residual.includes('prompt') && fb.image && fb.image.prompt !== next.image?.prompt) fixed.push('prompt');
+                if (residual.includes('action') && fb.video && fb.video.action !== next.video?.action) fixed.push('action');
+                if (residual.includes('speaker') && fb.audio && fb.audio.speaker !== next.audio?.speaker) fixed.push('speaker');
+                fallbackFixed++;
+                changed++;
+                console.warn(`[AGENT] fantasy_snake_repair: unit ${original.sceneIndex}:${original.unitIndex} fallback-desnakeified ${fixed.join(', ')} — kept (plain words instead of fantasy id)`);
+                return fb;
+            }
+            // Belt-and-suspenders: desnakeifyText removes EVERY invented token
+            // deterministically, so this branch is near-unreachable — kept as a
+            // defensive safety net (e.g. a draft that desnakeifies to empty).
+            // If it ever fires, it is unexpected: investigate, do not ignore.
             stillBad++;
-            console.warn(`[AGENT] fantasy_snake_repair: unit ${original.sceneIndex}:${original.unitIndex} still has unverified ids in ${residual.join(', ')} — reverting to original`);
+            console.warn(`[AGENT] fantasy_snake_repair: UNEXPECTED — unit ${original.sceneIndex}:${original.unitIndex} still has unverified ids in ${residual.join(', ')} after fallback — reverting to original (investigate)`);
             return original;
         }
         if (unitChanged) changed++;
         return next;
     });
-    return { units, changed, stillBad };
+    return { units, changed, stillBad, fallbackFixed };
 }
 
 /**
@@ -1483,11 +1539,11 @@ async function stepRepairFantasyIds(sessionId, allVisualUnits, characters, locat
     try {
         const result = await aiCaller.callAI(messages, { maxTokens: 4096 });
         const repaired = result.units || [];
-        const { units: merged, changed, stillBad } = mergeRepairResults(baseUnits, flagged, repaired, characters, knownIds);
+        const { units: merged, changed, stillBad, fallbackFixed } = mergeRepairResults(baseUnits, flagged, repaired, characters, knownIds);
 
         await aiCaller.logConversation(sessionId, step.step_id, messages, JSON.stringify(result));
         await completeStep(step.step_id, { units: merged.length });
-        console.log(`[AGENT] Step fantasy_snake_repair: ${autoFixed} auto-canonicalized, ${flagged.length} unit(s) flagged (${flagged.reduce((n, f) => n + f.tokens.length, 0)} fantasy ids), ${changed} reassembled, ${stillBad} still unverified (kept original)`);
+        console.log(`[AGENT] Step fantasy_snake_repair: ${autoFixed} auto-canonicalized, ${flagged.length} unit(s) flagged (${flagged.reduce((n, f) => n + f.tokens.length, 0)} fantasy ids), ${changed} reassembled, ${fallbackFixed} fallback-desnakeified, ${stillBad} still unverified (kept original)`);
         return merged;
     } catch (err) {
         await failStep(step.step_id, err.message);
