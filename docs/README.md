@@ -50,6 +50,7 @@
 | [`MIGRATION_PLAN.md`](04-planning/MIGRATION_PLAN.md) | План перехода к единому Orchestrator: 12 шагов, 4 релиза (A/B/C/D) |
 | [`ROADMAP_6M.md`](04-planning/ROADMAP_6M.md) | **НОВЫЙ.** Полугодовая дорожная карта: неделя → месяц → 3 месяца → долгосрок |
 | [`WORKFLOW_ROADMAP.md`](04-planning/WORKFLOW_ROADMAP.md) | Roadmap Workflow Manager: стадии 1-5 (бэкенд, фронтенд, параметры, dev mode, AI) |
+| [`GOLDEN_BOOK_EVOLUTION.md`](04-planning/GOLDEN_BOOK_EVOLUTION.md) | **Концепция «Эволюционное пахтание»:** Raw/Golden Books, Quality Delta, эволюционный цикл + честная критика (видение на будущее) |
 
 ---
 
@@ -156,7 +157,8 @@ docs/
 ├── 04-planning/                       ← планы
 │   ├── MIGRATION_PLAN.md
 │   ├── ROADMAP_6M.md
-│   └── WORKFLOW_ROADMAP.md
+│   ├── WORKFLOW_ROADMAP.md
+│   └── GOLDEN_BOOK_EVOLUTION.md        ← концепция «Эволюционное пахтание» (видение)
 │
 ├── 05-frontend/                       ← фронтенд
 │   ├── PROGRESS_HANDOFF.md            ← НОВЫЙ (из docs-claude/PROGRESS_FRONTEND_HANDOFF)
