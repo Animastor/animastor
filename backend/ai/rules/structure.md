@@ -58,6 +58,9 @@ bare narrative paragraph must NOT be forced into a structure.
   document. When the line is "Title. Author" on one line, split them.
   The title may also be glued to the author's name WITHOUT a separator
   ("За пределами алгоритмов С. А. Хабаров") — split at the full name.
+  A title line may end with a DECORATIVE trailing period ("За пределами
+  алгоритмов." — the classic Russian title-page form): it is still the
+  title; the program strips the period.
   If no title exists, omit the field.
 - **author** — a person's name (initials allowed: "С.А. Хабаров", "J.R.R.
   Tolkien"). Only for head candidates. If no author exists, omit.

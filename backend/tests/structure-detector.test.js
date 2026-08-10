@@ -87,6 +87,80 @@ describe('structure-detector (v2)', () => {
         });
     });
 
+    describe('bare title line with a decorative trailing period (ba_1786339258534)', () => {
+        // Реальный кейс: первая строка — ТОЛЬКО название с декоративной точкой
+        // («За пределами алгоритмов.»), без автора на той же строке. До фикса
+        // детерминированный детектор считал строку прозой (sentencePunctuation),
+        // title оставался null → create.js не создавал главу-обложку.
+        const BARE = [
+            'За пределами алгоритмов.',
+            '',
+            'Пролог. Мир на переломе эпох',
+            '',
+            'Первая половина XXI века стала временем стремительного научного прогресса. Искусственный интеллект научился решать задачи, которые ещё недавно считались исключительно человеческими. Биотехнологии приблизились к лечению неизлечимых болезней, робототехника изменила промышленность, а космические проекты вновь стали частью повседневной жизни.',
+            'Но очень быстро чудеса перестали казаться чудесами. Люди привыкли к ним так же, как когда-то привыкли к электричеству, интернету и смартфонам.',
+            'При этом сам мир не стал спокойнее. Военные конфликты продолжались, общества всё сильнее разделялись, а алгоритмы всё чаще определяли, какие новости увидит человек, во что он поверит и с кем окажется по одну сторону очередного спора.',
+            '',
+            'Глава 1. Земля',
+            '',
+            'Юра, инженер по искусственному интеллекту, всё чаще замечал странный парадокс: чем совершеннее становились технологии, тем реже человек пытался понять самого себя.',
+            'Светлана, исследователь когнитивной инженерии, пришла к похожему выводу. Она изучала, как человек способен осознанно менять собственные мыслительные привычки.',
+            'Постепенно они поняли, что главная проблема будущего — не недостаток технологий.',
+        ].join('\n');
+
+        it('detects the title despite the decorative trailing period (stripped)', () => {
+            const map = sd.buildDeterministicMap(BARE);
+            expect(map.title.text).to.equal('За пределами алгоритмов');
+            expect(map.author).to.equal(null);
+        });
+
+        it('still produces prologue + chapters structure', () => {
+            const map = sd.buildDeterministicMap(BARE);
+            expect(map.hasPrologue).to.equal(true);
+            expect(map.segments.map(s => s.type)).to.deep.equal(['prologue', 'chapter']);
+            expect(map.segments[0].title).to.equal('Мир на переломе эпох');
+            expect(map.segments[1].title).to.equal('Земля');
+            expect(map.segments[1].number).to.equal(1);
+        });
+
+        it('keeps the deterministic title when the LLM anchors it to the WRONG candidate', () => {
+            // Реальный прогон: LLM ответил правильно, но привязал title к c1
+            // (строка «Пролог…»), т.к. строка названия не попадала в payload.
+            // sanitizeStructure должен отбросить неконсистентный якорь, а
+            // детерминированный backbone — сохранить название.
+            const ids = candidateIds(BARE);
+            const wrongAnchor = {
+                title: { text: 'За пределами алгоритмов', candidate_id: ids['Пролог. Мир на переломе эпох'], confidence: 0.98 },
+                author: null,
+                elements: [],
+            };
+            const map = sd.mergeAiDecisions(BARE, wrongAnchor);
+            expect(map.title.text).to.equal('За пределами алгоритмов');
+            expect(map.author).to.equal(null);
+        });
+
+        it('a short 2-word narrative opening ending in a period is NOT a title', () => {
+            const t = 'Он проснулся.\n\nОн открыл глаза и посмотрел на часы. За окном светало, и город начинал свой шумный день.';
+            const map = sd.buildDeterministicMap(t);
+            expect(map.title).to.equal(null);
+        });
+
+        it('a multi-sentence narrative opening in one line is NOT a title (mid-line periods)', () => {
+            const t = 'Он проснулся. Он встал и подошёл к окну.\n\nГород ещё спал, и только редкие фонари мерцали в предрассветной мгле. Так начинался этот долгий день.';
+            const map = sd.buildDeterministicMap(t);
+            expect(map.title).to.equal(null);
+        });
+
+        it('a line ending in ?/!/… is NOT treated as a decorative-period title (nothing stripped)', () => {
+            // «Кто виноват?» на первой строке — не декоративная точка; регекс
+            // `^[^.!?…,;:]*\.$` её не пропускает (нужна именно точка), поэтому
+            // строка не становится названием и знак никогда не снимается.
+            const t = 'Кто виноват?\n\nВсе счастливые семьи похожи друг на друга. Эта длинная первая глава продолжается и продолжается, чтобы строка стала уверенным кандидатом.';
+            const map = sd.buildDeterministicMap(t);
+            expect(map.title).to.equal(null);
+        });
+    });
+
     describe('universality — no forced structure', () => {
         it('poem without headings → single body segment, no title', () => {
             const poem = 'Тишина\n\nЛуна плывёт над спящею землёй,\nИ тихий ветер трогает листву.';

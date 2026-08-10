@@ -219,8 +219,16 @@ async function stepAnalyzeStructure(sessionId, sourceText, stepIndex, progress, 
         .map(c => `${c.lineIndex + 1}: ${c.text}`)
         .join('\n');
 
+    // Candidates offered to the LLM. Strong candidates (keyword or
+    // headingLikelihood >= 0.3) plus STANDALONE title/author head-zone lines:
+    // a real title line like "За пределами алгоритмов." scores only ~0.15
+    // (decorative period → sentencePunctuation penalty) and would otherwise be
+    // invisible to the LLM, forcing it to anchor the title to a wrong
+    // candidate (e.g. the prologue line) and tripping the hallucination guard.
+    // standalone keeps long narrative paragraphs out — only title-page-like
+    // lines (blank line above AND below) join the payload.
     const candidatePayload = candidates
-        .filter(c => c.keyword || c.headingLikelihood >= 0.3)
+        .filter(c => c.keyword || c.headingLikelihood >= 0.3 || (c.inHeadBlock && c.standalone))
         .slice(0, 60)
         .map(c => ({
             id: c.id,

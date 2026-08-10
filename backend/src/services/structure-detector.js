@@ -285,6 +285,28 @@ function isAuthorSurnameACharacter(sourceText, authorText, narrativeStartOffset)
     return countSurnameInText(narrative, surname) >= AUTHOR_SURNAME_MIN_HITS;
 }
 
+// A DECORATIVE trailing period ("За пределами алгоритмов." — the classic
+// Russian title-page form) is typography, not a sentence end: the line must
+// not be disqualified for it. ONLY a single terminal period qualifies — the
+// regex excludes any other "." anywhere in the line (a multi-sentence
+// narrative opening "Он проснулся. Он встал." is prose), any "?!…", and any
+// mid-line ",;:" (hasSentencePunctuation treats those as prose too). The
+// line must also be short and weigh at least 3 words (keeps a 2-word
+// narrative opening like "Он проснулся." from being swallowed as a title —
+// real titles are rarely shorter). Note: `standalone` is always true for the
+// very first line (isFirstNonEmpty), so the punctuation regex carries the
+// real safety for first-line titles; standalone protects later head-zone
+// lines.
+function isDecorativePeriodTitle(c) {
+    if (!c || !c.text) return false;
+    const t = String(c.text || '').trim();
+    if (!t || t.length < 2 || t.length > 60) return false;
+    if (!/^[^.!?…,;:]*\.$/.test(t)) return false; // exactly ONE terminal '.', nothing else
+    if ((c.wordCount || 0) < 3) return false;
+    if (!c.standalone) return false; // glued to prose below → narrative, not a title
+    return true;
+}
+
 function looksLikeAuthorName(text) {
     const t = String(text || '').trim().replace(/[.!?…]+$/, '');
     if (!t || t.length > 60) return false;
@@ -650,9 +672,11 @@ function buildDeterministicMap(sourceText) {
 
     // A plain (non "Title. Author") first line is only a title when it is
     // "weighty" enough — otherwise a poem's first verse or a short fragment
-    // would be swallowed as a title and dropped from the narrative.
+    // would be swallowed as a title and dropped from the narrative. A line
+    // ending in a DECORATIVE trailing period ("За пределами алгоритмов.") is
+    // still a title candidate — the period is title-page typography, not prose.
     const firstParagraphLen = first ? (first.nextParagraphLength || 0) : 0;
-    const isConfidentTitle = first && !first.sentencePunctuation &&
+    const isConfidentTitle = first && (!first.sentencePunctuation || isDecorativePeriodTitle(first)) &&
         (first.wordCount >= 3 || firstParagraphLen >= 60 || nonEmptyCount >= 8);
 
     if (!author && first && nonEmptyCount >= 2 && first.length <= 90 && !first.keyword && !first.prefixDash) {
@@ -666,7 +690,12 @@ function buildDeterministicMap(sourceText) {
             // title, drop only the author.
             title = { text: sameLine.title, source: 'detect', candidateId: first.id };
         } else if (!sameLine && isConfidentTitle) {
-            title = { text: first.text, source: 'detect', candidateId: first.id };
+            // Strip a decorative trailing period — "За пределами алгоритмов."
+            // → "За пределами алгоритмов" (same rule as the inverted-title path).
+            const cleanTitle = isDecorativePeriodTitle(first)
+                ? first.text.replace(/\.$/, '').trim()
+                : first.text;
+            title = { text: cleanTitle, source: 'detect', candidateId: first.id };
         }
     }
 
