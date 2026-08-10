@@ -8,6 +8,30 @@ All notable changes to Animastor are documented here.
 
 ### Fixed
 
+- **Генерация падала сразу после «Сборки локаций»: `Assignment to constant variable`**
+  (`backend/src/services/agent/pipeline-runner.js`,
+  `backend/tests/pipeline-runner-placeholder.test.js` +1 тест):
+  - **Проблема (книга `import_1786344649131_1786344659769`):** пайплайн прошёл
+    `analyze_structure` → `analyze_characters` → `generate_voices` → `analyze_locations`
+    (4 локации) и упал в `runPipeline` (pipeline-runner.js:431) с
+    `TypeError: Assignment to constant variable` — сессия `failed`, шаг разбивки сцен не
+    начался, `POST /bootstrap → 400`.
+  - **Причина:** тот же коммит `c058d8c` (блок «no placeholder values» —
+    `sanitizeEnvironment` на merge локаций) добавил в цикл
+    `for (const loc of newLocations)` строку `loc = …` — переприсвоение переменной
+    цикла, объявленной `const`. Ветка слияния исполняется только при НЕпустой
+    экстракции локаций с `environment`, а тест того коммита мокал
+    `stepExtractLocations: async () => []` — ветка не покрывалась, и регрессия ушла
+    в прод (в предыдущих книгах локаций было 0 или пайплайн до этого места не доходил).
+  - **Фикс:** санитизация пишется в новую переменную `let cleanLoc`; ссылки внутри
+    цикла переведены на неё. Скан кодовой базы: других переприсвоений переменных
+    `for...of` нет (`create.js` локации пишет через `locations[locId] = entry` — безопасно).
+  - **Проверки:** +1 регрессионный тест — непустая экстракция локаций с
+    плейсхолдерными значениями (`season: 'not applicable'`, `weather: '—'`): merge не
+    падает, реальное значение сохраняется, плейсхолдер дропается, локация с одними
+    плейсхолдерами теряет `environment` целиком. Точка краша проверена напрямую. Весь
+    mocha-сьют (1015, было 1014) проходит.
+
 - **Генерация падала между «Сборкой персонажей» и «Сборкой локаций»: `hasRealAppearance is not a function`**
   (`backend/src/utils/character-identity.js`,
   `backend/tests/coreference-agent.test.js` +3 теста):

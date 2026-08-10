@@ -179,4 +179,42 @@ describe('runPipeline — placeholder character guard (no fake "unknown")', () =
         expect(result.characters.map(c => c.id)).to.deep.equal(['neizvestnyy']);
         expect(result.scenes[0].participants).to.deep.equal(['neizvestnyy']);
     });
+
+    it('merges extracted locations WITHOUT crashing — sanitized env cannot reassign the for-of const', async () => {
+        // REGRESSION: commit c058d8c added the sanitizeEnvironment write barrier
+        // inside `for (const loc of newLocations)` and REASSIGNED `loc` — the
+        // loop variable is const, so ANY non-empty extraction whose location has
+        // an environment object threw 'TypeError: Assignment to constant
+        // variable' right after Step 2 (locations), killing the session (book
+        // import_1786344649131_1786344659769: steps analyze_structure →
+        // analyze_characters → generate_voices → analyze_locations ✓, then
+        // crash in runPipeline before scene split). The shared mock returned []
+        // so the merge branch never executed in tests.
+        const mocks = makeMocks({
+            pipelineSteps: {
+                stepExtractLocations: async () => [
+                    {
+                        id: 'patriarch_ponds',
+                        name: 'Патриаршие пруды',
+                        environment: { season: 'not applicable', mood: 'tense and secretive' },
+                    },
+                    {
+                        id: 'griboedov',
+                        name: 'Дом Грибоедова',
+                        environment: { season: 'n/a', weather: '—' }, // only placeholders
+                    },
+                ],
+            },
+        });
+
+        const result = await run('sess', 'Some narrative text.', [], [], mocks);
+
+        const byId = new Map(result.locations.map(l => [l.id, l]));
+        // real env value survives, placeholder value dropped
+        expect(byId.get('patriarch_ponds').environment.mood).to.equal('tense and secretive');
+        expect(byId.get('patriarch_ponds').environment.season).to.equal(undefined);
+        // location whose env is ALL placeholders loses the environment key entirely
+        expect(byId.get('griboedov').environment).to.equal(undefined);
+        expect(byId.get('griboedov').id).to.equal('griboedov');
+    });
 });

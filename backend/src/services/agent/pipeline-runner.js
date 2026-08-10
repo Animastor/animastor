@@ -426,25 +426,31 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
             // correct, a placeholder would be injected into image prompts.
             // When nothing real remains, omit the environment key entirely
             // (same convention as create.js — readers use `|| {}` anyway).
+            // NOTE: the for-of loop variable is `const` — sanitize into a NEW
+            // variable. Reassigning `loc` itself would throw
+            // 'TypeError: Assignment to constant variable' (regression from
+            // c058d8c, surfaced by any non-empty location extraction with an
+            // environment object — book import_1786344649131_1786344659769).
+            let cleanLoc = loc;
             if (loc.environment && typeof loc.environment === 'object') {
                 const env = sanitizeEnvironment(loc.environment);
-                loc = Object.keys(env).length > 0
+                cleanLoc = Object.keys(env).length > 0
                     ? { ...loc, environment: env }
                     : Object.fromEntries(Object.entries(loc).filter(([k]) => k !== 'environment'));
             }
-            if (mergedMap.has(loc.id)) {
-                const existing = mergedMap.get(loc.id);
-                if (loc.description && loc.description.length > (existing.description || '').length) {
-                    mergedMap.set(loc.id, {
+            if (mergedMap.has(cleanLoc.id)) {
+                const existing = mergedMap.get(cleanLoc.id);
+                if (cleanLoc.description && cleanLoc.description.length > (existing.description || '').length) {
+                    mergedMap.set(cleanLoc.id, {
                         ...existing,
                         description: existing.description
-                            ? existing.description + ' ' + loc.description
-                            : loc.description,
+                            ? existing.description + ' ' + cleanLoc.description
+                            : cleanLoc.description,
                     });
                     enriched++;
                 }
             } else {
-                mergedMap.set(loc.id, loc);
+                mergedMap.set(cleanLoc.id, cleanLoc);
                 added++;
             }
         }
