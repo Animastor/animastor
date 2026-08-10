@@ -28,6 +28,30 @@ All notable changes to Animastor are documented here.
 
 ### Fixed
 
+- **Mobile Web Tester: полностью отключён полноэкранный режим — больше нельзя «застрять» в фуллскрине**
+  (`tools/mobile-web-tester/app/src/main/java/com/animastor/tester/MainActivity.kt`,
+  `tools/mobile-web-tester/app/src/main/res/layout/activity_main.xml`,
+  `tools/mobile-web-tester/app/src/main/res/values/strings.xml`,
+  `tools/mobile-web-tester/README.md`,
+  `docs/08-mobile-web-migration/07-MOBILE-WEB-TESTER.md`):
+  - **Проблема:** кнопка «во весь экран» мобильного плеера (`requestFullscreen`)
+    уводила тестер в фуллскрин, из которого не было выхода: современный WebView
+    рендерит element-fullscreen внутри себя (не вызывая `onShowCustomView`),
+    а кнопка выхода у самого фронта свёрстана вне фуллскрин-контейнера.
+  - **Фикс (сделано по запросу — «просто убери»):** полноэкранный режим
+    отключён начисто. `injectFullscreenBlock` на каждой загрузке подменяет
+    `Element.prototype.requestFullscreen`/`webkitRequestFullscreen` на reject-
+    заглушку, `HTMLMediaElement.prototype.webkitEnterFullscreen` — на no-op,
+    `document.exitFullscreen` — на resolve: кнопка плеера просто не работает.
+    Видео-фуллскрин (`onShowCustomView`) отклоняется сразу
+    (`callback.onCustomViewHidden()`). Все попытки «выхода» (✕-оверлей, ловец
+    касаний, JS-мост с поллингом, `FLAG_FORCE_NOT_FULLSCREEN`) вычищены из кода.
+  - **Заодно:** убрана кнопка-стрелка ▾/▴ сворачивания верхней панели — она
+    находилась внутри сворачиваемой панели и, сворачивая её, прятала саму себя
+    (выглядело как «фуллскрин, из которого не выйти»). Панель всегда видна.
+  - Проверки: `assembleDebug` без предупреждений; в dex-строке APK блокировка
+    `requestFullscreen` на месте, следов оверлеев/стрелки ноль.
+
 - **Генерация падала сразу после «Сборки локаций»: `Assignment to constant variable`**
   (`backend/src/services/agent/pipeline-runner.js`,
   `backend/tests/pipeline-runner-placeholder.test.js` +1 тест):

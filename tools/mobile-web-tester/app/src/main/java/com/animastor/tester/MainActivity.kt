@@ -63,11 +63,9 @@ class MainActivity : Activity() {
     private lateinit var topBar1: LinearLayout
     private lateinit var topBar2: LinearLayout
     private lateinit var chipContainer: LinearLayout
-    private lateinit var toggleBtn: ImageButton
 
     private val chips = mutableListOf<TextView>()
     private var currentViewport = 1 // 390×844 by default
-    private var toolbarVisible = true
 
     // Desired frame size in px (before clamping to the screen); re-clamped on
     // every container layout change (toolbar toggle, soft keyboard, ...).
@@ -95,11 +93,9 @@ class MainActivity : Activity() {
         setupWebView()
         wireActions()
 
-        // Restore persisted state (URL, viewport, toolbar) or defaults
+        // Restore persisted state (URL, viewport) or defaults
         urlInput.setText(prefs.getString(PREF_URL, BuildConfig.DEFAULT_URL))
         val savedViewport = prefs.getInt(PREF_VIEWPORT, 1).coerceIn(0, viewports.lastIndex)
-        toolbarVisible = prefs.getBoolean(PREF_TOOLBAR, true)
-        toggleToolbar(toolbarVisible)
 
         // Size the phone frame and load the page once the container is laid out;
         // re-clamp the frame on every later container size change (toolbar
@@ -135,7 +131,6 @@ class MainActivity : Activity() {
         topBar1 = findViewById(R.id.topBar1)
         topBar2 = findViewById(R.id.topBar2)
         chipContainer = findViewById(R.id.chipContainer)
-        toggleBtn = findViewById(R.id.toggleBtn)
     }
 
     private fun buildViewportChips() {
@@ -179,18 +174,6 @@ class MainActivity : Activity() {
                 true
             } else false
         }
-        toggleBtn.setOnClickListener {
-            toolbarVisible = !toolbarVisible
-            toggleToolbar(toolbarVisible)
-            prefs.edit().putBoolean(PREF_TOOLBAR, toolbarVisible).apply()
-        }
-    }
-
-    private fun toggleToolbar(visible: Boolean) {
-        topBar1.visibility = if (visible) View.VISIBLE else View.GONE
-        chipContainer.visibility = if (visible) View.VISIBLE else View.GONE
-        topBar2.visibility = if (visible) View.VISIBLE else View.GONE
-        toggleBtn.rotation = if (visible) 0f else 180f
     }
 
     private fun updateTime() {
@@ -315,6 +298,7 @@ class MainActivity : Activity() {
 
             override fun onPageFinished(view: WebView?, url: String?) {
                 progress.visibility = View.GONE
+                injectFullscreenBlock()
             }
 
             override fun onReceivedHttpAuthRequest(
@@ -347,7 +331,36 @@ class MainActivity : Activity() {
                     progress.visibility = View.GONE
                 }
             }
+
+            override fun onShowCustomView(view: View?, callback: WebChromeClient.CustomViewCallback?) {
+                // Fullscreen is disabled in this tester: reject any custom view
+                // (video fullscreen) request immediately so it never covers the app.
+                callback?.onCustomViewHidden()
+            }
+
+            override fun onHideCustomView() {
+                // nothing to do — fullscreen is disabled
+            }
         }
+    }
+
+    /**
+     * Disables the page's Fullscreen API: requestFullscreen becomes a no-op that
+     * rejects, so the mobile frontend's fullscreen button does nothing and the
+     * tester can never get stuck in a fullscreen it cannot exit.
+     */
+    private fun injectFullscreenBlock() {
+        val js = """
+            (function() {
+              var reject = function() { return Promise.reject(new Error('fullscreen disabled')); };
+              Element.prototype.requestFullscreen = reject;
+              Element.prototype.webkitRequestFullscreen = reject;
+              HTMLMediaElement.prototype.webkitEnterFullscreen = function() {};
+              document.exitFullscreen = function() { return Promise.resolve(); };
+              document.webkitExitFullscreen = function() {};
+            })();
+        """.trimIndent()
+        webView.evaluateJavascript(js, null)
     }
 
     private fun showErrorPage(url: String?, detail: String) {
@@ -397,6 +410,5 @@ class MainActivity : Activity() {
         private const val AUTH_PASS = "anm777"
         private const val PREF_URL = "url"
         private const val PREF_VIEWPORT = "viewport"
-        private const val PREF_TOOLBAR = "toolbar_visible"
     }
 }
