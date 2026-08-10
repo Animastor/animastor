@@ -132,6 +132,9 @@
     <string name="dialog_start">Start</string>
     <string name="generate_start_failed">Could not start generation: %1$s</string>
     <string name="generate_no_scene_selected">Open a scene first to target a scope</string>
+    <string name="generate_started_vbook">VBook generation started</string>
+    <string name="generate_started_layer">%1$s generation started</string>
+    <string name="generate_all_started">Generate All: %1$s (%2$s)</string>
 
     <!-- Cancel All button -->
     <string name="toolbar_cancel_all">CANCEL ALL</string>
@@ -142,12 +145,13 @@
     <!-- Worker stop button -->
     <string name="worker_stop_desc">Stop process</string>
     <string name="worker_stop_menu_title">Stop</string>
-    <string name="worker_stop_menu_cancel">Отменить</string>
+    <string name="worker_stop_menu_cancel">Cancel</string>
 
     <!-- Generation progress -->
     <string name="progress_label_audio">Audio</string>
     <string name="progress_label_image">Image</string>
     <string name="progress_label_video">Video</string>
+    <string name="worker_vbook">VBook</string>
     <string name="progress_format">%1$s · %2$d / %3$d scenes</string>
     <string name="progress_format_iu">%1$s · %2$d / %3$d modules</string>
     <string name="progress_idle">Idle</string>
@@ -155,6 +159,22 @@
     <string name="progress_cover_generating">Generating cover...</string>
     <string name="progress_vbook_analyzing">Analyzing...</string>
     <string name="progress_vbook_scenes">%1$d/%2$d</string>
+    <!-- VBook agent stage statuses (PROGRESS_STAGES) — 1:1 with mobile web i18n.ts.
+         The backend sends a machine stage/step_type id; the client maps it here so
+         the status follows the UI language instead of the backend's Russian text. -->
+    <string name="progress_vbook_stage_analyzing_structure">⟳ Analyzing document structure...</string>
+    <string name="progress_vbook_stage_extracting_chars">⟳ Extracting characters...</string>
+    <string name="progress_vbook_stage_extracting_locs">⟳ Extracting locations...</string>
+    <string name="progress_vbook_stage_creating_scenes">⟳ Creating scenes...</string>
+    <string name="progress_vbook_stage_creating_units">⟳ Creating units for scene %1$d...</string>
+    <string name="progress_vbook_stage_creating_visuals">⟳ Creating visual prompts for scene %1$d...</string>
+    <string name="progress_vbook_stage_voice_generation">⟳ Picking voices for characters...</string>
+    <string name="progress_vbook_stage_passport_reconciliation">⟳ Checking descriptions against character passports...</string>
+    <string name="progress_vbook_stage_video_action_reconciliation">⟳ Matching video action to the story...</string>
+    <string name="progress_vbook_stage_polishing_storyboard">⟳ Polishing storyboard visuals...</string>
+    <string name="progress_vbook_stage_video_action_polish">⟳ Polishing motion continuity...</string>
+    <string name="progress_vbook_stage_fantasy_snake_repair">⟳ Restoring natural character references...</string>
+    <string name="progress_vbook_stage_cancelled">✗ Cancelled</string>
 
     <!-- IU not generated -->
     <string name="iu_not_generated">Not generated</string>

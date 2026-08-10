@@ -17,6 +17,7 @@ import type {
 import { sceneRefs } from '../api/models';
 import type { SceneRef } from '../api/models';
 import { navigateTo, clearPosition, position } from './positionStore';
+import { vbookStageLabel } from '../app/i18n';
 // Runtime-only circular import (MainActivity.closeBook resets BOTH ViewModels —
 // GenerateViewModel + PlaybackViewModel; the player is released here too).
 import { closeBook as closePlayerBook } from './playbackStore';
@@ -189,12 +190,15 @@ export interface VBookProgress {
   totalScenes: number | null;
   /** Current window index (0-based). */
   windowIndex: number;
-  /** Human-readable PROGRESS_STAGES message from the backend. */
+  /** Human-readable PROGRESS_STAGES message from the backend (Russian fallback). */
   message: string | null;
+  /** Machine stage id (SSE `stage` / agent-status `step_type`) — mapped to a
+   *  localized status via vbookStageLabel; null when the backend didn't report one. */
+  stepType: string | null;
 }
 
 export const vbookProgress = signal<VBookProgress>({
-  stage: 'IDLE', sceneIndex: -1, scenesInWindow: 0, totalScenes: null, windowIndex: 0, message: null,
+  stage: 'IDLE', sceneIndex: -1, scenesInWindow: 0, totalScenes: null, windowIndex: 0, message: null, stepType: null,
 });
 
 export const isRegenerating = signal(false);
@@ -455,7 +459,9 @@ export function computeProgressRows(
       });
     } else {
       const stageMsg = vbookProg.message?.trim() || null;
-      const label = stageMsg || labels.vbookLabel;
+      // Localize by machine stage id first (follows the UI language); fall back
+      // to the backend's Russian progress message, then the generic label.
+      const label = vbookStageLabel(vbookProg.stepType, vbookProg.sceneIndex) ?? stageMsg ?? labels.vbookLabel;
       let ready: number; let total: number; let pct: number;
       let countText: string | null = null; let indeterminate: boolean;
       if (vbookProg.stage === 'ANALYZING') {
@@ -564,6 +570,12 @@ function updateVBookProgress(status: { step_type?: string | null; window_total_s
     totalScenes: status.created_scenes ?? status.total_scenes ?? null,
     windowIndex: status.window_index ?? 0,
     message: messageText,
+    // Preserve the last known stage id when agent-status reports none (between
+    // steps / at window end the running-step lookup returns null) — otherwise
+    // every poll would fall back to the backend's Russian progress message in
+    // English UIs for a render cycle. The value is nulled on each new
+    // generation start (startVBookGeneration), so it never leaks across runs.
+    stepType: status.step_type ?? vbookProgress.value.stepType,
   };
 }
 
@@ -600,7 +612,7 @@ export async function checkVBookAgentStatus(): Promise<VBookProgress> {
 }
 
 export function clearVBookProgress(): void {
-  vbookProgress.value = { stage: 'IDLE', sceneIndex: -1, scenesInWindow: 0, totalScenes: null, windowIndex: 0, message: null };
+  vbookProgress.value = { stage: 'IDLE', sceneIndex: -1, scenesInWindow: 0, totalScenes: null, windowIndex: 0, message: null, stepType: null };
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -661,6 +673,7 @@ function handleProgressEvent(data: string): void {
       totalScenes,
       windowIndex: 0,
       message: ev.message?.trim() ? ev.message : null,
+      stepType: ev.stage ?? null,
     };
   } else if (ev.type === 'generation_complete') {
     // A completion event belongs to one generation scope — the progress-panel
@@ -725,7 +738,7 @@ export async function startVBookGeneration(): Promise<void> {
   // stages are still running (Android GenerateViewModel fix, 1:1 parity).
   isRegenerating.value = true;
   newGenerationPending = true;
-  vbookProgress.value = { stage: 'ANALYZING', sceneIndex: -1, scenesInWindow: 1, totalScenes: null, windowIndex: 0, message: null };
+  vbookProgress.value = { stage: 'ANALYZING', sceneIndex: -1, scenesInWindow: 1, totalScenes: null, windowIndex: 0, message: null, stepType: null };
   // Manual per-window mode: one click = one window = one generation. The timer
   // always starts fresh for the new window (no survival across windows); the
   // previous window's finalise already stopped it.

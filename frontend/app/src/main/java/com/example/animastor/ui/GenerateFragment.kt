@@ -357,7 +357,8 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
             generationDone = getString(R.string.generation_done),
             vbookLabel = "VBook, scenes",
             vbookAnalyzing = getString(R.string.progress_vbook_analyzing),
-            vbookScenesFormat = { ready, total -> getString(R.string.progress_vbook_scenes, ready, total) }
+            vbookScenesFormat = { ready, total -> getString(R.string.progress_vbook_scenes, ready, total) },
+            vbookStageLabel = { stepType, sceneIndex -> resolveVBookStageLabel(stepType, sceneIndex) }
         )
 
         val uiState = viewModel.uiState.value
@@ -589,6 +590,49 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
     }
 
     // ═══════════════════════════════════════════════════════════════
+    //  VBOOK STAGE STATUS LOCALIZATION
+    // ═══════════════════════════════════════════════════════════════
+
+    /**
+     * Map a machine VBook stage id (SSE `stage` / agent-status `step_type`) to a
+     * localized status string. Returns null for unknown ids so the caller falls
+     * back to the backend progress message / generic label. Keep the wire-id
+     * table in sync with mobile web i18n.ts (VBOOK_STAGE_KEYS).
+     */
+    private fun resolveVBookStageLabel(stepType: String?, sceneIndex: Int): String? {
+        val sceneNum = (sceneIndex + 1).coerceAtLeast(1)
+        return when (stepType) {
+            "analyze_structure", "analyzing", "analyzing_structure" ->
+                getString(R.string.progress_vbook_stage_analyzing_structure)
+            "analyze_characters", "extracting_chars" ->
+                getString(R.string.progress_vbook_stage_extracting_chars)
+            "analyze_locations", "extracting_locs" ->
+                getString(R.string.progress_vbook_stage_extracting_locs)
+            "create_scenes", "creating_scenes" ->
+                getString(R.string.progress_vbook_stage_creating_scenes)
+            "create_units", "creating_units" ->
+                getString(R.string.progress_vbook_stage_creating_units, sceneNum)
+            "create_visual_prompts", "creating_visuals" ->
+                getString(R.string.progress_vbook_stage_creating_visuals, sceneNum)
+            "generate_voices", "voice_generation" ->
+                getString(R.string.progress_vbook_stage_voice_generation)
+            "reconcile_passports", "passport_reconciliation" ->
+                getString(R.string.progress_vbook_stage_passport_reconciliation)
+            "reconcile_video_actions", "video_action_reconciliation" ->
+                getString(R.string.progress_vbook_stage_video_action_reconciliation)
+            "polish_storyboard", "polishing_storyboard" ->
+                getString(R.string.progress_vbook_stage_polishing_storyboard)
+            "polish_video_actions", "video_action_polish" ->
+                getString(R.string.progress_vbook_stage_video_action_polish)
+            "repair_fantasy_snakes", "fantasy_snake_repair" ->
+                getString(R.string.progress_vbook_stage_fantasy_snake_repair)
+            "cancelled" ->
+                getString(R.string.progress_vbook_stage_cancelled)
+            else -> null
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
     //  ACTIONS
     // ═══════════════════════════════════════════════════════════════
 
@@ -600,10 +644,10 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
         }
         // Build list of actually enabled layers based on toggle switches
         val enabledLayers = buildList {
-            if (viewModel.vbookEnabled()) add("VBook")
-            if (viewModel.audioEnabled()) add("Audio")
-            if (viewModel.imageEnabled) add("Image")
-            if (viewModel.videoEnabled()) add("Video")
+            if (viewModel.vbookEnabled()) add(getString(R.string.worker_vbook))
+            if (viewModel.audioEnabled()) add(getString(R.string.progress_label_audio))
+            if (viewModel.imageEnabled) add(getString(R.string.progress_label_image))
+            if (viewModel.videoEnabled()) add(getString(R.string.progress_label_video))
         }
         val layersText = enabledLayers.joinToString(" → ")
 
@@ -616,7 +660,7 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
                 "from_current_scene" -> getString(R.string.scope_from_current_scene)
                 else -> getString(R.string.scope_whole_book)
             }
-            Toast.makeText(requireContext(), "Generate All: $layersText ($scopeLabel)", Toast.LENGTH_SHORT).show()
+            Toast.makeText(requireContext(), getString(R.string.generate_all_started, layersText, scopeLabel), Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -633,7 +677,7 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
         }
         viewModel.startVBookGeneration()
         updateVBookButtonText()
-        Toast.makeText(requireContext(), "VBook generation started", Toast.LENGTH_SHORT).show()
+        Toast.makeText(requireContext(), getString(R.string.generate_started_vbook), Toast.LENGTH_SHORT).show()
     }
 
     private fun updateVBookButtonText() {
@@ -669,8 +713,8 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
                 GenerateViewModel.GenerationRequest(workerTypes = listOf("audio"), scope = scope, chapterId = chId, sceneId = scId)
             ) { result ->
                 when (result) {
-                    is GenerateViewModel.GenerationResult.Started -> Toast.makeText(requireContext(), "Audio generation started", Toast.LENGTH_SHORT).show()
-                    is GenerateViewModel.GenerationResult.Failed -> Toast.makeText(requireContext(), "Failed: ${result.message}", Toast.LENGTH_LONG).show()
+                    is GenerateViewModel.GenerationResult.Started -> Toast.makeText(requireContext(), getString(R.string.generate_started_layer, getString(R.string.progress_label_audio)), Toast.LENGTH_SHORT).show()
+                    is GenerateViewModel.GenerationResult.Failed -> Toast.makeText(requireContext(), getString(R.string.generate_start_failed, result.message), Toast.LENGTH_LONG).show()
                 }
             }
         }
@@ -691,8 +735,8 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
                 GenerateViewModel.GenerationRequest(workerTypes = listOf("image"), scope = scope, chapterId = chId, sceneId = scId)
             ) { result ->
                 when (result) {
-                    is GenerateViewModel.GenerationResult.Started -> Toast.makeText(requireContext(), "Image generation started", Toast.LENGTH_SHORT).show()
-                    is GenerateViewModel.GenerationResult.Failed -> Toast.makeText(requireContext(), "Failed: ${result.message}", Toast.LENGTH_LONG).show()
+                    is GenerateViewModel.GenerationResult.Started -> Toast.makeText(requireContext(), getString(R.string.generate_started_layer, getString(R.string.progress_label_image)), Toast.LENGTH_SHORT).show()
+                    is GenerateViewModel.GenerationResult.Failed -> Toast.makeText(requireContext(), getString(R.string.generate_start_failed, result.message), Toast.LENGTH_LONG).show()
                 }
             }
         }
@@ -713,8 +757,8 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
                 GenerateViewModel.GenerationRequest(workerTypes = listOf("video"), scope = scope, chapterId = chId, sceneId = scId)
             ) { result ->
                 when (result) {
-                    is GenerateViewModel.GenerationResult.Started -> Toast.makeText(requireContext(), "Video generation started", Toast.LENGTH_SHORT).show()
-                    is GenerateViewModel.GenerationResult.Failed -> Toast.makeText(requireContext(), "Failed: ${result.message}", Toast.LENGTH_LONG).show()
+                    is GenerateViewModel.GenerationResult.Started -> Toast.makeText(requireContext(), getString(R.string.generate_started_layer, getString(R.string.progress_label_video)), Toast.LENGTH_SHORT).show()
+                    is GenerateViewModel.GenerationResult.Failed -> Toast.makeText(requireContext(), getString(R.string.generate_start_failed, result.message), Toast.LENGTH_LONG).show()
                 }
             }
         }

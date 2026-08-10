@@ -1073,16 +1073,26 @@ class GenerateViewModel(
 
         val messageText = status.progress_msg?.takeIf { it.isNotBlank() }
 
-        _uiState.update { it.copy(
-            vbookProgress = VBookProgress(
-                stage = stage,
-                sceneIndex = sceneIndex,
-                scenesInWindow = windowTotal,
-                totalScenes = total,
-                windowIndex = status.window_index ?: 0,
-                message = messageText
+        _uiState.update { state ->
+            val prevStepType = state.vbookProgress?.stepType
+            state.copy(
+                vbookProgress = VBookProgress(
+                    stage = stage,
+                    sceneIndex = sceneIndex,
+                    scenesInWindow = windowTotal,
+                    totalScenes = total,
+                    windowIndex = status.window_index ?: 0,
+                    message = messageText,
+                    // Preserve the last known stage id when agent-status reports
+                    // none (between steps / at window end the running-step lookup
+                    // returns null) — otherwise every poll would fall back to the
+                    // backend's Russian progress message in English UIs for a
+                    // render cycle. startVBookGeneration resets VBookProgress, so
+                    // it never leaks across runs.
+                    stepType = status.step_type ?: prevStepType
+                )
             )
-        )}
+        }
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -1378,7 +1388,8 @@ class GenerateViewModel(
                             scenesInWindow = windowTotal,
                             totalScenes = totalScenes,
                             windowIndex = 0,
-                            message = vbookMsg
+                            message = vbookMsg,
+                            stepType = event.vbookStage
                         )
                     )}
                     // SSE only updates GPU panel. Chat messages come from pollAgentProgress
@@ -1615,7 +1626,10 @@ class GenerateViewModel(
                 ))
             } else {
                 val stageMsg = vbookProgress.message?.takeIf { it.isNotBlank() }
-                val label = stageMsg ?: labels.vbookLabel
+                // Localize by machine stage id first (follows the UI language); fall
+                // back to the backend's Russian progress message, then the generic label.
+                val label = labels.vbookStageLabel(vbookProgress.stepType, vbookProgress.sceneIndex)
+                    ?: stageMsg ?: labels.vbookLabel
                 val ready: Int; val totalVBook: Int; val pctVBook: Int; val countText: String; val indeterminate: Boolean
                 val vbookElapsed: Long = if (timerStartedAt > 0L) (now - timerStartedAt) / 1000L else 0L
                 when (vbookProgress.stage) {
@@ -1765,7 +1779,15 @@ data class TaskLabels(
     val generationDone: String,
     val vbookLabel: String,
     val vbookAnalyzing: String,
-    val vbookScenesFormat: (Int, Int) -> String
+    val vbookScenesFormat: (Int, Int) -> String,
+    /**
+     * Localized VBook agent stage status by machine stage id (SSE `stage` /
+     * agent-status `step_type`). Returns null for unknown ids — the caller then
+     * falls back to the backend progress message / generic vbookLabel.
+     * @param stepType wire stage id (may be null)
+     * @param sceneIndex 0-based window-relative scene index (VBookProgress.sceneIndex)
+     */
+    val vbookStageLabel: (stepType: String?, sceneIndex: Int) -> String?
 )
 
 // ── UI State (generation only) ───────────────────────────────────
@@ -1826,8 +1848,12 @@ data class VBookProgress(
     val totalScenes: Int? = null,
     /** Current window index (0-based) */
     val windowIndex: Int = 0,
-    /** Human-readable PROGRESS_STAGES message from the backend, e.g. "⟳ Извлекаю персонажей..." */
-    val message: String? = null
+    /** Human-readable PROGRESS_STAGES message from the backend (Russian fallback), e.g. "⟳ Извлекаю персонажей..." */
+    val message: String? = null,
+    /** Machine stage id (SSE `stage` / agent-status `step_type`) — mapped to a
+     *  localized status via TaskLabels.vbookStageLabel; null when the backend
+     *  didn't report one. */
+    val stepType: String? = null
 )
 
 enum class VBookStage {

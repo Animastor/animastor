@@ -196,7 +196,7 @@ export function GeneratePage(props: { path?: string }) {
   const onGenerateVBook = () => {
     if (!bookId.value) { toast(t('file_status_opening')); return; }
     void startVBookGeneration();
-    toast('VBook generation started');
+    toast(t('generate_started_vbook'));
   };
 
   const onGenerateLayer = (type: 'audio' | 'image' | 'video') => {
@@ -341,18 +341,18 @@ export function GeneratePage(props: { path?: string }) {
             const scId = (scope === 'current_scene' || scope === 'from_current_scene') ? pos.sceneId : null;
             if (scopeFor === 'all') {
               const layers = [
-                vbookEnabled.value && 'VBook', audioEnabled.value && 'Audio',
-                imageEnabled.value && 'Image', videoEnabled.value && 'Video',
+                vbookEnabled.value && t('worker_vbook'), audioEnabled.value && t('progress_label_audio'),
+                imageEnabled.value && t('progress_label_image'), videoEnabled.value && t('progress_label_video'),
               ].filter(Boolean).join(' → ');
               const scopeLabel = scope === 'current_scene' ? t('scope_current_scene')
                 : scope === 'current_chapter' ? t('scope_current_chapter')
                 : scope === 'from_current_scene' ? t('scope_from_current_scene') : t('scope_whole_book');
               void onGenerateVBook();
-              toast(`Generate All: ${layers} (${scopeLabel})`);
+              toast(tf('generate_all_started', layers, scopeLabel));
             } else if (scopeFor === 'audio' || scopeFor === 'image' || scopeFor === 'video') {
               void (async () => {
                 const res = await startGeneration({ workerTypes: [scopeFor], scope, chapterId: chId, sceneId: scId });
-                if (res.ok) toast(`${capitalize(scopeFor)} generation started`);
+                if (res.ok) toast(tf('generate_started_layer', t(scopeFor === 'audio' ? 'progress_label_audio' : scopeFor === 'image' ? 'progress_label_image' : 'progress_label_video')));
                 else toast(tf('generate_start_failed', res.message));
               })();
             }
@@ -568,10 +568,6 @@ function buildLabels(): TaskLabels {
     vbookAnalyzing: t('progress_vbook_analyzing'),
     vbookScenesFormat: (ready, total) => tf('progress_vbook_scenes', ready, total),
   };
-}
-
-function capitalize(s: string): string {
-  return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
 // ═══════════════════════════════════════════════════════════════

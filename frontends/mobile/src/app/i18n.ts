@@ -332,10 +332,29 @@ const dict = {
     progress_cover_generating: 'Генерация обложки...',
     progress_vbook_analyzing: 'Анализ...',
     progress_vbook_scenes: '{0}/{1}',
+    // VBook agent stage statuses (PROGRESS_STAGES) — 1:1 with Android strings.xml.
+    // The backend sends a machine stage/step_type id; the client maps it here
+    // so the status follows the UI language instead of the backend's Russian text.
+    progress_vbook_stage_analyzing_structure: '⟳ Анализирую структуру документа...',
+    progress_vbook_stage_extracting_chars: '⟳ Извлекаю персонажей...',
+    progress_vbook_stage_extracting_locs: '⟳ Извлекаю локации...',
+    progress_vbook_stage_creating_scenes: '⟳ Создаю сцены...',
+    progress_vbook_stage_creating_units: '⟳ Создаю юниты для сцены {0}...',
+    progress_vbook_stage_creating_visuals: '⟳ Создаю visual prompts для сцены {0}...',
+    progress_vbook_stage_voice_generation: '⟳ Подбираю голоса для персонажей...',
+    progress_vbook_stage_passport_reconciliation: '⟳ Сверяю описания с паспортами персонажей...',
+    progress_vbook_stage_video_action_reconciliation: '⟳ Согласовываю видеоряд с сюжетом...',
+    progress_vbook_stage_polishing_storyboard: '⟳ Согласовываю визуальный ряд сториборда...',
+    progress_vbook_stage_video_action_polish: '⟳ Полирую непрерывность движений...',
+    progress_vbook_stage_fantasy_snake_repair: '⟳ Восстанавливаю естественные обозначения персонажей...',
+    progress_vbook_stage_cancelled: '✗ Отменено',
     generate_audio_disabled: 'Генерация аудио отключена. Включите переключатель выше.',
     generate_image_disabled: 'Генерация изображений отключена. Включите переключатель выше.',
     generate_video_disabled: 'Генерация видео отключена. Включите переключатель выше.',
     generate_started: 'Генерация запущена',
+    generate_started_vbook: 'Запущена генерация VBook',
+    generate_started_layer: 'Запущена генерация: {0}',
+    generate_all_started: 'Генерировать всё: {0} ({1})',
     // Misc
     action_copy: 'Копировать',
     copied_to_clipboard: 'Скопировано',
@@ -658,7 +677,7 @@ const dict = {
     generate_start_failed: 'Could not start generation: {0}',
     generate_no_scene_selected: 'Open a scene first to target a scope',
     worker_stop_desc: 'Stop process',
-    worker_stop_menu_cancel: 'Отменить',
+    worker_stop_menu_cancel: 'Cancel',
     progress_label_audio: 'Audio',
     progress_label_image: 'Image',
     progress_label_video: 'Video',
@@ -669,10 +688,29 @@ const dict = {
     progress_cover_generating: 'Generating cover...',
     progress_vbook_analyzing: 'Analyzing...',
     progress_vbook_scenes: '{0}/{1}',
+    // VBook agent stage statuses (PROGRESS_STAGES) — 1:1 with Android strings.xml.
+    // The backend sends a machine stage/step_type id; the client maps it here
+    // so the status follows the UI language instead of the backend's Russian text.
+    progress_vbook_stage_analyzing_structure: '⟳ Analyzing document structure...',
+    progress_vbook_stage_extracting_chars: '⟳ Extracting characters...',
+    progress_vbook_stage_extracting_locs: '⟳ Extracting locations...',
+    progress_vbook_stage_creating_scenes: '⟳ Creating scenes...',
+    progress_vbook_stage_creating_units: '⟳ Creating units for scene {0}...',
+    progress_vbook_stage_creating_visuals: '⟳ Creating visual prompts for scene {0}...',
+    progress_vbook_stage_voice_generation: '⟳ Picking voices for characters...',
+    progress_vbook_stage_passport_reconciliation: '⟳ Checking descriptions against character passports...',
+    progress_vbook_stage_video_action_reconciliation: '⟳ Matching video action to the story...',
+    progress_vbook_stage_polishing_storyboard: '⟳ Polishing storyboard visuals...',
+    progress_vbook_stage_video_action_polish: '⟳ Polishing motion continuity...',
+    progress_vbook_stage_fantasy_snake_repair: '⟳ Restoring natural character references...',
+    progress_vbook_stage_cancelled: '✗ Cancelled',
     generate_audio_disabled: 'Audio generation is disabled. Enable it in the switches above.',
     generate_image_disabled: 'Image generation is disabled. Enable it in the switches above.',
     generate_video_disabled: 'Video generation is disabled. Enable it in the switches above.',
     generate_started: 'Generation started',
+    generate_started_vbook: 'VBook generation started',
+    generate_started_layer: '{0} generation started',
+    generate_all_started: 'Generate All: {0} ({1})',
     // Misc
     action_copy: 'Copy',
     copied_to_clipboard: 'Copied',
@@ -695,4 +733,60 @@ export function tf(key: StrKey, ...args: (string | number)[]): string {
   let s: string = dict[currentLang()][key] ?? key;
   args.forEach((a, i) => { s = s.split(`{${i}}`).join(String(a)); });
   return s;
+}
+
+// ── VBook agent stage status localization ─────────────────────────────
+// The backend sends a machine-readable stage id (SSE `stage` / agent-status
+// `step_type`) together with a Russian progress message. The message is only a
+// fallback — the displayed status must follow the UI language, so the client
+// maps the id to a localized string from the dict above. Keep the wire-id → key
+// table in sync with Android's GenerateFragment.resolveVBookStageLabel.
+
+const VBOOK_STAGE_KEYS: Record<string, StrKey> = {
+  // SSE `stage` ids (publishVBook) + agent-status `step_type` ids (agent_steps)
+  analyzing_structure: 'progress_vbook_stage_analyzing_structure',
+  analyzing: 'progress_vbook_stage_analyzing_structure',
+  analyze_structure: 'progress_vbook_stage_analyzing_structure',
+  extracting_chars: 'progress_vbook_stage_extracting_chars',
+  analyze_characters: 'progress_vbook_stage_extracting_chars',
+  extracting_locs: 'progress_vbook_stage_extracting_locs',
+  analyze_locations: 'progress_vbook_stage_extracting_locs',
+  creating_scenes: 'progress_vbook_stage_creating_scenes',
+  create_scenes: 'progress_vbook_stage_creating_scenes',
+  creating_units: 'progress_vbook_stage_creating_units',
+  create_units: 'progress_vbook_stage_creating_units',
+  creating_visuals: 'progress_vbook_stage_creating_visuals',
+  create_visual_prompts: 'progress_vbook_stage_creating_visuals',
+  voice_generation: 'progress_vbook_stage_voice_generation',
+  generate_voices: 'progress_vbook_stage_voice_generation',
+  passport_reconciliation: 'progress_vbook_stage_passport_reconciliation',
+  reconcile_passports: 'progress_vbook_stage_passport_reconciliation',
+  video_action_reconciliation: 'progress_vbook_stage_video_action_reconciliation',
+  reconcile_video_actions: 'progress_vbook_stage_video_action_reconciliation',
+  polishing_storyboard: 'progress_vbook_stage_polishing_storyboard',
+  polish_storyboard: 'progress_vbook_stage_polishing_storyboard',
+  video_action_polish: 'progress_vbook_stage_video_action_polish',
+  polish_video_actions: 'progress_vbook_stage_video_action_polish',
+  fantasy_snake_repair: 'progress_vbook_stage_fantasy_snake_repair',
+  repair_fantasy_snakes: 'progress_vbook_stage_fantasy_snake_repair',
+  cancelled: 'progress_vbook_stage_cancelled',
+};
+
+const VBOOK_STAGE_WITH_SCENE: ReadonlySet<StrKey> = new Set<StrKey>([
+  'progress_vbook_stage_creating_units',
+  'progress_vbook_stage_creating_visuals',
+]);
+
+/**
+ * Localized status label for a VBook agent stage id, or null when the id is
+ * unknown (caller falls back to the backend message / generic label).
+ * @param stage wire stage/step_type id from SSE or /agent-status (may be null)
+ * @param sceneIndex 0-based window-relative scene index (VBookProgress.sceneIndex)
+ */
+export function vbookStageLabel(stage: string | null | undefined, sceneIndex: number): string | null {
+  if (!stage) return null;
+  const key = VBOOK_STAGE_KEYS[stage];
+  if (!key) return null;
+  if (VBOOK_STAGE_WITH_SCENE.has(key)) return tf(key, Math.max(1, sceneIndex + 1));
+  return t(key);
 }
