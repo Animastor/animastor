@@ -9,7 +9,8 @@ const lazyBook = require('../../book/lazy-book');
 const config = require('../../config/runtime-config');
 const { updateSession, createSession, isSessionCancelled, isBookCancelled } = require('../agent-session');
 const { PROGRESS_STAGES, MAX_WINDOW_CHARS, MAX_SCENES_PER_CHUNK, computeWindowChars } = require('../agent-prompts');
-const { mergeCharacterLists } = require('../../utils/character-identity');
+const { mergeCharacterLists, isPlaceholderCharacter } = require('../../utils/character-identity');
+const { sanitizeEnvironment } = require('../../utils/snake-guard');
 const pipelineSteps = require('./pipeline-steps');
 const { needsVideoActionReconciliation } = pipelineSteps;
 const { splitLongUnits } = require('./unit-splitter');
@@ -333,7 +334,10 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
         }
 
     }
-    let characters = existingChars || [];
+    // Placeholder characters ('unknown', 'unnamed', 'Unidentified', …) are
+    // filtered from the persisted set at load: a placeholder that leaked into
+    // characters.json by older code must not keep polluting later windows.
+    let characters = (existingChars || []).filter(c => !isPlaceholderCharacter(c));
     let locations = existingLocs || [];
     const rawWindowText = options.rawWindowText || text;
     const sourceOffsetBase = options.sourceOffsetBase || 0;
@@ -368,20 +372,23 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
     const charResult = await pipelineSteps.stepExtractCharacters(sessionId, text, stepIndex, _progress, language);
     let mentions = options.existingMentions || {};
     if (!charResult || !charResult.characters || charResult.characters.length === 0) {
+        // No info ≠ 'unknown': when nothing is extracted and nothing exists,
+        // keep the EMPTY set. A synthesized placeholder character would be seen
+        // by the scene-split agent as a known character, get picked into
+        // characters_present, and surface in scene.participants as a phantom.
         console.warn('[AGENT] No characters extracted from window, keeping existing set');
-        characters = existingChars.length > 0
-            ? existingChars
-            : [{ id: 'unknown', name: 'Unknown', role: 'minor', description: 'Unidentified character' }];
     } else {
-        const newCharacters = charResult.characters;
-        const mergeResult = mergeCharacterLists(existingChars || [], newCharacters || [], { skipGeneric: true });
+        // mergeCharacterLists itself drops placeholder characters the AI
+        // invented ('unknown', 'unnamed', …) — they are never real characters.
+        const existingCount = characters.length;
+        const mergeResult = mergeCharacterLists(characters, charResult.characters || [], { skipGeneric: true });
         characters = mergeResult.characters;
         if (charResult.mentions && typeof charResult.mentions === 'object') {
             for (const [alias, charId] of Object.entries(charResult.mentions)) {
                 if (!mentions[alias]) mentions[alias] = charId;
             }
         }
-        console.log(`[AGENT] Characters: ${existingChars.length} existing + ${mergeResult.added} new + ${mergeResult.enriched} enriched + ${mergeResult.skippedGeneric} generic skipped = ${characters.length} total, mentions: ${Object.keys(mentions).length}`);
+        console.log(`[AGENT] Characters: ${existingCount} existing + ${mergeResult.added} new + ${mergeResult.enriched} enriched + ${mergeResult.skippedGeneric} generic skipped = ${characters.length} total, mentions: ${Object.keys(mentions).length}`);
     }
 
     await checkCancelled();
@@ -406,15 +413,25 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
 
     const newLocations = await pipelineSteps.stepExtractLocations(sessionId, text, characters, stepIndex, _progress, language);
     if (!newLocations || newLocations.length === 0) {
+        // Same rule as characters: no info ≠ 'unknown' location.
         console.warn('[AGENT] No locations extracted from window, keeping existing set');
-        locations = existingLocs.length > 0
-            ? existingLocs
-            : [{ id: 'unknown', name: 'Unknown', type: 'outdoor', description: 'Unspecified location' }];
+        locations = existingLocs || [];
     } else {
         const mergedMap = new Map((existingLocs || []).map(l => [l.id, l]));
         let enriched = 0;
         let added = 0;
         for (const loc of newLocations) {
+            // Drop placeholder environment values ("not applicable", "n/a", …)
+            // before the location enters the registry — an absent field is
+            // correct, a placeholder would be injected into image prompts.
+            // When nothing real remains, omit the environment key entirely
+            // (same convention as create.js — readers use `|| {}` anyway).
+            if (loc.environment && typeof loc.environment === 'object') {
+                const env = sanitizeEnvironment(loc.environment);
+                loc = Object.keys(env).length > 0
+                    ? { ...loc, environment: env }
+                    : Object.fromEntries(Object.entries(loc).filter(([k]) => k !== 'environment'));
+            }
             if (mergedMap.has(loc.id)) {
                 const existing = mergedMap.get(loc.id);
                 if (loc.description && loc.description.length > (existing.description || '').length) {

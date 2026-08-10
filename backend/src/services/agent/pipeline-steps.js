@@ -19,7 +19,8 @@ const {
 } = require('../agent-prompts');
 const { normalizeCharacterRefs } = require('../../image/image-service');
 const { sanitizeVideoTokens, tokensToString } = require('../../book/lazy-book/appearance');
-const { findUnverifiedSnakeTokens, canonicalizeText, desnakeifyText, findCrossPromptGaps, participantFieldIds } = require('../../utils/snake-guard');
+const { findUnverifiedSnakeTokens, canonicalizeText, desnakeifyText, findCrossPromptGaps, participantFieldIds, sanitizeEnvironment } = require('../../utils/snake-guard');
+const { hasRealAppearance } = require('../../utils/character-identity');
 
 /**
  * Normalize names/aliases → character_id in an AI-written visual text.
@@ -178,12 +179,16 @@ function normalizeSceneEnvironment(scene) {
     if (!loc || typeof loc !== 'object') return scene;
     const raw = loc.environment;
     if (!raw || typeof raw !== 'object') return scene;
+    // Keep only known fields, then drop placeholder values ("not applicable",
+    // "n/a", "unknown", "—", …): an agent that cannot answer must leave the
+    // field absent — a placeholder would be injected into the image prompt.
     const clean = {};
     for (const key of SCENE_ENV_FIELDS) {
         const v = raw[key];
         if (typeof v === 'string' && v.trim()) clean[key] = v.trim();
     }
-    if (Object.keys(clean).length === 0) {
+    const sanitized = sanitizeEnvironment(clean);
+    if (Object.keys(sanitized).length === 0) {
         // Nothing valid remained — drop the environment entirely (removes
         // hallucinated junk fields and lets the location template be the
         // fallback at prompt build time).
@@ -191,7 +196,7 @@ function normalizeSceneEnvironment(scene) {
         delete newLoc.environment;
         return { ...scene, location: newLoc };
     }
-    return { ...scene, location: { ...loc, environment: clean } };
+    return { ...scene, location: { ...loc, environment: sanitized } };
 }
 
 async function stepAnalyzeStructure(sessionId, sourceText, stepIndex, progress, language, options = {}) {
@@ -487,11 +492,9 @@ async function stepGenerateVoices(sessionId, text, characters, stepIndex, progre
     // appearance description (the entry criterion in characters.md). A
     // dialogue-only participant without a described appearance is NOT a
     // character — no voice is invented for them; the audio pipeline assigns a
-    // default voice automatically.
-    const hasRealAppearance = (c) => {
-        const app = (c.passport?.appearance || c.appearance || c.description || '').trim();
-        return app.length > 0 && !/character from the story|period-appropriate|as described in|не опис|no descr|unknown|unclear/i.test(app);
-    };
+    // default voice automatically. Shared predicate (character-identity) —
+    // looks at the WHOLE aggregate (passport/appearance/clothes/description),
+    // not at the name alone.
     const viableChars = (characters || []).filter(c => c.id && c.name && hasRealAppearance(c));
     if (viableChars.length === 0) {
         console.log('[AGENT] Step voice_generation: skipped — no characters with described appearance to generate voices for');

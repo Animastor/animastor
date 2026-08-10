@@ -18,6 +18,8 @@ const {
 } = require('../src/services/agent-service');
 const {
     isGenericCharacter,
+    isPlaceholderCharacter,
+    isPlaceholderCharacterId,
     mergeCharacterLists,
 } = require('../src/utils/character-identity');
 
@@ -81,6 +83,61 @@ describe('Coreference — character identity merge', () => {
 
         expect(result.characters.map(c => c.id)).to.deep.equal(['zhenshchina_v_budochke']);
         expect(result.skippedGeneric).to.equal(1);
+    });
+
+    it('flags placeholder ids/names (unknown, unnamed, Unidentified, неизвестный)', () => {
+        expect(isPlaceholderCharacter({ id: 'unknown', name: 'Unknown' })).to.equal(true);
+        expect(isPlaceholderCharacter({ id: 'some_real_id', name: 'Unidentified' })).to.equal(true);
+        expect(isPlaceholderCharacter({ id: 'anna_smirnova', name: 'Anna Smirnova' })).to.equal(false);
+        expect(isPlaceholderCharacter(null)).to.equal(true);
+        expect(isPlaceholderCharacterId('unknown')).to.equal(true);
+        expect(isPlaceholderCharacterId('Unidentified')).to.equal(true);
+        expect(isPlaceholderCharacterId('неизвестный')).to.equal(true);
+        expect(isPlaceholderCharacterId('anna_smirnova')).to.equal(false);
+        expect(isPlaceholderCharacterId('')).to.equal(false);
+    });
+
+    it('a placeholder-named character WITH a real appearance is a real character (survives)', () => {
+        // "Неизвестный" (the mysterious stranger) is a legitimate literary name —
+        // with a described appearance it is a REAL character, not a placeholder.
+        expect(isPlaceholderCharacter({ id: 'neizvestnyy', name: 'Неизвестный', appearance: 'высокий мужчина в чёрном плаще' })).to.equal(false);
+        expect(isPlaceholderCharacter({ id: 'unknown', name: 'Unknown', appearance: 'tall man in a long black coat' })).to.equal(false);
+        // ...but a placeholder id/name with NO real info (or only placeholder
+        // boilerplate) is still a fictitious 'unknown' character.
+        expect(isPlaceholderCharacter({ id: 'unknown', name: 'Unknown', appearance: 'Unidentified character' })).to.equal(true);
+        expect(isPlaceholderCharacter({ id: 'unknown', name: 'Unknown', description: 'не описан' })).to.equal(true);
+    });
+
+    it('mergeCharacterLists with skipGeneric never re-introduces placeholders from AI output', () => {
+        const result = mergeCharacterLists([], [
+            { id: 'unknown', name: 'Unknown', appearance: 'Unidentified character' },
+            { id: 'anna_smirnova', name: 'Anna Smirnova', appearance: 'tall, blonde' },
+        ]);
+        expect(result.characters.map(c => c.id)).to.deep.equal(['anna_smirnova']);
+    });
+
+    it('mergeCharacterLists keeps a placeholder-named character that has a real appearance', () => {
+        const result = mergeCharacterLists([], [
+            { id: 'neizvestnyy', name: 'Неизвестный', appearance: 'высокий мужчина в чёрном плаще' },
+            { id: 'anna_smirnova', name: 'Anna Smirnova', appearance: 'tall, blonde' },
+        ]);
+        expect(result.characters.map(c => c.id).sort()).to.deep.equal(['anna_smirnova', 'neizvestnyy']);
+    });
+
+    it('mergeCharacterLists filters a legacy placeholder that sits in the EXISTING set', () => {
+        // Older code once wrote { id: 'unknown' } into characters.json — it must
+        // be cleaned at merge time so it never reaches knownParticipantIds /
+        // scene.participants. A legacy placeholder WITH a real appearance stays.
+        const result = mergeCharacterLists([
+            { id: 'unknown', name: 'Unknown' },
+            { id: 'boris_volkov', name: 'Boris Volkov', role: 'main' },
+        ], []);
+        expect(result.characters.map(c => c.id)).to.deep.equal(['boris_volkov']);
+
+        const withRealAppearance = mergeCharacterLists([
+            { id: 'unknown', name: 'Unknown', appearance: 'tall man in a long black coat' },
+        ], []);
+        expect(withRealAppearance.characters.map(c => c.id)).to.deep.equal(['unknown']);
     });
 });
 

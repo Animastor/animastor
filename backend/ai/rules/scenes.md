@@ -182,6 +182,11 @@ book) — set `epoch` and/or `country` ONLY in that case.
 IMPORTANT: all `environment` field values MUST be written in ENGLISH — they feed
 English-only generation models (LTX 2.3 video, Qwen Image).
 
+NEVER write placeholder values like "not applicable", "n/a", "none", "unknown",
+"unspecified", "not specified", "no data", "—", or "-". If a field does not apply
+or you are not sure, OMIT the field entirely — an absent field is correct, a
+placeholder pollutes the image prompt.
+
 ### Environment fields (set ONLY what differs from the location's default)
 - `time`: time of day (e.g. "hot spring sunset", "early morning", "deep night")
 - `season`: season (e.g. "late spring", "early summer", "deep winter")

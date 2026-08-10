@@ -7,8 +7,8 @@ const path = require('path');
 const { BookState, SceneStatus } = require('./constants');
 const { getBookDir, getChapterDir, getBookMetaPath, getCharactersPath, getMentionsPath, getBiblePath, getLocationsPath, getVoicesPath, chapterId, sceneId, unitId } = require('./paths');
 const { detectLanguage } = require('./parser');
-const { findCanonicalCharacter, isGenericCharacter } = require('../../utils/character-identity');
-const { sanitizeParticipants, findCanonicalId, canonicalizeMixedScriptId, isFantasySnakeToken } = require('../../utils/snake-guard');
+const { findCanonicalCharacter, isGenericCharacter, isPlaceholderCharacter, hasRealAppearance } = require('../../utils/character-identity');
+const { sanitizeParticipants, findCanonicalId, canonicalizeMixedScriptId, isFantasySnakeToken, sanitizeEnvironment } = require('../../utils/snake-guard');
 const draft = require('./draft');
 const metadata = require('./metadata');
 const chapterUtils = require('./chapter-utils');
@@ -82,6 +82,18 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
             const charPath = getCharactersPath(bookDir);
             if (fs.existsSync(charPath)) {
                 existingCharacters = JSON.parse(fs.readFileSync(charPath, 'utf8'));
+                // Load-time placeholder filter (same rule as runPipeline): a
+                // legacy 'unknown'/'unnamed' that older code once wrote into
+                // characters.json has no real information and must not re-enter
+                // the registry or scene.participants. A character with a REAL
+                // appearance keeps its id even when it looks like a placeholder
+                // word ('neizvestnyy' — the mysterious stranger is a real
+                // literary character).
+                const filtered = existingCharacters.filter(c => !isPlaceholderCharacter(c));
+                if (filtered.length !== existingCharacters.length) {
+                    console.warn(`[LAZY-BOOK] Filtered ${existingCharacters.length - filtered.length} placeholder character(s) from existing registry`);
+                    existingCharacters = filtered;
+                }
             }
         } catch (e) {
             console.warn(`[LAZY-BOOK] Failed to load existing characters: ${e.message}`);
@@ -127,6 +139,14 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
             return canonical || mixed;
         })();
         if (existingIds.has(charId)) continue;
+        // Placeholder ids/names ('unknown', 'unnamed', 'Unidentified', …) are
+        // NEVER real characters — absence of information ≠ a fictitious
+        // 'unknown' character. Dropped at the write barrier so it can never
+        // enter characters.json or scene.participants.
+        if (isPlaceholderCharacter({ ...ch, id: charId })) {
+            console.warn(`[LAZY-BOOK] Skipping placeholder character "${charId}" — no information ≠ 'unknown'`);
+            continue;
+        }
         if (isGenericCharacter({ ...ch, id: charId })) {
             console.warn(`[LAZY-BOOK] Skipping generic character without stable context: ${charId}`);
             continue;
@@ -220,8 +240,11 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
                 description: loc.description || `${loc.name} — location from the source text`,
             };
             // Global environment template — scene environments override it per-field.
+            // Write barrier: drop placeholder values ("not applicable", "n/a", …) so
+            // they can never reach the stored locations.json or the image prompt.
             if (loc.environment && typeof loc.environment === 'object' && Object.keys(loc.environment).length > 0) {
-                entry.environment = loc.environment;
+                const env = sanitizeEnvironment(loc.environment);
+                if (Object.keys(env).length > 0) entry.environment = env;
             }
             locations[locId] = entry;
         } else if (loc.name && !locations[locId].name) {
@@ -285,13 +308,11 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
     }
 
     const passportChars = mergedCharacters.filter(c => {
-        const p = c.passport || {};
-        // A character counts as visually described when it has EITHER a real
-        // appearance OR real clothes (the agent may provide one without the other).
-        const appearanceText = p.appearance || p.clothes || '';
-        const hasRealAppearance = appearanceText.length > 8 &&
-            !/character from the story|period-appropriate|as described in/i.test(appearanceText);
-        return hasRealAppearance;
+        // A character counts as visually described when it has a real appearance
+        // OR real clothes (the agent may provide one without the other). Shared
+        // predicate — looks at the whole aggregate (passport/appearance/clothes/
+        // description), not at the name alone.
+        return hasRealAppearance(c);
     }).map(c => {
         // Strip voice — voices live in voices.json only
         const { voice, ...charWithoutVoice } = c;

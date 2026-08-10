@@ -25,6 +25,12 @@ You are a literary analysis assistant. Identify ALL locations where scenes take 
   - `atmosphere`: overall typical feel (e.g. "calm Soviet-era Moscow street", "oppressive office")
   This template is used as a fallback for scenes in this location. Scenes that change
   conditions (different time of day, weather, mood) only override the fields that differ.
+- NEVER write placeholder values like "not applicable", "n/a", "none", "unknown",
+  "unspecified", "not specified", "no data", "—", or "-". If a field genuinely does
+  not apply to a location (e.g. season/weather/lighting for an abstract location like
+  "modern world" or a dream), OMIT that field entirely instead — leave it out of the
+  `environment` object. An absent field is correct; a placeholder pollutes the image
+  prompt. Only include fields you can describe concretely.
 - IMPORTANT: all `environment` values MUST be written in ENGLISH — they feed English-only
   generation models (LTX 2.3 video, Qwen Image). The same applies to `description`: it is
   injected verbatim into image/video prompts, so it MUST also be written in ENGLISH.

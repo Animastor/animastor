@@ -11,6 +11,8 @@ const {
     findKnownIdsInText,
     findGenericPersonTerms,
     findCrossPromptGaps,
+    isPlaceholderValue,
+    sanitizeEnvironment,
 } = snakeGuard;
 
 // ── Pure detection (src/utils/snake-guard.js) ──────────────────────────
@@ -80,6 +82,39 @@ describe('snake-guard — fantasy snake_case id detection', () => {
         expect(out).to.deep.equal(['anna_smirnova', 'женщина в будочке']);
     });
 
+    it('sanitizeParticipants drops placeholder ids that are NOT registered characters (unknown/unnamed)', () => {
+        // A placeholder-looking id that is NOT in characters.json (e.g. the AI
+        // returned 'unknown' but no such character was ever registered) is a
+        // phantom — it must never surface as a scene participant.
+        const out = sanitizeParticipants(
+            ['unknown', 'anna_smirnova', 'Unidentified'],
+            ['anna_smirnova']
+        );
+        expect(out).to.deep.equal(['anna_smirnova']);
+    });
+
+    it('sanitizeParticipants KEEPS a placeholder-named id that IS a registered character (real stranger)', () => {
+        // 'neizvestnyy' (Неизвестный — the mysterious stranger) reached
+        // characters.json through the registry write barriers, so it is a REAL
+        // character with a real appearance — it must stay in participants.
+        const out = sanitizeParticipants(
+            ['neizvestnyy', 'anna_smirnova', 'unknown'],
+            ['neizvestnyy', 'anna_smirnova']
+        );
+        expect(out).to.deep.equal(['neizvestnyy', 'anna_smirnova']);
+    });
+
+    it('sanitizeParticipants drops unregistered placeholder ids via onDrop and keeps natural designations', () => {
+        const dropped = [];
+        const out = sanitizeParticipants(
+            ['unknown', 'женщина в будочке'],
+            ['anna_smirnova'],
+            { onDrop: (p) => dropped.push(p) }
+        );
+        expect(out).to.deep.equal(['женщина в будочке']);
+        expect(dropped).to.deep.equal(['unknown']);
+    });
+
     it('sanitizeParticipants reports dropped values via onDrop', () => {
         const dropped = [];
         const out = sanitizeParticipants(
@@ -102,6 +137,54 @@ describe('snake-guard — fantasy snake_case id detection', () => {
         expect(out).to.deep.equal(['anna_smirnova', 'mikhail_berlioz', 'женщина в будочке']);
         expect(replaced).to.deep.equal([['mikhail_berлиоз', 'mikhail_berlioz']]);
         expect(dropped).to.deep.equal(['zhenshchina_v_budochke']);
+    });
+});
+
+describe('snake-guard — placeholder environment values', () => {
+    it('flags placeholder values (not applicable, n/a, none, unknown, —)', () => {
+        expect(isPlaceholderValue('not applicable')).to.equal(true);
+        expect(isPlaceholderValue('not applicable.')).to.equal(true);
+        expect(isPlaceholderValue('n/a')).to.equal(true);
+        expect(isPlaceholderValue('n/a.')).to.equal(true);
+        expect(isPlaceholderValue('none')).to.equal(true);
+        expect(isPlaceholderValue('unknown')).to.equal(true);
+        expect(isPlaceholderValue('not specified')).to.equal(true);
+        expect(isPlaceholderValue('—')).to.equal(true);
+        expect(isPlaceholderValue('-')).to.equal(true);
+        expect(isPlaceholderValue('не указано')).to.equal(true);
+        expect(isPlaceholderValue('нет')).to.equal(true);
+        expect(isPlaceholderValue('' )).to.equal(true);
+        expect(isPlaceholderValue(undefined)).to.equal(true);
+    });
+
+    it('keeps real environment values (even ones containing placeholder words)', () => {
+        expect(isPlaceholderValue('late spring')).to.equal(false);
+        expect(isPlaceholderValue('soft street lamps')).to.equal(false);
+        expect(isPlaceholderValue('tense and divided')).to.equal(false);
+        expect(isPlaceholderValue('not applicable, cloudy')).to.equal(false);
+        expect(isPlaceholderValue('unknown man in a coat')).to.equal(false);
+    });
+
+    it('sanitizeEnvironment drops placeholder fields and keeps real ones', () => {
+        const env = {
+            time: 'modern era',
+            season: 'not applicable',
+            lighting: 'not applicable',
+            weather: 'not applicable',
+            mood: 'tense and divided',
+            atmosphere: 'rapid technological progress with societal conflicts',
+        };
+        expect(sanitizeEnvironment(env)).to.deep.equal({
+            time: 'modern era',
+            mood: 'tense and divided',
+            atmosphere: 'rapid technological progress with societal conflicts',
+        });
+    });
+
+    it('sanitizeEnvironment returns empty object when only placeholders remain', () => {
+        expect(sanitizeEnvironment({ season: 'not applicable', weather: 'n/a' })).to.deep.equal({});
+        expect(sanitizeEnvironment(undefined)).to.deep.equal({});
+        expect(sanitizeEnvironment({})).to.deep.equal({});
     });
 });
 

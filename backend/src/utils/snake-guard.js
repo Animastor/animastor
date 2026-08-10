@@ -22,7 +22,7 @@
 //   - book/lazy-book/create.js  write barrier (participants / mentions / ids)
 //   - scripts/audit-video-actions.js  book audit
 
-const { normalizeForMatch } = require('./character-identity');
+const { normalizeForMatch, isPlaceholderCharacterId } = require('./character-identity');
 
 // Snake token: a word with ≥1 underscore, latin AND/OR cyrillic letters,
 // optional trailing underscores and possessive "'s". Case-insensitive via
@@ -59,6 +59,48 @@ const KNOWN_NON_CHARACTER_SNAKE = new Set([
     'window_sill', 'fire_escape', 'street_sign', 'traffic_light', 'cross_walk',
     'railway_track', 'front_seat', 'back_seat', 'car_seat', 'steering_wheel',
 ]);
+
+// ── Placeholder environment values ────────────────────────────────────
+// AI agents sometimes fill fields they cannot answer with placeholder strings
+// ("not applicable", "n/a", "none", "unknown", "—", …). Such values are
+// worse than an absent field: they get injected verbatim into image prompts
+// ("season: not applicable"). Absence of information ≠ a placeholder.
+const PLACEHOLDER_VALUE_RE = /^(not applicable|n\/a|n\/a\.|na|none|unknown|unspecified|not specified|not known|no data|no info|not available|no|—|-|\.\.\.)$/i;
+const PLACEHOLDER_VALUE_RU = /^(не применимо|н\/а|нет|не указано|неизвестно|отсутствует|не известно|—|-)$/i;
+
+/**
+ * Is this a placeholder/stub value rather than real information? Empty strings
+ * are handled by callers (treated as absent); this catches "not applicable"-style
+ * filler that agents write when they do not know the answer.
+ * @param {*} value
+ * @returns {boolean}
+ */
+function isPlaceholderValue(value) {
+    if (value === undefined || value === null) return true;
+    // Strip trailing punctuation (LLMs often emit "not applicable." or "n/a.")
+    // before the exact match — the placeholder is the WHOLE value, not a
+    // substring ("not applicable, cloudy" is a real description, keep it).
+    const s = String(value).trim().replace(/[.,;…\s]+$/, '');
+    if (!s) return true;
+    return PLACEHOLDER_VALUE_RE.test(s) || PLACEHOLDER_VALUE_RU.test(s);
+}
+
+/**
+ * Drop placeholder-valued fields from an environment object (season, weather,
+ * lighting, …) and return the cleaned copy. Fields with real content survive;
+ * a field whose value is "not applicable"-style filler is removed — absent is
+ * correct, a placeholder pollutes the image prompt. Returns an empty object
+ * (never null) when nothing real remains.
+ * @param {object} env
+ * @returns {object}
+ */
+function sanitizeEnvironment(env) {
+    const out = {};
+    for (const [key, value] of Object.entries(env || {})) {
+        if (!isPlaceholderValue(value)) out[key] = value;
+    }
+    return out;
+}
 
 // ── Cross-prompt consistency (generic person references) ─────────────
 // image.prompt and video.action describe the SAME unit. When one field names a
@@ -512,8 +554,21 @@ function sanitizeParticipants(participants, knownIds, options = {}) {
     for (const p of (participants || [])) {
         const s = String(p);
         if (!s) continue;
+        // Known registry ids are always kept: a character that reached
+        // characters.json passed the registry write barriers, so it is a REAL
+        // character even when its id/name looks like a placeholder word
+        // ('neizvestnyy' — the mysterious stranger — is a legitimate literary
+        // character, not a phantom). Look at the whole aggregate (passport,
+        // appearance), not at the name alone.
         if (ids.has(s.toLowerCase())) {
             out.push(p);
+            continue;
+        }
+        // Placeholder ids ('unknown', 'unnamed', 'Unidentified', …) that are
+        // NOT registered characters are NEVER scene participants — no
+        // information about a person ≠ a fictitious 'unknown' character.
+        if (isPlaceholderCharacterId(s)) {
+            if (onDrop) onDrop(p);
             continue;
         }
         // chimera (mixed-script / typo / transliteration variant) → canonical id
@@ -554,4 +609,6 @@ module.exports = {
     findGenericPersonTerms,
     findCrossPromptGaps,
     participantFieldIds,
+    isPlaceholderValue,
+    sanitizeEnvironment,
 };
