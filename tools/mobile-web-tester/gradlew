@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Uses the local Gradle 8.12 distribution already present in the repo
+# (same pattern as frontend/gradlew).
+exec "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../frontend/gradle-8.12/bin/gradle" "$@"

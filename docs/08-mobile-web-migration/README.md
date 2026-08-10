@@ -35,6 +35,7 @@
 | [`04-MAPPING-TABLES.md`](04-MAPPING-TABLES.md) | Таблицы соответствия Screen→Page, Component→Web Component |
 | [`05-SCREEN-IMPLEMENTATION-ORDER.md`](05-SCREEN-IMPLEMENTATION-ORDER.md) | План переноса экранов (простые → сложные) |
 | [`06-RISKS-AND-ALTERNATIVES.md`](06-RISKS-AND-ALTERNATIVES.md) | Компоненты с высоким техническим риском + альтернативы. Игрок — детально |
+| [`07-MOBILE-WEB-TESTER.md`](07-MOBILE-WEB-TESTER.md) | Android-тестер мобильного веба (`tools/mobile-web-tester`) — телефонный viewport на планшете |
 
 ---
 

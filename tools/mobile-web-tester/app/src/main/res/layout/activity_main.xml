@@ -1,0 +1,208 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/bg_root"
+    android:orientation="vertical">
+
+    <!-- Row 1: title + actions -->
+    <LinearLayout
+        android:id="@+id/topBar1"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="14dp"
+        android:paddingTop="6dp"
+        android:paddingEnd="2dp">
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:ellipsize="end"
+            android:singleLine="true"
+            android:text="@string/app_title"
+            android:textColor="@color/text_primary"
+            android:textSize="14sp"
+            android:textStyle="bold" />
+
+        <ImageButton
+            android:id="@+id/reloadBtn"
+            android:layout_width="42dp"
+            android:layout_height="42dp"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/action_reload"
+            android:padding="11dp"
+            android:scaleType="fitCenter"
+            android:src="@android:drawable/ic_menu_rotate" />
+
+        <ImageButton
+            android:id="@+id/toggleBtn"
+            android:layout_width="42dp"
+            android:layout_height="42dp"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/action_collapse"
+            android:padding="14dp"
+            android:scaleType="fitCenter"
+            android:src="@android:drawable/arrow_down_float" />
+    </LinearLayout>
+
+    <!-- Row 2: viewport size switcher -->
+    <LinearLayout
+        android:id="@+id/chipContainer"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:paddingStart="14dp"
+        android:paddingEnd="14dp"
+        android:paddingBottom="4dp" />
+
+    <!-- Row 3: URL field -->
+    <LinearLayout
+        android:id="@+id/topBar2"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="14dp"
+        android:paddingEnd="14dp"
+        android:paddingBottom="8dp">
+
+        <EditText
+            android:id="@+id/urlInput"
+            android:layout_width="0dp"
+            android:layout_height="42dp"
+            android:layout_weight="1"
+            android:background="@drawable/bg_input"
+            android:hint="@string/url_hint"
+            android:imeOptions="actionGo"
+            android:inputType="textUri"
+            android:paddingStart="12dp"
+            android:paddingEnd="12dp"
+            android:selectAllOnFocus="true"
+            android:singleLine="true"
+            android:textColor="@color/text_primary"
+            android:textColorHint="@color/text_muted"
+            android:textSize="13sp" />
+
+        <Button
+            android:id="@+id/openBtn"
+            android:layout_width="wrap_content"
+            android:layout_height="42dp"
+            android:layout_marginStart="8dp"
+            android:background="@drawable/bg_btn"
+            android:minWidth="0dp"
+            android:paddingStart="18dp"
+            android:paddingEnd="18dp"
+            android:text="@string/action_open"
+            android:textColor="@color/accent"
+            android:textSize="13sp"
+            android:textStyle="bold" />
+    </LinearLayout>
+
+    <!-- Page load progress -->
+    <ProgressBar
+        android:id="@+id/progress"
+        style="?android:attr/progressBarStyleHorizontal"
+        android:layout_width="match_parent"
+        android:layout_height="3dp"
+        android:max="100"
+        android:progressTint="@color/accent"
+        android:visibility="gone" />
+
+    <!-- Centered phone frame -->
+    <FrameLayout
+        android:id="@+id/frameContainer"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:paddingBottom="14dp"
+        android:paddingEnd="26dp"
+        android:paddingStart="26dp"
+        android:paddingTop="10dp">
+
+        <LinearLayout
+            android:id="@+id/phoneFrame"
+            android:layout_width="390dp"
+            android:layout_height="844dp"
+            android:layout_gravity="center"
+            android:background="@drawable/bg_phone_frame"
+            android:clipToOutline="true"
+            android:orientation="vertical">
+
+            <!-- Fake status bar -->
+            <LinearLayout
+                android:id="@+id/statusBar"
+                android:layout_width="match_parent"
+                android:layout_height="26dp"
+                android:background="@color/statusbar_bg"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingStart="14dp"
+                android:paddingEnd="14dp">
+
+                <TextView
+                    android:id="@+id/timeText"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textColor="@color/text_primary"
+                    android:textSize="11sp"
+                    android:textStyle="bold" />
+
+                <View
+                    android:layout_width="0dp"
+                    android:layout_height="1dp"
+                    android:layout_weight="1" />
+
+                <!-- signal bars -->
+                <View
+                    android:layout_width="3dp"
+                    android:layout_height="6dp"
+                    android:layout_marginEnd="2dp"
+                    android:background="@drawable/signal_bar" />
+                <View
+                    android:layout_width="3dp"
+                    android:layout_height="8dp"
+                    android:layout_marginEnd="2dp"
+                    android:background="@drawable/signal_bar" />
+                <View
+                    android:layout_width="3dp"
+                    android:layout_height="10dp"
+                    android:layout_marginEnd="2dp"
+                    android:background="@drawable/signal_bar" />
+                <View
+                    android:layout_width="3dp"
+                    android:layout_height="12dp"
+                    android:background="@drawable/signal_bar" />
+
+                <View
+                    android:layout_width="22dp"
+                    android:layout_height="11dp"
+                    android:layout_marginStart="8dp"
+                    android:background="@drawable/bg_battery" />
+            </LinearLayout>
+
+            <!-- The actual page -->
+            <WebView
+                android:id="@+id/webView"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:background="@android:color/white" />
+
+            <!-- Fake home indicator -->
+            <FrameLayout
+                android:layout_width="match_parent"
+                android:layout_height="22dp"
+                android:background="@color/statusbar_bg">
+
+                <View
+                    android:layout_width="120dp"
+                    android:layout_height="4dp"
+                    android:layout_gravity="center"
+                    android:background="@drawable/home_pill" />
+            </FrameLayout>
+        </LinearLayout>
+    </FrameLayout>
+</LinearLayout>

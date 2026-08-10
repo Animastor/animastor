@@ -6,6 +6,26 @@ All notable changes to Animastor are documented here.
 
 ## [Unreleased] — 2026-08-10
 
+### Added
+
+- **Инструмент «Mobile Web Tester»: телефонный viewport для тестирования мобильного веба на планшете**
+  (`tools/mobile-web-tester/` (новый Gradle-проект),
+  `docs/08-mobile-web-migration/07-MOBILE-WEB-TESTER.md` (новый), `README.md`):
+  - Мини-приложение-«телефон» для визуальной проверки `frontends/mobile` на планшете:
+    WebView в рамке **390×844 CSS px** (переключатель 360×800 / 390×844 / 430×932),
+    mobile user-agent, touch, вертикальная ориентация. CSS viewport задаётся шириной
+    рамки в dp (в Android WebView 1 CSS px = 1 dp); высота автоматически поджимается
+    под экран планшета, рамка пересчитывается при изменении размера контейнера.
+  - URL по умолчанию `https://m.animastor.in` (переопределяется `-PTESTER_URL=...`
+    при сборке или полем ввода в приложении, запоминается в SharedPreferences).
+  - **Авто-авторизация Basic Auth** (`m.animastor.in` защищён):
+    `onReceivedHttpAuthRequest` → `handler.proceed(AUTH_USER, AUTH_PASS)` — креды
+    константами в `MainActivity.kt`; долгое нажатие ⟳ очищает cookies/кэш/HTTP-auth.
+  - Только framework + Kotlin (без сторонних зависимостей), minSdk 26 / targetSdk 34 /
+    compileSdk 35, AGP 8.7.3 (та же связка, что у `frontend/`); сборка
+    `tools/mobile-web-tester/build-apk.sh` → копия в net-disk (`mobile-web-tester.apk`,
+    установка с `https://animastor.in/net-disk/mobile-web-tester.apk`).
+
 ### Fixed
 
 - **Генерация падала сразу после «Сборки локаций»: `Assignment to constant variable`**
