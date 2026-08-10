@@ -18,6 +18,12 @@ function buildLazyChapterIntro(chInfo, language) {
         language
     );
     if (!introData || !introData.text) return null;
+    // Typography page: image.prompt carries the page text verbatim; video.action
+    // copies it (static title card, still plays in the video sequence).
+    const introPrompt = chapterUtils.buildTypographyPagePrompt(
+        introData.text,
+        `${introData.scene_title} title page typography, book style`
+    );
     return {
         scene_id: sceneId(),
         scene_title: introData.scene_title,
@@ -30,7 +36,8 @@ function buildLazyChapterIntro(chInfo, language) {
             type: 'typography',
             text: introData.text,
             participants: [],
-            image: { shot: 'wide', prompt: `${introData.scene_title} title page typography, book style` },
+            image: { shot: 'wide', prompt: introPrompt },
+            video: { action: introPrompt },
         }],
     };
 }

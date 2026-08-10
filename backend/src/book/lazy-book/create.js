@@ -462,6 +462,14 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
     if (introMeta && introMeta.text) {
         const existingIntro = chapterObj.scenes.find(s => s.type === 'chapter_intro');
         if (!existingIntro) {
+            // Typography page: image.prompt must carry the page text verbatim (the
+            // generator has to know WHAT text to typeset, not just the style), and
+            // the static title card copies it into video.action — a typography page
+            // still plays in the video sequence, so an empty action is never written.
+            const introPrompt = chapterUtils.buildTypographyPagePrompt(
+                introMeta.text,
+                `${introMeta.scene_title || `Глава ${(chapterIndex || 0) + 1}`} title page typography, book style`
+            );
             const introScene = {
                 scene_id: sceneId(),
                 scene_title: introMeta.scene_title || `Глава ${(chapterIndex || 0) + 1}`,
@@ -477,7 +485,10 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
                     text: introMeta.text,
                     image: {
                         shot: 'wide',
-                        prompt: `Chapter ${(chapterIndex || 0) + 1} title page typography, book style`,
+                        prompt: introPrompt,
+                    },
+                    video: {
+                        action: introPrompt,
                     },
                 }],
             };

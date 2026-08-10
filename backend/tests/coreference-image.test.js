@@ -376,6 +376,47 @@ describe('Coreference — buildImagePrompt passport injection', () => {
 });
 
 // ======================================================
+// Typography page text — the generator must know WHAT text
+// to typeset, not just the visual style (P8)
+// ======================================================
+
+describe('buildImagePrompt — typography page text injection', () => {
+
+    const bookPayload = { characters: [], locations: {} };
+
+    it('injects the page text when image.prompt carries only the style instruction', () => {
+        const unit = {
+            type: 'typography',
+            text: 'Пролог\nМир на переломе эпох',
+            image: { prompt: 'Chapter 1 title page typography, book style' },
+        };
+        const result = buildImagePrompt(unit, { participants: [] }, {}, bookPayload);
+        expect(result).to.include('Chapter 1 title page typography, book style');
+        expect(result).to.include('page text: "Пролог\nМир на переломе эпох"');
+    });
+
+    it('does not duplicate the page text when image.prompt already mentions it', () => {
+        const unit = {
+            type: 'typography',
+            text: 'Пролог\nМир на переломе эпох',
+            image: { prompt: 'Пролог title page, Мир на переломе эпох, book style' },
+        };
+        const result = buildImagePrompt(unit, { participants: [] }, {}, bookPayload);
+        expect(result.match(/page text:/g) || []).to.have.lengthOf(0);
+        expect(result.match(/Мир на переломе эпох/g)).to.have.lengthOf(1);
+    });
+
+    it('leaves the prompt unchanged when the unit has no page text', () => {
+        const unit = {
+            type: 'typography',
+            image: { prompt: 'Book cover typography, elegant design' },
+        };
+        const result = buildImagePrompt(unit, { participants: [] }, {}, bookPayload);
+        expect(result).to.equal('Book cover typography, elegant design, image quality: highly detailed, sharp typography, clean composition, professional typesetting');
+    });
+});
+
+// ======================================================
 // Location environment template — fallback merge (L2)
 // ======================================================
 

@@ -296,24 +296,38 @@ describe('structure-detector (v2)', () => {
 
             const cover = chapters.find(c => c.type === 'cover');
             expect(cover).to.exist;
-            expect(cover.scenes[0].units[0].type).to.equal('typography');
-            expect(cover.scenes[0].units[0].text).to.contain('За пределами алгоритмов');
-            expect(cover.scenes[0].units[0].text).to.contain('С.А. Хабаров');
+            const coverUnit = cover.scenes[0].units[0];
+            expect(coverUnit.type).to.equal('typography');
+            expect(coverUnit.text).to.contain('За пределами алгоритмов');
+            expect(coverUnit.text).to.contain('С.А. Хабаров');
+            // Typography prompt carries the page text; video.action copies it
+            expect(coverUnit.image.prompt).to.contain('За пределами алгоритмов');
+            expect(coverUnit.video.action).to.equal(coverUnit.image.prompt);
 
             const prologue = chapters.find(c => c.type === 'prologue');
             expect(prologue.chapter_index).to.equal(0);
             expect(prologue.chapter_title).to.equal('Пролог');
-            expect(prologue.scenes[0].units[0].type).to.equal('typography');
-            expect(prologue.scenes[0].units[0].text).to.equal('Пролог\nМир на переломе эпох');
+            const prologueUnit = prologue.scenes[0].units[0];
+            expect(prologueUnit.type).to.equal('typography');
+            expect(prologueUnit.text).to.equal('Пролог\nМир на переломе эпох');
+            // Typography page text must reach image.prompt AND video.action
+            expect(prologueUnit.image.prompt).to.contain('Пролог');
+            expect(prologueUnit.image.prompt).to.contain('Мир на переломе эпох');
+            expect(prologueUnit.video.action).to.equal(prologueUnit.image.prompt);
 
             const numbered = chapters.filter(c => c.type === 'chapter').sort((a, b) => a.chapter_index - b.chapter_index);
             expect(numbered.length).to.equal(3);
             expect(numbered.map(c => c.chapter_title)).to.deep.equal(['Земля', 'Первый полёт', 'Процветание']);
             expect(numbered.map(c => c.chapter_index)).to.deep.equal([1, 2, 3]);
             for (const ch of numbered) {
-                expect(ch.scenes[0].units[0].type).to.equal('typography');
+                const unit = ch.scenes[0].units[0];
+                expect(unit.type).to.equal('typography');
+                // video.action always copies image.prompt on typography units
+                expect(unit.video.action).to.equal(unit.image.prompt);
             }
             expect(numbered[0].scenes[0].units[0].text).to.equal('Глава 1\nЗемля');
+            expect(numbered[0].scenes[0].units[0].image.prompt).to.contain('Глава 1');
+            expect(numbered[0].scenes[0].units[0].image.prompt).to.contain('Земля');
         });
     });
 
@@ -654,6 +668,28 @@ describe('structure-detector (v2)', () => {
             const intro = chapterUtils.buildSegmentIntro(
                 { type: 'chapter', title: 'Earth', number: 1, label: 'Chapter' }, 'en');
             expect(intro.text).to.equal('Chapter 1\nEarth');
+        });
+    });
+
+    describe('buildTypographyPagePrompt (typography image prompt + video action)', () => {
+        it('appends the page text verbatim to the base prompt', () => {
+            const p = chapterUtils.buildTypographyPagePrompt(
+                'Пролог\nМир на переломе эпох',
+                'Пролог title page typography, book style'
+            );
+            expect(p).to.equal('Пролог title page typography, book style, page text: "Пролог\nМир на переломе эпох"');
+        });
+
+        it('returns the base prompt unchanged when there is no page text', () => {
+            expect(chapterUtils.buildTypographyPagePrompt('', 'Chapter 1 title page typography, book style'))
+                .to.equal('Chapter 1 title page typography, book style');
+            expect(chapterUtils.buildTypographyPagePrompt(null, 'cover typography'))
+                .to.equal('cover typography');
+        });
+
+        it('escapes double quotes in the page text', () => {
+            const p = chapterUtils.buildTypographyPagePrompt('"Глава 1" Земля', 'title page');
+            expect(p).to.include("page text: \"'Глава 1' Земля\"");
         });
     });
 });

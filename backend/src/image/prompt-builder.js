@@ -202,6 +202,21 @@ function resolveLocationFromPrompt(directPrompt, locations) {
     return null;
 }
 
+// Does a prompt already mention the page text? Token-based containment check
+// (normalized, order/punctuation-tolerant) so the typography page text is never
+// injected twice when the AI or a creation site already put it into image.prompt.
+function promptMentionsPageText(promptText, pageText) {
+    const p = helpers.normalizeForMatch(promptText);
+    const t = helpers.normalizeForMatch(pageText);
+    if (!p || !t) return false;
+    // Skip 1-char tokens (digits/letters): a bare "1" or "a" matches inside
+    // unrelated words and could wrongly suppress the injection. The header
+    // number rides along with its keyword token ("Глава 1" → "glava").
+    const tokens = t.split(/\s+/).filter(w => w.length >= 2);
+    if (tokens.length === 0) return false;
+    return tokens.every(w => p.includes(w));
+}
+
 // ======================================================
 // Final image prompt assembly — driven by the selected ASSEMBLY PROFILE.
 //
@@ -297,6 +312,16 @@ function buildImagePrompt(iuPayload, scenePayload, chapterPayload, bookPayload, 
         const directPrompt = resolveImageField(iuPayload, 'prompt');
         if (directPrompt) {
             parts.push(directPrompt);
+        }
+        // Typography pages typeset ACTUAL text (heading + title). The stored
+        // image.prompt describes the style/composition — the page text
+        // (unit.text) must reach the generator explicitly or it will render
+        // style without content. Injection is a safety net for data written
+        // before the creation sites carried the text; skipped when the prompt
+        // already mentions it. Capped to stay within IMAGE_PROMPT_MAX_CHARS.
+        const pageText = String(iuPayload.text || '').trim().replace(/"/g, "'");
+        if (pageText && !promptMentionsPageText(directPrompt, pageText)) {
+            parts.push(`page text: "${pageText.slice(0, 300)}"`);
         }
         if (resolveImageField(iuPayload, 'quality')) {
             parts.push(`image quality: ${resolveImageField(iuPayload, 'quality')}`);

@@ -7,6 +7,21 @@ const path = require('path');
 const { getChapterDir, getBookDir, getBookMetaPath, sceneId, unitId, chapterId } = require('./paths');
 const { extractSceneTitle, isGenericSceneTitle } = require('../../utils/scene-title-utils');
 
+// ── Typography page prompt ───────────────────────────────────────────
+// A typography page (title card / cover) must tell the generator WHAT text to
+// render, not just how to style it. The page text (e.g. "Пролог\nМир на
+// переломе эпох") is appended verbatim to the base prompt so the exact wording
+// lands on the page. Title cards have no dynamics, so the video action simply
+// copies the image prompt — a typography page still plays in the video
+// sequence, so an empty video.action is never written.
+function buildTypographyPagePrompt(pageText, basePrompt) {
+    const text = String(pageText || '').trim();
+    const base = String(basePrompt || '').trim();
+    if (!text) return base;
+    const prefix = base ? `${base}, ` : '';
+    return `${prefix}page text: "${text.replace(/"/g, "'")}"`;
+}
+
 function createChapterIntroScene(chapterTitle, chapterNumber, language) {
     const scId = sceneId();
 
@@ -16,6 +31,10 @@ function createChapterIntroScene(chapterTitle, chapterNumber, language) {
     const sceneText = language === 'ru'
         ? `Глава ${chapterNumber}\n${cleanTitle}`
         : `Chapter ${chapterNumber}\n${cleanTitle}`;
+
+    // Typography page: image.prompt carries the page text verbatim; the static
+    // title card copies it into video.action (still plays in the video sequence).
+    const prompt = buildTypographyPagePrompt(sceneText, `Chapter ${chapterNumber} title page typography, book style`);
 
     return {
         scene_id: scId,
@@ -34,7 +53,10 @@ function createChapterIntroScene(chapterTitle, chapterNumber, language) {
             participants: [],
             image: {
                 shot: 'wide',
-                prompt: `Chapter ${chapterNumber} title page typography, book style, ${cleanTitle}`,
+                prompt,
+            },
+            video: {
+                action: prompt,
             },
         }],
     };
@@ -50,6 +72,13 @@ function createCoverChapter(title, author, language) {
     if (displayAuthor) textParts.push(displayAuthor);
     if (displayTitle) textParts.push(displayTitle);
     const sceneText = textParts.join('\n\n');
+
+    // Typography page: image.prompt carries the cover text verbatim; video.action
+    // copies it (static title card, still plays in the video sequence).
+    const prompt = buildTypographyPagePrompt(
+        sceneText,
+        `Book cover: ${displayTitle}${displayAuthor ? ` by ${displayAuthor}` : ''}, typography, elegant design`
+    );
 
     return {
         chapter_id: chId,
@@ -72,7 +101,10 @@ function createCoverChapter(title, author, language) {
                 participants: [],
                 image: {
                     shot: 'wide',
-                    prompt: `Book cover: ${displayTitle}${displayAuthor ? ` by ${displayAuthor}` : ''}, typography, elegant design`,
+                    prompt,
+                },
+                video: {
+                    action: prompt,
                 },
             }],
         }],
@@ -144,6 +176,7 @@ module.exports = {
     createCoverChapter,
     saveCoverChapter,
     buildSegmentIntro,
+    buildTypographyPagePrompt,
     extractSceneTitle,
     isGenericSceneTitle,
 };
