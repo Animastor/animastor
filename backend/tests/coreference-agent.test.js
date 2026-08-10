@@ -20,6 +20,7 @@ const {
     isGenericCharacter,
     isPlaceholderCharacter,
     isPlaceholderCharacterId,
+    hasRealAppearance,
     mergeCharacterLists,
 } = require('../src/utils/character-identity');
 
@@ -138,6 +139,42 @@ describe('Coreference — character identity merge', () => {
             { id: 'unknown', name: 'Unknown', appearance: 'tall man in a long black coat' },
         ], []);
         expect(withRealAppearance.characters.map(c => c.id)).to.deep.equal(['unknown']);
+    });
+});
+
+// ======================================================
+// hasRealAppearance — export guard + semantics
+// ======================================================
+// REGRESSION: commit c058d8c introduced hasRealAppearance as the shared
+// predicate for the pipeline (pipeline-steps stepGenerateVoices filters
+// voice candidates through it, lazy-book/create.js builds characters.json
+// through it) but forgot to export it — every caller received `undefined`
+// and generation crashed with "hasRealAppearance is not a function" between
+// the characters and locations stages. The export guard below pins the
+// module contract so the crash can never silently come back.
+
+describe('Coreference — hasRealAppearance', () => {
+    it('is exported as a callable function (all pipeline importers rely on it)', () => {
+        expect(typeof hasRealAppearance).to.equal('function');
+        // The two production importers must resolve the export — this would
+        // have thrown at require time had the import been undefined-broken.
+        const pipelineSteps = require('../src/services/agent/pipeline-steps');
+        expect(pipelineSteps).to.be.an('object');
+        const lazyBookCreate = require('../src/book/lazy-book/create');
+        expect(lazyBookCreate).to.be.an('object');
+    });
+
+    it('a character with a real appearance (even placeholder-ish id) is visually real', () => {
+        expect(hasRealAppearance({ id: 'neizvestnyy', appearance: 'высокий мужчина в чёрном плаще' })).to.equal(true);
+        expect(hasRealAppearance({ id: 'berlioz', appearance: 'tall man, age unknown' })).to.equal(true);
+        expect(hasRealAppearance({ id: 'berlioz', clothes: 'серый костюм' })).to.equal(true);
+    });
+
+    it('no appearance or placeholder-only boilerplate is NOT a real appearance', () => {
+        expect(hasRealAppearance({ id: 'berlioz' })).to.equal(false);
+        expect(hasRealAppearance({ id: 'berlioz', appearance: '' })).to.equal(false);
+        expect(hasRealAppearance({ id: 'unknown', appearance: 'Unidentified character' })).to.equal(false);
+        expect(hasRealAppearance({ id: 'berlioz', description: 'не описан' })).to.equal(false);
     });
 });
 

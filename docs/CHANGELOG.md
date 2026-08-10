@@ -8,6 +8,27 @@ All notable changes to Animastor are documented here.
 
 ### Fixed
 
+- **Генерация падала между «Сборкой персонажей» и «Сборкой локаций»: `hasRealAppearance is not a function`**
+  (`backend/src/utils/character-identity.js`,
+  `backend/tests/coreference-agent.test.js` +3 теста):
+  - **Проблема (книга `import_1786342460269_1786342470718`):** пайплайн успешно проходил
+    `analyze_structure` и `analyze_characters`, затем падал в `stepGenerateVoices` — статус
+    сессии `failed`, `progress_msg = «Ошибка: hasRealAppearance is not a function»`, шаг
+    `analyze_locations` не достигался. Фронт (Android, экран Генератор) показывал упавший
+    прогресс на «Сборка персонажей — сборка локаций».
+  - **Причина:** коммит `c058d8c` (общая `hasRealAppearance` для пайплайна и create.js)
+    забыл добавить функцию в `module.exports` `character-identity.js`. Два импортёра
+    (`pipeline-steps.js` стр. 23 — фильтр голосовых кандидатов, `create.js` стр. 10 —
+    фильтр passport-персонажей) получали `undefined` → рантайм-краш. Тесты рефакторинга
+    проверяли поведение `isPlaceholderCharacter`/`mergeCharacterLists`, но не факт экспорта
+    самой `hasRealAppearance`, поэтому регрессия прошла незамеченной.
+  - **Фикс:** `hasRealAppearance` добавлена в `module.exports` (экспорт-гард).
+  - **Проверки:** +3 теста — экспорт как callable-функция + require обоих production-импортёров
+    (упал бы при отсутствии экспорта), семантика (реальная внешность с placeholder-идом =
+    настоящий персонаж; пустой/шаблонный бойлерплей — нет). Точка краша проверена напрямую:
+    `characters.filter(c => c.id && c.name && hasRealAppearance(c))` → `['berlioz']`. Весь
+    mocha-сьют (1014, было 1011) проходит.
+
 - **Обложка не создавалась для книг, где название стоит отдельной строкой с декоративной точкой («За пределами алгоритмов.» — `ba_1786339258534`)**
   (`backend/src/services/structure-detector.js`,
   `backend/src/services/agent/pipeline-steps.js`,

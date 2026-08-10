@@ -286,6 +286,7 @@ module.exports = {
     isGenericCharacter,
     isPlaceholderCharacterId,
     isPlaceholderCharacter,
+    hasRealAppearance,
     PLACEHOLDER_CHARACTER_IDS,
     findCanonicalCharacter,
     mergeCharacterData,
