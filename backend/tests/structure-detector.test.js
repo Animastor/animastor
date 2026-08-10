@@ -310,9 +310,12 @@ describe('structure-detector (v2)', () => {
             const prologueUnit = prologue.scenes[0].units[0];
             expect(prologueUnit.type).to.equal('typography');
             expect(prologueUnit.text).to.equal('Пролог\nМир на переломе эпох');
-            // Typography page text must reach image.prompt AND video.action
-            expect(prologueUnit.image.prompt).to.contain('Пролог');
-            expect(prologueUnit.image.prompt).to.contain('Мир на переломе эпох');
+            // Typography prompt: English-only instructions + delimited content block
+            // (exact format is locked — no Russian inside the instructions, no dups).
+            expect(prologueUnit.image.prompt).to.equal(
+                'title page typography, soviet book style, vertical full-page composition, centered text layout, image quality: high detail, crisp lettering, sharp focus. text on the page: "Пролог\nМир на переломе эпох"'
+            );
+            // video.action copies image.prompt on typography units
             expect(prologueUnit.video.action).to.equal(prologueUnit.image.prompt);
 
             const numbered = chapters.filter(c => c.type === 'chapter').sort((a, b) => a.chapter_index - b.chapter_index);
@@ -672,24 +675,38 @@ describe('structure-detector (v2)', () => {
     });
 
     describe('buildTypographyPagePrompt (typography image prompt + video action)', () => {
-        it('appends the page text verbatim to the base prompt', () => {
-            const p = chapterUtils.buildTypographyPagePrompt(
-                'Пролог\nМир на переломе эпох',
-                'Пролог title page typography, book style'
+        const BASE = 'title page typography, soviet book style, vertical full-page composition, centered text layout';
+
+        it('builds English instructions + a delimited page-content block, no duplication', () => {
+            const p = chapterUtils.buildTypographyPagePrompt('Пролог\nМир на переломе эпох', BASE);
+            expect(p).to.equal(
+                'title page typography, soviet book style, vertical full-page composition, centered text layout, image quality: high detail, crisp lettering, sharp focus. text on the page: "Пролог\nМир на переломе эпох"'
             );
-            expect(p).to.equal('Пролог title page typography, book style, page text: "Пролог\nМир на переломе эпох"');
         });
 
-        it('returns the base prompt unchanged when there is no page text', () => {
+        it('keeps instructions English-only: the page content is the only Russian text', () => {
+            const p = chapterUtils.buildTypographyPagePrompt('Пролог\nМир на переломе эпох', BASE);
+            const instructions = p.split('text on the page:')[0];
+            // No Cyrillic anywhere outside the content block
+            expect(instructions).to.match(/^[\x00-\x7F]*$/);
+        });
+
+        it('still yields instructions (with quality) when there is no page text', () => {
             expect(chapterUtils.buildTypographyPagePrompt('', 'Chapter 1 title page typography, book style'))
-                .to.equal('Chapter 1 title page typography, book style');
+                .to.equal('Chapter 1 title page typography, book style, image quality: high detail, crisp lettering, sharp focus');
             expect(chapterUtils.buildTypographyPagePrompt(null, 'cover typography'))
-                .to.equal('cover typography');
+                .to.equal('cover typography, image quality: high detail, crisp lettering, sharp focus');
         });
 
         it('escapes double quotes in the page text', () => {
             const p = chapterUtils.buildTypographyPagePrompt('"Глава 1" Земля', 'title page');
-            expect(p).to.include("page text: \"'Глава 1' Земля\"");
+            expect(p).to.include("text on the page: \"'Глава 1' Земля\"");
+        });
+
+        it('maps stored style tokens to English descriptors', () => {
+            expect(chapterUtils.typographyStyleDescriptor('soviet_book_page')).to.equal('soviet book style');
+            expect(chapterUtils.typographyStyleDescriptor('cover')).to.equal('book cover');
+            expect(chapterUtils.typographyStyleDescriptor('custom_style')).to.equal('custom style');
         });
     });
 });

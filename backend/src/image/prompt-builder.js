@@ -304,31 +304,30 @@ function buildImagePrompt(iuPayload, scenePayload, chapterPayload, bookPayload, 
     }
 
     if (iuPayload?.type === "typography") {
-        const parts = [];
-        const renderMode = resolveRenderMode(scenePayload, bookPayload);
-        if (renderMode) {
-            parts.push(`style ${renderMode.replace(/_/g, " ")}`);
+        // Programmatic title cards store a SELF-CONTAINED prompt — English
+        // instructions (page kind, style, layout, quality) followed by the
+        // delimited page content (see buildTypographyPagePrompt in
+        // lazy-book/chapter-utils.js) — so this branch is a passthrough. Two
+        // safety nets cover older / AI-authored data: a missing quality line
+        // and a missing page-content block are appended with the same wording.
+        // No render mode is injected here — the page style already lives in
+        // the stored prompt, and a second style instruction would contradict
+        // it.
+        const directPrompt = resolveImageField(iuPayload, 'prompt') || '';
+        const instructionParts = [];
+        if (directPrompt) instructionParts.push(directPrompt);
+        // Only a REAL quality spec ("image quality: …") suppresses the default —
+        // the word alone (e.g. "no image quality degradation") must not.
+        if (!/image quality\s*:/i.test(directPrompt)) {
+            instructionParts.push(`image quality: ${resolveImageField(iuPayload, 'quality') || 'high detail, crisp lettering, sharp focus'}`);
         }
-        const directPrompt = resolveImageField(iuPayload, 'prompt');
-        if (directPrompt) {
-            parts.push(directPrompt);
-        }
-        // Typography pages typeset ACTUAL text (heading + title). The stored
-        // image.prompt describes the style/composition — the page text
-        // (unit.text) must reach the generator explicitly or it will render
-        // style without content. Injection is a safety net for data written
-        // before the creation sites carried the text; skipped when the prompt
-        // already mentions it. Capped to stay within IMAGE_PROMPT_MAX_CHARS.
+        let finalPrompt = helpers.cleanJoin(instructionParts);
+        // Same delimiter as the creation sites: instructions end, then the page
+        // content block — byte-consistent with buildTypographyPagePrompt.
         const pageText = String(iuPayload.text || '').trim().replace(/"/g, "'");
         if (pageText && !promptMentionsPageText(directPrompt, pageText)) {
-            parts.push(`page text: "${pageText.slice(0, 300)}"`);
+            finalPrompt += `. text on the page: "${pageText.slice(0, 300)}"`;
         }
-        if (resolveImageField(iuPayload, 'quality')) {
-            parts.push(`image quality: ${resolveImageField(iuPayload, 'quality')}`);
-        } else {
-            parts.push("image quality: highly detailed, sharp typography, clean composition, professional typesetting");
-        }
-        const finalPrompt = helpers.cleanJoin(parts);
         return finalPrompt || 'cinematic illustration';
     }
 

@@ -9,17 +9,45 @@ const { extractSceneTitle, isGenericSceneTitle } = require('../../utils/scene-ti
 
 // ── Typography page prompt ───────────────────────────────────────────
 // A typography page (title card / cover) must tell the generator WHAT text to
-// render, not just how to style it. The page text (e.g. "Пролог\nМир на
-// переломе эпох") is appended verbatim to the base prompt so the exact wording
-// lands on the page. Title cards have no dynamics, so the video action simply
-// copies the image prompt — a typography page still plays in the video
-// sequence, so an empty video.action is never written.
+// typeset, not just how to style the page. The prompt is assembled in a fixed
+// structure the image model can read directly:
+//
+//   <instructions, comma-separated> — page kind, style, composition, layout,
+//                                     quality — ALWAYS in English
+//   . text on the page: "<content>"  — the exact page content (the book's own
+//                                     language), clearly delimited at the end
+//
+// The content block is the ONLY place the page text appears — never in the
+// instructions — so nothing is duplicated and instruction vs content is
+// unambiguous. Title cards have no dynamics, so the video action copies the
+// image prompt (a typography page still plays in the video sequence, so an
+// empty video.action is never written).
+
+const TYPOGRAPHY_LAYOUT = 'vertical full-page composition, centered text layout';
+const TYPOGRAPHY_QUALITY = 'image quality: high detail, crisp lettering, sharp focus';
+
+// English wording for a stored style token (scene.style) inside image prompts.
+function typographyStyleDescriptor(style) {
+    const s = String(style || '').toLowerCase().replace(/[\s_-]+/g, '_');
+    const map = {
+        soviet_book_page: 'soviet book style',
+        book_style: 'classic book style',
+        typography_only: 'minimalist typography',
+        chapter_title: 'chapter title page',
+        cover: 'book cover',
+    };
+    const fallback = String(style || '').replace(/_/g, ' ').trim();
+    // Unknown tokens are used verbatim ONLY when pure ASCII — the instructions
+    // block must stay English-only (a Cyrillic style token would leak into it).
+    return map[s] || (fallback && /^[\x00-\x7F]*$/.test(fallback) ? fallback : 'book style');
+}
+
 function buildTypographyPagePrompt(pageText, basePrompt) {
     const text = String(pageText || '').trim();
     const base = String(basePrompt || '').trim();
-    if (!text) return base;
-    const prefix = base ? `${base}, ` : '';
-    return `${prefix}page text: "${text.replace(/"/g, "'")}"`;
+    const instructions = base ? `${base}, ${TYPOGRAPHY_QUALITY}` : TYPOGRAPHY_QUALITY;
+    if (!text) return instructions;
+    return `${instructions}. text on the page: "${text.replace(/"/g, "'")}"`;
 }
 
 function createChapterIntroScene(chapterTitle, chapterNumber, language) {
@@ -34,7 +62,10 @@ function createChapterIntroScene(chapterTitle, chapterNumber, language) {
 
     // Typography page: image.prompt carries the page text verbatim; the static
     // title card copies it into video.action (still plays in the video sequence).
-    const prompt = buildTypographyPagePrompt(sceneText, `Chapter ${chapterNumber} title page typography, book style`);
+    const prompt = buildTypographyPagePrompt(
+        sceneText,
+        `title page typography, soviet book style, ${TYPOGRAPHY_LAYOUT}`
+    );
 
     return {
         scene_id: scId,
@@ -74,10 +105,13 @@ function createCoverChapter(title, author, language) {
     const sceneText = textParts.join('\n\n');
 
     // Typography page: image.prompt carries the cover text verbatim; video.action
-    // copies it (static title card, still plays in the video sequence).
+    // copies it (static title card, still plays in the video sequence). The
+    // VISUAL text is title-first (a cover shows the title above the author);
+    // unit.text / audio keep the original source order.
+    const coverText = [displayTitle, displayAuthor].filter(Boolean).join('\n\n');
     const prompt = buildTypographyPagePrompt(
-        sceneText,
-        `Book cover: ${displayTitle}${displayAuthor ? ` by ${displayAuthor}` : ''}, typography, elegant design`
+        coverText,
+        `book cover typography, soviet book style, ${TYPOGRAPHY_LAYOUT}, prominent title`
     );
 
     return {
@@ -177,6 +211,8 @@ module.exports = {
     saveCoverChapter,
     buildSegmentIntro,
     buildTypographyPagePrompt,
+    typographyStyleDescriptor,
+    TYPOGRAPHY_LAYOUT,
     extractSceneTitle,
     isGenericSceneTitle,
 };

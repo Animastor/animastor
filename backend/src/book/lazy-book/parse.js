@@ -20,9 +20,11 @@ function buildLazyChapterIntro(chInfo, language) {
     if (!introData || !introData.text) return null;
     // Typography page: image.prompt carries the page text verbatim; video.action
     // copies it (static title card, still plays in the video sequence).
+    // Instructions are English-only; the page content lives in the delimited
+    // "text on the page" block.
     const introPrompt = chapterUtils.buildTypographyPagePrompt(
         introData.text,
-        `${introData.scene_title} title page typography, book style`
+        `title page typography, ${chapterUtils.typographyStyleDescriptor(introData.style || 'soviet_book_page')}, ${chapterUtils.TYPOGRAPHY_LAYOUT}`
     );
     return {
         scene_id: sceneId(),

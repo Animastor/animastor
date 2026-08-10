@@ -392,27 +392,42 @@ describe('buildImagePrompt — typography page text injection', () => {
         };
         const result = buildImagePrompt(unit, { participants: [] }, {}, bookPayload);
         expect(result).to.include('Chapter 1 title page typography, book style');
-        expect(result).to.include('page text: "Пролог\nМир на переломе эпох"');
+        expect(result).to.include('image quality: high detail, crisp lettering, sharp focus');
+        expect(result).to.include('text on the page: "Пролог\nМир на переломе эпох"');
     });
 
-    it('does not duplicate the page text when image.prompt already mentions it', () => {
+    it('does not duplicate the page text or quality when the prompt already carries them', () => {
         const unit = {
             type: 'typography',
             text: 'Пролог\nМир на переломе эпох',
-            image: { prompt: 'Пролог title page, Мир на переломе эпох, book style' },
+            image: { prompt: 'Пролог title page, Мир на переломе эпох, book style, image quality: high detail, crisp lettering, sharp focus. text on the page: "Пролог\nМир на переломе эпох"' },
         };
         const result = buildImagePrompt(unit, { participants: [] }, {}, bookPayload);
-        expect(result.match(/page text:/g) || []).to.have.lengthOf(0);
-        expect(result.match(/Мир на переломе эпох/g)).to.have.lengthOf(1);
+        expect(result).to.equal(unit.image.prompt); // self-contained prompt → passthrough
+        expect(result.match(/text on the page:/g) || []).to.have.lengthOf(1);
+        expect(result.match(/image quality:/g) || []).to.have.lengthOf(1);
     });
 
-    it('leaves the prompt unchanged when the unit has no page text', () => {
+    it('uses the unit image.quality override and keeps it before the content block', () => {
+        const unit = {
+            type: 'typography',
+            text: 'Пролог',
+            image: { prompt: 'title page typography, soviet book style', quality: 'ultra sharp lettering' },
+        };
+        const result = buildImagePrompt(unit, { participants: [] }, {}, bookPayload);
+        const qualityIdx = result.indexOf('image quality: ultra sharp lettering');
+        const contentIdx = result.indexOf('text on the page: "Пролог"');
+        expect(qualityIdx).to.be.greaterThan(-1);
+        expect(contentIdx).to.be.greaterThan(qualityIdx);
+    });
+
+    it('adds the default quality when the unit has no page text', () => {
         const unit = {
             type: 'typography',
             image: { prompt: 'Book cover typography, elegant design' },
         };
         const result = buildImagePrompt(unit, { participants: [] }, {}, bookPayload);
-        expect(result).to.equal('Book cover typography, elegant design, image quality: highly detailed, sharp typography, clean composition, professional typesetting');
+        expect(result).to.equal('Book cover typography, elegant design, image quality: high detail, crisp lettering, sharp focus');
     });
 });
 

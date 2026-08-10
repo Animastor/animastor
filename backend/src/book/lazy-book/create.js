@@ -466,9 +466,11 @@ function createOrAppendScenes(bookId, analysis, windowConfig) {
             // generator has to know WHAT text to typeset, not just the style), and
             // the static title card copies it into video.action — a typography page
             // still plays in the video sequence, so an empty action is never written.
+            // Instructions are English-only; the page content itself lives in the
+            // delimited "text on the page" block.
             const introPrompt = chapterUtils.buildTypographyPagePrompt(
                 introMeta.text,
-                `${introMeta.scene_title || `Глава ${(chapterIndex || 0) + 1}`} title page typography, book style`
+                `title page typography, ${chapterUtils.typographyStyleDescriptor(introMeta.style || 'soviet_book_page')}, ${chapterUtils.TYPOGRAPHY_LAYOUT}`
             );
             const introScene = {
                 scene_id: sceneId(),
