@@ -188,10 +188,14 @@ function buildSegmentIntro(segInfo, language) {
 
     // Normalize titles that (despite the LLM rule) include the structural
     // prefix: "Глава 1. Земля" → "Земля" (prevents "Глава 1\nГлава 1. Земля").
-    const title = String(info.title || '')
+    let title = String(info.title || '')
         .replace(/^(?:Глава|Chapter|Пролог|Prologue|Эпилог|Epilogue)\s*\d*\s*[.:]?\s*/i, '')
         .trim();
     const num = info.number != null ? info.number : null;
+    // A chapter title that is just the bare number ("Глава 1" → title "1",
+    // number 1) is the parser echoing the number as the title — never render
+    // "Глава 1\n1" (import_1786345731767, «два раза единица»).
+    if (num != null && /^\d{1,3}$/.test(title) && parseInt(title, 10) === num) title = '';
     const head = num != null ? `${label} ${num}` : label;
     const text = title ? `${head}\n${title}` : head;
 

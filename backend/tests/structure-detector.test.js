@@ -192,6 +192,80 @@ describe('structure-detector (v2)', () => {
     });
 
     describe('mergeAiDecisions', () => {
+        it('merges "Глава N" + ALL-CAPS title line classified as SEPARATE chapters (import_1786345731767)', () => {
+            // Реальный кейс: LLM классифицировал И "Глава 1", И заголовок
+            // ALL-CAPS отдельной строкой как ОТДЕЛЬНЫЕ главы — первая получила
+            // title '1' (число как заголовок), вторая — дубликат number. В итоге
+            // intro-юнит "Глава 1\n1" («два раза единица»). Детерминированный
+            // merge должен поглотить строку-продолжение как заголовок главы.
+            const src = [
+                'Михаил Афанасиевич Булгаков',
+                '',
+                'Мастер и Маргарита',
+                '',
+                'Глава 1',
+                'НИКОГДА НЕ РАЗГОВАРИВАЙТЕ С НЕИЗВЕСТНЫМИ',
+                '',
+                'Однажды весною, в час небывало жаркого заката, в Москве, на Патриарших прудах, появились два гражданина. Первый из них, одетый в летнюю серенькую пару, был маленького роста, упитан, лыс, свою приличную шляпу пирожком нес в руке.',
+                'Второй был плечистый, рыжеватый, вихрастый молодой человек в заломленной на затылок клетчатой кепке.',
+                '— Позвольте, а вы кто такой? — сердито спросил Иван и, попятившись, спрятал молоток за спину.',
+                '',
+                'Глава 2',
+                'ПОНТИЙ ПИЛАТ',
+                '',
+                'В белом плаще с кровавым подбоем, шаркающей кавалерийской походкой, ранним утром четырнадцатого числа весеннего месяца нисана в крытую колоннаду между двумя крыльями дворца Ирода Великого вышел прокуратор Иудеи Понтий Пилат.',
+            ].join('\n');
+            const ids = candidateIds(src);
+            const ai = {
+                title: { text: 'Мастер и Маргарита', candidate_id: ids['Мастер и Маргарита'], confidence: 0.98 },
+                author: { text: 'Михаил Афанасиевич Булгаков', candidate_id: ids['Михаил Афанасиевич Булгаков'], confidence: 0.98 },
+                elements: [
+                    // LLM echoed the number as the title of "Глава 1"…
+                    { candidate_id: ids['Глава 1'], kind: 'chapter', title: '1', number: 1, confidence: 0.95 },
+                    // …and classified the ALL-CAPS title line as a SEPARATE chapter
+                    // with a DUPLICATE number.
+                    { candidate_id: ids['НИКОГДА НЕ РАЗГОВАРИВАЙТЕ С НЕИЗВЕСТНЫМИ'], kind: 'chapter', title: 'НИКОГДА НЕ РАЗГОВАРИВАЙТЕ С НЕИЗВЕСТНЫМИ', number: 1, confidence: 0.95 },
+                    { candidate_id: ids['Глава 2'], kind: 'chapter', title: '2', number: 2, confidence: 0.95 },
+                    { candidate_id: ids['ПОНТИЙ ПИЛАТ'], kind: 'chapter', title: 'ПОНТИЙ ПИЛАТ', number: 2, confidence: 0.95 },
+                ],
+            };
+            const map = sd.mergeAiDecisions(src, ai);
+            const chapters = map.segments.filter(s => s.type === 'chapter');
+            expect(chapters.length).to.equal(2);
+            expect(chapters.map(s => s.number)).to.deep.equal([1, 2]);
+            expect(chapters[0].title).to.equal('НИКОГДА НЕ РАЗГОВАРИВАЙТЕ С НЕИЗВЕСТНЫМИ');
+            expect(chapters[1].title).to.equal('ПОНТИЙ ПИЛАТ');
+            expect(chapters[0].headerLine).to.equal('Глава 1');
+            expect(chapters[1].headerLine).to.equal('Глава 2');
+            // The intro unit text built from the merged map must NOT be "Глава 1\n1".
+            const intro = chapterUtils.buildSegmentIntro(
+                sd.mapToStructureChapters(map)[0], 'ru');
+            expect(intro.text).to.equal('Глава 1\nНИКОГДА НЕ РАЗГОВАРИВАЙТЕ С НЕИЗВЕСТНЫМИ');
+        });
+
+        it('keeps multi-line headers merged when the LLM titles only the "Глава N" line (no duplicate segment)', () => {
+            const src = [
+                'Глава 1',
+                'ЗЕМЛЯ',
+                '',
+                'Юра, инженер по искусственному интеллекту, всё чаще замечал странный парадокс: чем совершеннее становились технологии, тем реже человек пытался понять самого себя.',
+                'Светлана, исследователь когнитивной инженерии, пришла к похожему выводу.',
+            ].join('\n');
+            const ids = candidateIds(src);
+            const map = sd.mergeAiDecisions(src, {
+                elements: [
+                    // LLM merged the title into the "Глава N" line — the ALL-CAPS
+                    // line below must NOT become a second chapter segment.
+                    { candidate_id: ids['Глава 1'], kind: 'chapter', title: 'ЗЕМЛЯ', number: 1, confidence: 0.95 },
+                    { candidate_id: ids['ЗЕМЛЯ'], kind: 'chapter', title: 'ЗЕМЛЯ', number: 1, confidence: 0.9 },
+                ],
+            });
+            const chapters = map.segments.filter(s => s.type === 'chapter');
+            expect(chapters.length).to.equal(1);
+            expect(chapters[0].title).to.equal('ЗЕМЛЯ');
+            expect(chapters[0].number).to.equal(1);
+        });
+
         it('applies LLM decisions onto the deterministic backbone', () => {
             const ids = candidateIds(BOOK);
             const ai = {
@@ -295,6 +369,20 @@ describe('structure-detector (v2)', () => {
                 elements: [],
             }, sd.extractCandidates(BOOK).candidates);
             expect(out.title).to.equal(undefined);
+        });
+
+        it('sanitizeStructure nulls a bare-number chapter title equal to its number (import_1786345731767)', () => {
+            const src = 'Глава 1\nНИКОГДА НЕ РАЗГОВАРИВАЙТЕ С НЕИЗВЕСТНЫМИ\n\nОднажды весною, в час небывало жаркого заката, в Москве, на Патриарших прудах, появились два гражданина. Первый из них, одетый в летнюю серенькую пару, был маленького роста, упитан, лыс.';
+            const ids = candidateIds(src);
+            const out = sd.sanitizeStructure({
+                elements: [
+                    { candidate_id: ids['Глава 1'], kind: 'chapter', title: '1', number: 1, confidence: 0.95 },
+                    { candidate_id: ids['НИКОГДА НЕ РАЗГОВАРИВАЙТЕ С НЕИЗВЕСТНЫМИ'], kind: 'chapter', title: 'ПОНТИЙ ПИЛАТ', number: 2, confidence: 0.95 },
+                ],
+            }, sd.extractCandidates(src).candidates);
+            expect(out.elements[0].title).to.equal(null);
+            expect(out.elements[0].number).to.equal(1);
+            expect(out.elements[1].title).to.equal('ПОНТИЙ ПИЛАТ');
         });
     });
 
@@ -735,6 +823,23 @@ describe('structure-detector (v2)', () => {
             const intro = chapterUtils.buildSegmentIntro(
                 { type: 'chapter', title: 'Земля', number: 1, label: 'Глава' }, 'ru');
             expect(intro.text).to.equal('Глава 1\nЗемля');
+        });
+
+        it('never renders «Глава 1\n1» when the title is the bare number (import_1786345731767)', () => {
+            // LLM-артефакт: title '1' при number 1 — число, повторённое как
+            // заголовок. Юнит должен быть «Глава 1», а не «Глава 1\n1»
+            // («два раза единица»).
+            const intro = chapterUtils.buildSegmentIntro(
+                { type: 'chapter', title: '1', number: 1, label: 'Глава' }, 'ru');
+            expect(intro.text).to.equal('Глава 1');
+            expect(intro.text).to.not.contain('Глава 1\n1');
+        });
+
+        it('keeps a real multi-digit title that is not the chapter number', () => {
+            // «Глава 1984» — заголовок 1984 не равен number, остаётся.
+            const intro = chapterUtils.buildSegmentIntro(
+                { type: 'chapter', title: '1984', number: 1, label: 'Глава' }, 'ru');
+            expect(intro.text).to.equal('Глава 1\n1984');
         });
 
         it('body/poem → null (no forced title card)', () => {

@@ -416,6 +416,16 @@ function sanitizeChapterNumber(n) {
     return num;
 }
 
+// A chapter title that is just the bare number ("Глава 1" → title "1",
+// number 1) is the parser/LLM echoing the number as the title — NOT a real
+// title. Used by sanitizeStructure and the AI-header-continuation merge so
+// the real (deterministic) title wins over the number echo.
+function isBareNumberTitle(title, number) {
+    if (number == null) return false;
+    const t = String(title || '').trim();
+    return /^\d{1,3}$/.test(t) && parseInt(t, 10) === number;
+}
+
 /**
  * Validate/sanitize a raw LLM structure result before applying it.
  * Returns a cleaned copy or null. Drops unanchorable elements, enforces
@@ -498,20 +508,26 @@ function sanitizeStructure(aiResult, candidates, sourceText) {
                     candidate_id: cand.id,
                     confidence: conf,
                 };
+                if (el.number !== undefined && el.number !== null) {
+                    const n = sanitizeChapterNumber(el.number);
+                    if (!n) return null;
+                    out.number = n;
+                }
                 if (el.title !== undefined && el.title !== null) {
                     const t = String(el.title).trim();
-                    if (t === '') {
+                    // A chapter title that is just the bare number ("Глава 1" →
+                    // title "1", number 1) is the LLM echoing the number as the
+                    // title — NOT a real title. Null it so the deterministic
+                    // backbone title ("НИКОГДА...") survives for the same line
+                    // (import_1786345731767 → intro unit text "Глава 1\n1").
+                    const bareNumberTitle = isBareNumberTitle(t, out.number);
+                    if (t === '' || bareNumberTitle) {
                         out.title = null;   // titleless chapter — keep the boundary
                     } else {
                         const clean = sanitizeTitleLike(t);
                         if (!clean) return null; // genuinely invalid non-empty title
                         out.title = clean;
                     }
-                }
-                if (el.number !== undefined && el.number !== null) {
-                    const n = sanitizeChapterNumber(el.number);
-                    if (!n) return null;
-                    out.number = n;
                 }
                 return out;
             })
@@ -1026,10 +1042,53 @@ function mergeAiDecisions(sourceText, aiResult) {
     let prevBoundaryLi = null;
     let isFirst = true;
 
+    const byLine = new Map(candidates.map(c => [c.lineIndex, c]));
+
     for (const li of boundaryLines) {
         const info = boundaryByLine.get(li);
         const bStart = lineMeta[li].startOffset;
         if (bStart < prevEndOffset) continue;
+
+        // ── Multi-line header continuation (AI merge path) ──
+        // "Глава 1" + (blank lines) + "ЗАГОЛОВОК" is ONE header — the ALL-CAPS
+        // title line becomes the title of the numbered line. The LLM routinely
+        // classifies BOTH lines as separate chapters (import_1786345731767 →
+        // duplicate "Глава 1" / "НИКОГДА..." segments and the intro unit text
+        // "Глава 1\n1"). Mirror the deterministic map's merge: a title-like
+        // line within a few lines below a keyword-headed boundary is that
+        // boundary's TITLE, not a new segment.
+        const prevCand = prevBoundaryLi !== null ? byLine.get(prevBoundaryLi) : null;
+        const curCand = byLine.get(li);
+        const prevInfo = prevBoundaryLi !== null ? boundaryByLine.get(prevBoundaryLi) : null;
+        const isHeaderContinuation = prevBoundaryLi !== null && prevCand && curCand && prevInfo &&
+            li - prevBoundaryLi <= 3 &&
+            curCand.blankLinesBefore <= 2 &&
+            curCand.length >= 2 && curCand.length <= 60 &&
+            (curCand.allCaps || !curCand.sentencePunctuation) &&
+            curCand.followedByLongParagraph &&
+            prevCand.headingLikelihood >= 0.55 &&
+            !!prevInfo.label; // previous boundary is keyword-headed (Глава/Пролог/…)
+        if (isHeaderContinuation) {
+            const last = rebuilt[rebuilt.length - 1];
+            if (last) {
+                const contTitle = info.title || curCand.text;
+                const prevTitle = last.title ? String(last.title).trim() : '';
+                const prevIsBareNumber = isBareNumberTitle(prevTitle, last.number);
+                const contIsBareNumber = isBareNumberTitle(contTitle, info.number);
+                if (!prevTitle || prevIsBareNumber) {
+                    // The ALL-CAPS line is the REAL title — it wins over the
+                    // header's own empty or bare-number title ("Глава 1" + title
+                    // "1" → "НИКОГДА...").
+                    last.title = contIsBareNumber ? curCand.text : contTitle;
+                }
+                // else: the header already carries a real title — keep it and
+                // drop the duplicate segment.
+            }
+            // The continuation line is absorbed as the header's title: it gets
+            // NO new segment and its own LLM number (if any) is intentionally
+            // discarded — the header's number is the chapter number.
+            continue;
+        }
 
         // Adjacent boundary line → continuation title of the previous header
         // (multi-line headers like "Глава 1" + "Земля").
@@ -1091,10 +1150,21 @@ function mergeAiDecisions(sourceText, aiResult) {
     const partSegs = rebuilt.filter(s => s.type === 'part' && s.endOffset > s.startOffset);
     const cleanSegs = rebuilt.filter(s => s.endOffset > s.startOffset && s.type !== 'part');
 
-    // Number chapters in order if the LLM didn't provide numbers.
-    let autoNum = 1;
-    for (const s of cleanSegs) {
-        if (s.type === 'chapter' && s.number == null) s.number = autoNum++;
+    // ── Chapter numbering ──────────────────────────────────────
+    // Renumber chapters in reading order unless the LLM's numbers are already
+    // a clean 1..N sequence. Absorption of ALL-CAPS title lines drops their
+    // duplicate numbers — but when the LLM numbered EVERY line sequentially
+    // (1,2,3,4...) instead of pairing "Глава N" with its title, the surviving
+    // headers keep gaps (1,3,5...). Renumber like the deterministic map does
+    // (nextNum), so chapter numbers always match reading order. This also
+    // fills null numbers, preserving the legacy behavior.
+    const chapterNums = cleanSegs.filter(s => s.type === 'chapter').map(s => s.number);
+    const isCleanSequence = chapterNums.every((n, i) => n === i + 1);
+    if (!isCleanSequence) {
+        let autoNum = 1;
+        for (const s of cleanSegs) {
+            if (s.type === 'chapter') s.number = autoNum++;
+        }
     }
 
     const hasPrologue = cleanSegs.some(s => s.type === 'prologue');
