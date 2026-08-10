@@ -11,7 +11,7 @@ async function ensureBook(bookId, title, author, language) {
             author = COALESCE(NULLIF($6, ''), books.author),
             language = COALESCE(NULLIF($7, ''), books.language),
             updated_at = EXTRACT(EPOCH FROM NOW())::bigint
-    `, [bookId, title || null, author || null, language || 'ru',
+    `, [bookId, title || null, author || null, language || 'en',
         title || '', author || '', language || '']);
 }
 

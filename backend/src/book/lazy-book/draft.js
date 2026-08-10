@@ -12,6 +12,21 @@ const {
     getCharactersPath, getMentionsPath, getBiblePath, getLocationsPath, getVoicesPath, getChapterDir,
     generateBookId,
 } = require('./paths');
+const languageDetector = require('../../services/language-detector');
+
+// Detect the source language programmatically (tinyld — pure JS, no LLM) and
+// persist it into book.json (`language` + `defaults.language`). Unknown/empty
+// input falls back to 'en', never 'ru'. `language` is the SOURCE language; an
+// explicit value is never overwritten by callers — draft creation starts with
+// language: null, and the load backfill runs only when the field is empty.
+function applyDetectedLanguage(bookMeta, sourceText, bookDir) {
+    const detectedLanguage = languageDetector.detectLanguage(sourceText);
+    bookMeta.language = detectedLanguage;
+    if (!bookMeta.defaults) bookMeta.defaults = {};
+    bookMeta.defaults.language = detectedLanguage;
+    fs.writeFileSync(getBookMetaPath(bookDir), JSON.stringify(bookMeta, null, 2));
+    return detectedLanguage;
+}
 
 function createDraftBook(sourceText, sourceType, title) {
     const bookId = generateBookId(title || 'untitled');
@@ -46,7 +61,7 @@ function createDraftBook(sourceText, sourceType, title) {
         },
         defaults: {
             narration_voice: 'narrator',
-            language: 'ru',
+            language: 'en',
             scene: { auto_anchors: true, spatial_lock: true },
             iu: { character_binding: true },
         },
@@ -57,11 +72,15 @@ function createDraftBook(sourceText, sourceType, title) {
         },
     };
 
+    // ── Language detection (TXT → language detection → book.json → pipeline) ──
+    // Runs right after the raw text is read and BEFORE any scene/agent
+    // generation (see applyDetectedLanguage above).
+    const detectedLanguage = applyDetectedLanguage(bookMeta, sourceText, bookDir);
+
     fs.writeFileSync(getManifestPath(bookDir), JSON.stringify(manifest, null, 2));
-    fs.writeFileSync(getBookMetaPath(bookDir), JSON.stringify(bookMeta, null, 2));
     fs.writeFileSync(getSourcePath(bookDir), sourceText, 'utf8');
 
-    console.log(`[LAZY-BOOK] RAW_IMPORTED: ${bookId} (${sourceType}, ${manifest.import_meta.original_size} bytes)`);
+    console.log(`[LAZY-BOOK] RAW_IMPORTED: ${bookId} (${sourceType}, ${manifest.import_meta.original_size} bytes, language=${detectedLanguage})`);
     return { bookId, manifest, book: bookMeta };
 }
 
@@ -103,6 +122,18 @@ function loadDraftBook(bookId) {
         const voPath = getVoicesPath(bookDir);
         if (fs.existsSync(voPath)) {
             voices = JSON.parse(fs.readFileSync(voPath, 'utf8'));
+        }
+
+        // ── Lazy language backfill (legacy books) ──
+        // Books imported before programmatic detection may carry an empty
+        // book.language (the old pipeline never wrote it — and the pipeline
+        // would silently fall back to a hardcoded 'ru', corrupting the
+        // generation language for non-Russian books). Fill it ONCE from the
+        // source text. An explicitly set value (including user-set via the
+        // metadata PATCH) is never overwritten — backfill only when empty.
+        if (!bookMeta.language && sourceText && typeof sourceText === 'string' && sourceText.trim()) {
+            const detectedLanguage = applyDetectedLanguage(bookMeta, sourceText, bookDir);
+            console.log(`[LAZY-BOOK] Backfilled language=${detectedLanguage} for ${bookId}`);
         }
 
         const chapters = [];

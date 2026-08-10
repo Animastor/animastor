@@ -3,7 +3,7 @@
 // ======================================================
 // Tests for the language helpers added to agent-prompts.js:
 //   - buildLangInstruction(lang) — VALUE substituted for the %LANGUAGE% placeholder
-//   - resolveBookLanguage(draft)  — book.language → defaults.language → detectLanguage → 'ru'
+//   - resolveBookLanguage(draft)  — book.language → detectLanguage(sourceText) → 'en'
 //   - langName(code)              — language code → display name
 // Plus placeholder wiring in ai/rules/*.md:
 //   - UI-facing rules carry "%LANGUAGE%" point-wise next to user-facing fields
@@ -36,10 +36,10 @@ describe('buildLangInstruction — %LANGUAGE% value', () => {
         expect(buildLangInstruction('de')).to.equal('German (de)');
     });
 
-    it('defaults to ru when language is missing', () => {
-        expect(buildLangInstruction(undefined)).to.equal('Russian (ru)');
-        expect(buildLangInstruction(null)).to.equal('Russian (ru)');
-        expect(buildLangInstruction('')).to.equal('Russian (ru)');
+    it('defaults to en when language is missing (old ru default removed)', () => {
+        expect(buildLangInstruction(undefined)).to.equal('English (en)');
+        expect(buildLangInstruction(null)).to.equal('English (en)');
+        expect(buildLangInstruction('')).to.equal('English (en)');
     });
 
     it('normalizes uppercase language codes', () => {
@@ -165,9 +165,13 @@ describe('resolveBookLanguage — book language resolution', () => {
         expect(resolveBookLanguage({ book: { language: 'en' } })).to.equal('en');
     });
 
-    it('falls back to defaults.language when book.language is null', () => {
-        expect(resolveBookLanguage({ book: { language: null, defaults: { language: 'de' } } }))
-            .to.equal('de');
+    it('no longer consults defaults.language (hidden ru fallback removed) — detection wins', () => {
+        // Even if a stale defaults.language exists (legacy 'ru' default), the
+        // SOURCE text detection drives the resolution.
+        expect(resolveBookLanguage({
+            book: { language: null, defaults: { language: 'de' } },
+            sourceText: 'Привет, это русский текст книги для проверки определения языка.',
+        })).to.equal('ru');
     });
 
     it('detects Russian from sourceText when no explicit language', () => {
@@ -180,8 +184,8 @@ describe('resolveBookLanguage — book language resolution', () => {
         expect(resolveBookLanguage(draft)).to.equal('en');
     });
 
-    it('returns ru for a null draft', () => {
-        expect(resolveBookLanguage(null)).to.equal('ru');
+    it('returns en for a null draft', () => {
+        expect(resolveBookLanguage(null)).to.equal('en');
     });
 });
 

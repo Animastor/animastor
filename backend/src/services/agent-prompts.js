@@ -108,7 +108,7 @@ const LANG_NAMES = {
  * @returns {string} e.g. 'Russian'
  */
 function langName(lang) {
-    const code = (lang || 'ru').toLowerCase();
+    const code = (lang || 'en').toLowerCase();
     return LANG_NAMES[code] || code;
 }
 
@@ -128,7 +128,7 @@ function langName(lang) {
  * @returns {string} e.g. "Russian (ru)"
  */
 function buildLangInstruction(lang) {
-    const code = (lang || 'ru').toLowerCase();
+    const code = (lang || 'en').toLowerCase();
     const name = langName(code);
     return `${name} (${code})`;
 }
@@ -151,18 +151,23 @@ function fillLang(template, lang) {
 
 /**
  * Resolve the effective book language from a loaded draft book.
- * Order: book.language → defaults.language → detectLanguage(sourceText) → 'ru'.
+ * Order: book.language → detectLanguage(sourceText) → 'en'.
+ *
+ * `book.language` is the SOURCE language, set programmatically at import time
+ * (services/language-detector.js). The legacy `defaults.language` no longer
+ * drives resolution and the old hardcoded 'ru' fallback is removed — an
+ * undetectable/unknown text falls back to 'en'.
  * @param {{book?: object, sourceText?: string}|null} draft
  * @returns {string}
  */
 function resolveBookLanguage(draft) {
-    if (!draft) return 'ru';
+    if (!draft) return 'en';
     const book = draft.book || {};
     if (book.language) return book.language;
-    if (book.defaults && book.defaults.language) return book.defaults.language;
-    // parser.js is dependency-free — safe to require directly (no circular import).
+    // parser.js requires only services/language-detector.js (→ tinyld) — no
+    // circular import, safe to require directly.
     const { detectLanguage } = require('../book/lazy-book/parser');
-    return detectLanguage(draft.sourceText || '') || 'ru';
+    return detectLanguage(draft.sourceText || '') || 'en';
 }
 
 module.exports = {

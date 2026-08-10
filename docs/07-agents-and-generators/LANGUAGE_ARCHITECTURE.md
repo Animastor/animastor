@@ -101,7 +101,8 @@ GPU-поля (appearance, environment) плейсхолдер не получа�
 ### Как это реализовано в пайплайне
 
 - **`resolveBookLanguage(draft)`** (`agent-prompts.js`) — резолвит язык книги:
-  `draft.book.language || draft.book.defaults.language || detectLanguage(sourceText) || 'ru'`.
+  `draft.book.language || detectLanguage(sourceText) || 'en'` (без скрытого `defaults.language`
+  и без старого дефолта `'ru'`).
 - **`buildLangInstruction(lang)`** (`agent-prompts.js`) — возвращает **значение** для
   плейсхолдера, например `Russian (ru)`.
 - **`fillLang(template, lang)`** (`agent-prompts.js`) — заменяет **все** вхождения
@@ -156,6 +157,27 @@ GPU-поля (appearance, environment) плейсхолдер не получа�
 **Фундамент уже заложен:** проброс `language` (раздел 4) — это единственная точка, которая
 нужна для любой из стратегий. Сам перевод — отдельная фича (новый шаг + `ai/rules/translate.md`),
 реализуется позже, когда практика покажет нужность.
+
+### Как определяется язык исходника (`book.json.language`)
+
+`book.json.language` — это язык **исходного текста** (source language). Он определяется
+**программно** на этапе импорта (`TXT → language detection → book.json → pipeline`),
+сразу после чтения файла и ДО запуска генерации сцен/агентов:
+
+1. Если `book.json.language` уже задан явно — автоматически не переписывается.
+2. Если пусто — определение идёт по исходному TXT (`services/language-detector.js`, библиотека
+   **tinyld**: чистый JS, без LLM, коды ISO 639-1, 62 языка; украинский/болгарский больше не
+   путаются с русским, как в старой эвристике «кириллица = ru»).
+3. Если detector уверен — код записывается в `book.json` (и в `defaults.language`).
+4. Если detector не смог определить (пустой/слишком короткий/низкая уверенность) — `'en'`.
+
+Старый дефолт `'ru'` убран по всему бэкенду (draft, pipeline-runner, Postgres, промпты).
+Для книг, импортированных до этой схемы, пустой `language` дополняется лениво при загрузке
+черновика (backfill из исходника, явно заданное значение не трогается).
+
+Будущее разделение «source language / output (generation) language» (перевод книги) —
+отдельная архитектурная задача; текущее решение её не блокирует, т.к. `language`
+трактуется именно как язык исходника.
 
 ## 6. Конвенция для новых модулей
 

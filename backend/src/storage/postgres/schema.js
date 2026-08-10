@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS books (
     user_id         UUID REFERENCES users(user_id),
     title           TEXT,
     author          TEXT,
-    language        TEXT DEFAULT 'ru',
+    language        TEXT DEFAULT 'en',
     visibility      TEXT DEFAULT 'private' CHECK(visibility IN ('private','public','shared')),
     tags            TEXT[] DEFAULT '{}',
     created_at      BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::bigint),

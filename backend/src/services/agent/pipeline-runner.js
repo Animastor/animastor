@@ -264,7 +264,7 @@ function resolveSceneProgress(sceneText, scenes, sourceOffsetBase) {
 async function runPipeline(sessionId, text, existingChars, existingLocs, stepIndex, progress, baseSceneCount, options = {}) {
     const _progress = progress || (() => {});
     const { publishProgress, bookId, redis: redisClient } = options;
-    const language = options.language || 'ru';  // book language — localized user-facing text only
+    const language = options.language || 'en';  // book language — localized user-facing text only (never default to 'ru')
     const sceneOffset = baseSceneCount || 0;
 
     // Book-level default country/epoch — passed to the scene split step so the
@@ -877,7 +877,7 @@ async function runPipeline(sessionId, text, existingChars, existingLocs, stepInd
 async function processCachedScenes(sessionId, scenes, characters, locations, mentions, stepIndex, progress, baseSceneCount, options = {}) {
     const _progress = progress || (() => {});
     const { publishProgress, bookId, redis: redisClient } = options;
-    const language = options.language || 'ru';  // book language — localized user-facing text only
+    const language = options.language || 'en';  // book language — localized user-facing text only (never default to 'ru')
     const sceneOffset = baseSceneCount || 0;
     const effectiveChunkSize = _resolveChunkSize(options);
 

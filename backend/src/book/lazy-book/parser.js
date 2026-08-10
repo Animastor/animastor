@@ -180,11 +180,10 @@ function splitIntoUnits(sceneText) {
 }
 
 function detectLanguage(text) {
-    const sample = text.slice(0, 2000);
-    const cyrillicCount = (sample.match(/[\u0400-\u04FF]/g) || []).length;
-    const latinCount = (sample.match(/[a-zA-Z]/g) || []).length;
-    if (cyrillicCount > latinCount) return 'ru';
-    return 'en';
+    // Programmatic detection via tinyld (services/language-detector.js): pure
+    // JS, no LLM, ISO 639-1 codes, unknown → 'en'. The legacy Cyrillic-vs-Latin
+    // heuristic misclassified Ukrainian/Bulgarian/Serbian as Russian — replaced.
+    return require('../../services/language-detector').detectLanguage(text);
 }
 
 module.exports = {
