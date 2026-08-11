@@ -168,13 +168,17 @@
          the mobile web frontend 1:1; the compact 70dp bar height is set in activity_main.xml
          (80dp M3 default kept only as minHeight, which an exact layout_height overrides).
          Active and inactive share the same appearance on purpose (like the web — only the
-         color changes); itemTextAppearance overrides the layout's small/large label sizes. -->
+         color changes); itemTextAppearance overrides the layout's small/large label sizes.
+         itemTextAppearanceActiveBoldEnabled=false is REQUIRED: Material 1.11.0 otherwise
+         force-bolds the active (large) label via setTextAppearanceActiveBoldEnabled(true)
+         (NavigationBarView constructor default), which the web does not do (weight stays 500). -->
     <style name="Widget.Animastor.BottomNavigation" parent="Widget.Material3.BottomNavigationView">
         <item name="backgroundTint">?attr/colorSurface</item>
         <item name="itemIconTint">?attr/colorOnSurfaceVariant</item>
         <item name="itemTextColor">?attr/colorOnSurfaceVariant</item>
         <item name="itemTextAppearanceActive">@style/TextAppearance.Animastor.TabLabel</item>
         <item name="itemTextAppearanceInactive">@style/TextAppearance.Animastor.TabLabel</item>
+        <item name="itemTextAppearanceActiveBoldEnabled">false</item>
         <item name="itemRippleColor">?attr/colorPrimaryContainer</item>
         <item name="itemActiveIndicatorStyle">@style/Widget.Animastor.BottomNavIndicator</item>
         <item name="elevation">8dp</item>
@@ -301,11 +305,15 @@
     <!-- Tab label appearance (mirrors Material3 LabelLarge explicitly). Compacted
          14sp → 13sp for the denser 70dp nav bar — parity with the mobile web
          frontend (base.css .tabbar__item is 13sp/500). Also used by the Developer
-         View TabLayout. -->
+         View TabLayout.
+         android:textStyle=normal overrides LabelLarge's inherited bold — on
+         API < 28 textFontWeight is ignored, so without it labels would render
+         bold there (web keeps weight 500 in both states). -->
     <style name="TextAppearance.Animastor.TabLabel" parent="TextAppearance.Material3.LabelLarge">
         <item name="android:textSize">13sp</item>
         <item name="android:fontFamily">sans-serif-medium</item>
         <item name="android:textFontWeight">500</item>
+        <item name="android:textStyle">normal</item>
     </style>
 
     <!-- TabLayout -->
