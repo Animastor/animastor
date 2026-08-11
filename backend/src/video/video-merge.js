@@ -104,6 +104,7 @@ async function mergeSceneVideoGroups(redis, buildId, bookId, chapterId, sceneId,
     }
     try {
         const files = findSceneVideoGroups(buildId, bookId, chapterId, sceneId, suffixes);
+        log(`mergeSceneVideoGroups: scene=${bookId}/${chapterId}/${sceneId} suffixes=[${(suffixes || []).join(',')}] files=[${files.map(f => path.basename(f)).join(', ')}]`);
         if (files.length === 0) {
             log(`Nothing to merge for ${bookId}/${chapterId}/${sceneId} (no group files)`);
             return null;

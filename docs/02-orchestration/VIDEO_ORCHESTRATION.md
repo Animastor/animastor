@@ -2,7 +2,8 @@
 
 > **Дата:** 2026-08-11
 > **Статус:** внедрено (вариант B по ТЗ «video chunks по аналогии с audio chunks,
-> но без обязательной склейки в pipeline»).
+> но без обязательной склейки в pipeline»); подтверждено live-тестом 11.08
+> (см. §8) — 5/5 групп доехали, склейка и READY сработали.
 > **Ключевые файлы:** `backend/src/services/video-orchestrator.js` (новый),
 > `backend/src/video/video-merge.js`, `backend/src/video/video-service.js`,
 > `backend/src/orchestration/scene-orchestrator.js`,
@@ -260,7 +261,61 @@ backend (layer-config: video_timeout_minutes, дефолт 60, диапазон 
 
 ---
 
-## 8. Деплой-чеклист
+## 8. Live-тест 2026-08-11: что нашлось и исправлено
+
+Полный E2E-прогон сцены `sc-45d38693` (5 групп, по 1 юниту) подтвердил работу
+всей цепочки и вскрыл 3 проблемы:
+
+### 8.1 Цепочка отработала полностью
+
+```
+VIDEO_DISPATCH groups=['_g1'..'_g5'] (timeout=60 min from layer-config)
+📥 Task _g1.._g5:video timeout_ms:3600000   → все 5 в очереди hub'а
+🚀 _g1.._g5 → gpu-n-94d62b6a (video)        → воркер
+📤 Result _g1.._g5 (2.95–9.59MB)            → ВСЕ 5 дошли, каждые ~3 мин
+[VIDEO-ORCH] 5/5 groups received
+[VIDEO-MERGE] mergeSceneVideoGroups suffixes=[_g1.._g5]
+[VIDEO-ORCH] DONE (5 groups merged → scene.mp4)
+[ORCH] [PG-VIDEO-READY] status=ready        → asset.video = READY
+```
+
+Вчерашний инцидент «пришёл только первый чанк» больше не воспроизводится:
+все 5 групп сохранены отдельными файлами `_gN.mp4`, склейка в `scene.mp4`
+(23MB) произошла только после прихода ВСЕХ групп, плеер отдаёт полное видео.
+
+### 8.2 Проблемы, найденные при тесте (и их фиксы)
+
+1. **Stale `image=generating` блокировал видео (не код, а данные).** После
+   рестарта gpu-hub image-воркер получил `💀 GPU timeout` и умер; `iu-in-flight`
+   ключи протухли по TTL, но asset-state `image=generating` остался →
+   `imageEnabled=true` (in-flight) → видео не диспатчилось (ждёт `image=ready`
+   своей сцены — локальная зависимость работает как задумано). Разблокировано
+   вручную: `HSET image=ready` (картинки уже были на диске и зарегистрированы).
+2. **Fast-track merge падал с `orchestrator is not defined`** (наш баг): в
+   `executeVideoDispatch` переменная `orchestrator` не была импортирована
+   (только деструктуризация `{ completeStage, ... }`), а `completeGroup`
+   требует `deps.orchestrator`. Фикс: `const orchestrator = require('./orchestrator')`.
+3. **VERSION-GATE: legacy-книги без строки `scenes` в PG не получали READY**
+   (пред-существующий): `completeStage` fail-closed — `SELECT content_version`
+   → 0 строк → `shouldWriteReady=false` → DIRTY → бесконечный цикл
+   `dirty → fast-track → DONE → dirty`. А строка `scene_assets` video создаётся
+   только `markReady`, который вызывается ПОСЛЕ gate — замкнутый круг.
+   Фикс: при 0 строк в `scenes` gate считается пройденным (сцена без
+   version-схемы не может устареть); fail-closed для реальных схем сохранён.
+
+### 8.3 Операционные заметки для тестов
+
+- Перед тестом пересобрать **gpu-hub** (`docker compose up -d --build gpu-hub`)
+  — иначе старый hub (без live-mount) не пробросит `timeout_ms` и убьёт
+  долгие видео на 10-мин GPU_TIMEOUT.
+- Воркеры на GPU-инстансе должны иметь актуальный `worker.cjs` (из пуша).
+- Для обхода мёртвого image-воркера при тесте картинка юнита была подменена
+  копией соседней (данные, не код) — при следующей нормальной генерации
+  сгенерируется настоящая.
+
+---
+
+## 9. Деплой-чеклист
 
 1. **Слить очереди gpu-hub перед выкатом** — старые job'ы вида `{scene}:video`
    (без `_g1`) пишут в `scene.mp4`, что теперь конфликтует с путём склейки.
@@ -274,7 +329,7 @@ backend (layer-config: video_timeout_minutes, дефолт 60, диапазон 
 
 ---
 
-## 9. Тесты
+## 10. Тесты
 
 - `backend/tests/video-orchestrator.test.js` (новый, 18 тестов): переходы state
   machine, completeGroup по одной группе, merge-failure, lock-гонка, stale-dispatch,
@@ -284,7 +339,9 @@ backend (layer-config: video_timeout_minutes, дефолт 60, диапазон 
   уважает `task.timeout_ms` + видео-fallback ≥ 1 часа).
 - `backend/tests/reconciliation-engine.test.js`: `checkStalledVideoScenes` учитывает
   layer-config.
-- Весь mocha-сьют: **1065 passing** (было 1015).
+- `backend/tests/happy-path.test.js`: +2 теста VERSION-GATE (legacy-книга без
+  строки `scenes` → READY; stale-версии при существующей схеме → DIRTY).
+- Весь mocha-сьют: **1067 passing** (было 1015).
 
 <!-- === Footer === -->
 ---

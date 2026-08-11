@@ -264,6 +264,7 @@ async function waitResult(prompt_id, workflow, timeoutMs) {
   const outputsMap = findOutputNodes(workflow);
   const isVideoJob = outputsMap.video.length > 0;
   const effectiveTimeoutMs = timeoutMs || (isVideoJob ? VIDEO_RESULT_TIMEOUT_MS : RESULT_TIMEOUT_MS);
+  log("debug", `waitResult: ${isVideoJob ? 'video' : 'other'} prompt=${prompt_id} timeoutMs=${effectiveTimeoutMs} (task.timeout_ms=${timeoutMs || 'none'})`);
 
   let videoDir, beforeFiles, videoPrefix;
   if (isVideoJob) {
@@ -480,7 +481,7 @@ async function workerLoop() {
     }
     emptyQueueDelay = TASK_SLEEP_MS; // reset on task received
 
-    log("info", `Task ${task.job_id}`);
+    log("info", `Task ${task.job_id} (type=${WORKER_TYPE}, timeout_ms=${task.timeout_ms || 'default'})`);
 
     if (task.protocol_version !== PROTOCOL_VERSION || !task.dispatch_id) {
       const reason = `incompatible_task_protocol:${task.protocol_version || 'missing'}`;
@@ -521,6 +522,7 @@ async function workerLoop() {
       // таймаут для данного типа генерации. Если нет — per-type fallback.
       const result = await waitResult(prompt_id, task.params, task.timeout_ms);
       const base64 = await downloadResult(result);
+      log("debug", `result for ${task.job_id}: type=${result.type} size=${Math.round(base64.length / 1024)}KB`);
       await sendResult(task, base64);
       log("info", `Done ${task.job_id}`);
 

@@ -196,6 +196,7 @@ module.exports = function(redis, config, deps) {
                 // ТОЛЬКО после прихода всех групп (склейка для плеера), а не на
                 // первый результат — это фикс потери чанков _g2.._gN.
                 const videoOrch = require('./video-orchestrator');
+                log(`[VIDEO-RESULT] scene_video: job=${job_id} group='${parsed.groupSuffix || '(base)'}' bytes=${resultBuffer.length} → completeGroup`);
                 try {
                     await videoOrch.completeGroup(redis, parsed.bookId, parsed.chapterId, parsed.sceneId, parsed.groupSuffix, build_id, {
                         orchestrator,

@@ -45,6 +45,55 @@ All notable changes to Animastor are documented here.
     `task.timeout_ms` и видео-fallback ≥ 1 часа, `checkStalledVideoScenes` учитывает
     layer-config); весь mocha-сьют (1065, было 1058) проходит.
 
+- **VERSION-GATE больше не блокирует READY для legacy-книг без version-схемы (замкнутый круг «DONE → DIRTY → fast-track → DONE»)**
+  (`backend/src/orchestration/orchestrator.js`,
+  `backend/tests/happy-path.test.js` +2 теста):
+  - **Проблема (найдена при live-тесте 11.08, книга `import_1786345731767_1786345734345`):**
+    сцена после успешной склейки видео (DONE, `scene.mp4` создан, registry `ready`)
+    НЕ получала `READY` и каждый тик планировщика крутилась в
+    `dirty → fast-track merge → DONE → VERSION-GATE stale → dirty`. Причина: у
+    legacy-книг (импорт без version-схемы) в PG **нет строки в таблице `scenes`** —
+    `completeStage` работал fail-closed: `SELECT content_version FROM scenes` → 0 строк
+    → `shouldWriteReady=false` → DIRTY. А строка `scene_assets` video создаётся ТОЛЬКО
+    `markReady`, который вызывается ПОСЛЕ gate — замкнутый круг, READY был недостижим.
+  - **Фикс:** при `sceneResult.rows.length === 0` (сцена без version-схемы) gate
+    считается пройденным — сцена не может устареть относительно несуществующей
+    версии. Fail-closed для РЕАЛЬНЫХ version-схем сохранён (устаревшие версии asset
+    по-прежнему блокируют READY — контрольный тест).
+  - Проверки: 2 новых теста (legacy без строки scenes → READY + markReady; stale-версии
+    при существующей схеме → DIRTY, fail-closed не сломан); весь mocha-сьют (1067, было
+    1065) проходит; live: сцена `sc-45d38693` получила `[PG-VIDEO-READY] status=ready`,
+    активный индекс опустел, цикл остановлен.
+
+- **Fast-track merge видео падал с `orchestrator is not defined`**
+  (`backend/src/orchestration/scene-orchestrator.js`):
+  - **Проблема (найдена при live-тесте 11.08):** при полном cache-hit (все группы на
+    диске) `executeVideoDispatch` вызывал `videoOrch.completeGroup(..., { orchestrator,
+    dispatchId })`, но переменная `orchestrator` не была импортирована (сверху только
+    деструктуризация `{ completeStage, failStage, ... }`) → `ReferenceError` →
+    `DISPATCH_FAILED: orchestrator is not defined` → сцена в вечном fast-track-цикле
+    без склейки.
+  - **Фикс:** полный `const orchestrator = require('./orchestrator')` добавлен рядом с
+    деструктуризацией (нужен как `deps.orchestrator` для `completeGroup`).
+  - Проверки: весь mocha-сьют (1067) проходит; live: fast-track merge отработал
+    (`5/5 groups cached → MERGING → DONE → PG-VIDEO-READY`).
+
+- **Debug-логи для трассировки видео-цепочки при тестировании**
+  (`backend/src/orchestration/scene-orchestrator.js`,
+  `backend/src/services/video-orchestrator.js`,
+  `backend/src/services/task-handler.cjs`,
+  `backend/src/routes/generation-routes.cjs`,
+  `backend/src/video/video-merge.js`,
+  `gpu-hub/gpu-hub.js`,
+  `worker/worker/worker.cjs`):
+  - Сквозная трассировка `ComfyUI → gpu-hub → worker → backend → merge → serve` по
+    одному job_id: `VIDEO_DISPATCH groups=[...]`, `📥 Task ... timeout_ms:...` (hub),
+    `waitResult: ... timeoutMs=...` (worker), `[VIDEO-RESULT] scene_video: group='_g2'`
+    (backend), `[VIDEO-ORCH] completeGroup: ... X/5 groups received`,
+    `[VIDEO-MERGE] mergeSceneVideoGroups suffixes=[...]`, `[VIDEO-SERVE] merged scene.mp4`.
+  - Проверки: весь mocha-сьют (1067) проходит; live-тест проследил полную цепочку от
+    dispatch до READY.
+
 ### Added
 
 - **Video Orchestrator: видео-группы сцены проходят полный lifecycle, чанки не теряются, склейка — только для плеера**

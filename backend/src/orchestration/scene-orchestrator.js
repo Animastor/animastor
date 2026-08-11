@@ -10,6 +10,9 @@ const { log, warn, logEvent } = require('./scene-utils');
 const { handleAudioCompleted, handleImageCompleted, handleVideoCompleted } = require('./scene-callbacks');
 const { restoreSceneChunkStatus } = require('./scene-restoration');
 const { completeStage, failStage, setScenePending, setSceneGenerating } = require('./orchestrator');
+// Полный модуль нужен для fast-track video-orch (completeGroup принимает
+// deps.orchestrator) — деструктуризация выше не покрывает этот кейс.
+const orchestrator = require('./orchestrator');
 
 // ======================================================
 // SCENE ORCHESTRATOR
@@ -319,6 +322,7 @@ async function executeVideoDispatch(redis, scene, loadedBook, buildId, dispatchI
             unit_ids: Array.isArray(js.unit_ids) ? js.unit_ids : [],
         };
     });
+    log(`VIDEO_DISPATCH: ${bookId}/${chapterId}/${sceneId} groups=[${groups.map(g => `'${g.suffix || '(base)'}'(${g.unit_ids.length}u)`).join(', ')}]`);
 
     // ── OLD-STATE SNAPSHOT ДО initState ──
     // initState перезаписывает state, поэтому состав групп прошлого диспатча

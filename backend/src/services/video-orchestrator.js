@@ -197,6 +197,7 @@ async function markGroupDone(redis, bookId, chapterId, sceneId, groupSuffix) {
         state.groups_received = (state.groups_received || 0) + 1;
         state.last_group_at = Date.now();
         await setState(redis, bookId, chapterId, sceneId, state);
+        log(`group '${groupSuffix || '(base)'}' done → ${state.groups_received}/${state.groups.length} groups received`);
     }
     return state;
 }
@@ -246,6 +247,8 @@ function isGroupFileValid(buildId, bookId, chapterId, sceneId, suffix) {
 async function completeGroup(redis, bookId, chapterId, sceneId, groupSuffix, buildId, deps = {}) {
     const { orchestrator, dispatchId } = deps;
     const buildDir = path.join(config.OUTPUT_DIR, buildId);
+
+    log(`completeGroup: scene=${bookId}/${chapterId}/${sceneId} group='${groupSuffix || '(base)'}' build=${buildId} dispatch=${dispatchId ? dispatchId.slice(0, 12) : 'none'}`);
 
     const orchState = await getState(redis, bookId, chapterId, sceneId);
     if (!orchState) {
@@ -305,6 +308,11 @@ async function completeGroup(redis, bookId, chapterId, sceneId, groupSuffix, bui
 
     // ── Отмечаем пришедшую группу done + проверяем комплектность ──
     await markGroupDone(redis, bookId, chapterId, sceneId, groupSuffix);
+
+    const grpPath = groupFilePath(buildId, bookId, chapterId, sceneId, groupSuffix);
+    let grpSize = 0;
+    try { grpSize = fs.statSync(grpPath).size; } catch (_) {}
+    log(`group '${groupSuffix || '(base)'}' on disk: ${(grpSize / 1024 / 1024).toFixed(2)}MB`);
 
     const suffixes = groupSuffixes(orchState);
     const missing = suffixes.filter(s => !isGroupFileValid(buildId, bookId, chapterId, sceneId, s));

@@ -313,7 +313,7 @@ app.post("/task", requireApiKey, async (req, res) => {
 
   const type = job_type || "image"
 
-  console.log("📥 Task:", job_id, type, "build:", build_id)
+  console.log("📥 Task:", job_id, type, "build:", build_id, "timeout_ms:", timeout_ms || "(default)")
 
   // SYNC: backend/src/runtime/job-schema.js (PROTOCOL_VERSION)
   if (protocol_version !== PROTOCOL_VERSION) {
@@ -450,7 +450,7 @@ app.get("/task/next", async (req, res) => {
     })
   )
 
-  console.log(`🚀 ${task.job_id} → ${worker} (${task.job_type}) build:${task.build_id || "none"}`)
+  console.log(`🚀 ${task.job_id} → ${worker} (${task.job_type}) build:${task.build_id || "none"} timeout_ms:${task.timeout_ms || "(default)"}`)
 
   // Mark worker as busy in heartbeat
   try {
@@ -483,7 +483,7 @@ app.post("/task/result", async (req, res) => {
     return res.status(400).json({ error: "invalid" })
   }
 
-  console.log("📤 Result:", job_id, "build:", build_id || "none")
+  console.log("📤 Result:", job_id, "build:", build_id || "none", "size:", Math.round((result_base64 || "").length / 1024), "KB")
 
   // Read running info to get worker/job_type before deleting
   let runningInfo = null;

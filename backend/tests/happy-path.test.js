@@ -1474,6 +1474,53 @@ describe('Happy Path: Orchestrator facade — completeStage', () => {
         expect(result.completed).to.be.true;
     });
 
+    // VERSION-GATE fix: legacy-книги (импорт без version-схемы) не имеют
+    // строки в таблице scenes — fail-closed вечно блокировал бы READY
+    // (строка scene_assets создаётся только markReady, который вызывается
+    // ПОСЛЕ gate — замкнутый круг). При 0 строк gate считается пройденным.
+    it('VERSION-GATE: no scenes row (legacy book) → READY allowed, markReady called', async () => {
+        const dbPath = require.resolve('../src/storage/postgres/database');
+        require.cache[dbPath].exports.query = async () => ({ rows: [] });
+
+        delete require.cache[require.resolve('../src/orchestration/orchestrator')];
+        orchestrator = require('../src/orchestration/orchestrator');
+
+        const result = await orchestrator.completeStage(
+            redis, BOOK_ID, CHAPTER_ID, SCENE_ID, 'video', BUILD_ID, 'dispatch-test'
+        );
+
+        expect(result.completed).to.be.true;
+        expect(calls.markReady).to.be.true;
+        // T2: при пройденном gate — success
+        expect(calls._lastFinalizeOpts.outcome).to.equal('success');
+    });
+
+    // Контрольный: при 1 строке scenes, но устаревших версиях asset — READY
+    // по-прежнему блокируется (fail-closed для version-схемы сохраняется).
+    it('VERSION-GATE: stale versions still block READY (fail-closed preserved)', async () => {
+        const dbPath = require.resolve('../src/storage/postgres/database');
+        require.cache[dbPath].exports.query = async () => ({
+            rows: [{ content_version: 5, audio_config_version: 1 }],
+        });
+        const repoPath = require.resolve('../src/storage/postgres/repositories/scene-assets-repo');
+        require.cache[repoPath].exports.getAsset = async () => ({
+            scene_content_version: 2, // 2 < 5 → stale
+            scene_audio_config_version: 1,
+        });
+
+        delete require.cache[require.resolve('../src/orchestration/orchestrator')];
+        orchestrator = require('../src/orchestration/orchestrator');
+
+        const result = await orchestrator.completeStage(
+            redis, BOOK_ID, CHAPTER_ID, SCENE_ID, 'video', BUILD_ID, 'dispatch-test'
+        );
+
+        expect(result.completed).to.be.false;
+        expect(result.reason).to.equal('stale');
+        // Старый gate для version-схем не сломан: markReady НЕ вызывается
+        expect(calls.markReady).to.be.undefined;
+    });
+
     it('completeStage finalizes as failure when handler returns ok:false', async () => {
         const cbPath = require.resolve('../src/orchestration/scene-callbacks');
         require.cache[cbPath].exports.handleImageCompleted = async () => {

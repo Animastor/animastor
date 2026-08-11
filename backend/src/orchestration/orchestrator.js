@@ -125,6 +125,12 @@ async function completeStage(redis, bookId, chapterId, sceneId, stage, buildId, 
             handlerOk = true;
 
             // ── Handler succeeded — version gate (T1.11: fail-closed) ────
+            // VERSION-GATE: сцена без строки в `scenes` (legacy-книга, импорт
+            // без version-схемы) НЕ блокируется fail-closed — иначе video/audio
+            // никогда не получат READY (строка scene_assets создаётся только
+            // markReady, который вызывается ПОСЛЕ gate — замкнутый круг).
+            // Для таких сцен gate считается пройденным; строки версий
+            // создаются лениво (ensureSceneRow) при следующем bump.
             let shouldWriteReady = false;
             try {
                 const { query: pgQuery } = require('../storage/postgres/database');
@@ -151,6 +157,10 @@ async function completeStage(redis, bookId, chapterId, sceneId, stage, buildId, 
                             );
                         shouldWriteReady = contentVersionConfirmed && audioVersionConfirmed;
                     }
+                } else if (sceneResult.rows.length === 0) {
+                    // Legacy-книга без version-схемы — READY разрешён (сцена
+                    // не может устареть относительно несуществующей версии).
+                    shouldWriteReady = true;
                 }
             } catch (pgErr) {
                 // T1.11: Fail-closed — ошибка PG не разрешает READY

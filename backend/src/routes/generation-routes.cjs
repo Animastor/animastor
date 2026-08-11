@@ -617,19 +617,26 @@ module.exports = function(app, redis, deps) {
     function resolveSceneVideoFile(buildDir, bookId, chapterId, sceneId) {
         const prefix = `${bookId}_${chapterId}_${sceneId}`;
         const mergedPath = path.join(buildDir, `${prefix}.mp4`);
-        if (fs.existsSync(mergedPath)) return mergedPath;
+        if (fs.existsSync(mergedPath)) {
+            log(`[VIDEO-SERVE] ${bookId}/${chapterId}/${sceneId}: merged scene.mp4 → ${path.basename(mergedPath)}`);
+            return mergedPath;
+        }
         let files = [];
         try {
             files = fs.readdirSync(buildDir).filter(f =>
                 f.startsWith(prefix) && f.endsWith('.mp4') && f !== `${prefix}.mp4`
             );
         } catch (_) {}
-        if (files.length === 0) return null;
+        if (files.length === 0) {
+            log(`[VIDEO-SERVE] ${bookId}/${chapterId}/${sceneId}: no video files found`);
+            return null;
+        }
         files.sort((a, b) => {
             const na = parseInt((a.match(/_g(\d+)/) || [0, 0])[1], 10);
             const nb = parseInt((b.match(/_g(\d+)/) || [0, 0])[1], 10);
             return na - nb;
         });
+        log(`[VIDEO-SERVE] ${bookId}/${chapterId}/${sceneId}: no merged file, serving first group → ${files[0]}`);
         return path.join(buildDir, files[0]);
     }
 
