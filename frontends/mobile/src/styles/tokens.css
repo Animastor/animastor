@@ -34,7 +34,7 @@
   --fs-title: 1.5rem;
 
   /* Layout */
-  --tabbar-h: 5rem; /* 80dp — Material 3 BottomNavigationView (labeled) height */
+  --tabbar-h: 4.375rem; /* 70dp — compacted from M3's 80dp for density (web); still ~22dp above the 48dp touch minimum */
   --toolbar-h: 3.25rem;
   --safe-bottom: env(safe-area-inset-bottom, 0px);
   --safe-top: env(safe-area-inset-top, 0px);

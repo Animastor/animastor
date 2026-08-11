@@ -179,25 +179,38 @@ button { font: inherit; color: inherit; }
   position: relative;
   border: 0; background: transparent; color: var(--text-2); /* unchecked: colorOnSurfaceVariant */
   display: flex; flex-direction: column; align-items: center; justify-content: center;
-  /* 8dp icon→label gap: the 32dp pill is centered on the 24dp icon and extends
-     4dp below it, so pill bottom → label top gets a clean ~4dp — a legibility
-     margin slightly above M3's near-flush label (visual separation there comes
-     from includeFontPadding=false). */
-  gap: 0.5rem;
+  /* 6dp icon→label gap (compacted from 8dp for density): the 32dp pill is
+     centered on the 24dp icon and extends 4dp below it, so pill bottom → label
+     top still clears by ~2dp — and the pill sits behind the label anyway
+     (z-index 0 vs 1). */
+  gap: 0.375rem;
   /* TextAppearance.Animastor.TabLabel (parent TextAppearance.Material3.LabelLarge):
      textSize 14sp, fontFamily sans-serif-medium (Roboto Medium), textFontWeight 500.
-     Web: system-ui resolves to Roboto on Android; 0.875rem = 14sp. */
-  font-size: 0.875rem; /* 14sp */
+     Web: system-ui resolves to Roboto on Android. Compacted to 13sp for the
+     denser 70dp web bar: the widest label «Навигатор» (~66px @13sp) fits its
+     72px column (narrowest 360px test viewport) with ~3px side margins, leaving
+     a clean ~10px gap to «Редактор». */
+  font-size: 0.8125rem; /* 13sp (compacted from 14sp) */
   font-weight: 500;
   letter-spacing: 0.01em;  /* M3 LabelLarge tracking */
-  line-height: 1.25rem;    /* 20sp — M3 LabelLarge line height (14sp + 6sp extra) */
-  min-height: 0; padding: 0;
+  line-height: 1.125rem;   /* 18px — ~5px slack above the 13sp text */
+  min-height: 0; min-width: 0; /* min-width: 0 lets the 1fr grid columns shrink below label content on sub-360px viewports */
+  padding: 0;
 }
 /* Icon box hosts the M3 active-indicator pill; pill is centered on the icon
    (top:50%/left:50% + translate) so it can never overlap the label below. */
 .tabbar__icon-box { position: relative; display: inline-flex; }
 .tabbar__icon { width: 1.5rem; height: 1.5rem; position: relative; z-index: 1; }
-.tabbar__label { position: relative; z-index: 1; }
+/* Defensive net for sub-360px viewports: inline-block shrink-wraps the text so
+   the flex parent keeps centering it, and ellipsis clips instead of letting a
+   label spill into its neighbor. At 360px the widest label («Навигатор» ≈ 66px)
+   fits its 72px column, so this never triggers on the test viewports. */
+.tabbar__label {
+  position: relative; z-index: 1;
+  display: inline-block;
+  max-width: 100%;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 /* Active indicator pill: colorPrimary (#6E1F2A), fixed 64x32dp, 12dp radius.
    M3 indicator geometry is fixed regardless of the icon width, so NO max-width:
    calc(100% …) here would resolve against the 24px icon-box and squash the pill. */

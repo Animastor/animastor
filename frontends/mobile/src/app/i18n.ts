@@ -5,12 +5,13 @@ export type Lang = 'ru' | 'en';
 
 const dict = {
   ru: {
-    // Bottom Navigation (strings.xml ru — uppercase, 1:1)
-    tab_file: 'ФАЙЛ',
-    tab_generate: 'ГЕНЕРАТОР',
-    tab_play: 'ПЛЕЕР',
-    tab_edit: 'РЕДАКТОР',
-    tab_navigate: 'НАВИГАТОР',
+    // Bottom Navigation — sentence case (web density choice; NOT 1:1 with
+    // strings.xml ru, which keeps uppercase on Android).
+    tab_file: 'Файл',
+    tab_generate: 'Генератор',
+    tab_play: 'Плеер',
+    tab_edit: 'Редактор',
+    tab_navigate: 'Навигатор',
     // Toolbar / secondary
     settings: 'Настройки',
     settings_title: 'Настройки',
@@ -361,12 +362,13 @@ const dict = {
     voice_not_available: 'Распознавание речи недоступно'
   },
   en: {
-    // Bottom Navigation (strings.xml en — uppercase, 1:1)
-    tab_file: 'FILE',
-    tab_generate: 'GENERATE',
-    tab_play: 'PLAY',
-    tab_edit: 'EDIT',
-    tab_navigate: 'NAVIGATE',
+    // Bottom Navigation — sentence case (web density choice; NOT 1:1 with
+    // strings.xml en, which keeps uppercase on Android).
+    tab_file: 'File',
+    tab_generate: 'Generator',
+    tab_play: 'Player',
+    tab_edit: 'Editor',
+    tab_navigate: 'Navigator',
     // Toolbar / secondary
     settings: 'Settings',
     settings_title: 'Settings',
