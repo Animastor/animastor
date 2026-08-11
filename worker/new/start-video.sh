@@ -6,6 +6,11 @@ echo "=============================="
 echo "🚀 Starting ComfyUI setup..."
 echo "=============================="
 
+# --- Pin the Python environment (verified working boot used /opt/venv) ---
+PY=/opt/venv/bin/python
+PIP=/opt/venv/bin/pip
+"$PY" --version
+
 # --- System update ---
 echo "📦 Updating system..."
 apt update -y
@@ -40,29 +45,48 @@ echo "ComfyUI commit:  $COMFY_COMMIT"
 # --- Go to ComfyUI ---
 cd ~/ComfyUI || { echo "❌ ComfyUI folder not found"; exit 1; }
 
+# --- Clean stale sqlite DB created by a newer ComfyUI (no user data in it) ---
+# v0.27.0 ships no alembic migrations; a DB from v0.28+ blocks clean startup.
+if [ -f "$HOME/ComfyUI/user/comfyui.db" ]; then
+    echo "🧹 Removing stale comfyui.db (from newer ComfyUI, no user data)..."
+    rm -f "$HOME/ComfyUI/user/comfyui.db" "$HOME/ComfyUI/user/comfyui.db.lock" "$HOME/ComfyUI/user/comfyui.db.bkp"
+fi
+
 # --- Install base requirements (from lock if available) ---
 if [ -f "$LOCK_FILE" ]; then
     echo "📦 Installing deps from saved lock: $LOCK_FILE"
-    pip install -r "$LOCK_FILE"
+    "$PIP" install -r "$LOCK_FILE"
 else
     echo "📦 Installing base requirements (unpinned, lock will be saved after first successful boot)..."
-    pip install -r requirements.txt
+    "$PIP" install -r requirements.txt
 fi
 
-# --- Install GGUF dependencies (if exists) ---
-if [ -d "custom_nodes/ComfyUI-GGUF" ]; then
-    echo "🧠 Installing GGUF dependencies..."
-    pip install -r custom_nodes/ComfyUI-GGUF/requirements.txt
-fi
+# --- Install ALL custom node requirements (GGUF, VHS, easy-use, MelBandRoFormer, ...) ---
+for req in custom_nodes/*/requirements.txt; do
+    [ -f "$req" ] || continue
+    echo "🧠 Installing deps: $req"
+    "$PIP" install -r "$req"
+done
 
-# --- Reinstall Torch with CUDA 12.4 ---
-echo "🔥 Installing PyTorch (CUDA 12.4)..."
-pip uninstall torch torchvision torchaudio -y || true
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+# --- Purge the CUDA-13 stack if a custom node pulled it in ---
+# cu13 packages (cuda-toolkit, cuda-bindings, nvidia-*-cu13, unsuffixed nvidia-*)
+# overwrite the cu12 libs that torch 2.6.0+cu124 needs, causing
+# CUDNN_STATUS_NOT_INITIALIZED on any convolution.
+echo "🧹 Removing CUDA-13 nvidia packages (protect cu12 libs)..."
+"$PIP" uninstall -y cuda-toolkit cuda-bindings cuda-pathfinder \
+    nvidia-cudnn-cu13 nvidia-cublas nvidia-nccl-cu13 nvidia-nvshmem-cu13 \
+    nvidia-cusparselt-cu13 nvidia-cusolver nvidia-cuda-runtime nvidia-cuda-nvrtc \
+    nvidia-cuda-cupti nvidia-cuda-nvcc nvidia-nvtx nvidia-cufft nvidia-curand \
+    nvidia-cufile nvidia-cusparse nvidia-nvjitlink 2>/dev/null || true
+
+# --- Reinstall Torch with CUDA 12.4 (PINNED to the verified working build) ---
+echo "🔥 Installing PyTorch 2.6.0+cu124 (CUDA 12.4)..."
+"$PIP" uninstall torch torchvision torchaudio -y || true
+"$PIP" install torch==2.6.0+cu124 torchvision==0.21.0+cu124 torchaudio==2.6.0+cu124 --index-url https://download.pytorch.org/whl/cu124
 
 # --- Start ComfyUI in background ---
 echo "🎬 Starting ComfyUI..."
-nohup python main.py --listen 127.0.0.1 --port 8188 > output.log 2>&1 &
+nohup "$PY" main.py --listen 127.0.0.1 --port 8188 > output.log 2>&1 &
 
 # --- Wait until ComfyUI actually responds (up to 5 min) ---
 echo "⏳ Waiting for ComfyUI to become ready..."
@@ -82,9 +106,16 @@ if [ "$COMFY_OK" = "1" ]; then
 
     # Save reproducible dependency lock (only from a working build).
     # torch/torchvision/torchaudio are excluded — they are pinned separately
-    # below by the cu124 reinstall (torch 2.6.0+cu124).
+    # by the cu124 reinstall (torch 2.6.0+cu124).
+    # CUDA-13 nvidia/cuda packages are excluded too — they shadow the cu12
+    # libs torch 2.6.0+cu124 needs (CUDNN_STATUS_NOT_INITIALIZED).
     mkdir -p "$HOME/animastor/logs"
-    pip freeze | grep -viE '^(torch|torchvision|torchaudio)==' > "$LOCK_FILE"
+    "$PIP" freeze \
+        | grep -viE '^(torch|torchvision|torchaudio)==' \
+        | grep -viE '^(cuda-toolkit|cuda-bindings|cuda-pathfinder)==' \
+        | grep -viE '^(nvidia-cudnn-cu13|nvidia-nccl-cu13|nvidia-nvshmem-cu13|nvidia-cusparselt-cu13)==' \
+        | grep -viE '^nvidia-(cublas|cusolver|cuda-runtime|cuda-nvrtc|cuda-cupti|cuda-nvcc|nvtx|cufft|curand|cufile|cusparse|nvjitlink)==' \
+        > "$LOCK_FILE"
     echo "💾 Dependency lock saved: $LOCK_FILE"
 else
     echo "❌ ComfyUI did not become ready in time"
