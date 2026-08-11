@@ -24,6 +24,12 @@ const WORKER_IMAGE_TAG = process.env.WORKER_IMAGE_TAG || null;
 const PROTOCOL_VERSION = 2;
 
 const RESULT_TIMEOUT_MS = Number(process.env.RESULT_TIMEOUT_MS || 600000);
+// Видео-генерация длинная по своей природе (LTX: 5-10 мин, на слабом GPU —
+// 20-30+ мин). Дефолт для видео НЕ может быть 10 мин — иначе нормальная
+// долгая генерация убивается как timeout. Приоритет: task.timeout_ms
+// (приходит от backend через gpu-hub, layer-config per-type timeout);
+// fallback для видео — 2 часа (реальный потолок — dispatch-lease backend'а).
+const VIDEO_RESULT_TIMEOUT_MS = Number(process.env.VIDEO_RESULT_TIMEOUT_MS || 7200000);
 const TASK_SLEEP_MS = Number(process.env.TASK_SLEEP_MS || 2000);
 const BEACON_INTERVAL_MS = Number(process.env.BEACON_INTERVAL_MS || 10000);
 
@@ -253,10 +259,11 @@ async function runWorkflow(workflow) {
 // WAIT RESULT (with backoff)
 // ======================================================
 
-async function waitResult(prompt_id, workflow) {
+async function waitResult(prompt_id, workflow, timeoutMs) {
   const start = Date.now();
   const outputsMap = findOutputNodes(workflow);
   const isVideoJob = outputsMap.video.length > 0;
+  const effectiveTimeoutMs = timeoutMs || (isVideoJob ? VIDEO_RESULT_TIMEOUT_MS : RESULT_TIMEOUT_MS);
 
   let videoDir, beforeFiles, videoPrefix;
   if (isVideoJob) {
@@ -278,15 +285,15 @@ async function waitResult(prompt_id, workflow) {
 
   let pollDelay = 500;
   while (true) {
-    if (Date.now() - start > RESULT_TIMEOUT_MS) {
+    if (Date.now() - start > effectiveTimeoutMs) {
       try {
         const res = await fetchTimeout(comfyUrl(`/history/${prompt_id}`));
         const d = await res.json();
-        log("error", `Timeout: last history response`, JSON.stringify(d).slice(0, 2000));
+        log("error", `Timeout after ${Math.round(effectiveTimeoutMs / 60000)}min: last history response`, JSON.stringify(d).slice(0, 2000));
       } catch (err) {
         log("error", "Timeout: failed to fetch history", err.message);
       }
-      throw new Error("Timeout waiting result");
+      throw new Error(`Timeout waiting result (${Math.round(effectiveTimeoutMs / 60000)}min)`);
     }
 
     try {
@@ -510,7 +517,9 @@ async function workerLoop() {
       }
 
       const prompt_id = await runWorkflow(task.params);
-      const result = await waitResult(prompt_id, task.params);
+      // timeout_ms приходит с задачей (backend → gpu-hub → worker): per-job
+      // таймаут для данного типа генерации. Если нет — per-type fallback.
+      const result = await waitResult(prompt_id, task.params, task.timeout_ms);
       const base64 = await downloadResult(result);
       await sendResult(task, base64);
       log("info", `Done ${task.job_id}`);

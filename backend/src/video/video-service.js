@@ -94,7 +94,10 @@ async function generateVideoAnimation(sceneData, loadedBook, buildId, workflows,
 
     for (let g = 0; g < buildResult.workflows.length; g++) {
         const wfGroup = buildResult.workflows[g];
-        const suffix = g > 0 ? `_g${g + 1}` : '';
+        // Все группы именуются с суффиксом `_gN` (N>=1), включая первую:
+        // `scene.mp4` резервируется под результат склейки для плеера, а
+        // групповые файлы остаются отдельными чанками (dirty-регенерация).
+        const suffix = `_g${g + 1}`;
         const jobId = `${baseJobId}${suffix}`;
 
         // Read images for this workflow group

@@ -418,6 +418,76 @@ describe('checkStalledAudioScenes', () => {
 });
 
 // ======================================================
+// TESTS: checkStalledVideoScenes
+// ======================================================
+// Видео-генерация долгая: watchdog НЕ должен убивать нормальную долгую
+// генерацию коротким фиксированным порогом. Порог застоя = max(база,
+// video_timeout_minutes из layer-config + 5 мин буфера) — hub затаймливает
+// воркера раньше, watchdog срабатывает только если не пришло НИЧЕГО.
+
+describe('checkStalledVideoScenes', () => {
+    let redis;
+    afterEach(() => { delete require.cache[RECONCILE_PATH]; });
+
+    function setVideoOrch(redis, phase, extra = {}) {
+        const key = `animastor:video-orch:${BOOK_ID}:${CHAPTER_ID}:${SCENE_ID}`;
+        return redis.set(key, JSON.stringify({ phase, build_id: 'build-1', ...extra }));
+    }
+
+    it('returns 0 when no video-orch states exist', async () => {
+        redis = createMockRedis();
+        const engine = mockDeps(redis);
+        const count = await engine.checkStalledVideoScenes(redis, { orchestrator: { failStage: async () => {} } });
+        expect(count).to.equal(0);
+    });
+
+    it('returns 0 when phase is not WAITING_CHUNKS', async () => {
+        redis = createMockRedis();
+        await setVideoOrch(redis, 'GENERATING', { started_at: Date.now() - 60000 });
+        const engine = mockDeps(redis);
+        const count = await engine.checkStalledVideoScenes(redis, { orchestrator: { failStage: async () => {} } });
+        expect(count).to.equal(0);
+    });
+
+    it('returns 0 when last_group_at is recent (долгая, но живая генерация)', async () => {
+        redis = createMockRedis();
+        await setVideoOrch(redis, 'WAITING_CHUNKS', { last_group_at: Date.now() - 1000 });
+        const engine = mockDeps(redis);
+        const count = await engine.checkStalledVideoScenes(redis, { orchestrator: { failStage: async () => {} } });
+        expect(count).to.equal(0);
+    });
+
+    it('fails scene stalled beyond base threshold (нет прогресса за весь порог)', async () => {
+        redis = createMockRedis();
+        // Базовый порог = STALL_FAILSAFE_MS * 2. При GPU_TIMEOUT_MS=600s это 60 мин.
+        // Застой 70 мин > 60 мин, layer-config не задан → база.
+        await setVideoOrch(redis, 'WAITING_CHUNKS', { last_group_at: Date.now() - 70 * 60 * 1000 });
+        const engine = mockDeps(redis);
+        const count = await engine.checkStalledVideoScenes(redis, { orchestrator: { failStage: async () => {} } });
+        expect(count).to.equal(1);
+    });
+
+    it('УВАЖАЕТ layer-config video_timeout_minutes: долгая генерация (50 мин) при timeout=120 НЕ считается застоем', async () => {
+        redis = createMockRedis();
+        // per-book timeout 120 мин → порог = 120 + 5 = 125 мин. Генерация 50 мин
+        // без прогресса — это ещё норма (первая группа LTX может идти долго).
+        await redis.set(`animastor:layer-config:${BOOK_ID}`, JSON.stringify({ video_timeout_minutes: 120 }));
+        await setVideoOrch(redis, 'WAITING_CHUNKS', { last_group_at: Date.now() - 50 * 60 * 1000 });
+        const engine = mockDeps(redis);
+        const count = await engine.checkStalledVideoScenes(redis, { orchestrator: { failStage: async () => {} } });
+        expect(count).to.equal(0);
+    });
+
+    it('фолбэк на базу при отсутствии layer-config: 70 мин без прогресса → stalled', async () => {
+        redis = createMockRedis();
+        await setVideoOrch(redis, 'WAITING_CHUNKS', { last_group_at: Date.now() - 70 * 60 * 1000 });
+        const engine = mockDeps(redis);
+        const count = await engine.checkStalledVideoScenes(redis, { orchestrator: { failStage: async () => {} } });
+        expect(count).to.equal(1);
+    });
+});
+
+// ======================================================
 // TESTS: checkStaleLocks
 // ======================================================
 

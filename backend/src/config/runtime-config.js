@@ -151,6 +151,11 @@ const TIMEOUTS = {
     // пересчитываются автоматически.
     AUDIO_CHUNK_STALL_MS: STALL_FAILSAFE_MS,
 
+    // Порог застоя видео-групп (reconcileCycle, checkStalledVideoScenes).
+    // Аналогичен AUDIO_CHUNK_STALL_MS: видео-группы генерируются дольше
+    // (LTX до ~20 мин на группу), поэтому порог удвоен от STALL_FAILSAFE_MS.
+    VIDEO_CHUNK_STALL_MS: STALL_FAILSAFE_MS * 2,
+
     // Периодическая чистка протухших failsafe-локов (cleanup-service.cjs)
     CLEANUP_INTERVAL_MS: 60000,
 

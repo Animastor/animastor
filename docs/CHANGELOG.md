@@ -4,6 +4,96 @@ All notable changes to Animastor are documented here.
 
 ---
 
+## [Unreleased] — 2026-08-11
+
+### Fixed
+
+- **Долгая видео-генерация больше не убивается как timeout: per-job timeout пробрасывается backend → gpu-hub → worker, watchdog учитывает layer-config**
+  (`gpu-hub/gpu-hub.js`,
+  `worker/worker/worker.cjs`,
+  `backend/src/runtime/reconciliation-engine.js`,
+  `backend/tests/orchestration-stabilization.test.js`,
+  `backend/tests/reconciliation-engine.test.js`):
+  - **Проблема:** видеогенерация архитектурно долгая (LTX 190с уже сейчас, 5–10 мин в норме,
+    20–30+ мин на слабом GPU), но в трёх местах висели короткие фиксированные потолки:
+    1. **gpu-hub терял `timeout_ms`:** backend шлёт `timeout_ms` в теле POST /task (per-book
+       `video_timeout_minutes` из layer-config, дефолт 60 мин, диапазон 10–180), но hub не
+       читал его из body и не сохранял в очередь → `running.timeout_ms = null` → per-job
+       timeout = базовый `GPU_TIMEOUT_MS` (10 мин) → любое видео дольше 10 мин убивалось
+       как `worker_timeout` и уходило на retry.
+    2. **worker `RESULT_TIMEOUT_MS = 600000` (10 мин):** `waitResult` убивал нормальную
+       долгую генерацию, не зная таймаута задачи; `timeout_ms` из задачи игнорировался.
+    3. **Watchdog видео-застоя фиксированным 60 мин:** мог сработать РАНЬШЕ реального
+       per-job timeout (до 180 мин из layer-config) и зафейлить сцену при живой генерации.
+  - **Фикс 1 (gpu-hub):** `timeout_ms` читается из body и сохраняется в задаче очереди
+    (`task.timeout_ms`) и в `running.timeout_ms`; per-job timeout = `timeout_ms || GPU_TIMEOUT_MS`;
+    защита: per-job timeout не может быть МЕНЬШЕ `GPU_TIMEOUT_MS` (иначе job убьётся раньше
+    базового порога).
+  - **Фикс 2 (worker):** `waitResult(prompt_id, workflow, timeoutMs)` — приоритет у
+    `task.timeout_ms` из задачи (backend → gpu-hub → worker); per-type fallback: видео —
+    новый `VIDEO_RESULT_TIMEOUT_MS` (дефолт 2 часа, `process.env`), остальные — прежний
+    `RESULT_TIMEOUT_MS`. Отличие «долго генерируется» от «завис/worker умер» — на стороне
+    per-job timeout из layer-config, а не произвольного короткого дефолта.
+  - **Фикс 3 (reconciliation-engine):** `checkStalledVideoScenes` использует динамический
+    порог застоя — реальный `video_timeout_minutes` книги из layer-config (fallback
+    `VIDEO_CHUNK_STALL_MS`), порог = timeout + запас (вместо фиксированных 60 мин).
+  - **Параллельность (проверено, правок не потребовалось):** image и video генерируются
+    полностью независимо — `shouldScheduleAssets` не имеет глобального «wait until all
+    images»; видео сцены ждёт только `image=ready` СВОЕЙ сцены (reference-изображения для
+    injection), остальные сцены/стадии диспатчатся параллельно.
+  - Проверки: +тесты (gpu-hub пробрасывает `timeout_ms` в очередь, worker уважает
+    `task.timeout_ms` и видео-fallback ≥ 1 часа, `checkStalledVideoScenes` учитывает
+    layer-config); весь mocha-сьют (1065, было 1058) проходит.
+
+### Added
+
+- **Video Orchestrator: видео-группы сцены проходят полный lifecycle, чанки не теряются, склейка — только для плеера**
+  (`backend/src/services/video-orchestrator.js` (новый),
+  `backend/src/video/video-merge.js`,
+  `backend/src/video/video-service.js`,
+  `backend/src/orchestration/scene-orchestrator.js`,
+  `backend/src/services/task-handler.cjs`,
+  `backend/src/routes/generation-routes.cjs`,
+  `backend/src/orchestration/orchestrator.js`,
+  `backend/src/runtime/reconciliation-engine.js`,
+  `backend/src/config/runtime-config.js`,
+  `backend/tests/video-orchestrator.test.js` (новый, 18 тестов)):
+  - **Проблема (2026-08-11, книга `import_1786345731767_1786345734345`):** сцена
+    разбивалась на 5 групп (`_g1`..`_g5`), но приём результатов был «первый забрал всё»:
+    первый пришедший результат вызывал `completeStage` → `finalizeDispatch` удалял
+    metadata/lease, и группы `_g2`..`_g5` отклонялись с `no_active_dispatch` — на диск
+    попадал только первый файл, плеер видел «один чанк».
+  - **Архитектура (вариант B по ТЗ):** новый `video-orchestrator.js` — единая state
+    machine на Redis (`animastor:video-orch:{book}:{ch}:{sc}`), зеркало
+    `audio-orchestrator`: `GENERATING → WAITING_CHUNKS → MERGING → DONE / FAILED`.
+    Группы остаются отдельными файлами `_gN.mp4` (первая группа тоже получила суффикс
+    `_g1` — `scene.mp4` теперь резервируется под результат склейки); при приходе ВСЕХ
+    групп происходит `mergeSceneVideoGroups` (ffmpeg concat в `scene.mp4` для плеера)
+    и только тогда `completeStage('video')`. Групповые файлы НЕ удаляются после склейки —
+    нужны для точечной dirty-регенерации.
+  - **Dirty-регенерация:** video-orch state хранит маппинг `unit_ids → группа`;
+    `executeVideoDispatch` читает dirty-unit id из PG и перегенерирует только группы,
+    содержащие грязные юниты (плюс группы с изменившимся составом — границы групп
+    пересчитываются по длительности). Полный cache-hit → fast-track merge без отправки
+    job'ов. Пропущенные группы помечаются done в state сразу.
+  - **Stale-accept:** группы от старого dispatch принимаются, пока сцена в
+    `WAITING_CHUNKS/MERGING` (роут `/gpu/task/result` и task-handler — как у аудио).
+    `completeGroup` использует `dispatch_id` из ТЕКУЩЕЙ metadata — поздняя группа
+    со stale-dispatch не ломает `verifyDispatchIdentity` в `completeStage`.
+  - **Recovery:** `checkStalledVideoScenes` (watchdog застоя, `VIDEO_CHUNK_STALL_MS`),
+    `recoverVideoOrchStates` (startup), `checkVideoOrchInvariants` (DONE ⇔ READY);
+    `recoverResultKeys` теперь удаляет терминально отклонённые результаты
+    (`no_active_dispatch`/`stale_dispatch` и др.) вместо бесконечного ретрая каждые 60 с.
+  - **Роуты отдачи:** `resolveSceneVideoFile` предпочитает склеенный `scene.mp4`, иначе
+    первый групповой файл (сцена в процессе генерации).
+  - **Merge-lock guard:** два одновременно пришедших результата не валят сцену в FAILED —
+    проигравший NX-лок merge видит «in progress» и ждёт победителя.
+  - Проверки: 18 новых тестов video-orchestrator (переходы, completeGroup по одной группе,
+    merge-failure, lock-гонка, stale-dispatch, failWaitingScene, helpers); весь mocha-сьют
+    (1058, было 1015) проходит; `node --check` всех изменённых файлов OK.
+
+---
+
 ## [Unreleased] — 2026-08-10
 
 ### Added

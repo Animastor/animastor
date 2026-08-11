@@ -611,16 +611,36 @@ module.exports = function(app, redis, deps) {
         fs.createReadStream(filePath).pipe(res);
     });
 
+    // Resolve the best video file for a scene: the merged `scene.mp4` (result of
+    // group concat for the player) takes priority; otherwise the first group
+    // file `_gN.mp4` (scene mid-generation). Returns null when none exists.
+    function resolveSceneVideoFile(buildDir, bookId, chapterId, sceneId) {
+        const prefix = `${bookId}_${chapterId}_${sceneId}`;
+        const mergedPath = path.join(buildDir, `${prefix}.mp4`);
+        if (fs.existsSync(mergedPath)) return mergedPath;
+        let files = [];
+        try {
+            files = fs.readdirSync(buildDir).filter(f =>
+                f.startsWith(prefix) && f.endsWith('.mp4') && f !== `${prefix}.mp4`
+            );
+        } catch (_) {}
+        if (files.length === 0) return null;
+        files.sort((a, b) => {
+            const na = parseInt((a.match(/_g(\d+)/) || [0, 0])[1], 10);
+            const nb = parseInt((b.match(/_g(\d+)/) || [0, 0])[1], 10);
+            return na - nb;
+        });
+        return path.join(buildDir, files[0]);
+    }
+
     app.get('/api/v1/chunk/:id/video', async (req, res) => {
         try {
             const c = await getChunk(req.params.id);
             if (!c) return res.status(404).json({ error: 'chunk not found' });
             const dir = path.join(OUTPUT_DIR, c.build_id);
             if (!fs.existsSync(dir)) return res.status(404).json({ error: 'build directory not found' });
-            const prefix = `${c.book_id}_${c.chapter_id}_${c.scene_id}`;
-            const files = fs.readdirSync(dir).filter(f => f.startsWith(prefix) && f.endsWith('.mp4'));
-            if (!files.length) return res.status(404).json({ error: 'video not ready' });
-            const filePath = path.join(dir, files[0]);
+            const filePath = resolveSceneVideoFile(dir, c.book_id, c.chapter_id, c.scene_id);
+            if (!filePath) return res.status(404).json({ error: 'video not ready' });
             streamFileWithRange(req, res, filePath, 'video/mp4');
         } catch (err) {
             res.status(500).json({ error: err.message });
@@ -816,10 +836,8 @@ module.exports = function(app, redis, deps) {
             const buildId = getEffectiveBuildId(bookId, req.query.build_id, log);
             const dir = path.join(OUTPUT_DIR, buildId);
             if (!fs.existsSync(dir)) return res.status(404).json({ error: 'build directory not found' });
-            const prefix = `${bookId}_${chapterId}_${sceneId}`;
-            const files = fs.readdirSync(dir).filter(f => f.startsWith(prefix) && f.endsWith('.mp4'));
-            if (!files.length) return res.status(404).json({ error: 'video not ready' });
-            const filePath = path.join(dir, files[0]);
+            const filePath = resolveSceneVideoFile(dir, bookId, chapterId, sceneId);
+            if (!filePath) return res.status(404).json({ error: 'video not ready' });
             streamFileWithRange(req, res, filePath, 'video/mp4');
         } catch (err) {
             res.status(500).json({ error: err.message });
@@ -1143,10 +1161,13 @@ module.exports = function(app, redis, deps) {
                 // complete, the original dispatch lease may have expired and the
                 // scheduler created a new dispatch. Accept audio chunks as long as
                 // the scene is still in WAITING_CHUNKS/MERGING (actively collecting chunks).
-                if (stage === 'audio' && identity.reason === 'stale_dispatch') {
-                    const audioOrch = require('../services/audio-orchestrator');
-                    const orchState = await audioOrch.getState(redis, parsed.bookId, parsed.chapterId, parsed.sceneId);
-                    if (orchState && (orchState.phase === audioOrch.PHASES.WAITING_CHUNKS || orchState.phase === audioOrch.PHASES.MERGING)) {
+                // VIDEO: то же самое — группы сцены приходят последовательно, и после
+                // re-dispatch поздние группы от старого dispatch должны приниматься,
+                // пока video-orch в WAITING_CHUNKS/MERGING.
+                if ((stage === 'audio' || stage === 'video') && identity.reason === 'stale_dispatch') {
+                    const orchMod = stage === 'audio' ? require('../services/audio-orchestrator') : require('../services/video-orchestrator');
+                    const orchState = await orchMod.getState(redis, parsed.bookId, parsed.chapterId, parsed.sceneId);
+                    if (orchState && (orchState.phase === orchMod.PHASES.WAITING_CHUNKS || orchState.phase === orchMod.PHASES.MERGING)) {
                         log(`[GPU RESULT] Stale dispatch ACCEPTED for ${job_id} (scene still ${orchState.phase})`);
                     } else {
                         log(`[GPU RESULT] Rejected ${job_id}: ${identity.reason} (scene phase=${orchState?.phase || 'none'})`);

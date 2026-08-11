@@ -307,7 +307,8 @@ app.post("/task", requireApiKey, async (req, res) => {
     book_id,
     chapter_id,
     scene_id,
-    stage
+    stage,
+    timeout_ms
   } = req.body
 
   const type = job_type || "image"
@@ -365,7 +366,15 @@ if (!isNew) {
       chapter_id,
       scene_id,
       stage,
-      dispatch_id
+      dispatch_id,
+      // Per-job timeout, переданный backend'ом (layer-config per-type timeout).
+      // Без проброса per-job timeout падал бы на GPU_TIMEOUT_MS (10 мин по
+      // умолчанию) — нормальная долгая видео-генерация (20-60+ мин) убивалась
+      // как worker_timeout. ИНВАРИАНТ: per-job timeout >= GPU_TIMEOUT_MS —
+      // ниже базового порога не опускаемся никогда.
+      timeout_ms: timeout_ms && Number(timeout_ms) > 0
+        ? Math.max(Number(timeout_ms), GPU_TIMEOUT_MS)
+        : null
     })
   )
 

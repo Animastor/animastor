@@ -151,6 +151,34 @@ describe('orchestration stabilization: protocol contract', () => {
         expect(hubSource).to.match(/redis\.lrem\("animastor:processing"/);
         expect(workerSource).to.match(/Hub rejected beacon/);
     });
+
+    it('keeps long video generation alive: per-job timeout is forwarded hub→worker, not a short fixed cap', () => {
+        const hubSource = fs.readFileSync(
+            path.join(__dirname, '../../gpu-hub/gpu-hub.js'), 'utf8'
+        );
+        const workerSource = fs.readFileSync(
+            path.join(__dirname, '../../worker/worker/worker.cjs'), 'utf8'
+        );
+
+        // gpu-hub принимает timeout_ms из body и кладёт его в очередь (task)
+        expect(hubSource).to.match(/timeout_ms\s*}/);
+        expect(hubSource).to.match(/timeout_ms: timeout_ms/);
+
+        // worker уважает per-job timeout из задачи вместо короткого дефолта
+        expect(workerSource).to.match(/task\.timeout_ms/);
+        expect(workerSource).to.match(/VIDEO_RESULT_TIMEOUT_MS/);
+
+        // Дефолт видео-таймаута воркера — НЕ короткий фиксированный потолок:
+        // ≥ 1 час (LTX-генерация 5-10 мин, слабый GPU — 20-30+ мин),
+        // а не 200 секунд.
+        const videoDefaultMatch = workerSource.match(
+            /VIDEO_RESULT_TIMEOUT_MS\s*=\s*Number\(process\.env\.VIDEO_RESULT_TIMEOUT_MS\s*\|\|\s*(\d+)/
+        );
+        expect(videoDefaultMatch).to.exist;
+        const videoDefaultMs = Number(videoDefaultMatch[1]);
+        expect(videoDefaultMs).to.be.at.least(3600000); // ≥ 1 час
+        expect(videoDefaultMs).to.be.above(200000);      // точно не 200 сек
+    });
 });
 
 describe('orchestration stabilization: executor acceptance', () => {
@@ -169,6 +197,8 @@ describe('orchestration stabilization: executor acceptance', () => {
         '../src/orchestration/orchestrator',
         '../src/storage/postgres/repositories/scene-assets-repo',
         '../src/workflows/workflow-loader',
+        '../src/services/video-orchestrator',
+        '../src/config/runtime-config',
     ];
 
     let savedCache;
@@ -281,13 +311,14 @@ describe('orchestration stabilization: executor acceptance', () => {
 
     it('does not count video jobs rejected by GPU Hub as dispatched', async () => {
         const videoCalls = [];
+        const redis = createMockRedis();
         const { calls, sceneData, loadedBook } = installCommonStubs({
             video: {
                 generateVideoAnimation: async (...args) => {
                     videoCalls.push(args);
                     return {
                         success: true,
-                        jobSpecs: [{ job_id: 'book_ch-1_sc-1:video' }],
+                        jobSpecs: [{ job_id: 'book_ch-1_sc-1_g1:video', unit_ids: ['u1'] }],
                     };
                 },
             },
@@ -298,7 +329,7 @@ describe('orchestration stabilization: executor acceptance', () => {
         const sceneOrchestrator = require('../src/orchestration/scene-orchestrator');
 
         const result = await sceneOrchestrator.dispatchStage(
-            {}, sceneData, loadedBook, 'build-1', 'video', 'dispatch-video'
+            redis, sceneData, loadedBook, 'build-1', 'video', 'dispatch-video'
         );
 
         expect(result).to.deep.include({

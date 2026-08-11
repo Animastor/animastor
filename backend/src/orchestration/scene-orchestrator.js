@@ -306,15 +306,115 @@ async function executeVideoDispatch(redis, scene, loadedBook, buildId, dispatchI
         return { dispatched: false, jobs: 0, reason: 'no_job_specs' };
     }
 
+    // ── VIDEO-ORCH: init state machine с группами (suffix + unit_ids) ──
+    // Группа → { suffix: '_gN', unit_ids: [...] }. Маппинг юнитов на группу
+    // хранится в state для точечной dirty-регенерации: при повторном
+    // dispatch перегенерируются только группы, содержащие dirty-юниты.
+    const videoOrch = require('../services/video-orchestrator');
+    const jobSchema = require('../runtime/job-schema');
+    const groups = jobSpecs.map(js => {
+        const parsed = jobSchema.parseJobId(js.job_id);
+        return {
+            suffix: parsed?.groupSuffix || '',
+            unit_ids: Array.isArray(js.unit_ids) ? js.unit_ids : [],
+        };
+    });
+
+    // ── OLD-STATE SNAPSHOT ДО initState ──
+    // initState перезаписывает state, поэтому состав групп прошлого диспатча
+    // нужно запомнить ДО него. Используется для валидации cache-hit: группа
+    // считается готовой только если её unit_ids ТОЧНО совпадают с прошлой
+    // группой того же суффикса (границы групп могут сдвинуться при изменении
+    // длительностей юнитов — тогда старый файл устарел, даже если нет dirty).
+    const prevState = await videoOrch.getState(redis, bookId, chapterId, sceneId);
+    const prevGroupsBySuffix = new Map();
+    if (prevState && Array.isArray(prevState.groups)) {
+        for (const g of prevState.groups) {
+            prevGroupsBySuffix.set(g.suffix || '', g);
+        }
+    }
+    await videoOrch.initState(redis, bookId, chapterId, sceneId, buildId, groups);
+
+    // ── DIRTY-UNITS: читаем из PG (как в executeImageDispatch) ──
+    let dirtyUnitIds = new Set();
+    try {
+        const { getDirtyUnitIds } = require('../storage/postgres/repositories/scene-assets-repo');
+        const ids = await getDirtyUnitIds(bookId, chapterId, sceneId);
+        if (ids && ids.length > 0) {
+            dirtyUnitIds = new Set(ids);
+            log(`[DIRTY-UNITS] video ${bookId}/${chapterId}/${sceneId}: ${ids.length} dirty unit(s) from PG`);
+        }
+    } catch (err) {
+        warn(`[DIRTY-UNITS] video PG read failed for ${bookId}/${chapterId}/${sceneId}: ${err.message}`);
+    }
+
+    // ── ЧАСТИЧНЫЙ RE-DISPATCH: пропускаем группы, чьи файлы уже готовы ──
+    // Группа считается готовой (cache-hit), если:
+    //   1. её файл валиден на диске, И
+    //   2. ни один unit группы не dirty (dirty → перегенерация группы).
+    // Пропущенные группы сразу помечаем done в video-orch state.
+    const jobsToSend = [];
+    let cachedGroups = 0;
+    for (let i = 0; i < jobSpecs.length; i++) {
+        const js = jobSpecs[i];
+        const grp = groups[i];
+        const hasDirty = grp.unit_ids.some(u => dirtyUnitIds.has(u));
+        const fileOk = videoOrch.isGroupFileValid(buildId, bookId, chapterId, sceneId, grp.suffix);
+        // Cache-hit только при ТОЧНОМ совпадении unit_ids с прошлой группой того
+        // же суффикса: если границы групп сдвинулись (длительности изменились),
+        // старый файл содержит другие юниты → перегенерируем, даже без dirty.
+        const prev = prevGroupsBySuffix.get(grp.suffix || '');
+        const sameComposition = !!(prev && Array.isArray(prev.unit_ids)
+            && prev.unit_ids.length === grp.unit_ids.length
+            && grp.unit_ids.every(u => prev.unit_ids.includes(u)));
+        if (!hasDirty && fileOk && sameComposition) {
+            await videoOrch.markGroupDone(redis, bookId, chapterId, sceneId, grp.suffix);
+            cachedGroups++;
+            log(`VIDEO_DISPATCH: ${bookId}/${chapterId}/${sceneId} group '${grp.suffix || '(base)'}' cached on disk — skipped`);
+        } else {
+            // Группа перегенерируется: старый файл удаляем, чтобы при
+            // сбое re-dispatch не остался stale-чанк, посчитанный валидным.
+            if (fileOk) {
+                try {
+                    const stalePath = videoOrch.groupFilePath(buildId, bookId, chapterId, sceneId, grp.suffix);
+                    require('fs').unlinkSync(stalePath);
+                    log(`VIDEO_DISPATCH: removed stale group file ${grp.suffix || '(base)'} for re-generation`);
+                } catch (_) {}
+            }
+            jobsToSend.push(js);
+        }
+    }
+
+    // ── ВСЕ ГРУППЫ УЖЕ ГОТОВЫ (полный cache-hit) → fast-track ──
+    if (jobsToSend.length === 0 && cachedGroups > 0) {
+        log(`VIDEO_DISPATCH: ${bookId}/${chapterId}/${sceneId} — all ${cachedGroups} group(s) cached, fast-track merge`);
+        const result = await videoOrch.completeGroup(redis, bookId, chapterId, sceneId, '', buildId, {
+            orchestrator,
+            dispatchId,
+        });
+        if (result && result.completed) {
+            return { dispatched: false, jobs: 0, completed: true, reason: 'cache_hit' };
+        }
+        // Провал fast-track склейки (в т.ч. merge in progress): job'ы не
+        // отправлялись и отправлять нечего. Не возвращаем send_failed —
+        // scheduler передиспатчит сцену, а merge-ретрай сделает completeGroup.
+        warn(`VIDEO_DISPATCH: fast-track merge did not complete for ${bookId}/${chapterId}/${sceneId} (${result?.reason || 'unknown'}) — returning merge_retry`);
+        return { dispatched: false, jobs: 0, reason: result?.reason === 'merging' ? 'merge_in_progress' : 'merge_retry' };
+    }
+
     // Add per-type timeout to each job spec
-    for (const jobSpec of jobSpecs) {
+    for (const jobSpec of jobsToSend) {
         if (videoTimeoutMs) {
             jobSpec.timeout_ms = videoTimeoutMs;
         }
     }
 
+    // ── WAITING_CHUNKS ставится ДО отправки job'ов (race condition,
+    // аналогично аудио): первый результат не должен попасть в GENERATING.
+    await videoOrch.setWaitingChunks(redis, bookId, chapterId, sceneId);
+
     let sentCount = 0;
-    for (const jobSpec of jobSpecs) {
+    for (const jobSpec of jobsToSend) {
         try {
             const sendResult = await gpu.sendUnified(jobSpec);
             if (sendResult.sent) {
@@ -328,7 +428,7 @@ async function executeVideoDispatch(redis, scene, loadedBook, buildId, dispatchI
     }
 
     if (sentCount > 0) {
-        log(`VIDEO_DISPATCHED: ${bookId}/${chapterId}/${sceneId} (${sentCount}/${jobSpecs.length} job(s) sent)`);
+        log(`VIDEO_DISPATCHED: ${bookId}/${chapterId}/${sceneId} (${sentCount}/${jobsToSend.length} job(s) sent, ${cachedGroups} cached)`);
         return { dispatched: true, jobs: sentCount, reason: null };
     }
 

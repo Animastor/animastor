@@ -59,22 +59,43 @@ async function concatVideos(inputPaths, outputPath) {
     }
 }
 
-function findSceneVideoGroups(buildId, bookId, chapterId, sceneId) {
+// Собирает файлы видео-групп для указанной сцены в порядке генерации.
+// Группы именуются `{prefix}_gN.mp4` (N>=1). Базовый `{prefix}.mp4` —
+// результат склейки, в список групп не входит.
+function findSceneVideoGroups(buildId, bookId, chapterId, sceneId, suffixes = null) {
     const dir = getOutputPath(buildId);
     if (!fs.existsSync(dir)) return [];
     const prefix = `${bookId}_${chapterId}_${sceneId}`;
-    const mainPath = path.join(dir, `${prefix}.mp4`);
-    if (!fs.existsSync(mainPath)) return [];
 
-    const files = fs.readdirSync(dir).filter(f =>
-        f.startsWith(prefix) && f.endsWith('.mp4') && !f.endsWith('.mp4.mp4')
-    );
-    files.sort();
+    let files;
+    if (Array.isArray(suffixes) && suffixes.length > 0) {
+        // Явный порядок из video-orchestrator (источник истины — state machine,
+        // не порядок readdir): группы, переданные в правильном порядке.
+        files = suffixes.map(s => {
+            const name = `${prefix}${s || ''}.mp4`;
+            return fs.existsSync(path.join(dir, name)) ? path.join(dir, name) : null;
+        }).filter(Boolean);
+    } else {
+        // Fallback: сканируем диск. Сортируем по номеру группы численно
+        // (лексикографически _g10 < _g2), базовый файл исключаем.
+        files = fs.readdirSync(dir)
+            .filter(f => f.startsWith(prefix) && f.endsWith('.mp4') && f !== `${prefix}.mp4` && !f.endsWith('.mp4.mp4'))
+            .sort((a, b) => {
+                const na = parseInt((a.match(/_g(\d+)/) || [0, 0])[1], 10);
+                const nb = parseInt((b.match(/_g(\d+)/) || [0, 0])[1], 10);
+                return na - nb;
+            })
+            .map(f => path.join(dir, f));
+    }
 
-    return files.map(f => path.join(dir, f));
+    return files;
 }
 
-async function mergeSceneVideoGroups(redis, buildId, bookId, chapterId, sceneId) {
+// Склеивает видео-группы сцены в единый `{prefix}.mp4` для плеера.
+// Групповые файлы `_gN.mp4` НЕ удаляются — они остаются отдельными
+// чанками для точечной dirty-регенерации и экспорта.
+// При одном файле — просто копирует его в финальный путь.
+async function mergeSceneVideoGroups(redis, buildId, bookId, chapterId, sceneId, suffixes = null) {
     const lockKey = `animastor:video-merge-lock:${bookId}:${chapterId}:${sceneId}`;
     const lock = await redis.set(lockKey, buildId, 'NX', 'EX', 300);
     if (!lock) {
@@ -82,13 +103,20 @@ async function mergeSceneVideoGroups(redis, buildId, bookId, chapterId, sceneId)
         return null;
     }
     try {
-        const files = findSceneVideoGroups(buildId, bookId, chapterId, sceneId);
-        if (files.length <= 1) {
-            log(`Nothing to merge for ${bookId}/${chapterId}/${sceneId} (${files.length} file(s))`);
+        const files = findSceneVideoGroups(buildId, bookId, chapterId, sceneId, suffixes);
+        if (files.length === 0) {
+            log(`Nothing to merge for ${bookId}/${chapterId}/${sceneId} (no group files)`);
             return null;
         }
 
         const finalPath = path.join(getOutputPath(buildId), `${bookId}_${chapterId}_${sceneId}.mp4`);
+
+        if (files.length === 1) {
+            fs.copyFileSync(files[0], finalPath);
+            log(`Single group copied: ${bookId}/${chapterId}/${sceneId} → ${path.basename(finalPath)}`);
+            return finalPath;
+        }
+
         const tempPath = finalPath + '.merge.mp4';
 
         log(`Merging ${files.length} video groups for ${bookId}/${chapterId}/${sceneId}`);
@@ -97,12 +125,7 @@ async function mergeSceneVideoGroups(redis, buildId, bookId, chapterId, sceneId)
 
         fs.renameSync(tempPath, finalPath);
 
-        for (const f of files) {
-            if (f !== finalPath) {
-                try { fs.unlinkSync(f); } catch {}
-            }
-        }
-
+        // Групповые файлы сознательно сохраняются (чанки остаются отдельными).
         log(`Merge complete: ${bookId}/${chapterId}/${sceneId}`);
         return finalPath;
     } finally {

@@ -39,11 +39,14 @@ module.exports = function(redis, config, deps) {
         if (!identity.valid) {
             // 🔧 FIX: Allow stale dispatch for audio chunks if scene is still
             // in WAITING_CHUNKS (batch dispatch reorder: dialogue chunks come later).
-            if (stage === 'audio' && identity.reason === 'stale_dispatch') {
-                const audioOrch = require('./audio-orchestrator');
-                const orchState = await audioOrch.getState(redis, parsed.bookId, parsed.chapterId, parsed.sceneId);
-                if (orchState && (orchState.phase === audioOrch.PHASES.WAITING_CHUNKS || orchState.phase === audioOrch.PHASES.MERGING)) {
-                    log(`Stale dispatch accepted for audio chunk ${parsed.assetId} (scene still ${orchState.phase})`);
+            // VIDEO: то же самое — группы сцены приходят последовательно, и после
+            // re-dispatch (FAILED → scheduler) поздние группы от старого dispatch
+            // должны приниматься, пока video-orch в WAITING_CHUNKS/MERGING.
+            if ((stage === 'audio' || stage === 'video') && identity.reason === 'stale_dispatch') {
+                const orchMod = stage === 'audio' ? require('./audio-orchestrator') : require('./video-orchestrator');
+                const orchState = await orchMod.getState(redis, parsed.bookId, parsed.chapterId, parsed.sceneId);
+                if (orchState && (orchState.phase === orchMod.PHASES.WAITING_CHUNKS || orchState.phase === orchMod.PHASES.MERGING)) {
+                    log(`Stale dispatch accepted for ${stage} chunk ${parsed.assetId} (scene still ${orchState.phase})`);
                 } else {
                     const err = new Error(`Rejected task result: ${identity.reason} (scene phase=${orchState?.phase || 'none'})`);
                     err.code = identity.reason;
@@ -189,15 +192,18 @@ module.exports = function(redis, config, deps) {
                     console.warn('⚠️ Invalid video job_id format:', job_id);
                     break;
                 }
-                await orchestrator.completeStage(
-                    redis,
-                    parsed.bookId,
-                    parsed.chapterId,
-                    parsed.sceneId,
-                    'video',
-                    build_id,
-                    dispatch_id
-                );
+                // VIDEO-ORCH: результат одной группы сцены. completeStage вызывается
+                // ТОЛЬКО после прихода всех групп (склейка для плеера), а не на
+                // первый результат — это фикс потери чанков _g2.._gN.
+                const videoOrch = require('./video-orchestrator');
+                try {
+                    await videoOrch.completeGroup(redis, parsed.bookId, parsed.chapterId, parsed.sceneId, parsed.groupSuffix, build_id, {
+                        orchestrator,
+                        dispatchId: dispatch_id,
+                    });
+                } catch (orchErr) {
+                    console.error('❌ videoOrch.completeGroup failed:', orchErr.message);
+                }
                 break;
             }
 

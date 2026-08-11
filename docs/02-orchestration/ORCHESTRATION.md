@@ -1,9 +1,10 @@
 # Animastor — Система оркестрации
 
-> **Единый документ.** Актуальное состояние на **19 июля 2026**, ревизия `d29eca0`.
+> **Единый документ.** Актуальное состояние на **11 августа 2026** (видео-оркестрация внедрена), ревизия `a58676e+`.
 > Замещает: `ORCHESTRATOR_LIFECYCLE.md`, `ORCHESTRATOR_ARCHITECTURE_WITH_AUDIO.md`,
 > `AUDIO_ORCHESTRATOR.md`, `REGENERATION_SYSTEM.md`, `ORCHESTRATION_SYSTEM_AUDIT.md`,
 > `CAPACITY_AND_COMPLEXITY.md`. Все ответы на вопросы об оркестрации — здесь.
+> Детали видео-пайплайна: `VIDEO_ORCHESTRATION.md`.
 
 ---
 
@@ -41,6 +42,7 @@
          ┌──────▼──────────────▼──────────┐
          │   scene-orchestrator.js        │
          │   executeAudio/Image/Video     │
+         │   └ video-orch.js (groups)     │
          └───────────────────────────────┘
 
     GPU Hub (gpu-hub.js) ←─── backend
@@ -101,7 +103,25 @@ NEW ──→ PLACEHOLDER_READY ──→ GENERATING ──→ WAITING_CHUNKS �
 - Recovery: если чанки на диске без last_chunk_at → доиграть merge
 - Инвариант: `phase == DONE ⇔ asset.audio == READY`
 
-### 2.4 Asset State (`state.js`)
+### 2.4 Video Orchestrator (`video-orchestrator.js`)
+
+Детальная state machine для видео-пайплайна — **зеркало audio-orchestrator**, внедрена 2026-08-11 (см. `VIDEO_ORCHESTRATION.md`):
+
+```
+GENERATING ──→ WAITING_CHUNKS ──→ MERGING ──→ DONE
+      │              │               │
+      └──→ FAILED ←──┴───────────────┘
+```
+
+- Key: `animastor:video-orch:{bookId}:{chapterId}:{sceneId}`
+- Хранит: `phase, groups (unit_ids + статус), groups_received, build_id, dispatch_id`
+- Группы остаются отдельными файлами `_gN.mp4`; `scene.mp4` — только результат склейки ДЛЯ ПЛЕЕРА (не pipeline).
+- Stale-accept: поздние группы со старым dispatch_id принимаются в WAITING_CHUNKS/MERGING.
+- Dirty-регенерация точечная: перегенерируются только группы с грязными юнитами.
+- Watchdog: `checkStalledVideoScenes()` (порог от layer-config), recovery `recoverVideoOrchStates()`.
+- Инвариант: `phase == DONE ⇔ asset.video == READY` (проверяется в reconcileCycle).
+
+### 2.5 Asset State (`state.js`)
 
 High-level per-asset состояния:
 
@@ -116,7 +136,7 @@ NEW → PENDING → GENERATING → READY
 - **Единственный источник истины** для lifecycle с точки зрения scheduler'а.
 - `syncLinearState()` — производная проекция для плеера (legacy, будет удалена).
 
-### 2.5 Runtime Loop (`runtime-loop.js`)
+### 2.6 Runtime Loop (`runtime-loop.js`)
 
 - **Tick** (каждые 5s): быстрый цикл — сбор active-scenes, вызов scheduler.tick(), counter-reconciliation.
 - **Reconcile** (каждые 60s): полный цикл самовосстановления с distributed lock.
@@ -125,9 +145,9 @@ NEW → PENDING → GENERATING → READY
   - Phase C0/C1/C2: active state fixes
   - Phase C4: counter reconciliation (с PG deps)
   - Phase C5: session resume
-  - Phase D: audio-orch invariants check
+  - Phase D: audio-orch invariants check + video-orch invariants check
 
-### 2.6 Scene Orchestrator (`scene-orchestrator.js`)
+### 2.7 Scene Orchestrator (`scene-orchestrator.js`)
 
 Выполняет dispatch по типу: `executeAudioDispatch()`, `executeImageDispatch()`, `executeVideoDispatch()`.
 Каждый:
@@ -136,7 +156,11 @@ NEW → PENDING → GENERATING → READY
 3. Отправляет задачу в GPU Hub через `gpu.send()`
 4. Возвращает `{ dispatched, jobs, reason }`
 
-### 2.7 GPU Hub (`gpu-hub/gpu-hub.js`)
+Video-ветка дополнительно: инициализирует video-orch state (состав групп + unit_ids),
+перегенерирует только группы с грязными юнитами (точечная dirty-регенерация),
+при полном кэше — fast-track merge без отправки job'ов.
+
+### 2.8 GPU Hub (`gpu-hub/gpu-hub.js`)
 
 Прокси между backend и удалёнными GPU worker'ами:
 - Принимает задачи в Redis-очереди `animastor:queue:{audio|image|video}`
@@ -146,7 +170,7 @@ NEW → PENDING → GENERATING → READY
 - Callback: POST /gpu/task/result
 - **GPU_HUB_API_KEY** — опциональная аутентификация (env, не задан → open access)
 
-### 2.8 Regeneration System
+### 2.9 Regeneration System
 
 ```
 Edit → Save → PUT /api/v1/book/:bookId → disk
@@ -430,6 +454,7 @@ Scheduler tick
 # Runtime state
 animastor:scene-assets-state:{bid}:{cid}:{sid}    # per-asset states (JSON)
 animastor:audio-orch:{bid}:{cid}:{sid}            # audio-orch phase (JSON)
+animastor:video-orch:{bid}:{cid}:{sid}            # video-orch phase (JSON, groups)
 animastor:dispatch-lease:{bid}:{cid}:{sid}:{type}  # lease (SET NX)
 animastor:dispatch-meta:{bid}:{cid}:{sid}:{type}   # dispatch metadata
 animastor:active-scenes                            # SMEMBERS
@@ -467,10 +492,13 @@ animastor:cleanup-lock                             # reconcile lock
 | `LEASE_TTL_audio` | `lease-manager.js` | 15 min |
 | `LEASE_TTL_image` | `lease-manager.js` | 20 min |
 | `LEASE_TTL_video` | `lease-manager.js` | 30 min |
-| `GPU_TIMEOUT` | `gpu-hub.js` (env `GPU_TIMEOUT`) | 600000 ms (10 min) |
+| `GPU_TIMEOUT` | `gpu-hub.js` (env `GPU_TIMEOUT`) | 600000 ms (10 min), per-job переопределяется `timeout_ms` из body |
 | `SCHEDULER_TICK_INTERVAL` | `runtime-loop.js` | 5000 ms |
 | `RECONCILE_INTERVAL_MS` | `runtime-loop.js` | 60000 ms |
 | `AUDIO_CHUNK_STALL_MS` | `runtime-config.js` | 300000 ms |
+| `VIDEO_CHUNK_STALL_MS` | `runtime-config.js` | fallback watchdog; основной порог — из layer-config `video_timeout_minutes` |
+| `video_timeout_minutes` | `layer-config.js` | 60 min (дефолт), 10–180 диапазон |
+| `VIDEO_RESULT_TIMEOUT_MS` | `worker.cjs` (env) | 7200000 ms (2 ч), fallback воркера |
 
 ---
 
@@ -492,6 +520,8 @@ animastor:cleanup-lock                             # reconcile lock
 | `backend/src/runtime/retry-budget-manager.js` | ~165 | Per-scene retry budget |
 | `backend/src/state/scene-state.js` | ~250 | Per-asset state (unsafe* методы) |
 | `backend/src/services/audio-orchestrator.js` | ~450 | Audio phase machine |
+| `backend/src/services/video-orchestrator.js` | ~400 | Video phase machine (группы, merge для плеера) |
+| `backend/src/video/video-merge.js` | ~210 | Склейка групп → scene.mp4 (NX-лок) |
 | `backend/src/services/task-handler.cjs` | ~300 | Callback обработка |
 | `backend/src/services/gen-scope.js` | ~130 | Scope management |
 | `backend/src/services/layer-config.js` | ~120 | Profile management |
@@ -504,4 +534,4 @@ animastor:cleanup-lock                             # reconcile lock
 
 <!-- === Footer === -->
 ---
-*Единый документ оркестрации. Ревизия `d29eca0`. 19 июля 2026.*
+*Единый документ оркестрации. Обновлён 11 августа 2026 (видео-оркестрация).*

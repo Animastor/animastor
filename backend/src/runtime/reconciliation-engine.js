@@ -377,6 +377,107 @@ async function checkStalledAudioScenes(redis, deps) {
 }
 
 // ======================================================
+// B2: STALLED VIDEO GROUPS WATCHDOG
+// ======================================================
+// Сканирует video-orch state машины в фазе WAITING_CHUNKS.
+// Если last_group_at/started_at + VIDEO_CHUNK_STALL_MS < Date.now() —
+// сцена зависла: вызываем failWaitingScene(), которая чистит hub-dedup
+// недостающих групп и публикует failStage (→ re-dispatch).
+
+async function checkStalledVideoScenes(redis, deps) {
+    let videoOrch;
+    try {
+        videoOrch = require('../services/video-orchestrator');
+    } catch (_) {
+        return 0;
+    }
+
+    const { VIDEO_CHUNK_STALL_MS } = config.TIMEOUTS;
+    const allStates = await videoOrch.scanAllStates(redis);
+    if (allStates.length === 0) return 0;
+
+    let stalled = 0;
+    for (const entry of allStates) {
+        const { bookId, chapterId, sceneId, state: orchState } = entry;
+        if (orchState.phase !== videoOrch.PHASES.WAITING_CHUNKS) continue;
+
+        // ── ПЕРЕСМОТР ПОРОГА ЗАСТОЯ ──
+        // Видео-генерация долгая по природе (LTX 5-10 мин на группу, на слабом
+        // GPU — 20-30+ мин). Жёсткий константный порог мог бы убить нормальную
+        // долгую генерацию. Порог застоя СТРОГО БОЛЬШЕ per-job timeout из
+        // layer-config (video_timeout_minutes): hub затаймливает воркера раньше,
+        // watchdog срабатывает только если hub/worker НЕ объявили ни результат,
+        // ни ошибку за весь интервал.
+        let stallThreshold = VIDEO_CHUNK_STALL_MS;
+        try {
+            const layerRaw = await redis.get(`animastor:layer-config:${bookId}`);
+            if (layerRaw) {
+                const lc = JSON.parse(layerRaw);
+                const perJobMs = (Number(lc.video_timeout_minutes) || 60) * 60 * 1000;
+                stallThreshold = Math.max(stallThreshold, perJobMs + 5 * 60 * 1000);
+            }
+        } catch (_) {}
+
+        const buildId = orchState.build_id || 'default';
+        const lastGroupAt = orchState.last_group_at;
+        const startedAt = orchState.started_at;
+        const threshold = lastGroupAt || startedAt;
+
+        if (threshold) {
+            const age = Date.now() - threshold;
+            if (age < stallThreshold) continue;
+
+            const reason = `video_group_stall_timeout:${Math.round(age / 1000)}s`;
+            warn(`[STALLED-VIDEO] ${bookId}/${chapterId}/${sceneId} — ${reason} (threshold=${Math.round(stallThreshold / 60000)}min, last_group_at=${!!lastGroupAt} started_at=${!!startedAt})`);
+            try {
+                await videoOrch.failWaitingScene(redis, bookId, chapterId, sceneId, buildId, reason, {
+                    orchestrator: deps.orchestrator,
+                });
+                stalled++;
+            } catch (err) {
+                warn(`[STALLED-VIDEO] failWaitingScene error: ${err.message}`);
+            }
+        } else {
+            // Нет ни last_group_at, ни started_at — свежий state без dispatch.
+            // Если все группы на диске — доигрываем merge.
+            const suffixes = videoOrch.groupSuffixes(orchState);
+            const presentCount = suffixes.filter(s => videoOrch.isGroupFileValid(buildId, bookId, chapterId, sceneId, s)).length;
+            if (presentCount === suffixes.length && suffixes.length > 0) {
+                log(`[STALLED-VIDEO] ${bookId}/${chapterId}/${sceneId} — ALL ${presentCount} groups on disk, no last_group_at. Calling completeGroup to trigger merge.`);
+                try {
+                    await videoOrch.completeGroup(redis, bookId, chapterId, sceneId, '', buildId, {
+                        orchestrator: deps.orchestrator,
+                        dispatchId: 'recovery-reconcile',
+                    });
+                    stalled++;
+                } catch (err) {
+                    warn(`[STALLED-VIDEO] completeGroup recovery failed: ${err.message}`);
+                    try {
+                        await videoOrch.failWaitingScene(redis, bookId, chapterId, sceneId, buildId,
+                            `recovery_fallback:${err.message}`, { orchestrator: deps.orchestrator });
+                        stalled++;
+                    } catch (fsErr) {
+                        warn(`[STALLED-VIDEO] failWaitingScene fallback failed: ${fsErr.message}`);
+                    }
+                }
+            } else if (presentCount > 0) {
+                warn(`[STALLED-VIDEO] ${bookId}/${chapterId}/${sceneId} — ${presentCount}/${suffixes.length} on disk, no last_group_at. Partial groups, failing scene.`);
+                try {
+                    await videoOrch.failWaitingScene(redis, bookId, chapterId, sceneId, buildId,
+                        `partial_groups:${presentCount}/${suffixes.length}_no_timestamps`, { orchestrator: deps.orchestrator });
+                    stalled++;
+                } catch (err) {
+                    warn(`[STALLED-VIDEO] failWaitingScene failed: ${err.message}`);
+                }
+            }
+        }
+    }
+
+    if (stalled > 0) log(`[STALLED-VIDEO] ${stalled} stalled video scenes recovered`);
+    return stalled;
+}
+
+// ======================================================
 // T7.6: AUDIO-ORCH INVARIANT CHECKS
 // ======================================================
 // Проверяет соответствие между audio-orch phase и asset state:
@@ -425,6 +526,63 @@ async function checkAudioOrchInvariants(redis, bookId, chapterId, sceneId) {
                 scene: { bookId, chapterId, sceneId },
                 phase,
                 audioState,
+                expected: 'PENDING|GENERATING|DIRTY',
+                recommendation: 'mark_dirty_or_set_done'
+            });
+        }
+    }
+
+    return violations.length > 0 ? violations : null;
+}
+
+// ======================================================
+// VIDEO-ORCH INVARIANT CHECKS (зеркало checkAudioOrchInvariants)
+// ======================================================
+//   phase=DONE     ⇒ asset.video = READY (или PLACEHOLDER)
+//   phase=FAILED   ⇒ asset.video = FAILED (или PENDING — после re-dispatch)
+//   промежуточные  ⇒ asset.video = PENDING|GENERATING|DIRTY
+
+async function checkVideoOrchInvariants(redis, bookId, chapterId, sceneId) {
+    const videoOrch = require('../services/video-orchestrator');
+    const assetStates = await state.getAssetStates(redis, bookId, chapterId, sceneId);
+    const orchState = await videoOrch.getState(redis, bookId, chapterId, sceneId);
+
+    if (!orchState || !assetStates) return null;
+
+    const phase = orchState.phase;
+    const videoState = assetStates.video;
+    const violations = [];
+
+    if (phase === videoOrch.PHASES.DONE) {
+        if (videoState !== state.AssetState.READY && videoState !== state.AssetState.PLACEHOLDER) {
+            violations.push({
+                type: 'video_orch_invariant_done',
+                scene: { bookId, chapterId, sceneId },
+                phase,
+                videoState,
+                expected: 'READY or PLACEHOLDER',
+                recommendation: 'run_completeStage'
+            });
+        }
+    } else if (phase === videoOrch.PHASES.FAILED) {
+        if (videoState !== state.AssetState.FAILED && videoState !== state.AssetState.PENDING) {
+            violations.push({
+                type: 'video_orch_invariant_failed',
+                scene: { bookId, chapterId, sceneId },
+                phase,
+                videoState,
+                expected: 'FAILED or PENDING',
+                recommendation: 'mark_dirty'
+            });
+        }
+    } else if (phase !== videoOrch.PHASES.NEW && phase !== videoOrch.PHASES.GENERATING) {
+        // WAITING_CHUNKS, MERGING — ассет не должен быть READY
+        if (videoState === state.AssetState.READY) {
+            violations.push({
+                type: 'video_orch_invariant_intermediate',
+                scene: { bookId, chapterId, sceneId },
+                phase,
+                videoState,
                 expected: 'PENDING|GENERATING|DIRTY',
                 recommendation: 'mark_dirty_or_set_done'
             });
@@ -649,6 +807,18 @@ async function reconcileScene(redis, bookId, chapterId, sceneId) {
                 });
             }
             log(`[INVARIANT] ${bookId}/${chapterId}/${sceneId}: ${audioOrchViolations.length} audio-orch violations`);
+        }
+
+        // Video-orch invariants (зеркало аудио)
+        const videoOrchViolations = await checkVideoOrchInvariants(redis, bookId, chapterId, sceneId);
+        if (videoOrchViolations) {
+            for (const v of videoOrchViolations) {
+                report.inconsistentScenes.push({
+                    scene: v.scene,
+                    issue: v.type
+                });
+            }
+            log(`[INVARIANT] ${bookId}/${chapterId}/${sceneId}: ${videoOrchViolations.length} video-orch violations`);
         }
 
         return report;
@@ -1140,6 +1310,17 @@ async function reconcileCycle(redis, deps = {}, options = {}) {
         }
 
         // ══════════════════════════════════════════════
+        // PHASE B2: Stalled video groups watchdog
+        // ══════════════════════════════════════════════
+        try {
+            const b2Count = await checkStalledVideoScenes(redis, deps);
+            if (b2Count > 0) phases.push(`stalled_video:${b2Count}`);
+        } catch (err) {
+            warn(`Phase B2 failed: ${err.message}`);
+            summary.errors.push(`stalled_video: ${err.message}`);
+        }
+
+        // ══════════════════════════════════════════════
         // PHASE C: Startup-specific (startup-recovery)
         // ══════════════════════════════════════════════
         if (startup) {
@@ -1162,6 +1343,16 @@ async function reconcileCycle(redis, deps = {}, options = {}) {
             } catch (err) {
                 warn(`Phase C1 failed: ${err.message}`);
                 summary.errors.push(`audio_orch: ${err.message}`);
+            }
+
+            // C1b: Video-orch state recovery
+            try {
+                const c1bCount = await recoverVideoOrchStates(redis, deps);
+                summary.itemsRecovered += c1bCount;
+                phases.push(`video_orch:${c1bCount}`);
+            } catch (err) {
+                warn(`Phase C1b failed: ${err.message}`);
+                summary.errors.push(`video_orch: ${err.message}`);
             }
 
             // C2: Version staleness check
@@ -1246,6 +1437,19 @@ async function recoverResultKeys(redis, deps, scope) {
 
     let recovered = 0;
 
+    // Отклонения dispatch-identity — терминальные для результата: dispatch
+    // уже финализирован/отменён, файл писать нельзя. Ключ удаляем, чтобы
+    // recovery не ретраил его каждые 60 сек до истечения 1-часового TTL
+    // (бывший бесконечный цикл по _g2.._g5 после no_active_dispatch).
+    const TERMINAL_REJECTIONS = new Set([
+        'no_active_dispatch',
+        'stale_dispatch',
+        'missing_dispatch_id',
+        'metadata_missing_dispatch_id',
+        'dispatch_metadata_changed',
+        'lease_token_mismatch',
+    ]);
+
     // Scan animastor:result:*
     let cursor = '0';
     do {
@@ -1289,7 +1493,17 @@ async function recoverResultKeys(redis, deps, scope) {
                     warn(`Skipping legacy result without build/dispatch identity: ${job_id}`);
                     continue;
                 }
-                await taskHandler.handleTaskResult(job_id, result_base64, buildId, dispatchId);
+                try {
+                    await taskHandler.handleTaskResult(job_id, result_base64, buildId, dispatchId);
+                } catch (rejectErr) {
+                    if (rejectErr && TERMINAL_REJECTIONS.has(rejectErr.code)) {
+                        warn(`Result ${job_id} terminally rejected (${rejectErr.code}) — dropping result key, no infinite retry`);
+                        await redis.del(key);
+                    } else {
+                        throw rejectErr;
+                    }
+                    continue;
+                }
                 await redis.del(key);
                 recovered++;
             } catch (itemErr) {
@@ -1441,6 +1655,86 @@ async function recoverAudioOrchStates(redis, deps) {
     return recovered;
 }
 
+// ── PHASE C1b: Recover video-orch states ───────────────
+// Зеркало recoverAudioOrchStates: не-терминальные фазы → FAILED (re-dispatch),
+// MERGING/WAITING_CHUNKS с полным набором групп → доигрываем merge.
+async function recoverVideoOrchStates(redis, deps) {
+    let videoOrch;
+    try {
+        videoOrch = require('../services/video-orchestrator');
+    } catch (_) {
+        return 0;
+    }
+
+    const allStates = await videoOrch.scanAllStates(redis);
+    if (allStates.length === 0) return 0;
+
+    let recovered = 0;
+    const OUTPUT_DIR = config.OUTPUT_DIR;
+
+    for (const entry of allStates) {
+        const { bookId, chapterId, sceneId, state: orchState } = entry;
+        const phase = orchState.phase;
+        const buildId = orchState.build_id || 'default';
+        const suffixes = videoOrch.groupSuffixes(orchState);
+        const mergedPath = syncPath.join(OUTPUT_DIR, buildId, `${bookId}_${chapterId}_${sceneId}.mp4`);
+
+        switch (phase) {
+            case 'GENERATING':
+            case 'WAITING_CHUNKS':
+                // ── RECOVERY: сначала проверяем, все ли группы на диске ──
+                const presentCount = suffixes.filter(s => videoOrch.isGroupFileValid(buildId, bookId, chapterId, sceneId, s)).length;
+                if (presentCount === suffixes.length && suffixes.length > 0) {
+                    log(`[VIDEO-ORCH] Recover ${bookId}/${chapterId}/${sceneId}: ${phase} — ${presentCount}/${suffixes.length} groups on disk, driving merge`);
+                    try {
+                        await videoOrch.completeGroup(redis, bookId, chapterId, sceneId, '', buildId, {
+                            orchestrator: deps.orchestrator,
+                            dispatchId: 'startup-recovery',
+                        });
+                        recovered++;
+                        break;
+                    } catch (mergeErr) {
+                        warn(`[VIDEO-ORCH] Recover merge failed for ${bookId}/${chapterId}/${sceneId}: ${mergeErr.message} — falling through to FAILED`);
+                    }
+                }
+                log(`[VIDEO-ORCH] Recover ${bookId}/${chapterId}/${sceneId}: ${phase} → FAILED (${presentCount}/${suffixes.length} groups on disk)`);
+                await videoOrch.setFailed(redis, bookId, chapterId, sceneId, 'restart_recovery');
+                // F1: sync asset.video → FAILED после videoOrch.setFailed
+                await state.unsafeRestoreAssetState(redis, bookId, chapterId, sceneId, 'video', state.AssetState.FAILED);
+                if (deps.orchestrator) {
+                    await deps.orchestrator.markDirtyScene(redis, bookId, chapterId, sceneId, ['video']);
+                }
+                recovered++;
+                break;
+            case 'MERGING':
+                if (syncFs.existsSync(mergedPath)) {
+                    log(`[VIDEO-ORCH] Recover ${bookId}/${chapterId}/${sceneId}: MERGING → DONE`);
+                    await videoOrch.setDone(redis, bookId, chapterId, sceneId);
+                    await state.unsafeRestoreAssetState(redis, bookId, chapterId, sceneId, 'video', state.AssetState.READY);
+                } else {
+                    log(`[VIDEO-ORCH] Recover ${bookId}/${chapterId}/${sceneId}: MERGING → FAILED`);
+                    await videoOrch.setFailed(redis, bookId, chapterId, sceneId, 'restart_merge_missing');
+                    await state.unsafeRestoreAssetState(redis, bookId, chapterId, sceneId, 'video', state.AssetState.FAILED);
+                    if (deps.orchestrator) {
+                        await deps.orchestrator.markDirtyScene(redis, bookId, chapterId, sceneId, ['video']);
+                    }
+                }
+                recovered++;
+                break;
+            case 'DONE':
+            case 'FAILED':
+                // Terminal — leave as is
+                break;
+            default:
+                await videoOrch.deleteState(redis, bookId, chapterId, sceneId);
+                break;
+        }
+    }
+
+    if (recovered > 0) log(`[VIDEO-ORCH] ${recovered} non-terminal states recovered`);
+    return recovered;
+}
+
 // ── PHASE C2: Version staleness check ───────────────────
 // Из startup-recovery.js: для stale-ассетов → markDirtyScene
 async function checkVersionStaleness(redis, deps) {
@@ -1527,11 +1821,14 @@ module.exports = {
     reconcileCycle,
     recoverResultKeys,
     recoverAudioOrchStates,
+    recoverVideoOrchStates,
     checkVersionStaleness,
     reconcileMissingSceneState,
     checkStalledAudioScenes,
+    checkStalledVideoScenes,
 
     checkAudioOrchInvariants,
+    checkVideoOrchInvariants,
 
     checkOrphanVideoState,
     checkOrphanImageState,
