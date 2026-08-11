@@ -174,10 +174,10 @@
          (NavigationBarView constructor default), which the web does not do (weight stays 500).
          Compacted paddings for the 70dp bar: in LABELED mode Material hard-positions the icon
          container at itemPaddingTop and the label group bottom-anchored with itemPaddingBottom.
-         At the M3 defaults (12/16dp) the 80dp design leaves ~2dp pill→label, but at 70dp the
-         label group rides up and the 64×32dp indicator (bottom = itemPaddingTop + 32) overlaps
-         the label. 8/6dp restores the web's geometry: icon 12..36dp, indicator 8..40dp,
-         label text from ~46dp → clean ~6dp clearance. -->
+         Calibrated on-device against the web: M3 defaults 12/16dp made the 64×32dp indicator
+         (bottom = itemPaddingTop + 32) touch the label, 8/6dp overshot to a ~11dp gap. 10/10dp
+         lands in the middle (~5dp pill→label, icon ~9dp above bar center) — matching the web's
+         geometry (icon 11..35px, pill 7..39px, label ~46px in the 70px bar). -->
     <style name="Widget.Animastor.BottomNavigation" parent="Widget.Material3.BottomNavigationView">
         <item name="backgroundTint">?attr/colorSurface</item>
         <item name="itemIconTint">?attr/colorOnSurfaceVariant</item>
@@ -185,8 +185,8 @@
         <item name="itemTextAppearanceActive">@style/TextAppearance.Animastor.TabLabel</item>
         <item name="itemTextAppearanceInactive">@style/TextAppearance.Animastor.TabLabel</item>
         <item name="itemTextAppearanceActiveBoldEnabled">false</item>
-        <item name="itemPaddingTop">8dp</item>
-        <item name="itemPaddingBottom">6dp</item>
+        <item name="itemPaddingTop">10dp</item>
+        <item name="itemPaddingBottom">12dp</item>
         <item name="itemRippleColor">?attr/colorPrimaryContainer</item>
         <item name="itemActiveIndicatorStyle">@style/Widget.Animastor.BottomNavIndicator</item>
         <item name="elevation">8dp</item>
