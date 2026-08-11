@@ -86,9 +86,10 @@
 
     <!-- Bottom nav: explicit 70dp (compacted from the M3 80dp labeled default) —
          parity with the mobile web tabbar. Material's makeMinHeightSpec keeps an
-         EXACT layout_height, so 70dp wins over the 80dp minHeight; the internal
-         item layout (icon top-anchored, label bottom-anchored) auto-compresses
-         the icon→label gap from ~20dp to ~10dp. Tap targets stay 70dp tall. -->
+         EXACT layout_height, so 70dp wins over the 80dp minHeight. The internal
+         icon/label spacing is rebalanced via itemPaddingTop/itemPaddingBottom in
+         Widget.Animastor.BottomNavigation (see the comment there). Tap targets
+         stay 70dp tall. -->
     <com.google.android.material.bottomnavigation.BottomNavigationView
         android:id="@+id/bottom_navigation"
         android:layout_width="match_parent"
