@@ -163,11 +163,18 @@
          WIDGET STYLES — используют ?attr/ для адаптации к теме
          ============================================================ -->
 
-    <!-- Bottom Navigation -->
+    <!-- Bottom Navigation — label appearance is pinned to TextAppearance.Animastor.TabLabel
+         (13sp medium) instead of the M3 default (12sp bold LabelMedium) so the nav matches
+         the mobile web frontend 1:1; the compact 70dp bar height is set in activity_main.xml
+         (80dp M3 default kept only as minHeight, which an exact layout_height overrides).
+         Active and inactive share the same appearance on purpose (like the web — only the
+         color changes); itemTextAppearance overrides the layout's small/large label sizes. -->
     <style name="Widget.Animastor.BottomNavigation" parent="Widget.Material3.BottomNavigationView">
         <item name="backgroundTint">?attr/colorSurface</item>
         <item name="itemIconTint">?attr/colorOnSurfaceVariant</item>
         <item name="itemTextColor">?attr/colorOnSurfaceVariant</item>
+        <item name="itemTextAppearanceActive">@style/TextAppearance.Animastor.TabLabel</item>
+        <item name="itemTextAppearanceInactive">@style/TextAppearance.Animastor.TabLabel</item>
         <item name="itemRippleColor">?attr/colorPrimaryContainer</item>
         <item name="itemActiveIndicatorStyle">@style/Widget.Animastor.BottomNavIndicator</item>
         <item name="elevation">8dp</item>
@@ -291,9 +298,12 @@
     </style>
 
 
-    <!-- Tab label appearance (mirrors Material3 LabelLarge explicitly) -->
+    <!-- Tab label appearance (mirrors Material3 LabelLarge explicitly). Compacted
+         14sp → 13sp for the denser 70dp nav bar — parity with the mobile web
+         frontend (base.css .tabbar__item is 13sp/500). Also used by the Developer
+         View TabLayout. -->
     <style name="TextAppearance.Animastor.TabLabel" parent="TextAppearance.Material3.LabelLarge">
-        <item name="android:textSize">14sp</item>
+        <item name="android:textSize">13sp</item>
         <item name="android:fontFamily">sans-serif-medium</item>
         <item name="android:textFontWeight">500</item>
     </style>

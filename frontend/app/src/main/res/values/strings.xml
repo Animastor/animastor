@@ -2,13 +2,14 @@
 <resources>
     <string name="app_name">Animastor</string>
 
-    <!-- Bottom Navigation -->
-    <string name="tab_file">FILE</string>
-    <string name="tab_generate">GENERATE</string>
+    <!-- Bottom Navigation — sentence case (parity with the mobile web frontend;
+         compact labels + no all-caps block on narrow screens). -->
+    <string name="tab_file">File</string>
+    <string name="tab_generate">Generator</string>
     <string name="toolbar_ai">AI</string>
-    <string name="tab_play">PLAY</string>
-    <string name="tab_edit">EDIT</string>
-    <string name="tab_navigate">NAVIGATE</string>
+    <string name="tab_play">Player</string>
+    <string name="tab_edit">Editor</string>
+    <string name="tab_navigate">Navigator</string>
 
     <!-- File Screen -->
     <string name="file_title">Import Book</string>

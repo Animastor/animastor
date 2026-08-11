@@ -4,13 +4,14 @@
          of the UI language — see task: toolbar/launcher must not localize it. -->
     <string name="app_name">Animastor</string>
 
-    <!-- Bottom Navigation -->
-    <string name="tab_file">ФАЙЛ</string>
-    <string name="tab_generate">ГЕНЕРАТОР</string>
+    <!-- Bottom Navigation — sentence case (паритет с мобильным веб-фронтом:
+         компактные подписи вместо сплошного блока CAPS на узких экранах). -->
+    <string name="tab_file">Файл</string>
+    <string name="tab_generate">Генератор</string>
     <string name="toolbar_ai">ИИ</string>
-    <string name="tab_play">ПЛЕЕР</string>
-    <string name="tab_edit">РЕДАКТОР</string>
-    <string name="tab_navigate">НАВИГАТОР</string>
+    <string name="tab_play">Плеер</string>
+    <string name="tab_edit">Редактор</string>
+    <string name="tab_navigate">Навигатор</string>
 
     <!-- File Screen -->
     <string name="file_title">Импорт книги</string>
