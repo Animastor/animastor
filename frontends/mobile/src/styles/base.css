@@ -215,6 +215,7 @@ button { font: inherit; color: inherit; }
   background: var(--surface);
   color: var(--text-2);
   cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
 }
 .desktop-generation-status:hover { background: var(--surface-2); color: var(--text); }
 .desktop-generation-status__dot {
@@ -237,11 +238,20 @@ button { font: inherit; color: inherit; }
   0%, 100% { opacity: 1; transform: scale(1); }
   50% { opacity: 0.4; transform: scale(0.72); }
 }
-/* Nonessential desktop animations respect prefers-reduced-motion (plan §11). */
+/* Nonessential desktop animations respect prefers-reduced-motion (plan §11):
+   the dock slide, status pulses and every colour transition inside the shell
+   collapse to near-instant, keeping state changes readable without motion. */
 @media (prefers-reduced-motion: reduce) {
   .assistant-dock { animation: none; }
   .desktop-generation-status--running .desktop-generation-status__dot,
   .desktop-main .gen-desk-bar__summary--active { animation: none; }
+  .desktop-shell *,
+  .desktop-shell *::before,
+  .desktop-shell *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 .desktop-modes {
   display: inline-flex;
@@ -253,7 +263,7 @@ button { font: inherit; color: inherit; }
   background: var(--surface-2);
 }
 .desktop-modes__item {
-  min-height: 2.375rem;
+  min-height: 2.5rem; /* 40px — plan §11 primary action target */
   display: inline-flex;
   align-items: center;
   gap: 0.375rem;
@@ -265,8 +275,10 @@ button { font: inherit; color: inherit; }
   font-size: 0.8125rem;
   font-weight: 600;
   cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
 }
 .desktop-modes__item:hover { background: var(--surface); }
+.desktop-modes__item:focus-visible { outline-offset: 3px; }
 .desktop-modes__item--active { background: var(--primary); color: var(--on-primary); }
 .desktop-layout {
   flex: 1;
@@ -313,6 +325,7 @@ button { font: inherit; color: inherit; }
   background: transparent;
   color: var(--text-2);
   cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
 }
 .desktop-panel__collapse:hover { background: var(--surface-2); color: var(--text); }
 .desktop-panel > .page {
@@ -357,7 +370,9 @@ button { font: inherit; color: inherit; }
   gap: 0.75rem;
   margin-top: 0.875rem;
 }
-.desktop-start-state__btn { height: 2.375rem; font-size: 0.875rem; }
+.desktop-start-state__btn { height: 2.5rem; font-size: 0.875rem; transition: background-color 0.15s ease; }
+.desktop-start-state__btn:hover { background: var(--primary-pressed); }
+.desktop-start-state__btn.btn--outlined:hover { background: var(--surface-2); }
 
 /* File is manually collapsible. Its content stays mounted so an export/import
    status is not discarded; display:none also removes hidden controls from tab
@@ -448,8 +463,8 @@ button { font: inherit; color: inherit; }
   flex-shrink: 0;
 }
 .desktop-main .edit-header__nav-btn {
-  width: 2.25rem;
-  height: 2.25rem;
+  width: 2.375rem;
+  height: 2.375rem; /* 38px — frequent editor navigation */
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -458,6 +473,7 @@ button { font: inherit; color: inherit; }
   background: var(--surface);
   color: var(--text);
   cursor: pointer;
+  transition: background-color 0.15s ease;
 }
 .desktop-main .edit-header__nav-btn:hover { background: var(--surface-2); }
 .desktop-main .edit-header__nav-btn:disabled { opacity: 0.4; cursor: default; }
@@ -475,7 +491,7 @@ button { font: inherit; color: inherit; }
 .desktop-main .edit-header__state--busy { color: var(--text-2); }
 .desktop-main .edit-header__save {
   flex-shrink: 0;
-  height: 2.375rem;
+  height: 2.5rem; /* 40px — plan §11 primary action target */
   padding: 0 1rem;
   display: inline-flex;
   align-items: center;
@@ -488,6 +504,7 @@ button { font: inherit; color: inherit; }
   font-size: 0.875rem;
   font-weight: 500;
   cursor: pointer;
+  transition: background-color 0.15s ease;
 }
 .desktop-main .edit-header__save:hover { background: var(--primary-pressed); }
 .desktop-main .edit-header__save:disabled { opacity: 0.5; cursor: default; }
@@ -718,7 +735,12 @@ button { font: inherit; color: inherit; }
 /* Compact active-jobs summary — text + colour, never colour alone (plan §2.4,
    §6: running work must stay glanceable above a long task list). */
 .desktop-main .gen-desk-bar__summary {
-  flex-shrink: 0;
+  flex-shrink: 1;
+  min-width: 0;
+  max-width: 16rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 0.75rem;
   font-weight: 600;
   padding: 0.25rem 0.5rem;
@@ -739,9 +761,10 @@ button { font: inherit; color: inherit; }
   flex-shrink: 0;
 }
 .desktop-main .gen-desk-bar__actions .btn {
-  height: 2.375rem;
+  height: 2.5rem; /* 40px — plan §11 primary action target */
   font-size: 0.875rem;
   padding: 0 0.875rem;
+  transition: background-color 0.15s ease;
 }
 
 /* Standard/narrow desktop: one readable column instead of squeezing four
@@ -779,7 +802,7 @@ button { font: inherit; color: inherit; }
 }
 .desktop-main .play-console__play {
   flex-shrink: 0;
-  height: 2.375rem;
+  height: 2.5rem; /* 40px — plan §11 primary action target */
   padding: 0 1rem;
   display: inline-flex;
   align-items: center;
@@ -792,6 +815,7 @@ button { font: inherit; color: inherit; }
   font-size: 0.875rem;
   font-weight: 500;
   cursor: pointer;
+  transition: background-color 0.15s ease;
 }
 .desktop-main .play-console__play:hover { background: var(--primary-pressed); }
 .desktop-main .play-console__play:disabled { opacity: 0.4; cursor: default; }
@@ -817,11 +841,12 @@ button { font: inherit; color: inherit; }
   flex-shrink: 0;
 }
 .desktop-main .play-console__layer {
-  height: 2.375rem;
+  height: 2.5rem; /* 40px — frequent layer toggles */
   display: inline-flex;
   align-items: center;
   gap: 0.375rem;
   padding: 0 0.75rem;
+  max-width: 100%;
   border-radius: var(--radius-pill);
   border: 1px solid var(--outline-2);
   background: var(--surface);
@@ -832,6 +857,12 @@ button { font: inherit; color: inherit; }
   transition: background-color .15s ease, border-color .15s ease, color .15s ease;
 }
 .desktop-main .play-console__layer:hover { background: var(--surface-2); color: var(--text); }
+.desktop-main .play-console__layer > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .desktop-main .play-console__layer--on {
   background: var(--accent-container);
   border-color: var(--accent);
@@ -1973,8 +2004,8 @@ button { font: inherit; color: inherit; }
 .nav-unit-row .nav-item--unit { flex: 1; width: auto; margin-bottom: 0; }
 .nav-unit-row__play {
   flex-shrink: 0;
-  width: 2rem;
-  height: 2rem;
+  width: 2.375rem; /* 38px — frequent desktop action */
+  height: 2.375rem;
   margin-left: 0.25rem;
   margin-right: 0.5rem;
   display: inline-flex;
@@ -1985,8 +2016,10 @@ button { font: inherit; color: inherit; }
   background: var(--surface);
   color: var(--accent);
   cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
 }
 .nav-unit-row__play:hover { background: var(--surface-2); color: var(--text); }
+.nav-unit-row__play:focus-visible { outline-offset: 3px; }
 
 /* 44dp preview thumbnail (ImageView centerCrop); ic_image_off fallback tint */
 .nav-item__thumb {

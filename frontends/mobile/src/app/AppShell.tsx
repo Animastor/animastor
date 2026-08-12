@@ -135,8 +135,12 @@ function DesktopWorkspace({ path, isSecondary, children }: { path: string; isSec
           >
             {t('toolbar_ai')}
           </button>
-          <button class="toolbar__btn" aria-label={t('settings')} onClick={() => navigate('/settings')}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="22" height="22"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0 .33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-.33 1.82l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09A1.65 1.65 0 0 0 15 4.6a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09A1.65 1.65 0 0 0 19.4 15z" /></svg>
+          <button
+            class="toolbar__btn"
+            aria-label={t('settings')}
+            title={t('settings')}
+            onClick={() => navigate('/settings')}
+          >            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="22" height="22"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0 .33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-.33 1.82l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09A1.65 1.65 0 0 0 15 4.6a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09A1.65 1.65 0 0 0 19.4 15z" /></svg>
           </button>
         </div>
       </header>
@@ -149,6 +153,7 @@ function DesktopWorkspace({ path, isSecondary, children }: { path: string; isSec
               class="desktop-panel__collapse"
               type="button"
               aria-label={filePanelCollapsed ? t('edit_expand') : t('edit_collapse')}
+              title={filePanelCollapsed ? t('edit_expand') : t('edit_collapse')}
               aria-expanded={!filePanelCollapsed}
               onClick={() => setPanelPrefs((prefs) => ({ ...prefs, filePanelCollapsed: !prefs.filePanelCollapsed }))}
             >
@@ -178,6 +183,7 @@ function DesktopWorkspace({ path, isSecondary, children }: { path: string; isSec
               class="desktop-panel__collapse"
               type="button"
               aria-label={navigatorPanelCollapsed ? t('edit_expand') : t('edit_collapse')}
+              title={navigatorPanelCollapsed ? t('edit_expand') : t('edit_collapse')}
               aria-expanded={!navigatorPanelCollapsed}
               onClick={() => setPanelPrefs((prefs) => ({ ...prefs, navigatorPanelCollapsed: !prefs.navigatorPanelCollapsed }))}
             >
@@ -208,7 +214,7 @@ function DesktopSecondary({ path, children }: { path: string; children: JSX.Elem
   return (
     <div class="desktop-secondary">
       <div class="desktop-secondary-bar">
-        <button class="toolbar__btn" aria-label={t('back')} onClick={() => history.back()}>
+        <button class="toolbar__btn" aria-label={t('back')} title={t('back')} onClick={() => history.back()}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="24" height="24"><path d="M15 18l-6-6 6-6" /></svg>
         </button>
         <span class="desktop-secondary-bar__title">{title}</span>
@@ -304,7 +310,7 @@ function Toolbar({ path, isSecondary }: { path: string; isSecondary: boolean }) 
     const action = secondaryAction.value;
     return (
       <header class="toolbar">
-        <button class="toolbar__btn" aria-label={t('back')} onClick={() => history.back()}>
+        <button class="toolbar__btn" aria-label={t('back')} title={t('back')} onClick={() => history.back()}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="24" height="24"><path d="M15 18l-6-6 6-6" /></svg>
         </button>
         <span class="toolbar__title toolbar__title--secondary">{title}</span>

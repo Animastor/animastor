@@ -166,10 +166,18 @@
 - APK: `build-apk.sh` → net-disk → `https://animastor.in/net-disk/desktop-web-tester.apk`
   (сборка с `-PTESTER_URL=...` / `-PTESTER_WIDTH=...`)
 
-## Phase 10 — Final polish
+## Phase 10 — Final polish — статический слайс сделан
 
-- [ ] Отступы, выравнивание, анимации панелей, hover/focus, empty states, truncation, scrollbars
-- [ ] Проверка контраста и длинных промптов/русских меток
+Сделано (план §10/§11 — первый статический слайс):
+
+- [x] **Таргеты и hover/focus**: частые primary-действия доведены до 40px (mode-переключатель, Save, Generate/Stop, Play, layer-тогглы, start-state кнопки); навигация редактора и «Открыть в плеере» — 38px; единые `transition: background-color .15s` на всех десктопных контролах (модальные hover-состояния, `.btn` в gen-desk-bar и start-state — `.btn--outlined:hover`)
+- [x] **Tooltips для icon-only контролов** (план §11): settings-шестерёнка, обе кнопки collapse панелей, back-кнопка secondary-бара и мобильного Toolbar получили `title` (aria-label сохранён — SR использует aria-label, hover показывает tooltip)
+- [x] **Truncation длинных RU-меток**: `gen-desk-bar__summary` — max-width 16rem + `flex-shrink:1; min-width:0` + ellipsis (настоящий shrink при узком workspace); подпись layer-пиллов плеера — ellipsis через `> span`
+- [x] **prefers-reduced-motion — blanket**: внутри `.desktop-shell` все анимации и транзишены схлопываются до 0.01ms (`animation-iteration-count:1`). Мобильный tabbar (tab-pulse SUCCESS) вне шелла — не затронут; gen-pulse воркеров на десктопе корректно отключается
+- [x] Контраст: текст-2 на surface (тёмный #B8AFA3/#1B1816, светлый #6B6258/#FAF7F0) — читаемо; длинные промпты остаются в 12.5rem+ resize-able area (проверено статически)
+- [x] `tsc --noEmit` + `vite build` — OK; code-review пройден (дубли transition объединены в основные правила, summary получил настоящий shrink)
+
+Осталось (runtime): прогон в браузере/тестере — ширин, hover/focus табов, tooltips, reduced-motion (нужен Chrome/планшет).
 
 ---
 
