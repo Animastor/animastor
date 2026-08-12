@@ -234,6 +234,12 @@ button { font: inherit; color: inherit; }
 .desktop-panel--file.desktop-panel--collapsed .desktop-panel__title-label,
 .desktop-panel--file.desktop-panel--collapsed > .page { display: none; }
 .desktop-panel--file.desktop-panel--collapsed .desktop-panel__collapse { margin-left: 0; }
+.desktop-layout--navigator-collapsed { grid-template-columns: minmax(14rem, 15.5rem) minmax(0, 1fr) 3.75rem; }
+.desktop-layout--file-collapsed.desktop-layout--navigator-collapsed { grid-template-columns: 3.75rem minmax(0, 1fr) 3.75rem; }
+.desktop-panel--navigator.desktop-panel--collapsed .desktop-panel__title { justify-content: center; padding: 0; }
+.desktop-panel--navigator.desktop-panel--collapsed .desktop-panel__title-label,
+.desktop-panel--navigator.desktop-panel--collapsed > .page { display: none; }
+.desktop-panel--navigator.desktop-panel--collapsed .desktop-panel__collapse { margin-left: 0; }
 
 /* Toolbar */
 .toolbar {

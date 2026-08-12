@@ -61,6 +61,7 @@ export function AppShell({ children }: { children: JSX.Element }) {
 
 function DesktopWorkspace({ path, children }: { path: string; children: JSX.Element }) {
   const [filePanelCollapsed, setFilePanelCollapsed] = useState(false);
+  const [navigatorPanelCollapsed, setNavigatorPanelCollapsed] = useState(false);
   const modes: { route: '/generate' | '/play' | '/edit'; key: 'tab_generate' | 'tab_play' | 'tab_edit'; Icon: (p: IconProps) => JSX.Element }[] = [
     { route: '/generate', key: 'tab_generate', Icon: IconGenerate },
     { route: '/play', key: 'tab_play', Icon: IconPlay },
@@ -97,7 +98,7 @@ function DesktopWorkspace({ path, children }: { path: string; children: JSX.Elem
           </button>
         </div>
       </header>
-      <div class={'desktop-layout' + (filePanelCollapsed ? ' desktop-layout--file-collapsed' : '')}>
+      <div class={'desktop-layout' + (filePanelCollapsed ? ' desktop-layout--file-collapsed' : '') + (navigatorPanelCollapsed ? ' desktop-layout--navigator-collapsed' : '')}>
         <aside class={'desktop-panel desktop-panel--file' + (filePanelCollapsed ? ' desktop-panel--collapsed' : '')} aria-label={t('tab_file')}>
           <div class="desktop-panel__title">
             <IconFile width={18} height={18} />
@@ -117,8 +118,20 @@ function DesktopWorkspace({ path, children }: { path: string; children: JSX.Elem
         <main class="desktop-main">
           {hasWorkspaceMode ? children : <DesktopStartState />}
         </main>
-        <aside class="desktop-panel desktop-panel--navigator" aria-label={t('tab_navigate')}>
-          <div class="desktop-panel__title"><IconMap width={18} height={18} /> {t('tab_navigate')}</div>
+        <aside class={'desktop-panel desktop-panel--navigator' + (navigatorPanelCollapsed ? ' desktop-panel--collapsed' : '')} aria-label={t('tab_navigate')}>
+          <div class="desktop-panel__title">
+            <IconMap width={18} height={18} />
+            <span class="desktop-panel__title-label">{t('tab_navigate')}</span>
+            <button
+              class="desktop-panel__collapse"
+              type="button"
+              aria-label={navigatorPanelCollapsed ? t('edit_expand') : t('edit_collapse')}
+              aria-expanded={!navigatorPanelCollapsed}
+              onClick={() => setNavigatorPanelCollapsed((collapsed) => !collapsed)}
+            >
+              {navigatorPanelCollapsed ? <IconChevronLeft width={18} height={18} /> : <IconChevronRight width={18} height={18} />}
+            </button>
+          </div>
           <NavigatePage />
         </aside>
       </div>
