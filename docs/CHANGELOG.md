@@ -23,8 +23,21 @@ All notable changes to Animastor are documented here.
     (`mobile-web-tester`, `desktop-web-tester`) по умолчанию на `app.animastor.in`.
   - Проверки: `nginx -t`, docker-compose re-create nginx, curl-сценарии
     (public website 200, app 401, app/library 200, m → 301).
-  - **Ручной шаг на сервере:** расширить Let's Encrypt сертификат на
-    `app.animastor.in` (сейчас в SANs только animastor.in/m./www) — см. `ARCHITECTURE.md`.
+
+- **SSL: сертификат расширен на `app.animastor.in` (certbot --expand, webroot)** —
+  SANs теперь: `animastor.in, app.animastor.in, m.animastor.in, www.animastor.in`
+  (истекает 2026-11-10), TLS-валидация `https://app.animastor.in` проходит без
+  ошибок (`ssl_verify_result 0`). Бонус: починен устаревший webroot-маппинг в
+  `/etc/letsencrypt/renewal/animastor.in.conf` (`frontends/main` → `frontends/website`,
+  оставшийся после переименования каталогов) — без этого авто-продление падало бы.
+  ⚠️ **Внимание (требует DNS-правки):** публичный DNS больше не резолвит
+  `m.animastor.in` (NXDOMAIN) — пока это так, LE не сможет провалидировать все
+  SANs, и продление сертификата будет падать. Фикс: A-запись `m.animastor.in →
+  66.116.225.136` в панели хостинга (заодно заработает compatibility-редирект).
+  Продление (certbot.timer, ежедневно) само подхватит фикс без ручного запуска.
+  - **SSL:** сертификат расширен на `app.animastor.in` (см. `docs/CHANGELOG.md`,
+    2026-08-12). Кавеат: для авто-продления нужна A-запись `m.animastor.in`
+    (LE валидирует все SANs).
 
 - **Семантическое переименование каталогов: `frontends/{main,mobile,frontend}` → `frontends/{website,app,android}`**
   - `frontends/main` → `frontends/website` (публичный сайт);

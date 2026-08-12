@@ -50,6 +50,9 @@ docs/                 ← подробная документация (по фа
 - API: `/api/v1` → backend:3000, `/gpu` → gpu-hub:5000 — на обоих доменах.
 - Basic Auth на текущем этапе — существующая Nginx-авторизация; отдельной системы
   авторизации нет.
-- SSL: Let's Encrypt, `/etc/letsencrypt/live/animastor.in/` (общий для всех доменов
-  семейства). При добавлении домена — расширить SAN:
-  `certbot certonly --webroot -w <host-webroot: frontends/website> -d animastor.in -d www.animastor.in -d m.animastor.in -d app.animastor.in --expand`
+- SSL: Let's Encrypt, `/etc/letsencrypt/live/animastor.in/` — один сертификат на всё
+  семейство: `animastor.in, app.animastor.in, m.animastor.in, www.animastor.in`
+  (расширен 2026-08-12). Продление — webroot на `frontends/website` (ACME HTTP-01,
+  `certbot.timer` ежедневно). ⚠️ LE валидирует ВСЕ SANs: пока `m.animastor.in` не
+  резолвится публично (сейчас NXDOMAIN), авто-продление падает — нужна A-запись
+  `m.animastor.in → 66.116.225.136`.
