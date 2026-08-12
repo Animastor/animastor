@@ -1946,6 +1946,33 @@ button { font: inherit; color: inherit; }
   color: var(--accent);
   font-weight: 700;
 }
+/* Desktop unit rows (plan §4.3): a wrapper hosts the select button plus the
+   explicit "open in Player" action on the active row. The 4dp spacing moves
+   from the button to the row so the play button stays centered on the unit. */
+.nav-unit-row {
+  display: flex;
+  align-items: center;
+  margin-bottom: 0.25rem;
+  min-width: 0;
+}
+.nav-unit-row .nav-item--unit { flex: 1; width: auto; margin-bottom: 0; }
+.nav-unit-row__play {
+  flex-shrink: 0;
+  width: 2rem;
+  height: 2rem;
+  margin-left: 0.25rem;
+  margin-right: 0.5rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--outline);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--accent);
+  cursor: pointer;
+}
+.nav-unit-row__play:hover { background: var(--surface-2); color: var(--text); }
+
 /* 44dp preview thumbnail (ImageView centerCrop); ic_image_off fallback tint */
 .nav-item__thumb {
   width: 2.75rem; height: 2.75rem; flex-shrink: 0;

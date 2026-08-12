@@ -10,7 +10,7 @@ import { bookId, buildId, onPlaybackPrepared } from '../state/generateStore';
 import { navigateTo, position as positionSignal } from '../state/positionStore';
 import type { ActivePosition } from '../state/positionStore';
 import { seekToPosition } from '../state/playbackStore';
-import { IconImageOff } from '../app/icons';
+import { IconImageOff, IconPlay } from '../app/icons';
 
 // NavigatePage — 1:1 with NavigateFragment + fragment_navigate.xml (stage 5).
 //  - Position bar (include_position_bar) — label from bookData + ActivePosition.
@@ -249,6 +249,22 @@ export function NavigatePage(props: { path?: string }) {
   }, [items]);
 
   // ── Item interactions ──
+  const selectUnit = useCallback((item: Extract<NavItem, { kind: 'unit' }>) => {
+    // 1:1 with NavigateFragment unit click — seek only when the scene is real
+    navigateTo({ chapterId: item.chapterId, sceneId: item.sceneId, unitId: item.unitId, unitIndex: item.index });
+    if (item.chapterId != null && item.sceneId != null) {
+      void seekToPosition(item.chapterId, item.sceneId, item.index, item.unitId);
+    }
+  }, []);
+
+  // Explicit "open in Player" (plan §4.3): select the unit, then switch the
+  // workspace to Player. Desktop single-click only selects; double-click or the
+  // play button on the active row are the explicit playback actions.
+  const openInPlayer = useCallback((item: Extract<NavItem, { kind: 'unit' }>) => {
+    selectUnit(item);
+    navigate('/play');
+  }, [selectUnit]);
+
   const onItemClick = (item: NavItem) => {
     if (item.kind === 'chapter') {
       const id = item.chapterId;
@@ -272,11 +288,7 @@ export function NavigatePage(props: { path?: string }) {
         return next;
       });
     } else if (item.kind === 'unit') {
-      // 1:1 with NavigateFragment unit click — seek only when the scene is real
-      navigateTo({ chapterId: item.chapterId, sceneId: item.sceneId, unitId: item.unitId, unitIndex: item.index });
-      if (item.chapterId != null && item.sceneId != null) {
-        void seekToPosition(item.chapterId, item.sceneId, item.index, item.unitId);
-      }
+      selectUnit(item);
       if (!isDesktop) navigate('/play'); // switchToPlayTab()
     }
   };
@@ -297,24 +309,39 @@ export function NavigatePage(props: { path?: string }) {
       );
     }
     return (
-      <button
-        key={item.id}
-        type="button"
-        data-nav-active={item.isActive ? 'true' : undefined}
-        class={'nav-item nav-item--unit' + (item.isActive ? ' nav-item--unit-active' : '')}
-        onClick={() => onItemClick(item)}
-      >
-        <UnitThumb
-          bookId={bid}
-          buildId={bld}
-          chapterId={item.chapterId}
-          sceneId={item.sceneId}
-          unitId={item.unitId}
-        />
-        <span class="nav-item__text">
-          {item.type != null ? `[${item.type}] ` : ''}{item.label}
-        </span>
-      </button>
+      // Row wrapper hosts the explicit desktop "open in Player" action next to
+      // the select button (a nested button inside a button would be invalid).
+      <div key={item.id} class="nav-unit-row">
+        <button
+          type="button"
+          data-nav-active={item.isActive ? 'true' : undefined}
+          class={'nav-item nav-item--unit' + (item.isActive ? ' nav-item--unit-active' : '')}
+          onClick={() => onItemClick(item)}
+          onDblClick={() => { if (isDesktop) openInPlayer(item); }}
+        >
+          <UnitThumb
+            bookId={bid}
+            buildId={bld}
+            chapterId={item.chapterId}
+            sceneId={item.sceneId}
+            unitId={item.unitId}
+          />
+          <span class="nav-item__text">
+            {item.type != null ? `[${item.type}] ` : ''}{item.label}
+          </span>
+        </button>
+        {isDesktop && item.isActive && (
+          <button
+            type="button"
+            class="nav-unit-row__play"
+            aria-label={t('navigate_open_in_player')}
+            title={t('navigate_open_in_player')}
+            onClick={() => openInPlayer(item)}
+          >
+            <IconPlay width={16} height={16} />
+          </button>
+        )}
+      </div>
     );
   };
 

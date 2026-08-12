@@ -219,6 +219,7 @@ const dict = {
     navigate_cover: 'Обложка',
     navigate_prologue: 'Пролог',
     navigate_scene_type: 'сцена',
+    navigate_open_in_player: 'Открыть в плеере',
     no_book_loaded: 'Книга не загружена',
     // Edit (strings.xml ru)
     edit_scene: 'Сцена',
@@ -599,6 +600,7 @@ const dict = {
     navigate_cover: 'Cover',
     navigate_prologue: 'Prologue',
     navigate_scene_type: 'scene',
+    navigate_open_in_player: 'Open in Player',
     no_book_loaded: 'No book loaded',
     // Edit (strings.xml en)
     edit_scene: 'Scene',
