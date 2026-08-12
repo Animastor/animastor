@@ -682,6 +682,104 @@ button { font: inherit; color: inherit; }
   .desktop-main .gen-page { grid-template-columns: minmax(0, 1fr); }
 }
 
+/* ── Desktop Player transport console (Phase 7, plan §7) ──────────
+   Only inside .desktop-main. page--play is already overflow:hidden with
+   .play-media flex:1, so the stage naturally takes the majority of the
+   workspace; the mobile layerbar/meta/big-button below it are replaced by a
+   desktop transport bar: primary play/pause, status + progress and layer
+   toggles with icon AND visible label (plan §7 — never colour alone).
+   Fullscreen stays anchored to the stage (no duplicated control). Mobile
+   composition below the breakpoint is untouched. */
+.desktop-main .play-layerbar,
+.desktop-main .play-meta,
+.desktop-main .play-btn { display: none; }
+.desktop-main .play-console {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.625rem 1rem;
+  padding: 0.625rem 0.75rem;
+  background: var(--surface);
+  border-top: 1px solid var(--outline-2);
+}
+.desktop-main .play-console__transport {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.desktop-main .play-console__play {
+  flex-shrink: 0;
+  height: 2.375rem;
+  padding: 0 1rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.375rem;
+  border: 0;
+  border-radius: 1rem;
+  background: var(--primary);
+  color: var(--on-primary);
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+.desktop-main .play-console__play:hover { background: var(--primary-pressed); }
+.desktop-main .play-console__play:disabled { opacity: 0.4; cursor: default; }
+/* Status + indeterminate progress — column layout; the progress keeps its
+   4px height (base rule's flex:1 would grow it vertically in a column). */
+.desktop-main .play-console__meta {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 8rem;
+}
+.desktop-main .play-console__meta .play-progress { flex: 0 0 auto; width: 100%; }
+.desktop-main .play-console__meta .play-status {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+.desktop-main .play-console__layers {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+.desktop-main .play-console__layer {
+  height: 2.375rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0 0.75rem;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--outline-2);
+  background: var(--surface);
+  color: var(--text-2);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color .15s ease, border-color .15s ease, color .15s ease;
+}
+.desktop-main .play-console__layer:hover { background: var(--surface-2); color: var(--text); }
+.desktop-main .play-console__layer--on {
+  background: var(--accent-container);
+  border-color: var(--accent);
+  color: var(--on-accent-container);
+}
+
+/* Laptop desktop: the full console row (play + status + 4 RU-labelled pills)
+   is ~760px — tighter pill density keeps it inside the workspace when both
+   side panels are open at the 1180px edge (plan §7: controls below the stage). */
+@media (max-width: 1359px) {
+  .desktop-main .play-console__layer {
+    padding: 0 0.5rem;
+    font-size: 0.75rem;
+  }
+}
+
 /* Toolbar */
 .toolbar {
   height: var(--toolbar-h);

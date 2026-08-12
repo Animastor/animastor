@@ -103,10 +103,19 @@
 
 - [ ] Проверка poll lifecycle, scope dialog, cancel, ошибок при смене режимов (Phase 9 runtime-прогон)
 
-## Phase 7 — Player
+## Phase 7 — Player — первый срез сделан
 
-- [ ] Большая сцена + desktop transport console
-- [ ] Ревалидация fullscreen, subtitles, layer toggles, внешнего seek, soft refresh
+Сделано (этап 2, срез 1):
+
+- [x] **Десктопный transport console** (план §7): под stage — панель с primary play/pause (та же `handlePlayButton`), статусом + прогрессом и layer-переключателями с иконкой И видимой подписью (`aria-pressed` сохранён). Сцена и так занимает основное пространство (`.page--play` overflow:hidden + `.play-media` flex:1)
+- [x] Мобильная layerbar/meta/большая кнопка скрыты только на десктопе (`.desktop-main`); ниже 1180px всё 1:1 без изменений
+- [x] Fullscreen остаётся на сцене (якорный `.play-fs`) — без дублирующего контрола в консоли (план §7 упоминает fullscreen в консоли, но дубликат не нужен)
+- [x] Laptop-плотность: `flex-wrap: wrap` + уменьшенные pill-кнопки до 1359px — консоль (~760px) не выпадает из workspace при открытых обеих панелях на границе 1180px
+- [x] `tsc --noEmit` + `vite build` — OK; code-review пройден
+
+Осталось (Phase 7):
+
+- [ ] Ревалидация fullscreen, subtitles, layer toggles, внешнего seek, soft refresh (Phase 9 runtime-прогон)
 
 ## Phase 8 — Assistant и secondary-экраны
 
