@@ -120,6 +120,41 @@ button { font: inherit; color: inherit; }
   justify-content: flex-end;
   gap: 0.25rem;
 }
+.desktop-generation-status {
+  position: relative;
+  width: 2.5rem;
+  height: 2.5rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border: 1px solid var(--outline);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text-2);
+  cursor: pointer;
+}
+.desktop-generation-status:hover { background: var(--surface-2); color: var(--text); }
+.desktop-generation-status__dot {
+  position: absolute;
+  top: 0.375rem;
+  right: 0.375rem;
+  width: 0.4375rem;
+  height: 0.4375rem;
+  border: 1px solid var(--surface);
+  border-radius: 50%;
+  background: var(--text-disabled);
+}
+.desktop-generation-status--running { color: var(--accent); }
+.desktop-generation-status--running .desktop-generation-status__dot { background: var(--accent); animation: desktop-status-pulse 1.6s infinite ease-in-out; }
+.desktop-generation-status--error { color: var(--error); }
+.desktop-generation-status--error .desktop-generation-status__dot { background: var(--error); }
+.desktop-generation-status--success { color: var(--success); }
+.desktop-generation-status--success .desktop-generation-status__dot { background: var(--success); }
+@keyframes desktop-status-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.72); }
+}
 .desktop-modes {
   display: inline-flex;
   align-items: center;

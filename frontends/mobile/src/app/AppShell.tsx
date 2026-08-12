@@ -90,6 +90,7 @@ function DesktopWorkspace({ path, children }: { path: string; children: JSX.Elem
           })}
         </nav>
         <div class="desktop-header__actions">
+          <GenerationStatusButton />
           <button class="toolbar__ai-chip" aria-label={t('toolbar_ai')} onClick={() => navigate('/ai')}>
             {t('toolbar_ai')}
           </button>
@@ -136,6 +137,26 @@ function DesktopWorkspace({ path, children }: { path: string; children: JSX.Elem
         </aside>
       </div>
     </div>
+  );
+}
+
+function GenerationStatusButton() {
+  const status = generationStatus.value;
+  const stateClass = status === 'RUNNING' ? ' desktop-generation-status--running'
+    : status === 'ERROR' ? ' desktop-generation-status--error'
+      : status === 'SUCCESS' ? ' desktop-generation-status--success' : '';
+
+  return (
+    <button
+      type="button"
+      class={'desktop-generation-status' + stateClass}
+      aria-label={t('tab_generate')}
+      title={t('tab_generate')}
+      onClick={() => navigate('/generate')}
+    >
+      <IconGenerate width={19} height={19} />
+      <span class="desktop-generation-status__dot" aria-hidden="true" />
+    </button>
   );
 }
 
