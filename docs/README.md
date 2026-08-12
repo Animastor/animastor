@@ -185,7 +185,7 @@ docs/
 │   ├── AGENTS.md
 │   └── GENERATORS.md
 │
-├── 08-mobile-web-migration/           ← миграция Android → Mobile Web (m.animastor.in)
+├── 08-mobile-web-migration/           ← миграция Android → Mobile Web (историческая: m.animastor.in → app.animastor.in)
 │   ├── README.md
 │   ├── 01-MIGRATION-STRATEGY.md
 │   ├── 02-DESIGN-PRESERVATION-PRINCIPLES.md

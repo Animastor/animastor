@@ -15,7 +15,7 @@ android {
         versionName = "1.0"
     }
 
-    val baseUrl = project.findProperty("BASE_URL") as? String ?: "https://animastor.in/"
+    val baseUrl = project.findProperty("BASE_URL") as? String ?: "https://app.animastor.in/"
 
     buildTypes {
 

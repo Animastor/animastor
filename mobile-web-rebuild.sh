@@ -4,11 +4,11 @@ set -e
 
 # Script location = project root (works when invoked from any directory)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-MOBILE_DIR="$SCRIPT_DIR/frontends/mobile"
+MOBILE_DIR="$SCRIPT_DIR/frontends/app"
 
 echo
 echo "=================================="
-echo " Rebuild Mobile Web Frontend"
+echo " Rebuild Web App Frontend"
 echo "=================================="
 echo
 
@@ -38,7 +38,7 @@ echo "=================================="
 echo
 
 echo "Build output: $MOBILE_DIR/dist"
-echo "Served at:    https://m.animastor.in/"
-echo "Note: nginx serves ./frontends/mobile via bind-mount,"
+echo "Served at:    https://app.animastor.in/"
+echo "Note: nginx serves ./frontends/app via bind-mount,"
 echo "      so the new dist is live immediately — no restart needed."
 echo

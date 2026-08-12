@@ -1,8 +1,8 @@
 {
-  "name": "animastor-mobile",
+  "name": "animastor-app",
   "private": true,
   "version": "0.0.0",
-  "description": "Mobile web frontend for Animastor (m.animastor.in)",
+  "description": "Responsive web application for Animastor (app.animastor.in)",
   "type": "module",
   "scripts": {
     "dev": "vite --host --port 5174",

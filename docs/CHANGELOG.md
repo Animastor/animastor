@@ -4,6 +4,39 @@ All notable changes to Animastor are documented here.
 
 ---
 
+## [Unreleased] — 2026-08-12
+
+### Added
+
+- **Доменная архитектура: приложение → `app.animastor.in`, сайт `animastor.in` — публичный**
+  (`proxy/conf/default.conf`, `docker-compose.yml`):
+  - `app.animastor.in` — единое responsive-приложение (MobileShell/DesktopShell),
+    весь frontend закрыт существующим Nginx Basic Auth (тот же `.htpasswd`);
+    единственный публичный роут — `app.animastor.in/library` (alias на публичную
+    Library сайта, точный `location = /library` без SPA-fallback — исключение не
+    открывает приложение).
+  - `animastor.in` — публичный сайт (landing, Library, net-disk) **без** Basic Auth.
+  - `m.animastor.in` — legacy compatibility-редирект (301) на `app.animastor.in`
+    с сохранением пути.
+  - Frontend: `LibraryPage` использует относительный `/library` (без hardcoded
+    hostname); Android `BASE_URL`/Library → `app.animastor.in`; тестеры
+    (`mobile-web-tester`, `desktop-web-tester`) по умолчанию на `app.animastor.in`.
+  - Проверки: `nginx -t`, docker-compose re-create nginx, curl-сценарии
+    (public website 200, app 401, app/library 200, m → 301).
+  - **Ручной шаг на сервере:** расширить Let's Encrypt сертификат на
+    `app.animastor.in` (сейчас в SANs только animastor.in/m./www) — см. `ARCHITECTURE.md`.
+
+- **Семантическое переименование каталогов: `frontends/{main,mobile,frontend}` → `frontends/{website,app,android}`**
+  - `frontends/main` → `frontends/website` (публичный сайт);
+    `frontends/mobile` → `frontends/app` (responsive веб-приложение);
+    `frontend` → `frontends/android` (Android-приложение).
+  - Обновлены: `docker-compose.yml` (volume-маунты nginx), `mobile-web-rebuild.sh`,
+    `apk-build.sh`, `tools/*/gradlew` (`frontends/android/gradle-8.12`),
+    `frontends/app/package.json` (`animastor-app`), README, `PROJECT_STRUCTURE.md`.
+  - В корне добавлен `ARCHITECTURE.md` — карта доменов и каталогов.
+
+---
+
 ## [Unreleased] — 2026-08-11
 
 ### Fixed

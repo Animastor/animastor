@@ -5,6 +5,10 @@
 
 Статусы: `[ ]` pending · `[~]` in_progress · `[x]` done
 
+> **2026-08-12 — Доменная миграция:** приложение теперь живёт на `app.animastor.in`
+> (вместо `m.animastor.in`), каталог `frontends/mobile` переименован в `frontends/app`.
+> Упоминания старых путей ниже — исторические (см. `ARCHITECTURE.md` в корне).
+
 ---
 
 ## Phase 1 — Audit ✅ (завершена в плане)

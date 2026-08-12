@@ -10,7 +10,7 @@ if [ ! -f local.properties ]; then
 fi
 
 # Clean build — кеш компилятора часто даёт артефакты при изменении ViewModel логики
-cd frontend
+cd frontends/android
 ./gradlew clean assembleDebug
 
 echo "Done."

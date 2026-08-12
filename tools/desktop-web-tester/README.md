@@ -1,7 +1,7 @@
 # Animastor Desktop Tester
 
 Мини-приложение для Android-планшета: «эмулятор десктопа» для веб-версии
-Animastor (`frontends/mobile`). Открывает приложение в WebView на весь экран,
+Animastor (`frontends/app`). Открывает приложение в WebView на весь экран,
 но заставляет страницу думать, что она открыта на широком десктопном мониторе:
 
 - десктопный user-agent;
@@ -36,7 +36,7 @@ Animastor (`frontends/mobile`). Открывает приложение в WebVi
 Поддерживается JS, localStorage, cookies, touch, скролл, видео-аудио без жеста
 пользователя, mixed content (для dev-сервера по http).
 
-**Basic Auth на `https://m.animastor.in`**: тестер авторизуется автоматически
+**Basic Auth на `https://app.animastor.in`**: тестер авторизуется автоматически
 (логин/пароль зашиты в `MainActivity.kt`, константы `AUTH_USER` / `AUTH_PASS`).
 Если пароль на сервере поменяют — правь константы или сбрось кэш авторизации
 долгим нажатием на ⟳.
@@ -49,7 +49,7 @@ tools/desktop-web-tester/
 ├── app/src/main/res/...                (layout, темы, иконка)
 ├── app/build.gradle.kts                (applicationId com.animastor.desktop)
 ├── build-apk.sh                        (сборка + копия в net-disk)
-├── gradlew                             (обёртка над frontend/gradle-8.12)
+├── gradlew                             (обёртка над frontends/android/gradle-8.12)
 └── README.md
 ```
 
@@ -68,7 +68,7 @@ tools/desktop-web-tester/
 
 ### URL по умолчанию
 
-- По умолчанию: `https://m.animastor.in` (продакшен).
+- По умолчанию: `https://app.animastor.in` (продакшен).
 - Заменить при сборке:
   ```bash
   cd tools/desktop-web-tester
@@ -85,7 +85,7 @@ tools/desktop-web-tester/
   ```
 
 Требования сборки: Android SDK (`/home/sureg/Android/Sdk`, android-35), JDK 17,
-локальный Gradle 8.12 из `frontend/gradle-8.12`. minSdk 26, targetSdk 34,
+локальный Gradle 8.12 из `frontends/android/gradle-8.12`. minSdk 26, targetSdk 34,
 compileSdk 35.
 
 ## Ограничения

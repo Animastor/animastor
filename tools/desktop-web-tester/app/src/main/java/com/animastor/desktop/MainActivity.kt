@@ -74,7 +74,7 @@ class MainActivity : Activity() {
     @Volatile
     private var currentCssWidth = BuildConfig.DEFAULT_WIDTH
 
-    // Basic Auth для m.animastor.in (см. proxy/conf/.htpasswd) — те же креды,
+    // Basic Auth для app.animastor.in (см. proxy/conf/.htpasswd) — те же креды,
     // что зашиты в mobile-web-tester.
     private val authHeader by lazy {
         "Basic " + Base64.encodeToString(
@@ -386,7 +386,7 @@ class MainActivity : Activity() {
             <body>
               <div class="e">⚠️</div>
               <div class="m">Не удалось открыть страницу:<br>$safeDetail</div>
-              <div class="m">Проверьте URL в строке сверху и доступность сервера<br>(vite dev на :5174 или https://m.animastor.in).</div>
+              <div class="m">Проверьте URL в строке сверху и доступность сервера<br>(vite dev на :5174 или https://app.animastor.in).</div>
               <a href="$safeUrl">Повторить</a>
             </body></html>
         """.trimIndent()
@@ -411,7 +411,7 @@ class MainActivity : Activity() {
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 
     companion object {
-        // Basic Auth для m.animastor.in (см. proxy/conf/.htpasswd).
+        // Basic Auth для app.animastor.in (см. proxy/conf/.htpasswd).
         private const val AUTH_USER = "admin"
         private const val AUTH_PASS = "anm777"
         private const val PREF_URL = "url"

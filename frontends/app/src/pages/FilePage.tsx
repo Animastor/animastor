@@ -16,7 +16,7 @@ import { IconFolder, IconAdd, IconLibrary, IconDownload, IconImage, IconVolumeUp
 //    navigates to Play/Generate when done (navigationEvent, like the Android
 //    NavigationEvent flow).
 //  - Create New Book: closeBook() + → /ai (create-mode welcome).
-//  - Library card → /library (WebView/iframe of animastor.in).
+//  - Library card → /library (public route on the app domain, nginx-served).
 //  - Download section: book (.vbook) needs only bookId; storyboard/audio/video
 //    need bookId + buildId + a ready phase — with the same enable rules and
 //    export progress/saved status as Android (setMerging/setProgress/setSaved).

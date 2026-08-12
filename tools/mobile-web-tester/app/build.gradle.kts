@@ -17,7 +17,7 @@ android {
         // Default URL of the mobile web frontend. Override at build time:
         //   ./gradlew assembleDebug -PTESTER_URL=http://192.168.1.50:5174
         val defaultUrl = project.findProperty("TESTER_URL") as? String
-            ?: "https://m.animastor.in"
+            ?: "https://app.animastor.in"
         buildConfigField("String", "DEFAULT_URL", "\"$defaultUrl\"")
     }
 

@@ -1,10 +1,10 @@
 import { t } from '../app/i18n';
 
-// Library — 1:1 with LibraryFragment (WebView → iframe to animastor.in/library,
-// the project's public help/release-notes site, see R13 in 06-RISKS).
-// NB: https://animastor.in/ is behind nginx Basic Auth; only /library is public,
-// so the iframe must point at the public path (R16, global Basic Auth).
-const LIBRARY_URL = 'https://animastor.in/library';
+// Library — 1:1 with LibraryFragment (WebView → iframe of the public library).
+// The app lives on app.animastor.in behind nginx Basic Auth; /library is the one
+// public route (nginx serves it without auth), so a relative URL is used — it
+// resolves on any host (prod app.animastor.in, dev :5174 via vite proxy).
+const LIBRARY_URL = '/library';
 
 export function LibraryPage(props: { path?: string }) {
   void props;

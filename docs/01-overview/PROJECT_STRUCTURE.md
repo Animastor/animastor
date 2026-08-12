@@ -234,10 +234,17 @@
 │   └── conf/default.conf
 │
 ├── frontends/
-│   ├── main/
-│   │   └── index.html                           # Desktop web frontend (animastor.in)
-│   └── mobile/
-│       └── index.html                           # Mobile web frontend (m.animastor.in)
+│   ├── website/
+│   │   ├── index.html                       # Публичный сайт (animastor.in)
+│   │   └── library/index.html               # Публичная Library (/library, без auth)
+│   ├── app/                                 # Responsive веб-приложение (app.animastor.in)
+│   │   └── src/
+│   │       ├── layouts/                     # MobileShell / DesktopShell
+│   │       ├── pages/                       # File, Generator, Player, Editor, Navigator…
+│   │       ├── api/                         # /api/v1 (относительный base)
+│   │       └── styles/
+│   └── android/                             # Android-приложение (Kotlin, Gradle)
+│       └── app/
 │
 ├── docs/                                        # Документация
 │   ├── 01-overview/

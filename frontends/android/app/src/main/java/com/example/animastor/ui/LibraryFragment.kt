@@ -46,7 +46,7 @@ class LibraryFragment : Fragment(R.layout.fragment_library) {
             domStorageEnabled = true
         }
         wv.webViewClient = WebViewClient()
-        wv.loadUrl("https://animastor.in")
+        wv.loadUrl("https://app.animastor.in/library")
     }
 
     override fun onDestroyView() {
