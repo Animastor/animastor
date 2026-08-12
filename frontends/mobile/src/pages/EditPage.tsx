@@ -1170,6 +1170,26 @@ export function EditPage(props: { path?: string }) {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [saveToBackend]);
 
+  // ── Arrow-key unit navigation (desktop, plan §5.3/§11): Left/Right move the
+  //    active unit only when focus is NOT inside an editable control (input,
+  //    textarea, select, contenteditable) — text editing shortcuts stay
+  //    untouched. Gated by isDesktop so mobile keeps its existing behaviour.
+  useEffect(() => {
+    if (!isDesktop) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+      if (zoom || pendingNav !== null || draftRecoverOpen) return;
+      const target = e.target as HTMLElement | null;
+      if (!target) return;
+      const tag = target.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target.isContentEditable) return;
+      e.preventDefault();
+      requestUnitNavigation(e.key === 'ArrowLeft' ? -1 : 1);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [isDesktop, requestUnitNavigation, zoom, pendingNav, draftRecoverOpen]);
+
   // ── Tab scroll indicators (updateTabScrollIndicators) ──
   const updateTabScrollIndicators = useCallback(() => {
     const el = tabsScrollRef.current;
@@ -1921,6 +1941,15 @@ function DesktopUnitStage({ bid, bld, chapterId, sceneId, units, currentIndex, o
   const idx = Math.max(0, Math.min(currentIndex, units.length - 1));
   const current = units[idx];
   const label = current ? `${t('navigate_unit')} ${idx + 1}` : null;
+  // Keep the active thumb in view as the unit changes via keyboard/header
+  // arrows (plan §5.3: "keep the active item in view without stealing focus").
+  const railRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const rail = railRef.current;
+    if (!rail) return;
+    const active = rail.querySelector('[data-active="true"]');
+    active?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+  }, [idx]);
 
   return (
     <div class="edit-stage">
@@ -1939,7 +1968,7 @@ function DesktopUnitStage({ bid, bld, chapterId, sceneId, units, currentIndex, o
           <div class="edit-stage__missing"><IconImageOff width={32} height={32} /></div>
         )}
       </div>
-      <div class="edit-stage__rail" role="group" aria-label={t('edit_rail_title')}>
+      <div class="edit-stage__rail" ref={railRef} role="group" aria-label={t('edit_rail_title')}>
         {units.length === 0 ? (
           <span class="edit-stage__empty">{t('edit_rail_empty')}</span>
         ) : units.map((u, i) => {
@@ -1949,6 +1978,7 @@ function DesktopUnitStage({ bid, bld, chapterId, sceneId, units, currentIndex, o
               type="button"
               key={u.id ?? `iu${String(i).padStart(4, '0')}`}
               class={'edit-stage__thumb' + (active ? ' edit-stage__thumb--active' : '')}
+              data-active={active ? 'true' : undefined}
               aria-current={active ? 'true' : undefined}
               aria-label={`${t('navigate_unit')} ${i + 1}`}
               onClick={() => onJump(i)}

@@ -77,10 +77,16 @@
 - [x] Структурированный `lastPosRef` вместо парсинга строки ключа позиции
 - [x] i18n-ключи recover-modal (ru/en); `tsc --noEmit` + `vite build` — OK; code-review пройден
 
+Сделано (этап 2, срез 5):
+
+- [x] **Arrow-key навигация по юнитам** (план §5.3/§11): Left/Right двигают активный модуль на десктопе, когда фокус вне полей ввода/textarea/select/contenteditable; не срабатывает при открытых zoom/confirm/recover модалках. Текстовые хоткеи не перехватываются
+- [x] Авто-скролл активного thumb в rail (`scrollIntoView inline:nearest`) при смене модуля — активный модуль остаётся в поле зрения без кражи фокуса
+- [x] `tsc --noEmit` + `vite build` — OK; code-review пройден
+
 Осталось (Phase 5):
 
 - [ ] Опционально: collapse Navigator в режиме Editor на laptop
-- [ ] Keyboard-навигация по rail (стрелки) — план §5.3
+- [ ] Двойной клик / явное «Open in Player» в Navigator на десктопе (план §4.3 — сейчас выбор юнита только меняет позицию)
 
 ## Phase 6 — Generator
 
