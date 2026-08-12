@@ -32,7 +32,7 @@ Recon #3 does **not** implement that phase. It proves whether the computation is
 | `generation_tasks` | PG | selective-gen routes | task-level status (`running/completed/failed/cancelled`) | ✅ |
 | Artifacts | FS (`OUTPUT_DIR/{build_id}/`) | workers | `.mp3` (merged), `*_iu*.png`, `.mp4` | ✅ |
 | Placeholder marker | FS | placeholder-audio | `.mp3` indistinguishable from real TTS by name — **must probe `hasRealAudio`** (PG `scene_assets.status='placeholder'` row OR duration heuristic) | ✅ (via PG + FS) |
-| **`layer-config`** | **Redis only** | routes | which layers are enabled per book | ❌ **LOST** |
+| **`layer-config`** | **Redis + book.json (durable copy)** | routes | which layers are enabled per book | ✅ (Кирпич №2 — Redis-ключ восстанавливается из book.json на старте, C6) |
 | **cancel flag** | **Redis only** | window routes | `animastor:generation:cancel:{bookId}` | ❌ **LOST** |
 | `gen-scope` | Redis | routes | scope bounds of last run | ❌ LOST (recoverable from `book_generation_sessions` for VBook) |
 
@@ -112,7 +112,7 @@ The predicate requires `has_valid_artifact(s)` — a `ready` row **plus a real f
 
 **Caveat — layer-config (constraint (4) can be violated for disabled layers):** which layers are enabled is stored **only in Redis** (`animastor:layer-config:{bookId}`). After Redis loss the rebuild phase does not know that e.g. `video_enabled=false`. If a scene has no `.mp4` because video was *disabled*, the §4 predicate (with default "all layers enabled") would mark video as needing work and regenerate it. Mitigations available today:
 - Treat **absence of a PG `scene_assets` row for video + book-level completion signal** (`book_generation_sessions.completion_status='completed'` or `scenes.is_dirty` all false) as "layer disabled", not "needs work".
-- Better: persist layer-config to PG or book JSON (future operation, §9).
+- Better: persist layer-config to PG or book JSON — **✅ IMPLEMENTED (Cathedral Кирпич №2, Aug 2026):** `layerConfig.set()` пишет durable-копию `layer_config` в `book.json`; фаза C6 `reconcileCycle` (каждый цикл) восстанавливает Redis-ключ из `book.json` (только отсутствующие ключи, Redis остаётся источником истины во время работы). Фаза rebuild может читать `book.json.layer_config` и уважать отключённые слои. См. §9 finding 13.
 
 ### 5.4 No resurrection of cancelled work ❌ (cannot be proven for the whole-book path)
 
@@ -190,7 +190,8 @@ INPUT:  books = DISTINCT book_id FROM scenes              (PG — only books tha
 FOR each book b:
     skip b if it has a PG cancellation record (policy per §5.4 — REQUIRED before implementation;
         no-op today for whole-book books: no such record exists until policy option (1) is implemented)
-    layers_enabled = layer-config[b]  (Redis) → fallback DEFAULTS(all true) — §5.3 caveat
+    layers_enabled = layer-config[b]  (Redis) → fallback DEFAULTS(all true); Кирпич №2:
+                  Redis-ключ восстановлен из book.json на старте (C6) — §5.3 caveat закрыт
     build_id = latest build_id among b's scene_assets (or book JSON build field)
 
     FOR each scene s in collectScenes(bookJSON):
@@ -256,7 +257,7 @@ Recon #3 does not decide this — it documents the asymmetry so the future opera
 
 1. **✅ Constraint (1) — no duplicates:** provable via version gate + SADD idempotency + dispatch-scoped dedup. Residual duplicate (in-flight-at-loss) is intended re-dispatch, not a violation.
 2. **✅ Constraint (2) — no lost dirty state:** all dirty markers (`is_dirty`, versions, `dirty_unit_ids`, `stale`/`failed`/`pending` asset rows) are PG-resident and written before/with the Redis writes; predicate reads PG only.
-3. **✅ Constraint (4) — no regeneration of valid artifacts:** PG `ready` rows are insufficient on their own (files can be missing; C0 over-marks) — the predicate requires an **FS probe** + `hasRealAudio`. **Caveat:** layer-config is Redis-only; books with disabled layers may be regenerated for disabled stages unless a PG/FS completion signal is used.
+3. **✅ Constraint (4) — no regeneration of valid artifacts:** PG `ready` rows are insufficient on their own (files can be missing; C0 over-marks) — the predicate requires an **FS probe** + `hasRealAudio`. **Caveat (RESOLVED by Кирпич №2):** layer-config теперь durable в `book.json` и восстанавливается в Redis на старте (C6) — книги с отключёнными слоями больше не регенерируются для отключённых стадий после потери Redis.
 4. **❌ Constraint (3) — no resurrection of cancelled work:** **cannot be proven** for the whole-book path (cancel = Redis-only flag, no PG write). Provable only for VBook/agent (PG `book_generation_sessions.status='cancelled'`) and partially for selective-gen. A cancellation policy decision is a **prerequisite** for option E, not an implementation detail.
 5. **The predicate already exists** (dormant `getDirtyScenesByVersion` + `getSceneFilesStatus` + `hasRealAudio`) — option E is mostly *wiring + a decision*, not new logic.
 6. **A partial startup-rebuild already exists** (C5 → resumeIncompleteSessions → runBackgroundWindowGeneration → addActiveScene) but covers only VBook sessions and only newly-created scenes.
@@ -266,13 +267,20 @@ Recon #3 does not decide this — it documents the asymmetry so the future opera
 10. **✅ Book_id-level tombstone granularity is adequate** (§5.4b): concurrent independent runs of one book are impossible today (`regenerate` NX lock; VBook windows queued + processed sequentially).
 11. **✅ `bootstrapNextWindow` tombstone gap fixed** (§5.4b): Continue now clears `generation_cancellations` (same semantics as `regenerate`); covered by `bootstrap-cancel-continue.test.js`.
 12. **⚠️ Residual best-effort race** (§5.4c): PG failure during `cancel-generation` + Redis loss + restart can still resurrect a cancelled book. Requires three sequential failures; below the risk threshold for a local-first product — **decision made (Aug 2026): accept best-effort, documented** (fail-closed option A/C remains available if cancellation must become an absolute invariant in a multi-user future).
+13. **✅ Persistent layer-config implemented (Кирпич №2, Aug 2026):**
+    - `layerConfig.set()` дублирует конфиг в `book.json` (`persistToBook`, best-effort, multi-file + legacy single-file форматы). Единственная точка записи — `set()`; восстановление — `restoreFromBooks()`.
+    - Фаза C6 `reconcileCycle` вызывает `layerConfig.restoreFromBooks(redis)` **каждый цикл** (не только startup): заполняет **только отсутствующие** Redis-ключи из durable-копий (нормализация через `normalize()`), живое Redis-состояние никогда не перетирается. Это также heal'ит удаление ключа `cleanBookRedisKeys` на cache-clear / import / recovery, пока книга существует — конфиг не пропадает из Redis до рестарта.
+    - `saveBookBundle` сохраняет `layer_config` при перезаписи book.json **в обеих ветках**: serialize (`book.book`) и raw-files (ре-импорт бандла) — редактор или ре-импорт не затирают durable-копию.
+    - **Остаточный риск (best-effort by design):** read-modify-write без лока между `set()` и `saveBookBundle` теоретически допускает lost-update (конкурентный edit + PUT layer-config в один момент) — для local-first продукта приемлемо, задокументировано.
+    - Покрыто `backend/tests/layer-config-persistence.test.js` (10 тестов: set→book.json, merge, restore-fill, restore-no-overwrite, legacy-format, saveBookBundle-preserve оба пути). **Backend tests passing, 0 failing.**
+    - **Замкнутая цепочка для option E:** PostgreSQL → book.json (`layer_config` + `build_id`) → filesystem → deterministic WORK_TO_DO. Блокер §10.1 закрыт.
 
 ---
 
 ## 10. Recommendations (no implementation)
 
 1. **Decide the cancellation policy first** (§5.4 options 1–3). Without this, option E silently overrides user cancels for whole-book generation.
-2. **Persist layer-config to PG or book JSON** (smallest change: add to the book JSON on generate) so the rebuild can respect disabled layers — or accept the §5.3 completion-signal heuristic.
+2. **✅ DONE (Кирпич №2, Aug 2026):** layer-config теперь персистится в `book.json` при каждом `set()` и восстанавливается в Redis на старте (C6) — rebuild может уважать отключённые слои из `book.json.layer_config`. Схему PG не трогали.
 3. **Implement the rebuild as a generalization of C5** using the §4 predicate (`getDirtyScenesByVersion` ∪ FS probe ∪ `hasPendingDirtyMarker`), under `CLEANUP_LOCK`, writing only `SADD` to the active index.
 4. **Do NOT trust Redis asset states (C0) for the work-set decision** — PG statuses + FS probe only (C0's over-marking would otherwise cause lost image/video work).
 5. Consider a **`resume_after_redis` per-book flag** (or reuse `book_generation_sessions`) to make auto-resume opt-in per book — resolves both the cancel-asymmetry and the recover-chunks policy comment in one mechanism.

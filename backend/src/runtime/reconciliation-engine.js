@@ -1389,6 +1389,29 @@ async function reconcileCycle(redis, deps = {}, options = {}) {
         }
 
         // ══════════════════════════════════════════════
+        // PHASE C6: Restore durable layer-config from book.json (Кирпич №2)
+        // ══════════════════════════════════════════════
+        // Сервис layer-config владеет форматом: заполняет ТОЛЬКО отсутствующие
+        // Redis-ключи из durable-копии (нормализуя значения). В норме — no-op.
+        // Запускается каждый цикл (не только startup), чтобы heal удалений
+        // ключа cleanBookRedisKeys на cache-clear / import / recovery, пока
+        // книга существует — конфиг не пропадает из Redis до рестарта.
+
+        if (!scope) {
+            try {
+                let layerConfig;
+                try { layerConfig = require('../services/layer-config'); } catch (_) { layerConfig = null; }
+                if (layerConfig && typeof layerConfig.restoreFromBooks === 'function') {
+                    const c6Count = await layerConfig.restoreFromBooks(redis);
+                    if (c6Count > 0) phases.push(`layer_config_restore:${c6Count}`);
+                }
+            } catch (err) {
+                warn(`Phase C6 failed: ${err.message}`);
+                summary.errors.push(`layer_config_restore: ${err.message}`);
+            }
+        }
+
+        // ══════════════════════════════════════════════
         // PHASE D: Full scene reconciliation
         // ══════════════════════════════════════════════
         if (!scope || scope.includes(':')) {

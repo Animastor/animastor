@@ -275,6 +275,21 @@ function saveBookBundle(book, files) {
         const normalize = (p) =>
             p.replace(/\\\\/g, "/").replace(/\r/g, "").replace(/^(\.\/)+/, "").trim()
 
+        // Кирпич №2 (Persistent Layer Configuration): ре-импорт пишет book.json
+        // verbatim из бандла, который может не содержать layer_config (экспорт
+        // сделан до этого кирпича). Захватываем durable-копию ДО перезаписи,
+        // чтобы после неё не потерять конфиг отключённых слоёв.
+        let existingLayerConfig = null;
+        const priorMetaPath = path.join(bookDir, 'book.json');
+        if (fs.existsSync(priorMetaPath)) {
+            try {
+                const prior = JSON.parse(fs.readFileSync(priorMetaPath, 'utf8'));
+                if (prior && prior.layer_config && typeof prior.layer_config === 'object') {
+                    existingLayerConfig = prior.layer_config;
+                }
+            } catch (_) { /* best-effort */ }
+        }
+
         // Determine which files are chapters from book.structure.chapters_order
         const chaptersOrder = book.book?.structure?.chapters_order || [];
         const chapterBasenames = new Set(
@@ -303,7 +318,8 @@ function saveBookBundle(book, files) {
             fs.writeFileSync(targetPath, content);
         }
 
-        // Ensure chapters_order in book.json references filenames without path
+        // Ensure chapters_order in book.json references filenames without path,
+        // and restore the durable layer_config captured before the rewrite.
         const bookMetaPath = path.join(bookDir, 'book.json');
         if (fs.existsSync(bookMetaPath)) {
             try {
@@ -312,8 +328,12 @@ function saveBookBundle(book, files) {
                     bookMeta.structure.chapters_order = bookMeta.structure.chapters_order.map(
                         cf => cf.split('/').pop()
                     );
-                    fs.writeFileSync(bookMetaPath, JSON.stringify(bookMeta, null, 2));
                 }
+                // Кирпич №2: ре-импорт не должен уничтожать durable layer_config
+                if (existingLayerConfig && !bookMeta.layer_config) {
+                    bookMeta.layer_config = existingLayerConfig;
+                }
+                fs.writeFileSync(bookMetaPath, JSON.stringify(bookMeta, null, 2));
             } catch (e) {
                 // Ignore book.json rewrite errors
             }
@@ -338,6 +358,21 @@ function saveBookBundle(book, files) {
     // destroy the existing chapters_order and make all chapters invisible.
     const bookMeta = book.book ? JSON.parse(JSON.stringify(book.book)) : {};
     if (!bookMeta.structure) bookMeta.structure = {};
+    // Кирпич №2 (Persistent Layer Configuration): durable layer_config живёт в
+    // book.json. Редактор может перезаписать book.json из объекта без этого
+    // поля (например, закешированного до последнего PUT layer-config) — не
+    // даём durable-копии потеряться при перезаписи.
+    if (!bookMeta.layer_config) {
+        try {
+            const onDiskMetaPath = path.join(bookDir, 'book.json');
+            if (fs.existsSync(onDiskMetaPath)) {
+                const onDisk = JSON.parse(fs.readFileSync(onDiskMetaPath, 'utf8'));
+                if (onDisk && onDisk.layer_config && typeof onDisk.layer_config === 'object') {
+                    bookMeta.layer_config = onDisk.layer_config;
+                }
+            }
+        } catch (_) { /* best-effort */ }
+    }
     const chapterFilenames = (book.chapters || []).map(ch => `${ch.chapter_id}.json`);
     if (chapterFilenames.length > 0) {
         bookMeta.structure.chapters_order = chapterFilenames;

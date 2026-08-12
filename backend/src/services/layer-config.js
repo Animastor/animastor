@@ -16,6 +16,17 @@
 //   - GET  /api/v1/book/:bookId/layer-config (read)
 //   - PUT  /api/v1/book/:bookId/layer-config (write)
 //   - GET  /api/v1/book/:bookId/assets-state (derived: which layers have content)
+//
+// Cathedral Кирпич №2 — Persistent Layer Configuration:
+//   set() дублирует конфиг в book.json (поле layer_config), а startup-фаза
+//   C6 reconciliation-engine восстанавливает Redis-ключ из book.json после
+//   полной потери Redis. Redis остаётся источником истины во время работы;
+//   book.json — durable копия для recovery. Запись в файл — best-effort:
+//   сбой fs не должен ломать живой set().
+
+const fs = require('fs');
+const path = require('path');
+const config = require('../config/runtime-config');
 
 const SCOPES = Object.freeze({
     CURRENT_SCENE:      'current_scene',
@@ -73,6 +84,43 @@ async function get(redis, bookId) {
     return normalize(raw);
 }
 
+/**
+ * Кирпич №2: durable-копия конфига в book.json (best-effort).
+ *
+ * Читает book.json на диске (multi-file: <BOOKS_DIR>/<bookId>/book.json,
+ * legacy: <BOOKS_DIR>/<bookId>.json), кладёт туда layer_config и перезаписывает.
+ * Если книга ещё не записана на диск — просто пропускает (Redis остаётся
+ * единственным источником до первой saveBookBundle).
+ *
+ * @returns {boolean} true если durable-копия записана
+ */
+function persistToBook(bookId, cfg) {
+    if (!bookId || !cfg) return false;
+    try {
+        const booksDir = config.BOOKS_DIR;
+        if (!booksDir) return false;
+
+        const dirPath = path.join(booksDir, bookId);
+        const metaPath = path.join(dirPath, 'book.json');
+        if (!fs.existsSync(metaPath)) {
+            // Legacy single-file format
+            const legacyPath = path.join(booksDir, `${bookId}.json`);
+            if (!fs.existsSync(legacyPath)) return false;
+            const meta = JSON.parse(fs.readFileSync(legacyPath, 'utf8'));
+            meta.layer_config = { ...cfg, updated_at: Date.now() };
+            fs.writeFileSync(legacyPath, JSON.stringify(meta, null, 2));
+            return true;
+        }
+        const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+        meta.layer_config = { ...cfg, updated_at: Date.now() };
+        fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2));
+        return true;
+    } catch (_) {
+        // Best-effort: сбой диска не должен ломать живой set()
+        return false;
+    }
+}
+
 async function set(redis, bookId, partial) {
     if (!redis || !bookId) return { ...DEFAULTS };
     const current = await get(redis, bookId);
@@ -98,6 +146,8 @@ async function set(redis, bookId, partial) {
             : current.video_timeout_minutes,
     };
     await redis.set(key(bookId), JSON.stringify(next));
+    // Кирпич №2: durable-копия в book.json (не блокирует set при сбое)
+    persistToBook(bookId, next);
     return next;
 }
 
@@ -126,6 +176,58 @@ async function getChunkSize(redis, bookId) {
     return MAX_SCENES_PER_CHUNK;
 }
 
+/**
+ * Кирпич №2: восстановление Redis-ключей layer-config из durable-копий в
+ * book.json. Вызывается из startup-фазы C6 reconcileCycle после потери Redis.
+ *
+ * Только заполняет ОТСУТСТВУЮЩИЕ ключи — живое состояние Redis никогда не
+ * перетирается (Redis остаётся источником истины во время работы). Значения
+ * прогоняются через normalize(), как это делает get(). Best-effort: сбой
+ * одной книги не роняет весь проход.
+ *
+ * @param {Object} redis
+ * @returns {Promise<number>} сколько книг восстановлено
+ */
+async function restoreFromBooks(redis) {
+    if (!redis) return 0;
+    let entries;
+    try {
+        entries = fs.readdirSync(config.BOOKS_DIR);
+    } catch (_) {
+        return 0;
+    }
+
+    let restored = 0;
+    for (const entry of entries) {
+        let bookId = entry;
+        let metaPath = path.join(config.BOOKS_DIR, entry, 'book.json');
+        if (!fs.existsSync(metaPath)) {
+            // Legacy single-file format: <BOOKS_DIR>/<bookId>.json
+            if (entry.endsWith('.json')) {
+                metaPath = path.join(config.BOOKS_DIR, entry);
+                bookId = entry.slice(0, -5);
+            } else {
+                continue;
+            }
+        }
+        if (!bookId) continue;
+
+        try {
+            const existing = await redis.get(key(bookId));
+            if (existing) continue; // Redis wins — не трогаем живое состояние
+
+            const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+            if (!meta.layer_config || typeof meta.layer_config !== 'object') continue;
+
+            await redis.set(key(bookId), JSON.stringify(normalize(meta.layer_config)));
+            restored++;
+        } catch (_) {
+            // Best-effort: пропускаем книгу
+        }
+    }
+    return restored;
+}
+
 module.exports = {
     SCOPES,
     DEFAULTS,
@@ -135,4 +237,6 @@ module.exports = {
     normalize,
     isValidScope,
     getChunkSize,
+    persistToBook,
+    restoreFromBooks,
 };
