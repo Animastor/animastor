@@ -10,6 +10,9 @@ import type { IconProps } from './icons';
 import { FilePage } from '../pages/FilePage';
 import { NavigatePage } from '../pages/NavigatePage';
 import { position as activePosition } from '../state/positionStore';
+import { bookId as openBookId } from '../state/generateStore';
+import { getJson } from '../api/client';
+import type { BookData } from '../api/models';
 
 const DESKTOP_SHELL_QUERY = '(min-width: 1180px)';
 const DESKTOP_PANEL_PREFS_KEY = 'animastor_desktop_panels';
@@ -99,7 +102,7 @@ function DesktopWorkspace({ path, children }: { path: string; children: JSX.Elem
       <header class="desktop-header">
         <div class="desktop-header__identity">
           <span class="desktop-header__brand">Animastor</span>
-          <DesktopPositionSummary />
+          <DesktopBookContext />
         </div>
         <nav class="desktop-modes" aria-label="Workspace mode">
           {modes.map(({ route, key, Icon }) => {
@@ -165,6 +168,33 @@ function DesktopWorkspace({ path, children }: { path: string; children: JSX.Elem
         </aside>
       </div>
     </div>
+  );
+}
+
+function DesktopBookContext() {
+  const bookId = openBookId.value;
+  const [bookTitle, setBookTitle] = useState('');
+
+  useEffect(() => {
+    let disposed = false;
+    if (!bookId) {
+      setBookTitle('');
+      return () => { disposed = true; };
+    }
+    setBookTitle(bookId);
+    void getJson<BookData>(`/book/${encodeURIComponent(bookId)}`)
+      .then((book) => {
+        if (!disposed) setBookTitle(book.book?.title?.trim() || bookId);
+      })
+      .catch(() => { /* the stable book id remains a useful fallback */ });
+    return () => { disposed = true; };
+  }, [bookId]);
+
+  return (
+    <span class="desktop-book-context">
+      {bookTitle && <span class="desktop-book-title" title={bookTitle}>{bookTitle}</span>}
+      <DesktopPositionSummary />
+    </span>
   );
 }
 
