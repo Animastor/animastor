@@ -333,10 +333,9 @@ button { font: inherit; color: inherit; }
   display: grid;
   grid-template-columns: minmax(20rem, 44%) minmax(0, 1fr);
   grid-template-areas:
-    "posbar   posbar"
+    "header   header"
     "carousel tabs"
     "timeline content"
-    "timeline bottom"
     "dirty    dirty"
     "error    error"
     "empty    empty";
@@ -345,15 +344,104 @@ button { font: inherit; color: inherit; }
   overflow-y: auto;
   align-content: start;
 }
-/* Position bar is a plain breadcrumb in the desktop editor — the Navigator is
-   already a persistent right panel and the click-to-navigate guard lives in
-   EditPage (isDesktop), keeping keyboard activation consistent with mouse. */
-.desktop-main .edit-posbar { grid-area: posbar; cursor: default; }
+/* Desktop editor header — breadcrumb left, unit count, prev/next, save state,
+   persistent Save (plan §5.1/§5.2). Text + colour for the state, never colour
+   alone; the mobile position bar is superseded on desktop. */
+.desktop-main .edit-header {
+  grid-area: header;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem 0.625rem;
+  background: var(--nav-scene-bg);
+  border: 1px solid var(--outline-2);
+  border-radius: var(--radius-sm);
+}
+.desktop-main .edit-header__pos {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+.desktop-main .edit-header__units {
+  flex-shrink: 0;
+  color: var(--accent);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+.desktop-main .edit-header__nav {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  flex-shrink: 0;
+}
+.desktop-main .edit-header__nav-btn {
+  width: 2.25rem;
+  height: 2.25rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--outline);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+}
+.desktop-main .edit-header__nav-btn:hover { background: var(--surface-2); }
+.desktop-main .edit-header__nav-btn:disabled { opacity: 0.4; cursor: default; }
+.desktop-main .edit-header__state {
+  flex-shrink: 0;
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0.25rem 0.5rem;
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  border: 1px solid var(--outline-2);
+}
+.desktop-main .edit-header__state--saved { color: var(--success); }
+.desktop-main .edit-header__state--dirty { color: var(--accent); }
+.desktop-main .edit-header__state--busy { color: var(--text-2); }
+.desktop-main .edit-header__save {
+  flex-shrink: 0;
+  height: 2.375rem;
+  padding: 0 1rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.375rem;
+  border: 0;
+  border-radius: 1rem;
+  background: var(--primary);
+  color: var(--on-primary);
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+.desktop-main .edit-header__save:hover { background: var(--primary-pressed); }
+.desktop-main .edit-header__save:disabled { opacity: 0.5; cursor: default; }
+/* The mobile position bar is not needed in the desktop shell: the header
+   breadcrumb above serves the same purpose. */
+.desktop-main .edit-posbar { display: none; }
+/* Draft-protection modal description text */
+.edit-confirm__desc {
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--text);
+  line-height: 1.45;
+}
 .desktop-main .edit-panel--carousel { grid-area: carousel; align-self: start; }
-.desktop-main .edit-panel--timeline { grid-area: timeline; align-self: start; }
+/* The waveform column stretches below the carousel, mirroring the plan's
+   preview-column composition (waveform directly under the preview). */
+.desktop-main .edit-panel--timeline { grid-area: timeline; align-self: stretch; }
 .desktop-main .edit-tabs { grid-area: tabs; align-self: start; }
 .desktop-main .edit-content { grid-area: content; min-height: 0; }
-.desktop-main .edit-bottom { grid-area: bottom; }
+/* Mobile bottom Save is superseded by the persistent header Save on desktop
+   (plan §5.1/§5.2) — one explicit save action per composition. */
+.desktop-main .edit-bottom { display: none; }
 .desktop-main .edit-dirty { grid-area: dirty; }
 .desktop-main .edit-error { grid-area: error; }
 .desktop-main .edit-empty { grid-area: empty; }

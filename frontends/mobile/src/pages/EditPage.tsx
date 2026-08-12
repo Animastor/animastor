@@ -195,6 +195,9 @@ export function EditPage(props: { path?: string }) {
   // Collapsible panels (web deviation — frees vertical space for the editor).
   const [carouselCollapsed, setCarouselCollapsed] = useState(false);
   const [timelineCollapsed, setTimelineCollapsed] = useState(false);
+  // Desktop draft protection (plan §5.2): pending unit navigation awaiting the
+  // user's Save / Discard / Cancel decision when the draft is dirty.
+  const [pendingNav, setPendingNav] = useState<number | null>(null);
   // Full-size image zoom dialog (opens from the current carousel card).
   const [zoom, setZoom] = useState<{ url: string; label: string } | null>(null);
   const [zoomFailed, setZoomFailed] = useState(false);
@@ -696,6 +699,17 @@ export function EditPage(props: { path?: string }) {
     }
   }, [currentChIndex, currentScIndex, chapters, bookData]);
 
+  // ── Desktop draft protection (plan §5.2): navigating units with unsaved
+  //    edits on desktop asks Save / Discard / Cancel instead of silently
+  //    dropping the draft (mobile keeps the Android 1:1 discard behaviour).
+  const requestUnitNavigation = useCallback((delta: number) => {
+    if (isDesktop && saveDirtyRef.current) {
+      setPendingNav(delta);
+    } else {
+      navigateUnit(delta);
+    }
+  }, [isDesktop, navigateUnit]);
+
   // ── Passport override blocks (ensurePassportBlocks) ──
   // buildBlocksFromScene is a pure builder used both synchronously during render
   // (no setState-during-render) and by the effect that syncs state on scene change.
@@ -791,13 +805,15 @@ export function EditPage(props: { path?: string }) {
     return result;
   }, [overrideBlocks]);
 
-  // ── Save (saveToBackend) ──
-  const saveToBackend = useCallback(async () => {
+  // ── Save (saveToBackend) — resolves true only when the save succeeded, so
+  //    desktop draft protection can continue navigation after a confirmed save
+  //    (plan §5.2) and never loses a long prompt on failure.
+  const saveToBackend = useCallback(async (): Promise<boolean> => {
     const bd = bookData;
     const bId = bookIdSignal.value;
     if (!bd || !bId) {
       showSaveError('No book data');
-      return;
+      return false;
     }
     const fv = fieldValues.current;
 
@@ -828,10 +844,11 @@ export function EditPage(props: { path?: string }) {
         if (fresh) setBookData(fresh);
         setSaveLoading(false, true);
         setErrorText(null);
+        return true;
       } catch (e) {
         showSaveError(`${(e as Error).name}: ${(e as Error).message || 'unknown'}`);
+        return false;
       }
-      return;
     }
 
     // LOCATIONS tab — PATCH /locations/{id} per loc.* key group
@@ -852,7 +869,7 @@ export function EditPage(props: { path?: string }) {
         });
         if (byLoc.size === 0) {
           setSaveLoading(false, true);
-          return;
+          return true;
         }
         for (const [locId, fields] of byLoc) {
           await patchJson(`/book/${encodeURIComponent(bId)}/locations/${encodeURIComponent(locId)}`, { fields });
@@ -861,10 +878,11 @@ export function EditPage(props: { path?: string }) {
         if (fresh) setBookData(fresh);
         setSaveLoading(false, true);
         setErrorText(null);
+        return true;
       } catch (e) {
         showSaveError(`${(e as Error).name}: ${(e as Error).message || 'unknown'}`);
+        return false;
       }
-      return;
     }
 
     // CHARACTERS tab — PATCH /characters/{id} per CHANGED char (name + passport).
@@ -905,7 +923,7 @@ export function EditPage(props: { path?: string }) {
           setSaveLoading(false, true);
           saveDirtyRef.current = false;
           setSaveDirty(false);
-          return;
+          return true;
         }
         const fresh = await getJson<BookData>(`/book/${encodeURIComponent(bId)}`).catch(() => null);
         if (fresh) setBookData(fresh);
@@ -913,10 +931,11 @@ export function EditPage(props: { path?: string }) {
         setErrorText(null);
         saveDirtyRef.current = false;
         setSaveDirty(false);
+        return true;
       } catch (e) {
         showSaveError(`${(e as Error).name}: ${(e as Error).message || 'unknown'}`);
+        return false;
       }
-      return;
     }
 
     // VOICES tab — PATCH /voices/{id} per CHANGED voice (instruction).
@@ -951,7 +970,7 @@ export function EditPage(props: { path?: string }) {
           setSaveLoading(false, true);
           saveDirtyRef.current = false;
           setSaveDirty(false);
-          return;
+          return true;
         }
         const fresh = await getJson<BookData>(`/book/${encodeURIComponent(bId)}`).catch(() => null);
         if (fresh) setBookData(fresh);
@@ -959,10 +978,11 @@ export function EditPage(props: { path?: string }) {
         setErrorText(null);
         saveDirtyRef.current = false;
         setSaveDirty(false);
+        return true;
       } catch (e) {
         showSaveError(`${(e as Error).name}: ${(e as Error).message || 'unknown'}`);
+        return false;
       }
-      return;
     }
 
     const ch = chapters[currentChIndex];
@@ -971,7 +991,7 @@ export function EditPage(props: { path?: string }) {
     const sceneId = sc?.scene_id;
     if (!ch || !sc || !chapterId || !sceneId) {
       showSaveError('No chapter data');
-      return;
+      return false;
     }
 
     setSaveLoading(true, true);
@@ -1019,8 +1039,10 @@ export function EditPage(props: { path?: string }) {
       setErrorText(null);
       saveDirtyRef.current = false;
       setSaveDirty(false);
+      return true;
     } catch (e) {
       showSaveError(`${(e as Error).name}: ${(e as Error).message || 'unknown'}`);
+      return false;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, bookData, chapters, currentChIndex, currentScIndex, buildPassportOverrideFields, showSaveError, setSaveLoading]);
@@ -1406,8 +1428,67 @@ export function EditPage(props: { path?: string }) {
     };
   }, [zoom]);
 
+  // Draft-protection modal: Escape cancels the pending navigation (plan §11 —
+  // Escape closes the top-most dismissible surface) + locks body scroll.
+  useEffect(() => {
+    if (pendingNav === null) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setPendingNav(null); };
+    window.addEventListener('keydown', onKey);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [pendingNav]);
+
   return (
     <section class="page edit-page">
+      {/* Desktop editor header (plan §5.1/§5.2) — breadcrumb, unit ordinal,
+          previous/next, save state and a persistent Save action. Mobile keeps
+          the Android position bar; the header is desktop-only. */}
+      {isDesktop && (
+        <div class="edit-header">
+          <span class="edit-header__pos" title={posLabel}>{posLabel}</span>
+          {hasUnits && <span class="edit-header__units">{unitCountText}</span>}
+          <span class="edit-header__nav">
+            <button
+              type="button"
+              class="edit-header__nav-btn"
+              aria-label={t('edit_previous_unit')}
+              disabled={!carousel.prev}
+              onClick={() => requestUnitNavigation(-1)}
+            >
+              <IconChevronLeft width={18} height={18} />
+            </button>
+            <button
+              type="button"
+              class="edit-header__nav-btn"
+              aria-label={t('edit_next_unit')}
+              disabled={!carousel.next}
+              onClick={() => requestUnitNavigation(1)}
+            >
+              <IconChevronRight width={18} height={18} />
+            </button>
+          </span>
+          <span
+            class={'edit-header__state' + (saveBusy ? ' edit-header__state--busy' : saveDirty ? ' edit-header__state--dirty' : ' edit-header__state--saved')}
+            aria-live="polite"
+          >
+            {saveBusy ? t('edit_saving') : saveDirty ? t('edit_unsaved_changes') : t('edit_saved')}
+          </span>
+          <button
+            type="button"
+            class="edit-header__save"
+            disabled={saveBusy}
+            onClick={() => void saveToBackend()}
+          >
+            <IconSave width={16} height={16} />
+            {saveText}
+          </button>
+        </div>
+      )}
+
       {/* Position bar — tappable → Navigate (mobile). On desktop the Navigator
           is already a persistent right panel, so the bar is an informational
           breadcrumb and must not route away and empty the workspace. */}
@@ -1431,9 +1512,9 @@ export function EditPage(props: { path?: string }) {
           <IconChevronUp width={16} height={16} />
         </button>
         <div class="edit-carousel">
-          <CarouselCard kind="prev" bid={bid} bld={bld} item={carousel.prev} onClick={() => carousel.prev && navigateUnit(-1)} />
+          <CarouselCard kind="prev" bid={bid} bld={bld} item={carousel.prev} onClick={() => carousel.prev && requestUnitNavigation(-1)} />
           <CarouselCard kind="current" bid={bid} bld={bld} item={carousel.current} onClick={() => openZoom(carousel.current)} />
-          <CarouselCard kind="next" bid={bid} bld={bld} item={carousel.next} onClick={() => carousel.next && navigateUnit(1)} />
+          <CarouselCard kind="next" bid={bid} bld={bld} item={carousel.next} onClick={() => carousel.next && requestUnitNavigation(1)} />
         </div>
       </div>
 
@@ -1535,6 +1616,38 @@ export function EditPage(props: { path?: string }) {
           <button class="zoom__close" type="button" aria-label={t('edit_close')} onClick={() => setZoom(null)}>
             <IconClose width={20} height={20} />
           </button>
+        </div>
+      )}
+
+      {/* Desktop draft protection modal (plan §5.2): an unsaved draft must
+          never be silently lost on unit navigation. Save → continue on
+          success; Discard → navigate and drop the draft; Cancel → stay. */}
+      {pendingNav !== null && (
+        <div class="modal-backdrop" role="presentation" onClick={() => setPendingNav(null)}>
+          <div class="modal" role="dialog" aria-modal="true" aria-label={t('edit_confirm_title')} onClick={(e) => e.stopPropagation()}>
+            <div class="modal__title">{t('edit_confirm_title')}</div>
+            <div class="modal__body">
+              <p class="edit-confirm__desc">{t('edit_confirm_desc')}</p>
+            </div>
+            <div class="modal__footer">
+              {/* autofocus lands on the safe action; plan §11 — initial meaningful focus */}
+              <button type="button" class="btn btn--outlined" autofocus onClick={() => setPendingNav(null)}>{t('dialog_cancel')}</button>
+              <button
+                type="button"
+                class="btn btn--outlined"
+                onClick={() => { const d = pendingNav; setPendingNav(null); navigateUnit(d); }}
+              >{t('edit_discard')}</button>
+              <button
+                type="button"
+                class="btn"
+                disabled={saveBusy}
+                onClick={() => {
+                  const d = pendingNav;
+                  void saveToBackend().then((ok) => { if (ok) { setPendingNav(null); navigateUnit(d); } });
+                }}
+              >{t('edit_save_and_go')}</button>
+            </div>
+          </div>
         </div>
       )}
     </section>

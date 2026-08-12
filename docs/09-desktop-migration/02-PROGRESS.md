@@ -53,11 +53,18 @@
 - [x] `useDesktopShell` экспортирован из `AppShell.tsx` для переиспользования
 - [x] `tsc --noEmit` + `vite build` — OK; code-review пройден
 
-Осталось:
+Сделано (этап 2, срез 2):
 
-- [ ] Save/dirty-состояние в header редактора (сейчас — кнопка Save в нижней части инспектора)
+- [x] **Десктопный header редактора** (план §5.1/§5.2): breadcrumb (позиция), Unit N/M, кнопки prev/next (disabled на границах), save-состояние (Saving/Unsaved/Saved — текст + цвет, не цвет отдельно), persistent Save. Мобильный posbar скрыт на десктопе (`display: none`), нижняя мобильная кнопка Save тоже — один явный Save на композицию
+- [x] **Защита черновика** (план §5.2, риск §14): `requestUnitNavigation` — при dirty-черновике на десктопе показывается confirm (Сохранить и перейти / Не сохранять и перейти / Отмена). «Сохранить и перейти» продолжает навигацию только при успешном save (`saveToBackend` теперь `Promise<boolean>`, все пути возвращают true/false)
+- [x] Escape закрывает confirm-modal + scroll-lock; autofocus на безопасном действии (Отмена)
+- [x] Карусель (prev/next) тоже идёт через `requestUnitNavigation`
+- [x] Новые i18n-ключи в ru/en; `tsc --noEmit` + `vite build` — OK; code-review пройден
+
+Осталось (Phase 5):
+
+- [ ] Защита черновика при навигации из Navigator-панели (клик по юниту справа сейчас сбрасывает черновик — observer позиции в EditPage очищает fieldValues; нужен перехват в observer или confirm до `navigateTo`)
 - [ ] Thumbnail rail юнитов вместо карусели 3 карточек (сейчас карусель переиспользована)
-- [ ] Безопасная навигация по юнитам (без потери черновика)
 - [ ] Опционально: collapse Navigator в режиме Editor на laptop
 
 ## Phase 6 — Generator

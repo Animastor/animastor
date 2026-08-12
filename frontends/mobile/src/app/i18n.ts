@@ -296,6 +296,15 @@ const dict = {
     edit_collapse: 'Свернуть',
     edit_expand: 'Развернуть',
     edit_close: 'Закрыть',
+    // Desktop editor header + draft protection (Phase 5, plan §5.2)
+    edit_saved: 'Сохранено',
+    edit_unsaved_changes: 'Несохранённые изменения',
+    edit_previous_unit: 'Предыдущий модуль',
+    edit_next_unit: 'Следующий модуль',
+    edit_confirm_title: 'Несохранённые изменения',
+    edit_confirm_desc: 'В модуле есть несохранённые правки. Сохранить перед переходом?',
+    edit_discard: 'Не сохранять и перейти',
+    edit_save_and_go: 'Сохранить и перейти',
     // Generate (strings.xml ru)
     generate_global_section: 'Общее',
     generate_all: 'Генерировать всё',
@@ -653,6 +662,15 @@ const dict = {
     edit_collapse: 'Collapse',
     edit_expand: 'Expand',
     edit_close: 'Close',
+    // Desktop editor header + draft protection (Phase 5, plan §5.2)
+    edit_saved: 'Saved',
+    edit_unsaved_changes: 'Unsaved changes',
+    edit_previous_unit: 'Previous unit',
+    edit_next_unit: 'Next unit',
+    edit_confirm_title: 'Unsaved changes',
+    edit_confirm_desc: 'This unit has unsaved edits. Save before moving on?',
+    edit_discard: 'Discard edits',
+    edit_save_and_go: 'Save and continue',
     // Generate (strings.xml en)
     generate_global_section: 'Global',
     generate_all: 'Generate All',
