@@ -59,6 +59,18 @@ async function bootstrapWithAgent(bookId, progress, publishProgress, redis) {
     } catch (_) {
         // Best-effort — DB cleanup failure should not block generation
     }
+    // Cathedral Recon #3 §5.4: the user explicitly starting (or restarting)
+    // generation is a NEW run — clear the persistent cancellation tombstone,
+    // same semantics as POST /regenerate. Without this, a cancelled book that
+    // is later explicitly restarted would be skipped by startup-resume after a
+    // Redis loss even though the user re-ran it. Best-effort: a PG failure must
+    // not block the explicit new run.
+    try {
+        const generationCancelRepo = require('../../storage/postgres/repositories/generation-cancel-repo');
+        await generationCancelRepo.clear(bookId);
+    } catch (_) {
+        // Best-effort — tombstone cleanup failure should not block generation
+    }
 
     const session = await createSession(bookId, 'txt_import');
     const sessionId = session.session_id;
@@ -303,6 +315,15 @@ async function bootstrapNextWindow(bookId, progress, publishProgress, redis) {
         if (redis && bookId) {
             await redis.srem(`animastor:cancelled-workers:${bookId}`, 'vbook');
         }
+    } catch (_) { /* best-effort */ }
+    // Cathedral Recon #3 §5.4: "Continue" is an explicit new run — clear the
+    // persistent cancellation tombstone (same semantics as POST /regenerate).
+    // Without this, a cancelled-then-continued book would be skipped by
+    // startup-resume after a Redis loss despite the user's explicit resume.
+    // Best-effort: a PG failure must not block the explicit continuation.
+    try {
+        const generationCancelRepo = require('../../storage/postgres/repositories/generation-cancel-repo');
+        await generationCancelRepo.clear(bookId);
     } catch (_) { /* best-effort */ }
 
     let windowData = null;
