@@ -42,13 +42,23 @@
 - [ ] Режим навигации: выбор юнита не должен принудительно переключать режим (сейчас `NavigatePage` роутит в `/play` — десктопная семантика)
 - [ ] Secondary-экраны (settings/workflows/library) в шелле
 
-## Phase 5 — Editor (наивысший приоритет) — в работе
+## Phase 5 — Editor (наивысший приоритет) — первый срез сделан
 
-- [~] Десктопный layout Editor: preview + inspector в 2 колонки (этап 2)
-- [ ] Промпт-редакторы `image.prompt` / `video.action` (крупные textarea, лимит, resize)
-- [ ] Save/dirty-состояние в header редактора + Ctrl/Cmd+S
+Сделано (этап 2, коммит см. git log):
+
+- [x] Десктопный двухколоночный layout Editor внутри `.desktop-main`: слева — карусель юнитов + waveform (preview-колонка, ~44%), справа — tabs + fields + Save (инспектор). Мобильная композиция ниже 1180px не тронута (все правила под `.desktop-main`)
+- [x] `image.prompt` / `video.action` — промпт-редакторы: всегда textarea (rows 8), класс `edit-field--prompt`, min-height 200px (160px на laptop), resize: vertical, перенос строк, лимит символов сохраняется. Только в десктопном шелле (`useDesktopShell`) — мобильный рендер полей не меняется
+- [x] Ctrl/Cmd+S сохраняет dirty-черновик (`e.code === 'KeyS'` — независимо от раскладки RU/EN)
+- [x] Posbar редактора на десктопе — информационный breadcrumb (клик не роутит в `/navigate`, т.к. Navigator уже справа)
+- [x] `useDesktopShell` экспортирован из `AppShell.tsx` для переиспользования
+- [x] `tsc --noEmit` + `vite build` — OK; code-review пройден
+
+Осталось:
+
+- [ ] Save/dirty-состояние в header редактора (сейчас — кнопка Save в нижней части инспектора)
+- [ ] Thumbnail rail юнитов вместо карусели 3 карточек (сейчас карусель переиспользована)
 - [ ] Безопасная навигация по юнитам (без потери черновика)
-- [ ] Интеграция waveform и карусели/thumbnail rail
+- [ ] Опционально: collapse Navigator в режиме Editor на laptop
 
 ## Phase 6 — Generator
 

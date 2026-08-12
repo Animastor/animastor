@@ -323,6 +323,74 @@ button { font: inherit; color: inherit; }
   .desktop-layout--file-collapsed.desktop-layout--navigator-collapsed { grid-template-columns: 3.75rem minmax(0, 1fr) 3.75rem; }
 }
 
+/* ── Desktop Editor workspace (Phase 5) ─────────────────────────
+   Only inside .desktop-main (i.e. >= 1180px). The EditPage keeps its mobile
+   composition and all its state; at desktop width it becomes a two-column
+   workspace: preview column (unit carousel + waveform timeline) on the left,
+   editing inspector (tabs + fields + save) on the right. Panels stay mounted
+   so drafts and media survive mode switches. */
+.desktop-main .edit-page {
+  display: grid;
+  grid-template-columns: minmax(20rem, 44%) minmax(0, 1fr);
+  grid-template-areas:
+    "posbar   posbar"
+    "carousel tabs"
+    "timeline content"
+    "timeline bottom"
+    "dirty    dirty"
+    "error    error"
+    "empty    empty";
+  gap: 0.625rem;
+  padding: 0.75rem;
+  overflow-y: auto;
+  align-content: start;
+}
+/* Position bar is a plain breadcrumb in the desktop editor — the Navigator is
+   already a persistent right panel and the click-to-navigate guard lives in
+   EditPage (isDesktop), keeping keyboard activation consistent with mouse. */
+.desktop-main .edit-posbar { grid-area: posbar; cursor: default; }
+.desktop-main .edit-panel--carousel { grid-area: carousel; align-self: start; }
+.desktop-main .edit-panel--timeline { grid-area: timeline; align-self: start; }
+.desktop-main .edit-tabs { grid-area: tabs; align-self: start; }
+.desktop-main .edit-content { grid-area: content; min-height: 0; }
+.desktop-main .edit-bottom { grid-area: bottom; }
+.desktop-main .edit-dirty { grid-area: dirty; }
+.desktop-main .edit-error { grid-area: error; }
+.desktop-main .edit-empty { grid-area: empty; }
+
+/* Prompt editors (image.prompt / video.action) get durable room on desktop: full
+   inspector width, taller initial height, vertical resize, preserved line breaks. */
+.desktop-main .edit-field--prompt {
+  padding: 0.625rem;
+}
+.desktop-main .edit-field--prompt .edit-field__input--area {
+  min-height: 12.5rem; /* 200px — plan §5.4 180–260px initial range */
+  resize: vertical;
+  font-size: 0.875rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+
+/* Wide desktop: give the preview column more room, cap it at 50%. */
+@media (min-width: 1440px) {
+  .desktop-main .edit-page {
+    grid-template-columns: minmax(22rem, 46%) minmax(0, 1fr);
+  }
+}
+
+/* Laptop desktop: the editor inspector must stay usable — when the workspace is
+   tight, the Navigator panel collapses to a rail first (user-controlled), and
+   the editor keeps a two-column split with safe minimums. */
+@media (max-width: 1359px) {
+  .desktop-main .edit-page {
+    grid-template-columns: minmax(17rem, 40%) minmax(0, 1fr);
+  }
+  .desktop-main .edit-field--prompt .edit-field__input--area {
+    min-height: 10rem;
+  }
+}
+
 /* Toolbar */
 .toolbar {
   height: var(--toolbar-h);

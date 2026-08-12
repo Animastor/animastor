@@ -35,6 +35,7 @@ import type {
 } from '../api/models';
 import { t, tf } from '../app/i18n';
 import { navigate } from '../app/router';
+import { useDesktopShell } from '../app/AppShell';
 import {
   bookId as bookIdSignal, buildId as buildIdSignal, dirtySummary as dirtySignal, onPlaybackPrepared,
 } from '../state/generateStore';
@@ -159,6 +160,10 @@ function unitId(u: BookUnit, index: number): string {
 
 export function EditPage(props: { path?: string }) {
   void props;
+  // Desktop prompt editors (image.prompt / video.action) render as dedicated
+  // tall textareas ONLY in the desktop shell — mobile keeps the 1:1 Android
+  // field rendering (plan §5.4, §10: desktop gated by the shared breakpoint).
+  const isDesktop = useDesktopShell();
   const [bookData, setBookData] = useState<BookData | null>(null);
   const [currentChIndex, setCurrentChIndex] = useState(0);
   const [currentScIndex, setCurrentScIndex] = useState(0);
@@ -1020,6 +1025,22 @@ export function EditPage(props: { path?: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, bookData, chapters, currentChIndex, currentScIndex, buildPassportOverrideFields, showSaveError, setSaveLoading]);
 
+  // ── Ctrl/Cmd+S — desktop editor save (plan §5.2): the same explicit save
+  //    path, triggered from the keyboard when a draft is dirty. Works on all
+  //    desktop widths; harmless on touch where the shortcut rarely fires.
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      // e.code (physical key) is layout-independent: Ctrl+S / Cmd+S works on
+      // RU and EN layouts alike (e.key would be 's' or 'ы' depending on layout).
+      if ((e.ctrlKey || e.metaKey) && e.code === 'KeyS') {
+        e.preventDefault();
+        if (saveDirtyRef.current) void saveToBackend();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [saveToBackend]);
+
   // ── Tab scroll indicators (updateTabScrollIndicators) ──
   const updateTabScrollIndicators = useCallback(() => {
     const el = tabsScrollRef.current;
@@ -1044,14 +1065,19 @@ export function EditPage(props: { path?: string }) {
     // алгоритмов" glues into "ХабаровЗа…"), and an edit would save the stripped
     // value back, destroying TTS paragraph breaks. Length alone (the old
     // heuristic) missed short multiline texts like book covers.
-    const useTextarea = multiline || (fieldValues.current[storeKey] ?? '').includes('\n');
+    // Desktop prompt editors (image.prompt / video.action, plan §5.4) are ALWAYS
+    // multiline textareas — dedicated working fields, not ordinary input cards.
+    // Only the desktop shell promotes the frame prompts to dedicated editors;
+    // mobile keeps the original single/multiline heuristic untouched.
+    const isPromptEditor = isDesktop && (storeKey === 'image.prompt' || storeKey === 'video.action');
+    const useTextarea = isPromptEditor || multiline || (fieldValues.current[storeKey] ?? '').includes('\n');
     return (
-      <div class="edit-field" key={storeKey}>
+      <div class={'edit-field' + (isPromptEditor ? ' edit-field--prompt' : '')} key={storeKey}>
         <label class="edit-field__label">{label}</label>
         {useTextarea ? (
           <textarea
             class="edit-field__input edit-field__input--area"
-            rows={4}
+            rows={isPromptEditor ? 8 : 4}
             maxLength={maxLength}
             defaultValue={fieldValues.current[storeKey]}
             onInput={(e) => { fieldValues.current[storeKey] = (e.target as HTMLTextAreaElement).value; setCounterTick((t) => t + 1); markDirty(); }}
@@ -1382,8 +1408,10 @@ export function EditPage(props: { path?: string }) {
 
   return (
     <section class="page edit-page">
-      {/* Position bar — tappable → Navigate */}
-      <button class="gen-posbar edit-posbar" type="button" onClick={() => navigate('/navigate')}>
+      {/* Position bar — tappable → Navigate (mobile). On desktop the Navigator
+          is already a persistent right panel, so the bar is an informational
+          breadcrumb and must not route away and empty the workspace. */}
+      <button class="gen-posbar edit-posbar" type="button" onClick={() => { if (!isDesktop) navigate('/navigate'); }}>
         <span class="gen-posbar__label">{posLabel}</span>
         {hasUnits && <span class="gen-posbar__units">{unitCountText}</span>}
       </button>
@@ -1394,7 +1422,7 @@ export function EditPage(props: { path?: string }) {
           height). Collapsed = thin title strip that re-expands on tap.
           The carousel stays mounted (hidden via CSS) so image sizes restore
           exactly; current card opens the full-size image. */}
-      <div class={'edit-panel' + (carouselCollapsed ? ' edit-panel--collapsed' : '')}>
+      <div class={'edit-panel edit-panel--carousel' + (carouselCollapsed ? ' edit-panel--collapsed' : '')}>
         <button class="edit-panel__strip" type="button" aria-expanded={!carouselCollapsed} onClick={() => setCarouselCollapsed(false)}>
           <span class="edit-panel__title">{t('edit_carousel_title')}</span>
           <span class="edit-panel__chev" aria-hidden="true"><IconChevronDown width={18} height={18} /></span>
@@ -1412,7 +1440,7 @@ export function EditPage(props: { path?: string }) {
       {/* Audio timeline panel — collapsible (same web deviation). Collapsing
           stops playback so audio never plays without the visible waveform. */}
       {timelineVisible && (
-        <div class={'edit-panel' + (timelineCollapsed ? ' edit-panel--collapsed' : '')}>
+        <div class={'edit-panel edit-panel--timeline' + (timelineCollapsed ? ' edit-panel--collapsed' : '')}>
           <button class="edit-panel__strip" type="button" aria-expanded={!timelineCollapsed} onClick={() => setTimelineCollapsed(false)}>
             <span class="edit-panel__title">{t('edit_waveform_title')}</span>
             <span class="edit-panel__chev" aria-hidden="true"><IconChevronDown width={18} height={18} /></span>

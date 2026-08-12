@@ -39,7 +39,7 @@ function writeDesktopPanelPrefs(prefs: DesktopPanelPrefs): void {
   try { localStorage.setItem(DESKTOP_PANEL_PREFS_KEY, JSON.stringify(prefs)); } catch { /* storage may be unavailable */ }
 }
 
-function useDesktopShell(): boolean {
+export function useDesktopShell(): boolean {
   const [isDesktop, setIsDesktop] = useState(() => window.matchMedia(DESKTOP_SHELL_QUERY).matches);
 
   useEffect(() => {
