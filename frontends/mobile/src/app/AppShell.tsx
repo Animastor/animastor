@@ -11,6 +11,29 @@ import { FilePage } from '../pages/FilePage';
 import { NavigatePage } from '../pages/NavigatePage';
 
 const DESKTOP_SHELL_QUERY = '(min-width: 1180px)';
+const DESKTOP_PANEL_PREFS_KEY = 'animastor_desktop_panels';
+
+interface DesktopPanelPrefs {
+  filePanelCollapsed: boolean;
+  navigatorPanelCollapsed: boolean;
+}
+
+function readDesktopPanelPrefs(): DesktopPanelPrefs {
+  const fallback: DesktopPanelPrefs = { filePanelCollapsed: false, navigatorPanelCollapsed: false };
+  try {
+    const value = JSON.parse(localStorage.getItem(DESKTOP_PANEL_PREFS_KEY) || '{}') as Partial<DesktopPanelPrefs>;
+    return {
+      filePanelCollapsed: value.filePanelCollapsed === true,
+      navigatorPanelCollapsed: value.navigatorPanelCollapsed === true,
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+function writeDesktopPanelPrefs(prefs: DesktopPanelPrefs): void {
+  try { localStorage.setItem(DESKTOP_PANEL_PREFS_KEY, JSON.stringify(prefs)); } catch { /* storage may be unavailable */ }
+}
 
 function useDesktopShell(): boolean {
   const [isDesktop, setIsDesktop] = useState(() => window.matchMedia(DESKTOP_SHELL_QUERY).matches);
@@ -60,8 +83,9 @@ export function AppShell({ children }: { children: JSX.Element }) {
 }
 
 function DesktopWorkspace({ path, children }: { path: string; children: JSX.Element }) {
-  const [filePanelCollapsed, setFilePanelCollapsed] = useState(false);
-  const [navigatorPanelCollapsed, setNavigatorPanelCollapsed] = useState(false);
+  const [panelPrefs, setPanelPrefs] = useState<DesktopPanelPrefs>(readDesktopPanelPrefs);
+  const { filePanelCollapsed, navigatorPanelCollapsed } = panelPrefs;
+  useEffect(() => { writeDesktopPanelPrefs(panelPrefs); }, [panelPrefs]);
   const modes: { route: '/generate' | '/play' | '/edit'; key: 'tab_generate' | 'tab_play' | 'tab_edit'; Icon: (p: IconProps) => JSX.Element }[] = [
     { route: '/generate', key: 'tab_generate', Icon: IconGenerate },
     { route: '/play', key: 'tab_play', Icon: IconPlay },
@@ -109,7 +133,7 @@ function DesktopWorkspace({ path, children }: { path: string; children: JSX.Elem
               type="button"
               aria-label={filePanelCollapsed ? t('edit_expand') : t('edit_collapse')}
               aria-expanded={!filePanelCollapsed}
-              onClick={() => setFilePanelCollapsed((collapsed) => !collapsed)}
+              onClick={() => setPanelPrefs((prefs) => ({ ...prefs, filePanelCollapsed: !prefs.filePanelCollapsed }))}
             >
               {filePanelCollapsed ? <IconChevronRight width={18} height={18} /> : <IconChevronLeft width={18} height={18} />}
             </button>
@@ -128,7 +152,7 @@ function DesktopWorkspace({ path, children }: { path: string; children: JSX.Elem
               type="button"
               aria-label={navigatorPanelCollapsed ? t('edit_expand') : t('edit_collapse')}
               aria-expanded={!navigatorPanelCollapsed}
-              onClick={() => setNavigatorPanelCollapsed((collapsed) => !collapsed)}
+              onClick={() => setPanelPrefs((prefs) => ({ ...prefs, navigatorPanelCollapsed: !prefs.navigatorPanelCollapsed }))}
             >
               {navigatorPanelCollapsed ? <IconChevronLeft width={18} height={18} /> : <IconChevronRight width={18} height={18} />}
             </button>
