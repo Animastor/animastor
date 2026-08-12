@@ -5,6 +5,7 @@ import type { BookChapter, BookData, BookScene, BookUnit } from '../api/models';
 import { unitIndex } from '../api/models';
 import { t } from '../app/i18n';
 import { navigate } from '../app/router';
+import { useDesktopShell } from '../app/desktop';
 import { bookId, buildId, onPlaybackPrepared } from '../state/generateStore';
 import { navigateTo, position as positionSignal } from '../state/positionStore';
 import type { ActivePosition } from '../state/positionStore';
@@ -75,6 +76,11 @@ function unitLabel(u: BookUnit, uIdx: number): string {
 
 export function NavigatePage(props: { path?: string }) {
   void props;
+  // Desktop (plan §4.3): the Navigator is a persistent right panel, so unit
+  // selection updates the shared position but must NOT force a mode switch to
+  // /play — that would interrupt editing. Mobile keeps the Android 1:1
+  // switchToPlayTab() behaviour.
+  const isDesktop = useDesktopShell();
   const [bookData, setBookData] = useState<BookData | null>(null);
   const [loading, setLoading] = useState(false);
   // Start with the current position's scene already expanded — avoids the
@@ -271,7 +277,7 @@ export function NavigatePage(props: { path?: string }) {
       if (item.chapterId != null && item.sceneId != null) {
         void seekToPosition(item.chapterId, item.sceneId, item.index, item.unitId);
       }
-      navigate('/play'); // switchToPlayTab()
+      if (!isDesktop) navigate('/play'); // switchToPlayTab()
     }
   };
 

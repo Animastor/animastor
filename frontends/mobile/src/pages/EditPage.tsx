@@ -35,7 +35,7 @@ import type {
 } from '../api/models';
 import { t, tf } from '../app/i18n';
 import { navigate } from '../app/router';
-import { useDesktopShell } from '../app/AppShell';
+import { useDesktopShell } from '../app/desktop';
 import {
   bookId as bookIdSignal, buildId as buildIdSignal, dirtySummary as dirtySignal, onPlaybackPrepared,
 } from '../state/generateStore';
@@ -298,19 +298,67 @@ export function EditPage(props: { path?: string }) {
     }
   }, [showSaveError, clearEditor]);
 
+  // ── Draft snapshot for external navigation (plan §5.2): when the position
+  //    changes from OUTSIDE the editor (Navigator panel click, AI, deep link)
+  //    while a desktop draft is dirty, the field values are snapshotted and a
+  //    recover modal offers to go back instead of silently losing the draft.
+  //    Mobile keeps the Android 1:1 discard behaviour (no prompt).
+  const draftSnapshot = useRef<{
+    chapterId: string | null; sceneId: string | null; unitIndex: number;
+    tab: number; fv: Record<string, string>; blocks: OverrideBlock[];
+  } | null>(null);
+  const [draftRecoverOpen, setDraftRecoverOpen] = useState(false);
+
+  // Set while restoreDraft navigates back to the snapshotted position — the
+  // position observer must not clear the restored draft or re-snapshot it.
+  const restoringRef = useRef(false);
+
   // ── Observe position (observePosition) — reload on every position change ──
+  // Structured mirror of the last seen position (in addition to the key) so a
+  // dirty desktop draft can be snapshotted without parsing a joined string.
+  const lastPosRef = useRef<{ chapterId: string | null; sceneId: string | null; unitIndex: number } | null>(null);
   const lastPosKey = useRef<string | null>(null);
   if (lastPosKey.current === null) {
     const p = positionSignal.value;
     lastPosKey.current = p.chapterId && p.sceneId ? `${p.chapterId}|${p.sceneId}|${p.unitIndex}` : null;
+    lastPosRef.current = { chapterId: p.chapterId, sceneId: p.sceneId, unitIndex: p.unitIndex };
   }
   useEffect(() => {
     const p = positionSignal.value;
     const key = p.chapterId && p.sceneId ? `${p.chapterId}|${p.sceneId}|${p.unitIndex}` : null;
     if (key !== lastPosKey.current) {
       lastPosKey.current = key;
-      // Any navigation discards unsaved field edits (Android fieldValues.clear()
-      // on unit moves as well as scene changes) — 1:1.
+      // Restore path: keep the restored draft untouched, just reload the scene.
+      if (restoringRef.current) {
+        restoringRef.current = false;
+        lastPosRef.current = { chapterId: p.chapterId, sceneId: p.sceneId, unitIndex: p.unitIndex };
+        if (p.chapterId != null && p.sceneId != null) {
+          void loadAndSync(p.chapterId, p.sceneId);
+        } else if (!bookIdSignal.value) {
+          clearEditor();
+        }
+        return;
+      }
+      // Desktop + dirty draft + a real previous position → snapshot instead of
+      // discarding. Editor-internal navigation never reaches here dirty (the
+      // confirm modal in requestUnitNavigation/requestUnitJump handles it), so
+      // this only fires for external position changes.
+      const prev = lastPosRef.current;
+      lastPosRef.current = { chapterId: p.chapterId, sceneId: p.sceneId, unitIndex: p.unitIndex };
+      if (isDesktop && saveDirtyRef.current && prev != null) {
+        draftSnapshot.current = {
+          chapterId: prev.chapterId,
+          sceneId: prev.sceneId,
+          unitIndex: prev.unitIndex,
+          tab,
+          fv: { ...fieldValues.current },
+          blocks: overrideBlocks.map((b) => ({ charId: b.charId, fields: { ...b.fields } })),
+        };
+        setDraftRecoverOpen(true);
+      }
+      // Any navigation discards the active field edits (Android
+      // fieldValues.clear() on unit moves as well as scene changes) — 1:1. The
+      // snapshot above preserves the desktop draft for the recover path.
       fieldValues.current = {};
       saveDirtyRef.current = false;
       setSaveDirty(false);
@@ -743,6 +791,31 @@ export function EditPage(props: { path?: string }) {
       jumpToUnit(index);
     }
   }, [isDesktop, jumpToUnit]);
+
+  // ── Restore an externally-navigated-away draft (plan §5.2): switch back to
+  //    the snapshotted position, restore tab/fields/overrides and mark dirty so
+  //    the user can review and save. The position change reloads the scene.
+  const restoreDraft = useCallback(() => {
+    const snap = draftSnapshot.current;
+    if (!snap) return;
+    draftSnapshot.current = null;
+    setDraftRecoverOpen(false);
+    fieldValues.current = { ...snap.fv };
+    setOverrideBlocks(snap.blocks);
+    blocksSceneKey.current = null;
+    setTab(snap.tab);
+    saveDirtyRef.current = true;
+    setSaveDirty(true);
+    if (snap.chapterId != null && snap.sceneId != null) {
+      restoringRef.current = true;
+      navigateTo({ chapterId: snap.chapterId, sceneId: snap.sceneId, unitId: null, chunkId: null, unitIndex: snap.unitIndex });
+    }
+  }, []);
+
+  const discardDraft = useCallback(() => {
+    draftSnapshot.current = null;
+    setDraftRecoverOpen(false);
+  }, []);
 
   // ── Passport override blocks (ensurePassportBlocks) ──
   // buildBlocksFromScene is a pure builder used both synchronously during render
@@ -1476,6 +1549,20 @@ export function EditPage(props: { path?: string }) {
     };
   }, [pendingNav]);
 
+  // Draft-recover modal: Escape dismisses the snapshot (draft stays lost, the
+  // user explicitly gave it up) + locks body scroll.
+  useEffect(() => {
+    if (!draftRecoverOpen) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') discardDraft(); };
+    window.addEventListener('keydown', onKey);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [draftRecoverOpen, discardDraft]);
+
   return (
     <section class="page edit-page">
       {/* Desktop editor header (plan §5.1/§5.2) — breadcrumb, unit ordinal,
@@ -1667,6 +1754,24 @@ export function EditPage(props: { path?: string }) {
           <button class="zoom__close" type="button" aria-label={t('edit_close')} onClick={() => setZoom(null)}>
             <IconClose width={20} height={20} />
           </button>
+        </div>
+      )}
+
+      {/* Desktop draft-recover modal (plan §5.2): the position changed from
+          outside the editor while a draft was dirty; the draft is snapshotted
+          and offered back instead of being silently dropped. */}
+      {draftRecoverOpen && draftSnapshot.current !== null && (
+        <div class="modal-backdrop" role="presentation" onClick={discardDraft}>
+          <div class="modal" role="dialog" aria-modal="true" aria-label={t('edit_draft_recover_title')} onClick={(e) => e.stopPropagation()}>
+            <div class="modal__title">{t('edit_draft_recover_title')}</div>
+            <div class="modal__body">
+              <p class="edit-confirm__desc">{t('edit_draft_recover_desc')}</p>
+            </div>
+            <div class="modal__footer">
+              <button type="button" class="btn btn--outlined" autofocus onClick={discardDraft}>{t('edit_draft_recover_discard')}</button>
+              <button type="button" class="btn" onClick={restoreDraft}>{t('edit_draft_recover_back')}</button>
+            </div>
+          </div>
         </div>
       )}
 

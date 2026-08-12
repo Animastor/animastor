@@ -69,10 +69,18 @@
 - [x] Пустое состояние rail (`edit_rail_empty`), lazy-загрузка, a11y: кнопки без ложного listbox-паттерна
 - [x] `tsc --noEmit` + `vite build` — OK; code-review пройден
 
+Сделано (этап 2, срез 4):
+
+- [x] **Защита черновика при внешней навигации** (план §5.2, риск §14): observer позиции в EditPage при внешней смене позиции (Navigator-клик, AI, deep link) с dirty-черновиком на десктопе делает snapshot (позиция/tab/поля/override-блоки) и показывает modal «Вернуться к черновику / Потерять правки» — вместо молчаливой потери длинного промпта. `restoringRef` защищает восстановленные поля от повторной очистки observer'ом
+- [x] **Navigator-клик на десктопе не роутит в `/play`** (план §4.3): выбор юнита обновляет shared position, режим workspace остаётся; мобильный сохраняет Android `switchToPlayTab()` ниже 1180px
+- [x] **`useDesktopShell` + `DESKTOP_SHELL_QUERY` вынесены в `src/app/desktop.ts`** — устранён циклический импорт AppShell ↔ NavigatePage; импортируются из AppShell/EditPage/NavigatePage
+- [x] Структурированный `lastPosRef` вместо парсинга строки ключа позиции
+- [x] i18n-ключи recover-modal (ru/en); `tsc --noEmit` + `vite build` — OK; code-review пройден
+
 Осталось (Phase 5):
 
-- [ ] Защита черновика при навигации из Navigator-панели (клик по юниту справа сейчас сбрасывает черновик — observer позиции в EditPage очищает fieldValues; нужен перехват в observer или confirm до `navigateTo`)
 - [ ] Опционально: collapse Navigator в режиме Editor на laptop
+- [ ] Keyboard-навигация по rail (стрелки) — план §5.3
 
 ## Phase 6 — Generator
 

@@ -13,8 +13,8 @@ import { position as activePosition } from '../state/positionStore';
 import { bookId as openBookId } from '../state/generateStore';
 import { getJson } from '../api/client';
 import type { BookData } from '../api/models';
+import { useDesktopShell } from './desktop';
 
-const DESKTOP_SHELL_QUERY = '(min-width: 1180px)';
 const DESKTOP_PANEL_PREFS_KEY = 'animastor_desktop_panels';
 
 interface DesktopPanelPrefs {
@@ -37,20 +37,6 @@ function readDesktopPanelPrefs(): DesktopPanelPrefs {
 
 function writeDesktopPanelPrefs(prefs: DesktopPanelPrefs): void {
   try { localStorage.setItem(DESKTOP_PANEL_PREFS_KEY, JSON.stringify(prefs)); } catch { /* storage may be unavailable */ }
-}
-
-export function useDesktopShell(): boolean {
-  const [isDesktop, setIsDesktop] = useState(() => window.matchMedia(DESKTOP_SHELL_QUERY).matches);
-
-  useEffect(() => {
-    const media = window.matchMedia(DESKTOP_SHELL_QUERY);
-    const update = () => setIsDesktop(media.matches);
-    update();
-    media.addEventListener('change', update);
-    return () => media.removeEventListener('change', update);
-  }, []);
-
-  return isDesktop;
 }
 
 export function AppShell({ children }: { children: JSX.Element }) {

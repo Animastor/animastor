@@ -309,6 +309,11 @@ const dict = {
     edit_zoom_preview: 'Увеличить превью',
     edit_rail_title: 'Модули сцены',
     edit_rail_empty: 'Нет сгенерированных превью',
+    // External navigation draft snapshot (plan §5.2 — Navigator clicks)
+    edit_draft_recover_title: 'Несохранённые правки',
+    edit_draft_recover_desc: 'В другом модуле остались несохранённые правки. Вернуться к ним и сохранить?',
+    edit_draft_recover_back: 'Вернуться к черновику',
+    edit_draft_recover_discard: 'Потерять правки',
     // Generate (strings.xml ru)
     generate_global_section: 'Общее',
     generate_all: 'Генерировать всё',
@@ -679,6 +684,11 @@ const dict = {
     edit_zoom_preview: 'Zoom preview',
     edit_rail_title: 'Scene units',
     edit_rail_empty: 'No generated previews',
+    // External navigation draft snapshot (plan §5.2 — Navigator clicks)
+    edit_draft_recover_title: 'Unsaved edits',
+    edit_draft_recover_desc: 'Another unit still has unsaved edits. Go back and save them?',
+    edit_draft_recover_back: 'Back to draft',
+    edit_draft_recover_discard: 'Discard edits',
     // Generate (strings.xml en)
     generate_global_section: 'Global',
     generate_all: 'Generate All',
