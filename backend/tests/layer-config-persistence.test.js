@@ -26,7 +26,13 @@ describe('Layer Config Persistence (Кирпич №2)', () => {
         async get(k) {
             return Object.prototype.hasOwnProperty.call(this._store, k) ? this._store[k] : null;
         },
-        async set(k, v) { this._store[k] = v; return 'OK'; },
+        // NX-семантика как у ioredis / createMockRedis: при существующем ключе
+        // возвращает null и не пишет (нужна restoreFromBooks для атомарного SETNX).
+        async set(k, v, ...args) {
+            if (args.includes('NX') && Object.prototype.hasOwnProperty.call(this._store, k)) return null;
+            this._store[k] = v;
+            return 'OK';
+        },
     };
 
     beforeEach(() => {
@@ -86,6 +92,33 @@ describe('Layer Config Persistence (Кирпич №2)', () => {
         expect(fs.existsSync(path.join(tmpDir, bookId))).to.be.false;
     });
 
+    it('set() merges against the durable book.json copy when the Redis key is missing (Redis-loss window)', async () => {
+        const bookId = 'lc-set-durable-1';
+        // Redis пуст (потерян), durable-копия есть: частичный PUT не должен
+        // молча сбросить ранее сохранённое image_enabled=false в defaults.
+        writeBookDir(bookId, {
+            structure: { chapters_order: [] },
+            layer_config: { image_enabled: false },
+        });
+
+        const cfg = await layerConfig.set(fakeRedis, bookId, { chunk_size: 5 });
+
+        expect(cfg.image_enabled).to.be.false; // сохранено из durable-копии
+        expect(cfg.chunk_size).to.equal(5);
+        // Redis получил то же самое — последующие чтения согласованы
+        const fromRedis = JSON.parse(fakeRedis._store[layerConfig.key(bookId)]);
+        expect(fromRedis.image_enabled).to.be.false;
+        expect(fromRedis.chunk_size).to.equal(5);
+    });
+
+    it('set() falls back to defaults when neither Redis nor durable copy exists', async () => {
+        const bookId = 'lc-set-defaults-1'; // нет ни ключа, ни book.json
+        const cfg = await layerConfig.set(fakeRedis, bookId, { video_enabled: false });
+        expect(cfg.audio_enabled).to.be.true;
+        expect(cfg.image_enabled).to.be.true;
+        expect(cfg.video_enabled).to.be.false;
+    });
+
     // ── 2. restoreFromBooks() — cold Redis recovery ──
     it('restoreFromBooks() fills missing Redis keys from book.json', async () => {
         const bookId = 'lc-restore-1';
@@ -139,6 +172,47 @@ describe('Layer Config Persistence (Кирпич №2)', () => {
 
         const count = await layerConfig.restoreFromBooks(fakeRedis);
         expect(count).to.equal(0);
+    });
+
+    it('restoreFromBooks() is atomic — one SETNX write, no read-then-write window', async () => {
+        const bookId = 'lc-atomic-1';
+        writeBookDir(bookId, {
+            structure: { chapters_order: [] },
+            layer_config: { image_enabled: false },
+        });
+
+        // Если бы restore читал Redis ДО записи, был бы TOCTOU-интервал, в
+        // котором concurrent set() мог бы быть затёрт. Спай: get вообще не
+        // должен вызываться — восстановление = один атомарный SET NX.
+        let getCalls = 0;
+        const spyRedis = {
+            ...fakeRedis,
+            get: async (k) => { getCalls++; return fakeRedis.get(k); },
+        };
+
+        const count = await layerConfig.restoreFromBooks(spyRedis);
+
+        expect(count).to.equal(1);
+        expect(getCalls).to.equal(0);
+        expect(JSON.parse(fakeRedis._store[layerConfig.key(bookId)]).image_enabled).to.be.false;
+    });
+
+    it('restoreFromBooks() SETNX fails (returns null) when a key appears concurrently — live state intact', async () => {
+        const bookId = 'lc-atomic-2';
+        writeBookDir(bookId, {
+            structure: { chapters_order: [] },
+            layer_config: { image_enabled: false },
+        });
+        // Имитация: между началом restore и записью concurrent set() уже
+        // положил живое значение — SETNX обязан его не затронуть.
+        fakeRedis._store[layerConfig.key(bookId)] = JSON.stringify({ image_enabled: true, chunk_size: 2 });
+
+        const count = await layerConfig.restoreFromBooks(fakeRedis);
+
+        expect(count).to.equal(0);
+        const live = JSON.parse(fakeRedis._store[layerConfig.key(bookId)]);
+        expect(live.image_enabled).to.be.true;
+        expect(live.chunk_size).to.equal(2);
     });
 
     // ── 3. persistToBook() legacy single-file ──

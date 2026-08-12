@@ -85,6 +85,29 @@ async function get(redis, bookId) {
 }
 
 /**
+ * Внутренний helper: нормализованная durable layer_config из book.json или null.
+ * Форматы: multi-file <BOOKS_DIR>/<bookId>/book.json и legacy <BOOKS_DIR>/<bookId>.json.
+ * Используется set() (база для merge при пустом Redis) и restoreFromBooks().
+ * Best-effort: сбой чтения/парсинга → null.
+ */
+function _readDurable(bookId) {
+    if (!bookId) return null;
+    try {
+        const booksDir = config.BOOKS_DIR;
+        if (!booksDir) return null;
+        const dirMeta = path.join(booksDir, bookId, 'book.json');
+        const legacyMeta = path.join(booksDir, `${bookId}.json`);
+        const metaPath = fs.existsSync(dirMeta) ? dirMeta : (fs.existsSync(legacyMeta) ? legacyMeta : null);
+        if (!metaPath) return null;
+        const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+        if (!meta.layer_config || typeof meta.layer_config !== 'object') return null;
+        return normalize(meta.layer_config);
+    } catch (_) {
+        return null;
+    }
+}
+
+/**
  * Кирпич №2: durable-копия конфига в book.json (best-effort).
  *
  * Читает book.json на диске (multi-file: <BOOKS_DIR>/<bookId>/book.json,
@@ -123,7 +146,12 @@ function persistToBook(bookId, cfg) {
 
 async function set(redis, bookId, partial) {
     if (!redis || !bookId) return { ...DEFAULTS };
-    const current = await get(redis, bookId);
+    // База для merge: живое Redis-состояние. Если ключа нет (окно после потери
+    // Redis, до того как C6 восстановит) — база из durable-копии book.json,
+    // иначе defaults. Иначе частичный PUT в этом окне молча сбросил бы ранее
+    // сохранённые значения (например, image_enabled=false) обратно в defaults.
+    const raw = await redis.get(key(bookId));
+    const current = raw ? normalize(raw) : (_readDurable(bookId) || { ...DEFAULTS });
     const next = {
         audio_enabled: partial.audio_enabled !== undefined ? !!partial.audio_enabled : current.audio_enabled,
         image_enabled: partial.image_enabled !== undefined ? !!partial.image_enabled : current.image_enabled,
@@ -200,27 +228,22 @@ async function restoreFromBooks(redis) {
     let restored = 0;
     for (const entry of entries) {
         let bookId = entry;
-        let metaPath = path.join(config.BOOKS_DIR, entry, 'book.json');
-        if (!fs.existsSync(metaPath)) {
-            // Legacy single-file format: <BOOKS_DIR>/<bookId>.json
-            if (entry.endsWith('.json')) {
-                metaPath = path.join(config.BOOKS_DIR, entry);
-                bookId = entry.slice(0, -5);
-            } else {
-                continue;
-            }
+        // Multi-file: <BOOKS_DIR>/<bookId>/book.json; legacy: <BOOKS_DIR>/<bookId>.json
+        if (!fs.existsSync(path.join(config.BOOKS_DIR, entry, 'book.json'))) {
+            if (entry.endsWith('.json')) bookId = entry.slice(0, -5);
+            else continue;
         }
         if (!bookId) continue;
 
         try {
-            const existing = await redis.get(key(bookId));
-            if (existing) continue; // Redis wins — не трогаем живое состояние
-
-            const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
-            if (!meta.layer_config || typeof meta.layer_config !== 'object') continue;
-
-            await redis.set(key(bookId), JSON.stringify(normalize(meta.layer_config)));
-            restored++;
+            const durable = _readDurable(bookId);
+            if (!durable) continue;
+            // Атомарный SET NX — заполняем ТОЛЬКО отсутствующие ключи. Один
+            // атомарный write вместо get-then-set: TOCTOU-окно (concurrent
+            // layerConfig.set() между проверкой и записью) структурно исключено —
+            // если ключ уже появился, NX вернёт null и живое состояние цело.
+            const written = await redis.set(key(bookId), JSON.stringify(durable), 'NX');
+            if (written) restored++;
         } catch (_) {
             // Best-effort: пропускаем книгу
         }
