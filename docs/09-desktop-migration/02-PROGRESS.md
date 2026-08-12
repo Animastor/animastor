@@ -132,11 +132,22 @@
 - [x] **Secondary-маршруты в шелле** (план §4.4/§8): settings/library/workflows/dev и deep-link `/ai` рендерятся внутри DesktopWorkspace как центральный контент с компактной back-бар (заголовок из `secondaryTitle`/пути); на мобильном `.secondary`-обёртка не тронута. `.desktop-main` стал flex-column; `.settings-page` сохраняет pinned-footer scroll-модель
 - [x] `tsc --noEmit` + `vite build` — OK; code-review пройден
 
-## Phase 9 — Responsive integration и usability pass
+## Phase 9 — Responsive integration и usability pass — статический аудит сделан
 
-- [ ] Прогон ширин 900/1024/1280/1366/1440/1920 + 200% zoom, ru/en, dark/light, no-book/loading/error/running
-- [ ] Сценарии: open → generate → monitor → navigate → play → edit prompts → save → regenerate → play
-- [ ] Mouse/keyboard/screen-reader семантика и восстановление фокуса
+Сделано (этап 2, срез 1 — статический аудит + фиксы; runtime-прогон требует браузера):
+
+- [x] **Черновик редактора переживает смену режима/роут** (план §1.1/§14, закрыт gap из Phase 5/8): модульный `storedDraft` в EditPage — при unmount с dirty-черновиком на десктопе snapshot кладётся в store, при следующем mount восстанавливается (та же позиция → поля возвращаются напрямую, помечаются dirty; другая позиция → существующий recover-modal «Вернуться к черновику»). Мобильный поведение не тронуто. `tabRef`/`overrideBlocksRef` исключают stale closures
+- [x] **Фикс pre-existing бага**: восстановленные passport-override блоки больше не перезаписываются каноническим ребуилдом `ensurePassportBlocks` после reload — одноразовый `preserveBlocksRef` (применён и к mount-restore, и к in-mount `restoreDraft`)
+- [x] **First-run / no-book состояние** (план §4.2): `DesktopStartState` стал ориентирующим — заголовок + описание + две кнопки: «Открыть» (разворачивает File-панель и через событие `animastor:open-file` открывает пикер постоянно смонтированной FilePage) и «Создать с ИИ» (открывает assistant dock в create-режиме). `/file` с открытой книгой теперь показывает FilePage в центре (как мобильная вкладка)
+- [x] `prefers-reduced-motion`: десктопные анимации (dock-in, пульсы статуса генерации и summary) отключаются
+- [x] Статический аудит: все новые десктопные контролы имеют доступные имена (aria-label/title/текст); длинные RU-метки эллипсируются (header, posbar, panel title, nav); брейкпоинт 1180px — CSS-пиксели, поэтому 200% zoom на 1920px переводит в мобильную композицию (задокументированное поведение)
+- [x] i18n-ключи (ru/en); `tsc --noEmit` + `vite build` — OK; code-review пройден
+
+Осталось (Phase 9):
+
+- [ ] Runtime-прогон ширин 900/1024/1280/1366/1440/1920 + 200% zoom, ru/en, dark/light, no-book/loading/error/running — нужен браузер/дев-сервер
+- [ ] Сценарии open → generate → monitor → navigate → play → edit → save → regenerate → play — runtime-прогон
+- [ ] Mouse/keyboard/screen-reader семантика — runtime-прогон (статика проверена)
 
 ## Phase 10 — Final polish
 

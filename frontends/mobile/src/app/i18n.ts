@@ -18,6 +18,9 @@ const dict = {
     ai: 'AI-ассистент',
     toolbar_ai: 'ИИ',
     back: 'Назад',
+    // Desktop shell (Phase 4/9)
+    desktop_empty_title: 'Откройте или создайте книгу',
+    desktop_empty_desc: 'Книга пока не открыта. Используйте панель «Файл» слева или создайте новую книгу с ИИ.',
     library_title: 'Библиотека',
     workflow_manager_title: 'Менеджер Workflow',
     workflow: 'Workflow',
@@ -399,6 +402,9 @@ const dict = {
     ai: 'AI Assistant',
     toolbar_ai: 'AI',
     back: 'Back',
+    // Desktop shell (Phase 4/9)
+    desktop_empty_title: 'Open or create a book',
+    desktop_empty_desc: 'No book is open yet. Use the File panel on the left or create a new book with AI.',
     library_title: 'Library',
     workflow_manager_title: 'Workflow Manager',
     workflow: 'Workflow',

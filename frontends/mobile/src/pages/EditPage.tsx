@@ -62,6 +62,30 @@ interface OverrideBlock {
   fields: Record<string, string>;
 }
 
+// ── Desktop draft persistence across mounts (Phase 9, plan §1.1/§14) ──
+// Mode switches and route changes (mode switcher, "Open in Player", back /
+// forward) unmount EditPage. A dirty desktop draft is snapshotted here on
+// unmount and restored on the next mount — the in-mount position observer only
+// covers changes while the page stays mounted, so without this a long prompt
+// would be silently lost whenever the user leaves the editor. Mobile keeps the
+// Android 1:1 discard behaviour (nothing is ever stored there).
+interface StoredDraft {
+  chapterId: string | null;
+  sceneId: string | null;
+  unitIndex: number;
+  tab: number;
+  fv: Record<string, string>;
+  blocks: OverrideBlock[];
+}
+let storedDraft: StoredDraft | null = null;
+function storeDesktopDraft(d: StoredDraft): void { storedDraft = d; }
+// takeDesktopDraft — read-once: the mount restore consumes the snapshot.
+function takeDesktopDraft(): StoredDraft | null {
+  const d = storedDraft;
+  storedDraft = null;
+  return d;
+}
+
 // ── Field label mapping (EditFragment.fieldLabel — user-facing keys only) ──
 function fieldLabel(key: string): string {
   switch (key) {
@@ -212,6 +236,12 @@ export function EditPage(props: { path?: string }) {
   // Passport override blocks (Scene tab).
   const [overrideBlocks, setOverrideBlocks] = useState<OverrideBlock[]>([]);
   const blocksSceneKey = useRef<string | null>(null);
+  // One-shot guard: when a draft is restored (mount restore or the in-mount
+  // recover modal), ensurePassportBlocks must NOT rebuild the restored blocks
+  // from the scene's canonical passport right after the reload — the restored
+  // override edits may be unsaved and would be silently clobbered. The flag is
+  // consumed by the first ensure call for the restored scene.
+  const preserveBlocksRef = useRef(false);
 
   // Tab scroll indicators.
   const tabsScrollRef = useRef<HTMLDivElement | null>(null);
@@ -312,6 +342,60 @@ export function EditPage(props: { path?: string }) {
   // Set while restoreDraft navigates back to the snapshotted position — the
   // position observer must not clear the restored draft or re-snapshot it.
   const restoringRef = useRef(false);
+
+  // Latest-value mirrors for the unmount draft snapshot: effect closures capture
+  // the values from the render they were created in, and the save effect has a
+  // stable dep — refs keep the cleanup reading the CURRENT tab / override blocks.
+  const tabRef = useRef(tab);
+  tabRef.current = tab;
+  const overrideBlocksRef = useRef(overrideBlocks);
+  overrideBlocksRef.current = overrideBlocks;
+
+  // ── Mount restore (Phase 9): a draft left dirty on a previous visit comes
+  //    back — same position → fields restored directly (loadAndSync only seeds
+  //    keys inputCard has not already set); other position → the recover modal
+  //    offers to go back, exactly like an in-mount external navigation.
+  useEffect(() => {
+    if (!isDesktop) return;
+    const stored = takeDesktopDraft();
+    if (!stored) return;
+    const p = positionSignal.value;
+    const samePosition = stored.chapterId === p.chapterId
+      && stored.sceneId === p.sceneId
+      && stored.unitIndex === p.unitIndex;
+    if (samePosition) {
+      fieldValues.current = { ...stored.fv };
+      setOverrideBlocks(stored.blocks);
+      blocksSceneKey.current = null;
+      preserveBlocksRef.current = true;
+      setTab(stored.tab);
+      saveDirtyRef.current = true;
+      setSaveDirty(true);
+    } else {
+      draftSnapshot.current = stored;
+      setDraftRecoverOpen(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isDesktop]);
+
+  // ── Unmount snapshot (Phase 9): leaving the editor with a dirty desktop
+  //    draft stores it for the mount restore above instead of losing it.
+  useEffect(() => {
+    return () => {
+      if (!isDesktop || !saveDirtyRef.current) return;
+      const p = positionSignal.value;
+      if (p.chapterId == null || p.sceneId == null) return;
+      storeDesktopDraft({
+        chapterId: p.chapterId,
+        sceneId: p.sceneId,
+        unitIndex: p.unitIndex,
+        tab: tabRef.current,
+        fv: { ...fieldValues.current },
+        blocks: overrideBlocksRef.current.map((b) => ({ charId: b.charId, fields: { ...b.fields } })),
+      });
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isDesktop]);
 
   // ── Observe position (observePosition) — reload on every position change ──
   // Structured mirror of the last seen position (in addition to the key) so a
@@ -803,6 +887,7 @@ export function EditPage(props: { path?: string }) {
     fieldValues.current = { ...snap.fv };
     setOverrideBlocks(snap.blocks);
     blocksSceneKey.current = null;
+    preserveBlocksRef.current = true;
     setTab(snap.tab);
     saveDirtyRef.current = true;
     setSaveDirty(true);
@@ -841,6 +926,11 @@ export function EditPage(props: { path?: string }) {
     const key = `${currentChIndex}/${currentScIndex}`;
     if (blocksSceneKey.current === key) return;
     blocksSceneKey.current = key;
+    // A restored draft must survive the canonical rebuild (see preserveBlocksRef).
+    if (preserveBlocksRef.current) {
+      preserveBlocksRef.current = false;
+      return;
+    }
     setOverrideBlocks(buildBlocksFromScene(sc));
   }, [currentChIndex, currentScIndex]);
 

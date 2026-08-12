@@ -237,6 +237,12 @@ button { font: inherit; color: inherit; }
   0%, 100% { opacity: 1; transform: scale(1); }
   50% { opacity: 0.4; transform: scale(0.72); }
 }
+/* Nonessential desktop animations respect prefers-reduced-motion (plan §11). */
+@media (prefers-reduced-motion: reduce) {
+  .assistant-dock { animation: none; }
+  .desktop-generation-status--running .desktop-generation-status__dot,
+  .desktop-main .gen-desk-bar__summary--active { animation: none; }
+}
 .desktop-modes {
   display: inline-flex;
   align-items: center;
@@ -342,7 +348,16 @@ button { font: inherit; color: inherit; }
   font-size: 1rem;
   font-weight: 600;
 }
-.desktop-start-state small { color: var(--text-2); font-size: 0.8125rem; font-weight: 400; }
+.desktop-start-state small { color: var(--text-2); font-size: 0.8125rem; font-weight: 400; max-width: 28rem; line-height: 1.45; }
+.desktop-start-state__title { color: var(--text); font-size: 1.125rem; font-weight: 600; }
+.desktop-start-state__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.75rem;
+  margin-top: 0.875rem;
+}
+.desktop-start-state__btn { height: 2.375rem; font-size: 0.875rem; }
 
 /* File is manually collapsible. Its content stays mounted so an export/import
    status is not discarded; display:none also removes hidden controls from tab

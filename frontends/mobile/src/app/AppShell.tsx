@@ -5,7 +5,7 @@ import { navigate, START_ROUTE, TAB_ROUTES } from './router';
 import { secondaryTitle, secondaryAction } from './titleStore';
 import { generationStatus } from '../state/generateStore';
 import type { GenerationStatus } from '../state/generateStore';
-import { IconFile, IconGenerate, IconPlay, IconEdit, IconMap, IconChevronLeft, IconChevronRight } from './icons';
+import { IconFile, IconGenerate, IconPlay, IconEdit, IconMap, IconChevronLeft, IconChevronRight, IconFolder, IconAdd } from './icons';
 import type { IconProps } from './icons';
 import { FilePage } from '../pages/FilePage';
 import { NavigatePage } from '../pages/NavigatePage';
@@ -160,7 +160,15 @@ function DesktopWorkspace({ path, isSecondary, children }: { path: string; isSec
         <main class="desktop-main">
           {hasWorkspaceMode ? children
             : isSecondary ? <DesktopSecondary path={path}>{children}</DesktopSecondary>
-            : <DesktopStartState />}
+            : openBookId.value ? <FilePage /> /* /file with a book open mirrors the mobile tab */
+            : <DesktopStartState
+                onOpenFile={() => {
+                  // Show the File panel and let its always-mounted picker open.
+                  setPanelPrefs((prefs) => ({ ...prefs, filePanelCollapsed: false }));
+                  window.dispatchEvent(new CustomEvent('animastor:open-file'));
+                }}
+                onCreateAI={() => setAssistantOpen(true)}
+              />}
         </main>
         <aside class={'desktop-panel desktop-panel--navigator' + (navigatorPanelCollapsed ? ' desktop-panel--collapsed' : '')} aria-label={t('tab_navigate')}>
           <div class="desktop-panel__title">
@@ -266,12 +274,20 @@ function GenerationStatusButton() {
   );
 }
 
-function DesktopStartState() {
+function DesktopStartState({ onOpenFile, onCreateAI }: { onOpenFile: () => void; onCreateAI: () => void }) {
   return (
     <div class="desktop-start-state">
-      <IconFile width={28} height={28} />
-      <span>{t('file_from_device')}</span>
-      <small>{t('file_from_device_desc')}</small>
+      <IconFile width={32} height={32} />
+      <span class="desktop-start-state__title">{t('desktop_empty_title')}</span>
+      <small>{t('desktop_empty_desc')}</small>
+      <span class="desktop-start-state__actions">
+        <button type="button" class="btn desktop-start-state__btn" onClick={onOpenFile}>
+          <IconFolder width={18} height={18} /> {t('file_from_device')}
+        </button>
+        <button type="button" class="btn btn--outlined desktop-start-state__btn" onClick={onCreateAI}>
+          <IconAdd width={18} height={18} /> {t('file_create')}
+        </button>
+      </span>
     </div>
   );
 }

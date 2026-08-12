@@ -31,6 +31,15 @@ export function FilePage(props: { path?: string }) {
   const [dragOver, setDragOver] = useState(false);
   const [exportStatus, setExportStatus] = useState<{ text: string; pct?: number } | null>(null);
 
+  // The desktop shell's no-book empty state (central workspace) can trigger the
+  // always-mounted File panel's picker via a custom event (Phase 9) — one
+  // "Open" action from the middle of the screen instead of hunting the panel.
+  useEffect(() => {
+    const onOpenFile = () => fileInputRef.current?.click();
+    window.addEventListener('animastor:open-file', onOpenFile);
+    return () => window.removeEventListener('animastor:open-file', onOpenFile);
+  }, []);
+
   // ── Deep link: ?book=<id> / ?open=<id> — processed once per page instance,
   // then the param is stripped so tab re-mounts and back/forward don't re-trigger.
   const deepLinkDone = useRef(false);
