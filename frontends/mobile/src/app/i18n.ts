@@ -374,6 +374,11 @@ const dict = {
     generate_started_vbook: 'Запущена генерация VBook',
     generate_started_layer: 'Запущена генерация: {0}',
     generate_all_started: 'Генерировать всё: {0} ({1})',
+    // Desktop generator control room (plan §6)
+    generate_tasks_running_one: '{0} задача выполняется',
+    generate_tasks_running_many: '{0} задач выполняется',
+    generate_working: 'Идёт генерация…',
+    generate_idle_summary: 'Нет активных задач',
     // Misc
     action_copy: 'Копировать',
     copied_to_clipboard: 'Скопировано',
@@ -749,6 +754,11 @@ const dict = {
     generate_started_vbook: 'VBook generation started',
     generate_started_layer: '{0} generation started',
     generate_all_started: 'Generate All: {0} ({1})',
+    // Desktop generator control room (plan §6)
+    generate_tasks_running_one: '{0} task running',
+    generate_tasks_running_many: '{0} tasks running',
+    generate_working: 'Generating…',
+    generate_idle_summary: 'No active tasks',
     // Misc
     action_copy: 'Copy',
     copied_to_clipboard: 'Copied',

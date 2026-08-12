@@ -88,11 +88,20 @@
 - [ ] Опционально: collapse Navigator в режиме Editor на laptop
 - [ ] Двойной клик / явное «Open in Player» в Navigator на десктопе (план §4.3 — сейчас выбор юнита только меняет позицию)
 
-## Phase 6 — Generator
+## Phase 6 — Generator — первый срез сделан
 
-- [ ] Раскладка воркер-карточек (grid, 2 колонки на wide)
-- [ ] Глобальный job summary / status handoff в header
-- [ ] Проверка poll lifecycle, scope dialog, cancel, ошибок при смене режимов
+Сделано (этап 2, срез 1):
+
+- [x] **Control room** (план §6): на десктопе `.gen-page` — grid: header-строка (позиция · активные задачи · Generate All/Stop All) + воркер-карточки в 2 колонки на wide (>=1360px), 1 читаемая колонка на laptop (max-width 1359px). Мобильная композиция ниже 1180px не тронута (всё под `.desktop-main`, JS гейтится `isDesktop`)
+- [x] **Active-jobs summary** в header (текст + цвет, не цвет отдельно): «N задач выполняется» / «Идёт генерация…» / «Нет активных задач», пульс при работе. `isGenerating` покрывает poll-gap (1.5s) и окно показа COMPLETED-строки VBook (10s, `isRegenerating`) — header никогда не показывает idle во время реальной работы
+- [x] Posbar на десктопе скрыт (информационный breadcrumb в header; клик не роутит в `/navigate`); мобильная Global-карточка скрыта — её действия перенесены в header
+- [x] Poll lifecycle, scope dialog, cancel — без изменений семантики (только layout)
+- [x] **ScopeDialog**: initial focus на Cancel, Escape отменяет, scroll-lock; `onCancel` в ref + подписка один раз — фокус не крадётся кнопкой Cancel при ре-рендерах родителя каждые 500ms (тик таймера)
+- [x] i18n-ключи (ru/en); `tsc --noEmit` + `vite build` — OK; code-review пройден
+
+Осталось (Phase 6):
+
+- [ ] Проверка poll lifecycle, scope dialog, cancel, ошибок при смене режимов (Phase 9 runtime-прогон)
 
 ## Phase 7 — Player
 

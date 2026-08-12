@@ -610,6 +610,78 @@ button { font: inherit; color: inherit; }
   }
 }
 
+/* ── Desktop Generator control room (Phase 6, plan §6) ─────────
+   Only inside .desktop-main (i.e. >= 1180px). GeneratePage keeps its mobile
+   composition and all its state (polling, scope dialog, cancellation); at
+   desktop width the page becomes a responsive grid: a header row with the
+   current position, a compact active-jobs summary and the global Generate /
+   Stop actions, then the four worker cards — two columns at wide desktop,
+   one readable column on laptop. The mobile position bar and the Global
+   section card are superseded by the header row on desktop. */
+.desktop-main .gen-page {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+  align-content: start;
+  padding: 0.75rem;
+}
+.desktop-main .gen-posbar { display: none; }
+.desktop-main .gen-card--global { display: none; }
+.desktop-main .gen-desk-bar {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem 0.625rem;
+  background: var(--nav-scene-bg);
+  border: 1px solid var(--outline-2);
+  border-radius: var(--radius-sm);
+}
+.desktop-main .gen-desk-bar__pos {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+/* Compact active-jobs summary — text + colour, never colour alone (plan §2.4,
+   §6: running work must stay glanceable above a long task list). */
+.desktop-main .gen-desk-bar__summary {
+  flex-shrink: 0;
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0.25rem 0.5rem;
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  border: 1px solid var(--outline-2);
+  color: var(--text-2);
+}
+.desktop-main .gen-desk-bar__summary--active {
+  color: var(--accent);
+  border-color: var(--accent);
+  animation: desktop-status-pulse 1.6s infinite ease-in-out;
+}
+.desktop-main .gen-desk-bar__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+.desktop-main .gen-desk-bar__actions .btn {
+  height: 2.375rem;
+  font-size: 0.875rem;
+  padding: 0 0.875rem;
+}
+
+/* Standard/narrow desktop: one readable column instead of squeezing four
+   worker cards (plan §6) — cards stretch full width below the wide grid. */
+@media (max-width: 1359px) {
+  .desktop-main .gen-page { grid-template-columns: minmax(0, 1fr); }
+}
+
 /* Toolbar */
 .toolbar {
   height: var(--toolbar-h);

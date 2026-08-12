@@ -1,9 +1,10 @@
 import type { JSX } from 'preact';
-import { useCallback, useEffect, useState } from 'preact/hooks';
+import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import { getJson } from '../api/client';
 import type { BookData, BookChapter, BookScene, ProgressPanelResponse, WorkerCounts } from '../api/models';
 import { t, tf } from '../app/i18n';
 import { navigate } from '../app/router';
+import { useDesktopShell } from '../app/desktop';
 import { workerType } from '../app/routeState';
 import {
   bookId, phase, vbookProgress, isRegenerating,
@@ -40,6 +41,10 @@ type WorkerType = 'vbook' | 'audio' | 'image' | 'video';
 
 export function GeneratePage(props: { path?: string }) {
   void props;
+  // Desktop control room (plan §6): a header row (position, active-jobs
+  // summary, global actions) plus a responsive grid of worker cards. Mobile
+  // keeps the Android 1:1 composition below the shared breakpoint.
+  const isDesktop = useDesktopShell();
   const [counts, setCounts] = useState<WorkerCounts | null>(null);
   const [panel, setPanel] = useState<ReturnType<typeof computeProgressRows>>({ kind: 'hidden' });
   const [bookData, setBookData] = useState<BookData | null>(null);
@@ -241,16 +246,57 @@ export function GeneratePage(props: { path?: string }) {
 
   const showDoneRow = panel.kind === 'done';
 
+  // Active-jobs summary for the desktop header (plan §6): rows that are still
+  // running (not done / not cancelled). VBook work appears as rows too, so a
+  // single count covers all four worker sections.
+  const runningRows = panel.kind === 'rows' ? panel.rows.filter((r) => !r.done && !r.cancelled) : [];
+  const runningCount = runningRows.length;
+  // isGenerating covers the poll gap after start (up to 1.5s) and the vbook
+  // green COMPLETED-row display window (isRegenerating stays true for 10s) —
+  // the summary must never claim idle while work is actually in flight.
+  const summaryActive = runningCount > 0 || isGenerating;
+  const runningText = runningCount === 1
+    ? tf('generate_tasks_running_one', 1)
+    : runningCount > 1 ? tf('generate_tasks_running_many', runningCount)
+    : isGenerating ? t('generate_working')
+    : t('generate_idle_summary');
+
   return (
     <section class="page gen-page">
-      {/* Position bar (include_position_bar) */}
-      <button class="gen-posbar" onClick={() => navigate('/navigate')}>
+      {/* Position bar (include_position_bar) — mobile-only on desktop (the
+          header below carries the position breadcrumb; the bar would route
+          away to /navigate and empty the workspace). */}
+      <button class="gen-posbar" onClick={() => { if (!isDesktop) navigate('/navigate'); }}>
         <span class="gen-posbar__label">{posLabel}</span>
         {posUnitCount && <span class="gen-posbar__units">{posUnitCount}</span>}
       </button>
 
-      {/* Global section */}
-      <div class="card gen-card">
+      {/* Desktop generator header row (plan §6): current position, a compact
+          active-jobs summary (so a long card list never hides running work)
+          and the global Generate / Stop actions. Mobile keeps the Global
+          section card instead — it is hidden on desktop via CSS. */}
+      {isDesktop && (
+        <div class="gen-desk-bar">
+          <span class="gen-desk-bar__pos" title={posLabel}>{posLabel}</span>
+          <span
+            class={'gen-desk-bar__summary' + (summaryActive ? ' gen-desk-bar__summary--active' : '')}
+            aria-live="polite"
+          >
+            {runningText}
+          </span>
+          <span class="gen-desk-bar__actions">
+            <button type="button" class="btn gen-desk-bar__gen" onClick={onGenerateAll}>
+              <IconPlay width={18} height={18} /> {t('generate_all')}
+            </button>
+            <button type="button" class="btn btn--outlined gen-desk-bar__stop" onClick={onStopAll}>
+              <IconStop width={18} height={18} /> {t('stop_all')}
+            </button>
+          </span>
+        </div>
+      )}
+
+      {/* Global section (mobile) — superseded by the desktop header row. */}
+      <div class="card gen-card gen-card--global">
         <span class="gen-card__label">{t('generate_global_section')}</span>
         <div class="gen-global-row">
           <button class="btn gen-btn gen-btn--global" onClick={onGenerateAll}>
@@ -580,6 +626,25 @@ function ScopeDialog({ hasPosition, onCancel, onStart }: {
   onStart: (scope: string) => void;
 }) {
   const [scope, setScope] = useState('whole_book');
+  // Desktop dialog discipline (plan §6/§11): initial focus on the safe action
+  // (Cancel), Escape cancels, body scroll is locked while open. onCancel is an
+  // inline arrow from the parent, which re-renders every 500ms (timer tick) —
+  // so the callback is kept in a ref and the effect subscribes ONCE. Otherwise
+  // the effect would re-run constantly and steal focus back to Cancel.
+  const cancelRef = useRef<HTMLButtonElement | null>(null);
+  const onCancelRef = useRef(onCancel);
+  onCancelRef.current = onCancel;
+  useEffect(() => {
+    cancelRef.current?.focus();
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onCancelRef.current(); };
+    window.addEventListener('keydown', onKey);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, []);
   const options: { id: string; label: string; needsPosition: boolean }[] = [
     { id: 'current_scene', label: t('scope_current_scene'), needsPosition: true },
     { id: 'current_chapter', label: t('scope_current_chapter'), needsPosition: true },
@@ -609,7 +674,7 @@ function ScopeDialog({ hasPosition, onCancel, onStart }: {
           })}
         </div>
         <div class="modal__footer">
-          <button class="btn btn--outlined" onClick={onCancel}>{t('dialog_cancel')}</button>
+          <button class="btn btn--outlined" ref={cancelRef} onClick={onCancel}>{t('dialog_cancel')}</button>
           <button class="btn" onClick={() => onStart(scope)}>{t('dialog_start')}</button>
         </div>
       </div>
