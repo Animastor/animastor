@@ -134,6 +134,49 @@ After Redis loss:
 2. **Conservative default:** rebuild only books whose *most recent* `book_generation_sessions`/task state is `generating|pending|queued|completed` and never re-add books whose only PG signal is generic dirtiness. This would *under-resume* (some genuinely-interrupted books stay paused) — safe but incomplete.
 3. **Accept the risk:** rebuild everything dirty; document that "cancel" after Redis loss is best-effort. Simplest, but violates the user's explicit action.
 
+### 5.4a Operation #1 verification — recovery integration test (real PG)
+
+**`backend/tests/cancellation-recovery.integration.test.js`** runs against the real PostgreSQL (same pattern as `book-sync.test.js`) and proves the Definition of Done from the follow-up review:
+
+| Scenario | Expectation | Result |
+|---|---|---|
+| Cancel → tombstone in PG → restart (`resumeIncompleteSessions`) | cancelled session **NOT resumed**, status untouched | ✅ passed |
+| Live book (no tombstone) → restart | session **IS resumed** (control) | ✅ passed |
+| Cancel → regenerate clears tombstone → restart | session **IS resumed** (explicit new run unblocks) | ✅ passed |
+| Full cycle: cancel → restart (skipped) → regenerate → restart (resumed) | both behaviors | ✅ passed |
+
+Route-level wiring tests were added to `generation-routes.test.js`: `POST /cancel-generation` calls `setCancelled({reason:'user_cancelled', createdBy:'cancel-generation'})`; `POST /regenerate` calls `clear(bookId)`. **1082 backend tests passing, 0 failing** (was 1076 before this follow-up).
+
+### 5.4b Concurrent-runs analysis — book_id-level tombstone is adequate
+
+The follow-up asked whether the book_id-grained tombstone is too coarse — i.e. whether two *independent* generation runs of the same book can exist simultaneously. Code-verified:
+
+- **`POST /regenerate` is serialized** by the NX lock `animastor:regenerate-lock:{bookId}` (120 s TTL). A second concurrent regenerate is rejected with `429` (generation-routes.cjs:307-316). So two parallel whole-book regenerations are impossible.
+- **The VBook/windowed path serializes windows:** `trigger-next-window` (import-routes.cjs:859-871) checks for `generating`/`pending` sessions and queues new windows as `queued` instead of starting a second run; `window-generator` processes queued sessions **sequentially** (window-generator.cjs:139-146).
+- `bootstrapNextWindow` (VBook "Continue") and `regenerate` are both guarded by Redis cancel-flag / session-status checks before starting work.
+
+**Conclusion:** one book = one effective generation run at a time. `book_id → CANCELLED` semantics is therefore precise enough for the current model; no per-session/per-window tombstone granularity is needed. (If a future operation introduces true parallel multi-run per book, the tombstone would need a `run_id` column — note it, don't build it yet.)
+
+**⚠️ Gap found during the analysis (not part of Operation #1):** `bootstrapNextWindow` — the *explicit* VBook "Continue" action — clears stale `cancelled` agent-session statuses and the Redis `cancelled-workers` key ("user pressing = intent to CONTINUE", bootstrap.js:305-315), **but does not clear the `generation_cancellations` tombstone**. Consequence: user cancels → presses "Continue" (new run starts) → Redis dies → backend restarts → `startup-resume` sees the tombstone and **skips the book the user explicitly continued**. This is an inconsistency between the two explicit-new-run paths (`regenerate` clears, `bootstrapNextWindow` does not). Fix is one line (`generationCancelRepo.clear(bookId)` in the same cleanup block) — **decision pending (§10 rec 6).**
+
+### 5.4c Best-effort PG write — the residual race, assessed
+
+The tombstone write is deliberately best-effort (`PG failure must not block Redis-side cancellation`). The follow-up asked whether this leaves the exact failure mode we set out to kill:
+
+```
+User cancels → Redis flag set (SUCCESS) → PG tombstone FAILS → Redis dies →
+restart → PG has no tombstone → C5 sees active session → generation resumes
+```
+
+**Reachability assessment:** requires *three* independent failures in sequence — (a) PG error exactly during `cancel-generation` (the route's other PG writes, `cancelActiveTasksForBook` and the `agent_sessions` update, are also best-effort), (b) total Redis state loss afterwards, (c) backend restart before the user notices. Each is rare; the conjunction is very rare. But it is **architecturally real**: the durable cancellation invariant is not absolute.
+
+Options to close it fully:
+- **A. Fail-closed cancel:** `cancel-generation` returns an error if the tombstone write fails (cancel is a rare, deliberate user action — failing it loudly is arguably better UX than silently losing the invariant). Redis-side cancel then never happens without the durable record. Cost: if PG is down, user cannot cancel (must retry).
+- **B. Keep best-effort (current):** cancel always succeeds; durable record is probabilistic. Consistent with every other PG write in the cancel path (`cancelActiveTasksForBook`, `agent_sessions` update are also best-effort) — making only the tombstone fail-closed would be inconsistent.
+- **C. Write-ahead ordering:** write the tombstone *before* `setCancelFlag` and *before* clearing the active index — so the durable record is the first thing done; a failure then aborts the route before any Redis mutation. Same UX cost as A, but makes the ordering the guard instead of a retry.
+
+**Recommendation:** the residual race is below the risk threshold that justifies A/C for a single-user local-first product (see §10 rec 6). Accept B, document it. If a future operation makes cancellation a strict invariant (multi-user, shared books), revisit with C.
+
 ---
 
 ## 6. The full algorithm (as a spec, not implemented)
@@ -219,6 +262,10 @@ Recon #3 does not decide this — it documents the asymmetry so the future opera
 6. **A partial startup-rebuild already exists** (C5 → resumeIncompleteSessions → runBackgroundWindowGeneration → addActiveScene) but covers only VBook sessions and only newly-created scenes.
 7. **Stale `generation_tasks.status='running'` rows become orphans after cold Redis** (selective-gen path). They do not participate in the §4 predicate, and a re-dispatched scene creates a *second* task row → duplicate task entries in the progress panel. No constraint is violated (progress display only), but cleanup of orphaned task rows is a separate follow-up task.
 8. **build_id must be pinned** to the last generation's build for correct FS probing.
+9. **✅ Operation #1 verified by integration tests** (§5.4a): cancel → tombstone → restart → skipped; live → resumed; regenerate unblocks. 1082 tests passing.
+10. **✅ Book_id-level tombstone granularity is adequate** (§5.4b): concurrent independent runs of one book are impossible today (`regenerate` NX lock; VBook windows queued + processed sequentially).
+11. **⚠️ `bootstrapNextWindow` does not clear the tombstone** (§5.4b): the VBook "Continue" path clears stale cancelled agent sessions + Redis `cancelled-workers` but leaves `generation_cancellations` — a book the user explicitly continued is skipped by startup-resume after Redis loss. One-line fix, decision pending (§10 rec 6).
+12. **⚠️ Residual best-effort race** (§5.4c): PG failure during `cancel-generation` + Redis loss + restart can still resurrect a cancelled book. Requires three sequential failures; below the risk threshold for a local-first product — accept + document, or fail-closed (option A/C) if cancellation must be an absolute invariant.
 
 ---
 
@@ -229,6 +276,9 @@ Recon #3 does not decide this — it documents the asymmetry so the future opera
 3. **Implement the rebuild as a generalization of C5** using the §4 predicate (`getDirtyScenesByVersion` ∪ FS probe ∪ `hasPendingDirtyMarker`), under `CLEANUP_LOCK`, writing only `SADD` to the active index.
 4. **Do NOT trust Redis asset states (C0) for the work-set decision** — PG statuses + FS probe only (C0's over-marking would otherwise cause lost image/video work).
 5. Consider a **`resume_after_redis` per-book flag** (or reuse `book_generation_sessions`) to make auto-resume opt-in per book — resolves both the cancel-asymmetry and the recover-chunks policy comment in one mechanism.
+6. **Two small decisions from the Operation #1 follow-up (Aug 2026):**
+   - **(a) `bootstrapNextWindow` tombstone clear** (§5.4b): add `generationCancelRepo.clear(bookId)` to the existing "intent to CONTINUE" cleanup block in `agent/bootstrap.js` — makes the explicit VBook Continue path consistent with `regenerate`. One line; unblocks the discovered gap.
+   - **(b) Best-effort vs fail-closed cancel** (§5.4c): keep best-effort (recommended for the current local-first product) or make the tombstone write fail-closed (option A/C) if cancellation must be an absolute invariant. Note: the two other PG writes in the cancel path (`cancelActiveTasksForBook`, `agent_sessions` update) are also best-effort — making only the tombstone fail-closed would be inconsistent.
 
 ---
 

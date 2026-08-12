@@ -22,6 +22,7 @@ describe('Generation routes independent commands', () => {
         '../src/routes/book/generation-routes.cjs',
         '../src/storage/postgres/repositories/scene-assets-repo',
         '../src/storage/postgres/repositories/task-repo',
+        '../src/storage/postgres/repositories/generation-cancel-repo',
         '../src/runtime/runtime-scheduler',
         '../src/runtime/scene-window',
     ];
@@ -410,5 +411,142 @@ describe('Generation routes independent commands', () => {
         const imageTask = tasks.find(task => task.type === 'image');
         expect(imageTask, 'image task should exist').to.exist;
         expect(imageTask.targets).to.deep.include({ chapter_id: 'ch-cover', scene_id: 'sc-cover' });
+    });
+
+    it('cancel-generation persists a cancellation tombstone in PG (best-effort, after Redis flag)', async () => {
+        const redis = createMockRedis();
+        const tombstoneCalls = [];
+        const savedFetch = globalThis.fetch;
+        globalThis.fetch = async () => ({ ok: true });
+        try {
+
+        stub('../src/storage/postgres/repositories/generation-cancel-repo', {
+            setCancelled: async (bookId, opts) => {
+                tombstoneCalls.push({ bookId, opts });
+                return { book_id: bookId, cancelled: true };
+            },
+            clear: async () => {},
+            isCancelled: async () => false,
+            getAllCancelled: async () => [],
+        });
+        stub('../src/storage/postgres/repositories/task-repo', {
+            createTask: async () => {},
+            updateTaskStatus: async () => {},
+            cancelActiveTasksForBook: async () => 0,
+        });
+        stub('../src/runtime/scene-window', {
+            setCancelFlag: async () => {},
+            clearCancelFlag: async () => {},
+        });
+        stub('../src/runtime/runtime-scheduler', {
+            clearBookFromActiveIndex: async () => {},
+            addSceneToActiveIndex: async () => {},
+        });
+
+        const handlers = new Map();
+        const app = {
+            post(path, handler) { handlers.set(path, handler); },
+            get() {},
+            put() {},
+        };
+        const deps = {
+            config: { HUB_URL: 'http://gpu-hub.invalid', GPU_HUB_API_KEY: null },
+            runtime: {
+                sceneWindow: { setCancelFlag: async () => {}, clearCancelFlag: async () => {} },
+                scheduler: { clearBookFromActiveIndex: async () => {}, addSceneToActiveIndex: async () => {} },
+            },
+            utils: { log: () => {} },
+        };
+        require('../src/routes/book/generation-routes.cjs')(app, redis, deps);
+        const handler = handlers.get('/api/v1/book/:bookId/cancel-generation');
+
+            const response = createResponse();
+            await handler({ params: { bookId: 'tombstone-cancel-book' } }, response);
+
+            expect(response.statusCode).to.equal(200);
+            expect(tombstoneCalls).to.have.length(1);
+            expect(tombstoneCalls[0].bookId).to.equal('tombstone-cancel-book');
+            expect(tombstoneCalls[0].opts.reason).to.equal('user_cancelled');
+            expect(tombstoneCalls[0].opts.createdBy).to.equal('cancel-generation');
+        } finally {
+            globalThis.fetch = savedFetch;
+        }
+    });
+
+    it('regenerate clears the cancellation tombstone (explicit new run)', async () => {
+        const redis = createMockRedis();
+        const clearCalls = [];
+
+        stub('../src/storage/postgres/repositories/scene-assets-repo', {
+            setDirtyUnitIds: async () => {},
+        });
+        stub('../src/storage/postgres/repositories/task-repo', {
+            createTask: async () => {},
+            updateTaskStatus: async () => {},
+        });
+        stub('../src/storage/postgres/repositories/generation-cancel-repo', {
+            setCancelled: async () => {},
+            clear: async (bookId) => {
+                clearCalls.push(bookId);
+                return { book_id: bookId, cancelled: false };
+            },
+            isCancelled: async () => false,
+        });
+        stub('../src/runtime/scene-window', {
+            clearCancelFlag: async () => {},
+        });
+        stub('../src/runtime/runtime-scheduler', {
+            addSceneToActiveIndex: async () => {},
+            clearBookFromActiveIndex: async () => {},
+        });
+
+        const handlers = new Map();
+        const app = {
+            post(path, handler) { handlers.set(path, handler); },
+            get() {},
+            put() {},
+        };
+        const loadedBook = { manifest: { build_id: 'build-1' }, chapters: [] };
+        const allScenes = [
+            { chapter_id: 'ch-1', scene_id: 'scene-a', payload: { units: [] } },
+        ];
+        const deps = {
+            config: { HUB_URL: 'http://gpu-hub.invalid', OUTPUT_DIR: '/tmp/tombstone-clear-output' },
+            book: {
+                loadBook: () => loadedBook,
+                collectScenes: () => allScenes,
+            },
+            layerConfig: {
+                get: async () => ({ audio_enabled: true, image_enabled: true, video_enabled: true }),
+                set: async () => ({}),
+            },
+            bookDiff: {
+                filterDirtyScenesByScope: (dirty) => dirty,
+            },
+            storage: {},
+            orchestrator: {
+                resetScenes: async () => ({ marked: 0 }),
+            },
+            runtime: {
+                sceneWindow: { clearCancelFlag: async () => {}, setCancelFlag: async () => {}, slideWindow: async () => ({}) },
+                scheduler: { addSceneToActiveIndex: async () => {}, clearBookFromActiveIndex: async () => {} },
+            },
+            utils: { log: () => {} },
+        };
+        require('../src/routes/book/generation-routes.cjs')(app, redis, deps);
+        const handler = handlers.get('/api/v1/book/:bookId/regenerate');
+
+        const response = createResponse();
+        await handler({
+            params: { bookId: 'tombstone-clear-book' },
+            body: {
+                scope: 'whole_book',
+                worker_types: ['audio'],
+                rebuild_all: true,
+            },
+        }, response);
+
+        expect(response.statusCode).to.equal(200);
+        expect(clearCalls).to.deep.equal(['tombstone-clear-book']);
     });
 });
