@@ -1881,6 +1881,7 @@ async function rebuildWorkList(redis) {
     const placeholderAudio = require('../services/placeholder-audio');
     const sceneWindow = require('./scene-window');
     const runtimeScheduler = require('./runtime-scheduler');
+    const orchestrator = require('../orchestration/orchestrator');
 
     const AssetState = state.AssetState;
     const STAGES = ['audio', 'image', 'video'];
@@ -1917,12 +1918,19 @@ async function rebuildWorkList(redis) {
                 video: layerCfg.video_enabled !== false,
             };
 
-            // 2. Dirty-маркеры из PG: сценовый уровень + per-asset staleness.
-            const dirtyScenes = new Set(); // "ch:sc"
+            // 2. Dirty-маркеры из PG (audit gap 2): каждый marker РЕАЛЬНО влияет
+            // на WORK_TO_DO. Раньше dirtyScenes собирался, но не использовался —
+            // dirty_unit_ids и per-asset статусы (stale/failed/pending) теряли
+            // regeneration intent. Теперь:
+            //   - staleAssets: ready-строка с version mismatch → PENDING (как раньше)
+            //   - dirtyStages: scene_assets.status IN (stale,failed,pending) → PENDING
+            //     даже при валидном файле на диске (leftover от прошлого билда)
+            //   - unitDirtyScenes: dirty_unit_ids → image PENDING (force-regen юнитов)
             const staleAssets = {};        // "ch:sc:asset" → ready, но version mismatch
+            const dirtyStages = {};        // "ch:sc:asset" → status IN (stale,failed,pending)
+            const unitDirtyScenes = new Set(); // "ch:sc" → dirty_unit_ids (image force-regen)
             const dirtyRows = await sceneAssetsRepo.getDirtyScenesByVersion(bookId);
             for (const row of dirtyRows) {
-                dirtyScenes.add(`${row.chapter_id}:${row.scene_id}`);
                 const contentStale = row.scene_content_version != null && row.content_version != null &&
                     row.scene_content_version < row.content_version;
                 const audioCfgStale = row.scene_audio_config_version != null && row.audio_config_version != null &&
@@ -1933,17 +1941,19 @@ async function rebuildWorkList(redis) {
                 }
             }
 
-            // 2b. dirty_unit_ids (granular force-regen) + pending-маркеры (stale/failed/pending)
+            // 2b. dirty_unit_ids (granular force-regen) → image; per-asset статусы
+            // (stale/failed/pending) → PENDING. asset_type обязателен, чтобы
+            // знать, КАКАЯ стадия грязная (раньше терялся).
             const unitMarker = await storage.postgres.query(`
                 SELECT DISTINCT chapter_id, scene_id FROM scenes
                 WHERE book_id = $1 AND dirty_unit_ids IS NOT NULL AND array_length(dirty_unit_ids, 1) > 0
             `, [bookId]);
-            for (const row of unitMarker.rows) dirtyScenes.add(`${row.chapter_id}:${row.scene_id}`);
+            for (const row of unitMarker.rows) unitDirtyScenes.add(`${row.chapter_id}:${row.scene_id}`);
             const assetMarker = await storage.postgres.query(`
-                SELECT DISTINCT chapter_id, scene_id FROM scene_assets
+                SELECT DISTINCT chapter_id, scene_id, asset_type FROM scene_assets
                 WHERE book_id = $1 AND status IN ('stale', 'failed', 'pending')
             `, [bookId]);
-            for (const row of assetMarker.rows) dirtyScenes.add(`${row.chapter_id}:${row.scene_id}`);
+            for (const row of assetMarker.rows) dirtyStages[`${row.chapter_id}:${row.scene_id}:${row.asset_type}`] = true;
 
             // 3. Пройти все сцены книги: FS-проба + предикат §4 (Recon #3)
             const scenes = bookModule.collectScenes(loadedBook);
@@ -1965,7 +1975,9 @@ async function rebuildWorkList(redis) {
                     if (!enabled[stage]) continue; // disabled: PENDING не пишем (isInFlight-override в shouldScheduleAssets)
                     const fileValid = fsStatus[stage].exists && (stage !== 'audio' || audioReal);
                     const stale = !!staleAssets[`${key}:${stage}`];
-                    if (fileValid && !stale) {
+                    const dirty = !!dirtyStages[`${key}:${stage}`];
+                    const unitDirty = stage === 'image' && unitDirtyScenes.has(key);
+                    if (fileValid && !stale && !dirty && !unitDirty) {
                         stateMap[stage] = AssetState.READY;
                     } else {
                         stateMap[stage] = AssetState.PENDING;
@@ -1975,9 +1987,61 @@ async function rebuildWorkList(redis) {
 
                 if (!needsWork) continue;
 
-                // 4. Материализовать states ДО SADD (restore-путь, S2.4-whitelisted).
-                if (Object.keys(stateMap).length > 0) {
-                    await state.unsafeRestoreAssetStates(redis, bookId, chapterId, sceneId, stateMap);
+                // 4. Материализовать states ДО SADD — через SAFE facade (audit gap 1).
+                // Нельзя downgrade-ить выполняющуюся генерацию:
+                //   GENERATING/PENDING/PLACEHOLDER → НЕ трогаем (in-flight/очередь
+                //   владеют стадией; recovery не имеет права их откатывать).
+                //   PENDING-таргеты → orchestrator.setScenePending (валидация переходов:
+                //   GENERATING→PENDING rejected самой таблицей переходов).
+                //   READY-таргеты → guarded restore-fact write (S2.4): только из
+                //   NEW/DIRTY/FAILED/READY, никогда поверх GENERATING/PENDING.
+                //   C0 over-mark (READY без файла) → READY→DIRTY (markDirtyScene) →
+                //   →PENDING (setScenePending) — self-heal P1 через валидные переходы.
+                const currentStates = await state.getAssetStates(redis, bookId, chapterId, sceneId);
+                for (const [stage, target] of Object.entries(stateMap)) {
+                    const current = currentStates[stage] || state.AssetState.NEW;
+                    // GENERATING/PENDING — выполняющаяся/очередная генерация:
+                    // recovery не имеет права downgrade-ить её (audit gap 1).
+                    if (current === state.AssetState.GENERATING ||
+                        current === state.AssetState.PENDING) {
+                        log(`[WORKLIST] ${bookId}/${chapterId}/${sceneId} ${stage}: ${current} — untouched by recovery (in-flight/queued)`);
+                        continue;
+                    }
+                    if (target === state.AssetState.PENDING) {
+                        if (current === state.AssetState.READY || current === state.AssetState.PLACEHOLDER) {
+                            // C0 over-mark (P1, READY без файла) / placeholder-аудио:
+                            // прямой READY→PENDING / PLACEHOLDER→PENDING невалиден;
+                            // READY→DIRTY / PLACEHOLDER→DIRTY валиден → затем DIRTY→PENDING.
+                            // TOCTOU-guard (audit follow-up): scheduler tick работает
+                            // конкурентно (runtime-loop стартует ДО startup-цикла),
+                            // markVersionStaleDirty → dispatch может успеть выставить
+                            // GENERATING между нашим guard-read и markDirtyScene (который
+                            // пишет DIRTY через unsafe без re-validation). Re-read прямо
+                            // перед записью: если состояние изменилось — стадией уже
+                            // владеет кто-то другой, recovery отступает. setScenePending
+                            // ниже сам re-reads + validates (вторая линия обороны).
+                            const fresh = (await state.getAssetStates(redis, bookId, chapterId, sceneId))[stage] || state.AssetState.NEW;
+                            if (fresh !== current) {
+                                log(`[WORKLIST] ${bookId}/${chapterId}/${sceneId} ${stage}: state changed ${current}→${fresh} during rebuild — untouched (owner present)`);
+                                continue;
+                            }
+                            log(`[WORKLIST] ${bookId}/${chapterId}/${sceneId} ${stage}: ${current} → DIRTY → PENDING (valid transitions)`);
+                            await orchestrator.markDirtyScene(redis, bookId, chapterId, sceneId, [stage]);
+                            await orchestrator.setScenePending(redis, bookId, chapterId, sceneId, stage);
+                        } else {
+                            // NEW/DIRTY/FAILED → PENDING — валидные переходы.
+                            await orchestrator.setScenePending(redis, bookId, chapterId, sceneId, stage);
+                        }
+                    } else {
+                        // target === READY — restore-fact (файл валиден на диске):
+                        // guarded unsafe write, S2.4 (restore path). Пропускаются
+                        // GENERATING/PENDING (см. guard выше); из остальных состояний
+                        // (NEW/DIRTY/FAILED/PLACEHOLDER/READY) восстановить READY
+                        // безопасно — файл доказан FS-пробой.
+                        if (current !== state.AssetState.READY) {
+                            await state.unsafeRestoreAssetState(redis, bookId, chapterId, sceneId, stage, state.AssetState.READY);
+                        }
+                    }
                 }
                 await runtimeScheduler.addSceneToActiveIndex(redis, bookId, chapterId, sceneId);
                 scenesAdded++;

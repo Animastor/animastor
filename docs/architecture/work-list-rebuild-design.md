@@ -93,10 +93,10 @@ The project's own rule (S2.4, `scene-state.js` header): lifecycle transitions MU
 | Write | Via | Effect |
 |---|---|---|
 | `orchestrator.setScenePending(redis, bookId, ch, sc, 'image')` | facade (journaled, transition-validated) | Redis state `image: pending`; no PG write |
-| `state.unsafeRestoreAssetStates(...)` | S2.4-whitelisted restore path (same as C0) | Redis states only; already used by startup recovery |
+| `state.unsafeRestoreAssetState(s)` | S2.4-whitelisted restore path (same as C0) | Redis states only; restore-fact writes only |
 | `orchestrator.markDirtyScene(redis, ..., ['audio'])` | facade | Redis `dirty` + **PG `scene_assets.status='stale'`** (double-write, heavier) |
 
-For a pure runtime rebuild, `setScenePending` per needed layer (or one `unsafeRestoreAssetStates` batch per scene) is the minimal correct write. `markDirtyScene` is the right tool when PG also needs to be made consistent (e.g. a scene stuck `ready` in PG that the predicate found stale — `detectVersionStale` already covers this per-tick).
+**Implemented policy (follow-up audit, Aug 2026):** C7 writes PENDING targets exclusively through the facade — `setScenePending` for `NEW/DIRTY/FAILED` (valid transitions), and the two-step `markDirtyScene` (READY/PLACEHOLDER → DIRTY) → `setScenePending` (DIRTY → PENDING) for C0 over-marks. `unsafeRestoreAssetState` (singular, guarded restore-fact) is used **only** for READY targets with a valid file, and never for PENDING — so a concurrent `GENERATING` can never be downgraded to `PENDING` (the transition table rejects `GENERATING→PENDING`; the guard additionally skips `GENERATING`/`PENDING` currents entirely). `markDirtyScene`'s PG side-effect (`status='stale'`) is a welcome side-benefit here: it makes the predicate's own dirty-markers self-consistent.
 
 ---
 
@@ -141,7 +141,7 @@ if (!lockAcquired) { /* skip cycle */ }
 The scheduler serializes its own ticks with `SCHEDULER_TICK_LOCK` (dispatch-engine.js, NX 30s), **not** `CLEANUP_LOCK`. So the rebuild (under CLEANUP_LOCK) can run concurrently with a scheduler tick. Why this is safe:
 
 1. **Membership is idempotent:** `addActiveScene` = `SADD` — re-adding an already-present scene is a no-op; a tick reading the set mid-rebuild simply sees a subset, and the next tick sees the rest.
-2. **Dispatch is single-flight per (scene,stage):** `dispatchStage` acquires `animastor:dispatch-lease:{book}:{ch}:{sc}:{stage}` with `NX EX` — if the rebuild's state write lands while a tick is mid-dispatch, the lease already prevents a second dispatch. If a client `/regenerate` raced the rebuild (regenerate sets states via the facade, rebuild via `unsafeRestoreAssetStates` — **note the unsafe write bypasses transition validation, S2 rule**), the rebuild's `PENDING` write could theoretically downgrade a facade-set `GENERATING`; the NX lease still gates dispatch (no duplicate), and the eventual callback/lease-expiry resolves the state. **Cleanest fix: have the rebuild write states via the facade (`setScenePending`) per §4/§10.2 — then transitions are validated and this caveat disappears.**
+2. **Dispatch is single-flight per (scene,stage):** `dispatchStage` acquires `animastor:dispatch-lease:{book}:{ch}:{sc}:{stage}` with `NX EX` — if the rebuild's state write lands while a tick is mid-dispatch, the lease already prevents a second dispatch. **Caveat resolved (follow-up audit, Aug 2026):** the rebuild now writes states **via the facade** (`setScenePending` / `markDirtyScene`) per §4/§10.2, so transitions are validated — a facade-set `GENERATING` is never downgraded to `PENDING` by recovery. The NX lease remains the second line of defense against duplicate dispatch.
 3. **Ordering inside the rebuild matters:** write states **first**, SADD **last** (a tick that observes the scene between the two writes sees correct states; a tick before the SADD sees nothing).
 4. **Late callbacks are deduped** by `dispatch-scoped` markers (`animastor:job:{dispatch_id}:{job_id}` NX, `result-processed` NX, `verifyDispatchIdentity` in dispatch-engine.js) — a scene re-dispatched by the rebuild after a stale dispatch cannot double-apply a result.
 
@@ -239,7 +239,8 @@ Implemented as **phase C7** inside `reconcileCycle` (`backend/src/runtime/reconc
 | build_id pinned to last generation's build | `manifest.build_id` from `book.json`, `'default'` fallback — same expression `attemptDispatch` uses |
 | Tombstoned books skipped fail-closed | `generationCancelRepo.getAllCancelled()` → book skipped entirely (Operation #1) |
 | Disabled layers never PENDING | per-book `layerCfg` from Redis (restored from `book.json` by C6 / Кирпич №2); disabled stage → not written at all (the `isInFlight` override in `shouldScheduleAssets` would otherwise dispatch it) |
-| Materialize states BEFORE SADD (§3) | one `state.unsafeRestoreAssetStates` batch per scene (S2.4-whitelisted restore path), then `addSceneToActiveIndex` (SADD) |
+| Materialize states BEFORE SADD (§3) | PENDING targets via **facade** (`setScenePending`; `markDirtyScene`→`setScenePending` two-step for READY/PLACEHOLDER C0 over-marks); READY targets via guarded `unsafeRestoreAssetState` (restore-fact); `GENERATING`/`PENDING` currents **never touched**; then `addSceneToActiveIndex` (SADD) |
+| Dirty-intent actually drives the predicate (follow-up gap 2) | `stale` (version-mismatch ready) → PENDING; `scene_assets.status IN (stale,failed,pending)` per `asset_type` → PENDING even with a valid leftover file; `dirty_unit_ids` → image PENDING (force-regen). Previously collected-but-unused, markers now feed the `stateMap` decision |
 | No dispatch | C7 writes only Redis states + SADD — generation is started exclusively by the normal scheduler tick |
 | Per-book failure isolation | try/catch per book; a broken book cannot stop the phase; `hasRealAudio` probe failure is logged (`warn`) and fails closed (audio → PENDING, never silently trusted) |
 | Idempotency | verified by test — a second `startup:true` cycle produces identical states and a SADD no-op |
@@ -249,6 +250,14 @@ Implemented as **phase C7** inside `reconcileCycle` (`backend/src/runtime/reconc
 - fully-valid scene → **not** re-added (no duplicate generation);
 - cancelled book → skipped, states stay `new` (no resurrection);
 - disabled layer → never PENDING; scheduler plan dispatches exactly the enabled set;
-- version-stale `ready` asset → re-dispatched as `pending` (stale file not trusted).
+- version-stale `ready` asset → re-dispatched as `pending` (stale file not trusted);
+- **GENERATING stage → never downgraded to PENDING by recovery** (in-flight generation owns its stage);
+- **C0 over-mark (READY with no file) → self-healed via valid transitions READY→DIRTY→PENDING**;
+- **PLACEHOLDER audio with no real file → moved to PENDING via DIRTY (valid transition)**;
+- **`dirty_unit_ids` → image force-regen despite a valid-looking file**;
+- **`scene_assets.status=failed|pending` → re-dispatch despite a leftover file**;
+- **absent Redis state for a disabled layer → never NEW→dispatch (real `shouldScheduleAssets` call graph)**;
+- disabled layer WITH a PENDING state → dispatches (proves C7 must never write PENDING for a disabled layer);
+- **TOCTOU race: concurrent scheduler tick dispatching between the guard-read and the state write is never overwritten** (fresh-state re-read backs off; the in-flight `GENERATING` survives).
 
-**Test-isolation note (why `purgeMockedModules` re-requires modules in `before()`):** earlier alphabetical test files mutate `require.cache` for `runtime-config` (happy-path.test.js replaces it with a stub; scope-slide.test.js deletes it). A module first loaded inside that window captures a **stale config instance forever**. The integration test purges the config-consuming modules and re-binds them in `before()` so C7's lazy requires see the same instances the test mutates. Full suite: **1107 passing, 0 failing**.
+**Test-isolation note (why `purgeMockedModules` re-requires modules in `before()`):** earlier alphabetical test files mutate `require.cache` for `runtime-config` (happy-path.test.js replaces it with a stub; scope-slide.test.js deletes it). A module first loaded inside that window captures a **stale config instance forever**. The integration test purges the config-consuming modules and re-binds them in `before()` so C7's lazy requires see the same instances the test mutates. Full suite: **1117 passing, 0 failing**.

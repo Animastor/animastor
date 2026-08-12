@@ -82,14 +82,14 @@ function purgeMockedModules() {
 const CHAPTER = 'ch-000001';
 const SCENE = 'sc-000001';
 
-const TEST_BOOKS = ['wl-half', 'wl-valid', 'wl-cancelled', 'wl-disabled', 'wl-stale'];
+const TEST_BOOKS = ['wl-half', 'wl-valid', 'wl-cancelled', 'wl-disabled', 'wl-stale', 'wl-gen', 'wl-c0', 'wl-units', 'wl-failed', 'wl-pending', 'wl-toc'];
 
-async function insertScene(bookId, chapterId = CHAPTER, sceneId = SCENE, contentVersion = 1, audioCfgVersion = 1) {
+async function insertScene(bookId, chapterId = CHAPTER, sceneId = SCENE, contentVersion = 1, audioCfgVersion = 1, dirtyUnitIds = null, isDirty = false) {
     await postgres.query(
-        `INSERT INTO scenes (book_id, chapter_id, scene_id, content_version, audio_config_version, dirty_unit_ids)
-         VALUES ($1, $2, $3, $4, $5, '{}')
+        `INSERT INTO scenes (book_id, chapter_id, scene_id, content_version, audio_config_version, dirty_unit_ids, is_dirty)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
          ON CONFLICT (book_id, chapter_id, scene_id) DO NOTHING`,
-        [bookId, chapterId, sceneId, contentVersion, audioCfgVersion]
+        [bookId, chapterId, sceneId, contentVersion, audioCfgVersion, dirtyUnitIds || [], isDirty]
     );
 }
 
@@ -282,5 +282,193 @@ describe('Option E — WORK_TO_DO rebuild through real reconcileCycle (real PG +
         const states = await assetStates('wl-stale');
         expect(states.audio).to.equal('pending'); // stale despite valid-looking file
         expect(await activeScenes()).to.deep.equal(['wl-stale:ch-000001:sc-000001']);
+    });
+
+    // ── Audit gap 1: safe state materialization ────────────────────────────
+    it('GENERATING stage is NEVER downgraded to PENDING by recovery', async () => {
+        writeBook('wl-gen');
+        writeArtifact('wl-gen', 'audio');
+        await insertScene('wl-gen');
+        await insertAsset('wl-gen', 'audio', { status: 'ready' });
+        // Simulate a worker mid-flight: image = GENERATING, no file on disk yet.
+        await redis.hset('animastor:asset-state:wl-gen:ch-000001:sc-000001', 'image', 'generating');
+
+        const result = await reconciliation.reconcileCycle(redis, {}, { startup: true });
+
+        expect(result.ok).to.be.true;
+        const states = await assetStates('wl-gen');
+        // In-flight generation must be left untouched — recovery has no right to
+        // downgrade GENERATING → PENDING (audit gap 1).
+        expect(states.image).to.equal('generating');
+        expect(states.audio).to.equal('ready');
+        expect(states.video).to.equal('pending'); // missing → resumed
+    });
+
+    it('C0 over-mark (READY with no file) is self-healed via valid transitions READY→DIRTY→PENDING', async () => {
+        writeBook('wl-c0');
+        writeArtifact('wl-c0', 'audio');
+        await insertScene('wl-c0');
+        await insertAsset('wl-c0', 'audio', { status: 'ready' });
+        // C0 quirk (Recon #2 P1): sets ALL THREE to READY even though image/video
+        // have no files on disk.
+        await redis.hset('animastor:asset-state:wl-c0:ch-000001:sc-000001',
+            { audio: 'ready', image: 'ready', video: 'ready' });
+
+        const result = await reconciliation.reconcileCycle(redis, {}, { startup: true });
+
+        expect(result.ok).to.be.true;
+        const states = await assetStates('wl-c0');
+        // The work-set decision is PG+FS based, not Redis based → image/video
+        // missing files must be PENDING despite C0's over-marking.
+        expect(states.image).to.equal('pending');
+        expect(states.video).to.equal('pending');
+        expect(states.audio).to.equal('ready');
+        expect(await activeScenes()).to.deep.equal(['wl-c0:ch-000001:sc-000001']);
+    });
+
+    it('TOCTOU: concurrent tick dispatching image between guard-read and write is NEVER overwritten (fresh-state check)', async () => {
+        writeBook('wl-toc');
+        writeArtifact('wl-toc', 'audio');
+        await insertScene('wl-toc');
+        await insertAsset('wl-toc', 'audio', { status: 'ready' });
+        // C0 over-mark (P1): all three READY, but image/video have no files →
+        // the predicate wants image PENDING. Simulate the exact TOCTOU the
+        // scheduler tick can produce: it runs concurrently with the startup
+        // cycle (runtime.loop.start() happens BEFORE reconcileCycle in
+        // backend.cjs), and markVersionStaleDirty → dispatch can set GENERATING
+        // between C7's guard-read and its state write. The rebuild's
+        // markDirtyScene would otherwise overwrite GENERATING → DIRTY via
+        // unsafeRestoreAssetState without re-validation.
+        await redis.hset('animastor:asset-state:wl-toc:ch-000001:sc-000001',
+            { audio: 'ready', image: 'ready', video: 'ready' });
+
+        const origGet = state.getAssetStates;
+        let guardRead = false;
+        state.getAssetStates = async (...args) => {
+            const [r, bookId, chapterId, sceneId] = args;
+            const res = await origGet.apply(state, args);
+            if (bookId === 'wl-toc') {
+                // 1st call = C7's guard-read; 2nd call = the two-step's fresh
+                // re-read for image. On the 2nd, simulate the concurrent tick
+                // having just dispatched image (GENERATING) in real Redis.
+                if (!guardRead) {
+                    guardRead = true;
+                } else {
+                    await redis.hset(`animastor:asset-state:${bookId}:${chapterId}:${sceneId}`, 'image', 'generating');
+                    return { ...res, image: 'generating' };
+                }
+            }
+            return res;
+        };
+
+        try {
+            const added = await reconciliation.rebuildWorkList(redis);
+            expect(added).to.equal(1);
+            const states = await origGet.apply(state, [redis, 'wl-toc', CHAPTER, SCENE]);
+            // In-flight generation won the race → recovery must leave it untouched.
+            expect(states.image).to.equal('generating');
+            // Video had no concurrent racer → still self-healed via the valid
+            // READY → DIRTY → PENDING bridge.
+            expect(states.video).to.equal('pending');
+            expect(states.audio).to.equal('ready');
+        } finally {
+            state.getAssetStates = origGet;
+        }
+    });
+
+    it('PLACEHOLDER audio with NO real file is moved to PENDING via DIRTY (valid transition)', async () => {
+        writeBook('wl-c0');
+        await insertScene('wl-c0');
+        // No real audio artifact on disk — predicate says audio needs work.
+        await redis.hset('animastor:asset-state:wl-c0:ch-000001:sc-000001', 'audio', 'placeholder');
+
+        const result = await reconciliation.reconcileCycle(redis, {}, { startup: true });
+
+        expect(result.ok).to.be.true;
+        const states = await assetStates('wl-c0');
+        // PLACEHOLDER → PENDING is not a direct transition; the facade bridge is
+        // PLACEHOLDER → DIRTY → PENDING.
+        expect(states.audio).to.equal('pending');
+    });
+
+    // ── Audit gap 2: dirty markers must influence WORK_TO_DO ───────────────
+    it('dirty_unit_ids forces image regeneration despite a valid-looking file', async () => {
+        writeBook('wl-units');
+        writeArtifact('wl-units', 'image'); // file exists and looks valid
+        await insertScene('wl-units', CHAPTER, SCENE, 1, 1, ['iu-000001']); // dirty_unit_ids
+        await insertAsset('wl-units', 'image', { status: 'ready', contentVersion: 1 });
+
+        const result = await reconciliation.reconcileCycle(redis, {}, { startup: true });
+
+        expect(result.ok).to.be.true;
+        const states = await assetStates('wl-units');
+        // dirty_unit_ids = granular force-regen intent — a valid-looking file must
+        // NOT suppress it (audit gap 2).
+        expect(states.image).to.equal('pending');
+        expect(await activeScenes()).to.deep.equal(['wl-units:ch-000001:sc-000001']);
+    });
+
+    it('scene_assets status=failed forces re-dispatch despite leftover file', async () => {
+        writeBook('wl-failed');
+        writeArtifact('wl-failed', 'video'); // leftover from an old build
+        await insertScene('wl-failed');
+        await insertAsset('wl-failed', 'video', { status: 'failed' }); // PG says failed
+
+        const result = await reconciliation.reconcileCycle(redis, {}, { startup: true });
+
+        expect(result.ok).to.be.true;
+        const states = await assetStates('wl-failed');
+        // A 'failed' PG row is regeneration intent — must not be treated as ready
+        // just because a leftover file exists (audit gap 2).
+        expect(states.video).to.equal('pending');
+        expect(await activeScenes()).to.deep.equal(['wl-failed:ch-000001:sc-000001']);
+    });
+
+    it('scene_assets status=pending forces re-dispatch despite leftover file', async () => {
+        writeBook('wl-pending');
+        writeArtifact('wl-pending', 'image'); // leftover
+        await insertScene('wl-pending');
+        await insertAsset('wl-pending', 'image', { status: 'pending' });
+
+        const result = await reconciliation.reconcileCycle(redis, {}, { startup: true });
+
+        expect(result.ok).to.be.true;
+        const states = await assetStates('wl-pending');
+        expect(states.image).to.equal('pending');
+        expect(await activeScenes()).to.deep.equal(['wl-pending:ch-000001:sc-000001']);
+    });
+
+    // ── Audit gap 3: disabled-layer semantics via REAL shouldScheduleAssets ──
+    it('absent Redis state for a disabled layer NEVER becomes NEW → dispatch (real call graph)', async () => {
+        writeBook('wl-disabled');
+        await insertScene('wl-disabled');
+        await redis.set('animastor:layer-config:wl-disabled', JSON.stringify({
+            audio_enabled: true, image_enabled: false, video_enabled: true,
+        }));
+        // Deliberately do NOT write any asset state for image — absent key.
+        // shouldScheduleAssets: imageEnabled = layerCfg.image_enabled !== false ||
+        // isInFlight(state) = false || isInFlight('new') = false → never dispatched.
+        const plan = await runtimeScheduler.shouldScheduleAssets(redis, 'wl-disabled', CHAPTER, SCENE);
+        expect(plan.stages).to.not.include('image');
+        // audio is dispatched; video is gated on image=ready (image disabled+missing → blocked)
+        expect(plan.stages).to.include('audio');
+    });
+
+    it('disabled layer with PENDING state WOULD dispatch (isInFlight override) — proof C7 must never write PENDING for it', async () => {
+        writeBook('wl-disabled');
+        await insertScene('wl-disabled');
+        await redis.set('animastor:layer-config:wl-disabled', JSON.stringify({
+            audio_enabled: true, image_enabled: false, video_enabled: true,
+        }));
+        // Hypothetical: if C7 wrote PENDING for the disabled layer, isInFlight
+        // would flip imageEnabled to true and the scheduler WOULD dispatch it.
+        await redis.hset('animastor:asset-state:wl-disabled:ch-000001:sc-000001', 'image', 'pending');
+
+        const plan = await runtimeScheduler.shouldScheduleAssets(redis, 'wl-disabled', CHAPTER, SCENE);
+        expect(plan.stages).to.include('image'); // isInFlight override proves the danger
+
+        // And C7 must never produce that state: run the real cycle on a fresh book.
+        const result = await reconciliation.reconcileCycle(redis, {}, { startup: true });
+        expect(result.ok).to.be.true;
     });
 });

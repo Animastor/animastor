@@ -127,6 +127,11 @@ async function getAssetStates(redis, bookId, chapterId, sceneId) {
  *   - backend/src/services/book-diff.cjs          (reset to PENDING on diff)
  *   - backend/src/helpers/redis-helpers.cjs       (book-wide restore)
  *   - backend/src/routes/debug-routes.cjs         (debug endpoints)
+ *   - backend/src/runtime/reconciliation-engine.js (C7 WORK_TO_DO rebuild: PENDING
+ *       пишется ТОЛЬКО через orchestrator facade (setScenePending / markDirtyScene —
+ *       валидация переходов, GENERATING→PENDING rejected); unsafe* остаётся только
+ *       для guarded READY restore-fact (файл валиден на диске, никогда поверх
+ *       GENERATING/PENDING) и для существующих фаз C0/C1/C1b (startup recovery)
  *
  * @param {RedisClient} redis
  * @param {string} bookId
