@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="bg_root">#0E1116</color>
+    <color name="bg_panel">#171C24</color>
+    <color name="statusbar_bg">#141821</color>
+    <color name="stroke">#2A323E</color>
+    <color name="text_primary">#E8ECF2</color>
+    <color name="text_muted">#8A93A3</color>
+    <color name="accent">#5B8CFF</color>
+    <color name="ic_launcher_bg">#16233D</color>
+</resources>

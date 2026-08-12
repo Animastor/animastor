@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Animastor Desktop Tester</string>
+    <string name="app_title">Animastor Desktop Tester</string>
+    <string name="url_hint">URL приложения (http://…)</string>
+    <string name="action_open">Открыть</string>
+    <string name="action_reload">Перезагрузить</string>
+    <string name="toast_cleared">Cookies и кэш очищены</string>
+</resources>

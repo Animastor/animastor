@@ -149,6 +149,23 @@
 - [ ] Сценарии open → generate → monitor → navigate → play → edit → save → regenerate → play — runtime-прогон
 - [ ] Mouse/keyboard/screen-reader семантика — runtime-прогон (статика проверена)
 
+## Инструмент: Desktop Web Tester (`tools/desktop-web-tester`)
+
+Сделан Android-«эмулятор десктопа» для оценки дизайна на планшете (клон
+`tools/mobile-web-tester`, applicationId `com.animastor.desktop`):
+
+- WebView на весь экран, landscape; десктопный user-agent
+- CSS viewport принудительно 1280/1366/1440/1920 px — HTML главного фрейма
+  перехватывается в `shouldInterceptRequest`, content `<meta name="viewport">`
+  целиком заменяется на `width=N` (без `initial-scale`, чтобы
+  `loadWithOverviewMode` уместил весь макет на экран); включается десктопный
+  шелл (порог >= 1180px)
+- pinch-zoom доступен (разглядывать мелкий макет); Basic Auth автоматически
+  (Authorization header в перехвате + `HttpAuthHandler` fallback); fullscreen
+  API заблокирован; долгое нажатие ⟳ — сброс cookies/кэша
+- APK: `build-apk.sh` → net-disk → `https://animastor.in/net-disk/desktop-web-tester.apk`
+  (сборка с `-PTESTER_URL=...` / `-PTESTER_WIDTH=...`)
+
 ## Phase 10 — Final polish
 
 - [ ] Отступы, выравнивание, анимации панелей, hover/focus, empty states, truncation, scrollbars
