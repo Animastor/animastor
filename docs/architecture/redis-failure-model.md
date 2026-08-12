@@ -89,7 +89,7 @@ backend startup (backend.cjs):
 | D full reconcile | `reconcileAll` | SCAN `animastor:event-journal:*` | the journal *is* the scene list — empty Redis ⇒ **zero scenes scanned**, the whole phase is a no-op | no |
 | standalone | `backend.cjs` | Redis | reset `runtime:active-*` to 0; delete all `dispatch-lease:*`; counter reconciliation | no |
 
-**Nothing in the entire startup path calls `addSceneToActiveIndex`.** Verified: every writer of `animastor:active-scenes` is listed in §5 — none is on the startup path.
+**No startup phase rebuilds the work list for ordinary (whole-book/scope) generation.** One partial exception verified in Recon #3: Phase C5 calls `resumeIncompleteSessions` (`startup-resume.js`), which resumes VBook/agent sessions (`book_generation_sessions` with `pending/generating/queued`) via `runBackgroundWindowGeneration` → `addActiveScene` (`window-generator.cjs:106`) — but only for *newly created* scenes of VBook sessions, not for existing incomplete scenes of ordinary regeneration. See `recoverable-work-set.md` §7a.
 
 ### 4.2 The result
 
