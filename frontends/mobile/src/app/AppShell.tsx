@@ -9,6 +9,7 @@ import { IconFile, IconGenerate, IconPlay, IconEdit, IconMap, IconChevronLeft, I
 import type { IconProps } from './icons';
 import { FilePage } from '../pages/FilePage';
 import { NavigatePage } from '../pages/NavigatePage';
+import { position as activePosition } from '../state/positionStore';
 
 const DESKTOP_SHELL_QUERY = '(min-width: 1180px)';
 const DESKTOP_PANEL_PREFS_KEY = 'animastor_desktop_panels';
@@ -96,7 +97,10 @@ function DesktopWorkspace({ path, children }: { path: string; children: JSX.Elem
   return (
     <div class="app-shell desktop-shell">
       <header class="desktop-header">
-        <span class="desktop-header__brand">Animastor</span>
+        <div class="desktop-header__identity">
+          <span class="desktop-header__brand">Animastor</span>
+          <DesktopPositionSummary />
+        </div>
         <nav class="desktop-modes" aria-label="Workspace mode">
           {modes.map(({ route, key, Icon }) => {
             const active = path === route || path.startsWith(route + '/');
@@ -162,6 +166,15 @@ function DesktopWorkspace({ path, children }: { path: string; children: JSX.Elem
       </div>
     </div>
   );
+}
+
+function DesktopPositionSummary() {
+  const current = activePosition.value;
+  const label = current.chapterId == null || current.sceneId == null
+    ? t('navigate_no_position')
+    : `${t('navigate_chapter')} · ${t('navigate_scene')} · ${t('navigate_unit')} ${current.unitIndex + 1}`;
+
+  return <span class="desktop-position" title={label}>{label}</span>;
 }
 
 function GenerationStatusButton() {
