@@ -176,6 +176,22 @@ button { font: inherit; color: inherit; }
   font-size: 0.8125rem;
   font-weight: 700;
 }
+.desktop-panel__title-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.desktop-panel__collapse {
+  width: 2rem;
+  height: 2rem;
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+}
+.desktop-panel__collapse:hover { background: var(--surface-2); color: var(--text); }
 .desktop-panel > .page {
   min-height: 0;
   padding: 0.75rem;
@@ -209,6 +225,15 @@ button { font: inherit; color: inherit; }
   font-weight: 600;
 }
 .desktop-start-state small { color: var(--text-2); font-size: 0.8125rem; font-weight: 400; }
+
+/* File is manually collapsible. Its content stays mounted so an export/import
+   status is not discarded; display:none also removes hidden controls from tab
+   order. No automatic behaviour changes this user-selected state. */
+.desktop-layout--file-collapsed { grid-template-columns: 3.75rem minmax(0, 1fr) minmax(15rem, 17.5rem); }
+.desktop-panel--file.desktop-panel--collapsed .desktop-panel__title { justify-content: center; padding: 0; }
+.desktop-panel--file.desktop-panel--collapsed .desktop-panel__title-label,
+.desktop-panel--file.desktop-panel--collapsed > .page { display: none; }
+.desktop-panel--file.desktop-panel--collapsed .desktop-panel__collapse { margin-left: 0; }
 
 /* Toolbar */
 .toolbar {

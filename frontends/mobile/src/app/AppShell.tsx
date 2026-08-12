@@ -5,7 +5,7 @@ import { navigate, START_ROUTE, TAB_ROUTES } from './router';
 import { secondaryTitle, secondaryAction } from './titleStore';
 import { generationStatus } from '../state/generateStore';
 import type { GenerationStatus } from '../state/generateStore';
-import { IconFile, IconGenerate, IconPlay, IconEdit, IconMap } from './icons';
+import { IconFile, IconGenerate, IconPlay, IconEdit, IconMap, IconChevronLeft, IconChevronRight } from './icons';
 import type { IconProps } from './icons';
 import { FilePage } from '../pages/FilePage';
 import { NavigatePage } from '../pages/NavigatePage';
@@ -60,6 +60,7 @@ export function AppShell({ children }: { children: JSX.Element }) {
 }
 
 function DesktopWorkspace({ path, children }: { path: string; children: JSX.Element }) {
+  const [filePanelCollapsed, setFilePanelCollapsed] = useState(false);
   const modes: { route: '/generate' | '/play' | '/edit'; key: 'tab_generate' | 'tab_play' | 'tab_edit'; Icon: (p: IconProps) => JSX.Element }[] = [
     { route: '/generate', key: 'tab_generate', Icon: IconGenerate },
     { route: '/play', key: 'tab_play', Icon: IconPlay },
@@ -96,9 +97,21 @@ function DesktopWorkspace({ path, children }: { path: string; children: JSX.Elem
           </button>
         </div>
       </header>
-      <div class="desktop-layout">
-        <aside class="desktop-panel desktop-panel--file" aria-label={t('tab_file')}>
-          <div class="desktop-panel__title"><IconFile width={18} height={18} /> {t('tab_file')}</div>
+      <div class={'desktop-layout' + (filePanelCollapsed ? ' desktop-layout--file-collapsed' : '')}>
+        <aside class={'desktop-panel desktop-panel--file' + (filePanelCollapsed ? ' desktop-panel--collapsed' : '')} aria-label={t('tab_file')}>
+          <div class="desktop-panel__title">
+            <IconFile width={18} height={18} />
+            <span class="desktop-panel__title-label">{t('tab_file')}</span>
+            <button
+              class="desktop-panel__collapse"
+              type="button"
+              aria-label={filePanelCollapsed ? t('edit_expand') : t('edit_collapse')}
+              aria-expanded={!filePanelCollapsed}
+              onClick={() => setFilePanelCollapsed((collapsed) => !collapsed)}
+            >
+              {filePanelCollapsed ? <IconChevronRight width={18} height={18} /> : <IconChevronLeft width={18} height={18} />}
+            </button>
+          </div>
           <FilePage />
         </aside>
         <main class="desktop-main">
