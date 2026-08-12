@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Animastor — Library</title>
+  <style>
+    :root {
+      --primary: #8a1f2d;
+      --accent: #c9a227;
+      --bg: #faf7f1;
+      --ink: #22181a;
+      --muted: #6b5d5f;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      padding: 24px;
+    }
+    .card {
+      max-width: 520px;
+      width: 100%;
+      background: #ffffff;
+      border: 1px solid #ece3d8;
+      border-radius: 18px;
+      padding: 44px 40px;
+      text-align: center;
+      box-shadow: 0 12px 40px rgba(34, 24, 26, .08);
+    }
+    .logo {
+      width: 72px;
+      height: 72px;
+      margin: 0 auto 20px;
+      display: block;
+    }
+    h1 {
+      font-size: 2rem;
+      margin: 0 0 4px;
+      font-weight: 700;
+      letter-spacing: -.01em;
+    }
+    .tag {
+      display: inline-block;
+      margin: 0 0 20px;
+      padding: 4px 14px;
+      border-radius: 999px;
+      background: rgba(201, 162, 39, .16);
+      color: var(--primary);
+      font-size: .8rem;
+      font-weight: 600;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+    p {
+      color: var(--muted);
+      line-height: 1.55;
+      margin: 0 0 24px;
+      font-size: .95rem;
+    }
+    a.cta {
+      display: inline-block;
+      padding: 12px 26px;
+      border-radius: 12px;
+      background: var(--primary);
+      color: #fff;
+      text-decoration: none;
+      font-weight: 600;
+      font-size: .95rem;
+      transition: transform .12s ease, background .12s ease;
+    }
+    a.cta:hover { background: #75202c; transform: translateY(-1px); }
+    a.cta:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+    .note {
+      margin-top: 18px;
+      font-size: .8rem;
+      color: #a2958f;
+    }
+  </style>
+</head>
+<body>
+  <main class="card">
+    <svg class="logo" viewBox="0 0 48 48" fill="none" aria-hidden="true">
+      <rect x="6" y="10" width="36" height="28" rx="6" fill="#8a1f2d"/>
+      <rect x="10" y="16" width="28" height="4" rx="2" fill="#c9a227"/>
+      <rect x="10" y="24" width="20" height="4" rx="2" fill="#ffffff" opacity=".85"/>
+      <rect x="10" y="32" width="14" height="4" rx="2" fill="#ffffff" opacity=".45"/>
+    </svg>
+    <h1>Animastor</h1>
+    <span class="tag">Library</span>
+    <p>
+      Public library and release notes for Animastor.
+      <br>
+      Публичная библиотека и релиз-ноты Animastor.
+    </p>
+    <a class="cta" href="https://animastor.in" rel="noopener">Open the app →</a>
+    <p class="note">The app itself requires an access password.</p>
+  </main>
+</body>
+</html>
