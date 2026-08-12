@@ -1412,6 +1412,22 @@ async function reconcileCycle(redis, deps = {}, options = {}) {
         }
 
         // ══════════════════════════════════════════════
+        // PHASE C7: WORK_TO_DO rebuild (Option E) — startup-only
+        // ══════════════════════════════════════════════
+        // Авто-возобновление прерванной генерации после потери Redis. Только
+        // первый цикл (startup:true) — периодический цикл работу НЕ возрождает
+        // (политика Recon #4 §10.3: без user action генерация не стартует).
+        if (startup && !scope) {
+            try {
+                const c7Count = await rebuildWorkList(redis);
+                if (c7Count > 0) phases.push(`worklist_rebuild:${c7Count}`);
+            } catch (err) {
+                warn(`Phase C7 failed: ${err.message}`);
+                summary.errors.push(`worklist_rebuild: ${err.message}`);
+            }
+        }
+
+        // ══════════════════════════════════════════════
         // PHASE D: Full scene reconciliation
         // ══════════════════════════════════════════════
         if (!scope || scope.includes(':')) {
@@ -1833,6 +1849,148 @@ async function reconcileMissingSceneState(redis, deps) {
     }
 }
 
+// ── PHASE C7: WORK_TO_DO rebuild (Option E) ──────────
+// Cathedral Option E — см. docs/architecture/work-list-rebuild-design.md
+// (Recon #4 design proof). После полной потери Redis пересчитывает WORK_TO_DO
+// из PG + FS и МАТЕРИАЛИЗУЕТ runtime-состояние: per-asset Redis states + SADD
+// в active index. Генерацию НЕ запускает — это делает обычный scheduler tick
+// (единственный владелец execution, SCHEDULER_TICK_LOCK).
+//
+// Доказанные в Recon #4 инварианты:
+//  1. Предикат НЕ читает Redis asset state (C0 over-marks READY/READY/READY
+//     для любой сцены с .mp3) — только PG + FS-проба.
+//  2. States пишутся ДО SADD: scheduler решает «что диспатчить» по Redis
+//     states (shouldScheduleAssets), пустой ключ = NEW = «диспатчить всё».
+//  3. build_id пинится из manifest.book_id — та же формула, что в attemptDispatch.
+//  4. Книги с cancellation tombstone (Operation #1) пропускаются fail-closed.
+//  5. Фаза последняя среди state-write C-фаз и идёт ПОСЛЕ C6 (layer-config
+//     восстановлен — нужен для enabled-слоёв).
+//  6. Ошибки PG — fail-closed: без PG предикат невычислим, фаза прерывается
+//     (нельзя воскресить отменённую работу или потерять dirty-маркеры).
+async function rebuildWorkList(redis) {
+    // Все зависимости — lazy require на момент вызова, чтобы фаза была
+    // самодостаточной (не зависит от того, с какими зависимостями был
+    // загружен reconciliation-engine) и чтобы unit-тесты не могли подменить
+    // storage/state через require.cache.
+    const state = require('../state');
+    const storage = require('../storage');
+    const bookModule = require('../book');
+    const sceneAssetsRepo = require('../storage/postgres/repositories/scene-assets-repo');
+    const generationCancelRepo = require('../storage/postgres/repositories/generation-cancel-repo');
+    const layerConfig = require('../services/layer-config');
+    const placeholderAudio = require('../services/placeholder-audio');
+    const sceneWindow = require('./scene-window');
+    const runtimeScheduler = require('./runtime-scheduler');
+
+    const AssetState = state.AssetState;
+    const STAGES = ['audio', 'image', 'video'];
+
+    // 0. Fail-closed: книги с cancellation tombstone (Operation #1)
+    const cancelled = new Set();
+    const cancelRows = await generationCancelRepo.getAllCancelled();
+    for (const r of cancelRows) cancelled.add(r.book_id);
+
+    // 1. Книги с историей генерации — из PG (у книги без PG-строк нет работы)
+    const bookResult = await storage.postgres.query('SELECT DISTINCT book_id FROM scenes');
+    const books = bookResult.rows.map(r => r.book_id);
+
+    let scenesAdded = 0;
+    for (const bookId of books) {
+        if (cancelled.has(bookId)) {
+            log(`[WORKLIST] ${bookId}: skipped (cancellation tombstone)`);
+            continue;
+        }
+
+        try {
+            const loadedBook = bookModule.loadBook(bookId);
+            if (!loadedBook) {
+                log(`[WORKLIST] ${bookId}: no book.json on disk — skipped`);
+                continue;
+            }
+
+            const buildId = loadedBook?.manifest?.build_id || 'default';
+            const buildDir = syncPath.join(config.OUTPUT_DIR, buildId);
+            const layerCfg = await layerConfig.get(redis, bookId);
+            const enabled = {
+                audio: layerCfg.audio_enabled !== false,
+                image: layerCfg.image_enabled !== false,
+                video: layerCfg.video_enabled !== false,
+            };
+
+            // 2. Dirty-маркеры из PG: сценовый уровень + per-asset staleness.
+            const dirtyScenes = new Set(); // "ch:sc"
+            const staleAssets = {};        // "ch:sc:asset" → ready, но version mismatch
+            const dirtyRows = await sceneAssetsRepo.getDirtyScenesByVersion(bookId);
+            for (const row of dirtyRows) {
+                dirtyScenes.add(`${row.chapter_id}:${row.scene_id}`);
+                const contentStale = row.scene_content_version != null && row.content_version != null &&
+                    row.scene_content_version < row.content_version;
+                const audioCfgStale = row.scene_audio_config_version != null && row.audio_config_version != null &&
+                    row.scene_audio_config_version < row.audio_config_version;
+                if (row.status === 'ready' &&
+                    (contentStale || (row.asset_type === 'audio' && audioCfgStale))) {
+                    staleAssets[`${row.chapter_id}:${row.scene_id}:${row.asset_type}`] = true;
+                }
+            }
+
+            // 2b. dirty_unit_ids (granular force-regen) + pending-маркеры (stale/failed/pending)
+            const unitMarker = await storage.postgres.query(`
+                SELECT DISTINCT chapter_id, scene_id FROM scenes
+                WHERE book_id = $1 AND dirty_unit_ids IS NOT NULL AND array_length(dirty_unit_ids, 1) > 0
+            `, [bookId]);
+            for (const row of unitMarker.rows) dirtyScenes.add(`${row.chapter_id}:${row.scene_id}`);
+            const assetMarker = await storage.postgres.query(`
+                SELECT DISTINCT chapter_id, scene_id FROM scene_assets
+                WHERE book_id = $1 AND status IN ('stale', 'failed', 'pending')
+            `, [bookId]);
+            for (const row of assetMarker.rows) dirtyScenes.add(`${row.chapter_id}:${row.scene_id}`);
+
+            // 3. Пройти все сцены книги: FS-проба + предикат §4 (Recon #3)
+            const scenes = bookModule.collectScenes(loadedBook);
+            for (const s of scenes) {
+                const chapterId = s.chapter_id;
+                const sceneId = s.scene_id;
+                const key = `${chapterId}:${sceneId}`;
+
+                const fsStatus = await sceneWindow.getSceneFilesStatus(buildDir, bookId, chapterId, sceneId);
+                let audioReal = false;
+                if (fsStatus.audio.exists) {
+                    try { audioReal = await placeholderAudio.hasRealAudio(bookId, chapterId, sceneId, buildId); }
+                    catch (err) { warn(`Rebuild: hasRealAudio probe failed for ${bookId}/${chapterId}/${sceneId}: ${err.message}`); }
+                }
+
+                const stateMap = {};
+                let needsWork = false;
+                for (const stage of STAGES) {
+                    if (!enabled[stage]) continue; // disabled: PENDING не пишем (isInFlight-override в shouldScheduleAssets)
+                    const fileValid = fsStatus[stage].exists && (stage !== 'audio' || audioReal);
+                    const stale = !!staleAssets[`${key}:${stage}`];
+                    if (fileValid && !stale) {
+                        stateMap[stage] = AssetState.READY;
+                    } else {
+                        stateMap[stage] = AssetState.PENDING;
+                        needsWork = true;
+                    }
+                }
+
+                if (!needsWork) continue;
+
+                // 4. Материализовать states ДО SADD (restore-путь, S2.4-whitelisted).
+                if (Object.keys(stateMap).length > 0) {
+                    await state.unsafeRestoreAssetStates(redis, bookId, chapterId, sceneId, stateMap);
+                }
+                await runtimeScheduler.addSceneToActiveIndex(redis, bookId, chapterId, sceneId);
+                scenesAdded++;
+            }
+        } catch (err) {
+            warn(`Rebuild failed for book ${bookId}: ${err.message}`);
+        }
+    }
+
+    if (scenesAdded > 0) log(`[WORKLIST] ${scenesAdded} scene(s) re-added for generation resume`);
+    return scenesAdded;
+}
+
 // ======================================================
 // EXPORTS
 // ======================================================
@@ -1847,6 +2005,7 @@ module.exports = {
     recoverVideoOrchStates,
     checkVersionStaleness,
     reconcileMissingSceneState,
+    rebuildWorkList,
     checkStalledAudioScenes,
     checkStalledVideoScenes,
 

@@ -225,3 +225,30 @@ scheduler (tick under SCHEDULER_TICK_LOCK)
 > **6. Is "reconciliation only restores the work index" a real boundary?** **Partially** — the index *and the runtime states the scheduler consumes* must be restored by reconciliation; the scheduler remains the sole owner of execution. "Only SADD" was under-specified (§0, §3, §8).
 
 **Verdict: build is authorized after decision §10.1 (layer-config persistence).** The mechanism is provably idempotent and race-safe; the one correctness gap (disabled-layer regeneration after Redis loss) is a policy decision, not an architecture flaw, and is exactly the same gap already documented in Recon #3.
+
+---
+
+## 12. Implementation status — ✅ BUILT (Cathedral Option E, Aug 2026)
+
+Implemented as **phase C7** inside `reconcileCycle` (`backend/src/runtime/reconciliation-engine.js`, `rebuildWorkList()`), satisfying every constraint this design proved:
+
+| Design requirement | Implementation |
+|---|---|
+| Runs under `CLEANUP_LOCK`, **only on `startup:true`** (never periodic — no surprise auto-resume mid-session) | C7 phase, gated by the `startup` flag of the cycle, ordered **after C6** (last state-writing C-phase, §6a) |
+| Predicate = PG + FS, **never trusts Redis asset state** | `getDirtyScenesByVersion` ∪ `dirty_unit_ids` marker ∪ `stale|failed|pending` `scene_assets` marker ∪ FS probe `getSceneFilesStatus` ∪ `hasRealAudio`; no `redis.get` in the decision |
+| build_id pinned to last generation's build | `manifest.build_id` from `book.json`, `'default'` fallback — same expression `attemptDispatch` uses |
+| Tombstoned books skipped fail-closed | `generationCancelRepo.getAllCancelled()` → book skipped entirely (Operation #1) |
+| Disabled layers never PENDING | per-book `layerCfg` from Redis (restored from `book.json` by C6 / Кирпич №2); disabled stage → not written at all (the `isInFlight` override in `shouldScheduleAssets` would otherwise dispatch it) |
+| Materialize states BEFORE SADD (§3) | one `state.unsafeRestoreAssetStates` batch per scene (S2.4-whitelisted restore path), then `addSceneToActiveIndex` (SADD) |
+| No dispatch | C7 writes only Redis states + SADD — generation is started exclusively by the normal scheduler tick |
+| Per-book failure isolation | try/catch per book; a broken book cannot stop the phase; `hasRealAudio` probe failure is logged (`warn`) and fails closed (audio → PENDING, never silently trusted) |
+| Idempotency | verified by test — a second `startup:true` cycle produces identical states and a SADD no-op |
+
+**Verified by integration tests** (`backend/tests/worklist-rebuild.integration.test.js`, real PG + real FS + mock redis, through the REAL `reconcileCycle`):
+- half-generated scene (audio valid, image/video missing) → audio stays `ready`, image/video `pending`, scene re-added;
+- fully-valid scene → **not** re-added (no duplicate generation);
+- cancelled book → skipped, states stay `new` (no resurrection);
+- disabled layer → never PENDING; scheduler plan dispatches exactly the enabled set;
+- version-stale `ready` asset → re-dispatched as `pending` (stale file not trusted).
+
+**Test-isolation note (why `purgeMockedModules` re-requires modules in `before()`):** earlier alphabetical test files mutate `require.cache` for `runtime-config` (happy-path.test.js replaces it with a stub; scope-slide.test.js deletes it). A module first loaded inside that window captures a **stale config instance forever**. The integration test purges the config-consuming modules and re-binds them in `before()` so C7's lazy requires see the same instances the test mutates. Full suite: **1107 passing, 0 failing**.
