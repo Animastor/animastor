@@ -42,7 +42,7 @@ import {
 import { navigateTo, position as positionSignal } from '../state/positionStore';
 import { seekToPosition } from '../state/playbackStore';
 import { Waveform } from '../lib/waveform';
-import { IconChevronDown, IconChevronLeft, IconChevronRight, IconChevronUp, IconClock, IconClose, IconImageOff, IconPlay, IconReset, IconSave, IconStop } from '../app/icons';
+import { IconChevronDown, IconChevronLeft, IconChevronRight, IconChevronUp, IconClock, IconClose, IconFullscreen, IconImageOff, IconPlay, IconReset, IconSave, IconStop } from '../app/icons';
 
 // ── Tabs (propertyTabs) — default to Unit (index 2) like EditFragment ──
 const TABS = ['edit_scene', 'edit_audio', 'edit_units_tab', 'edit_characters_tab', 'edit_voices_tab', 'edit_locations_tab', 'edit_global_tab'] as const;
@@ -195,9 +195,9 @@ export function EditPage(props: { path?: string }) {
   // Collapsible panels (web deviation — frees vertical space for the editor).
   const [carouselCollapsed, setCarouselCollapsed] = useState(false);
   const [timelineCollapsed, setTimelineCollapsed] = useState(false);
-  // Desktop draft protection (plan §5.2): pending unit navigation awaiting the
-  // user's Save / Discard / Cancel decision when the draft is dirty.
-  const [pendingNav, setPendingNav] = useState<number | null>(null);
+  // Desktop draft protection (plan §5.2): pending unit navigation action
+  // awaiting the user's Save / Discard / Cancel decision when the draft is dirty.
+  const [pendingNav, setPendingNav] = useState<(() => void) | null>(null);
   // Full-size image zoom dialog (opens from the current carousel card).
   const [zoom, setZoom] = useState<{ url: string; label: string } | null>(null);
   const [zoomFailed, setZoomFailed] = useState(false);
@@ -702,13 +702,47 @@ export function EditPage(props: { path?: string }) {
   // ── Desktop draft protection (plan §5.2): navigating units with unsaved
   //    edits on desktop asks Save / Discard / Cancel instead of silently
   //    dropping the draft (mobile keeps the Android 1:1 discard behaviour).
+  //    Pending actions are stored as closures so both carousel deltas and
+  //    thumbnail-rail jumps use the same confirmation flow.
   const requestUnitNavigation = useCallback((delta: number) => {
     if (isDesktop && saveDirtyRef.current) {
-      setPendingNav(delta);
+      setPendingNav(() => () => navigateUnit(delta));
     } else {
       navigateUnit(delta);
     }
   }, [isDesktop, navigateUnit]);
+
+  // ── Jump to an absolute unit index within the current scene (thumbnail rail,
+  //    plan §5.3) — position + seekToPosition, same semantics as navigateUnit's
+  //    in-scene branch.
+  const jumpToUnit = useCallback((index: number) => {
+    const sc = currentScene();
+    if (!sc) return;
+    const units = sc.units ?? [];
+    const clamped = Math.max(0, Math.min(index, units.length - 1));
+    const u = units[clamped];
+    navigateTo({
+      chapterId: chapters[currentChIndex]?.chapter_id ?? null,
+      sceneId: sc.scene_id ?? null,
+      unitId: u?.id ?? null,
+      chunkId: null,
+      unitIndex: clamped,
+    });
+    const chId = chapters[currentChIndex]?.chapter_id;
+    if (chId != null && sc.scene_id != null) {
+      void seekToPosition(chId, sc.scene_id, clamped, u ? unitId(u, clamped) : null);
+    }
+  }, [currentChIndex, currentScIndex, chapters, bookData]);
+
+  const requestUnitJump = useCallback((index: number) => {
+    // Jumping to the already-active unit is a no-op — never prompt for it.
+    if (index === positionSignal.value.unitIndex) return;
+    if (isDesktop && saveDirtyRef.current) {
+      setPendingNav(() => () => jumpToUnit(index));
+    } else {
+      jumpToUnit(index);
+    }
+  }, [isDesktop, jumpToUnit]);
 
   // ── Passport override blocks (ensurePassportBlocks) ──
   // buildBlocksFromScene is a pure builder used both synchronously during render
@@ -1511,11 +1545,28 @@ export function EditPage(props: { path?: string }) {
         <button class="edit-panel__collapse" type="button" aria-label={t('edit_collapse')} onClick={() => setCarouselCollapsed(true)}>
           <IconChevronUp width={16} height={16} />
         </button>
-        <div class="edit-carousel">
-          <CarouselCard kind="prev" bid={bid} bld={bld} item={carousel.prev} onClick={() => carousel.prev && requestUnitNavigation(-1)} />
-          <CarouselCard kind="current" bid={bid} bld={bld} item={carousel.current} onClick={() => openZoom(carousel.current)} />
-          <CarouselCard kind="next" bid={bid} bld={bld} item={carousel.next} onClick={() => carousel.next && requestUnitNavigation(1)} />
-        </div>
+        {isDesktop ? (
+          /* Desktop preview stage + unit rail (plan §5.3): a bounded canvas for
+             the current unit (click → full-size zoom) and a horizontally
+             scrollable rail of the current scene's units; selecting a rail
+             thumb jumps through the shared position with draft protection. */
+          <DesktopUnitStage
+            bid={bid}
+            bld={bld}
+            chapterId={chapters[currentChIndex]?.chapter_id ?? null}
+            sceneId={currentScene()?.scene_id ?? null}
+            units={currentScene()?.units ?? []}
+            currentIndex={positionSignal.value.unitIndex}
+            onZoom={() => openZoom(carousel.current)}
+            onJump={requestUnitJump}
+          />
+        ) : (
+          <div class="edit-carousel">
+            <CarouselCard kind="prev" bid={bid} bld={bld} item={carousel.prev} onClick={() => carousel.prev && requestUnitNavigation(-1)} />
+            <CarouselCard kind="current" bid={bid} bld={bld} item={carousel.current} onClick={() => openZoom(carousel.current)} />
+            <CarouselCard kind="next" bid={bid} bld={bld} item={carousel.next} onClick={() => carousel.next && requestUnitNavigation(1)} />
+          </div>
+        )}
       </div>
 
       {/* Audio timeline panel — collapsible (same web deviation). Collapsing
@@ -1635,15 +1686,15 @@ export function EditPage(props: { path?: string }) {
               <button
                 type="button"
                 class="btn btn--outlined"
-                onClick={() => { const d = pendingNav; setPendingNav(null); navigateUnit(d); }}
+                onClick={() => { const act = pendingNav; setPendingNav(null); act(); }}
               >{t('edit_discard')}</button>
               <button
                 type="button"
                 class="btn"
                 disabled={saveBusy}
                 onClick={() => {
-                  const d = pendingNav;
-                  void saveToBackend().then((ok) => { if (ok) { setPendingNav(null); navigateUnit(d); } });
+                  const act = pendingNav;
+                  void saveToBackend().then((ok) => { if (ok) { setPendingNav(null); act(); } });
                 }}
               >{t('edit_save_and_go')}</button>
             </div>
@@ -1726,12 +1777,11 @@ function UnitPreview({ bid, bld, chapterId, sceneId, unitId, isCurrent, label }:
       </>
     );
   }
-  const src = `/api/v1/preview/${encodeURIComponent(bid)}/${encodeURIComponent(chapterId)}/${encodeURIComponent(sceneId)}/${encodeURIComponent(unitId)}?build_id=${encodeURIComponent(bld)}`;
   return (
     <>
       <img
         class="edit-unit-card__img"
-        src={src}
+        src={previewUrl(bid, bld, chapterId, sceneId, unitId)}
         alt=""
         loading="lazy"
         decoding="async"
@@ -1739,5 +1789,135 @@ function UnitPreview({ bid, bld, chapterId, sceneId, unitId, isCurrent, label }:
       />
       {isCurrent && label && <span class="edit-unit-card__label">{label}</span>}
     </>
+  );
+}
+
+// Shared preview URL (GET /preview/...?build_id=) — the same endpoint the
+// mobile carousel uses; desktop stage and rail reuse it unchanged.
+function previewUrl(bid: string, bld: string, chapterId: string, sceneId: string, unitId: string): string {
+  return `/api/v1/preview/${encodeURIComponent(bid)}/${encodeURIComponent(chapterId)}/${encodeURIComponent(sceneId)}/${encodeURIComponent(unitId)}?build_id=${encodeURIComponent(bld)}`;
+}
+
+// ── Desktop preview stage + unit rail (plan §5.3) ──
+// Large bounded canvas for the current unit (click → existing full-size zoom)
+// above a horizontally scrollable rail of the current scene's units. Clicking a
+// rail thumb jumps through the shared position (draft-protected); the active
+// thumb is highlighted with the existing accent/container language.
+function DesktopUnitStage({ bid, bld, chapterId, sceneId, units, currentIndex, onZoom, onJump }: {
+  bid: string;
+  bld: string;
+  chapterId: string | null;
+  sceneId: string | null;
+  units: BookUnit[];
+  currentIndex: number;
+  onZoom: () => void;
+  onJump: (index: number) => void;
+}) {
+  const idx = Math.max(0, Math.min(currentIndex, units.length - 1));
+  const current = units[idx];
+  const label = current ? `${t('navigate_unit')} ${idx + 1}` : null;
+
+  return (
+    <div class="edit-stage">
+      <div class="edit-stage__canvas">
+        {chapterId && sceneId && current ? (
+          <StagePreview
+            bid={bid}
+            bld={bld}
+            chapterId={chapterId}
+            sceneId={sceneId}
+            unitId={unitId(current, idx)}
+            onClick={onZoom}
+            label={label}
+          />
+        ) : (
+          <div class="edit-stage__missing"><IconImageOff width={32} height={32} /></div>
+        )}
+      </div>
+      <div class="edit-stage__rail" role="group" aria-label={t('edit_rail_title')}>
+        {units.length === 0 ? (
+          <span class="edit-stage__empty">{t('edit_rail_empty')}</span>
+        ) : units.map((u, i) => {
+          const active = i === idx;
+          return (
+            <button
+              type="button"
+              key={u.id ?? `iu${String(i).padStart(4, '0')}`}
+              class={'edit-stage__thumb' + (active ? ' edit-stage__thumb--active' : '')}
+              aria-current={active ? 'true' : undefined}
+              aria-label={`${t('navigate_unit')} ${i + 1}`}
+              onClick={() => onJump(i)}
+            >
+              {chapterId && sceneId ? (
+                <RailThumb bid={bid} bld={bld} chapterId={chapterId} sceneId={sceneId} unitId={unitId(u, i)} />
+              ) : (
+                <span class="edit-stage__thumb-missing"><IconImageOff width={16} height={16} /></span>
+              )}
+              <span class="edit-stage__thumb-label">{i + 1}</span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// Large current-unit preview: stable bounded canvas (object-fit: contain),
+// click opens the existing full-size zoom, missing state falls back to the
+// image-off icon — the rail and mobile carousel keep their own rendering.
+function StagePreview({ bid, bld, chapterId, sceneId, unitId, onClick, label }: {
+  bid: string;
+  bld: string;
+  chapterId: string;
+  sceneId: string;
+  unitId: string;
+  onClick: () => void;
+  label: string | null;
+}) {
+  const [failed, setFailed] = useState(false);
+  useEffect(() => { setFailed(false); }, [unitId]);
+
+  return (
+    <button type="button" class="edit-stage__zoom" aria-label={t('edit_zoom_preview')} title={t('edit_zoom_preview')} onClick={onClick}>
+      {failed ? (
+        <span class="edit-stage__missing"><IconImageOff width={32} height={32} /></span>
+      ) : (
+        <img
+          class="edit-stage__img"
+          src={previewUrl(bid, bld, chapterId, sceneId, unitId)}
+          alt={label ?? ''}
+          loading="lazy"
+          decoding="async"
+          onError={() => setFailed(true)}
+        />
+      )}
+      <span class="edit-stage__zoom-hint" aria-hidden="true"><IconFullscreen width={18} height={18} /></span>
+    </button>
+  );
+}
+
+// Compact rail thumb — same preview endpoint, fixed square crop.
+function RailThumb({ bid, bld, chapterId, sceneId, unitId }: {
+  bid: string;
+  bld: string;
+  chapterId: string;
+  sceneId: string;
+  unitId: string;
+}) {
+  const [failed, setFailed] = useState(false);
+  useEffect(() => { setFailed(false); }, [unitId]);
+
+  if (failed) {
+    return <span class="edit-stage__thumb-missing"><IconImageOff width={16} height={16} /></span>;
+  }
+  return (
+    <img
+      class="edit-stage__thumb-img"
+      src={previewUrl(bid, bld, chapterId, sceneId, unitId)}
+      alt=""
+      loading="lazy"
+      decoding="async"
+      onError={() => setFailed(true)}
+    />
   );
 }

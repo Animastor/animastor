@@ -305,6 +305,10 @@ const dict = {
     edit_confirm_desc: 'В модуле есть несохранённые правки. Сохранить перед переходом?',
     edit_discard: 'Не сохранять и перейти',
     edit_save_and_go: 'Сохранить и перейти',
+    // Desktop editor preview stage + unit rail (plan §5.3)
+    edit_zoom_preview: 'Увеличить превью',
+    edit_rail_title: 'Модули сцены',
+    edit_rail_empty: 'Нет сгенерированных превью',
     // Generate (strings.xml ru)
     generate_global_section: 'Общее',
     generate_all: 'Генерировать всё',
@@ -671,6 +675,10 @@ const dict = {
     edit_confirm_desc: 'This unit has unsaved edits. Save before moving on?',
     edit_discard: 'Discard edits',
     edit_save_and_go: 'Save and continue',
+    // Desktop editor preview stage + unit rail (plan §5.3)
+    edit_zoom_preview: 'Zoom preview',
+    edit_rail_title: 'Scene units',
+    edit_rail_empty: 'No generated previews',
     // Generate (strings.xml en)
     generate_global_section: 'Global',
     generate_all: 'Generate All',

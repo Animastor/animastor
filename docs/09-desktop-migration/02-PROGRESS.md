@@ -61,10 +61,17 @@
 - [x] Карусель (prev/next) тоже идёт через `requestUnitNavigation`
 - [x] Новые i18n-ключи в ru/en; `tsc --noEmit` + `vite build` — OK; code-review пройден
 
+Сделано (этап 2, срез 3):
+
+- [x] **Preview stage + thumbnail rail** (план §5.3): на десктопе вместо карусели 3 карточек — bounded canvas текущего юнита (`object-fit: contain`, клик → существующий full-size zoom, hover-подсказка zoom) + горизонтальный скролл-rail юнитов текущей сцены (миниатюры с номером, активная — accent-рамка, `aria-current`)
+- [x] Клик по thumb → `jumpToUnit` (позиция + seek, те же семантики, что in-scene ветка `navigateUnit`) через защиту черновика (`requestUnitJump`; прыжок на активный юнит — no-op без prompt)
+- [x] Общий хелпер `previewUrl` переиспользован во всех трёх рендерах (stage / rail / мобильная карусель)
+- [x] Пустое состояние rail (`edit_rail_empty`), lazy-загрузка, a11y: кнопки без ложного listbox-паттерна
+- [x] `tsc --noEmit` + `vite build` — OK; code-review пройден
+
 Осталось (Phase 5):
 
 - [ ] Защита черновика при навигации из Navigator-панели (клик по юниту справа сейчас сбрасывает черновик — observer позиции в EditPage очищает fieldValues; нужен перехват в observer или confirm до `navigateTo`)
-- [ ] Thumbnail rail юнитов вместо карусели 3 карточек (сейчас карусель переиспользована)
 - [ ] Опционально: collapse Navigator в режиме Editor на laptop
 
 ## Phase 6 — Generator
