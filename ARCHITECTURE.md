@@ -8,7 +8,6 @@
 |--------------------|----------------------------------------------------------------------------|------|
 | `animastor.in`     | **Публичный сайт**: landing, документация, публичная Library, net-disk      | нет  |
 | `app.animastor.in` | **Веб-приложение** — responsive: `MobileShell` / `DesktopShell`             | Basic Auth, кроме `/library` |
-| `m.animastor.in`   | Legacy compatibility: 301 → `app.animastor.in` (путь сохраняется)           | —    |
 
 Правило: **hostname определяет приложение, viewport определяет presentation**.
 Один frontend, один API, одни stores. Layout зависит только от ширины вьюпорта:
@@ -51,8 +50,7 @@ docs/                 ← подробная документация (по фа
 - Basic Auth на текущем этапе — существующая Nginx-авторизация; отдельной системы
   авторизации нет.
 - SSL: Let's Encrypt, `/etc/letsencrypt/live/animastor.in/` — один сертификат на всё
-  семейство: `animastor.in, app.animastor.in, m.animastor.in, www.animastor.in`
-  (расширен 2026-08-12). Продление — webroot на `frontends/website` (ACME HTTP-01,
-  `certbot.timer` ежедневно). ⚠️ LE валидирует ВСЕ SANs: пока `m.animastor.in` не
-  резолвится публично (сейчас NXDOMAIN), авто-продление падает — нужна A-запись
-  `m.animastor.in → 66.116.225.136`.
+  семейство: `animastor.in, app.animastor.in, www.animastor.in` (SANs обновлены
+  2026-08-12; `m.animastor.in` выведен из эксплуатации). Продление — webroot на
+  `frontends/website` (ACME HTTP-01, `certbot.timer` ежедневно), проверено
+  `--dry-run` — success.

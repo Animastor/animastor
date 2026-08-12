@@ -30,11 +30,8 @@ All notable changes to Animastor are documented here.
   ошибок (`ssl_verify_result 0`). Бонус: починен устаревший webroot-маппинг в
   `/etc/letsencrypt/renewal/animastor.in.conf` (`frontends/main` → `frontends/website`,
   оставшийся после переименования каталогов) — без этого авто-продление падало бы.
-  ⚠️ **Внимание (требует DNS-правки):** публичный DNS больше не резолвит
-  `m.animastor.in` (NXDOMAIN) — пока это так, LE не сможет провалидировать все
-  SANs, и продление сертификата будет падать. Фикс: A-запись `m.animastor.in →
-  66.116.225.136` в панели хостинга (заодно заработает compatibility-редирект).
-  Продление (certbot.timer, ежедневно) само подхватит фикс без ручного запуска.
+  → **Решение:** `m.animastor.in` выведен из эксплуатации (см. «Removed» ниже),
+  сертификат перевыпущен на 3 SANs, продление проверено `--dry-run` — success.
   - **SSL:** сертификат расширен на `app.animastor.in` (см. `docs/CHANGELOG.md`,
     2026-08-12). Кавеат: для авто-продления нужна A-запись `m.animastor.in`
     (LE валидирует все SANs).
@@ -47,6 +44,18 @@ All notable changes to Animastor are documented here.
     `apk-build.sh`, `tools/*/gradlew` (`frontends/android/gradle-8.12`),
     `frontends/app/package.json` (`animastor-app`), README, `PROJECT_STRUCTURE.md`.
   - В корне добавлен `ARCHITECTURE.md` — карта доменов и каталогов.
+
+### Removed
+
+- **`m.animastor.in` выведен из эксплуатации** (решение 2026-08-12, `proxy/conf/default.conf`):
+  - Домен был адресом «мобильной» эпохи (Mobile Web), всегда за Basic Auth — реального
+    внешнего трафика не имел; тестеры уже пересобраны на `app.animastor.in`.
+  - nginx: удалён 443-блок с 301-редиректом и `m.` из HTTP `server_name` (домен
+    удалён из DNS панели хостинга).
+  - SSL: сертификат перевыпущен без SAN `m.animastor.in` — теперь `animastor.in`,
+    `www.animastor.in`, `app.animastor.in`; `certbot renew --dry-run` проходит
+    полностью (ранее падал с NXDOMAIN на m.).
+  - Renewal conf очищен от записей `m.animastor.in`.
 
 ---
 
