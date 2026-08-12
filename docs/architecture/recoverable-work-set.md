@@ -129,8 +129,8 @@ After Redis loss:
 
 **Conclusion:** constraint (3) holds **only for books with PG session/task cancellation records**. For books whose generation was cancelled through the whole-book windowed UI, `WORK_TO_DO` **cannot** distinguish "cancelled by user" from "in progress when Redis died" — the information simply does not exist in PG.
 
-**Required decision for the future operation (not implemented):** the rebuild phase needs an explicit cancellation policy. Options:
-1. **Tombstone writes:** whole-book cancel also writes a PG row (e.g. `book_generation_sessions` or a `book_events` cancel event) — then the rebuild skips cancelled books. Small, precise, but touches the cancel path.
+**Required decision for the future operation:** the rebuild phase needs an explicit cancellation policy. Options:
+1. **Tombstone writes:** whole-book cancel also writes a PG row (e.g. `book_generation_sessions` or a `book_events` cancel event) — then the rebuild skips cancelled books. Small, precise, but touches the cancel path. **✅ IMPLEMENTED (Cathedral Operation #1, Aug 2026):** table `generation_cancellations` + `generation-cancel-repo`; written by `POST /cancel-generation`, cleared by `POST /regenerate`, honored by `startup-resume` (Phase C5) so a cancelled book is never auto-resumed after Redis loss. The future work-list rebuild must call `getAllCancelled()` and skip those `book_id`s.
 2. **Conservative default:** rebuild only books whose *most recent* `book_generation_sessions`/task state is `generating|pending|queued|completed` and never re-add books whose only PG signal is generic dirtiness. This would *under-resume* (some genuinely-interrupted books stay paused) — safe but incomplete.
 3. **Accept the risk:** rebuild everything dirty; document that "cancel" after Redis loss is best-effort. Simplest, but violates the user's explicit action.
 

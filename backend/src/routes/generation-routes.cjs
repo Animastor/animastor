@@ -57,6 +57,16 @@ module.exports = function(app, redis, deps) {
             const bookData = book.buildBookFromBundle(files);
             const bookId = bookData.manifest.book_id;
 
+            // Cathedral Recon #3 §5.4 option 1: an explicit full-book generate is a
+            // new run — clear any cancellation tombstone so it can't linger and be
+            // skipped by startup-resume on a later restart. Best-effort.
+            try {
+                const generationCancelRepo = require('../storage/postgres/repositories/generation-cancel-repo');
+                await generationCancelRepo.clear(bookId);
+            } catch (tombErr) {
+                console.warn(`[GENERATE] Failed to clear cancellation tombstone for ${bookId}: ${tombErr.message}`);
+            }
+
             await genScope.setScope(redis, bookId, layerConfig.SCOPES.WHOLE_BOOK, null, null);
 
             const existingBook = book.loadBook(bookId);

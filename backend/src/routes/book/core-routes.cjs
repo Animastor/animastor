@@ -774,6 +774,7 @@ module.exports = function(app, redis, deps) {
                 'chat_sessions',
                 'agent_sessions',
                 'book_generation_sessions',
+                'generation_cancellations',
                 'ai_chat_sessions',
                 'book_events',
                 'scene_assets',

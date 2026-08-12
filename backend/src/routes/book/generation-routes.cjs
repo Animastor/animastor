@@ -8,6 +8,7 @@ const sceneAssetsRepo = require('../../storage/postgres/repositories/scene-asset
 const generationProgress = require('../../services/generation-progress');
 const dispatchEngine = require('../../runtime/dispatch-engine');
 const taskRepo = require('../../storage/postgres/repositories/task-repo');
+const generationCancelRepo = require('../../storage/postgres/repositories/generation-cancel-repo');
 
 module.exports = function(app, redis, deps) {
     const {
@@ -140,6 +141,16 @@ module.exports = function(app, redis, deps) {
                 } catch (pgErr) {
                     console.warn(`[CANCEL-WORKER] Failed to cancel VBook session: ${pgErr.message}`);
                 }
+                // Cathedral Recon #3 §5.4 option 1: also persist the cancellation
+                // tombstone. startup-resume (C5) reads only book_generation_sessions,
+                // which cancel-worker does NOT update — without the tombstone a
+                // cancelled VBook would be auto-resumed after Redis loss.
+                try {
+                    await generationCancelRepo.setCancelled(bookId, { reason: 'user_cancelled', createdBy: 'cancel-worker:vbook' });
+                    log(`[CANCEL-WORKER] ${bookId}: cancellation tombstone persisted (vbook)`);
+                } catch (tombErr) {
+                    console.warn(`[CANCEL-WORKER] Failed to persist cancellation tombstone for ${bookId}: ${tombErr.message}`);
+                }
             } else if (resolvedType === 'cover') {
                 // Cover uses both audio + image stages — cancel both
                 await dispatchEngine.clearLeasesForBookByStage(redis, bookId, 'audio');
@@ -217,6 +228,17 @@ module.exports = function(app, redis, deps) {
             log(`[CANCEL-GENERATION] ${bookId}: cancelling generation`);
 
             await runtime.sceneWindow.setCancelFlag(redis, bookId);
+
+            // Cathedral Recon #3 §5.4 option 1: persistent cancellation tombstone.
+            // Survives Redis loss so startup-resume / future work-list rebuild can
+            // never resurrect an explicitly cancelled generation. Best-effort: a PG
+            // failure must not block the Redis-side cancellation itself.
+            try {
+                await generationCancelRepo.setCancelled(bookId, { reason: 'user_cancelled', createdBy: 'cancel-generation' });
+                log(`[CANCEL-GENERATION] ${bookId}: cancellation tombstone persisted`);
+            } catch (tombErr) {
+                console.warn(`[CANCEL-GENERATION] Failed to persist cancellation tombstone for ${bookId}: ${tombErr.message}`);
+            }
 
             await runtime.scheduler.clearBookFromActiveIndex(redis, bookId);
 
@@ -318,6 +340,14 @@ module.exports = function(app, redis, deps) {
             const buildId = loadedBook.manifest?.build_id || 'default';
 
             await runtime.sceneWindow.clearCancelFlag(redis, bookId);
+            // Cathedral Recon #3 §5.4 option 1: an explicit new run removes the
+            // cancellation tombstone so future automatic resumption is unblocked.
+            try {
+                await generationCancelRepo.clear(bookId);
+                log(`[REGENERATE] ${bookId}: cancellation tombstone cleared`);
+            } catch (tombErr) {
+                console.warn(`[REGENERATE] Failed to clear cancellation tombstone for ${bookId}: ${tombErr.message}`);
+            }
             // force-dispatch is owned by orchestrator.resetScenes().
 
             const effectiveScope = scope || 'whole_book';

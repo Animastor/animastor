@@ -807,6 +807,28 @@ async function runMigrations() {
             console.error('[PG] Failed to create book_generation_sessions:', err.message);
         }
     }
+
+    // ======================================================
+    // Generation cancellation tombstones (Cathedral Recon #3 §5.4)
+    // ======================================================
+    // Persistent marker that the user explicitly cancelled generation for a
+    // book. Written by POST /cancel-generation, cleared by POST /regenerate.
+    // Survives Redis loss so automatic resumption (startup-resume / future
+    // work-list rebuild) can never resurrect an explicitly cancelled run.
+    try {
+        await query(`CREATE TABLE IF NOT EXISTS generation_cancellations (
+            book_id         TEXT PRIMARY KEY,
+            cancelled_at    BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::bigint),
+            reason          TEXT,
+            created_by      TEXT,
+            updated_at      BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::bigint)
+        )`);
+        console.log('[PG] Created generation_cancellations table');
+    } catch (err) {
+        if (!err.message.includes('already exists')) {
+            console.error('[PG] Failed to create generation_cancellations:', err.message);
+        }
+    }
 }
 
 module.exports = { runMigrations, SCHEMA_SQL };
