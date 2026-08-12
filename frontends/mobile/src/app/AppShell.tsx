@@ -7,9 +7,28 @@ import { generationStatus } from '../state/generateStore';
 import type { GenerationStatus } from '../state/generateStore';
 import { IconFile, IconGenerate, IconPlay, IconEdit, IconMap } from './icons';
 import type { IconProps } from './icons';
+import { FilePage } from '../pages/FilePage';
+import { NavigatePage } from '../pages/NavigatePage';
+
+const DESKTOP_SHELL_QUERY = '(min-width: 1180px)';
+
+function useDesktopShell(): boolean {
+  const [isDesktop, setIsDesktop] = useState(() => window.matchMedia(DESKTOP_SHELL_QUERY).matches);
+
+  useEffect(() => {
+    const media = window.matchMedia(DESKTOP_SHELL_QUERY);
+    const update = () => setIsDesktop(media.matches);
+    update();
+    media.addEventListener('change', update);
+    return () => media.removeEventListener('change', update);
+  }, []);
+
+  return isDesktop;
+}
 
 export function AppShell({ children }: { children: JSX.Element }) {
   const [, setPath] = useState(location.pathname);
+  const isDesktop = useDesktopShell();
   useEffect(() => {
     const onPop = () => setPath(location.pathname);
     window.addEventListener('popstate', onPop);
@@ -25,6 +44,10 @@ export function AppShell({ children }: { children: JSX.Element }) {
   // kept the green SUCCESS indicator alive forever while the user browsed tabs.
   // generateStore anchors the auto-reset to the SUCCESS timestamp (watchdog).
 
+  if (isDesktop && !isSecondary) {
+    return <DesktopWorkspace path={path}>{children}</DesktopWorkspace>;
+  }
+
   return (
     <div class="app-shell">
       <Toolbar path={path} isSecondary={isSecondary} />
@@ -32,6 +55,70 @@ export function AppShell({ children }: { children: JSX.Element }) {
         {isSecondary ? <div class="secondary">{children}</div> : children}
       </div>
       {!isSecondary && <TabBar path={path} />}
+    </div>
+  );
+}
+
+function DesktopWorkspace({ path, children }: { path: string; children: JSX.Element }) {
+  const modes: { route: '/generate' | '/play' | '/edit'; key: 'tab_generate' | 'tab_play' | 'tab_edit'; Icon: (p: IconProps) => JSX.Element }[] = [
+    { route: '/generate', key: 'tab_generate', Icon: IconGenerate },
+    { route: '/play', key: 'tab_play', Icon: IconPlay },
+    { route: '/edit', key: 'tab_edit', Icon: IconEdit },
+  ];
+  const hasWorkspaceMode = modes.some((mode) => path === mode.route || path.startsWith(mode.route + '/'));
+
+  return (
+    <div class="app-shell desktop-shell">
+      <header class="desktop-header">
+        <span class="desktop-header__brand">Animastor</span>
+        <nav class="desktop-modes" aria-label="Workspace mode">
+          {modes.map(({ route, key, Icon }) => {
+            const active = path === route || path.startsWith(route + '/');
+            return (
+              <button
+                type="button"
+                class={'desktop-modes__item' + (active ? ' desktop-modes__item--active' : '')}
+                aria-current={active ? 'page' : undefined}
+                onClick={() => navigate(route)}
+              >
+                <Icon width={18} height={18} />
+                <span>{t(key)}</span>
+              </button>
+            );
+          })}
+        </nav>
+        <div class="desktop-header__actions">
+          <button class="toolbar__ai-chip" aria-label={t('toolbar_ai')} onClick={() => navigate('/ai')}>
+            {t('toolbar_ai')}
+          </button>
+          <button class="toolbar__btn" aria-label={t('settings')} onClick={() => navigate('/settings')}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="22" height="22"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0 .33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-.33 1.82l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09A1.65 1.65 0 0 0 15 4.6a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09A1.65 1.65 0 0 0 19.4 15z" /></svg>
+          </button>
+        </div>
+      </header>
+      <div class="desktop-layout">
+        <aside class="desktop-panel desktop-panel--file" aria-label={t('tab_file')}>
+          <div class="desktop-panel__title"><IconFile width={18} height={18} /> {t('tab_file')}</div>
+          <FilePage />
+        </aside>
+        <main class="desktop-main">
+          {hasWorkspaceMode ? children : <DesktopStartState />}
+        </main>
+        <aside class="desktop-panel desktop-panel--navigator" aria-label={t('tab_navigate')}>
+          <div class="desktop-panel__title"><IconMap width={18} height={18} /> {t('tab_navigate')}</div>
+          <NavigatePage />
+        </aside>
+      </div>
+    </div>
+  );
+}
+
+function DesktopStartState() {
+  return (
+    <div class="desktop-start-state">
+      <IconFile width={28} height={28} />
+      <span>{t('file_from_device')}</span>
+      <small>{t('file_from_device_desc')}</small>
     </div>
   );
 }
