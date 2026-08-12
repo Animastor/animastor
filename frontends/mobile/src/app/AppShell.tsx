@@ -1,5 +1,5 @@
 import type { JSX } from 'preact';
-import { useState, useEffect } from 'preact/hooks';
+import { useCallback, useState, useEffect, useRef } from 'preact/hooks';
 import { t } from './i18n';
 import { navigate, START_ROUTE, TAB_ROUTES } from './router';
 import { secondaryTitle, secondaryAction } from './titleStore';
@@ -9,6 +9,7 @@ import { IconFile, IconGenerate, IconPlay, IconEdit, IconMap, IconChevronLeft, I
 import type { IconProps } from './icons';
 import { FilePage } from '../pages/FilePage';
 import { NavigatePage } from '../pages/NavigatePage';
+import { AiAssistantPage } from '../pages/AiAssistantPage';
 import { position as activePosition } from '../state/positionStore';
 import { bookId as openBookId } from '../state/generateStore';
 import { getJson } from '../api/client';
@@ -57,8 +58,8 @@ export function AppShell({ children }: { children: JSX.Element }) {
   // kept the green SUCCESS indicator alive forever while the user browsed tabs.
   // generateStore anchors the auto-reset to the SUCCESS timestamp (watchdog).
 
-  if (isDesktop && !isSecondary) {
-    return <DesktopWorkspace path={path}>{children}</DesktopWorkspace>;
+  if (isDesktop) {
+    return <DesktopWorkspace path={path} isSecondary={isSecondary}>{children}</DesktopWorkspace>;
   }
 
   return (
@@ -72,10 +73,27 @@ export function AppShell({ children }: { children: JSX.Element }) {
   );
 }
 
-function DesktopWorkspace({ path, children }: { path: string; children: JSX.Element }) {
+function DesktopWorkspace({ path, isSecondary, children }: { path: string; isSecondary: boolean; children: JSX.Element }) {
   const [panelPrefs, setPanelPrefs] = useState<DesktopPanelPrefs>(readDesktopPanelPrefs);
   const { filePanelCollapsed, navigatorPanelCollapsed } = panelPrefs;
   useEffect(() => { writeDesktopPanelPrefs(panelPrefs); }, [panelPrefs]);
+  // Assistant dock (plan §8): contextual overlay opened from the header — never
+  // a route change, so the workspace below keeps its state. Escape + close
+  // button + header toggle dismiss it; focus returns to the invoking chip.
+  const [assistantOpen, setAssistantOpen] = useState(false);
+  const assistantBtnRef = useRef<HTMLButtonElement | null>(null);
+  // Single dismissal path (Escape / close button) so focus always returns to the
+  // invoking chip (plan §8) and the dock never unmounts with focus inside it.
+  const closeAssistant = useCallback(() => {
+    setAssistantOpen(false);
+    assistantBtnRef.current?.focus();
+  }, []);
+  useEffect(() => {
+    if (!assistantOpen) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') closeAssistant(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [assistantOpen, closeAssistant]);
   const modes: { route: '/generate' | '/play' | '/edit'; key: 'tab_generate' | 'tab_play' | 'tab_edit'; Icon: (p: IconProps) => JSX.Element }[] = [
     { route: '/generate', key: 'tab_generate', Icon: IconGenerate },
     { route: '/play', key: 'tab_play', Icon: IconPlay },
@@ -108,7 +126,13 @@ function DesktopWorkspace({ path, children }: { path: string; children: JSX.Elem
         </nav>
         <div class="desktop-header__actions">
           <GenerationStatusButton />
-          <button class="toolbar__ai-chip" aria-label={t('toolbar_ai')} onClick={() => navigate('/ai')}>
+          <button
+            ref={assistantBtnRef}
+            class={'toolbar__ai-chip' + (assistantOpen ? ' toolbar__ai-chip--active' : '')}
+            aria-label={t('toolbar_ai')}
+            aria-expanded={assistantOpen}
+            onClick={() => setAssistantOpen((open) => !open)}
+          >
             {t('toolbar_ai')}
           </button>
           <button class="toolbar__btn" aria-label={t('settings')} onClick={() => navigate('/settings')}>
@@ -134,7 +158,9 @@ function DesktopWorkspace({ path, children }: { path: string; children: JSX.Elem
           <FilePage />
         </aside>
         <main class="desktop-main">
-          {hasWorkspaceMode ? children : <DesktopStartState />}
+          {hasWorkspaceMode ? children
+            : isSecondary ? <DesktopSecondary path={path}>{children}</DesktopSecondary>
+            : <DesktopStartState />}
         </main>
         <aside class={'desktop-panel desktop-panel--navigator' + (navigatorPanelCollapsed ? ' desktop-panel--collapsed' : '')} aria-label={t('tab_navigate')}>
           <div class="desktop-panel__title">
@@ -153,6 +179,33 @@ function DesktopWorkspace({ path, children }: { path: string; children: JSX.Elem
           <NavigatePage />
         </aside>
       </div>
+      {/* Assistant dock — contextual overlay below the header (plan §8). The
+          embedded AiAssistantPage keeps its session list / modes / context;
+          only the back arrow becomes a close action. */}
+      {assistantOpen && (
+        <div class="assistant-dock" role="complementary" aria-label={t('ai')}>
+          <AiAssistantPage embedded onClose={closeAssistant} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Desktop containment for secondary routes (plan §4.4/§8): settings, library,
+// workflows, dev and the /ai deep link render inside the desktop shell as full
+// central content with a compact back bar — they no longer drop to the mobile
+// toolbar composition on desktop.
+function DesktopSecondary({ path, children }: { path: string; children: JSX.Element }) {
+  const title = secondaryTitle.value ?? secondaryTitleByPath(path);
+  return (
+    <div class="desktop-secondary">
+      <div class="desktop-secondary-bar">
+        <button class="toolbar__btn" aria-label={t('back')} onClick={() => history.back()}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="24" height="24"><path d="M15 18l-6-6 6-6" /></svg>
+        </button>
+        <span class="desktop-secondary-bar__title">{title}</span>
+      </div>
+      {children}
     </div>
   );
 }

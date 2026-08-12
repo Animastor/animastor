@@ -8,7 +8,7 @@ import { bookId as generateBookId } from '../state/generateStore';
 import { position as positionSignal } from '../state/positionStore';
 import { setSecondaryTitle } from '../app/titleStore';
 import { Modal, toast } from '../lib/ui';
-import { IconMic, IconMicOff, IconSend, IconMenu, IconAdd, IconSparkle, IconDownload, IconEdit, IconMap, IconFile, IconCheck, IconCopy, IconChevronLeft, IconChevronRight } from '../app/icons';
+import { IconMic, IconMicOff, IconSend, IconMenu, IconAdd, IconSparkle, IconDownload, IconEdit, IconMap, IconFile, IconCheck, IconCopy, IconChevronLeft, IconChevronRight, IconClose } from '../app/icons';
 import type { IconProps } from '../app/icons';
 
 // AiAssistantPage — 1:1 with AiAssistantFragment. Chat with AI: session history
@@ -54,8 +54,12 @@ function modeLabel(id: string): string {
 
 let nextId = 1;
 
-export function AiAssistantPage(props: { path?: string }) {
-  void props;
+// embedded — desktop shell variant (plan §8): the assistant is a docked panel,
+// not a route; the mobile "back" arrow becomes a close action so history is
+// never polluted by the overlay.
+export function AiAssistantPage(props: { path?: string; embedded?: boolean; onClose?: () => void }) {
+  void props.path;
+  const { embedded = false, onClose } = props;
   const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [sessions, setSessions] = useState<ChatSessionApi[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
@@ -82,7 +86,14 @@ export function AiAssistantPage(props: { path?: string }) {
 
   const bid = generateBookId.value;
 
-  useEffect(() => { setSecondaryTitle(t('ai')); return () => setSecondaryTitle(null); }, []);
+  // Route title is only meaningful when mounted as a route. In the desktop dock
+  // (embedded) the assistant has its own header and must NOT overwrite the
+  // secondary-bar title of the page rendered underneath the overlay.
+  useEffect(() => {
+    if (embedded) return;
+    setSecondaryTitle(t('ai'));
+    return () => setSecondaryTitle(null);
+  }, [embedded]);
 
   const scrollToBottom = useCallback(() => {
     requestAnimationFrame(() => {
@@ -305,9 +316,15 @@ export function AiAssistantPage(props: { path?: string }) {
           between them (Android: 0dp positionBar constrained between
           sessionListButton and newChatButton). */}
       <div class="ai-header">
-        <button class="toolbar__btn" aria-label={t('back')} onClick={() => history.back()}>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="24" height="24"><path d="M15 18l-6-6 6-6" /></svg>
-        </button>
+        {embedded ? (
+          <button class="toolbar__btn" aria-label={t('edit_close')} onClick={onClose}>
+            <IconClose />
+          </button>
+        ) : (
+          <button class="toolbar__btn" aria-label={t('back')} onClick={() => history.back()}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="24" height="24"><path d="M15 18l-6-6 6-6" /></svg>
+          </button>
+        )}
         <button class="toolbar__btn" aria-label={t('ai_session_list')} onClick={() => setShowSessions(true)}>
           <IconMenu />
         </button>

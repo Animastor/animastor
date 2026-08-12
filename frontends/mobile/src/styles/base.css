@@ -96,7 +96,59 @@ button { font: inherit; color: inherit; }
    reuses the existing File/Navigate pages and central route content; desktop
    refinements (collapsible rails, editor workspace and responsive priorities)
    are separate small steps. */
-.desktop-shell { background: var(--bg); }
+.desktop-shell { background: var(--bg); position: relative; }
+.toolbar__ai-chip--active { background: var(--surface-2); }
+/* Assistant dock — contextual overlay panel (plan §8): docked right, below the
+   header, above the workspace but below global modal priority (z 60 < 100). */
+.assistant-dock {
+  position: absolute;
+  top: 4rem;
+  right: 0;
+  bottom: 0;
+  width: min(26rem, 100%);
+  z-index: 60;
+  display: flex;
+  background: var(--surface);
+  border-left: 1px solid var(--outline-2);
+  box-shadow: var(--elev-3);
+  animation: assistant-dock-in 0.18s ease;
+}
+.assistant-dock > .ai-page { flex: 1; min-height: 0; }
+@keyframes assistant-dock-in {
+  from { transform: translateX(16px); opacity: 0; }
+  to { transform: none; opacity: 1; }
+}
+/* Desktop containment for secondary routes (plan §4.4): compact back bar above
+   the full-height central page, all inside the shell — no mobile toolbar. */
+.desktop-secondary {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.desktop-secondary-bar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 3rem;
+  padding: 0 0.75rem;
+  border-bottom: 1px solid var(--outline-2);
+  background: var(--surface);
+}
+.desktop-secondary-bar__title {
+  color: var(--text);
+  font-size: 1rem;
+  font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.desktop-secondary > .page { flex: 1; min-height: 0; }
+/* Settings keeps its pinned-footer scroll model inside the shell too (its outer
+   .page must not double-scroll next to .settings-page__scroll). */
+.desktop-main .settings-page { overflow: hidden; }
 .desktop-header {
   min-height: 4rem;
   display: grid;
@@ -269,6 +321,7 @@ button { font: inherit; color: inherit; }
   min-width: 0;
   min-height: 0;
   display: flex;
+  flex-direction: column;
   overflow: hidden;
   background: var(--surface);
   border: 1px solid var(--outline-2);

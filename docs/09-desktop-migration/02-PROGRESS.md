@@ -117,10 +117,15 @@
 
 - [ ] Ревалидация fullscreen, subtitles, layer toggles, внешнего seek, soft refresh (Phase 9 runtime-прогон)
 
-## Phase 8 — Assistant и secondary-экраны
+## Phase 8 — Assistant и secondary-экраны — первый срез сделан
 
-- [ ] Выделить контент Assistant из route-оболочки; монтировать в sheet/dock
-- [ ] Settings/Library/workflows в шелле
+Сделано (этап 2, срез 1):
+
+- [x] **Assistant как десктопный dock** (план §8): клик по AI-чипу в десктопном header открывает оверлей-панель справа (26rem, ниже header, z-60 — ниже модалок), НЕ роут — workspace под ней сохраняет состояние. `AiAssistantPage` получила props `embedded`/`onClose`: стрелка «назад» заменяется на кнопку закрытия (`IconClose`), роут-заголовок не затирается (`setSecondaryTitle` загарден `if (embedded)`)
+- [x] Закрытие: Escape / кнопка закрытия / повторный клик по чипу; единый `closeAssistant` возвращает фокус на чип (план §11 — focus restoration); `aria-expanded` + active-класс на чипе
+- [x] Modal списка сессий внутри dock не конфликтует с Escape (lib/ui Modal закрывается только по backdrop-клику)
+- [x] **Secondary-маршруты в шелле** (план §4.4/§8): settings/library/workflows/dev и deep-link `/ai` рендерятся внутри DesktopWorkspace как центральный контент с компактной back-бар (заголовок из `secondaryTitle`/пути); на мобильном `.secondary`-обёртка не тронута. `.desktop-main` стал flex-column; `.settings-page` сохраняет pinned-footer scroll-модель
+- [x] `tsc --noEmit` + `vite build` — OK; code-review пройден
 
 ## Phase 9 — Responsive integration и usability pass
 
