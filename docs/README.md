@@ -98,6 +98,16 @@
 
 ---
 
+## 🖥 Миграция Mobile Web → Desktop — `09-desktop-migration/`
+
+| Документ | Описание |
+|---|---|
+| [`README.md`](09-desktop-migration/README.md) | Обзор раздела + ключевое решение (десктоп внутри `frontends/mobile/`, не `frontends/main`) |
+| [`01-MIGRATION-PLAN.md`](09-desktop-migration/01-MIGRATION-PLAN.md) | Полный план: десктопный шелл, Editor/Generator/Player workspace, Assistant, фазы 1–10 |
+| [`02-PROGRESS.md`](09-desktop-migration/02-PROGRESS.md) | Трекер прогресса: shell-прототип сделан, Editor в работе |
+
+---
+
 ## 🗂 База знаний (корень `docs/`)
 
 | Документ | Описание |
@@ -183,6 +193,11 @@ docs/
 │   ├── 04-MAPPING-TABLES.md
 │   ├── 05-SCREEN-IMPLEMENTATION-ORDER.md
 │   └── 06-RISKS-AND-ALTERNATIVES.md
+│
+├── 09-desktop-migration/             ← миграция Mobile Web → Desktop
+│   ├── README.md
+│   ├── 01-MIGRATION-PLAN.md
+│   └── 02-PROGRESS.md
 │
 └── 99-archive/                        ← устаревшие документы
     ├── LLM_AUDIT_CONTEXT.md
