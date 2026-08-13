@@ -132,6 +132,12 @@ function DesktopWorkspace({ path, isSecondary, children }: { path: string; isSec
     <div class="app-shell desktop-shell">
       <header class="desktop-header">
         <div class="desktop-header__identity">
+          {/* Brand: existing app logo (website/logo.png) + wordmark. The logo's
+              square cream canvas is circle-cropped in CSS (border-radius:50%
+              + object-fit:cover — the Android launcher's round-container
+              treatment) so it reads as a small app-icon, not a stuck-out
+              square. */}
+          <img class="desktop-header__logo" src="/logo.png" alt="" width="36" height="36" />
           <span class="desktop-header__brand">Animastor</span>
           <DesktopBookContext />
         </div>

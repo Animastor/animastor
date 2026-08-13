@@ -166,6 +166,18 @@ button { font: inherit; color: inherit; }
   letter-spacing: 0.08em;
   white-space: nowrap;
 }
+.desktop-header__logo {
+  /* Brand mark next to the wordmark (website/logo.png) as a small app-icon:
+     the logo is a cream square whose corners would stick out of the panel, so
+     it is circle-cropped (Android launcher treatment — round container around
+     the golden emblem).     Circle size ≈ wordmark height (20% above it); the logo's own cream
+     margin stays as air around the emblem. Never grows the 4rem header. */
+  height: 2.25rem;
+  width: 2.25rem;
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+}
 .desktop-header__identity {
   min-width: 0;
   display: flex;
