@@ -1728,6 +1728,14 @@ export function EditPage(props: { path?: string }) {
         {hasUnits && <span class="gen-posbar__units">{unitCountText}</span>}
       </button>
 
+      {/* Desktop editor columns: the preview column (carousel + timeline) and
+          the inspector column (tabs + fields) each fill the workspace height
+          on desktop (grid rows minmax(0,1fr)), so neither starves the other.
+          On mobile the wrappers are display:contents, keeping the flat 1:1
+          Android composition (the children stay direct flex children of
+          .edit-page). */}
+      <div class="edit-preview">
+
       {/* Unit carousel — collapsible panel (web deviation: frees vertical
           space for the editor). Expanded = original carousel + a small
           collapse chevron floating in its top-right corner (zero extra
@@ -1797,7 +1805,9 @@ export function EditPage(props: { path?: string }) {
           </div>
         </div>
       )}
+      </div>
 
+      <div class="edit-inspector">
       {/* Property tabs with scroll indicators */}
       <div class="edit-tabs">
         <button class="edit-tabs__scroll" type="button" aria-label="Scroll left" disabled={!canScrollLeft} style={{ opacity: canScrollLeft ? 1 : 0.3 }} onClick={() => scrollTabs(-1)}>
@@ -1823,6 +1833,7 @@ export function EditPage(props: { path?: string }) {
       {/* Content area */}
       <div class="edit-content">
         {loading ? <div class="progress"><div class="progress__bar" /></div> : renderContent()}
+      </div>
       </div>
 
       {/* Bottom save row */}

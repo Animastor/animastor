@@ -11,9 +11,10 @@ import { FilePage } from '../pages/FilePage';
 import { NavigatePage } from '../pages/NavigatePage';
 import { AiAssistantPage } from '../pages/AiAssistantPage';
 import { position as activePosition } from '../state/positionStore';
-import { bookId as openBookId } from '../state/generateStore';
+import { bookId as openBookId, phase as playerPhase } from '../state/generateStore';
 import { getJson } from '../api/client';
 import type { BookData } from '../api/models';
+import { sceneRefs } from '../api/models';
 import { useDesktopShell } from './desktop';
 
 const DESKTOP_PANEL_PREFS_KEY = 'animastor_desktop_panels';
@@ -77,6 +78,32 @@ function DesktopWorkspace({ path, isSecondary, children }: { path: string; isSec
   const [panelPrefs, setPanelPrefs] = useState<DesktopPanelPrefs>(readDesktopPanelPrefs);
   const { filePanelCollapsed, navigatorPanelCollapsed } = panelPrefs;
   useEffect(() => { writeDesktopPanelPrefs(panelPrefs); }, [panelPrefs]);
+  // Panel routes (/file, /navigate) are side wings in the desktop shell — the
+  // central workspace must always be one of the three work screens (Генератор /
+  // Плеер / Редактор), never a duplicate of a wing. When the route lands on a
+  // panel page while a book is open, bounce the center to the matching screen:
+  // Плеер when the book already has parsed/generated scenes, Генератор when it
+  // is still a raw unparsed import (first-import scenario). Mirrors the mobile
+  // import flow (navigationEvent → Play/Generate tab), extended to session
+  // restore and manual /file visits, which never emitted the event.
+  useEffect(() => {
+    if (path !== '/file' && path !== '/navigate') return;
+    const bId = openBookId.value;
+    if (!bId) return;
+    let disposed = false;
+    void getJson<BookData>(`/book/${encodeURIComponent(bId)}`)
+      .then((bd) => {
+        if (disposed) return;
+        navigate(sceneRefs(bd).length > 0 ? '/play' : '/generate', { replace: true });
+      })
+      .catch(() => {
+        // Book fetch failed (transient network / stale id) — fall back to the
+        // store's phase mirror, which import/restore already settled.
+        if (disposed) return;
+        navigate(playerPhase.value === 'SCENE_READY' ? '/play' : '/generate', { replace: true });
+      });
+    return () => { disposed = true; };
+  }, [path, openBookId.value]);
   // Assistant dock (plan §8): contextual overlay opened from the header — never
   // a route change, so the workspace below keeps its state. Escape + close
   // button + header toggle dismiss it; focus returns to the invoking chip.
@@ -165,7 +192,15 @@ function DesktopWorkspace({ path, isSecondary, children }: { path: string; isSec
         <main class="desktop-main">
           {hasWorkspaceMode ? children
             : isSecondary ? <DesktopSecondary path={path}>{children}</DesktopSecondary>
-            : openBookId.value ? <FilePage /> /* /file with a book open mirrors the mobile tab */
+            // A panel route with a book open never renders the wing in the
+            // center — the redirect above bounces to the matching work screen;
+            // this brief loading state covers the in-flight book fetch.
+            : openBookId.value ? (
+              <div class="desktop-start-state" role="status" aria-live="polite">
+                <div class="progress desktop-start-state__progress"><div class="progress__bar" /></div>
+                <small>{t('file_status_opening')}</small>
+              </div>
+            )
             : <DesktopStartState
                 onOpenFile={() => {
                   // Show the File panel and let its always-mounted picker open.

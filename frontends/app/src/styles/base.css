@@ -347,7 +347,12 @@ button { font: inherit; color: inherit; }
   border-radius: var(--radius-md);
   box-shadow: var(--elev-1);
 }
-.desktop-main > .page { min-width: 0; }
+/* Pages inside the central workspace must be allowed to shrink to the
+   available height (min-height: auto would force them to content height and
+   .desktop-main's overflow:hidden would clip the overflow — the editor's
+   tall field list was the visible casualty). Same pattern as
+   .desktop-secondary > .page below. */
+.desktop-main > .page { min-width: 0; min-height: 0; }
 .desktop-start-state {
   flex: 1;
   display: flex;
@@ -371,6 +376,9 @@ button { font: inherit; color: inherit; }
   margin-top: 0.875rem;
 }
 .desktop-start-state__btn { height: 2.5rem; font-size: 0.875rem; transition: background-color 0.15s ease; }
+/* Brief loading state while a book-open panel route resolves to its work
+   screen (see DesktopWorkspace redirect) — indeterminate bar + status text. */
+.desktop-start-state__progress { width: 12rem; }
 .desktop-start-state__btn:hover { background: var(--primary-pressed); }
 .desktop-start-state__btn.btn--outlined:hover { background: var(--surface-2); }
 
@@ -417,15 +425,20 @@ button { font: inherit; color: inherit; }
   grid-template-columns: minmax(20rem, 44%) minmax(0, 1fr);
   grid-template-areas:
     "header   header"
-    "carousel tabs"
-    "timeline content"
+    "preview  inspector"
     "dirty    dirty"
-    "error    error"
-    "empty    empty";
+    "error    error";
+  /* Both editor columns fill the workspace height below the header
+     (minmax(0,1fr)), and each column is its own flex column: preview =
+     carousel + timeline, inspector = tabs + fields. The preview stage shrinks
+     to the available height (object-fit: contain) instead of driving its row
+     by the image size, so the inspector can never be squeezed to a sliver.
+     The no-book empty state (.edit-empty) is position:absolute, so it is not
+     a grid item — no row for it. */
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
   gap: 0.625rem;
   padding: 0.75rem;
   overflow-y: auto;
-  align-content: start;
 }
 /* Desktop editor header — breadcrumb left, unit count, prev/next, save state,
    persistent Save (plan §5.1/§5.2). Text + colour for the state, never colour
@@ -649,18 +662,41 @@ button { font: inherit; color: inherit; }
 /* Desktop hides the mobile carousel panel chrome inside the preview column. */
 .desktop-main .edit-panel--carousel .edit-panel__strip,
 .desktop-main .edit-panel--carousel .edit-panel__collapse { display: none; }
-.desktop-main .edit-panel--carousel { grid-area: carousel; align-self: start; }
-/* The waveform column stretches below the carousel, mirroring the plan's
-   preview-column composition (waveform directly under the preview). */
-.desktop-main .edit-panel--timeline { grid-area: timeline; align-self: stretch; }
-.desktop-main .edit-tabs { grid-area: tabs; align-self: start; }
-.desktop-main .edit-content { grid-area: content; min-height: 0; }
+/* Preview column: carousel panel fills the column (its stage canvas adapts to
+   the available height), timeline sits compact below it. */
+.desktop-main .edit-preview {
+  grid-area: preview;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.625rem;
+}
+.desktop-main .edit-panel--carousel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.desktop-main .edit-panel--carousel .edit-stage { flex: 1; min-height: 0; }
+.desktop-main .edit-panel--timeline { flex-shrink: 0; }
+/* Inspector column: tabs pinned on top, fields fill the rest and scroll. */
+.desktop-main .edit-inspector {
+  grid-area: inspector;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.625rem;
+}
+.desktop-main .edit-tabs { flex-shrink: 0; }
+.desktop-main .edit-content { flex: 1; min-height: 0; }
 /* Mobile bottom Save is superseded by the persistent header Save on desktop
    (plan §5.1/§5.2) — one explicit save action per composition. */
 .desktop-main .edit-bottom { display: none; }
 .desktop-main .edit-dirty { grid-area: dirty; }
 .desktop-main .edit-error { grid-area: error; }
-.desktop-main .edit-empty { grid-area: empty; }
+/* No .edit-empty grid-area: the empty state is position:absolute inset:0
+   (base rule), so on desktop it must overlay the whole editor page like on
+   mobile — pinning it to a grid area would anchor it to a 0px row instead. */
 
 /* Prompt editors (image.prompt / video.action) get durable room on desktop: full
    inspector width, taller initial height, vertical resize, preserved line breaks. */
@@ -2039,6 +2075,12 @@ button { font: inherit; color: inherit; }
   background: var(--surface); /* ?attr/colorSurface */
   position: relative;
 }
+/* Mobile keeps the flat 1:1 Android composition: the desktop column wrappers
+   are transparent to layout, so their children (carousel/timeline/tabs/fields)
+   remain direct flex children of .edit-page. The desktop shell block below
+   overrides these to real flex columns. */
+.edit-preview,
+.edit-inspector { display: contents; }
 .edit-posbar { flex-shrink: 0; }
 
 /* Collapsible panels (web deviation — Edit carousel + waveform). Expanded:
