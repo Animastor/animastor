@@ -30,6 +30,10 @@ module.exports = function(redis) {
             video_status: data.video_status || 'pending',
             audio_status: data.audio_status || 'pending',
             padded_text: !!data.padded_text,
+            // TEMPORARY (research): preserve per-chunk unit binding — saveChunk is
+            // called by task-handler on every audio_chunk result and must not drop
+            // the unit_id that generation.js wrote into the chunk key.
+            unit_id: data.unit_id || null,
         };
         await redis.set(`animastor:chunk:${id}`, JSON.stringify(chunkForRedis));
         await redis.sadd(`animastor:chunks:${data.book_id}`, id);

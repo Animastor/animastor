@@ -30,7 +30,14 @@ async function runFFmpegMerge(args) {
     });
 }
 
-async function runFFmpegTrim(inputPath, outputPath, startTimeSec = 0, durationSec = null) {
+// TEMPORARY (research): tail-only cleanup — trims trailing silence but keeps
+// internal pauses (in-chunk and inter-chunk). The legacy filter below
+// (stop_periods=-1) removes silence from the MIDDLE of the file, which shrinks
+// the merged track below the sum of chunk durations.
+const TAIL_ONLY_FILTER = 'areverse,silenceremove=start_periods=1:start_duration=0.2:start_threshold=-50dB,areverse';
+const LEGACY_MIDDLE_TRIM_FILTER = 'silenceremove=stop_periods=-1:stop_duration=0.2:stop_threshold=-50dB';
+
+async function runFFmpegTrim(inputPath, outputPath, startTimeSec = 0, durationSec = null, tailOnly = false) {
     return new Promise((resolve, reject) => {
         const args = ['-i', inputPath];
 
@@ -38,7 +45,7 @@ async function runFFmpegTrim(inputPath, outputPath, startTimeSec = 0, durationSe
             args.push('-ss', String(startTimeSec));
         }
 
-        const filterArgs = ['-af', 'silenceremove=stop_periods=-1:stop_duration=0.2:stop_threshold=-50dB'];
+        const filterArgs = ['-af', tailOnly ? TAIL_ONLY_FILTER : LEGACY_MIDDLE_TRIM_FILTER];
         args.push(...filterArgs);
 
         if (durationSec !== null) {

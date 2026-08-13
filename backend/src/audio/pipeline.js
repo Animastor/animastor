@@ -9,6 +9,20 @@ const ffmpeg = require('./ffmpeg');
 const validation = require('./validation');
 const chunks = require('./chunks');
 
+// TEMPORARY (research): when set, source audio chunks are NOT deleted after merge
+// so their real durations can be measured while they are still on disk.
+const KEEP_AUDIO_CHUNKS = !!process.env.KEEP_AUDIO_CHUNKS;
+
+// TEMPORARY (research): when set, final cleanup trims ONLY the trailing silence
+// (tail-only) instead of removing silence from the middle of the file.
+// This keeps Σ(chunk durations) ≈ merged duration, which is what video sync needs.
+const CLEANUP_TAIL_ONLY = !!process.env.AUDIO_CLEANUP_TAIL_ONLY;
+
+// TEMPORARY (research): when set, real durations of every source chunk (raw and
+// after tail-only trim) are measured before merge and written next to the merged
+// file as <scene>.chunk-durations.json — for comparing against video chunk timings.
+const TRACK_CHUNK_DURATIONS = !!process.env.TRACK_CHUNK_DURATIONS;
+
 function createConcatFile(chunks, buildId) {
     const concatContent = chunks
         .map(chunk => `file '${chunk}'`)
@@ -67,14 +81,18 @@ async function buildSceneAudio(chunkPaths, finalPath, buildId = null, force = fa
 
         try {
             helpers.log(`ffmpeg cleanup: trim tail and save to temp path...`);
-            await ffmpeg.runFFmpegTrim(singleChunk, tempPath);
+            await ffmpeg.runFFmpegTrim(singleChunk, tempPath, 0, null, CLEANUP_TAIL_ONLY);
 
             fs.renameSync(tempPath, finalPath);
             helpers.log(`✅ Single chunk processed: ${path.basename(finalPath)}`);
 
             if (fs.existsSync(singleChunk)) {
-                fs.unlinkSync(singleChunk);
-                helpers.log(`🗑 Deleted temp chunk: ${path.basename(singleChunk)}`);
+                if (KEEP_AUDIO_CHUNKS) {
+                    helpers.log(`🔒 KEEP_AUDIO_CHUNKS: keeping single chunk: ${path.basename(singleChunk)}`);
+                } else {
+                    fs.unlinkSync(singleChunk);
+                    helpers.log(`🗑 Deleted temp chunk: ${path.basename(singleChunk)}`);
+                }
             }
 
             return finalPath;
@@ -102,8 +120,8 @@ async function buildSceneAudio(chunkPaths, finalPath, buildId = null, force = fa
         helpers.log(`🎬 Applying final audio cleanup filter to canonical output...`);
         const tempCleanupPath = finalPath.replace('.mp3', '.cleanup.mp3');
         try {
-            await ffmpeg.runFFmpegTrim(finalPath, tempCleanupPath);
-            helpers.log(`✅ Final audio cleanup applied`);
+            await ffmpeg.runFFmpegTrim(finalPath, tempCleanupPath, 0, null, CLEANUP_TAIL_ONLY);
+            helpers.log(`✅ Final audio cleanup applied${CLEANUP_TAIL_ONLY ? ' (TAIL-ONLY mode)' : ''}`);
             fs.unlinkSync(finalPath);
             fs.renameSync(tempCleanupPath, finalPath);
         } catch (cleanupErr) {
@@ -115,7 +133,11 @@ async function buildSceneAudio(chunkPaths, finalPath, buildId = null, force = fa
 
         for (const chunk of chunkPaths) {
             if (fs.existsSync(chunk)) {
-                try { fs.unlinkSync(chunk); } catch (e) {}
+                if (KEEP_AUDIO_CHUNKS) {
+                    helpers.log(`🔒 KEEP_AUDIO_CHUNKS: keeping chunk: ${path.basename(chunk)}`);
+                } else {
+                    try { fs.unlinkSync(chunk); } catch (e) {}
+                }
             }
         }
         if (fs.existsSync(concatPath)) {
@@ -132,6 +154,50 @@ async function buildSceneAudio(chunkPaths, finalPath, buildId = null, force = fa
             try { fs.unlinkSync(concatPath); } catch (e) {}
         }
         return null;
+    }
+}
+
+// TEMPORARY (research): measure real durations of every source chunk before merge.
+// raw = duration as-is on disk; tail = duration after the same tail-only trim that
+// the final cleanup applies. Chunks are bound to their source unit via Redis
+// (animastor:chunk:* → unit_id, set during generation).
+// Written as <scene>.chunk-durations.json next to the merged file.
+async function trackChunkDurations(redis, bookId, chapterId, sceneId, chunkPaths, finalPath) {
+    if (!TRACK_CHUNK_DURATIONS || !chunkPaths.length) return;
+    try {
+        const records = [];
+        for (let i = 0; i < chunkPaths.length; i++) {
+            const chunkPath = chunkPaths[i];
+            if (!fs.existsSync(chunkPath)) continue;
+            const chunkIndex = i + 1;
+            const raw = await ffmpeg.probeDuration(chunkPath);
+            let tail = raw;
+            if (CLEANUP_TAIL_ONLY) {
+                const tmp = chunkPath.replace(/\.mp3$/, '.tailonly.mp3');
+                try {
+                    await ffmpeg.runFFmpegTrim(chunkPath, tmp, 0, null, true);
+                    tail = await ffmpeg.probeDuration(tmp);
+                } catch (_) { tail = raw; }
+                finally {
+                    if (fs.existsSync(tmp)) { try { fs.unlinkSync(tmp); } catch (_) {} }
+                }
+            }
+            let unitId = null;
+            try {
+                const id = chunks.makeChunkId(chapterId, sceneId, chunkIndex, bookId);
+                const chunkKey = `animastor:chunk:${id}`;
+                const rawChunk = await redis.get(chunkKey);
+                if (rawChunk) unitId = JSON.parse(rawChunk).unit_id || null;
+            } catch (_) {}
+            records.push({ chunk_index: chunkIndex, unit_id: unitId, raw_duration_sec: raw, tail_duration_sec: tail });
+        }
+        const sumRaw = records.reduce((s, r) => s + r.raw_duration_sec, 0);
+        const sumTail = records.reduce((s, r) => s + r.tail_duration_sec, 0);
+        const metaPath = finalPath.replace(/\.mp3$/, '.chunk-durations.json');
+        fs.writeFileSync(metaPath, JSON.stringify({ records, sum_raw_sec: sumRaw, sum_tail_sec: sumTail, tail_only: CLEANUP_TAIL_ONLY }, null, 2));
+        helpers.log(`📏 trackChunkDurations: ${records.length} chunks → sum_raw=${sumRaw.toFixed(3)}s sum_tail=${sumTail.toFixed(3)}s → ${path.basename(metaPath)}`);
+    } catch (err) {
+        helpers.warn(`trackChunkDurations failed: ${err.message}`);
     }
 }
 
@@ -170,6 +236,8 @@ async function mergeSceneAudioChunks(redis, bookId, chapterId, sceneId, buildId,
         if (emptyChunks.length > 0) {
             helpers.warn(`${emptyChunks.length} chunk(s) are empty — will produce incomplete output: [${emptyChunks.join(',')}]`);
         }
+
+        await trackChunkDurations(redis, bookId, chapterId, sceneId, chunkPaths, finalPath);
 
         const result = await buildSceneAudio(chunkPaths, finalPath, buildId, true);
         return result;

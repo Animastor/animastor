@@ -550,34 +550,90 @@ function toValidLTXFrames(rawTotal) {
 }
 
 // ======================================================
-// GROUP SPLITTER (duration-aware)
+// GROUP SPLITTER (LTX-drift aware)
 // ======================================================
-// Groups consecutive image units into video chunks based on cumulative
-// duration rather than raw count. Target: ~20s per video chunk.
-// Max 4 units per group (model limitation of current LTX workflows).
+// Groups consecutive image units into video chunks. LTX 2.3 requires each
+// generated clip to have a frame count of 8n+1 (official: 9, 17, 25, 33, ...).
+// Every chunk pays this alignment "tax" (rounding its raw frame sum UP to a
+// valid 8n+1), and the tax is paid PER CHUNK — so fewer, larger chunks keep
+// the total video length closest to the audio track.
+//
+// DP chooses the grouping that minimises the sum of per-chunk alignment
+// overhead (totalFrames − raw frames), so the concatenated scene video lands
+// as close to the real audio duration as the 8n+1 constraint allows.
+//
+// Constraints:
+//   - max 4 units per group (model limitation of current LTX workflows)
+//   - group duration ≤ VIDEO_CHUNK_MAX_SEC (default 30s; LTX target is ~20s,
+//     slightly longer groups are allowed when they cut alignment drift)
+//   - soft penalty for groups exceeding VIDEO_CHUNK_TARGET_SEC (quality guard)
 
 const VIDEO_CHUNK_TARGET_SEC = 20;
+const VIDEO_CHUNK_MAX_SEC = parseInt(process.env.VIDEO_CHUNK_MAX_SEC || '30', 10);
+const MAX_UNITS_PER_GROUP = 4;
+const OVER_TARGET_PENALTY_PER_SEC = 0.25; // frames of virtual cost per second over 20s
+
+// Alignment overhead (in frames) a group pays when its raw frame sum is
+// rounded up to a valid LTX 8n+1 count. Zero means the group sum is already
+// a valid frame count.
+function groupAlignmentOverhead(iuDurations, start, end) {
+    let rawFrames = 0;
+    for (let i = start; i < end; i++) {
+        const dur = Math.max(iuDurations[i] || MIN_IU_DURATION, MIN_IU_DURATION);
+        rawFrames += Math.round(dur * VIDEO_FPS);
+    }
+    return toValidLTXFrames(rawFrames) - rawFrames;
+}
+
+function groupDuration(iuDurations, start, end) {
+    let sec = 0;
+    for (let i = start; i < end; i++) {
+        sec += Math.max(iuDurations[i] || MIN_IU_DURATION, MIN_IU_DURATION);
+    }
+    return sec;
+}
 
 function selectWorkflowGroups(units, iuDurations) {
-    const groups = [];
-    let offset = 0;
-    while (offset < units.length) {
-        let sum = 0;
-        let count = 0;
-        // Accumulate units until we hit target duration or max 4 per group.
-        // Always include at least 1 unit (even if its duration exceeds target).
-        for (let i = offset; i < units.length && count < 4; i++) {
-            const dur = Math.max(iuDurations[i] || MIN_IU_DURATION, MIN_IU_DURATION);
-            // If adding this unit would push us beyond target AND we already
-            // have at least 1 unit, start a new group.
-            if (count > 0 && sum + dur > VIDEO_CHUNK_TARGET_SEC) break;
-            sum += dur;
-            count++;
+    const n = units.length;
+    if (n === 0) return [];
+
+    // dp[k] = { cost, from, groupSize } — minimal total cost to cover units[0..k)
+    // cost = alignment overhead + over-target duration penalty.
+    const dp = Array.from({ length: n + 1 }, () => ({ cost: Infinity, from: -1, groupSize: 0 }));
+    dp[0] = { cost: 0, from: -1, groupSize: 0 };
+
+    for (let k = 0; k < n; k++) {
+        if (dp[k].cost === Infinity) continue;
+        // Try group sizes from largest to smallest so that, on equal cost,
+        // the leftmost groups end up largest (stable, predictable grouping).
+        for (let g = MAX_UNITS_PER_GROUP; g >= 1; g--) {
+            const end = k + g;
+            if (end > n) continue;
+            if (g > 1) {
+                const sec = groupDuration(iuDurations, k, end);
+                if (sec > VIDEO_CHUNK_MAX_SEC) continue;
+            }
+            const overhead = groupAlignmentOverhead(iuDurations, k, end);
+            const sec = groupDuration(iuDurations, k, end);
+            const overTarget = Math.max(0, sec - VIDEO_CHUNK_TARGET_SEC) * OVER_TARGET_PENALTY_PER_SEC;
+            const cost = dp[k].cost + overhead + overTarget;
+            // `<=` keeps the last best candidate — combined with descending g
+            // this prefers larger leftmost groups on ties.
+            if (cost <= dp[end].cost) {
+                dp[end] = { cost, from: k, groupSize: g };
+            }
         }
-        groups.push({ offset, count, name: `video-ltx-${count}p` });
-        offset += count;
     }
-    return groups;
+
+    const groups = [];
+    let k = n;
+    while (k > 0) {
+        const { from, groupSize } = dp[k];
+        if (from === -1) break; // safety — should not happen for k > 0
+        groups.push({ offset: from, count: groupSize, name: `video-ltx-${groupSize}p` });
+        k = from;
+    }
+    return groups.reverse();
 }
 
 // ======================================================

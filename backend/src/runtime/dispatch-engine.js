@@ -453,8 +453,13 @@ async function dispatchStage(redis, bookId, chapterId, sceneId, stage, loadedBoo
         }
     }
 
-    // Phase 9 Step 0: Check circuit breaker
-    const circuitStatus = await circuitBreaker.checkDispatch(redis, stage);
+    // Phase 9 Step 0: Check circuit breaker (with auto-recovery: an OPEN
+    // circuit that has cooled down transitions to HALF_OPEN and lets this
+    // dispatch through as a test request — see checkDispatchWithRecovery).
+    const circuitStatus = await circuitBreaker.checkDispatchWithRecovery(redis, stage);
+    if (circuitStatus.recovered) {
+        log(`CIRCUIT_RECOVERED_TEST: ${bookId}/${chapterId}/${sceneId}:${stage} → half-open test dispatch`);
+    }
     if (!circuitStatus.allowed) {
         log(`CIRCUIT_BLOCKED: ${bookId}/${chapterId}/${sceneId}:${stage} (circuit: ${circuitStatus.circuitState})`);
         await journal.appendSceneEvent(
@@ -809,8 +814,8 @@ async function finalizeDispatch(redis, bookId, chapterId, sceneId, stage, option
     if (outcome === 'success') {
         try {
             const circuitResult = await circuitBreaker.recordSuccess(redis, stage);
-            if (circuitResult.state === circuitBreaker.CircuitState.HALF_OPEN && circuitResult.testRequest) {
-                log(`CIRCUIT_HALF_OPEN_TEST: ${stage} (test request ${circuitResult.halfOpenCount})`);
+            if (circuitResult.healed) {
+                log(`CIRCUIT_HALF_OPEN_TEST_SUCCEEDED: ${stage} — circuit closed`);
             }
         } catch (circuitErr) {
             cleanupErrors.push(`circuit:${circuitErr.message}`);

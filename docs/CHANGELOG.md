@@ -4,6 +4,46 @@ All notable changes to Animastor are documented here.
 
 ---
 
+## [Unreleased] — 2026-08-13
+
+### Added
+
+- **Синхронизация аудио/видео: raw audio chunks = источник истины для таймингов**
+  (`docs/02-orchestration/AUDIO_VIDEO_SYNC.md`):
+  - `segments.js`: каждый TTS-сегмент (= чанк) знает свой `unit_id`
+    (dialogue — напрямую, narration — `assignNarrationUnitIds` по позиции в тексте);
+  - `generation.js` + `redis-helpers.cjs`: `unit_id` пробрасывается в Redis-ключ
+    `animastor:chunk:*` (в т.ч. при приёме чанка — баг `saveChunk`, стиравший
+    `unit_id`, исправлен);
+  - `pipeline.js` (`trackChunkDurations`): замер `raw/tail` длительностей каждого
+    чанка перед merge → `<scene>.chunk-durations.json` (флаг `TRACK_CHUNK_DURATIONS`);
+  - `scene-callbacks.js` (IU-RECALC): вместо пропорционального сплита —
+    кумулятивные фактические границы юнитов (последний чанк по tail);
+  - Проверено на `sc-45d38693`: Σ таймингов = 63.720 с = merged-файл (Δ = 0.000);
+    отклонения границ юнитов в видео упали с ±0.28…0.77 с до ±0.00…0.23 с.
+
+- **LTX-группировка видеочанков: DP-минимизация «налога» выравнивания 8n+1**
+  (`video-workflows.js` `selectWorkflowGroups`):
+  - жадный сплит заменён на DP, минимизирующий суммарное округление кадров
+    (≤ 4 юнита/группа, ≤ 30 с/группа, мягкий штраф > 20 с);
+  - на реальной сцене налог снижен с +12 до +3 кадров (0.50 с → 0.125 с);
+  - 4 новых теста в `tests/video-workflows.test.js`.
+
+### Fixed
+
+- **Circuit breaker: авто-восстановление после таймаута (баг «вечный OPEN»)**
+  (`backend/src/runtime/circuit-breaker.js`, `dispatch-engine.js`):
+  - `tryRecover` существовал, но **нигде не вызывался** — после 5 фейлов circuit
+    навсегда оставался OPEN (видео/аудио заблокированы до ручного сброса Redis);
+  - добавлен `checkDispatchWithRecovery`: OPEN + прошедший `recoveryTimeoutMs` →
+    HALF_OPEN + тестовый диспатч (ограничен `halfOpenMaxRequests`);
+  - `recordSuccess` в HALF_OPEN теперь **закрывает** circuit (heal),
+    `recordFailure` в HALF_OPEN — немедленно открывает заново;
+  - `forceOpen` (аварийный стоп) ставит timestamp, чтобы cooldown соблюдался;
+  - 7 новых тестов в `tests/circuit-breaker-recovery.test.js`.
+
+---
+
 ## [Unreleased] — 2026-08-12
 
 ### Added

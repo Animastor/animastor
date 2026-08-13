@@ -300,6 +300,7 @@ async function generateSceneAudio(redis, sceneData, loadedBook, buildId, bookId,
                     const existing = JSON.parse(existingChunk);
                     existing.padded_text = segment.padded || false;
                     existing.expected_chunk_count = expectedChunkCount;
+                    existing.unit_id = segment.unit_id || existing.unit_id || null;
                     if (existing.audio_status !== 'ready') {
                         existing.audio = true;
                         existing.audio_status = 'ready';
@@ -317,7 +318,8 @@ async function generateSceneAudio(redis, sceneData, loadedBook, buildId, bookId,
                         scene_type: sceneData.scene_type,
                         audio: true,
                         audio_status: 'ready',
-                        padded_text: segment.padded || false
+                        padded_text: segment.padded || false,
+                        unit_id: segment.unit_id || null
                     };
                     await redis.set(chunkKey, JSON.stringify(chunkData));
                     await redis.sadd(`animastor:chunks:${bookId}`, id);
@@ -432,13 +434,15 @@ async function sendPerSegmentAudio(redis, segList, sceneData, loadedBook, buildI
                     audio: false,
                     audio_status: 'pending',
                     padded_text: expectPadded,
-                    original_text_length: segment.original_text_length
+                    original_text_length: segment.original_text_length,
+                    unit_id: segment.unit_id || null
                 };
                 await redis.set(chunkKey, JSON.stringify(fresh));
                 await redis.sadd(`animastor:chunks:${bookId}`, id);
             } else {
                 existing.padded_text = expectPadded;
                 existing.expected_chunk_count = segList.length;
+                existing.unit_id = segment.unit_id || existing.unit_id || null;
                 existing.audio = chunkFileExists;
                 existing.audio_status = chunkFileExists ? 'ready' : 'pending';
                 await redis.set(chunkKey, JSON.stringify(existing));
@@ -460,7 +464,8 @@ async function sendPerSegmentAudio(redis, segList, sceneData, loadedBook, buildI
                 audio: chunkFileExists,
                 audio_status: chunkFileExists ? 'ready' : 'pending',
                 padded_text: segment.padded || false,
-                original_text_length: segment.original_text_length
+                original_text_length: segment.original_text_length,
+                unit_id: segment.unit_id || null
             };
             await redis.set(chunkKey, JSON.stringify(chunkData));
             await redis.sadd(`animastor:chunks:${bookId}`, id);

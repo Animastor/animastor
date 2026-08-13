@@ -165,6 +165,19 @@ async function recordFailure(redis, service) {
     const failureKey = getCircuitFailureKey(service);
     const lastFailureKey = getCircuitLastFailureKey(service);
 
+    // HALF_OPEN test request failed → re-open immediately (single test failure
+    // is enough to abort recovery; no need to wait for the full threshold).
+    const currentState = await getCircuitState(redis, service);
+    if (currentState === CircuitState.HALF_OPEN) {
+        const halfOpenKey = getCircuitHalfOpenKey(service);
+        await redis.del(halfOpenKey);
+        await redis.set(failureKey, '1', 'EX', Math.ceil(CIRCUIT_CONFIG.failureWindowMs / 1000));
+        await redis.set(lastFailureKey, Date.now().toString());
+        await setCircuitState(redis, service, CircuitState.OPEN);
+        log(`CIRCUIT_REOPENED: ${service} (half-open test failed)`);
+        return { circuitState: CircuitState.OPEN, isTripped: true, newCount: 1, service };
+    }
+
     // Increment failure count
     const newCount = await redis.incr(failureKey);
     await redis.set(lastFailureKey, Date.now().toString());
@@ -174,7 +187,7 @@ async function recordFailure(redis, service) {
 
     // If tripped, open the circuit
     if (isTripped) {
-        const oldState = await setCircuitState(redis, service, CircuitState.OPEN);
+        await setCircuitState(redis, service, CircuitState.OPEN);
         log(`CIRCUIT_TRIPPED: ${service} (failures: ${newCount})`);
     }
 
@@ -191,7 +204,8 @@ async function recordFailure(redis, service) {
 
 /**
  * Record a successful operation.
- * Resets failure count for closed circuits.
+ * Resets failure count for closed circuits; heals a HALF_OPEN circuit
+ * (test request succeeded → back to CLOSED).
  */
 async function recordSuccess(redis, service) {
     const failureKey = getCircuitFailureKey(service);
@@ -204,6 +218,16 @@ async function recordSuccess(redis, service) {
         // Circuit is open — success calls should not happen through normal flow
         // But if they do (e.g., test request passed the guard), just log and return
         return { success: false, state: CircuitState.OPEN, reason: 'circuit_open' };
+    }
+
+    // HALF_OPEN: the test dispatch succeeded → circuit heals back to CLOSED.
+    if (currentState === CircuitState.HALF_OPEN) {
+        const halfOpenKey = getCircuitHalfOpenKey(service);
+        await redis.del(halfOpenKey);
+        await redis.set(failureKey, '0', 'EX', Math.ceil(CIRCUIT_CONFIG.failureWindowMs / 1000));
+        await setCircuitState(redis, service, CircuitState.CLOSED);
+        log(`CIRCUIT_HEALED: ${service} (half-open test succeeded)`);
+        return { success: true, state: CircuitState.CLOSED, reset: true, healed: true, testRequest: true };
     }
 
     // Reset failure count if circuit is closed
@@ -288,9 +312,38 @@ async function checkAndIncrementTestRequest(redis, service) {
     if (result.allowed && result.isTestRequest) {
         const halfOpenKey = getCircuitHalfOpenKey(service);
         await redis.incr(halfOpenKey);
+        await redis.expire(halfOpenKey, Math.ceil(CIRCUIT_CONFIG.recoveryTimeoutMs / 1000));
     }
 
     return result;
+}
+
+/**
+ * Check dispatch with automatic recovery.
+ *
+ * When the circuit is OPEN and the recovery timeout has elapsed, transitions
+ * to HALF_OPEN and allows a limited test dispatch — so a tripped circuit
+ * recovers on its own instead of blocking the stage forever.
+ *
+ * Returns the same shape as checkDispatch, with an extra `recovered` flag:
+ * { allowed, reason, circuitState, recovered? }
+ */
+async function checkDispatchWithRecovery(redis, service) {
+    const currentState = await getCircuitState(redis, service);
+
+    if (currentState !== CircuitState.OPEN) {
+        return checkAndIncrementTestRequest(redis, service);
+    }
+
+    const recovery = await tryRecover(redis, service);
+    if (recovery.recoverable) {
+        // Transitioned OPEN → HALF_OPEN: this dispatch becomes the test request.
+        const result = await checkAndIncrementTestRequest(redis, service);
+        return { ...result, recovered: true };
+    }
+
+    // Not recoverable yet (timeout not met or no failure record) — still blocked.
+    return { allowed: false, reason: 'circuit_open', circuitState: currentState, recovery };
 }
 
 // ======================================================
@@ -344,9 +397,14 @@ async function tryRecover(redis, service) {
 
 /**
  * Force open a circuit (emergency stop).
+ * Sets a last-failure timestamp so automatic recovery (tryRecover) still
+ * respects the recovery timeout — an emergency stop must not be immediately
+ * recoverable on the very next dispatch.
  */
 async function forceOpen(redis, service, reason) {
     const result = await setCircuitState(redis, service, CircuitState.OPEN);
+    const lastFailureKey = getCircuitLastFailureKey(service);
+    await redis.set(lastFailureKey, Date.now().toString());
     log(`CIRCUIT_FORCED_OPEN: ${service} (reason: ${reason})`);
     return result;
 }
@@ -483,6 +541,7 @@ module.exports = {
     // Dispatch check
     checkDispatch,
     checkAndIncrementTestRequest,
+    checkDispatchWithRecovery,
 
     // Recovery
     tryRecover,

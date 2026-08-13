@@ -61,6 +61,13 @@ services:
       - AI_MODEL=qwen/qwen3-32b
       # T9: GPU Hub API key — должно совпадать с GPU_HUB_API_KEY в gpu-hub секции
       - GPU_HUB_API_KEY=${GPU_HUB_API_KEY:-}
+      # TEMPORARY (research): keep source audio chunks after merge
+      # (set KEEP_AUDIO_CHUNKS=1 in .env to measure chunk durations)
+      - KEEP_AUDIO_CHUNKS=${KEEP_AUDIO_CHUNKS:-}
+      # TEMPORARY (research): tail-only cleanup (keep internal pauses) + track
+      # real chunk durations to <scene>.chunk-durations.json before merge
+      - AUDIO_CLEANUP_TAIL_ONLY=${AUDIO_CLEANUP_TAIL_ONLY:-}
+      - TRACK_CHUNK_DURATIONS=${TRACK_CHUNK_DURATIONS:-}
     volumes:
       - ./workflow.json:/workflow.json:ro
       - ./data/output:/data/output

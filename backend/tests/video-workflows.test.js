@@ -129,6 +129,63 @@ describe('selectWorkflowGroups (duration-aware)', () => {
             ]);
         });
     });
+
+    describe('LTX drift minimization (8n+1 alignment tax)', () => {
+        // Helper: total alignment overhead (valid frames − raw frames) for a grouping
+        function totalOverhead(groups, durs) {
+            let overhead = 0;
+            for (const g of groups) {
+                const gd = durs.slice(g.offset, g.offset + g.count);
+                let raw = 0;
+                for (const d of gd) raw += Math.round(Math.max(d, 1) * 24);
+                overhead += wf.toValidLTXFrames(raw) - raw;
+            }
+            return overhead;
+        }
+
+        it('real scene durations: [7.656,15.264,11.808,20.616,8.376] → 1p+2p+1p+1p, drift 3 frames', () => {
+            const durs = [7.656, 15.264, 11.808, 20.616, 8.376];
+            const g = wf.selectWorkflowGroups(makeUnits(5), durs);
+            expect(g).to.deep.equal([
+                { count: 1, offset: 0, name: 'video-ltx-1p' },
+                { count: 2, offset: 1, name: 'video-ltx-2p' }, // 15.264+11.808 → raw 649, already 8n+1
+                { count: 1, offset: 3, name: 'video-ltx-1p' },
+                { count: 1, offset: 4, name: 'video-ltx-1p' }
+            ]);
+            // All-singles baseline pays 1+3+6+2+0 = 12 frames; DP pays only 3.
+            expect(totalOverhead(g, durs)).to.equal(3);
+        });
+
+        it('keeps units together when the combined raw sum is already 8n+1 (zero tax)', () => {
+            // 2s=48f, 3s=72f, 1.04s=25f → 145 = 8×18+1: single 3p group pays 0 tax.
+            const durs = [2, 3, 1.04];
+            const g = wf.selectWorkflowGroups(makeUnits(3), durs);
+            expect(g).to.deep.equal([{ count: 3, offset: 0, name: 'video-ltx-3p' }]);
+            expect(totalOverhead(g, durs)).to.equal(0);
+        });
+
+        it('splits a group whose combined duration exceeds VIDEO_CHUNK_MAX_SEC even at higher tax', () => {
+            // 4×10s: 4p would be 40s > 30s max → forced 2p+2p (tax 1+1).
+            const durs = [10, 10, 10, 10];
+            const g = wf.selectWorkflowGroups(makeUnits(4), durs);
+            expect(g).to.deep.equal([
+                { count: 2, offset: 0, name: 'video-ltx-2p' },
+                { count: 2, offset: 2, name: 'video-ltx-2p' }
+            ]);
+            expect(totalOverhead(g, durs)).to.equal(2);
+        });
+
+        it('prefers fewer chunks when alignment tax is the dominant cost', () => {
+            // [5,5,5,10,5]: singles pay 1×5 = 5 frames; 3p+2p pays 1+1 = 2 frames.
+            const durs = [5, 5, 5, 10, 5];
+            const g = wf.selectWorkflowGroups(makeUnits(5), durs);
+            expect(g).to.deep.equal([
+                { count: 3, offset: 0, name: 'video-ltx-3p' },
+                { count: 2, offset: 3, name: 'video-ltx-2p' }
+            ]);
+            expect(totalOverhead(g, durs)).to.equal(2);
+        });
+    });
 });
 
 describe('calculateFrames', () => {

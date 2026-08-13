@@ -67,6 +67,48 @@ function padShortText(text) {
 }
 
 /**
+ * TEMPORARY (research): bind narration segments (split from scene full_text) to
+ * the units they came from. Units and segments are both ordered by text position;
+ * we locate each unit's normalized text in the normalized full text, then assign
+ * every segment that falls inside a unit's range to that unit.
+ *
+ * Segments that cannot be matched are left without unit_id (no timing bound).
+ */
+function assignNarrationUnitIds(segments, units, fullText) {
+    if (!units || units.length === 0 || segments.length === 0) return;
+    const norm = s => (s || '').replace(/\s+/g, ' ').trim();
+    const normFull = norm(fullText);
+    if (!normFull) return;
+
+    // Ordered ranges of each unit inside the normalized full text.
+    const ranges = [];
+    let cursor = 0;
+    for (const u of units) {
+        const uText = norm(u.text || '');
+        if (!uText) continue;
+        const idx = normFull.indexOf(uText, cursor);
+        if (idx === -1) continue;
+        ranges.push({ id: u.id, start: idx, end: idx + uText.length });
+        cursor = idx + uText.length;
+    }
+    if (ranges.length === 0) return;
+
+    let segCursor = 0;
+    let ri = 0;
+    for (const seg of segments) {
+        const sText = norm(seg.text);
+        if (!sText) continue;
+        const idx = normFull.indexOf(sText, segCursor);
+        if (idx === -1) continue;
+        segCursor = idx + sText.length;
+        while (ri < ranges.length && idx >= ranges[ri].end) ri++;
+        if (ri < ranges.length && idx >= ranges[ri].start && idx < ranges[ri].end) {
+            seg.unit_id = ranges[ri].id;
+        }
+    }
+}
+
+/**
  * Check that a substring match is at a word boundary (not inside another word).
  * Uses Unicode letter class \p{L} for multilingual support.
  *
@@ -164,13 +206,17 @@ function buildSegments(runtimeEntry) {
             helpers.log(`📐 buildSegments: short text (${rawText.length} chars) → padded mode ON for "${rawText}"`);
         }
         const chunks = splitTextIntoChunks(fullText);
-        return chunks.map((text, i) => ({
+        const segments = chunks.map((text, i) => ({
             segment_id: String(i + 1).padStart(4, "0"),
             segment_type: "narration",
             text,
             padded: isPadded,
             original_text_length: isPadded ? rawText.length : undefined
         }));
+        // TEMPORARY (research): bind narration segments to their source units by
+        // position in the full text — so chunk durations can be mapped back to IUs.
+        assignNarrationUnitIds(segments, runtimeEntry.payload?.units || [], fullText);
+        return segments;
     }
     if (runtimeEntry.runtime_type === "scene" && runtimeEntry.scene_type === "dialogue") {
         // Build TTS segments from ALL units in order, preserving interleaving.
@@ -216,6 +262,7 @@ function buildSegments(runtimeEntry) {
                             text: chunk,
                             padded: isPadded,
                             original_text_length: isPadded ? rawText.length : undefined,
+                            unit_id: unit.id,
                         });
                     }
                     continue;
@@ -238,6 +285,7 @@ function buildSegments(runtimeEntry) {
                         text: fullNarration,
                         padded: isPadded,
                         original_text_length: isPadded ? extractResult.pre.length : undefined,
+                        unit_id: unit.id,
                     });
                 }
 
@@ -247,6 +295,7 @@ function buildSegments(runtimeEntry) {
                     segment_id: String(segmentIdx).padStart(4, "0"),
                     segment_type: "dialogue",
                     text: `${speaker}: ${text}`,
+                    unit_id: unit.id,
                 });
 
                 // Post-narration AFTER dialogue
@@ -265,6 +314,7 @@ function buildSegments(runtimeEntry) {
                         text: fullNarration,
                         padded: isPadded,
                         original_text_length: isPadded ? extractResult.post.length : undefined,
+                        unit_id: unit.id,
                     });
                 }
             } else {
@@ -286,6 +336,7 @@ function buildSegments(runtimeEntry) {
                         text: chunk,
                         padded: isPadded,
                         original_text_length: isPadded ? rawText.length : undefined,
+                        unit_id: unit.id,
                     });
                 }
             }
@@ -308,4 +359,5 @@ module.exports = {
     padShortText,
     buildSegments,
     extractNarrationFromDialogueUnit,
+    assignNarrationUnitIds,
 };

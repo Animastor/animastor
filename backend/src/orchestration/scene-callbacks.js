@@ -116,17 +116,81 @@ async function handleAudioCompleted(redis, bookId, chapterId, sceneId, buildId) 
     }
 
     // ── IU TIMING RECALCULATION ──
+    // TEMPORARY (research): source of truth for unit timings is now the ACTUAL
+    // raw audio chunk durations (.chunk-durations.json written by trackChunkDurations
+    // during merge), not a text-length-proportional split of the merged duration.
+    // Chunks carry unit_id (set during generation), so we sum per-unit durations
+    // and build cumulative boundaries. Falls back to the old proportional split
+    // only when no per-chunk data is available (e.g. pure-dialogue merged chunks).
     if (realDuration > 0) {
         try {
             const units = await iuRepo.getImageUnitsForScene(buildId, bookId, chapterId, sceneId);
             if (units && units.length > 0) {
+                const metaPath = audioPath.replace(/\.mp3$/, '.chunk-durations.json');
+                const factual = fs.existsSync(metaPath) ? JSON.parse(fs.readFileSync(metaPath, 'utf8')) : null;
+                // The final cleanup trims trailing silence only from the LAST chunk
+                // of the scene (tail-only mode). To match the merged file exactly,
+                // that last chunk must be counted by its tail duration, all others
+                // by their raw duration (their tail becomes an internal pause).
+                const lastChunkIdx = factual && factual.records && factual.records.length > 0
+                    ? Math.max(...factual.records.map(r => r.chunk_index))
+                    : null;
+                const perUnit = factual && factual.records && factual.records.length > 0
+                    ? factual.records
+                        .filter(r => r.unit_id)
+                        .reduce((acc, r) => {
+                            const isLast = r.chunk_index === lastChunkIdx;
+                            const dur = isLast && r.tail_duration_sec
+                                ? r.tail_duration_sec
+                                : r.raw_duration_sec;
+                            acc[r.unit_id] = (acc[r.unit_id] || 0) + dur;
+                            return acc;
+                        }, {})
+                    : null;
+
                 const oldSceneDur = units[0].scene_duration_sec || 0;
                 const diff = Math.abs(realDuration - oldSceneDur);
-                if (diff > 1.0) {
+
+                if (perUnit && Object.keys(perUnit).length > 0) {
+                    const durLabel = oldSceneDur > 0
+                        ? `${oldSceneDur.toFixed(2)}s → factual ${realDuration.toFixed(2)}s`
+                        : `first-time factual (${realDuration.toFixed(2)}s)`;
+                    const sumFactual = Object.values(perUnit).reduce((s, v) => s + v, 0);
+                    log(`[IU-RECALC] ${bookId}/${chapterId}/${sceneId}: ${durLabel}, applying ACTUAL chunk timings to ${units.length} IUs (${Object.keys(perUnit).length} units with audio chunks; last-chunk tail fix applied, Σ=${sumFactual.toFixed(2)}s)`);
+                    let cursorMs = 0;
+                    for (const u of units) {
+                        const actualSec = perUnit[u.unit_id] ?? null;
+                        let startMs = cursorMs;
+                        let endMs;
+                        let estSec;
+                        if (actualSec != null && actualSec > 0) {
+                            endMs = cursorMs + Math.round(actualSec * 1000);
+                            estSec = parseFloat(actualSec.toFixed(3));
+                        } else {
+                            // No audio chunk for this unit (e.g. typography) — keep
+                            // the unit at zero width: same start, zero duration.
+                            endMs = cursorMs;
+                            estSec = 0;
+                        }
+                        cursorMs = endMs;
+                        await iuRepo.upsertImageUnit(buildId, bookId, chapterId, sceneId, u.unit_id, {
+                            scene_order: u.scene_order || 0,
+                            text: u.text,
+                            text_length: u.text_length || 0,
+                            text_proportion: 0,
+                            scene_duration_sec: realDuration,
+                            estimated_duration_sec: estSec,
+                            scene_audio_file: u.scene_audio_file || `${bookId}_${chapterId}_${sceneId}.mp3`,
+                            start_ms: startMs,
+                            end_ms: endMs,
+                        });
+                    }
+                    log(`[IU-RECALC] ✓ ${bookId}/${chapterId}/${sceneId}: ACTUAL unit timings applied (Σ=${Object.values(perUnit).reduce((s, v) => s + v, 0).toFixed(2)}s, merged=${realDuration.toFixed(2)}s)`);
+                } else if (diff > 1.0) {
                     const durLabel = oldSceneDur > 0
                         ? `${oldSceneDur.toFixed(2)}s → ${realDuration.toFixed(2)}s (Δ=${diff.toFixed(2)}s)`
                         : `first-time calculation (${realDuration.toFixed(2)}s)`;
-                    log(`[IU-RECALC] ${bookId}/${chapterId}/${sceneId}: ${durLabel}, recalculating ${units.length} IU timings`);
+                    log(`[IU-RECALC] ${bookId}/${chapterId}/${sceneId}: ${durLabel}, recalculating ${units.length} IU timings (proportional fallback — no per-chunk unit data)`);
                     const totalTextLen = units.reduce((s, u) => s + (u.text_length || 0), 0);
                     let cursorMs = 0;
                     const sceneDurationMs = Math.round(realDuration * 1000);
@@ -149,7 +213,7 @@ async function handleAudioCompleted(redis, bookId, chapterId, sceneId, buildId) 
                             end_ms: endMs,
                         });
                     }
-                    log(`[IU-RECALC] ✓ ${bookId}/${chapterId}/${sceneId}: ${units.length} IU timings updated to ${realDuration.toFixed(2)}s total`);
+                    log(`[IU-RECALC] ✓ ${bookId}/${chapterId}/${sceneId}: ${units.length} IU timings updated to ${realDuration.toFixed(2)}s total (proportional fallback)`);
                 } else {
                     log(`[IU-RECALC] ${bookId}/${chapterId}/${sceneId}: duration unchanged (${realDuration.toFixed(2)}s ≈ ${oldSceneDur.toFixed(2)}s), skipping`);
                 }
