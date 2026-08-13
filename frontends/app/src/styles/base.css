@@ -849,15 +849,24 @@ button { font: inherit; color: inherit; }
   border-top: 1px solid var(--outline-2);
 }
 .desktop-main .play-console__transport {
+  /* One cohesive playback-control block on the RIGHT (mobile composition:
+     status + progress ABOVE the Start button): a flex column — status text,
+     thin 4px progress line, then the primary Start/Play button. Pushed to the
+     far edge via margin-left:auto; never grows into the middle of the bar;
+     on wrap it lands right-aligned on its own row (under the right thumb on
+     touch tablets). */
   display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  min-width: 0;
-  flex: 1 1 auto;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.5rem;
+  min-width: 13rem; /* cohesive block — status/line/button share the width */
+  flex: 0 0 auto;
+  margin-left: auto;
 }
 .desktop-main .play-console__play {
   flex-shrink: 0;
-  height: 2.5rem; /* 40px — plan §11 primary action target */
+  width: 100%; /* fills the control block — Start is its main element */
+  height: 3rem; /* 48px — comfortably touchable; mobile play button is 56dp */
   padding: 0 1rem;
   display: inline-flex;
   align-items: center;
@@ -874,26 +883,30 @@ button { font: inherit; color: inherit; }
 }
 .desktop-main .play-console__play:hover { background: var(--primary-pressed); }
 .desktop-main .play-console__play:disabled { opacity: 0.4; cursor: default; }
-/* Status + indeterminate progress — column layout; the progress keeps its
-   4px height (base rule's flex:1 would grow it vertically in a column). */
+/* Status + thin progress line in ONE row above the Start button — the exact
+   mobile .play-meta composition (progress fills the free width on the LEFT,
+   nowrap status on the RIGHT; gap matches mobile 0.75rem). No extra vertical
+   row: the 4px line stays thin and when idle it is display:none, so the row
+   shows only the status text — no reserved empty area. */
 .desktop-main .play-console__meta {
   display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-  min-width: 8rem;
+  align-items: center;
+  gap: 0.75rem; /* same as mobile .play-meta */
+  width: 100%;
 }
-.desktop-main .play-console__meta .play-progress { flex: 0 0 auto; width: 100%; }
+.desktop-main .play-console__meta .play-progress { flex: 1; width: auto; } /* fills the free width, stays 4px */
 .desktop-main .play-console__meta .play-status {
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 100%;
+  flex-shrink: 0; /* natural width — the line takes the rest */
 }
 .desktop-main .play-console__layers {
   display: inline-flex;
   align-items: center;
   gap: 0.375rem;
-  margin-left: auto;
   flex-shrink: 0;
+  /* Secondary controls stay LEFT — no margin-left:auto push anymore. */
 }
 .desktop-main .play-console__layer {
   height: 2.5rem; /* 40px — frequent layer toggles */

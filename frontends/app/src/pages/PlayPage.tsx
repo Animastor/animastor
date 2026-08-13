@@ -269,26 +269,34 @@ export function PlayPage(props: { path?: string }) {
       {/* Desktop transport console (plan §7) — replaces the mobile layerbar /
           meta / big button above inside the desktop shell: primary play/pause,
           status + progress and labelled layer toggles. Fullscreen stays
-          anchored to the stage (no duplicated control). */}
+          anchored to the stage (no duplicated control). Order mirrors the
+          mobile composition: secondary layer toggles on the LEFT, the primary
+          Start/Play section on the RIGHT — natural for right-handed thumb on
+          touch tablets, where the desktop shell also runs. */}
       {isDesktop && (
         <div class="play-console">
+          <div class="play-console__layers">
+            <LayerButton checked={layerAudio.value} onToggle={setLayerAudio} label={t('layer_audio')} On={IconVolumeUp} Off={IconVolumeOff} />
+            <LayerButton checked={layerImage.value} onToggle={setLayerImage} label={t('layer_image')} On={IconImage} Off={IconImageOff} />
+            <LayerButton checked={layerVideo.value} onToggle={setLayerVideo} label={t('layer_video')} On={IconVideocam} Off={IconVideocamOff} />
+            <LayerButton checked={layerSubtitles.value} onToggle={setLayerSubtitles} label={t('layer_subtitles')} On={IconSubtitles} Off={IconSubtitlesOff} />
+          </div>
           <div class="play-console__transport">
-            <button type="button" class="play-console__play" disabled={!buttonEnabled} onClick={handlePlayButton}>
-              {showPause ? <IconPause width={18} height={18} /> : <IconPlay width={18} height={18} />}
-              <span>{showPause ? t('play_pause') : t('play_play')}</span>
-            </button>
+            {/* Mobile model (.play-meta): status + thin progress line share
+                ONE row above the Start button — progress line LEFT (fills the
+                free width), status RIGHT (nowrap). The line is display:none
+                when idle, so the row shows just the status text — no reserved
+                empty area. Start stays below as the main button. */}
             <div class="play-console__meta">
               <div class="play-progress" style={loading ? undefined : 'display:none'}>
                 <div class="play-progress__bar" />
               </div>
               <span class="play-status">{missing ? t('iu_not_generated') : statusText(s)}</span>
             </div>
-          </div>
-          <div class="play-console__layers">
-            <LayerButton checked={layerAudio.value} onToggle={setLayerAudio} label={t('layer_audio')} On={IconVolumeUp} Off={IconVolumeOff} />
-            <LayerButton checked={layerImage.value} onToggle={setLayerImage} label={t('layer_image')} On={IconImage} Off={IconImageOff} />
-            <LayerButton checked={layerVideo.value} onToggle={setLayerVideo} label={t('layer_video')} On={IconVideocam} Off={IconVideocamOff} />
-            <LayerButton checked={layerSubtitles.value} onToggle={setLayerSubtitles} label={t('layer_subtitles')} On={IconSubtitles} Off={IconSubtitlesOff} />
+            <button type="button" class="play-console__play" disabled={!buttonEnabled} onClick={handlePlayButton}>
+              {showPause ? <IconPause width={18} height={18} /> : <IconPlay width={18} height={18} />}
+              <span>{showPause ? t('play_pause') : t('play_play')}</span>
+            </button>
           </div>
         </div>
       )}
