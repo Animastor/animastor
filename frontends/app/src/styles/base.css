@@ -277,9 +277,28 @@ button { font: inherit; color: inherit; }
   cursor: pointer;
   transition: background-color 0.15s ease, color 0.15s ease;
 }
+/* State colors ported from the mobile bottom-nav reference (Android
+   Widget.Animastor.BottomNavigation + @color/bottom_nav_tint.xml, web
+   .tabbar): unchecked = colorOnSurfaceVariant (--text-2), checked = gold
+   colorSecondary (--accent) for icon AND label, active indicator = colorPrimary
+   (--primary) pill, press = colorPrimaryContainer ripple (radial). */
 .desktop-modes__item:hover { background: var(--surface); }
+/* Press — mobile ripple approximation (radial colorPrimaryContainer). */
+.desktop-modes__item:active {
+  background: radial-gradient(circle, var(--primary-container) 0%, transparent 72%);
+}
 .desktop-modes__item:focus-visible { outline-offset: 3px; }
-.desktop-modes__item--active { background: var(--primary); color: var(--on-primary); }
+/* Active = the mobile checked character: dark-red colorPrimary pill with gold
+   colorSecondary content (icon inherits currentColor). */
+.desktop-modes__item--active { background: var(--primary); color: var(--accent); }
+/* The active pill is immune to hover/press washes: the generic :hover above has
+   higher specificity than the base --active rule and used to paint the active
+   pill surface-colored (near-white in the light theme), flashing the cream
+   text unreadable. Active hover keeps the pill solid; its press darkens it
+   (--primary-pressed, the standard primary-button press) so the gold stays
+   readable in both themes. */
+.desktop-modes__item--active:hover { background: var(--primary); }
+.desktop-modes__item--active:active { background: var(--primary-pressed); }
 .desktop-layout {
   flex: 1;
   min-height: 0;
