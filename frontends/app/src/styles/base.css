@@ -945,6 +945,21 @@ button { font: inherit; color: inherit; }
   display: inline-flex; align-items: center; justify-content: center;
 }
 .toolbar__btn:active { background: var(--primary-container); }
+/* Back-arrow affordance (desktop secondary bar + mobile toolbar / AI header):
+   a light rounded square around the arrow so mouse users read it as a button —
+   resting surface-2 fill + hairline outline (matches desktop-modes / panel
+   collapse language), hover relaxes the fill and tints the arrow accent.
+   Keeps the 2.5rem size, so no layout change. */
+.toolbar__btn--back {
+  background: var(--surface-2);
+  border: 1px solid var(--outline-2);
+  color: var(--text);
+}
+.toolbar__btn--back:hover {
+  background: var(--surface);
+  border-color: var(--outline);
+  color: var(--accent);
+}
 
 /* AI chip — mirrors activity_main.xml toolbarAiButton (MaterialCardView):
    48x40dp, cornerRadius 10dp, background colorSurface, stroke colorOutline 1dp,

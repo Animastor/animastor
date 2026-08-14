@@ -309,7 +309,7 @@ export function AiAssistantPage(props: { path?: string; embedded?: boolean; onCl
             <IconClose />
           </button>
         ) : (
-          <button class="toolbar__btn" aria-label={t('back')} onClick={() => history.back()}>
+          <button class="toolbar__btn toolbar__btn--back" aria-label={t('back')} onClick={() => history.back()}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="24" height="24"><path d="M15 18l-6-6 6-6" /></svg>
           </button>
         )}
