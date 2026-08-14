@@ -3,7 +3,7 @@
 set -e
 
 echo "Building APK..."
-cd frontend
+cd frontends/android
 ./gradlew assembleDebug
 
 echo "Done."
