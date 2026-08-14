@@ -48,7 +48,7 @@
 | `MaterialButton` (`Widget.Animastor.Button`, cornerRadius 18dp) | `<button class="btn">` (CSS token radius medium) |
 | `MaterialButton.Tonal` / `.Mode` / `.Outlined` | модификаторы `.btn--tonal`, `.btn--mode`, `.btn--outlined` |
 | `Chip` (`Widget.Animastor.Chip.Layer`) icon-toggle 48dp | `<button class="chip chip--layer">` (icon-only, SVG tint by `currentColor`) |
-| `Chip` mode/topic/toggle/worker (state-list bg/icon/stroke) | `.chip--mode`, `.chip--topic`, `.chip--toggle`, `.chip--worker` |
+| `Chip` mode/topic/toggle (state-list bg/icon/stroke) | `.chip--mode`, `.chip--topic`, `.chip--toggle` |
 | `MaterialCardView` (`Widget.Animastor.Card`) | `<article class="card">` (radius large/elevation) |
 | `TabLayout` (`Widget.Animastor.TabLayout`) | `.tabs` |
 | `LinearProgressIndicator` / `CircularProgressIndicator` | `<progress class="bar">` / `.spinner` (CSS) |

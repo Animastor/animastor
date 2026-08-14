@@ -117,7 +117,7 @@ Therefore desktop should be implemented inside `frontends/mobile/` as a responsi
 1. **One book, one shared position, one workspace.** The selected chapter/scene/unit is continuously visible in breadcrumb/status form and has the same meaning in Navigator, Player, Generator and Editor.
 2. **Use persistent space only for frequent context.** Navigator earns persistent space on wide screens. File is initially discoverable but should not permanently consume space once book work begins. Settings, workflows and Assistant are on-demand.
 3. **Keep the editing loop in view.** In Editor the user must be able to assess the unit, change prompts, save and move to the next unit without repeatedly opening drawers or scrolling through unrelated properties.
-4. **Progress must be glanceable, not modal.** Generation status remains visible in the Generator mode and is also represented by a small status indicator in the workspace header. Running work must never disappear when the user changes to Player or Editor.
+4. **Progress must be glanceable, not modal.** Generation status remains visible in the Generator mode and is also represented directly on the Generator mode item in the workspace header: its icon pulses/colours with generation state (idle/running/error/success), exactly like the mobile bottom-nav Generator icon. Running work must never disappear when the user changes to Player or Editor.
 5. **Keyboard augments, never conflicts with text editing.** Arrow keys move units only outside an editable control; Escape closes the top-most dismissible surface; standard browser text editing shortcuts remain untouched.
 6. **Progressive disclosure over a wall of panels.** Tabs, collapsible detail areas and optional inspector panes are preferred to simultaneous small cards. Panels have clear ownership and a meaningful empty state.
 7. **Predictable persistence.** Mode, sidebar state and user-selected inspector subtab may persist locally. A current book, active position, draft status and generation state come from the existing stores/server, not duplicated layout state.
@@ -183,7 +183,7 @@ Player may be visually first or marked as the default content mode after a book 
 The header also shows:
 
 - current book title, with an accessible compact breadcrumb/position (`Chapter / Scene / Unit`);
-- a small Generator status button: idle, running, error or success using the existing pulse/status colours; clicking opens Generator;
+- the Generator mode item itself carries the generation status: idle, running, error or success using the existing pulse/status colours — the mobile bottom-nav pattern ported 1:1, so there is ONE Generator navigation item and no separate header status button;
 - Assistant button and settings menu;
 - controls to reveal/collapse File and Navigator panels.
 
@@ -385,7 +385,7 @@ The existing `/ai` route remains available for mobile and direct links. Desktop 
 - `FileSidebar` and compact `FileRail`.
 - `NavigatorPanel` wrapper around reusable navigation tree.
 - `EditorWorkspace`, `UnitPreviewStage`, `UnitThumbnailRail`, `EditorInspector` and `PromptEditor`.
-- `GenerationStatusButton` / global job summary.
+- mode-bar generation status on the Generator item (mobile `tabbar__pulse*` classes) / global job summary.
 - `AssistantPanel` / `AssistantSheet` and focus management utility.
 - `useDesktopBreakpoint` or CSS-first responsive shell logic; a small workspace layout preference store only for presentation state.
 

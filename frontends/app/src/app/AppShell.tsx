@@ -144,6 +144,11 @@ function DesktopWorkspace({ path, isSecondary, children }: { path: string; isSec
         <nav class="desktop-modes" aria-label="Workspace mode">
           {modes.map(({ route, key, Icon }) => {
             const active = path === route || path.startsWith(route + '/');
+            // Generation status lives on the Generator mode item's icon itself —
+            // the mobile bottom-nav pattern (tabbar__pulse*) ported 1:1, so the
+            // desktop keeps ONE Generator navigation item (plan §4.1 revisited:
+            // no separate header status button next to the AI chip).
+            const pulse = navIconPulseClass(route === '/generate', generationStatus.value);
             return (
               <button
                 type="button"
@@ -151,14 +156,13 @@ function DesktopWorkspace({ path, isSecondary, children }: { path: string; isSec
                 aria-current={active ? 'page' : undefined}
                 onClick={() => navigate(route)}
               >
-                <Icon width={18} height={18} />
+                <Icon class={pulse || undefined} width={18} height={18} />
                 <span>{t(key)}</span>
               </button>
             );
           })}
         </nav>
         <div class="desktop-header__actions">
-          <GenerationStatusButton />
           <button
             ref={assistantBtnRef}
             class={'toolbar__ai-chip' + (assistantOpen ? ' toolbar__ai-chip--active' : '')}
@@ -301,26 +305,6 @@ function DesktopPositionSummary() {
   return <span class="desktop-position" title={label}>{label}</span>;
 }
 
-function GenerationStatusButton() {
-  const status = generationStatus.value;
-  const stateClass = status === 'RUNNING' ? ' desktop-generation-status--running'
-    : status === 'ERROR' ? ' desktop-generation-status--error'
-      : status === 'SUCCESS' ? ' desktop-generation-status--success' : '';
-
-  return (
-    <button
-      type="button"
-      class={'desktop-generation-status' + stateClass}
-      aria-label={t('tab_generate')}
-      title={t('tab_generate')}
-      onClick={() => navigate('/generate')}
-    >
-      <IconGenerate width={19} height={19} />
-      <span class="desktop-generation-status__dot" aria-hidden="true" />
-    </button>
-  );
-}
-
 function DesktopStartState({ onOpenFile, onCreateAI }: { onOpenFile: () => void; onCreateAI: () => void }) {
   return (
     <div class="desktop-start-state">
@@ -401,6 +385,19 @@ function secondaryTitleByPath(path: string): string {
   return '';
 }
 
+/** Nav-icon generation status — MainActivity.updateNavIconStatus port, shared
+ *  by the mobile TabBar and the desktop mode bar (ONE Generator navigation item
+ *  in both shells, plan §4.1): RUNNING pulses gold, ERROR turns red, SUCCESS
+ *  pulses green then holds solid (CSS `tabbar__pulse*` classes; SUCCESS auto-
+ *  resets via generateStore's 22s watchdog). Empty string = no pulse. */
+function navIconPulseClass(isGenerate: boolean, status: GenerationStatus): string {
+  if (!isGenerate) return '';
+  if (status === 'RUNNING') return 'tabbar__pulse';
+  if (status === 'ERROR') return 'tabbar__pulse tabbar__pulse--error';
+  if (status === 'SUCCESS') return 'tabbar__pulse tabbar__pulse--success';
+  return '';
+}
+
 function TabBar({ path }: { path: string }) {
   const status: GenerationStatus = generationStatus.value;
   const items: { route: typeof TAB_ROUTES[number]; key: 'tab_file' | 'tab_generate' | 'tab_play' | 'tab_edit' | 'tab_navigate'; Icon: (p: IconProps) => JSX.Element }[] = [
@@ -415,11 +412,7 @@ function TabBar({ path }: { path: string }) {
     <nav class="tabbar">
       {items.map((it) => {
         const active = path === it.route || path.startsWith(it.route + '/');
-        const isGenerate = it.route === '/generate';
-        const pulseClass = isGenerate && status === 'RUNNING' ? 'tabbar__pulse'
-          : isGenerate && status === 'ERROR' ? 'tabbar__pulse tabbar__pulse--error'
-          : isGenerate && status === 'SUCCESS' ? 'tabbar__pulse tabbar__pulse--success'
-          : '';
+        const pulseClass = navIconPulseClass(it.route === '/generate', status);
         return (
           <button
             class={'tabbar__item' + (active ? ' tabbar__item--active' : '')}
