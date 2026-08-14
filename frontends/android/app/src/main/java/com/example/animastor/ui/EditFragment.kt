@@ -817,8 +817,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
             // right edge → the glyph ends 6 + 8 = 14dp in from the tabs panel
             // (which itself is 8dp from the screen edge). contentScroll has an 8dp
             // end margin, so 14dp end padding puts the duration's right edge on
-            // the glyph line (22dp from the edge) and ~9dp clear of the 5dp
-            // scrollbar thumb that sits at the content edge.
+            // the glyph line (22dp from the edge).
             setPadding(0, 16, 14, 4)
         }
         val title = TextView(ctx).apply {
