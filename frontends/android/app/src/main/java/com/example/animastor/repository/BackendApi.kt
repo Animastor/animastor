@@ -134,6 +134,20 @@ interface BackendApi {
         @Body body: Map<String, @JvmSuppressWildcards Any?>
     ): GenericResponse
 
+    @PATCH("/api/v1/book/{bookId}/characters/{characterId}")
+    suspend fun patchCharacter(
+        @Path("bookId") bookId: String,
+        @Path("characterId") characterId: String,
+        @Body body: Map<String, @JvmSuppressWildcards Any?>
+    ): GenericResponse
+
+    @PATCH("/api/v1/book/{bookId}/voices/{voiceId}")
+    suspend fun patchVoice(
+        @Path("bookId") bookId: String,
+        @Path("voiceId") voiceId: String,
+        @Body body: Map<String, @JvmSuppressWildcards Any?>
+    ): GenericResponse
+
     @Streaming
     @GET("/api/v1/book/{bookId}/export")
     suspend fun exportBook(

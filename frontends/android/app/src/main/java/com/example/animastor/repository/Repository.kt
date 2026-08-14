@@ -227,6 +227,16 @@ class Repository(
         api.patchLocation(bookId, locationId, mapOf("fields" to fields))
     }
 
+    suspend fun patchCharacter(bookId: String, characterId: String, fields: Map<String, @JvmSuppressWildcards Any?>) {
+        Log.d("Repo", "patchCharacter: $bookId/$characterId keys=${fields.keys}")
+        api.patchCharacter(bookId, characterId, mapOf("fields" to fields))
+    }
+
+    suspend fun patchVoice(bookId: String, voiceId: String, fields: Map<String, @JvmSuppressWildcards Any?>) {
+        Log.d("Repo", "patchVoice: $bookId/$voiceId keys=${fields.keys}")
+        api.patchVoice(bookId, voiceId, mapOf("fields" to fields))
+    }
+
     suspend fun chatWithAiFull(request: AiChatRequest): AiChatResponse {
         Log.d("Repo", "chatWithAiFull: ${request.messages.size} messages")
         val response = api.chatWithAi(request)

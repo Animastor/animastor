@@ -964,38 +964,39 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                 // id is a read-only system field (kept in JSON style)
                 inner.addView(readOnlyCard(ctx, "id", ch.id ?: ""))
 
-                inner.addView(inputCard(ctx, getString(R.string.field_name), ch.name ?: "", false, boldValue = true, storeKey = "name"))
+                val charId = ch.id ?: "char_unknown"
+                // Name key is scoped per character (web parity) — the old bare
+                // "name" key made every character's name field share one slot.
+                inner.addView(inputCard(ctx, getString(R.string.field_name), ch.name ?: "", false, boldValue = true, storeKey = "char.${charId}.name"))
 
-                // Passport fields
+                // Passport fields — always rendered (web parity): a character
+                // without a passport can still get one from the editor.
                 val passport = ch.passport
-                if (passport != null) {
-                    val passportLabel = TextView(ctx).apply {
-                        text = getString(R.string.field_passport)
-                        textSize = 12f
-                        typeface = android.graphics.Typeface.DEFAULT_BOLD
-                        setTextColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorSecondary))
-                        setPadding(0, 8, 0, 4)
-                    }
-                    inner.addView(passportLabel)
+                val passportLabel = TextView(ctx).apply {
+                    text = getString(R.string.field_passport)
+                    textSize = 12f
+                    typeface = android.graphics.Typeface.DEFAULT_BOLD
+                    setTextColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorSecondary))
+                    setPadding(0, 8, 0, 4)
+                }
+                inner.addView(passportLabel)
 
-                    val charId = ch.id ?: "char_unknown"
-                    val passportPrefix = "char.${charId}.passport"
-                    val passportKeys = listOf(
-                        "${passportPrefix}.appearance",
-                        "${passportPrefix}.clothes",
-                        "${passportPrefix}.video_tokens"
-                    )
-                    val pf = mapOf(
-                        "${passportPrefix}.appearance" to (passport.appearance ?: ""),
-                        "${passportPrefix}.clothes" to (passport.clothes ?: ""),
-                        "${passportPrefix}.video_tokens" to passport.videoTokensAsText()
-                    )
+                val passportPrefix = "char.${charId}.passport"
+                val passportKeys = listOf(
+                    "${passportPrefix}.appearance",
+                    "${passportPrefix}.clothes",
+                    "${passportPrefix}.video_tokens"
+                )
+                val pf = mapOf(
+                    "${passportPrefix}.appearance" to (passport?.appearance ?: ""),
+                    "${passportPrefix}.clothes" to (passport?.clothes ?: ""),
+                    "${passportPrefix}.video_tokens" to (passport?.videoTokensAsText() ?: "")
+                )
 
-                    passportKeys.forEach { key ->
-                        val v = pf[key] ?: ""
-                        if (!fieldValues.containsKey(key)) fieldValues[key] = v
-                        inner.addView(inputCard(ctx, passportFieldLabel(key), fieldValues[key] ?: v, (v.length > 80), storeKey = key))
-                    }
+                passportKeys.forEach { key ->
+                    val v = pf[key] ?: ""
+                    if (!fieldValues.containsKey(key)) fieldValues[key] = v
+                    inner.addView(inputCard(ctx, passportFieldLabel(key), fieldValues[key] ?: v, (v.length > 80), storeKey = key))
                 }
 
                 card.addView(inner)
@@ -1578,6 +1579,21 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         else -> key
     }
 
+    /**
+     * Render a passport field value as editable text (web parity).
+     * video_tokens may be a legacy string OR an array of features —
+     * videoTokensAsText() joins arrays with ", ".
+     */
+    private fun passportFieldText(p: CharPassport?, field: String): String {
+        if (p == null) return ""
+        return when (field) {
+            "appearance" -> p.appearance ?: ""
+            "clothes" -> p.clothes ?: ""
+            "video_tokens" -> p.videoTokensAsText()
+            else -> ""
+        }
+    }
+
     private fun markDirty() {
         binding?.saveButton?.text = "${getString(R.string.edit_save)} *"
     }
@@ -1793,6 +1809,127 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                 return
             }
 
+            // Characters tab (3) — dedicated PATCH per changed character
+            // (name + passport), mirroring the web EditPage CHARS_TAB branch.
+            // Without this branch Android's generic save below pushed char.*
+            // keys into the scene/unit object as junk that never reached
+            // characters.json (the generator reads characters.json).
+            if (selectedTab == 3) {
+                setSaveLoading(true)
+                lifecycleScope.launch {
+                    try {
+                        // Group char.* keys from the shared fieldValues map
+                        val byChar = mutableMapOf<String, MutableMap<String, String>>()
+                        fieldValues.forEach { (key, value) ->
+                            if (key.startsWith("char.")) {
+                                val rest = key.removePrefix("char.")
+                                val dot = rest.indexOf('.')
+                                if (dot > 0) {
+                                    val charId = rest.substring(0, dot)
+                                    val fieldKey = rest.substring(dot + 1)
+                                    byChar.getOrPut(charId) { mutableMapOf() }[fieldKey] = value
+                                }
+                            }
+                        }
+
+                        if (byChar.isEmpty()) {
+                            setSaveLoading(false)
+                            return@launch
+                        }
+
+                        val chars = bd.characters ?: emptyList()
+                        var anyChanged = false
+                        byChar.forEach { (charId, fields) ->
+                            // Diff vs canonical data — skip untouched entities.
+                            val orig = chars.find { it.id == charId }
+                            val changed = mutableMapOf<String, String>()
+                            fields.forEach { (k, v) ->
+                                val oldVal = when {
+                                    k == "name" -> orig?.name ?: ""
+                                    k.startsWith("passport.") -> passportFieldText(orig?.passport, k.removePrefix("passport."))
+                                    else -> ""
+                                }
+                                if (v != oldVal) changed[k] = v
+                            }
+                            if (changed.isEmpty()) return@forEach
+                            anyChanged = true
+                            viewModel.repository.patchCharacter(bookId, charId, changed)
+                        }
+
+                        if (!anyChanged) {
+                            setSaveLoading(false)
+                            return@launch
+                        }
+
+                        // Thin-client: re-fetch canonical book data instead of
+                        // reconstructing it locally (server is the source of truth).
+                        bookData = runCatching { viewModel.repository.getBook(bookId) }.getOrNull()
+                        chapters = bookData?.chapters ?: emptyList()
+                        viewModel.markUnsavedChanges()
+                        setSaveLoading(false)
+                        errorText?.visibility = View.GONE
+                    } catch (e: Exception) {
+                        Log.e("EditFragment", "characters save failed", e)
+                        showSaveError("${e::class.simpleName}: ${e.message ?: "unknown"}")
+                    }
+                }
+                return
+            }
+
+            // Voices tab (4) — dedicated PATCH per changed voice (instruction),
+            // mirroring the web EditPage VOICES_TAB branch. Same reasoning as
+            // the characters branch: voice.* keys must not leak into scenes.
+            if (selectedTab == 4) {
+                setSaveLoading(true)
+                lifecycleScope.launch {
+                    try {
+                        val byVoice = mutableMapOf<String, MutableMap<String, String>>()
+                        fieldValues.forEach { (key, value) ->
+                            if (key.startsWith("voice.")) {
+                                val rest = key.removePrefix("voice.")
+                                val dot = rest.indexOf('.')
+                                if (dot > 0) {
+                                    val voiceId = rest.substring(0, dot)
+                                    val fieldKey = rest.substring(dot + 1)
+                                    byVoice.getOrPut(voiceId) { mutableMapOf() }[fieldKey] = value
+                                }
+                            }
+                        }
+
+                        if (byVoice.isEmpty()) {
+                            setSaveLoading(false)
+                            return@launch
+                        }
+
+                        val voices = bd.voices ?: emptyMap()
+                        var anyChanged = false
+                        byVoice.forEach { (voiceId, fields) ->
+                            val orig = voices[voiceId]?.instruction ?: ""
+                            val changed = mutableMapOf<String, String>()
+                            fields.forEach { (k, v) -> if (v != orig) changed[k] = v }
+                            if (changed.isEmpty()) return@forEach
+                            anyChanged = true
+                            viewModel.repository.patchVoice(bookId, voiceId, changed)
+                        }
+
+                        if (!anyChanged) {
+                            setSaveLoading(false)
+                            return@launch
+                        }
+
+                        bookData = runCatching { viewModel.repository.getBook(bookId) }.getOrNull()
+                        chapters = bookData?.chapters ?: emptyList()
+                        viewModel.markUnsavedChanges()
+                        setSaveLoading(false)
+                        errorText?.visibility = View.GONE
+                    } catch (e: Exception) {
+                        Log.e("EditFragment", "voices save failed", e)
+                        showSaveError("${e::class.simpleName}: ${e.message ?: "unknown"}")
+                    }
+                }
+                return
+            }
+
             val ch = chapters.getOrNull(currentChIndex) ?: run {
                 showSaveError("No chapter data")
                 return
@@ -1828,7 +1965,13 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                     //   - participants string → array
                     //   - empty string → null
                     // Exclude chapter_title from fields (sent separately below).
-                    val sendFields = fieldValues - "chapter_title"
+                    // Characters/Voices are saved through their dedicated PATCH
+                    // endpoints (tabs 3/4 above) — char.* / voice.* keys must NOT
+                    // reach the scene PATCH here: setDeep would write them into
+                    // the unit/scene object as junk keys that never persist to
+                    // characters.json / voices.json.
+                    val sendFields = fieldValues
+                        .filterKeys { it != "chapter_title" && !it.startsWith("char.") && !it.startsWith("voice.") }
                     patchBody["fields"] = sendFields
 
                     if (hasUnit && sceneUnits != null) {

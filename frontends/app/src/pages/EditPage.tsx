@@ -1107,9 +1107,13 @@ export function EditPage(props: { path?: string }) {
           const orig = chars.find((c) => c.id === charId);
           const changed: Record<string, string> = {};
           Object.entries(fields).forEach(([k, v]) => {
+            // passport.<field> keys must compare against the REAL field
+            // (p[field]); passportFieldText(p, 'passport.appearance') would look
+            // up p['passport.appearance'] — always '' — so clearing a field to
+            // empty never persisted and untouched fields were re-sent every save.
             const oldVal = k === 'name'
               ? (orig?.name ?? '')
-              : passportFieldText(orig?.passport as CharPassport | null, k);
+              : passportFieldText(orig?.passport as CharPassport | null, k.startsWith('passport.') ? k.slice('passport.'.length) : k);
             if (v !== oldVal) changed[k] = v;
           });
           if (Object.keys(changed).length === 0) continue;
