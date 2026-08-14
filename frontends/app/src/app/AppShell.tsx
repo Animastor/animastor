@@ -137,7 +137,7 @@ function DesktopWorkspace({ path, isSecondary, children }: { path: string; isSec
               + object-fit:cover — the Android launcher's round-container
               treatment) so it reads as a small app-icon, not a stuck-out
               square. */}
-          <img class="desktop-header__logo" src="/logo.png" alt="" width="36" height="36" />
+          <img class="desktop-header__logo" src="/logo.png" alt="" width="40" height="40" />
           <span class="desktop-header__brand">Animastor</span>
           <DesktopBookContext />
         </div>
