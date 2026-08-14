@@ -474,7 +474,10 @@ function WorkerSection({ label, iconActive, iconInactive, state, enabled, onTogg
       <div class="gen-rows">
         {showDoneRow && <DoneRow />}
         {!showDoneRow && rows.map((row, i) => (
-          <WorkerRow key={row.taskId ?? `${row.type}-${i}`} row={row} onStop={() => onRowStop(row)} />
+          // A generation task can emit several rows sharing one task_id (per-target
+          // rows, e.g. cover + scene) — the key must be unique per ROW or React
+          // would reconcile duplicate keys and drop/misrender rows.
+          <WorkerRow key={row.taskId ? `${row.taskId}:${row.chapterId ?? ''}:${row.sceneId ?? ''}:${i}` : `${row.type}-${i}`} row={row} onStop={() => onRowStop(row)} />
         ))}
       </div>
 

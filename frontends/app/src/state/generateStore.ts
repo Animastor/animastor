@@ -288,6 +288,24 @@ let generationCompleted = false;
 let newGenerationPending = false;
 let importCompleteReceived = false;
 
+/**
+ * Row-unique tracking key for one progress row.
+ *
+ * A generation task can emit MULTIPLE rows: the backend's progress-panel emits
+ * one row per target scene for `current_scene` tasks, and a task can legitimately
+ * span several scenes. Keying the monotonic floor / completion timestamp by
+ * task_id ALONE made sibling rows of the same task share one record: when the
+ * first sibling finished (e.g. the cover's fast 1/1 row), its `completedAt` was
+ * recorded under the shared key, and the 10s done-row expiry then dropped the
+ * STILL-RUNNING sibling (the real scene) the moment it reached 5/5 — so the
+ * final green "5/5 → 100%" row never rendered and the panel finalised early
+ * (the reported "4/5 → drop, no final 100%" bug). The shared floor also leaked
+ * ready counts across rows (e.g. a cover row showing "4/1").
+ */
+function rowTaskKey(taskId: string | null, type: string, chapterId: string | null, sceneId: string | null): string {
+  return taskId ? `${taskId}:${type}:${chapterId ?? ''}:${sceneId ?? ''}` : `legacy:${type}`;
+}
+
 /** Clear in-flight generation tracking (GenerateViewModel.resetProgressState).
  *  Used by the Settings clear-storyboard flow — the book stays open, only the
  *  progress-panel tracking and playback state are reset. */
@@ -375,7 +393,10 @@ export function computeProgressRows(
 
   const addFromServer = (sw: ProgressTask, label: string) => {
     if (sw.total <= 0) return;
-    const taskKey = sw.task_id ?? `legacy:${sw.type}`;
+    // Per-ROW key: sibling rows of one task (per-target rows) keep their own
+    // floor and their own 10s done-window — a fast sibling can never expire a
+    // still-running one, and ready counts never cross-pollute.
+    const taskKey = rowTaskKey(sw.task_id ?? null, sw.type, sw.chapter_id ?? null, sw.scene_id ?? null);
     const ready = Math.max(sw.ready, taskReadyFloor.get(taskKey) ?? 0);
     const done = sw.done || (ready >= sw.total && ready > 0);
     // STALE-DONE GATE — the backend keeps recently-completed tasks in the panel
@@ -438,8 +459,9 @@ export function computeProgressRows(
   if (vbookProg != null && vbookProg.stage !== 'IDLE') {
     const vbookElapsed = timerStartedAt > 0 ? Math.floor((now - timerStartedAt) / 1000) : 0;
     if (vbookProg.stage === 'COMPLETED') {
-      if (!taskCompletedAt.has('vbook')) taskCompletedAt.set('vbook', now);
-      if (!taskFrozenElapsed.has('vbook')) taskFrozenElapsed.set('vbook', vbookElapsed);
+      const vbookKey = rowTaskKey('vbook', 'vbook', null, null);
+      if (!taskCompletedAt.has(vbookKey)) taskCompletedAt.set(vbookKey, now);
+      if (!taskFrozenElapsed.has(vbookKey)) taskFrozenElapsed.set(vbookKey, vbookElapsed);
       // Preserve the final window counter (e.g. "3/3") instead of resetting to
       // "1/1": derive ready/total from the last known window state. When no
       // scene-level index was ever reported, show the full window count (best
@@ -455,7 +477,7 @@ export function computeProgressRows(
         endSceneLabel: null, endChapterLabel: null,
         ready: finalReady, total: finalTotal, percent: 100, done: true, countText: null,
         indeterminate: false, cancelled: false,
-        elapsedSeconds: taskFrozenElapsed.get('vbook') ?? vbookElapsed, frozen: true,
+        elapsedSeconds: taskFrozenElapsed.get(rowTaskKey('vbook', 'vbook', null, null)) ?? vbookElapsed, frozen: true,
       });
     } else {
       const stageMsg = vbookProg.message?.trim() || null;
@@ -511,9 +533,12 @@ export function computeProgressRows(
   }
 
   // ── Per-worker expiry: drop done rows whose 10s display window expired ──
+  // Uses the ROW-unique key (task + type + target), so each sibling row of a
+  // multi-target task expires by its OWN completion time — the real scene's
+  // green 5/5 stays visible for its full 10s window and only then finalises.
   const filtered = rows.filter((row) => {
     if (row.done && !row.cancelled) {
-      const taskKey = row.taskId ?? `legacy:${row.type}`;
+      const taskKey = rowTaskKey(row.taskId, row.type, row.chapterId, row.sceneId);
       const completedAt = taskCompletedAt.get(taskKey);
       return !(completedAt != null && (now - completedAt) >= COMPLETED_TASK_DISPLAY_MS);
     }

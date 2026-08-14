@@ -1343,6 +1343,24 @@ class GenerateViewModel(
      */
     private val STALE_DONE_TOLERANCE_MS = 3_000L
 
+    /**
+     * Row-unique tracking key for one progress row.
+     *
+     * A generation task can emit MULTIPLE rows: the backend's progress-panel
+     * emits one row per target scene for `current_scene` tasks, and a task can
+     * legitimately span several scenes. Keying the monotonic floor / completion
+     * timestamp by task_id ALONE made sibling rows of the same task share one
+     * record: when the first sibling finished (e.g. the cover's fast 1/1 row),
+     * its `completedAt` was recorded under the shared key, and the 10s done-row
+     * expiry then dropped the STILL-RUNNING sibling (the real scene) the moment
+     * it reached 5/5 — so the final green "5/5 → 100%" row never rendered and
+     * the panel finalised early (the reported "4/5 → drop, no final 100%" bug).
+     * The shared floor also leaked ready counts across rows (e.g. a cover row
+     * showing "4/1"). Mirrors rowTaskKey in the mobile web generateStore.
+     */
+    private fun rowTaskKey(taskId: String?, type: String, chapterId: String?, sceneId: String?): String =
+        if (taskId != null) "$taskId:$type:${chapterId ?: ""}:${sceneId ?: ""}" else "legacy:$type"
+
     /** Floor per generation task — prevents progress rollback. */
     private val taskReadyFloor = ConcurrentHashMap<String, Int>()
 
@@ -1528,7 +1546,10 @@ class GenerateViewModel(
             label: String
         ) {
             if (sw.total <= 0) return
-            val taskKey = sw.task_id ?: "legacy:${sw.type}"
+            // Per-ROW key: sibling rows of one task (per-target rows) keep their
+            // own floor and their own 10s done-window — a fast sibling can never
+            // expire a still-running one, and ready counts never cross-pollute.
+            val taskKey = rowTaskKey(sw.task_id, sw.type, sw.chapter_id, sw.scene_id)
             val ready = maxOf(sw.ready, taskReadyFloor[taskKey] ?: 0)
             val done = sw.done || (ready >= sw.total && ready > 0)
             // STALE-DONE GATE (identical to mobile web) — the backend keeps
@@ -1595,11 +1616,12 @@ class GenerateViewModel(
         // ── VBook worker (local state) ──
         if (vbookProgress != null && vbookProgress.stage != VBookStage.IDLE) {
             if (vbookProgress.stage == VBookStage.COMPLETED) {
+                val vbookKey = rowTaskKey("vbook", "vbook", null, null)
                 // Record completion timestamp if not already set
-                if (!taskCompletedAt.containsKey("vbook")) {
-                    taskCompletedAt["vbook"] = now
+                if (!taskCompletedAt.containsKey(vbookKey)) {
+                    taskCompletedAt[vbookKey] = now
                 }
-                val vbookElapsed = taskFrozenElapsed.getOrPut("vbook") {
+                val vbookElapsed = taskFrozenElapsed.getOrPut(vbookKey) {
                     if (timerStartedAt > 0L) (now - timerStartedAt) / 1000L else 0L
                 }
                 // Preserve the final window counter (e.g. "3/3") instead of
@@ -1681,9 +1703,13 @@ class GenerateViewModel(
         }
 
         // ── Per-worker expiry: filter out done workers whose 10s display window expired ──
+        // Uses the ROW-unique key (task + type + target), so each sibling row of
+        // a multi-target task expires by its OWN completion time — the real
+        // scene's green 5/5 stays visible for its full 10s window and only then
+        // finalises.
         rows.removeAll { row ->
             if (row.done && !row.cancelled) {
-                val taskKey = row.taskId ?: "legacy:${row.type}"
+                val taskKey = rowTaskKey(row.taskId, row.type, row.chapterId, row.sceneId)
                 val completedAt = taskCompletedAt[taskKey]
                 completedAt != null && (now - completedAt) >= COMPLETED_TASK_DISPLAY_MS
             } else false

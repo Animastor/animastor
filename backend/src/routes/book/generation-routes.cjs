@@ -453,8 +453,17 @@ module.exports = function(app, redis, deps) {
                 .filter(ds => ds.dirty_layers.length > 0);
 
             // ── Cover check — ensure cover scene is included in generation ──
+            // Whole-book scope ONLY. For scoped requests (current_scene etc.) the
+            // cover must NOT be dragged in as a second target of the same task:
+            // the progress-panel then emits TWO rows sharing one task_id, and the
+            // frontend's per-task completion tracking — armed when the cover's
+            // fast 1/1 row finishes — expires the real scene's 5/5 row before it
+            // can render (the "4/5 → drop, final green 100% never shows" bug).
+            // collectScenes() already includes the cover for whole_book, so this
+            // prepend is only meaningful as a safety net when the cover is not
+            // among the whole-book dirty scenes.
             const coverCh = (loadedBook.chapters || []).find(ch => ch.type === 'cover');
-            if (coverCh && coverCh.scenes && coverCh.scenes.length > 0 && requestedTypeSet.has('image')) {
+            if (effectiveScope === 'whole_book' && coverCh && coverCh.scenes && coverCh.scenes.length > 0 && requestedTypeSet.has('image')) {
                 const coverScene = coverCh.scenes[0];
                 // Legacy chapters (parse.js) carry the id in `chapter`; modern
                 // lazy-book chapters (chapter-utils.js) use `chapter_id`. Reading
