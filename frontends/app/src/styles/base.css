@@ -11,64 +11,6 @@ body {
 button { font: inherit; color: inherit; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
-/* ── Android-parity vertical scrollbar ─────────────────────────────
-   Thumb = colorAccent (#C9A15A), track = colorOutlineVariant
-   (#2D2925 dark / #E2DACD light), 5dp wide, 3dp radius — mirrors
-   res/drawable/scrollbar_thumb.xml + scrollbar_track.xml with
-   fadeScrollbars=false. Only applies to overflowing content because
-   every scrollable area uses overflow-y: auto. Horizontal-only strips
-   that hide their scrollbar keep it via their own display:none rules
-   (higher specificity). */
-/* Vertical only (the task targets vertical scrollbars; horizontal areas like
-   dev-json / tables keep their native look). Orientation pseudo-classes are
-   WebKit-only, so Firefox stays global via scrollbar-* properties. */
-*::-webkit-scrollbar:vertical { width: 5px; }
-*::-webkit-scrollbar-track:vertical {
-  background: var(--outline-2);
-  border-radius: 3px;
-}
-*::-webkit-scrollbar-thumb:vertical {
-  background: var(--accent);
-  border-radius: 3px;
-}
-/* Firefox parity (thin ≈ 5-8px, accent thumb on outline-variant track) */
-* { scrollbar-width: thin; scrollbar-color: var(--accent) var(--outline-2); }
-
-/* Touch devices (phones / tablets / touch laptops): the native scrollbar is an
-   overlay that fades right after scrolling stops, and CSS scrollbar styling is
-   ignored — so hide it and let lib/scrollbar.ts paint a persistent
-   Android-style indicator (fixed overlay, visible only while overflowing). */
-@media (pointer: coarse) {
-  *::-webkit-scrollbar:vertical { width: 0; }
-  *::-webkit-scrollbar:horizontal { height: 0; }
-  * { scrollbar-width: none; }
-}
-
-/* JS-drawn persistent scroll indicator (see lib/scrollbar.ts) — a fixed,
-   pointer-transparent overlay at each scroll container's right edge. Track =
-   colorOutlineVariant (--outline-2), thumb = colorSecondary/cinema_accent
-   (--accent), 5px wide, 3px radius; opacity is toggled by the module and it is
-   never shown when the content fits. z-index 140 sits above modal content
-   (backdrops 100 / popups 90) so indicators show inside dialogs too, while
-   staying below full-screen overlays (zoom 150, toasts 200). */
-.vs-ind {
-  position: fixed;
-  top: 0; left: 0;
-  width: 5px;
-  background: var(--outline-2);
-  border-radius: 3px;
-  pointer-events: none;
-  z-index: 140;
-  opacity: 0;
-  transition: opacity 0.15s ease;
-}
-.vs-thumb {
-  position: absolute;
-  top: 0; left: 0; right: 0;
-  background: var(--accent);
-  border-radius: 3px;
-}
-
 #app {
   display: flex;
   flex-direction: column;
@@ -2323,7 +2265,7 @@ button { font: inherit; color: inherit; }
   min-height: 0;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
-  padding: 0.125rem 0.5rem 0.5rem; /* right 0.5rem — clear of the scrollbar */
+  padding: 0.125rem 0.5rem 0.5rem;
 }
 .edit-section {
   font-size: 0.875rem; /* 14sp */
