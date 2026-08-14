@@ -9,7 +9,10 @@
   <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
   <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16.png" />
   <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
-  <title>Animastor Mobile</title>
+  <!-- One tab title for the whole app: the same WebFront serves both the
+       desktop and mobile shells (layout auto-selects by window size), so
+       they share a single name — no per-shell titles. -->
+  <title>Animastor App</title>
   <script>
     // Apply theme before paint to avoid FOUC (mirrors Android applyTheme()).
     (function () {
