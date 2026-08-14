@@ -113,22 +113,6 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
         // Build mode chips
         buildModeChips()
 
-        // Mode scroll indicators
-        b.modeScrollLeft.setOnClickListener {
-            val hsv = b.modeRow
-            val targetX = (hsv.scrollX - hsv.width * 3 / 4).coerceAtLeast(0)
-            hsv.smoothScrollTo(targetX, 0)
-        }
-        b.modeScrollRight.setOnClickListener {
-            val hsv = b.modeRow
-            val contentW = hsv.getChildAt(0)?.width ?: 0
-            val maxScroll = (contentW - hsv.width).coerceAtLeast(0)
-            val targetX = (hsv.scrollX + hsv.width * 3 / 4).coerceAtMost(maxScroll)
-            hsv.smoothScrollTo(targetX, 0)
-        }
-        b.modeRow.viewTreeObserver.addOnScrollChangedListener { updateModeScrollIndicators() }
-        b.modeRow.post { updateModeScrollIndicators() }
-
         if (argCreateMode && generateViewModel.bookId.isBlank()) {
             messages.clear()
             apiMessages.clear()
@@ -183,7 +167,6 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
             }
             container.addView(chip)
         }
-        binding?.modeRow?.post { updateModeScrollIndicators() }
     }
 
     private fun startNewSession() {
@@ -735,17 +718,6 @@ class AiAssistantFragment : Fragment(R.layout.fragment_ai_assistant) {
                 scrollToBottom()
             }
         }
-    }
-
-    private fun updateModeScrollIndicators() {
-        val b = binding ?: return
-        val hsv = b.modeRow
-        val canLeft = hsv.canScrollHorizontally(-1)
-        val canRight = hsv.canScrollHorizontally(1)
-        b.modeScrollLeft.alpha = if (canLeft) 1.0f else 0.3f
-        b.modeScrollLeft.isEnabled = canLeft
-        b.modeScrollRight.alpha = if (canRight) 1.0f else 0.3f
-        b.modeScrollRight.isEnabled = canRight
     }
 
     private fun buildToolResultMessage(toolResults: List<ToolCallResult>, patchesApplied: Int): String {

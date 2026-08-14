@@ -8,7 +8,7 @@ import { bookId as generateBookId } from '../state/generateStore';
 import { position as positionSignal } from '../state/positionStore';
 import { setSecondaryTitle } from '../app/titleStore';
 import { Modal, toast } from '../lib/ui';
-import { IconMic, IconMicOff, IconSend, IconMenu, IconAdd, IconSparkle, IconDownload, IconEdit, IconMap, IconFile, IconCheck, IconCopy, IconChevronLeft, IconChevronRight, IconClose } from '../app/icons';
+import { IconMic, IconMicOff, IconSend, IconMenu, IconAdd, IconSparkle, IconDownload, IconEdit, IconMap, IconFile, IconCheck, IconCopy, IconClose } from '../app/icons';
 import type { IconProps } from '../app/icons';
 
 // AiAssistantPage — 1:1 with AiAssistantFragment. Chat with AI: session history
@@ -70,10 +70,8 @@ export function AiAssistantPage(props: { path?: string; embedded?: boolean; onCl
   const [showSessions, setShowSessions] = useState(false);
   const [listening, setListening] = useState(false);
   const [positionLabel, setPositionLabel] = useState(t('navigate_no_position'));
-  const [modeRowScroll, setModeRowScroll] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
   const apiMessagesRef = useRef<AiMessage[]>([]);
-  const modeRowRef = useRef<HTMLDivElement>(null);
   const sessionAtSendRef = useRef<string | null>(null);
   // Mirror of currentSessionId readable inside async callbacks (state alone would
   // be stale there); Android compares against currentSessionId in the coroutine.
@@ -298,16 +296,6 @@ export function AiAssistantPage(props: { path?: string; embedded?: boolean; onCl
     void navigator.clipboard?.writeText(msg.text).then(() => toast(t('copied_to_clipboard')));
   };
 
-  const updateModeScroll = () => {
-    const el = modeRowRef.current;
-    if (el) setModeRowScroll(el.scrollLeft);
-  };
-
-  const canLeft = modeRowScroll > 0;
-  const canRight = modeRowRef.current
-    ? modeRowScroll < modeRowRef.current.scrollWidth - modeRowRef.current.clientWidth - 4
-    : false;
-
   return (
     <section class="ai-page">
       {/* Header: back + session list + new chat */}
@@ -334,13 +322,10 @@ export function AiAssistantPage(props: { path?: string; embedded?: boolean; onCl
         </button>
       </div>
 
-      {/* Mode chips row */}
+      {/* Mode chips row — natural horizontal carousel: the next chip peeking
+          past the right edge signals scrollability (no chevron indicators). */}
       <div class="ai-mode-row">
-        <button class="ai-mode-scroll" aria-label="scroll left" disabled={!canLeft}
-          onClick={() => { const el = modeRowRef.current; if (el) el.scrollBy({ left: -el.clientWidth * 0.75, behavior: 'smooth' }); }}>
-          <IconChevronLeft />
-        </button>
-        <div class="ai-mode-scroll-x" ref={modeRowRef} onScroll={updateModeScroll}>
+        <div class="ai-mode-scroll-x">
           {MODES.map((m) => (
             <button
               key={m.id}
@@ -352,10 +337,6 @@ export function AiAssistantPage(props: { path?: string; embedded?: boolean; onCl
             </button>
           ))}
         </div>
-        <button class="ai-mode-scroll" aria-label="scroll right" disabled={!canRight}
-          onClick={() => { const el = modeRowRef.current; if (el) el.scrollBy({ left: el.clientWidth * 0.75, behavior: 'smooth' }); }}>
-          <IconChevronRight />
-        </button>
       </div>
 
       {/* Message list */}

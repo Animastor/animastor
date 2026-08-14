@@ -1829,15 +1829,8 @@ button { font: inherit; color: inherit; }
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .ai-mode-row {
-  display: flex; align-items: center; gap: 0.25rem;
   padding: 0.5rem 0.5rem 0.25rem;
 }
-.ai-mode-scroll {
-  border: 0; background: transparent; color: var(--text-2);
-  width: 1.75rem; height: 2.25rem; display: inline-flex;
-  align-items: center; justify-content: center; flex-shrink: 0;
-}
-.ai-mode-scroll:disabled { opacity: 0.3; }
 .ai-mode-scroll-x {
   display: flex; gap: 0.5rem; overflow-x: auto; scrollbar-width: none;
   flex: 1; min-width: 0; padding: 0.125rem 0;

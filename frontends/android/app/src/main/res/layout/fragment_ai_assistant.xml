@@ -61,7 +61,8 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent" />
 
-    <!-- Mode selector row with scroll indicators -->
+    <!-- Mode selector row — natural horizontal carousel: the next chip peeking
+         past the right edge signals scrollability (no chevron indicators). -->
     <FrameLayout
         android:id="@+id/modeRowContainer"
         android:layout_width="0dp"
@@ -75,8 +76,8 @@
             android:id="@+id/modeRow"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:paddingStart="28dp"
-            android:paddingEnd="28dp"
+            android:paddingStart="8dp"
+            android:paddingEnd="8dp"
             android:scrollbars="none">
 
             <LinearLayout
@@ -86,28 +87,6 @@
                 android:orientation="horizontal"
                 android:gravity="center_vertical" />
         </HorizontalScrollView>
-
-        <ImageButton
-            android:id="@+id/modeScrollLeft"
-            android:layout_width="28dp"
-            android:layout_height="match_parent"
-            android:layout_gravity="start"
-            android:background="?attr/selectableItemBackgroundBorderless"
-            android:src="@drawable/ic_chevron_left"
-            android:scaleType="center"
-            android:tint="?attr/colorOnSurfaceVariant"
-            android:contentDescription="Scroll modes left" />
-
-        <ImageButton
-            android:id="@+id/modeScrollRight"
-            android:layout_width="28dp"
-            android:layout_height="match_parent"
-            android:layout_gravity="end"
-            android:background="?attr/selectableItemBackgroundBorderless"
-            android:src="@drawable/ic_chevron_right"
-            android:scaleType="center"
-            android:tint="?attr/colorOnSurfaceVariant"
-            android:contentDescription="Scroll modes right" />
     </FrameLayout>
 
     <!-- Message list -->
