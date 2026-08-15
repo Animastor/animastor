@@ -2,12 +2,18 @@ package com.example.animastor.ui
 
 import android.graphics.Bitmap
 import android.media.MediaPlayer
+import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.util.Base64
 import android.util.Log
 import android.view.MotionEvent
+import android.view.PixelCopy
 import android.view.SurfaceHolder
 import android.view.View
 import android.widget.Toast
+import java.io.ByteArrayOutputStream
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.activityViewModels
 import androidx.lifecycle.Lifecycle
@@ -66,11 +72,31 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
     private var isFullscreen = false
     private var pendingLoad = false
     private var pendingVideoSyncJob: Job? = null
+    // Explicit position the whole-scene video must land on (ms) once prepared.
+    // Set when the video is started for a unit navigation / rotation resume;
+    // guards syncVideoFrame() from clobbering it with the audio player's not-yet
+    // seeked currentPosition (the audio seekTo is asynchronous). -1 = no target.
+    private var pendingVideoTargetMs: Long = -1L
+    // ── TEMPORARY unit-seek diagnostics ────────────────────────────────────
+    // One SEEK_REQUEST/SEEK_RESULT pair per Navigator/Edit unit tap is posted
+    // to POST /api/v1/debug/video-seek (backend appends to a JSONL file while
+    // VIDEO_SEEK_DEBUG=1). Remove together with the backend endpoint.
+    private var pendingDebugRecord: MutableMap<String, Any?>? = null
+    // Captured BEFORE stopAll() releases the old video player, so "video_before"
+    // is the real position at the moment of the unit tap.
+    private var debugVideoBeforeMs: Long = -1L
+    private var debugVideoFileBefore: String? = null
+    private var debugSeq = 0L
+    // TEMPORARY: high-frequency (50ms) video+audio position trace collected for
+    // ~1.5s after onPrepared — shows the exact moment the correct seeked
+    // position is replaced by a wrong one / when playback starts early.
+    private var debugTraceSamples: MutableList<Map<String, Any?>>? = null
 
     private fun checkPendingExternalSeek() {
         if (playbackViewModel.pendingExternalSeek != null) {
             if (isHidden) return
             Log.i(TAG, "checkPendingExternalSeek: executing seek to ${playbackViewModel.pendingExternalSeek}")
+            captureDebugVideoBefore()
             pendingLoad = true
             stopAll()
             playbackViewModel.executePendingSeek()
@@ -84,6 +110,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                     if (playbackViewModel.pendingExternalSeek != null) {
                         if (isHidden) return@collect
                         Log.i(TAG, "external seek via state")
+                        captureDebugVideoBefore()
                         pendingLoad = true
                         stopAll()
                         playbackViewModel.executePendingSeek()
@@ -91,6 +118,13 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                 }
             }
         }
+    }
+
+    /** TEMPORARY: snapshot the old video player's position before stopAll()
+     *  releases it — this is "video_before" in the seek-debug record. */
+    private fun captureDebugVideoBefore() {
+        debugVideoBeforeMs = runCatching { videoPlayer?.currentPosition?.toLong() }.getOrNull() ?: -1L
+        debugVideoFileBefore = currentVideoFile?.name
     }
 
     private fun observeManualUnitChange() {
@@ -564,19 +598,41 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         if (!isAdded) return
         Log.i(TAG, "handleChunk: audio=${audio.size}B video=${video?.size}B ius=${iuSequence?.size ?: 0}")
 
-        if (video != null) playVideoOverlay(video)
-
         playbackViewModel.persistedImage = null
 
-        // Calculate seek offset from unitIndex if navigating externally
+        // Compute the target position on the CANONICAL timeline (audio/start_ms)
+        // BEFORE touching any player. The whole-scene video is aligned to the
+        // audio timeline at merge time (group clips are trimmed to their exact
+        // audio frame counts), so BOTH the audio and the video seek to the same
+        // position — the final muxed product has a single timeline. Priority:
+        // externally selected unit → rotation-resume position.
         val targetUnit = SharedPositionManager.current.value.unitIndex
         val seekToUnit = if (targetUnit > 0 && !iuSequence.isNullOrEmpty() && targetUnit < iuSequence.size) targetUnit else 0
-        var seekMs = 0L
-        if (seekToUnit > 0 && !iuSequence.isNullOrEmpty()) {
-            for (i in 0 until seekToUnit) {
-                seekMs += iuSequence[i].durationMs
-            }
+        val pendingRotMs = playbackViewModel.pendingSeekPositionMs
+        val seekMs = when {
+            seekToUnit > 0 && !iuSequence.isNullOrEmpty() -> unitStartMs(iuSequence, seekToUnit)
+            pendingRotMs > 0 -> pendingRotMs
+            else -> 0L
         }
+        if (seekMs > 0) playbackViewModel.pendingSeekPositionMs = -1
+
+        if (seekToUnit > 0 && !iuSequence.isNullOrEmpty()) {
+            val target = iuSequence[seekToUnit]
+            Log.i(TAG, "UNIT-SEEK unit=${target.unitId} index=$seekToUnit startMs=${target.startMs} seekMs=$seekMs")
+            setPlayerDebug("seek→unit ${seekToUnit + 1} target ${seekMs}ms")
+        }
+
+        // TEMPORARY diagnostics: one SEEK_REQUEST per Navigator/Edit unit tap.
+        if (playbackViewModel.debugSeekPending && !iuSequence.isNullOrEmpty()) {
+            emitSeekRequest(seekToUnit, seekMs, iuSequence)
+        }
+
+        // An external unit tap (or rotation resume) is an EXPLICIT video target
+        // — including 0 for unit 1 — so the video is seeked to it directly
+        // instead of the audio-sync fallback (web parity).
+        val explicitVideoSeek = playbackViewModel.explicitVideoSeekPending || pendingRotMs > 0
+        playbackViewModel.explicitVideoSeekPending = false
+        if (video != null) playVideoOverlay(video, seekMs, explicitVideoSeek)
 
         if (!iuSequence.isNullOrEmpty()) {
             currentIuSequence = iuSequence
@@ -621,13 +677,24 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                 currentPlayer?.start()
             }
             if (seekMs > 0) {
-                Log.i(TAG, "seeking to unit ${seekToUnit} at ${seekMs}ms")
+                Log.i(TAG, "audio seek to unit ${seekToUnit} at ${seekMs}ms")
                 currentPlayer?.seekTo(seekMs.toInt())
-            } else if (playbackViewModel.pendingSeekPositionMs > 0) {
-                val sMs = playbackViewModel.pendingSeekPositionMs.toInt()
-                Log.i(TAG, "seek to ${sMs}ms after rotation resume")
-                currentPlayer?.seekTo(sMs)
-                playbackViewModel.pendingSeekPositionMs = -1
+                // TEMPORARY diagnostics: verify the AUDIO actually landed on the
+                // target (the video-side logs were always exact; audio was the
+                // only unmeasured component).
+                viewLifecycleOwner.lifecycleScope.launch {
+                    delay(300)
+                    val aPos = runCatching { currentPlayer?.currentPosition?.toLong() }.getOrNull() ?: -1L
+                    Log.i(TAG, "audio pos after seek: ${aPos}ms (target ${seekMs}ms)")
+                    setPlayerDebug("audio→${aPos}ms (tgt ${seekMs}ms)")
+                    repository.postVideoSeekDebug(mapOf(
+                        "event" to "AUDIO_SEEK_RESULT",
+                        "unit_index" to seekToUnit,
+                        "seek_target" to seekMs,
+                        "audio_after" to aPos,
+                        "client_ts" to System.currentTimeMillis(),
+                    ))
+                }
             }
             Log.i(TAG, "first MediaPlayer started at unit ${seekToUnit}")
             if (currentPlayer != null) {
@@ -647,6 +714,161 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
             startIuCycling()
         }
         updateLayers()
+    }
+
+    /** TEMPORARY diagnostics: SEEK_REQUEST — what the player was asked to do
+     *  for this unit tap (source identity, unit timing, computed seek target,
+     *  video position/file right before the seek). Posted to the backend
+     *  debug log; the SEEK_RESULT is emitted from onPrepared. */
+    private fun emitSeekRequest(unitIndex: Int, seekMs: Long, iuSequence: List<IuImageItem>) {
+        playbackViewModel.debugSeekPending = false
+        val pos = SharedPositionManager.current.value
+        val target = iuSequence.getOrNull(unitIndex)
+        val next = iuSequence.getOrNull(unitIndex + 1)
+        val unitStart = target?.startMs
+        val unitEnd = next?.startMs ?: unitStart?.let { it + target.durationMs.coerceAtLeast(0L) }
+        val record = linkedMapOf<String, Any?>(
+            "event" to "SEEK_REQUEST",
+            "seek_id" to "${System.currentTimeMillis()}-${debugSeq++}",
+            "client_ts" to System.currentTimeMillis(),
+            "book_id" to playbackViewModel.bookId,
+            "build_id" to playbackViewModel.buildId,
+            "chapter_id" to pos.chapterId,
+            "scene_id" to pos.sceneId,
+            "unit_id" to (target?.unitId ?: pos.unitId),
+            "unit_index" to unitIndex,
+            "unit_start" to (unitStart ?: -1L),
+            "unit_end" to (unitEnd ?: -1L),
+            "seek_target" to seekMs,
+            "video_before" to debugVideoBeforeMs,
+            "video_file_before" to (debugVideoFileBefore ?: "none"),
+        )
+        debugVideoBeforeMs = -1L
+        debugVideoFileBefore = null
+        pendingDebugRecord = record
+        Log.i(TAG, "SEEK_REQUEST $record")
+        viewLifecycleOwner.lifecycleScope.launch { repository.postVideoSeekDebug(record) }
+    }
+
+    /** TEMPORARY diagnostics: grab the ACTUAL frame displayed on the video
+     *  surface (PixelCopy) after a unit seek and post it to the backend
+     *  (event=FRAME_CAPTURE). The server compares it against the expected
+     *  clip frame at the seek target — directly answers whether the screen
+     *  shows the right content. API 26+ only (guard below). */
+    private fun captureVideoFrame(seekId: String?, unitIndex: Int?, seekTargetMs: Long?) {
+        if (Build.VERSION.SDK_INT < 26) return
+        val b = binding ?: return
+        if (b.videoSurface.visibility != View.VISIBLE) return
+        val sv = b.videoSurface
+        if (sv.width <= 0 || sv.height <= 0) return
+        val bitmap = Bitmap.createBitmap(sv.width, sv.height, Bitmap.Config.ARGB_8888)
+        try {
+            PixelCopy.request(sv, bitmap, { result ->
+                if (result == PixelCopy.SUCCESS) {
+                    val baos = ByteArrayOutputStream()
+                    bitmap.compress(Bitmap.CompressFormat.JPEG, 80, baos)
+                    val b64 = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
+                    Log.i(TAG, "FRAME_CAPTURE seek_id=$seekId unit=$unitIndex target=${seekTargetMs}ms bytes=${baos.size()}")
+                    viewLifecycleOwner.lifecycleScope.launch {
+                        repository.postVideoSeekDebug(mapOf(
+                            "event" to "FRAME_CAPTURE",
+                            "seek_id" to (seekId ?: "frame"),
+                            "unit_index" to (unitIndex ?: -1),
+                            "seek_target" to (seekTargetMs ?: -1L),
+                            "w" to sv.width,
+                            "h" to sv.height,
+                            "frame_b64" to b64,
+                            "client_ts" to System.currentTimeMillis(),
+                        ))
+                    }
+                } else {
+                    Log.w(TAG, "PixelCopy failed: $result")
+                }
+                if (!bitmap.isRecycled) bitmap.recycle()
+            }, Handler(Looper.getMainLooper()))
+        } catch (e: Exception) {
+            Log.w(TAG, "captureVideoFrame failed: ${e.message}")
+        }
+    }
+
+    /** TEMPORARY diagnostics: video vs audio position lock check. If both
+     *  move together (video ≈ audio ≈ target + elapsed) after a unit seek,
+     *  the player/seek is provably fine and any visual mismatch is a
+     *  rendering (surface/buffer) issue, not a position issue. */
+    private fun logLockPositions(tag: String, seekId: String? = null, unitIndex: Int? = null, seekTargetMs: Long? = null) {
+        val vp = videoPlayer
+        val ap = currentPlayer
+        val vPos = runCatching { vp?.currentPosition?.toLong() }.getOrNull() ?: -1L
+        val aPos = runCatching { ap?.currentPosition?.toLong() }.getOrNull() ?: -1L
+        val delta = if (vPos >= 0 && aPos >= 0) (vPos - aPos) else Long.MIN_VALUE
+        Log.i(TAG, "LOCK-CHECK $tag: video=${vPos}ms audio=${aPos}ms delta=${if (delta == Long.MIN_VALUE) "n/a" else delta}ms")
+        setPlayerDebug("LOCK $tag: v ${vPos}ms a ${aPos}ms Δ${if (delta == Long.MIN_VALUE) "?" else delta}ms")
+        // Also POST to the backend debug log so the audio↔video lock can be
+        // checked without logcat.
+        viewLifecycleOwner.lifecycleScope.launch {
+            repository.postVideoSeekDebug(mapOf(
+                "event" to "LOCK_CHECK",
+                "seek_id" to (seekId ?: "none"),
+                "unit_index" to (unitIndex ?: -1),
+                "seek_target" to (seekTargetMs ?: -1L),
+                "tag" to tag,
+                "video_pos" to vPos,
+                "audio_pos" to aPos,
+                "delta_ms" to (if (delta == Long.MIN_VALUE) null else delta),
+                "client_ts" to System.currentTimeMillis(),
+            ))
+        }
+    }
+
+    /** TEMPORARY diagnostics: append a (t, video, audio, playing) snapshot to
+     *  the active seek trace (no-op unless a trace is being collected). */
+    private fun traceSnap(tag: String) {
+        val samples = debugTraceSamples ?: return
+        val vp = videoPlayer
+        val ap = currentPlayer
+        val v = runCatching { vp?.currentPosition?.toLong() }.getOrNull() ?: -1L
+        val a = runCatching { ap?.currentPosition?.toLong() }.getOrNull() ?: -1L
+        val p = runCatching { vp?.isPlaying }.getOrNull() ?: false
+        samples.add(mapOf("t" to System.currentTimeMillis(), "tag" to tag, "v" to v, "a" to a, "playing" to p))
+        Log.i(TAG, "TRACE $tag v=${v}ms a=${a}ms playing=$p")
+    }
+
+    /** TEMPORARY diagnostics: SEEK_RESULT — where the video actually landed
+     *  once the async seek settled (probed ~300ms after onPrepared). */
+    private fun emitSeekResult(videoAfterMs: Long, videoDurationMs: Long, videoFile: String?) {
+        val req = pendingDebugRecord ?: return
+        pendingDebugRecord = null
+        val record = linkedMapOf<String, Any?>(
+            "event" to "SEEK_RESULT",
+            "seek_id" to req["seek_id"],
+            "client_ts" to System.currentTimeMillis(),
+            "book_id" to req["book_id"],
+            "build_id" to req["build_id"],
+            "chapter_id" to req["chapter_id"],
+            "scene_id" to req["scene_id"],
+            "unit_id" to req["unit_id"],
+            "unit_index" to req["unit_index"],
+            "unit_start" to req["unit_start"],
+            "seek_target" to req["seek_target"],
+            "video_before" to req["video_before"],
+            "video_after" to videoAfterMs,
+            "video_duration" to videoDurationMs,
+            "video_file" to (videoFile ?: "none"),
+        )
+        Log.i(TAG, "SEEK_RESULT $record")
+        viewLifecycleOwner.lifecycleScope.launch { repository.postVideoSeekDebug(record) }
+    }
+
+    /** Start offset (ms) of a unit inside the whole-scene timeline (audio =
+     *  start_ms, the canonical position — the video is aligned to the same
+     *  timeline at merge time). Falls back to the cumulative durationMs sum for
+     *  legacy storyboards without timestamps. */
+    private fun unitStartMs(ius: List<IuImageItem>, unitIndex: Int): Long {
+        val startMs = ius.getOrNull(unitIndex)?.startMs
+        if (startMs != null && startMs > 0) return startMs
+        var seekMs = 0L
+        for (i in 0 until unitIndex) seekMs += ius[i].durationMs
+        return seekMs
     }
 
     /** Handle chunk with no audio — show IU images with timer-based cycling (e.g. Cover). */
@@ -896,16 +1118,25 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                     continue
                 }
 
-                var cumulative = 0L
+                // Map audio position → unit index on the same timeline the seek
+                // uses: server start_ms boundaries when present (handles gaps the
+                // user created in Edit), else cumulative durationMs (legacy).
                 var idx = 0
-                for ((i, iu) in ius.withIndex()) {
-                    cumulative += iu.durationMs
-                    if (pos < cumulative) {
-                        idx = i
-                        break
+                if (ius.firstOrNull()?.startMs != null) {
+                    idx = ius.indexOfLast { (it.startMs ?: 0L) <= pos }
+                    if (idx < 0) idx = 0
+                    if (idx >= ius.size) idx = ius.size - 1
+                } else {
+                    var cumulative = 0L
+                    for ((i, iu) in ius.withIndex()) {
+                        cumulative += iu.durationMs
+                        if (pos < cumulative) {
+                            idx = i
+                            break
+                        }
                     }
+                    if (idx >= ius.size) idx = ius.size - 1
                 }
-                if (idx >= ius.size) idx = ius.size - 1
 
                 if (idx == 0 && currentIuIndex != 0) {
                     delay(500)
@@ -1068,8 +1299,9 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         return file
     }
 
-    private fun playVideoOverlay(bytes: ByteArray) {
+    private fun playVideoOverlay(bytes: ByteArray, startSeekMs: Long = 0L, explicitSeek: Boolean = false) {
         try {
+            pendingVideoTargetMs = if (explicitSeek) startSeekMs else -1L
             videoPlayer?.release()
             videoPlayer = null
             currentVideoFile?.delete()
@@ -1092,12 +1324,165 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                     setOnVideoSizeChangedListener { _, width, height ->
                         fitSurfaceToContainer(b, width, height)
                     }
+                    setOnSeekCompleteListener {
+                        traceSnap("seek_complete pos=${runCatching { currentPosition }.getOrNull()}ms")
+                    }
                     setOnPreparedListener {
                         updateLayers()
-                        val ap = currentPlayer?.currentPosition ?: 0
-                        if (ap > 0) seekTo(ap)
+                        var seekLandTarget = 0L
+                        if (explicitSeek) {
+                            // External navigation / rotation resume: seek to the unit's
+                            // start on the VIDEO timeline explicitly — including 0 for
+                            // unit 1 / scene start. Reading currentPlayer.currentPosition
+                            // here is racy — the audio player may not exist yet or its
+                            // own seekTo may not have landed — which left the video at 0
+                            // or mid-scene.
+                            val durMs = try { duration.toLong() } catch (e: Exception) { -1L }
+                            val target = if (durMs > 0) startSeekMs.coerceAtMost((durMs - 100).coerceAtLeast(0)) else startSeekMs
+                            seekLandTarget = target
+                            // TEMPORARY diagnostics: begin the high-frequency trace
+                            // (video+audio position every 50ms for ~1.5s) and post it
+                            // as one SEEK_TRACE record at the end.
+                            val dbgReqT = pendingDebugRecord
+                            val traceSeekId = dbgReqT?.get("seek_id") as? String
+                            val traceUnitIndex = dbgReqT?.get("unit_index") as? Int
+                            val traceTarget = dbgReqT?.get("seek_target") as? Long
+                            debugTraceSamples = mutableListOf()
+                            traceSnap("onPrepared target=${target}ms")
+                            viewLifecycleOwner.lifecycleScope.launch {
+                                val t0 = System.currentTimeMillis()
+                                while (System.currentTimeMillis() - t0 < 1500) {
+                                    delay(50)
+                                    traceSnap("sample")
+                                }
+                                val samples = debugTraceSamples
+                                debugTraceSamples = null
+                                if (samples != null) {
+                                    repository.postVideoSeekDebug(mapOf(
+                                        "event" to "SEEK_TRACE",
+                                        "seek_id" to (traceSeekId ?: "none"),
+                                        "unit_index" to (traceUnitIndex ?: -1),
+                                        "seek_target" to (traceTarget ?: -1L),
+                                        "samples" to samples,
+                                        "client_ts" to System.currentTimeMillis(),
+                                    ))
+                                }
+                            }
+                            if (target > 0) {
+                                traceSnap("seekTo(${target})")
+                                seekTo(target.toInt())
+                            }
+                            Log.i(TAG, "video seek applied: target=${target}ms (video dur=${durMs}ms)")
+                            // Delayed probes: report the position the player actually
+                            // landed on after the async seek settles — SEEK_RESULT at
+                            // +300ms, then video-vs-audio lock checks at +1.5s and +4s
+                            // to detect any later position override / desync.
+                            // Snapshot the seek context BEFORE emitSeekResult consumes
+                            // pendingDebugRecord, so the frame capture can be matched
+                            // to this seek (unit, target position).
+                            val dbgReq = pendingDebugRecord
+                            val capSeekId = dbgReq?.get("seek_id") as? String
+                            val capUnitIndex = dbgReq?.get("unit_index") as? Int
+                            val capSeekTarget = dbgReq?.get("seek_target") as? Long
+                            viewLifecycleOwner.lifecycleScope.launch {
+                                delay(300)
+                                try {
+                                    val actual = currentPosition.toLong()
+                                    Log.i(TAG, "video pos after seek: ${actual}ms")
+                                    emitSeekResult(actual, durMs, file.name)
+                                    setPlayerDebug("video→${actual}ms (tgt ${startSeekMs}ms)")
+                                } catch (e: IllegalStateException) {
+                                    Log.w(TAG, "video pos probe failed: ${e.message}")
+                                }
+                                delay(1200)
+                                logLockPositions("after seek +1.5s", capSeekId, capUnitIndex, capSeekTarget)
+                                captureVideoFrame(capSeekId, capUnitIndex, capSeekTarget)
+                                delay(2500)
+                                logLockPositions("after seek +4s", capSeekId, capUnitIndex, capSeekTarget)
+                                // Second capture: verify the surface eventually
+                                // shows the seeked frame (rendering delay check).
+                                delay(2000)
+                                captureVideoFrame(capSeekId, capUnitIndex, capSeekTarget)
+                            }
+                        } else {
+                            // Normal playback: the video usually finishes preparing after
+                            // the audio is already playing — sync to the audio position.
+                            // seekTo is ASYNC and must not race start() (a start()
+                            // before the seek lands drops the seek and the video plays
+                            // from 0). Confirm the seek landed, then start.
+                            val ap = currentPlayer?.currentPosition ?: 0
+                            if (ap > 0) {
+                                seekTo(ap)
+                                viewLifecycleOwner.lifecycleScope.launch {
+                                    var waited = 0
+                                    while (waited < 1500) {
+                                        delay(50)
+                                        waited += 50
+                                        val cur = runCatching { currentPosition.toLong() }.getOrNull() ?: -1L
+                                        if (cur >= ap) break
+                                    }
+                                    try { if (!isPlaying) start() } catch (e: IllegalStateException) {
+                                        Log.w(TAG, "video sync start failed: ${e.message}")
+                                    }
+                                }
+                            } else {
+                                start()
+                            }
+                        }
+                        pendingVideoTargetMs = -1L
                         if (pendingLoad || isPaused) {
                             Log.i(TAG, "video prepared — pending load, staying paused")
+                            // ROOT-CAUSE FIX (unit seek): force the seeked frame to
+                            // render onto the surface WITHOUT racing the async seek.
+                            // A paused MediaPlayer does NOT push a new frame, so the
+                            // surface keeps showing the PREVIOUS player's stale frame
+                            // (previous unit's stop-frame) — the "one-unit shift" the
+                            // user sees even though currentPosition is exact. But the
+                            // OLD code called start() immediately after seekTo(): on
+                            // many devices the start() raced the in-flight seek, DROPPED
+                            // it, and the video played from 0 / the stale frame until
+                            // the lock loop re-seeked — the "wrong position first, then
+                            // polling corrects" symptom. Now: poll while PAUSED until
+                            // currentPosition confirms the seek landed (re-issuing the
+                            // seek if it was dropped), then briefly start()+pause() to
+                            // push exactly the seeked frame.
+                            if (explicitSeek) {
+                                try {
+                                    val targetPos = seekLandTarget
+                                    viewLifecycleOwner.lifecycleScope.launch {
+                                        var waited = 0
+                                        while (waited < 2000) {
+                                            delay(50)
+                                            waited += 50
+                                            val cur = runCatching { currentPosition.toLong() }.getOrNull() ?: -1L
+                                            if (cur >= 0 && (targetPos <= 0 || cur >= targetPos)) break
+                                            if (targetPos > 0 && waited % 400 == 0) {
+                                                // Seek hasn't landed yet — re-issue it
+                                                // while still paused (safe; no start()
+                                                // racing it).
+                                                try { seekTo(targetPos.toInt()) } catch (_: IllegalStateException) {}
+                                            }
+                                        }
+                                        delay(100) // let one full frame render
+                                        // Seek confirmed landed (or target 0) — now
+                                        // start() renders the seeked frame, then pause.
+                                        traceSnap("peek_start target=${targetPos}")
+                                        try { if (!isPlaying) start() } catch (e: IllegalStateException) {
+                                            Log.w(TAG, "peek-render start failed: ${e.message}")
+                                        }
+                                        delay(120)
+                                        traceSnap("peek_pause")
+                                        try {
+                                            if (isPaused) pause()
+                                        } catch (e: IllegalStateException) {
+                                            Log.w(TAG, "peek-render pause failed: ${e.message}")
+                                        }
+                                        Log.i(TAG, "peek-render done at ${runCatching { currentPosition.toLong() }.getOrNull()}ms (target ${targetPos}ms)")
+                                    }
+                                } catch (e: IllegalStateException) {
+                                    Log.w(TAG, "peek-render failed: ${e.message}")
+                                }
+                            }
                         } else {
                             start()
                         }
@@ -1163,11 +1548,15 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
 
     private fun syncVideoFrame() {
         pendingVideoSyncJob?.cancel()
-        val pos = currentPlayer?.currentPosition ?: 0
+        // While a unit-navigation seek is in flight the audio currentPosition may
+        // still report 0 (seekTo is asynchronous) — use the explicit target so the
+        // video is not dragged back to the scene start.
+        val pos: Long = if (pendingVideoTargetMs >= 0) pendingVideoTargetMs else (currentPlayer?.currentPosition ?: 0).toLong()
         val vp = videoPlayer ?: return
         if (pos < 0) return
         try {
-            vp.seekTo(pos)
+            traceSnap("syncVideoFrame seek=${pos}ms")
+            vp.seekTo(pos.toInt())
             if (!vp.isPlaying) {
                 vp.start()
             }
@@ -1184,7 +1573,14 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         }
     }
 
-    private fun pausePlayback() {
+    /** TEMPORARY diagnostics: show a one-line status in the player UI (the
+     *  user has no logcat) — mirrors the seek/lock messages. */
+    private fun setPlayerDebug(msg: String) {
+        val b = binding ?: return
+        b.debugText.text = msg
+        b.debugText.visibility = View.VISIBLE
+        Log.i(TAG, "DBG $msg")
+    }    private fun pausePlayback() {
         Log.i(TAG, "pausePlayback")
         currentPlayer?.pause()
         try {
@@ -1226,6 +1622,18 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
 
         showCurrentIu()
         currentPlayer?.start()
+        traceSnap("resumePlayback video-start")
+        // If the video is still carrying an unconsumed unit-navigation target,
+        // apply it before starting — otherwise it would resume from a stale
+        // (possibly scene-start) position.
+        try {
+            if (videoPlayer != null && pendingVideoTargetMs >= 0) {
+                videoPlayer?.seekTo(pendingVideoTargetMs.toInt())
+                pendingVideoTargetMs = -1L
+            }
+        } catch (e: IllegalStateException) {
+            Log.w(TAG, "videoPlayer pending-seek failed (state issue): ${e.message}")
+        }
         try {
             if (videoPlayer != null && !videoPlayer!!.isPlaying) {
                 videoPlayer?.start()
@@ -1251,6 +1659,8 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
     fun stopAll() {
         Log.i(TAG, "stopAll")
         pendingVideoSyncJob?.cancel()
+        pendingVideoTargetMs = -1L
+        pendingDebugRecord = null
         iuCyclingJob?.cancel()
         iuCyclingJob = null
         currentIuSequence = null

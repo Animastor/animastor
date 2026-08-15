@@ -472,6 +472,18 @@ interface BackendApi {
     ): AddConnectorResponse
 
     // ======================================================
+    // TEMPORARY: video-seek diagnostics (unit-shift investigation)
+    // One record per unit-seek (SEEK_REQUEST / SEEK_RESULT) — the backend
+    // appends it as JSONL to its debug log while VIDEO_SEEK_DEBUG=1.
+    // Remove together with the debug client after the root cause is found.
+    // ======================================================
+
+    @POST("/api/v1/debug/video-seek")
+    suspend fun postVideoSeekDebug(
+        @Body body: Map<String, @JvmSuppressWildcards Any?>
+    ): GenericResponse
+
+    // ======================================================
     // Workflow Status API (Stage 1)
     // ======================================================
 

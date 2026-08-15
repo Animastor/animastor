@@ -68,6 +68,10 @@ services:
       # real chunk durations to <scene>.chunk-durations.json before merge
       - AUDIO_CLEANUP_TAIL_ONLY=${AUDIO_CLEANUP_TAIL_ONLY:-}
       - TRACK_CHUNK_DURATIONS=${TRACK_CHUNK_DURATIONS:-}
+      # TEMPORARY (diagnostics): unit-seek debug — when VIDEO_SEEK_DEBUG=1 the
+      # backend appends SEEK_REQUEST/SEEK_RESULT records from the Android player
+      # to <OUTPUT_DIR>/logs/video_seek_debug.jsonl. Remove after investigation.
+      - VIDEO_SEEK_DEBUG=${VIDEO_SEEK_DEBUG:-}
     volumes:
       - ./workflow.json:/workflow.json:ro
       - ./data/output:/data/output

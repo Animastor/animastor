@@ -80,6 +80,8 @@ export interface IuImageItem {
   unitId: string | null;
   text: string | null;
   status: IuStatus;
+  /** Server-computed start (ms) on the whole-scene timeline (start_ms). */
+  startMs: number | null;
 }
 export interface PreloadedScene {
   audio: Blob;
@@ -108,7 +110,18 @@ let needsRotationResume = false;      // PlaybackViewModel.needsRotationResume
 let savedPlaybackPositionMs = 0;      // PlaybackViewModel.savedPlaybackPositionMs
 let pendingSeekPositionMs = -1;       // PlaybackViewModel.pendingSeekPositionMs
 let isExecutingExternalSeek = false;
+// Set by executePendingSeek (an external unit tap), consumed by the next
+// handleChunk: marks the computed seekMs as an EXPLICIT video target — even
+// when it is 0 (unit 1 / scene start). Without this, seeking to 0 fell into
+// the "sync to audio position" branch and, when the same scene video URL was
+// re-used (no reload, element stays at the old position), the video never
+// moved back to the start.
+let pendingExplicitUnitTarget = false;
 let currentVolume = 1;                // fragment.currentVolume
+// Explicit position (seconds) the whole-scene video must land on once loaded.
+// Set on unit navigation; guards re-syncs (attachVideo) from clobbering it with
+// the audio element's not-yet-seeked currentTime (seek is async). -1 = none.
+let pendingVideoTargetSec = -1;
 let sceneSeqCounter = 0;              // PlaybackViewModel.sceneSeqCounter
 let lastProcessedSceneSequence = 0;
 let videoEnded = false;
@@ -380,6 +393,12 @@ export function resumePlayback(): void {
   showCurrentIu();
   playAudio(currentPlayer);
   if (videoEl && videoBlobUrl && !videoEnded) {
+    // Apply any unconsumed video-timeline target before starting — otherwise
+    // the video could resume from a stale (possibly scene-start) position.
+    if (pendingVideoTargetSec >= 0) {
+      try { videoEl.currentTime = pendingVideoTargetSec; } catch { /* ignore */ }
+      pendingVideoTargetSec = -1;
+    }
     try { void videoEl.play().catch(() => { }); } catch { /* ignore */ }
   }
   uiState.value = { ...uiState.value, phase: 'PLAYING' };
@@ -512,6 +531,7 @@ export function executePendingSeek(): void {
   currentIndex = sceneIdx;
   missingIuPosition.value = null;
   isExecutingExternalSeek = true;
+  pendingExplicitUnitTarget = true;
   currentUnitIndex = seek.unitIndex;
   navigateTo({ ...seek });
   needsContentRefresh = false;
@@ -580,8 +600,14 @@ export function attachVideo(el: HTMLVideoElement): void {
   el.addEventListener('ended', onVideoEnded);
   if (videoBlobUrl) {
     el.src = videoBlobUrl;
-    const cur = currentPlayer?.currentTime ?? 0;
-    if (cur > 0) { try { el.currentTime = cur; } catch { /* not ready */ } }
+    // Prefer the explicit video-timeline target while one is pending; the
+    // audio currentTime can still be unseeked (0) right after a unit seek.
+    if (pendingVideoTargetSec >= 0) {
+      try { el.currentTime = pendingVideoTargetSec; } catch { /* not ready */ }
+    } else {
+      const cur = currentPlayer?.currentTime ?? 0;
+      if (cur > 0) { try { el.currentTime = cur; } catch { /* not ready */ } }
+    }
     if (!isPaused && uiState.value.phase === 'PLAYING') {
       try { void el.play().catch(() => { }); } catch { /* ignore */ }
     }
@@ -767,11 +793,12 @@ async function fetchIuSequence(chapterId: string, sceneId: string): Promise<IuIm
     return await Promise.all(sb.ius.map(async (iu) => {
       const durationMs = iu.duration_ms ?? 200; // N1: server-computed; floor fallback
       const text = iu.text ?? null;
+      const startMs = iu.start_ms ?? null;
       try {
         const blob = await getIuImageBlob(chapterId, sceneId, iu.unit_id);
-        return { blobUrl: URL.createObjectURL(blob), durationMs, unitId: iu.unit_id ?? null, text, status: 'READY' as IuStatus };
+        return { blobUrl: URL.createObjectURL(blob), durationMs, unitId: iu.unit_id ?? null, text, status: 'READY' as IuStatus, startMs };
       } catch {
-        return { blobUrl: null, durationMs, unitId: iu.unit_id ?? null, text, status: 'NOT_GENERATED' as IuStatus };
+        return { blobUrl: null, durationMs, unitId: iu.unit_id ?? null, text, status: 'NOT_GENERATED' as IuStatus, startMs };
       }
     }));
   } catch {
@@ -854,14 +881,32 @@ function releaseAudioEl(el: HTMLAudioElement | null): void {
 /** handleChunk — deliver a scene with audio: set IU sequence, create the first
  *  player or chain the next one, seek to the target unit (sum of durationMs). */
 function handleChunk(scene: PreloadedScene): void {
-  if (scene.videoUrl) playVideoOverlay(scene.videoUrl);
-
-  // Seek offset from unitIndex if navigating externally (PlayFragment.kt:573).
+  // Compute the target position on the CANONICAL timeline (audio/start_ms)
+  // BEFORE touching any player. The whole-scene video is aligned to the audio
+  // timeline at merge time (group clips are trimmed to their exact audio frame
+  // counts), so BOTH the audio and the video seek to the same position — the
+  // final muxed product has a single timeline. Priority: externally selected
+  // unit → rotation-resume.
   const ius = scene.iuSequence;
   const targetUnit = currentUnitIndex;
   const seekToUnit = targetUnit > 0 && ius.length > 0 && targetUnit < ius.length ? targetUnit : 0;
-  let seekMs = 0;
-  for (let i = 0; i < seekToUnit; i++) seekMs += ius[i].durationMs;
+  const pendingRotMs = pendingSeekPositionMs;
+  const seekMs = seekToUnit > 0 && ius.length > 0 ? unitStartMs(ius, seekToUnit)
+    : pendingRotMs > 0 ? pendingRotMs : 0;
+  if (seekMs > 0) pendingSeekPositionMs = -1;
+  if (seekToUnit > 0 && ius.length > 0) {
+    console.info(`[PLAY] UNIT-SEEK unit=${ius[seekToUnit].unitId} index=${seekToUnit} ` +
+      `startMs=${ius[seekToUnit].startMs} seekMs=${seekMs}`);
+  }
+
+  // An external unit tap (or rotation resume) is an EXPLICIT video target —
+  // including 0 for unit 1 — so the video is seeked to it directly instead of
+  // falling into the audio-sync branch (which leaves a reused <video> element
+  // stuck at its old position when the same scene URL is re-assigned).
+  const explicitVideoSeekMs: number | null =
+    (pendingExplicitUnitTarget || pendingRotMs > 0) ? seekMs : null;
+  pendingExplicitUnitTarget = false;
+  if (scene.videoUrl) playVideoOverlay(scene.videoUrl, explicitVideoSeekMs);
 
   currentIuSequence.value = ius;
   currentIuIndex = seekToUnit;
@@ -910,6 +955,17 @@ function handleChunk(scene: PreloadedScene): void {
     startIuCycling();
   }
   updateLayers();
+}
+
+/** Start offset (ms) of a unit on the whole-scene timeline (audio = start_ms,
+ *  the canonical position — the video is aligned to the same timeline at merge
+ *  time). Falls back to cumulative durationMs for legacy storyboards. */
+function unitStartMs(ius: IuImageItem[], unitIndex: number): number {
+  const startMs = ius[unitIndex]?.startMs;
+  if (startMs != null && startMs > 0) return startMs;
+  let seekMs = 0;
+  for (let i = 0; i < unitIndex; i++) seekMs += ius[i].durationMs;
+  return seekMs;
 }
 
 /** handleSilentChunk — no audio: release players, timer-based IU cycling. */
@@ -973,13 +1029,23 @@ function startIuCycling(): void {
       return;
     }
 
-    let cumulative = 0;
+    // Map audio position → unit index on the same timeline the seek uses:
+    // server start_ms boundaries when present, else cumulative durationMs.
     let idx = 0;
-    for (let i = 0; i < ius.length; i++) {
-      cumulative += ius[i].durationMs;
-      if (pos < cumulative) { idx = i; break; }
+    if (ius[0]?.startMs != null) {
+      for (let i = 0; i < ius.length; i++) {
+        if ((ius[i].startMs ?? 0) <= pos) idx = i;
+        else break;
+      }
+      if (idx >= ius.length) idx = ius.length - 1;
+    } else {
+      let cumulative = 0;
+      for (let i = 0; i < ius.length; i++) {
+        cumulative += ius[i].durationMs;
+        if (pos < cumulative) { idx = i; break; }
+      }
+      if (idx >= ius.length) idx = ius.length - 1;
     }
-    if (idx >= ius.length) idx = ius.length - 1;
     if (idx === 0 && currentIuIndex !== 0) return;
     if (idx !== currentIuIndex) {
       currentIuIndex = idx;
@@ -1129,19 +1195,46 @@ function updateLayers(): void {
   videoVisible.value = !!videoEl && !!videoBlobUrl && !videoEnded && layerVideo.value;
 }
 
-/** playVideoOverlay — load the scene video on the adopted <video> element,
- *  synced to the audio position (R4, no 50ms hack). */
-function playVideoOverlay(url: string): void {
+/** playVideoOverlay — load the scene video on the adopted <video> element.
+ *  With an explicit target (unit navigation / rotation resume) seek to the
+ *  timeline position and keep it; otherwise (normal playback) sync to the
+ *  audio position. Reading the audio currentTime as the target here is racy —
+ *  right after a unit seek the audio element is not seeked yet (seek is
+ *  async), which left the video at 0 ("2nd unit → start of video"). */
+function playVideoOverlay(url: string, explicitSeekMs: number | null = null): void {
   videoBlobUrl = url;
   videoEnded = false;
+  // Explicit target in seconds — 0 is a valid target (unit 1 / scene start).
+  // null = no explicit target → audio-sync fallback in applyVideoSeek.
+  pendingVideoTargetSec = explicitSeekMs != null ? explicitSeekMs / 1000 : -1;
   if (!videoEl) { updateLayers(); return; }
   videoEl.src = url;
-  const cur = currentPlayer?.currentTime ?? 0;
-  if (cur > 0) { try { videoEl.currentTime = cur; } catch { /* ignore */ } }
+  applyVideoSeek(explicitSeekMs);
+  // currentTime set before metadata loads is unreliable in some browsers —
+  // re-apply once the metadata is ready.
+  const onMeta = () => {
+    videoEl?.removeEventListener('loadedmetadata', onMeta);
+    applyVideoSeek(explicitSeekMs);
+  };
+  videoEl.addEventListener('loadedmetadata', onMeta);
   if (!isPaused && !pendingLoad && uiState.value.phase === 'PLAYING') {
     try { void videoEl.play().catch(() => { }); } catch { /* ignore */ }
   }
   updateLayers();
+}
+
+/** Seek the adopted video element to an explicit position (ms on the VIDEO
+ *  timeline) when one is given — INCLUDING 0 — else sync to the audio
+ *  position (late-loaded video during chained scene playback). */
+function applyVideoSeek(explicitSeekMs: number | null): void {
+  const el = videoEl;
+  if (!el) return;
+  if (explicitSeekMs != null) {
+    try { el.currentTime = explicitSeekMs / 1000; } catch { /* ignore */ }
+  } else {
+    const cur = currentPlayer?.currentTime ?? 0;
+    if (cur > 0) { try { el.currentTime = cur; } catch { /* ignore */ } }
+  }
 }
 
 function onVideoEnded(): void {
@@ -1169,6 +1262,7 @@ export function stopAll(): void {
   }
   videoBlobUrl = null;
   videoEnded = false;
+  pendingVideoTargetSec = -1;
   isPaused = false;
   enginePaused.value = false;
   updateLayers();

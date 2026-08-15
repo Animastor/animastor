@@ -230,4 +230,21 @@
         app:layout_constraintBottom_toTopOf="@id/playButton"
         app:layout_constraintEnd_toEndOf="parent" />
 
+    <!-- TEMPORARY: seek diagnostics shown in the player UI (no logcat needed) -->
+    <TextView
+        android:id="@+id/debugText"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="16dp"
+        android:layout_marginEnd="16dp"
+        android:layout_marginBottom="4dp"
+        android:maxLines="4"
+        android:textColor="#FFEB3B"
+        android:textSize="10sp"
+        android:textIsSelectable="true"
+        android:visibility="gone"
+        app:layout_constraintBottom_toTopOf="@id/statusText"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
 </androidx.constraintlayout.widget.ConstraintLayout>

@@ -122,6 +122,17 @@ class PlaybackViewModel(
     var pendingExternalSeek: ActivePosition? = null
     private var isExecutingExternalSeek = false
 
+    // TEMPORARY diagnostics: set when an external unit-seek (Navigator/Edit tap)
+    // is executed; PlayFragment consumes it to emit one SEEK_REQUEST/SEEK_RESULT
+    // pair to the backend debug log. Remove after the unit-shift investigation.
+    var debugSeekPending = false
+
+    // Set by executePendingSeek (external unit tap), consumed by the next
+    // handleChunk: marks the computed seekMs as an EXPLICIT video target — even
+    // when it is 0 (unit 1 / scene start). Parity with the web player: without
+    // this, seeking to 0 fell into the "sync to audio position" branch.
+    var explicitVideoSeekPending = false
+
     // ── Soft content refresh (regeneration completes while player is active) ─
 
     /**
@@ -563,8 +574,15 @@ class PlaybackViewModel(
         isExecutingExternalSeek = true
         currentUnitIndex = seek.unitIndex
         SharedPositionManager.navigateTo(seek)
+        debugSeekPending = true
+        explicitVideoSeekPending = true
         _uiState.update { it.copy(phase = PlayerPhase.DOWNLOADING) }
         needsContentRefresh = false
+
+        // The seek re-fetches the scene — drop the in-memory storyboard so the
+        // latest timings (start_ms AND video_start_ms) come from the server,
+        // not from a possibly stale cached response without video_start_ms.
+        _repository.clearStoryboardCache()
 
         preloadCache.clear()
         preloadJobs.clear()
@@ -800,10 +818,10 @@ class PlaybackViewModel(
                                 Log.d(TAG, "fetching IU image: ${iu.unit_id} (dur=$durationMs ms)")
                                 val imgBytes = _repository.getIuImage(bookId, chapterId, sceneId, iu.unit_id, buildId)
                                 val bmp = withContext(Dispatchers.Default) { MediaDecoder.decodeBitmap(imgBytes) }
-                                IuImageItem(bmp, durationMs, iu.unit_id, iuText, IuStatus.READY)
+                                IuImageItem(bmp, durationMs, iu.unit_id, iuText, IuStatus.READY, startMs = iu.start_ms)
                             }.getOrNull() ?: run {
                                 Log.w(TAG, "IU image NOT GENERATED: ${iu.unit_id} — using placeholder")
-                                IuImageItem(null, durationMs, iu.unit_id, iuText, IuStatus.NOT_GENERATED)
+                                IuImageItem(null, durationMs, iu.unit_id, iuText, IuStatus.NOT_GENERATED, startMs = iu.start_ms)
                             }
                         }
                     }.awaitAll()

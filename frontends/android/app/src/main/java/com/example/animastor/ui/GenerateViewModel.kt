@@ -1900,7 +1900,12 @@ data class IuImageItem(
     val durationMs: Long,
     val unitId: String? = null,
     val text: String? = null,
-    val status: IuStatus = IuStatus.READY
+    val status: IuStatus = IuStatus.READY,
+    // Server-computed start offset (ms) of this unit inside the whole-scene
+    // audio/video timeline (image_units.start_ms). Null when the backend
+    // hasn't timed the scene yet — callers then fall back to cumulative
+    // durationMs. This is the same anchor the Edit screen preview seeks to.
+    val startMs: Long? = null
 )
 
 enum class IuStatus {

@@ -2,6 +2,12 @@ const config = require('../config/runtime-config');
 const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
+const videoTimeline = require('./video-timeline');
+
+// Alignment constants — MUST mirror video-workflows.js (calculateFrames):
+const ALIGN_FPS = parseInt(process.env.VIDEO_FPS || '24', 10);
+const ALIGN_MIN_IU_DURATION = 1.0;
+const MIN_VIDEO_BYTES = 10240;
 
 function getOutputPath(...parts) {
     return path.join(config.OUTPUT_DIR, ...parts.filter(Boolean));
@@ -56,6 +62,179 @@ async function concatVideos(inputPaths, outputPath) {
         return outputPath;
     } finally {
         try { fs.unlinkSync(concatFile); } catch {}
+    }
+}
+
+/** Load the scene's units (order + audio durations) from image_units so the
+ *  merge can align the video timeline to the audio/start_ms timeline. */
+async function loadSceneUnitDurations(buildId, bookId, chapterId, sceneId) {
+    try {
+        const iuRepo = require('../storage/postgres/repositories/iu-repo');
+        const rows = await iuRepo.getImageUnitsForScene(buildId, bookId, chapterId, sceneId);
+        if (!rows || rows.length === 0) return null;
+        const sorted = [...rows].sort((a, b) => (a.scene_order || 0) - (b.scene_order || 0));
+        return sorted.map(r => {
+            const est = r.estimated_duration_sec && r.estimated_duration_sec > 0 ? r.estimated_duration_sec : null;
+            const real = r.start_ms != null && r.end_ms != null ? (r.end_ms - r.start_ms) / 1000 : null;
+            return est || real || ALIGN_MIN_IU_DURATION;
+        });
+    } catch (err) {
+        warn(`loadSceneUnitDurations failed for ${bookId}/${chapterId}/${sceneId}: ${err.message}`);
+        return null;
+    }
+}
+
+/** Trim a video to exactly `targetFrames` frames with `-c copy` (frame-exact,
+ *  no re-encode). Returns the trimmed path, or the original when no trim is
+ *  needed (target missing / target >= actual frames). */
+async function trimVideoToFrames(filePath, targetFrames) {
+    if (!targetFrames || targetFrames <= 0) return filePath;
+    const actual = await countVideoFrames(filePath);
+    if (actual == null || targetFrames >= actual) return filePath;
+    const trimmed = filePath + '.trim.mp4';
+    try {
+        await runFFmpeg(['-y', '-i', filePath, '-c', 'copy', '-frames:v', String(targetFrames), trimmed, '-loglevel', 'error']);
+        if (fs.existsSync(trimmed) && fs.statSync(trimmed).size >= MIN_VIDEO_BYTES) return trimmed;
+        try { fs.unlinkSync(trimmed); } catch {}
+        return filePath;
+    } catch (err) {
+        warn(`trimVideoToFrames failed for ${path.basename(filePath)}: ${err.message}`);
+        try { fs.unlinkSync(trimmed); } catch {}
+        return filePath;
+    }
+}function countVideoFrames(filePath) {
+    return new Promise(resolve => {
+        const proc = spawn('ffprobe', [
+            '-v', 'error', '-count_frames', '-select_streams', 'v:0',
+            '-show_entries', 'stream=nb_read_frames', '-of', 'csv=p=0', filePath,
+        ], { stdio: ['ignore', 'pipe', 'pipe'] });
+        let out = '';
+        proc.stdout.on('data', d => { out += d.toString(); });
+        proc.on('error', () => resolve(null));
+        proc.on('close', () => {
+            const v = parseInt(out.trim(), 10);
+            resolve(Number.isFinite(v) && v > 0 ? v : null);
+        });
+    });
+
+}
+
+/** Probe every video frame's PTS (seconds, in display order). */
+function probeFramePtsSec(filePath) {
+    return new Promise(resolve => {
+        const proc = spawn('ffprobe', [
+            '-v', 'error', '-select_streams', 'v:0',
+            '-show_entries', 'frame=pts_time', '-of', 'csv=p=0', filePath,
+        ], { stdio: ['ignore', 'pipe', 'pipe'] });
+        let out = '';
+        proc.stdout.on('data', d => { out += d.toString(); });
+        proc.on('error', () => resolve(null));
+        proc.on('close', () => {
+            const pts = out.split(/\r?\n/).map(s => parseFloat(s.trim())).filter(Number.isFinite);
+            resolve(pts.length > 0 ? pts : null);
+        });
+    });
+}
+
+/** Re-encode a video, forcing an IDR keyframe at the LAST frame at-or-before
+ *  each unit boundary (cumulative unit durations in seconds). Returns true on
+ *  success. Rationale: Android MediaPlayer.seekTo is keyframe-aligned — it
+ *  decodes from the nearest keyframe AT-OR-BEFORE the target. The merged video
+ *  is VFR with cumulative PTS drift (concat of trimmed clips), so time-based
+ *  -force_key_frames lands one frame after the boundary and the seek skips to
+ *  the previous unit's keyframe (the "one-unit shift": N-th unit → N-1-th
+ *  unit content). Forcing the keyframe on the last frame at-or-before the
+ *  boundary makes the seek land within one frame of the unit start (the frame
+ *  right at the transition — imperceptible). Frame count is preserved
+ *  (passthrough fps mode); only the stream is re-encoded (crf 18, veryfast).
+ *  Audio (if any) is copied. */
+async function forceKeyframesAtUnitBoundaries(videoPath, buildId, bookId, chapterId, sceneId) {
+    try {
+        const durations = await loadSceneUnitDurations(buildId, bookId, chapterId, sceneId);
+        if (!durations || durations.length <= 1) return true; // single unit — keyframe at 0 exists
+
+        const framePts = await probeFramePtsSec(videoPath);
+        if (!framePts || framePts.length === 0) return false;
+
+        // Unit boundary times (seconds) = cumulative durations (audio timeline,
+        // which the merged video is aligned to by alignGroupClips).
+        const boundaries = [];
+        let acc = 0;
+        for (let i = 0; i < durations.length - 1; i++) {
+            acc += durations[i];
+            boundaries.push(acc);
+        }
+        if (boundaries.length === 0) return true;
+
+        // For each boundary, find the index of the LAST frame with PTS <= it
+        // (frame indices are stable under re-encode: -fps_mode passthrough
+        // preserves the frame count exactly).
+        const indices = [];
+        for (const b of boundaries) {
+            let idx = -1;
+            for (let i = 0; i < framePts.length; i++) {
+                if (framePts[i] <= b + 1e-6) idx = i;
+                else break;
+            }
+            if (idx > 0 && !indices.includes(idx)) indices.push(idx);
+        }
+        if (indices.length === 0) return true;
+
+        const expr = 'expr:' + indices.map(i => `eq(n,${i})`).join('+');
+        const tmp = videoPath + '.kf.mp4';
+        await runFFmpeg([
+            '-y', '-i', videoPath,
+            '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18',
+            '-force_key_frames', expr,
+            '-fps_mode', 'passthrough',
+            '-c:a', 'copy',
+            tmp, '-loglevel', 'error',
+        ]);
+        if (fs.existsSync(tmp) && fs.statSync(tmp).size >= MIN_VIDEO_BYTES) {
+            fs.renameSync(tmp, videoPath);
+            log(`Forced keyframes at frames [${indices.join(', ')}] (unit boundaries ${boundaries.map(b => b.toFixed(3)).join(', ')}s)`);
+            return true;
+        }
+        try { fs.unlinkSync(tmp); } catch {}
+        return false;
+    } catch (err) {
+        warn(`forceKeyframesAtUnitBoundaries failed: ${err.message}`);
+        try { fs.unlinkSync(videoPath + '.kf.mp4'); } catch {}
+        return false;
+    }
+}
+
+/** Trim every group clip to its exact audio-duration frame count so the merged
+ *  scene video's timeline equals the audio/start_ms timeline (removes the
+ *  8n+1 alignment tax per group). Returns the trimmed file list (original
+ *  files untouched). Degrades gracefully — on any failure returns originals. */
+async function alignGroupClips(files, buildId, bookId, chapterId, sceneId) {
+    try {
+        const durations = await loadSceneUnitDurations(buildId, bookId, chapterId, sceneId);
+        if (!durations) return files;
+
+        const rawFrames = durations.map(d => Math.max(
+            Math.round(ALIGN_MIN_IU_DURATION * ALIGN_FPS), Math.round(d * ALIGN_FPS)
+        ));
+
+        const groupSec = [];
+        for (const f of files) {
+            const dur = await videoTimeline.probeVideoDurationSec(f);
+            if (dur == null) return files;
+            groupSec.push(dur);
+        }
+        const targets = videoTimeline.computeGroupTargetFrames(rawFrames, groupSec, ALIGN_FPS);
+        if (targets.length !== files.length) return files;
+
+        const trimmed = [];
+        for (let i = 0; i < files.length; i++) {
+            trimmed.push(await trimVideoToFrames(files[i], targets[i]));
+        }
+        log(`Aligned ${files.length} group clip(s) to the audio timeline for ${bookId}/${chapterId}/${sceneId}`);
+        return trimmed;
+    } catch (err) {
+        warn(`alignGroupClips failed for ${bookId}/${chapterId}/${sceneId}: ${err.message} — merging untrimmed`);
+        return files;
     }
 }
 
@@ -120,9 +299,34 @@ async function mergeSceneVideoGroups(redis, buildId, bookId, chapterId, sceneId,
 
         const tempPath = finalPath + '.merge.mp4';
 
-        log(`Merging ${files.length} video groups for ${bookId}/${chapterId}/${sceneId}`);
-        const result = await concatVideos(files, tempPath);
+        // Align each group clip to the audio timeline before concat so the
+        // merged video's unit boundaries match start_ms (see video-timeline.js).
+        const alignedFiles = await alignGroupClips(files, buildId, bookId, chapterId, sceneId);
+        log(`Merging ${alignedFiles.length} video groups for ${bookId}/${chapterId}/${sceneId}`);
+        const result = await concatVideos(alignedFiles, tempPath);
         if (!result) return null;
+
+        // ROOT-CAUSE FIX (unit seek landing in the previous unit): Android
+        // MediaPlayer.seekTo is KEYFRAME-ALIGNED — it decodes from the nearest
+        // keyframe at-or-before the target. If no keyframe sits exactly on a
+        // unit boundary, a seek to that unit's start_ms lands on the previous
+        // unit's last keyframe and the player shows the PREVIOUS unit's frames
+        // until playback catches up (the "one-unit shift", N-th unit → N-1-th
+        // unit content). Force a keyframe at every unit boundary so seekTo()
+        // lands exactly on the selected unit's first frame.
+        const forced = await forceKeyframesAtUnitBoundaries(tempPath, buildId, bookId, chapterId, sceneId);
+        if (forced) {
+            log(`Forced unit-boundary keyframes: ${bookId}/${chapterId}/${sceneId}`);
+        } else {
+            warn(`forceKeyframesAtUnitBoundaries failed for ${bookId}/${chapterId}/${sceneId} — seek may land one unit early`);
+        }
+
+        // Clean up trimmed intermediates (never touches the original _gN files).
+        for (const f of alignedFiles) {
+            if (f.endsWith('.trim.mp4')) {
+                try { fs.unlinkSync(f); } catch {}
+            }
+        }
 
         fs.renameSync(tempPath, finalPath);
 
