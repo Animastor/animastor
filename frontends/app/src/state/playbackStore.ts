@@ -138,6 +138,14 @@ let currentPlayer: HTMLAudioElement | null = null;
 let nextPlayer: HTMLAudioElement | null = null;
 let videoEl: HTMLVideoElement | null = null;
 let videoBlobUrl: string | null = null;
+// Scene key of the whole-scene video currently loaded in videoEl. Used to
+// detect unit navigation WITHIN the same scene: the video file does not change
+// (blob URLs are recreated per fetch, so the scene key — not the URL — is the
+// identity), and re-src'ing the element would clear the frame and force a
+// black/storyboard gap until the new source decodes. Web parity with the
+// Android keepSurface fix: the current frame stays visible through the seek
+// and the new unit's frame replaces it directly.
+let currentVideoSceneKey: string | null = null;
 let iuRafId = 0;
 let silentTimer: number | null = null;
 
@@ -599,6 +607,7 @@ export function attachVideo(el: HTMLVideoElement): void {
   videoEl = el;
   el.addEventListener('ended', onVideoEnded);
   if (videoBlobUrl) {
+    currentVideoSceneKey = getCurrentSceneKey();
     el.src = videoBlobUrl;
     // Prefer the explicit video-timeline target while one is pending; the
     // audio currentTime can still be unseeked (0) right after a unit seek.
@@ -621,6 +630,7 @@ export function detachVideo(): void {
     videoEl.removeAttribute('src');
     videoEl = null;
   }
+  currentVideoSceneKey = null;
   updateLayers();
 }
 
@@ -1202,7 +1212,24 @@ function updateLayers(): void {
  *  right after a unit seek the audio element is not seeked yet (seek is
  *  async), which left the video at 0 ("2nd unit → start of video"). */
 function playVideoOverlay(url: string, explicitSeekMs: number | null = null): void {
+  // Same whole-scene video (unit navigation within a scene): do NOT re-src the
+  // element — the browser keeps the current frame visible through the seek, so
+  // the new unit's frame replaces it directly (no black/storyboard gap). The
+  // freshly fetched blob URL is redundant — revoke it and just seek.
+  const sceneKey = getCurrentSceneKey();
+  if (videoEl && currentVideoSceneKey != null && sceneKey != null && sceneKey === currentVideoSceneKey) {
+    URL.revokeObjectURL(url);
+    videoEnded = false;
+    pendingVideoTargetSec = explicitSeekMs != null ? explicitSeekMs / 1000 : -1;
+    applyVideoSeek(explicitSeekMs);
+    if (!isPaused && !pendingLoad && uiState.value.phase === 'PLAYING') {
+      try { void videoEl.play().catch(() => { }); } catch { /* ignore */ }
+    }
+    updateLayers();
+    return;
+  }
   videoBlobUrl = url;
+  currentVideoSceneKey = sceneKey;
   videoEnded = false;
   // Explicit target in seconds — 0 is a valid target (unit 1 / scene start).
   // null = no explicit target → audio-sync fallback in applyVideoSeek.
@@ -1263,6 +1290,7 @@ export function stopAll(): void {
   videoBlobUrl = null;
   videoEnded = false;
   pendingVideoTargetSec = -1;
+  currentVideoSceneKey = null;
   isPaused = false;
   enginePaused.value = false;
   updateLayers();
