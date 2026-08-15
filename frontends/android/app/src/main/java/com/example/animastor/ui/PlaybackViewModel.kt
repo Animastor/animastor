@@ -382,6 +382,23 @@ class PlaybackViewModel(
     }
 
     /**
+     * Buffer gate (video underrun on a slow network): the WHOLE player pauses
+     * into "Загрузка…" ([PlayerPhase.BUFFERING]) instead of the video freezing
+     * while the audio keeps playing (desync). Mirrors the web buffer gate
+     * (frontends/app/src/state/playbackStore.ts). The fragment drives these on
+     * MediaPlayer MEDIA_INFO_BUFFERING_START/END.
+     */
+    fun enterBuffering() {
+        _uiState.update { it.copy(phase = PlayerPhase.BUFFERING) }
+    }
+
+    /** Leave BUFFERING → PLAYING after the video can continue (fragment
+     *  resyncs the video to the audio position before calling this). */
+    fun exitBuffering() {
+        _uiState.update { it.copy(phase = PlayerPhase.PLAYING) }
+    }
+
+    /**
      * Resume playback. Restores the phase to [PlayerPhase.PLAYING], or — if
      * [needsContentRefresh] is set (content was regenerated while paused) —
      * re-fetches the current scene from scratch so the user hears fresh audio.

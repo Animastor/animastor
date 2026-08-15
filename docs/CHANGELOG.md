@@ -8,6 +8,31 @@ All notable changes to Animastor are documented here.
 
 ### Added
 
+- **Android: буфер-гейт (паритет web)** — при нехватке данных видео на слабой
+  сети весь плеер паузится в «Загрузка…» вместо рассинхрона
+  (`PlayFragment.kt`, `PlaybackViewModel.kt`, `GenerateViewModel.kt`):
+  `MediaPlayer.setOnInfoListener` → `MEDIA_INFO_BUFFERING_START` паузит аудио и
+  ставит `PlayerPhase.BUFFERING` (статус/прогресс «Загрузка…», кнопка — пауза);
+  `MEDIA_INFO_BUFFERING_END` ре-синхронизирует видео по аудио (SEEK_CLOSEST при
+  дрейфе > 500 мс) и продолжает воспроизведение. Ошибка стрима во время буфера
+  разблокирует плеер и уходит на сториборд.
+
+- **Экспорт: фолбэк на playback-файлы** (`export-routes.cjs`, `video-merge.js`) —
+  если у сцены нет исходников `_gN.mp4` (prebuilt/demo-книги), экспорт собирает
+  сцену из merged playback-файла вместо 404 (качество playback-профиля, но
+  лучше, чем отсутствие экспорта).
+
+- **Кап битрейта источников при приёме (ingest)** (`runtime-config.js`,
+  `video-orchestrator.js`, `video-merge.js`) — нода SaveVideo в ComfyUI не имеет
+  параметров битрейта (проверено по документации), поэтому сырые клипы приходят
+  по 4–6+ Мбит/с. `SOURCE_VIDEO_BITRATE_KBPS=3500` капит каждый `_gN.mp4` ОДИН
+  раз при приёме (идемпотентно): хранение и вход merge-энкода стартуют с
+  разумного битрейта, экспорт остаётся near-transparent (PSNR ~39,8 дБ).
+  `reencode-playback.js --sources` применил кап к существующим данным
+  (g1: 6,3→3,5; g5: 3,8→3,5 Мбит/с; остальные уже ≤3,5). 0 — отключить.
+
+### Fixed
+
 - **Playback-профиль видео (Source/Playback/Export)** — Player получает лёгкую
   производную (~2 Мбит/с), экспорт остаётся в master-качестве
   (`backend/src/config/runtime-config.js`, `backend/src/video/video-merge.js`,

@@ -74,6 +74,15 @@ const HUB_URL = process.env.HUB_URL || 'https://animastor.in/gpu';
 // where the 5.47 Mbps current file buffered constantly (SSIM 0.968 vs source).
 const PLAYBACK_VIDEO_BITRATE_KBPS = Number(process.env.PLAYBACK_VIDEO_BITRATE_KBPS ?? 2000);
 
+// Source/master profile (kbps): the pipeline's ComfyUI SaveVideo node has NO
+// bitrate controls, so raw group clips arrive at 4-6+ Mbps for 768p animation.
+// video-orchestrator caps each incoming _gN.mp4 ONCE at ingest to this rate so
+// stored sources (and the merge's playback re-encode) start from a sane
+// bitrate. 3500 kbps is near-transparent for this content (PSNR ~39.8 dB,
+// SSIM ~0.977 per the playback experiment) and still export-worthy; 0 disables
+// the cap (sources stored as the pipeline produced them).
+const SOURCE_VIDEO_BITRATE_KBPS = Number(process.env.SOURCE_VIDEO_BITRATE_KBPS ?? 3500);
+
 // ======================================================
 // TXT IMPORT
 // ======================================================
@@ -271,6 +280,7 @@ module.exports = {
 
     // Video playback profile
     PLAYBACK_VIDEO_BITRATE_KBPS,
+    SOURCE_VIDEO_BITRATE_KBPS,
 
 };
 

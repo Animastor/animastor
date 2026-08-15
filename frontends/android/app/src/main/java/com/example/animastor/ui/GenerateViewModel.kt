@@ -1839,6 +1839,7 @@ enum class PlayerPhase {
     SCENE_READY,
     PLAYING,
     PAUSED,
+    BUFFERING,
     IMPORTING_TXT
 }
 

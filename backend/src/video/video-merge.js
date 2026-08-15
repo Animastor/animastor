@@ -1,7 +1,7 @@
 const config = require('../config/runtime-config');
 const path = require('path');
 const fs = require('fs');
-const { spawn } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 const videoTimeline = require('./video-timeline');
 
 // Alignment constants — MUST mirror video-workflows.js (calculateFrames):
@@ -155,33 +155,54 @@ function probeFramePtsSec(filePath) {
     });
 }
 
-/** Encode args for the PLAYER's lightweight playback derivative. The merged
- *  scene video served to the Player is capped at PLAYBACK_VIDEO_BITRATE_KBPS
- *  (default 2000 kbps, VBV-constrained) so it streams on connections where the
- *  5+ Mbps near-lossless CRF 18 re-encode buffered constantly. When the cap is
- *  disabled (config 0) the old CRF 18 behavior is kept. The pipeline SOURCES
- *  are never touched — master quality for export comes from them, not here. */
-function playbackVideoEncodeArgs() {
-    const k = config.PLAYBACK_VIDEO_BITRATE_KBPS;
-    if (k && k > 0) {
-        return ['-c:v', 'libx264', '-preset', 'veryfast', '-b:v', `${k}k`, '-maxrate', `${k}k`, '-bufsize', `${k * 2}k`];
+/** Encode args for a bitrate-capped playback derivative (VBV: average =
+ *  maxrate = bitrateKbps). 0/disabled → the near-lossless CRF 18 fallback. */
+function profileVideoEncodeArgs(bitrateKbps) {
+    if (bitrateKbps && bitrateKbps > 0) {
+        return ['-c:v', 'libx264', '-preset', 'veryfast', '-b:v', `${bitrateKbps}k`, '-maxrate', `${bitrateKbps}k`, '-bufsize', `${bitrateKbps * 2}k`];
     }
     return ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18'];
 }
 
-/** Re-encode a video into the playback profile (bitrate-capped, faststart).
- *  When forceKeyFramesExpr is given (unit-boundary frame indices), those exact
+/** Core re-encode: bitrate-capped profile + faststart. When
+ *  forceKeyFramesExpr is given (unit-boundary frame indices), those exact
  *  frames become IDR keyframes. Frame count is preserved (-fps_mode
  *  passthrough); audio (if any) is copied. */
-async function encodePlaybackProfile(inputPath, outputPath, forceKeyFramesExpr = null) {
+async function encodeVideoProfile(inputPath, outputPath, bitrateKbps, forceKeyFramesExpr = null) {
     const args = [
         '-y', '-i', inputPath,
-        ...playbackVideoEncodeArgs(),
+        ...profileVideoEncodeArgs(bitrateKbps),
     ];
     if (forceKeyFramesExpr) args.push('-force_key_frames', forceKeyFramesExpr);
     args.push('-fps_mode', 'passthrough', '-c:a', 'copy', '-movflags', '+faststart', outputPath, '-loglevel', 'error');
     await runFFmpeg(args);
     return outputPath;
+}
+
+/** PLAYER's lightweight playback derivative (PLAYBACK_VIDEO_BITRATE_KBPS,
+ *  default 2000 kbps) — served to the Player, never exported from. */
+async function encodePlaybackProfile(inputPath, outputPath, forceKeyFramesExpr = null) {
+    return encodeVideoProfile(inputPath, outputPath, config.PLAYBACK_VIDEO_BITRATE_KBPS, forceKeyFramesExpr);
+}
+
+/** SOURCE/master profile (SOURCE_VIDEO_BITRATE_KBPS, default 3500 kbps): caps
+ *  the pipeline's raw group clips ONCE at ingest (the ComfyUI SaveVideo node
+ *  has no bitrate controls, so clips arrive at 4-6+ Mbps for 768p animation).
+ *  Stored sources stay export-worthy (near-transparent at 3.5 Mbps) while
+ *  storage and the merge's playback re-encode start from a sane bitrate. */
+async function encodeSourceProfile(inputPath, outputPath) {
+    return encodeVideoProfile(inputPath, outputPath, config.SOURCE_VIDEO_BITRATE_KBPS, null);
+}
+
+/** Average video bitrate of a file (kbps), or null when it can't be probed. */
+function probeVideoBitrateKbps(filePath) {
+    const r = spawnSync('ffprobe', [
+        '-v', 'error', '-select_streams', 'v:0',
+        '-show_entries', 'stream=bit_rate',
+        '-of', 'default=noprint_wrappers=1:nokey=1', filePath,
+    ], { encoding: 'utf8' });
+    const v = parseFloat((r.stdout || '').trim());
+    return Number.isFinite(v) && v > 0 ? v / 1000 : null;
 }
 
 /** Re-encode a video, forcing an IDR keyframe at the LAST frame at-or-before
@@ -425,7 +446,18 @@ async function mergeBookVideosFromSources(redis, bookId, buildId, scenes) {
         try {
             for (const scene of scenes) {
                 const groups = findSceneVideoGroups(buildId, bookId, scene.chapter_id, scene.scene_id);
-                if (groups.length === 0) continue;
+                if (groups.length === 0) {
+                    // Fallback: no source clips for this scene (prebuilt/demo
+                    // books without _gN.mp4) — use the Player's merged scene
+                    // file so the export doesn't 404. Quality is the playback
+                    // profile, not master — better than no export at all.
+                    const scenePlayback = getOutputPath(buildId, `${bookId}_${scene.chapter_id}_${scene.scene_id}.mp4`);
+                    if (fs.existsSync(scenePlayback)) {
+                        log(`Export fallback: ${bookId}/${scene.chapter_id}/${scene.scene_id} has no sources — using playback file`);
+                        sceneVideos.push(scenePlayback);
+                    }
+                    continue;
+                }
                 if (groups.length === 1) {
                     sceneVideos.push(groups[0]);
                     continue;
@@ -545,5 +577,7 @@ module.exports = {
     concatVideos,
     muxVideoAudio,
     encodePlaybackProfile,
+    encodeSourceProfile,
+    probeVideoBitrateKbps,
     forceKeyframesAtUnitBoundaries,
 };

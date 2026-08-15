@@ -24,6 +24,11 @@ const videoMerge = require(path.join(ROOT, 'src/video/video-merge'));
 const config = require(path.join(ROOT, 'src/config/runtime-config'));
 
 const CAP_KBPS = config.PLAYBACK_VIDEO_BITRATE_KBPS;
+const SRC_CAP_KBPS = config.SOURCE_VIDEO_BITRATE_KBPS;
+// --sources: also cap the pipeline group clips (_gN.mp4) to the SOURCE profile
+// (3500 kbps) — merged scene files are ALWAYS re-encoded to the playback
+// profile; sources are only touched in this mode.
+const CAP_SOURCES = process.argv.includes('--sources');
 
 function probeBitrateKbps(filePath) {
     const r = spawnSync('ffprobe', [
@@ -58,6 +63,25 @@ async function reencode(videoPath, buildId, prefix) {
         console.log(`  ⏭  skip ${path.basename(videoPath)} (already ${(current / 1000).toFixed(1)} Mbps ≤ ${CAP_KBPS / 1000} Mbps)`);
         return;
     }
+    if (CAP_SOURCES) {
+        // Source clips: cap to SOURCE_VIDEO_BITRATE_KBPS (no keyframes — the
+        // unit-boundary keyframes are forced later by the playback merge).
+        if (current != null && SRC_CAP_KBPS > 0 && current <= SRC_CAP_KBPS * 1.05) {
+            console.log(`  ⏭  skip ${path.basename(videoPath)} (source already ${(current / 1000).toFixed(1)} Mbps ≤ ${SRC_CAP_KBPS / 1000} Mbps)`);
+            return;
+        }
+        const tmp = videoPath + '.cap.mp4';
+        try {
+            await videoMerge.encodeSourceProfile(videoPath, tmp);
+            fs.renameSync(tmp, videoPath);
+            const after = probeBitrateKbps(videoPath);
+            console.log(`  ✓ source-cap ${path.basename(videoPath)} → ${after != null ? (after / 1000).toFixed(1) : '?'} Mbps`);
+        } catch (err) {
+            console.error(`  ✗ source-cap failed for ${path.basename(videoPath)}: ${err.message}`);
+            try { fs.unlinkSync(tmp); } catch {}
+        }
+        return;
+    }
     const durations = loadUnitDurationsFromDisk(prefix);
     if (durations && durations.length > 1) {
         const ok = await videoMerge.forceKeyframesAtUnitBoundaries(videoPath, buildId, null, null, null, durations);
@@ -87,20 +111,27 @@ async function scanBuildDir(buildDir) {
     try { entries = fs.readdirSync(buildDir); } catch { return; }
     for (const name of entries) {
         if (!name.endsWith('.mp4')) continue;
-        if (/_g\d+\.mp4$/.test(name)) continue; // source clips — never touched
+        if (/_g\d+\.mp4$/.test(name)) {
+            if (CAP_SOURCES) {
+                const videoPath = path.join(buildDir, name);
+                await reencode(videoPath, buildId, path.join(buildDir, name.replace(/\.mp4$/, '')));
+            }
+            continue; // source clips are never re-encoded in the default mode
+        }
         const idxCh = name.indexOf('_ch-');
         const idxSc = name.indexOf('_sc-');
         if (idxCh < 0 || idxSc <= idxCh) continue;
-        if (/\.(src|book|kf|single|merge|trim|replay)\.mp4$/.test(name)) continue;
+        if (/\.(src|book|kf|single|merge|trim|replay|cap)\.mp4$/.test(name)) continue;
         const videoPath = path.join(buildDir, name);
         await reencode(videoPath, buildId, path.join(buildDir, name.replace(/\.mp4$/, '')));
     }
 }
 
 async function main() {
-    const targets = process.argv.slice(2);
+    const targets = process.argv.slice(2).filter(a => !a.startsWith('--'));
     const roots = targets.length > 0 ? targets : [config.OUTPUT_DIR];
     console.log(`Playback profile: ${CAP_KBPS > 0 ? `${CAP_KBPS / 1000} Mbps` : 'DISABLED (CRF 18 fallback)'}`);
+    if (CAP_SOURCES) console.log(`Source profile: ${SRC_CAP_KBPS > 0 ? `${SRC_CAP_KBPS / 1000} Mbps` : 'DISABLED'}`);
     for (const root of roots) {
         let buildDirs = [];
         try {

@@ -314,6 +314,39 @@ async function completeGroup(redis, bookId, chapterId, sceneId, groupSuffix, bui
     try { grpSize = fs.statSync(grpPath).size; } catch (_) {}
     log(`group '${groupSuffix || '(base)'}' on disk: ${(grpSize / 1024 / 1024).toFixed(2)}MB`);
 
+    // ── INGEST BITRATE CAP (SOURCE PROFILE) ──
+    // The pipeline's ComfyUI SaveVideo node has no bitrate controls, so raw
+    // group clips arrive at 4-6+ Mbps for 768p animation. Cap each one ONCE at
+    // ingest (SOURCE_VIDEO_BITRATE_KBPS, default 3500 — near-transparent,
+    // export-worthy) so stored sources and the merge's playback re-encode start
+    // from a sane bitrate. Idempotent: files already at/below the cap are left
+    // alone (also covers re-dispatch of a previously capped group).
+    const srcCapKbps = config.SOURCE_VIDEO_BITRATE_KBPS;
+    if (srcCapKbps > 0 && fs.existsSync(grpPath)) {
+        try {
+            const videoMerge = deps.videoMerge || require('../video/video-merge');
+            const curKbps = videoMerge.probeVideoBitrateKbps(grpPath);
+            if (curKbps == null || curKbps > srcCapKbps * 1.05) {
+                const capTmp = grpPath + '.cap.mp4';
+                try {
+                    await videoMerge.encodeSourceProfile(grpPath, capTmp);
+                    if (fs.existsSync(capTmp) && fs.statSync(capTmp).size >= MIN_VIDEO_BYTES) {
+                        fs.renameSync(capTmp, grpPath);
+                        log(`group '${groupSuffix || '(base)'}' capped to source profile: ${curKbps ? (curKbps / 1000).toFixed(1) : '?'} → ${(srcCapKbps / 1000).toFixed(1)} Mbps`);
+                    } else {
+                        warn(`source cap produced invalid output for ${path.basename(grpPath)} — keeping original`);
+                        try { fs.unlinkSync(capTmp); } catch {}
+                    }
+                } catch (capErr) {
+                    warn(`source cap failed for ${path.basename(grpPath)}: ${capErr.message} — keeping original`);
+                    try { fs.unlinkSync(capTmp); } catch {}
+                }
+            }
+        } catch (probeErr) {
+            warn(`source cap probe failed for ${path.basename(grpPath)}: ${probeErr.message}`);
+        }
+    }
+
     const suffixes = groupSuffixes(orchState);
     const missing = suffixes.filter(s => !isGroupFileValid(buildId, bookId, chapterId, sceneId, s));
     if (missing.length > 0) {

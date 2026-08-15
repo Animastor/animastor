@@ -57,6 +57,11 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
     private var nextFile: File? = null
     private var videoPlayer: MediaPlayer? = null
     private var isPaused = false
+    // Buffer gate: video is a network stream while audio is a local file; on a
+    // slow connection the video underruns and would freeze while the audio
+    // keeps playing (desync). While true, the whole player is paused into
+    // "Загрузка…" (BUFFERING) and resumes with a resync on BUFFERING_END.
+    private var videoBuffering = false
     private var iuCyclingJob: Job? = null
     private var currentIuSequence: List<IuImageItem>? = null
     private var currentIuIndex = 0
@@ -215,6 +220,10 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                 }
                 phase == PlayerPhase.PLAYING && !isPaused -> pausePlayback()
                 phase == PlayerPhase.PLAYING && isPaused -> resumePlayback()
+                phase == PlayerPhase.BUFFERING -> {
+                    // Tap during "Загрузка…" aborts the buffer wait — plain pause.
+                    pausePlayback()
+                }
                 phase == PlayerPhase.PAUSED -> {
                     Log.i(TAG, "playButton: PAUSED — resuming playback")
                     resumePlayback()
@@ -409,7 +418,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
 
                         // Update play button state BEFORE any early returns
                         val hasChunks = playbackViewModel.sceneQueueSize > 0
-                        val buttonEnabled = state.phase == PlayerPhase.SCENE_READY || state.phase == PlayerPhase.PLAYING || hasChunks
+                        val buttonEnabled = state.phase == PlayerPhase.SCENE_READY || state.phase == PlayerPhase.PLAYING || state.phase == PlayerPhase.BUFFERING || hasChunks
                         b.playButton.isEnabled = buttonEnabled
                         b.playButton.alpha = if (buttonEnabled) 1.0f else 0.4f
 
@@ -522,7 +531,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                             b.placeholderText.visibility = View.INVISIBLE
                         }
 
-                        val loading = state.phase == PlayerPhase.LOADING_BOOK || state.phase == PlayerPhase.DOWNLOADING
+                        val loading = state.phase == PlayerPhase.LOADING_BOOK || state.phase == PlayerPhase.DOWNLOADING || state.phase == PlayerPhase.BUFFERING
                         b.previewOverlay.visibility = if (loading && state.coverImage != null) View.VISIBLE else View.GONE
                         b.progressBar.visibility = if (loading) View.VISIBLE else View.GONE
 
@@ -536,6 +545,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                             PlayerPhase.GENERATING, PlayerPhase.DOWNLOADING -> b.statusText.text = getString(R.string.play_loading)
                             PlayerPhase.SCENE_READY -> b.statusText.text = getString(R.string.play_ready)
                             PlayerPhase.PLAYING -> b.statusText.text = getString(R.string.play_playing)
+                            PlayerPhase.BUFFERING -> b.statusText.text = getString(R.string.play_loading)
                             PlayerPhase.IDLE -> b.statusText.text = when {
                                 playbackViewModel.bookId.isBlank() && generateViewModel.bookId.isBlank() -> getString(R.string.empty_state)
                                 playbackViewModel.bookId.isBlank() -> getString(R.string.play_placeholder_no_generation)
@@ -546,8 +556,8 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                         }
 
                         // Single source of truth: button matches state.phase.
-                        // PLAYING = Pause button, everything else = Play button.
-                        val showPause = state.phase == PlayerPhase.PLAYING
+                        // PLAYING/BUFFERING = Pause button, everything else = Play.
+                        val showPause = state.phase == PlayerPhase.PLAYING || state.phase == PlayerPhase.BUFFERING
                         b.playButton.text = if (showPause) getString(R.string.play_pause) else getString(R.string.play_play)
                         if (showPause) b.playButton.setIconResource(R.drawable.ic_pause) else b.playButton.setIconResource(R.drawable.ic_play)
                     } catch (e: Exception) {
@@ -1194,6 +1204,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         try {
             videoSpeedSyncJob?.cancel()
             pendingVideoTargetMs = if (explicitSeek) startSeekMs else -1L
+            videoBuffering = false
             videoPlayer?.release()
             videoPlayer = null
             val startedAt = SystemClock.elapsedRealtime()
@@ -1209,14 +1220,27 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                     setOnErrorListener { _, what, extra ->
                         Log.e(TAG, "video MediaPlayer error: what=$what extra=$extra url=$url")
                         // Stream failed (404 / network) — fall back to the
-                        // storyboard layer instead of a stuck black surface.
+                        // storyboard layer instead of a stuck black surface,
+                        // and unblock the player if we were buffering.
+                        videoBuffering = false
                         runCatching { videoPlayer?.release() }
                         videoPlayer = null
+                        if (playbackViewModel.uiState.value.phase == PlayerPhase.BUFFERING) {
+                            playbackViewModel.exitBuffering()
+                            currentPlayer?.start()
+                        }
                         updateLayers()
                         true
                     }
                     setOnVideoSizeChangedListener { _, width, height ->
                         fitSurfaceToContainer(b, width, height)
+                    }
+                    setOnInfoListener { _, what, _ ->
+                        when (what) {
+                            MediaPlayer.MEDIA_INFO_BUFFERING_START -> enterVideoBuffering()
+                            MediaPlayer.MEDIA_INFO_BUFFERING_END -> resumeFromBuffering()
+                        }
+                        false
                     }
                     setOnPreparedListener {
                         Log.i(TAG, "video prepared in ${SystemClock.elapsedRealtime() - startedAt}ms " +
@@ -1455,9 +1479,50 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         }
     }
 
+    /** Buffer gate — the scene AUDIO is a local file (never stalls) while the
+     *  VIDEO streams over the network; on a slow connection the video runs out
+     *  of data and freezes while the audio keeps playing (the desync symptom).
+     *  MediaPlayer signals MEDIA_INFO_BUFFERING_START/END — pause the WHOLE
+     *  player into "Загрузка…" and resume with a resync once the video can
+     *  continue. Mirrors the web buffer gate (playbackStore.ts). */
+    private fun enterVideoBuffering() {
+        val layerOn = binding?.layerVideo?.isChecked ?: false
+        if (videoBuffering || isPaused || !layerOn || playbackViewModel.uiState.value.phase != PlayerPhase.PLAYING) return
+        videoBuffering = true
+        Log.i(TAG, "video buffering — pausing audio to keep sync")
+        currentPlayer?.pause()
+        playbackViewModel.enterBuffering()
+    }
+
+    private fun resumeFromBuffering() {
+        if (!videoBuffering) return
+        videoBuffering = false
+        if (playbackViewModel.uiState.value.phase != PlayerPhase.BUFFERING) return
+        // Re-align the video to the audio timeline (a sub-second drift may have
+        // accumulated while the audio ran ahead before the gate caught it).
+        try {
+            val ap = (currentPlayer?.currentPosition ?: 0).toLong()
+            val vp = (videoPlayer?.currentPosition ?: 0).toLong()
+            if (ap > 0 && kotlin.math.abs(ap - vp) > 500) {
+                Log.i(TAG, "video buffering done — resync video ${vp}ms → ${ap}ms")
+                if (Build.VERSION.SDK_INT >= 26) {
+                    videoPlayer?.seekTo(ap, MediaPlayer.SEEK_CLOSEST)
+                } else {
+                    videoPlayer?.seekTo(ap.toInt())
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "buffering resync failed: ${e.message}")
+        }
+        currentPlayer?.start()
+        playbackViewModel.exitBuffering()
+        Log.i(TAG, "video buffering done — resuming")
+    }
+
     private fun pausePlayback() {
         Log.i(TAG, "pausePlayback")
         videoSpeedSyncJob?.cancel()
+        videoBuffering = false
         currentPlayer?.pause()
         Log.i(TAG, "pausePlayback")
         currentPlayer?.pause()
