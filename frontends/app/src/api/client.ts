@@ -3,7 +3,7 @@
 //  - retryWithBackoff (3 attempts, 1s→2s, cap 5s) like PlaybackViewModel.retryWithBackoff,
 //  - SSE client for generation progress (ProgressStream.kt equivalent),
 //  - streaming Blob download for audio/video/image.
-const BASE = '/api/v1';
+export const API_BASE = '/api/v1';
 const REQUEST_TIMEOUT_MS = 30_000; // OkHttp default read timeout
 // Long-running endpoints (POST /bootstrap, /bootstrap-next-window) block for the
 // WHOLE AI pipeline window (minutes). Mirrors the Android OkHttp config
@@ -42,7 +42,7 @@ function withTimeout(signal: AbortSignal | null | undefined, timeoutMs: number):
 async function request<T>(path: string, init: RequestInit = {}, timeoutMs: number = REQUEST_TIMEOUT_MS): Promise<T> {
   const { signal, timedOut, clear } = withTimeout(init.signal, timeoutMs);
   try {
-    const res = await fetch(BASE + path, {
+    const res = await fetch(API_BASE + path, {
       ...init,
       signal,
       headers: {
@@ -89,7 +89,7 @@ export async function deleteJson<T>(path: string): Promise<T> { return request<T
 export async function getBlob(path: string, signal?: AbortSignal, onProgress?: (progress: number) => void): Promise<Blob> {
   const { signal: s, timedOut, clear } = withTimeout(signal, BLOB_TIMEOUT_MS);
   try {
-    const res = await fetch(BASE + path, { headers: { 'Accept': 'application/octet-stream' }, signal: s });
+    const res = await fetch(API_BASE + path, { headers: { 'Accept': 'application/octet-stream' }, signal: s });
     if (!res.ok) throw new ApiError(res.statusText, res.status);
     if (!res.body) return res.blob();
     const reader = res.body.getReader();
@@ -141,7 +141,7 @@ export interface SseEvent {
   data: string;
 }
 export async function* sse(path: string, signal?: AbortSignal): AsyncGenerator<SseEvent> {
-  const res = await fetch(BASE + path, {
+  const res = await fetch(API_BASE + path, {
     headers: { 'Accept': 'text/event-stream' },
     signal
   });

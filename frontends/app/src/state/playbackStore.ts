@@ -20,7 +20,7 @@
 //  - DONT_DO.md: no IU stall/retry, no skip-IU-by-null-bitmap, no rewrite of
 //    the sliding-window preload, single navigation source (FileFragment only).
 import { signal } from '@preact/signals';
-import { getBlob, getJson, retryWithBackoff } from '../api/client';
+import { API_BASE, getBlob, getJson, retryWithBackoff } from '../api/client';
 import type { BookData, SceneStatusResponse, StoryboardResponse } from '../api/models';
 import { sceneRefs } from '../api/models';
 import { navigateTo } from './positionStore';
@@ -88,8 +88,9 @@ export interface PreloadedScene {
   audioUrl: string;
   /** status.video_ready — whether the whole-scene video exists on the backend.
    *  The video itself is NOT downloaded as part of the scene bundle anymore:
-   *  it is fetched on demand (ensureSceneVideo) only when the scene actually
-   *  plays with the video layer enabled — preloading it burned ~43 MB/scene. */
+   *  it is streamed from its direct HTTP URL (ensureSceneVideo) only when the
+   *  scene actually plays with the video layer enabled — preloading/downloading
+   *  it burned ~43 MB/scene. */
   videoReady: boolean;
   iuSequence: IuImageItem[];
 }
@@ -140,7 +141,9 @@ let engineHost: HTMLDivElement | null = null;
 let currentPlayer: HTMLAudioElement | null = null;
 let nextPlayer: HTMLAudioElement | null = null;
 let videoEl: HTMLVideoElement | null = null;
-let videoBlobUrl: string | null = null;
+// Direct HTTP URL of the current scene's video (streamed progressively with
+// Range — the browser fetches moov + first samples, not the whole file).
+let videoSrcUrl: string | null = null;
 // Scene key of the whole-scene video currently loaded in videoEl. Used to
 // detect unit navigation WITHIN the same scene: the video file does not change
 // (blob URLs are recreated per fetch, so the scene key — not the URL — is the
@@ -149,9 +152,6 @@ let videoBlobUrl: string | null = null;
 // Android keepSurface fix: the current frame stays visible through the seek
 // and the new unit's frame replaces it directly.
 let currentVideoSceneKey: string | null = null;
-// Scene keys with an on-demand video fetch in flight (dedupe repeated requests
-// for the same scene while the first one downloads).
-const inflightVideo = new Set<string>();
 let iuRafId = 0;
 let silentTimer: number | null = null;
 
@@ -404,7 +404,7 @@ export function resumePlayback(): void {
   enginePaused.value = false;
   showCurrentIu();
   playAudio(currentPlayer);
-  if (videoEl && videoBlobUrl && !videoEnded) {
+  if (videoEl && videoSrcUrl && !videoEnded) {
     // Apply any unconsumed video-timeline target before starting — otherwise
     // the video could resume from a stale (possibly scene-start) position.
     if (pendingVideoTargetSec >= 0) {
@@ -605,7 +605,7 @@ export function setLayerVideo(v: boolean): void {
   if (v) {
     const key = getCurrentSceneKey();
     if (key && activeScene?.videoReady) {
-      void ensureSceneVideo(key, null);
+      ensureSceneVideo(key, null);
     }
   }
 }
@@ -619,9 +619,10 @@ export function attachVideo(el: HTMLVideoElement): void {
   detachVideo();
   videoEl = el;
   el.addEventListener('ended', onVideoEnded);
-  if (videoBlobUrl) {
+  el.addEventListener('error', onVideoError);
+  if (videoSrcUrl) {
     currentVideoSceneKey = getCurrentSceneKey();
-    el.src = videoBlobUrl;
+    el.src = videoSrcUrl;
     // Prefer the explicit video-timeline target while one is pending; the
     // audio currentTime can still be unseeked (0) right after a unit seek.
     if (pendingVideoTargetSec >= 0) {
@@ -639,6 +640,7 @@ export function attachVideo(el: HTMLVideoElement): void {
 export function detachVideo(): void {
   if (videoEl) {
     videoEl.removeEventListener('ended', onVideoEnded);
+    videoEl.removeEventListener('error', onVideoError);
     try { videoEl.pause(); } catch { /* ignore */ }
     videoEl.removeAttribute('src');
     videoEl = null;
@@ -958,12 +960,13 @@ function handleChunk(scene: PreloadedScene): void {
   const explicitVideoSeekMs: number | null =
     (pendingExplicitUnitTarget || pendingRotMs > 0) ? seekMs : null;
   pendingExplicitUnitTarget = false;
-  // Video is fetched ON DEMAND (ensureSceneVideo) — never as part of the scene
-  // bundle. If the video for this scene is already attached (same-scene unit
-  // navigation), just seek it to the unit target without re-fetching.
+  // Video is streamed ON DEMAND from its direct HTTP URL (ensureSceneVideo) —
+  // never downloaded as part of the scene bundle. If the video for this scene
+  // is already attached (same-scene unit navigation), just seek it to the unit
+  // target without re-src'ing the element.
   if (scene.videoReady && layerVideo.value) {
     if (!seekAttachedVideo(explicitVideoSeekMs)) {
-      void ensureSceneVideo(getCurrentSceneKey(), explicitVideoSeekMs);
+      ensureSceneVideo(getCurrentSceneKey(), explicitVideoSeekMs);
     }
   }
 
@@ -1251,7 +1254,7 @@ function updateSubtitleVisibility(): void {
 
 /** updateLayers — videoSurface visibility (image layer handled in render). */
 function updateLayers(): void {
-  videoVisible.value = !!videoEl && !!videoBlobUrl && !videoEnded && layerVideo.value;
+  videoVisible.value = !!videoEl && !!videoSrcUrl && !videoEnded && layerVideo.value;
 }
 
 /** seekAttachedVideo — same whole-scene video (unit navigation within a
@@ -1274,36 +1277,23 @@ function seekAttachedVideo(explicitSeekMs: number | null): boolean {
   return true;
 }
 
-/** ensureSceneVideo — fetch the whole-scene video for sceneKey on demand
- *  (Cache API → network) and attach it to the <video> element, seeked to
- *  explicitSeekMs (unit target) or synced to the audio position. Skipped when
- *  the video layer is off or the fetch is already in flight for this scene.
- *  The network cost (~43 MB) is only paid when the scene actually plays with
- *  the video layer on — never for preloaded scenes. */
-async function ensureSceneVideo(sceneKey: string | null, explicitSeekMs: number | null = null): Promise<void> {
+/** ensureSceneVideo — stream the whole-scene video for sceneKey from its
+ *  direct HTTP URL on the <video> element (PROGRESSIVE DOWNLOAD: the browser
+ *  fetches the moov atom + first samples and starts decoding while the rest
+ *  keeps downloading; seeks are served by backend Range/206 requests — the
+ *  files are faststart'd, see docs/05-frontend/VIDEO_LOADING_RESEARCH.md).
+ *  Skipped when the video layer is off or the video is already attached for
+ *  this scene (same-scene unit tap → just seek). No blob/Cache API roundtrip:
+ *  the whole-scene MP4 (~43 MB) is never downloaded into memory ahead of
+ *  playback. */
+function ensureSceneVideo(sceneKey: string | null, explicitSeekMs: number | null = null): void {
   if (!sceneKey) return;
   if (!layerVideo.value) return;
-  if (inflightVideo.has(sceneKey)) return;
   // Already attached for this scene (e.g. re-emit after a same-scene unit tap)
   // — just re-apply the seek target.
   if (seekAttachedVideo(explicitSeekMs)) return;
   const [chId, scId] = sceneKey.split(':', 2);
-  const bld = buildId.value;
-  inflightVideo.add(sceneKey);
-  try {
-    const cached = await getMedia(bld, sceneKey, 'video');
-    const blob = cached ?? await getBlob(scenePath(chId, scId, 'video'));
-    if (!cached) void putMedia(bld, sceneKey, 'video', blob);
-    // Stale completion (scene changed / layer toggled off while fetching) —
-    // drop the blob without attaching.
-    if (getCurrentSceneKey() !== sceneKey || !layerVideo.value) return;
-    if (seekAttachedVideo(explicitSeekMs)) return; // attached while fetching
-    playVideoOverlay(URL.createObjectURL(blob), explicitSeekMs);
-  } catch {
-    // Video not ready yet / fetch failed — storyboard stays, no retry loop.
-  } finally {
-    inflightVideo.delete(sceneKey);
-  }
+  playVideoOverlay(API_BASE + scenePath(chId, scId, 'video'), explicitSeekMs);
 }
 
 /** playVideoOverlay — load the scene video on the adopted <video> element.
@@ -1313,12 +1303,9 @@ async function ensureSceneVideo(sceneKey: string | null, explicitSeekMs: number 
  *  right after a unit seek the audio element is not seeked yet (seek is
  *  async), which left the video at 0 ("2nd unit → start of video"). */
 function playVideoOverlay(url: string, explicitSeekMs: number | null = null): void {
-  // Same whole-scene video already attached — redundant fetch, revoke + seek.
-  if (seekAttachedVideo(explicitSeekMs)) {
-    URL.revokeObjectURL(url);
-    return;
-  }
-  videoBlobUrl = url;
+  // Same whole-scene video already attached — redundant src, just seek.
+  if (seekAttachedVideo(explicitSeekMs)) return;
+  videoSrcUrl = url;
   currentVideoSceneKey = getCurrentSceneKey();
   videoEnded = false;
   // Explicit target in seconds — 0 is a valid target (unit 1 / scene start).
@@ -1359,6 +1346,14 @@ function onVideoEnded(): void {
   updateLayers();
 }
 
+/** Stream failed (e.g. the video file 404s despite a stale video_ready status,
+ *  or a transient network error) — drop the src so the storyboard layer shows
+ *  instead of a black element. */
+function onVideoError(): void {
+  videoSrcUrl = null;
+  updateLayers();
+}
+
 /** stopAll — fragment.stopAll(): release players, reset engine flags. */
 export function stopAll(): void {
   cancelIuCycling();
@@ -1377,7 +1372,7 @@ export function stopAll(): void {
     try { videoEl.pause(); } catch { /* ignore */ }
     videoEl.removeAttribute('src');
   }
-  videoBlobUrl = null;
+  videoSrcUrl = null;
   videoEnded = false;
   pendingVideoTargetSec = -1;
   currentVideoSceneKey = null;

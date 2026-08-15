@@ -78,6 +78,24 @@ All notable changes to Animastor are documented here.
     moov в конце файла заставлял качать весь файл до первого кадра/seek.
   - Проверки: полный backend mocha-сьют 1141 passing; syntax-smoke OK.
 
+- **Web Player: видео стримится прогрессивно по прямому URL с Range вместо
+  скачивания целиком в Blob** (вариант B из `docs/05-frontend/VIDEO_LOADING_RESEARCH.md`,
+  `frontends/app/src/state/playbackStore.ts`, `frontends/app/src/api/client.ts`):
+  - `ensureSceneVideo` больше не качает MP4 через fetch→Blob→objectURL: `<video>`
+    получает прямой URL `/api/v1/scene/.../video?build_id=`, браузер сам делает
+    progressive download (moov + первые выборки → первый кадр за ~1 с) и Range
+    запросы для seek (backend отвечает 206, файлы faststart).
+  - Блоб-кэш видео (Cache API) не используется; аудио и IU-картинки по-прежнему
+    в бандле сцены с кэшированием.
+  - `onVideoError` → сброс src: при 404/сетевой ошибке стрима показывается
+    сториборд вместо чёрного элемента.
+  - Проверка end-to-end на реальном файле: `206 Partial Content`,
+    `Accept-Ranges: bytes`, `Content-Range: bytes 0-1023/43626301`, в первых
+    байтах ответа `ftyp` → `moov` (moov в начале).
+  - Существующие 6 MP4 в `data/output` переобработаны батч-ремuxом
+    `-c copy -movflags +faststart` (все `moov@front`, временных файлов нет).
+  - Проверки: web `tsc --noEmit` + `vite build` OK.
+
 ---
 
 ## [Unreleased] — 2026-08-14
