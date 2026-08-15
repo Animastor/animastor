@@ -18,14 +18,17 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.io.File
@@ -146,6 +149,25 @@ class PlaybackViewModel(
     var videoEnabled: Boolean = true
         private set
 
+    // ── On-demand video delivery ─────────────────────────────────
+    // The whole-scene video is NOT part of the scene bundle anymore — it is
+    // fetched on demand (ensureSceneVideo) only when the scene actually plays
+    // with the video layer enabled, and delivered to the fragment here. This
+    // saves ~43 MB per preloaded/skipped scene and skips the download entirely
+    // while the video layer is off.
+
+    data class VideoDelivery(
+        val sceneKey: String,
+        val bytes: ByteArray?,
+        val seekMs: Long,
+        val explicitSeek: Boolean
+    )
+
+    private val _videoDelivery = Channel<VideoDelivery>(Channel.BUFFERED)
+    val videoDelivery: Flow<VideoDelivery> = _videoDelivery.receiveAsFlow()
+    private val videoInFlight = mutableSetOf<String>()
+    private val videoLatestReq = mutableMapOf<String, VideoDelivery>()
+
     // ── Preload ──────────────────────────────────────────────────
 
     private val preloadCache = mutableMapOf<String, PreloadedScene>()
@@ -163,6 +185,33 @@ class PlaybackViewModel(
 
     fun setVideoEnabled(enabled: Boolean) {
         videoEnabled = enabled
+    }
+
+    /**
+     * Fetch the whole-scene video for [sceneKey] on demand (repository cache →
+     * network) and deliver it via [videoDelivery] when the scene is still
+     * current and the video layer is enabled. Skipped while [videoEnabled] is
+     * off. Repeated requests for the same scene while a fetch is in flight are
+     * deduped — the latest seek params win.
+     */
+    fun ensureSceneVideo(sceneKey: String, seekMs: Long, explicitSeek: Boolean) {
+        if (!videoEnabled) return
+        if (sceneKey in videoInFlight) {
+            videoLatestReq[sceneKey] = VideoDelivery(sceneKey, null, seekMs, explicitSeek)
+            return
+        }
+        val chId = sceneKey.substringBefore(':')
+        val scId = sceneKey.substringAfter(':')
+        videoInFlight += sceneKey
+        viewModelScope.launch {
+            val bytes = runCatching { _repository.getSceneVideo(bookId, chId, scId, buildId) }.getOrNull()
+            videoInFlight -= sceneKey
+            if (bytes == null || bytes.isEmpty()) return@launch
+            if (!videoEnabled || sceneKey != getCurrentSceneKey()) return@launch
+            val latest = videoLatestReq.remove(sceneKey)
+            val req = latest ?: VideoDelivery(sceneKey, null, seekMs, explicitSeek)
+            _videoDelivery.send(VideoDelivery(sceneKey, bytes, req.seekMs, req.explicitSeek))
+        }
     }
 
     /**
@@ -578,9 +627,11 @@ class PlaybackViewModel(
         // not from a possibly stale cached response without video_start_ms.
         _repository.clearStoryboardCache()
 
+        // The seek re-fetches the current scene via playNext() — preloading it
+        // here too (includeCurrent=true) would download the scene TWICE in
+        // parallel. playNext() fetches it once, then preloadAhead() warms 1..3.
         preloadCache.clear()
         preloadJobs.clear()
-        preloadAhead(includeCurrent = true)
         playNext()
     }
 
@@ -589,6 +640,8 @@ class PlaybackViewModel(
     fun clearPlaybackState() {
         preloadCache.clear()
         preloadJobs.clear()
+        videoInFlight.clear()
+        videoLatestReq.clear()
         sceneQueue.clear()
         currentIndex = 0
         currentUnitIndex = 0
@@ -775,20 +828,17 @@ class PlaybackViewModel(
                 byteArrayOf()
             }
         }
-        val videoDeferred = async {
-            if (status.video_ready) {
-                runCatching { _repository.getSceneVideo(bookId, chId, scId, buildId) }.getOrNull().also {
-                    Log.d(TAG, if (it != null) "video fetched: ${it.size} bytes" else "video null")
-                }
-            } else null
-        }
         val iuDeferred = async { fetchIuSequence(chId, scId) }
 
         val audio = audioDeferred.await()
-        val videoBytes = videoDeferred.await()
         val iuSequence = iuDeferred.await()
 
-        PreloadedScene(audio, videoBytes, iuSequence)
+        // NOTE: the whole-scene VIDEO is intentionally NOT part of the bundle —
+        // it is fetched on demand by ensureSceneVideo() only when the scene
+        // actually plays with the video layer enabled (saves ~43 MB per
+        // preloaded/skipped scene). hasVideo carries status.video_ready so the
+        // player knows a video exists without downloading it.
+        PreloadedScene(audio, null, iuSequence, hasVideo = status.video_ready)
     }
 
     private suspend fun fetchIuSequence(chapterId: String, sceneId: String): List<IuImageItem> {

@@ -128,6 +128,24 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         }
     }
 
+    /** On-demand whole-scene video: attach + seek when the bytes arrive for the
+     *  CURRENT scene with the video layer on (stale / layer-off deliveries drop).
+     *  The video is fetched by ensureSceneVideo — never as part of the scene
+     *  bundle — so preloaded scenes and off-layer scenes cost zero video traffic. */
+    private fun observeVideoDelivery() {
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                playbackViewModel.videoDelivery.collect { delivery ->
+                    if (!isAdded) return@collect
+                    val bytes = delivery.bytes ?: return@collect
+                    if (delivery.sceneKey != playbackViewModel.getCurrentSceneKey()) return@collect
+                    if (binding?.layerVideo?.isChecked == false) return@collect
+                    playVideoOverlay(bytes, delivery.seekMs, delivery.explicitSeek)
+                }
+            }
+        }
+    }
+
     private fun showCurtains() {
         if (!isAdded || isInCurtainsState) return
         // Once a cover has ever been displayed, curtains are permanently disabled
@@ -259,6 +277,15 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                 resources.getDrawable(R.drawable.ic_videocam_off, null)
             updateLayers()
             playbackViewModel.setVideoEnabled(isChecked)
+            if (isChecked) {
+                // Layer re-enabled: the video may have been skipped entirely
+                // (layer off = traffic saver). Fetch + attach it on demand,
+                // synced to the audio position.
+                val cur = (currentPlayer?.currentPosition ?: 0).toLong()
+                playbackViewModel.getCurrentSceneKey()?.let { sceneKey ->
+                    playbackViewModel.ensureSceneVideo(sceneKey, cur, explicitSeek = false)
+                }
+            }
         }
         binding?.layerSubtitles?.setOnCheckedChangeListener { _, isChecked ->
             binding?.layerSubtitles?.chipIcon = if (isChecked)
@@ -281,6 +308,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         observeExternalNavigation()
         observeManualUnitChange()
         observePreloadCompletion()
+        observeVideoDelivery()
         checkPendingExternalSeek()
 
         if (currentIuSequence == null && currentPlayer != null) {
@@ -628,23 +656,23 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         // instead of the audio-sync fallback (web parity).
         val explicitVideoSeek = playbackViewModel.explicitVideoSeekPending || pendingRotMs > 0
         playbackViewModel.explicitVideoSeekPending = false
-        if (video != null) playVideoOverlay(video, seekMs, explicitVideoSeek)
+        // Whole-scene video is fetched ON DEMAND (ensureSceneVideo) — never as
+        // part of the scene bundle. Request it when the video layer is on; the
+        // bytes arrive via observeVideoDelivery and are attached + seeked there.
+        if (binding?.layerVideo?.isChecked != false) {
+            playbackViewModel.getCurrentSceneKey()?.let { sceneKey ->
+                playbackViewModel.ensureSceneVideo(sceneKey, seekMs, explicitVideoSeek)
+            }
+        }
 
         if (!iuSequence.isNullOrEmpty()) {
             currentIuSequence = iuSequence
             playbackViewModel.currentIuSequence = iuSequence
             currentIuIndex = seekToUnit
-            // Unit seek / scene load: the whole-scene video covers the storyboard
-            // a few hundred ms later — showing the image now causes a brief
-            // storyboard flash while the video prepares (the surface is being
-            // recreated after stopAll, so the image is visible until the first
-            // video frame renders). Skip it when the video layer is on and video
-            // bytes are coming: the screen stays dark for the prepare gap and the
-            // video frame appears directly.
-            val videoComing = video != null && (binding?.layerVideo?.isChecked ?: true)
-            if (!videoComing) {
-                showIuImage(iuSequence[seekToUnit])
-            }
+            // The whole-scene video now arrives asynchronously (ensureSceneVideo
+            // → observeVideoDelivery): show the storyboard immediately; the video
+            // frame replaces it when the video is fetched and prepared.
+            showIuImage(iuSequence[seekToUnit])
             updateSubtitleIfEnabled(iuSequence[seekToUnit].text)
         } else {
             currentIuSequence = iuSequence

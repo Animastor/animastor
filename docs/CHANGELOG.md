@@ -36,6 +36,35 @@ All notable changes to Animastor are documented here.
   - Проверки: Android `compileDebugKotlin` OK; backend mocha-сьют зелёный; web
     `tsc --noEmit` + `vite build` OK; дерево чистое, временные артефакты удалены.
 
+### Changed
+
+- **Подгрузка контента Player: видео больше не скачивается в составе бандла сцены и
+  не прелоадится наперёд; выключенный слой видео = ноль трафика на видео**
+  (исследование: `docs/05-frontend/VIDEO_LOADING_RESEARCH.md`;
+  `frontends/app/src/state/playbackStore.ts`,
+  `frontends/android/app/src/main/java/com/example/animastor/ui/PlaybackViewModel.kt`,
+  `frontends/android/app/src/main/java/com/example/animastor/ui/PlayFragment.kt`):
+  - **Причина:** оба клиента скачивали весь цельный MP4 сцены (~43 МБ) до создания
+    плеера (web: fetch→Blob→objectURL; Android: `body.bytes()`→temp file), плюс
+    `preloadAhead(3)` качал полные видео 3 сцен (~150 МБ), плюс видео качалось даже
+    при выключенном слое — тесты за день сжигали гигабайты трафика.
+  - **Web:** `PreloadedScene` больше не несёт видео (`videoReady` из status вместо
+    blob); `fetchSceneData` отдаёт аудио+IU, дедупликация in-flight загрузок одной
+    сцены (`inflightAssets`) с per-call object URLs; видео подключается on-demand
+    через `ensureSceneVideo` (Cache API → network) только когда сцена реально
+    играет со включённым видео-слоем; re-enable слоя докачивает и синхронизирует
+    видео; unit-навигация внутри сцены по-прежнему просто сикает прикреплённый
+    элемент (`seekAttachedVideo`).
+  - **Android:** видео убрано из `fetchSceneData`; on-demand через
+    `ensureSceneVideo` → `videoDelivery` (Channel) → фрагмент `observeVideoDelivery`
+    прикрепляет байты (`playVideoOverlay`); выключенный слой = fetch не запускается;
+    re-enable слоя запрашивает видео с синхронизацией по аудио; `executePendingSeek`
+    больше не прелоадит текущую сцену дважды.
+  - **Итог:** прелоад 3 сцен ≈ 18 МБ вместо ~150 МБ; при выключенном видео-слое
+    экономия ~43 МБ/сцену; тап юнита не удваивает загрузку текущей сцены. Прогрессив-
+    ный стриминг (faststart + Range, варианты A–C из отчёта) — отдельный этап.
+  - Проверки: web `tsc --noEmit` + `vite build` OK; Android `compileDebugKotlin` OK.
+
 ---
 
 ## [Unreleased] — 2026-08-14
