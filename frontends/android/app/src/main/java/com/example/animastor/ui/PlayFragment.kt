@@ -84,8 +84,6 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
     private var pendingDebugRecord: MutableMap<String, Any?>? = null
     // Captured BEFORE stopAll() releases the old video player, so "video_before"
     // is the real position at the moment of the unit tap.
-    private var debugVideoBeforeMs: Long = -1L
-    private var debugVideoFileBefore: String? = null
     private var debugSeq = 0L
     // TEMPORARY: high-frequency (50ms) video+audio position trace collected for
     // ~1.5s after onPrepared — shows the exact moment the correct seeked
@@ -96,7 +94,6 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         if (playbackViewModel.pendingExternalSeek != null) {
             if (isHidden) return
             Log.i(TAG, "checkPendingExternalSeek: executing seek to ${playbackViewModel.pendingExternalSeek}")
-            captureDebugVideoBefore()
             pendingLoad = true
             stopAll()
             playbackViewModel.executePendingSeek()
@@ -110,7 +107,6 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                     if (playbackViewModel.pendingExternalSeek != null) {
                         if (isHidden) return@collect
                         Log.i(TAG, "external seek via state")
-                        captureDebugVideoBefore()
                         pendingLoad = true
                         stopAll()
                         playbackViewModel.executePendingSeek()
@@ -118,13 +114,6 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                 }
             }
         }
-    }
-
-    /** TEMPORARY: snapshot the old video player's position before stopAll()
-     *  releases it — this is "video_before" in the seek-debug record. */
-    private fun captureDebugVideoBefore() {
-        debugVideoBeforeMs = runCatching { videoPlayer?.currentPosition?.toLong() }.getOrNull() ?: -1L
-        debugVideoFileBefore = currentVideoFile?.name
     }
 
     private fun observeManualUnitChange() {
@@ -270,6 +259,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                 resources.getDrawable(R.drawable.ic_image, null)
             else
                 resources.getDrawable(R.drawable.ic_image_off, null)
+            logLayerToggle("image", isChecked)
             updateLayers()
             if (isChecked) {
                 val ius = currentIuSequence
@@ -283,8 +273,20 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                 resources.getDrawable(R.drawable.ic_videocam, null)
             else
                 resources.getDrawable(R.drawable.ic_videocam_off, null)
+            logLayerToggle("video", isChecked)
             updateLayers()
             playbackViewModel.setVideoEnabled(isChecked)
+            // TEMPORARY diagnostics: when the video layer comes back, capture
+            // what the surface actually shows (~400ms later, once re-attached) —
+            // directly answers "does the video return, or does the storyboard
+            // frame stay".
+            if (isChecked && videoPlayer != null) {
+                val capPos = runCatching { videoPlayer?.currentPosition?.toLong() }.getOrNull() ?: -1L
+                viewLifecycleOwner.lifecycleScope.launch {
+                    delay(400)
+                    captureVideoFrame("layer-video-on", currentIuIndex, capPos)
+                }
+            }
         }
         binding?.layerSubtitles?.setOnCheckedChangeListener { _, isChecked ->
             binding?.layerSubtitles?.chipIcon = if (isChecked)
@@ -740,11 +742,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
             "unit_start" to (unitStart ?: -1L),
             "unit_end" to (unitEnd ?: -1L),
             "seek_target" to seekMs,
-            "video_before" to debugVideoBeforeMs,
-            "video_file_before" to (debugVideoFileBefore ?: "none"),
         )
-        debugVideoBeforeMs = -1L
-        debugVideoFileBefore = null
         pendingDebugRecord = record
         Log.i(TAG, "SEEK_REQUEST $record")
         viewLifecycleOwner.lifecycleScope.launch { repository.postVideoSeekDebug(record) }
@@ -816,6 +814,35 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                 "audio_pos" to aPos,
                 "delta_ms" to (if (delta == Long.MIN_VALUE) null else delta),
                 "client_ts" to System.currentTimeMillis(),
+            ))
+        }
+    }
+
+    /** TEMPORARY diagnostics: layer-switch (video/storyboard/image) event.
+     *  Posts video+audio position, paused state and player liveness so the
+     *  "video layer → storyboard → video layer" restore can be traced: does the
+     *  video come back at all, at which position, and does it stay paused.
+     *  Remove with the rest of the seek/layer diagnostics. */
+    private fun logLayerToggle(layer: String, enabled: Boolean) {
+        val vp = videoPlayer
+        val ap = currentPlayer
+        val vPos = runCatching { vp?.currentPosition?.toLong() }.getOrNull() ?: -1L
+        val aPos = runCatching { ap?.currentPosition?.toLong() }.getOrNull() ?: -1L
+        val playing = runCatching { vp?.isPlaying }.getOrNull() ?: false
+        Log.i(TAG, "LAYER_TOGGLE $layer enabled=$enabled video=${vPos}ms audio=${aPos}ms paused=$isPaused playing=$playing")
+        setPlayerDebug("layer $layer ${if (enabled) "ON" else "OFF"}: v ${vPos}ms a ${aPos}ms paused=$isPaused")
+        viewLifecycleOwner.lifecycleScope.launch {
+            repository.postVideoSeekDebug(mapOf(
+                "event" to "LAYER_TOGGLE",
+                "client_ts" to System.currentTimeMillis(),
+                "book_id" to playbackViewModel.bookId,
+                "build_id" to playbackViewModel.buildId,
+                "layer" to layer,
+                "enabled" to enabled,
+                "video_pos" to vPos,
+                "audio_pos" to aPos,
+                "paused" to isPaused,
+                "playing" to playing,
             ))
         }
     }
