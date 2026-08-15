@@ -87,10 +87,14 @@ describe('Scene audio HTTP Range support (Edit waveform seek)', () => {
     });
 
     function hit(rangeHeader) {
+        return hitHeaders(rangeHeader ? { range: rangeHeader } : {});
+    }
+
+    function hitHeaders(headers) {
         const req = {
             params: { bookId: 'book1', chapterId: 'ch1', sceneId: 'sc1' },
             query: { build_id: 'stale-build' },
-            headers: rangeHeader ? { range: rangeHeader } : {},
+            headers,
         };
         const res = makeResponse();
         const done = audioHandler(req, res).then(() => {
@@ -147,5 +151,42 @@ describe('Scene audio HTTP Range support (Edit waveform seek)', () => {
         const res = await hit('bytes=abc');
         expect(res.statusCode).to.equal(416);
         expect(res.getHeader('content-range')).to.equal('bytes */1000');
+    });
+
+    it('advertises cache validators (ETag/Last-Modified/Cache-Control)', async () => {
+        const res = await hit(null);
+        expect(res.statusCode).to.equal(200);
+        expect(res.getHeader('etag')).to.be.a('string').and.not.equal('');
+        expect(res.getHeader('last-modified')).to.be.a('string').and.not.equal('');
+        expect(res.getHeader('cache-control')).to.equal('public, max-age=0, must-revalidate');
+    });
+
+    it('answers a conditional GET with 304 when the ETag matches', async () => {
+        const first = await hit(null);
+        const etag = first.getHeader('etag');
+        const res = await hitHeaders({ 'if-none-match': etag });
+        expect(res.statusCode).to.equal(304);
+        expect(res.data.length).to.equal(0);
+    });
+
+    it('serves a fresh 200 when the ETag does not match', async () => {
+        const res = await hitHeaders({ 'if-none-match': '"deadbeef-0"' });
+        expect(res.statusCode).to.equal(200);
+        expect(res.data.length).to.equal(1000);
+    });
+
+    it('serves 206 for a Range when If-Range matches the ETag (resume cached ranges)', async () => {
+        const first = await hit(null);
+        const etag = first.getHeader('etag');
+        const res = await hitHeaders({ range: 'bytes=500-599', 'if-range': etag });
+        expect(res.statusCode).to.equal(206);
+        expect(res.getHeader('content-range')).to.equal('bytes 500-599/1000');
+        expect(res.data.length).to.equal(100);
+    });
+
+    it('ignores the Range and serves full 200 when If-Range mismatches (regenerated file)', async () => {
+        const res = await hitHeaders({ range: 'bytes=500-599', 'if-range': '"deadbeef-0"' });
+        expect(res.statusCode).to.equal(200);
+        expect(res.data.length).to.equal(1000);
     });
 });

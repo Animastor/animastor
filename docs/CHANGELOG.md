@@ -111,6 +111,20 @@ All notable changes to Animastor are documented here.
     peek-render, speed-lock, z-order слоёв) сохранён — поменялся только источник.
   - Проверки: Android `compileDebugKotlin` OK.
 
+- **Backend: HTTP-кэш для медиа (ETag/Last-Modified + 304 + If-Range) в
+  `streamFileWithRange`** (`backend/src/routes/generation-routes.cjs`,
+  `backend/tests/scene-audio-range.test.js`):
+  - Ответы аудио/видео отдают `ETag` (size+mtime), `Last-Modified` и
+    `Cache-Control: public, max-age=0, must-revalidate` — браузерный media-кэш
+    обслуживает повторные просмотры сцены и докачивает только недостающие
+    диапазоны вместо повторной загрузки 20-43 МБ.
+  - `If-None-Match`/`If-Modified-Since` → 304 (без тела); `If-Range` совпал →
+    206 (продолжение буферизованных диапазонов); `If-Range` не совпал → полный
+    200. `immutable` сознательно НЕ используется: backend регенерирует файлы
+    на месте (тот же build_id/URL), поэтому контент обязан ревалидироваться.
+  - Проверено живьём: 304 / 206 / 200-full на реальном 43.6 МБ файле; полный
+    backend mocha-сьют 1146 passing (добавлено 5 тестов кэш-поведения).
+
 ---
 
 ## [Unreleased] — 2026-08-14

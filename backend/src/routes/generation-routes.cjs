@@ -676,38 +676,80 @@ module.exports = function(app, redis, deps) {
      * buffers the whole file and seeks internally, so it never hit this.
      */
     function streamFileWithRange(req, res, filePath, contentType) {
-        const fileSize = fs.statSync(filePath).size;
+        const stat = fs.statSync(filePath);
+        const fileSize = stat.size;
+        // Content is served per build_id URL, but the backend REGENERATES files
+        // IN PLACE (same build_id → same URL, new bytes). So responses are
+        // cacheable but MUST be revalidated: ETag/Last-Modified + If-None-Match /
+        // If-Range let a browser media cache serve repeat plays and resume
+        // buffered ranges WITHOUT re-downloading the whole 20-43 MB file, while a
+        // regenerated file still propagates (changed ETag → full fresh 200).
+        const etag = `"${fileSize.toString(16)}-${Math.floor(stat.mtimeMs).toString(16)}"`;
+        const lastModified = stat.mtime.toUTCString();
+        const lastModifiedSec = Math.floor(stat.mtimeMs / 1000) * 1000;
         res.setHeader('Content-Type', contentType);
         res.setHeader('Accept-Ranges', 'bytes');
+        res.setHeader('ETag', etag);
+        res.setHeader('Last-Modified', lastModified);
+        res.setHeader('Cache-Control', 'public, max-age=0, must-revalidate');
 
         const range = req.headers.range;
-        if (range) {
-            const match = /^bytes=(\d*)-(\d*)$/.exec(range);
-            if (!match) {
-                res.status(416).setHeader('Content-Range', `bytes */${fileSize}`).end();
+        if (!range) {
+            // Conditional GET: 304 when the cached entity is still current.
+            const inm = (req.headers['if-none-match'] || '').split(',').map((s) => s.trim());
+            if (inm.includes(etag) || inm.includes('*')) {
+                res.status(304).end();
                 return;
             }
-            let start = match[1] ? parseInt(match[1], 10) : 0;
-            let end = match[2] ? parseInt(match[2], 10) : fileSize - 1;
-            if (match[1] === '' && match[2] !== '') {
-                // Suffix range "bytes=-N" — last N bytes.
-                start = Math.max(0, fileSize - parseInt(match[2], 10));
-                end = fileSize - 1;
-            }
-            if (start >= fileSize || start > end) {
-                res.status(416).setHeader('Content-Range', `bytes */${fileSize}`).end();
+            const ims = req.headers['if-modified-since'];
+            if (ims && Date.parse(ims) >= lastModifiedSec) {
+                res.status(304).end();
                 return;
             }
-            end = Math.min(end, fileSize - 1);
-            res.status(206);
-            res.setHeader('Content-Range', `bytes ${start}-${end}/${fileSize}`);
-            res.setHeader('Content-Length', end - start + 1);
-            fs.createReadStream(filePath, { start, end }).pipe(res);
+            res.setHeader('Content-Length', fileSize);
+            fs.createReadStream(filePath).pipe(res);
             return;
         }
 
-        res.setHeader('Content-Length', fileSize);
-        fs.createReadStream(filePath).pipe(res);
+        const match = /^bytes=(\d*)-(\d*)$/.exec(range);
+        if (!match) {
+            res.status(416).setHeader('Content-Range', `bytes */${fileSize}`).end();
+            return;
+        }
+        let start = match[1] ? parseInt(match[1], 10) : 0;
+        let end = match[2] ? parseInt(match[2], 10) : fileSize - 1;
+        if (match[1] === '' && match[2] !== '') {
+            // Suffix range "bytes=-N" — last N bytes.
+            start = Math.max(0, fileSize - parseInt(match[2], 10));
+            end = fileSize - 1;
+        }
+        if (start >= fileSize || start > end) {
+            res.status(416).setHeader('Content-Range', `bytes */${fileSize}`).end();
+            return;
+        }
+        // If-Range: the client's cached entity must still match ours (ETag or
+        // date) — otherwise the Range is ignored and the full 200 entity is
+        // served. Media players send this to resume buffered ranges without
+        // re-downloading; a regenerated file gets the full fresh body.
+        let ifRangeOk = true;
+        const ifRange = req.headers['if-range'];
+        if (ifRange) {
+            if (ifRange.startsWith('"') || ifRange.startsWith('W/')) {
+                ifRangeOk = ifRange === etag;
+            } else {
+                ifRangeOk = Date.parse(ifRange) === lastModifiedSec;
+            }
+        }
+        if (!ifRangeOk) {
+            res.setHeader('Content-Length', fileSize);
+            fs.createReadStream(filePath).pipe(res);
+            return;
+        }
+        end = Math.min(end, fileSize - 1);
+        res.status(206);
+        res.setHeader('Content-Range', `bytes ${start}-${end}/${fileSize}`);
+        res.setHeader('Content-Length', end - start + 1);
+        fs.createReadStream(filePath, { start, end }).pipe(res);
     }
 
     app.get('/api/v1/scene/:bookId/:chapterId/:sceneId/audio', async (req, res) => {
