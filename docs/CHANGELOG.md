@@ -62,8 +62,21 @@ All notable changes to Animastor are documented here.
     больше не прелоадит текущую сцену дважды.
   - **Итог:** прелоад 3 сцен ≈ 18 МБ вместо ~150 МБ; при выключенном видео-слое
     экономия ~43 МБ/сцену; тап юнита не удваивает загрузку текущей сцены. Прогрессив-
-    ный стриминг (faststart + Range, варианты A–C из отчёта) — отдельный этап.
+    ный стриминг (варианты B/C из отчёта) — отдельный этап.
   - Проверки: web `tsc --noEmit` + `vite build` OK; Android `compileDebugKotlin` OK.
+
+- **Backend: moov-атом в начало всех MP4, которые отдаются плеерам/экспорту
+  (`-movflags +faststart`)**
+  (`backend/src/video/video-merge.js`):
+  - Проверено на реальном файле (43.6 МБ): moov перемещается с 100.0% на 0.0%
+    файла, размер не меняется (`-c copy`, без ре-энкода).
+  - `concatVideos` (склейка групп сцены и книг), `forceKeyframesAtUnitBoundaries`
+    (полный re-энкод — флаг почти бесплатен), single-group путь в
+    `mergeSceneVideoGroups` (вместо копии — faststart-remux, с фолбэком на копию),
+    `muxVideoAudio` (экспорт book.mp4).
+  - Без этого даже прогрессивный стриминг по прямому URL не мог бы стартовать:
+    moov в конце файла заставлял качать весь файл до первого кадра/seek.
+  - Проверки: полный backend mocha-сьют 1141 passing; syntax-smoke OK.
 
 ---
 

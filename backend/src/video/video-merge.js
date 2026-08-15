@@ -48,6 +48,21 @@ function createConcatFile(filePaths) {
     return concatPath;
 }
 
+/** Remux a file to MP4 with the moov atom at the front (`+faststart`, -c copy:
+ *  no re-encode, just metadata relocation). Without faststart the moov sits at
+ *  the END of the file and players must download the whole file before they can
+ *  start playback or seek — no progressive delivery (see
+ *  docs/05-frontend/VIDEO_LOADING_RESEARCH.md). */
+async function faststartRemux(inputPath, outputPath) {
+    await runFFmpeg([
+        '-y', '-i', inputPath,
+        '-c', 'copy',
+        '-movflags', '+faststart',
+        outputPath, '-loglevel', 'error',
+    ]);
+    return outputPath;
+}
+
 async function concatVideos(inputPaths, outputPath) {
     if (inputPaths.length === 0) return null;
     if (inputPaths.length === 1) {
@@ -57,7 +72,11 @@ async function concatVideos(inputPaths, outputPath) {
 
     const concatFile = createConcatFile(inputPaths);
     try {
-        await runFFmpeg(['-f', 'concat', '-safe', '0', '-i', concatFile, '-c', 'copy', outputPath, '-y']);
+        // +faststart: moov atom at the FRONT of the file. Without it the moov
+        // lands at the end and a player must download the whole file before it
+        // can start or seek (no progressive playback, slow first frame — see
+        // docs/05-frontend/VIDEO_LOADING_RESEARCH.md). -c copy: no re-encode.
+        await runFFmpeg(['-f', 'concat', '-safe', '0', '-i', concatFile, '-c', 'copy', '-movflags', '+faststart', outputPath, '-y']);
         log(`Merged ${inputPaths.length} videos → ${path.basename(outputPath)}`);
         return outputPath;
     } finally {
@@ -188,6 +207,10 @@ async function forceKeyframesAtUnitBoundaries(videoPath, buildId, bookId, chapte
             '-force_key_frames', expr,
             '-fps_mode', 'passthrough',
             '-c:a', 'copy',
+            // +faststart (moov at front): the merged scene video is served to
+            // the players; without it the moov sits at the file end and the
+            // player can't start/seek until the whole file is downloaded.
+            '-movflags', '+faststart',
             tmp, '-loglevel', 'error',
         ]);
         if (fs.existsSync(tmp) && fs.statSync(tmp).size >= MIN_VIDEO_BYTES) {
@@ -292,8 +315,18 @@ async function mergeSceneVideoGroups(redis, buildId, bookId, chapterId, sceneId,
         const finalPath = path.join(getOutputPath(buildId), `${bookId}_${chapterId}_${sceneId}.mp4`);
 
         if (files.length === 1) {
-            fs.copyFileSync(files[0], finalPath);
-            log(`Single group copied: ${bookId}/${chapterId}/${sceneId} → ${path.basename(finalPath)}`);
+            // A plain copy would leave the group clip's moov at the END of the
+            // file — no progressive playback/seek. Remux with faststart instead.
+            const tempSingle = finalPath + '.single.mp4';
+            try {
+                await faststartRemux(files[0], tempSingle);
+                fs.renameSync(tempSingle, finalPath);
+                log(`Single group remuxed (faststart): ${bookId}/${chapterId}/${sceneId} → ${path.basename(finalPath)}`);
+            } catch (err) {
+                warn(`faststart remux failed for ${path.basename(finalPath)}: ${err.message} — copying as-is`);
+                try { fs.unlinkSync(tempSingle); } catch {}
+                fs.copyFileSync(files[0], finalPath);
+            }
             return finalPath;
         }
 
@@ -407,6 +440,8 @@ async function muxVideoAudio(videoPath, audioPath, outputPath) {
         '-map', '0:v:0',
         '-map', '1:a:0',
         '-shortest',
+        // +faststart: the export file is played in browsers/players too.
+        '-movflags', '+faststart',
         outputPath, '-y'
     ]);
     log(`Muxed video+audio → ${path.basename(outputPath)}`);
