@@ -409,17 +409,6 @@ class Repository(
         diskCache?.evictAll()
     }
 
-    /**
-     * TEMPORARY diagnostics: forward one unit-seek debug record to the backend
-     * (POST /api/v1/debug/video-seek → JSONL). Fire-and-forget — failures are
-     * logged and swallowed so the debug path can never break the player.
-     * Remove together with the debug client after the investigation.
-     */
-    suspend fun postVideoSeekDebug(record: Map<String, Any?>) {
-        runCatching { api.postVideoSeekDebug(record) }
-            .onFailure { Log.w("Repo", "postVideoSeekDebug failed: ${it.message}") }
-    }
-
     /** Drop only the storyboard cache. Used on external unit-seeks so the fresh
      *  scene storyboard (with up-to-date start_ms / video_start_ms timings) is
      *  always re-fetched instead of a potentially stale cached response. */

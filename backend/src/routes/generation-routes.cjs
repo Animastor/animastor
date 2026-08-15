@@ -1290,52 +1290,5 @@ module.exports = function(app, redis, deps) {
         }
     });
 
-    // ======================================================
-    // TEMPORARY: video-seek diagnostics (unit-shift investigation)
-    // ======================================================
-    // The Android player posts one JSON record per unit-seek
-    // (SEEK_REQUEST / SEEK_RESULT). While config.VIDEO_SEEK_DEBUG=1 each
-    // record is appended as a JSONL line to config.VIDEO_SEEK_DEBUG_LOG.
-    // Remove this endpoint together with the Android debug client once the
-    // root cause of the unit-shift is found.
-    app.post('/api/v1/debug/video-seek', (req, res) => {
-        if (!config.VIDEO_SEEK_DEBUG) {
-            return res.json({ enabled: false, ok: false });
-        }
-        try {
-            const record = (req.body && typeof req.body === 'object') ? req.body : {};
-            const out = { ...record };
-            // FRAME_CAPTURE: the Android player posts a base64 JPEG of the actual
-            // video surface after a unit seek. Decode it to a PNG next to the
-            // JSONL so the frame the user SEES can be compared (PSNR) against the
-            // expected clip frame at the seek target.
-            if (out.event === 'FRAME_CAPTURE' && typeof out.frame_b64 === 'string' && out.frame_b64.length > 0) {
-                try {
-                    const framesDir = path.join(path.dirname(config.VIDEO_SEEK_DEBUG_LOG), 'frames');
-                    fs.mkdirSync(framesDir, { recursive: true });
-                    const safeId = String(out.seek_id || 'frame').replace(/[^\w.-]/g, '_');
-                    const framePath = path.join(framesDir, `${safeId}.png`);
-                    fs.writeFileSync(framePath, Buffer.from(out.frame_b64, 'base64'));
-                    out.frame_path = framePath;
-                } catch (err) {
-                    out.frame_error = String(err.message || err);
-                }
-                delete out.frame_b64;
-            }
-            const line = JSON.stringify({
-                ts: new Date().toISOString(),
-                ...out,
-            });
-            const logFile = config.VIDEO_SEEK_DEBUG_LOG;
-            fs.mkdirSync(path.dirname(logFile), { recursive: true });
-            fs.appendFileSync(logFile, line + '\n');
-            log('[video-seek-debug] ' + line);
-            res.json({ enabled: true, ok: true });
-        } catch (err) {
-            console.error('[video-seek-debug] write failed:', err.message);
-            res.status(500).json({ enabled: true, ok: false, error: String(err.message || err) });
-        }
-    });
-
     log('[ROUTES] Generation routes loaded');
 };

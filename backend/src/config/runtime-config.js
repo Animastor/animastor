@@ -62,16 +62,6 @@ const BOOKS_DIR = process.env.BOOKS_DIR || '/data/books';
 const HUB_URL = process.env.HUB_URL || 'https://animastor.in/gpu';
 
 // ======================================================
-// VIDEO SEEK DEBUG (TEMPORARY diagnostics)
-// ======================================================
-// When VIDEO_SEEK_DEBUG=1, POST /api/v1/debug/video-seek appends one JSON
-// line per unit-seek (SEEK_REQUEST / SEEK_RESULT) to VIDEO_SEEK_DEBUG_LOG.
-// Temporary tool for the Android unit-seek shift investigation — remove
-// together with the Android debug client once the root cause is found.
-const VIDEO_SEEK_DEBUG = process.env.VIDEO_SEEK_DEBUG === '1';
-const VIDEO_SEEK_DEBUG_LOG = process.env.VIDEO_SEEK_DEBUG_LOG || (OUTPUT_DIR + '/logs/video_seek_debug.jsonl');
-
-// ======================================================
 // TXT IMPORT
 // ======================================================
 const TXT_MAX_SIZE = 10 * 1024 * 1024; // 10 MB
@@ -266,9 +256,6 @@ module.exports = {
     OPENROUTER_API_KEY,
     OPENROUTER_MODEL,
 
-    // Video-seek diagnostics (temporary)
-    VIDEO_SEEK_DEBUG,
-    VIDEO_SEEK_DEBUG_LOG,
 };
 
 // Backwards compatibility aliases

@@ -4,6 +4,40 @@ All notable changes to Animastor are documented here.
 
 ---
 
+## [Unreleased] — 2026-08-15
+
+### Fixed
+
+- **Player: выбор юнита в Navigator надёжно позиционирует цельный scene-video на таймстемп юнита; переключение слоёв video/storyboard больше не ломает видео; этап завершён, временный debug удалён**
+  (`docs/05-frontend/PLAYER_SEEK_ENGINEERING.md`,
+  `frontends/android/app/src/main/java/com/example/animastor/ui/PlayFragment.kt`,
+  `frontends/android/app/src/main/java/com/example/animastor/ui/PlaybackViewModel.kt`,
+  `frontends/android/app/src/main/java/com/example/animastor/repository/Repository.kt`,
+  `frontends/android/app/src/main/java/com/example/animastor/repository/BackendApi.kt`,
+  `frontends/app/src/state/playbackStore.ts`,
+  `backend/src/video/video-merge.js`,
+  `backend/src/video/video-timeline.js`):
+  - **Архитектура:** сцена играется двумя независимыми элементами (аудио + цельный
+    видеофайл сцены); канонический таймлайн — аудио (`start_ms`); видео выровнено по
+    нему на merge (`alignGroupClips` + `forceKeyframesAtUnitBoundaries`).
+  - **Исправлено (Android):** explicit unit-target включая 0; `SEEK_CLOSEST` для
+    точных mid-unit позиций; poll-в-паузе + peek-render вместо гонки seekTo↔start();
+    переключение слоёв через z-order (поверхность никогда не скрывается — скрытие
+    убивает MediaPlayer); keepSurface при unit-seek (старый кадр держится, новый
+    приходит без флэша); speed-lock через `setPlaybackParams` (дрейф ~0.7% часов
+    двух плееров ограничен без прыжков).
+  - **Исправлено (web):** unit-target (включая 0) на load/resume; навигация внутри
+    сцены не перезагружает видео-элемент (ключ сцены) — без чёрного промежутка.
+  - **Отклонено:** переиспользование плеера на Android при навигации (seek на живом
+    плеере в паузе мигает поверхностью на устройстве) — возвращено к rebuild+keepSurface.
+  - **Диагностика:** SEEK_REQUEST/SEEK_RESULT/SEEK_TRACE/FRAME_CAPTURE/LOCK_CHECK
+    через временный `POST /api/v1/debug/video-seek` (JSONL + кадры, флаг
+    VIDEO_SEEK_DEBUG) — полностью удалено, методика зафиксирована в документации.
+  - Проверки: Android `compileDebugKotlin` OK; backend mocha-сьют зелёный; web
+    `tsc --noEmit` + `vite build` OK; дерево чистое, временные артефакты удалены.
+
+---
+
 ## [Unreleased] — 2026-08-14
 
 ### Fixed
