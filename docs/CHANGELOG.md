@@ -6,6 +6,27 @@ All notable changes to Animastor are documented here.
 
 ## [Unreleased] — 2026-08-15
 
+### Added
+
+- **Playback-профиль видео (Source/Playback/Export)** — Player получает лёгкую
+  производную (~2 Мбит/с), экспорт остаётся в master-качестве
+  (`backend/src/config/runtime-config.js`, `backend/src/video/video-merge.js`,
+  `backend/src/routes/book/export-routes.cjs`, `backend/scripts/reencode-playback.js`):
+  - **Причина:** битрейт merged-файла 5,47 Мбит/с (ре-энкод CRF 18 раздувал 27,7 МБ
+    источников до 43,6 МБ) превышал фактическую скорость мобильной сети (~4,3 Мбит/с)
+    → постоянная буферизация; YouTube 720p играл, т.к. его битрейт ниже и есть ABR.
+    Эксперимент на устройстве подтвердил: 2 Мбит/с играет непрерывно.
+  - **`PLAYBACK_VIDEO_BITRATE_KBPS`** (по умолчанию 2000; 0 — откат к CRF 18):
+    ре-энкод в `forceKeyframesAtUnitBoundaries` и single-group merge теперь капит
+    битрейт (VBV `-b:v/-maxrate/-bufsize`), сохраняя faststart и unit-boundary
+    keyframes (проверено PTS: 7.500≤7.512, 22.542≤22.560, 34.042≤34.056, 54.417≤54.456).
+  - **Экспорт строится из источников** `_gN.mp4` (concat -c copy, master ~3,45 Мбит/с)
+    вместо playback-файлов — финальное качество не деградирует.
+  - **`reencode-playback.js`** — батч для существующих книг (идемпотентный,
+    keyframes из `{prefix}.chunk-durations.json`); применён к текущим данным:
+    merged-файл сцены 43,6 МБ → 16,0 МБ / 2,0 Мбит/с, moov@0%, 206/Range работает.
+  - Хранилище на сцену: sources (27,7 МБ) + playback (16 МБ) ≈ 44 МБ вместо 71 МБ.
+
 ### Fixed
 
 - **Player (web): видео-буфер-гейт — при слабом интернете плеер не уходит в

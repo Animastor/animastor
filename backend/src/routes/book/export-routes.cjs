@@ -126,15 +126,12 @@ module.exports = function(app, redis, deps) {
             const dir = path.join(OUTPUT_DIR, ctx.buildId);
             if (!fs.existsSync(dir)) return res.status(404).json({ error: 'no build output for this book' });
 
-            // Concatenate scene videos into a single book video. mergeBookVideos
-            // returns null for a single scene, so fall back to that lone file.
-            let bookVideo = await videoMerge.mergeBookVideos(redis, bookId, ctx.buildId, ctx.scenes);
-            if (!bookVideo) {
-                const singles = ctx.scenes
-                    .map(s => path.join(dir, `${bookId}_${s.chapter_id}_${s.scene_id}.mp4`))
-                    .filter(p => fs.existsSync(p));
-                if (singles.length === 1) bookVideo = singles[0];
-            }
+            // Export builds from the pipeline SOURCE clips (_gN.mp4, master
+            // quality): the Player's merged scene files are a lightweight
+            // playback derivative (PLAYBACK_VIDEO_BITRATE_KBPS ≈ 2 Mbps) and
+            // must NOT be the export source — the final file would lose the
+            // pipeline's original quality.
+            const bookVideo = await videoMerge.mergeBookVideosFromSources(redis, bookId, ctx.buildId, ctx.scenes);
             if (!bookVideo || !fs.existsSync(bookVideo)) {
                 return res.status(404).json({ error: 'no scene videos to export' });
             }

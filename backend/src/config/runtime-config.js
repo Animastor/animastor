@@ -62,6 +62,19 @@ const BOOKS_DIR = process.env.BOOKS_DIR || '/data/books';
 const HUB_URL = process.env.HUB_URL || 'https://animastor.in/gpu';
 
 // ======================================================
+// VIDEO — PLAYBACK PROFILE
+// ======================================================
+// Bitrate cap (kbps) for the Player's merged scene video (the re-encode in
+// video-merge.js that also forces unit-boundary keyframes). The pipeline
+// SOURCES (_gN.mp4) stay untouched at master quality — this only affects the
+// lightweight derivative served to the Player. 0 disables the cap → falls back
+// to the previous near-lossless CRF 18. Default 2000 kbps was confirmed by the
+// on-device experiment (docs/05-frontend/VIDEO_LOADING_RESEARCH.md §playback
+// profile): a 2 Mbps 768×1024 stream played continuously on a mobile connection
+// where the 5.47 Mbps current file buffered constantly (SSIM 0.968 vs source).
+const PLAYBACK_VIDEO_BITRATE_KBPS = Number(process.env.PLAYBACK_VIDEO_BITRATE_KBPS ?? 2000);
+
+// ======================================================
 // TXT IMPORT
 // ======================================================
 const TXT_MAX_SIZE = 10 * 1024 * 1024; // 10 MB
@@ -255,6 +268,9 @@ module.exports = {
     // AI
     OPENROUTER_API_KEY,
     OPENROUTER_MODEL,
+
+    // Video playback profile
+    PLAYBACK_VIDEO_BITRATE_KBPS,
 
 };
 

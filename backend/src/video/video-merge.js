@@ -155,6 +155,35 @@ function probeFramePtsSec(filePath) {
     });
 }
 
+/** Encode args for the PLAYER's lightweight playback derivative. The merged
+ *  scene video served to the Player is capped at PLAYBACK_VIDEO_BITRATE_KBPS
+ *  (default 2000 kbps, VBV-constrained) so it streams on connections where the
+ *  5+ Mbps near-lossless CRF 18 re-encode buffered constantly. When the cap is
+ *  disabled (config 0) the old CRF 18 behavior is kept. The pipeline SOURCES
+ *  are never touched — master quality for export comes from them, not here. */
+function playbackVideoEncodeArgs() {
+    const k = config.PLAYBACK_VIDEO_BITRATE_KBPS;
+    if (k && k > 0) {
+        return ['-c:v', 'libx264', '-preset', 'veryfast', '-b:v', `${k}k`, '-maxrate', `${k}k`, '-bufsize', `${k * 2}k`];
+    }
+    return ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18'];
+}
+
+/** Re-encode a video into the playback profile (bitrate-capped, faststart).
+ *  When forceKeyFramesExpr is given (unit-boundary frame indices), those exact
+ *  frames become IDR keyframes. Frame count is preserved (-fps_mode
+ *  passthrough); audio (if any) is copied. */
+async function encodePlaybackProfile(inputPath, outputPath, forceKeyFramesExpr = null) {
+    const args = [
+        '-y', '-i', inputPath,
+        ...playbackVideoEncodeArgs(),
+    ];
+    if (forceKeyFramesExpr) args.push('-force_key_frames', forceKeyFramesExpr);
+    args.push('-fps_mode', 'passthrough', '-c:a', 'copy', '-movflags', '+faststart', outputPath, '-loglevel', 'error');
+    await runFFmpeg(args);
+    return outputPath;
+}
+
 /** Re-encode a video, forcing an IDR keyframe at the LAST frame at-or-before
  *  each unit boundary (cumulative unit durations in seconds). Returns true on
  *  success. Rationale: Android MediaPlayer.seekTo is keyframe-aligned — it
@@ -165,11 +194,13 @@ function probeFramePtsSec(filePath) {
  *  unit content). Forcing the keyframe on the last frame at-or-before the
  *  boundary makes the seek land within one frame of the unit start (the frame
  *  right at the transition — imperceptible). Frame count is preserved
- *  (passthrough fps mode); only the stream is re-encoded (crf 18, veryfast).
- *  Audio (if any) is copied. */
-async function forceKeyframesAtUnitBoundaries(videoPath, buildId, bookId, chapterId, sceneId) {
+ *  (passthrough fps mode); only the stream is re-encoded (playback profile,
+ *  see playbackVideoEncodeArgs). Audio (if any) is copied. durationsOverride
+ *  (unit durations, seconds) bypasses the DB lookup — used by the batch
+ *  re-encode tool for existing builds whose DB rows may be gone. */
+async function forceKeyframesAtUnitBoundaries(videoPath, buildId, bookId, chapterId, sceneId, durationsOverride = null) {
     try {
-        const durations = await loadSceneUnitDurations(buildId, bookId, chapterId, sceneId);
+        const durations = durationsOverride || await loadSceneUnitDurations(buildId, bookId, chapterId, sceneId);
         if (!durations || durations.length <= 1) return true; // single unit — keyframe at 0 exists
 
         const framePts = await probeFramePtsSec(videoPath);
@@ -201,18 +232,11 @@ async function forceKeyframesAtUnitBoundaries(videoPath, buildId, bookId, chapte
 
         const expr = 'expr:' + indices.map(i => `eq(n,${i})`).join('+');
         const tmp = videoPath + '.kf.mp4';
-        await runFFmpeg([
-            '-y', '-i', videoPath,
-            '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18',
-            '-force_key_frames', expr,
-            '-fps_mode', 'passthrough',
-            '-c:a', 'copy',
-            // +faststart (moov at front): the merged scene video is served to
-            // the players; without it the moov sits at the file end and the
-            // player can't start/seek until the whole file is downloaded.
-            '-movflags', '+faststart',
-            tmp, '-loglevel', 'error',
-        ]);
+        // +faststart (moov at front) comes from encodePlaybackProfile: the
+        // merged scene video is served to the players; without it the moov sits
+        // at the file end and the player can't start/seek until the whole file
+        // is downloaded.
+        await encodePlaybackProfile(videoPath, tmp, expr);
         if (fs.existsSync(tmp) && fs.statSync(tmp).size >= MIN_VIDEO_BYTES) {
             fs.renameSync(tmp, videoPath);
             log(`Forced keyframes at frames [${indices.join(', ')}] (unit boundaries ${boundaries.map(b => b.toFixed(3)).join(', ')}s)`);
@@ -315,17 +339,27 @@ async function mergeSceneVideoGroups(redis, buildId, bookId, chapterId, sceneId,
         const finalPath = path.join(getOutputPath(buildId), `${bookId}_${chapterId}_${sceneId}.mp4`);
 
         if (files.length === 1) {
-            // A plain copy would leave the group clip's moov at the END of the
-            // file — no progressive playback/seek. Remux with faststart instead.
+            // The Player streams this file: a plain copy would keep the group
+            // clip's high pipeline bitrate (5+ Mbps — constant buffering on
+            // mobile) AND its moov at the END (no progressive playback/seek).
+            // Re-encode into the playback profile instead (bitrate cap +
+            // faststart); fall back to a faststart remux on encode failure.
             const tempSingle = finalPath + '.single.mp4';
             try {
-                await faststartRemux(files[0], tempSingle);
+                await encodePlaybackProfile(files[0], tempSingle);
                 fs.renameSync(tempSingle, finalPath);
-                log(`Single group remuxed (faststart): ${bookId}/${chapterId}/${sceneId} → ${path.basename(finalPath)}`);
+                log(`Single group encoded to playback profile: ${bookId}/${chapterId}/${sceneId} → ${path.basename(finalPath)}`);
             } catch (err) {
-                warn(`faststart remux failed for ${path.basename(finalPath)}: ${err.message} — copying as-is`);
+                warn(`playback profile encode failed for ${path.basename(finalPath)}: ${err.message} — faststart remux instead`);
                 try { fs.unlinkSync(tempSingle); } catch {}
-                fs.copyFileSync(files[0], finalPath);
+                try {
+                    await faststartRemux(files[0], tempSingle);
+                    fs.renameSync(tempSingle, finalPath);
+                } catch (err2) {
+                    warn(`faststart remux failed for ${path.basename(finalPath)}: ${err2.message} — copying as-is`);
+                    try { fs.unlinkSync(tempSingle); } catch {}
+                    fs.copyFileSync(files[0], finalPath);
+                }
             }
             return finalPath;
         }
@@ -366,6 +400,62 @@ async function mergeSceneVideoGroups(redis, buildId, bookId, chapterId, sceneId,
         // Групповые файлы сознательно сохраняются (чанки остаются отдельными).
         log(`Merge complete: ${bookId}/${chapterId}/${sceneId}`);
         return finalPath;
+    } finally {
+        await redis.del(lockKey);
+    }
+}
+
+/** Export build: merge the SOURCE group clips (_gN.mp4, master quality) into a
+ *  single book video — NOT the playback-profile merged scene files, so the
+ *  final export keeps the pipeline's original quality. Per scene the groups are
+ *  concat'd losslessly (-c copy), then the scene files are concat'd. Used by
+ *  the export route; the Player keeps using the lightweight scene merges. */
+async function mergeBookVideosFromSources(redis, bookId, buildId, scenes) {
+    const lockKey = `animastor:video-book-merge-lock:${bookId}`;
+    const lock = await redis.set(lockKey, buildId, 'NX', 'EX', 600);
+    if (!lock) {
+        log(`Book merge already in progress: ${bookId}`);
+        return null;
+    }
+    try {
+        const finalPath = getOutputPath(buildId, `${bookId}.mp4`);
+        const tempPath = finalPath + '.book.mp4';
+        const sceneVideos = [];
+        const temps = [];
+        try {
+            for (const scene of scenes) {
+                const groups = findSceneVideoGroups(buildId, bookId, scene.chapter_id, scene.scene_id);
+                if (groups.length === 0) continue;
+                if (groups.length === 1) {
+                    sceneVideos.push(groups[0]);
+                    continue;
+                }
+                const sceneTemp = getOutputPath(buildId, `${bookId}_${scene.chapter_id}_${scene.scene_id}.src.mp4`);
+                const merged = await concatVideos(groups, sceneTemp);
+                if (!merged) continue;
+                temps.push(sceneTemp);
+                sceneVideos.push(merged);
+            }
+
+            if (sceneVideos.length === 0) {
+                log(`No source videos to export for book ${bookId}`);
+                return null;
+            }
+
+            if (sceneVideos.length === 1) {
+                // Single scene — still produce the final file at source quality.
+                fs.copyFileSync(sceneVideos[0], tempPath);
+            } else {
+                const result = await concatVideos(sceneVideos, tempPath);
+                if (!result) return null;
+            }
+            fs.renameSync(tempPath, finalPath);
+            log(`Book merge from SOURCES complete: ${bookId} → ${path.basename(finalPath)}`);
+            return finalPath;
+        } finally {
+            for (const t of temps) { try { fs.unlinkSync(t); } catch {} }
+            try { fs.unlinkSync(tempPath); } catch {}
+        }
     } finally {
         await redis.del(lockKey);
     }
@@ -451,6 +541,9 @@ async function muxVideoAudio(videoPath, audioPath, outputPath) {
 module.exports = {
     mergeSceneVideoGroups,
     mergeBookVideos,
+    mergeBookVideosFromSources,
     concatVideos,
     muxVideoAudio,
+    encodePlaybackProfile,
+    forceKeyframesAtUnitBoundaries,
 };
