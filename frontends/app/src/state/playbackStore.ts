@@ -152,6 +152,17 @@ let videoSrcUrl: string | null = null;
 // Android keepSurface fix: the current frame stays visible through the seek
 // and the new unit's frame replaces it directly.
 let currentVideoSceneKey: string | null = null;
+// Debug: time from <video> src assignment to the first frame (loadeddata) —
+// should be ~1s with faststart + Range streaming, not the full-download time.
+let videoSrcSetAt = 0;
+function logFirstFrameReady(): void {
+  videoEl?.addEventListener('loadeddata', () => {
+    if (videoSrcSetAt > 0) {
+      console.info(`[PLAY-STREAM] first frame in ${Math.round(performance.now() - videoSrcSetAt)}ms (src→loadeddata)`);
+      videoSrcSetAt = 0;
+    }
+  }, { once: true });
+}
 let iuRafId = 0;
 let silentTimer: number | null = null;
 
@@ -623,6 +634,8 @@ export function attachVideo(el: HTMLVideoElement): void {
   if (videoSrcUrl) {
     currentVideoSceneKey = getCurrentSceneKey();
     el.src = videoSrcUrl;
+    videoSrcSetAt = performance.now();
+    logFirstFrameReady();
     // Prefer the explicit video-timeline target while one is pending; the
     // audio currentTime can still be unseeked (0) right after a unit seek.
     if (pendingVideoTargetSec >= 0) {
@@ -1288,12 +1301,20 @@ function seekAttachedVideo(explicitSeekMs: number | null): boolean {
  *  playback. */
 function ensureSceneVideo(sceneKey: string | null, explicitSeekMs: number | null = null): void {
   if (!sceneKey) return;
-  if (!layerVideo.value) return;
+  if (!layerVideo.value) {
+    console.info(`[PLAY-STREAM] skip video (layer off) scene=${sceneKey}`);
+    return;
+  }
   // Already attached for this scene (e.g. re-emit after a same-scene unit tap)
   // — just re-apply the seek target.
-  if (seekAttachedVideo(explicitSeekMs)) return;
+  if (seekAttachedVideo(explicitSeekMs)) {
+    console.info(`[PLAY-STREAM] reuse attached video scene=${sceneKey} seekMs=${explicitSeekMs ?? 'audio-sync'}`);
+    return;
+  }
   const [chId, scId] = sceneKey.split(':', 2);
-  playVideoOverlay(API_BASE + scenePath(chId, scId, 'video'), explicitSeekMs);
+  const url = API_BASE + scenePath(chId, scId, 'video');
+  console.info(`[PLAY-STREAM] stream scene=${sceneKey} url=${url} seekMs=${explicitSeekMs ?? 'audio-sync'}`);
+  playVideoOverlay(url, explicitSeekMs);
 }
 
 /** playVideoOverlay — load the scene video on the adopted <video> element.
@@ -1313,6 +1334,8 @@ function playVideoOverlay(url: string, explicitSeekMs: number | null = null): vo
   pendingVideoTargetSec = explicitSeekMs != null ? explicitSeekMs / 1000 : -1;
   if (!videoEl) { updateLayers(); return; }
   videoEl.src = url;
+  videoSrcSetAt = performance.now();
+  logFirstFrameReady();
   applyVideoSeek(explicitSeekMs);
   // currentTime set before metadata loads is unreliable in some browsers —
   // re-apply once the metadata is ready.
@@ -1334,10 +1357,14 @@ function applyVideoSeek(explicitSeekMs: number | null): void {
   const el = videoEl;
   if (!el) return;
   if (explicitSeekMs != null) {
+    console.info(`[PLAY-STREAM] video seek explicit=${explicitSeekMs}ms`);
     try { el.currentTime = explicitSeekMs / 1000; } catch { /* ignore */ }
   } else {
     const cur = currentPlayer?.currentTime ?? 0;
-    if (cur > 0) { try { el.currentTime = cur; } catch { /* ignore */ } }
+    if (cur > 0) {
+      console.info(`[PLAY-STREAM] video seek audio-sync=${Math.round(cur * 1000)}ms`);
+      try { el.currentTime = cur; } catch { /* ignore */ }
+    }
   }
 }
 
@@ -1350,6 +1377,7 @@ function onVideoEnded(): void {
  *  or a transient network error) — drop the src so the storyboard layer shows
  *  instead of a black element. */
 function onVideoError(): void {
+  console.warn(`[PLAY-STREAM] video error — fallback to storyboard (src=${videoEl?.currentSrc ?? 'unknown'})`);
   videoSrcUrl = null;
   updateLayers();
 }

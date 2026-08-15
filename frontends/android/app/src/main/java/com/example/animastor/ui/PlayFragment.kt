@@ -5,6 +5,7 @@ import android.media.MediaPlayer
 import android.media.PlaybackParams
 import android.os.Build
 import android.os.Bundle
+import android.os.SystemClock
 import android.util.Log
 import android.view.MotionEvent
 import android.view.SurfaceHolder
@@ -1195,6 +1196,8 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
             pendingVideoTargetMs = if (explicitSeek) startSeekMs else -1L
             videoPlayer?.release()
             videoPlayer = null
+            val startedAt = SystemClock.elapsedRealtime()
+            Log.i(TAG, "video stream start: url=$url seekMs=$startSeekMs explicit=$explicitSeek")
             val b = binding ?: return
             b.videoSurface.visibility = View.VISIBLE
 
@@ -1216,6 +1219,8 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                         fitSurfaceToContainer(b, width, height)
                     }
                     setOnPreparedListener {
+                        Log.i(TAG, "video prepared in ${SystemClock.elapsedRealtime() - startedAt}ms " +
+                            "dur=${runCatching { duration.toLong() }.getOrNull()}ms")
                         updateLayers()
                         var seekLandTarget = 0L
                         if (explicitSeek) {

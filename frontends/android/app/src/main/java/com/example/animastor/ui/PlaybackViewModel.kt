@@ -195,11 +195,16 @@ class PlaybackViewModel(
      * entirely while [videoEnabled] is off — zero video traffic.
      */
     fun ensureSceneVideo(sceneKey: String, seekMs: Long, explicitSeek: Boolean) {
-        if (!videoEnabled) return
+        if (!videoEnabled) {
+            Log.d(TAG, "ensureSceneVideo: skip (video layer off) scene=$sceneKey")
+            return
+        }
         if (sceneKey != getCurrentSceneKey()) return
         val chId = sceneKey.substringBefore(':')
         val scId = sceneKey.substringAfter(':')
-        _videoDelivery.trySend(VideoDelivery(sceneKey, buildSceneVideoUrl(chId, scId), seekMs, explicitSeek))
+        val url = buildSceneVideoUrl(chId, scId)
+        Log.i(TAG, "video stream: scene=$sceneKey url=$url seekMs=$seekMs explicit=$explicitSeek")
+        _videoDelivery.trySend(VideoDelivery(sceneKey, url, seekMs, explicitSeek))
     }
 
     /** Direct HTTP URL of the whole-scene MP4 (progressive/streamed, never
