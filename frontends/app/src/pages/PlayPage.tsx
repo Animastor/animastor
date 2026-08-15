@@ -38,6 +38,8 @@ function statusText(s: PlaybackUiState): string {
       return t('play_ready');
     case 'PLAYING':
       return t('play_playing');
+    case 'BUFFERING':
+      return t('play_loading');
     case 'PAUSED':
       return t('play_paused');
     case 'IDLE':
@@ -208,10 +210,10 @@ export function PlayPage(props: { path?: string }) {
   const showResult = !!imgSrc && layerImage.value;
   const showCover = !!coverImage.value && !showResult;
   const showCurtains = !coverImage.value && !showResult && !previewImage.value;
-  const loading = s.phase === 'DOWNLOADING' || s.phase === 'LOADING_BOOK';
+  const loading = s.phase === 'DOWNLOADING' || s.phase === 'LOADING_BOOK' || s.phase === 'BUFFERING';
   const showVideo = videoVisible.value && layerVideo.value;
-  const showPause = s.phase === 'PLAYING';
-  const buttonEnabled = s.phase === 'SCENE_READY' || s.phase === 'PLAYING' || sceneQueueSize() > 0;
+  const showPause = s.phase === 'PLAYING' || s.phase === 'BUFFERING';
+  const buttonEnabled = s.phase === 'SCENE_READY' || s.phase === 'PLAYING' || s.phase === 'BUFFERING' || sceneQueueSize() > 0;
   const subtitle = subtitleText.value;
 
   let placeholder = '';

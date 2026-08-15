@@ -31,7 +31,7 @@ import { getMedia, putMedia, clearCache as clearMediaCache } from '../cache/medi
 
 export type PlayerPhase =
   | 'IDLE' | 'LOADING_BOOK' | 'GENERATING' | 'DOWNLOADING'
-  | 'SCENE_READY' | 'PLAYING' | 'PAUSED' | 'IMPORTING_TXT';
+  | 'SCENE_READY' | 'PLAYING' | 'PAUSED' | 'BUFFERING' | 'IMPORTING_TXT';
 
 export interface PlaybackUiState {
   phase: PlayerPhase;
@@ -396,6 +396,7 @@ export function rotationRecovery(): void {
 export function pausePlayback(): void {
   isPaused = true;
   enginePaused.value = true;
+  resetVideoBuffering();
   try { currentPlayer?.pause(); } catch { /* ignore */ }
   try { videoEl?.pause(); } catch { /* ignore */ }
   uiState.value = { ...uiState.value, phase: 'PAUSED' };
@@ -459,6 +460,9 @@ export function handlePlayButton(): void {
     else playSceneQueue();
   } else if (phase === 'IDLE' && sceneQueue.value.length > 0) {
     playSceneQueue();
+  } else if (phase === 'BUFFERING') {
+    // Tap during "Загрузка…" aborts the buffer wait — plain pause.
+    pausePlayback();
   }
 }
 
@@ -631,6 +635,8 @@ export function attachVideo(el: HTMLVideoElement): void {
   videoEl = el;
   el.addEventListener('ended', onVideoEnded);
   el.addEventListener('error', onVideoError);
+  el.addEventListener('waiting', onVideoWaiting);
+  el.addEventListener('playing', onVideoPlaying);
   if (videoSrcUrl) {
     currentVideoSceneKey = getCurrentSceneKey();
     el.src = videoSrcUrl;
@@ -654,11 +660,14 @@ export function detachVideo(): void {
   if (videoEl) {
     videoEl.removeEventListener('ended', onVideoEnded);
     videoEl.removeEventListener('error', onVideoError);
+    videoEl.removeEventListener('waiting', onVideoWaiting);
+    videoEl.removeEventListener('playing', onVideoPlaying);
     try { videoEl.pause(); } catch { /* ignore */ }
     videoEl.removeAttribute('src');
     videoEl = null;
   }
   currentVideoSceneKey = null;
+  resetVideoBuffering();
   updateLayers();
 }
 
@@ -1375,11 +1384,120 @@ function onVideoEnded(): void {
 
 /** Stream failed (e.g. the video file 404s despite a stale video_ready status,
  *  or a transient network error) — drop the src so the storyboard layer shows
- *  instead of a black element. */
+ *  instead of a black element, and unblock playback if we were buffering. */
 function onVideoError(): void {
   console.warn(`[PLAY-STREAM] video error — fallback to storyboard (src=${videoEl?.currentSrc ?? 'unknown'})`);
   videoSrcUrl = null;
   updateLayers();
+  resumeFromBuffering();
+}
+
+// ── Video buffer gate ─────────────────────────────────────────────
+// The scene AUDIO is a local blob (never stalls) while the VIDEO is streamed
+// over the network. On a slow connection the <video> element runs out of
+// buffered data and freezes while the audio keeps playing — the "video goes out
+// of sync" symptom. Fix: gate the WHOLE player on the video buffer — when the
+// video underruns (< PAUSE_BUFFER_GUARD_S ahead) pause the audio AND the video
+// and show "Загрузка…" (BUFFERING); resume once the browser buffered
+// RESUME_BUFFER_S ahead, re-aligning the video to the audio timeline first.
+// The browser cannot be told a buffer size directly — the debounce + resume
+// thresholds ARE the buffer policy: the 'waiting' event is debounced by
+// BUFFER_ENTER_DEBOUNCE_MS so a fast Range fetch after a unit seek (~200ms on
+// a decent connection) never flashes the status, while a genuine underrun
+// (slow internet) settles into BUFFERING and auto-resumes when enough data is
+// ahead. This also gates the INITIAL load: if the first bytes are slow to
+// arrive, the player shows "Загрузка…" instead of playing the audio alone and
+// letting the video join late/desynced.
+const PAUSE_BUFFER_GUARD_S = 1.0;
+const RESUME_BUFFER_S = 3.0;
+const BUFFER_ENTER_DEBOUNCE_MS = 300;
+let videoBuffering = false;
+let bufferingTimer: number | null = null;
+let pendingBufferingTimer: number | null = null;
+
+function bufferedAheadSec(el: HTMLVideoElement): number {
+  try {
+    const b = el.buffered;
+    if (!b || b.length === 0) return 0;
+    return b.end(b.length - 1) - el.currentTime;
+  } catch { /* ignore */ }
+  return 0;
+}
+
+function onVideoWaiting(): void {
+  // Edge-triggered underrun (initial load AND mid-playback stalls both land
+  // here). Debounce: if the browser recovers quickly (fast Range fetch), the
+  // 'playing' event cancels the pending entry and nothing visible happens.
+  if (videoBuffering || pendingBufferingTimer != null) return;
+  pendingBufferingTimer = window.setTimeout(() => {
+    pendingBufferingTimer = null;
+    enterVideoBuffering();
+  }, BUFFER_ENTER_DEBOUNCE_MS);
+}
+
+function onVideoPlaying(): void {
+  if (pendingBufferingTimer != null) {
+    clearTimeout(pendingBufferingTimer);
+    pendingBufferingTimer = null;
+  }
+  // Hold the gate: if the element auto-recovers from 'waiting' while we are
+  // still in BUFFERING (audio paused), re-pause it so it can't run ahead.
+  if (videoBuffering && videoEl) {
+    try { videoEl.pause(); } catch { /* ignore */ }
+  }
+}
+
+function enterVideoBuffering(): void {
+  if (videoBuffering || isPaused || !layerVideo.value || uiState.value.phase !== 'PLAYING') return;
+  const el = videoEl;
+  console.info(`[PLAY-STREAM] buffering — video underrun (ahead=${el ? bufferedAheadSec(el).toFixed(2) : '?'}s < guard ${PAUSE_BUFFER_GUARD_S}s), pausing to keep sync`);
+  videoBuffering = true;
+  // Pause the video element too (not just the audio): while it is paused the
+  // browser keeps fetching but will NOT auto-resume past our gate.
+  try { el?.pause(); } catch { /* ignore */ }
+  pauseAudio(currentPlayer);
+  uiState.value = { ...uiState.value, phase: 'BUFFERING' };
+  startBufferingMonitor();
+}
+
+function startBufferingMonitor(): void {
+  stopBufferingMonitor();
+  bufferingTimer = window.setInterval(() => {
+    if (uiState.value.phase !== 'BUFFERING') { stopBufferingMonitor(); return; }
+    const el = videoEl;
+    if (!el || el.ended || !layerVideo.value) { resumeFromBuffering(); return; }
+    if (bufferedAheadSec(el) >= RESUME_BUFFER_S) resumeFromBuffering();
+  }, 200);
+}
+
+function stopBufferingMonitor(): void {
+  if (bufferingTimer != null) { clearInterval(bufferingTimer); bufferingTimer = null; }
+  if (pendingBufferingTimer != null) { clearTimeout(pendingBufferingTimer); pendingBufferingTimer = null; }
+}
+
+function resetVideoBuffering(): void {
+  stopBufferingMonitor();
+  videoBuffering = false;
+}
+
+function resumeFromBuffering(): void {
+  stopBufferingMonitor();
+  videoBuffering = false;
+  if (uiState.value.phase !== 'BUFFERING') return;
+  // Re-align the video to the audio timeline (both paused at the stall point;
+  // a sub-second drift may have accumulated while the audio ran ahead).
+  if (videoEl && currentPlayer) {
+    const diff = Math.abs(videoEl.currentTime - currentPlayer.currentTime);
+    if (diff > 0.5) {
+      try { videoEl.currentTime = currentPlayer.currentTime; } catch { /* ignore */ }
+    }
+  }
+  playAudio(currentPlayer);
+  if (videoEl && videoSrcUrl && !videoEnded && layerVideo.value) {
+    try { void videoEl.play().catch(() => { }); } catch { /* ignore */ }
+  }
+  uiState.value = { ...uiState.value, phase: 'PLAYING' };
+  console.info('[PLAY-STREAM] buffering done — resuming');
 }
 
 /** stopAll — fragment.stopAll(): release players, reset engine flags. */
@@ -1404,6 +1522,7 @@ export function stopAll(): void {
   videoEnded = false;
   pendingVideoTargetSec = -1;
   currentVideoSceneKey = null;
+  resetVideoBuffering();
   isPaused = false;
   enginePaused.value = false;
   updateLayers();
