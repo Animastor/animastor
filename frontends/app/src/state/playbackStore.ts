@@ -1342,6 +1342,10 @@ function playVideoOverlay(url: string, explicitSeekMs: number | null = null): vo
   // null = no explicit target → audio-sync fallback in applyVideoSeek.
   pendingVideoTargetSec = explicitSeekMs != null ? explicitSeekMs / 1000 : -1;
   if (!videoEl) { updateLayers(); return; }
+  // Fresh source — start the buffer policy from the base target (a new scene
+  // is a new attempt; the escalation re-accumulates if this connection still
+  // can't sustain playback).
+  resumeBufferTargetS = RESUME_BUFFER_MIN_S;
   videoEl.src = url;
   videoSrcSetAt = performance.now();
   logFirstFrameReady();
@@ -1409,17 +1413,37 @@ function onVideoError(): void {
 // arrive, the player shows "Загрузка…" instead of playing the audio alone and
 // letting the video join late/desynced.
 const PAUSE_BUFFER_GUARD_S = 1.0;
-const RESUME_BUFFER_S = 3.0;
+// Resume thresholds are ADAPTIVE: a fixed small target (the original 3s)
+// caused rapid pause/start cycling on slow connections — the video drained
+// the tiny buffer and underran again right after each resume. Base target
+// is larger; on every underrun that lands within CYCLE_WINDOW_MS of a resume
+// the target escalates (×1.5, capped) so each wait accumulates a bigger
+// buffer: fewer, longer pauses (YouTube-style) instead of churn. A healthy
+// run (> CYCLE_WINDOW_MS without underrun) brings the target back down.
+const RESUME_BUFFER_MIN_S = 6;
+const RESUME_BUFFER_MAX_S = 20;
+const CYCLE_WINDOW_MS = 10000;
 const BUFFER_ENTER_DEBOUNCE_MS = 300;
 let videoBuffering = false;
 let bufferingTimer: number | null = null;
 let pendingBufferingTimer: number | null = null;
+let resumeBufferTargetS = RESUME_BUFFER_MIN_S;
+let lastResumedAt = 0;
 
 function bufferedAheadSec(el: HTMLVideoElement): number {
   try {
     const b = el.buffered;
     if (!b || b.length === 0) return 0;
-    return b.end(b.length - 1) - el.currentTime;
+    const t = el.currentTime;
+    // Only the CONTIGUOUS range containing currentTime is actually playable:
+    // after unit seeks the buffer can be fragmented, and measuring the last
+    // range's end would overestimate the playable-ahead and cause a
+    // resume→instant-stall cycle (buffer reports "enough", but the video hits
+    // a gap immediately).
+    for (let i = 0; i < b.length; i++) {
+      if (t >= b.start(i) && t <= b.end(i)) return b.end(i) - t;
+    }
+    return 0; // mid-seek — currentTime is not inside any range yet
   } catch { /* ignore */ }
   return 0;
 }
@@ -1450,7 +1474,22 @@ function onVideoPlaying(): void {
 function enterVideoBuffering(): void {
   if (videoBuffering || isPaused || !layerVideo.value || uiState.value.phase !== 'PLAYING') return;
   const el = videoEl;
-  console.info(`[PLAY-STREAM] buffering — video underrun (ahead=${el ? bufferedAheadSec(el).toFixed(2) : '?'}s < guard ${PAUSE_BUFFER_GUARD_S}s), pausing to keep sync`);
+  const now = performance.now();
+  if (now - lastResumedAt < CYCLE_WINDOW_MS) {
+    // Underran shortly after resuming — the current target can't sustain
+    // playback on this connection. Raise it so the next wait accumulates a
+    // bigger buffer before trying again.
+    const prev = resumeBufferTargetS;
+    resumeBufferTargetS = Math.min(RESUME_BUFFER_MAX_S, resumeBufferTargetS * 1.5);
+    if (resumeBufferTargetS !== prev) {
+      console.info(`[PLAY-STREAM] buffering cycle — resume target ${prev.toFixed(1)}s → ${resumeBufferTargetS.toFixed(1)}s`);
+    }
+  } else if (resumeBufferTargetS > RESUME_BUFFER_MIN_S) {
+    // Played cleanly for longer than CYCLE_WINDOW_MS — connection recovered,
+    // come back down to the base target.
+    resumeBufferTargetS = RESUME_BUFFER_MIN_S;
+  }
+  console.info(`[PLAY-STREAM] buffering — video underrun (ahead=${el ? bufferedAheadSec(el).toFixed(2) : '?'}s < guard ${PAUSE_BUFFER_GUARD_S}s), pausing to keep sync (resume at ${resumeBufferTargetS.toFixed(1)}s)`);
   videoBuffering = true;
   // Pause the video element too (not just the audio): while it is paused the
   // browser keeps fetching but will NOT auto-resume past our gate.
@@ -1466,7 +1505,7 @@ function startBufferingMonitor(): void {
     if (uiState.value.phase !== 'BUFFERING') { stopBufferingMonitor(); return; }
     const el = videoEl;
     if (!el || el.ended || !layerVideo.value) { resumeFromBuffering(); return; }
-    if (bufferedAheadSec(el) >= RESUME_BUFFER_S) resumeFromBuffering();
+    if (bufferedAheadSec(el) >= resumeBufferTargetS) resumeFromBuffering();
   }, 200);
 }
 
@@ -1484,6 +1523,7 @@ function resumeFromBuffering(): void {
   stopBufferingMonitor();
   videoBuffering = false;
   if (uiState.value.phase !== 'BUFFERING') return;
+  lastResumedAt = performance.now();
   // Re-align the video to the audio timeline (both paused at the stall point;
   // a sub-second drift may have accumulated while the audio ran ahead).
   if (videoEl && currentPlayer) {
@@ -1497,7 +1537,7 @@ function resumeFromBuffering(): void {
     try { void videoEl.play().catch(() => { }); } catch { /* ignore */ }
   }
   uiState.value = { ...uiState.value, phase: 'PLAYING' };
-  console.info('[PLAY-STREAM] buffering done — resuming');
+  console.info(`[PLAY-STREAM] buffering done — resuming (buffered ${resumeBufferTargetS.toFixed(1)}s)`);
 }
 
 /** stopAll — fragment.stopAll(): release players, reset engine flags. */
@@ -1523,6 +1563,7 @@ export function stopAll(): void {
   pendingVideoTargetSec = -1;
   currentVideoSceneKey = null;
   resetVideoBuffering();
+  resumeBufferTargetS = RESUME_BUFFER_MIN_S;
   isPaused = false;
   enginePaused.value = false;
   updateLayers();
