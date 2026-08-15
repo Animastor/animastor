@@ -2,6 +2,7 @@ package com.example.animastor.ui
 
 import android.app.Application
 import android.graphics.Bitmap
+import android.net.Uri
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
@@ -150,23 +151,22 @@ class PlaybackViewModel(
         private set
 
     // ── On-demand video delivery ─────────────────────────────────
-    // The whole-scene video is NOT part of the scene bundle anymore — it is
-    // fetched on demand (ensureSceneVideo) only when the scene actually plays
-    // with the video layer enabled, and delivered to the fragment here. This
-    // saves ~43 MB per preloaded/skipped scene and skips the download entirely
-    // while the video layer is off.
+    // The whole-scene video is NOT part of the scene bundle anymore — the player
+    // STREAMS it from its direct HTTP URL (MediaPlayer progressive download +
+    // Range seeks; backend serves 206 Partial Content and the MP4s are
+    // faststart'd). ensureSceneVideo() delivers the URL only when the scene
+    // actually plays with the video layer enabled — the ~43 MB file is never
+    // downloaded into memory/disk ahead of playback.
 
     data class VideoDelivery(
         val sceneKey: String,
-        val bytes: ByteArray?,
+        val url: String,
         val seekMs: Long,
         val explicitSeek: Boolean
     )
 
     private val _videoDelivery = Channel<VideoDelivery>(Channel.BUFFERED)
     val videoDelivery: Flow<VideoDelivery> = _videoDelivery.receiveAsFlow()
-    private val videoInFlight = mutableSetOf<String>()
-    private val videoLatestReq = mutableMapOf<String, VideoDelivery>()
 
     // ── Preload ──────────────────────────────────────────────────
 
@@ -188,30 +188,28 @@ class PlaybackViewModel(
     }
 
     /**
-     * Fetch the whole-scene video for [sceneKey] on demand (repository cache →
-     * network) and deliver it via [videoDelivery] when the scene is still
-     * current and the video layer is enabled. Skipped while [videoEnabled] is
-     * off. Repeated requests for the same scene while a fetch is in flight are
-     * deduped — the latest seek params win.
+     * Stream the whole-scene video for [sceneKey] from its direct HTTP URL
+     * (MediaPlayer progressive download — moov + first samples → first frame
+     * fast; seeks via backend Range/206). Delivered via [videoDelivery] only
+     * when the scene is still current and the video layer is enabled. Skipped
+     * entirely while [videoEnabled] is off — zero video traffic.
      */
     fun ensureSceneVideo(sceneKey: String, seekMs: Long, explicitSeek: Boolean) {
         if (!videoEnabled) return
-        if (sceneKey in videoInFlight) {
-            videoLatestReq[sceneKey] = VideoDelivery(sceneKey, null, seekMs, explicitSeek)
-            return
-        }
+        if (sceneKey != getCurrentSceneKey()) return
         val chId = sceneKey.substringBefore(':')
         val scId = sceneKey.substringAfter(':')
-        videoInFlight += sceneKey
-        viewModelScope.launch {
-            val bytes = runCatching { _repository.getSceneVideo(bookId, chId, scId, buildId) }.getOrNull()
-            videoInFlight -= sceneKey
-            if (bytes == null || bytes.isEmpty()) return@launch
-            if (!videoEnabled || sceneKey != getCurrentSceneKey()) return@launch
-            val latest = videoLatestReq.remove(sceneKey)
-            val req = latest ?: VideoDelivery(sceneKey, null, seekMs, explicitSeek)
-            _videoDelivery.send(VideoDelivery(sceneKey, bytes, req.seekMs, req.explicitSeek))
-        }
+        _videoDelivery.trySend(VideoDelivery(sceneKey, buildSceneVideoUrl(chId, scId), seekMs, explicitSeek))
+    }
+
+    /** Direct HTTP URL of the whole-scene MP4 (progressive/streamed, never
+     *  downloaded as a whole by the client). */
+    fun buildSceneVideoUrl(chId: String, scId: String): String {
+        val b = Uri.encode(bookId)
+        val c = Uri.encode(chId)
+        val s = Uri.encode(scId)
+        val bld = Uri.encode(buildId)
+        return "${RetrofitClient.baseUrl}api/v1/scene/$b/$c/$s/video?build_id=$bld"
     }
 
     /**
@@ -640,8 +638,6 @@ class PlaybackViewModel(
     fun clearPlaybackState() {
         preloadCache.clear()
         preloadJobs.clear()
-        videoInFlight.clear()
-        videoLatestReq.clear()
         sceneQueue.clear()
         currentIndex = 0
         currentUnitIndex = 0

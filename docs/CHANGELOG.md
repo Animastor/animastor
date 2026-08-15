@@ -96,6 +96,21 @@ All notable changes to Animastor are documented here.
     `-c copy -movflags +faststart` (все `moov@front`, временных файлов нет).
   - Проверки: web `tsc --noEmit` + `vite build` OK.
 
+- **Android Player: видео стримится по прямому HTTP URL вместо скачивания целиком
+  в файл** (вариант C из `docs/05-frontend/VIDEO_LOADING_RESEARCH.md`,
+  `frontends/android/.../ui/PlaybackViewModel.kt`, `ui/PlayFragment.kt`):
+  - `ensureSceneVideo` больше не качает байты через `Repository.getSceneVideo`:
+    по каналу доставляется прямой URL `{BASE_URL}api/v1/scene/.../video?build_id=`,
+    `MediaPlayer.setDataSource(url)` + `prepareAsync()` делают прогрессивный
+    download (moov + первые выборки → первый кадр быстро; seek через Range/206
+    бэкенда — файлы faststart).
+  - Убран весь файловый путь: `currentVideoFile`/`cacheVideoFile`/temp-файлы
+    `video-*.mp4` — видео не пишется на диск; ошибка стрима (404/сеть) →
+    фолбэк на сториборд (release + null + updateLayers) вместо чёрной поверхности.
+  - Весь seek-инжиниринг (explicit unit-target, SEEK_CLOSEST, poll-в-паузе,
+    peek-render, speed-lock, z-order слоёв) сохранён — поменялся только источник.
+  - Проверки: Android `compileDebugKotlin` OK.
+
 ---
 
 ## [Unreleased] — 2026-08-14

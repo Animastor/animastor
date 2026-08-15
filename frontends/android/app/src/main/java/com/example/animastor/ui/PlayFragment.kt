@@ -54,7 +54,6 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
     private var nextPlayer: MediaPlayer? = null
     private var currentFile: File? = null
     private var nextFile: File? = null
-    private var currentVideoFile: File? = null
     private var videoPlayer: MediaPlayer? = null
     private var isPaused = false
     private var iuCyclingJob: Job? = null
@@ -137,10 +136,9 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 playbackViewModel.videoDelivery.collect { delivery ->
                     if (!isAdded) return@collect
-                    val bytes = delivery.bytes ?: return@collect
                     if (delivery.sceneKey != playbackViewModel.getCurrentSceneKey()) return@collect
                     if (binding?.layerVideo?.isChecked == false) return@collect
-                    playVideoOverlay(bytes, delivery.seekMs, delivery.explicitSeek)
+                    playVideoOverlay(delivery.url, delivery.seekMs, delivery.explicitSeek)
                 }
             }
         }
@@ -760,8 +758,6 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         currentFile = null
         nextFile?.delete()
         nextFile = null
-        currentVideoFile?.delete()
-        currentVideoFile = null
         videoPlayer?.release()
         videoPlayer = null
 
@@ -1174,49 +1170,46 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         return file
     }
 
-    private fun playVideoOverlay(bytes: ByteArray, startSeekMs: Long = 0L, explicitSeek: Boolean = false) {
+    private fun playVideoOverlay(url: String, startSeekMs: Long = 0L, explicitSeek: Boolean = false) {
         try {
-            // The previous temp chunk file is replaced by the newly written one;
-            // repository-cached files are kept (cache hit on re-entry).
-            if (currentVideoFile?.name?.startsWith("video-") == true) currentVideoFile?.delete()
-            val chunkId = playbackViewModel.getCurrentSceneKey()
-            val file = if (chunkId != null) {
-                repository.cacheVideoFile(chunkId, bytes)
-                    ?: File(requireContext().cacheDir, "video-${System.currentTimeMillis()}.mp4").also { it.writeBytes(bytes) }
-            } else {
-                File(requireContext().cacheDir, "video-${System.currentTimeMillis()}.mp4").also { it.writeBytes(bytes) }
-            }
-            playVideoFromFile(file, startSeekMs, explicitSeek)
+            playVideoFromUrl(url, startSeekMs, explicitSeek)
         } catch (e: Exception) {
             Log.e(TAG, "Video exception: ${e.message}", e)
         }
     }
 
     /**
-     * Build (or rebuild) the whole-scene video player from an existing file and
-     * position it at startSeekMs. Used by the normal overlay path AND by the
-     * layer-restore path (video layer → storyboard → video layer): hiding the
-     * SurfaceView tears the surface down and leaves the old MediaPlayer stopped
-     * / broken, so the layer-restore rebuilds the player from the cached file —
-     * the same path a Navigator unit-seek uses, which provably restores video.
+     * Build (or rebuild) the whole-scene video player from its direct HTTP URL
+     * and position it at startSeekMs (MediaPlayer progressive download — the
+     * backend serves faststart MP4s with Range/206, so playback starts after
+     * moov + first samples and unit seeks issue Range requests; no local file
+     * is written anymore). Used by the overlay path AND by the layer-restore
+     * path (video layer → storyboard → video layer): hiding the SurfaceView
+     * tears the surface down and leaves the old MediaPlayer stopped / broken,
+     * so the layer-restore rebuilds the player — the same path a Navigator
+     * unit-seek uses, which provably restores video.
      */
-    private fun playVideoFromFile(file: File, startSeekMs: Long = 0L, explicitSeek: Boolean = false) {
+    private fun playVideoFromUrl(url: String, startSeekMs: Long = 0L, explicitSeek: Boolean = false) {
         try {
             videoSpeedSyncJob?.cancel()
             pendingVideoTargetMs = if (explicitSeek) startSeekMs else -1L
             videoPlayer?.release()
             videoPlayer = null
-            currentVideoFile = file
             val b = binding ?: return
             b.videoSurface.visibility = View.VISIBLE
 
             fun startVideo() {
                 videoPlayer = MediaPlayer().apply {
-                    setDataSource(file.absolutePath)
+                    setDataSource(url)
                     setDisplay(b.videoSurface.holder)
                     setVolume(currentVolume, currentVolume)
                     setOnErrorListener { _, what, extra ->
-                        Log.e(TAG, "video MediaPlayer error: what=$what extra=$extra file=${file.name}")
+                        Log.e(TAG, "video MediaPlayer error: what=$what extra=$extra url=$url")
+                        // Stream failed (404 / network) — fall back to the
+                        // storyboard layer instead of a stuck black surface.
+                        runCatching { videoPlayer?.release() }
+                        videoPlayer = null
+                        updateLayers()
                         true
                     }
                     setOnVideoSizeChangedListener { _, width, height ->
@@ -1334,8 +1327,6 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                     }
                     setOnCompletionListener {
                         b.videoSurface.visibility = View.INVISIBLE
-                        currentVideoFile?.delete()
-                        currentVideoFile = null
                     }
                     prepareAsync()
                 }
@@ -1495,8 +1486,6 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
             nextFile = null
             videoPlayer?.release()
             videoPlayer = null
-            currentVideoFile?.delete()
-            currentVideoFile = null
             isPaused = false
             playbackViewModel.resumePlayback()
             return
@@ -1559,12 +1548,10 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         videoPlayer = null
         if (currentFile?.name?.startsWith("chunk-") == true) currentFile?.delete()
         if (nextFile?.name?.startsWith("chunk-") == true) nextFile?.delete()
-        if (currentVideoFile?.name?.startsWith("video-") == true) currentVideoFile?.delete()
         currentPlayer = null
         nextPlayer = null
         currentFile = null
         nextFile = null
-        currentVideoFile = null
         isPaused = false
         val b = binding
         if (b != null) {
@@ -1663,10 +1650,8 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         videoPlayer = null
         if (currentFile?.name?.startsWith("chunk-") == true) currentFile?.delete()
         if (nextFile?.name?.startsWith("chunk-") == true) nextFile?.delete()
-        if (currentVideoFile?.name?.startsWith("video-") == true) currentVideoFile?.delete()
         currentFile = null
         nextFile = null
-        currentVideoFile = null
         iuCyclingJob?.cancel()
         iuCyclingJob = null
         binding = null
