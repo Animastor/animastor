@@ -2,6 +2,7 @@ package com.example.animastor.ui
 
 import android.graphics.Bitmap
 import android.media.MediaPlayer
+import android.media.PlaybackParams
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -77,6 +78,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
     // guards syncVideoFrame() from clobbering it with the audio player's not-yet
     // seeked currentPosition (the audio seekTo is asynchronous). -1 = no target.
     private var pendingVideoTargetMs: Long = -1L
+    private var videoSpeedSyncJob: Job? = null
     // ── TEMPORARY unit-seek diagnostics ────────────────────────────────────
     // One SEEK_REQUEST/SEEK_RESULT pair per Navigator/Edit unit tap is posted
     // to POST /api/v1/debug/video-seek (backend appends to a JSONL file while
@@ -95,7 +97,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
             if (isHidden) return
             Log.i(TAG, "checkPendingExternalSeek: executing seek to ${playbackViewModel.pendingExternalSeek}")
             pendingLoad = true
-            stopAll()
+            stopAll(keepSurface = true)
             playbackViewModel.executePendingSeek()
         }
     }
@@ -108,7 +110,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                         if (isHidden) return@collect
                         Log.i(TAG, "external seek via state")
                         pendingLoad = true
-                        stopAll()
+                        stopAll(keepSurface = true)
                         playbackViewModel.executePendingSeek()
                     }
                 }
@@ -277,13 +279,13 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
             updateLayers()
             playbackViewModel.setVideoEnabled(isChecked)
             // TEMPORARY diagnostics: when the video layer comes back, capture
-            // what the surface actually shows (~400ms later, once re-attached) —
-            // directly answers "does the video return, or does the storyboard
-            // frame stay".
+            // what the surface actually shows (~1.2s later, once re-attached and
+            // the restore peek has rendered a frame) — directly answers "does
+            // the video return, or does the storyboard frame stay".
             if (isChecked && videoPlayer != null) {
                 val capPos = runCatching { videoPlayer?.currentPosition?.toLong() }.getOrNull() ?: -1L
                 viewLifecycleOwner.lifecycleScope.launch {
-                    delay(400)
+                    delay(1200)
                     captureVideoFrame("layer-video-on", currentIuIndex, capPos)
                 }
             }
@@ -570,12 +572,41 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
             b.coverImage.visibility = View.VISIBLE
         }
         val showVideo = b.layerVideo.isChecked && videoPlayer != null
-        if (showVideo && b.videoSurface.visibility != View.VISIBLE) {
-            b.videoSurface.visibility = View.VISIBLE
-            attachVideoSurface()
-        } else if (!showVideo) {
+        if (showVideo) {
+            if (b.videoSurface.visibility != View.VISIBLE) {
+                b.videoSurface.visibility = View.VISIBLE
+                attachVideoSurface()
+            }
+            // Video on top of the storyboard. IMPORTANT: the SurfaceView is
+            // never hidden once a player exists — hiding a SurfaceView destroys
+            // its surface and kills the MediaPlayer (the root cause of every
+            // "video doesn't come back / desyncs" layer bug). Web parity: the
+            // video element keeps playing under display:none, so here the video
+            // player keeps playing behind the storyboard and re-shows already
+            // synced to the audio.
+            b.videoSurface.bringToFront()
+        } else if (videoPlayer != null) {
+            // Layer off: keep the surface ALIVE and put an opaque view on top of
+            // its hole instead of hiding it.
+            if (b.videoSurface.visibility != View.VISIBLE) {
+                b.videoSurface.visibility = View.VISIBLE
+            }
+            if (imageOn) {
+                b.resultImage.bringToFront()
+            } else if (b.coverImage.drawable != null) {
+                b.coverImage.visibility = View.VISIBLE
+                b.coverImage.bringToFront()
+            } else {
+                b.curtainsImage.bringToFront()
+            }
+        } else {
             b.videoSurface.visibility = View.INVISIBLE
         }
+        // Keep UI overlays above the flipped media layers.
+        b.previewOverlay.bringToFront()
+        b.subtitleText.bringToFront()
+        b.fullscreenButton.bringToFront()
+        b.debugText.bringToFront()
         anchorFullscreenToImage()
     }
 
@@ -640,7 +671,17 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
             currentIuSequence = iuSequence
             playbackViewModel.currentIuSequence = iuSequence
             currentIuIndex = seekToUnit
-            showIuImage(iuSequence[seekToUnit])
+            // Unit seek / scene load: the whole-scene video covers the storyboard
+            // a few hundred ms later — showing the image now causes a brief
+            // storyboard flash while the video prepares (the surface is being
+            // recreated after stopAll, so the image is visible until the first
+            // video frame renders). Skip it when the video layer is on and video
+            // bytes are coming: the screen stays dark for the prepare gap and the
+            // video frame appears directly.
+            val videoComing = video != null && (binding?.layerVideo?.isChecked ?: true)
+            if (!videoComing) {
+                showIuImage(iuSequence[seekToUnit])
+            }
             updateSubtitleIfEnabled(iuSequence[seekToUnit].text)
         } else {
             currentIuSequence = iuSequence
@@ -1328,10 +1369,9 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
 
     private fun playVideoOverlay(bytes: ByteArray, startSeekMs: Long = 0L, explicitSeek: Boolean = false) {
         try {
-            pendingVideoTargetMs = if (explicitSeek) startSeekMs else -1L
-            videoPlayer?.release()
-            videoPlayer = null
-            currentVideoFile?.delete()
+            // The previous temp chunk file is replaced by the newly written one;
+            // repository-cached files are kept (cache hit on re-entry).
+            if (currentVideoFile?.name?.startsWith("video-") == true) currentVideoFile?.delete()
             val chunkId = playbackViewModel.getCurrentSceneKey()
             val file = if (chunkId != null) {
                 repository.cacheVideoFile(chunkId, bytes)
@@ -1339,6 +1379,26 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
             } else {
                 File(requireContext().cacheDir, "video-${System.currentTimeMillis()}.mp4").also { it.writeBytes(bytes) }
             }
+            playVideoFromFile(file, startSeekMs, explicitSeek)
+        } catch (e: Exception) {
+            Log.e(TAG, "Video exception: ${e.message}", e)
+        }
+    }
+
+    /**
+     * Build (or rebuild) the whole-scene video player from an existing file and
+     * position it at startSeekMs. Used by the normal overlay path AND by the
+     * layer-restore path (video layer → storyboard → video layer): hiding the
+     * SurfaceView tears the surface down and leaves the old MediaPlayer stopped
+     * / broken, so the layer-restore rebuilds the player from the cached file —
+     * the same path a Navigator unit-seek uses, which provably restores video.
+     */
+    private fun playVideoFromFile(file: File, startSeekMs: Long = 0L, explicitSeek: Boolean = false) {
+        try {
+            videoSpeedSyncJob?.cancel()
+            pendingVideoTargetMs = if (explicitSeek) startSeekMs else -1L
+            videoPlayer?.release()
+            videoPlayer = null
             currentVideoFile = file
             val b = binding ?: return
             b.videoSurface.visibility = View.VISIBLE
@@ -1348,6 +1408,19 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                     setDataSource(file.absolutePath)
                     setDisplay(b.videoSurface.holder)
                     setVolume(currentVolume, currentVolume)
+                    setOnErrorListener { _, what, extra ->
+                        Log.e(TAG, "video MediaPlayer error: what=$what extra=$extra file=${file.name}")
+                        viewLifecycleOwner.lifecycleScope.launch {
+                            repository.postVideoSeekDebug(mapOf(
+                                "event" to "VIDEO_ERROR",
+                                "what" to what,
+                                "extra" to extra,
+                                "file" to file.name,
+                                "client_ts" to System.currentTimeMillis(),
+                            ))
+                        }
+                        true
+                    }
                     setOnVideoSizeChangedListener { _, width, height ->
                         fitSurfaceToContainer(b, width, height)
                     }
@@ -1397,7 +1470,19 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                             }
                             if (target > 0) {
                                 traceSnap("seekTo(${target})")
-                                seekTo(target.toInt())
+                                // Default seekTo is keyframe-aligned: a mid-unit
+                                // position (e.g. a layer-restore target inside a
+                                // unit) would land on the PREVIOUS unit's
+                                // keyframe — the video then starts one unit too
+                                // early while the audio is already mid-unit
+                                // (LAYER_RESTORE desync). SEEK_CLOSEST (API 26+)
+                                // decodes to the exact target frame. Fallback for
+                                // older APIs keeps the old behavior.
+                                if (Build.VERSION.SDK_INT >= 26) {
+                                    seekTo(target, MediaPlayer.SEEK_CLOSEST)
+                                } else {
+                                    seekTo(target.toInt())
+                                }
                             }
                             Log.i(TAG, "video seek applied: target=${target}ms (video dur=${durMs}ms)")
                             // Delayed probes: report the position the player actually
@@ -1512,6 +1597,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                             }
                         } else {
                             start()
+                            startVideoSpeedSync()
                         }
                     }
                     setOnCompletionListener {
@@ -1607,7 +1693,65 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         b.debugText.text = msg
         b.debugText.visibility = View.VISIBLE
         Log.i(TAG, "DBG $msg")
-    }    private fun pausePlayback() {
+    }
+
+    /**
+     * Adaptive video/audio SPEED lock. The audio and video are independent
+     * MediaPlayers whose clocks drift apart (~0.7% on some devices) — over a
+     * scene the video can end up ~0.5s ahead of the audio. Instead of
+     * force-seeking (visible jumps), the VIDEO PLAYBACK SPEED is gently
+     * corrected via setPlaybackParams so both positions advance at the same
+     * rate. The video track has no audio, so speed changes are inaudible.
+     * Measured every ~8s while playing; correction is clamped and damped
+     * (re-converges to the audio rate, then stays).
+     */
+    private fun startVideoSpeedSync() {
+        videoSpeedSyncJob?.cancel()
+        val vp = videoPlayer ?: return
+        val ap = currentPlayer ?: return
+        videoSpeedSyncJob = viewLifecycleOwner.lifecycleScope.launch {
+            while (isActive) {
+                delay(4000)
+                if (isPaused || pendingLoad) continue
+                val v1 = runCatching { vp.currentPosition }.getOrNull() ?: -1
+                val a1 = runCatching { ap.currentPosition }.getOrNull() ?: -1
+                if (v1 < 0 || a1 < 0) continue
+                delay(4000)
+                if (isPaused || pendingLoad) continue
+                val v2 = runCatching { vp.currentPosition }.getOrNull() ?: -1
+                val a2 = runCatching { ap.currentPosition }.getOrNull() ?: -1
+                if (v2 < 0 || a2 < 0) continue
+                val dv = v2 - v1
+                val da = a2 - a1
+                // Not enough movement (buffering / paused mid-interval) — skip.
+                if (dv < 1500 || da < 1500) continue
+                val curSpeed = runCatching { vp.playbackParams.speed }.getOrNull() ?: 1.0f
+                // Speed that makes the video advance at exactly the audio's rate.
+                val target = (curSpeed * da.toFloat() / dv.toFloat()).coerceIn(0.9f, 1.1f)
+                if (kotlin.math.abs(target - curSpeed) > 0.002f) {
+                    Log.i(TAG, "speed sync: video +${dv}ms audio +${da}ms → speed %.4f".format(target))
+                    viewLifecycleOwner.lifecycleScope.launch {
+                        repository.postVideoSeekDebug(mapOf(
+                            "event" to "SPEED_SYNC",
+                            "dv" to dv,
+                            "da" to da,
+                            "speed" to target,
+                            "v_pos" to v2,
+                            "a_pos" to a2,
+                            "client_ts" to System.currentTimeMillis(),
+                        ))
+                    }
+                    runCatching { vp.setPlaybackParams(PlaybackParams().setSpeed(target)) }
+                        .onFailure { Log.w(TAG, "setPlaybackParams failed: ${it.message}") }
+                }
+            }
+        }
+    }
+
+    private fun pausePlayback() {
+        Log.i(TAG, "pausePlayback")
+        videoSpeedSyncJob?.cancel()
+        currentPlayer?.pause()
         Log.i(TAG, "pausePlayback")
         currentPlayer?.pause()
         try {
@@ -1673,6 +1817,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         // Update ViewModel state — restore PLAYING phase
         playbackViewModel.resumePlayback()
         startIuCycling()
+        startVideoSpeedSync()
     }
 
     private fun togglePlay() {
@@ -1683,8 +1828,9 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         }
     }
 
-    fun stopAll() {
-        Log.i(TAG, "stopAll")
+    fun stopAll(keepSurface: Boolean = false) {
+        Log.i(TAG, "stopAll keepSurface=$keepSurface")
+        videoSpeedSyncJob?.cancel()
         pendingVideoSyncJob?.cancel()
         pendingVideoTargetMs = -1L
         pendingDebugRecord = null
@@ -1697,6 +1843,9 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         nextChainReady = false
         currentPlayer?.release()
         nextPlayer?.release()
+        // Snapshot BEFORE release: only a surface that actually rendered video
+        // can keep showing a frame through the seek transition.
+        val hadVideo = videoPlayer != null
         videoPlayer?.release()
         videoPlayer = null
         if (currentFile?.name?.startsWith("chunk-") == true) currentFile?.delete()
@@ -1718,12 +1867,21 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
             b.curtainsImage.visibility = View.GONE
             isInCurtainsState = false
             stopPulse()
-            b.videoSurface.visibility = View.INVISIBLE
-            if (b.coverImage.drawable != null) {
-                b.coverImage.visibility = View.VISIBLE
+            if (keepSurface && hadVideo) {
+                // External unit-seek / scene load: keep the surface ALIVE so it
+                // holds the last rendered frame while the next video prepares —
+                // the new video frame then swaps in directly, with NO cover or
+                // black flash in between (hiding the surface destroys it and
+                // forces a blank/cover gap until the new frame renders).
+                b.videoSurface.visibility = View.VISIBLE
             } else {
-                // No cover available — show curtains as fallback to avoid blank screen
-                showCurtains()
+                b.videoSurface.visibility = View.INVISIBLE
+                if (b.coverImage.drawable != null) {
+                    b.coverImage.visibility = View.VISIBLE
+                } else {
+                    // No cover available — show curtains as fallback to avoid blank screen
+                    showCurtains()
+                }
             }
         }
         anchorFullscreenToImage()
@@ -1756,7 +1914,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
             if (playbackViewModel.pendingExternalSeek != null) {
                 Log.i(TAG, "onHiddenChanged: external seek pending, executing")
                 pendingLoad = true
-                stopAll()
+                stopAll(keepSurface = true)
                 playbackViewModel.executePendingSeek()
             }
         }
@@ -1787,6 +1945,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
 
     override fun onDestroyView() {
         stopPulse()
+        videoSpeedSyncJob?.cancel()
         currentPlayer?.release()
         currentPlayer = null
         nextPlayer?.release()

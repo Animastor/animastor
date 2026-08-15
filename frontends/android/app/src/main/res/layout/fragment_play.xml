@@ -114,6 +114,25 @@
             app:srcCompat="@drawable/ic_fullscreen"
             app:tint="#FFFFFF" />
 
+        <!-- TEMPORARY: seek diagnostics overlay — pinned to the TOP of the media
+             viewport so it never covers the layer toggles or the play button -->
+        <TextView
+            android:id="@+id/debugText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="top|center_horizontal"
+            android:layout_marginTop="10dp"
+            android:layout_marginHorizontal="24dp"
+            android:background="#CC000000"
+            android:paddingHorizontal="10dp"
+            android:paddingVertical="4dp"
+            android:maxLines="2"
+            android:ellipsize="end"
+            android:textColor="#FFD54F"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            android:visibility="gone" />
+
     </FrameLayout>
 
     <!-- Layer Controls — cinema console -->
@@ -228,23 +247,6 @@
         android:textColor="?attr/colorOnSurfaceVariant"
         android:textSize="11sp"
         app:layout_constraintBottom_toTopOf="@id/playButton"
-        app:layout_constraintEnd_toEndOf="parent" />
-
-    <!-- TEMPORARY: seek diagnostics shown in the player UI (no logcat needed) -->
-    <TextView
-        android:id="@+id/debugText"
-        android:layout_width="0dp"
-        android:layout_height="wrap_content"
-        android:layout_marginStart="16dp"
-        android:layout_marginEnd="16dp"
-        android:layout_marginBottom="4dp"
-        android:maxLines="4"
-        android:textColor="#FFEB3B"
-        android:textSize="10sp"
-        android:textIsSelectable="true"
-        android:visibility="gone"
-        app:layout_constraintBottom_toTopOf="@id/statusText"
-        app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent" />
 
 </androidx.constraintlayout.widget.ConstraintLayout>
