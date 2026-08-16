@@ -62,6 +62,25 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
     // keeps playing (desync). While true, the whole player is paused into
     // "Загрузка…" (BUFFERING) and resumes with a resync on BUFFERING_END.
     private var videoBuffering = false
+    // Whether the whole-scene video has rendered its first frame and may cover
+    // the storyboard. While false, the storyboard stays on TOP and the surface
+    // (which would otherwise show black until the first frame decodes) is kept
+    // alive but behind it — no more "video starts from black" on unit seek /
+    // layer toggle. Set true only after the video actually pushed a frame.
+    private var videoReadyToShow = false
+    // Bumped on every intentional videoPlayer release/rebuild. The onError /
+    // onInfo listeners capture the generation of the player they belong to and
+    // ignore late callbacks (MEDIA_ERROR_SERVER_DIED etc.) fired by release()/
+    // teardown — without this, a stale error after a quick unit-seek ran the
+    // fallback against the NEW player, releasing it and leaving the user with
+    // only the storyboard layer ("player crashes on fast taps").
+    private var videoPlayerGeneration = 0L
+    // Whether the video SurfaceView ever attached a surface. Hiding a live
+    // surface destroys it, so once a video has played we keep the surface
+    // alive (behind the storyboard) across the async video-delivery gap in
+    // handleChunk — the upcoming seek's player then attaches to a live surface
+    // instead of a dead one (black / server-died errors).
+    private var videoSurfaceAlive = false
     private var iuCyclingJob: Job? = null
     private var currentIuSequence: List<IuImageItem>? = null
     private var currentIuIndex = 0
@@ -286,12 +305,17 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
             updateLayers()
             playbackViewModel.setVideoEnabled(isChecked)
             if (isChecked) {
-                // Layer re-enabled: the video may have been skipped entirely
-                // (layer off = traffic saver). Fetch + attach it on demand,
-                // synced to the audio position.
-                val cur = (currentPlayer?.currentPosition ?: 0).toLong()
-                playbackViewModel.getCurrentSceneKey()?.let { sceneKey ->
-                    playbackViewModel.ensureSceneVideo(sceneKey, cur, explicitSeek = false)
+                // Layer re-enabled: only rebuild when the player is actually
+                // GONE (stream error / scene change / never requested). A live
+                // player is merely covered by the storyboard and comes back
+                // INSTANTLY via updateLayers — rebuilding it here would drop the
+                // buffered video and restart from black (the "layer toggle kills
+                // the video" bug).
+                if (videoPlayer == null || !videoReadyToShow) {
+                    val cur = (currentPlayer?.currentPosition ?: 0).toLong()
+                    playbackViewModel.getCurrentSceneKey()?.let { sceneKey ->
+                        playbackViewModel.ensureSceneVideo(sceneKey, cur, explicitSeek = false)
+                    }
                 }
             }
         }
@@ -578,7 +602,11 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         if (!imageOn) {
             b.coverImage.visibility = View.VISIBLE
         }
-        val showVideo = b.layerVideo.isChecked && videoPlayer != null
+        // The video only covers the storyboard once it has actually rendered a
+        // frame (videoReadyToShow). Until then the surface would be black, so
+        // the storyboard stays on top — the user sees the unit's image while
+        // the stream prepares instead of a black hole.
+        val showVideo = b.layerVideo.isChecked && videoPlayer != null && videoReadyToShow
         if (showVideo) {
             if (b.videoSurface.visibility != View.VISIBLE) {
                 b.videoSurface.visibility = View.VISIBLE
@@ -593,8 +621,8 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
             // synced to the audio.
             b.videoSurface.bringToFront()
         } else if (videoPlayer != null) {
-            // Layer off: keep the surface ALIVE and put an opaque view on top of
-            // its hole instead of hiding it.
+            // Layer off (or video still preparing): keep the surface ALIVE and
+            // put an opaque view on top of its hole instead of hiding it.
             if (b.videoSurface.visibility != View.VISIBLE) {
                 b.videoSurface.visibility = View.VISIBLE
             }
@@ -607,7 +635,25 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                 b.curtainsImage.bringToFront()
             }
         } else {
-            b.videoSurface.visibility = View.INVISIBLE
+            // No player yet — the async video-delivery gap during scene change /
+            // unit seek (handleChunk runs before the delivery arrives). If this
+            // surface ever rendered video, KEEP it alive (hiding it destroys the
+            // surface and the upcoming seek's player would attach to a dead
+            // surface: black + server-died errors), but keep the storyboard on
+            // top so the user never sees black.
+            if (videoSurfaceAlive) {
+                b.videoSurface.visibility = View.VISIBLE
+            } else {
+                b.videoSurface.visibility = View.INVISIBLE
+            }
+            if (imageOn) {
+                b.resultImage.bringToFront()
+            } else if (b.coverImage.drawable != null) {
+                b.coverImage.visibility = View.VISIBLE
+                b.coverImage.bringToFront()
+            } else {
+                b.curtainsImage.bringToFront()
+            }
         }
         // Keep UI overlays above the flipped media layers.
         b.previewOverlay.bringToFront()
@@ -624,6 +670,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
             val cb = object : SurfaceHolder.Callback {
                 override fun surfaceCreated(holder: SurfaceHolder) {
                     b.videoSurface.holder.removeCallback(this)
+                    videoSurfaceAlive = true
                     try { videoPlayer?.setDisplay(holder) } catch (_: Exception) {}
                 }
                 override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {}
@@ -769,6 +816,8 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         currentFile = null
         nextFile?.delete()
         nextFile = null
+        videoPlayerGeneration++
+        videoReadyToShow = false
         videoPlayer?.release()
         videoPlayer = null
 
@@ -1205,6 +1254,13 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
             videoSpeedSyncJob?.cancel()
             pendingVideoTargetMs = if (explicitSeek) startSeekMs else -1L
             videoBuffering = false
+            // New player owns the surface: the storyboard stays on top until it
+            // renders its first frame (no black during prepare/seek).
+            videoReadyToShow = false
+            // Bump the generation BEFORE releasing the old player: a late error
+            // from its teardown then sees a stale generation and is ignored
+            // instead of killing the new player's surface.
+            val myGen = ++videoPlayerGeneration
             videoPlayer?.release()
             videoPlayer = null
             val startedAt = SystemClock.elapsedRealtime()
@@ -1213,32 +1269,46 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
             b.videoSurface.visibility = View.VISIBLE
 
             fun startVideo() {
+                videoSurfaceAlive = true
                 videoPlayer = MediaPlayer().apply {
                     setDataSource(url)
                     setDisplay(b.videoSurface.holder)
                     setVolume(currentVolume, currentVolume)
                     setOnErrorListener { _, what, extra ->
                         Log.e(TAG, "video MediaPlayer error: what=$what extra=$extra url=$url")
-                        // Stream failed (404 / network) — fall back to the
-                        // storyboard layer instead of a stuck black surface,
-                        // and unblock the player if we were buffering.
-                        videoBuffering = false
-                        runCatching { videoPlayer?.release() }
-                        videoPlayer = null
-                        if (playbackViewModel.uiState.value.phase == PlayerPhase.BUFFERING) {
-                            playbackViewModel.exitBuffering()
-                            currentPlayer?.start()
+                        if (myGen != videoPlayerGeneration) {
+                            // Stale error from a player we intentionally released
+                            // (quick seek / layer toggle / stop) — the new player
+                            // owns the surface now. Ignoring it is what keeps
+                            // rapid interaction from "crashing" the player.
+                            true
+                        } else {
+                            // Stream failed (404 / network) — fall back to the
+                            // storyboard layer instead of a stuck black surface,
+                            // and unblock the player if we were buffering.
+                            videoBuffering = false
+                            videoReadyToShow = false
+                            runCatching { videoPlayer?.release() }
+                            videoPlayer = null
+                            if (playbackViewModel.uiState.value.phase == PlayerPhase.BUFFERING) {
+                                playbackViewModel.exitBuffering()
+                                runCatching { currentPlayer?.start() }
+                            }
+                            updateLayers()
+                            true
                         }
-                        updateLayers()
-                        true
                     }
                     setOnVideoSizeChangedListener { _, width, height ->
                         fitSurfaceToContainer(b, width, height)
                     }
                     setOnInfoListener { _, what, _ ->
-                        when (what) {
-                            MediaPlayer.MEDIA_INFO_BUFFERING_START -> enterVideoBuffering()
-                            MediaPlayer.MEDIA_INFO_BUFFERING_END -> resumeFromBuffering()
+                        // Same generation guard: buffering events from a released
+                        // player must not gate/resume the new session.
+                        if (myGen == videoPlayerGeneration) {
+                            when (what) {
+                                MediaPlayer.MEDIA_INFO_BUFFERING_START -> enterVideoBuffering()
+                                MediaPlayer.MEDIA_INFO_BUFFERING_END -> resumeFromBuffering()
+                            }
                         }
                         false
                     }
@@ -1292,9 +1362,17 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                                     try { if (!isPlaying) start() } catch (e: IllegalStateException) {
                                         Log.w(TAG, "video sync start failed: ${e.message}")
                                     }
+                                    delay(200) // let the first frame render
+                                    videoReadyToShow = true
+                                    updateLayers()
                                 }
                             } else {
                                 start()
+                                viewLifecycleOwner.lifecycleScope.launch {
+                                    delay(200) // let the first frame render
+                                    videoReadyToShow = true
+                                    updateLayers()
+                                }
                             }
                         }
                         pendingVideoTargetMs = -1L
@@ -1344,6 +1422,10 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                                             Log.w(TAG, "peek-render pause failed: ${e.message}")
                                         }
                                         Log.i(TAG, "peek-render done at ${runCatching { currentPosition.toLong() }.getOrNull()}ms (target ${targetPos}ms)")
+                                        // The seeked frame is now on the surface —
+                                        // swap the storyboard for the video.
+                                        videoReadyToShow = true
+                                        updateLayers()
                                     }
                                 } catch (e: IllegalStateException) {
                                     Log.w(TAG, "peek-render failed: ${e.message}")
@@ -1352,10 +1434,18 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                         } else {
                             start()
                             startVideoSpeedSync()
+                            viewLifecycleOwner.lifecycleScope.launch {
+                                delay(200) // let the first frame render
+                                videoReadyToShow = true
+                                updateLayers()
+                            }
                         }
                     }
                     setOnCompletionListener {
-                        b.videoSurface.visibility = View.INVISIBLE
+                        videoReadyToShow = false
+                        if (!videoSurfaceAlive) {
+                            b.videoSurface.visibility = View.INVISIBLE
+                        }
                     }
                     prepareAsync()
                 }
@@ -1514,7 +1604,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         } catch (e: Exception) {
             Log.w(TAG, "buffering resync failed: ${e.message}")
         }
-        currentPlayer?.start()
+        runCatching { currentPlayer?.start() }
         playbackViewModel.exitBuffering()
         Log.i(TAG, "video buffering done — resuming")
     }
@@ -1523,9 +1613,9 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         Log.i(TAG, "pausePlayback")
         videoSpeedSyncJob?.cancel()
         videoBuffering = false
-        currentPlayer?.pause()
+        runCatching { currentPlayer?.pause() }
         Log.i(TAG, "pausePlayback")
-        currentPlayer?.pause()
+        runCatching { currentPlayer?.pause() }
         try {
             videoPlayer?.pause()
         } catch (e: IllegalStateException) {
@@ -1562,7 +1652,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         }
 
         showCurrentIu()
-        currentPlayer?.start()
+        runCatching { currentPlayer?.start() }
         // If the video is still carrying an unconsumed unit-navigation target,
         // apply it before starting — otherwise it would resume from a stale
         // (possibly scene-start) position.
@@ -1614,6 +1704,8 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         // Snapshot BEFORE release: only a surface that actually rendered video
         // can keep showing a frame through the seek transition.
         val hadVideo = videoPlayer != null
+        videoPlayerGeneration++
+        videoReadyToShow = false
         videoPlayer?.release()
         videoPlayer = null
         if (currentFile?.name?.startsWith("chunk-") == true) currentFile?.delete()
@@ -1639,8 +1731,10 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                 // the new video frame then swaps in directly, with NO cover or
                 // black flash in between (hiding the surface destroys it and
                 // forces a blank/cover gap until the new frame renders).
+                videoSurfaceAlive = true
                 b.videoSurface.visibility = View.VISIBLE
             } else {
+                videoSurfaceAlive = false
                 b.videoSurface.visibility = View.INVISIBLE
                 if (b.coverImage.drawable != null) {
                     b.coverImage.visibility = View.VISIBLE
@@ -1716,6 +1810,9 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         currentPlayer = null
         nextPlayer?.release()
         nextPlayer = null
+        videoPlayerGeneration++
+        videoReadyToShow = false
+        videoSurfaceAlive = false
         videoPlayer?.release()
         videoPlayer = null
         if (currentFile?.name?.startsWith("chunk-") == true) currentFile?.delete()
