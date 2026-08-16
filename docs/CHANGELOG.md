@@ -8,6 +8,17 @@ All notable changes to Animastor are documented here.
 
 ### Fixed
 
+- **Android: временно отключены все показы картинки-«покрывала» при
+  переключении юнитов** (`PlayFragment.kt`). Пользователь просил убрать
+  неверную картинку, накрывающую чёрный экран во время подгрузки видео.
+  Закомментированы: вызов `showSelectedUnitImageNow` в `stopAll`
+  (keepSurface-оверлей выбранного юнита), `observeManualUnitChange()`
+  (показ картинки по позиции), `showCurrentIu()` в `resumePlayback` и в
+  `onHiddenChanged(false)`. Видео раскрывается штатно на первом
+  отрисованном кадре; вместо картинки во время загрузки — подложка
+  (обложка/шторы) и чёрная поверхность. Все выключения помечены
+  `TEMP-DISABLED` с комментарием как вернуть.
+
 - **Android: «чужая, соседняя» картинка сториборда после «Загрузка...» при
   unit-seek — `showCurrentIu` показывал СТАРЫЙ юнит по устаревшему
   `currentUnitIndex`** (`PlayFragment.kt`). Из логов: `manualPos i3 →

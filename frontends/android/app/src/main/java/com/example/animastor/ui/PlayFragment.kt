@@ -383,7 +383,10 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
 
         observeState()
         observeExternalNavigation()
-        observeManualUnitChange()
+        // TEMP-DISABLED: observeManualUnitChange flashes storyboard images on
+        // position changes (the "wrong/neighboring unit picture over the video"
+        // reports). Re-enable once the root cause is fixed.
+        // observeManualUnitChange()
         checkPendingExternalSeek()
 
         if (currentIuSequence == null && videoPlayer != null) {
@@ -1602,7 +1605,9 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
             return
         }
 
-        showCurrentIu()
+        // TEMP-DISABLED: showCurrentIu() could flash the previous unit's image
+        // right before play. The video reveals on its first rendered frame.
+        // showCurrentIu()
         // playWhenReady carries the intent — an early Play while the source is
         // still preparing is honored by ExoPlayer itself at STATE_READY (the
         // "UI says ready, Play does nothing / lost start" states are gone).
@@ -1715,15 +1720,14 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                     showCurtains()
                 }
             }
-            // Cover with the SELECTED unit's storyboard image as soon as it can
-            // be shown (the seek is still pending here — executePendingSeek
-            // clears it right after stopAll). The visual sequence becomes:
-            // old unit's video → selected unit's storyboard → selected unit's
-            // video — no stale frame of the previous unit, no black surface.
-            if (keepSurface) {
-                val pendingSeek = playbackViewModel.pendingExternalSeek
-                if (pendingSeek != null) showSelectedUnitImageNow(pendingSeek, savedIuSequence)
-            }
+            // TEMP-DISABLED (unit-picture overlay — shows the wrong/neighboring
+            // unit's image over the loading video; user asked to disable it:
+            // "лучше чёрный экран, чем неверная картинка поверх"). To re-enable
+            // after the root cause is fixed, uncomment:
+            //   if (keepSurface) {
+            //       val pendingSeek = playbackViewModel.pendingExternalSeek
+            //       if (pendingSeek != null) showSelectedUnitImageNow(pendingSeek, savedIuSequence)
+            //   }
         }
         anchorFullscreenToImage()
     }
@@ -1812,9 +1816,11 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         } else {
             // Single player holds ONE position for both tracks — no re-sync
             // needed on return, only the visual reveal.
-            if (isPaused) {
-                showCurrentIu()
-            }
+            // TEMP-DISABLED: showCurrentIu() re-flashed the previous unit's
+            // image on return (stale currentUnitIndex before executePendingSeek).
+            // if (isPaused) {
+            //     showCurrentIu()
+            // }
             // The SurfaceView died while the tab was hidden and ExoPlayer
             // re-renders on the recreated one asynchronously — hold the
             // storyboard until that render lands (never black on return).
