@@ -160,7 +160,14 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                         return@collect
                     }
                     val ius = currentIuSequence
-                    val idx = pos.unitIndex
+                    // Resolve by unitId when the position carries one (Navigator
+                    // index is over scene.units, which can be offset from the
+                    // storyboard list); index is the fallback (e.g. warmup).
+                    val idx = if (pos.unitId != null && !ius.isNullOrEmpty()) {
+                        ius.indexOfFirst { it.unitId == pos.unitId }
+                    } else {
+                        pos.unitIndex
+                    }
                     if (!ius.isNullOrEmpty() && idx in ius.indices && idx != currentIuIndex) {
                         currentIuIndex = idx
                         showIuImage(ius[idx].bitmap)
@@ -702,7 +709,14 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         // seek target would be clobbered to 0 — the video would start from the
         // beginning instead of the selected unit. Web parity: the web reads its
         // module-level currentUnitIndex here, never the position store.
-        val targetUnit = playbackViewModel.currentUnitIndex
+        // Authoritative target: resolved by the seek's unitId against the
+        // storyboard sequence (the Navigator's unitIndex is over scene.units,
+        // which can be offset from the storyboard list — an index-only mapping
+        // landed on the previous unit). Falls back to the index when no id.
+        val targetUnit = playbackViewModel.resolveUnitIndexForSequence(iuSequence)
+        if (targetUnit != playbackViewModel.currentUnitIndex) {
+            playbackViewModel.currentUnitIndex = targetUnit
+        }
         val seekToUnit = if (targetUnit > 0 && !iuSequence.isNullOrEmpty() && targetUnit < iuSequence.size) targetUnit else 0
         val pendingRotMs = playbackViewModel.pendingSeekPositionMs
         val seekMs = when {
@@ -1589,9 +1603,17 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         val gen = ++selectedUnitImageGen
         if (chId == null || scId == null) return
         // Same scene → the unit's image is already in the loaded sequence.
+        // Resolve BY ID (the Navigator's unitIndex is over scene.units, which
+        // can be offset from the storyboard list — index-only landed on the
+        // previous unit); index remains the fallback for legacy seeks.
         if (chId == playbackViewModel.currentChapterId && scId == playbackViewModel.currentSceneId) {
             val ius = savedIuSequence
-            val idx = seek.unitIndex
+            val uid = seek.unitId
+            val idx = if (!ius.isNullOrEmpty() && uid != null) {
+                ius.indexOfFirst { it.unitId == uid }
+            } else {
+                seek.unitIndex
+            }
             if (!ius.isNullOrEmpty() && idx in ius.indices && ius[idx].bitmap != null) {
                 currentIuIndex = idx
                 overlaySelectedUnitImage(ius[idx].bitmap!!)

@@ -104,6 +104,13 @@ const SAVED_POS_KEY = 'animastor:playbackPosition';
 
 let currentIndex = 0;                 // PlaybackViewModel.currentIndex
 let currentUnitIndex = 0;             // PlaybackViewModel.currentUnitIndex
+// unitId of the in-flight external unit seek. handleChunk resolves the target
+// unit in the STORYBOARD sequence by ID (authoritative): the Navigator's
+// unitIndex is over scene.units while the player's iuSequence comes from the
+// storyboard — the two lists can be offset (e.g. a leading cover unit or
+// dialogue-block units), and an index-only mapping landed on the PREVIOUS unit
+// ("select 2nd → see 1st"). Cleared when a non-external advance takes over.
+let pendingExternalUnitId: string | null = null;   // PlaybackViewModel.pendingExternalUnitId
 let currentIuIndex = 0;               // fragment.currentIuIndex
 let isPaused = false;                 // fragment.isPaused
 let pendingLoad = false;              // fragment.pendingLoad
@@ -607,6 +614,7 @@ export function executePendingSeek(): void {
   isExecutingExternalSeek = true;
   pendingExplicitUnitTarget = true;
   currentUnitIndex = seek.unitIndex;
+  pendingExternalUnitId = seek.unitId;
   navigateTo({ ...seek });
   needsContentRefresh = false;
   bumpSceneEpoch();
@@ -636,6 +644,7 @@ export function closeBook(): void {
   iuMissing.value = false;
   currentIndex = 0;
   currentUnitIndex = 0;
+  pendingExternalUnitId = null;
   currentIuIndex = 0;
   sessionStorage.removeItem(SAVED_POS_KEY);
   navigateTo({ chapterId: null, sceneId: null, unitId: null, chunkId: null, unitIndex: 0 });
@@ -742,6 +751,7 @@ function playNext(): void {
 
   if (!isExecutingExternalSeek) {
     currentUnitIndex = 0;
+    pendingExternalUnitId = null;
     navigateTo({ chapterId: chId, sceneId: scId, unitId: null, chunkId: sceneKey, unitIndex: 0 });
   }
   isExecutingExternalSeek = false;
@@ -1017,7 +1027,12 @@ function handleChunk(scene: PreloadedScene): void {
   // final muxed product has a single timeline. Priority: externally selected
   // unit → rotation-resume.
   const ius = scene.iuSequence;
-  const targetUnit = currentUnitIndex;
+  // Authoritative target: resolved by the seek's unitId against the storyboard
+  // sequence (the Navigator's unitIndex is over scene.units, which can be
+  // offset from the storyboard list — an index-only mapping landed on the
+  // previous unit). Falls back to the index when no id.
+  const targetUnit = resolveUnitIndexForSequence(ius);
+  if (targetUnit !== currentUnitIndex) currentUnitIndex = targetUnit;
   const seekToUnit = targetUnit > 0 && ius.length > 0 && targetUnit < ius.length ? targetUnit : 0;
   const pendingRotMs = pendingSeekPositionMs;
   const seekMs = seekToUnit > 0 && ius.length > 0 ? unitStartMs(ius, seekToUnit)
@@ -1103,6 +1118,19 @@ function unitStartMs(ius: IuImageItem[], unitIndex: number): number {
   let seekMs = 0;
   for (let i = 0; i < unitIndex; i++) seekMs += ius[i].durationMs;
   return seekMs;
+}
+
+/** Index of the externally-selected unit inside [ius], resolved by ID first
+ *  (the storyboard sequence and the Navigator's scene.units can be offset),
+ *  falling back to the index-based currentUnitIndex when no id is present or
+ *  the id is not found. */
+function resolveUnitIndexForSequence(ius: IuImageItem[]): number {
+  const uid = pendingExternalUnitId;
+  if (ius.length > 0 && uid) {
+    const byId = ius.findIndex((it) => it.unitId === uid);
+    if (byId >= 0) return byId;
+  }
+  return currentUnitIndex;
 }
 
 /** handleSilentChunk — no audio: release players, timer-based IU cycling. */

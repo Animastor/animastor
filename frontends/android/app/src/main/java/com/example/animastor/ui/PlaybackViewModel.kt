@@ -131,6 +131,14 @@ class PlaybackViewModel(
 
     var savedPlaybackPositionMs: Long = 0
     var persistedImage: Bitmap? = null
+    // unitId of the in-flight external unit seek. handleChunk resolves the
+    // target unit in the STORYBOARD sequence by ID (authoritative): the
+    // Navigator's unitIndex is over scene.units while the player's iuSequence
+    // comes from the storyboard — the two lists can be offset (e.g. a leading
+    // cover unit or dialogue-block units), and an index-only mapping landed on
+    // the PREVIOUS unit ("select 2nd → see 1st"). Cleared when a non-external
+    // advance takes over. Index remains the fallback when the id is absent.
+    var pendingExternalUnitId: String? = null
     var pendingSeekPositionMs: Long = -1
     var needsRotationResume = false
     var pendingExternalSeek: ActivePosition? = null
@@ -719,6 +727,7 @@ class PlaybackViewModel(
         _uiState.update { it.copy(missingIuPosition = null) }
         isExecutingExternalSeek = true
         currentUnitIndex = seek.unitIndex
+        pendingExternalUnitId = seek.unitId
         SharedPositionManager.navigateTo(seek)
         explicitVideoSeekPending = true
         _uiState.update { it.copy(phase = PlayerPhase.DOWNLOADING) }
@@ -739,12 +748,26 @@ class PlaybackViewModel(
 
     // ── State reset ──────────────────────────────────────────────
 
+    /** Index of the externally-selected unit inside [ius], resolved by ID first
+     *  (the storyboard sequence and the Navigator's scene.units can be offset),
+     *  falling back to the index-based [currentUnitIndex] when no id is present
+     *  or the id is not found. */
+    fun resolveUnitIndexForSequence(ius: List<IuImageItem>?): Int {
+        val uid = pendingExternalUnitId
+        if (!ius.isNullOrEmpty() && uid != null) {
+            val byId = ius.indexOfFirst { it.unitId == uid }
+            if (byId >= 0) return byId
+        }
+        return currentUnitIndex
+    }
+
     fun clearPlaybackState() {
         preloadCache.clear()
         preloadJobs.clear()
         sceneQueue.clear()
         currentIndex = 0
         currentUnitIndex = 0
+        pendingExternalUnitId = null
         currentIuSequence = null
         pendingSceneAudio = null
         pendingSceneVideo = null
@@ -789,6 +812,7 @@ class PlaybackViewModel(
 
         if (!isExecutingExternalSeek) {
             currentUnitIndex = 0
+            pendingExternalUnitId = null
             SharedPositionManager.navigateTo(
                 chapterId = chId,
                 sceneId = scId,

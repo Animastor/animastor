@@ -8,6 +8,21 @@ All notable changes to Animastor are documented here.
 
 ### Fixed
 
+- **Выбор юнита из Navigator — маппинг по `unitId`, а не по индексу
+  (Android `PlaybackViewModel.kt`/`PlayFragment.kt` + web `playbackStore.ts`).**
+  Seem «смещение на один юнит»: выбор 2-го юнита показывал картинку/видео
+  1-го. Причина: Навигатор передаёт `unitIndex` по `scene.units` книги, а
+  плеер работает со списком `ius` из сториборда — эти два списка могут быть
+  смещены (ведущий cover-юнит / юниты из `dialogue_blocks`), и поиск по
+  индексу попадал на предыдущий юнит. Теперь целевой юнит резолвится по
+  `unitId` в последовательности сториборда (`resolveUnitIndexForSequence` —
+  Android VM, `resolveUnitIndexForSequence` — web store), индекс остаётся
+  только запасным вариантом (legacy-сики без id). Применено везде, где юнит
+  превращается в картинку/seek: `handleChunk` (картинка + позиция видео),
+  same-scene оверлей `showSelectedUnitImageNow`, `observeManualUnitChange`
+  (Android); `handleChunk` (web). `pendingExternalUnitId` живёт от
+  `executePendingSeek` до не-внешнего продвижения/closeBook.
+
 - **Android: переключение юнитов из Navigator — без промежуточного кадра
   старого юнита** (`PlayFragment.kt`). При внешнем unit-seek `stopAll`
   больше не оставляет старый видео-кадр/сториборд видимым во время загрузки:
