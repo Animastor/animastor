@@ -1450,11 +1450,15 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
 
     private fun syncVideoFrame() {
         pendingVideoSyncJob?.cancel()
+        val vp = videoPlayer ?: return
+        // No media targeted yet (IDLE / item cleared) — nothing to sync; the
+        // videoDelivery path targets the persistent player when bytes arrive.
+        // Seeking an IDLE player is a no-op anyway, but skip it to stay clean.
+        if (vp.playbackState == Player.STATE_IDLE || vp.currentMediaItem == null) return
         // While a unit-navigation seek is in flight the audio currentPosition may
         // still report 0 (seekTo is asynchronous) — use the explicit target so the
         // video is not dragged back to the scene start.
         val pos: Long = if (pendingVideoTargetMs >= 0) pendingVideoTargetMs else (currentPlayer?.currentPosition ?: 0).toLong()
-        val vp = videoPlayer ?: return
         if (pos < 0) return
         try {
             // ExoPlayer renders the seeked frame even while paused — no
@@ -1462,6 +1466,32 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
             vp.seekTo(pos)
         } catch (e: IllegalStateException) {
             Log.w(TAG, "syncVideoFrame failed: ${e.message}")
+        }
+    }
+
+    /**
+     * The player screen's SurfaceView is destroyed whenever the screen leaves
+     * view (tab switch via hide(), activity backgrounded) and recreated on
+     * return — ExoPlayer then re-renders the frame on the new surface
+     * ASYNCHRONOUSLY, while videoReadyToShow is still true from before. Showing
+     * the surface at that moment would flash black / hide the video behind a
+     * dead surface. Keep the storyboard on top until the re-render settles
+     * (150 ms), then reveal the video. Generation-guarded: a new video item
+     * (scene change / seek) cancels the scheduled reveal, so it can never
+     * resurrect the video over a freshly loading item.
+     */
+    private fun revealVideoAfterReturn() {
+        val gen = videoCurrentGen
+        videoReadyToShow = false
+        updateLayers()
+        Log.i(TAG, "VID-LC return: holding storyboard until surface re-render (gen=$gen)")
+        viewLifecycleOwner.lifecycleScope.launch {
+            delay(150)
+            if (binding != null && isAdded && videoCurrentGen == gen && videoPlayer != null) {
+                videoReadyToShow = true
+                updateLayers()
+                Log.i(TAG, "VID-LC return: video revealed (gen=$gen)")
+            }
         }
     }
 
@@ -1711,6 +1741,13 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                 syncVideoFrame()
                 showCurrentIu()
             }
+            // The SurfaceView died while the tab was hidden and ExoPlayer
+            // re-renders on the recreated one asynchronously — hold the
+            // storyboard until that render lands (never black on return).
+            val vp = videoPlayer
+            if (vp != null && videoReadyToShow && vp.playbackState == Player.STATE_READY) {
+                revealVideoAfterReturn()
+            }
             // Auto-initialize when tab becomes visible
             if (playbackViewModel.bookId.isBlank() && generateViewModel.bookId.isNotBlank()) {
                 Log.i(TAG, "onHiddenChanged: bookId blank — auto-initializing from GenVM")
@@ -1728,6 +1765,13 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
     override fun onResume() {
         super.onResume()
         checkPendingExternalSeek()
+        // Same surface-recreate re-gate as onHiddenChanged(false): the surface
+        // died with the activity window while backgrounded. (No-op after config
+        // change — the view was recreated and videoPlayer is null then.)
+        val vp = videoPlayer
+        if (vp != null && videoReadyToShow && vp.playbackState == Player.STATE_READY) {
+            revealVideoAfterReturn()
+        }
     }
 
     override fun onPause() {
