@@ -551,11 +551,31 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
 
                         if (state.phase == PlayerPhase.SCENE_READY) {
                             val showResult = displayImage != null
-                            if (!showResult) debugLog("SCENE_READY hide resultImage (no preview)")
-                            b.resultImage.visibility = if (showResult) View.VISIBLE else View.INVISIBLE
                             if (showResult) {
                                 b.resultImage.setImageBitmap(displayImage)
+                                b.resultImage.visibility = View.VISIBLE
                                 b.mediaContainer.post { anchorFullscreenToImage() }
+                            } else {
+                                // Keep the unit storyboard set by handleChunk /
+                                // the overlay (the scene is positioned & paused
+                                // at the selected unit): hiding it reveals the
+                                // generic cover during the load window — the
+                                // reported "foreign/neighboring picture after
+                                // Загрузка" (cover = another scene's unit
+                                // image, video = the selected unit). Hide only
+                                // when there is genuinely no unit image to
+                                // show (boot / queue end / missing unit).
+                                val ius = currentIuSequence
+                                val hasUnitImage = !ius.isNullOrEmpty() &&
+                                    currentIuIndex in ius.indices &&
+                                    ius[currentIuIndex].bitmap != null &&
+                                    b.resultImage.drawable != null
+                                if (!hasUnitImage) {
+                                    debugLog("SCENE_READY hide resultImage (no unit image)")
+                                    b.resultImage.visibility = View.INVISIBLE
+                                } else {
+                                    debugLog("SCENE_READY keep unit image idx=$currentIuIndex")
+                                }
                             }
                         }
 
