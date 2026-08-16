@@ -542,9 +542,18 @@ class PlaybackViewModel(
         if (idx < 0) {
             Log.w(TAG, "seekToPosition: scene $sceneKey not found — trying refresh from backend")
             if (bookId.isBlank()) {
-                val pos = ActivePosition(chapterId, sceneId, unitId, null, unitIndex)
-                _uiState.update { it.copy(missingIuPosition = pos) }
-                pendingExternalSeek = null
+                // Player not initialized yet (cold start: the book session is
+                // still being restored — GenVM already has the book, PlaybackVM
+                // gets it only when preparePlayback/ensureInitialized arrives).
+                // Do NOT drop the command: keep it pending so it executes once
+                // the queue is populated (the next uiState emission triggers
+                // executePendingSeek via observeExternalNavigation /
+                // checkPendingExternalSeek). Previously the seek was nulled
+                // here, so the first quick unit tap after a fresh install was
+                // silently lost (curtains → cover → nothing until the second
+                // tap of the same unit).
+                Log.i(TAG, "seekToPosition: player not initialized yet — deferring seek to $chapterId/$sceneId unit=$unitIndex")
+                pendingExternalSeek = ActivePosition(chapterId, sceneId, unitId, null, unitIndex)
                 return
             }
             // Refresh scene queue from book JSON
@@ -645,6 +654,16 @@ class PlaybackViewModel(
 
     fun executePendingSeek() {
         val seek = pendingExternalSeek ?: return
+        // Cold-start deferral: the tap may arrive before preparePlayback
+        // populated the queue (book session restore still in flight). Keep the
+        // command pending — the next uiState emission (SCENE_READY after init)
+        // re-triggers this via observeExternalNavigation / checkPendingExternalSeek.
+        // Consuming and dropping it here was the other half of the lost-first-tap
+        // bug: executePendingSeek fired early (empty queue) and nulled the seek.
+        if (bookId.isBlank() || sceneQueue.isEmpty()) {
+            Log.i(TAG, "executePendingSeek: player not initialized yet (queue=${sceneQueue.size}) — deferring")
+            return
+        }
         pendingExternalSeek = null
 
         if (currentIndex >= sceneQueue.size) {

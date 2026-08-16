@@ -53,6 +53,27 @@ All notable changes to Animastor are documented here.
 
 ### Fixed
 
+- **Android: первый быстрый тап юнита в Navigator на холодном старте больше не
+  теряется** (`PlaybackViewModel.kt`). Причина: `seekToPosition` при ещё
+  неинициализированном плеере (книга восстанавливается — `GenVM.bookId` уже
+  есть, а `PlaybackVM.preparePlayback` приходит только после загрузки обложки)
+  обнулял `pendingExternalSeek` и ставил `missingIuPosition` → команда
+  «открыть юнит» выбрасывалась, на Play-табе `clearMissingIu` стирала оверлей,
+  и первый тап после установки давал «шторы → обложка → ничего», пока повторный
+  тап того же юнита не срабатывал (к тому моменту плеер уже инициализирован).
+  Фикс (вариант 1 — отложить, не выбрасывать): в ветке `bookId.isBlank()` seek
+  остаётся в `pendingExternalSeek`; `executePendingSeek` при пустой очереди /
+  пустом bookId НЕ потребляет команду и возвращается — следующая эмиссия
+  состояния (`SCENE_READY` после `preparePlayback`/`ensureInitialized`)
+  перезапускает её через `observeExternalNavigation`/`checkPendingExternalSeek`.
+  Существующий механизм отложенного исполнения, `missingIuPosition` для
+  реально отсутствующих сцен, пауза «позиционирован и ждёт Play» при внешнем
+  seek и дизайн без искусственных задержек не менялись.
+  Проверка: `compileDebugKotlin` ✓; цепочка прослежена для обоих путей
+  (новый фрагмент: `checkPendingExternalSeek` → defer → `preparePlayback` →
+  `observeExternalNavigation` → `executePendingSeek`; существующий фрагмент:
+  `onHiddenChanged(false)` → defer → следующая эмиссия → execute).
+
 - **Web Player: паритет поведения с Android — silent-сцены продвигаются на
   следующую сцену, silent-циклинг возобновляется после паузы, видео без
   чёрного старта** (`frontends/app/src/state/playbackStore.ts`):
