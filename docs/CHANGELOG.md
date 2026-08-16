@@ -6,6 +6,30 @@ All notable changes to Animastor are documented here.
 
 ## [Unreleased] — 2026-08-16
 
+### Changed
+
+- **Android: видеодвижок переведён с MediaPlayer на Media3 ExoPlayer**
+  (`PlayFragment.kt`). Причина: старый цикл create→prepare→seek→play→destroy
+  на каждое действие давал неустранимые гонки — «UI показывает готово, а video
+  player ещё не готов»; ранний Play терялся (start() в состоянии Preparing
+  бросал IllegalStateException и проглатывался); async-seek гонялся со start()
+  и падал. Теперь: ОДИН ExoPlayer на весь экран Player (release только в
+  onDestroyView), сцены/позиции переключаются через
+  `setMediaItem(url, startPos) + prepare()`; `STATE_READY` — честный сигнал
+  «видео готово» (ExoPlayer рендерит кадр позиции даже в паузе — хак
+  peek-render больше не нужен); ранний Play не теряется:
+  - если Play нажат, пока видео готовится — старт откладывается (интент
+    `pendingVideoPlay`), аудио+видео стартуют вместе с позиции выбранного
+    юнита, UI честно показывает «Загрузка…»;
+  - нормальный старт сцены — видео «догоняет» живую позицию аудио (join-seek
+    на READY), рассинхрон на слабой сети исключён;
+  - внутри-сценный unit-seek — мгновенный `seekTo` без переподготовки;
+  - буфер-гейт «Загрузка…» срабатывает только на реальные underrun'ы после
+    первого READY, а не на первичную загрузку;
+  - скорость-лок аудио/видео переведён на `setPlaybackSpeed` (геттер —
+    `playbackParameters.speed`; в media3 1.5.1 нет `getPlaybackSpeed()`).
+  Аудио осталось на MediaPlayer (локальные файлы — работает стабильно).
+
 ### Fixed
 
 - **Android: видео больше не «падает» при быстром взаимодействии**
