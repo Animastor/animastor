@@ -23,6 +23,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.example.animastor.R
 import com.example.animastor.databinding.FragmentPlayBinding
+import com.example.animastor.util.MediaDecoder
 import com.example.animastor.util.VideoCache
 import java.io.File
 import kotlinx.coroutines.Job
@@ -111,6 +112,10 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
     private var currentVolume = 1.0f
     private var isFullscreen = false
     private var pendingLoad = false
+    // Monotonic guard for the "show the selected unit's image immediately"
+    // overlay fetch: bumped on every new unit selection and every scene
+    // delivery, so a stale image fetch can never overwrite what is on screen.
+    private var selectedUnitImageGen = 0L
 
     private fun checkPendingExternalSeek() {
         if (playbackViewModel.pendingExternalSeek != null) {
@@ -677,6 +682,9 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
 
     private fun handleChunk(audio: ByteArray, video: ByteArray?, iuSequence: List<IuImageItem>?) {
         if (!isAdded) return
+        // The scene is delivered — invalidate any in-flight selected-unit
+        // image overlay fetch (its image is about to be shown here anyway).
+        selectedUnitImageGen++
         Log.i(TAG, "handleChunk: audio=${audio.size}B video=${video?.size}B ius=${iuSequence?.size ?: 0}")
 
         playbackViewModel.persistedImage = null
@@ -779,6 +787,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
     /** Handle chunk with no audio — show IU images with timer-based cycling (e.g. Cover). */
     private fun handleSilentChunk(iuSequence: List<IuImageItem>) {
         if (!isAdded) return
+        selectedUnitImageGen++
         Log.i(TAG, "handleSilentChunk: ius=${iuSequence.size}")
 
         // Stop any existing playback (silent scene = no merged audio source)
@@ -1486,6 +1495,11 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         Log.i(TAG, "stopAll keepSurface=$keepSurface")
         iuCyclingJob?.cancel()
         iuCyclingJob = null
+        // Snapshot BEFORE clearing: the same-scene fast path of
+        // showSelectedUnitImageNow (called below for keepSurface seeks) needs
+        // the already-loaded IU sequence to overlay the selected unit's image
+        // instantly — by the time the overlay runs, the field is already null.
+        val savedIuSequence = currentIuSequence
         currentIuSequence = null
         playbackViewModel.currentIuSequence = null
         currentIuIndex = 0
@@ -1516,28 +1530,23 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
             if (keepSurface && hadVideo) {
                 // External unit-seek / scene load: keep the surface ALIVE (so
                 // the next video re-target never has to re-attach a fresh
-                // surface — a re-attached surface would flash black until its
-                // first frame renders) BUT cover it right away with the
-                // previous unit's storyboard image. The stale last video frame
-                // must not stay visible during the fetch — it caused the
-                // "triple flash" (old video frame → new unit's storyboard → new
-                // video frame). The storyboard keeps visual continuity until
-                // handleChunk swaps in the SELECTED unit's image; the video
-                // then reveals on its first rendered frame as usual.
+                // surface — that would flash black until the first frame
+                // renders) but cover it right away with a NEUTRAL placeholder.
+                // The previous unit's video frame / storyboard must never be
+                // visible during the switch; the SELECTED unit's storyboard is
+                // overlaid as soon as it is available (showSelectedUnitImageNow
+                // below — same-scene image instantly, other scenes via a fast
+                // single-image fetch), then handleChunk delivers the full scene
+                // and the video reveals on its first rendered frame.
                 videoSurfaceAlive = true
                 b.videoSurface.visibility = View.VISIBLE
-                if (b.layerImage.isChecked && b.resultImage.drawable != null) {
-                    b.resultImage.visibility = View.VISIBLE
-                    b.resultImage.bringToFront()
-                } else if (b.coverImage.drawable != null) {
+                if (b.coverImage.drawable != null) {
                     b.coverImage.visibility = View.VISIBLE
                     b.coverImage.bringToFront()
                 } else {
                     b.curtainsImage.visibility = View.VISIBLE
                     b.curtainsImage.bringToFront()
                 }
-                // Keep the UI overlays above the flipped media layers
-                // (updateLayers does the same at the end of its runs).
                 b.previewOverlay.bringToFront()
                 b.subtitleText.bringToFront()
                 b.fullscreenButton.bringToFront()
@@ -1551,7 +1560,69 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                     showCurtains()
                 }
             }
+            // Cover with the SELECTED unit's storyboard image as soon as it can
+            // be shown (the seek is still pending here — executePendingSeek
+            // clears it right after stopAll). The visual sequence becomes:
+            // old unit's video → selected unit's storyboard → selected unit's
+            // video — no stale frame of the previous unit, no black surface.
+            if (keepSurface) {
+                val pendingSeek = playbackViewModel.pendingExternalSeek
+                if (pendingSeek != null) showSelectedUnitImageNow(pendingSeek, savedIuSequence)
+            }
         }
+        anchorFullscreenToImage()
+    }
+
+    /** When an external unit seek starts, cover the live surface with the
+     *  SELECTED unit's storyboard image as soon as possible — the previous
+     *  unit's video frame / storyboard must never be visible during the switch
+     *  (reported "old unit shows first"). Same-scene selections use the image
+     *  already loaded in [currentIuSequence]; a different scene fetches just
+     *  the one IU image (fast; disk-cached for preloaded scenes). The result is
+     *  overlaid over the surface; handleChunk replaces it with the same image
+     *  from the scene bundle (and bumps the gen guard so stale fetches are
+     *  dropped). */
+    private fun showSelectedUnitImageNow(seek: ActivePosition, savedIuSequence: List<IuImageItem>?) {
+        val chId = seek.chapterId
+        val scId = seek.sceneId
+        val unitId = seek.unitId
+        val gen = ++selectedUnitImageGen
+        if (chId == null || scId == null) return
+        // Same scene → the unit's image is already in the loaded sequence.
+        if (chId == playbackViewModel.currentChapterId && scId == playbackViewModel.currentSceneId) {
+            val ius = savedIuSequence
+            val idx = seek.unitIndex
+            if (!ius.isNullOrEmpty() && idx in ius.indices && ius[idx].bitmap != null) {
+                currentIuIndex = idx
+                overlaySelectedUnitImage(ius[idx].bitmap!!)
+                return
+            }
+        }
+        // Different scene (or image not loaded) → fetch just this unit's image.
+        if (unitId == null || playbackViewModel.bookId.isBlank()) return
+        viewLifecycleOwner.lifecycleScope.launch {
+            val bmp = runCatching {
+                val bytes = repository.getIuImage(playbackViewModel.bookId, chId, scId, unitId, playbackViewModel.buildId)
+                MediaDecoder.decodeBitmap(bytes)
+            }.getOrNull()
+            if (bmp != null && gen == selectedUnitImageGen && isAdded && binding != null) {
+                overlaySelectedUnitImage(bmp)
+            }
+        }
+    }
+
+    /** Show [bmp] (the selected unit's storyboard) over the live surface and
+     *  re-raise the UI overlays (mirrors the re-raises at the end of
+     *  updateLayers). */
+    private fun overlaySelectedUnitImage(bmp: Bitmap) {
+        val b = binding ?: return
+        if (!b.layerImage.isChecked) return  // image layer off → cover stays
+        b.resultImage.setImageBitmap(bmp)
+        b.resultImage.visibility = View.VISIBLE
+        b.resultImage.bringToFront()
+        b.previewOverlay.bringToFront()
+        b.subtitleText.bringToFront()
+        b.fullscreenButton.bringToFront()
         anchorFullscreenToImage()
     }
 
