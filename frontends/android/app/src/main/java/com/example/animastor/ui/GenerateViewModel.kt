@@ -1919,7 +1919,11 @@ class PreloadedScene(
     val audioBytes: ByteArray,
     val videoBytes: ByteArray?,
     val iuSequence: List<IuImageItem>,
-    val hasVideo: Boolean = false
+    val hasVideo: Boolean = false,
+    // Backend content version of the scene video — used to version the video
+    // cache key (?v= in the URL) so a regenerated video (same URL, new bytes)
+    // is not served from the stale disk cache.
+    val videoVersion: Long = 0
 ) {
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
@@ -1927,13 +1931,15 @@ class PreloadedScene(
         return audioBytes.contentEquals(other.audioBytes) &&
                videoBytes.contentEquals(other.videoBytes) &&
                iuSequence == other.iuSequence &&
-               hasVideo == other.hasVideo
+               hasVideo == other.hasVideo &&
+               videoVersion == other.videoVersion
     }
     override fun hashCode(): Int {
         var result = audioBytes.contentHashCode()
         result = 31 * result + (videoBytes?.contentHashCode() ?: 0)
         result = 31 * result + iuSequence.hashCode()
         result = 31 * result + if (hasVideo) 1 else 0
+        result = 31 * result + videoVersion.hashCode()
         return result
     }
 }

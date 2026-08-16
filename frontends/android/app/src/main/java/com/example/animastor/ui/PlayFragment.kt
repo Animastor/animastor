@@ -87,6 +87,11 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
     // alive but behind it — no more "video starts from black" on unit seek /
     // layer toggle. Set true only after the video actually pushed a frame.
     private var videoReadyToShow = false
+    // Set by revealVideoAfterReturn() to the video generation captured at
+    // return; onRenderedFirstFrame() (a NEW frame rendered on the recreated
+    // surface) reveals the video at the exact render moment instead of a blind
+    // fixed delay. Reset by targetScene (new item) and by the 150 ms fallback.
+    private var pendingRevealGen = -1L
     // Bumped every time the persistent player is re-targeted (new scene /
     // layer change). The Player.Listener ignores errors that arrive after a
     // newer target was set — a stale item's error must not run the storyboard
@@ -1105,6 +1110,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
     private fun targetScene(audioFile: File, startPosMs: Long, includeVideo: Boolean, playIntent: Boolean) {
         try {
             videoReadyToShow = false
+            pendingRevealGen = -1L // a new item cancels any pending return-reveal
             videoPlayerGeneration++
             videoCurrentGen = videoPlayerGeneration
             val startedAt = SystemClock.elapsedRealtime()
@@ -1123,7 +1129,9 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
             if (sameScene && player.playbackState != Player.STATE_IDLE) {
                 // Same scene re-target (unit navigation within the scene):
                 // instant seek — both tracks seek together, no re-download.
-                if (startPosMs > 0) player.seekTo(startPosMs)
+                // NOTE: 0 (the first unit, incl. last→first) IS a valid seek
+                // target — it must not be skipped.
+                player.seekTo(startPosMs)
                 player.playWhenReady = playIntent
                 if (player.playbackState == Player.STATE_READY) {
                     // The seeked frame renders shortly — reveal the video (a
@@ -1241,6 +1249,19 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
             }
         }
 
+        override fun onRenderedFirstFrame() {
+            // The return path (surface recreated) waits for this: a frame is
+            // actually ON the new surface, so showing the video cannot flash
+            // black. Gen-guarded: only reveals the item that was pending.
+            val gen = pendingRevealGen
+            if (gen >= 0 && videoCurrentGen == gen && binding != null && isAdded) {
+                pendingRevealGen = -1L
+                videoReadyToShow = true
+                updateLayers()
+                Log.i(TAG, "VID-LC return: video revealed on first rendered frame (gen=$gen)")
+            }
+        }
+
         override fun onPlayerError(error: PlaybackException) {
             val cause = error.cause
             Log.e(
@@ -1332,14 +1353,21 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
     private fun revealVideoAfterReturn() {
         val gen = videoCurrentGen
         videoReadyToShow = false
+        pendingRevealGen = gen
         updateLayers()
         Log.i(TAG, "VID-LC return: holding storyboard until surface re-render (gen=$gen)")
+        // Primary signal: the first frame actually rendered on the recreated
+        // surface (onRenderedFirstFrame) reveals the video at the exact render
+        // moment. The fixed delay is only a safety net for sources where the
+        // callback never fires (audio-only / edge cases) — and it still honors
+        // the gen guard, so it can never resurrect the video over a fresh item.
         viewLifecycleOwner.lifecycleScope.launch {
             delay(150)
-            if (binding != null && isAdded && videoCurrentGen == gen && videoPlayer != null) {
+            if (pendingRevealGen == gen && binding != null && isAdded && videoCurrentGen == gen && videoPlayer != null) {
+                pendingRevealGen = -1L
                 videoReadyToShow = true
                 updateLayers()
-                Log.i(TAG, "VID-LC return: video revealed (gen=$gen)")
+                Log.i(TAG, "VID-LC return: video revealed (timeout fallback, gen=$gen)")
             }
         }
     }

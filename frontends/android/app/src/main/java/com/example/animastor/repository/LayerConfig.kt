@@ -36,7 +36,12 @@ data class SceneStatusResponse(
     val scene_type: String? = null,
     val audio_ready: Boolean = false,
     val video_ready: Boolean = false,
-    val image_ready: Boolean = false
+    val image_ready: Boolean = false,
+    // Content version of the scene video (file mtime on the backend). build_id
+    // is immutable per book and regeneration replaces video in place (same URL,
+    // new bytes) — this version goes into the video URL (?v=) so the disk cache
+    // key changes exactly when the content changes. 0 = no video / legacy backend.
+    val video_version: Long = 0
 )
 
 /**

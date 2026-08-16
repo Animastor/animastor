@@ -53,6 +53,30 @@ All notable changes to Animastor are documented here.
 
 ### Fixed
 
+- **Android: аудит ExoPlayer — three fixes** (audit-driven).
+  1. **Same-scene seek в позицию 0** (`PlayFragment.kt`): guard
+  `if (startPosMs > 0)` исключал 0 — навигация на ПЕРВЫЙ юнит той же сцены
+  (в т.ч. последний→первый) не вызывала `seekTo(0)`, и плеер оставался на
+  старой позиции. Теперь 0 — валидная seek-цель, `seekTo` вызывается всегда.
+  2. **Версионированный cache key видео** (backend + Android): проверка
+  показала, что `build_id = build_<bookId>` immutable на книгу, а регенерация
+  заменяет видео **на месте** (тот же URL, новые байты) — SimpleCache без
+  ревалидации отдавал бы stale-видео после регенерации. Бэкенд теперь отдаёт
+  `video_version` (mtime видео-файла, тот же источник, что ETag) в
+  `/scene/.../status`; Android пробрасывает его (`SceneStatusResponse` →
+  `PreloadedScene` → `emitScene` → `currentVideoVersion`) и добавляет в URL
+  видео как `?v=…` — cache key меняется ровно когда меняется контент, старые
+  диапазоны уходят по LRU, весь кэш не уничтожается. При 0/legacy бэкенде
+  URL без `?v=` (прежнее поведение).
+  3. **Показ видео после возврата — по штатному `onRenderedFirstFrame`**
+  (`PlayFragment.kt`): вместо слепой фиксированной задержки 150 мс видео
+  поднимается в момент, когда кадр реально отрисован на пересозданной
+  поверхности (`pendingRevealGen` + gen-guard); 150 мс остаётся только
+  страховкой для источников без callback'а (audio-only/края).
+  Архитектура кэша/плеера (SimpleCache + CacheDataSource +
+  ProgressiveMediaSource + MergingMediaSource + один ExoPlayer) и поведение
+  слоя video OFF не менялись.
+
 - **Android: переходы между сценами + сцены без видео** (`PlayFragment.kt`,
   `PlaybackViewModel.kt`). (1) Флаг `video_ready` из бэкенда больше не
   теряется: `emitScene` пробрасывает `hasVideo`, и `handleChunk` строит

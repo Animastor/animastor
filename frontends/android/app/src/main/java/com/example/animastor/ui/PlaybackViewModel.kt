@@ -119,6 +119,11 @@ class PlaybackViewModel(
     // audio-only ExoPlayer source for scenes without video — ExoPlayer plays
     // audio natively, no merging with a dead video URL, no 404 round-trip.
     var pendingSceneHasVideo = false
+    // Backend content version of the CURRENT scene's video (status.video_version
+    // = file mtime). Appended to the video URL as ?v= so the disk-cache key
+    // changes when a regenerated video (same URL, new bytes) changes. 0 = no
+    // video / legacy backend (URL without ?v=, previous behavior).
+    var currentVideoVersion: Long = 0
     var lastProcessedSceneSequence: Long = 0
     private var sceneSeqCounter = 0L
 
@@ -213,13 +218,18 @@ class PlaybackViewModel(
     }
 
     /** Direct HTTP URL of the whole-scene MP4 (progressive/streamed, never
-     *  downloaded as a whole by the client). */
+     *  downloaded as a whole by the client). Includes the backend content
+     *  version (?v=) so the persistent disk-cache key changes exactly when a
+     *  regenerated video (same URL, new bytes) changes — stale cached ranges
+     *  are never served after regeneration. */
     fun buildSceneVideoUrl(chId: String, scId: String): String {
         val b = Uri.encode(bookId)
         val c = Uri.encode(chId)
         val s = Uri.encode(scId)
         val bld = Uri.encode(buildId)
-        return "${RetrofitClient.baseUrl}api/v1/scene/$b/$c/$s/video?build_id=$bld"
+        val v = currentVideoVersion
+        return "${RetrofitClient.baseUrl}api/v1/scene/$b/$c/$s/video?build_id=$bld" +
+            if (v > 0) "&v=$v" else ""
     }
 
     /**
@@ -332,6 +342,7 @@ class PlaybackViewModel(
             pendingSceneVideo = null
             pendingSceneIuSequence = null
             pendingSceneHasVideo = false
+            currentVideoVersion = 0
             Log.i(TAG, "refreshContent: player PLAYING — proactively reloading current scene (index=$currentIndex)")
             // Trigger immediate reload: the next fragment tick will see
             // the state change to SCENE_READY (via stale player detection),
@@ -348,6 +359,7 @@ class PlaybackViewModel(
             pendingSceneVideo = null
             pendingSceneIuSequence = null
             pendingSceneHasVideo = false
+            currentVideoVersion = 0
             Log.i(TAG, "refreshContent: player PAUSED — marked needsContentRefresh")
             return
         }
@@ -727,7 +739,7 @@ class PlaybackViewModel(
         val cached = preloadCache.remove("${buildId}_$sceneKey")
         if (cached != null) {
             Log.i(TAG, "playNext: using preloaded data for $sceneKey")
-            emitScene(cached.audioBytes, cached.videoBytes, cached.iuSequence, cached.hasVideo)
+            emitScene(cached.audioBytes, cached.videoBytes, cached.iuSequence, cached.hasVideo, cached.videoVersion)
             preloadAhead()
             return
         }
@@ -740,7 +752,7 @@ class PlaybackViewModel(
             val cachedAfter = preloadCache.remove("${buildId}_$sceneKey")
             if (cachedAfter != null) {
                 Log.i(TAG, "playNext: preload completed for $sceneKey")
-                emitScene(cachedAfter.audioBytes, cachedAfter.videoBytes, cachedAfter.iuSequence, cachedAfter.hasVideo)
+                emitScene(cachedAfter.audioBytes, cachedAfter.videoBytes, cachedAfter.iuSequence, cachedAfter.hasVideo, cachedAfter.videoVersion)
                 preloadAhead()
                 return@launch
             }
@@ -759,18 +771,19 @@ class PlaybackViewModel(
 
             Log.i(TAG, "delivering scene $sceneKey")
             _uiState.update { it.copy(previewImage = null) }
-            emitScene(sceneData.audioBytes, sceneData.videoBytes, sceneData.iuSequence, sceneData.hasVideo)
+            emitScene(sceneData.audioBytes, sceneData.videoBytes, sceneData.iuSequence, sceneData.hasVideo, sceneData.videoVersion)
             preloadAhead()
         }
     }
 
-    private fun emitScene(audio: ByteArray, video: ByteArray?, iuSequence: List<IuImageItem>?, hasVideo: Boolean = false) {
+    private fun emitScene(audio: ByteArray, video: ByteArray?, iuSequence: List<IuImageItem>?, hasVideo: Boolean = false, videoVersion: Long = 0) {
         val seq = ++sceneSeqCounter
-        Log.i(TAG, "emitScene #$seq: audio=${audio.size}B ius=${iuSequence?.size ?: 0} hasVideo=$hasVideo → PLAYING")
+        Log.i(TAG, "emitScene #$seq: audio=${audio.size}B ius=${iuSequence?.size ?: 0} hasVideo=$hasVideo v=$videoVersion → PLAYING")
         pendingSceneAudio = audio
         pendingSceneVideo = video
         pendingSceneIuSequence = iuSequence
         pendingSceneHasVideo = hasVideo
+        currentVideoVersion = videoVersion
         _uiState.update { it.copy(phase = PlayerPhase.PLAYING, chunkSequence = seq) }
     }
 
@@ -864,8 +877,14 @@ class PlaybackViewModel(
         // it is fetched on demand by ensureSceneVideo() only when the scene
         // actually plays with the video layer enabled (saves ~43 MB per
         // preloaded/skipped scene). hasVideo carries status.video_ready so the
-        // player knows a video exists without downloading it.
-        PreloadedScene(audio, null, iuSequence, hasVideo = status.video_ready)
+        // player knows a video exists without downloading it; videoVersion
+        // (backend file mtime) versions the video cache key so a regenerated
+        // video is never served from the stale disk cache.
+        PreloadedScene(
+            audio, null, iuSequence,
+            hasVideo = status.video_ready,
+            videoVersion = status.video_version
+        )
     }
 
     private suspend fun fetchIuSequence(chapterId: String, sceneId: String): List<IuImageItem> {

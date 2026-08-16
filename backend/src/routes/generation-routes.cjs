@@ -951,6 +951,20 @@ module.exports = function(app, redis, deps) {
             const audioReady = fs.existsSync(audioPath);
             const videoReady = fs.existsSync(videoPath);
 
+            // Content version of the scene video: the file mtime (same source as
+            // the ETag in streamFileWithRange). build_id is immutable per book and
+            // regeneration replaces files IN PLACE (same URL, new bytes), so a
+            // client-side video cache keyed by URL alone would serve STALE video
+            // after a regeneration. The Android player appends this as ?v= to the
+            // video URL → the cache key changes exactly when the content changes
+            // (no wholesale cache wipe). 0 = no video file.
+            let videoVersion = 0;
+            if (videoReady) {
+                try {
+                    videoVersion = Math.floor(fs.statSync(videoPath).mtimeMs);
+                } catch {}
+            }
+
             // Image readiness: check for either the scene .png file or IU images
             let imageReady = fs.existsSync(imagePath);
             if (!imageReady && fs.existsSync(buildDir)) {
@@ -982,6 +996,7 @@ module.exports = function(app, redis, deps) {
                 book_id: bookId, chapter_id: chapterId, scene_id: sceneId,
                 build_id: buildId, scene_type: sceneType,
                 audio_ready: audioReady, video_ready: videoReady, image_ready: imageReady,
+                video_version: videoVersion,
             });
         } catch (err) {
             res.status(500).json({ error: err.message });
