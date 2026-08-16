@@ -1287,6 +1287,15 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                 // Same scene re-target (unit navigation within the scene):
                 // instant seek — no re-prepare, no re-download.
                 if (startPos > 0) player.seekTo(startPos)
+                // CONSUME the explicit target: it was just applied via seekTo.
+                // Keeping it would permanently anchor the video to the unit
+                // start — syncVideoFrame/resumePlayback would drag it BACK to
+                // the unit on every screen return while the audio keeps its
+                // live position → video stuck seconds behind audio (stutter +
+                // desync, no buffer gate). The target is still carried for the
+                // NEW-item branch below, where the deferred-play detection and
+                // the syncVideoFrame guard depend on it.
+                pendingVideoTargetMs = -1L
                 player.playWhenReady = !isPaused
                 if (player.playbackState == Player.STATE_READY) {
                     // Already ready: the seeked frame renders shortly — reveal
