@@ -35,8 +35,11 @@ All notable changes to Animastor are documented here.
   (`cacheSizeBytes` — размер кэша, `cachedBytesRead` — байты из кэша);
   однозначное hit/miss-доказательство — обёртка upstream-датсорса
   `NetLogDataSourceFactory`: `VID-NET open` логирует каждый сетевой
-  Range-запрос (мисс), повторный seek в закэшированный диапазон не даёт ни
-  одного open'а (hit). Временный — убрать после подтверждения.
+  Range-запрос (мисс, с uri), повторный seek в закэшированный диапазон не
+  даёт ни одного open'а (hit). `VID-LC error` показывает подлежащий
+  `error.cause` (класс + сообщение). `debugStatus` безопасен с любого
+  потока (ExoPlayer loader thread → main). Временный — убрать после
+  подтверждения.
 
 - **Android: видеодвижок переведён с MediaPlayer на Media3 ExoPlayer**
   (`PlayFragment.kt`). Причина: старый цикл create→prepare→seek→play→destroy

@@ -3,6 +3,7 @@ package com.example.animastor.ui
 import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Bundle
+import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
 import android.view.MotionEvent
@@ -1125,7 +1126,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                 inner.addTransferListener(transferListener)
             override fun open(dataSpec: DataSpec): Long {
                 val len = inner.open(dataSpec)
-                debugStatus("VID-NET open: pos=${dataSpec.position} len=${dataSpec.length}")
+                debugStatus("VID-NET open: pos=${dataSpec.position} len=${dataSpec.length} uri=${dataSpec.uri}")
                 return len
             }
             override fun read(buffer: ByteArray, offset: Int, length: Int): Int =
@@ -1142,6 +1143,14 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
     private fun debugStatus(msg: String) {
         Log.i(TAG, msg)
         if (!BuildConfig.DEBUG) return
+        // May be called from the ExoPlayer loader thread (NetLogDataSource.open)
+        // — view updates must happen on the main thread.
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            try {
+                requireActivity().runOnUiThread { debugStatus(msg) }
+            } catch (_: Exception) {}
+            return
+        }
         val b = binding ?: return
         debugLines.addLast(msg)
         while (debugLines.size > 6) debugLines.removeFirst()
@@ -1308,7 +1317,12 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         }
 
         override fun onPlayerError(error: PlaybackException) {
-            debugStatus("VID-LC error: ${error.errorCodeName} ${error.message}")
+            val cause = error.cause
+            debugStatus(
+                "VID-LC error: ${error.errorCodeName} ${error.message}" +
+                    (cause?.let { " | ${it::class.java.simpleName}: ${it.message}" } ?: "")
+            )
+            Log.e(TAG, "VID-LC error: ${error.errorCodeName} ${error.message}", error)
             if (videoCurrentGen != videoPlayerGeneration) return // stale (previous item)
             // The VIDEO child of the merged source failed (missing video file /
             // 404 / network) while the LOCAL audio is fine — fall back to an
