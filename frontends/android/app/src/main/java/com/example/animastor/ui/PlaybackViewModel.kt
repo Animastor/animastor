@@ -281,6 +281,28 @@ class PlaybackViewModel(
             Log.w(TAG, "preparePlayback → IDLE (no scenes)")
             _uiState.update { it.copy(phase = PlayerPhase.IDLE) }
         }
+
+        // A unit tap that arrived before this init (cold start — the book
+        // session is still being restored) is kept pending in
+        // pendingExternalSeek. Execute it HERE, synchronously with the queue
+        // being ready, so the user pressing Start can never race it with
+        // playSceneQueue (which would play scene 0 / unit 0 — the reported
+        // "first unit plays instead of the selected one"). Mirrors the web:
+        // preparePlayback drains the deferred seek once the queue is populated.
+        // Only when the target scene is actually in the queue; a stale seek for
+        // a different book is dropped.
+        val deferred = pendingExternalSeek
+        if (deferred != null) {
+            val deferredIdx = deferred.chunkId?.let { sceneKeys.indexOf(it) } ?: -1
+            if (deferredIdx >= 0) {
+                currentIndex = deferredIdx
+                Log.i(TAG, "preparePlayback: executing deferred seek to ${deferred.chunkId} unit=${deferred.unitIndex}")
+                executePendingSeek()
+            } else {
+                Log.w(TAG, "preparePlayback: deferred seek target ${deferred.chunkId} not in queue — dropping")
+                pendingExternalSeek = null
+            }
+        }
     }
 
     /**
@@ -553,7 +575,9 @@ class PlaybackViewModel(
                 // silently lost (curtains → cover → nothing until the second
                 // tap of the same unit).
                 Log.i(TAG, "seekToPosition: player not initialized yet — deferring seek to $chapterId/$sceneId unit=$unitIndex")
-                pendingExternalSeek = ActivePosition(chapterId, sceneId, unitId, null, unitIndex)
+                // chunkId = scene key: executePendingSeek derives the scene index
+                // from it (currentIndex can still point at scene 0 after init).
+                pendingExternalSeek = ActivePosition(chapterId, sceneId, unitId, sceneKey, unitIndex)
                 return
             }
             // Refresh scene queue from book JSON
@@ -570,7 +594,7 @@ class PlaybackViewModel(
                         sceneQueue.addAll(allKeys)
                         currentIndex = newIdx
                         _uiState.update { it.copy(missingIuPosition = null) }
-                        pendingExternalSeek = ActivePosition(chapterId, sceneId, unitId, null, unitIndex)
+                        pendingExternalSeek = ActivePosition(chapterId, sceneId, unitId, sceneKey, unitIndex)
                         Log.i(TAG, "seekToPosition: found $sceneKey at index $newIdx after refresh")
                     } else {
                         Log.w(TAG, "seekToPosition: still not found after refresh")
@@ -586,7 +610,7 @@ class PlaybackViewModel(
         }
         Log.i(TAG, "seekToPosition: $chapterId/$sceneId unit=$unitIndex index=$idx")
         _uiState.update { it.copy(missingIuPosition = null) }
-        pendingExternalSeek = ActivePosition(chapterId, sceneId, unitId, null, unitIndex)
+        pendingExternalSeek = ActivePosition(chapterId, sceneId, unitId, sceneKey, unitIndex)
         currentIndex = idx
     }
 
@@ -665,6 +689,26 @@ class PlaybackViewModel(
             return
         }
         pendingExternalSeek = null
+
+        // Derive the scene index from the seek itself (chunkId IS the scene
+        // key) instead of trusting the module-level currentIndex: after the
+        // cold-start deferral currentIndex can still point at scene 0 while the
+        // seek targets a different scene — and if the user pressed Start in
+        // between, playSceneQueue reset it to 0 (the reported "first unit plays
+        // instead of the selected third"). Web parity: the web looks the scene
+        // up by chunkId too. Legacy seeks without chunkId keep currentIndex.
+        val seekIdx = seek.chunkId?.let { sceneQueue.indexOf(it) } ?: -1
+        when {
+            seekIdx >= 0 -> currentIndex = seekIdx
+            seek.chunkId != null -> {
+                // chunkId set but the scene is not in the queue — it is
+                // genuinely missing; show the overlay instead of playing the
+                // wrong scene via a stale currentIndex.
+                Log.w(TAG, "executePendingSeek: scene ${seek.chunkId} not in queue — showing missing overlay")
+                _uiState.update { it.copy(missingIuPosition = seek) }
+                return
+            }
+        }
 
         if (currentIndex >= sceneQueue.size) {
             Log.w(TAG, "executePendingSeek: currentIndex out of bounds, falling back")

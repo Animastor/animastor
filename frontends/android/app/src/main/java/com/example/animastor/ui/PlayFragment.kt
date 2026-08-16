@@ -252,6 +252,17 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                     Log.i(TAG, "playButton: PAUSED — resuming playback")
                     resumePlayback()
                 }
+                phase == PlayerPhase.SCENE_READY && playbackViewModel.pendingExternalSeek != null -> {
+                    // A deferred cold-start seek is still waiting (the queue was
+                    // just populated, or the user pressed Start before it
+                    // drained): Start must play the SELECTED unit, never scene 0
+                    // — playSceneQueue here was the lost-intent race (the first
+                    // unit flashed and played instead of the tapped one).
+                    Log.i(TAG, "playButton: SCENE_READY with pending external seek — executing it")
+                    pendingLoad = true
+                    stopAll(keepSurface = true)
+                    playbackViewModel.executePendingSeek()
+                }
                 phase == PlayerPhase.SCENE_READY && playbackViewModel.needsRotationResume -> {
                     Log.i(TAG, "playButton: rotation resume from index ${playbackViewModel.currentSceneIndex}")
                     playbackViewModel.resumeFromCurrentScene()

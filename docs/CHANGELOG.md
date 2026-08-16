@@ -74,6 +74,29 @@ All notable changes to Animastor are documented here.
   `observeExternalNavigation` → `executePendingSeek`; существующий фрагмент:
   `onHiddenChanged(false)` → defer → следующая эмиссия → execute).
 
+- **Android: холодный старт + быстрый тап юнита + Старт больше не играет первый
+  юнит вместо выбранного** (`PlaybackViewModel.kt`, `PlayFragment.kt`).
+  Причина: отложенный seek исполнялся только через коллектор фрагмента на
+  следующей эмиссии — если пользователь успевал нажать Старт на `SCENE_READY`
+  (пока seek ещё отложен), `handlePlayButton` уходил в `playSceneQueue`
+  (сцена 0, юнит 0), а затем отложенный seek исполнялся с `currentIndex=0`
+  (отложенная ветка не ставила индекс сцены) и гонка двух `playNext`
+  (сцена 0 + выбранная сцена) оставляла плеер на первой сцене — «первый юнит
+  и Воспроизведение…, а само висит». Фикс:
+  (1) `seekToPosition` во ВСЕХ ветках ставит `chunkId = sceneKey` —
+  `executePendingSeek` выводит индекс сцены из `chunkId`, а не из
+  `currentIndex` (web-паритет: web ищет сцену по chunkId); если chunkId задан,
+  но сцены нет в очереди — честный оверлей «не найдено» вместо проигрывания
+  неверной сцены;
+  (2) `preparePlayback` синхронно исполняет отложенный seek сразу после
+  наполнения очереди (как на web) — фаза `SCENE_READY` с отложенным seek
+  больше не наблюдается, гонка со Стартом исключена в корне;
+  (3) страховка: ветка кнопки Старт при `SCENE_READY` + `pendingExternalSeek`
+  исполняет seek вместо `playSceneQueue`.
+  Проверка: `compileDebugKotlin` ✓; цепочки прослежены — холодный старт,
+  Старт до инициализации, Старт на SCENE_READY, обычный (не холодный) тап
+  (chunkId → индекс совпадает с прежним `currentIndex`), EditFragment-навигация.
+
 - **Web Player: тот же фикс потерянного первого тапа на холодном старте
   (`frontends/app/src/state/playbackStore.ts`).** Аудит показал: web имеет ту же
   схему сброса команды — `seekToPosition` при пустом `bookId` ставил
