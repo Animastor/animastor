@@ -32,6 +32,20 @@ All notable changes to Animastor are documented here.
 
 ### Fixed
 
+- **Android: автопауза при уходе с экрана Player срабатывает в любом активном
+  состоянии** (`PlayFragment.kt`). Раньше гейт был `phase == PLAYING` — фазы
+  BUFFERING («Загрузка…», отложенный Play) и silent-сцены выпадали из
+  автопаузы: плеер мог продолжить играть на скрытом экране (audio слышно на
+  вкладке Навигатор — self-heal буфер-гейта/отложенного Play на STATE_READY),
+  а по возвращении рассинхрон `isPaused`/`phase` ломал кнопку Старт/Пауза.
+  Теперь `autoPauseForBackground()` (вызывается из `onHiddenChanged(true)` и
+  `onPause`) паузит аудио+видео при PLAYING **и** BUFFERING и корректно
+  записывает паузу (включая silent-сцены); `STATE_READY` при скрытом экране
+  буферизует видео, но не стартует воспроизведение (`isHidden`-guard) — на
+  возврате кнопка честно показывает Play и один тап возобновляет с нужной
+  позиции. Silent-сцены после resume снова циклируют картинки по таймеру
+  (`startSilentIuCycling`).
+
 - **Android: стабильное возвращение к воспроизведению после ухода с экрана
   Player** (`PlayFragment.kt`). При переключении на другой таб (hide) или уходе
   приложения в фон SurfaceView уничтожается, а при возврате ExoPlayer

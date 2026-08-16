@@ -1327,6 +1327,20 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                     hasBeenReadyForItem = true
                     Log.i(TAG, "VID-LC ready: pos=${runCatching { vp.currentPosition }.getOrNull()}ms " +
                         "dur=${runCatching { vp.duration }.getOrNull()}ms gen=$videoCurrentGen")
+                    // The screen left view while the item was preparing /
+                    // buffering — it can still become READY in the background.
+                    // Buffer it, but NEVER start audio/video on a hidden screen
+                    // (the deferred-play / buffer-gate self-heal would otherwise
+                    // play on the Navigator tab). The return path re-syncs and
+                    // the user resumes with one tap.
+                    if (isHidden || !isAdded) {
+                        runCatching { vp.pause() }
+                        videoBuffering = false
+                        pendingVideoPlay = false
+                        videoReadyToShow = true
+                        Log.i(TAG, "VID-LC ready while hidden — staying paused")
+                        return
+                    }
                     when {
                         pendingVideoPlay -> {
                             // Early Play (unit navigation): the video is now
@@ -1573,6 +1587,30 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         Log.i(TAG, "video buffering done — resuming")
     }
 
+    /** Auto-pause whenever the Player screen leaves view (switch to another
+     *  bottom-nav tab, activity backgrounded). Stops audio AND video in ANY
+     *  active phase — including BUFFERING: without this the buffer gate / the
+     *  deferred-Play self-heal at STATE_READY would start playback on the
+     *  hidden screen (audio audible while browsing the Navigator), and the
+     *  mismatched isPaused/phase left the Start/Pause button lying on return.
+     *  The silent-scene branch (no MediaPlayer) is also subsumed here: phase is
+     *  PLAYING for silent scenes too, so pausePlayback records the pause
+     *  consistently. */
+    private fun autoPauseForBackground() {
+        val phase = playbackViewModel.uiState.value.phase
+        if (phase == PlayerPhase.PLAYING || phase == PlayerPhase.BUFFERING) {
+            pausePlayback()
+        } else {
+            // No active phase — but a stale video may still be running (e.g.
+            // after stopAll/onTrimMemory with a stale PLAYING phase). Nothing
+            // may play on a hidden screen.
+            videoBuffering = false
+            pendingVideoPlay = false
+            runCatching { videoPlayer?.pause() }
+            runCatching { currentPlayer?.pause() }
+        }
+    }
+
     private fun pausePlayback() {
         Log.i(TAG, "pausePlayback")
         videoSpeedSyncJob?.cancel()
@@ -1648,7 +1686,10 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         isPaused = false
         // Update ViewModel state — restore PLAYING phase
         playbackViewModel.resumePlayback()
-        startIuCycling()
+        // Audio scenes cycle from the player clock; silent scenes (no
+        // MediaPlayer) cycle on a timer — resume whichever is active.
+        if (currentPlayer != null) startIuCycling()
+        else if (!currentIuSequence.isNullOrEmpty()) startSilentIuCycling()
         startVideoSpeedSync()
     }
 
@@ -1726,16 +1767,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         super.onHiddenChanged(hidden)
         if (hidden) {
             stopPulse()
-            val phase = playbackViewModel.uiState.value.phase
-            if (phase == PlayerPhase.PLAYING && !isPaused) {
-                if (currentPlayer == null && currentIuSequence != null) {
-                    // Silent scene (no MediaPlayer) — just stop cycling
-                    iuCyclingJob?.cancel()
-                    isPaused = true
-                } else {
-                    pausePlayback()
-                }
-            }
+            autoPauseForBackground()
         } else {
             if (isPaused) {
                 syncVideoFrame()
@@ -1787,9 +1819,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                 if (bmp != null) playbackViewModel.persistedImage = bmp
             }
         }
-        if (playbackViewModel.uiState.value.phase == PlayerPhase.PLAYING && !isPaused) {
-            pausePlayback()
-        }
+        autoPauseForBackground()
     }
 
     override fun onDestroyView() {
