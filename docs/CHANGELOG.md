@@ -21,25 +21,13 @@ All notable changes to Animastor are documented here.
   видео-URL: audio-only сцены, выключенный видео-слой и локальное аудио
   видео-кэш не трогают (аудио осталось на своей фабрике, аудио-кэш
   SimpleDiskCache не тронут). Один живущий ExoPlayer, `setMediaItem` при
-  смене сцены и мгновенный `seekTo` внутри сцены сохранены. Временные
-  диагностические логи `VID-CACHE` (cacheSpace / read from disk) — убрать
-  после проверки hit/miss.
-
-- **Android: временный on-screen debug-статус** (`PlayFragment.kt`,
-  `fragment_play.xml`). Ключевые события видео-жизненного цикла и кэша
-  (`VID-LC ready/buffering/ended/error`, `scene target/seek/prepare`,
-  `VID-CACHE cached: cacheSize/readFromCache`, `VID-NET open`) дублируются в
-  маленький оверлей в левом верхнем углу плеера (последние 6 строк, только
-  debug-сборки) — проверка кэша и стриминга на устройстве без adb/logcat.
-  Семантика `onCachedBytesRead` исправлена по исходнику media3
-  (`cacheSizeBytes` — размер кэша, `cachedBytesRead` — байты из кэша);
-  однозначное hit/miss-доказательство — обёртка upstream-датсорса
-  `NetLogDataSourceFactory`: `VID-NET open` логирует каждый сетевой
-  Range-запрос (мисс, с uri), повторный seek в закэшированный диапазон не
-  даёт ни одного open'а (hit). `VID-LC error` показывает подлежащий
-  `error.cause` (класс + сообщение). `debugStatus` безопасен с любого
-  потока (ExoPlayer loader thread → main). Временный — убрать после
-  подтверждения.
+  смене сцены и мгновенный `seekTo` внутри сцены сохранены. Проверено на
+  устройстве: первый проход — `cacheSpace` 0 → `VID-NET open` (Range) →
+  данные легли в кэш; повторный — `readFromCache=9,9MB`, сетевых open'ов
+  нет; кэш переживает закрытие Player Screen. Временные диагностика
+  (`VID-CACHE`/`VID-NET`/on-screen оверлей) после проверки удалена;
+  остались обычные logcat-логи `VID-LC` (включая `error.cause` в
+  `VID-LC error`).
 
 - **Android: видеодвижок переведён с MediaPlayer на Media3 ExoPlayer**
   (`PlayFragment.kt`). Причина: старый цикл create→prepare→seek→play→destroy

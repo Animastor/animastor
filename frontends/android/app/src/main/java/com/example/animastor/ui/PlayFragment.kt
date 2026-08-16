@@ -3,7 +3,6 @@ package com.example.animastor.ui
 import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Bundle
-import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
 import android.view.MotionEvent
@@ -15,18 +14,13 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.VideoSize
-import androidx.media3.datasource.DataSource
-import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.DefaultDataSource
-import androidx.media3.datasource.TransferListener
-import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.MergingMediaSource
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
-import com.example.animastor.BuildConfig
 import com.example.animastor.R
 import com.example.animastor.databinding.FragmentPlayBinding
 import com.example.animastor.util.VideoCache
@@ -82,8 +76,6 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
     // source rebuild / no re-download).
     private var currentPlayerSceneKey: String? = null
     private var currentPlayerHasVideo = false
-    // TEMP: last on-screen debug events (video cache / lifecycle) — remove after verification.
-    private val debugLines = ArrayDeque<String>()
     // Guards the scene-advance (ENDED → playNext) against double-firing: the
     // transition can be triggered by STATE_ENDED and by the iuCycling watchdog;
     // reset when the next scene is targeted.
@@ -1110,54 +1102,6 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
      * carries the play intent across prepare — an early Play press is never
      * lost, and readiness is the player's own STATE_READY, never a UI guess.
      */
-    private fun mb(bytes: Long): String = "%.1fMB".format(bytes / 1048576.0)
-
-    /** TEMP: logs every upstream (network) open — unambiguous cache HIT/MISS
-     *  proof. CacheDataSource opens the upstream ONLY on a cache miss (missing
-     *  byte range): a re-seek into an already-cached range produces NO network
-     *  open; a new range produces "VID-NET open: pos=… len=…". Remove after
-     *  verification. */
-    private inner class NetLogDataSourceFactory(
-        private val base: DataSource.Factory
-    ) : DataSource.Factory {
-        override fun createDataSource(): DataSource = object : DataSource {
-            private val inner = base.createDataSource()
-            override fun addTransferListener(transferListener: TransferListener) =
-                inner.addTransferListener(transferListener)
-            override fun open(dataSpec: DataSpec): Long {
-                val len = inner.open(dataSpec)
-                debugStatus("VID-NET open: pos=${dataSpec.position} len=${dataSpec.length} uri=${dataSpec.uri}")
-                return len
-            }
-            override fun read(buffer: ByteArray, offset: Int, length: Int): Int =
-                inner.read(buffer, offset, length)
-            override fun getUri(): Uri? = inner.uri
-            override fun getResponseHeaders(): MutableMap<String, MutableList<String>> =
-                inner.getResponseHeaders()
-            override fun close() = inner.close()
-        }
-    }
-
-    /** TEMP diagnostics: log to logcat AND mirror on the player screen (device
-     *  testing without adb). Debug builds only. Remove after verification. */
-    private fun debugStatus(msg: String) {
-        Log.i(TAG, msg)
-        if (!BuildConfig.DEBUG) return
-        // May be called from the ExoPlayer loader thread (NetLogDataSource.open)
-        // — view updates must happen on the main thread.
-        if (Looper.myLooper() != Looper.getMainLooper()) {
-            try {
-                requireActivity().runOnUiThread { debugStatus(msg) }
-            } catch (_: Exception) {}
-            return
-        }
-        val b = binding ?: return
-        debugLines.addLast(msg)
-        while (debugLines.size > 6) debugLines.removeFirst()
-        b.debugStatusText.text = debugLines.joinToString("\n")
-        b.debugStatusText.visibility = View.VISIBLE
-    }
-
     private fun targetScene(audioFile: File, startPosMs: Long, includeVideo: Boolean, playIntent: Boolean) {
         try {
             videoReadyToShow = false
@@ -1175,7 +1119,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
             val player = videoPlayer ?: createVideoPlayer().also { videoPlayer = it }
             val sceneKey = playbackViewModel.getCurrentSceneKey()
             val sameScene = sceneKey != null && sceneKey == currentPlayerSceneKey && includeVideo == currentPlayerHasVideo
-            debugStatus("scene target: scene=$sceneKey pos=${startPosMs}ms video=$includeVideo play=$playIntent same=$sameScene")
+            Log.i(TAG, "scene target: scene=$sceneKey pos=${startPosMs}ms video=$includeVideo play=$playIntent same=$sameScene gen=$videoCurrentGen")
             if (sameScene && player.playbackState != Player.STATE_IDLE) {
                 // Same scene re-target (unit navigation within the scene):
                 // instant seek — both tracks seek together, no re-download.
@@ -1190,7 +1134,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                         updateLayers()
                     }
                 }
-                debugStatus("scene same-item seek: ${startPosMs}ms")
+                Log.i(TAG, "scene same-item seek: ${startPosMs}ms")
             } else {
                 currentPlayerSceneKey = sceneKey
                 currentPlayerHasVideo = includeVideo
@@ -1209,26 +1153,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                         audioSource
                     } else {
                         val videoUrl = playbackViewModel.buildSceneVideoUrl(chId, scId)
-                        val videoFactory = VideoCache.dataSourceFactory(requireContext(), NetLogDataSourceFactory(localFactory))
-                            .let { factory ->
-                                // TEMP diagnostics: cache hit/miss (remove after verification).
-                                // Media3: onCachedBytesRead(cacheSizeBytes, cachedBytesRead) —
-                                // 1st = total cache size, 2nd = bytes read FROM the cache.
-                                if (factory is CacheDataSource.Factory) {
-                                    factory.setEventListener(object : CacheDataSource.EventListener {
-                                        override fun onCachedBytesRead(cacheSizeBytes: Long, cachedBytesRead: Long) {
-                                            debugStatus("VID-CACHE cached: cacheSize=${mb(cacheSizeBytes)} readFromCache=${mb(cachedBytesRead)}")
-                                        }
-                                        override fun onCacheIgnored(reason: Int) {
-                                            Log.d(TAG, "VID-CACHE cache ignored: reason=$reason")
-                                        }
-                                    })
-                                }
-                                factory
-                            }
-                        VideoCache.get(requireContext())?.let {
-                            debugStatus("VID-CACHE target: cacheSpace=${mb(it.getCacheSpace())}")
-                        }
+                        val videoFactory = VideoCache.dataSourceFactory(requireContext(), localFactory)
                         val videoSource = ProgressiveMediaSource.Factory(videoFactory)
                             .createMediaSource(MediaItem.fromUri(Uri.parse(videoUrl)))
                         MergingMediaSource(audioSource, videoSource)
@@ -1240,7 +1165,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                 player.prepare()
                 player.playWhenReady = playIntent
                 advancePending = false
-                debugStatus("scene set (prepare) in ${SystemClock.elapsedRealtime() - startedAt}ms")
+                Log.i(TAG, "scene set (prepare) in ${SystemClock.elapsedRealtime() - startedAt}ms")
             }
         } catch (e: Exception) {
             Log.e(TAG, "Scene target exception: ${e.message}", e)
@@ -1256,8 +1181,8 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
             val vp = videoPlayer ?: return
             when (playbackState) {
                 Player.STATE_READY -> {
-                    debugStatus("VID-LC ready: pos=${runCatching { vp.currentPosition }.getOrNull()}ms " +
-                        "dur=${runCatching { vp.duration }.getOrNull()}ms")
+                    Log.i(TAG, "VID-LC ready: pos=${runCatching { vp.currentPosition }.getOrNull()}ms " +
+                        "dur=${runCatching { vp.duration }.getOrNull()}ms gen=$videoCurrentGen")
                     // The screen left view while the item was preparing — it can
                     // still become READY in the background. Buffer it, but never
                     // start on a hidden screen.
@@ -1288,7 +1213,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                     }
                 }
                 Player.STATE_BUFFERING -> {
-                    debugStatus("VID-LC buffering (filling buffer…)")
+                    Log.i(TAG, "VID-LC buffering gen=$videoCurrentGen")
                     // The player pauses BOTH tracks itself while it fills the
                     // buffer — the UI only reflects it ("Загрузка…").
                     if (vp.playWhenReady && playbackViewModel.uiState.value.phase != PlayerPhase.BUFFERING) {
@@ -1298,7 +1223,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                 }
                 Player.STATE_ENDED -> {
                     videoReadyToShow = false
-                    debugStatus("VID-LC ended — advancing to next scene")
+                    Log.i(TAG, "VID-LC ended — advancing to next scene")
                     onTrackEnd()
                 }
                 else -> {}
@@ -1318,11 +1243,12 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
 
         override fun onPlayerError(error: PlaybackException) {
             val cause = error.cause
-            debugStatus(
+            Log.e(
+                TAG,
                 "VID-LC error: ${error.errorCodeName} ${error.message}" +
-                    (cause?.let { " | ${it::class.java.simpleName}: ${it.message}" } ?: "")
+                    (cause?.let { " | ${it::class.java.simpleName}: ${it.message}" } ?: ""),
+                error
             )
-            Log.e(TAG, "VID-LC error: ${error.errorCodeName} ${error.message}", error)
             if (videoCurrentGen != videoPlayerGeneration) return // stale (previous item)
             // The VIDEO child of the merged source failed (missing video file /
             // 404 / network) while the LOCAL audio is fine — fall back to an
