@@ -74,6 +74,26 @@ All notable changes to Animastor are documented here.
   `observeExternalNavigation` → `executePendingSeek`; существующий фрагмент:
   `onHiddenChanged(false)` → defer → следующая эмиссия → execute).
 
+- **Web Player: тот же фикс потерянного первого тапа на холодном старте
+  (`frontends/app/src/state/playbackStore.ts`).** Аудит показал: web имеет ту же
+  схему сброса команды — `seekToPosition` при пустом `bookId` ставил
+  `missingIuPosition` и обнулял `pendingExternalSeek`, а `preparePlayback`
+  в конце безусловно делал `pendingExternalSeek.value = null` (даже если бы
+  команда сохранилась — инициализация её бы стёрла). Окно гонки на вебе уже,
+  чем на Android (в `restoreBookSession` нет загрузки обложки перед эмиссией
+  `playbackPrepared` — только один `getJson(/book/…)`), но триггер тот же:
+  быстрый тап юнита после свежей загрузки страницы до инициализации плеера
+  терялся (повторный тап работал). Фикс — вариант 1: (1) ветка `!bId` в
+  `seekToPosition` сохраняет команду в `pendingExternalSeek` (chunkId = sceneKey)
+  вместо сброса; (2) `executePendingSeek` при пустой очереди/пустом bookId
+  НЕ потребляет команду и возвращается; (3) `preparePlayback` после наполнения
+  очереди сам исполняет отложенный seek (если целевая сцена есть в очереди),
+  иначе обнуляет его (stale-seek от другой книги не запускает новую книгу
+  через `playSceneQueue`). Плюс: web-специфика — нет коллектора uiState как на
+  Android, поэтому триггер исполнения встроен в `preparePlayback` (единая точка
+  инициализации, покрывает и `ensureInitialized`).
+  Проверки: `tsc --noEmit` + `vite build` OK.
+
 - **Web Player: паритет поведения с Android — silent-сцены продвигаются на
   следующую сцену, silent-циклинг возобновляется после паузы, видео без
   чёрного старта** (`frontends/app/src/state/playbackStore.ts`):

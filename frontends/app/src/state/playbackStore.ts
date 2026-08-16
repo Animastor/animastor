@@ -264,7 +264,23 @@ export function preparePlayback(bId: string, bBuild: string, scenes: SceneRef[])
     currentIndex,
   };
   missingIuPosition.value = null;
-  pendingExternalSeek.value = null;
+  // A unit tap that arrived before this init (boot restore still in flight)
+  // is kept pending in pendingExternalSeek (Android parity) — execute it now
+  // that the queue is ready instead of dropping it (the lost-first-tap bug:
+  // tap → empty queue → command consumed → nothing until the second tap).
+  // Only auto-execute when the target scene is actually in the new queue;
+  // otherwise null it (stale seek from a previous book must not start
+  // playback of the newly opened book via the playSceneQueue fallback).
+  const deferredSeek = pendingExternalSeek.value;
+  const deferredInQueue = !!deferredSeek && !!deferredSeek.chunkId &&
+    sceneQueue.value.some((s) => sceneKeyOf(s) === deferredSeek.chunkId);
+  if (deferredInQueue) {
+    pendingLoad = true;
+    stopAll();
+    executePendingSeek();
+  } else {
+    pendingExternalSeek.value = null;
+  }
 }
 
 /** Soft refresh after regeneration (PlaybackViewModel.refreshContent): keeps
@@ -523,8 +539,15 @@ export async function seekToPosition(chapterId: string, sceneId: string, unitInd
 
   const bId = bookId.value;
   if (!bId) {
-    missingIuPosition.value = { chapterId, sceneId, unitId, chunkId: null, unitIndex };
-    pendingExternalSeek.value = null;
+    // Player not initialized yet (boot restore in flight — the queue is
+    // populated only when preparePlayback arrives; generateStore already has
+    // the book, so the Navigator can show units). Do NOT drop the command:
+    // keep it pending (Android parity) so preparePlayback executes it once the
+    // queue is ready — the first quick unit tap after a fresh load is no
+    // longer silently lost. missingIuPosition stays reserved for scenes that
+    // are genuinely absent AFTER init (the refresh branches below).
+    console.info(`[PLAY] seekToPosition: player not initialized yet — deferring seek to ${chapterId}/${sceneId} unit=${unitIndex}`);
+    pendingExternalSeek.value = { chapterId, sceneId, unitId, chunkId: sceneKey, unitIndex };
     return;
   }
   try {
@@ -558,6 +581,15 @@ export function clearMissingIu(): void {
 export function executePendingSeek(): void {
   const seek = pendingExternalSeek.value;
   if (!seek) return;
+  // Cold-start deferral (Android parity): the tap may arrive before
+  // preparePlayback populated the queue (boot restore still in flight). Keep
+  // the command pending — preparePlayback executes it once the queue is ready.
+  // Consuming it here (empty queue → playSceneQueue no-op) was the other half
+  // of the lost-first-tap bug: the seek was nulled before anything could run.
+  if (!bookId.value || sceneQueue.value.length === 0) {
+    console.info('[PLAY] executePendingSeek: player not initialized yet — deferring');
+    return;
+  }
   pendingExternalSeek.value = null;
 
   // Derive the index from the seek itself (chunkId IS the scene key) instead of
