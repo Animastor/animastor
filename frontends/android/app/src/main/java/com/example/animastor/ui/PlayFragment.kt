@@ -1,7 +1,6 @@
 package com.example.animastor.ui
 
 import android.graphics.Bitmap
-import android.media.MediaPlayer
 import android.net.Uri
 import android.os.Bundle
 import android.os.SystemClock
@@ -10,12 +9,15 @@ import android.view.MotionEvent
 import android.view.View
 import android.widget.Toast
 import androidx.fragment.app.Fragment
+import androidx.fragment.app.activityViewModels
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.VideoSize
+import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.exoplayer.ExoPlayer
-import androidx.fragment.app.activityViewModels
+import androidx.media3.exoplayer.source.MergingMediaSource
+import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
@@ -54,71 +56,51 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
     }
     private val repository get() = playbackViewModel.repository
 
-    private var currentPlayer: MediaPlayer? = null
-    private var nextPlayer: MediaPlayer? = null
-    private var currentFile: File? = null
-    private var nextFile: File? = null
+    // ONE player for the whole Player-screen life: Media3 ExoPlayer playing a
+    // MergingMediaSource — the LOCAL scene audio file + the NETWORK whole-scene
+    // video URL — in a SINGLE media clock. This is the researched-correct
+    // architecture (ExoPlayer docs: "two tracks synchronized using the same
+    // internal clock"); the old two-player setup (audio MediaPlayer + video
+    // ExoPlayer) had two independent clocks, so the video could stutter and
+    // drift away from the audio, and a manual buffer gate could never work
+    // reliably. With one player: STATE_BUFFERING pauses BOTH tracks together
+    // (audio physically cannot run ahead), seek seeks both, and buffering is
+    // native — the UI only reflects STATE_BUFFERING/STATE_READY.
     private var videoPlayer: ExoPlayer? = null
+    // Local temp file holding the CURRENT scene's audio (merged into the
+    // player's source; deleted on scene change / stop / destroy).
+    private var currentAudioFile: File? = null
+    // Scene key + video-inclusion of the item currently loaded in the player —
+    // used for the same-scene fast path (unit navigation = instant seekTo, no
+    // source rebuild / no re-download).
+    private var currentPlayerSceneKey: String? = null
+    private var currentPlayerHasVideo = false
     private var isPaused = false
-    // Buffer gate: video is a network stream while audio is a local file; on a
-    // slow connection the video underruns and would freeze while the audio
-    // keeps playing (desync). While true, the whole player is paused into
-    // "Загрузка…" (BUFFERING) and resumes with a resync on BUFFERING_END.
-    private var videoBuffering = false
     // Whether the whole-scene video has rendered its first frame and may cover
     // the storyboard. While false, the storyboard stays on TOP and the surface
     // (which would otherwise show black until the first frame decodes) is kept
     // alive but behind it — no more "video starts from black" on unit seek /
     // layer toggle. Set true only after the video actually pushed a frame.
     private var videoReadyToShow = false
-    // Bumped every time the persistent player is re-targeted (setMediaItem /
-    // new scene). The Player.Listener ignores errors that arrive after a newer
-    // target was set — a stale item's error must not run the storyboard
-    // fallback against the current item. With a single long-lived ExoPlayer
-    // this is the only "generation" guard needed (no create/destroy race).
+    // Bumped every time the persistent player is re-targeted (new scene /
+    // layer change). The Player.Listener ignores errors that arrive after a
+    // newer target was set — a stale item's error must not run the storyboard
+    // fallback against the current item.
     private var videoPlayerGeneration = 0L
-    // Generation of the item the listener is currently servicing (set together
-    // with videoPlayerGeneration in playVideoFromUrl).
+    // Generation of the item the listener is currently servicing.
     private var videoCurrentGen = 0L
-    // Per-item ExoPlayer state (all reset in playVideoFromUrl):
-    // - explicitItem: the item was targeted at a unit boundary (seek) rather
-    //   than a live join;
-    // - hasBeenReadyForItem: STATE_READY reached for the current item — only
-    //   then does STATE_BUFFERING mean a real underrun (buffer gate), not the
-    //   initial load;
-    // - joinHandled: the one-time "join the live audio position" re-position
-    //   was done for a join-mode item;
-    // - pendingVideoPlay: the user pressed Play while the video was still
-    //   preparing — honored (audio + video start together from the unit) once
-    //   STATE_READY arrives. The play intent lives here instead of being
-    //   thrown away by a start() on a not-yet-ready player.
-    private var explicitItem = false
-    private var hasBeenReadyForItem = false
-    private var joinHandled = false
-    private var pendingVideoPlay = false
     // Whether the video SurfaceView ever attached a surface. Hiding a live
     // surface destroys it, so once a video has played we keep the surface
-    // alive (behind the storyboard) across the async video-delivery gap in
-    // handleChunk — the upcoming seek's player then attaches to a live surface
-    // instead of a dead one (black / server-died errors).
+    // alive (behind the storyboard) across scene/unit transitions.
     private var videoSurfaceAlive = false
     private var iuCyclingJob: Job? = null
     private var currentIuSequence: List<IuImageItem>? = null
     private var currentIuIndex = 0
-    private var sceneTransitionPending = false
-    private var nextChainReady = false
     private var hasDisplayedCover = false
     private var isInCurtainsState = false
     private var currentVolume = 1.0f
     private var isFullscreen = false
     private var pendingLoad = false
-    private var pendingVideoSyncJob: Job? = null
-    // Explicit position the whole-scene video must land on (ms) once prepared.
-    // Set when the video is started for a unit navigation / rotation resume;
-    // guards syncVideoFrame() from clobbering it with the audio player's not-yet
-    // seeked currentPosition (the audio seekTo is asynchronous). -1 = no target.
-    private var pendingVideoTargetMs: Long = -1L
-    private var videoSpeedSyncJob: Job? = null
 
     private fun checkPendingExternalSeek() {
         if (playbackViewModel.pendingExternalSeek != null) {
@@ -156,35 +138,6 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                         currentIuIndex = idx
                         showIuImage(ius[idx].bitmap)
                     }
-                }
-            }
-        }
-    }
-
-    private fun observePreloadCompletion() {
-        viewLifecycleOwner.lifecycleScope.launch {
-            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
-                playbackViewModel.preloadCompleted.collect {
-                    if (currentPlayer != null && !nextChainReady && nextPlayer == null) {
-                        preloadAheadAudio()
-                    }
-                }
-            }
-        }
-    }
-
-    /** On-demand whole-scene video: attach + seek when the bytes arrive for the
-     *  CURRENT scene with the video layer on (stale / layer-off deliveries drop).
-     *  The video is fetched by ensureSceneVideo — never as part of the scene
-     *  bundle — so preloaded scenes and off-layer scenes cost zero video traffic. */
-    private fun observeVideoDelivery() {
-        viewLifecycleOwner.lifecycleScope.launch {
-            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
-                playbackViewModel.videoDelivery.collect { delivery ->
-                    if (!isAdded) return@collect
-                    if (delivery.sceneKey != playbackViewModel.getCurrentSceneKey()) return@collect
-                    if (binding?.layerVideo?.isChecked == false) return@collect
-                    playVideoOverlay(delivery.url, delivery.seekMs, delivery.explicitSeek)
                 }
             }
         }
@@ -261,9 +214,9 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
 
         binding?.playButton?.setOnClickListener {
             val phase = playbackViewModel.uiState.value.phase
-            Log.i(TAG, "playButton clicked, phase=$phase isPaused=$isPaused player=$currentPlayer rotate=${playbackViewModel.needsRotationResume}")
+            Log.i(TAG, "playButton clicked, phase=$phase isPaused=$isPaused player=${videoPlayer != null} rotate=${playbackViewModel.needsRotationResume}")
             when {
-                phase == PlayerPhase.PLAYING && currentPlayer == null -> {
+                phase == PlayerPhase.PLAYING && videoPlayer == null -> {
                     Log.i(TAG, "playButton: player was released, restarting")
                     playbackViewModel.resumeFromCurrentScene()
                 }
@@ -305,8 +258,6 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
 
         binding?.layerAudio?.setOnCheckedChangeListener { _, isChecked ->
             currentVolume = if (isChecked) 1.0f else 0.0f
-            currentPlayer?.setVolume(currentVolume, currentVolume)
-            nextPlayer?.setVolume(currentVolume, currentVolume)
             videoPlayer?.volume = currentVolume
             binding?.layerAudio?.chipIcon = if (isChecked)
                 resources.getDrawable(R.drawable.ic_volume_up, null)
@@ -335,17 +286,15 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
             updateLayers()
             playbackViewModel.setVideoEnabled(isChecked)
             if (isChecked) {
-                // Layer re-enabled: only rebuild when the player is actually
-                // GONE (stream error / scene change / never requested). A live
-                // player is merely covered by the storyboard and comes back
-                // INSTANTLY via updateLayers — rebuilding it here would drop the
-                // buffered video and restart from black (the "layer toggle kills
-                // the video" bug).
-                if (videoPlayer == null || !videoReadyToShow) {
-                    val cur = (currentPlayer?.currentPosition ?: 0).toLong()
-                    playbackViewModel.getCurrentSceneKey()?.let { sceneKey ->
-                        playbackViewModel.ensureSceneVideo(sceneKey, cur, explicitSeek = false)
-                    }
+                // Layer re-enabled: if the current source is AUDIO-ONLY (the
+                // layer was off when the scene loaded) — or no player target
+                // exists yet — rebuild the merged source WITH the video at the
+                // current position. A source that already includes the video is
+                // kept as-is (instant re-show via updateLayers, no re-download).
+                val af = currentAudioFile
+                if (af != null && (!currentPlayerHasVideo || videoPlayer == null)) {
+                    val cur = (videoPlayer?.currentPosition ?: 0).toLong()
+                    targetScene(af, cur, includeVideo = true, playIntent = !isPaused)
                 }
             }
         }
@@ -369,14 +318,12 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         observeState()
         observeExternalNavigation()
         observeManualUnitChange()
-        observePreloadCompletion()
-        observeVideoDelivery()
         checkPendingExternalSeek()
 
-        if (currentIuSequence == null && currentPlayer != null) {
+        if (currentIuSequence == null && videoPlayer != null) {
             currentIuSequence = playbackViewModel.currentIuSequence
         }
-        if (currentIuSequence != null && currentPlayer != null) {
+        if (currentIuSequence != null && videoPlayer != null) {
             showCurrentIu()
         }
     }
@@ -468,7 +415,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                 playbackViewModel.uiState.collect { state ->
                     try {
                         val b = binding ?: return@collect
-                        Log.d(TAG, "state: phase=${state.phase} img=${state.previewImage != null} cover=${state.coverImage != null} player=$currentPlayer")
+                        Log.d(TAG, "state: phase=${state.phase} img=${state.previewImage != null} cover=${state.coverImage != null} player=${videoPlayer != null}")
 
                         // Update play button state BEFORE any early returns
                         val hasChunks = playbackViewModel.sceneQueueSize > 0
@@ -484,10 +431,15 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                             hideIuMissingPlaceholder()
                         }
 
-                        // Skip rotation recovery when no MediaPlayer available (e.g. silent scenes)
-                        if (state.phase == PlayerPhase.PLAYING && currentPlayer == null
+                        // Rotation recovery: the view was recreated (the player
+                        // is fresh and not targeted at the current scene) but the
+                        // chunk was already processed before rotation — handleChunk
+                        // won't re-run, so reset to SCENE_READY for a clean resume.
+                        val playerTargeted = videoPlayer != null &&
+                            currentPlayerSceneKey == playbackViewModel.getCurrentSceneKey()
+                        if (state.phase == PlayerPhase.PLAYING && !playerTargeted
                             && state.chunkSequence <= playbackViewModel.lastProcessedSceneSequence) {
-                            Log.w(TAG, "rotation recovery: PLAYING with no player (chunk already processed) -> SCENE_READY")
+                            Log.w(TAG, "rotation recovery: PLAYING with no targeted player (chunk already processed) -> SCENE_READY")
                             playbackViewModel.rotationRecovery()
                             return@collect
                         }
@@ -718,27 +670,17 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
             Log.i(TAG, "UNIT-SEEK unit=${target.unitId} index=$seekToUnit startMs=${target.startMs} seekMs=$seekMs")
         }
 
-        // An external unit tap (or rotation resume) is an EXPLICIT video target
-        // — including 0 for unit 1 — so the video is seeked to it directly
-        // instead of the audio-sync fallback (web parity).
-        val explicitVideoSeek = playbackViewModel.explicitVideoSeekPending || pendingRotMs > 0
+        // An external unit tap (or rotation resume) targets an explicit
+        // position — including 0 for unit 1. With the merged single player the
+        // seekMs position is applied to BOTH tracks at once (targetScene).
         playbackViewModel.explicitVideoSeekPending = false
-        // Whole-scene video is fetched ON DEMAND (ensureSceneVideo) — never as
-        // part of the scene bundle. Request it when the video layer is on; the
-        // bytes arrive via observeVideoDelivery and are attached + seeked there.
-        if (binding?.layerVideo?.isChecked != false) {
-            playbackViewModel.getCurrentSceneKey()?.let { sceneKey ->
-                playbackViewModel.ensureSceneVideo(sceneKey, seekMs, explicitVideoSeek)
-            }
-        }
 
         if (!iuSequence.isNullOrEmpty()) {
             currentIuSequence = iuSequence
             playbackViewModel.currentIuSequence = iuSequence
             currentIuIndex = seekToUnit
-            // The whole-scene video now arrives asynchronously (ensureSceneVideo
-            // → observeVideoDelivery): show the storyboard immediately; the video
-            // frame replaces it when the video is fetched and prepared.
+            // Storyboard first; the video frame replaces it once the merged
+            // source renders (videoReadyToShow).
             showIuImage(iuSequence[seekToUnit])
             updateSubtitleIfEnabled(iuSequence[seekToUnit].text)
         } else {
@@ -748,56 +690,32 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
             updateSubtitleIfEnabled(null)
         }
 
-        if (nextChainReady && currentPlayer != null) {
-            nextChainReady = false
-            Log.d(TAG, "handleChunk: chain already set up, preloading next-next audio")
-            preloadAheadAudio()
-            sceneTransitionPending = true
+        // ONE player: the local scene audio file + the (layer-on) whole-scene
+        // video URL merged into a single ExoPlayer source — both tracks share
+        // one clock (MergingMediaSource), so they can never drift, and
+        // STATE_BUFFERING pauses BOTH tracks (native "Загрузка…"; the audio can
+        // physically not run ahead of the video). The video is included only
+        // when the video layer is on — audio-only source otherwise (zero video
+        // traffic, web parity).
+        if (audio.isEmpty()) {
+            handleSilentChunk(iuSequence ?: emptyList())
             return
         }
-
-        if (currentPlayer == null) {
-            Log.i(TAG, "creating first MediaPlayer")
-            val file = writeTemp(audio)
-            currentFile = file
-            currentPlayer = createPlayer(file)
-            if (currentPlayer == null) {
-                // Player creation failed (corrupted or empty file).
-                // Reset the phase so the UI shows a Play button and the user can retry.
-                Log.w(TAG, "handleChunk: createPlayer returned null — resetting to SCENE_READY")
-                playbackViewModel.handleNullPlayer(playbackViewModel.getCurrentSceneKey() ?: "unknown")
-                return
-            }
-            currentPlayer?.setOnCompletionListener { onTrackEnd() }
-            if (pendingLoad) {
-                pendingLoad = false
-                isPaused = true
-                playbackViewModel.pausePlayback()
-                Log.i(TAG, "pending load — player stays Prepared")
-            } else {
-                currentPlayer?.start()
-            }
-            if (seekMs > 0) {
-                Log.i(TAG, "audio seek to unit ${seekToUnit} at ${seekMs}ms")
-                currentPlayer?.seekTo(seekMs.toInt())
-            }
-            Log.i(TAG, "first MediaPlayer started at unit ${seekToUnit}")
-            if (currentPlayer != null) {
-                startIuCycling()
-            } else if (!iuSequence.isNullOrEmpty()) {
-                Log.i(TAG, "no audio available — timer-based IU cycling")
-                startSilentIuCycling()
-            }
-            preloadAheadAudio()
-        } else {
-            Log.d(TAG, "preloading next audio and chaining")
-            preloadNext(audio)
-            currentPlayer?.setNextMediaPlayer(nextPlayer)
-            nextPlayer?.setOnCompletionListener { onTrackEnd() }
-            sceneTransitionPending = true
-            iuCyclingJob?.cancel()
-            startIuCycling()
+        currentAudioFile?.delete()
+        val file = writeTemp(audio)
+        currentAudioFile = file
+        val includeVideo = binding?.layerVideo?.isChecked == true
+        if (pendingLoad) {
+            // External unit seek / rotation resume: the scene loads POSITIONED
+            // but paused — the user presses Play to start (matches the old
+            // "player stays Prepared" behavior).
+            pendingLoad = false
+            isPaused = true
+            playbackViewModel.pausePlayback()
+            Log.i(TAG, "pending load — player stays positioned & paused")
         }
+        targetScene(file, seekMs, includeVideo, playIntent = !isPaused)
+        startIuCycling()
         updateLayers()
     }
 
@@ -818,15 +736,11 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         if (!isAdded) return
         Log.i(TAG, "handleSilentChunk: ius=${iuSequence.size}")
 
-        // Stop any existing playback
-        currentPlayer?.release()
-        currentPlayer = null
-        nextPlayer?.release()
-        nextPlayer = null
-        currentFile?.delete()
-        currentFile = null
-        nextFile?.delete()
-        nextFile = null
+        // Stop any existing playback (silent scene = no merged audio source)
+        currentAudioFile?.delete()
+        currentAudioFile = null
+        currentPlayerSceneKey = null
+        currentPlayerHasVideo = false
         videoPlayerGeneration++
         videoReadyToShow = false
         runCatching { videoPlayer?.pause() }
@@ -889,14 +803,6 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         }
     }
 
-    private fun preloadAheadAudio() {
-        val nextScene = playbackViewModel.tryPreloadNextScene() ?: return
-        preloadNext(nextScene.audioBytes)
-        currentPlayer?.setNextMediaPlayer(nextPlayer)
-        nextPlayer?.setOnCompletionListener { onTrackEnd() }
-        nextChainReady = true
-    }
-
     private fun showIuImage(bitmap: Bitmap?) {
         if (!isAdded) return
         val b = binding ?: return
@@ -956,9 +862,11 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         try {
             currentIuSequence = emptyList()
             playbackViewModel.currentIuSequence = emptyList()
-            currentPlayer?.runCatching { stop() }
-            currentPlayer?.release()
-            currentPlayer = null
+            currentAudioFile?.delete()
+            currentAudioFile = null
+            currentPlayerSceneKey = null
+            currentPlayerHasVideo = false
+            runCatching { videoPlayer?.pause() }
             isPaused = false
             b.resultImage.setImageBitmap(null)
             b.resultImage.visibility = View.INVISIBLE
@@ -1035,8 +943,8 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                     continue
                 }
                 val ius = currentIuSequence
-                val player = currentPlayer
-                if (ius.isNullOrEmpty() || player == null) {
+                val player = videoPlayer
+                if (ius.isNullOrEmpty() || player == null || player.playbackState != Player.STATE_READY) {
                     delay(500)
                     continue
                 }
@@ -1046,20 +954,13 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                     continue
                 }
 
-                val pos = try { player.currentPosition.toLong() } catch (e: Exception) { -1L }
-                val dur = try { player.duration.toLong() } catch (e: Exception) { -1L }
-                if (pos < 0 || dur <= 0) {
+                val pos = runCatching { player.currentPosition }.getOrNull() ?: -1L
+                if (pos < 0) {
                     delay(500)
                     continue
                 }
 
-                if (pos >= dur - 200 && sceneTransitionPending) {
-                    sceneTransitionPending = false
-                    switchToNextPlayer()
-                    continue
-                }
-
-                // Map audio position → unit index on the same timeline the seek
+                // Map position → unit index on the same timeline the seek
                 // uses: server start_ms boundaries when present (handles gaps the
                 // user created in Edit), else cumulative durationMs (legacy).
                 var idx = 0
@@ -1105,51 +1006,20 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         }
     }
 
-    private fun switchToNextPlayer() {
-        Log.i(TAG, "switchToNextPlayer: hasNext=${nextPlayer != null} isPaused=$isPaused")
-        currentIuIndex = 0
-        updateSubtitleIfEnabled(null)
-        currentPlayer?.stop()
-        currentPlayer = nextPlayer
-        currentFile = nextFile
-        nextPlayer = null
-        nextFile = null
-        if (currentPlayer != null) {
-            if (isPaused) {
-                currentPlayer?.pause()
-            } else {
-                currentPlayer?.start()
-            }
-            startIuCycling()
-        } else {
-            Log.w(TAG, "switchToNextPlayer: no next player")
-        }
-        playbackViewModel.onAudioCompleted()
-    }
-
+    /** Whole-scene media ended → advance to the next scene. The next scene's
+     *  bytes are usually already preloaded by the ViewModel, so the re-target
+     *  (handleChunk → targetScene) is fast; the single-player model prefers
+     *  this tiny boundary gap over the old two-player gapless chain (which
+     *  traded it for clock drift and desync). */
     private fun onTrackEnd() {
         Log.i(TAG, "onTrackEnd: isPaused=$isPaused")
         try {
             viewLifecycleOwner.lifecycleScope.launch {
                 iuCyclingJob?.cancel()
-                currentFile?.delete()
-                currentPlayer?.stop()
-                currentPlayer = nextPlayer
-                currentFile = nextFile
-                nextPlayer = null
-                nextFile = null
-                if (currentPlayer != null) {
-                    currentIuIndex = 0
-                    updateSubtitleIfEnabled(null)
-                    if (isPaused) {
-                        currentPlayer?.pause()
-                    } else {
-                        currentPlayer?.start()
-                    }
-                    startIuCycling()
-                } else {
-                    if (isAdded) showCoverOnly()
-                }
+                currentAudioFile?.delete()
+                currentAudioFile = null
+                currentPlayerSceneKey = null
+                currentPlayerHasVideo = false
                 playbackViewModel.onAudioCompleted()
             }
         } catch (e: Exception) {
@@ -1176,59 +1046,6 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         }
     }
 
-    private fun preloadNext(audio: ByteArray) {
-        nextFile?.delete()
-        nextPlayer?.release()
-        if (audio.isEmpty()) {
-            Log.w(TAG, "preloadNext: empty audio, skipping")
-            nextPlayer = null
-            nextFile = null
-            return
-        }
-        val file = writeTemp(audio)
-        nextFile = file
-        nextPlayer = try {
-            MediaPlayer().apply {
-                setDataSource(file.absolutePath)
-                prepare()
-                setVolume(currentVolume, currentVolume)
-                setOnErrorListener { _, what, extra ->
-                    Log.e(TAG, "MediaPlayer (next) error: what=$what extra=$extra")
-                    isPaused = false
-                    playbackViewModel.handlePlaybackError("Audio preload error (what=$what, extra=$extra)")
-                    true
-                }
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "preloadNext failed: ${e.message}")
-            nextFile = null
-            null
-        }
-    }
-
-    private fun createPlayer(file: File): MediaPlayer? {
-        if (file.length() == 0L) {
-            Log.w(TAG, "createPlayer: empty audio file")
-            return null
-        }
-        return try {
-            MediaPlayer().apply {
-                setDataSource(file.absolutePath)
-                prepare()
-                setVolume(currentVolume, currentVolume)
-                setOnErrorListener { _, what, extra ->
-                    Log.e(TAG, "MediaPlayer error: what=$what extra=$extra")
-                    isPaused = false
-                    playbackViewModel.handlePlaybackError("Audio playback error (what=$what, extra=$extra)")
-                    true // return true = error handled, no callback
-                }
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "createPlayer failed: ${e.message}")
-            null
-        }
-    }
-
     private fun writeTemp(bytes: ByteArray): File {
         val chunkId = playbackViewModel.getCurrentSceneKey()
         if (chunkId != null) {
@@ -1240,164 +1057,125 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         return file
     }
 
-    private fun playVideoOverlay(url: String, startSeekMs: Long = 0L, explicitSeek: Boolean = false) {
-        try {
-            playVideoFromUrl(url, startSeekMs, explicitSeek)
-        } catch (e: Exception) {
-            Log.e(TAG, "Video exception: ${e.message}", e)
-        }
-    }
-
     /**
-     * Target the persistent video player at [url] from [startSeekMs] (Media3
-     * ExoPlayer progressive streaming of the faststart MP4 — Range/206 seeks,
-     * no whole-file download, no local file). Explicit unit navigation sets the
-     * start position in setMediaItem (or does an instant same-item seek for
-     * unit navigation within the current scene); normal playback joins at the
-     * audio position. playWhenReady carries the user's play intent, so an early
-     * Play press is remembered and honored the moment the item becomes ready —
-     * readiness is the player's own STATE_READY, never a UI guess.
+     * Target the single ExoPlayer at the CURRENT scene: a MergingMediaSource of
+     * the LOCAL scene-audio file + (layer-on) the NETWORK whole-scene video URL
+     * — both tracks in ONE media clock (ExoPlayer's MergingMediaSource: "two
+     * tracks synchronized using the same internal clock"), starting at
+     * [startPosMs]. Same-scene re-targets (unit navigation) do an instant
+     * seekTo with NO source rebuild (no re-download, no re-prepare); a new
+     * scene (or a layer change) rebuilds the merged source. playWhenReady
+     * carries the play intent across prepare — an early Play press is never
+     * lost, and readiness is the player's own STATE_READY, never a UI guess.
      */
-    private fun playVideoFromUrl(url: String, startSeekMs: Long = 0L, explicitSeek: Boolean = false) {
+    private fun targetScene(audioFile: File, startPosMs: Long, includeVideo: Boolean, playIntent: Boolean) {
         try {
-            videoSpeedSyncJob?.cancel()
-            pendingVideoTargetMs = if (explicitSeek) startSeekMs else -1L
-            videoBuffering = false
-            // The storyboard stays on top until STATE_READY renders the first
-            // frame (no black during prepare/seek).
             videoReadyToShow = false
-            // Bump the item generation BEFORE re-targeting: stale errors from
-            // the previous item are then ignored by the listener.
             videoPlayerGeneration++
             videoCurrentGen = videoPlayerGeneration
             val startedAt = SystemClock.elapsedRealtime()
-            Log.i(TAG, "video stream start: url=$url seekMs=$startSeekMs explicit=$explicitSeek gen=$videoCurrentGen")
             val b = binding ?: return
             b.videoSurface.visibility = View.VISIBLE
             videoSurfaceAlive = true
             val player = videoPlayer ?: createVideoPlayer().also { videoPlayer = it }
-            // Start position: explicit unit target, else the current audio
-            // position (the video joins mid-scene already in sync).
-            val startPos = if (explicitSeek) startSeekMs else (currentPlayer?.currentPosition ?: 0).toLong()
-            val sameItem = player.currentMediaItem?.localConfiguration?.uri == Uri.parse(url)
-            explicitItem = explicitSeek
-            hasBeenReadyForItem = false
-            joinHandled = false
-            if (sameItem && player.playbackState != Player.STATE_IDLE) {
+            val sceneKey = playbackViewModel.getCurrentSceneKey()
+            val sameScene = sceneKey != null && sceneKey == currentPlayerSceneKey && includeVideo == currentPlayerHasVideo
+            Log.i(TAG, "scene target: scene=$sceneKey pos=${startPosMs}ms video=$includeVideo play=$playIntent same=$sameScene gen=$videoCurrentGen")
+            if (sameScene && player.playbackState != Player.STATE_IDLE) {
                 // Same scene re-target (unit navigation within the scene):
-                // instant seek — no re-prepare, no re-download.
-                if (startPos > 0) player.seekTo(startPos)
-                // CONSUME the explicit target: it was just applied via seekTo.
-                // Keeping it would permanently anchor the video to the unit
-                // start — syncVideoFrame/resumePlayback would drag it BACK to
-                // the unit on every screen return while the audio keeps its
-                // live position → video stuck seconds behind audio (stutter +
-                // desync, no buffer gate). The target is still carried for the
-                // NEW-item branch below, where the deferred-play detection and
-                // the syncVideoFrame guard depend on it.
-                pendingVideoTargetMs = -1L
-                player.playWhenReady = !isPaused
+                // instant seek — both tracks seek together, no re-download.
+                if (startPosMs > 0) player.seekTo(startPosMs)
+                player.playWhenReady = playIntent
                 if (player.playbackState == Player.STATE_READY) {
-                    // Already ready: the seeked frame renders shortly — reveal
-                    // the video (a ~100ms render delay is invisible behind the
-                    // storyboard). Without this, videoReadyToShow stays false
-                    // after stopAll and the video never comes back on top.
+                    // The seeked frame renders shortly — reveal the video (a
+                    // ~100ms render delay is invisible behind the storyboard).
                     viewLifecycleOwner.lifecycleScope.launch {
                         delay(120)
                         videoReadyToShow = true
                         updateLayers()
                     }
                 }
-                Log.i(TAG, "video same-item seek: ${startPos}ms")
+                Log.i(TAG, "scene same-item seek: ${startPosMs}ms")
             } else {
-                player.setMediaItem(MediaItem.fromUri(url), startPos)
+                currentPlayerSceneKey = sceneKey
+                currentPlayerHasVideo = includeVideo
+                val dataSourceFactory = DefaultDataSource.Factory(requireContext())
+                val audioSource = ProgressiveMediaSource.Factory(dataSourceFactory)
+                    .createMediaSource(MediaItem.fromUri(Uri.fromFile(audioFile)))
+                val source = if (includeVideo) {
+                    val chId = sceneKey?.substringBefore(':')
+                    val scId = sceneKey?.substringAfter(':')
+                    if (chId == null || scId == null) {
+                        audioSource
+                    } else {
+                        val videoUrl = playbackViewModel.buildSceneVideoUrl(chId, scId)
+                        val videoSource = ProgressiveMediaSource.Factory(dataSourceFactory)
+                            .createMediaSource(MediaItem.fromUri(Uri.parse(videoUrl)))
+                        MergingMediaSource(audioSource, videoSource)
+                    }
+                } else {
+                    audioSource
+                }
+                player.setMediaSources(listOf(source), 0, startPosMs)
                 player.prepare()
-                // The play intent is resolved at STATE_READY — never start
-                // before the item is positioned (that was the lost-seek race).
-                player.playWhenReady = false
-                Log.i(TAG, "video target set (prepare) in ${SystemClock.elapsedRealtime() - startedAt}ms")
+                player.playWhenReady = playIntent
+                Log.i(TAG, "scene set (prepare) in ${SystemClock.elapsedRealtime() - startedAt}ms")
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Video exception: ${e.message}", e)
+            Log.e(TAG, "Scene target exception: ${e.message}", e)
         }
     }
 
-    /** Media3 ExoPlayer driving the whole-scene video. ONE instance for the
-     *  Player screen's whole life; scenes/positions are switched via
-     *  setMediaItem(url, startPos) + prepare(). playWhenReady carries the user's
-     *  play intent across prepare — an early Play press is never lost — and
-     *  STATE_READY is the honest "video ready, first frame on the surface"
-     *  signal (the storyboard stays on top until then). */
+    /** Single-player state → UI. STATE_BUFFERING means the player is waiting
+     *  for DATA (the network video); because the LOCAL audio is part of the
+     *  SAME player it pauses TOGETHER with the video — "Загрузка…" is native
+     *  now and the audio physically cannot run ahead of the video. */
     private val videoPlayerListener = object : Player.Listener {
         override fun onPlaybackStateChanged(playbackState: Int) {
             val vp = videoPlayer ?: return
             when (playbackState) {
                 Player.STATE_READY -> {
-                    hasBeenReadyForItem = true
                     Log.i(TAG, "VID-LC ready: pos=${runCatching { vp.currentPosition }.getOrNull()}ms " +
                         "dur=${runCatching { vp.duration }.getOrNull()}ms gen=$videoCurrentGen")
-                    // The screen left view while the item was preparing /
-                    // buffering — it can still become READY in the background.
-                    // Buffer it, but NEVER start audio/video on a hidden screen
-                    // (the deferred-play / buffer-gate self-heal would otherwise
-                    // play on the Navigator tab). The return path re-syncs and
-                    // the user resumes with one tap.
+                    // The screen left view while the item was preparing — it can
+                    // still become READY in the background. Buffer it, but never
+                    // start on a hidden screen.
                     if (isHidden || !isAdded) {
                         runCatching { vp.pause() }
-                        videoBuffering = false
-                        pendingVideoPlay = false
                         videoReadyToShow = true
                         Log.i(TAG, "VID-LC ready while hidden — staying paused")
                         return
                     }
-                    when {
-                        pendingVideoPlay -> {
-                            // Early Play (unit navigation): the video is now
-                            // ready at the selected unit — start the deferred
-                            // audio and the video TOGETHER from the unit
-                            // position. The play request was never lost and the
-                            // seek was never dropped.
-                            pendingVideoPlay = false
-                            pendingVideoTargetMs = -1L
-                            runCatching { currentPlayer?.start() }
-                            runCatching { vp.play() }
-                            playbackViewModel.exitBuffering()
-                            Log.i(TAG, "VID-LC pending play honored — unit plays from its start")
-                        }
-                        videoBuffering -> resumeFromBuffering()
-                        !explicitItem && !joinHandled -> {
-                            // Normal scene start: the video finished loading
-                            // while the audio was already playing — join the
-                            // live audio position (one-time re-position).
-                            joinHandled = true
-                            val ap = (currentPlayer?.currentPosition ?: 0).toLong()
-                            val vpos = runCatching { vp.currentPosition }.getOrNull() ?: 0L
-                            if (ap > 0 && kotlin.math.abs(ap - vpos) > 800) {
-                                Log.i(TAG, "VID-LC join: video ${vpos}ms → audio ${ap}ms")
-                                runCatching { vp.seekTo(ap) }
-                            }
-                            if (!isPaused) runCatching { vp.play() }
-                        }
-                        else -> if (!isPaused) runCatching { vp.play() }
-                    }
-                    // ExoPlayer rendered the frame at the start position — the
-                    // storyboard can now give way to the video.
+                    // First frame rendered — the storyboard can give way.
                     videoReadyToShow = true
                     updateLayers()
-                    startVideoSpeedSync()
+                    startIuCycling()
+                    // Phase follows the play intent: READY + playWhenReady →
+                    // PLAYING; READY + paused → PAUSED (never "ready but the
+                    // button lies").
+                    if (playbackViewModel.uiState.value.phase == PlayerPhase.BUFFERING) {
+                        if (vp.playWhenReady) {
+                            isPaused = false
+                            playbackViewModel.exitBuffering()
+                        } else {
+                            isPaused = true
+                            playbackViewModel.pausePlayback()
+                        }
+                    }
                 }
                 Player.STATE_BUFFERING -> {
                     Log.i(TAG, "VID-LC buffering gen=$videoCurrentGen")
-                    // The initial load is NOT gated (the video joins / honors
-                    // the pending play intent at READY) — only real mid-playback
-                    // underruns pause the whole player into "Загрузка…".
-                    if (hasBeenReadyForItem) enterVideoBuffering()
+                    // The player pauses BOTH tracks itself while it fills the
+                    // buffer — the UI only reflects it ("Загрузка…").
+                    if (vp.playWhenReady && playbackViewModel.uiState.value.phase != PlayerPhase.BUFFERING) {
+                        isPaused = true
+                        playbackViewModel.enterBuffering()
+                    }
                 }
                 Player.STATE_ENDED -> {
                     videoReadyToShow = false
-                    if (!videoSurfaceAlive) {
-                        binding?.videoSurface?.visibility = View.INVISIBLE
-                    }
+                    Log.i(TAG, "VID-LC ended — advancing to next scene")
+                    onTrackEnd()
                 }
                 else -> {}
             }
@@ -1418,14 +1196,14 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
             Log.e(TAG, "VID-LC error: ${error.errorCodeName} ${error.message} gen=$videoCurrentGen")
             if (videoCurrentGen != videoPlayerGeneration) return // stale (previous item)
             // Stream failed (404 / network) — fall back to the storyboard layer
-            // and unblock the player if we were buffering or deferring a play.
-            videoBuffering = false
-            pendingVideoPlay = false
+            // and unblock the player if it was showing "Загрузка…".
             videoReadyToShow = false
+            currentPlayerSceneKey = null
+            currentPlayerHasVideo = false
             runCatching { videoPlayer?.stop() }
             if (playbackViewModel.uiState.value.phase == PlayerPhase.BUFFERING) {
                 playbackViewModel.exitBuffering()
-                runCatching { currentPlayer?.start() }
+                runCatching { videoPlayer?.pause() }
             }
             updateLayers()
         }
@@ -1471,27 +1249,6 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         b.videoSurface.layoutParams = lp
     }
 
-    private fun syncVideoFrame() {
-        pendingVideoSyncJob?.cancel()
-        val vp = videoPlayer ?: return
-        // No media targeted yet (IDLE / item cleared) — nothing to sync; the
-        // videoDelivery path targets the persistent player when bytes arrive.
-        // Seeking an IDLE player is a no-op anyway, but skip it to stay clean.
-        if (vp.playbackState == Player.STATE_IDLE || vp.currentMediaItem == null) return
-        // While a unit-navigation seek is in flight the audio currentPosition may
-        // still report 0 (seekTo is asynchronous) — use the explicit target so the
-        // video is not dragged back to the scene start.
-        val pos: Long = if (pendingVideoTargetMs >= 0) pendingVideoTargetMs else (currentPlayer?.currentPosition ?: 0).toLong()
-        if (pos < 0) return
-        try {
-            // ExoPlayer renders the seeked frame even while paused — no
-            // start()+pause() dance needed.
-            vp.seekTo(pos)
-        } catch (e: IllegalStateException) {
-            Log.w(TAG, "syncVideoFrame failed: ${e.message}")
-        }
-    }
-
     /**
      * The player screen's SurfaceView is destroyed whenever the screen leaves
      * view (tab switch via hide(), activity backgrounded) and recreated on
@@ -1518,116 +1275,25 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         }
     }
 
-    /**
-     * Adaptive video/audio SPEED lock. The audio (MediaPlayer) and video
-     * (ExoPlayer) are independent players whose clocks drift apart (~0.7% on
-     * some devices) — over a scene the video can end up ~0.5s ahead of the
-     * audio. Instead of force-seeking (visible jumps), the VIDEO PLAYBACK
-     * SPEED is gently corrected via setPlaybackSpeed so both positions advance
-     * at the same rate. The video track has no audio, so speed changes are
-     * inaudible. Measured every ~8s while playing; correction is clamped and
-     * damped (re-converges to the audio rate, then stays).
-     */
-    private fun startVideoSpeedSync() {
-        videoSpeedSyncJob?.cancel()
-        val vp = videoPlayer ?: return
-        val ap = currentPlayer ?: return
-        videoSpeedSyncJob = viewLifecycleOwner.lifecycleScope.launch {
-            while (isActive) {
-                delay(4000)
-                if (isPaused || pendingLoad) continue
-                val v1 = runCatching { vp.currentPosition }.getOrNull() ?: -1
-                val a1 = runCatching { ap.currentPosition }.getOrNull() ?: -1
-                if (v1 < 0 || a1 < 0) continue
-                delay(4000)
-                if (isPaused || pendingLoad) continue
-                val v2 = runCatching { vp.currentPosition }.getOrNull() ?: -1
-                val a2 = runCatching { ap.currentPosition }.getOrNull() ?: -1
-                if (v2 < 0 || a2 < 0) continue
-                val dv = v2 - v1
-                val da = a2 - a1
-                // Not enough movement (buffering / paused mid-interval) — skip.
-                if (dv < 1500 || da < 1500) continue
-                val curSpeed = runCatching { vp.playbackParameters.speed }.getOrNull() ?: 1.0f
-                // Speed that makes the video advance at exactly the audio's rate.
-                val target = (curSpeed * da.toFloat() / dv.toFloat()).coerceIn(0.9f, 1.1f)
-                if (kotlin.math.abs(target - curSpeed) > 0.002f) {
-                    Log.i(TAG, "speed sync: video +${dv}ms audio +${da}ms → speed %.4f".format(target))
-                    runCatching { vp.setPlaybackSpeed(target) }
-                        .onFailure { Log.w(TAG, "setPlaybackSpeed failed: ${it.message}") }
-                }
-            }
-        }
-    }
-
-    /** Buffer gate — the scene AUDIO is a local file (never stalls) while the
-     *  VIDEO streams over the network; on a slow connection the video runs out
-     *  of data and freezes while the audio keeps playing (the desync symptom).
-     *  ExoPlayer signals STATE_BUFFERING / STATE_READY — pause the WHOLE player
-     *  into "Загрузка…" and resume with a resync once the video can continue.
-     *  Mirrors the web buffer gate (playbackStore.ts). */
-    private fun enterVideoBuffering() {
-        val layerOn = binding?.layerVideo?.isChecked ?: false
-        if (videoBuffering || isPaused || !layerOn || playbackViewModel.uiState.value.phase != PlayerPhase.PLAYING) return
-        videoBuffering = true
-        Log.i(TAG, "video buffering — pausing audio to keep sync")
-        currentPlayer?.pause()
-        playbackViewModel.enterBuffering()
-    }
-
-    private fun resumeFromBuffering() {
-        if (!videoBuffering) return
-        videoBuffering = false
-        if (playbackViewModel.uiState.value.phase != PlayerPhase.BUFFERING) return
-        // Re-align the video to the audio timeline (a sub-second drift may have
-        // accumulated while the audio ran ahead before the gate caught it).
-        try {
-            val ap = (currentPlayer?.currentPosition ?: 0).toLong()
-            val vp = (videoPlayer?.currentPosition ?: 0).toLong()
-            if (ap > 0 && kotlin.math.abs(ap - vp) > 500) {
-                Log.i(TAG, "video buffering done — resync video ${vp}ms → ${ap}ms")
-                videoPlayer?.seekTo(ap)
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "buffering resync failed: ${e.message}")
-        }
-        runCatching { currentPlayer?.start() }
-        playbackViewModel.exitBuffering()
-        Log.i(TAG, "video buffering done — resuming")
-    }
-
     /** Auto-pause whenever the Player screen leaves view (switch to another
-     *  bottom-nav tab, activity backgrounded). Stops audio AND video in ANY
-     *  active phase — including BUFFERING: without this the buffer gate / the
-     *  deferred-Play self-heal at STATE_READY would start playback on the
-     *  hidden screen (audio audible while browsing the Navigator), and the
-     *  mismatched isPaused/phase left the Start/Pause button lying on return.
-     *  The silent-scene branch (no MediaPlayer) is also subsumed here: phase is
-     *  PLAYING for silent scenes too, so pausePlayback records the pause
-     *  consistently. */
+     *  bottom-nav tab, activity backgrounded). With ONE player this pauses the
+     *  whole scene (audio + video together) in any active phase — including
+     *  BUFFERING: nothing may keep playing (or keep buffering into playback)
+     *  on a hidden screen, and the pause is recorded so the button is
+     *  consistent on return (one tap resumes). */
     private fun autoPauseForBackground() {
         val phase = playbackViewModel.uiState.value.phase
         if (phase == PlayerPhase.PLAYING || phase == PlayerPhase.BUFFERING) {
             pausePlayback()
         } else {
-            // No active phase — but a stale video may still be running (e.g.
-            // after stopAll/onTrimMemory with a stale PLAYING phase). Nothing
-            // may play on a hidden screen.
-            videoBuffering = false
-            pendingVideoPlay = false
+            // No active phase — a stale player may still be running (e.g.
+            // after stopAll/onTrimMemory). Nothing may play on a hidden screen.
             runCatching { videoPlayer?.pause() }
-            runCatching { currentPlayer?.pause() }
         }
     }
 
     private fun pausePlayback() {
         Log.i(TAG, "pausePlayback")
-        videoSpeedSyncJob?.cancel()
-        videoBuffering = false
-        pendingVideoPlay = false
-        runCatching { currentPlayer?.pause() }
-        Log.i(TAG, "pausePlayback")
-        runCatching { currentPlayer?.pause() }
         // ExoPlayer pause() (playWhenReady=false) is safe in every state.
         runCatching { videoPlayer?.pause() }
         isPaused = true
@@ -1637,24 +1303,16 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
 
     private fun resumePlayback() {
         Log.i(TAG, "resumePlayback")
-        pendingVideoSyncJob?.cancel()
 
-        // If content was regenerated while paused, the old MediaPlayer has stale
-        // audio. Release it so the ViewModel's resumePlayback → playNext →
-        // fetchSceneData path creates a brand-new player with fresh content.
+        // If content was regenerated while paused, the old source has stale
+        // audio. Clear it so the ViewModel's resumePlayback → playNext →
+        // fetchSceneData path re-targets the same player with fresh content.
         if (playbackViewModel.needsContentRefresh) {
-            Log.i(TAG, "resumePlayback: content changed, releasing stale player")
-            currentPlayer?.runCatching { stop() }
-            currentPlayer?.release()
-            currentPlayer = null
-            currentFile?.delete()
-            currentFile = null
-            nextPlayer?.release()
-            nextPlayer = null
-            nextFile?.delete()
-            nextFile = null
-            // The video player is persistent — just pause it; the refreshed
-            // scene's delivery re-targets it via setMediaItem.
+            Log.i(TAG, "resumePlayback: content changed, releasing stale source")
+            currentAudioFile?.delete()
+            currentAudioFile = null
+            currentPlayerSceneKey = null
+            currentPlayerHasVideo = false
             runCatching { videoPlayer?.pause() }
             videoReadyToShow = false
             isPaused = false
@@ -1662,44 +1320,31 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
             return
         }
 
-        showCurrentIu()
+        // The player must be targeted at the CURRENT scene to resume — after a
+        // rotation (fresh view), a stream error, or stopAll there is no media
+        // loaded; reload the scene (positioned at the saved position) instead
+        // of silently flipping the button to PLAYING with nothing to play.
         val vp = videoPlayer
-        val videoPending = vp != null && vp.playbackState != Player.STATE_READY && pendingVideoTargetMs >= 0
-        if (videoPending) {
-            // Early Play while the video is still preparing (unit navigation):
-            // defer the WHOLE start until STATE_READY — the video then starts
-            // from the selected unit and the (still-paused, unit-positioned)
-            // audio joins it there. Nothing is lost, the seek is preserved,
-            // and the UI honestly shows "Загрузка…" while the video loads
-            // (the "UI says ready, Play does nothing" state is gone).
-            pendingVideoPlay = true
-            playbackViewModel.enterBuffering()
-            Log.i(TAG, "VID-LC playRequest deferred until video ready (gen=$videoCurrentGen)")
+        if (vp == null || currentPlayerSceneKey != playbackViewModel.getCurrentSceneKey() || vp.playbackState == Player.STATE_IDLE) {
+            Log.i(TAG, "resumePlayback: no targeted scene — reloading current scene")
+            isPaused = false
+            playbackViewModel.resumeFromCurrentScene()
             return
         }
-        runCatching { currentPlayer?.start() }
-        if (vp != null) {
-            // Apply an unconsumed unit-navigation target if present.
-            try {
-                if (pendingVideoTargetMs >= 0) {
-                    vp.seekTo(pendingVideoTargetMs)
-                    pendingVideoTargetMs = -1L
-                }
-            } catch (e: IllegalStateException) {
-                Log.w(TAG, "videoPlayer pending-seek failed (state issue): ${e.message}")
-            }
-            runCatching { vp.play() }
-            Log.i(TAG, "VID-LC play() gen=$videoCurrentGen")
-        }
+
+        showCurrentIu()
+        // playWhenReady carries the intent — an early Play while the source is
+        // still preparing is honored by ExoPlayer itself at STATE_READY (the
+        // "UI says ready, Play does nothing / lost start" states are gone).
+        runCatching { videoPlayer?.play() }
+        Log.i(TAG, "VID-LC play() gen=$videoCurrentGen")
         updateLayers()
         isPaused = false
-        // Update ViewModel state — restore PLAYING phase
+        // Update ViewModel state — restore PLAYING phase (STATE_BUFFERING will
+        // flip it to "Загрузка…" if the player actually has to wait).
         playbackViewModel.resumePlayback()
-        // Audio scenes cycle from the player clock; silent scenes (no
-        // MediaPlayer) cycle on a timer — resume whichever is active.
-        if (currentPlayer != null) startIuCycling()
+        if (currentAudioFile != null) startIuCycling()
         else if (!currentIuSequence.isNullOrEmpty()) startSilentIuCycling()
-        startVideoSpeedSync()
     }
 
     private fun togglePlay() {
@@ -1712,33 +1357,24 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
 
     fun stopAll(keepSurface: Boolean = false) {
         Log.i(TAG, "stopAll keepSurface=$keepSurface")
-        videoSpeedSyncJob?.cancel()
-        pendingVideoSyncJob?.cancel()
-        pendingVideoTargetMs = -1L
         iuCyclingJob?.cancel()
         iuCyclingJob = null
         currentIuSequence = null
         playbackViewModel.currentIuSequence = null
         currentIuIndex = 0
-        sceneTransitionPending = false
-        nextChainReady = false
-        currentPlayer?.release()
-        nextPlayer?.release()
-        // Snapshot BEFORE release: only a surface that actually rendered video
+        currentPlayerSceneKey = null
+        currentPlayerHasVideo = false
+        currentAudioFile?.delete()
+        currentAudioFile = null
+        // Snapshot BEFORE pausing: only a surface that actually rendered video
         // can keep showing a frame through the seek transition.
         val hadVideo = videoSurfaceAlive
-        // The video player is persistent (one ExoPlayer for the screen's life)
-        // — never release per action: just pause it; the next videoDelivery
-        // re-targets the same instance via setMediaItem.
+        // The player is persistent (one ExoPlayer for the screen's life) —
+        // never release per action: just pause it; the next scene re-targets
+        // the same instance via targetScene.
         videoPlayerGeneration++
         videoReadyToShow = false
         runCatching { videoPlayer?.pause() }
-        if (currentFile?.name?.startsWith("chunk-") == true) currentFile?.delete()
-        if (nextFile?.name?.startsWith("chunk-") == true) nextFile?.delete()
-        currentPlayer = null
-        nextPlayer = null
-        currentFile = null
-        nextFile = null
         isPaused = false
         val b = binding
         if (b != null) {
@@ -1778,8 +1414,9 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
             stopPulse()
             autoPauseForBackground()
         } else {
+            // Single player holds ONE position for both tracks — no re-sync
+            // needed on return, only the visual reveal.
             if (isPaused) {
-                syncVideoFrame()
                 showCurrentIu()
             }
             // The SurfaceView died while the tab was hidden and ExoPlayer
@@ -1818,10 +1455,8 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
     override fun onPause() {
         super.onPause()
         if (activity?.isChangingConfigurations == true) {
-            if (currentPlayer != null) {
-                val pos = currentPlayer?.currentPosition?.toLong() ?: 0
-                if (pos > 0) playbackViewModel.savedPlaybackPositionMs = pos
-            }
+            val pos = (videoPlayer?.currentPosition ?: 0).toLong()
+            if (pos > 0) playbackViewModel.savedPlaybackPositionMs = pos
             val b = binding
             if (b != null && b.resultImage.visibility == View.VISIBLE && b.resultImage.drawable != null) {
                 val bmp = (b.resultImage.drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap
@@ -1833,23 +1468,17 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
 
     override fun onDestroyView() {
         stopPulse()
-        videoSpeedSyncJob?.cancel()
-        currentPlayer?.release()
-        currentPlayer = null
-        nextPlayer?.release()
-        nextPlayer = null
+        iuCyclingJob?.cancel()
+        iuCyclingJob = null
         videoPlayerGeneration++
         videoReadyToShow = false
         videoSurfaceAlive = false
         videoPlayer?.removeListener(videoPlayerListener)
         videoPlayer?.release()
         videoPlayer = null
-        if (currentFile?.name?.startsWith("chunk-") == true) currentFile?.delete()
-        if (nextFile?.name?.startsWith("chunk-") == true) nextFile?.delete()
-        currentFile = null
-        nextFile = null
-        iuCyclingJob?.cancel()
-        iuCyclingJob = null
+        currentAudioFile?.delete()
+        currentAudioFile = null
+        currentPlayerSceneKey = null
         binding = null
         super.onDestroyView()
     }

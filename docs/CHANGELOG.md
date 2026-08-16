@@ -32,6 +32,24 @@ All notable changes to Animastor are documented here.
 
 ### Fixed
 
+- **Android: весь сценарий одной сцены играет ОДНИМ плеером (Media3
+  ExoPlayer + `MergingMediaSource`)** (`PlayFragment.kt`). Исследование
+  (ExoPlayer docs: "two tracks synchronized using the same internal clock")
+  показало: два независимых плеера (аудио MediaPlayer + видео ExoPlayer) —
+  антипаттерн; у них разные clock'и, а у video-only ExoPlayer clock ведётся
+  рендером кадров и замирает при пересоздании поверхности (Навигатор↔Плеер)
+  — отсюда «жуткие тормоза», рассинхрон и никогда не срабатывавший ручной
+  буфер-гейт. Теперь локальное аудио-файл сцены и сетевой видео-URL
+  мержатся в ОДИН ExoPlayer-источник (`MergingMediaSource`): единый clock →
+  дрейф/рассинхрон невозможны; `STATE_BUFFERING` паузит ОБЕ дорожки самим
+  плеером (аудио физически не может убежать вперёд) — «Загрузка…» стала
+  нативной, ручной гейт, speed-sync, join и deferred-play удалены (−371
+  строка нетто). Seek по юнитам — `seekTo` обеих дорожек сразу (same-scene —
+  без пересборки источника); слой video OFF = аудио-только источник (ноль
+  видео-трафика). Переходы между сценами: `STATE_ENDED` → `playNext()`
+  (аудио следующей сцены уже прекэшировано в ViewModel — граница короткая;
+  цена — отказ от gapless-цепочки MediaPlayer ради отсутствия дрейфа).
+
 - **Android: видео больше не «якорится» к старту юнита после unit-seek**
   (`PlayFragment.kt`). `pendingVideoTargetMs` (цель unit-навигации) не
   потреблялся в same-item ветке `playVideoFromUrl` (seek по той же сцене):
