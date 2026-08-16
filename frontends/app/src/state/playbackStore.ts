@@ -144,6 +144,16 @@ let videoEl: HTMLVideoElement | null = null;
 // Direct HTTP URL of the current scene's video (streamed progressively with
 // Range — the browser fetches moov + first samples, not the whole file).
 let videoSrcUrl: string | null = null;
+// Whether the current video src has decoded its first frame ('loadeddata').
+// Mirrors Android videoReadyToShow: the <video> element stays hidden (the
+// storyboard stays on top) until it actually has a frame to show — otherwise
+// the element paints black over the storyboard from src assignment until the
+// first frame decodes (Android fixed the same "video starts from black" via
+// STATE_READY / onRenderedFirstFrame gating). Reset when a NEW src is assigned
+// (playVideoOverlay / attachVideo re-src) or the element is torn down; kept
+// true across same-scene seeks and layer toggles so a visible frame never
+// disappears.
+let videoHasFrame = false;
 // Scene key of the whole-scene video currently loaded in videoEl. Used to
 // detect unit navigation WITHIN the same scene: the video file does not change
 // (blob URLs are recreated per fetch, so the scene key — not the URL — is the
@@ -426,7 +436,12 @@ export function resumePlayback(): void {
     try { void videoEl.play().catch(() => { }); } catch { /* ignore */ }
   }
   uiState.value = { ...uiState.value, phase: 'PLAYING' };
-  startIuCycling();
+  // Silent scenes (no audio player) resume their timer-based IU cycling the
+  // same way — Android parity (PlayFragment: startSilentIuCycling when no
+  // audio is targeted). Without this a silent scene paused by a tab switch
+  // never resumed its image cycling (startIuCycling needs an audio player).
+  if (currentPlayer) startIuCycling();
+  else if (currentIuSequence.value && currentIuSequence.value.length > 0) startSilentIuCycling();
 }
 
 /** Handle a media error (PlaybackViewModel.handlePlaybackError). */
@@ -637,7 +652,11 @@ export function attachVideo(el: HTMLVideoElement): void {
   el.addEventListener('error', onVideoError);
   el.addEventListener('waiting', onVideoWaiting);
   el.addEventListener('playing', onVideoPlaying);
+  el.addEventListener('loadeddata', onVideoFirstFrame);
   if (videoSrcUrl) {
+    // Fresh src assignment — any previously decoded frame is gone; hold the
+    // storyboard on top until the new src decodes its first frame.
+    videoHasFrame = false;
     currentVideoSceneKey = getCurrentSceneKey();
     el.src = videoSrcUrl;
     videoSrcSetAt = performance.now();
@@ -662,11 +681,13 @@ export function detachVideo(): void {
     videoEl.removeEventListener('error', onVideoError);
     videoEl.removeEventListener('waiting', onVideoWaiting);
     videoEl.removeEventListener('playing', onVideoPlaying);
+    videoEl.removeEventListener('loadeddata', onVideoFirstFrame);
     try { videoEl.pause(); } catch { /* ignore */ }
     videoEl.removeAttribute('src');
     videoEl = null;
   }
   currentVideoSceneKey = null;
+  videoHasFrame = false;
   resetVideoBuffering();
   updateLayers();
 }
@@ -1165,7 +1186,16 @@ function startSilentIuCycling(): void {
     const dur = ius[currentIuIndex].durationMs;
     silentTimer = window.setTimeout(() => {
       if (isPaused || ius !== currentIuSequence.value) return;
-      const nextIdx = (currentIuIndex + 1) % ius.length;
+      if (currentIuIndex >= ius.length - 1) {
+        // Last unit shown — the silent scene is done: advance to the next
+        // scene (Android parity — the silent scene must not cycle its images
+        // forever; playNext delivers the next scene: an audio one → handleChunk,
+        // a silent one → cycles in turn). No further timer is scheduled; the
+        // next scene starts its own cycling.
+        onAudioCompleted();
+        return;
+      }
+      const nextIdx = currentIuIndex + 1;
       currentIuIndex = nextIdx;
       uiState.value = { ...uiState.value, currentUnitIndex: nextIdx };
       showIu(ius[nextIdx]);
@@ -1274,9 +1304,12 @@ function updateSubtitleVisibility(): void {
   subtitleText.value = text ?? null;
 }
 
-/** updateLayers — videoSurface visibility (image layer handled in render). */
+/** updateLayers — videoSurface visibility (image layer handled in render).
+ *  The video only covers the storyboard once it has a frame to show
+ *  (videoHasFrame) — no black rectangle over the storyboard while the src
+ *  decodes (Android parity: videoReadyToShow). */
 function updateLayers(): void {
-  videoVisible.value = !!videoEl && !!videoSrcUrl && !videoEnded && layerVideo.value;
+  videoVisible.value = !!videoEl && !!videoSrcUrl && !videoEnded && videoHasFrame && layerVideo.value;
 }
 
 /** seekAttachedVideo — same whole-scene video (unit navigation within a
@@ -1338,6 +1371,9 @@ function playVideoOverlay(url: string, explicitSeekMs: number | null = null): vo
   videoSrcUrl = url;
   currentVideoSceneKey = getCurrentSceneKey();
   videoEnded = false;
+  // New src — the previous frame (if any) is gone: keep the storyboard on top
+  // until the first frame of the new src decodes (videoHasFrame).
+  videoHasFrame = false;
   // Explicit target in seconds — 0 is a valid target (unit 1 / scene start).
   // null = no explicit target → audio-sync fallback in applyVideoSeek.
   pendingVideoTargetSec = explicitSeekMs != null ? explicitSeekMs / 1000 : -1;
@@ -1383,6 +1419,13 @@ function applyVideoSeek(explicitSeekMs: number | null): void {
 
 function onVideoEnded(): void {
   videoEnded = true;
+  updateLayers();
+}
+
+/** First frame of the current src decoded — the storyboard can give way
+ *  (Android parity with STATE_READY / onRenderedFirstFrame gating). */
+function onVideoFirstFrame(): void {
+  videoHasFrame = true;
   updateLayers();
 }
 
@@ -1560,6 +1603,7 @@ export function stopAll(): void {
   }
   videoSrcUrl = null;
   videoEnded = false;
+  videoHasFrame = false;
   pendingVideoTargetSec = -1;
   currentVideoSceneKey = null;
   resetVideoBuffering();
