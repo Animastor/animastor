@@ -100,21 +100,6 @@
             android:visibility="gone"
             android:contentDescription="@null" />
 
-        <!-- TEMP: on-screen debug status (video cache / lifecycle) — remove after verification -->
-        <TextView
-            android:id="@+id/debugStatusText"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_gravity="top|start"
-            android:layout_margin="8dp"
-            android:paddingHorizontal="8dp"
-            android:paddingVertical="4dp"
-            android:background="#99000000"
-            android:textColor="#FFFFFF"
-            android:textSize="10sp"
-            android:typeface="monospace"
-            android:visibility="gone" />
-
         <!-- Fullscreen Toggle Button - bottom right, player style -->
         <ImageButton
             android:id="@+id/fullscreenButton"
@@ -244,5 +229,23 @@
         android:textSize="11sp"
         app:layout_constraintBottom_toTopOf="@id/playButton"
         app:layout_constraintEnd_toEndOf="parent" />
+
+    <!-- TEMP: on-screen debug status (video cache / lifecycle) — remove after verification.
+         Root-level (NOT inside mediaContainer): the SurfaceView is brought to front
+         over mediaContainer's children when video plays, which would cover it. -->
+    <TextView
+        android:id="@+id/debugStatusText"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_margin="8dp"
+        android:paddingHorizontal="8dp"
+        android:paddingVertical="4dp"
+        android:background="#99000000"
+        android:textColor="#FFFFFF"
+        android:textSize="10sp"
+        android:typeface="monospace"
+        android:visibility="gone"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintStart_toStartOf="parent" />
 
 </androidx.constraintlayout.widget.ConstraintLayout>
