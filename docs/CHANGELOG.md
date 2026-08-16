@@ -9,6 +9,23 @@ All notable changes to Animastor are documented here.
 ### Fixed
 
 - **Android: «чужая, соседняя» картинка сториборда после «Загрузка...» при
+  unit-seek — `showCurrentIu` показывал СТАРЫЙ юнит по устаревшему
+  `currentUnitIndex`** (`PlayFragment.kt`). Из логов: `manualPos i3 →
+  showCurrentIu idx=4 → stopAll seek=i3` — правильная картинка выбранного
+  юнита (manualPos) перезаписывалась картинкой ПРЕДЫДУЩЕГО юнита прямо перед
+  переключением (вызов из `onHiddenChanged(false)` при возврате с Navigator).
+  `showCurrentIu` теперь резолвит юнит по `pendingExternalSeek.unitId`
+  (авторитетен с момента тапа в Navigator, до stopAll), fallback —
+  `pendingExternalUnitId` / `currentUnitIndex`.
+
+- **Android: «экзоплеер умер» после unit-seek с play=false** — reveal-гейт в
+  `startIuCycling` стоял ПОСЛЕ `if (isPaused) continue`, поэтому при
+  позиционированной паузе видео никогда не раскрывалось (`PlayFragment.kt`).
+  Гейт перенесён до проверки паузы; добавлен watchdog в STATE_READY:
+  `videoSeekInFlight` сбрасывается и по достижению целевой позиции (на случай
+  отсутствия `DISCONTINUITY_REASON_SEEK` при seek на уже достигнутую позицию).
+
+- **Android: «чужая, соседняя» картинка сториборда после «Загрузка...» при
   unit-seek — `currentIuSequence` больше не обнуляется в `stopAll` при
   keepSurface-seek** (`PlayFragment.kt`). Конфликт двух фиксов: оверлей
   `showSelectedUnitImageNow` (8093532) показывал ПРАВИЛЬНУЮ картинку

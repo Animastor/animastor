@@ -398,7 +398,21 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         if (!isAdded) return
         val ius = currentIuSequence ?: return
         if (ius.isEmpty()) return
-        val idx = playbackViewModel.currentUnitIndex.coerceIn(0, ius.size - 1)
+        // Resolve by the pending external seek's unitId when one is in flight:
+        // currentUnitIndex is still the PREVIOUS unit until executePendingSeek
+        // runs (right after stopAll) — showing by the stale index overwrote the
+        // correct selected-unit image (manualPos) with the neighboring unit's
+        // picture right before the switch. pendingExternalSeek.unitId is
+        // authoritative from the moment the Navigator tapped (it is set before
+        // stopAll, unlike pendingExternalUnitId which is only set inside
+        // executePendingSeek). Same fallback chain as handleChunk.
+        var idx = playbackViewModel.currentUnitIndex.coerceIn(0, ius.size - 1)
+        val pendingUid = playbackViewModel.pendingExternalSeek?.unitId
+            ?: playbackViewModel.pendingExternalUnitId
+        if (pendingUid != null) {
+            val byId = ius.indexOfFirst { it.unitId == pendingUid }
+            if (byId >= 0) idx = byId
+        }
         debugLog("showCurrentIu -> idx=$idx unit=${ius[idx].unitId}")
         showIuImage(ius[idx].bitmap)
     }
@@ -1082,11 +1096,6 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                     continue
                 }
 
-                if (isPaused) {
-                    delay(500)
-                    continue
-                }
-
                 val pos = runCatching { player.currentPosition }.getOrNull() ?: -1L
                 if (pos < 0) {
                     delay(500)
@@ -1102,6 +1111,10 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                 // covering). The flag also guards the target=0 seek (unit 1):
                 // currentPosition already reports 0 while the seek is in
                 // flight, so a plain pos >= target would reveal too early.
+                // Runs BEFORE the isPaused gate: a positioned-pause after a
+                // unit-seek must still reveal the video's first frame at the
+                // selected unit (the old 120ms timer did; gating on isPaused
+                // here made the player look dead after a seek with play=false).
                 if (!videoReadyToShow && currentPlayerHasVideo && pendingRevealPosMs >= 0 &&
                     !videoSeekInFlight && pos >= pendingRevealPosMs
                 ) {
@@ -1109,6 +1122,11 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                     pendingRevealPosMs = -1L
                     debugLog("reveal video at pos=$pos >= target (seek done)")
                     updateLayers()
+                }
+
+                if (isPaused) {
+                    delay(500)
+                    continue
                 }
 
                 // Map position → unit index on the same timeline the seek
@@ -1315,6 +1333,19 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                     debugLog("READY pos=${runCatching { vp.currentPosition }.getOrNull()}ms dur=${runCatching { vp.duration }.getOrNull()}ms")
                     Log.i(TAG, "VID-LC ready: pos=${runCatching { vp.currentPosition }.getOrNull()}ms " +
                         "dur=${runCatching { vp.duration }.getOrNull()}ms gen=$videoCurrentGen")
+                    // Watchdog for the same-scene seek: DISCONTINUITY_REASON_SEEK
+                    // may not arrive (seek to an already-reached position), which
+                    // would leave videoSeekInFlight stuck true and the reveal
+                    // gate in startIuCycling would never fire — the player looks
+                    // dead after the seek. If READY reports the target position
+                    // already reached, the seek has effectively landed.
+                    if (videoSeekInFlight && pendingRevealPosMs >= 0) {
+                        val p = runCatching { vp.currentPosition }.getOrNull() ?: -1L
+                        if (p >= pendingRevealPosMs) {
+                            videoSeekInFlight = false
+                            Log.i(TAG, "VID-LC ready: seek landed (position watchdog)")
+                        }
+                    }
                     // The screen left view while the item was preparing — it can
                     // still become READY in the background. Buffer it, but never
                     // start on a hidden screen.
