@@ -8,6 +8,23 @@ All notable changes to Animastor are documented here.
 
 ### Changed
 
+- **Android: persistent disk-cache для видео (Media3 SimpleCache +
+  CacheDataSource)** (`util/VideoCache.kt`, `PlayFragment.kt`). Видео-URL
+  сцены стримится через `CacheDataSource.Factory` поверх штатного upstream:
+  уже полученные Range-диапазоны пишутся на диск и при повторном seek
+  читаются из кэша без сети; недостающие диапазоны запрашиваются HTTP Range
+  и затем кэшируются (stream-as-you-play — ничего не пре-скачивается).
+  Кэш — application-scoped синглтон, лимит 250 МБ с LRU-eviction
+  (`LeastRecentlyUsedCacheEvictor`), переживает пересоздание Fragment и
+  открытия Player Screen; при порче БД — одноразовый wipe + rebuild, при
+  неудаче плеер играет без кэша. Задействуется только для сетевого
+  видео-URL: audio-only сцены, выключенный видео-слой и локальное аудио
+  видео-кэш не трогают (аудио осталось на своей фабрике, аудио-кэш
+  SimpleDiskCache не тронут). Один живущий ExoPlayer, `setMediaItem` при
+  смене сцены и мгновенный `seekTo` внутри сцены сохранены. Временные
+  диагностические логи `VID-CACHE` (cacheSpace / read from disk) — убрать
+  после проверки hit/miss.
+
 - **Android: видеодвижок переведён с MediaPlayer на Media3 ExoPlayer**
   (`PlayFragment.kt`). Причина: старый цикл create→prepare→seek→play→destroy
   на каждое действие давал неустранимые гонки — «UI показывает готово, а video

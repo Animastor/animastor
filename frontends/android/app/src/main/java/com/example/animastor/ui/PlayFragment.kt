@@ -15,6 +15,7 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.VideoSize
 import androidx.media3.datasource.DefaultDataSource
+import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.MergingMediaSource
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
@@ -23,6 +24,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.example.animastor.R
 import com.example.animastor.databinding.FragmentPlayBinding
+import com.example.animastor.util.VideoCache
 import java.io.File
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -1137,8 +1139,13 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
             } else {
                 currentPlayerSceneKey = sceneKey
                 currentPlayerHasVideo = includeVideo
-                val dataSourceFactory = DefaultDataSource.Factory(requireContext())
-                val audioSource = ProgressiveMediaSource.Factory(dataSourceFactory)
+                // Audio stays on the plain local-file factory; ONLY the network
+                // video URL goes through the persistent disk cache (Media3
+                // SimpleCache + CacheDataSource): already-fetched ranges are read
+                // from disk on repeat seeks, missing ranges are fetched via HTTP
+                // Range and then cached. Nothing is pre-downloaded.
+                val localFactory = DefaultDataSource.Factory(requireContext())
+                val audioSource = ProgressiveMediaSource.Factory(localFactory)
                     .createMediaSource(MediaItem.fromUri(Uri.fromFile(audioFile)))
                 val source = if (includeVideo) {
                     val chId = sceneKey?.substringBefore(':')
@@ -1147,7 +1154,25 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                         audioSource
                     } else {
                         val videoUrl = playbackViewModel.buildSceneVideoUrl(chId, scId)
-                        val videoSource = ProgressiveMediaSource.Factory(dataSourceFactory)
+                        val videoFactory = VideoCache.dataSourceFactory(requireContext(), localFactory)
+                            .let { factory ->
+                                // TEMP diagnostics: cache hit/miss (remove after verification).
+                                if (factory is CacheDataSource.Factory) {
+                                    factory.setEventListener(object : CacheDataSource.EventListener {
+                                        override fun onCachedBytesRead(cacheBytesRead: Long, elapsedMs: Long) {
+                                            Log.i(TAG, "VID-CACHE read from disk: ${cacheBytesRead}B in ${elapsedMs}ms")
+                                        }
+                                        override fun onCacheIgnored(reason: Int) {
+                                            Log.d(TAG, "VID-CACHE cache ignored: reason=$reason")
+                                        }
+                                    })
+                                }
+                                factory
+                            }
+                        VideoCache.get(requireContext())?.let {
+                            Log.i(TAG, "VID-CACHE target: cacheSpace=${it.getCacheSpace()}B")
+                        }
+                        val videoSource = ProgressiveMediaSource.Factory(videoFactory)
                             .createMediaSource(MediaItem.fromUri(Uri.parse(videoUrl)))
                         MergingMediaSource(audioSource, videoSource)
                     }
