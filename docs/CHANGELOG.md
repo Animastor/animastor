@@ -66,6 +66,21 @@ All notable changes to Animastor are documented here.
   (аудио следующей сцены уже прекэшировано в ViewModel — граница короткая;
   цена — отказ от gapless-цепочки MediaPlayer ради отсутствия дрейфа).
 
+- **Android: видеослой гарантированно убирается на сценах без видео**
+  (`PlayFragment.kt`). Раньше при переходе с видеосцены на сцену без видео
+  (аудио-только источник) `STATE_READY` всё равно срабатывал и поднимал
+  surface с последним кадром предыдущего видео поверх сториборда — экран
+  «залипал» на последнем кадре (toggle не помогал: `videoReadyToShow` оставался
+  true), а через Navigator поверх сториборда был чёрный экран. Теперь
+  `updateLayers` различает источники БЕЗ видео-дорожки (`hasVideoTrack` =
+  плеер есть && `currentPlayerHasVideo`): для аудио-только источника surface
+  скрывается ЦЕЛИКОМ (`INVISIBLE`, `videoSurfaceAlive=false`) — последний кадр
+  не висит, сториборд виден; `targetScene` не воскрешает surface для
+  аудио-только источника; listener ставит `videoReadyToShow` только при
+  наличии видео-дорожки. Работает одинаково для автоматического перехода и
+  навигации через Navigator; следующая видеосцена пересоздаёт surface
+  штатно (ExoPlayer re-attach на surfaceCreated).
+
 - **Android: видео больше не «якорится» к старту юнита после unit-seek**
   (`PlayFragment.kt`). `pendingVideoTargetMs` (цель unit-навигации) не
   потреблялся в same-item ветке `playVideoFromUrl` (seek по той же сцене):

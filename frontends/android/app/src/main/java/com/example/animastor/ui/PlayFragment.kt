@@ -589,23 +589,26 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
             b.coverImage.visibility = View.VISIBLE
         }
         // The video only covers the storyboard once it has actually rendered a
-        // frame (videoReadyToShow). Until then the surface would be black, so
-        // the storyboard stays on top — the user sees the unit's image while
-        // the stream prepares instead of a black hole.
-        val showVideo = b.layerVideo.isChecked && videoPlayer != null && videoReadyToShow
+        // frame (videoReadyToShow) AND the current source has a video track
+        // (currentPlayerHasVideo). An AUDIO-ONLY source (scene without video)
+        // has no frames: the surface must be hidden entirely, or the LAST FRAME
+        // of the previous video scene lingers on screen, covering the
+        // storyboard (the reported bug — also visible as black via Navigator).
+        val hasVideoTrack = videoPlayer != null && currentPlayerHasVideo
+        val showVideo = b.layerVideo.isChecked && hasVideoTrack && videoReadyToShow
         if (showVideo) {
             if (b.videoSurface.visibility != View.VISIBLE) {
                 b.videoSurface.visibility = View.VISIBLE
             }
             // Video on top of the storyboard. IMPORTANT: the SurfaceView is
-            // never hidden once a player exists — hiding a SurfaceView destroys
-            // its surface and kills the MediaPlayer (the root cause of every
-            // "video doesn't come back / desyncs" layer bug). Web parity: the
-            // video element keeps playing under display:none, so here the video
-            // player keeps playing behind the storyboard and re-shows already
-            // synced to the audio.
+            // never hidden once a video track is loaded — hiding it destroys
+            // the surface and the player must re-attach (safe for ExoPlayer,
+            // but a fresh surface briefly shows black while re-rendering). Web
+            // parity: the video element keeps playing under display:none, so
+            // here the video player keeps playing behind the storyboard and
+            // re-shows already synced to the audio.
             b.videoSurface.bringToFront()
-        } else if (videoPlayer != null) {
+        } else if (hasVideoTrack) {
             // Layer off (or video still preparing): keep the surface ALIVE and
             // put an opaque view on top of its hole instead of hiding it.
             if (b.videoSurface.visibility != View.VISIBLE) {
@@ -620,17 +623,13 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                 b.curtainsImage.bringToFront()
             }
         } else {
-            // No player yet — the async video-delivery gap during scene change /
-            // unit seek (handleChunk runs before the delivery arrives). If this
-            // surface ever rendered video, KEEP it alive (hiding it destroys the
-            // surface and the upcoming seek's player would attach to a dead
-            // surface: black + server-died errors), but keep the storyboard on
-            // top so the user never sees black.
-            if (videoSurfaceAlive) {
-                b.videoSurface.visibility = View.VISIBLE
-            } else {
-                b.videoSurface.visibility = View.INVISIBLE
-            }
+            // No video track (audio-only scene) — hide the surface ENTIRELY:
+            // the previous scene's last frame must not linger over the
+            // storyboard. Safe: an audio-only source needs no surface; the next
+            // video scene re-creates it via targetScene (ExoPlayer re-attaches
+            // natively on surfaceCreated).
+            b.videoSurface.visibility = View.INVISIBLE
+            videoSurfaceAlive = false
             if (imageOn) {
                 b.resultImage.bringToFront()
             } else if (b.coverImage.drawable != null) {
@@ -1109,8 +1108,13 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
             videoCurrentGen = videoPlayerGeneration
             val startedAt = SystemClock.elapsedRealtime()
             val b = binding ?: return
-            b.videoSurface.visibility = View.VISIBLE
-            videoSurfaceAlive = true
+            // Only a source WITH a video track needs the surface alive. An
+            // audio-only source must NOT resurrect the surface here — its
+            // last-frame buffer would linger over the storyboard.
+            if (includeVideo) {
+                b.videoSurface.visibility = View.VISIBLE
+                videoSurfaceAlive = true
+            }
             val player = videoPlayer ?: createVideoPlayer().also { videoPlayer = it }
             val sceneKey = playbackViewModel.getCurrentSceneKey()
             val sameScene = sceneKey != null && sceneKey == currentPlayerSceneKey && includeVideo == currentPlayerHasVideo
@@ -1177,12 +1181,15 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                     // start on a hidden screen.
                     if (isHidden || !isAdded) {
                         runCatching { vp.pause() }
-                        videoReadyToShow = true
+                        if (currentPlayerHasVideo) videoReadyToShow = true
                         Log.i(TAG, "VID-LC ready while hidden — staying paused")
                         return
                     }
-                    // First frame rendered — the storyboard can give way.
-                    videoReadyToShow = true
+                    // First frame rendered — the storyboard can give way. Only
+                    // for sources WITH a video track: an audio-only source
+                    // (scene without video) has no frames, and videoReadyToShow
+                    // must stay false so the lingering surface stays hidden.
+                    if (currentPlayerHasVideo) videoReadyToShow = true
                     updateLayers()
                     startIuCycling()
                     // Phase follows the play intent: READY + playWhenReady →
