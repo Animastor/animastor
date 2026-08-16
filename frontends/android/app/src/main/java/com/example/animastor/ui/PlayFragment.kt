@@ -75,6 +75,10 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
     // source rebuild / no re-download).
     private var currentPlayerSceneKey: String? = null
     private var currentPlayerHasVideo = false
+    // Guards the scene-advance (ENDED → playNext) against double-firing: the
+    // transition can be triggered by STATE_ENDED and by the iuCycling watchdog;
+    // reset when the next scene is targeted.
+    private var advancePending = false
     private var isPaused = false
     // Whether the whole-scene video has rendered its first frame and may cover
     // the storyboard. While false, the storyboard stays on TOP and the surface
@@ -292,7 +296,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                 // current position. A source that already includes the video is
                 // kept as-is (instant re-show via updateLayers, no re-download).
                 val af = currentAudioFile
-                if (af != null && (!currentPlayerHasVideo || videoPlayer == null)) {
+                if (af != null && playbackViewModel.pendingSceneHasVideo && (!currentPlayerHasVideo || videoPlayer == null)) {
                     val cur = (videoPlayer?.currentPosition ?: 0).toLong()
                     targetScene(af, cur, includeVideo = true, playIntent = !isPaused)
                 }
@@ -704,7 +708,13 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         currentAudioFile?.delete()
         val file = writeTemp(audio)
         currentAudioFile = file
-        val includeVideo = binding?.layerVideo?.isChecked == true
+        // ExoPlayer plays AUDIO natively (no video track needed): include the
+        // network video only when the layer is on AND the scene actually has a
+        // whole-scene video file (backend video_ready) — otherwise an audio-only
+        // source is built from the start (no merge with a dead video URL, no 404
+        // round-trip, the scene just plays).
+        val sceneHasVideo = playbackViewModel.pendingSceneHasVideo
+        val includeVideo = binding?.layerVideo?.isChecked == true && sceneHasVideo
         if (pendingLoad) {
             // External unit seek / rotation resume: the scene loads POSITIONED
             // but paused — the user presses Play to start (matches the old
@@ -786,7 +796,16 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
 
                 if (!isAdded || isPaused || ius != currentIuSequence) continue
 
-                val nextIdx = (currentIuIndex + 1) % ius.size
+                if (currentIuIndex >= ius.size - 1) {
+                    // Last unit shown — the silent scene is done: advance to the
+                    // next scene (playNext delivers the next scene: audio one →
+                    // re-targets the player; silent one → cycles it in turn).
+                    Log.i(TAG, "silent scene done — advancing to next scene")
+                    playbackViewModel.onAudioCompleted()
+                    return@launch
+                }
+
+                val nextIdx = currentIuIndex + 1
                 currentIuIndex = nextIdx
                 playbackViewModel.currentUnitIndex = nextIdx
                 showIuImage(ius[nextIdx])
@@ -944,7 +963,18 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                 }
                 val ius = currentIuSequence
                 val player = videoPlayer
-                if (ius.isNullOrEmpty() || player == null || player.playbackState != Player.STATE_READY) {
+                if (ius.isNullOrEmpty() || player == null) {
+                    delay(500)
+                    continue
+                }
+                // Watchdog for the scene transition: if the player reached the
+                // end but STATE_ENDED didn't fire (merged-source duration
+                // quirks), advance anyway. onTrackEnd is idempotent.
+                if (player.playbackState == Player.STATE_ENDED) {
+                    onTrackEnd()
+                    return@launch
+                }
+                if (player.playbackState != Player.STATE_READY) {
                     delay(500)
                     continue
                 }
@@ -1010,8 +1040,12 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
      *  bytes are usually already preloaded by the ViewModel, so the re-target
      *  (handleChunk → targetScene) is fast; the single-player model prefers
      *  this tiny boundary gap over the old two-player gapless chain (which
-     *  traded it for clock drift and desync). */
+     *  traded it for clock drift and desync). Idempotent: may be triggered by
+     *  STATE_ENDED and by the iuCycling watchdog; [advancePending] collapses
+     *  double-fires. */
     private fun onTrackEnd() {
+        if (advancePending) return
+        advancePending = true
         Log.i(TAG, "onTrackEnd: isPaused=$isPaused")
         try {
             viewLifecycleOwner.lifecycleScope.launch {
@@ -1119,6 +1153,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                 player.setMediaSources(listOf(source), 0, startPosMs)
                 player.prepare()
                 player.playWhenReady = playIntent
+                advancePending = false
                 Log.i(TAG, "scene set (prepare) in ${SystemClock.elapsedRealtime() - startedAt}ms")
             }
         } catch (e: Exception) {
@@ -1195,7 +1230,21 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         override fun onPlayerError(error: PlaybackException) {
             Log.e(TAG, "VID-LC error: ${error.errorCodeName} ${error.message} gen=$videoCurrentGen")
             if (videoCurrentGen != videoPlayerGeneration) return // stale (previous item)
-            // Stream failed (404 / network) — fall back to the storyboard layer
+            // The VIDEO child of the merged source failed (missing video file /
+            // 404 / network) while the LOCAL audio is fine — fall back to an
+            // AUDIO-ONLY source so the scene still plays (web parity: scenes
+            // without video are audio-only). A missing video must not kill the
+            // whole scene (that also silently broke scene transitions when the
+            // NEXT scene had no video).
+            if (currentPlayerHasVideo && currentAudioFile != null) {
+                val af = currentAudioFile!!
+                val pos = runCatching { videoPlayer?.currentPosition }.getOrNull() ?: 0L
+                Log.w(TAG, "VID-LC video stream failed — falling back to audio-only (pos=$pos)")
+                currentPlayerSceneKey = null
+                targetScene(af, pos, includeVideo = false, playIntent = !isPaused)
+                return
+            }
+            // Real (audio-side) failure — fall back to the storyboard layer
             // and unblock the player if it was showing "Загрузка…".
             videoReadyToShow = false
             currentPlayerSceneKey = null

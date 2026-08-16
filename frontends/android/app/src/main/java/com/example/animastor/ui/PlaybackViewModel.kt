@@ -114,6 +114,11 @@ class PlaybackViewModel(
     var pendingSceneAudio: ByteArray? = null
     var pendingSceneVideo: ByteArray? = null
     var pendingSceneIuSequence: List<IuImageItem>? = null
+    // Whether the CURRENT scene has a whole-scene video file ready
+    // (backend status.video_ready). The fragment uses it to build an
+    // audio-only ExoPlayer source for scenes without video — ExoPlayer plays
+    // audio natively, no merging with a dead video URL, no 404 round-trip.
+    var pendingSceneHasVideo = false
     var lastProcessedSceneSequence: Long = 0
     private var sceneSeqCounter = 0L
 
@@ -326,6 +331,7 @@ class PlaybackViewModel(
             pendingSceneAudio = null
             pendingSceneVideo = null
             pendingSceneIuSequence = null
+            pendingSceneHasVideo = false
             Log.i(TAG, "refreshContent: player PLAYING — proactively reloading current scene (index=$currentIndex)")
             // Trigger immediate reload: the next fragment tick will see
             // the state change to SCENE_READY (via stale player detection),
@@ -341,6 +347,7 @@ class PlaybackViewModel(
             pendingSceneAudio = null
             pendingSceneVideo = null
             pendingSceneIuSequence = null
+            pendingSceneHasVideo = false
             Log.i(TAG, "refreshContent: player PAUSED — marked needsContentRefresh")
             return
         }
@@ -667,6 +674,7 @@ class PlaybackViewModel(
         pendingSceneAudio = null
         pendingSceneVideo = null
         pendingSceneIuSequence = null
+        pendingSceneHasVideo = false
         lastProcessedSceneSequence = 0
         needsRotationResume = false
         pendingExternalSeek = null
@@ -719,7 +727,7 @@ class PlaybackViewModel(
         val cached = preloadCache.remove("${buildId}_$sceneKey")
         if (cached != null) {
             Log.i(TAG, "playNext: using preloaded data for $sceneKey")
-            emitScene(cached.audioBytes, cached.videoBytes, cached.iuSequence)
+            emitScene(cached.audioBytes, cached.videoBytes, cached.iuSequence, cached.hasVideo)
             preloadAhead()
             return
         }
@@ -732,7 +740,7 @@ class PlaybackViewModel(
             val cachedAfter = preloadCache.remove("${buildId}_$sceneKey")
             if (cachedAfter != null) {
                 Log.i(TAG, "playNext: preload completed for $sceneKey")
-                emitScene(cachedAfter.audioBytes, cachedAfter.videoBytes, cachedAfter.iuSequence)
+                emitScene(cachedAfter.audioBytes, cachedAfter.videoBytes, cachedAfter.iuSequence, cachedAfter.hasVideo)
                 preloadAhead()
                 return@launch
             }
@@ -751,17 +759,18 @@ class PlaybackViewModel(
 
             Log.i(TAG, "delivering scene $sceneKey")
             _uiState.update { it.copy(previewImage = null) }
-            emitScene(sceneData.audioBytes, sceneData.videoBytes, sceneData.iuSequence)
+            emitScene(sceneData.audioBytes, sceneData.videoBytes, sceneData.iuSequence, sceneData.hasVideo)
             preloadAhead()
         }
     }
 
-    private fun emitScene(audio: ByteArray, video: ByteArray?, iuSequence: List<IuImageItem>?) {
+    private fun emitScene(audio: ByteArray, video: ByteArray?, iuSequence: List<IuImageItem>?, hasVideo: Boolean = false) {
         val seq = ++sceneSeqCounter
-        Log.i(TAG, "emitScene #$seq: audio=${audio.size}B ius=${iuSequence?.size ?: 0} → PLAYING")
+        Log.i(TAG, "emitScene #$seq: audio=${audio.size}B ius=${iuSequence?.size ?: 0} hasVideo=$hasVideo → PLAYING")
         pendingSceneAudio = audio
         pendingSceneVideo = video
         pendingSceneIuSequence = iuSequence
+        pendingSceneHasVideo = hasVideo
         _uiState.update { it.copy(phase = PlayerPhase.PLAYING, chunkSequence = seq) }
     }
 

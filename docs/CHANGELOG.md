@@ -32,6 +32,22 @@ All notable changes to Animastor are documented here.
 
 ### Fixed
 
+- **Android: переходы между сценами + сцены без видео** (`PlayFragment.kt`,
+  `PlaybackViewModel.kt`). (1) Флаг `video_ready` из бэкенда больше не
+  теряется: `emitScene` пробрасывает `hasVideo`, и `handleChunk` строит
+  источник с учётом реального наличия видео-файла сцены. Сцена без видео
+  играет **аудио-только источником** (ExoPlayer нативно играет аудио без
+  видео-дорожки — без merge с мёртвым URL и без ожидания 404); раньше
+  несуществующий видео-URL ронял весь `MergingMediaSource` (включая аудио) —
+  сцена «не работала» и ломала переход на следующую. (2) Страховка в
+  `onPlayerError`: если видео-дорожка всё же ошиблась (флаг устарел / файл
+  пропал) — фолбэк на аудио-только источник, сцена продолжает играть.
+  (3) Silent-сцены (без аудио) после последнего юнита продвигаются на
+  следующую сцену (раньше циклировали картинки вечно). (4) Watchdog
+  перехода: если `STATE_ENDED` не пришёл (нюансы merged-длительности),
+  iuCycling продвигает сцену сам; `advancePending` защищает от двойного
+  срабатывания (STATE_ENDED + watchdog).
+
 - **Android: весь сценарий одной сцены играет ОДНИМ плеером (Media3
   ExoPlayer + `MergingMediaSource`)** (`PlayFragment.kt`). Исследование
   (ExoPlayer docs: "two tracks synchronized using the same internal clock")
