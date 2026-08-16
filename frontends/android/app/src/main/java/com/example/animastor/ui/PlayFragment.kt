@@ -78,6 +78,11 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
     // source rebuild / no re-download).
     private var currentPlayerSceneKey: String? = null
     private var currentPlayerHasVideo = false
+    // Video content version (?v= in the scene video URL) of the item loaded in
+    // the player. A regenerated scene keeps the same scene key but gets a new
+    // version — including it in the same-scene check makes the instant-seek
+    // path (no source rebuild) refuse a stale source after regeneration.
+    private var currentPlayerVideoVersion: Long = 0
     // Guards the scene-advance (ENDED → playNext) against double-firing: the
     // transition can be triggered by STATE_ENDED and by the iuCycling watchdog;
     // reset when the next scene is targeted.
@@ -1202,7 +1207,9 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
             }
             val player = videoPlayer ?: createVideoPlayer().also { videoPlayer = it }
             val sceneKey = playbackViewModel.getCurrentSceneKey()
-            val sameScene = sceneKey != null && sceneKey == currentPlayerSceneKey && includeVideo == currentPlayerHasVideo
+            val sameScene = sceneKey != null && sceneKey == currentPlayerSceneKey &&
+                includeVideo == currentPlayerHasVideo &&
+                currentPlayerVideoVersion == playbackViewModel.currentVideoVersion
             Log.i(TAG, "scene target: scene=$sceneKey pos=${startPosMs}ms video=$includeVideo play=$playIntent same=$sameScene gen=$videoCurrentGen")
             debugLog("target same=$sameScene pos=${startPosMs}ms v=$includeVideo play=$playIntent")
             if (sameScene && player.playbackState != Player.STATE_IDLE) {
@@ -1225,6 +1232,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
             } else {
                 currentPlayerSceneKey = sceneKey
                 currentPlayerHasVideo = includeVideo
+                currentPlayerVideoVersion = playbackViewModel.currentVideoVersion
                 // Audio stays on the plain local-file factory; ONLY the network
                 // video URL goes through the persistent disk cache (Media3
                 // SimpleCache + CacheDataSource): already-fetched ranges are read
@@ -1545,8 +1553,15 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         currentIuSequence = null
         playbackViewModel.currentIuSequence = null
         currentIuIndex = 0
-        currentPlayerSceneKey = null
-        currentPlayerHasVideo = false
+        // For keepSurface (external unit-seek) the player keeps its CURRENT
+        // scene source: currentPlayerSceneKey/currentPlayerHasVideo are only
+        // cleared in the non-keep branch below. Nulling them here broke BOTH
+        // the sameScene instant-seek in targetScene AND resumePlayback's
+        // targeted-scene guard — after a unit switch the guard saw a null key
+        // and force-reloaded the scene via playNext, which (not in the external
+        // seek mode) reset currentUnitIndex=0 and pendingExternalUnitId=null →
+        // handleChunk showed the FIRST unit's storyboard and seeked the video
+        // to 0: the reported "neighboring/foreign unit picture after Загрузка".
         currentAudioFile?.delete()
         currentAudioFile = null
         // Snapshot BEFORE pausing: only a surface that actually rendered video
@@ -1595,6 +1610,8 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
             } else {
                 videoSurfaceAlive = false
                 b.videoSurface.visibility = View.INVISIBLE
+                currentPlayerSceneKey = null
+                currentPlayerHasVideo = false
                 if (b.coverImage.drawable != null) {
                     b.coverImage.visibility = View.VISIBLE
                 } else {

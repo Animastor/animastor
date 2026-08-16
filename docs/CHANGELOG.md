@@ -8,6 +8,23 @@ All notable changes to Animastor are documented here.
 
 ### Fixed
 
+- **Android: «чужая, соседняя» картинка сториборда после «Загрузка...» при
+  unit-seek — потеря seek-контекста при нажатии Play** (`PlayFragment.kt`).
+  Корневая причина найдена по git-истории: `stopAll` при внешнем unit-seek
+  обнулял `currentPlayerSceneKey` — из-за этого (1) `targetScene` всегда
+  пересобирал источник (`same=false` на каждом переключении юнита той же
+  сцены, повторная загрузка видео вместо мгновенного `seekTo`) и (2)
+  `resumePlayback` при нажатии Play видел «нет загруженной сцены» и
+  принудительно перезагружал сцену через `playNext` — а тот вне режима
+  внешнего seek сбрасывал `currentUnitIndex=0` и `pendingExternalUnitId=null`,
+  и `handleChunk` показывал картинку ПЕРВОГО юнита и seek'ал видео в 0.
+  Теперь `stopAll(keepSurface=true)` сохраняет `currentPlayerSceneKey` /
+  `currentPlayerHasVideo`: unit-навигация той же сцены идёт мгновенным
+  `seekTo` без пересборки/повторной докачки, а Play просто возобновляет
+  воспроизведение с выбранной позиции. В same-scene проверку добавлена
+  `currentPlayerVideoVersion` (?v= URL) — после регенерации сцены инстант-seek
+  откажется от устаревшего источника и пересоберёт его заново.
+
 - **Android: «чужая» картинка после «Загрузка...» при выборе юнита — это
   обложка, а не соседний юнит** (`PlayFragment.kt`). Диагностика на
   устройстве показала: механизм seek корректен (`extId → seekTo → READY pos`
