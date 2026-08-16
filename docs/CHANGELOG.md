@@ -94,6 +94,24 @@ All notable changes to Animastor are documented here.
   инициализации, покрывает и `ensureInitialized`).
   Проверки: `tsc --noEmit` + `vite build` OK.
 
+- **Android: после внешнего unit-seek больше не промигивает картинка первого
+  юнита** (`PlayFragment.kt`). Причина — «чужой» `SharedPositionManager.navigateTo`
+  warmup'а восстановления сессии / завершения генерации (GenerateViewModel
+  ставит позицию на ПЕРВУЮ сцену, юнит 0, без игнорирования контекста):
+  (1) `observeManualUnitChange` реагировал на любое изменение позиции и
+  показывал `ius[pos.unitIndex]` ТОЛЬКО по индексу, без проверки сцены —
+  warmup'овый `navigateTo(0)` давал одно-кадровую вспышку `ius[0]` текущей
+  сцены поверх играющего видео (видео при этом не трогалось и продолжало
+  играть выбранный юнит); (2) `handleChunk` читал seek-цель из
+  `SharedPositionManager.current.value.unitIndex` — если warmup попадал в окно
+  DOWNLOADING, цель сбрасывалась на 0 и видео начало бы играть с начала.
+  Фикс: `handleChunk` использует авторитетный `playbackViewModel.currentUnitIndex`
+  (ставится `executePendingSeek`/`playNext`, внешние navigateTo его не трогают;
+  web-паритет — web читает свой `currentUnitIndex`, не позицию);
+  `observeManualUnitChange` игнорирует позиции вне загруженной сцены
+  (сверка chapterId/sceneId) — легитимные внутри-сценные смены проходят как
+  раньше. Проверка: `compileDebugKotlin` ✓.
+
 - **Web Player: паритет поведения с Android — silent-сцены продвигаются на
   следующую сцену, silent-циклинг возобновляется после паузы, видео без
   чёрного старта** (`frontends/app/src/state/playbackStore.ts`):

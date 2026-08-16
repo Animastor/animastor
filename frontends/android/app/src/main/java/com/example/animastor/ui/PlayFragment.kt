@@ -142,6 +142,18 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         viewLifecycleOwner.lifecycleScope.launch {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 SharedPositionManager.current.collect { pos ->
+                    // Only react to positions INSIDE the scene currently loaded
+                    // in the player. The unit index alone is not enough: foreign
+                    // navigateTo calls (the boot session-restore / generation
+                    // warmup pointing at the FIRST scene, unit 0) would otherwise
+                    // flash the wrong unit's image over the playing scene — the
+                    // reported "первый юнит промигивает" right after an external
+                    // unit seek. Same-scene manual changes still pass through.
+                    val chId = playbackViewModel.currentChapterId
+                    val scId = playbackViewModel.currentSceneId
+                    if (chId == null || scId == null || pos.chapterId != chId || pos.sceneId != scId) {
+                        return@collect
+                    }
                     val ius = currentIuSequence
                     val idx = pos.unitIndex
                     if (!ius.isNullOrEmpty() && idx in ius.indices && idx != currentIuIndex) {
@@ -664,7 +676,14 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         // audio frame counts), so BOTH the audio and the video seek to the same
         // position — the final muxed product has a single timeline. Priority:
         // externally selected unit → rotation-resume position.
-        val targetUnit = SharedPositionManager.current.value.unitIndex
+        // Authoritative unit index for the CURRENT scene (set by
+        // executePendingSeek / playNext), NOT the global shared position: the
+        // boot session-restore / generation warmup navigates to the FIRST
+        // scene (unit 0), and if that lands while the scene is downloading, the
+        // seek target would be clobbered to 0 — the video would start from the
+        // beginning instead of the selected unit. Web parity: the web reads its
+        // module-level currentUnitIndex here, never the position store.
+        val targetUnit = playbackViewModel.currentUnitIndex
         val seekToUnit = if (targetUnit > 0 && !iuSequence.isNullOrEmpty() && targetUnit < iuSequence.size) targetUnit else 0
         val pendingRotMs = playbackViewModel.pendingSeekPositionMs
         val seekMs = when {
