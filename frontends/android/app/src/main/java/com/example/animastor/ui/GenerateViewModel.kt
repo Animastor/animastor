@@ -1906,7 +1906,13 @@ data class IuImageItem(
     // audio/video timeline (image_units.start_ms). Null when the backend
     // hasn't timed the scene yet — callers then fall back to cumulative
     // durationMs. This is the same anchor the Edit screen preview seeks to.
-    val startMs: Long? = null
+    val startMs: Long? = null,
+    // Server-computed position (ms) of this unit on the whole-scene VIDEO
+    // timeline (video_start_ms from the storyboard API). The video drifts
+    // ahead of the audio/start_ms timeline on LTX builds, so the player must
+    // seek the scene video by this value; audio keeps seeking by startMs.
+    // Null when the backend didn't measure the video files.
+    val videoStartMs: Long? = null
 )
 
 enum class IuStatus {

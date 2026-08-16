@@ -82,6 +82,10 @@ export interface IuImageItem {
   status: IuStatus;
   /** Server-computed start (ms) on the whole-scene timeline (start_ms). */
   startMs: number | null;
+  /** Server-measured position (ms) on the whole-scene VIDEO timeline
+   *  (video_start_ms — the video drifts ahead of start_ms on LTX builds).
+   *  Null when the backend didn't measure the video files. */
+  videoStartMs: number | null;
 }
 export interface PreloadedScene {
   audio: Blob;
@@ -853,6 +857,7 @@ interface RawIu {
   text: string | null;
   status: IuStatus;
   startMs: number | null;
+  videoStartMs: number | null;
 }
 interface SceneAssets {
   audio: Blob;
@@ -903,6 +908,7 @@ async function fetchSceneData(sceneKey: string): Promise<PreloadedScene> {
       text: iu.text,
       status: iu.status,
       startMs: iu.startMs,
+      videoStartMs: iu.videoStartMs,
     })),
   };
 }
@@ -933,11 +939,12 @@ async function fetchIuSequence(chapterId: string, sceneId: string): Promise<RawI
       const durationMs = iu.duration_ms ?? 200; // N1: server-computed; floor fallback
       const text = iu.text ?? null;
       const startMs = iu.start_ms ?? null;
+      const videoStartMs = iu.video_start_ms ?? null;
       try {
         const blob = await getIuImageBlob(chapterId, sceneId, iu.unit_id);
-        return { blob, durationMs, unitId: iu.unit_id ?? null, text, status: 'READY' as IuStatus, startMs };
+        return { blob, durationMs, unitId: iu.unit_id ?? null, text, status: 'READY' as IuStatus, startMs, videoStartMs };
       } catch {
-        return { blob: null, durationMs, unitId: iu.unit_id ?? null, text, status: 'NOT_GENERATED' as IuStatus, startMs };
+        return { blob: null, durationMs, unitId: iu.unit_id ?? null, text, status: 'NOT_GENERATED' as IuStatus, startMs, videoStartMs };
       }
     }));
   } catch {
@@ -1109,10 +1116,16 @@ function handleChunk(scene: PreloadedScene): void {
   updateLayers();
 }
 
-/** Start offset (ms) of a unit on the whole-scene timeline (audio = start_ms,
- *  the canonical position — the video is aligned to the same timeline at merge
- *  time). Falls back to cumulative durationMs for legacy storyboards. */
+/** Start offset (ms) of a unit on the whole-scene timeline. Prefers the
+ *  server-measured VIDEO position (videoStartMs) — the whole-scene video
+ *  drifts ahead of the audio/start_ms timeline on LTX builds (8n+1 tax per
+ *  group), so seeking by start_ms lands inside the PREVIOUS unit's clip.
+ *  Falls back to the audio start_ms (canonical — the video is aligned to the
+ *  audio timeline at merge time on exact-timed builds), then to cumulative
+ *  durationMs for legacy storyboards without timestamps. */
 function unitStartMs(ius: IuImageItem[], unitIndex: number): number {
+  const videoStartMs = ius[unitIndex]?.videoStartMs;
+  if (videoStartMs != null && videoStartMs > 0) return videoStartMs;
   const startMs = ius[unitIndex]?.startMs;
   if (startMs != null && startMs > 0) return startMs;
   let seekMs = 0;

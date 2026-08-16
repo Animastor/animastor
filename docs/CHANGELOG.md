@@ -6,6 +6,30 @@ All notable changes to Animastor are documented here.
 
 ## [Unreleased] — 2026-08-16
 
+### Added
+
+- **video_start_ms — модельно-агностичное выравнивание таймлайна видео**
+  (backend + Android + web). Плееры сeкают whole-scene видео по позиции юнита
+  на РЕАЛЬНОМ видео-таймлайне (`video_start_ms`), а не по аудио-`start_ms`.
+  На LTX-билдах каждый клип группы округляется до валидного 8n+1 кадров и
+  видео-таймлайн уезжает ВПЕРЁД относительно аудио — seek по `start_ms`
+  попадал в хвост ПРЕДЫДУЩЕГО юнита (кадр, похожий на его сториборд).
+
+  - `backend/src/video/video-timeline.js`: измерение теперь модельно-агностичное:
+    1) merged-файл `{prefix}.mp4` (если выровнен, ±0.5s) — probe frame PTS и
+    первый кадр at-or-after каждой аудио-границы; 2) групповые файлы `_gN.mp4` —
+    толерантный матчинг: измеренный group frame count может равняться и точной
+    сумме (non-LTX, напр. Minimax H3), и LTX-округлённому значению (8n+1);
+    3) identity-фолбэк: видео = аудио (без допущения о налоге).
+  - Роут `/api/v1/scene/:bookId/:chapterId/:sceneId/storyboard` вызывает
+    `computeVideoStartMs` и отдаёт `video_start_ms` на каждый юнит (best-effort,
+    кэш 5 мин).
+  - Android: `IuItem.video_start_ms` → `IuImageItem.videoStartMs` →
+    `unitStartMs()` предпочитает видео-позицию, фолбэк `startMs`/кумулятивный.
+  - Web: `StoryboardIu.video_start_ms` → `IuImageItem.videoStartMs` →
+    `unitStartMs()` аналогично.
+  - Для exact-timed билдов (не-LTX) измерение равно `start_ms` — no-op.
+
 ### Fixed
 
 - **Android: временно отключены все показы картинки-«покрывала» при

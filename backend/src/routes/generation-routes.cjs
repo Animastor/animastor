@@ -11,6 +11,7 @@
 const path = require('path');
 const fs = require('fs');
 const multer = require('multer');
+const videoTimeline = require('../video/video-timeline');
 
 module.exports = function(app, redis, deps) {
     const {
@@ -892,6 +893,19 @@ module.exports = function(app, redis, deps) {
                 } else {
                     iu.duration_ms = 2000;
                 }
+            }
+
+            // Per-unit positions on the WHOLE-SCENE VIDEO timeline. Players seek
+            // the scene video by video_start_ms (its real timeline, measured from
+            // the merged/group files) instead of start_ms (the audio timeline) —
+            // on LTX builds the video drifts ahead of audio, and seeking to
+            // start_ms lands in the previous unit. Model-agnostic: on exact-timed
+            // builds (e.g. Minimax H3) the measurement equals start_ms and is a
+            // no-op. Best-effort: failures leave video_start_ms absent.
+            try {
+                await videoTimeline.computeVideoStartMs(ius, buildId, bookId, chapterId, sceneId, OUTPUT_DIR);
+            } catch (tlErr) {
+                console.warn(`[SCENE STORYBOARD] video_start_ms failed for ${bookId}/${chapterId}/${sceneId}: ${tlErr.message}`);
             }
 
             res.json({ book_id: bookId, chapter_id: chapterId, scene_id: sceneId, build_id: buildId, ius });

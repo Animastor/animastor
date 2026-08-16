@@ -20,5 +20,10 @@ data class IuItem(
     val start_ms: Long? = null,
     val end_ms: Long? = null,
     // Server-computed playback duration (interval → estimate → 2000ms default).
-    val duration_ms: Long? = null
+    val duration_ms: Long? = null,
+    // Server-computed position of this unit on the whole-scene VIDEO timeline
+    // (the video drifts ahead of the audio/start_ms timeline on LTX builds —
+    // players must seek the scene video by video_start_ms, not start_ms).
+    // Absent when the backend couldn't measure the video files.
+    val video_start_ms: Long? = null
 )

@@ -848,11 +848,16 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         updateLayers()
     }
 
-    /** Start offset (ms) of a unit inside the whole-scene timeline (audio =
-     *  start_ms, the canonical position — the video is aligned to the same
-     *  timeline at merge time). Falls back to the cumulative durationMs sum for
-     *  legacy storyboards without timestamps. */
+    /** Start offset (ms) of a unit inside the whole-scene timeline. Prefers the
+     *  server-measured VIDEO position (video_start_ms) — the whole-scene video
+     *  drifts ahead of the audio/start_ms timeline on LTX builds (8n+1 tax per
+     *  group), so seeking by start_ms lands inside the PREVIOUS unit's clip.
+     *  Falls back to the audio start_ms (canonical — video is aligned to the
+     *  audio timeline at merge time on exact-timed builds), then to the
+     *  cumulative durationMs sum for legacy storyboards without timestamps. */
     private fun unitStartMs(ius: List<IuImageItem>, unitIndex: Int): Long {
+        val videoStartMs = ius.getOrNull(unitIndex)?.videoStartMs
+        if (videoStartMs != null && videoStartMs > 0) return videoStartMs
         val startMs = ius.getOrNull(unitIndex)?.startMs
         if (startMs != null && startMs > 0) return startMs
         var seekMs = 0L
@@ -1686,18 +1691,18 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
             isInCurtainsState = false
             stopPulse()
             if (keepSurface && hadVideo) {
-                // External unit-seek / scene load: keep the surface ALIVE (so
-                // the next video re-target never has to re-attach a fresh
-                // surface — that would flash black until the first frame
-                // renders) but cover it right away with a NEUTRAL placeholder.
-                // The previous unit's video frame / storyboard must never be
-                // visible during the switch; the SELECTED unit's storyboard is
-                // overlaid as soon as it is available (showSelectedUnitImageNow
-                // below — same-scene image instantly, other scenes via a fast
-                // single-image fetch), then handleChunk delivers the full scene
-                // and the video reveals on its first rendered frame.
-                videoSurfaceAlive = true
-                b.videoSurface.visibility = View.VISIBLE
+                // External unit-seek / scene load. TEMP behavior per user: the
+                // old approach kept the surface ALIVE+VISIBLE with the previous
+                // unit's stale video frame on it while the new range loaded, and
+                // every storyboard overlay used to cover it showed the WRONG
+                // (neighboring) unit's image — the user asked to just show a
+                // BLACK screen instead ("лучше чёрный экран"). So: hide the
+                // surface entirely (it is recreated on reveal and ExoPlayer
+                // re-attaches natively, rendering the seeked frame) and show a
+                // neutral cover/curtains placeholder — NO unit picture, NO stale
+                // frame.
+                videoSurfaceAlive = false
+                b.videoSurface.visibility = View.INVISIBLE
                 if (b.coverImage.drawable != null) {
                     b.coverImage.visibility = View.VISIBLE
                     b.coverImage.bringToFront()
