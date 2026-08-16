@@ -14,7 +14,10 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.VideoSize
+import androidx.media3.datasource.DataSource
+import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.DefaultDataSource
+import androidx.media3.datasource.TransferListener
 import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.MergingMediaSource
@@ -1106,6 +1109,34 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
      * carries the play intent across prepare — an early Play press is never
      * lost, and readiness is the player's own STATE_READY, never a UI guess.
      */
+    private fun mb(bytes: Long): String = "%.1fMB".format(bytes / 1048576.0)
+
+    /** TEMP: logs every upstream (network) open — unambiguous cache HIT/MISS
+     *  proof. CacheDataSource opens the upstream ONLY on a cache miss (missing
+     *  byte range): a re-seek into an already-cached range produces NO network
+     *  open; a new range produces "VID-NET open: pos=… len=…". Remove after
+     *  verification. */
+    private inner class NetLogDataSourceFactory(
+        private val base: DataSource.Factory
+    ) : DataSource.Factory {
+        override fun createDataSource(): DataSource = object : DataSource {
+            private val inner = base.createDataSource()
+            override fun addTransferListener(transferListener: TransferListener) =
+                inner.addTransferListener(transferListener)
+            override fun open(dataSpec: DataSpec): Long {
+                val len = inner.open(dataSpec)
+                debugStatus("VID-NET open: pos=${dataSpec.position} len=${dataSpec.length}")
+                return len
+            }
+            override fun read(buffer: ByteArray, offset: Int, length: Int): Int =
+                inner.read(buffer, offset, length)
+            override fun getUri(): Uri? = inner.uri
+            override fun getResponseHeaders(): MutableMap<String, MutableList<String>> =
+                inner.getResponseHeaders()
+            override fun close() = inner.close()
+        }
+    }
+
     /** TEMP diagnostics: log to logcat AND mirror on the player screen (device
      *  testing without adb). Debug builds only. Remove after verification. */
     private fun debugStatus(msg: String) {
@@ -1169,13 +1200,15 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                         audioSource
                     } else {
                         val videoUrl = playbackViewModel.buildSceneVideoUrl(chId, scId)
-                        val videoFactory = VideoCache.dataSourceFactory(requireContext(), localFactory)
+                        val videoFactory = VideoCache.dataSourceFactory(requireContext(), NetLogDataSourceFactory(localFactory))
                             .let { factory ->
                                 // TEMP diagnostics: cache hit/miss (remove after verification).
+                                // Media3: onCachedBytesRead(cacheSizeBytes, cachedBytesRead) —
+                                // 1st = total cache size, 2nd = bytes read FROM the cache.
                                 if (factory is CacheDataSource.Factory) {
                                     factory.setEventListener(object : CacheDataSource.EventListener {
-                                        override fun onCachedBytesRead(cacheBytesRead: Long, elapsedMs: Long) {
-                                            debugStatus("VID-CACHE read from disk: ${cacheBytesRead}B in ${elapsedMs}ms")
+                                        override fun onCachedBytesRead(cacheSizeBytes: Long, cachedBytesRead: Long) {
+                                            debugStatus("VID-CACHE cached: cacheSize=${mb(cacheSizeBytes)} readFromCache=${mb(cachedBytesRead)}")
                                         }
                                         override fun onCacheIgnored(reason: Int) {
                                             Log.d(TAG, "VID-CACHE cache ignored: reason=$reason")
@@ -1185,7 +1218,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                                 factory
                             }
                         VideoCache.get(requireContext())?.let {
-                            debugStatus("VID-CACHE target: cacheSpace=${it.getCacheSpace()}B")
+                            debugStatus("VID-CACHE target: cacheSpace=${mb(it.getCacheSpace())}")
                         }
                         val videoSource = ProgressiveMediaSource.Factory(videoFactory)
                             .createMediaSource(MediaItem.fromUri(Uri.parse(videoUrl)))
