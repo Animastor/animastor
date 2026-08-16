@@ -9,6 +9,20 @@ All notable changes to Animastor are documented here.
 ### Fixed
 
 - **Android: «чужая, соседняя» картинка сториборда после «Загрузка...» при
+  unit-seek — `currentIuSequence` больше не обнуляется в `stopAll` при
+  keepSurface-seek** (`PlayFragment.kt`). Конфликт двух фиксов: оверлей
+  `showSelectedUnitImageNow` (8093532) показывал ПРАВИЛЬНУЮ картинку
+  выбранного юнита, но `stopAll` тут же обнулял `currentIuSequence`, и блок
+  SCENE_READY (5d580db) видел пустую последовательность → `hasUnitImage` =
+  false → прятал правильную картинку → открывалась generic cover / старый
+  кадр (соседний юнит). Теперь при keepSurface (внешний unit-seek той же
+  сцены) последовательность сохраняется (меняется только `currentIuIndex` +
+  seekTo), обнуляется только при реальном stop. Reveal видео дополнительно
+  гейтится флагом `videoSeekInFlight` (ставится при `seekTo`, снимается по
+  `DISCONTINUITY_REASON_SEEK`) + позицией ≥ target — старый кадр не
+  показывается как «покрывало» даже при seek в позицию 0 (первый юнит).
+
+- **Android: «чужая, соседняя» картинка сториборда после «Загрузка...» при
   unit-seek — потеря seek-контекста при нажатии Play** (`PlayFragment.kt`).
   Корневая причина найдена по git-истории: `stopAll` при внешнем unit-seek
   обнулял `currentPlayerSceneKey` — из-за этого (1) `targetScene` всегда

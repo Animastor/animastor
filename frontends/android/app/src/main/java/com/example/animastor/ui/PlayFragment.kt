@@ -83,6 +83,13 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
     // version — including it in the same-scene check makes the instant-seek
     // path (no source rebuild) refuse a stale source after regeneration.
     private var currentPlayerVideoVersion: Long = 0
+    // Seek target of the in-flight same-scene instant seek. The video surface
+    // must NOT cover the storyboard until the player is actually positioned at
+    // this target and rendering — revealing on a 120ms timer exposed the
+    // PREVIOUS unit's stale frame while the new video range buffered (the
+    // reported "picture of a neighboring unit" that appears with the video
+    // load). -1 = no pending same-scene reveal.
+    private var pendingRevealPosMs = -1L
     // Guards the scene-advance (ENDED → playNext) against double-firing: the
     // transition can be triggered by STATE_ENDED and by the iuCycling watchdog;
     // reset when the next scene is targeted.
@@ -122,6 +129,13 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
     // overlay fetch: bumped on every new unit selection and every scene
     // delivery, so a stale image fetch can never overwrite what is on screen.
     private var selectedUnitImageGen = 0L
+    // True while a same-scene seekTo is in flight: set in targetScene right
+    // after seekTo(), cleared by the DISCONTINUITY_REASON_SEEK callback. The
+    // position-gated reveal (startIuCycling) only shows the video once the
+    // seek landed — otherwise the stale previous-unit frame would show as the
+    // covering (and unit-1 seeks to pos 0 would reveal before the seek even
+    // started).
+    private var videoSeekInFlight = false
 
     private fun checkPendingExternalSeek() {
         if (playbackViewModel.pendingExternalSeek != null) {
@@ -176,6 +190,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                     }
                     if (!ius.isNullOrEmpty() && idx in ius.indices && idx != currentIuIndex) {
                         currentIuIndex = idx
+                        debugLog("manualPos ${pos.unitId ?: "-"}/i${pos.unitIndex} -> idx=$idx unit=${ius[idx].unitId}")
                         showIuImage(ius[idx].bitmap)
                     }
                 }
@@ -384,6 +399,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         val ius = currentIuSequence ?: return
         if (ius.isEmpty()) return
         val idx = playbackViewModel.currentUnitIndex.coerceIn(0, ius.size - 1)
+        debugLog("showCurrentIu -> idx=$idx unit=${ius[idx].unitId}")
         showIuImage(ius[idx].bitmap)
     }
 
@@ -1077,6 +1093,24 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                     continue
                 }
 
+                // Same-scene seek reveal: the video surface may cover the
+                // storyboard only once the player is actually positioned at
+                // the seek target AND the seek has completed (videoSeekInFlight
+                // cleared by the DISCONTINUITY_REASON_SEEK callback) — never
+                // while the new range buffers or the old frame is still on the
+                // surface (the stale previous-unit frame would show as the
+                // covering). The flag also guards the target=0 seek (unit 1):
+                // currentPosition already reports 0 while the seek is in
+                // flight, so a plain pos >= target would reveal too early.
+                if (!videoReadyToShow && currentPlayerHasVideo && pendingRevealPosMs >= 0 &&
+                    !videoSeekInFlight && pos >= pendingRevealPosMs
+                ) {
+                    videoReadyToShow = true
+                    pendingRevealPosMs = -1L
+                    debugLog("reveal video at pos=$pos >= target (seek done)")
+                    updateLayers()
+                }
+
                 // Map position → unit index on the same timeline the seek
                 // uses: server start_ms boundaries when present (handles gaps the
                 // user created in Edit), else cumulative durationMs (legacy).
@@ -1219,20 +1253,22 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                 // target — it must not be skipped.
                 player.seekTo(startPosMs)
                 player.playWhenReady = playIntent
-                if (player.playbackState == Player.STATE_READY) {
-                    // The seeked frame renders shortly — reveal the video (a
-                    // ~100ms render delay is invisible behind the storyboard).
-                    viewLifecycleOwner.lifecycleScope.launch {
-                        delay(120)
-                        videoReadyToShow = true
-                        updateLayers()
-                    }
-                }
-                Log.i(TAG, "scene same-item seek: ${startPosMs}ms")
+                // NO timer-based reveal here: videoReadyToShow stays false and
+                // the storyboard keeps covering the surface until the player is
+                // actually positioned at the seek target AND the seek completed
+                // (checked in startIuCycling via videoSeekInFlight + position).
+                // The old 120ms reveal exposed the previous unit's stale frame
+                // while the new video range buffered.
+                videoSeekInFlight = true
+                pendingRevealPosMs = startPosMs
+                debugLog("target same: seek to $startPosMs, reveal gated at pos >= $startPosMs")
+                Log.i(TAG, "scene same-item seek: ${startPosMs}ms (reveal gated)")
             } else {
                 currentPlayerSceneKey = sceneKey
                 currentPlayerHasVideo = includeVideo
                 currentPlayerVideoVersion = playbackViewModel.currentVideoVersion
+                pendingRevealPosMs = -1L
+                videoSeekInFlight = false
                 // Audio stays on the plain local-file factory; ONLY the network
                 // video URL goes through the persistent disk cache (Media3
                 // SimpleCache + CacheDataSource): already-fetched ranges are read
@@ -1292,7 +1328,14 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                     // for sources WITH a video track: an audio-only source
                     // (scene without video) has no frames, and videoReadyToShow
                     // must stay false so the lingering surface stays hidden.
-                    if (currentPlayerHasVideo) videoReadyToShow = true
+                    if (currentPlayerHasVideo && pendingRevealPosMs < 0) {
+                        // Full (re)build path — the source starts at its target
+                        // position; reveal right away. The same-scene instant
+                        // path leaves pendingRevealPosMs set and reveals in
+                        // startIuCycling only once pos >= target.
+                        videoReadyToShow = true
+                        debugLog("READY: reveal (full source)")
+                    }
                     updateLayers()
                     startIuCycling()
                     // Phase follows the play intent: READY + playWhenReady →
@@ -1328,6 +1371,17 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
 
         override fun onIsPlayingChanged(isPlaying: Boolean) {
             Log.i(TAG, "VID-LC isPlaying=$isPlaying gen=$videoCurrentGen")
+        }
+
+        override fun onPositionDiscontinuity(
+            oldPosition: Player.PositionInfo,
+            newPosition: Player.PositionInfo,
+            reason: Int
+        ) {
+            if (reason == Player.DISCONTINUITY_REASON_SEEK) {
+                videoSeekInFlight = false
+                Log.i(TAG, "VID-LC seek landed at ${newPosition.positionMs}ms gen=$videoCurrentGen")
+            }
         }
 
         override fun onVideoSizeChanged(videoSize: VideoSize) {
@@ -1545,14 +1599,24 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         Log.i(TAG, "stopAll keepSurface=$keepSurface")
         iuCyclingJob?.cancel()
         iuCyclingJob = null
-        // Snapshot BEFORE clearing: the same-scene fast path of
-        // showSelectedUnitImageNow (called below for keepSurface seeks) needs
-        // the already-loaded IU sequence to overlay the selected unit's image
-        // instantly — by the time the overlay runs, the field is already null.
+        // Snapshot for showSelectedUnitImageNow (below): the same-scene fast
+        // path overlays the SELECTED unit's image from the already-loaded IU
+        // sequence. For keepSurface (external unit-seek) the loaded sequence is
+        // KEPT — the seek only changes currentIuIndex and the video position.
+        // Nulling it here made the SCENE_READY collector see an empty sequence
+        // and hide the correct selected-unit image, revealing the generic cover
+        // / old frame over the loading video — the "foreign/neighboring unit
+        // picture" (the 8093532 overlay vs the 5d580db SCENE_READY conflict:
+        // the overlay shows the right image, then SCENE_READY removes it
+        // because currentIuSequence was nulled). Only a real stop (non-keep)
+        // clears the sequence; a cross-scene seek replaces it via handleChunk
+        // anyway.
         val savedIuSequence = currentIuSequence
-        currentIuSequence = null
-        playbackViewModel.currentIuSequence = null
-        currentIuIndex = 0
+        if (!keepSurface) {
+            currentIuSequence = null
+            playbackViewModel.currentIuSequence = null
+            currentIuIndex = 0
+        }
         // For keepSurface (external unit-seek) the player keeps its CURRENT
         // scene source: currentPlayerSceneKey/currentPlayerHasVideo are only
         // cleared in the non-keep branch below. Nulling them here broke BOTH
@@ -1572,6 +1636,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         // the same instance via targetScene.
         videoPlayerGeneration++
         videoReadyToShow = false
+        videoSeekInFlight = false
         runCatching { videoPlayer?.pause() }
         isPaused = false
         val b = binding
