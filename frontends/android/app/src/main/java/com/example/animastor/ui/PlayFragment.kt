@@ -1514,13 +1514,33 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
             isInCurtainsState = false
             stopPulse()
             if (keepSurface && hadVideo) {
-                // External unit-seek / scene load: keep the surface ALIVE so it
-                // holds the last rendered frame while the next video prepares —
-                // the new video frame then swaps in directly, with NO cover or
-                // black flash in between (hiding the surface destroys it and
-                // forces a blank/cover gap until the new frame renders).
+                // External unit-seek / scene load: keep the surface ALIVE (so
+                // the next video re-target never has to re-attach a fresh
+                // surface — a re-attached surface would flash black until its
+                // first frame renders) BUT cover it right away with the
+                // previous unit's storyboard image. The stale last video frame
+                // must not stay visible during the fetch — it caused the
+                // "triple flash" (old video frame → new unit's storyboard → new
+                // video frame). The storyboard keeps visual continuity until
+                // handleChunk swaps in the SELECTED unit's image; the video
+                // then reveals on its first rendered frame as usual.
                 videoSurfaceAlive = true
                 b.videoSurface.visibility = View.VISIBLE
+                if (b.layerImage.isChecked && b.resultImage.drawable != null) {
+                    b.resultImage.visibility = View.VISIBLE
+                    b.resultImage.bringToFront()
+                } else if (b.coverImage.drawable != null) {
+                    b.coverImage.visibility = View.VISIBLE
+                    b.coverImage.bringToFront()
+                } else {
+                    b.curtainsImage.visibility = View.VISIBLE
+                    b.curtainsImage.bringToFront()
+                }
+                // Keep the UI overlays above the flipped media layers
+                // (updateLayers does the same at the end of its runs).
+                b.previewOverlay.bringToFront()
+                b.subtitleText.bringToFront()
+                b.fullscreenButton.bringToFront()
             } else {
                 videoSurfaceAlive = false
                 b.videoSurface.visibility = View.INVISIBLE
