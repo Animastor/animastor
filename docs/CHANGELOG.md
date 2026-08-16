@@ -25,6 +25,14 @@ All notable changes to Animastor are documented here.
   диагностические логи `VID-CACHE` (cacheSpace / read from disk) — убрать
   после проверки hit/miss.
 
+- **Android: временный on-screen debug-статус** (`PlayFragment.kt`,
+  `fragment_play.xml`). Ключевые события видео-жизненного цикла и кэша
+  (`VID-LC ready/buffering/ended/error`, `scene target/seek/prepare`,
+  `VID-CACHE cacheSpace/read from disk`) дублируются в маленький оверлей в
+  левом верхнем углу плеера (последние 6 строк, только debug-сборки) —
+  проверка кэша и стриминга на устройстве без adb/logcat. Временный —
+  убрать после подтверждения.
+
 - **Android: видеодвижок переведён с MediaPlayer на Media3 ExoPlayer**
   (`PlayFragment.kt`). Причина: старый цикл create→prepare→seek→play→destroy
   на каждое действие давал неустранимые гонки — «UI показывает готово, а video
