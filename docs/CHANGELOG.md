@@ -6,6 +6,16 @@ All notable changes to Animastor are documented here.
 
 ## [Unreleased] — 2026-08-16
 
+### Debug (temporary)
+
+- **Android: временный on-screen debug переключения юнитов**
+  (`PlayFragment.kt` + `fragment_play.xml`): маленький жёлтый оверлей сверху
+  плеера с таймлайном unit-switch — `stopAll` (seek id/index), `chunk`
+  (extId/ius/byId/seekTo/seekMs), `target` (same/pos/video), `READY` (pos),
+  `cycle` (позиция → индекс → unitId), `SCENE_READY hide`. Для диагностики
+  «после Загрузка показывается картинка соседнего юнита». Будет удалён после
+  проверки.
+
 ### Fixed
 
 - **Выбор юнита из Navigator — маппинг по `unitId`, а не по индексу

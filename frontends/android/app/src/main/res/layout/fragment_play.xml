@@ -116,6 +116,24 @@
 
     </FrameLayout>
 
+    <!-- TEMP DEBUG: unit-switch timeline (remove after verification) -->
+    <TextView
+        android:id="@+id/debugStatusText"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:layout_marginStart="6dp"
+        android:background="#CC000000"
+        android:paddingHorizontal="6dp"
+        android:paddingVertical="3dp"
+        android:textColor="#FFE066"
+        android:textSize="8sp"
+        android:fontFamily="monospace"
+        android:maxLines="14"
+        android:visibility="gone"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintStart_toStartOf="parent" />
+
     <!-- Layer Controls — cinema console -->
     <HorizontalScrollView
         android:id="@+id/layerBar"

@@ -3,6 +3,7 @@ package com.example.animastor.ui
 import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Bundle
+import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
 import android.view.MotionEvent
@@ -550,6 +551,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
 
                         if (state.phase == PlayerPhase.SCENE_READY) {
                             val showResult = displayImage != null
+                            if (!showResult) debugLog("SCENE_READY hide resultImage (no preview)")
                             b.resultImage.visibility = if (showResult) View.VISIBLE else View.INVISIBLE
                             if (showResult) {
                                 b.resultImage.setImageBitmap(displayImage)
@@ -718,6 +720,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
             playbackViewModel.currentUnitIndex = targetUnit
         }
         val seekToUnit = if (targetUnit > 0 && !iuSequence.isNullOrEmpty() && targetUnit < iuSequence.size) targetUnit else 0
+        Log.i(TAG, "chunk resolve: extId=${playbackViewModel.pendingExternalUnitId} byId=$targetUnit cur=${playbackViewModel.currentUnitIndex} seekTo=$seekToUnit")
         val pendingRotMs = playbackViewModel.pendingSeekPositionMs
         val seekMs = when {
             seekToUnit > 0 && !iuSequence.isNullOrEmpty() -> unitStartMs(iuSequence, seekToUnit)
@@ -725,6 +728,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
             else -> 0L
         }
         if (seekMs > 0) playbackViewModel.pendingSeekPositionMs = -1
+        debugLog("chunk extId=${playbackViewModel.pendingExternalUnitId ?: "-"} ius=[${iuSequence?.take(6)?.joinToString(",") { it.unitId ?: "?" }}] cur=${playbackViewModel.currentUnitIndex} -> seekTo=$seekToUnit ms=$seekMs")
 
         if (seekToUnit > 0 && !iuSequence.isNullOrEmpty()) {
             val target = iuSequence[seekToUnit]
@@ -1077,6 +1081,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                     if (isPaused) continue
                     playbackViewModel.currentUnitIndex = idx
                     showIuImage(ius[idx])
+                    debugLog("cycle pos=$pos -> idx=$idx -> ${ius[idx].unitId}")
                     updateSubtitleIfEnabled(ius[idx].text)
                     SharedPositionManager.navigateTo(
                         chapterId = playbackViewModel.currentChapterId,
@@ -1179,6 +1184,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
             val sceneKey = playbackViewModel.getCurrentSceneKey()
             val sameScene = sceneKey != null && sceneKey == currentPlayerSceneKey && includeVideo == currentPlayerHasVideo
             Log.i(TAG, "scene target: scene=$sceneKey pos=${startPosMs}ms video=$includeVideo play=$playIntent same=$sameScene gen=$videoCurrentGen")
+            debugLog("target same=$sameScene pos=${startPosMs}ms v=$includeVideo play=$playIntent")
             if (sameScene && player.playbackState != Player.STATE_IDLE) {
                 // Same scene re-target (unit navigation within the scene):
                 // instant seek — both tracks seek together, no re-download.
@@ -1242,6 +1248,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
             val vp = videoPlayer ?: return
             when (playbackState) {
                 Player.STATE_READY -> {
+                    debugLog("READY pos=${runCatching { vp.currentPosition }.getOrNull()}ms dur=${runCatching { vp.duration }.getOrNull()}ms")
                     Log.i(TAG, "VID-LC ready: pos=${runCatching { vp.currentPosition }.getOrNull()}ms " +
                         "dur=${runCatching { vp.duration }.getOrNull()}ms gen=$videoCurrentGen")
                     // The screen left view while the item was preparing — it can
@@ -1506,6 +1513,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
     }
 
     fun stopAll(keepSurface: Boolean = false) {
+        debugLog("stopAll keep=$keepSurface seek=${playbackViewModel.pendingExternalSeek?.let { "${it.unitId}/i${it.unitIndex}" } ?: "-"}")
         Log.i(TAG, "stopAll keepSurface=$keepSurface")
         iuCyclingJob?.cancel()
         iuCyclingJob = null
@@ -1585,6 +1593,21 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
             }
         }
         anchorFullscreenToImage()
+    }
+
+    // ── TEMP DEBUG: on-screen unit-switch timeline (remove after verification) ──
+    private val debugLines = ArrayDeque<String>()
+    private fun debugLog(msg: String) {
+        val line = "${System.currentTimeMillis() % 100000}: $msg"
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            view?.post { debugLog(msg) }
+            return
+        }
+        val b = binding ?: return
+        debugLines.addLast(line)
+        while (debugLines.size > 14) debugLines.removeFirst()
+        b.debugStatusText.text = debugLines.joinToString("\n")
+        b.debugStatusText.visibility = View.VISIBLE
     }
 
     /** When an external unit seek starts, cover the live surface with the
