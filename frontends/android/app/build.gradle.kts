@@ -67,4 +67,7 @@ dependencies {
     implementation("com.squareup.retrofit2:converter-gson:2.11.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
     implementation("androidx.media3:media3-exoplayer:1.5.1")
+
+    // T2.2: reveal-gate unit tests (PlayerGateTest.kt — pure JVM, no device).
+    testImplementation("junit:junit:4.13.2")
 }

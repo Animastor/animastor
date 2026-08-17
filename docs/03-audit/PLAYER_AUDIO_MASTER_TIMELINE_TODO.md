@@ -40,9 +40,18 @@ Web `playbackStore.ts:1434,1494`) проверяет только нижнюю �
   либо добавить проверку рендера.
 
 ### [T2.2] Тест-сценарии
-- [ ] Seek → первый кадр есть, позиция < гейта → не показываем.
-- [ ] Позиция >= гейта, первый кадр ещё не готов → не показываем.
-- [ ] Оба условия выполнены → показываем.
+- [x] Seek → первый кадр есть, позиция < гейта → не показываем.
+- [x] Позиция >= гейта, первый кадр ещё не готов → не показываем.
+- [x] Оба условия выполнены → показываем.
+
+Реализовано как юнит-тесты на ОБЕИХ платформах (логика гейта вынесена в чистые
+модули, `shouldRevealSeekVideo` — чистая AND-функция, используется в рантайме
+Android: `startIuCycling`; Web: `onVideoTimeUpdate`):
+- Web: `frontends/app/src/state/playbackGate.ts` + `playbackGate.test.ts` (vitest —
+  14 тестов: 3 сценария AND-гейта + клампинг `unitRevealGateSec` — короткий юнит,
+  последний юнит, legacy-cumulative, fallback без границ).
+- Android: `PlayerGate.kt` + `PlayerGateTest.kt` (JUnit 4, `:app:testDebugUnitTest` —
+  16 тестов: те же сценарии + `unitRevealGateMs`/`unitStartMs`/`unitEndMs`).
 
 ---
 
@@ -94,7 +103,18 @@ Guard `idx == 0 && currentIuIndex != 0` — корректная защита о
 
 - [x] Описать состояния: `IDLE / LOADING_SCENE / SHOWING_STORYBOARD / SEEKING /
   VIDEO_READY / PLAYING / PAUSED`.
-- [ ] Свести флаги к одному источнику истины для selectedUnit.
+- [x] Свести флаги к одному источнику истины для selectedUnit: пара
+  `currentIuSequence`/`currentIuIndex` заменена единым `selectedUnit`
+  (Android: `SelectedUnit(sequence, index)` в `PlayFragment.kt`; Web: `selectedUnit`
+  в `playbackStore.ts`). 7 состояний реализованы как хранимое состояние
+  (`playerState` + `transition()`; таблица переходов — в дизайн-доке).
+- [x] Снести семантические флаги: `isPaused`, `videoReadyToShow`/`videoHasFrame`,
+  `videoSeekInFlight`, `pendingRevealPosMs`/`pendingVideoRevealSec` — стали
+  read-only accessor'ами состояния; все записи заменены на `transition()`
+  (`SEEKING` несёт payload: `revealGateMs` / `seekLanded` / `paused`).
+  Guard/one-shot поля (`advancePending`, `pendingLoad`, `pendingRevealGen`,
+  поколения, `videoSurfaceAlive`, `sceneTransitionPending`/`nextChainReady`,
+  `videoEnded`) остаются полями по таблице дизайн-дока.
 - [x] Не добавлять новые флаги до этого рефактора.
 
 Дизайн: `docs/05-frontend/PLAYER_STATE_MACHINE_DESIGN.md`.
@@ -116,9 +136,9 @@ Guard `idx == 0 && currentIuIndex != 0` — корректная защита о
 | T1.1 Reveal-гейт с верхней границей | ✅ Done |
 | T1.2 Последний юнит сцены | ✅ Done (код; ручной тест — T4) |
 | T2.1 AND first-frame + position | ✅ Done |
-| T2.2 Тест-сценарии gate | 📝 Plan |
+| T2.2 Тест-сценарии gate | ✅ Done (Web: vitest 14/14; Android: JUnit 16/16) |
 | T3.1 Инвариант index vs unitId | ✅ Done (verify) |
 | T4 Регрессионные сценарии | 📝 Plan |
 | T5 Разделить две 150 | ✅ Done |
-| T6 State machine | 🔧 In progress (дизайн готов; рефактор флагов — отдельный этап) |
+| T6 State machine | ✅ Done (selectedUnit — единый источник истины; 7 состояний — хранимое состояние + transition(); семантические флаги снесены в accessors) |
 | T7 video_start_ms правило | ✅ Done |
