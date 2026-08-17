@@ -101,9 +101,9 @@ Guard `idx == 0 && currentIuIndex != 0` — корректная защита о
 
 ## Этап 7: Правило на будущее — video_start_ms (⚪ Doc)
 
-- [ ] Зафиксировать в DONT_DO.md: **Player никогда не зависит от `video_start_ms`**;
+- [x] Зафиксировать в DONT_DO.md: **Player никогда не зависит от `video_start_ms`**;
   LTX 8N+1 решается при подготовке/assembly видео.
-- [ ] Проверить чистоту моделей frontends (нигде не осталось `videoStartMs`).
+- [x] Проверить чистоту моделей frontends (нигде не осталось `videoStartMs`).
 
 ---
 
@@ -119,4 +119,4 @@ Guard `idx == 0 && currentIuIndex != 0` — корректная защита о
 | T4 Регрессионные сценарии | 📝 Plan |
 | T5 Разделить две 150 | ✅ Done |
 | T6 State machine | 📝 Plan |
-| T7 video_start_ms правило | 📝 Plan |
+| T7 video_start_ms правило | ✅ Done |

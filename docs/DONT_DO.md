@@ -71,6 +71,14 @@
 - Шаг 1.2 — BODY → HEADERS
 - Причина: после этого изменения плеер перестал воспроизводить очередь (не установлена прямая связь, но откат исправил проблему)
 
+### 11. Возврат зависимости Player от `video_start_ms`
+**Запрещено:** Заставлять Player (Android `PlayFragment.kt` / Web `playbackStore.ts`) читать, вычислять или потреблять `video_start_ms`.
+
+- Контракт (audio master timeline): **Audio = semantic master timeline (`start_ms`), Storyboard = selected unit, Video = visual follower** — Player живёт только на `start_ms`. `video_start_ms` считается в backend (`backend/src/video/video-timeline.js`) как best-effort и используется ТОЛЬКО в Final Assembly (точные границы при экспорте).
+- Не вводить `videoStartMs` в `IuImageItem`/`IuItem`/`StoryboardIu`/`RawIu` и в состояние Player.
+- Даже если в конкретном LTX-тесте (8N+1) снова проявится рассинхрон границ — править выравнивание в подготовке/assembly видео, а не добавлять вторую временную модель в Player.
+- Причина: вторая временная шкала создавала второй таймлайн и рассогласование; убрано в рамках рефактора audio master timeline.
+
 ## Проверка перед любым изменением
 
 Перед тем как вносить любое изменение в файлы плеера (PlayFragment.kt, PlaybackViewModel.kt, Repository.kt), необходимо:
