@@ -152,6 +152,23 @@
     <string name="field_participants">участники</string>
     <string name="field_voice">голос</string>
     <string name="field_full_text">полный текст</string>
+    <!-- Добавление/удаление сущностей (вкладки редактора — персонажи/локации/голоса) -->
+    <string name="entity_add">Добавить</string>
+    <string name="entity_delete">Удалить</string>
+    <string name="entity_id">ID</string>
+    <string name="entity_id_hint">Пусто или свободная форма — ID сформируется из имени (транслитерация на сервере)</string>
+    <string name="entity_name_required">Введите имя</string>
+    <string name="entity_id_exists">Сущность с таким ID уже существует</string>
+    <string name="entity_delete_btn">Удалить</string>
+    <string name="entity_add_character">Добавить персонажа</string>
+    <string name="entity_add_location">Добавить локацию</string>
+    <string name="entity_add_voice">Добавить голос</string>
+    <string name="entity_delete_character">Удалить персонажа?</string>
+    <string name="entity_delete_character_confirm">Вы действительно хотите удалить этого персонажа? Будет удалён весь его паспорт.</string>
+    <string name="entity_delete_location">Удалить локацию?</string>
+    <string name="entity_delete_location_confirm">Вы действительно хотите удалить эту локацию?</string>
+    <string name="entity_delete_voice">Удалить голос?</string>
+    <string name="entity_delete_voice_confirm">Вы действительно хотите удалить этот голос?</string>
     <string name="edit_field_chapter_id">ID главы</string>
     <string name="edit_field_scene_id">ID сцены</string>
     <string name="edit_save">Сохранить</string>

@@ -442,6 +442,26 @@
             android:paddingBottom="8dp" />
     </androidx.core.widget.NestedScrollView>
 
+    <!-- Floating "+" for the entity tables (characters/voices/locations) —
+         overlays the content area's top-right corner; zero layout space, so
+         the first card is never pushed down. Shown only on the entity tabs. -->
+    <ImageButton
+        android:id="@+id/entityAddButton"
+        android:layout_width="28dp"
+        android:layout_height="28dp"
+        android:background="@drawable/bg_entity_add"
+        android:src="@drawable/ic_add"
+        android:tint="?attr/colorOnSecondary"
+        android:contentDescription="@string/entity_add"
+        android:scaleType="center"
+        android:padding="6dp"
+        android:elevation="2dp"
+        android:visibility="gone"
+        android:layout_marginTop="8dp"
+        android:layout_marginEnd="8dp"
+        app:layout_constraintTop_toTopOf="@id/contentScroll"
+        app:layout_constraintEnd_toEndOf="@id/contentScroll" />
+
     <!-- Bottom row: SAVE -->
     <LinearLayout
         android:id="@+id/bottomRow"

@@ -11,6 +11,7 @@
 //   chunks-routes.cjs    - GET chunks, GET assets-state
 //   agent-routes.cjs     - GET agent-status
 //   recovery-routes.cjs  - recover-placeholders
+//   entity-crud-routes.cjs - add/delete characters, locations, voices
 //
 // Previously extracted sub-registrars:
 //   status-routes.cjs    - status endpoints
@@ -52,6 +53,9 @@ module.exports = function(app, redis, deps) {
 
     // Recent books list (session restore across clients)
     require('./book/recent-books-routes.cjs')(app, redis, deps);
+
+    // Manual entity add/delete (characters / locations / voices) — Editor CRUD
+    require('./book/entity-crud-routes.cjs')(app, redis, deps);
 
     // Already-extracted sub-registrars (kept as-is)
     const registerStatusRoutes = require('./book/status-routes.cjs');

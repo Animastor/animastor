@@ -148,6 +148,44 @@ interface BackendApi {
         @Body body: Map<String, @JvmSuppressWildcards Any?>
     ): GenericResponse
 
+    // ── Manual entity add/delete (Editor tables — characters/locations/voices) ──
+
+    @POST("/api/v1/book/{bookId}/characters")
+    suspend fun createCharacter(
+        @Path("bookId") bookId: String,
+        @Body body: Map<String, @JvmSuppressWildcards Any?>
+    ): GenericResponse
+
+    @HTTP(method = "DELETE", path = "/api/v1/book/{bookId}/characters/{characterId}", hasBody = false)
+    suspend fun deleteCharacter(
+        @Path("bookId") bookId: String,
+        @Path("characterId") characterId: String
+    ): GenericResponse
+
+    @POST("/api/v1/book/{bookId}/locations")
+    suspend fun createLocation(
+        @Path("bookId") bookId: String,
+        @Body body: Map<String, @JvmSuppressWildcards Any?>
+    ): GenericResponse
+
+    @HTTP(method = "DELETE", path = "/api/v1/book/{bookId}/locations/{locationId}", hasBody = false)
+    suspend fun deleteLocation(
+        @Path("bookId") bookId: String,
+        @Path("locationId") locationId: String
+    ): GenericResponse
+
+    @POST("/api/v1/book/{bookId}/voices")
+    suspend fun createVoice(
+        @Path("bookId") bookId: String,
+        @Body body: Map<String, @JvmSuppressWildcards Any?>
+    ): GenericResponse
+
+    @HTTP(method = "DELETE", path = "/api/v1/book/{bookId}/voices/{voiceId}", hasBody = false)
+    suspend fun deleteVoice(
+        @Path("bookId") bookId: String,
+        @Path("voiceId") voiceId: String
+    ): GenericResponse
+
     @Streaming
     @GET("/api/v1/book/{bookId}/export")
     suspend fun exportBook(

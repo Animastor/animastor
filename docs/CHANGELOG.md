@@ -6,6 +6,38 @@ All notable changes to Animastor are documented here.
 
 ## [Unreleased] — 2026-08-17
 
+### Added
+
+- **Editor: ручное добавление и удаление персонажей, локаций и голосов
+  (Android + web)** — единый переиспользуемый паттерн Add/Delete на странице
+  «Редактор», поверх существующих таблиц селекторов Characters/Locations/Voices:
+  - **Add**: круглая «+»-кнопка в правом верхнем углу каждой таблицы
+    (overlay/absolute — не занимает место в layout и не сдвигает первую строку)
+    → modal/dialog с формой по существующей JSON-схеме сущности → Save с
+    валидацией обязательных полей и уникальности ID → таблица обновляется без
+    перезагрузки страницы. ID генерируется из свободного ввода через
+    существующую транслитерацию `cyrToLatin` + snake-case
+    (`backend/src/utils/entity-id.js`); валидный введённый ID используется как есть.
+  - **Delete**: компактная «−»-кнопка (мягкий красный акцент) в заголовке строки
+    рядом с ID → confirmation dialog («Удалить персонажа/локацию/голос?»,
+    Отмена/Удалить) → удаляется ВЕСЬ JSON-объект сущности (не только ID) через
+    существующий `book.saveBookBundle` → таблица обновляется сразу, выбранная
+    сущность корректно снимается.
+  - **Архитектура**: один паттерн на три сущности без дублирования — web
+    (`frontends/app/src/lib/entityEditor.tsx`: `EntityAddButton`,
+    `EntityDeleteButton`, `EntityEditorDialog`, `DeleteConfirmDialog` + схема
+    полей в `EditPage.tsx`), Android (`EditFragment.kt`: `EntityKind` enum +
+    схемы полей + общие dialog-построители). Пригоден для последующего
+    переиспользования при Add/Delete Unit и Scene.
+  - **Backend**: `POST /api/v1/book/:bookId/entities/:kind` и
+    `DELETE /api/v1/book/:bookId/entities/:kind/:id`
+    (`backend/src/routes/book/entity-crud-routes.cjs`) — добавление/удаление
+    целой сущности через существующий механизм сохранения книги;
+    `backend/src/utils/entity-id.js` — генерация snake-ID.
+  - Проверки: backend mocha-сьют (1164 passing, +14 новых тестов
+    `entity-crud-routes.test.js`); web `tsc --noEmit` + vitest (38 passing) +
+    `vite build`; Android `compileDebugKotlin` + `assembleDebug` + unit-тесты.
+
 ### Changed
 
 - **Player: единая master timeline — аудио. Убран `video_start_ms` из Player.**

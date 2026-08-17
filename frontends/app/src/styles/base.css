@@ -2302,6 +2302,67 @@ button { font: inherit; color: inherit; }
   color: var(--text);
   padding: 0.25rem 0 0.375rem;
 }
+/* Card header row — delete button left, entity id (bold, truncated) right.
+   The delete sits on the LEFT so the floating "+" (top-right corner of the
+   table) never covers the first row's delete button. */
+.edit-card__head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.125rem 0 0.375rem;
+}
+.edit-card__head .edit-card__title {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Entity tables (characters / voices / locations) — manual add/delete.
+   The round "+" floats in the table's top-right corner: sticky keeps it
+   visible while the content scrolls, float takes it out of flow so the
+   first card is never pushed down. Sized close to the existing 24dp
+   collapse chevrons (28dp — round, same visual language, editor accent). */
+.edit-entity-table { position: relative; }
+.entity-add-btn {
+  position: sticky;
+  top: 0.375rem;
+  float: right;
+  z-index: 5;
+  width: 1.75rem; height: 1.75rem; /* 28dp */
+  margin-bottom: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 0; border-radius: var(--radius-pill);
+  background: var(--accent); color: var(--on-accent);
+  cursor: pointer;
+  box-shadow: var(--elev-1);
+}
+.entity-add-btn:hover { background: var(--accent-dim); }
+.entity-add-btn:active { background: var(--accent-dim); }
+
+/* Small square "−" — soft destructive accent (error-container bg, error
+   stroke/icon), deliberately not an aggressive bright-red destructive UI. */
+.entity-del-btn {
+  flex-shrink: 0;
+  width: 1.75rem; height: 1.75rem;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid color-mix(in srgb, var(--error) 45%, transparent);
+  border-radius: 0.375rem; /* 6dp */
+  background: var(--error-container);
+  color: var(--error);
+  cursor: pointer;
+}
+.entity-del-btn:active { filter: brightness(0.92); }
+
+/* Entity add-dialog form bits */
+.entity-form { display: flex; flex-direction: column; gap: 0.25rem; }
+.entity-form__hint { font-size: 0.6875rem; color: var(--text-2); }
+.entity-form__error {
+  font-size: 0.75rem; color: var(--error);
+  padding: 0.375rem 0 0;
+}
 .edit-card .edit-field { margin-bottom: 0.375rem; }
 .edit-card--override .edit-field { margin-bottom: 0.375rem; }
 .edit-overrides__hint {

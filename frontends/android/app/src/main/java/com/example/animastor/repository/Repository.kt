@@ -237,6 +237,41 @@ class Repository(
         api.patchVoice(bookId, voiceId, mapOf("fields" to fields))
     }
 
+    // ── Manual entity add/delete (Editor tables) ──
+    // POST/DELETE through the dedicated endpoints; the id stays free-form — the
+    // server transliterates non-canonical input (reusing its cyrToLatin util),
+    // so the clients never duplicate the algorithm.
+
+    suspend fun createCharacter(bookId: String, body: Map<String, @JvmSuppressWildcards Any?>) {
+        Log.d("Repo", "createCharacter: $bookId body=${body.keys}")
+        api.createCharacter(bookId, body)
+    }
+
+    suspend fun deleteCharacter(bookId: String, characterId: String) {
+        Log.i("Repo", "deleteCharacter: $bookId/$characterId")
+        api.deleteCharacter(bookId, characterId)
+    }
+
+    suspend fun createLocation(bookId: String, body: Map<String, @JvmSuppressWildcards Any?>) {
+        Log.d("Repo", "createLocation: $bookId body=${body.keys}")
+        api.createLocation(bookId, body)
+    }
+
+    suspend fun deleteLocation(bookId: String, locationId: String) {
+        Log.i("Repo", "deleteLocation: $bookId/$locationId")
+        api.deleteLocation(bookId, locationId)
+    }
+
+    suspend fun createVoice(bookId: String, body: Map<String, @JvmSuppressWildcards Any?>) {
+        Log.d("Repo", "createVoice: $bookId body=${body.keys}")
+        api.createVoice(bookId, body)
+    }
+
+    suspend fun deleteVoice(bookId: String, voiceId: String) {
+        Log.i("Repo", "deleteVoice: $bookId/$voiceId")
+        api.deleteVoice(bookId, voiceId)
+    }
+
     suspend fun chatWithAiFull(request: AiChatRequest): AiChatResponse {
         Log.d("Repo", "chatWithAiFull: ${request.messages.size} messages")
         val response = api.chatWithAi(request)

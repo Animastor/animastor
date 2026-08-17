@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Round "+" for the entity tables (characters/voices/locations). Same shape
+     language as bg_collapse_btn but tinted with the Editor accent
+     (colorSecondary == cinema_accent), matching the tab indicator. -->
+<ripple xmlns:android="http://schemas.android.com/apk/res/android"
+    android:color="#33FFFFFF">
+    <item>
+        <shape android:shape="oval">
+            <solid android:color="?attr/colorSecondary" />
+        </shape>
+    </item>
+</ripple>

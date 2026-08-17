@@ -113,6 +113,14 @@ export function IconAdd(props: IconProps) {
   );
 }
 
+export function IconMinus(props: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor" aria-hidden="true" {...props}>
+      <path d="M19 13H5v-2h14v2z" />
+    </svg>
+  );
+}
+
 export function IconSparkle(props: IconProps) {
   return (
     <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor" aria-hidden="true" {...props}>

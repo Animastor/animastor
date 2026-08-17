@@ -29,7 +29,7 @@
 import type { JSX } from 'preact';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { useSignal } from '@preact/signals';
-import { getJson, patchJson, postJson, putJson } from '../api/client';
+import { deleteJson, getJson, patchJson, postJson, putJson } from '../api/client';
 import type {
   AppConfig, BookChapter, BookData, BookScene, BookUnit, CharPassport, SceneTiming, WaveformData,
 } from '../api/models';
@@ -42,6 +42,8 @@ import {
 import { navigateTo, position as positionSignal } from '../state/positionStore';
 import { seekToPosition } from '../state/playbackStore';
 import { Waveform } from '../lib/waveform';
+import { DeleteConfirmDialog, ENTITY_SCHEMAS, EntityAddButton, EntityDeleteButton, EntityEditorDialog } from '../lib/entityEditor';
+import type { EntityKind } from '../lib/entityEditor';
 import { IconChevronDown, IconChevronLeft, IconChevronRight, IconChevronUp, IconClock, IconClose, IconFullscreen, IconImageOff, IconPlay, IconReset, IconSave, IconStop } from '../app/icons';
 
 // ── Tabs (propertyTabs) — default to Unit (index 2) like EditFragment ──
@@ -209,6 +211,14 @@ export function EditPage(props: { path?: string }) {
   const [saveBusy, setSaveBusy] = useState(false);
   const [saveText, setSaveText] = useState<string>(t('edit_save'));
   const [errorText, setErrorText] = useState<string | null>(null);
+
+  // Entity Add/Delete (Characters / Locations / Voices tables) — one reusable
+  // schema-driven pattern; both dialogs share the busy/error state since only
+  // one is open at a time.
+  const [entityAddKind, setEntityAddKind] = useState<EntityKind | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{ kind: EntityKind; id: string } | null>(null);
+  const [entityBusy, setEntityBusy] = useState(false);
+  const [entityError, setEntityError] = useState<string | null>(null);
 
   // Timeline (waveform + timings + audio playback).
   const [waveformData, setWaveformData] = useState<WaveformData | null>(null);
@@ -1068,7 +1078,12 @@ export function EditPage(props: { path?: string }) {
           setSaveLoading(false, true);
           return true;
         }
+        // Top-level locations.json wins; legacy bible.locations is the fallback
+        // (mirrors buildLocationsFields).
+        const existingLocs = { ...(bd.locations ?? {}), ...(bd.bible?.locations ?? {}) };
         for (const [locId, fields] of byLoc) {
+          // Skip entities deleted since the editor rendered (stale fieldValues).
+          if (!(locId in existingLocs)) continue;
           await patchJson(`/book/${encodeURIComponent(bId)}/locations/${encodeURIComponent(locId)}`, { fields });
         }
         const fresh = await getJson<BookData>(`/book/${encodeURIComponent(bId)}`).catch(() => null);
@@ -1105,6 +1120,8 @@ export function EditPage(props: { path?: string }) {
         for (const [charId, fields] of byChar) {
           // Diff vs canonical data — skip untouched entities (GLOBAL-tab pattern).
           const orig = chars.find((c) => c.id === charId);
+          // Skip entities deleted since the editor rendered (stale fieldValues).
+          if (!orig) continue;
           const changed: Record<string, string> = {};
           Object.entries(fields).forEach(([k, v]) => {
             // passport.<field> keys must compare against the REAL field
@@ -1158,6 +1175,8 @@ export function EditPage(props: { path?: string }) {
         const voices = bd.voices ?? {};
         let anyChanged = false;
         for (const [voiceId, fields] of byVoice) {
+          // Skip entities deleted since the editor rendered (stale fieldValues).
+          if (!(voiceId in voices)) continue;
           const orig = voices[voiceId]?.instruction ?? '';
           const changed: Record<string, string> = {};
           Object.entries(fields).forEach(([k, v]) => {
@@ -1296,6 +1315,95 @@ export function EditPage(props: { path?: string }) {
     tabsScrollRef.current?.scrollBy({ left: direction * 160, behavior: 'smooth' });
   }, []);
 
+  // ── Entity add/delete (Characters / Locations / Voices) ──
+  // Save/delete go through the dedicated backend endpoints (POST/DELETE
+  // /characters, /locations, /voices); after success the canonical book data is
+  // re-fetched so the table updates without a manual page reload. The id stays
+  // free-form here — the server transliterates non-canonical input via the
+  // existing backend utility (never duplicated on the client).
+  const refreshBook = useCallback(async () => {
+    const bId = bookIdSignal.value;
+    if (!bId) return;
+    const fresh = await getJson<BookData>(`/book/${encodeURIComponent(bId)}`).catch(() => null);
+    if (fresh) setBookData(fresh);
+  }, []);
+
+  const entityCollection = useCallback((kind: EntityKind): string =>
+    kind === 'character' ? 'characters' : kind === 'location' ? 'locations' : 'voices', []);
+
+  const buildCreateBody = useCallback((kind: EntityKind, values: Record<string, string>): Record<string, unknown> => {
+    const body: Record<string, unknown> = {};
+    const id = (values.id ?? '').trim();
+    const name = (values.name ?? '').trim();
+    if (id) body.id = id;
+    if (name) body.name = name;
+    if (kind === 'character') {
+      const passport: Record<string, string> = {};
+      ['appearance', 'clothes', 'video_tokens'].forEach((f) => {
+        const v = (values[`passport.${f}`] ?? '').trim();
+        if (v) passport[f] = v;
+      });
+      if (Object.keys(passport).length > 0) body.passport = passport;
+    } else if (kind === 'location') {
+      const desc = (values.description ?? '').trim();
+      if (desc) body.description = desc;
+      const env: Record<string, string> = {};
+      ['time', 'season', 'lighting', 'weather', 'mood', 'atmosphere'].forEach((f) => {
+        const v = (values[`environment.${f}`] ?? '').trim();
+        if (v) env[f] = v;
+      });
+      if (Object.keys(env).length > 0) body.environment = env;
+    } else {
+      const instruction = (values.instruction ?? '').trim();
+      if (instruction) body.instruction = instruction;
+    }
+    return body;
+  }, []);
+
+  const saveEntity = useCallback(async (kind: EntityKind, values: Record<string, string>) => {
+    const bId = bookIdSignal.value;
+    if (!bId) return;
+    setEntityBusy(true);
+    setEntityError(null);
+    try {
+      await postJson(`/book/${encodeURIComponent(bId)}/${entityCollection(kind)}`, buildCreateBody(kind, values));
+      setEntityAddKind(null);
+      await refreshBook();
+    } catch (e) {
+      setEntityError((e as Error).message);
+    } finally {
+      setEntityBusy(false);
+    }
+  }, [entityCollection, buildCreateBody, refreshBook]);
+
+  const confirmDeleteEntity = useCallback(async () => {
+    const target = deleteTarget;
+    const bId = bookIdSignal.value;
+    if (!target || !bId) return;
+    setEntityBusy(true);
+    setEntityError(null);
+    try {
+      await deleteJson(`/book/${encodeURIComponent(bId)}/${entityCollection(target.kind)}/${encodeURIComponent(target.id)}`);
+      setDeleteTarget(null);
+      await refreshBook();
+    } catch (e) {
+      setEntityError((e as Error).message);
+    } finally {
+      setEntityBusy(false);
+    }
+  }, [deleteTarget, entityCollection, refreshBook]);
+
+  const entityExistingIds = useMemo(() => {
+    const bd = bookData;
+    if (!bd) return new Set<string>();
+    if (entityAddKind === 'character') return new Set((bd.characters ?? []).map((c) => c.id ?? ''));
+    if (entityAddKind === 'location') return new Set(Object.keys(bd.locations ?? {}));
+    return new Set(Object.keys(bd.voices ?? {}));
+  }, [bookData, entityAddKind]);
+
+  const isEntityTab = tab === CHARS_TAB || tab === VOICES_TAB || tab === LOCATIONS_TAB;
+  const currentEntityKind: EntityKind = tab === CHARS_TAB ? 'character' : tab === LOCATIONS_TAB ? 'location' : 'voice';
+
   // ── Content builders ──
 
   const sectionLabel = (text: string): JSX.Element => <div class="edit-section">{text}</div>;
@@ -1427,7 +1535,12 @@ export function EditPage(props: { path?: string }) {
       // (Android EditFragment uses the same prefix pattern).
       return (
         <div class="edit-card" key={charId || 'char'}>
-          {readonlyField('id', charId)}
+          {/* Delete on the LEFT so the floating "+" (top-right corner of the
+              table) never sits on top of the first row's delete button. */}
+          <div class="edit-card__head">
+            <EntityDeleteButton onClick={() => { setEntityError(null); setDeleteTarget({ kind: 'character', id: charId }); }} />
+            <span class="edit-card__title">{charId || '—'}</span>
+          </div>
           {inputCard(t('field_name'), ch.name ?? '', false, `char.${charId}.name`)}
           <div class="edit-section">{t('field_passport')}</div>
           {PASSPORT_OVERRIDE_FIELDS.map((f) => {
@@ -1447,7 +1560,10 @@ export function EditPage(props: { path?: string }) {
     }
     return entries.map(([voiceId, entry]) => (
       <div class="edit-card" key={voiceId}>
-        <div class="edit-card__title">{voiceId}</div>
+        <div class="edit-card__head">
+          <EntityDeleteButton onClick={() => { setEntityError(null); setDeleteTarget({ kind: 'voice', id: voiceId }); }} />
+          <span class="edit-card__title">{voiceId}</span>
+        </div>
         {inputCard(t('field_instruction'), entry?.instruction ?? '', (entry?.instruction?.length ?? 0) > 80, `voice.${voiceId}.instruction`)}
       </div>
     ));
@@ -1465,7 +1581,10 @@ export function EditPage(props: { path?: string }) {
       const out: JSX.Element[] = [];
       out.push(
         <div class="edit-card" key={locId}>
-          {readonlyField('id', locId)}
+          <div class="edit-card__head">
+            <EntityDeleteButton onClick={() => { setEntityError(null); setDeleteTarget({ kind: 'location', id: locId }); }} />
+            <span class="edit-card__title">{locId}</span>
+          </div>
           {inputCard(t('field_name'), loc?.name ?? '', false, `${prefix}name`)}
           {inputCard(t('field_description'), loc?.description ?? '', (loc?.description?.length ?? 0) > 80, `${prefix}description`)}
           <div class="edit-section">{t('field_environment')}</div>
@@ -1834,9 +1953,17 @@ export function EditPage(props: { path?: string }) {
         </button>
       </div>
 
-      {/* Content area */}
+      {/* Content area — entity tables (characters/voices/locations) get the
+          floating "+" overlay in the top-right corner (zero layout space). */}
       <div class="edit-content">
-        {loading ? <div class="progress"><div class="progress__bar" /></div> : renderContent()}
+        {loading ? <div class="progress"><div class="progress__bar" /></div> : (
+          isEntityTab ? (
+            <div class="edit-entity-table">
+              <EntityAddButton onClick={() => { setEntityError(null); setEntityAddKind(currentEntityKind); }} />
+              {renderContent()}
+            </div>
+          ) : renderContent()
+        )}
       </div>
       </div>
 
@@ -1898,6 +2025,32 @@ export function EditPage(props: { path?: string }) {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Entity add dialog (Characters / Locations / Voices tables) — schema-
+          driven reusable form; save closes it and refreshes the table. */}
+      {entityAddKind && (
+        <EntityEditorDialog
+          schema={ENTITY_SCHEMAS[entityAddKind]}
+          existingIds={entityExistingIds}
+          busy={entityBusy}
+          error={entityError}
+          onSave={(values) => void saveEntity(entityAddKind, values)}
+          onClose={() => { if (!entityBusy) { setEntityAddKind(null); setEntityError(null); } }}
+        />
+      )}
+
+      {/* Entity delete confirmation — destructive actions never fire without
+          explicit confirmation; the text is per-entity (character/location/voice). */}
+      {deleteTarget && (
+        <DeleteConfirmDialog
+          title={t(ENTITY_SCHEMAS[deleteTarget.kind].deleteTitleKey)}
+          message={t(ENTITY_SCHEMAS[deleteTarget.kind].deleteConfirmKey)}
+          busy={entityBusy}
+          error={entityError}
+          onConfirm={() => void confirmDeleteEntity()}
+          onClose={() => { if (!entityBusy) { setDeleteTarget(null); setEntityError(null); } }}
+        />
       )}
 
       {/* Desktop draft protection modal (plan §5.2): an unsaved draft must

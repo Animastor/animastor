@@ -7,6 +7,7 @@ import android.os.Bundle
 import android.util.Log
 import android.view.View
 import android.view.ViewGroup
+import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -66,6 +67,64 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
     /** Full-size image zoom dialog (web parity) — dismissed on fragment teardown. */
     private var zoomDialog: android.app.Dialog? = null
 
+    // ── Manual entity add/delete (characters / voices / locations tables) ──
+    // One schema-driven pattern (EntityKind + EntityDef) so Add/Delete for the
+    // three entity types — and later Unit/Scene — never fork into near-identical
+    // implementations. The id stays free-form: the server transliterates
+    // non-canonical input (its own cyrToLatin util), so no client-side copy.
+    private enum class EntityKind { CHARACTER, LOCATION, VOICE }
+
+    private class EntityField(val key: String, val labelRes: Int, val multiline: Boolean = false)
+
+    private class EntityDef(
+        val kind: EntityKind,
+        val addTitleRes: Int,
+        val deleteTitleRes: Int,
+        val deleteConfirmRes: Int,
+        val fields: List<EntityField>
+    )
+
+    private fun entityDef(kind: EntityKind): EntityDef = when (kind) {
+        EntityKind.CHARACTER -> EntityDef(
+            kind,
+            R.string.entity_add_character,
+            R.string.entity_delete_character,
+            R.string.entity_delete_character_confirm,
+            listOf(
+                EntityField("passport.appearance", R.string.field_appearance, multiline = true),
+                EntityField("passport.clothes", R.string.field_clothes, multiline = true),
+                EntityField("passport.video_tokens", R.string.field_video_tokens, multiline = true),
+            )
+        )
+        EntityKind.LOCATION -> EntityDef(
+            kind,
+            R.string.entity_add_location,
+            R.string.entity_delete_location,
+            R.string.entity_delete_location_confirm,
+            listOf(
+                EntityField("description", R.string.field_description, multiline = true),
+                EntityField("environment.time", R.string.field_time),
+                EntityField("environment.season", R.string.field_season),
+                EntityField("environment.lighting", R.string.field_lighting),
+                EntityField("environment.weather", R.string.field_weather),
+                EntityField("environment.mood", R.string.field_mood),
+                EntityField("environment.atmosphere", R.string.field_atmosphere),
+            )
+        )
+        EntityKind.VOICE -> EntityDef(
+            kind,
+            R.string.entity_add_voice,
+            R.string.entity_delete_voice,
+            R.string.entity_delete_voice_confirm,
+            listOf(
+                EntityField("instruction", R.string.field_instruction, multiline = true),
+            )
+        )
+    }
+
+    /** Editor tab positions that render entity tables (characters/voices/locations). */
+    private val ENTITY_TABS = setOf(3, 4, 5)
+
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         binding = FragmentEditBinding.bind(view)
@@ -96,6 +155,16 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         // Tab scroll indicators
         b.tabScrollLeft.setOnClickListener { scrollTabs(-1) }
         b.tabScrollRight.setOnClickListener { scrollTabs(1) }
+
+        // Floating "+" — manual entity add (characters/voices/locations tables).
+        // The button is only visible on the entity tabs (rebuildContent toggles it).
+        b.entityAddButton.setOnClickListener {
+            when (b.propertyTabs.selectedTabPosition) {
+                3 -> showAddEntityDialog(EntityKind.CHARACTER)
+                4 -> showAddEntityDialog(EntityKind.VOICE)
+                else -> showAddEntityDialog(EntityKind.LOCATION)
+            }
+        }
 
         // Reliable scroll position tracking — fires on every scroll pixel change
         b.propertyTabs.viewTreeObserver.addOnScrollChangedListener {
@@ -218,6 +287,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         b.errorText.visibility = View.GONE
         b.emptyState.visibility = View.VISIBLE
         b.contentFrame.removeAllViews()
+        b.entityAddButton.visibility = View.GONE
         b.prevUnitCard.visibility = View.INVISIBLE
         b.currentUnitCard.visibility = View.INVISIBLE
         b.nextUnitCard.visibility = View.INVISIBLE
@@ -420,6 +490,230 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                 fallback.visibility = View.VISIBLE
                 img.visibility = View.GONE
             }
+        }
+    }
+
+    // ======================================================
+    // Manual entity add/delete (characters / voices / locations)
+    // ======================================================
+
+    /** Card header row — delete button left, entity id (bold, truncated) right.
+     *  The delete sits on the LEFT so the floating "+" (top-right corner of the
+     *  table) never covers the first row's delete button. */
+    private fun entityCardHead(ctx: Context, id: String, onDelete: () -> Unit): View {
+        val row = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            setPadding(0, 0, 0, 2)
+        }
+        val dm = resources.displayMetrics
+        val sz = (28 * dm.density + 0.5f).toInt()
+        val pad = (6 * dm.density + 0.5f).toInt()
+        val del = ImageButton(ctx).apply {
+            contentDescription = getString(R.string.entity_delete)
+            setImageResource(R.drawable.ic_remove)
+            // Soft destructive accent: error icon on error-container rounded square
+            // (square-ish, small corner radius — not an aggressive bright-red control).
+            val errorColor = MaterialColors.getColor(this, com.google.android.material.R.attr.colorError)
+            val errorContainerColor = MaterialColors.getColor(this, com.google.android.material.R.attr.colorErrorContainer)
+            imageTintList = android.content.res.ColorStateList.valueOf(errorColor)
+            background = android.graphics.drawable.GradientDrawable().apply {
+                shape = android.graphics.drawable.GradientDrawable.RECTANGLE
+                cornerRadius = (6 * dm.density + 0.5f).toInt().toFloat()
+                setColor(errorContainerColor)
+            }
+            layoutParams = LinearLayout.LayoutParams(sz, sz)
+            setPadding(pad, pad, pad, pad)
+            stateListAnimator = null
+            setOnClickListener { onDelete() }
+        }
+        val title = TextView(ctx).apply {
+            text = id
+            textSize = 14f
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            setTextColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorOnSurface))
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                marginStart = (8 * dm.density + 0.5f).toInt()
+            }
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
+        }
+        row.addView(del)
+        row.addView(title)
+        return row
+    }
+
+    /** Existing entity ids of the given kind — for the add-dialog uniqueness check. */
+    private fun existingEntityIds(kind: EntityKind): Set<String> = when (kind) {
+        EntityKind.CHARACTER -> (bookData?.characters ?: emptyList()).mapNotNull { it.id }.toSet()
+        EntityKind.LOCATION -> (bookData?.locations ?: emptyMap()).keys.toSet()
+        EntityKind.VOICE -> (bookData?.voices ?: emptyMap()).keys.toSet()
+    }
+
+    /** Flat form values → the backend create payload (mirror of the web builder). */
+    private fun buildCreateBody(kind: EntityKind, values: Map<String, String>): Map<String, Any?> {
+        val body = mutableMapOf<String, Any?>()
+        values["id"]?.takeIf { it.isNotBlank() }?.let { body["id"] = it }
+        values["name"]?.takeIf { it.isNotBlank() }?.let { body["name"] = it }
+        when (kind) {
+            EntityKind.CHARACTER -> {
+                val passport = mutableMapOf<String, String>()
+                listOf("appearance", "clothes", "video_tokens").forEach { f ->
+                    values["passport.$f"]?.takeIf { it.isNotBlank() }?.let { passport[f] = it }
+                }
+                if (passport.isNotEmpty()) body["passport"] = passport
+            }
+            EntityKind.LOCATION -> {
+                values["description"]?.takeIf { it.isNotBlank() }?.let { body["description"] = it }
+                val env = mutableMapOf<String, String>()
+                listOf("time", "season", "lighting", "weather", "mood", "atmosphere").forEach { f ->
+                    values["environment.$f"]?.takeIf { it.isNotBlank() }?.let { env[f] = it }
+                }
+                if (env.isNotEmpty()) body["environment"] = env
+            }
+            EntityKind.VOICE -> {
+                values["instruction"]?.takeIf { it.isNotBlank() }?.let { body["instruction"] = it }
+            }
+        }
+        return body
+    }
+
+    /** Add dialog — schema-driven form (id + name + entity fields). Validation of
+     *  the required name and id uniqueness happens before the API call; the id
+     *  is left free-form so the server transliterates it. */
+    private fun showAddEntityDialog(kind: EntityKind) {
+        val ctx = requireContext()
+        val def = entityDef(kind)
+        val bookId = viewModel.bookId.takeIf { it.isNotBlank() } ?: return
+        val existingIds = existingEntityIds(kind)
+
+        val container = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(24, 4, 24, 0)
+        }
+        val inputs = mutableMapOf<String, TextInputEditText>()
+        val errorText = TextView(ctx).apply {
+            textSize = 12f
+            setTextColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorError))
+            visibility = View.GONE
+            setPadding(0, 8, 0, 0)
+        }
+
+        fun addField(label: String, key: String, multiline: Boolean, hint: String? = null) {
+            val til = TextInputLayout(ctx).apply {
+                this.hint = label
+                isHintEnabled = true
+                boxBackgroundMode = TextInputLayout.BOX_BACKGROUND_OUTLINE
+                if (hint != null) helperText = hint
+            }
+            val et = TextInputEditText(ctx).apply {
+                textSize = 14f
+                if (multiline) {
+                    minLines = 3
+                    gravity = android.view.Gravity.TOP or android.view.Gravity.START
+                }
+                setPadding(12, 10, 12, 10)
+            }
+            til.addView(et)
+            inputs[key] = et
+            container.addView(til)
+        }
+
+        addField(getString(R.string.entity_id), "id", false, getString(R.string.entity_id_hint))
+        addField("${getString(R.string.field_name)} *", "name", false)
+        def.fields.forEach { f -> addField(getString(f.labelRes), f.key, f.multiline) }
+        container.addView(errorText)
+
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(ctx)
+            .setTitle(def.addTitleRes)
+            .setView(container)
+            .setNegativeButton(R.string.dialog_cancel, null)
+            .setPositiveButton(R.string.edit_save, null)
+            .create()
+
+        dialog.setOnShowListener {
+            dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val values = inputs.mapValues { (_, et) -> et.text?.toString()?.trim() ?: "" }
+                val name = values["name"] ?: ""
+                if (name.isBlank()) {
+                    errorText.text = getString(R.string.entity_name_required)
+                    errorText.visibility = View.VISIBLE
+                    return@setOnClickListener
+                }
+                val id = values["id"] ?: ""
+                if (id.isNotBlank() && id in existingIds) {
+                    errorText.text = getString(R.string.entity_id_exists)
+                    errorText.visibility = View.VISIBLE
+                    return@setOnClickListener
+                }
+                errorText.visibility = View.GONE
+                dialog.dismiss()
+                createEntity(kind, values, bookId)
+            }
+        }
+        dialog.show()
+    }
+
+    private fun createEntity(kind: EntityKind, values: Map<String, String>, bookId: String) {
+        lifecycleScope.launch {
+            try {
+                val body = buildCreateBody(kind, values)
+                when (kind) {
+                    EntityKind.CHARACTER -> viewModel.repository.createCharacter(bookId, body)
+                    EntityKind.LOCATION -> viewModel.repository.createLocation(bookId, body)
+                    EntityKind.VOICE -> viewModel.repository.createVoice(bookId, body)
+                }
+                reloadEntityTable()
+            } catch (e: Exception) {
+                Log.e("EditFragment", "entity create failed", e)
+                showSaveError("${e::class.simpleName}: ${e.message ?: "unknown"}")
+            }
+        }
+    }
+
+    /** Delete confirmation — destructive action never fires without confirmation. */
+    private fun showDeleteConfirmDialog(kind: EntityKind, id: String) {
+        val def = entityDef(kind)
+        val ctx = requireContext()
+        val bookId = viewModel.bookId.takeIf { it.isNotBlank() } ?: return
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(ctx)
+            .setTitle(def.deleteTitleRes)
+            .setMessage(def.deleteConfirmRes)
+            .setNegativeButton(R.string.dialog_cancel, null)
+            .setPositiveButton(R.string.entity_delete_btn, null)
+            .create()
+        dialog.setOnShowListener {
+            // Soft red accent for the destructive action (colorError, not bright red)
+            dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE)
+                .setTextColor(MaterialColors.getColor(dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE), com.google.android.material.R.attr.colorError))
+            dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                dialog.dismiss()
+                lifecycleScope.launch {
+                    try {
+                        when (kind) {
+                            EntityKind.CHARACTER -> viewModel.repository.deleteCharacter(bookId, id)
+                            EntityKind.LOCATION -> viewModel.repository.deleteLocation(bookId, id)
+                            EntityKind.VOICE -> viewModel.repository.deleteVoice(bookId, id)
+                        }
+                        reloadEntityTable()
+                    } catch (e: Exception) {
+                        Log.e("EditFragment", "entity delete failed", e)
+                        showSaveError("${e::class.simpleName}: ${e.message ?: "unknown"}")
+                    }
+                }
+            }
+        }
+        dialog.show()
+    }
+
+    /** Re-fetch the canonical book and rebuild the current tab — the table
+     *  updates immediately, no manual page reload. */
+    private fun reloadEntityTable() {
+        val bookId = viewModel.bookId.takeIf { it.isNotBlank() } ?: return
+        lifecycleScope.launch {
+            bookData = runCatching { viewModel.repository.getBook(bookId) }.getOrNull()
+            chapters = bookData?.chapters ?: emptyList()
+            rebuildContent(binding?.propertyTabs?.selectedTabPosition ?: 0)
         }
     }
 
@@ -777,6 +1071,10 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                 5 -> buildLocationsFields(frame)
                 6 -> buildGlobalFields(frame)
             }
+            // Entity tables (characters/voices/locations) get the floating "+"
+            // overlay button — hidden on every other tab.
+            binding?.entityAddButton?.visibility =
+                if (tab in ENTITY_TABS) View.VISIBLE else View.GONE
             // Update scroll indicators after rebuilding
             updateTabScrollIndicators()
         } catch (e: Exception) {
@@ -960,10 +1258,11 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                     orientation = LinearLayout.VERTICAL
                 }
 
-                // id is a read-only system field (kept in JSON style)
-                inner.addView(readOnlyCard(ctx, "id", ch.id ?: ""))
-
                 val charId = ch.id ?: "char_unknown"
+                // Header row: entity id (read-only, bold) + delete button (web parity)
+                inner.addView(entityCardHead(ctx, charId) {
+                    showDeleteConfirmDialog(EntityKind.CHARACTER, charId)
+                })
                 // Name key is scoped per character (web parity) — the old bare
                 // "name" key made every character's name field share one slot.
                 inner.addView(inputCard(ctx, getString(R.string.field_name), ch.name ?: "", false, boldValue = true, storeKey = "char.${charId}.name"))
@@ -1039,10 +1338,9 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                     orientation = LinearLayout.VERTICAL
                 }
 
-                inner.addView(TextView(ctx).apply {
-                    text = voiceId
-                    textSize = 14f
-                    typeface = android.graphics.Typeface.DEFAULT_BOLD
+                // Header row: voice id (bold) + delete button (web parity)
+                inner.addView(entityCardHead(ctx, voiceId) {
+                    showDeleteConfirmDialog(EntityKind.VOICE, voiceId)
                 })
 
                 val instruction = entry.instruction ?: ""
@@ -1096,7 +1394,10 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                 // Use the map key (== location id) consistently — the backend
                 // PATCH indexes locations by the locations.json map key.
                 val locId = key
-                inner.addView(readOnlyCard(ctx, "id", locId))
+                // Header row: location id (read-only, bold) + delete button (web parity)
+                inner.addView(entityCardHead(ctx, locId) {
+                    showDeleteConfirmDialog(EntityKind.LOCATION, locId)
+                })
 
                 // storeKey prefixes with the location id so per-location fields
                 // don't collide in the shared fieldValues map.
@@ -1789,7 +2090,11 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                             return@launch
                         }
 
+                        val existingLocs = (bd.locations ?: emptyMap()).keys + (bd.bible?.locations ?: emptyMap()).keys
                         byLoc.forEach { (locId, fields) ->
+                            // Skip entities deleted since the editor rendered
+                            // (stale fieldValues must not PATCH a 404).
+                            if (locId !in existingLocs) return@forEach
                             viewModel.repository.patchLocation(bookId, locId, fields)
                         }
 
@@ -1841,6 +2146,9 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                         byChar.forEach { (charId, fields) ->
                             // Diff vs canonical data — skip untouched entities.
                             val orig = chars.find { it.id == charId }
+                            // Skip entities deleted since the editor rendered
+                            // (stale fieldValues must not PATCH a 404).
+                            if (orig == null) return@forEach
                             val changed = mutableMapOf<String, String>()
                             fields.forEach { (k, v) ->
                                 val oldVal = when {
@@ -1903,6 +2211,9 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                         val voices = bd.voices ?: emptyMap()
                         var anyChanged = false
                         byVoice.forEach { (voiceId, fields) ->
+                            // Skip entities deleted since the editor rendered
+                            // (stale fieldValues must not PATCH a 404).
+                            if (!voices.containsKey(voiceId)) return@forEach
                             val orig = voices[voiceId]?.instruction ?: ""
                             val changed = mutableMapOf<String, String>()
                             fields.forEach { (k, v) -> if (v != orig) changed[k] = v }
