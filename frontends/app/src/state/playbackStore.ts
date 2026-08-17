@@ -683,13 +683,43 @@ export function setLayerImage(v: boolean): void {
 export function setLayerVideo(v: boolean): void {
   layerVideo.value = v;
   updateLayers();
-  // Layer re-enabled mid-scene: if the current scene has a backend video that
-  // was never fetched (layer was off → we skipped it to save traffic), fetch it
-  // now and attach it synced to the audio position.
+  // Layer re-enabled mid-scene. Two cases (Android parity — PlayFragment.kt
+  // layerVideo listener): a source that ALREADY includes the video is kept
+  // as-is — instant re-show via updateLayers, no re-download, no seek; only a
+  // missing video (layer was off when the scene loaded → we skipped it to save
+  // traffic) is fetched now and attached synced to the audio position.
   if (v) {
     const key = getCurrentSceneKey();
     if (key && activeScene?.videoReady) {
-      ensureSceneVideo(key, null);
+      const el = videoEl;
+      const audio = currentPlayer;
+      const attached = !!el && !!videoSrcUrl && !videoEnded && currentVideoSceneKey === key;
+      if (attached && audio && !Number.isNaN(audio.currentTime)) {
+        // The video kept playing under display:none, but the buffer gate is
+        // DISABLED while the layer is off (enterVideoBuffering returns on
+        // !layerVideo.value), so the hidden element can stall and drift behind
+        // the audio. When it is still in sync, re-show ONLY. Re-entering
+        // ensureSceneVideo here would audio-sync seek an already-synced element
+        // (seekAttachedVideo → applyVideoSeek): that drops the buffered data
+        // and forces a fresh Range fetch → 'waiting' → the buffer gate pauses
+        // the whole player into «Загрузка…» with the adaptive 6→20 s resume
+        // target escalating on repeated toggles — the reported long / infinite
+        // buffering after re-enabling the video layer. Android's equivalent
+        // (single merged source) can never drift, so it never needs this seek.
+        const diff = Math.abs(el.currentTime - audio.currentTime);
+        if (diff > 0.5) {
+          console.info(`[PLAY-STREAM] video layer re-enabled — hidden video drifted ${diff.toFixed(2)}s, re-syncing to audio`);
+          applyVideoSeek(null);
+        }
+        // A hidden element can be paused by the browser (or the video is simply
+        // still running) — ensure it resumes without touching its position when
+        // it is in sync (no buffer drop / no re-fetch).
+        if (!isPaused && !pendingLoad && uiState.value.phase === 'PLAYING') {
+          try { if (el.paused) void el.play().catch(() => { }); } catch { /* ignore */ }
+        }
+      } else {
+        ensureSceneVideo(key, null);
+      }
     }
   }
 }
