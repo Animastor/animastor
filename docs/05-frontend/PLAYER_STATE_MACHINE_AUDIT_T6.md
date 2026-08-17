@@ -279,10 +279,43 @@ State machine и reveal-gate не тронуты.
 A→B оставляет ТОЛЬКО listener B (A снят); сработавший listener снимает себя, а
 `detachVideo` чистит слот; `stopAll` чистит слот. 2 из 3 падают на до-фиксовом коде.
 
-### P2-1. Web: `enginePaused` — write-only сигнал
+### P2-1. Web: `enginePaused` — write-only сигнал — **usage audit done**
 
-Никто не читает; держится как API-зеркало. Кандидат на удаление (после проверки
-потребителей вне репозитория) или явную документацию «mirror for parity».
+Никто не читает в production; держится как API-зеркало. Кандидат на удаление (после
+проверки потребителей вне репозитория) или явную документацию «mirror for parity».
+
+**Usage audit (полный список sites, `frontends/app`):**
+
+| Тип | Место | Значение | Функция/контекст |
+|---|---|---|---|
+| write | `playbackStore.ts:112` | `signal(false)` | объявление + **export** (`fragment.isPaused` mirror) |
+| write | `playbackStore.ts:496` | `true` | `pausePlayback()` |
+| write | `playbackStore.ts:521` | `false` | `resumePlayback()` |
+| write | `playbackStore.ts:1220` | `true` | `handleChunk` (pendingLoad — positioned & paused) |
+| write | `playbackStore.ts:1265` | `false` | `handleSilentChunk()` |
+| write | `playbackStore.ts:1438` | `false` | `onAudioError()` |
+| write | `playbackStore.ts:1890` | `false` | `stopAll()` |
+| read | `playbackStore.test.ts:42,61,89,103` | `enginePaused.value` | ТОЛЬКО тесты (P1-1 contract: pauseIfPlaying → PAUSED + phase + enginePaused; resume) |
+
+**Production reads: 0.** Репозиторий-широкий поиск `enginePaused` находит только
+`playbackStore.ts` (7 записей + экспорт), `playbackStore.test.ts` (4 чтения) и этот
+документ. `PlayPage.tsx` импортирует `subtitleText`, `iuMissing`, `videoVisible`,
+`pendingExternalSeek` — НЕ `enginePaused`. Косвенного использования нет: ни
+destructuring, ни computed/watch, ни template bindings, ни object/state references.
+
+**Android:** 0 совпадений — `enginePaused` отсутствует в android-коде и не является
+частью общего контракта (Android-параллель — производный `isPaused` фрагмента и
+фаза ViewModel).
+
+**Вывод (классификация): C — только записывается, в production нигде не читается**
+(формально экспортирован — «внешний символ», но реальных потребителей вне стора
+нет; единственные читатели — тесты P1-1).
+
+**Рекомендация:** удалить сигнал целиком (7 записей, объявление, export) и перевести
+тест `playbackStore.test.ts` на проверку `getPlayerState()==PAUSED` +
+`uiState.phase==PAUSED` (контракт P1-1 уже полностью покрыт этими двумя) —
+`enginePaused` в нём дублирует `isPaused()` и не несёт отдельного смысла. Либо, если
+нужна явная parity-документация, оставить с комментарием «mirror, write-only».
 
 ### P2-2. Android: двойной `transition(ShowingStoryboard)` в `handleSilentChunk`
 
@@ -365,7 +398,9 @@ L872 и L884 пишут одно и то же состояние подряд (�
 ### P2
 - **P2-4:** reveal при «проскоке» за конец юнита — раскрывать (позиция ≥ гейта,
   даже если `withinUnit=false`), приведя код в соответствие с собственным комментарием.
-- **P2-1:** удалить `enginePaused` (write-only) или задекларировать как parity-mirror.
+- **P2-1 (usage audit done):** удалить `enginePaused` (write-only в production,
+  0 production reads, читается только тестами P1-1) или задекларировать как
+  parity-mirror. Полный список write/read sites — в §4.
 - **P2-2:** Android `handleSilentChunk` — убрать дубль `transition(ShowingStoryboard)`.
 - **P2-3:** web `preparePlayback` при смене книги — чистить `selectedUnit`/
   `currentIuBlobUrl` (сверка с Android-поведением; проверить в T4).
