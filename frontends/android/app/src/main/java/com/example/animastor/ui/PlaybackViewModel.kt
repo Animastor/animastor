@@ -214,14 +214,12 @@ class PlaybackViewModel(
      */
     fun ensureSceneVideo(sceneKey: String, seekMs: Long, explicitSeek: Boolean) {
         if (!videoEnabled) {
-            Log.d(TAG, "ensureSceneVideo: skip (video layer off) scene=$sceneKey")
             return
         }
         if (sceneKey != getCurrentSceneKey()) return
         val chId = sceneKey.substringBefore(':')
         val scId = sceneKey.substringAfter(':')
         val url = buildSceneVideoUrl(chId, scId)
-        Log.i(TAG, "video stream: scene=$sceneKey url=$url seekMs=$seekMs explicit=$explicitSeek")
         _videoDelivery.trySend(VideoDelivery(sceneKey, url, seekMs, explicitSeek))
     }
 

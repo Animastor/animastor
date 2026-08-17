@@ -3,8 +3,6 @@ package com.example.animastor.ui
 import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Bundle
-import android.os.Looper
-import android.os.SystemClock
 import android.util.Log
 import android.view.MotionEvent
 import android.view.View
@@ -198,7 +196,6 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                     }
                     if (!ius.isNullOrEmpty() && idx in ius.indices && idx != currentIuIndex) {
                         currentIuIndex = idx
-                        debugLog("manualPos ${pos.unitId ?: "-"}/i${pos.unitIndex} -> idx=$idx unit=${ius[idx].unitId}")
                         showIuImage(ius[idx].bitmap)
                     }
                 }
@@ -424,7 +421,6 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
             val byId = ius.indexOfFirst { it.unitId == pendingUid }
             if (byId >= 0) idx = byId
         }
-        debugLog("showCurrentIu -> idx=$idx unit=${ius[idx].unitId}")
         showIuImage(ius[idx].bitmap)
     }
 
@@ -617,10 +613,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                                     ius[currentIuIndex].bitmap != null &&
                                     b.resultImage.drawable != null
                                 if (!hasUnitImage) {
-                                    debugLog("SCENE_READY hide resultImage (no unit image)")
                                     b.resultImage.visibility = View.INVISIBLE
-                                } else {
-                                    debugLog("SCENE_READY keep unit image idx=$currentIuIndex")
                                 }
                             }
                         }
@@ -786,7 +779,6 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
             playbackViewModel.currentUnitIndex = targetUnit
         }
         val seekToUnit = if (targetUnit > 0 && !iuSequence.isNullOrEmpty() && targetUnit < iuSequence.size) targetUnit else 0
-        Log.i(TAG, "chunk resolve: extId=${playbackViewModel.pendingExternalUnitId} byId=$targetUnit cur=${playbackViewModel.currentUnitIndex} seekTo=$seekToUnit")
         val pendingRotMs = playbackViewModel.pendingSeekPositionMs
         val seekMs = when {
             seekToUnit > 0 && !iuSequence.isNullOrEmpty() -> unitStartMs(iuSequence, seekToUnit)
@@ -794,12 +786,6 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
             else -> 0L
         }
         if (seekMs > 0) playbackViewModel.pendingSeekPositionMs = -1
-        debugLog("chunk extId=${playbackViewModel.pendingExternalUnitId ?: "-"} ius=[${iuSequence?.take(6)?.joinToString(",") { it.unitId ?: "?" }}] cur=${playbackViewModel.currentUnitIndex} -> seekTo=$seekToUnit ms=$seekMs")
-
-        if (seekToUnit > 0 && !iuSequence.isNullOrEmpty()) {
-            val target = iuSequence[seekToUnit]
-            Log.i(TAG, "UNIT-SEEK unit=${target.unitId} index=$seekToUnit startMs=${target.startMs} seekMs=$seekMs")
-        }
 
         // An external unit tap (or rotation resume) targets an explicit
         // position — including 0 for unit 1. With the merged single player the
@@ -1138,7 +1124,6 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                 ) {
                     videoReadyToShow = true
                     pendingRevealPosMs = -1L
-                    debugLog("reveal video at pos=$pos >= target+150ms (inside unit)")
                     updateLayers()
                 }
 
@@ -1176,7 +1161,6 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                     if (isPaused) continue
                     playbackViewModel.currentUnitIndex = idx
                     showIuImage(ius[idx])
-                    debugLog("cycle pos=$pos -> idx=$idx -> ${ius[idx].unitId}")
                     updateSubtitleIfEnabled(ius[idx].text)
                     SharedPositionManager.navigateTo(
                         chapterId = playbackViewModel.currentChapterId,
@@ -1266,7 +1250,6 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
             pendingRevealGen = -1L // a new item cancels any pending return-reveal
             videoPlayerGeneration++
             videoCurrentGen = videoPlayerGeneration
-            val startedAt = SystemClock.elapsedRealtime()
             val b = binding ?: return
             // Only a source WITH a video track needs the surface alive. An
             // audio-only source must NOT resurrect the surface here — its
@@ -1280,8 +1263,6 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
             val sameScene = sceneKey != null && sceneKey == currentPlayerSceneKey &&
                 includeVideo == currentPlayerHasVideo &&
                 currentPlayerVideoVersion == playbackViewModel.currentVideoVersion
-            Log.i(TAG, "scene target: scene=$sceneKey pos=${startPosMs}ms video=$includeVideo play=$playIntent same=$sameScene gen=$videoCurrentGen")
-            debugLog("target same=$sameScene pos=${startPosMs}ms v=$includeVideo play=$playIntent")
             if (sameScene && player.playbackState != Player.STATE_IDLE) {
                 // Same scene re-target (unit navigation within the scene):
                 // instant seek — both tracks seek together, no re-download.
@@ -1300,8 +1281,6 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                 // unit's tail (audio master timeline — no video_start_ms).
                 videoSeekInFlight = true
                 pendingRevealPosMs = startPosMs + UNIT_REVEAL_TOLERANCE_MS
-                debugLog("target same: seek to $startPosMs, reveal gated at pos >= ${startPosMs + UNIT_REVEAL_TOLERANCE_MS}")
-                Log.i(TAG, "scene same-item seek: ${startPosMs}ms (reveal gated +${UNIT_REVEAL_TOLERANCE_MS}ms)")
             } else {
                 currentPlayerSceneKey = sceneKey
                 currentPlayerHasVideo = includeVideo
@@ -1338,7 +1317,6 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                 player.prepare()
                 player.playWhenReady = playIntent
                 advancePending = false
-                Log.i(TAG, "scene set (prepare) in ${SystemClock.elapsedRealtime() - startedAt}ms")
             }
         } catch (e: Exception) {
             Log.e(TAG, "Scene target exception: ${e.message}", e)
@@ -1354,9 +1332,6 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
             val vp = videoPlayer ?: return
             when (playbackState) {
                 Player.STATE_READY -> {
-                    debugLog("READY pos=${runCatching { vp.currentPosition }.getOrNull()}ms dur=${runCatching { vp.duration }.getOrNull()}ms")
-                    Log.i(TAG, "VID-LC ready: pos=${runCatching { vp.currentPosition }.getOrNull()}ms " +
-                        "dur=${runCatching { vp.duration }.getOrNull()}ms gen=$videoCurrentGen")
                     // Watchdog for the same-scene seek: DISCONTINUITY_REASON_SEEK
                     // may not arrive (seek to an already-reached position), which
                     // would leave videoSeekInFlight stuck true and the reveal
@@ -1369,7 +1344,6 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                         val p = runCatching { vp.currentPosition }.getOrNull() ?: -1L
                         if (p >= pendingRevealPosMs - UNIT_REVEAL_TOLERANCE_MS) {
                             videoSeekInFlight = false
-                            Log.i(TAG, "VID-LC ready: seek landed (position watchdog)")
                         }
                     }
                     // The screen left view while the item was preparing — it can
@@ -1378,7 +1352,6 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                     if (isHidden || !isAdded) {
                         runCatching { vp.pause() }
                         if (currentPlayerHasVideo) videoReadyToShow = true
-                        Log.i(TAG, "VID-LC ready while hidden — staying paused")
                         return
                     }
                     // First frame rendered — the storyboard can give way. Only
@@ -1392,7 +1365,6 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                     // video until it is positioned inside the unit).
                     if (currentPlayerHasVideo && pendingRevealPosMs < 0) {
                         videoReadyToShow = true
-                        debugLog("READY: reveal (full source)")
                     }
                     updateLayers()
                     startIuCycling()
@@ -1410,7 +1382,6 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                     }
                 }
                 Player.STATE_BUFFERING -> {
-                    Log.i(TAG, "VID-LC buffering gen=$videoCurrentGen")
                     // The player pauses BOTH tracks itself while it fills the
                     // buffer — the UI only reflects it ("Загрузка…").
                     if (vp.playWhenReady && playbackViewModel.uiState.value.phase != PlayerPhase.BUFFERING) {
@@ -1420,15 +1391,10 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                 }
                 Player.STATE_ENDED -> {
                     videoReadyToShow = false
-                    Log.i(TAG, "VID-LC ended — advancing to next scene")
                     onTrackEnd()
                 }
                 else -> {}
             }
-        }
-
-        override fun onIsPlayingChanged(isPlaying: Boolean) {
-            Log.i(TAG, "VID-LC isPlaying=$isPlaying gen=$videoCurrentGen")
         }
 
         override fun onPositionDiscontinuity(
@@ -1438,7 +1404,6 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         ) {
             if (reason == Player.DISCONTINUITY_REASON_SEEK) {
                 videoSeekInFlight = false
-                Log.i(TAG, "VID-LC seek landed at ${newPosition.positionMs}ms gen=$videoCurrentGen")
             }
         }
 
@@ -1458,7 +1423,6 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                 pendingRevealGen = -1L
                 videoReadyToShow = true
                 updateLayers()
-                Log.i(TAG, "VID-LC return: video revealed on first rendered frame (gen=$gen)")
             }
         }
 
@@ -1555,7 +1519,6 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         videoReadyToShow = false
         pendingRevealGen = gen
         updateLayers()
-        Log.i(TAG, "VID-LC return: holding storyboard until surface re-render (gen=$gen)")
         // Primary signal: the first frame actually rendered on the recreated
         // surface (onRenderedFirstFrame) reveals the video at the exact render
         // moment. The fixed delay is only a safety net for sources where the
@@ -1567,7 +1530,6 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                 pendingRevealGen = -1L
                 videoReadyToShow = true
                 updateLayers()
-                Log.i(TAG, "VID-LC return: video revealed (timeout fallback, gen=$gen)")
             }
         }
     }
@@ -1636,7 +1598,6 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         // still preparing is honored by ExoPlayer itself at STATE_READY (the
         // "UI says ready, Play does nothing / lost start" states are gone).
         runCatching { videoPlayer?.play() }
-        Log.i(TAG, "VID-LC play() gen=$videoCurrentGen")
         updateLayers()
         isPaused = false
         // Update ViewModel state — restore PLAYING phase (STATE_BUFFERING will
@@ -1655,7 +1616,6 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
     }
 
     fun stopAll(keepSurface: Boolean = false) {
-        debugLog("stopAll keep=$keepSurface seek=${playbackViewModel.pendingExternalSeek?.let { "${it.unitId}/i${it.unitIndex}" } ?: "-"}")
         Log.i(TAG, "stopAll keepSurface=$keepSurface")
         iuCyclingJob?.cancel()
         iuCyclingJob = null
@@ -1754,21 +1714,6 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
             //   }
         }
         anchorFullscreenToImage()
-    }
-
-    // ── TEMP DEBUG: on-screen unit-switch timeline (remove after verification) ──
-    private val debugLines = ArrayDeque<String>()
-    private fun debugLog(msg: String) {
-        val line = "${System.currentTimeMillis() % 100000}: $msg"
-        if (Looper.myLooper() != Looper.getMainLooper()) {
-            view?.post { debugLog(msg) }
-            return
-        }
-        val b = binding ?: return
-        debugLines.addLast(line)
-        while (debugLines.size > 14) debugLines.removeFirst()
-        b.debugStatusText.text = debugLines.joinToString("\n")
-        b.debugStatusText.visibility = View.VISIBLE
     }
 
     /** When an external unit seek starts, cover the live surface with the

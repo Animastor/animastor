@@ -694,29 +694,19 @@ module.exports = function(app, redis, deps) {
         res.setHeader('Last-Modified', lastModified);
         res.setHeader('Cache-Control', 'public, max-age=0, must-revalidate');
 
-        // Debug: one compact line per media request so the streaming/cache
-        // behavior is observable (206 = range served, 304 = cache revalidation,
-        // 200 = full entity incl. If-Range mismatch → regenerated content).
-        const serve = (status, detail) => {
-            log(`[MEDIA] ${status} ${path.basename(filePath)} ${detail}`);
-        };
-
         const range = req.headers.range;
         if (!range) {
             // Conditional GET: 304 when the cached entity is still current.
             const inm = (req.headers['if-none-match'] || '').split(',').map((s) => s.trim());
             if (inm.includes(etag) || inm.includes('*')) {
-                serve(304, 'if-none-match');
                 res.status(304).end();
                 return;
             }
             const ims = req.headers['if-modified-since'];
             if (ims && Date.parse(ims) >= lastModifiedSec) {
-                serve(304, 'if-modified-since');
                 res.status(304).end();
                 return;
             }
-            serve(200, `full size=${fileSize}`);
             res.setHeader('Content-Length', fileSize);
             fs.createReadStream(filePath).pipe(res);
             return;
@@ -724,7 +714,6 @@ module.exports = function(app, redis, deps) {
 
         const match = /^bytes=(\d*)-(\d*)$/.exec(range);
         if (!match) {
-            serve(416, 'malformed-range');
             res.status(416).setHeader('Content-Range', `bytes */${fileSize}`).end();
             return;
         }
@@ -736,7 +725,6 @@ module.exports = function(app, redis, deps) {
             end = fileSize - 1;
         }
         if (start >= fileSize || start > end) {
-            serve(416, `range-start=${start} out-of-bounds`);
             res.status(416).setHeader('Content-Range', `bytes */${fileSize}`).end();
             return;
         }
@@ -754,14 +742,12 @@ module.exports = function(app, redis, deps) {
             }
         }
         if (!ifRangeOk) {
-            serve(200, `if-range-miss range=${start}-${end} full`);
             res.setHeader('Content-Length', fileSize);
             fs.createReadStream(filePath).pipe(res);
             return;
         }
         end = Math.min(end, fileSize - 1);
         res.status(206);
-        serve(206, `bytes ${start}-${end}/${fileSize}`);
         res.setHeader('Content-Range', `bytes ${start}-${end}/${fileSize}`);
         res.setHeader('Content-Length', end - start + 1);
         fs.createReadStream(filePath, { start, end }).pipe(res);

@@ -182,17 +182,6 @@ const UNIT_REVEAL_TOLERANCE_MS = 150;
 // Android keepSurface fix: the current frame stays visible through the seek
 // and the new unit's frame replaces it directly.
 let currentVideoSceneKey: string | null = null;
-// Debug: time from <video> src assignment to the first frame (loadeddata) —
-// should be ~1s with faststart + Range streaming, not the full-download time.
-let videoSrcSetAt = 0;
-function logFirstFrameReady(): void {
-  videoEl?.addEventListener('loadeddata', () => {
-    if (videoSrcSetAt > 0) {
-      console.info(`[PLAY-STREAM] first frame in ${Math.round(performance.now() - videoSrcSetAt)}ms (src→loadeddata)`);
-      videoSrcSetAt = 0;
-    }
-  }, { once: true });
-}
 let iuRafId = 0;
 let silentTimer: number | null = null;
 
@@ -566,7 +555,6 @@ export async function seekToPosition(chapterId: string, sceneId: string, unitInd
     // queue is ready — the first quick unit tap after a fresh load is no
     // longer silently lost. missingIuPosition stays reserved for scenes that
     // are genuinely absent AFTER init (the refresh branches below).
-    console.info(`[PLAY] seekToPosition: player not initialized yet — deferring seek to ${chapterId}/${sceneId} unit=${unitIndex}`);
     pendingExternalSeek.value = { chapterId, sceneId, unitId, chunkId: sceneKey, unitIndex };
     return;
   }
@@ -607,7 +595,6 @@ export function executePendingSeek(): void {
   // Consuming it here (empty queue → playSceneQueue no-op) was the other half
   // of the lost-first-tap bug: the seek was nulled before anything could run.
   if (!bookId.value || sceneQueue.value.length === 0) {
-    console.info('[PLAY] executePendingSeek: player not initialized yet — deferring');
     return;
   }
   pendingExternalSeek.value = null;
@@ -708,7 +695,6 @@ export function setLayerVideo(v: boolean): void {
         // (single merged source) can never drift, so it never needs this seek.
         const diff = Math.abs(el.currentTime - audio.currentTime);
         if (diff > 0.5) {
-          console.info(`[PLAY-STREAM] video layer re-enabled — hidden video drifted ${diff.toFixed(2)}s, re-syncing to audio`);
           applyVideoSeek(null);
         }
         // A hidden element can be paused by the browser (or the video is simply
@@ -744,8 +730,6 @@ export function attachVideo(el: HTMLVideoElement): void {
     videoHasFrame = false;
     currentVideoSceneKey = getCurrentSceneKey();
     el.src = videoSrcUrl;
-    videoSrcSetAt = performance.now();
-    logFirstFrameReady();
     // Prefer the explicit video-timeline target while one is pending; the
     // audio currentTime can still be unseeked (0) right after a unit seek.
     if (pendingVideoTargetSec >= 0) {
@@ -1090,10 +1074,6 @@ function handleChunk(scene: PreloadedScene): void {
   const seekMs = seekToUnit > 0 && ius.length > 0 ? unitStartMs(ius, seekToUnit)
     : pendingRotMs > 0 ? pendingRotMs : 0;
   if (seekMs > 0) pendingSeekPositionMs = -1;
-  if (seekToUnit > 0 && ius.length > 0) {
-    console.info(`[PLAY] UNIT-SEEK unit=${ius[seekToUnit].unitId} index=${seekToUnit} ` +
-      `startMs=${ius[seekToUnit].startMs} seekMs=${seekMs}`);
-  }
 
   // An external unit tap (or rotation resume) is an EXPLICIT video target —
   // including 0 for unit 1 — so the video is seeked to it directly instead of
@@ -1475,18 +1455,15 @@ function seekAttachedVideo(explicitSeekMs: number | null): boolean {
 function ensureSceneVideo(sceneKey: string | null, explicitSeekMs: number | null = null): void {
   if (!sceneKey) return;
   if (!layerVideo.value) {
-    console.info(`[PLAY-STREAM] skip video (layer off) scene=${sceneKey}`);
     return;
   }
   // Already attached for this scene (e.g. re-emit after a same-scene unit tap)
   // — just re-apply the seek target.
   if (seekAttachedVideo(explicitSeekMs)) {
-    console.info(`[PLAY-STREAM] reuse attached video scene=${sceneKey} seekMs=${explicitSeekMs ?? 'audio-sync'}`);
     return;
   }
   const [chId, scId] = sceneKey.split(':', 2);
   const url = API_BASE + scenePath(chId, scId, 'video');
-  console.info(`[PLAY-STREAM] stream scene=${sceneKey} url=${url} seekMs=${explicitSeekMs ?? 'audio-sync'}`);
   playVideoOverlay(url, explicitSeekMs);
 }
 
@@ -1522,8 +1499,6 @@ function playVideoOverlay(url: string, explicitSeekMs: number | null = null): vo
   // can't sustain playback).
   resumeBufferTargetS = RESUME_BUFFER_MIN_S;
   videoEl.src = url;
-  videoSrcSetAt = performance.now();
-  logFirstFrameReady();
   applyVideoSeek(explicitSeekMs);
   // currentTime set before metadata loads is unreliable in some browsers —
   // re-apply once the metadata is ready.
@@ -1545,12 +1520,10 @@ function applyVideoSeek(explicitSeekMs: number | null): void {
   const el = videoEl;
   if (!el) return;
   if (explicitSeekMs != null) {
-    console.info(`[PLAY-STREAM] video seek explicit=${explicitSeekMs}ms`);
     try { el.currentTime = explicitSeekMs / 1000; } catch { /* ignore */ }
   } else {
     const cur = currentPlayer?.currentTime ?? 0;
     if (cur > 0) {
-      console.info(`[PLAY-STREAM] video seek audio-sync=${Math.round(cur * 1000)}ms`);
       try { el.currentTime = cur; } catch { /* ignore */ }
     }
   }
@@ -1605,7 +1578,7 @@ function onVideoError(): void {
 // over the network. On a slow connection the <video> element runs out of
 // buffered data and freezes while the audio keeps playing — the "video goes out
 // of sync" symptom. Fix: gate the WHOLE player on the video buffer — when the
-// video underruns (< PAUSE_BUFFER_GUARD_S ahead) pause the audio AND the video
+// video underruns (<1s ahead) pause the audio AND the video
 // and show "Загрузка…" (BUFFERING); resume once the browser buffered
 // RESUME_BUFFER_S ahead, re-aligning the video to the audio timeline first.
 // The browser cannot be told a buffer size directly — the debounce + resume
@@ -1616,7 +1589,6 @@ function onVideoError(): void {
 // ahead. This also gates the INITIAL load: if the first bytes are slow to
 // arrive, the player shows "Загрузка…" instead of playing the audio alone and
 // letting the video join late/desynced.
-const PAUSE_BUFFER_GUARD_S = 1.0;
 // Resume thresholds are ADAPTIVE: a fixed small target (the original 3s)
 // caused rapid pause/start cycling on slow connections — the video drained
 // the tiny buffer and underran again right after each resume. Base target
@@ -1683,17 +1655,12 @@ function enterVideoBuffering(): void {
     // Underran shortly after resuming — the current target can't sustain
     // playback on this connection. Raise it so the next wait accumulates a
     // bigger buffer before trying again.
-    const prev = resumeBufferTargetS;
     resumeBufferTargetS = Math.min(RESUME_BUFFER_MAX_S, resumeBufferTargetS * 1.5);
-    if (resumeBufferTargetS !== prev) {
-      console.info(`[PLAY-STREAM] buffering cycle — resume target ${prev.toFixed(1)}s → ${resumeBufferTargetS.toFixed(1)}s`);
-    }
   } else if (resumeBufferTargetS > RESUME_BUFFER_MIN_S) {
     // Played cleanly for longer than CYCLE_WINDOW_MS — connection recovered,
     // come back down to the base target.
     resumeBufferTargetS = RESUME_BUFFER_MIN_S;
   }
-  console.info(`[PLAY-STREAM] buffering — video underrun (ahead=${el ? bufferedAheadSec(el).toFixed(2) : '?'}s < guard ${PAUSE_BUFFER_GUARD_S}s), pausing to keep sync (resume at ${resumeBufferTargetS.toFixed(1)}s)`);
   videoBuffering = true;
   // Pause the video element too (not just the audio): while it is paused the
   // browser keeps fetching but will NOT auto-resume past our gate.
@@ -1741,7 +1708,6 @@ function resumeFromBuffering(): void {
     try { void videoEl.play().catch(() => { }); } catch { /* ignore */ }
   }
   uiState.value = { ...uiState.value, phase: 'PLAYING' };
-  console.info(`[PLAY-STREAM] buffering done — resuming (buffered ${resumeBufferTargetS.toFixed(1)}s)`);
 }
 
 /** stopAll — fragment.stopAll(): release players, reset engine flags. */
