@@ -225,6 +225,12 @@ let videoSrcUrl: string | null = null;
 // Android keepSurface fix: the current frame stays visible through the seek
 // and the new unit's frame replaces it directly.
 let currentVideoSceneKey: string | null = null;
+// P1-2 (option A): the single latest loadedmetadata listener registered by
+// playVideoOverlay (it re-applies the seek target once metadata is ready). One
+// slot is enough — there is exactly one "latest intent" per element; the
+// previous listener is removed on a new registration, on detach and on stop
+// (docs/05-frontend/PLAYER_STATE_MACHINE_AUDIT_T6.md §8).
+let pendingMetaListener: (() => void) | null = null;
 let iuRafId = 0;
 let silentTimer: number | null = null;
 
@@ -833,6 +839,12 @@ export function detachVideo(): void {
     videoEl.removeEventListener('playing', onVideoPlaying);
     videoEl.removeEventListener('loadeddata', onVideoFirstFrame);
     videoEl.removeEventListener('timeupdate', onVideoTimeUpdate);
+    // P1-2: the pending loadedmetadata listener lives on this element — drop
+    // it together with the element (it must not fire on a later re-attach).
+    if (pendingMetaListener) {
+      videoEl.removeEventListener('loadedmetadata', pendingMetaListener);
+      pendingMetaListener = null;
+    }
     try { videoEl.pause(); } catch { /* ignore */ }
     videoEl.removeAttribute('src');
     videoEl = null;
@@ -1588,15 +1600,25 @@ function playVideoOverlay(url: string, explicitSeekMs: number | null = null): vo
   // is a new attempt; the escalation re-accumulates if this connection still
   // can't sustain playback).
   resumeBufferTargetS = RESUME_BUFFER_MIN_S;
+  // P1-2: drop the previous listener BEFORE the new src assignment — a stale
+  // onMeta whose metadata never fired must not survive onto the new src's
+  // metadata, where it would apply a stale seek first (the ref is null when
+  // the previous listener already fired and removed itself).
+  if (pendingMetaListener) {
+    videoEl.removeEventListener('loadedmetadata', pendingMetaListener);
+    pendingMetaListener = null;
+  }
   videoEl.src = url;
   applyVideoSeek(explicitSeekMs);
   // currentTime set before metadata loads is unreliable in some browsers —
   // re-apply once the metadata is ready.
   const onMeta = () => {
+    if (pendingMetaListener === onMeta) pendingMetaListener = null;
     videoEl?.removeEventListener('loadedmetadata', onMeta);
     applyVideoSeek(explicitSeekMs);
   };
   videoEl.addEventListener('loadedmetadata', onMeta);
+  pendingMetaListener = onMeta;
   if (!isPaused() && !pendingLoad && uiState.value.phase === 'PLAYING') {
     try { void videoEl.play().catch(() => { }); } catch { /* ignore */ }
   }
@@ -1853,6 +1875,11 @@ export function stopAll(): void {
   if (videoEl) {
     try { videoEl.pause(); } catch { /* ignore */ }
     videoEl.removeAttribute('src');
+  }
+  // P1-2: clear the pending loadedmetadata listener on stop as well.
+  if (pendingMetaListener) {
+    videoEl?.removeEventListener('loadedmetadata', pendingMetaListener);
+    pendingMetaListener = null;
   }
   videoSrcUrl = null;
   videoEnded = false;

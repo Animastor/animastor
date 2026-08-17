@@ -260,18 +260,24 @@ State machine и reveal-gate не тронуты.
 `SHOWING_STORYBOARD` + `phase=PLAYING` + `enginePaused=false`. Тест падает на
 до-фиксовом коде (фаза оставалась `PLAYING`).
 
-### P1-2. Web: устаревшие `loadedmetadata`-листенеры (stale callbacks) — **investigated, см. §8**
+### P1-2. Web: устаревшие `loadedmetadata`-листенеры (stale callbacks) — **DONE**
 
-`playVideoOverlay` регистрирует самоснимающийся `onMeta` при каждом вызове и никогда
-не снимает предыдущие (ни в `detachVideo`, ни в `stopAll`). При смене сцены старый
-листенер срабатывает на `loadedmetadata` НОВОЙ сцены и применяет устаревший
-`explicitSeekMs` (переходная неправильная позиция). Самокоррекция: листенеры
-вызываются в порядке регистрации, самый новый — последний, и он применяет правильный
-таргет. Реального видимого бага нет, но листенеры копятся на каждую сцену — риск
-порядка/гонки.
+`playVideoOverlay` регистрировал самоснимающийся `onMeta` при каждом вызове и не
+снимал предыдущие (ни при смене сцены, ни в `detachVideo`, ни в `stopAll`): старый
+листенер срабатывал на `loadedmetadata` НОВОЙ сцены и применял устаревший
+`explicitSeekMs` (транзиентный wrong seek; финальное состояние всегда корректно —
+полный анализ в §8).
 
-Полный lifecycle-анализ (где создаётся, кто/когда срабатывает, все сценарии,
-решение и почему именно оно) — в разделе **§8 «P1-2 — Investigation»** ниже.
+**Как исправлено (вариант A, §8.4):** один module-level ref `pendingMetaListener` —
+слот «последнего интента». Снятие предыдущего листенера перед регистрацией нового в
+`playVideoOverlay` (до присвоения нового src), снятие в `detachVideo` и `stopAll`;
+самоcнятие + очистка ref при срабатывании. Token/generation НЕ понадобился: слот
+один, «последний интент» на элемент единственный (§8.2.7).
+
+**Тест:** `frontends/app/src/state/playbackVideoListener.test.ts` (3 теста, реальный
+поток preparePlayback→playSceneQueue→handleChunk→playVideoOverlay с fake-элементом):
+A→B оставляет ТОЛЬКО listener B (A снят); сработавший listener снимает себя, а
+`detachVideo` чистит слот; `stopAll` чистит слот. 2 из 3 падают на до-фиксовом коде.
 
 ### P2-1. Web: `enginePaused` — write-only сигнал
 
@@ -352,9 +358,9 @@ L872 и L884 пишут одно и то же состояние подряд (�
 ### P1
 - **P1-1 (DONE):** web `pauseIfPlaying` silent-ветка — сведена к единому пути
   `pausePlayback()` (пишет `phase=PAUSED`), тест в `playbackStore.test.ts`.
-- **P1-2 (решение в §8):** `playVideoOverlay` — вариант A: module-level ref на
-  последний `onMeta`, снятие предыдущего перед регистрацией нового + в
-  `detachVideo`/`stopAll`. Устраняет и накопление, и транзиентный stale-seek.
+- **P1-2 (DONE):** `playVideoOverlay` — вариант A: один module-level ref
+  `pendingMetaListener`, снятие предыдущего перед регистрацией нового + в
+  `detachVideo`/`stopAll`. Тест в `playbackVideoListener.test.ts`.
 
 ### P2
 - **P2-4:** reveal при «проскоке» за конец юнита — раскрывать (позиция ≥ гейта,
@@ -479,10 +485,12 @@ dispatch loadedmetadata (один task, FIFO по регистрации):
 
 ### 8.4 Решение
 
-**Вариант A (рекомендован):** module-level ref на последний листенер
+**Вариант A (рекомендован — РЕАЛИЗОВАН):** module-level ref на последний листенер
 (`let pendingMetaListener: (() => void) | null`), снимать предыдущий перед
-регистрацией нового в `playVideoOverlay` + в `detachVideo` и `stopAll` (~4 строки,
-state machine и reveal-gate не затрагиваются).
+регистрацией нового в `playVideoOverlay` (до присвоения нового src) + в
+`detachVideo` и `stopAll` (~4 строки, state machine и reveal-gate не затрагиваются).
+При срабатывании `onMeta` снимает сам себя и очищает ref (`if (pendingMetaListener ===
+onMeta) pendingMetaListener = null`).
 
 **Почему A, а не B/D:**
 
@@ -499,13 +507,16 @@ state machine и reveal-gate не затрагиваются).
   транзиентный seek остаётся, а инвариант хрупок к будущим правкам — риск дешевле
   устранить сейчас.
 
-### 8.5 Регрессионный тест — НЕ добавлен
+### 8.5 Регрессионный тест — добавлен вместе с фиксом
 
-Неверное финальное состояние не воспроизводимо (п. 8.3): любой тест, фиксирующий
-«после A→B позиция = targetB», проходит и до, и после исправления — ценности не
-несёт. Единственный воспроизводимый эффект — транзиентный `currentTime = targetA`
-между двумя листенерами в одном dispatch, но он требует инструментирования
-элемента (спай на сеттер `currentTime`) и не является пользовательским багом.
-Тест, падающий на до-фиксовом коде, появится вместе с реализацией варианта A
-(assert: после dispatch зарегистрирован ровно один листенер / stale seek не
-применялся).
+`frontends/app/src/state/playbackVideoListener.test.ts` (3 теста): вместо спая на
+сеттер `currentTime` тест фиксирует сам слот — через fake `<video>`-элемент с
+реестром листенеров (`listenerCount('loadedmetadata')`), получаемый через публичный
+`attachVideo`, и реальный поток `preparePlayback → playSceneQueue → mocked fetch →
+handleChunk → playVideoOverlay`:
+1. `playVideoOverlay(A)` → `playVideoOverlay(B)` (смена сцены без срабатывания A):
+   остаётся РОВНО один листенер (B) — ref-снятие A;
+2. сработавший `onMeta` снимает себя; `detachVideo()` чистит слот;
+3. `stopAll()` чистит слот.
+2 из 3 падают на до-фиксовом коде (ref-снятие и stopAll-очистка — новые;
+самоcнятие при fire существовало и раньше).
