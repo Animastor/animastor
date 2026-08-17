@@ -54,6 +54,11 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         // — the storyboard overlay covers the transition. Audio master timeline
         // only: no video_start_ms is computed or consumed.
         private const val UNIT_REVEAL_TOLERANCE_MS = 150L
+        // Keep the reveal position inside the SELECTED unit: never land on (or
+        // past) the unit's end boundary — a unit shorter than the tolerance
+        // would otherwise reveal the video already inside the NEXT unit.
+        // ~1 frame at 24fps.
+        private const val UNIT_REVEAL_SAFETY_MARGIN_MS = 40L
     }
 
     private var binding: FragmentPlayBinding? = null
@@ -815,6 +820,39 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         return seekMs
     }
 
+    /** End offset (ms) of a unit on the AUDIO master timeline: the next unit's
+     *  start_ms when present (server boundaries), else start_ms + durationMs,
+     *  else cumulative durationMs (legacy). Used to bound the reveal gate so a
+     *  unit shorter than the reveal tolerance never reveals the video already
+     *  inside the NEXT unit. */
+    private fun unitEndMs(ius: List<IuImageItem>, unitIndex: Int): Long {
+        val nextStart = ius.getOrNull(unitIndex + 1)?.startMs
+        if (nextStart != null && nextStart > 0) return nextStart
+        val startMs = ius.getOrNull(unitIndex)?.startMs
+        if (startMs != null && startMs > 0) {
+            return startMs + (ius.getOrNull(unitIndex)?.durationMs ?: 0L)
+        }
+        var endMs = 0L
+        for (i in 0..unitIndex) endMs += ius[i].durationMs
+        return endMs
+    }
+
+    /** Reveal gate (ms) for the video layer after a unit seek: the raw seek
+     *  target plus the tolerance, clamped to stay INSIDE the selected unit
+     *  (audio master timeline). A unit shorter than the tolerance must never
+     *  reveal the video already inside the NEXT unit — `revealPosition =
+     *  min(unitStart + tolerance, unitEnd - safetyMargin)`. Falls back to the
+     *  raw gate when the unit boundaries aren't available. */
+    private fun unitRevealGateMs(ius: List<IuImageItem>?, unitIndex: Int, startPosMs: Long): Long {
+        val raw = startPosMs + UNIT_REVEAL_TOLERANCE_MS
+        if (ius.isNullOrEmpty() || unitIndex !in ius.indices) return raw
+        val end = unitEndMs(ius, unitIndex)
+        // Clamp to stay inside the selected unit; a unit shorter than the
+        // safety margin falls back to the raw target (best effort — sub-frame
+        // units can't hold a tolerance window).
+        return maxOf(startPosMs, minOf(raw, end - UNIT_REVEAL_SAFETY_MARGIN_MS))
+    }
+
     /** Handle chunk with no audio — show IU images with timer-based cycling (e.g. Cover). */
     private fun handleSilentChunk(iuSequence: List<IuImageItem>) {
         if (!isAdded) return
@@ -1073,8 +1111,18 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                 // selected unit's storyboard on screen (per the audio scale)
                 // until playback actually moves inside the unit — the video
                 // reveals as soon as the position passes the tolerance.
+                // The reveal gate is bounded by the SELECTED unit (target +
+                // tolerance, clamped to unitEnd - safety): the reveal must never
+                // land inside the NEXT unit — a unit shorter than the tolerance
+                // would otherwise show the next unit's frame over the selected
+                // unit's storyboard. The belt-and-suspenders pos < unitEnd
+                // guards the race where the position advances past the unit
+                // boundary between two polls (the storyboard overlay already
+                // switched to the next unit by then — revealing its frame is
+                // correct).
                 if (!videoReadyToShow && currentPlayerHasVideo && pendingRevealPosMs >= 0 &&
-                    !videoSeekInFlight && pos >= pendingRevealPosMs
+                    !videoSeekInFlight && pos >= pendingRevealPosMs &&
+                    pos < unitEndMs(ius, currentIuIndex)
                 ) {
                     videoReadyToShow = true
                     pendingRevealPosMs = -1L
@@ -1234,7 +1282,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                 // shown frame belongs to the SELECTED unit, never the previous
                 // unit's tail (audio master timeline — no video_start_ms).
                 videoSeekInFlight = true
-                pendingRevealPosMs = startPosMs + UNIT_REVEAL_TOLERANCE_MS
+                pendingRevealPosMs = unitRevealGateMs(currentIuSequence, currentIuIndex, startPosMs)
             } else {
                 currentPlayerSceneKey = sceneKey
                 currentPlayerHasVideo = includeVideo
@@ -1242,7 +1290,9 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                 // Full (re)build: the source starts at startPosMs, but reveal the
                 // video only once positioned inside the selected unit (same
                 // tolerance as the same-scene path — audio master timeline).
-                pendingRevealPosMs = if (includeVideo) startPosMs + UNIT_REVEAL_TOLERANCE_MS else -1L
+                // Bounded by the unit's end so a short unit never reveals the
+                // video already inside the NEXT unit.
+                pendingRevealPosMs = if (includeVideo) unitRevealGateMs(currentIuSequence, currentIuIndex, startPosMs) else -1L
                 videoSeekInFlight = false
                 // Audio stays on the plain local-file factory; ONLY the network
                 // video URL goes through the persistent disk cache (Media3
@@ -1313,10 +1363,12 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                     // (scene without video) has no frames, and videoReadyToShow
                     // must stay false so the lingering surface stays hidden.
                     // Both the full (re)build and the same-scene instant path
-                    // set pendingRevealPosMs = start + tolerance; the reveal
-                    // happens in startIuCycling once pos >= that (audio master
-                    // timeline — the storyboard of the selected unit covers the
-                    // video until it is positioned inside the unit).
+                    // set pendingRevealPosMs = the clamped reveal gate (seek
+                    // target + tolerance, bounded to the selected unit's end);
+                    // the reveal happens in startIuCycling once pos >= that
+                    // (audio master timeline — the storyboard of the selected
+                    // unit covers the video until it is positioned inside the
+                    // unit).
                     if (currentPlayerHasVideo && pendingRevealPosMs < 0) {
                         videoReadyToShow = true
                     }

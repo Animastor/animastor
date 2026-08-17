@@ -174,6 +174,10 @@ let videoHasFrame = false;
 let videoSeekInFlight = false;
 let pendingVideoRevealSec = -1;
 const UNIT_REVEAL_TOLERANCE_MS = 150;
+// Keep the reveal position inside the SELECTED unit: never land on (or past)
+// the unit's end boundary — a unit shorter than the tolerance would otherwise
+// reveal the video already inside the NEXT unit. ~1 frame at 24fps.
+const UNIT_REVEAL_SAFETY_MARGIN_MS = 40;
 // Scene key of the whole-scene video currently loaded in videoEl. Used to
 // detect unit navigation WITHIN the same scene: the video file does not change
 // (blob URLs are recreated per fetch, so the scene key — not the URL — is the
@@ -736,9 +740,14 @@ export function attachVideo(el: HTMLVideoElement): void {
       try { el.currentTime = pendingVideoTargetSec; } catch { /* not ready */ }
       // Unit target — gate the reveal on the position (audio master
       // timeline): the storyboard of the selected unit covers the element
-      // until the video is actually positioned inside the unit.
+      // until the video is actually positioned inside the unit. Bounded by
+      // the selected unit's end (unitRevealGateSec).
       videoSeekInFlight = true;
-      pendingVideoRevealSec = pendingVideoTargetSec + UNIT_REVEAL_TOLERANCE_MS / 1000;
+      pendingVideoRevealSec = unitRevealGateSec(
+        currentIuSequence.value ?? [],
+        currentIuIndex,
+        pendingVideoTargetSec,
+      );
     } else {
       const cur = currentPlayer?.currentTime ?? 0;
       if (cur > 0) { try { el.currentTime = cur; } catch { /* not ready */ } }
@@ -1082,6 +1091,11 @@ function handleChunk(scene: PreloadedScene): void {
   const explicitVideoSeekMs: number | null =
     (pendingExplicitUnitTarget || pendingRotMs > 0) ? seekMs : null;
   pendingExplicitUnitTarget = false;
+  // Set the sequence + selected unit FIRST: the video reveal gate (seek) is
+  // bounded by the selected unit's end on the audio master timeline, and the
+  // video functions below read currentIuSequence/currentIuIndex to clamp it.
+  currentIuSequence.value = ius;
+  currentIuIndex = seekToUnit;
   // Video is streamed ON DEMAND from its direct HTTP URL (ensureSceneVideo) —
   // never downloaded as part of the scene bundle. If the video for this scene
   // is already attached (same-scene unit navigation), just seek it to the unit
@@ -1092,8 +1106,6 @@ function handleChunk(scene: PreloadedScene): void {
     }
   }
 
-  currentIuSequence.value = ius;
-  currentIuIndex = seekToUnit;
   uiState.value = { ...uiState.value, currentUnitIndex: seekToUnit };
   if (ius.length > 0) {
     showIu(ius[seekToUnit]);
@@ -1157,6 +1169,33 @@ function unitStartMs(ius: IuImageItem[], unitIndex: number): number {
   let seekMs = 0;
   for (let i = 0; i < unitIndex; i++) seekMs += ius[i].durationMs;
   return seekMs;
+}
+
+/** End offset (ms) of a unit on the AUDIO master timeline: the next unit's
+ *  start_ms when present (server boundaries), else start_ms + durationMs, else
+ *  cumulative durationMs (legacy). Used to bound the reveal gate so a unit
+ *  shorter than the reveal tolerance never reveals the video already inside
+ *  the NEXT unit. */
+function unitEndMs(ius: IuImageItem[], unitIndex: number): number {
+  const nextStart = ius[unitIndex + 1]?.startMs;
+  if (nextStart != null && nextStart > 0) return nextStart;
+  const startMs = ius[unitIndex]?.startMs;
+  if (startMs != null && startMs > 0) return startMs + (ius[unitIndex]?.durationMs ?? 0);
+  let endMs = 0;
+  for (let i = 0; i <= unitIndex; i++) endMs += ius[i].durationMs;
+  return endMs;
+}
+
+/** Reveal gate (sec) for the video layer after a unit seek: the raw seek
+ *  target plus the tolerance, clamped to stay INSIDE the selected unit
+ *  (audio master timeline) — `revealPosition = min(unitStart + tolerance,
+ *  unitEnd - safetyMargin)`. Falls back to the raw gate when the unit
+ *  boundaries aren't available. */
+function unitRevealGateSec(ius: IuImageItem[], unitIndex: number, targetSec: number): number {
+  const raw = targetSec + UNIT_REVEAL_TOLERANCE_MS / 1000;
+  if (!ius || ius.length === 0 || unitIndex < 0 || unitIndex >= ius.length) return raw;
+  const end = unitEndMs(ius, unitIndex) / 1000;
+  return Math.max(targetSec, Math.min(raw, end - UNIT_REVEAL_SAFETY_MARGIN_MS / 1000));
 }
 
 /** Index of the externally-selected unit inside [ius], resolved by ID first
@@ -1428,10 +1467,16 @@ function seekAttachedVideo(explicitSeekMs: number | null): boolean {
   // the raw target would show the previous unit's tail (n-1). Gate the reveal
   // on the position: hide the element (selected unit's storyboard shows, audio
   // master timeline) and reveal once currentTime is actually inside the unit
-  // (target + tolerance). Android parity: videoSeekInFlight + pendingRevealPosMs.
+  // (target + tolerance, bounded by the selected unit's end — a unit shorter
+  // than the tolerance must never reveal inside the NEXT unit). Android
+  // parity: videoSeekInFlight + pendingRevealPosMs.
   if (explicitSeekMs != null) {
     videoSeekInFlight = true;
-    pendingVideoRevealSec = explicitSeekMs / 1000 + UNIT_REVEAL_TOLERANCE_MS / 1000;
+    pendingVideoRevealSec = unitRevealGateSec(
+      currentIuSequence.value ?? [],
+      currentIuIndex,
+      explicitSeekMs / 1000,
+    );
     videoHasFrame = false;
     updateLayers();
   }
@@ -1487,11 +1532,17 @@ function playVideoOverlay(url: string, explicitSeekMs: number | null = null): vo
   pendingVideoTargetSec = explicitSeekMs != null ? explicitSeekMs / 1000 : -1;
   // Unit target — gate the reveal on the position (audio master timeline):
   // the selected unit's storyboard covers the element until the video is
-  // positioned inside the unit (target + tolerance), so the first shown frame
-  // belongs to the selected unit, never the previous unit's tail.
+  // positioned inside the unit (target + tolerance, bounded by the selected
+  // unit's end — a unit shorter than the tolerance must never reveal inside
+  // the NEXT unit), so the first shown frame belongs to the selected unit,
+  // never the previous unit's tail.
   if (explicitSeekMs != null) {
     videoSeekInFlight = true;
-    pendingVideoRevealSec = explicitSeekMs / 1000 + UNIT_REVEAL_TOLERANCE_MS / 1000;
+    pendingVideoRevealSec = unitRevealGateSec(
+      currentIuSequence.value ?? [],
+      currentIuIndex,
+      explicitSeekMs / 1000,
+    );
   }
   if (!videoEl) { updateLayers(); return; }
   // Fresh source — start the buffer policy from the base target (a new scene
@@ -1555,7 +1606,14 @@ function onVideoFirstFrame(): void {
  *  video reveals as soon as playback moves past the tolerance. */
 function onVideoTimeUpdate(): void {
   if (!videoSeekInFlight || !videoEl || pendingVideoRevealSec < 0) return;
-  if (videoEl.currentTime >= pendingVideoRevealSec) {
+  // Belt-and-suspenders upper bound (parity with the clamped gate): never
+  // reveal the NEXT unit's frame over the selected unit's storyboard if the
+  // position raced past the unit boundary between timeupdate events.
+  const ius = currentIuSequence.value;
+  const posMs = videoEl.currentTime * 1000;
+  const withinUnit = !ius || ius.length === 0 ||
+    posMs < unitEndMs(ius, Math.max(0, Math.min(currentIuIndex, ius.length - 1)));
+  if (videoEl.currentTime >= pendingVideoRevealSec && withinUnit) {
     videoSeekInFlight = false;
     pendingVideoRevealSec = -1;
     videoHasFrame = true;

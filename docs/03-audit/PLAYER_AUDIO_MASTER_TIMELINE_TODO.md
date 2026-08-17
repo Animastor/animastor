@@ -14,15 +14,16 @@ Web `playbackStore.ts:1434,1494`) проверяет только нижнюю �
 раскрывает видео уже в следующем юните.
 
 ### [T1.1] Ввести верхнюю границу reveal-гейта
-- [ ] Android: в `startIuCycling` добавить `pos < unitEnd` (или `min(start + tol, unitEnd - safety)`)
+- [x] Android: в `startIuCycling` добавить `pos < unitEnd` (или `min(start + tol, unitEnd - safety)`)
   к условию reveal (`PlayFragment.kt:1076-1082`). Границу брать из `startMs` следующего юнита
   или `end_ms` (`StoryboardResponse.kt:21`).
-- [ ] Web: в `onVideoTimeUpdate` добавить верхнюю границу (`playbackStore.ts:1556-1564`).
-- [ ] Fallback: если у последнего юнита нет следующего `startMs` — использовать
+- [x] Web: в `onVideoTimeUpdate` добавить верхнюю границу (`playbackStore.ts:1556-1564`).
+- [x] Fallback: если у последнего юнита нет следующего `startMs` — использовать
   `startMs + durationMs`.
 
 ### [T1.2] Проверить границу на последнем юните сцены
-- [ ] Seek в последний юнит сцены: reveal не должен улетать за конец сцены / в `ended`.
+- [x] Seek в последний юнит сцены: reveal не должен улетать за конец сцены / в `ended`
+  (закрыто `unitEndMs`: последний юнит → `startMs + durationMs`; ручная проверка — в T4).
 
 ---
 
@@ -103,8 +104,8 @@ pause/resume/rotation/restore.
 
 | Задача | Статус |
 |---|---|
-| T1.1 Reveal-гейт с верхней границей | 📝 Plan |
-| T1.2 Последний юнит сцены | 📝 Plan |
+| T1.1 Reveal-гейт с верхней границей | ✅ Done |
+| T1.2 Последний юнит сцены | ✅ Done (код; ручной тест — T4) |
 | T2.1 AND first-frame + position | 📝 Plan |
 | T2.2 Тест-сценарии gate | 📝 Plan |
 | T3.1 Инвариант index vs unitId | 📝 Plan |
