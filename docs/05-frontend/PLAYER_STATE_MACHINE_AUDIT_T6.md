@@ -831,3 +831,149 @@ AND-гейт по-прежнему требует `!seekInFlight` + `withinUnit`
 **Регрессионный тест (реализован):** `playbackRevealOvershoot.test.ts` — см. §4
 P2-4 → DONE (5 кейсов; кейс «overshoot → reveal после смены selectedUnit» падает
 на до-фиксовом коде).
+
+## 11. Integration Audit — post P2-4
+
+Контрольная точка после цепочки фиксов **P0-1 → P1-1 → P1-2 → P2-1 → P2-3 →
+P2-4** (web; Android-код в этом шаге не менялся, участвует только как эталон
+контракта). Цель — убедиться, что последовательные исправления не создали
+новый конфликт в цепочке
+`audio position → selectedUnit → external seek → SEEKING → video seek → seekLanded
+→ onVideoTimeUpdate → reveal gate → VIDEO_READY / PLAYING`.
+
+Метод: перечитаны текущие (после всех фиксов) реализации `preparePlayback`
+(P2-3), `executePendingSeek`/`checkPendingExternalSeek`, `handleChunk`,
+`seekAttachedVideo`/`playVideoOverlay`/`attachVideo`/`detachVideo` (P1-2),
+`pausePlayback`/`resumePlayback`/`pauseIfPlaying` (P1-1), `stopAll`,
+`onVideoTimeUpdate` (P0-1+P2-4), `enterVideoBuffering`/`resumeFromBuffering`,
+`setLayerVideo`, `updateLayers`, рендер PlayPage; Android-параллель по
+`PlayFragment.kt` (poll-цикл startIuCycling, pause/resume, stopAll keepSurface).
+Код не менялся.
+
+### 11.1 Состояние цепочки фиксов
+
+| Фикс | Что закрыл | Статус на момент аудита |
+|---|---|---|
+| P0-1 | одноразовая посадка `seekLanded` в `onVideoTimeUpdate` (дедлок reveal-гейта) | закрыт |
+| P1-1 | `pauseIfPlaying` silent-ветка писала `phase=PLAYING` при `PAUSED` | закрыт |
+| P1-2 | единый слот `pendingMetaListener` (stale loadedmetadata) | закрыт |
+| P2-1 | удалён `enginePaused` (write-only) | закрыт |
+| P2-3 | смена книги — `stopAll()` + очистка one-shots в `preparePlayback` | закрыт |
+| P2-4 | overshoot-лок: guard `!videoSeekInFlight()` → `playerState.name !== 'SEEKING'` | закрыт |
+
+### 11.2 Сценарии
+
+Легенда ожидаемых значений: `PS` — playerState, `SU` — selectedUnit, `VV` —
+videoVisible, `VK` — currentVideoSceneKey, `PT` — pendingVideoTargetSec,
+`SL` — seekLanded.
+
+| # | Сценарий | Ожидаемое | Факт | Вердикт |
+|---|---|---|---|---|
+| 1 | PLAYING, A→B (Navigator) | PS=PLAYING; SU=B; VV=true; VK=та же сцена; PT=target/1000 (живёт до resume — безвредно); SL=true | handleChunk: SU=B → `seekAttachedVideo` (та же сцена, без re-src) → SEEKING{gateB} → тик: посадка + withinUnit → PLAYING + updateLayers. showIu(B) синхронно в том же таске — старая картинка A не мелькает. | ✅ PASS |
+| 2 | PAUSED, A→B | PS=VIDEO_READY (reveal в paused) либо SEEKING{paused:true} до reveal; VV=true после reveal | `pendingLoad`-ветка сохраняет гейт (`{...SEEKING, paused:true}`); seek завершается и во время паузы шлёт timeupdate → посадка + withinUnit → VIDEO_READY; на resume — то же. | ✅ PASS |
+| 3 | PLAYING, A→B→C быстро, до metadata | финальный таргет C; stale B не применяется | P1-2: перед `src=C` старый onMetaB снят (единый слот), регистрируется onMetaC; новый src абортит загрузку B — metadata C применяет только target C. FIFO + «новейший — последний». | ✅ PASS |
+| 4 | PLAYING, A→B→A быстро | финальный таргет A | та же сцена: каждый тап перевооружает SEEKING свежим payload-ом (transition целиком заменяет); между сценами — P1-2 слот. | ✅ PASS |
+| 5 | SEEKING, A→B в момент незавершённого seek | старый seek не влияет на B | `checkPendingExternalSeek` → `stopAll()` (SEEKING→IDLE, PT=-1) → новый executePendingSeek вооружает свежий SEEKING{landed:false}. Старые timeupdate перечитывают ТЕКУЩИЙ playerState (новый гейт); старый onMeta снят (P1-2) либо не существует (та же сцена). | ✅ PASS |
+| 6 | Unit-end overshoot (гейт пересечён после unitEnd) | без лока; reveal на первом тике с withinUnit=true | P2-4: каждый тик пере-оценивает AND-гейт; посадка идемпотентна. | ✅ PASS |
+| 7 | Video OFF → seek → playback → ON | без лишнего seek; видео синхронизируется | layer off: handleChunk пропускает ensureSceneVideo (нет SEEKING, SHOWING_STORYBOARD); ON mid-scene: attached → re-show (seek только при |diff|>0.5); не attached → `ensureSceneVideo(key, null)` → audio-sync, reveal по loadeddata. Инвариант F соблюдён. | ✅ PASS |
+| 8 | Video OFF во время SEEKING | скрыто (сториборд) до reveal; self-heal после ON | OFF: updateLayers прячет, SEEKING живёт (правильно — сториборд юнита поверх). ON: attached-ветка, re-align к аудио (дифф) → timeupdate: посадка + withinUnit → PLAYING. Теоретический угол «re-align к ещё не севшему аудио» недостижим — аудио локальный blob, seek мгновенный. | ✅ PASS |
+| 9 | **Pause во время SEEKING → resume** | **PS=PLAYING/VIDEO_READY, VV=true** | **см. §11.3 — НАЙДЕН БАГ** | ❌ **FAIL (P1)** |
+| 10 | Book switch во время SEEKING | без переноса состояния A | P2-3: `stopAll()` (SEEKING→IDLE, аудио A released, src снят, pendingMetaListener очищен) + one-shots; deferred seek из A обнуляется, если сцены нет в очереди B; stale fetch отбрасывается по sceneEpoch. | ✅ PASS |
+
+Итог: **9 PASS / 1 FAIL**. Дополнительный вариант FAIL (тот же класс, другой вход) —
+буферный гейт во время SEEKING, см. §11.3.2.
+
+### 11.3 НОВАЯ ПРОБЛЕМА (P1) — SEEKING не «липкий»: пауза или буфер-гейт во время seek
+
+#### 11.3.1 Точный сценарий (web)
+
+1. PLAYING, юнит B по Navigator → SEEKING{landed:false, paused:false}, видео
+   seeked к B, сториборд B поверх, VV=false (корректно).
+2. **Пауза до посадки** (тап паузы / `pauseIfPlaying` при tab-hide — на медленной
+   сети окно seek = Range-fetch = сотни мс — реально):
+   `pausePlayback()` L515: `transition(videoHasFrame() ? 'VIDEO_READY' : 'PAUSED')`
+   → `videoHasFrame()` во время SEEKING = false → **PAUSED, payload гейта УНИЧТОЖЕН**.
+3. Resume: `resumePlayback()` → не SEEKING → `SHOWING_STORYBOARD`; видео seeked к
+   `pendingVideoTargetSec` и играет **скрытым**.
+4. Путей reveal больше нет:
+   - `onVideoTimeUpdate` L1692: guard `playerState.name !== 'SEEKING'` → return
+     (состояние SHOWING_STORYBOARD);
+   - `loadeddata` уже сработал для этого src (same-scene seek не пере-присваивает
+     src → `onVideoFirstFrame` не придёт);
+   - `updateLayers` не вызывается ни в pause, ни в resume;
+   - буфер-гейт: `enterVideoBuffering` тоже пишет PAUSED (см. 11.3.2),
+     `resumeFromBuffering` → SHOWING_STORYBOARD.
+
+**Итог: видео навсегда скрыто** — аудио играет, сториборды циклится по юнитам,
+кнопка/фаза = PLAYING, видео нет. Разблокировка только новым unit-seek (новый
+SEEKING) или сменой сцены (loadeddata). Симптом тот же, что у P2-4.
+
+#### 11.3.2 Буфер-гейт во время SEEKING (тот же класс)
+
+`enterVideoBuffering` L1836: `transition(videoHasFrame() ? 'VIDEO_READY' : 'PAUSED')`
+→ во время SEEKING тот же сброс payload; `resumeFromBuffering` → SHOWING_STORYBOARD
++ play. Видео скрыто до следующего seek/сцены. Вход: медленный Range-fetch после
+unit-seek (штатный сценарий на медленных сетях — гейт как раз для этого и есть).
+
+#### 11.3.3 Web vs Android
+
+Android имеет ТУ ЖЕ семантику переходов (pausePlayback: `if (videoReadyToShow)
+VideoReady else Paused` — гейт сбрасывается; resume → ShowingStoryboard), но
+практически недостижим: ExoPlayer-seek по локальному merged-файлу мгновенный, а
+reveal-проверка живёт в 50ms poll-цикле startIuCycling — посадка и reveal
+происходят раньше, чем человеческий тап/переключение таба успевают попасть в
+окно. Web: видео — 43MB прогрессивный стрим, seek = Range-fetch (сотни мс),
+reveal — только по timeupdate (каденс ~250ms) → окно реальное. Расхождение
+платформ: **семантически одинаковые переходы, но разная достижимость**.
+
+#### 11.3.4 Минимальная рекомендуемая правка (НЕ реализована — только аудит)
+
+Вариант 1 (липкий гейт, 2 строки, соответствует дизайн-доку — «пауза во время
+seek сохраняет гейт», см. PLAYER_STATE_MACHINE_DESIGN.md: PAUSED ↔ SEEKING):
+- `pausePlayback`: при SEEKING → `{...playerState, paused: true}` (вместо PAUSED);
+- `enterVideoBuffering`: при SEEKING → `{...playerState, paused: true}` (вместо PAUSED).
+
+Вариант 2 (самовосстановление, по образцу P2-4): расширить `onVideoTimeUpdate` —
+помимо SEEKING, разрешить reveal для SHOWING_STORYBOARD/PAUSED с attached-видео
+(`videoSrcUrl && !videoEnded`) и декодируемым кадром (`readyState >= 2`) —
+`transition(isPaused() ? 'VIDEO_READY' : 'PLAYING')`. readyState>=2 уже
+различает «кадр есть» от «свежий src ещё без кадра», поэтому fresh-src случай
+(сториборд до loadeddata) не пострадает.
+
+Рекомендация: **Вариант 1** как основной (2 точечных перехода, без новых путей
+reveal, паритет с Android-семантикой и дизайн-доком), Вариант 2 —
+belt-and-suspenders, если захотим закрыть класс целиком.
+
+### 11.4 Инварианты
+
+| Инвариант | Вердикт | Комментарий |
+|---|---|---|
+| A. PS != SEEKING ⇒ onVideoTimeUpdate не делает seek-reveal работу | ✅ | guard L1692 работает как задумано — НО именно он оставляет сценарий §11.3 без пути восстановления (корень проблемы) |
+| B. SEEKING + landed + кадр + гейт + withinUnit ⇒ reveal на подходящем timeupdate | ✅ | P2-4, тесты 28/28 |
+| C. withinUnit=false не раскрывает | ✅ | негативный тест P2-4 |
+| D. Book switch не переносит состояние старой книги | ✅ | P2-3, тесты 23/23 до 28/28 |
+| E. Unit switch не переносит stale pending seek | ✅ | свежий payload каждый seek; P2-3 TEST C |
+| F. Video toggle OFF/ON не создаёт лишний seek | ✅ | re-show ветка, re-align только при |diff|>0.5 |
+| G. detach/stopAll — старые metadata-листенеры не влияют | ✅ | P1-2, тесты 19/19 до 28/28 |
+
+### 11.5 Найденные новые проблемы
+
+| Severity | Проблема | Точка | Статус |
+|---|---|---|---|
+| **P1** | SEEKING не «липкий»: `pausePlayback`/`enterVideoBuffering` во время seek уничтожают payload гейта → видео навсегда скрыто (web; Android недостижимо практически) | playbackStore L515, L1836 | **открыт** — §11.3 |
+| P2 | `pendingVideoTargetSec` живёт после reveal до следующего `resumePlayback` (лишний re-seek к той же позиции — фактически no-op) | seekAttachedVideo/playVideoOverlay | открыт (косметика) |
+| P2 | Unit-tap в ту же сцену перекачивает scene-ассеты заново (fetchSceneData после clearPreloadCache в executePendingSeek) — аудио/IU из Cache API, но повторный roundtrip | executePendingSeek | открыт (перф) |
+
+### 11.6 Окончательно закрыто (этой цепочкой)
+
+P0-1 (дедлок reveal), P1-1 (PAUSED+PLAYING), P1-2 (stale metadata), P2-1
+(enginePaused), P2-3 (смена книги), P2-4 (overshoot-лок).
+
+### 11.7 Рекомендации по приоритету
+
+- **P1**: реализовать §11.3.4 Вариант 1 (липкий SEEKING в pausePlayback и
+  enterVideoBuffering) + regression-тест на последовательность
+  «SEEKING → pause → resume → reveal» (гейт жив, reveal на тике) и негативный
+  «pause после reveal → VIDEO_READY»;
+- **P2**: (по желанию) чистить `pendingVideoTargetSec` при reveal;
+- **P2**: (по желанию) same-scene unit-tap без полного clearPreloadCache.
