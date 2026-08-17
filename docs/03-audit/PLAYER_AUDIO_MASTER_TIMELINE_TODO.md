@@ -34,9 +34,9 @@ Web `playbackStore.ts:1434,1494`) проверяет только нижнюю �
 ставится по позиции). Android раскрывает по позиции без `onRenderedFirstFrame` в seek-пути.
 
 ### [T2.1] Привести оба платформы к AND
-- [ ] Web: в `onVideoTimeUpdate` перед reveal убеждаться, что кадр реально декодирован
+- [x] Web: в `onVideoTimeUpdate` перед reveal убеждаться, что кадр реально декодирован
   (например, `videoHasFrame || readyState >= HAVE_CURRENT_DATA`).
-- [ ] Android: зафиксировать решение — seek-reveal по позиции достаточен (README/комментарий),
+- [x] Android: зафиксировать решение — seek-reveal по позиции достаточен (README/комментарий),
   либо добавить проверку рендера.
 
 ### [T2.2] Тест-сценарии
@@ -52,9 +52,16 @@ Web `playbackStore.ts:1434,1494`) проверяет только нижнюю �
 pause/resume/rotation/restore.
 
 ### [T3.1] Проверить invariant
-- [ ] После каждого перехода (seek, pause, resume, rotation, scene transition, Navigator)
+- [x] После каждого перехода (seek, pause, resume, rotation, scene transition, Navigator)
   проверять: `ius[currentIuIndex].unitId == targetUnit.unitId`.
-- [ ] Особо покрыть guard `idx == 0 && currentIuIndex != 0` (`PlayFragment.kt:1109`).
+- [x] Особо покрыть guard `idx == 0 && currentIuIndex != 0` (`PlayFragment.kt:1109`).
+
+**Вывод:** invariant выполнен конструктивно — оба платформы в `handleChunk` выводят
+`currentIuIndex` из `resolveUnitIndexForSequence` (unitId-first, fallback index),
+то есть индекс пере-вычисляется на каждом заходе сцены, а не копируется из store.
+Guard `idx == 0 && currentIuIndex != 0` — корректная защита от транзиентного `pos == 0`
+сразу после seek в более поздний юнит (его `start_ms > 0`); при seek в юнит 0
+`currentIuIndex == 0`, и guard не срабатывает. Ручной регресс — T4.
 
 ---
 
@@ -73,10 +80,10 @@ pause/resume/rotation/restore.
 
 ## Этап 5: Разделить две смысловые `150` (🟢 Medium)
 
-- [ ] Android: переименовать/вынести `delay(150)` в `revealVideoAfterReturn`
+- [x] Android: переименовать/вынести `delay(150)` в `revealVideoAfterReturn`
   (`PlayFragment.kt:1482`) в отдельную именованную константу (например
   `SURFACE_RE_RENDER_FALLBACK_MS`), отдельно от `UNIT_REVEAL_TOLERANCE_MS`.
-- [ ] Web: убедиться, что `UNIT_REVEAL_TOLERANCE_MS` — единственная величина 150.
+- [x] Web: убедиться, что `UNIT_REVEAL_TOLERANCE_MS` — единственная величина 150.
 
 ---
 
@@ -106,10 +113,10 @@ pause/resume/rotation/restore.
 |---|---|
 | T1.1 Reveal-гейт с верхней границей | ✅ Done |
 | T1.2 Последний юнит сцены | ✅ Done (код; ручной тест — T4) |
-| T2.1 AND first-frame + position | 📝 Plan |
+| T2.1 AND first-frame + position | ✅ Done |
 | T2.2 Тест-сценарии gate | 📝 Plan |
-| T3.1 Инвариант index vs unitId | 📝 Plan |
+| T3.1 Инвариант index vs unitId | ✅ Done (verify) |
 | T4 Регрессионные сценарии | 📝 Plan |
-| T5 Разделить две 150 | 📝 Plan |
+| T5 Разделить две 150 | ✅ Done |
 | T6 State machine | 📝 Plan |
 | T7 video_start_ms правило | 📝 Plan |

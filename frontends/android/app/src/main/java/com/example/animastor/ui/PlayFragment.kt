@@ -59,6 +59,11 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         // would otherwise reveal the video already inside the NEXT unit.
         // ~1 frame at 24fps.
         private const val UNIT_REVEAL_SAFETY_MARGIN_MS = 40L
+        // Fixed delay in revealVideoAfterReturn: a safety net for sources where
+        // onRenderedFirstFrame never fires (audio-only / edge cases). Distinct
+        // from UNIT_REVEAL_TOLERANCE_MS — this is a surface re-render fallback,
+        // not a timeline tolerance.
+        private const val SURFACE_RE_RENDER_FALLBACK_MS = 150L
     }
 
     private var binding: FragmentPlayBinding? = null
@@ -1120,6 +1125,11 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                 // boundary between two polls (the storyboard overlay already
                 // switched to the next unit by then — revealing its frame is
                 // correct).
+                // Frame gate (T2.1 decision): the loop above already requires
+                // STATE_READY (a frame is decodable/rendered — ExoPlayer is
+                // READY only when it has buffered data at the current position),
+                // so the seek-reveal by position is sufficient; no separate
+                // onRenderedFirstFrame check is added to the seek path.
                 if (!videoReadyToShow && currentPlayerHasVideo && pendingRevealPosMs >= 0 &&
                     !videoSeekInFlight && pos >= pendingRevealPosMs &&
                     pos < unitEndMs(ius, currentIuIndex)
@@ -1531,7 +1541,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         // callback never fires (audio-only / edge cases) — and it still honors
         // the gen guard, so it can never resurrect the video over a fresh item.
         viewLifecycleOwner.lifecycleScope.launch {
-            delay(150)
+            delay(SURFACE_RE_RENDER_FALLBACK_MS)
             if (pendingRevealGen == gen && binding != null && isAdded && videoCurrentGen == gen && videoPlayer != null) {
                 pendingRevealGen = -1L
                 videoReadyToShow = true

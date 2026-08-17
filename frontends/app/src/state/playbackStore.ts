@@ -1603,9 +1603,14 @@ function onVideoFirstFrame(): void {
  *  Android startIuCycling gate (videoSeekInFlight + pendingRevealPosMs).
  *  Fires on timeupdate (frequent during playback and after seeks) — for a
  *  positioned-pause right at the boundary the storyboard stays up, and the
- *  video reveals as soon as playback moves past the tolerance. */
+ *  video reveals as soon as playback moves past the tolerance.
+ *  AND-gate with the frame (T2.1): reveal only when a frame is actually
+ *  decoded — readyState >= HAVE_CURRENT_DATA (2) means the current playback
+ *  position has data, so timeupdate reflects a real rendered position, never
+ *  a position-only guess over a black/empty surface. */
 function onVideoTimeUpdate(): void {
   if (!videoSeekInFlight || !videoEl || pendingVideoRevealSec < 0) return;
+  if (videoEl.readyState < 2) return; // HAVE_CURRENT_DATA — no decodable frame yet
   // Belt-and-suspenders upper bound (parity with the clamped gate): never
   // reveal the NEXT unit's frame over the selected unit's storyboard if the
   // position raced past the unit boundary between timeupdate events.
