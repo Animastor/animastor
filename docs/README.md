@@ -38,6 +38,8 @@
 | [`DEPENDENCY_ANALYSIS.md`](03-audit/DEPENDENCY_ANALYSIS.md) | Анализ циклических зависимостей, сильных связностей, единых точек отказа |
 | [`DOCUMENTATION_AUDIT.md`](03-audit/DOCUMENTATION_AUDIT.md) | **НОВЫЙ.** Аудит документации против кода: 25 документов, сквозные противоречия |
 | [`PLAYER_AUDIT.md`](03-audit/PLAYER_AUDIT.md) | Аудит Android-плеера: архитектура, сетевая предзагрузка, кэширование |
+| [`PLAYER_AUDIO_MASTER_TIMELINE.md`](03-audit/PLAYER_AUDIO_MASTER_TIMELINE.md) | **НОВЫЙ.** Аудит единой аудио-шкалы: reveal-гейт по позиции, unitId-seek, границы юнита, race first-frame/gate |
+| [`PLAYER_AUDIO_MASTER_TIMELINE_TODO.md`](03-audit/PLAYER_AUDIO_MASTER_TIMELINE_TODO.md) | **НОВЫЙ.** TODO-трекер аудита audio master timeline (этапы 1-7) |
 | [`ARCHITECTURAL_DEBT.md`](03-audit/ARCHITECTURAL_DEBT.md) | Технический долг: известные проблемы (обновлён: orchestrator 173 строки, rate limit 500, 3 governance LIVE) |
 | [`ARCHITECTURAL_AUDIT_TODO.md`](03-audit/ARCHITECTURAL_AUDIT_TODO.md) | Исторический TODO-трекер аудита (все Phase 1-6 ✅ выполнены) |
 
