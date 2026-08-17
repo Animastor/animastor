@@ -995,10 +995,10 @@ class PlaybackViewModel(
                                 Log.d(TAG, "fetching IU image: ${iu.unit_id} (dur=$durationMs ms)")
                                 val imgBytes = _repository.getIuImage(bookId, chapterId, sceneId, iu.unit_id, buildId)
                                 val bmp = withContext(Dispatchers.Default) { MediaDecoder.decodeBitmap(imgBytes) }
-                                IuImageItem(bmp, durationMs, iu.unit_id, iuText, IuStatus.READY, startMs = iu.start_ms, videoStartMs = iu.video_start_ms)
+                                IuImageItem(bmp, durationMs, iu.unit_id, iuText, IuStatus.READY, startMs = iu.start_ms)
                             }.getOrNull() ?: run {
                                 Log.w(TAG, "IU image NOT GENERATED: ${iu.unit_id} — using placeholder")
-                                IuImageItem(null, durationMs, iu.unit_id, iuText, IuStatus.NOT_GENERATED, startMs = iu.start_ms, videoStartMs = iu.video_start_ms)
+                                IuImageItem(null, durationMs, iu.unit_id, iuText, IuStatus.NOT_GENERATED, startMs = iu.start_ms)
                             }
                         }
                     }.awaitAll()

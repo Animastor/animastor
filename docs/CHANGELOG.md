@@ -4,30 +4,48 @@ All notable changes to Animastor are documented here.
 
 ---
 
-## [Unreleased] — 2026-08-16
+## [Unreleased] — 2026-08-17
+
+### Changed
+
+- **Player: единая master timeline — аудио. Убран `video_start_ms` из Player.**
+  (Android + web). Аудио-шкала — единственная семантическая шкала приложения:
+  юнит живёт на ней (`start_ms`), сториборд принадлежит юниту, видео —
+  подчинённый визуальный поток. Вторая шкала (`video_start_ms`, PTS-анализ
+  merged-файла) убрана из Player — она создавала вторую временную модель и,
+  как показали замеры, в принципе не могла надёжно попасть в первый кадр
+  целевого юнита: кадр «первый ≥ границы» на границе LTX-клипа оказывался
+  ПОСЛЕДНИМ кадром предыдущего (n-1). Теперь:
+
+  - Android (`PlayFragment.kt`): `unitStartMs()` возвращает только аудио-
+    `startMs`; reveal-гейт `videoSeekInFlight` + `pendingRevealPosMs =
+    startPosMs + 150ms` — поверхность скрыта (сториборд выбранного юнита,
+    аудио-шкала), видео раскрывается только когда позиция реально внутри
+    юнита (pos ≥ start + 150ms), в same-scene и full-build путях. Watchdog
+    в READY снимает `videoSeekInFlight` по сырой позиции seek.
+  - Web (`playbackStore.ts`): аналогичный гейт — `videoSeekInFlight` +
+    `pendingVideoRevealSec = target + 150ms`; при unit seek элемент скрыт
+    (сториборд выбранного юнита), reveal через `timeupdate` когда
+    `currentTime` дошёл до позиции внутри юнита. `onVideoFirstFrame` не
+    раскрывает раньше гейта.
+  - `videoStartMs` убран из `IuImageItem`/`IuItem`/`StoryboardIu`/`RawIu` и
+    из маппинга на обоих клиентах. Backend продолжает отдавать
+    `video_start_ms` (безвредный best-effort) — на него больше ничего не
+    завязано в Player; точное выравнивание — задача video profile/assembly.
 
 ### Added
 
 - **video_start_ms — модельно-агностичное выравнивание таймлайна видео**
-  (backend + Android + web). Плееры сeкают whole-scene видео по позиции юнита
-  на РЕАЛЬНОМ видео-таймлайне (`video_start_ms`), а не по аудио-`start_ms`.
-  На LTX-билдах каждый клип группы округляется до валидного 8n+1 кадров и
-  видео-таймлайн уезжает ВПЕРЁД относительно аудио — seek по `start_ms`
-  попадал в хвост ПРЕДЫДУЩЕГО юнита (кадр, похожий на его сториборд).
-
-  - `backend/src/video/video-timeline.js`: измерение теперь модельно-агностичное:
-    1) merged-файл `{prefix}.mp4` (если выровнен, ±0.5s) — probe frame PTS и
-    первый кадр at-or-after каждой аудио-границы; 2) групповые файлы `_gN.mp4` —
-    толерантный матчинг: измеренный group frame count может равняться и точной
-    сумме (non-LTX, напр. Minimax H3), и LTX-округлённому значению (8n+1);
-    3) identity-фолбэк: видео = аудио (без допущения о налоге).
-  - Роут `/api/v1/scene/:bookId/:chapterId/:sceneId/storyboard` вызывает
-    `computeVideoStartMs` и отдаёт `video_start_ms` на каждый юнит (best-effort,
-    кэш 5 мин).
-  - Android: `IuItem.video_start_ms` → `IuImageItem.videoStartMs` →
-    `unitStartMs()` предпочитает видео-позицию, фолбэк `startMs`/кумулятивный.
-  - Web: `StoryboardIu.video_start_ms` → `IuImageItem.videoStartMs` →
-    `unitStartMs()` аналогично.
+  (backend). Измерение реального видео-таймлайна через ffprobe:
+  1) merged-файл `{prefix}.mp4` (если выровнен, ±0.5s) — probe frame PTS и
+  первый кадр at-or-after каждой аудио-границы; 2) групповые файлы `_gN.mp4` —
+  толерантный матчинг: измеренный group frame count может равняться и точной
+  сумме (non-LTX, напр. Minimax H3), и LTX-округлённому значению (8n+1);
+  3) identity-фолбэк: видео = аудио (без допущения о налоге).
+  Роут `/api/v1/scene/:bookId/:chapterId/:sceneId/storyboard` отдаёт
+  `video_start_ms` на каждый юнит (best-effort, кэш 5 мин). Значение остаётся
+  в API для Final Assembly (точные границы при экспорте), но Player его
+  не использует.
   - Для exact-timed билдов (не-LTX) измерение равно `start_ms` — no-op.
 
 ### Fixed

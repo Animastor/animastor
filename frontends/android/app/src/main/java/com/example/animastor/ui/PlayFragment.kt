@@ -48,6 +48,14 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
 
     companion object {
         private const val TAG = "PlayFragment"
+        // Reveal tolerance for the video layer after a unit seek: the whole-scene
+        // video may drift a few frames (~40 ms on LTX builds) from the audio
+        // master timeline, so revealing exactly at start_ms could show the
+        // PREVIOUS unit's tail frame. Reveal only once the player is positioned
+        // comfortably INSIDE the selected unit (150 ms = ~4 frames at 24 fps)
+        // — the storyboard overlay covers the transition. Audio master timeline
+        // only: no video_start_ms is computed or consumed.
+        private const val UNIT_REVEAL_TOLERANCE_MS = 150L
     }
 
     private var binding: FragmentPlayBinding? = null
@@ -848,16 +856,17 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         updateLayers()
     }
 
-    /** Start offset (ms) of a unit inside the whole-scene timeline. Prefers the
-     *  server-measured VIDEO position (video_start_ms) — the whole-scene video
-     *  drifts ahead of the audio/start_ms timeline on LTX builds (8n+1 tax per
-     *  group), so seeking by start_ms lands inside the PREVIOUS unit's clip.
-     *  Falls back to the audio start_ms (canonical — video is aligned to the
-     *  audio timeline at merge time on exact-timed builds), then to the
-     *  cumulative durationMs sum for legacy storyboards without timestamps. */
+    /** Start offset (ms) of a unit on the AUDIO master timeline. The audio
+     *  timeline is the ONLY semantic timeline the player knows: a unit exists
+     *  there (start_ms), its storyboard belongs to it, and the whole-scene
+     *  video is a subordinate visualization that we seek to the same position.
+     *  No second video timeline (video_start_ms) is computed or consumed — the
+     *  player never analyzes the video file. If the video drifts a few frames
+     *  from the audio boundary, that is acceptable for a preview; the storyboard
+     *  overlay covers the transition until the video is actually positioned
+     *  (reveal gate in startIuCycling). Falls back to cumulative durationMs
+     *  for legacy storyboards without timestamps. */
     private fun unitStartMs(ius: List<IuImageItem>, unitIndex: Int): Long {
-        val videoStartMs = ius.getOrNull(unitIndex)?.videoStartMs
-        if (videoStartMs != null && videoStartMs > 0) return videoStartMs
         val startMs = ius.getOrNull(unitIndex)?.startMs
         if (startMs != null && startMs > 0) return startMs
         var seekMs = 0L
@@ -1110,25 +1119,26 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                     continue
                 }
 
-                // Same-scene seek reveal: the video surface may cover the
-                // storyboard only once the player is actually positioned at
-                // the seek target AND the seek has completed (videoSeekInFlight
-                // cleared by the DISCONTINUITY_REASON_SEEK callback) — never
-                // while the new range buffers or the old frame is still on the
-                // surface (the stale previous-unit frame would show as the
-                // covering). The flag also guards the target=0 seek (unit 1):
+                // Seek reveal: the video surface may cover the storyboard only
+                // once the player is actually positioned INSIDE the selected
+                // unit — the raw seek target plus a small tolerance, because the
+                // video can drift a few frames from the audio master timeline
+                // (revealing exactly at start_ms showed the PREVIOUS unit's tail
+                // frame). The storyboard overlay of the selected unit covers the
+                // transition (audio master timeline — no video_start_ms).
+                // videoSeekInFlight guards the target=0 seek (unit 1):
                 // currentPosition already reports 0 while the seek is in
                 // flight, so a plain pos >= target would reveal too early.
-                // Runs BEFORE the isPaused gate: a positioned-pause after a
-                // unit-seek must still reveal the video's first frame at the
-                // selected unit (the old 120ms timer did; gating on isPaused
-                // here made the player look dead after a seek with play=false).
+                // Runs BEFORE the isPaused gate: a positioned-pause keeps the
+                // selected unit's storyboard on screen (per the audio scale)
+                // until playback actually moves inside the unit — the video
+                // reveals as soon as the position passes the tolerance.
                 if (!videoReadyToShow && currentPlayerHasVideo && pendingRevealPosMs >= 0 &&
                     !videoSeekInFlight && pos >= pendingRevealPosMs
                 ) {
                     videoReadyToShow = true
                     pendingRevealPosMs = -1L
-                    debugLog("reveal video at pos=$pos >= target (seek done)")
+                    debugLog("reveal video at pos=$pos >= target+150ms (inside unit)")
                     updateLayers()
                 }
 
@@ -1284,16 +1294,22 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                 // actually positioned at the seek target AND the seek completed
                 // (checked in startIuCycling via videoSeekInFlight + position).
                 // The old 120ms reveal exposed the previous unit's stale frame
-                // while the new video range buffered.
+                // while the new video range buffered. The tolerance pushes the
+                // reveal past the video's residual boundary drift so the first
+                // shown frame belongs to the SELECTED unit, never the previous
+                // unit's tail (audio master timeline — no video_start_ms).
                 videoSeekInFlight = true
-                pendingRevealPosMs = startPosMs
-                debugLog("target same: seek to $startPosMs, reveal gated at pos >= $startPosMs")
-                Log.i(TAG, "scene same-item seek: ${startPosMs}ms (reveal gated)")
+                pendingRevealPosMs = startPosMs + UNIT_REVEAL_TOLERANCE_MS
+                debugLog("target same: seek to $startPosMs, reveal gated at pos >= ${startPosMs + UNIT_REVEAL_TOLERANCE_MS}")
+                Log.i(TAG, "scene same-item seek: ${startPosMs}ms (reveal gated +${UNIT_REVEAL_TOLERANCE_MS}ms)")
             } else {
                 currentPlayerSceneKey = sceneKey
                 currentPlayerHasVideo = includeVideo
                 currentPlayerVideoVersion = playbackViewModel.currentVideoVersion
-                pendingRevealPosMs = -1L
+                // Full (re)build: the source starts at startPosMs, but reveal the
+                // video only once positioned inside the selected unit (same
+                // tolerance as the same-scene path — audio master timeline).
+                pendingRevealPosMs = if (includeVideo) startPosMs + UNIT_REVEAL_TOLERANCE_MS else -1L
                 videoSeekInFlight = false
                 // Audio stays on the plain local-file factory; ONLY the network
                 // video URL goes through the persistent disk cache (Media3
@@ -1345,11 +1361,13 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                     // may not arrive (seek to an already-reached position), which
                     // would leave videoSeekInFlight stuck true and the reveal
                     // gate in startIuCycling would never fire — the player looks
-                    // dead after the seek. If READY reports the target position
-                    // already reached, the seek has effectively landed.
+                    // dead after the seek. If READY reports the RAW seek target
+                    // already reached (pendingRevealPosMs - tolerance), the seek
+                    // has effectively landed; the reveal itself still waits for
+                    // the tolerance position (inside the selected unit).
                     if (videoSeekInFlight && pendingRevealPosMs >= 0) {
                         val p = runCatching { vp.currentPosition }.getOrNull() ?: -1L
-                        if (p >= pendingRevealPosMs) {
+                        if (p >= pendingRevealPosMs - UNIT_REVEAL_TOLERANCE_MS) {
                             videoSeekInFlight = false
                             Log.i(TAG, "VID-LC ready: seek landed (position watchdog)")
                         }
@@ -1367,11 +1385,12 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                     // for sources WITH a video track: an audio-only source
                     // (scene without video) has no frames, and videoReadyToShow
                     // must stay false so the lingering surface stays hidden.
+                    // Both the full (re)build and the same-scene instant path
+                    // set pendingRevealPosMs = start + tolerance; the reveal
+                    // happens in startIuCycling once pos >= that (audio master
+                    // timeline — the storyboard of the selected unit covers the
+                    // video until it is positioned inside the unit).
                     if (currentPlayerHasVideo && pendingRevealPosMs < 0) {
-                        // Full (re)build path — the source starts at its target
-                        // position; reveal right away. The same-scene instant
-                        // path leaves pendingRevealPosMs set and reveals in
-                        // startIuCycling only once pos >= target.
                         videoReadyToShow = true
                         debugLog("READY: reveal (full source)")
                     }

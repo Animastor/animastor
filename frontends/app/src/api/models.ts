@@ -747,11 +747,6 @@ export interface StoryboardIu {
   /** Server-computed playback duration (interval → estimate → default); the
    *  client never re-derives it (N1). */
   duration_ms?: number | null;
-  /** Server-measured position (ms) of this unit on the whole-scene VIDEO
-   *  timeline (the video drifts ahead of the audio/start_ms timeline on LTX
-   *  builds — players must seek the scene video by video_start_ms, not
-   *  start_ms). Absent when the backend couldn't measure the video files. */
-  video_start_ms?: number | null;
 }
 
 /**

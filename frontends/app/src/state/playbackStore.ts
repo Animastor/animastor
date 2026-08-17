@@ -80,12 +80,10 @@ export interface IuImageItem {
   unitId: string | null;
   text: string | null;
   status: IuStatus;
-  /** Server-computed start (ms) on the whole-scene timeline (start_ms). */
+  /** Server-computed start (ms) of this unit on the AUDIO master timeline
+   *  (start_ms). The player seeks BOTH audio and video to this value — there
+   *  is no separate video timeline. */
   startMs: number | null;
-  /** Server-measured position (ms) on the whole-scene VIDEO timeline
-   *  (video_start_ms — the video drifts ahead of start_ms on LTX builds).
-   *  Null when the backend didn't measure the video files. */
-  videoStartMs: number | null;
 }
 export interface PreloadedScene {
   audio: Blob;
@@ -165,6 +163,17 @@ let videoSrcUrl: string | null = null;
 // true across same-scene seeks and layer toggles so a visible frame never
 // disappears.
 let videoHasFrame = false;
+// Unit-seek reveal gate (Android parity: videoSeekInFlight + pendingRevealPosMs).
+// On a same-scene unit seek the browser keeps the PREVIOUS unit's last frame
+// (which looks like its storyboard — LTX animates from the guide image) visible
+// through the seek, so revealing on the raw target shows the previous unit's
+// tail (the n-1 bug). While in flight the element stays hidden and the
+// SELECTED unit's storyboard covers it (audio master timeline); the video is
+// revealed only once currentTime is actually inside the selected unit
+// (target + tolerance).
+let videoSeekInFlight = false;
+let pendingVideoRevealSec = -1;
+const UNIT_REVEAL_TOLERANCE_MS = 150;
 // Scene key of the whole-scene video currently loaded in videoEl. Used to
 // detect unit navigation WITHIN the same scene: the video file does not change
 // (blob URLs are recreated per fetch, so the scene key — not the URL — is the
@@ -698,6 +707,7 @@ export function attachVideo(el: HTMLVideoElement): void {
   el.addEventListener('waiting', onVideoWaiting);
   el.addEventListener('playing', onVideoPlaying);
   el.addEventListener('loadeddata', onVideoFirstFrame);
+  el.addEventListener('timeupdate', onVideoTimeUpdate);
   if (videoSrcUrl) {
     // Fresh src assignment — any previously decoded frame is gone; hold the
     // storyboard on top until the new src decodes its first frame.
@@ -710,6 +720,11 @@ export function attachVideo(el: HTMLVideoElement): void {
     // audio currentTime can still be unseeked (0) right after a unit seek.
     if (pendingVideoTargetSec >= 0) {
       try { el.currentTime = pendingVideoTargetSec; } catch { /* not ready */ }
+      // Unit target — gate the reveal on the position (audio master
+      // timeline): the storyboard of the selected unit covers the element
+      // until the video is actually positioned inside the unit.
+      videoSeekInFlight = true;
+      pendingVideoRevealSec = pendingVideoTargetSec + UNIT_REVEAL_TOLERANCE_MS / 1000;
     } else {
       const cur = currentPlayer?.currentTime ?? 0;
       if (cur > 0) { try { el.currentTime = cur; } catch { /* not ready */ } }
@@ -727,12 +742,15 @@ export function detachVideo(): void {
     videoEl.removeEventListener('waiting', onVideoWaiting);
     videoEl.removeEventListener('playing', onVideoPlaying);
     videoEl.removeEventListener('loadeddata', onVideoFirstFrame);
+    videoEl.removeEventListener('timeupdate', onVideoTimeUpdate);
     try { videoEl.pause(); } catch { /* ignore */ }
     videoEl.removeAttribute('src');
     videoEl = null;
   }
   currentVideoSceneKey = null;
   videoHasFrame = false;
+  videoSeekInFlight = false;
+  pendingVideoRevealSec = -1;
   resetVideoBuffering();
   updateLayers();
 }
@@ -857,7 +875,6 @@ interface RawIu {
   text: string | null;
   status: IuStatus;
   startMs: number | null;
-  videoStartMs: number | null;
 }
 interface SceneAssets {
   audio: Blob;
@@ -908,7 +925,6 @@ async function fetchSceneData(sceneKey: string): Promise<PreloadedScene> {
       text: iu.text,
       status: iu.status,
       startMs: iu.startMs,
-      videoStartMs: iu.videoStartMs,
     })),
   };
 }
@@ -939,12 +955,11 @@ async function fetchIuSequence(chapterId: string, sceneId: string): Promise<RawI
       const durationMs = iu.duration_ms ?? 200; // N1: server-computed; floor fallback
       const text = iu.text ?? null;
       const startMs = iu.start_ms ?? null;
-      const videoStartMs = iu.video_start_ms ?? null;
       try {
         const blob = await getIuImageBlob(chapterId, sceneId, iu.unit_id);
-        return { blob, durationMs, unitId: iu.unit_id ?? null, text, status: 'READY' as IuStatus, startMs, videoStartMs };
+        return { blob, durationMs, unitId: iu.unit_id ?? null, text, status: 'READY' as IuStatus, startMs };
       } catch {
-        return { blob: null, durationMs, unitId: iu.unit_id ?? null, text, status: 'NOT_GENERATED' as IuStatus, startMs, videoStartMs };
+        return { blob: null, durationMs, unitId: iu.unit_id ?? null, text, status: 'NOT_GENERATED' as IuStatus, startMs };
       }
     }));
   } catch {
@@ -1116,16 +1131,17 @@ function handleChunk(scene: PreloadedScene): void {
   updateLayers();
 }
 
-/** Start offset (ms) of a unit on the whole-scene timeline. Prefers the
- *  server-measured VIDEO position (videoStartMs) — the whole-scene video
- *  drifts ahead of the audio/start_ms timeline on LTX builds (8n+1 tax per
- *  group), so seeking by start_ms lands inside the PREVIOUS unit's clip.
- *  Falls back to the audio start_ms (canonical — the video is aligned to the
- *  audio timeline at merge time on exact-timed builds), then to cumulative
- *  durationMs for legacy storyboards without timestamps. */
+/** Start offset (ms) of a unit on the AUDIO master timeline. The audio
+ *  timeline is the ONLY semantic timeline the player knows: a unit exists
+ *  there (start_ms), its storyboard belongs to it, and the whole-scene video
+ *  is a subordinate visualization that we seek to the same position. No second
+ *  video timeline (video_start_ms) is computed or consumed — the player never
+ *  analyzes the video file. If the video drifts a few frames from the audio
+ *  boundary, that is acceptable for a preview; the storyboard overlay covers
+ *  the transition until the video is actually positioned (reveal gate in
+ *  updateLayers / onVideoFirstFrame). Falls back to cumulative durationMs for
+ *  legacy storyboards without timestamps. */
 function unitStartMs(ius: IuImageItem[], unitIndex: number): number {
-  const videoStartMs = ius[unitIndex]?.videoStartMs;
-  if (videoStartMs != null && videoStartMs > 0) return videoStartMs;
   const startMs = ius[unitIndex]?.startMs;
   if (startMs != null && startMs > 0) return startMs;
   let seekMs = 0;
@@ -1397,6 +1413,18 @@ function seekAttachedVideo(explicitSeekMs: number | null): boolean {
   }
   videoEnded = false;
   pendingVideoTargetSec = explicitSeekMs != null ? explicitSeekMs / 1000 : -1;
+  // Explicit unit target — the browser keeps the PREVIOUS unit's last frame
+  // (which looks like its storyboard) visible through the seek; revealing on
+  // the raw target would show the previous unit's tail (n-1). Gate the reveal
+  // on the position: hide the element (selected unit's storyboard shows, audio
+  // master timeline) and reveal once currentTime is actually inside the unit
+  // (target + tolerance). Android parity: videoSeekInFlight + pendingRevealPosMs.
+  if (explicitSeekMs != null) {
+    videoSeekInFlight = true;
+    pendingVideoRevealSec = explicitSeekMs / 1000 + UNIT_REVEAL_TOLERANCE_MS / 1000;
+    videoHasFrame = false;
+    updateLayers();
+  }
   applyVideoSeek(explicitSeekMs);
   if (!isPaused && !pendingLoad && uiState.value.phase === 'PLAYING') {
     try { void videoEl.play().catch(() => { }); } catch { /* ignore */ }
@@ -1450,6 +1478,14 @@ function playVideoOverlay(url: string, explicitSeekMs: number | null = null): vo
   // Explicit target in seconds — 0 is a valid target (unit 1 / scene start).
   // null = no explicit target → audio-sync fallback in applyVideoSeek.
   pendingVideoTargetSec = explicitSeekMs != null ? explicitSeekMs / 1000 : -1;
+  // Unit target — gate the reveal on the position (audio master timeline):
+  // the selected unit's storyboard covers the element until the video is
+  // positioned inside the unit (target + tolerance), so the first shown frame
+  // belongs to the selected unit, never the previous unit's tail.
+  if (explicitSeekMs != null) {
+    videoSeekInFlight = true;
+    pendingVideoRevealSec = explicitSeekMs / 1000 + UNIT_REVEAL_TOLERANCE_MS / 1000;
+  }
   if (!videoEl) { updateLayers(); return; }
   // Fresh source — start the buffer policy from the base target (a new scene
   // is a new attempt; the escalation re-accumulates if this connection still
@@ -1496,10 +1532,32 @@ function onVideoEnded(): void {
 }
 
 /** First frame of the current src decoded — the storyboard can give way
- *  (Android parity with STATE_READY / onRenderedFirstFrame gating). */
+ *  (Android parity with STATE_READY / onRenderedFirstFrame gating). A gated
+ *  unit seek (videoSeekInFlight) must NOT reveal on the first decoded frame —
+ *  after seeking to the unit's start the browser can decode a frame that is
+ *  still the PREVIOUS unit's tail (n-1); the timeupdate handler reveals once
+ *  the position is actually inside the selected unit. */
 function onVideoFirstFrame(): void {
+  if (videoSeekInFlight) return;
   videoHasFrame = true;
   updateLayers();
+}
+
+/** Reveal gate for unit seeks (audio master timeline): keep the selected
+ *  unit's storyboard covering the element until currentTime is actually
+ *  inside the unit (target + tolerance), then reveal the video. Mirrors the
+ *  Android startIuCycling gate (videoSeekInFlight + pendingRevealPosMs).
+ *  Fires on timeupdate (frequent during playback and after seeks) — for a
+ *  positioned-pause right at the boundary the storyboard stays up, and the
+ *  video reveals as soon as playback moves past the tolerance. */
+function onVideoTimeUpdate(): void {
+  if (!videoSeekInFlight || !videoEl || pendingVideoRevealSec < 0) return;
+  if (videoEl.currentTime >= pendingVideoRevealSec) {
+    videoSeekInFlight = false;
+    pendingVideoRevealSec = -1;
+    videoHasFrame = true;
+    updateLayers();
+  }
 }
 
 /** Stream failed (e.g. the video file 404s despite a stale video_ready status,
@@ -1677,6 +1735,8 @@ export function stopAll(): void {
   videoSrcUrl = null;
   videoEnded = false;
   videoHasFrame = false;
+  videoSeekInFlight = false;
+  pendingVideoRevealSec = -1;
   pendingVideoTargetSec = -1;
   currentVideoSceneKey = null;
   resetVideoBuffering();
