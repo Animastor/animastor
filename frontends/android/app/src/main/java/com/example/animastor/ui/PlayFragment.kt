@@ -131,10 +131,6 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
     private var currentVolume = 1.0f
     private var isFullscreen = false
     private var pendingLoad = false
-    // Monotonic guard for the "show the selected unit's image immediately"
-    // overlay fetch: bumped on every new unit selection and every scene
-    // delivery, so a stale image fetch can never overwrite what is on screen.
-    private var selectedUnitImageGen = 0L
     // True while a same-scene seekTo is in flight: set in targetScene right
     // after seekTo(), cleared by the DISCONTINUITY_REASON_SEEK callback. The
     // position-gated reveal (startIuCycling) only shows the video once the
@@ -163,40 +159,6 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                         pendingLoad = true
                         stopAll(keepSurface = true)
                         playbackViewModel.executePendingSeek()
-                    }
-                }
-            }
-        }
-    }
-
-    private fun observeManualUnitChange() {
-        viewLifecycleOwner.lifecycleScope.launch {
-            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
-                SharedPositionManager.current.collect { pos ->
-                    // Only react to positions INSIDE the scene currently loaded
-                    // in the player. The unit index alone is not enough: foreign
-                    // navigateTo calls (the boot session-restore / generation
-                    // warmup pointing at the FIRST scene, unit 0) would otherwise
-                    // flash the wrong unit's image over the playing scene — the
-                    // reported "первый юнит промигивает" right after an external
-                    // unit seek. Same-scene manual changes still pass through.
-                    val chId = playbackViewModel.currentChapterId
-                    val scId = playbackViewModel.currentSceneId
-                    if (chId == null || scId == null || pos.chapterId != chId || pos.sceneId != scId) {
-                        return@collect
-                    }
-                    val ius = currentIuSequence
-                    // Resolve by unitId when the position carries one (Navigator
-                    // index is over scene.units, which can be offset from the
-                    // storyboard list); index is the fallback (e.g. warmup).
-                    val idx = if (pos.unitId != null && !ius.isNullOrEmpty()) {
-                        ius.indexOfFirst { it.unitId == pos.unitId }
-                    } else {
-                        pos.unitIndex
-                    }
-                    if (!ius.isNullOrEmpty() && idx in ius.indices && idx != currentIuIndex) {
-                        currentIuIndex = idx
-                        showIuImage(ius[idx].bitmap)
                     }
                 }
             }
@@ -388,10 +350,6 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
 
         observeState()
         observeExternalNavigation()
-        // TEMP-DISABLED: observeManualUnitChange flashes storyboard images on
-        // position changes (the "wrong/neighboring unit picture over the video"
-        // reports). Re-enable once the root cause is fixed.
-        // observeManualUnitChange()
         checkPendingExternalSeek()
 
         if (currentIuSequence == null && videoPlayer != null) {
@@ -750,9 +708,6 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
 
     private fun handleChunk(audio: ByteArray, video: ByteArray?, iuSequence: List<IuImageItem>?) {
         if (!isAdded) return
-        // The scene is delivered — invalidate any in-flight selected-unit
-        // image overlay fetch (its image is about to be shown here anyway).
-        selectedUnitImageGen++
         Log.i(TAG, "handleChunk: audio=${audio.size}B video=${video?.size}B ius=${iuSequence?.size ?: 0}")
 
         playbackViewModel.persistedImage = null
@@ -863,7 +818,6 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
     /** Handle chunk with no audio — show IU images with timer-based cycling (e.g. Cover). */
     private fun handleSilentChunk(iuSequence: List<IuImageItem>) {
         if (!isAdded) return
-        selectedUnitImageGen++
         Log.i(TAG, "handleSilentChunk: ius=${iuSequence.size}")
 
         // Stop any existing playback (silent scene = no merged audio source)
@@ -1591,9 +1545,6 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
             return
         }
 
-        // TEMP-DISABLED: showCurrentIu() could flash the previous unit's image
-        // right before play. The video reveals on its first rendered frame.
-        // showCurrentIu()
         // playWhenReady carries the intent — an early Play while the source is
         // still preparing is honored by ExoPlayer itself at STATE_READY (the
         // "UI says ready, Play does nothing / lost start" states are gone).
@@ -1619,19 +1570,15 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         Log.i(TAG, "stopAll keepSurface=$keepSurface")
         iuCyclingJob?.cancel()
         iuCyclingJob = null
-        // Snapshot for showSelectedUnitImageNow (below): the same-scene fast
-        // path overlays the SELECTED unit's image from the already-loaded IU
-        // sequence. For keepSurface (external unit-seek) the loaded sequence is
-        // KEPT — the seek only changes currentIuIndex and the video position.
-        // Nulling it here made the SCENE_READY collector see an empty sequence
-        // and hide the correct selected-unit image, revealing the generic cover
-        // / old frame over the loading video — the "foreign/neighboring unit
-        // picture" (the 8093532 overlay vs the 5d580db SCENE_READY conflict:
-        // the overlay shows the right image, then SCENE_READY removes it
-        // because currentIuSequence was nulled). Only a real stop (non-keep)
-        // clears the sequence; a cross-scene seek replaces it via handleChunk
-        // anyway.
-        val savedIuSequence = currentIuSequence
+        // For keepSurface (external unit-seek) the loaded IU sequence is KEPT —
+        // the seek only changes currentIuIndex and the video position. Nulling
+        // it here made the SCENE_READY collector see an empty sequence and hide
+        // the correct selected-unit image, revealing the generic cover / old
+        // frame over the loading video — the "foreign/neighboring unit picture"
+        // (the 8093532 overlay vs the 5d580db SCENE_READY conflict: the overlay
+        // shows the right image, then SCENE_READY removes it because
+        // currentIuSequence was nulled). Only a real stop (non-keep) clears the
+        // sequence; a cross-scene seek replaces it via handleChunk anyway.
         if (!keepSurface) {
             currentIuSequence = null
             playbackViewModel.currentIuSequence = null
@@ -1704,76 +1651,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                     showCurtains()
                 }
             }
-            // TEMP-DISABLED (unit-picture overlay — shows the wrong/neighboring
-            // unit's image over the loading video; user asked to disable it:
-            // "лучше чёрный экран, чем неверная картинка поверх"). To re-enable
-            // after the root cause is fixed, uncomment:
-            //   if (keepSurface) {
-            //       val pendingSeek = playbackViewModel.pendingExternalSeek
-            //       if (pendingSeek != null) showSelectedUnitImageNow(pendingSeek, savedIuSequence)
-            //   }
         }
-        anchorFullscreenToImage()
-    }
-
-    /** When an external unit seek starts, cover the live surface with the
-     *  SELECTED unit's storyboard image as soon as possible — the previous
-     *  unit's video frame / storyboard must never be visible during the switch
-     *  (reported "old unit shows first"). Same-scene selections use the image
-     *  already loaded in [currentIuSequence]; a different scene fetches just
-     *  the one IU image (fast; disk-cached for preloaded scenes). The result is
-     *  overlaid over the surface; handleChunk replaces it with the same image
-     *  from the scene bundle (and bumps the gen guard so stale fetches are
-     *  dropped). */
-    private fun showSelectedUnitImageNow(seek: ActivePosition, savedIuSequence: List<IuImageItem>?) {
-        val chId = seek.chapterId
-        val scId = seek.sceneId
-        val unitId = seek.unitId
-        val gen = ++selectedUnitImageGen
-        if (chId == null || scId == null) return
-        // Same scene → the unit's image is already in the loaded sequence.
-        // Resolve BY ID (the Navigator's unitIndex is over scene.units, which
-        // can be offset from the storyboard list — index-only landed on the
-        // previous unit); index remains the fallback for legacy seeks.
-        if (chId == playbackViewModel.currentChapterId && scId == playbackViewModel.currentSceneId) {
-            val ius = savedIuSequence
-            val uid = seek.unitId
-            val idx = if (!ius.isNullOrEmpty() && uid != null) {
-                ius.indexOfFirst { it.unitId == uid }
-            } else {
-                seek.unitIndex
-            }
-            if (!ius.isNullOrEmpty() && idx in ius.indices && ius[idx].bitmap != null) {
-                currentIuIndex = idx
-                overlaySelectedUnitImage(ius[idx].bitmap!!)
-                return
-            }
-        }
-        // Different scene (or image not loaded) → fetch just this unit's image.
-        if (unitId == null || playbackViewModel.bookId.isBlank()) return
-        viewLifecycleOwner.lifecycleScope.launch {
-            val bmp = runCatching {
-                val bytes = repository.getIuImage(playbackViewModel.bookId, chId, scId, unitId, playbackViewModel.buildId)
-                MediaDecoder.decodeBitmap(bytes)
-            }.getOrNull()
-            if (bmp != null && gen == selectedUnitImageGen && isAdded && binding != null) {
-                overlaySelectedUnitImage(bmp)
-            }
-        }
-    }
-
-    /** Show [bmp] (the selected unit's storyboard) over the live surface and
-     *  re-raise the UI overlays (mirrors the re-raises at the end of
-     *  updateLayers). */
-    private fun overlaySelectedUnitImage(bmp: Bitmap) {
-        val b = binding ?: return
-        if (!b.layerImage.isChecked) return  // image layer off → cover stays
-        b.resultImage.setImageBitmap(bmp)
-        b.resultImage.visibility = View.VISIBLE
-        b.resultImage.bringToFront()
-        b.previewOverlay.bringToFront()
-        b.subtitleText.bringToFront()
-        b.fullscreenButton.bringToFront()
         anchorFullscreenToImage()
     }
 
@@ -1785,11 +1663,6 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         } else {
             // Single player holds ONE position for both tracks — no re-sync
             // needed on return, only the visual reveal.
-            // TEMP-DISABLED: showCurrentIu() re-flashed the previous unit's
-            // image on return (stale currentUnitIndex before executePendingSeek).
-            // if (isPaused) {
-            //     showCurrentIu()
-            // }
             // The SurfaceView died while the tab was hidden and ExoPlayer
             // re-renders on the recreated one asynchronously — hold the
             // storyboard until that render lands (never black on return).
