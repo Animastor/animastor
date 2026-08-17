@@ -1084,3 +1084,96 @@ reveal не пере-вооружает SEEKING), TEST D (resumePlayback пос�
 пере-сикает видео назад — позиция сохраняется), плюс кейс «обычный playback
 без seek — target никогда не вооружается». Валидация: A/C/D падают без
 cleanup-строки; B и plain — контрактные гварды.
+
+## Post-fix Integration Audit
+
+Финальная контрольная точка после всей серии:
+
+| Фикс | Что закрыл |
+|---|---|
+| P0-1 | дедлок reveal-гейта (одноразовая посадка `seekLanded`) |
+| P1-1 | `pauseIfPlaying` silent-ветка: `PAUSED + phase=PLAYING` |
+| P1-2 | stale `loadedmetadata`-листенеры (единый слот) |
+| P2-1 | удалён `enginePaused` (write-only) |
+| P2-3 | смена книги: stale player state (stopAll + one-shots) |
+| P2-4 | overshoot-лок: guard `!videoSeekInFlight()` → `!= SEEKING` |
+| P1 (sticky) | пауза/буфер-гейт во время seek уничтожали SEEKING payload |
+| P2 (target) | `pendingVideoTargetSec` stale после reveal |
+
+Метод: 12 сценариев проверены по текущему коду (после §11 менялись только
+sticky-переходы и reveal-cleanup — `git diff fd1d08f..HEAD` по store: 3
+перехода + 1 строка + accessor; остальные пути — сценарии 1–3, 6–10 §11
+остаются валидными как есть). Код не менялся.
+
+### Результат: 12/12 PASS
+
+| # | Сценарий | Вердикт | Ключевые состояния / замечание |
+|---|---|---|---|
+| 1 | Unit A → B | ✅ PASS | PLAYING/VIDEO_READY, SU=B, VV=true; showIu(B) в том же таске — без stale image |
+| 2 | A → B → C быстро (до metadata) | ✅ PASS | финальный таргет C; P1-2 слот: onMetaB снят до src=C |
+| 3 | A → B → A быстро | ✅ PASS | каждый тап перевооружает свежий SEEKING; P1-2 между сценами |
+| 4 | SEEKING → PAUSE → RESUME → REVEAL | ✅ PASS | sticky: SEEKING{paused:true} → SEEKING{paused:false} → reveal; target потреблён resume |
+| 5 | SEEKING → BUFFERING → RESUME → REVEAL | ✅ PASS | sticky на входе и выходе буфер-гейта; без SHOWING_STORYBOARD |
+| 6 | SEEKING → overshoot unitEnd → next unit → REVEAL | ✅ PASS | P2-4: каждый тик пере-оценивает гейт; без лока |
+| 7 | Book A → B во время SEEKING | ✅ PASS | P2-3: stopAll → IDLE; deferred seek из A обнулён если не в очереди B |
+| 8 | Video OFF → ON во время playback | ✅ PASS | re-show (seek только при \|diff\|>0.5); без нового seek |
+| 9 | Video OFF → ON во время SEEKING | ✅ PASS | гейт живёт скрытым; ON: re-align → времяпдате до гейта → reveal (paused-вариант — после resume) |
+| 10 | detachVideo → attachVideo после reveal | ✅ PASS | target=-1 → else-ветка (синк к аудио, без SEEKING); reveal по loadeddata нового src |
+| 11 | resumePlayback после reveal | ✅ PASS | target=-1 → ветка L551 пропущена; позиция сохраняется (TEST D) |
+| 12 | Pause/resume после завершённого reveal | ✅ PASS | PLAYING ↔ VIDEO_READY, без seek; target уже -1 |
+
+### Инварианты — PASS
+
+**После успешного reveal:** `pendingVideoTargetSec == -1` (cleanup),
+`playerState != SEEKING` (VIDEO_READY/PLAYING), resume не запускает старый seek
+(target -1), attachVideo не пере-вооружает SEEKING (else-ветка), видео остаётся
+visible (videoHasFrame = true; pause/resume сохраняют).
+
+**Пока SEEKING не завершён:** pause/buffering сохраняют payload (sticky),
+resume продолжает существующий seek (SEEKING{paused:false}, до-сик target
+только если он ещё жив), новый unnecessary seek не создаётся (TEST E).
+
+### Web vs Android
+
+| Ось | Web | Android | Паритет |
+|---|---|---|---|
+| pause during seek | sticky: SEEKING{paused:true} | `Paused` (payload сбрасывается) | ⚠️ **расхождение** — см. ниже |
+| buffering during seek | sticky через буфер-гейт | N/A (локальный merged source, гейта нет) | ✅ |
+| reveal | timeupdate + AND-гейт (readyState≥2) | 50ms poll startIuCycling + STATE_READY | ✅ эквивалентны |
+| unit boundary | аудио-мастер шкала (start_ms / cumulative) | та же шкала | ✅ |
+
+**Расхождение (осознанное):** Web после P1-fix держит SEEKING через паузу,
+Android — роняет в `Paused`. На Android это практически недостижимо (мгновенный
+локальный seek + 50ms poll раскрывают раньше человеческого тапа), поэтому
+Android оставлен без изменений. Если когда-нибудь захочется полного паритета —
+тот же sticky-переход в Android `pausePlayback()`.
+
+### Закрыто всей серией
+
+P0-1, P1-1, P1-2, P2-1, P2-3, P2-4, P1 sticky SEEKING, P2 target cleanup — все
+проблемы аудита закрыты. Тесты: vitest **38/38** (gate 14, P1-1 2, listener 3,
+book-switch 4, overshoot 5, sticky 5, target-cleanup 5), `tsc --noEmit` чисто.
+
+### Оставшиеся риски (не баги)
+
+1. **P2 (перф)**: same-scene unit-tap перекачивает scene-ассеты заново
+   (fetchSceneData после clearPreloadCache в executePendingSeek) — аудио/IU из
+   Cache API, но лишний roundtrip.
+2. **Расхождение sticky Web/Android** (см. выше) — осознанное, Android
+   недостижим практически.
+3. **Теоретический угол сценария 9**: re-align к ещё не севшему аудио при
+   Video ON во время SEEKING — недостижим (аудио — локальный blob, seek
+   мгновенный).
+4. **T4 (ручной регресс)** из основного TODO так и не прогнан на
+   устройстве/в браузере — интеграционные сценарии 1–12 покрыты юнит-тестами
+   на уровне state machine, но не реальными таймингами браузера.
+
+### Что можно считать stable
+
+- Цепочка `seek → SEEKING → gate → reveal → VIDEO_READY/PLAYING` — все пути
+  входа/выхода (reveal, sticky pause/resume, буфер-гейт, overshoot, book
+  switch, layer toggles, detach/attach) согласованы и покрыты тестами.
+- После reveal stale-состояний нет: target очищен, SEEKING не пере-вооружается
+  повторно, позиция видео не пере-сикивается назад.
+- Один пользовательский поток (PLAYING) со сторибордами, субтитрами и
+  переключением юнитов не затрагивался фиксами — работает как до серии.
