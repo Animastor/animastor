@@ -353,14 +353,14 @@ C — SEEKING→B (stale seek/gate не выполняется против B, �
 D — SCENE_READY книги B до первого handleChunk → `currentIuBlobUrl===null`.
 Все 4 падают на до-фиксовом коде.
 
-### P2-4. Web: «проскок» мимо конца юнита — видео остаётся скрытым
+### P2-4. Web: «проскок» мимо конца юнита — видео остаётся скрытым — **investigated, см. §10**
 
 Если между `timeupdate`-событиями позиция перескочила за конец выбранного юнита,
-`withinUnit=false` → reveal не срабатывает, гейт остаётся вооружённым (SEEKING), и
-видео скрыто до смены состояния. Комментарий в коде прямо говорит, что в этом случае
-показ кадра следующего юнита **корректен** (сториборд уже переключился), но код этого
-не делает. Пред-существующее поведение (не регрессия T6/T2.2), но противоречит
-собственному комментарию.
+`withinUnit=false` → reveal не срабатывает. Подробный разбор показал: сам «проскок»
+был и раньше (отложенный reveal), но **перманентная блокировка** — регрессия
+T2.2+P0-1 (см. §10: одноразовая «посадка» + guard `!videoSeekInFlight()`).
+Полный lifecycle-анализ, state timeline, Web vs Android и минимальная правка —
+**§10 «P2-4 — Investigation»** ниже.
 
 ### Семантические перегрузки (не баги, но источник путаницы)
 
@@ -418,8 +418,9 @@ D — SCENE_READY книги B до первого handleChunk → `currentIuBlo
   `detachVideo`/`stopAll`. Тест в `playbackVideoListener.test.ts`.
 
 ### P2
-- **P2-4:** reveal при «проскоке» за конец юнита — раскрывать (позиция ≥ гейта,
-  даже если `withinUnit=false`), приведя код в соответствие с собственным комментарием.
+- **P2-4 (решение в §10):** web `onVideoTimeUpdate` — заменить guard
+  `!videoSeekInFlight()` на `playerState.name !== 'SEEKING'` (продолжать
+  пере-оценку после посадки; reveal сработает на первом тике с `withinUnit=true`).
 - **P2-1 (DONE):** `enginePaused` удалён как write-only legacy mirror (объявление +
   7 записей); тест P1-1 проверяет `getPlayerState()==PAUSED` + `phase==PAUSED`.
   Полный список write/read sites — в §4.
@@ -701,3 +702,119 @@ Same-book ветка (soft re-prepare) не затрагивается — по�
 `prevBookId !== bId` в `preparePlayback`; `stopAll()` владеет engine/display/video
 полями, one-shots сбрасываются отдельно (не дублируется то, что stopAll уже чистит).
 Regression tests: `playbackBookSwitch.test.ts` (TEST A–D, падают на до-фиксовом коде).
+
+---
+
+## 10. P2-4 — Investigation: «проскок» мимо конца юнита — видео остаётся скрытым (web)
+
+Только исследование; код не менялся.
+
+### 10.1 Где определяется переход A→B
+
+Переход A→B определяется в `startIuCycling` (RAF-циклинг по **audio**
+`currentTime`): позиция аудио отображается на индекс юнита (по `start_ms`
+сервера, иначе cumulative `durationMs`), и при `idx !== sel.index` —
+`selectedUnit = { ...sel, index: idx }` + `showIu` + `navigateTo`. Смена
+`selectedUnit` НЕ трогает PlayerState, `currentVideoSceneKey`, `videoSrcUrl`
+(видео-источник тот же — сцена не менялась). Раскрытие видео при unit-seek
+делает `onVideoTimeUpdate` (reveal-гейт, аудио-мастер-таймлайн).
+
+### 10.2 Точный код reveal-гейта (текущий)
+
+```js
+function onVideoTimeUpdate(): void {
+  if (!videoSeekInFlight() || !videoEl || pendingVideoRevealSec() < 0) return;  // GUARD
+  if (videoEl.readyState < 2) return;
+  const withinUnit = posMs < unitEndMs(ius, selectedUnit.index);                // проскок → false
+  if (playerState.name === 'SEEKING' && pos >= pendingVideoRevealSec()) {
+    transition({ ...playerState, seekLanded: true });                          // P0-1: посадка по позиции
+  }
+  if (shouldRevealSeekVideo({ seekInFlight: videoSeekInFlight(), withinUnit, ... })) {
+    transition(isPaused() ? 'VIDEO_READY' : 'PLAYING');                        // reveal
+  }
+}
+```
+
+### 10.3 Root cause
+
+P0-1 ввёл «посадку» по позиции: пересечение гейта делает `seekLanded=true`
+ОДИН раз. Guard `!videoSeekInFlight()` ( = `SEEKING && !seekLanded`) после этого
+навсегда отсекает все последующие тики. Если в ЕДИНСТВЕННЫЙ тик, где позиция
+впервые ≥ гейта, `withinUnit=false` (позиция уже за концом выбранного юнита), то:
+
+- flip происходит (pos ≥ gate), reveal НЕ происходит (withinUnit false);
+- состояние остаётся `SEEKING{landed:true}`; видео скрыто (videoHasFrame=false);
+- все следующие тики: guard `!videoSeekInFlight()` → return. **Перманентный лок**
+  до выхода из SEEKING (pause/resume/буфер/stop/новый seek/смена сцены).
+
+**Это регрессия T2.2+P0-1.** До T2.2 (`7996b48`) `videoSeekInFlight` оставался true
+до reveal, и каждый следующий `timeupdate` пере-оценивал условие: как только
+`selectedUnit` переключался на B (или позиция оказывалась внутри юнита),
+`withinUnit` становился true → reveal срабатывал. «Проскок» давал лишь ОТЛОЖЕННЫЙ
+reveal. Одноразовая посадка (P0-1) + одноразовый guard (T2.2) превратили «пропусти
+и повтори» в «пропусти и заблокируй».
+
+### 10.4 Условие воспроизведения (точное)
+
+Тик, где одновременно: `SEEKING && !seekLanded` (guard прошёл), `pos >= gate`
+(→ flip), `pos >= unitEnd(selectedUnit.index на этот тик)` (→ withinUnit false).
+Гейт = `min(target + 150ms, unitEnd − 40ms)`. Так как гейт ≤ unitEnd − 40, тик
+может «перепрыгнуть» гейт уже за концом юнита, когда:
+
+- **короткий юнит** (длительность < каденса timeupdate ~250ms + дрейф): первый
+  тик ≥ гейта уже после unitEnd;
+- **видео опережает аудио** (дрейф/рассинхрон посадки seek-а): video pos ≥
+  unitEnd, а audio pos (и `selectedUnit`) ещё в старом юните — циклинг идёт по
+  аудио и не успел переключиться на B;
+- **замороженный selectedUnit** (isPaused: циклинг выходит на `if (isPaused) return`).
+
+### 10.5 State timeline
+
+**A→B при PLAYING (норма):** seek → SEEKING{landed:false}; pos ≥ gate в окне
+[gate, unitEnd) → flip + withinUnit true → reveal ✓.
+
+**A→B при PLAYING, короткий юнит / видео впереди аудио (баг):** первый тик ≥ gate
+уже ≥ unitEnd(A), `selectedUnit` ещё A → flip + withinUnit false → NO reveal;
+следующие тики: guard отсекает → **видео скрыто до конца сцены** (даже после того,
+как циклинг переключил `selectedUnit` на B).
+
+**A→B при PAUSED:** пауза до reveal дропает гейт (`pausePlayback` → PAUSED,
+SEEKING не сохраняется) — лок невозможен по этому пути; resume → первый кадр.
+
+**На границе (audioTime == unitEnd) и при audioTime > unitEnd на несколько мс:**
+если гейт ещё вооружён и тик посадки застаёт pos ≥ unitEnd — тот же лок.
+
+### 10.6 Web vs Android
+
+Android: reveal выполняется в цикле `startIuCycling` (poll ~50 мс) — каждый тик
+независимо пере-оценивает `shouldRevealSeekVideo(seekInFlight, revealGateMs,
+posMs, unitEndMs)`. `seekLanded` там переключается callbacks-ами (STATE_READY
+watchdog / onPositionDiscontinuity), НЕ позицией, и poll не имеет одноразового
+guard-а: тик с `withinUnit=false` просто пропускается, следующий (через 50 мс,
+после переключения selectedUnit) сработает. **Android самовосстанавливается; лок
+невозможен.** Семантика `seekLanded` на Android — «запрос seek-а выполнен браузером»,
+на web (после P0-1) — «позиция пересекла гейт». Различие guard-ов и есть причина:
+web-обработчик событийный (timeupdate) и одноразовый, Android-цикл — постоянный.
+
+### 10.7 Минимальная рекомендуемая правка
+
+В `onVideoTimeUpdate` заменить guard с одноразового на «состояние SEEKING»:
+
+```js
+// было:
+if (!videoSeekInFlight() || !videoEl || pendingVideoRevealSec() < 0) return;
+// стало:
+if (playerState.name !== 'SEEKING' || !videoEl || pendingVideoRevealSec() < 0) return;
+```
+
+Посадка (P0-1) остаётся идемпотентной (`{...playerState, seekLanded:true}` —
+пере-выполняется безвредно), AND-гейт по-прежнему требует `!seekInFlight` +
+`withinUnit` + `hasFrame`. После правки тик с `withinUnit=false` просто не
+раскрывает, а СЛЕДУЮЩИЙ тик (selectedUnit уже B / позиция внутри юнита) —
+раскрывает: восстанавливается самовосстановление из до-T2.2 и паритет с
+Android-циклом. State machine, reveal gate math, seek logic не меняются.
+
+**Регрессионный тест (придёт с фиксом):** SEEKING вооружён → тик с pos ≥ gate и
+pos ≥ unitEnd (selectedUnit ещё старый) → assert: без reveal, состояние SEEKING;
+затем перевести selectedUnit/позицию внутрь следующего юнита → тик → assert:
+reveal (VIDEO_READY/PLAYING). Текущий код падает на втором шаге (guard отсекает).
