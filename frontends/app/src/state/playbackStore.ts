@@ -21,6 +21,7 @@
 //    the sliding-window preload, single navigation source (FileFragment only).
 import { signal } from '@preact/signals';
 import { API_BASE, getBlob, getJson, retryWithBackoff } from '../api/client';
+import { shouldRevealSeekVideo, unitEndMs, unitRevealGateSec, unitStartMs } from './playbackGate';
 import type { BookData, SceneStatusResponse, StoryboardResponse } from '../api/models';
 import { sceneRefs } from '../api/models';
 import { navigateTo } from './positionStore';
@@ -65,8 +66,47 @@ export const layerSubtitles = signal(true);
 // ── Display state consumed by PlayPage (fragment collectors) ──
 export const coverImage = signal<string | null>(null);      // blob URL (state.coverImage)
 export const previewImage = signal<string | null>(null);    // blob URL (state.previewImage)
-export const currentIuSequence = signal<IuImageItem[] | null>(null);
 export const currentIuBlobUrl = signal<string | null>(null); // resultImage src
+// ── Player state machine (T6) — see docs/05-frontend/PLAYER_STATE_MACHINE_DESIGN.md ──
+// The 7 states are STORED (single source of truth for the four semantic flags
+// isPaused / videoHasFrame / videoSeekInFlight / pendingVideoRevealSec — now
+// read-only accessor functions derived from the state). Every state change
+// goes through transition(); the low-level guards that remain as fields
+// (pendingLoad, sceneTransitionPending, nextChainReady, videoEnded,
+// pendingVideoTargetSec) are one-shots / surface state per the design doc's
+// mapping table.
+export type PlayerState =
+  | 'IDLE' | 'LOADING_SCENE' | 'SHOWING_STORYBOARD' | 'SEEKING'
+  | 'VIDEO_READY' | 'PLAYING' | 'PAUSED';
+
+type PlayerStateInternal =
+  | { name: 'IDLE' } | { name: 'LOADING_SCENE' } | { name: 'SHOWING_STORYBOARD' }
+  | { name: 'SEEKING'; revealGateSec: number; seekLanded: boolean; paused: boolean }
+  | { name: 'VIDEO_READY' } | { name: 'PLAYING' } | { name: 'PAUSED' };
+let playerState: PlayerStateInternal = { name: 'IDLE' };
+
+/** The single place where [playerState] changes (T6). Accepts a state name
+ *  or a full state object (SEEKING carries its payload). */
+function transition(state: PlayerStateInternal | PlayerState): void {
+  playerState = typeof state === 'string' ? { name: state } as PlayerStateInternal : state;
+}
+
+/** The four semantic flags as read-only projections of [playerState] (the
+ *  design's "reads → state comparisons", centralized). */
+function isPaused(): boolean {
+  if (playerState.name === 'PAUSED' || playerState.name === 'VIDEO_READY') return true;
+  if (playerState.name === 'SEEKING') return playerState.paused;
+  return false;
+}
+function videoHasFrame(): boolean {
+  return playerState.name === 'VIDEO_READY' || playerState.name === 'PLAYING';
+}
+function videoSeekInFlight(): boolean {
+  return playerState.name === 'SEEKING' && !playerState.seekLanded;
+}
+function pendingVideoRevealSec(): number {
+  return playerState.name === 'SEEKING' ? playerState.revealGateSec : -1;
+}
 export const subtitleText = signal<string | null>(null);     // subtitleText TextView
 export const iuMissing = signal(false);                      // iuMissingOverlay visible
 export const enginePaused = signal(false);                   // fragment.isPaused mirror
@@ -113,8 +153,19 @@ let currentUnitIndex = 0;             // PlaybackViewModel.currentUnitIndex
 // dialogue-block units), and an index-only mapping landed on the PREVIOUS unit
 // ("select 2nd → see 1st"). Cleared when a non-external advance takes over.
 let pendingExternalUnitId: string | null = null;   // PlaybackViewModel.pendingExternalUnitId
-let currentIuIndex = 0;               // fragment.currentIuIndex
-let isPaused = false;                 // fragment.isPaused
+// T6: single source of truth for the SELECTED unit — the storyboard sequence
+// + the index of the unit on the surface, kept atomically in one object.
+// Replaces the old currentIuSequence signal + currentIuIndex var (two fields
+// that could disagree — the N−1 picture bugs). currentIuBlobUrl remains the
+// display output driven by showIu().
+interface SelectedUnit {
+  sequence: IuImageItem[];
+  index: number;
+}
+let selectedUnit: SelectedUnit | null = null;
+// One-shot intent: the scene loads positioned & paused (external unit seek /
+// rotation resume). Consumed by handleChunk — not a state, like
+// pendingExternalSeek (design doc: свойство состояния, positioned & paused).
 let pendingLoad = false;              // fragment.pendingLoad
 let sceneTransitionPending = false;   // fragment.sceneTransitionPending
 let nextChainReady = false;           // fragment.nextChainReady
@@ -162,22 +213,10 @@ let videoSrcUrl: string | null = null;
 // (playVideoOverlay / attachVideo re-src) or the element is torn down; kept
 // true across same-scene seeks and layer toggles so a visible frame never
 // disappears.
-let videoHasFrame = false;
-// Unit-seek reveal gate (Android parity: videoSeekInFlight + pendingRevealPosMs).
-// On a same-scene unit seek the browser keeps the PREVIOUS unit's last frame
-// (which looks like its storyboard — LTX animates from the guide image) visible
-// through the seek, so revealing on the raw target shows the previous unit's
-// tail (the n-1 bug). While in flight the element stays hidden and the
-// SELECTED unit's storyboard covers it (audio master timeline); the video is
-// revealed only once currentTime is actually inside the selected unit
-// (target + tolerance).
-let videoSeekInFlight = false;
-let pendingVideoRevealSec = -1;
-const UNIT_REVEAL_TOLERANCE_MS = 150;
-// Keep the reveal position inside the SELECTED unit: never land on (or past)
-// the unit's end boundary — a unit shorter than the tolerance would otherwise
-// reveal the video already inside the NEXT unit. ~1 frame at 24fps.
-const UNIT_REVEAL_SAFETY_MARGIN_MS = 40;
+// The unit-seek reveal gate (videoSeekInFlight + pendingVideoRevealSec) now
+// lives in the stored playerState (SEEKING) — see the state machine above.
+// The gate math (unitStartMs/unitEndMs/unitRevealGateSec/shouldRevealSeekVideo
+// + the 150/40 constants) lives in playbackGate.ts — pure, unit tested (T2.2).
 // Scene key of the whole-scene video currently loaded in videoEl. Used to
 // detect unit navigation WITHIN the same scene: the video file does not change
 // (blob URLs are recreated per fetch, so the scene key — not the URL — is the
@@ -196,6 +235,13 @@ interface SavedPosition {
   posMs: number;
 }
 let pendingPositionRestore: SavedPosition | null = null;
+
+/** The 7-state model (T6) — returns the stored state (web mirror of the
+ *  Android playerState; BUFFERING is expressed as PAUSED by the buffer gate
+ *  transitions, so no phase special-casing is needed here). */
+export function getPlayerState(): PlayerState {
+  return playerState.name;
+}
 
 // ═══════════════════════════════════════════════════════════════
 //  HELPERS
@@ -225,9 +271,9 @@ function revokeSceneUrls(scene: PreloadedScene): void {
 }
 
 // Revokes cached object URLs unless they are still referenced by the current
-// IU sequence (currentIuSequence may outlive a cache entry after soft refresh).
+// IU sequence (selectedUnit may outlive a cache entry after soft refresh).
 function clearPreloadCache(): void {
-  const live = new Set(currentIuSequence.value?.map((i) => i.blobUrl).filter(Boolean));
+  const live = new Set(selectedUnit?.sequence.map((i) => i.blobUrl).filter(Boolean));
   for (const scene of preloadCache.values()) {
     if (!live.has(scene.audioUrl)) URL.revokeObjectURL(scene.audioUrl);
     for (const iu of scene.iuSequence) if (iu.blobUrl && !live.has(iu.blobUrl)) URL.revokeObjectURL(iu.blobUrl);
@@ -276,6 +322,8 @@ export function preparePlayback(bId: string, bBuild: string, scenes: SceneRef[])
     sceneCount: scenes.length,
     currentIndex,
   };
+  // No scene loaded yet — IDLE until the first handleChunk targets one.
+  transition(selectedUnit ? 'SHOWING_STORYBOARD' : 'IDLE');
   missingIuPosition.value = null;
   // A unit tap that arrived before this init (boot restore still in flight)
   // is kept pending in pendingExternalSeek (Android parity) — execute it now
@@ -334,6 +382,7 @@ export function refreshContent(bId: string, bBuild: string, scenes: SceneRef[]):
     sceneCount: scenes.length,
     currentIndex,
   };
+  transition(selectedUnit ? 'SHOWING_STORYBOARD' : 'IDLE');
 }
 
 /** Set the cover image (PlaybackViewModel.setCoverImage). */
@@ -399,11 +448,13 @@ export function playSceneQueue(): void {
   if (sceneQueue.value.length === 0) return;
   uiState.value = { ...uiState.value, errorMessage: null };
   missingIuPosition.value = null;
-  currentIuSequence.value = null;
+  selectedUnit = null;
   currentUnitIndex = 0;
   lastProcessedSceneSequence = 0;
   currentIndex = 0;
   bumpSceneEpoch();
+  // T6: SCENE_LOADING — a scene fetch is starting (handleChunk re-targets).
+  transition('LOADING_SCENE');
   preloadAhead(true);
   playNext();
 }
@@ -429,11 +480,13 @@ export function resumeFromCurrentScene(): void {
 export function rotationRecovery(): void {
   needsRotationResume = true;
   uiState.value = { ...uiState.value, phase: 'SCENE_READY' };
+  transition(selectedUnit ? 'SHOWING_STORYBOARD' : 'IDLE');
 }
 
 /** Pause playback (PlaybackViewModel.pausePlayback + fragment.pausePlayback). */
 export function pausePlayback(): void {
-  isPaused = true;
+  // T6: PAUSE → VIDEO_READY (video revealed) / PAUSED (storyboard).
+  transition(videoHasFrame() ? 'VIDEO_READY' : 'PAUSED');
   enginePaused.value = true;
   resetVideoBuffering();
   try { currentPlayer?.pause(); } catch { /* ignore */ }
@@ -451,7 +504,14 @@ export function resumePlayback(): void {
     playNext();
     return;
   }
-  isPaused = false;
+  // T6: PLAY — a paused seek keeps its gate but clears the pause intent;
+  // VIDEO_READY / PLAYING resume as PLAYING; storyboard stays until the
+  // first frame renders (onVideoFirstFrame).
+  transition(
+    playerState.name === 'SEEKING' ? { ...playerState, paused: false }
+      : videoHasFrame() ? 'PLAYING'
+      : 'SHOWING_STORYBOARD'
+  );
   enginePaused.value = false;
   showCurrentIu();
   playAudio(currentPlayer);
@@ -470,7 +530,7 @@ export function resumePlayback(): void {
   // audio is targeted). Without this a silent scene paused by a tab switch
   // never resumed its image cycling (startIuCycling needs an audio player).
   if (currentPlayer) startIuCycling();
-  else if (currentIuSequence.value && currentIuSequence.value.length > 0) startSilentIuCycling();
+  else if (selectedUnit && selectedUnit.sequence.length > 0) startSilentIuCycling();
 }
 
 /** Handle a media error (PlaybackViewModel.handlePlaybackError). */
@@ -490,9 +550,9 @@ export function handlePlayButton(): void {
   const phase = uiState.value.phase;
   if (phase === 'PLAYING' && currentPlayer == null) {
     resumeFromCurrentScene();
-  } else if (phase === 'PLAYING' && !isPaused) {
+  } else if (phase === 'PLAYING' && !isPaused()) {
     pausePlayback();
-  } else if (phase === 'PLAYING' && isPaused) {
+  } else if (phase === 'PLAYING' && isPaused()) {
     resumePlayback();
   } else if (phase === 'PAUSED') {
     resumePlayback();
@@ -513,10 +573,10 @@ export function handlePlayButton(): void {
 /** Fragment.onHiddenChanged(hidden=true) — pause when the Play tab is left. */
 export function pauseIfPlaying(): void {
   const phase = uiState.value.phase;
-  if (phase === 'PLAYING' && !isPaused) {
-    if (currentPlayer == null && currentIuSequence.value != null) {
+  if (phase === 'PLAYING' && !isPaused()) {
+    if (currentPlayer == null && selectedUnit != null) {
       cancelIuCycling();
-      isPaused = true;
+      transition('PAUSED');
       enginePaused.value = true;
     } else {
       pausePlayback();
@@ -608,6 +668,7 @@ export function executePendingSeek(): void {
   // mount can clobber it between seekToPosition and here, which would play the
   // restored scene instead of the selected one (web hardening; Android runs the
   // same look-up when refreshing the queue).
+  transition('LOADING_SCENE');
   const sceneIdx = sceneQueue.value.findIndex((s) => sceneKeyOf(s) === seek.chunkId);
   if (sceneIdx < 0) {
     playSceneQueue();
@@ -642,14 +703,13 @@ export function closeBook(): void {
   pendingExternalSeek.value = null;
   coverImage.value = null;
   previewImage.value = null;
-  currentIuSequence.value = null;
+  selectedUnit = null;
   currentIuBlobUrl.value = null;
   subtitleText.value = null;
   iuMissing.value = false;
   currentIndex = 0;
   currentUnitIndex = 0;
   pendingExternalUnitId = null;
-  currentIuIndex = 0;
   sessionStorage.removeItem(SAVED_POS_KEY);
   navigateTo({ chapterId: null, sceneId: null, unitId: null, chunkId: null, unitIndex: 0 });
   uiState.value = { ...initial };
@@ -667,8 +727,8 @@ export function setLayerImage(v: boolean): void {
   layerImage.value = v;
   updateLayers();
   if (v) {
-    const ius = currentIuSequence.value;
-    if (ius && ius.length && currentIuIndex < ius.length) showIu(ius[currentIuIndex]);
+    const sel = selectedUnit;
+    if (sel && sel.index < sel.sequence.length) showIu(sel.sequence[sel.index]);
   }
 }
 export function setLayerVideo(v: boolean): void {
@@ -704,7 +764,7 @@ export function setLayerVideo(v: boolean): void {
         // A hidden element can be paused by the browser (or the video is simply
         // still running) — ensure it resumes without touching its position when
         // it is in sync (no buffer drop / no re-fetch).
-        if (!isPaused && !pendingLoad && uiState.value.phase === 'PLAYING') {
+        if (!isPaused() && !pendingLoad && uiState.value.phase === 'PLAYING') {
           try { if (el.paused) void el.play().catch(() => { }); } catch { /* ignore */ }
         }
       } else {
@@ -731,7 +791,6 @@ export function attachVideo(el: HTMLVideoElement): void {
   if (videoSrcUrl) {
     // Fresh src assignment — any previously decoded frame is gone; hold the
     // storyboard on top until the new src decodes its first frame.
-    videoHasFrame = false;
     currentVideoSceneKey = getCurrentSceneKey();
     el.src = videoSrcUrl;
     // Prefer the explicit video-timeline target while one is pending; the
@@ -742,17 +801,22 @@ export function attachVideo(el: HTMLVideoElement): void {
       // timeline): the storyboard of the selected unit covers the element
       // until the video is actually positioned inside the unit. Bounded by
       // the selected unit's end (unitRevealGateSec).
-      videoSeekInFlight = true;
-      pendingVideoRevealSec = unitRevealGateSec(
-        currentIuSequence.value ?? [],
-        currentIuIndex,
-        pendingVideoTargetSec,
-      );
+      transition({
+        name: 'SEEKING',
+        revealGateSec: unitRevealGateSec(
+          selectedUnit?.sequence ?? [],
+          selectedUnit?.index ?? 0,
+          pendingVideoTargetSec,
+        ),
+        seekLanded: false,
+        paused: isPaused(),
+      });
     } else {
+      transition(isPaused() ? 'PAUSED' : 'SHOWING_STORYBOARD');
       const cur = currentPlayer?.currentTime ?? 0;
       if (cur > 0) { try { el.currentTime = cur; } catch { /* not ready */ } }
     }
-    if (!isPaused && uiState.value.phase === 'PLAYING') {
+    if (!isPaused() && uiState.value.phase === 'PLAYING') {
       try { void el.play().catch(() => { }); } catch { /* ignore */ }
     }
   }
@@ -771,9 +835,9 @@ export function detachVideo(): void {
     videoEl = null;
   }
   currentVideoSceneKey = null;
-  videoHasFrame = false;
-  videoSeekInFlight = false;
-  pendingVideoRevealSec = -1;
+  // The element is gone — the storyboard covers the surface until the next
+  // attach decodes a frame (old flags: videoHasFrame=false, no gate).
+  transition(isPaused() ? 'PAUSED' : 'SHOWING_STORYBOARD');
   resetVideoBuffering();
   updateLayers();
 }
@@ -787,6 +851,8 @@ function playNext(): void {
     currentIndex = 0;
     cancelIuCycling();
     uiState.value = { ...uiState.value, phase: 'SCENE_READY', currentIndex: 0 };
+    // End of queue — no scene is loading (the old flags → IDLE / storyboard).
+    transition(selectedUnit ? 'SHOWING_STORYBOARD' : 'IDLE');
     return;
   }
   const ref = sceneQueue.value[currentIndex];
@@ -810,6 +876,7 @@ function playNext(): void {
   }
 
   uiState.value = { ...uiState.value, phase: 'DOWNLOADING' };
+  transition('LOADING_SCENE');
   const epoch = sceneEpoch;
   void retryWithBackoff(() => fetchSceneData(sceneKey), 3, 1000, 5000)
     .then((data) => {
@@ -837,7 +904,7 @@ function emitScene(scene: PreloadedScene): void {
   };
   processPendingScene(scene);
   // The previous scene's object URLs are no longer displayed (handleChunk/
-  // handleSilentChunk replaced currentIuSequence / released the players) —
+  // handleSilentChunk replaced selectedUnit / released the players) —
   // revoke them so long playthroughs don't accumulate blob URLs.
   const prev = activeScene;
   activeScene = scene;
@@ -1091,11 +1158,10 @@ function handleChunk(scene: PreloadedScene): void {
   const explicitVideoSeekMs: number | null =
     (pendingExplicitUnitTarget || pendingRotMs > 0) ? seekMs : null;
   pendingExplicitUnitTarget = false;
-  // Set the sequence + selected unit FIRST: the video reveal gate (seek) is
-  // bounded by the selected unit's end on the audio master timeline, and the
-  // video functions below read currentIuSequence/currentIuIndex to clamp it.
-  currentIuSequence.value = ius;
-  currentIuIndex = seekToUnit;
+  // Set the selected unit FIRST (single source of truth, T6): the video
+  // reveal gate (seek) is bounded by the selected unit's end on the audio
+  // master timeline, and the video functions below read selectedUnit to clamp it.
+  selectedUnit = { sequence: ius, index: seekToUnit };
   // Video is streamed ON DEMAND from its direct HTTP URL (ensureSceneVideo) —
   // never downloaded as part of the scene bundle. If the video for this scene
   // is already attached (same-scene unit navigation), just seek it to the unit
@@ -1104,6 +1170,11 @@ function handleChunk(scene: PreloadedScene): void {
     if (!seekAttachedVideo(explicitVideoSeekMs)) {
       ensureSceneVideo(getCurrentSceneKey(), explicitVideoSeekMs);
     }
+  } else if (playerState.name === 'IDLE' || playerState.name === 'LOADING_SCENE') {
+    // Audio-only scene (or video layer off): no seek gate is armed — the
+    // selected unit's storyboard is on the surface (the pendingLoad branch
+    // below marks it paused if the load is positioned & paused).
+    transition(isPaused() ? 'PAUSED' : 'SHOWING_STORYBOARD');
   }
 
   uiState.value = { ...uiState.value, currentUnitIndex: seekToUnit };
@@ -1129,7 +1200,8 @@ function handleChunk(scene: PreloadedScene): void {
 
     if (pendingLoad) {
       pendingLoad = false;
-      isPaused = true;
+      // Positioned & paused: keep any armed SEEKING gate, mark it paused.
+      transition(playerState.name === 'SEEKING' ? { ...playerState, paused: true } : 'PAUSED');
       enginePaused.value = true;
       pauseAudio(el);
       uiState.value = { ...uiState.value, phase: 'PAUSED' };
@@ -1153,51 +1225,6 @@ function handleChunk(scene: PreloadedScene): void {
   updateLayers();
 }
 
-/** Start offset (ms) of a unit on the AUDIO master timeline. The audio
- *  timeline is the ONLY semantic timeline the player knows: a unit exists
- *  there (start_ms), its storyboard belongs to it, and the whole-scene video
- *  is a subordinate visualization that we seek to the same position. No second
- *  video timeline (video_start_ms) is computed or consumed — the player never
- *  analyzes the video file. If the video drifts a few frames from the audio
- *  boundary, that is acceptable for a preview; the storyboard overlay covers
- *  the transition until the video is actually positioned (reveal gate in
- *  updateLayers / onVideoFirstFrame). Falls back to cumulative durationMs for
- *  legacy storyboards without timestamps. */
-function unitStartMs(ius: IuImageItem[], unitIndex: number): number {
-  const startMs = ius[unitIndex]?.startMs;
-  if (startMs != null && startMs > 0) return startMs;
-  let seekMs = 0;
-  for (let i = 0; i < unitIndex; i++) seekMs += ius[i].durationMs;
-  return seekMs;
-}
-
-/** End offset (ms) of a unit on the AUDIO master timeline: the next unit's
- *  start_ms when present (server boundaries), else start_ms + durationMs, else
- *  cumulative durationMs (legacy). Used to bound the reveal gate so a unit
- *  shorter than the reveal tolerance never reveals the video already inside
- *  the NEXT unit. */
-function unitEndMs(ius: IuImageItem[], unitIndex: number): number {
-  const nextStart = ius[unitIndex + 1]?.startMs;
-  if (nextStart != null && nextStart > 0) return nextStart;
-  const startMs = ius[unitIndex]?.startMs;
-  if (startMs != null && startMs > 0) return startMs + (ius[unitIndex]?.durationMs ?? 0);
-  let endMs = 0;
-  for (let i = 0; i <= unitIndex; i++) endMs += ius[i].durationMs;
-  return endMs;
-}
-
-/** Reveal gate (sec) for the video layer after a unit seek: the raw seek
- *  target plus the tolerance, clamped to stay INSIDE the selected unit
- *  (audio master timeline) — `revealPosition = min(unitStart + tolerance,
- *  unitEnd - safetyMargin)`. Falls back to the raw gate when the unit
- *  boundaries aren't available. */
-function unitRevealGateSec(ius: IuImageItem[], unitIndex: number, targetSec: number): number {
-  const raw = targetSec + UNIT_REVEAL_TOLERANCE_MS / 1000;
-  if (!ius || ius.length === 0 || unitIndex < 0 || unitIndex >= ius.length) return raw;
-  const end = unitEndMs(ius, unitIndex) / 1000;
-  return Math.max(targetSec, Math.min(raw, end - UNIT_REVEAL_SAFETY_MARGIN_MS / 1000));
-}
-
 /** Index of the externally-selected unit inside [ius], resolved by ID first
  *  (the storyboard sequence and the Navigator's scene.units can be offset),
  *  falling back to the index-based currentUnitIndex when no id is present or
@@ -1214,13 +1241,12 @@ function resolveUnitIndexForSequence(ius: IuImageItem[]): number {
 /** handleSilentChunk — no audio: release players, timer-based IU cycling. */
 function handleSilentChunk(ius: IuImageItem[]): void {
   stopAll();
-  currentIuSequence.value = ius;
-  currentIuIndex = 0;
+  selectedUnit = { sequence: ius, index: 0 };
   uiState.value = { ...uiState.value, currentUnitIndex: 0 };
   if (ius.length > 0) {
     showIu(ius[0]);
   }
-  isPaused = false;
+  transition('SHOWING_STORYBOARD');
   enginePaused.value = false;
   startSilentIuCycling();
   updateLayers();
@@ -1254,10 +1280,11 @@ function startIuCycling(): void {
   cancelIuCycling();
   const tick = () => {
     iuRafId = requestAnimationFrame(tick);
-    const ius = currentIuSequence.value;
+    const sel = selectedUnit;
     const player = currentPlayer;
-    if (!ius || ius.length === 0 || !player) return;
-    if (isPaused) return;
+    if (!sel || sel.sequence.length === 0 || !player) return;
+    if (isPaused()) return;
+    const ius = sel.sequence;
 
     const pos = player.currentTime * 1000;
     const dur = (player.duration && isFinite(player.duration) ? player.duration : 0) * 1000;
@@ -1289,10 +1316,10 @@ function startIuCycling(): void {
       }
       if (idx >= ius.length) idx = ius.length - 1;
     }
-    if (idx === 0 && currentIuIndex !== 0) return;
-    if (idx !== currentIuIndex) {
-      currentIuIndex = idx;
-      if (isPaused) return;
+    if (idx === 0 && sel.index !== 0) return;
+    if (idx !== sel.index) {
+      selectedUnit = { ...sel, index: idx };
+      if (isPaused()) return;
       uiState.value = { ...uiState.value, currentUnitIndex: idx };
       const item = ius[idx];
       showIu(item);
@@ -1312,19 +1339,20 @@ function startIuCycling(): void {
 function startSilentIuCycling(): void {
   cancelIuCycling();
   const loop = () => {
-    if (isPaused) { silentTimer = window.setTimeout(loop, 500); return; }
-    const ius = currentIuSequence.value;
-    if (!ius || ius.length === 0) { silentTimer = window.setTimeout(loop, 500); return; }
-    if (currentIuIndex >= ius.length) { silentTimer = window.setTimeout(loop, 500); return; }
+    if (isPaused()) { silentTimer = window.setTimeout(loop, 500); return; }
+    const sel = selectedUnit;
+    if (!sel || sel.sequence.length === 0) { silentTimer = window.setTimeout(loop, 500); return; }
+    const ius = sel.sequence;
+    if (sel.index >= ius.length) { silentTimer = window.setTimeout(loop, 500); return; }
     // No images at all → idle-poll slowly (still never stalls anything).
     if (ius.every((it) => it.status !== 'READY' && !it.blobUrl)) {
       silentTimer = window.setTimeout(loop, 5000);
       return;
     }
-    const dur = ius[currentIuIndex].durationMs;
+    const dur = ius[sel.index].durationMs;
     silentTimer = window.setTimeout(() => {
-      if (isPaused || ius !== currentIuSequence.value) return;
-      if (currentIuIndex >= ius.length - 1) {
+      if (isPaused() || selectedUnit?.sequence !== ius) return;
+      if (sel.index >= ius.length - 1) {
         // Last unit shown — the silent scene is done: advance to the next
         // scene (Android parity — the silent scene must not cycle its images
         // forever; playNext delivers the next scene: an audio one → handleChunk,
@@ -1333,8 +1361,8 @@ function startSilentIuCycling(): void {
         onAudioCompleted();
         return;
       }
-      const nextIdx = currentIuIndex + 1;
-      currentIuIndex = nextIdx;
+      const nextIdx = sel.index + 1;
+      selectedUnit = { ...sel, index: nextIdx };
       uiState.value = { ...uiState.value, currentUnitIndex: nextIdx };
       showIu(ius[nextIdx]);
       navigateTo({
@@ -1358,13 +1386,13 @@ function cancelIuCycling(): void {
 
 /** switchToNextPlayer — promote nextPlayer at the −200ms early switch. */
 function switchToNextPlayer(): void {
-  currentIuIndex = 0;
+  if (selectedUnit) selectedUnit = { ...selectedUnit, index: 0 };
   subtitleText.value = null;
   releaseAudioEl(currentPlayer);
   currentPlayer = nextPlayer;
   nextPlayer = null;
   if (currentPlayer) {
-    if (isPaused) pauseAudio(currentPlayer);
+    if (isPaused()) pauseAudio(currentPlayer);
     else playAudio(currentPlayer);
     startIuCycling();
   }
@@ -1379,9 +1407,9 @@ function onTrackEnd(): void {
   currentPlayer = nextPlayer;
   nextPlayer = null;
   if (currentPlayer) {
-    currentIuIndex = 0;
+    if (selectedUnit) selectedUnit = { ...selectedUnit, index: 0 };
     subtitleText.value = null;
-    if (isPaused) pauseAudio(currentPlayer);
+    if (isPaused()) pauseAudio(currentPlayer);
     else playAudio(currentPlayer);
     startIuCycling();
   } else {
@@ -1392,16 +1420,15 @@ function onTrackEnd(): void {
 
 /** Audio element error — reset to SCENE_READY so the user can retry. */
 function onAudioError(): void {
-  isPaused = false;
   enginePaused.value = false;
-  handlePlaybackError('Audio playback error');
+  handlePlaybackError('Audio playback error'); // stopAll → IDLE
 }
 
 function showCurrentIu(): void {
-  const ius = currentIuSequence.value;
-  if (!ius || ius.length === 0) return;
-  const idx = Math.max(0, Math.min(currentUnitIndex, ius.length - 1));
-  showIu(ius[idx]);
+  const sel = selectedUnit;
+  if (!sel || sel.sequence.length === 0) return;
+  const idx = Math.max(0, Math.min(currentUnitIndex, sel.sequence.length - 1));
+  showIu(sel.sequence[idx]);
 }
 
 function showIu(item: IuImageItem): void {
@@ -1437,8 +1464,8 @@ function updateSubtitleIfEnabled(text: string | null): void {
 }
 
 function updateSubtitleVisibility(): void {
-  const ius = currentIuSequence.value;
-  const text = layerSubtitles.value && ius && currentIuIndex < ius.length ? ius[currentIuIndex].text : null;
+  const sel = selectedUnit;
+  const text = layerSubtitles.value && sel && sel.index < sel.sequence.length ? sel.sequence[sel.index].text : null;
   subtitleText.value = text ?? null;
 }
 
@@ -1447,7 +1474,7 @@ function updateSubtitleVisibility(): void {
  *  (videoHasFrame) — no black rectangle over the storyboard while the src
  *  decodes (Android parity: videoReadyToShow). */
 function updateLayers(): void {
-  videoVisible.value = !!videoEl && !!videoSrcUrl && !videoEnded && videoHasFrame && layerVideo.value;
+  videoVisible.value = !!videoEl && !!videoSrcUrl && !videoEnded && videoHasFrame() && layerVideo.value;
 }
 
 /** seekAttachedVideo — same whole-scene video (unit navigation within a
@@ -1471,17 +1498,22 @@ function seekAttachedVideo(explicitSeekMs: number | null): boolean {
   // than the tolerance must never reveal inside the NEXT unit). Android
   // parity: videoSeekInFlight + pendingRevealPosMs.
   if (explicitSeekMs != null) {
-    videoSeekInFlight = true;
-    pendingVideoRevealSec = unitRevealGateSec(
-      currentIuSequence.value ?? [],
-      currentIuIndex,
-      explicitSeekMs / 1000,
-    );
-    videoHasFrame = false;
+    // T6: SEEK_START — the reveal gate is armed (clamped to the selected
+    // unit), the seek is in flight, pause intent kept.
+    transition({
+      name: 'SEEKING',
+      revealGateSec: unitRevealGateSec(
+        selectedUnit?.sequence ?? [],
+        selectedUnit?.index ?? 0,
+        explicitSeekMs / 1000,
+      ),
+      seekLanded: false,
+      paused: isPaused(),
+    });
     updateLayers();
   }
   applyVideoSeek(explicitSeekMs);
-  if (!isPaused && !pendingLoad && uiState.value.phase === 'PLAYING') {
+  if (!isPaused() && !pendingLoad && uiState.value.phase === 'PLAYING') {
     try { void videoEl.play().catch(() => { }); } catch { /* ignore */ }
   }
   updateLayers();
@@ -1524,9 +1556,6 @@ function playVideoOverlay(url: string, explicitSeekMs: number | null = null): vo
   videoSrcUrl = url;
   currentVideoSceneKey = getCurrentSceneKey();
   videoEnded = false;
-  // New src — the previous frame (if any) is gone: keep the storyboard on top
-  // until the first frame of the new src decodes (videoHasFrame).
-  videoHasFrame = false;
   // Explicit target in seconds — 0 is a valid target (unit 1 / scene start).
   // null = no explicit target → audio-sync fallback in applyVideoSeek.
   pendingVideoTargetSec = explicitSeekMs != null ? explicitSeekMs / 1000 : -1;
@@ -1535,14 +1564,21 @@ function playVideoOverlay(url: string, explicitSeekMs: number | null = null): vo
   // positioned inside the unit (target + tolerance, bounded by the selected
   // unit's end — a unit shorter than the tolerance must never reveal inside
   // the NEXT unit), so the first shown frame belongs to the selected unit,
-  // never the previous unit's tail.
+  // never the previous unit's tail. Fresh src without an explicit target —
+  // keep the storyboard on top until the first frame decodes.
   if (explicitSeekMs != null) {
-    videoSeekInFlight = true;
-    pendingVideoRevealSec = unitRevealGateSec(
-      currentIuSequence.value ?? [],
-      currentIuIndex,
-      explicitSeekMs / 1000,
-    );
+    transition({
+      name: 'SEEKING',
+      revealGateSec: unitRevealGateSec(
+        selectedUnit?.sequence ?? [],
+        selectedUnit?.index ?? 0,
+        explicitSeekMs / 1000,
+      ),
+      seekLanded: false,
+      paused: isPaused(),
+    });
+  } else {
+    transition(isPaused() ? 'PAUSED' : 'SHOWING_STORYBOARD');
   }
   if (!videoEl) { updateLayers(); return; }
   // Fresh source — start the buffer policy from the base target (a new scene
@@ -1558,7 +1594,7 @@ function playVideoOverlay(url: string, explicitSeekMs: number | null = null): vo
     applyVideoSeek(explicitSeekMs);
   };
   videoEl.addEventListener('loadedmetadata', onMeta);
-  if (!isPaused && !pendingLoad && uiState.value.phase === 'PLAYING') {
+  if (!isPaused() && !pendingLoad && uiState.value.phase === 'PLAYING') {
     try { void videoEl.play().catch(() => { }); } catch { /* ignore */ }
   }
   updateLayers();
@@ -1592,8 +1628,9 @@ function onVideoEnded(): void {
  *  still the PREVIOUS unit's tail (n-1); the timeupdate handler reveals once
  *  the position is actually inside the selected unit. */
 function onVideoFirstFrame(): void {
-  if (videoSeekInFlight) return;
-  videoHasFrame = true;
+  if (videoSeekInFlight()) return;
+  // First frame decoded — the storyboard can give way.
+  transition(isPaused() ? 'VIDEO_READY' : 'PLAYING');
   updateLayers();
 }
 
@@ -1609,19 +1646,27 @@ function onVideoFirstFrame(): void {
  *  position has data, so timeupdate reflects a real rendered position, never
  *  a position-only guess over a black/empty surface. */
 function onVideoTimeUpdate(): void {
-  if (!videoSeekInFlight || !videoEl || pendingVideoRevealSec < 0) return;
+  if (!videoSeekInFlight() || !videoEl || pendingVideoRevealSec() < 0) return;
   if (videoEl.readyState < 2) return; // HAVE_CURRENT_DATA — no decodable frame yet
   // Belt-and-suspenders upper bound (parity with the clamped gate): never
   // reveal the NEXT unit's frame over the selected unit's storyboard if the
   // position raced past the unit boundary between timeupdate events.
-  const ius = currentIuSequence.value;
+  const ius = selectedUnit?.sequence;
   const posMs = videoEl.currentTime * 1000;
   const withinUnit = !ius || ius.length === 0 ||
-    posMs < unitEndMs(ius, Math.max(0, Math.min(currentIuIndex, ius.length - 1)));
-  if (videoEl.currentTime >= pendingVideoRevealSec && withinUnit) {
-    videoSeekInFlight = false;
-    pendingVideoRevealSec = -1;
-    videoHasFrame = true;
+    posMs < unitEndMs(ius, Math.max(0, Math.min(selectedUnit?.index ?? 0, ius.length - 1)));
+  // T2.1/T2.2 AND-gate (pure, unit-tested in playbackGate.test.ts): frame
+  // decoded (readyState >= HAVE_CURRENT_DATA) AND position inside the unit
+  // past the gate — never reveal on one condition alone.
+  if (shouldRevealSeekVideo({
+    seekInFlight: videoSeekInFlight(),
+    hasFrame: videoEl.readyState >= 2,
+    revealGateSec: pendingVideoRevealSec(),
+    posSec: videoEl.currentTime,
+    withinUnit,
+  })) {
+    // REVEAL — SEEKING → VIDEO_READY / PLAYING (position inside the unit).
+    transition(isPaused() ? 'VIDEO_READY' : 'PLAYING');
     updateLayers();
   }
 }
@@ -1711,7 +1756,7 @@ function onVideoPlaying(): void {
 }
 
 function enterVideoBuffering(): void {
-  if (videoBuffering || isPaused || !layerVideo.value || uiState.value.phase !== 'PLAYING') return;
+  if (videoBuffering || isPaused() || !layerVideo.value || uiState.value.phase !== 'PLAYING') return;
   const el = videoEl;
   const now = performance.now();
   if (now - lastResumedAt < CYCLE_WINDOW_MS) {
@@ -1726,9 +1771,12 @@ function enterVideoBuffering(): void {
   }
   videoBuffering = true;
   // Pause the video element too (not just the audio): while it is paused the
-  // browser keeps fetching but will NOT auto-resume past our gate.
+  // browser keeps fetching but will NOT auto-resume past our gate. The buffer
+  // gate holds the player: VIDEO_READY / PAUSED with the video's
+  // revealed-ness preserved (a playing video stays visible under "Загрузка…").
   try { el?.pause(); } catch { /* ignore */ }
   pauseAudio(currentPlayer);
+  transition(videoHasFrame() ? 'VIDEO_READY' : 'PAUSED');
   uiState.value = { ...uiState.value, phase: 'BUFFERING' };
   startBufferingMonitor();
 }
@@ -1766,6 +1814,8 @@ function resumeFromBuffering(): void {
       try { videoEl.currentTime = currentPlayer.currentTime; } catch { /* ignore */ }
     }
   }
+  // Resume — restore the pre-buffer state (storyboard until the next frame).
+  transition(videoHasFrame() ? 'PLAYING' : 'SHOWING_STORYBOARD');
   playAudio(currentPlayer);
   if (videoEl && videoSrcUrl && !videoEnded && layerVideo.value) {
     try { void videoEl.play().catch(() => { }); } catch { /* ignore */ }
@@ -1776,13 +1826,14 @@ function resumeFromBuffering(): void {
 /** stopAll — fragment.stopAll(): release players, reset engine flags. */
 export function stopAll(): void {
   cancelIuCycling();
-  currentIuSequence.value = null;
+  selectedUnit = null;
   currentIuBlobUrl.value = null;
   subtitleText.value = null;
   iuMissing.value = false;
-  currentIuIndex = 0;
   sceneTransitionPending = false;
   nextChainReady = false;
+  // T6: STOP → IDLE (the four semantic flags are folded into the state).
+  transition('IDLE');
   releaseAudioEl(currentPlayer);
   currentPlayer = null;
   releaseAudioEl(nextPlayer);
@@ -1793,14 +1844,10 @@ export function stopAll(): void {
   }
   videoSrcUrl = null;
   videoEnded = false;
-  videoHasFrame = false;
-  videoSeekInFlight = false;
-  pendingVideoRevealSec = -1;
   pendingVideoTargetSec = -1;
   currentVideoSceneKey = null;
   resetVideoBuffering();
   resumeBufferTargetS = RESUME_BUFFER_MIN_S;
-  isPaused = false;
   enginePaused.value = false;
   updateLayers();
 }

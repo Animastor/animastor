@@ -30,6 +30,34 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
+/** Formalized player state machine (T6 — see
+ *  docs/05-frontend/PLAYER_STATE_MACHINE_DESIGN.md): the 7 states
+ *  IDLE / LOADING_SCENE / SHOWING_STORYBOARD / SEEKING / VIDEO_READY /
+ *  PLAYING / PAUSED. Stored in [PlayFragment.playerState] as the single
+ *  source of truth for the four semantic flags (isPaused, videoReadyToShow,
+ *  videoSeekInFlight, pendingRevealPosMs) — those are now read-only accessors
+ *  derived from the state, and every write to them is an explicit
+ *  [PlayFragment.transition]. SEEKING carries its operational payload: the
+ *  clamped reveal gate on the audio master timeline ([revealGateMs]), whether
+ *  the seek has landed ([seekLanded] — the old videoSeekInFlight), and the
+ *  pause intent ([paused] — the old isPaused). The remaining low-level guards
+ *  (videoPlayerGeneration/videoCurrentGen/pendingRevealGen/advancePending/
+ *  pendingLoad) and media/surface identity props stay as fields per the
+ *  design doc's mapping table. */
+private sealed class PlayerState {
+    object Idle : PlayerState()
+    object LoadingScene : PlayerState()
+    object ShowingStoryboard : PlayerState()
+    data class Seeking(
+        val revealGateMs: Long,
+        val seekLanded: Boolean,
+        val paused: Boolean,
+    ) : PlayerState()
+    object VideoReady : PlayerState()
+    object Playing : PlayerState()
+    object Paused : PlayerState()
+}
+
 /**
  * Media player fragment.
  *
@@ -46,24 +74,24 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
 
     companion object {
         private const val TAG = "PlayFragment"
-        // Reveal tolerance for the video layer after a unit seek: the whole-scene
-        // video may drift a few frames (~40 ms on LTX builds) from the audio
-        // master timeline, so revealing exactly at start_ms could show the
-        // PREVIOUS unit's tail frame. Reveal only once the player is positioned
-        // comfortably INSIDE the selected unit (150 ms = ~4 frames at 24 fps)
-        // — the storyboard overlay covers the transition. Audio master timeline
-        // only: no video_start_ms is computed or consumed.
-        private const val UNIT_REVEAL_TOLERANCE_MS = 150L
-        // Keep the reveal position inside the SELECTED unit: never land on (or
-        // past) the unit's end boundary — a unit shorter than the tolerance
-        // would otherwise reveal the video already inside the NEXT unit.
-        // ~1 frame at 24fps.
-        private const val UNIT_REVEAL_SAFETY_MARGIN_MS = 40L
+        // Reveal tolerance + safety margin constants live in PlayerGate.kt
+        // (top-level, pure — unit-tested in PlayerGateTest.kt, T2.2).
         // Fixed delay in revealVideoAfterReturn: a safety net for sources where
         // onRenderedFirstFrame never fires (audio-only / edge cases). Distinct
         // from UNIT_REVEAL_TOLERANCE_MS — this is a surface re-render fallback,
         // not a timeline tolerance.
         private const val SURFACE_RE_RENDER_FALLBACK_MS = 150L
+
+        /** One source of truth for the unit currently selected on the surface:
+         *  the storyboard [sequence] + the [index] of the unit in it, kept
+         *  atomically — the old currentIuSequence/currentIuIndex pair could
+         *  disagree, which was the root of the N−1 picture bugs. */
+        private data class SelectedUnit(
+            val sequence: List<IuImageItem>,
+            val index: Int,
+        ) {
+            val item: IuImageItem? get() = sequence.getOrNull(index)
+        }
     }
 
     private var binding: FragmentPlayBinding? = null
@@ -99,28 +127,16 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
     // version — including it in the same-scene check makes the instant-seek
     // path (no source rebuild) refuse a stale source after regeneration.
     private var currentPlayerVideoVersion: Long = 0
-    // Seek target of the in-flight same-scene instant seek. The video surface
-    // must NOT cover the storyboard until the player is actually positioned at
-    // this target and rendering — revealing on a 120ms timer exposed the
-    // PREVIOUS unit's stale frame while the new video range buffered (the
-    // reported "picture of a neighboring unit" that appears with the video
-    // load). -1 = no pending same-scene reveal.
-    private var pendingRevealPosMs = -1L
     // Guards the scene-advance (ENDED → playNext) against double-firing: the
     // transition can be triggered by STATE_ENDED and by the iuCycling watchdog;
-    // reset when the next scene is targeted.
+    // reset when the next scene is targeted. Not a state — a transition guard
+    // (design doc: guard перехода PLAYING → LOADING_SCENE, idempotent).
     private var advancePending = false
-    private var isPaused = false
-    // Whether the whole-scene video has rendered its first frame and may cover
-    // the storyboard. While false, the storyboard stays on TOP and the surface
-    // (which would otherwise show black until the first frame decodes) is kept
-    // alive but behind it — no more "video starts from black" on unit seek /
-    // layer toggle. Set true only after the video actually pushed a frame.
-    private var videoReadyToShow = false
     // Set by revealVideoAfterReturn() to the video generation captured at
     // return; onRenderedFirstFrame() (a NEW frame rendered on the recreated
     // surface) reveals the video at the exact render moment instead of a blind
     // fixed delay. Reset by targetScene (new item) and by the 150 ms fallback.
+    // Guard against stale players — stays a field per the design doc.
     private var pendingRevealGen = -1L
     // Bumped every time the persistent player is re-targeted (new scene /
     // layer change). The Player.Listener ignores errors that arrive after a
@@ -134,20 +150,47 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
     // alive (behind the storyboard) across scene/unit transitions.
     private var videoSurfaceAlive = false
     private var iuCyclingJob: Job? = null
-    private var currentIuSequence: List<IuImageItem>? = null
-    private var currentIuIndex = 0
+    // T6: single source of truth for the SELECTED unit — the storyboard
+    // sequence + the index of the unit on the surface, kept atomically in one
+    // object. Replaces the old currentIuSequence + currentIuIndex pair (two
+    // independently-nullable fields that could disagree — the N−1 chain:
+    // currentIuSequence → stopAll → null → SCENE_READY → another picture).
+    // playbackViewModel.currentIuSequence / currentUnitIndex remain the
+    // ViewModel's session-restore mirror, written here as outputs (never read
+    // back as the source of truth while a scene is live).
+    private var selectedUnit: SelectedUnit? = null
     private var hasDisplayedCover = false
     private var isInCurtainsState = false
     private var currentVolume = 1.0f
     private var isFullscreen = false
+    // One-shot intent: the scene loads positioned & paused (external unit seek
+    // / rotation resume). Consumed by handleChunk — not a state, like
+    // pendingExternalSeek (design doc: свойство состояния, positioned & paused).
     private var pendingLoad = false
-    // True while a same-scene seekTo is in flight: set in targetScene right
-    // after seekTo(), cleared by the DISCONTINUITY_REASON_SEEK callback. The
-    // position-gated reveal (startIuCycling) only shows the video once the
-    // seek landed — otherwise the stale previous-unit frame would show as the
-    // covering (and unit-1 seeks to pos 0 would reveal before the seek even
-    // started).
-    private var videoSeekInFlight = false
+
+    /** The stored player state (T6): single source of truth for the four
+     *  semantic flags below — every state change goes through [transition]. */
+    private var playerState: PlayerState = PlayerState.Idle
+
+    /** The four semantic flags as read-only projections of [playerState] (the
+     *  design's "reads → state comparisons", centralized so the diff is
+     *  mechanical and behavior is unchanged). */
+    private val isPaused: Boolean get() = when (val s = playerState) {
+        is PlayerState.Paused, is PlayerState.VideoReady -> true
+        is PlayerState.Seeking -> s.paused
+        else -> false
+    }
+    private val videoReadyToShow: Boolean get() =
+        playerState is PlayerState.VideoReady || playerState is PlayerState.Playing
+    private val videoSeekInFlight: Boolean get() =
+        (playerState as? PlayerState.Seeking)?.seekLanded == false
+    private val pendingRevealPosMs: Long get() =
+        (playerState as? PlayerState.Seeking)?.revealGateMs ?: -1L
+
+    /** The single place where [playerState] changes (T6). */
+    private fun transition(state: PlayerState) {
+        playerState = state
+    }
 
     private fun checkPendingExternalSeek() {
         if (playbackViewModel.pendingExternalSeek != null) {
@@ -315,9 +358,9 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                 resources.getDrawable(R.drawable.ic_image_off, null)
             updateLayers()
             if (isChecked) {
-                val ius = currentIuSequence
-                if (!ius.isNullOrEmpty() && currentIuIndex < ius.size) {
-                    showIuImage(ius[currentIuIndex].bitmap)
+                val sel = selectedUnit
+                if (sel != null && sel.index in sel.sequence.indices) {
+                    showIuImage(sel.sequence[sel.index].bitmap)
                 }
             }
         }
@@ -362,17 +405,21 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         observeExternalNavigation()
         checkPendingExternalSeek()
 
-        if (currentIuSequence == null && videoPlayer != null) {
-            currentIuSequence = playbackViewModel.currentIuSequence
+        if (selectedUnit == null && videoPlayer != null) {
+            val restored = playbackViewModel.currentIuSequence
+            if (restored != null) {
+                selectedUnit = SelectedUnit(restored, playbackViewModel.currentUnitIndex)
+            }
         }
-        if (currentIuSequence != null && videoPlayer != null) {
+        if (selectedUnit != null && videoPlayer != null) {
             showCurrentIu()
         }
     }
 
     private fun showCurrentIu() {
         if (!isAdded) return
-        val ius = currentIuSequence ?: return
+        val sel = selectedUnit ?: return
+        val ius = sel.sequence
         if (ius.isEmpty()) return
         // Resolve by the pending external seek's unitId when one is in flight:
         // currentUnitIndex is still the PREVIOUS unit until executePendingSeek
@@ -407,8 +454,9 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
     private fun updateSubtitleVisibility() {
         if (!isAdded) return
         val b = binding ?: return
-        if (b.layerSubtitles.isChecked && currentIuSequence != null && currentIuIndex < currentIuSequence!!.size) {
-            val text = currentIuSequence!![currentIuIndex].text
+        val sel = selectedUnit
+        if (b.layerSubtitles.isChecked && sel != null && sel.index < sel.sequence.size) {
+            val text = sel.sequence[sel.index].text
             if (text != null) {
                 b.subtitleText.text = text
                 b.subtitleText.visibility = View.VISIBLE
@@ -471,7 +519,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                 playbackViewModel.uiState.collect { state ->
                     try {
                         val b = binding ?: return@collect
-                        Log.d(TAG, "state: phase=${state.phase} img=${state.previewImage != null} cover=${state.coverImage != null} player=${videoPlayer != null}")
+                        Log.d(TAG, "state: phase=${state.phase} img=${state.previewImage != null} cover=${state.coverImage != null} player=${videoPlayer != null} playerState=$playerState")
 
                         // Update play button state BEFORE any early returns
                         val hasChunks = playbackViewModel.sceneQueueSize > 0
@@ -575,10 +623,10 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                                 // image, video = the selected unit). Hide only
                                 // when there is genuinely no unit image to
                                 // show (boot / queue end / missing unit).
-                                val ius = currentIuSequence
-                                val hasUnitImage = !ius.isNullOrEmpty() &&
-                                    currentIuIndex in ius.indices &&
-                                    ius[currentIuIndex].bitmap != null &&
+                                val sel = selectedUnit
+                                val hasUnitImage = sel != null &&
+                                    sel.index in sel.sequence.indices &&
+                                    sel.sequence[sel.index].bitmap != null &&
                                     b.resultImage.drawable != null
                                 if (!hasUnitImage) {
                                     b.resultImage.visibility = View.INVISIBLE
@@ -758,15 +806,14 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         playbackViewModel.explicitVideoSeekPending = false
 
         if (!iuSequence.isNullOrEmpty()) {
-            currentIuSequence = iuSequence
+            selectedUnit = SelectedUnit(iuSequence, seekToUnit)
             playbackViewModel.currentIuSequence = iuSequence
-            currentIuIndex = seekToUnit
             // Storyboard first; the video frame replaces it once the merged
             // source renders (videoReadyToShow).
             showIuImage(iuSequence[seekToUnit])
             updateSubtitleIfEnabled(iuSequence[seekToUnit].text)
         } else {
-            currentIuSequence = iuSequence
+            selectedUnit = iuSequence?.let { SelectedUnit(it, seekToUnit) }
             playbackViewModel.currentIuSequence = iuSequence
             showIuMissingPlaceholder()
             updateSubtitleIfEnabled(null)
@@ -796,9 +843,10 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         if (pendingLoad) {
             // External unit seek / rotation resume: the scene loads POSITIONED
             // but paused — the user presses Play to start (matches the old
-            // "player stays Prepared" behavior).
+            // "player stays Prepared" behavior). T6: PAUSED — positioned &
+            // paused (stopAll just cleared the reveal, so storyboard is up).
             pendingLoad = false
-            isPaused = true
+            transition(PlayerState.Paused)
             playbackViewModel.pausePlayback()
             Log.i(TAG, "pending load — player stays positioned & paused")
         }
@@ -807,56 +855,8 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         updateLayers()
     }
 
-    /** Start offset (ms) of a unit on the AUDIO master timeline. The audio
-     *  timeline is the ONLY semantic timeline the player knows: a unit exists
-     *  there (start_ms), its storyboard belongs to it, and the whole-scene
-     *  video is a subordinate visualization that we seek to the same position.
-     *  No second video timeline (video_start_ms) is computed or consumed — the
-     *  player never analyzes the video file. If the video drifts a few frames
-     *  from the audio boundary, that is acceptable for a preview; the storyboard
-     *  overlay covers the transition until the video is actually positioned
-     *  (reveal gate in startIuCycling). Falls back to cumulative durationMs
-     *  for legacy storyboards without timestamps. */
-    private fun unitStartMs(ius: List<IuImageItem>, unitIndex: Int): Long {
-        val startMs = ius.getOrNull(unitIndex)?.startMs
-        if (startMs != null && startMs > 0) return startMs
-        var seekMs = 0L
-        for (i in 0 until unitIndex) seekMs += ius[i].durationMs
-        return seekMs
-    }
-
-    /** End offset (ms) of a unit on the AUDIO master timeline: the next unit's
-     *  start_ms when present (server boundaries), else start_ms + durationMs,
-     *  else cumulative durationMs (legacy). Used to bound the reveal gate so a
-     *  unit shorter than the reveal tolerance never reveals the video already
-     *  inside the NEXT unit. */
-    private fun unitEndMs(ius: List<IuImageItem>, unitIndex: Int): Long {
-        val nextStart = ius.getOrNull(unitIndex + 1)?.startMs
-        if (nextStart != null && nextStart > 0) return nextStart
-        val startMs = ius.getOrNull(unitIndex)?.startMs
-        if (startMs != null && startMs > 0) {
-            return startMs + (ius.getOrNull(unitIndex)?.durationMs ?: 0L)
-        }
-        var endMs = 0L
-        for (i in 0..unitIndex) endMs += ius[i].durationMs
-        return endMs
-    }
-
-    /** Reveal gate (ms) for the video layer after a unit seek: the raw seek
-     *  target plus the tolerance, clamped to stay INSIDE the selected unit
-     *  (audio master timeline). A unit shorter than the tolerance must never
-     *  reveal the video already inside the NEXT unit — `revealPosition =
-     *  min(unitStart + tolerance, unitEnd - safetyMargin)`. Falls back to the
-     *  raw gate when the unit boundaries aren't available. */
-    private fun unitRevealGateMs(ius: List<IuImageItem>?, unitIndex: Int, startPosMs: Long): Long {
-        val raw = startPosMs + UNIT_REVEAL_TOLERANCE_MS
-        if (ius.isNullOrEmpty() || unitIndex !in ius.indices) return raw
-        val end = unitEndMs(ius, unitIndex)
-        // Clamp to stay inside the selected unit; a unit shorter than the
-        // safety margin falls back to the raw target (best effort — sub-frame
-        // units can't hold a tolerance window).
-        return maxOf(startPosMs, minOf(raw, end - UNIT_REVEAL_SAFETY_MARGIN_MS))
-    }
+    // unitStartMs / unitEndMs / unitRevealGateMs / shouldRevealSeekVideo now
+    // live in PlayerGate.kt (top-level, pure — unit-tested, T2.2).
 
     /** Handle chunk with no audio — show IU images with timer-based cycling (e.g. Cover). */
     private fun handleSilentChunk(iuSequence: List<IuImageItem>) {
@@ -869,12 +869,11 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         currentPlayerSceneKey = null
         currentPlayerHasVideo = false
         videoPlayerGeneration++
-        videoReadyToShow = false
+        transition(PlayerState.ShowingStoryboard)
         runCatching { videoPlayer?.pause() }
 
-        currentIuSequence = iuSequence
+        selectedUnit = SelectedUnit(iuSequence, 0)
         playbackViewModel.currentIuSequence = iuSequence
-        currentIuIndex = 0
         playbackViewModel.currentUnitIndex = 0
 
         if (iuSequence.isNotEmpty()) {
@@ -882,7 +881,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
             updateSubtitleIfEnabled(iuSequence[0].text)
         }
 
-        isPaused = false
+        transition(PlayerState.ShowingStoryboard)
         startSilentIuCycling()
         updateLayers()
     }
@@ -893,9 +892,10 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         iuCyclingJob = viewLifecycleOwner.lifecycleScope.launch {
             while (isActive) {
                 if (!isAdded) { delay(500); continue }
-                val ius = currentIuSequence
-                if (ius.isNullOrEmpty()) { delay(500); continue }
-                if (currentIuIndex >= ius.size) { delay(500); continue }
+                val sel = selectedUnit
+                if (sel == null || sel.sequence.isEmpty()) { delay(500); continue }
+                val ius = sel.sequence
+                if (sel.index >= ius.size) { delay(500); continue }
 
                 // Don't cycle if no images are available
                 if (ius.all { it.status != IuStatus.READY && it.bitmap == null }) {
@@ -908,12 +908,12 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                     continue
                 }
 
-                val dur = ius[currentIuIndex].durationMs
+                val dur = ius[sel.index].durationMs
                 delay(dur)
 
-                if (!isAdded || isPaused || ius != currentIuSequence) continue
+                if (!isAdded || isPaused || selectedUnit?.sequence !== ius) continue
 
-                if (currentIuIndex >= ius.size - 1) {
+                if (sel.index >= ius.size - 1) {
                     // Last unit shown — the silent scene is done: advance to the
                     // next scene (playNext delivers the next scene: audio one →
                     // re-targets the player; silent one → cycles it in turn).
@@ -922,8 +922,8 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                     return@launch
                 }
 
-                val nextIdx = currentIuIndex + 1
-                currentIuIndex = nextIdx
+                val nextIdx = sel.index + 1
+                selectedUnit = sel.copy(index = nextIdx)
                 playbackViewModel.currentUnitIndex = nextIdx
                 showIuImage(ius[nextIdx])
                 updateSubtitleIfEnabled(ius[nextIdx].text)
@@ -996,14 +996,14 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         val b = binding ?: return
         Log.w(TAG, "showMissingChunkOverlay: ${position.chapterId}/${position.sceneId}/${position.unitId}")
         try {
-            currentIuSequence = emptyList()
+            selectedUnit = SelectedUnit(emptyList(), 0)
             playbackViewModel.currentIuSequence = emptyList()
             currentAudioFile?.delete()
             currentAudioFile = null
             currentPlayerSceneKey = null
             currentPlayerHasVideo = false
             runCatching { videoPlayer?.pause() }
-            isPaused = false
+            transition(PlayerState.Idle)
             b.resultImage.setImageBitmap(null)
             b.resultImage.visibility = View.INVISIBLE
             b.placeholderText.visibility = View.INVISIBLE
@@ -1078,12 +1078,13 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                     delay(500)
                     continue
                 }
-                val ius = currentIuSequence
+                val sel = selectedUnit
                 val player = videoPlayer
-                if (ius.isNullOrEmpty() || player == null) {
+                if (sel == null || sel.sequence.isEmpty() || player == null) {
                     delay(500)
                     continue
                 }
+                val ius = sel.sequence
                 // Watchdog for the scene transition: if the player reached the
                 // end but STATE_ENDED didn't fire (merged-source duration
                 // quirks), advance anyway. onTrackEnd is idempotent.
@@ -1130,12 +1131,21 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                 // READY only when it has buffered data at the current position),
                 // so the seek-reveal by position is sufficient; no separate
                 // onRenderedFirstFrame check is added to the seek path.
-                if (!videoReadyToShow && currentPlayerHasVideo && pendingRevealPosMs >= 0 &&
-                    !videoSeekInFlight && pos >= pendingRevealPosMs &&
-                    pos < unitEndMs(ius, currentIuIndex)
+                // T2.1/T2.2 AND-gate — pure, unit-tested (PlayerGateTest.kt):
+                // frame ready (STATE_READY) AND position past the gate,
+                // bounded by the selected unit's end.
+                if (shouldRevealSeekVideo(
+                        playerReady = player.playbackState == Player.STATE_READY,
+                        videoReadyToShow = videoReadyToShow,
+                        hasVideo = currentPlayerHasVideo,
+                        seekInFlight = videoSeekInFlight,
+                        revealGateMs = pendingRevealPosMs,
+                        posMs = pos,
+                        unitEndMs = unitEndMs(ius, sel.index),
+                    )
                 ) {
-                    videoReadyToShow = true
-                    pendingRevealPosMs = -1L
+                    // T6: reveal — SEEKING → VIDEO_READY (paused) / PLAYING.
+                    transition(if (isPaused) PlayerState.VideoReady else PlayerState.Playing)
                     updateLayers()
                 }
 
@@ -1164,12 +1174,12 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                     if (idx >= ius.size) idx = ius.size - 1
                 }
 
-                if (idx == 0 && currentIuIndex != 0) {
+                if (idx == 0 && sel.index != 0) {
                     delay(500)
                     continue
                 }
-                if (idx != currentIuIndex) {
-                    currentIuIndex = idx
+                if (idx != sel.index) {
+                    selectedUnit = sel.copy(index = idx)
                     if (isPaused) continue
                     playbackViewModel.currentUnitIndex = idx
                     showIuImage(ius[idx])
@@ -1201,6 +1211,9 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         if (advancePending) return
         advancePending = true
         Log.i(TAG, "onTrackEnd: isPaused=$isPaused")
+        // Event table: ENDED → LOADING_SCENE (the next scene is fetched and
+        // handleChunk re-targets; queue end falls through to stopAll → IDLE).
+        transition(PlayerState.LoadingScene)
         try {
             viewLifecycleOwner.lifecycleScope.launch {
                 iuCyclingJob?.cancel()
@@ -1258,7 +1271,6 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
      */
     private fun targetScene(audioFile: File, startPosMs: Long, includeVideo: Boolean, playIntent: Boolean) {
         try {
-            videoReadyToShow = false
             pendingRevealGen = -1L // a new item cancels any pending return-reveal
             videoPlayerGeneration++
             videoCurrentGen = videoPlayerGeneration
@@ -1291,8 +1303,13 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                 // reveal past the video's residual boundary drift so the first
                 // shown frame belongs to the SELECTED unit, never the previous
                 // unit's tail (audio master timeline — no video_start_ms).
-                videoSeekInFlight = true
-                pendingRevealPosMs = unitRevealGateMs(currentIuSequence, currentIuIndex, startPosMs)
+                // T6: SEEK_START — the reveal gate is armed (clamped to the
+                // selected unit), the seek is in flight, pause intent kept.
+                transition(PlayerState.Seeking(
+                    revealGateMs = unitRevealGateMs(selectedUnit?.sequence, selectedUnit?.index ?: 0, startPosMs),
+                    seekLanded = false,
+                    paused = isPaused,
+                ))
             } else {
                 currentPlayerSceneKey = sceneKey
                 currentPlayerHasVideo = includeVideo
@@ -1302,8 +1319,21 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                 // tolerance as the same-scene path — audio master timeline).
                 // Bounded by the unit's end so a short unit never reveals the
                 // video already inside the NEXT unit.
-                pendingRevealPosMs = if (includeVideo) unitRevealGateMs(currentIuSequence, currentIuIndex, startPosMs) else -1L
-                videoSeekInFlight = false
+                // T6: SEEK_START (video) / SCENE_TARGETED (audio-only). The
+                // fresh source is not seek-in-flight (landed immediately); the
+                // reveal gate still bounds the first shown frame to the
+                // selected unit.
+                transition(if (includeVideo) {
+                    PlayerState.Seeking(
+                        revealGateMs = unitRevealGateMs(selectedUnit?.sequence, selectedUnit?.index ?: 0, startPosMs),
+                        seekLanded = true,
+                        paused = isPaused,
+                    )
+                } else if (isPaused) {
+                    PlayerState.Paused
+                } else {
+                    PlayerState.ShowingStoryboard
+                })
                 // Audio stays on the plain local-file factory; ONLY the network
                 // video URL goes through the persistent disk cache (Media3
                 // SimpleCache + CacheDataSource): already-fetched ranges are read
@@ -1354,10 +1384,11 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                     // already reached (pendingRevealPosMs - tolerance), the seek
                     // has effectively landed; the reveal itself still waits for
                     // the tolerance position (inside the selected unit).
-                    if (videoSeekInFlight && pendingRevealPosMs >= 0) {
+                    val seeking = playerState as? PlayerState.Seeking
+                    if (seeking != null && !seeking.seekLanded && seeking.revealGateMs >= 0) {
                         val p = runCatching { vp.currentPosition }.getOrNull() ?: -1L
-                        if (p >= pendingRevealPosMs - UNIT_REVEAL_TOLERANCE_MS) {
-                            videoSeekInFlight = false
+                        if (p >= seeking.revealGateMs - UNIT_REVEAL_TOLERANCE_MS) {
+                            transition(PlayerState.Seeking(seeking.revealGateMs, seekLanded = true, paused = seeking.paused))
                         }
                     }
                     // The screen left view while the item was preparing — it can
@@ -1365,7 +1396,9 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                     // start on a hidden screen.
                     if (isHidden || !isAdded) {
                         runCatching { vp.pause() }
-                        if (currentPlayerHasVideo) videoReadyToShow = true
+                        if (currentPlayerHasVideo) {
+                            transition(if (isPaused) PlayerState.VideoReady else PlayerState.Playing)
+                        }
                         return
                     }
                     // First frame rendered — the storyboard can give way. Only
@@ -1379,8 +1412,8 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                     // (audio master timeline — the storyboard of the selected
                     // unit covers the video until it is positioned inside the
                     // unit).
-                    if (currentPlayerHasVideo && pendingRevealPosMs < 0) {
-                        videoReadyToShow = true
+                    if (currentPlayerHasVideo && playerState !is PlayerState.Seeking) {
+                        transition(if (isPaused) PlayerState.VideoReady else PlayerState.Playing)
                     }
                     updateLayers()
                     startIuCycling()
@@ -1389,24 +1422,26 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                     // button lies").
                     if (playbackViewModel.uiState.value.phase == PlayerPhase.BUFFERING) {
                         if (vp.playWhenReady) {
-                            isPaused = false
+                            transition(PlayerState.Playing)
                             playbackViewModel.exitBuffering()
                         } else {
-                            isPaused = true
+                            transition(if (videoReadyToShow) PlayerState.VideoReady else PlayerState.Paused)
                             playbackViewModel.pausePlayback()
                         }
                     }
                 }
                 Player.STATE_BUFFERING -> {
                     // The player pauses BOTH tracks itself while it fills the
-                    // buffer — the UI only reflects it ("Загрузка…").
+                    // buffer — the UI only reflects it ("Загрузка…"). The
+                    // buffer gate holds the player: PAUSED / VIDEO_READY with
+                    // the video's revealed-ness preserved (a playing video
+                    // stays visible under "Загрузка…").
                     if (vp.playWhenReady && playbackViewModel.uiState.value.phase != PlayerPhase.BUFFERING) {
-                        isPaused = true
+                        transition(if (videoReadyToShow) PlayerState.VideoReady else PlayerState.Paused)
                         playbackViewModel.enterBuffering()
                     }
                 }
                 Player.STATE_ENDED -> {
-                    videoReadyToShow = false
                     onTrackEnd()
                 }
                 else -> {}
@@ -1419,7 +1454,12 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
             reason: Int
         ) {
             if (reason == Player.DISCONTINUITY_REASON_SEEK) {
-                videoSeekInFlight = false
+                // The seek landed — the reveal gate can now fire (SEEKING
+                // persists until pos passes the gate).
+                val seeking = playerState as? PlayerState.Seeking
+                if (seeking != null) {
+                    transition(PlayerState.Seeking(seeking.revealGateMs, seekLanded = true, paused = seeking.paused))
+                }
             }
         }
 
@@ -1437,7 +1477,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
             val gen = pendingRevealGen
             if (gen >= 0 && videoCurrentGen == gen && binding != null && isAdded) {
                 pendingRevealGen = -1L
-                videoReadyToShow = true
+                transition(if (isPaused) PlayerState.VideoReady else PlayerState.Playing)
                 updateLayers()
             }
         }
@@ -1466,8 +1506,9 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
                 return
             }
             // Real (audio-side) failure — fall back to the storyboard layer
-            // and unblock the player if it was showing "Загрузка…".
-            videoReadyToShow = false
+            // and unblock the player if it was showing "Загрузка…". Event
+            // table: ERROR → SHOWING_STORYBOARD (pause intent preserved).
+            transition(if (isPaused) PlayerState.Paused else PlayerState.ShowingStoryboard)
             currentPlayerSceneKey = null
             currentPlayerHasVideo = false
             runCatching { videoPlayer?.stop() }
@@ -1532,7 +1573,8 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
      */
     private fun revealVideoAfterReturn() {
         val gen = videoCurrentGen
-        videoReadyToShow = false
+        // Re-gate: hold the storyboard until the recreated surface re-renders.
+        transition(if (isPaused) PlayerState.Paused else PlayerState.ShowingStoryboard)
         pendingRevealGen = gen
         updateLayers()
         // Primary signal: the first frame actually rendered on the recreated
@@ -1544,7 +1586,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
             delay(SURFACE_RE_RENDER_FALLBACK_MS)
             if (pendingRevealGen == gen && binding != null && isAdded && videoCurrentGen == gen && videoPlayer != null) {
                 pendingRevealGen = -1L
-                videoReadyToShow = true
+                transition(if (isPaused) PlayerState.VideoReady else PlayerState.Playing)
                 updateLayers()
             }
         }
@@ -1571,7 +1613,8 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         Log.i(TAG, "pausePlayback")
         // ExoPlayer pause() (playWhenReady=false) is safe in every state.
         runCatching { videoPlayer?.pause() }
-        isPaused = true
+        // T6: PAUSE → PAUSED (storyboard) / VIDEO_READY (video already revealed).
+        transition(if (videoReadyToShow) PlayerState.VideoReady else PlayerState.Paused)
         // Update ViewModel state — this drives the button/status via state.phase
         playbackViewModel.pausePlayback()
     }
@@ -1589,8 +1632,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
             currentPlayerSceneKey = null
             currentPlayerHasVideo = false
             runCatching { videoPlayer?.pause() }
-            videoReadyToShow = false
-            isPaused = false
+            transition(PlayerState.ShowingStoryboard)
             playbackViewModel.resumePlayback()
             return
         }
@@ -1602,7 +1644,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         val vp = videoPlayer
         if (vp == null || currentPlayerSceneKey != playbackViewModel.getCurrentSceneKey() || vp.playbackState == Player.STATE_IDLE) {
             Log.i(TAG, "resumePlayback: no targeted scene — reloading current scene")
-            isPaused = false
+            transition(PlayerState.LoadingScene)
             playbackViewModel.resumeFromCurrentScene()
             return
         }
@@ -1612,12 +1654,18 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         // "UI says ready, Play does nothing / lost start" states are gone).
         runCatching { videoPlayer?.play() }
         updateLayers()
-        isPaused = false
+        // T6: PLAY → PLAYING (a paused seek keeps its gate but clears the
+        // pause intent; VIDEO_READY / PLAYING resume as PLAYING).
+        transition(when (val s = playerState) {
+            is PlayerState.Seeking -> s.copy(paused = false)
+            is PlayerState.VideoReady, is PlayerState.Playing -> PlayerState.Playing
+            else -> PlayerState.ShowingStoryboard
+        })
         // Update ViewModel state — restore PLAYING phase (STATE_BUFFERING will
         // flip it to "Загрузка…" if the player actually has to wait).
         playbackViewModel.resumePlayback()
         if (currentAudioFile != null) startIuCycling()
-        else if (!currentIuSequence.isNullOrEmpty()) startSilentIuCycling()
+        else if (selectedUnit?.sequence?.isNotEmpty() == true) startSilentIuCycling()
     }
 
     private fun togglePlay() {
@@ -1633,18 +1681,17 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         iuCyclingJob?.cancel()
         iuCyclingJob = null
         // For keepSurface (external unit-seek) the loaded IU sequence is KEPT —
-        // the seek only changes currentIuIndex and the video position. Nulling
-        // it here made the SCENE_READY collector see an empty sequence and hide
-        // the correct selected-unit image, revealing the generic cover / old
-        // frame over the loading video — the "foreign/neighboring unit picture"
-        // (the 8093532 overlay vs the 5d580db SCENE_READY conflict: the overlay
-        // shows the right image, then SCENE_READY removes it because
-        // currentIuSequence was nulled). Only a real stop (non-keep) clears the
-        // sequence; a cross-scene seek replaces it via handleChunk anyway.
+        // the seek only changes selectedUnit.index and the video position.
+        // Nulling it here made the SCENE_READY collector see an empty sequence
+        // and hide the correct selected-unit image, revealing the generic cover
+        // / old frame over the loading video — the "foreign/neighboring unit
+        // picture" (the 8093532 overlay vs the 5d580db SCENE_READY conflict:
+        // the overlay shows the right image, then SCENE_READY removes it
+        // because the sequence was nulled). Only a real stop (non-keep) clears
+        // the selection; a cross-scene seek replaces it via handleChunk anyway.
         if (!keepSurface) {
-            currentIuSequence = null
+            selectedUnit = null
             playbackViewModel.currentIuSequence = null
-            currentIuIndex = 0
         }
         // For keepSurface (external unit-seek) the player keeps its CURRENT
         // scene source: currentPlayerSceneKey/currentPlayerHasVideo are only
@@ -1664,10 +1711,17 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         // never release per action: just pause it; the next scene re-targets
         // the same instance via targetScene.
         videoPlayerGeneration++
-        videoReadyToShow = false
-        videoSeekInFlight = false
         runCatching { videoPlayer?.pause() }
-        isPaused = false
+        // T6: STOP — a keepSurface stop preserves the reveal gate (seek still
+        // pending, mirroring the old videoSeekInFlight=false / isPaused=false /
+        // videoReadyToShow=false flags); a real stop → IDLE.
+        transition(if (keepSurface && pendingRevealPosMs >= 0) {
+            PlayerState.Seeking(pendingRevealPosMs, seekLanded = true, paused = false)
+        } else if (keepSurface) {
+            PlayerState.ShowingStoryboard
+        } else {
+            PlayerState.Idle
+        })
         val b = binding
         if (b != null) {
             b.resultImage.visibility = View.INVISIBLE
@@ -1777,7 +1831,7 @@ class PlayFragment : Fragment(R.layout.fragment_play) {
         iuCyclingJob?.cancel()
         iuCyclingJob = null
         videoPlayerGeneration++
-        videoReadyToShow = false
+        transition(PlayerState.Idle)
         videoSurfaceAlive = false
         videoPlayer?.removeListener(videoPlayerListener)
         videoPlayer?.release()
