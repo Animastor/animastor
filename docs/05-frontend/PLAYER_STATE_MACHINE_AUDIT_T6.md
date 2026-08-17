@@ -325,16 +325,33 @@ video lifecycle / Android не тронуты. Repository-wide: 0 production ref
 L872 и L884 пишут одно и то же состояние подряд (между ними только установка
 `selectedUnit` и пауза плеера). Безвредно, но шумит в аудите переходов.
 
-### P2-3. Web: `preparePlayback` не чистит `selectedUnit`/`currentIuBlobUrl` при смене книги — **investigated, см. §9**
+### P2-3. Web: `preparePlayback` не чистит `selectedUnit`/`currentIuBlobUrl` при смене книги — **DONE**
 
-При открытии книги B поверх играющей A `selectedUnit` (и blob-URL картинок A,
-которые `clearPreloadCache` считает «живыми») переживают `preparePlayback` →
-`SHOWING_STORYBOARD` с картинкой старой книги на экране SCENE_READY. Android
-очищается через `stopAll()` при переходе PLAYING→SCENE_READY (collector).
-На web такого collector-эквивалента нет.
+При открытии книги B поверх играющей A `selectedUnit` (и blob-URL картинок A)
+переживали `preparePlayback` → `SHOWING_STORYBOARD` с картинкой старой книги на
+SCENE_READY новой; аудио A продолжало играть. Android очищается через `stopAll()`
+(collector PLAYING→SCENE_READY); на web collector-эквивалента не было.
 
-Подтверждено исследованием (полный lifecycle, таблица владения полями, сценарии,
-визуальный сценарий, минимальная рекомендация) — **§9 «P2-3 — Investigation»** ниже.
+**Как исправлено (root cause и точка reset в §9):** в `preparePlayback`, в
+существующей ветке `prevBookId !== bId` (перед `bumpSceneEpoch`), вызывается
+`stopAll()` (владеет: selectedUnit, currentIuBlobUrl, subtitleText, iuMissing,
+currentPlayer/nextPlayer, videoEl src, pendingMetaListener, videoSrcUrl,
+currentVideoSceneKey, pendingVideoTargetSec, videoEnded, transition→IDLE,
+updateLayers) + дополнительный сброс one-shot полей старой книги (НЕ покрыты
+stopAll): `pendingLoad=false`, `pendingExternalUnitId=null`,
+`needsContentRefresh=false`, `needsRotationResume=false`,
+`savedPlaybackPositionMs=0`, `pendingSeekPositionMs=-1`,
+`isExecutingExternalSeek=false`, `pendingExplicitUnitTarget=false`. Порядок
+безопасен: очистка старого playback → подготовка состояния B (bookId/buildId/
+sceneQueue/currentIndex/cover не трогаются stopAll) → SCENE_READY → первая сцена B.
+Same-book ветка (soft re-prepare) не затрагивается.
+
+**Тест:** `frontends/app/src/state/playbackBookSwitch.test.ts` (TEST A–D, реальный
+поток preparePlayback→playSceneQueue→handleChunk с fake-элементами): A — PLAYING→B
+(аудио остановлено, IDLE, currentIuBlobUrl null, B стартует); B — PAUSED→B;
+C — SEEKING→B (stale seek/gate не выполняется против B, позиция аудио 0);
+D — SCENE_READY книги B до первого handleChunk → `currentIuBlobUrl===null`.
+Все 4 падают на до-фиксовом коде.
 
 ### P2-4. Web: «проскок» мимо конца юнита — видео остаётся скрытым
 
@@ -407,8 +424,9 @@ L872 и L884 пишут одно и то же состояние подряд (�
   7 записей); тест P1-1 проверяет `getPlayerState()==PAUSED` + `phase==PAUSED`.
   Полный список write/read sites — в §4.
 - **P2-2:** Android `handleSilentChunk` — убрать дубль `transition(ShowingStoryboard)`.
-- **P2-3 (решение в §9):** web `preparePlayback` — при смене книги вызывать
-  `stopAll()` (чистит display/video/player state) + сбросить one-shot поля.
+- **P2-3 (DONE):** web `preparePlayback` — в ветке `prevBookId !== bId` вызывается
+  `stopAll()` + сброс one-shot полей старой книги. Тест в
+  `playbackBookSwitch.test.ts` (TEST A–D).
 - **P2-5:** унифицировать семантику `seekLanded` для fresh-src: Android вооружает
   `Seeking(landed=true)` сразу (L1326), web — `false` (L1570). После P0-1 результат
   одинаковый, но поле на web несёт другой смысл; привести к Android-варианту.
@@ -679,8 +697,7 @@ if (prevBookId !== bId) {
 SCENE_READY книги B покажет cover/шторки (не картинку A), аудио A остановится.
 Same-book ветка (soft re-prepare) не затрагивается — позиция/выбор сохраняются.
 
-**Тест:** существующего теста на смену книги нет (`playbackStore.test.ts` гоняет
-только same-book). Конкретная ошибка доказана (§9.2/§9.4) — регрессионный тест
-(после `preparePlayback(B)` при другой книге: `currentIuBlobUrl==null`,
-`getPlayerState()==IDLE`, аудио остановлено) добавится вместе с фиксом в следующем
-шаге, чтобы коммит оставался зелёным.
+**Реализовано** (фикс + тесты): см. §4 P2-3 → DONE. Точка reset — начало ветки
+`prevBookId !== bId` в `preparePlayback`; `stopAll()` владеет engine/display/video
+полями, one-shots сбрасываются отдельно (не дублируется то, что stopAll уже чистит).
+Regression tests: `playbackBookSwitch.test.ts` (TEST A–D, падают на до-фиксовом коде).

@@ -300,6 +300,27 @@ export function preparePlayback(bId: string, bBuild: string, scenes: SceneRef[])
   const prevBuildId = buildId.value;
   const savedIndex = currentIndex < scenes.length ? currentIndex : 0;
 
+  // P2-3: a book switch must not leak the OLD book's player state into the new
+  // one — stale selectedUnit/currentIuBlobUrl (the old unit image was rendered
+  // on the new book's SCENE_READY), still-playing audio, stale video attachment
+  // and one-shot intents. stopAll() owns the engine/display/video cleanup
+  // (selectedUnit, currentIuBlobUrl, subtitleText, iuMissing, players,
+  // videoSrcUrl/currentVideoSceneKey/pendingVideoTargetSec/videoEnded,
+  // transition → IDLE, updateLayers); the one-shots below belong to the old
+  // book and are NOT covered by stopAll() (audit §9.6). Same-book re-prepares
+  // (soft refresh) skip this — position/selection are preserved.
+  if (prevBookId !== bId) {
+    stopAll();
+    pendingLoad = false;
+    pendingExternalUnitId = null;
+    needsContentRefresh = false;
+    needsRotationResume = false;
+    savedPlaybackPositionMs = 0;
+    pendingSeekPositionMs = -1;
+    isExecutingExternalSeek = false;
+    pendingExplicitUnitTarget = false;
+  }
+
   bumpSceneEpoch();
   clearPreloadCache();
   bookId.value = bId;
