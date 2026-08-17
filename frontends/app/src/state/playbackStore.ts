@@ -109,7 +109,6 @@ function pendingVideoRevealSec(): number {
 }
 export const subtitleText = signal<string | null>(null);     // subtitleText TextView
 export const iuMissing = signal(false);                      // iuMissingOverlay visible
-export const enginePaused = signal(false);                   // fragment.isPaused mirror
 export const videoVisible = signal(false);                   // videoSurface visibility
 
 // ── IuImageItem / IuStatus / PreloadedScene (GenerateViewModel.kt:1564) ──
@@ -493,7 +492,6 @@ export function rotationRecovery(): void {
 export function pausePlayback(): void {
   // T6: PAUSE → VIDEO_READY (video revealed) / PAUSED (storyboard).
   transition(videoHasFrame() ? 'VIDEO_READY' : 'PAUSED');
-  enginePaused.value = true;
   resetVideoBuffering();
   try { currentPlayer?.pause(); } catch { /* ignore */ }
   try { videoEl?.pause(); } catch { /* ignore */ }
@@ -518,7 +516,6 @@ export function resumePlayback(): void {
       : videoHasFrame() ? 'PLAYING'
       : 'SHOWING_STORYBOARD'
   );
-  enginePaused.value = false;
   showCurrentIu();
   playAudio(currentPlayer);
   if (videoEl && videoSrcUrl && !videoEnded) {
@@ -584,8 +581,8 @@ export function pauseIfPlaying(): void {
       // Silent scene (no audio player): stop its timer-based cycling, then
       // take the SAME unified pause path as every other scenario — the
       // player touches inside pausePlayback() are null-safe no-ops here. The
-      // old branch set playerState + enginePaused but left uiState.phase =
-      // PLAYING (forbidden PAUSED + PLAYING combo; Android parity —
+      // old branch set playerState but left uiState.phase = PLAYING
+      // (forbidden PAUSED + PLAYING combo; Android parity —
       // PLAYER_STATE_MACHINE_AUDIT_T6.md P1-1).
       cancelIuCycling();
     }
@@ -1217,7 +1214,6 @@ function handleChunk(scene: PreloadedScene): void {
       pendingLoad = false;
       // Positioned & paused: keep any armed SEEKING gate, mark it paused.
       transition(playerState.name === 'SEEKING' ? { ...playerState, paused: true } : 'PAUSED');
-      enginePaused.value = true;
       pauseAudio(el);
       uiState.value = { ...uiState.value, phase: 'PAUSED' };
     } else {
@@ -1262,7 +1258,6 @@ function handleSilentChunk(ius: IuImageItem[]): void {
     showIu(ius[0]);
   }
   transition('SHOWING_STORYBOARD');
-  enginePaused.value = false;
   startSilentIuCycling();
   updateLayers();
 }
@@ -1435,7 +1430,6 @@ function onTrackEnd(): void {
 
 /** Audio element error — reset to SCENE_READY so the user can retry. */
 function onAudioError(): void {
-  enginePaused.value = false;
   handlePlaybackError('Audio playback error'); // stopAll → IDLE
 }
 
@@ -1887,7 +1881,6 @@ export function stopAll(): void {
   currentVideoSceneKey = null;
   resetVideoBuffering();
   resumeBufferTargetS = RESUME_BUFFER_MIN_S;
-  enginePaused.value = false;
   updateLayers();
 }
 

@@ -1,9 +1,9 @@
 // P1-1 contract (docs/05-frontend/PLAYER_STATE_MACHINE_AUDIT_T6.md): the web
 // pauseIfPlaying() silent-scene branch (currentPlayer == null && selectedUnit
-// != null) must leave a coherent player — playerState=PAUSED, uiState.phase=
-// PAUSED, enginePaused=true — exactly like the Android autoPauseForBackground
-// → pausePlayback() path. The old branch set playerState + enginePaused but
-// left phase=PLAYING (forbidden PAUSED + PLAYING combo).
+// != null) must leave a coherent player — playerState=PAUSED AND uiState.phase=
+// PAUSED — exactly like the Android autoPauseForBackground → pausePlayback()
+// path. The old branch set playerState but left phase=PLAYING (forbidden PAUSED
+// + PLAYING combo). (enginePaused was removed as write-only — P2-1.)
 //
 // The test drives the REAL public flow: preparePlayback → playSceneQueue →
 // (mocked fetch) handleSilentChunk delivers a silent scene (SHOWING_STORYBOARD
@@ -39,7 +39,6 @@ vi.mock('./positionStore', () => ({
 }));
 
 import {
-  enginePaused,
   getPlayerState,
   pauseIfPlaying,
   playSceneQueue,
@@ -58,7 +57,6 @@ async function playSilentScene(): Promise<void> {
   playSceneQueue();
   await vi.waitFor(() => expect(getPlayerState()).toBe('SHOWING_STORYBOARD'));
   expect(uiState.value.phase).toBe('PLAYING');
-  expect(enginePaused.value).toBe(false);
 }
 
 describe('P1-1 — pauseIfPlaying() on a silent scene', () => {
@@ -77,7 +75,7 @@ describe('P1-1 — pauseIfPlaying() on a silent scene', () => {
     vi.unstubAllGlobals();
   });
 
-  it('silent branch → playerState=PAUSED + phase=PAUSED + enginePaused=true', async () => {
+  it('silent branch → playerState=PAUSED + phase=PAUSED', async () => {
     await playSilentScene();
 
     // document.hidden → pauseIfPlaying: hits the silent branch
@@ -86,7 +84,6 @@ describe('P1-1 — pauseIfPlaying() on a silent scene', () => {
 
     expect(getPlayerState()).toBe('PAUSED');
     expect(uiState.value.phase).toBe('PAUSED');
-    expect(enginePaused.value).toBe(true);
   });
 
   it('resume after the silent-scene pause restores the playing state (no phase stuck in PAUSED)', async () => {
@@ -97,9 +94,8 @@ describe('P1-1 — pauseIfPlaying() on a silent scene', () => {
     resumePlayback();
 
     // Silent scene has no video frame — the storyboard stays up while the
-    // timer cycling resumes; phase and enginePaused return to PLAYING.
+    // timer cycling resumes; phase returns to PLAYING.
     expect(getPlayerState()).toBe('SHOWING_STORYBOARD');
     expect(uiState.value.phase).toBe('PLAYING');
-    expect(enginePaused.value).toBe(false);
   });
 });

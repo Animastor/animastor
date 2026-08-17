@@ -279,7 +279,7 @@ State machine и reveal-gate не тронуты.
 A→B оставляет ТОЛЬКО listener B (A снят); сработавший listener снимает себя, а
 `detachVideo` чистит слот; `stopAll` чистит слот. 2 из 3 падают на до-фиксовом коде.
 
-### P2-1. Web: `enginePaused` — write-only сигнал — **usage audit done**
+### P2-1. Web: `enginePaused` — write-only сигнал — **DONE**
 
 Никто не читает в production; держится как API-зеркало. Кандидат на удаление (после
 проверки потребителей вне репозитория) или явную документацию «mirror for parity».
@@ -311,11 +311,14 @@ destructuring, ни computed/watch, ни template bindings, ни object/state re
 (формально экспортирован — «внешний символ», но реальных потребителей вне стора
 нет; единственные читатели — тесты P1-1).
 
-**Рекомендация:** удалить сигнал целиком (7 записей, объявление, export) и перевести
-тест `playbackStore.test.ts` на проверку `getPlayerState()==PAUSED` +
-`uiState.phase==PAUSED` (контракт P1-1 уже полностью покрыт этими двумя) —
-`enginePaused` в нём дублирует `isPaused()` и не несёт отдельного смысла. Либо, если
-нужна явная parity-документация, оставить с комментарием «mirror, write-only».
+**Как исправлено (P2-1, удаление):** сигнал удалён полностью — объявление/export
+(L112) и все 7 записей (`pausePlayback`, `resumePlayback`, `handleChunk`
+pendingLoad, `handleSilentChunk`, `onAudioError`, `stopAll`). Тест P1-1
+(`playbackStore.test.ts`) переведён на проверку `getPlayerState()==PAUSED` +
+`uiState.phase==PAUSED` (контракт полностью покрыт этими двумя — `enginePaused`
+дублировал `isPaused()`). PlayerState / transition() / uiState.phase / reveal gate /
+video lifecycle / Android не тронуты. Repository-wide: 0 production references
+(остались только исторические упоминания в этом документе и комментарий в тесте).
 
 ### P2-2. Android: двойной `transition(ShowingStoryboard)` в `handleSilentChunk`
 
@@ -398,9 +401,9 @@ L872 и L884 пишут одно и то же состояние подряд (�
 ### P2
 - **P2-4:** reveal при «проскоке» за конец юнита — раскрывать (позиция ≥ гейта,
   даже если `withinUnit=false`), приведя код в соответствие с собственным комментарием.
-- **P2-1 (usage audit done):** удалить `enginePaused` (write-only в production,
-  0 production reads, читается только тестами P1-1) или задекларировать как
-  parity-mirror. Полный список write/read sites — в §4.
+- **P2-1 (DONE):** `enginePaused` удалён как write-only legacy mirror (объявление +
+  7 записей); тест P1-1 проверяет `getPlayerState()==PAUSED` + `phase==PAUSED`.
+  Полный список write/read sites — в §4.
 - **P2-2:** Android `handleSilentChunk` — убрать дубль `transition(ShowingStoryboard)`.
 - **P2-3:** web `preparePlayback` при смене книги — чистить `selectedUnit`/
   `currentIuBlobUrl` (сверка с Android-поведением; проверить в T4).
