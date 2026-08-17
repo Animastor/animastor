@@ -353,14 +353,27 @@ C — SEEKING→B (stale seek/gate не выполняется против B, �
 D — SCENE_READY книги B до первого handleChunk → `currentIuBlobUrl===null`.
 Все 4 падают на до-фиксовом коде.
 
-### P2-4. Web: «проскок» мимо конца юнита — видео остаётся скрытым — **investigated, см. §10**
+### P2-4. Web: «проскок» мимо конца юнита — видео остаётся скрытым — **DONE**
 
 Если между `timeupdate`-событиями позиция перескочила за конец выбранного юнита,
-`withinUnit=false` → reveal не срабатывает. Подробный разбор показал: сам «проскок»
-был и раньше (отложенный reveal), но **перманентная блокировка** — регрессия
-T2.2+P0-1 (см. §10: одноразовая «посадка» + guard `!videoSeekInFlight()`).
-Полный lifecycle-анализ, state timeline, Web vs Android и минимальная правка —
-**§10 «P2-4 — Investigation»** ниже.
+`withinUnit=false` → reveal не срабатывал, и из-за одноразовой посадки (P0-1) +
+guard-а `!videoSeekInFlight()` (T2.2) видео оставалось скрытым до выхода из SEEKING.
+
+**Как исправлено (§10.7):** в `onVideoTimeUpdate` guard заменён с
+`!videoSeekInFlight()` на `playerState.name !== 'SEEKING'` — после посадки каждый
+tick пере-оценивает AND-гейт, и reveal срабатывает на первом тике, где
+`withinUnit=true`. Инвариант подтверждён: `SEEKING + seekLanded=true + кадр готов +
+гейт достигнут + withinUnit=true ⇒ reveal` (PLAYING при игре / VIDEO_READY при
+паузе); при `withinUnit=false` видео НЕ раскрывается; в PAUSED (не SEEKING) guard
+отсекает. State machine, gate math, seekLanded semantics, циклинг — не тронуты.
+
+**Тест:** `frontends/app/src/state/playbackRevealOvershoot.test.ts` (5 тестов,
+реальный поток arm-SEEKING через внешний unit-seek): (1) overshoot не раскрывает
+и НЕ блокирует — reveal после переключения selectedUnit на следующий юнит
+(регрессионный, падает на до-фиксовом коде); (2) негативный — при
+`withinUnit=false` видео не раскрывается (несколько тиков); (3) happy path —
+seek → gate → withinUnit → reveal в том же тике; (4) paused-seek → `VIDEO_READY`;
+(5) pause до reveal → PAUSED, новый guard не раскрывает в PAUSED.
 
 ### Семантические перегрузки (не баги, но источник путаницы)
 
@@ -418,9 +431,9 @@ T2.2+P0-1 (см. §10: одноразовая «посадка» + guard `!video
   `detachVideo`/`stopAll`. Тест в `playbackVideoListener.test.ts`.
 
 ### P2
-- **P2-4 (решение в §10):** web `onVideoTimeUpdate` — заменить guard
-  `!videoSeekInFlight()` на `playerState.name !== 'SEEKING'` (продолжать
-  пере-оценку после посадки; reveal сработает на первом тике с `withinUnit=true`).
+- **P2-4 (DONE):** web `onVideoTimeUpdate` — guard `playerState.name !== 'SEEKING'`
+  (пере-оценка после посадки; reveal на первом тике с `withinUnit=true`). Тест в
+  `playbackRevealOvershoot.test.ts` (5 кейсов, регрессионный падает до фикса).
 - **P2-1 (DONE):** `enginePaused` удалён как write-only legacy mirror (объявление +
   7 записей); тест P1-1 проверяет `getPlayerState()==PAUSED` + `phase==PAUSED`.
   Полный список write/read sites — в §4.
@@ -796,9 +809,9 @@ guard-а: тик с `withinUnit=false` просто пропускается, с
 на web (после P0-1) — «позиция пересекла гейт». Различие guard-ов и есть причина:
 web-обработчик событийный (timeupdate) и одноразовый, Android-цикл — постоянный.
 
-### 10.7 Минимальная рекомендуемая правка
+### 10.7 Минимальная рекомендуемая правка — РЕАЛИЗОВАНА
 
-В `onVideoTimeUpdate` заменить guard с одноразового на «состояние SEEKING»:
+В `onVideoTimeUpdate` guard заменён с одноразового на «состояние SEEKING»:
 
 ```js
 // было:
@@ -807,14 +820,14 @@ if (!videoSeekInFlight() || !videoEl || pendingVideoRevealSec() < 0) return;
 if (playerState.name !== 'SEEKING' || !videoEl || pendingVideoRevealSec() < 0) return;
 ```
 
-Посадка (P0-1) остаётся идемпотентной (`{...playerState, seekLanded:true}` —
-пере-выполняется безвредно), AND-гейт по-прежнему требует `!seekInFlight` +
-`withinUnit` + `hasFrame`. После правки тик с `withinUnit=false` просто не
-раскрывает, а СЛЕДУЮЩИЙ тик (selectedUnit уже B / позиция внутри юнита) —
-раскрывает: восстанавливается самовосстановление из до-T2.2 и паритет с
-Android-циклом. State machine, reveal gate math, seek logic не меняются.
+Посадка (P0-1) осталась идемпотентной (`{...playerState, seekLanded:true}`),
+AND-гейт по-прежнему требует `!seekInFlight` + `withinUnit` + `hasFrame`. Тик с
+`withinUnit=false` не раскрывает, а следующий тик (selectedUnit уже B / позиция
+внутри юнита) раскрывает: восстановлено самовосстановление из до-T2.2 и паритет
+с Android-циклом. **Инвариант подтверждён** (проверка перед фиксом): SEEKING +
+посадка + кадр + гейт + withinUnit ⇒ reveal на ближайшем тике; при
+`withinUnit=false` — без reveal; в PAUSED guard отсекает (состояние не SEEKING).
 
-**Регрессионный тест (придёт с фиксом):** SEEKING вооружён → тик с pos ≥ gate и
-pos ≥ unitEnd (selectedUnit ещё старый) → assert: без reveal, состояние SEEKING;
-затем перевести selectedUnit/позицию внутрь следующего юнита → тик → assert:
-reveal (VIDEO_READY/PLAYING). Текущий код падает на втором шаге (guard отсекает).
+**Регрессионный тест (реализован):** `playbackRevealOvershoot.test.ts` — см. §4
+P2-4 → DONE (5 кейсов; кейс «overshoot → reveal после смены selectedUnit» падает
+на до-фиксовом коде).

@@ -1686,7 +1686,15 @@ function onVideoFirstFrame(): void {
  *  position has data, so timeupdate reflects a real rendered position, never
  *  a position-only guess over a black/empty surface. */
 function onVideoTimeUpdate(): void {
-  if (!videoSeekInFlight() || !videoEl || pendingVideoRevealSec() < 0) return;
+  // P2-4: keep evaluating on EVERY tick while a gate is armed — not only
+  // while the seek is still "in flight". With a one-shot landing (P0-1,
+  // seekLanded flips on position) the old guard `!videoSeekInFlight()` bailed
+  // forever right after the flip, so an overshoot tick (pos already past the
+  // selected unit's end → withinUnit=false) locked the video hidden until the
+  // state left SEEKING. Re-evaluating each tick restores the self-recovering
+  // behavior: the reveal fires on the first tick where withinUnit becomes
+  // true (docs/05-frontend/PLAYER_STATE_MACHINE_AUDIT_T6.md §10).
+  if (playerState.name !== 'SEEKING' || !videoEl || pendingVideoRevealSec() < 0) return;
   if (videoEl.readyState < 2) return; // HAVE_CURRENT_DATA — no decodable frame yet
   // Belt-and-suspenders upper bound (parity with the clamped gate): never
   // reveal the NEXT unit's frame over the selected unit's storyboard if the
