@@ -883,7 +883,7 @@ videoVisible, `VK` — currentVideoSceneKey, `PT` — pendingVideoTargetSec,
 Итог: **9 PASS / 1 FAIL**. Дополнительный вариант FAIL (тот же класс, другой вход) —
 буферный гейт во время SEEKING, см. §11.3.2.
 
-### 11.3 НОВАЯ ПРОБЛЕМА (P1) — SEEKING не «липкий»: пауза или буфер-гейт во время seek
+### 11.3 НОВАЯ ПРОБЛЕМА (P1) — SEEKING не «липкий»: пауза или буфер-гейт во время seek — РЕАЛИЗОВАНА (sticky SEEKING)
 
 #### 11.3.1 Точный сценарий (web)
 
@@ -926,23 +926,48 @@ reveal-проверка живёт в 50ms poll-цикле startIuCycling — п
 reveal — только по timeupdate (каденс ~250ms) → окно реальное. Расхождение
 платформ: **семантически одинаковые переходы, но разная достижимость**.
 
-#### 11.3.4 Минимальная рекомендуемая правка (НЕ реализована — только аудит)
+#### 11.3.4 Минимальная рекомендуемая правка — РЕАЛИЗОВАНА (Вариант 1, sticky SEEKING)
 
-Вариант 1 (липкий гейт, 2 строки, соответствует дизайн-доку — «пауза во время
-seek сохраняет гейт», см. PLAYER_STATE_MACHINE_DESIGN.md: PAUSED ↔ SEEKING):
-- `pausePlayback`: при SEEKING → `{...playerState, paused: true}` (вместо PAUSED);
-- `enterVideoBuffering`: при SEEKING → `{...playerState, paused: true}` (вместо PAUSED).
+**Root cause:** `pausePlayback` (L515) и `enterVideoBuffering` (L1836) писали
+`transition(videoHasFrame() ? 'VIDEO_READY' : 'PAUSED')` — во время SEEKING
+payload гейта (`revealGateSec`/`seekLanded`) уничтожался, resume уходил в
+`SHOWING_STORYBOARD` без путей reveal (timeupdate-guard отсекает не-SEEKING,
+`loadeddata` для same-scene seek уже сработал).
 
-Вариант 2 (самовосстановление, по образцу P2-4): расширить `onVideoTimeUpdate` —
-помимо SEEKING, разрешить reveal для SHOWING_STORYBOARD/PAUSED с attached-видео
-(`videoSrcUrl && !videoEnded`) и декодируемым кадром (`readyState >= 2`) —
-`transition(isPaused() ? 'VIDEO_READY' : 'PLAYING')`. readyState>=2 уже
-различает «кадр есть» от «свежий src ещё без кадра», поэтому fresh-src случай
-(сториборд до loadeddata) не пострадает.
+**Sticky SEEKING semantics:** пока гейт вооружён, пауза и буфер-гейт НЕ выводят
+из SEEKING — только маркируют паузу:
 
-Рекомендация: **Вариант 1** как основной (2 точечных перехода, без новых путей
-reveal, паритет с Android-семантикой и дизайн-доком), Вариант 2 —
-belt-and-suspenders, если захотим закрыть класс целиком.
+```js
+// pausePlayback / enterVideoBuffering (вход из SEEKING):
+transition(playerState.name === 'SEEKING' ? { ...playerState, paused: true }
+  : videoHasFrame() ? 'VIDEO_READY' : 'PAUSED');
+// resumeFromBuffering (выход из буфер-гейта, вход из SEEKING):
+transition(playerState.name === 'SEEKING' ? { ...playerState, paused: false }
+  : videoHasFrame() ? 'PLAYING' : 'SHOWING_STORYBOARD');
+```
+
+- **Pause path:** SEEKING → SEEKING{paused:true}; resumePlayback уже был sticky
+  (SEEKING → SEEKING{paused:false}) — правок не потребовал. Завершившийся seek
+  шлёт timeupdate даже при паузе → посадка + reveal (VIDEO_READY) по контракту.
+- **Buffering path:** SEEKING → буфер → SEEKING{paused:true} (вход) →
+  SEEKING{paused:false} (выход, `resumeFromBuffering` адаптирован — иначе выход
+  снова ронял payload в SHOWING_STORYBOARD).
+- **Без новых seek:** resume не пере-сикает видео, уже стоящее на target
+  (re-apply `pendingVideoTargetSec` — no-op при равенстве).
+- **P2-4 остаётся рабочим:** guard `playerState.name !== 'SEEKING'` и AND-гейт
+  не тронуты; overshoot-кейсы (включая переписанный кейс 5 — теперь он
+  проверяет sticky-контракт вместо старого сброса) зелёные.
+
+**Регрессионные тесты (реализованы):** `playbackStickySeeking.test.ts` — TEST A
+(pause до посадки → SEEKING{paused:true} → resume → reveal PLAYING), TEST B
+(paused seek → resume без SHOWING_STORYBOARD; paused-reveal → VIDEO_READY),
+TEST C (буфер-гейт во время SEEKING → гейт жив на входе и выходе → reveal
+PLAYING), TEST D (обычный PAUSED без изменений, негатив), TEST E (нет второго
+seek после resume). Валидация: A/C/E падают на до-фиксовом коде; B/D —
+контрактные гварды.
+
+Вариант 2 (самовосстановление в `onVideoTimeUpdate` для не-SEEKING с
+`readyState >= 2`) остаётся belt-and-suspenders на будущее — не реализован.
 
 ### 11.4 Инварианты
 
@@ -960,7 +985,7 @@ belt-and-suspenders, если захотим закрыть класс цели�
 
 | Severity | Проблема | Точка | Статус |
 |---|---|---|---|
-| **P1** | SEEKING не «липкий»: `pausePlayback`/`enterVideoBuffering` во время seek уничтожают payload гейта → видео навсегда скрыто (web; Android недостижимо практически) | playbackStore L515, L1836 | **открыт** — §11.3 |
+| **P1** | SEEKING не «липкий»: `pausePlayback`/`enterVideoBuffering` во время seek уничтожают payload гейта → видео навсегда скрыто (web; Android недостижимо практически) | playbackStore L515, L1836, L1874 | **закрыт** — §11.3 (sticky SEEKING, тесты 33/33) |
 | P2 | `pendingVideoTargetSec` живёт после reveal до следующего `resumePlayback` (лишний re-seek к той же позиции — фактически no-op) | seekAttachedVideo/playVideoOverlay | открыт (косметика) |
 | P2 | Unit-tap в ту же сцену перекачивает scene-ассеты заново (fetchSceneData после clearPreloadCache в executePendingSeek) — аудио/IU из Cache API, но повторный roundtrip | executePendingSeek | открыт (перф) |
 
@@ -971,9 +996,9 @@ P0-1 (дедлок reveal), P1-1 (PAUSED+PLAYING), P1-2 (stale metadata), P2-1
 
 ### 11.7 Рекомендации по приоритету
 
-- **P1**: реализовать §11.3.4 Вариант 1 (липкий SEEKING в pausePlayback и
-  enterVideoBuffering) + regression-тест на последовательность
-  «SEEKING → pause → resume → reveal» (гейт жив, reveal на тике) и негативный
-  «pause после reveal → VIDEO_READY»;
+- **P1 — ✅ DONE**: sticky SEEKING (§11.3.4) — `pausePlayback`/
+  `enterVideoBuffering` сохраняют payload (`{...SEEKING, paused:true}`),
+  `resumeFromBuffering` возвращает в SEEKING{paused:false}; тесты
+  `playbackStickySeeking.test.ts` (TEST A–E); весь набор 33/33;
 - **P2**: (по желанию) чистить `pendingVideoTargetSec` при reveal;
 - **P2**: (по желанию) same-scene unit-tap без полного clearPreloadCache.

@@ -222,14 +222,33 @@ describe('P2-4 — reveal gate survives unit-end overshoot (web)', () => {
     expect(videoVisible.value).toBe(true);
   });
 
-  it('pause before reveal drops SEEKING → PAUSED; the new guard does not reveal in PAUSED', async () => {
+  it('pause before reveal keeps the gate (sticky SEEKING, §11.3) — no reveal while withinUnit=false', async () => {
     const video = await armSeeking();
-    pausePlayback(); // SEEKING → PAUSED (gate dropped)
-    expect(getPlayerState()).toBe('PAUSED');
+    // P1 fix: a pause during an in-flight seek must NOT drop the SEEKING
+    // payload — SEEKING → SEEKING{paused:true}, not PAUSED.
+    pausePlayback();
+    expect(getPlayerState()).toBe('SEEKING');
     expect(uiState.value.phase).toBe('PAUSED');
-
-    timeupdate(video, 0.35); // pos past gate and past u1's end — must NOT reveal
-    expect(getPlayerState()).toBe('PAUSED');
     expect(videoVisible.value).toBe(false);
+
+    timeupdate(video, 0.35); // pos past gate AND past u1's end — withinUnit=false, must NOT reveal
+    expect(getPlayerState()).toBe('SEEKING');
+    expect(videoVisible.value).toBe(false);
+
+    // Resume keeps the gate (never SEEKING → SHOWING_STORYBOARD with payload
+    // loss): still no reveal while withinUnit=false...
+    resumePlayback();
+    expect(getPlayerState()).toBe('SEEKING');
+    timeupdate(video, 0.35);
+    expect(getPlayerState()).toBe('SEEKING');
+    expect(videoVisible.value).toBe(false);
+
+    // ...and the reveal fires once selectedUnit/position enters the unit.
+    audios.at(-1)!.currentTime = 0.35;
+    audios.at(-1)!.duration = 10;
+    runCyclingTick();
+    timeupdate(video, 0.35);
+    expect(getPlayerState()).toBe('PLAYING');
+    expect(videoVisible.value).toBe(true);
   });
 });

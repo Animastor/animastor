@@ -512,7 +512,13 @@ export function rotationRecovery(): void {
 /** Pause playback (PlaybackViewModel.pausePlayback + fragment.pausePlayback). */
 export function pausePlayback(): void {
   // T6: PAUSE → VIDEO_READY (video revealed) / PAUSED (storyboard).
-  transition(videoHasFrame() ? 'VIDEO_READY' : 'PAUSED');
+  // P1 (integration audit §11.3): a pause during an in-flight unit seek must
+  // NOT destroy the SEEKING payload — keep the gate + seekLanded, mark the
+  // pause intent. Otherwise resume lands in SHOWING_STORYBOARD with an
+  // already-seeked video and no reveal path left (video permanently hidden).
+  transition(playerState.name === 'SEEKING' ? { ...playerState, paused: true }
+    : videoHasFrame() ? 'VIDEO_READY'
+    : 'PAUSED');
   resetVideoBuffering();
   try { currentPlayer?.pause(); } catch { /* ignore */ }
   try { videoEl?.pause(); } catch { /* ignore */ }
@@ -1833,7 +1839,12 @@ function enterVideoBuffering(): void {
   // revealed-ness preserved (a playing video stays visible under "Загрузка…").
   try { el?.pause(); } catch { /* ignore */ }
   pauseAudio(currentPlayer);
-  transition(videoHasFrame() ? 'VIDEO_READY' : 'PAUSED');
+  // P1 (§11.3): buffering during an in-flight unit seek must keep the SEEKING
+  // payload (gate + seekLanded), only mark the pause intent — a plain PAUSED
+  // here would leave resumeFromBuffering no reveal path (video hidden forever).
+  transition(playerState.name === 'SEEKING' ? { ...playerState, paused: true }
+    : videoHasFrame() ? 'VIDEO_READY'
+    : 'PAUSED');
   uiState.value = { ...uiState.value, phase: 'BUFFERING' };
   startBufferingMonitor();
 }
@@ -1872,7 +1883,11 @@ function resumeFromBuffering(): void {
     }
   }
   // Resume — restore the pre-buffer state (storyboard until the next frame).
-  transition(videoHasFrame() ? 'PLAYING' : 'SHOWING_STORYBOARD');
+  // P1 (§11.3): a SEEKING buffered by the gate keeps its payload on exit too —
+  // plain SHOWING_STORYBOARD would kill the gate and strand the video hidden.
+  transition(playerState.name === 'SEEKING' ? { ...playerState, paused: false }
+    : videoHasFrame() ? 'PLAYING'
+    : 'SHOWING_STORYBOARD');
   playAudio(currentPlayer);
   if (videoEl && videoSrcUrl && !videoEnded && layerVideo.value) {
     try { void videoEl.play().catch(() => { }); } catch { /* ignore */ }
