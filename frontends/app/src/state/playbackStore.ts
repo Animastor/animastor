@@ -248,6 +248,12 @@ export function getPlayerState(): PlayerState {
   return playerState.name;
 }
 
+/** Test/UI accessor — the unconsumed explicit video-timeline target (sec), -1
+ *  when none is pending (P2 §12: cleared on reveal / resume / stopAll). */
+export function getPendingVideoTargetSec(): number {
+  return pendingVideoTargetSec;
+}
+
 // ═══════════════════════════════════════════════════════════════
 //  HELPERS
 // ═══════════════════════════════════════════════════════════════
@@ -1729,6 +1735,13 @@ function onVideoTimeUpdate(): void {
     withinUnit,
   })) {
     // REVEAL — SEEKING → VIDEO_READY / PLAYING (position inside the unit).
+    // P2 (§12): the explicit video-timeline target has been reached (the gate
+    // is target + tolerance, clamped to the unit end) — clear it so a later
+    // resumePlayback / attachVideo can't re-apply a stale target (seek back to
+    // the unit start) or re-arm a needless SEEKING. In the sticky pause path
+    // resumePlayback already consumed it; this covers the direct seek → reveal
+    // path.
+    pendingVideoTargetSec = -1;
     transition(isPaused() ? 'VIDEO_READY' : 'PLAYING');
     updateLayers();
   }

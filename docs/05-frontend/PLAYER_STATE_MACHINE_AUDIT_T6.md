@@ -1000,7 +1000,7 @@ P0-1 (дедлок reveal), P1-1 (PAUSED+PLAYING), P1-2 (stale metadata), P2-1
   `enterVideoBuffering` сохраняют payload (`{...SEEKING, paused:true}`),
   `resumeFromBuffering` возвращает в SEEKING{paused:false}; тесты
   `playbackStickySeeking.test.ts` (TEST A–E); весь набор 33/33;
-- **P2**: (по желанию) чистить `pendingVideoTargetSec` при reveal — см. §12;
+- **P2 — ✅ DONE**: cleanup `pendingVideoTargetSec` при reveal — см. §12 (тесты 38/38);
 - **P2**: (по желанию) same-scene unit-tap без полного clearPreloadCache.
 
 ## 12. P2 — Investigation: `pendingVideoTargetSec` после успешного reveal
@@ -1037,14 +1037,14 @@ tolerance (кламп к unitEnd) ⇒ в момент reveal видео уже �
 
 - **`resumePlayback`**: применяет target к видео, чтобы до-сикнуть его на
   не достигнутую ещё позицию (аудио right-after-seek может быть 0). После
-  reveal видео уже позиционировано внутри юнита → re-apply = no-op (то же
-  значение `currentTime`). Единственный эффект — лишний вызов + потребление,
-  которое при этом происходит только при СЛЕДУЮЩЕМ resume: между reveal и ним
-  target висит `>= 0` как stale.
+  reveal видео уже позиционировано внутри юнита и могло уйти ВПЕРЁД → re-apply
+  stale target = **реальный seek НАЗАД к началу юнита** (повтор фрагмента),
+  а не no-op (уточнение к §12.4). Потребление происходит только при следующем
+  resume — между reveal и ним target висит `>= 0` как stale.
 - **`attachVideo`** (unmount/remount PlayPage после reveal): target `>= 0` →
-  повторное позиционирование (no-op) + **пере-вооружение SEEKING{landed:false}**
-  (L842) → лишний gate-цикл (времяпдате снова посадит и раскроет). Не баг
-  (self-heal), но лишняя работа + повторный скрытый-видео интервал.
+  повторное позиционирование + **пере-вооружение SEEKING{landed:false}** (L842)
+  → лишний gate-цикл (времяпдате снова посадит и раскроет). Не баг (self-heal),
+  но лишняя работа + повторный скрытый-видео интервал.
 - Reveal-логика target не использует (гейт — в payload). Других читателей нет.
 
 ### 12.5 Sticky-сценарий (SEEKING → pause → resume → reveal)
@@ -1055,13 +1055,12 @@ tolerance (кламп к unitEnd) ⇒ в момент reveal видео уже �
 - resume: `resumePlayback` сам потребляет target (L553 → `-1`) **до** reveal.
   ⇒ cleanup при reveal этот сценарий не заденет (target уже `-1`).
 
-### 12.6 Вывод и рекомендуемая точка cleanup
+### 12.6 Вывод и рекомендуемая точка cleanup — РЕАЛИЗОВАНО
 
-**Stale после успешного reveal подтверждено** (только для прямого PLAYING-режима:
-seek → reveal без resume между; в sticky-сценарии target уже потреблён resume).
-
-Рекомендуемая точка — единственное место успешного reveal, `onVideoTimeUpdate`,
-внутри reveal-ветки (одна строка):
+**Stale после успешного reveal подтверждено** (прямой PLAYING-режим: seek →
+reveal без resume между; в sticky-сценарии target уже потреблён resume до
+reveal). Cleanup внесён в единственное место успешного reveal —
+`onVideoTimeUpdate`, внутри reveal-ветки (одна строка):
 
 ```js
 if (shouldRevealSeekVideo({ ... })) {
@@ -1072,7 +1071,16 @@ if (shouldRevealSeekVideo({ ... })) {
 }
 ```
 
-Эффект: `resumePlayback` после reveal пропускает no-op re-apply (L551-ветка),
-`attachVideo` после reveal идёт в else-ветку (синк к аудио — аудио уже на
-target, корректно) и не пере-вооружает SEEKING без необходимости. State
-machine, гейт, sticky-семантика, seek-логика не меняются.
+Эффект: `resumePlayback` после reveal пропускает stale re-apply (нет seek назад
+к началу юнита), `attachVideo` после reveal идёт в else-ветку (синк к аудио —
+аудио уже на target, корректно) и не пере-вооружает SEEKING без необходимости.
+State machine, гейт, sticky-семантика, seek-логика не меняются. Добавлен
+read-only accessor `getPendingVideoTargetSec()` (для тестов/UI).
+
+**Регрессионные тесты (реализованы):** `playbackTargetCleanup.test.ts` — TEST A
+(direct seek → reveal → target -1), TEST B (seek → pause → resume → reveal:
+target жив до потребления resume, -1 после reveal), TEST C (attachVideo после
+reveal не пере-вооружает SEEKING), TEST D (resumePlayback после reveal не
+пере-сикает видео назад — позиция сохраняется), плюс кейс «обычный playback
+без seek — target никогда не вооружается». Валидация: A/C/D падают без
+cleanup-строки; B и plain — контрактные гварды.
