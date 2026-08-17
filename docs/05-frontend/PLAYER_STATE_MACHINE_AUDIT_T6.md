@@ -1000,5 +1000,79 @@ P0-1 (дедлок reveal), P1-1 (PAUSED+PLAYING), P1-2 (stale metadata), P2-1
   `enterVideoBuffering` сохраняют payload (`{...SEEKING, paused:true}`),
   `resumeFromBuffering` возвращает в SEEKING{paused:false}; тесты
   `playbackStickySeeking.test.ts` (TEST A–E); весь набор 33/33;
-- **P2**: (по желанию) чистить `pendingVideoTargetSec` при reveal;
+- **P2**: (по желанию) чистить `pendingVideoTargetSec` при reveal — см. §12;
 - **P2**: (по желанию) same-scene unit-tap без полного clearPreloadCache.
+
+## 12. P2 — Investigation: `pendingVideoTargetSec` после успешного reveal
+
+### 12.1 Где устанавливается (3 места + объявление)
+
+| Место | Строка | Что делает |
+|---|---|---|
+| объявление | L187 | `let pendingVideoTargetSec = -1;` (initial = «нет target») |
+| `seekAttachedVideo` | L1527 | `explicitSeekMs != null ? explicitSeekMs/1000 : -1` — same-scene unit-seek |
+| `playVideoOverlay` | L1597 | та же формула — fresh-src unit-seek / rotation-resume |
+| `stopAll` | L1924 | сброс в `-1` (полный стоп) |
+
+### 12.2 Где читается (2 места)
+
+| Место | Строка | Что делает |
+|---|---|---|
+| `resumePlayback` | L551–553 | если `>= 0`: `videoEl.currentTime = target`, затем **потребляет** (`= -1`) |
+| `attachVideo` | L831–842 | если `>= 0`: `el.currentTime = target` + пере-вооружение SEEKING с гейтом от target (L842) |
+
+Больше нигде не читается — включая `onVideoTimeUpdate` (reveal) и
+`onVideoFirstFrame`: после арма SEEKING reveal-логика живёт только на payload
+(`revealGateSec`/`seekLanded`), target сам по себе не нужен.
+
+### 12.3 Что происходит в момент успешного reveal
+
+`onVideoTimeUpdate` (L1735–1740): `shouldRevealSeekVideo(...)` →
+`transition(isPaused() ? 'VIDEO_READY' : 'PLAYING'); updateLayers();` —
+**target НЕ сбрасывается**. Reveal требует `pos >= гейт`, гейт = target +
+tolerance (кламп к unitEnd) ⇒ в момент reveal видео уже за пределами target —
+позиция достигнута.
+
+### 12.4 Нужен ли после reveal — НЕТ (stale state)
+
+- **`resumePlayback`**: применяет target к видео, чтобы до-сикнуть его на
+  не достигнутую ещё позицию (аудио right-after-seek может быть 0). После
+  reveal видео уже позиционировано внутри юнита → re-apply = no-op (то же
+  значение `currentTime`). Единственный эффект — лишний вызов + потребление,
+  которое при этом происходит только при СЛЕДУЮЩЕМ resume: между reveal и ним
+  target висит `>= 0` как stale.
+- **`attachVideo`** (unmount/remount PlayPage после reveal): target `>= 0` →
+  повторное позиционирование (no-op) + **пере-вооружение SEEKING{landed:false}**
+  (L842) → лишний gate-цикл (времяпдате снова посадит и раскроет). Не баг
+  (self-heal), но лишняя работа + повторный скрытый-видео интервал.
+- Reveal-логика target не использует (гейт — в payload). Других читателей нет.
+
+### 12.5 Sticky-сценарий (SEEKING → pause → resume → reveal)
+
+- pause (sticky): target не трогается — живёт. Это **нужно**: если seek ещё не
+  посадился, `resumePlayback` применяет target (реальная работа — до-сик
+  видео к целевому юниту, не no-op).
+- resume: `resumePlayback` сам потребляет target (L553 → `-1`) **до** reveal.
+  ⇒ cleanup при reveal этот сценарий не заденет (target уже `-1`).
+
+### 12.6 Вывод и рекомендуемая точка cleanup
+
+**Stale после успешного reveal подтверждено** (только для прямого PLAYING-режима:
+seek → reveal без resume между; в sticky-сценарии target уже потреблён resume).
+
+Рекомендуемая точка — единственное место успешного reveal, `onVideoTimeUpdate`,
+внутри reveal-ветки (одна строка):
+
+```js
+if (shouldRevealSeekVideo({ ... })) {
+  // REVEAL — SEEKING → VIDEO_READY / PLAYING (position inside the unit).
+  pendingVideoTargetSec = -1; // P2: target reached — no longer needed
+  transition(isPaused() ? 'VIDEO_READY' : 'PLAYING');
+  updateLayers();
+}
+```
+
+Эффект: `resumePlayback` после reveal пропускает no-op re-apply (L551-ветка),
+`attachVideo` после reveal идёт в else-ветку (синк к аудио — аудио уже на
+target, корректно) и не пере-вооружает SEEKING без необходимости. State
+machine, гейт, sticky-семантика, seek-логика не меняются.
