@@ -1655,6 +1655,15 @@ function onVideoTimeUpdate(): void {
   const posMs = videoEl.currentTime * 1000;
   const withinUnit = !ius || ius.length === 0 ||
     posMs < unitEndMs(ius, Math.max(0, Math.min(selectedUnit?.index ?? 0, ius.length - 1)));
+  // Web has no seek-landing callback (Android flips seekLanded in its
+  // STATE_READY watchdog + onPositionDiscontinuity), so the position crossing
+  // the gate IS the landing signal — mark the seek landed here. Without this
+  // the AND-gate's "not in flight" condition never holds and the video never
+  // reveals after a unit seek (the reveal-gate deadlock, T2.2 regression —
+  // docs/05-frontend/PLAYER_STATE_MACHINE_AUDIT_T6.md P0-1).
+  if (playerState.name === 'SEEKING' && videoEl.currentTime >= pendingVideoRevealSec()) {
+    transition({ ...playerState, seekLanded: true });
+  }
   // T2.1/T2.2 AND-gate (pure, unit-tested in playbackGate.test.ts): frame
   // decoded (readyState >= HAVE_CURRENT_DATA) AND position inside the unit
   // past the gate — never reveal on one condition alone.
