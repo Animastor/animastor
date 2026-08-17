@@ -325,14 +325,16 @@ video lifecycle / Android не тронуты. Repository-wide: 0 production ref
 L872 и L884 пишут одно и то же состояние подряд (между ними только установка
 `selectedUnit` и пауза плеера). Безвредно, но шумит в аудите переходов.
 
-### P2-3. Web: `preparePlayback` не чистит `selectedUnit`/`currentIuBlobUrl` при смене книги
+### P2-3. Web: `preparePlayback` не чистит `selectedUnit`/`currentIuBlobUrl` при смене книги — **investigated, см. §9**
 
 При открытии книги B поверх играющей A `selectedUnit` (и blob-URL картинок A,
 которые `clearPreloadCache` считает «живыми») переживают `preparePlayback` →
 `SHOWING_STORYBOARD` с картинкой старой книги на экране SCENE_READY. Android
-очищается через `stopAll()` при переходе PLAYING→SCENE_READY (collector L578).
-На web такого collector-эквивалента нет — проверить в T4 (возможен «чужой» кадр при
-переключении книги).
+очищается через `stopAll()` при переходе PLAYING→SCENE_READY (collector).
+На web такого collector-эквивалента нет.
+
+Подтверждено исследованием (полный lifecycle, таблица владения полями, сценарии,
+визуальный сценарий, минимальная рекомендация) — **§9 «P2-3 — Investigation»** ниже.
 
 ### P2-4. Web: «проскок» мимо конца юнита — видео остаётся скрытым
 
@@ -405,8 +407,8 @@ L872 и L884 пишут одно и то же состояние подряд (�
   7 записей); тест P1-1 проверяет `getPlayerState()==PAUSED` + `phase==PAUSED`.
   Полный список write/read sites — в §4.
 - **P2-2:** Android `handleSilentChunk` — убрать дубль `transition(ShowingStoryboard)`.
-- **P2-3:** web `preparePlayback` при смене книги — чистить `selectedUnit`/
-  `currentIuBlobUrl` (сверка с Android-поведением; проверить в T4).
+- **P2-3 (решение в §9):** web `preparePlayback` — при смене книги вызывать
+  `stopAll()` (чистит display/video/player state) + сбросить one-shot поля.
 - **P2-5:** унифицировать семантику `seekLanded` для fresh-src: Android вооружает
   `Seeking(landed=true)` сразу (L1326), web — `false` (L1570). После P0-1 результат
   одинаковый, но поле на web несёт другой смысл; привести к Android-варианту.
@@ -558,3 +560,127 @@ handleChunk → playVideoOverlay`:
 3. `stopAll()` чистит слот.
 2 из 3 падают на до-фиксовом коде (ref-снятие и stopAll-очистка — новые;
 самоcнятие при fire существовало и раньше).
+
+---
+
+## 9. P2-3 — Investigation: смена книги и stale player state (web)
+
+Только исследование; код не менялся.
+
+### 9.1 Фактический lifecycle смены книги
+
+Путь открытия книги B поверх играющей A (web): `openBookById(B)`
+(`generateStore.ts:1124`) → `emitPlaybackPrepared` → `wirePlaybackCoordination`
+(`playbackStore.ts:1951`) → **`preparePlayback(B)`**.
+
+**`closePlayerBook()` на этом пути НЕ вызывается** — он используется только из
+`generateStore.closeBook()` («Create New Book», logout) и SettingsPage. То есть
+`preparePlayback(B)` при смене книги выполняется **без `stopAll()`** (stopAll зовётся
+только внутри deferred-seek ветки — если в этот момент висел внешний тап).
+
+Android-параллель: `PlaybackViewModel.preparePlayback` тоже НЕ вызывает stopAll, но
+фрагмент-коллектор `observeState` (`PlayFragment.kt:580`) вызывает `stopAll()` при
+переходе фазы PLAYING→SCENE_READY — именно он чистит `selectedUnit`/`currentIuSequence`
+при открытии новой книги из PLAYING. (Из PAUSED→SCENE_READY коллектор не срабатывает —
+на Android остаётся аналогичный латентный зазор; на web нет даже PLAYING-случая.)
+
+### 9.2 Состояние полей ДО/ПОСЛЕ `preparePlayback(B)` (web)
+
+| Поле | До (книга A играет) | После preparePlayback(B) | Пережило? |
+|---|---|---|---|
+| `selectedUnit` | A: sequence+index | **без изменений (A)** | ✅ пережило |
+| `currentIuBlobUrl` | URL картинки юнита A | **без изменений (A)** | ✅ пережило |
+| `currentVideoSceneKey` | ключ сцены A | без изменений (A) | ✅ |
+| `videoSrcUrl` | URL видео A | без изменений (A) | ✅ |
+| `videoVisible` | true (если играло) | false (playerState→SHOWING_STORYBOARD, videoHasFrame=false) | ✅ сброшено косвенно |
+| `videoHasFrame()` | true (если раскрыто) | false (SHOWING_STORYBOARD) | ✅ сброшено косвенно |
+| `pendingVideoTargetSec` | таргет seek-а A | без изменений | ✅ |
+| `videoEnded` | false | без изменений | ✅ |
+| `playerState` | PLAYING / SEEKING / PAUSED | **SHOWING_STORYBOARD** (если stale selectedUnit) / IDLE | ✅ частично (неверно при stale selectedUnit) |
+| `uiState.phase` | PLAYING / PAUSED | SCENE_READY / IDLE | ✅ сброшено |
+| `currentPlayer` / `nextPlayer` | аудио A (играет!) | **без изменений — аудио A продолжает играть** | ✅ пережило |
+| `videoEl` | элемент с видео A | без изменений (src A) | ✅ |
+| `coverImage` / `previewImage` | картинки A | **очищены** (revoke + null) | ❌ правильно сброшено |
+| `bookId` / `buildId` / `sceneQueue` / `currentIndex` / `currentUnitIndex` | A | **B / 0 / 0** | ❌ правильно сброшено |
+| `missingIuPosition` / `pendingExternalSeek` | — | очищены | ❌ сброшено |
+| one-shots: `pendingLoad`, `pendingExternalUnitId`, `needsContentRefresh`, `needsRotationResume`, `savedPlaybackPositionMs`, `pendingSeekPositionMs`, `sceneTransitionPending`, `nextChainReady`, `isExecutingExternalSeek`, `pendingExplicitUnitTarget` | значения из жизни A | без изменений | ✅ пережили |
+
+### 9.3 Сценарии A→B
+
+- **A→B без stopAll (штатный путь, openBookById):** переживает всё из 9.2. Аудио A
+  играет дальше (phase=SCENE_READY, но элемент жив), картинка A на экране.
+- **A→B во время PLAYING:** RAF-циклинг (startIuCycling) продолжает крутить юниты A
+  (isPaused=false, selectedUnit/currentPlayer всё ещё A) — `currentIuBlobUrl` меняется
+  картинками A; когда аудио A доигрывает, `onAudioCompleted` → `playNext` запускает
+  сцену 0 книги B «сама по себе».
+- **A→B во время PAUSED:** аудио A приостановлено, но элемент и картинка A на месте;
+  тап Play → SCENE_READY → `playSceneQueue` → handleChunk(B) перезаписывает всё.
+- **A→B во время SEEKING:** гейт дропается на SHOWING_STORYBOARD; stale
+  `pendingVideoTargetSec` (таргет A) может быть применён `attachVideo`/`resumePlayback`
+  к элементу с URL видео A до того, как handleChunk(B) пере-вооружит всё.
+- **A→B сразу после переключения unit:** selectedUnit/currentIuBlobUrl = новый юнит A
+  — тот же утёк.
+
+### 9.4 Визуальный сценарий (подтверждён рендером PlayPage)
+
+`PlayPage.tsx:209`: `imgSrc = phase==='SCENE_READY' && previewImage ? previewImage :
+currentIuBlobUrl.value` — на SCENE_READY книги B (previewImage очищен) рендерится
+**старый `currentIuBlobUrl` книги A** до первого handleChunk(B). Старый video frame НЕ
+показывается (videoVisible требует VIDEO_READY/PLAYING, а playerState после
+preparePlayback — SHOWING_STORYBOARD), но «старая картинка A» и «аудио A играет» —
+да. Окно утечки: от preparePlayback(B) до handleChunk(B) (загрузка первой сцены B).
+
+### 9.5 Semantic ownership
+
+| FIELD | BOOK CHANGE | SCENE CHANGE | UNIT CHANGE | WHY |
+|---|---|---|---|---|
+| `bookId` / `buildId` / `sceneQueue` / `currentIndex` / `currentUnitIndex` | **clear/replace** | replace | keep (index меняется) | владение книгой/очередью |
+| `selectedUnit` | **clear** | replace (handleChunk) | replace (handleChunk/циклинг) | выбранный юнит принадлежит книге+сцене |
+| `currentIuBlobUrl` / `subtitleText` / `iuMissing` | **clear** | replace (showIu) | replace (showIu) | display-выходы selectedUnit |
+| `coverImage` / `previewImage` | **clear** (уже) | replace | keep | арт книги |
+| `currentPlayer` / `nextPlayer` | **release/stop** | replace (gapless) | keep | аудио-элементы |
+| `videoEl` | **stop/очистить src** | keep (adopted) | keep | единственный видео-элемент |
+| `videoSrcUrl` / `currentVideoSceneKey` / `videoEnded` | **clear** | replace (playVideoOverlay) | keep | identity прикреплённого видео |
+| `pendingVideoTargetSec` | **clear** | replace | set (per seek) | one-shot таргет видео |
+| `playerState` | **IDLE** | LOADING_SCENE→…→SHOWING | SEEKING | состояние машины |
+| `pendingLoad` / `pendingExternalUnitId` / `needsContentRefresh` / `needsRotationResume` / `savedPlaybackPositionMs` / `pendingSeekPositionMs` / `isExecutingExternalSeek` / `pendingExplicitUnitTarget` / `sceneTransitionPending` / `nextChainReady` | **clear** | clear/replace | set | one-shot интенты |
+| `missingIuPosition` / `pendingExternalSeek` | **clear** (уже) | clear | set | внешние seek-команды |
+
+### 9.6 Вывод и минимальная рекомендация
+
+**Stale state ВОЗМОЖЕН** (подтверждён): при смене книги через `openBookById`
+`preparePlayback(B)` не вызывает `stopAll()` → переживают `selectedUnit`,
+`currentIuBlobUrl`, `subtitleText`, `iuMissing`, `videoSrcUrl`, `currentVideoSceneKey`,
+`pendingVideoTargetSec`, `videoEnded`, аудио-элементы (играют дальше), playerState
+(SHOWING_STORYBOARD от stale selectedUnit) и все one-shot интенты.
+
+**Минимальная правка (в `preparePlayback`, в уже существующей ветке
+`prevBookId !== bId` рядом с очисткой cover):**
+
+```js
+if (prevBookId !== bId) {
+  // …существующая очистка cover/preview…
+  stopAll();                                   // selectedUnit, currentIuBlobUrl, subtitleText,
+                                               // iuMissing, videoSrcUrl, currentVideoSceneKey,
+                                               // pendingVideoTargetSec, videoEnded, игроки,
+                                               // transition→IDLE
+  pendingLoad = false;
+  pendingExternalUnitId = null;
+  needsContentRefresh = false;
+  needsRotationResume = false;
+  savedPlaybackPositionMs = 0;
+  pendingSeekPositionMs = -1;
+  isExecutingExternalSeek = false;
+  pendingExplicitUnitTarget = false;
+}
+```
+
+После этого `transition(selectedUnit ? 'SHOWING_STORYBOARD' : 'IDLE')` даст IDLE,
+SCENE_READY книги B покажет cover/шторки (не картинку A), аудио A остановится.
+Same-book ветка (soft re-prepare) не затрагивается — позиция/выбор сохраняются.
+
+**Тест:** существующего теста на смену книги нет (`playbackStore.test.ts` гоняет
+только same-book). Конкретная ошибка доказана (§9.2/§9.4) — регрессионный тест
+(после `preparePlayback(B)` при другой книге: `currentIuBlobUrl==null`,
+`getPlayerState()==IDLE`, аудио остановлено) добавится вместе с фиксом в следующем
+шаге, чтобы коммит оставался зелёным.
