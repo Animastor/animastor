@@ -238,14 +238,27 @@ if (shouldRevealSeekVideo({ seekInFlight: videoSeekInFlight(), ... })) {      //
 `videoEl.currentTime >= pendingVideoRevealSec()`. После этого `videoSeekInFlight()`
 становится false, AND-гейт «не в полёте» выполняется, reveal срабатывает как раньше.
 
-### P1-1. Web: silent-сцена + скрытие вкладки — `phase=PLAYING` при `playerState=PAUSED`
+### P1-1. Web: silent-сцена + скрытие вкладки — `phase=PLAYING` при `playerState=PAUSED` — **DONE**
 
-`pauseIfPlaying` (L579) в ветке `currentPlayer==null && selectedUnit!=null` делает
-`transition('PAUSED')` + `enginePaused=true`, но **не пишет `uiState.phase`** —
-остаётся `PLAYING`. Кнопка/статус врут («Playing» при реальной паузе; повторный тап
-по кнопке работает — `handlePlayButton` ветка `PLAYING && isPaused()` → resume).
+`pauseIfPlaying` (L579) в ветке `currentPlayer==null && selectedUnit!=null` делал
+`transition('PAUSED')` + `enginePaused=true`, но **не писал `uiState.phase`** —
+оставалось `PLAYING`. Кнопка/статус врали («Playing» при реальной паузе; повторный
+тап по кнопке работал — `handlePlayButton` ветка `PLAYING && isPaused()` → resume).
 Android-параллель (`autoPauseForBackground`) всегда идёт через `pausePlayback()` →
 `PAUSED`. Разъезд платформ.
+
+**Как исправлено:** ветка сведена к единому пути `pausePlayback()` — он безопасен
+для silent-сценария (все player-touches внутри — null-safe no-op, `videoHasFrame()`
+false → `PAUSED`) и дополнительно пишет `phase=PAUSED`. Оставлен только
+silent-специфичный `cancelIuCycling()` (остановка таймерного цикла картинок).
+State machine и reveal-gate не тронуты.
+
+**Тест:** `frontends/app/src/state/playbackStore.test.ts` (2 теста) — реальный поток
+`preparePlayback → playSceneQueue → handleSilentChunk`, затем
+`pauseIfPlaying()`: `getPlayerState()==PAUSED`, `uiState.phase==PAUSED`,
+`enginePaused==true`; второй тест — `resumePlayback()` после паузы возвращает
+`SHOWING_STORYBOARD` + `phase=PLAYING` + `enginePaused=false`. Тест падает на
+до-фиксовом коде (фаза оставалась `PLAYING`).
 
 ### P1-2. Web: устаревшие `loadedmetadata`-листенеры (stale callbacks)
 
@@ -333,8 +346,8 @@ L872 и L884 пишут одно и то же состояние подряд (�
   покрытие даёт ручной регресс T4).
 
 ### P1
-- **P1-1:** web `pauseIfPlaying` silent-ветка — писать `phase=PAUSED` (или просто
-  вызывать `pausePlayback()`), чтобы убрать комбинацию `PAUSED + PLAYING`.
+- **P1-1 (DONE):** web `pauseIfPlaying` silent-ветка — сведена к единому пути
+  `pausePlayback()` (пишет `phase=PAUSED`), тест в `playbackStore.test.ts`.
 - **P1-2:** `playVideoOverlay` — снимать предыдущий `loadedmetadata`-листенер или
   гвардить по токену сцены (сценарий: быстрое переключение сцен, ре-таргет видео).
 

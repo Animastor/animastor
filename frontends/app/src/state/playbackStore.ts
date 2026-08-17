@@ -575,12 +575,15 @@ export function pauseIfPlaying(): void {
   const phase = uiState.value.phase;
   if (phase === 'PLAYING' && !isPaused()) {
     if (currentPlayer == null && selectedUnit != null) {
+      // Silent scene (no audio player): stop its timer-based cycling, then
+      // take the SAME unified pause path as every other scenario — the
+      // player touches inside pausePlayback() are null-safe no-ops here. The
+      // old branch set playerState + enginePaused but left uiState.phase =
+      // PLAYING (forbidden PAUSED + PLAYING combo; Android parity —
+      // PLAYER_STATE_MACHINE_AUDIT_T6.md P1-1).
       cancelIuCycling();
-      transition('PAUSED');
-      enginePaused.value = true;
-    } else {
-      pausePlayback();
     }
+    pausePlayback();
   }
 }
 
