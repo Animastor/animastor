@@ -62,6 +62,7 @@
 |---|---|
 | [`PROGRESS_HANDOFF.md`](05-frontend/PROGRESS_HANDOFF.md) | **НОВЫЙ.** GPU Progress: SSE-клиент, монотонность, stuck-детект, поллер (F1-F7 ✅) |
 | [`PLAYER_STATE.md`](05-frontend/PLAYER_STATE.md) | Состояние плеера после регенерации: soft refresh, `needsContentRefresh`, buildId |
+| [`PLAYER_STATE_MACHINE_DESIGN.md`](05-frontend/PLAYER_STATE_MACHINE_DESIGN.md) | **НОВЫЙ.** Дизайн state machine Player: 7 состояний, один источник истины `selectedUnit` (T6) |
 
 ---
 

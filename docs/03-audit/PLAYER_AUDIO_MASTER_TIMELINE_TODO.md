@@ -92,10 +92,12 @@ Guard `idx == 0 && currentIuIndex != 0` — корректная защита о
 **Проблема:** множество независимых флагов (`PlayFragment.kt:85-140`) вместо одного
 источника истины для selectedUnit.
 
-- [ ] Описать состояния: `IDLE / LOADING_SCENE / SHOWING_STORYBOARD / SEEKING /
+- [x] Описать состояния: `IDLE / LOADING_SCENE / SHOWING_STORYBOARD / SEEKING /
   VIDEO_READY / PLAYING / PAUSED`.
 - [ ] Свести флаги к одному источнику истины для selectedUnit.
-- [ ] Не добавлять новые флаги до этого рефактора.
+- [x] Не добавлять новые флаги до этого рефактора.
+
+Дизайн: `docs/05-frontend/PLAYER_STATE_MACHINE_DESIGN.md`.
 
 ---
 
@@ -118,5 +120,5 @@ Guard `idx == 0 && currentIuIndex != 0` — корректная защита о
 | T3.1 Инвариант index vs unitId | ✅ Done (verify) |
 | T4 Регрессионные сценарии | 📝 Plan |
 | T5 Разделить две 150 | ✅ Done |
-| T6 State machine | 📝 Plan |
+| T6 State machine | 🔧 In progress (дизайн готов; рефактор флагов — отдельный этап) |
 | T7 video_start_ms правило | ✅ Done |
