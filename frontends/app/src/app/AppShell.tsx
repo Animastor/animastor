@@ -10,7 +10,6 @@ import type { IconProps } from './icons';
 import { FilePage } from '../pages/FilePage';
 import { NavigatePage } from '../pages/NavigatePage';
 import { AiAssistantPage } from '../pages/AiAssistantPage';
-import { position as activePosition } from '../state/positionStore';
 import { bookId as openBookId, phase as playerPhase } from '../state/generateStore';
 import { getJson } from '../api/client';
 import type { BookData } from '../api/models';
@@ -139,7 +138,6 @@ function DesktopWorkspace({ path, isSecondary, children }: { path: string; isSec
               square. */}
           <img class="desktop-header__logo" src="/logo.png" alt="" width="40" height="40" />
           <span class="desktop-header__brand">Animastor</span>
-          <DesktopBookContext />
         </div>
         <nav class="desktop-modes" aria-label="Workspace mode">
           {modes.map(({ route, key, Icon }) => {
@@ -267,42 +265,6 @@ function DesktopSecondary({ path, children }: { path: string; children: JSX.Elem
       {children}
     </div>
   );
-}
-
-function DesktopBookContext() {
-  const bookId = openBookId.value;
-  const [bookTitle, setBookTitle] = useState('');
-
-  useEffect(() => {
-    let disposed = false;
-    if (!bookId) {
-      setBookTitle('');
-      return () => { disposed = true; };
-    }
-    setBookTitle(bookId);
-    void getJson<BookData>(`/book/${encodeURIComponent(bookId)}`)
-      .then((book) => {
-        if (!disposed) setBookTitle(book.book?.title?.trim() || bookId);
-      })
-      .catch(() => { /* the stable book id remains a useful fallback */ });
-    return () => { disposed = true; };
-  }, [bookId]);
-
-  return (
-    <span class="desktop-book-context">
-      {bookTitle && <span class="desktop-book-title" title={bookTitle}>{bookTitle}</span>}
-      <DesktopPositionSummary />
-    </span>
-  );
-}
-
-function DesktopPositionSummary() {
-  const current = activePosition.value;
-  const label = current.chapterId == null || current.sceneId == null
-    ? t('navigate_no_position')
-    : `${t('navigate_chapter')} · ${t('navigate_scene')} · ${t('navigate_unit')} ${current.unitIndex + 1}`;
-
-  return <span class="desktop-position" title={label}>{label}</span>;
 }
 
 function DesktopStartState({ onOpenFile, onCreateAI }: { onOpenFile: () => void; onCreateAI: () => void }) {
