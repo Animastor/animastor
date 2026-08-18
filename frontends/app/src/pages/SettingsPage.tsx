@@ -165,7 +165,7 @@ function GeneralSection() {
           title={confirm.kind === 'clear' ? t('settings_cache_clear') : t('settings_delete_vbook')}
           onClose={() => { if (!busy) setConfirm(null); }}
         >
-          <p class="settings-page__notice" style="white-space:pre-line;margin:0">{confirm.message}</p>
+          <p class="modal__notice">{confirm.message}</p>
           <div class="modal__footer">
             <button class="btn btn--outlined" onClick={() => { if (!busy) setConfirm(null); }} disabled={busy}>
               {t('dialog_cancel')}

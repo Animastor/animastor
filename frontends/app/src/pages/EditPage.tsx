@@ -2039,7 +2039,7 @@ export function EditPage(props: { path?: string }) {
           <div class="modal" role="dialog" aria-modal="true" aria-label={t('edit_draft_recover_title')} onClick={(e) => e.stopPropagation()}>
             <div class="modal__title">{t('edit_draft_recover_title')}</div>
             <div class="modal__body">
-              <p class="edit-confirm__desc">{t('edit_draft_recover_desc')}</p>
+              <p class="modal__notice">{t('edit_draft_recover_desc')}</p>
             </div>
             <div class="modal__footer">
               <button type="button" class="btn btn--outlined" autofocus onClick={discardDraft}>{t('edit_draft_recover_discard')}</button>
@@ -2083,7 +2083,7 @@ export function EditPage(props: { path?: string }) {
           <div class="modal" role="dialog" aria-modal="true" aria-label={t('edit_confirm_title')} onClick={(e) => e.stopPropagation()}>
             <div class="modal__title">{t('edit_confirm_title')}</div>
             <div class="modal__body">
-              <p class="edit-confirm__desc">{t('edit_confirm_desc')}</p>
+              <p class="modal__notice">{t('edit_confirm_desc')}</p>
             </div>
             <div class="modal__footer">
               {/* autofocus lands on the safe action; plan §11 — initial meaningful focus */}

@@ -439,12 +439,19 @@ button { font: inherit; color: inherit; }
 /* The mobile position bar is not needed in the desktop shell: the header
    breadcrumb above serves the same purpose. */
 .desktop-main .edit-posbar { display: none; }
-/* Draft-protection modal description text */
-.edit-confirm__desc {
+/* Simple confirm-dialog warning block — the notice panel used by the
+   Settings "Удалить сториборд / визуальную книгу" dialogs (surface-2 panel,
+   dashed outline), ported to every title+warning+buttons confirm dialog:
+   entity delete (characters/locations/voices), draft protect/recover. */
+.modal__notice {
   margin: 0;
+  white-space: pre-line;
+  color: var(--text-2);
   font-size: 0.875rem;
-  color: var(--text);
-  line-height: 1.45;
+  background: var(--surface-2);
+  border: 1px dashed var(--outline);
+  border-radius: var(--radius-sm);
+  padding: 0.75rem 1rem;
 }
 
 /* ── Desktop preview stage + unit rail (plan §5.3) ── */

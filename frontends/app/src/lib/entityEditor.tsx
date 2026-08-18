@@ -223,7 +223,7 @@ export function DeleteConfirmDialog({ title, message, busy, error, onConfirm, on
       </>
     }>
       <>
-        <p class="edit-confirm__desc">{message}</p>
+        <p class="modal__notice">{message}</p>
         {error && <div class="entity-form__error">{error}</div>}
       </>
     </Modal>
