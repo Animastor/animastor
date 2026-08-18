@@ -48,7 +48,7 @@ function GeneralSection() {
   // read-only BuildConfig.BASE_URL display Android pre-fills. §14 deviation:
   // not editable because the web app cannot switch servers per-install.
   const serverUrl = typeof location !== 'undefined' ? location.origin : '';
-  const debugText = `App: Animastor Web 0.1\nServer: ${serverUrl}`;
+  const debugText = `App: Animastor Web 0.1.0\nServer: ${serverUrl}`;
 
   // clearCacheButton — Android: no book → Repository.clearCache() + toast;
   // book open → confirm dialog → clearBookCache + clearCache + player reset
