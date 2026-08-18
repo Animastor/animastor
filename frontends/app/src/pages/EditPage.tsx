@@ -27,7 +27,7 @@
 //    playbackStore.seekToPosition like the Android carousel.
 
 import type { JSX } from 'preact';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { useSignal } from '@preact/signals';
 import { deleteJson, getJson, patchJson, postJson, putJson } from '../api/client';
 import type {
@@ -1314,6 +1314,28 @@ export function EditPage(props: { path?: string }) {
   const scrollTabs = useCallback((direction: number) => {
     tabsScrollRef.current?.scrollBy({ left: direction * 160, behavior: 'smooth' });
   }, []);
+
+  // Initial + reactive scroll-indicator state. The chevrons must be computed on
+  // the very first render (before any scroll event fires) — otherwise a tab row
+  // that overflows to the right starts with an inactive right chevron until the
+  // user nudges the scroll. useLayoutEffect keeps the very first painted frame
+  // correct (Android parity: EditFragment posts updateTabScrollIndicators()
+  // right after view setup). ResizeObserver + window resize keep the state in
+  // sync when the window or the container changes size.
+  useLayoutEffect(() => {
+    updateTabScrollIndicators();
+    const onResize = () => updateTabScrollIndicators();
+    window.addEventListener('resize', onResize);
+    let ro: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== 'undefined' && tabsScrollRef.current) {
+      ro = new ResizeObserver(onResize);
+      ro.observe(tabsScrollRef.current);
+    }
+    return () => {
+      window.removeEventListener('resize', onResize);
+      ro?.disconnect();
+    };
+  }, [updateTabScrollIndicators]);
 
   // ── Entity add/delete (Characters / Locations / Voices) ──
   // Save/delete go through the dedicated backend endpoints (POST/DELETE
