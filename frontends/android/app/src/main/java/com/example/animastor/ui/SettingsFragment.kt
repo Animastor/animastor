@@ -1,7 +1,6 @@
 package com.example.animastor.ui
 
 import android.content.Context
-import androidx.appcompat.app.AlertDialog
 import android.view.LayoutInflater
 import android.os.Bundle
 import android.view.View
@@ -110,41 +109,43 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
             val cacheBinding = DialogDeleteVbookBinding.inflate(cacheInflate)
             cacheBinding.dialogMessage.text = getString(R.string.settings_cache_clear_confirm)
 
-            AlertDialog.Builder(requireContext())
-                .setTitle(R.string.settings_cache_clear)
-                .setView(cacheBinding.root)
-                .setPositiveButton(android.R.string.ok) { _, _ ->
-                    val bookId = viewModel.bookId
-                    lifecycleScope.launch {
-                        runCatching {
-                            // Clear only generated assets (chunks, images, audio, video)
-                            // while preserving the book structure (chapters, scenes, source).
-                            // This keeps the vBook intact — only the generated
-                            // storyboard content is removed.
-                            viewModel.repository.clearBookCache(bookId)
-                            viewModel.repository.clearCache()
-                            // Delete local temp cache files (chunk MP3, video, scene audio)
-                            val cacheDir = requireContext().cacheDir
-                            cacheDir.listFiles()?.forEach { file ->
-                                if (file.name.startsWith("chunk-") || file.name.startsWith("video-") || file.name.startsWith("scene_audio-")) {
-                                    file.delete()
-                                }
+            AppDialogs.action(
+                ctx = requireContext(),
+                title = getString(R.string.settings_cache_clear),
+                content = cacheBinding.root,
+                cancelText = getString(R.string.dialog_cancel),
+                actionText = getString(android.R.string.ok),
+            ) { dlg ->
+                dlg.dismiss()
+                val bookId = viewModel.bookId
+                lifecycleScope.launch {
+                    runCatching {
+                        // Clear only generated assets (chunks, images, audio, video)
+                        // while preserving the book structure (chapters, scenes, source).
+                        // This keeps the vBook intact — only the generated
+                        // storyboard content is removed.
+                        viewModel.repository.clearBookCache(bookId)
+                        viewModel.repository.clearCache()
+                        // Delete local temp cache files (chunk MP3, video, scene audio)
+                        val cacheDir = requireContext().cacheDir
+                        cacheDir.listFiles()?.forEach { file ->
+                            if (file.name.startsWith("chunk-") || file.name.startsWith("video-") || file.name.startsWith("scene_audio-")) {
+                                file.delete()
                             }
-                            // Clear playback state so the player shows empty state.
-                            // Do NOT close the book — the vBook structure is still
-                            // intact and the Navigator should keep displaying it.
-                            playbackViewModel.closeBook()
-                            // Reset any in-progress generation tracking
-                            viewModel.resetProgressState()
-                        }.onSuccess {
-                            Toast.makeText(requireContext(), R.string.settings_cache_cleared, Toast.LENGTH_SHORT).show()
-                        }.onFailure { e ->
-                            Toast.makeText(requireContext(), "Error: ${e.message}", Toast.LENGTH_LONG).show()
                         }
+                        // Clear playback state so the player shows empty state.
+                        // Do NOT close the book — the vBook structure is still
+                        // intact and the Navigator should keep displaying it.
+                        playbackViewModel.closeBook()
+                        // Reset any in-progress generation tracking
+                        viewModel.resetProgressState()
+                    }.onSuccess {
+                        Toast.makeText(requireContext(), R.string.settings_cache_cleared, Toast.LENGTH_SHORT).show()
+                    }.onFailure { e ->
+                        Toast.makeText(requireContext(), "Error: ${e.message}", Toast.LENGTH_LONG).show()
                     }
                 }
-                .setNegativeButton(android.R.string.cancel, null)
-                .show()
+            }.show()
         }
 
         b.deleteVbookButton.setOnClickListener {
@@ -157,36 +158,38 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
             val dialogBinding = DialogDeleteVbookBinding.inflate(inflater)
             dialogBinding.dialogMessage.text = getString(R.string.settings_delete_vbook_confirm)
 
-            AlertDialog.Builder(requireContext())
-                .setTitle(R.string.settings_delete_vbook)
-                .setView(dialogBinding.root)
-                .setPositiveButton(android.R.string.ok) { _, _ ->
-                    val bookId = viewModel.bookId
-                    lifecycleScope.launch {
-                        runCatching {
-                            viewModel.repository.deleteBook(bookId)
-                            viewModel.repository.clearCache()
-                            // Delete local temp cache files (chunk MP3, video, scene audio)
-                            val cacheDir = requireContext().cacheDir
-                            cacheDir.listFiles()?.forEach { file ->
-                                if (file.name.startsWith("chunk-") || file.name.startsWith("video-") || file.name.startsWith("scene_audio-")) {
-                                    file.delete()
-                                }
+            AppDialogs.action(
+                ctx = requireContext(),
+                title = getString(R.string.settings_delete_vbook),
+                content = dialogBinding.root,
+                cancelText = getString(R.string.dialog_cancel),
+                actionText = getString(android.R.string.ok),
+            ) { dlg ->
+                dlg.dismiss()
+                val bookId = viewModel.bookId
+                lifecycleScope.launch {
+                    runCatching {
+                        viewModel.repository.deleteBook(bookId)
+                        viewModel.repository.clearCache()
+                        // Delete local temp cache files (chunk MP3, video, scene audio)
+                        val cacheDir = requireContext().cacheDir
+                        cacheDir.listFiles()?.forEach { file ->
+                            if (file.name.startsWith("chunk-") || file.name.startsWith("video-") || file.name.startsWith("scene_audio-")) {
+                                file.delete()
                             }
-                            // Clear both ViewModels to prevent stale state from
-                            // lingering after book deletion (preloadCache,
-                            // chunkQueue, chunkPositions, UI state, etc.)
-                            viewModel.closeBook()
-                            playbackViewModel.closeBook()
-                        }.onSuccess {
-                            Toast.makeText(requireContext(), R.string.settings_delete_vbook_done, Toast.LENGTH_SHORT).show()
-                        }.onFailure { e ->
-                            Toast.makeText(requireContext(), "Error: ${e.message}", Toast.LENGTH_LONG).show()
                         }
+                        // Clear both ViewModels to prevent stale state from
+                        // lingering after book deletion (preloadCache,
+                        // chunkQueue, chunkPositions, UI state, etc.)
+                        viewModel.closeBook()
+                        playbackViewModel.closeBook()
+                    }.onSuccess {
+                        Toast.makeText(requireContext(), R.string.settings_delete_vbook_done, Toast.LENGTH_SHORT).show()
+                    }.onFailure { e ->
+                        Toast.makeText(requireContext(), "Error: ${e.message}", Toast.LENGTH_LONG).show()
                     }
                 }
-                .setNegativeButton(android.R.string.cancel, null)
-                .show()
+            }.show()
         }
 
         b.toolbar.setNavigationOnClickListener {

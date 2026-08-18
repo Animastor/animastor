@@ -628,34 +628,30 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         def.fields.forEach { f -> addField(getString(f.labelRes), f.key, f.multiline) }
         container.addView(errorText)
 
-        val dialog = androidx.appcompat.app.AlertDialog.Builder(ctx)
-            .setTitle(def.addTitleRes)
-            .setView(container)
-            .setNegativeButton(R.string.dialog_cancel, null)
-            .setPositiveButton(R.string.edit_save, null)
-            .create()
-
-        dialog.setOnShowListener {
-            dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                val values = inputs.mapValues { (_, et) -> et.text?.toString()?.trim() ?: "" }
-                val name = values["name"] ?: ""
-                if (name.isBlank()) {
-                    errorText.text = getString(R.string.entity_name_required)
-                    errorText.visibility = View.VISIBLE
-                    return@setOnClickListener
-                }
-                val id = values["id"] ?: ""
-                if (id.isNotBlank() && id in existingIds) {
-                    errorText.text = getString(R.string.entity_id_exists)
-                    errorText.visibility = View.VISIBLE
-                    return@setOnClickListener
-                }
-                errorText.visibility = View.GONE
-                dialog.dismiss()
-                createEntity(kind, values, bookId)
+        AppDialogs.action(
+            ctx = ctx,
+            title = getString(def.addTitleRes),
+            content = container,
+            cancelText = getString(R.string.dialog_cancel),
+            actionText = getString(R.string.edit_save),
+        ) { dlg ->
+            val values = inputs.mapValues { (_, et) -> et.text?.toString()?.trim() ?: "" }
+            val name = values["name"] ?: ""
+            if (name.isBlank()) {
+                errorText.text = getString(R.string.entity_name_required)
+                errorText.visibility = View.VISIBLE
+                return@action
             }
-        }
-        dialog.show()
+            val id = values["id"] ?: ""
+            if (id.isNotBlank() && id in existingIds) {
+                errorText.text = getString(R.string.entity_id_exists)
+                errorText.visibility = View.VISIBLE
+                return@action
+            }
+            errorText.visibility = View.GONE
+            dlg.dismiss()
+            createEntity(kind, values, bookId)
+        }.show()
     }
 
     private fun createEntity(kind: EntityKind, values: Map<String, String>, bookId: String) {
@@ -680,34 +676,35 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         val def = entityDef(kind)
         val ctx = requireContext()
         val bookId = viewModel.bookId.takeIf { it.isNotBlank() } ?: return
-        val dialog = androidx.appcompat.app.AlertDialog.Builder(ctx)
-            .setTitle(def.deleteTitleRes)
-            .setMessage(def.deleteConfirmRes)
-            .setNegativeButton(R.string.dialog_cancel, null)
-            .setPositiveButton(R.string.entity_delete_btn, null)
-            .create()
-        dialog.setOnShowListener {
-            // Soft red accent for the destructive action (colorError, not bright red)
-            dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE)
-                .setTextColor(MaterialColors.getColor(dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE), com.google.android.material.R.attr.colorError))
-            dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                dialog.dismiss()
-                lifecycleScope.launch {
-                    try {
-                        when (kind) {
-                            EntityKind.CHARACTER -> viewModel.repository.deleteCharacter(bookId, id)
-                            EntityKind.LOCATION -> viewModel.repository.deleteLocation(bookId, id)
-                            EntityKind.VOICE -> viewModel.repository.deleteVoice(bookId, id)
-                        }
-                        reloadEntityTable()
-                    } catch (e: Exception) {
-                        Log.e("EditFragment", "entity delete failed", e)
-                        showSaveError("${e::class.simpleName}: ${e.message ?: "unknown"}")
+        val message = TextView(ctx).apply {
+            text = getString(def.deleteConfirmRes)
+            textSize = 14f
+            setTextColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorOnSurface))
+            setLineSpacing(0f, 1.45f)
+        }
+        AppDialogs.action(
+            ctx = ctx,
+            title = getString(def.deleteTitleRes),
+            content = message,
+            cancelText = getString(R.string.dialog_cancel),
+            actionText = getString(R.string.entity_delete_btn),
+            destructive = true,
+        ) { dlg ->
+            dlg.dismiss()
+            lifecycleScope.launch {
+                try {
+                    when (kind) {
+                        EntityKind.CHARACTER -> viewModel.repository.deleteCharacter(bookId, id)
+                        EntityKind.LOCATION -> viewModel.repository.deleteLocation(bookId, id)
+                        EntityKind.VOICE -> viewModel.repository.deleteVoice(bookId, id)
                     }
+                    reloadEntityTable()
+                } catch (e: Exception) {
+                    Log.e("EditFragment", "entity delete failed", e)
+                    showSaveError("${e::class.simpleName}: ${e.message ?: "unknown"}")
                 }
             }
-        }
-        dialog.show()
+        }.show()
     }
 
     /** Re-fetch the canonical book and rebuild the current tab — the table

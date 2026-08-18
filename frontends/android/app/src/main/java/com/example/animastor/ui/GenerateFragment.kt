@@ -943,22 +943,24 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
         // Default selection: whole_book
         binding.scopeWholeBook.isChecked = true
 
-        androidx.appcompat.app.AlertDialog.Builder(requireContext())
-            .setTitle(R.string.generate_dialog_title)
-            .setView(binding.root)
-            .setNegativeButton(R.string.dialog_cancel, null)
-            .setPositiveButton(R.string.dialog_start) { _, _ ->
-                val scope = when (binding.scopeGroup.checkedRadioButtonId) {
-                    R.id.scopeCurrentScene -> "current_scene"
-                    R.id.scopeCurrentChapter -> "current_chapter"
-                    R.id.scopeFromCurrentScene -> "from_current_scene"
-                    else -> "whole_book"
-                }
-                val chId: String? = if (scope != "whole_book") pos.chapterId else null
-                val scId: String? = if (scope == "current_scene" || scope == "from_current_scene") pos.sceneId else null
-                onStart(scope, chId, scId)
+        AppDialogs.action(
+            ctx = requireContext(),
+            title = getString(R.string.generate_dialog_title),
+            content = binding.root,
+            cancelText = getString(R.string.dialog_cancel),
+            actionText = getString(R.string.dialog_start),
+        ) { dlg ->
+            val scope = when (binding.scopeGroup.checkedRadioButtonId) {
+                R.id.scopeCurrentScene -> "current_scene"
+                R.id.scopeCurrentChapter -> "current_chapter"
+                R.id.scopeFromCurrentScene -> "from_current_scene"
+                else -> "whole_book"
             }
-            .show()
+            val chId: String? = if (scope != "whole_book") pos.chapterId else null
+            val scId: String? = if (scope == "current_scene" || scope == "from_current_scene") pos.sceneId else null
+            dlg.dismiss()
+            onStart(scope, chId, scId)
+        }.show()
     }
 
     // ═══════════════════════════════════════════════════════════════

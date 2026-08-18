@@ -205,6 +205,14 @@
         <item name="android:textSize">15sp</item>
         <item name="elevation">2dp</item>
     </style>
+    <style name="Widget.Animastor.Button.Error" parent="Widget.Material3.Button">
+        <item name="cornerRadius">18dp</item>
+        <item name="backgroundTint">@color/cinema_error</item>
+        <item name="android:textColor">?attr/colorOnError</item>
+        <item name="android:textAllCaps">false</item>
+        <item name="android:textSize">15sp</item>
+        <item name="elevation">2dp</item>
+    </style>
     <style name="Widget.Animastor.Button.Tonal" parent="Widget.Material3.Button.TonalButton">
         <item name="cornerRadius">18dp</item>
         <item name="backgroundTint">?attr/colorSurfaceVariant</item>

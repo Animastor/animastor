@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Web-parity action row for AppDialogs.action — compact outlined cancel +
+     filled action (primary by default, destructive tint applied in code),
+     right-aligned with an 8dp gap like the web's .modal__footer. The buttons
+     keep MaterialButton's default insets (6dp): the outlined stroke is drawn
+     inside the button bounds, so a hair of edge clipping can never slice it. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="horizontal"
+    android:gravity="end">
+
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/dialogCancelButton"
+        android:layout_width="wrap_content"
+        android:layout_height="52dp"
+        android:layout_marginEnd="8dp"
+        android:textSize="13sp"
+        android:gravity="center"
+        style="@style/Widget.Animastor.Button.Outlined" />
+
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/dialogActionButton"
+        android:layout_width="wrap_content"
+        android:layout_height="52dp"
+        android:textSize="15sp"
+        android:gravity="center"
+        style="@style/Widget.Animastor.Button" />
+
+</LinearLayout>
