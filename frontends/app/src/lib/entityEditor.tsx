@@ -217,7 +217,7 @@ export function DeleteConfirmDialog({ title, message, busy, error, onConfirm, on
     <Modal title={title} onClose={onClose} footer={
       <>
         <button type="button" class="btn btn--outlined" disabled={busy} onClick={onClose}>{t('dialog_cancel')}</button>
-        <button type="button" class="btn btn--error" disabled={busy} onClick={onConfirm}>
+        <button type="button" class="btn btn--error-solid" disabled={busy} onClick={onConfirm}>
           {busy ? t('edit_saving') : t('entity_delete_btn')}
         </button>
       </>

@@ -1183,6 +1183,15 @@ button { font: inherit; color: inherit; }
   width: 100%;
 }
 .btn--error:active { background: var(--error-container); }
+/* Solid destructive button (delete-confirm dialog): the base .btn paints the
+   dark-red --primary background, kept as the danger color; the label switches
+   to the designed on-primary (near-white) instead of .btn--error's --error
+   text, which read as "red on red". ~11:1 contrast in both themes. Natural
+   width in the right-aligned modal footer — no 100% stretch (that belongs to
+   the full-width Settings buttons only). */
+.btn--error-solid {
+  color: var(--on-primary);
+}
 
 /* Settings: stacked group with a 13sp bold section label (Android TextView
    letterSpacing 0.06 + bold onSurface) above a full-width control. */
