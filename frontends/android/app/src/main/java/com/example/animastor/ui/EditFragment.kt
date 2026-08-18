@@ -514,6 +514,9 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
             setImageResource(R.drawable.ic_remove)
             // Soft destructive accent: error icon on error-container rounded square
             // (square-ish, small corner radius — not an aggressive bright-red control).
+            // Thin 1dp error stroke keeps the button readable against the card
+            // (web parity: .entity-del-btn border) — without it the light theme
+            // blends the pale error-container square into the card.
             val errorColor = MaterialColors.getColor(this, com.google.android.material.R.attr.colorError)
             val errorContainerColor = MaterialColors.getColor(this, com.google.android.material.R.attr.colorErrorContainer)
             imageTintList = android.content.res.ColorStateList.valueOf(errorColor)
@@ -521,6 +524,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                 shape = android.graphics.drawable.GradientDrawable.RECTANGLE
                 cornerRadius = (6 * dm.density + 0.5f).toInt().toFloat()
                 setColor(errorContainerColor)
+                setStroke((1 * dm.density + 0.5f).toInt(), errorColor)
             }
             layoutParams = LinearLayout.LayoutParams(sz, sz)
             setPadding(pad, pad, pad, pad)
@@ -2152,8 +2156,8 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                             val changed = mutableMapOf<String, String>()
                             fields.forEach { (k, v) ->
                                 val oldVal = when {
-                                    k == "name" -> orig?.name ?: ""
-                                    k.startsWith("passport.") -> passportFieldText(orig?.passport, k.removePrefix("passport."))
+                                    k == "name" -> orig.name ?: ""
+                                    k.startsWith("passport.") -> passportFieldText(orig.passport, k.removePrefix("passport."))
                                     else -> ""
                                 }
                                 if (v != oldVal) changed[k] = v
