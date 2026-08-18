@@ -77,7 +77,11 @@ function normalizeAssembly(profile, type, profileName) {
             : []
     );
     const defaults = { ...base.defaults, ...(profile?.assembly?.defaults || {}) };
-    return { profileName, type, sections, suppress, defaults };
+    // Pass through model-specific video metadata (frameAlignment, requiresTrim,
+    // requiresKeyframeForcing) when present in the profile JSON. Downstream
+    // video merge/assembly uses this to decide alignment strategy per model.
+    const video = profile?.video || null;
+    return { profileName, type, sections, suppress, defaults, video };
 }
 
 /**

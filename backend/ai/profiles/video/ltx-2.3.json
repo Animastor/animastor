@@ -4,6 +4,11 @@
   "model": "LTX-2.3",
   "workflow": "video-ltx-*",
   "skill": "video/ltx-2.3",
+  "video": {
+    "frameAlignment": 8,
+    "requiresTrim": true,
+    "requiresKeyframeForcing": true
+  },
   "assembly": {
     "sections": [
       "characters",

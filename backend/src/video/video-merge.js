@@ -3,6 +3,8 @@ const path = require('path');
 const fs = require('fs');
 const { spawn, spawnSync } = require('child_process');
 const videoTimeline = require('./video-timeline');
+const { resolveAssembly } = require('../image/assembly-profile');
+const profileOverride = require('../services/profile-override');
 
 // Alignment constants — MUST mirror video-workflows.js (calculateFrames):
 const ALIGN_FPS = parseInt(process.env.VIDEO_FPS || '24', 10);
@@ -11,6 +13,28 @@ const MIN_VIDEO_BYTES = 10240;
 
 function getOutputPath(...parts) {
     return path.join(config.OUTPUT_DIR, ...parts.filter(Boolean));
+}
+
+/** Resolve the active video profile's model-specific metadata from
+ *  ai/profiles/video/{profileName}.json (via assembly-profile resolver).
+ *  Returns { frameAlignment, requiresTrim, requiresKeyframeForcing } or null
+ *  when no profile is configured or the profile has no video section.
+ *
+ *  Profile resolution priority mirrors video-workflows.js:
+ *  user override → connector's profile.videoProfile → null (no profile).
+ *  Uses profileOverride's connectorProfileName() which reads the connector's
+ *  default via the workflow loader (safe — already loaded at startup). */
+function resolveVideoProfileMeta() {
+    try {
+        const profileName = profileOverride.getOverride('video')
+            || profileOverride.connectorProfileName('video')
+            || null;
+        if (!profileName) return null;
+        const assembly = resolveAssembly('video', profileName);
+        return assembly?.video || null;
+    } catch {
+        return null;
+    }
 }
 
 const logPrefix = '[VIDEO-MERGE]';
@@ -219,7 +243,7 @@ function probeVideoBitrateKbps(filePath) {
  *  see playbackVideoEncodeArgs). Audio (if any) is copied. durationsOverride
  *  (unit durations, seconds) bypasses the DB lookup — used by the batch
  *  re-encode tool for existing builds whose DB rows may be gone. */
-async function forceKeyframesAtUnitBoundaries(videoPath, buildId, bookId, chapterId, sceneId, durationsOverride = null) {
+async function forceKeyframesAtUnitBoundaries(videoPath, buildId, bookId, chapterId, sceneId, durationsOverride = null, bitrateKbps = null) {
     try {
         const durations = durationsOverride || await loadSceneUnitDurations(buildId, bookId, chapterId, sceneId);
         if (!durations || durations.length <= 1) return true; // single unit — keyframe at 0 exists
@@ -253,11 +277,12 @@ async function forceKeyframesAtUnitBoundaries(videoPath, buildId, bookId, chapte
 
         const expr = 'expr:' + indices.map(i => `eq(n,${i})`).join('+');
         const tmp = videoPath + '.kf.mp4';
-        // +faststart (moov at front) comes from encodePlaybackProfile: the
-        // merged scene video is served to the players; without it the moov sits
-        // at the file end and the player can't start/seek until the whole file
-        // is downloaded.
-        await encodePlaybackProfile(videoPath, tmp, expr);
+        // Encode with the specified bitrate (PLAYBACK for player, SOURCE for
+        // export) or fall back to the playback profile (backward-compatible).
+        const kbps = (bitrateKbps != null && bitrateKbps > 0)
+            ? bitrateKbps
+            : config.PLAYBACK_VIDEO_BITRATE_KBPS;
+        await encodeVideoProfile(videoPath, tmp, kbps, expr);
         if (fs.existsSync(tmp) && fs.statSync(tmp).size >= MIN_VIDEO_BYTES) {
             fs.renameSync(tmp, videoPath);
             log(`Forced keyframes at frames [${indices.join(', ')}] (unit boundaries ${boundaries.map(b => b.toFixed(3)).join(', ')}s)`);
@@ -275,8 +300,20 @@ async function forceKeyframesAtUnitBoundaries(videoPath, buildId, bookId, chapte
 /** Trim every group clip to its exact audio-duration frame count so the merged
  *  scene video's timeline equals the audio/start_ms timeline (removes the
  *  8n+1 alignment tax per group). Returns the trimmed file list (original
- *  files untouched). Degrades gracefully — on any failure returns originals. */
-async function alignGroupClips(files, buildId, bookId, chapterId, sceneId) {
+ *  files untouched). Degrades gracefully — on any failure returns originals.
+ *
+ *  Profile-driven: when profileMeta.requiresTrim is explicitly false, trimming
+ *  is skipped (non-LTX models produce clips at exact frame counts — no tax).
+ *  When profileMeta is null (no profile resolved), trimming proceeds as before
+ *  (safe default: trimming non-LTX clips is a no-op since toValidLTXFrames
+ *  equals rawSum for non-8-aligned totals). */
+async function alignGroupClips(files, buildId, bookId, chapterId, sceneId, profileMeta = null) {
+    // Profile-driven skip: non-LTX models have no alignment tax.
+    if (profileMeta && profileMeta.requiresTrim === false) {
+        log(`alignGroupClips: skip (profile ${profileMeta.frameAlignment}-aligned, no trim needed) for ${bookId}/${chapterId}/${sceneId}`);
+        return files;
+    }
+
     try {
         const durations = await loadSceneUnitDurations(buildId, bookId, chapterId, sceneId);
         if (!durations) return files;
@@ -387,9 +424,13 @@ async function mergeSceneVideoGroups(redis, buildId, bookId, chapterId, sceneId,
 
         const tempPath = finalPath + '.merge.mp4';
 
+        // Profile-driven alignment: resolve the active video profile's metadata
+        // (e.g. LTX 8N+1 requires trim; non-LTX models don't).
+        const videoMeta = resolveVideoProfileMeta();
+
         // Align each group clip to the audio timeline before concat so the
         // merged video's unit boundaries match start_ms (see video-timeline.js).
-        const alignedFiles = await alignGroupClips(files, buildId, bookId, chapterId, sceneId);
+        const alignedFiles = await alignGroupClips(files, buildId, bookId, chapterId, sceneId, videoMeta);
         log(`Merging ${alignedFiles.length} video groups for ${bookId}/${chapterId}/${sceneId}`);
         const result = await concatVideos(alignedFiles, tempPath);
         if (!result) return null;
@@ -429,8 +470,9 @@ async function mergeSceneVideoGroups(redis, buildId, bookId, chapterId, sceneId,
 /** Export build: merge the SOURCE group clips (_gN.mp4, master quality) into a
  *  single book video — NOT the playback-profile merged scene files, so the
  *  final export keeps the pipeline's original quality. Per scene the groups are
- *  concat'd losslessly (-c copy), then the scene files are concat'd. Used by
- *  the export route; the Player keeps using the lightweight scene merges. */
+ *  aligned (profile-driven 8N+1 trim), then concat'd, then forced keyframes
+ *  at unit boundaries (SOURCE bitrate, not playback). Used by the export
+ *  route; the Player keeps using the lightweight scene merges. */
 async function mergeBookVideosFromSources(redis, bookId, buildId, scenes) {
     const lockKey = `animastor:video-book-merge-lock:${bookId}`;
     const lock = await redis.set(lockKey, buildId, 'NX', 'EX', 600);
@@ -443,6 +485,9 @@ async function mergeBookVideosFromSources(redis, bookId, buildId, scenes) {
         const tempPath = finalPath + '.book.mp4';
         const sceneVideos = [];
         const temps = [];
+        // Profile-driven alignment for the export path: resolve once for the
+        // whole book (all scenes use the same video model).
+        const videoMeta = resolveVideoProfileMeta();
         try {
             for (const scene of scenes) {
                 const groups = findSceneVideoGroups(buildId, bookId, scene.chapter_id, scene.scene_id);
@@ -462,11 +507,34 @@ async function mergeBookVideosFromSources(redis, bookId, buildId, scenes) {
                     sceneVideos.push(groups[0]);
                     continue;
                 }
+                // Profile-driven alignment: trim group clips to exact audio
+                // frame counts before concat (removes LTX 8N+1 padding when
+                // the active profile requires it).
+                const aligned = await alignGroupClips(
+                    groups, buildId, bookId, scene.chapter_id, scene.scene_id, videoMeta
+                );
                 const sceneTemp = getOutputPath(buildId, `${bookId}_${scene.chapter_id}_${scene.scene_id}.src.mp4`);
-                const merged = await concatVideos(groups, sceneTemp);
+                const merged = await concatVideos(aligned, sceneTemp);
                 if (!merged) continue;
+
+                // Force keyframes at unit boundaries in the export scene video
+                // (SOURCE bitrate — export quality, not playback).
+                if (videoMeta?.requiresKeyframeForcing !== false) {
+                    await forceKeyframesAtUnitBoundaries(
+                        sceneTemp, buildId, bookId, scene.chapter_id, scene.scene_id,
+                        null, config.SOURCE_VIDEO_BITRATE_KBPS
+                    );
+                }
+
+                // Clean up trimmed intermediates.
+                for (const f of aligned) {
+                    if (f.endsWith('.trim.mp4')) {
+                        try { fs.unlinkSync(f); } catch {}
+                    }
+                }
+
                 temps.push(sceneTemp);
-                sceneVideos.push(merged);
+                sceneVideos.push(sceneTemp);
             }
 
             if (sceneVideos.length === 0) {
