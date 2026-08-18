@@ -26,7 +26,7 @@ const dict = {
     workflow: 'Workflow',
     developer_tools: 'Инструменты разработчика',
     vbook_settings_title: 'Настройки генерации VBook',
-    worker_settings_title: 'Настройки генерации',
+    worker_settings_title: 'Настройки генерации контента',
     // Placeholder
     coming_soon: 'Скоро',
     // Play Screen (strings.xml ru)
