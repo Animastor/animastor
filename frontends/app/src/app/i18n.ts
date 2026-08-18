@@ -117,7 +117,7 @@ const dict = {
     workflow_manager_no_workflows: 'Нет настроенных Workflow',
     workflow_manager_manage: 'Управление',
     // Worker counts (web-дополнение)
-    worker_settings_workers_title: 'Воркеры',
+    worker_settings_workers_title: 'Workers',
     worker_counts_fmt: '{0} доступно · {1} активно',
     worker_vbook: 'VBook',
     // Library

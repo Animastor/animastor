@@ -431,6 +431,13 @@
     <string name="generate_video_disabled">Генерация видео отключена. Включите переключатель выше.</string>
 
     <!-- Toggle chip labels -->
+    <!-- Prompt Profiles (Settings) -->
+    <string name="settings_prompt_profiles">Профили промптов</string>
+    <string name="settings_audio_profile">Профиль аудио</string>
+    <string name="settings_image_profile">Профиль изображений</string>
+    <string name="settings_video_profile">Профиль видео</string>
+    <string name="settings_profiles_saved_and_applied">Выбор сохраняется и применяется при генерации</string>
+
     <!-- Worker Settings -->
     <string name="worker_settings_title_audio">Настройки генерации аудио</string>
     <string name="worker_settings_title_image">Настройки генерации изображений</string>
@@ -440,6 +447,8 @@
     <string name="worker_settings_timeout_desc">Если генерация превышает это время, задача будет автоматически отправлена повторно</string>
     <string name="worker_settings_timeout_unit">мин</string>
     <string name="worker_settings_default">По умолчанию</string>
+    <string name="worker_settings_workers_title">Workers</string>
+    <string name="worker_counts_fmt">%1$d доступно · %2$d активно</string>
 
     <!-- Unified worker settings screen title (web parity: worker_settings_title) -->
     <string name="worker_settings_title">Настройки генерации контента</string>

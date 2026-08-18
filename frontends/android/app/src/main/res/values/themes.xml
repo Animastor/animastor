@@ -225,6 +225,22 @@
         <item name="android:textAllCaps">false</item>
     </style>
 
+    <!-- Segmented control button (web parity: .seg__btn). Transparent until
+         selected; the selected button fills with colorPrimary (bordeaux) and
+         onPrimary text — state driven by isSelected. -->
+    <style name="Widget.Animastor.SegButton" parent="Widget.Material3.Button">
+        <item name="cornerRadius">20dp</item>
+        <item name="backgroundTint">@color/seg_btn_bg</item>
+        <item name="android:textColor">@color/seg_btn_text</item>
+        <item name="android:textAllCaps">false</item>
+        <item name="android:textSize">13sp</item>
+        <item name="android:minHeight">0dp</item>
+        <item name="android:insetTop">0dp</item>
+        <item name="android:insetBottom">0dp</item>
+        <item name="elevation">0dp</item>
+        <item name="rippleColor">?attr/colorOnSurfaceVariant</item>
+    </style>
+
     <style name="Widget.Animastor.Button.Outlined.Error" parent="Widget.Material3.Button.OutlinedButton">
         <item name="cornerRadius">18dp</item>
         <item name="strokeColor">@color/cinema_error</item>

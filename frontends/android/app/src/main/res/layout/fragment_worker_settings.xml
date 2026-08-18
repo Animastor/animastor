@@ -18,48 +18,53 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent" />
 
-    <!-- Worker type switcher (web parity: the segmented control on /settings/worker
-         switches Audio/Image/Video within the single screen; the private gears on
-         Generator just pre-select the section). -->
-    <com.google.android.material.tabs.TabLayout
-        android:id="@+id/workerTabs"
+    <!-- Section switcher (web parity: the segmented Audio/Image/Video buttons on
+         /settings/worker, NOT the Editor tab strip). The container is a
+         surfaceVariant pill; the selected button fills with colorPrimary
+         (bordeaux) + onPrimary text, driven by isSelected. -->
+    <LinearLayout
+        android:id="@+id/workerSeg"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
-        android:background="?attr/colorSurface"
-        app:tabMode="fixed"
-        app:tabGravity="fill"
-        app:tabIndicatorHeight="2dp"
-        app:tabIndicatorColor="?attr/colorSecondary"
-        app:tabTextColor="?attr/colorOnSurfaceVariant"
-        app:tabSelectedTextColor="?attr/colorSecondary"
-        app:tabRippleColor="?attr/colorSecondaryContainer"
+        android:orientation="horizontal"
+        android:background="@drawable/bg_segmented"
+        android:padding="4dp"
         app:layout_constraintTop_toBottomOf="@id/toolbar"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent">
 
-        <com.google.android.material.tabs.TabItem
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/segAudioButton"
+            style="@style/Widget.Animastor.SegButton"
+            android:layout_width="0dp"
+            android:layout_height="40dp"
+            android:layout_weight="1"
             android:text="@string/layer_audio" />
 
-        <com.google.android.material.tabs.TabItem
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/segImageButton"
+            style="@style/Widget.Animastor.SegButton"
+            android:layout_width="0dp"
+            android:layout_height="40dp"
+            android:layout_weight="1"
             android:text="@string/layer_image" />
 
-        <com.google.android.material.tabs.TabItem
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/segVideoButton"
+            style="@style/Widget.Animastor.SegButton"
+            android:layout_width="0dp"
+            android:layout_height="40dp"
+            android:layout_weight="1"
             android:text="@string/layer_video" />
 
-    </com.google.android.material.tabs.TabLayout>
+    </LinearLayout>
 
     <ScrollView
         android:id="@+id/scrollView"
         android:layout_width="0dp"
         android:layout_height="0dp"
         android:scrollbars="vertical"
-        app:layout_constraintTop_toBottomOf="@id/workerTabs"
+        app:layout_constraintTop_toBottomOf="@id/workerSeg"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent">
@@ -69,6 +74,145 @@
             android:layout_height="wrap_content"
             android:orientation="vertical"
             android:padding="16dp">
+
+            <!-- ── Workers (availability) — /worker/counts ── -->
+            <com.google.android.material.card.MaterialCardView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="12dp"
+                app:cardCornerRadius="16dp"
+                app:cardElevation="1dp"
+                style="@style/Widget.Animastor.Card">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="20dp">
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/worker_settings_workers_title"
+                        android:textSize="13sp"
+                        android:textColor="?attr/colorOnSurface"
+                        android:letterSpacing="0.06"
+                        android:textStyle="bold" />
+
+                    <LinearLayout
+                        android:id="@+id/workerCountsContainer"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical"
+                        android:layout_marginTop="12dp">
+
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="horizontal"
+                            android:gravity="center_vertical">
+
+                            <TextView
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:text="@string/layer_audio"
+                                android:textSize="14sp"
+                                android:textColor="?attr/colorOnSurface" />
+
+                            <TextView
+                                android:id="@+id/workerAudioCount"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="12dp"
+                                android:textSize="14sp"
+                                android:textColor="?attr/colorOnSurface"
+                                android:textStyle="bold" />
+
+                        </LinearLayout>
+
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="12dp"
+                            android:orientation="horizontal"
+                            android:gravity="center_vertical">
+
+                            <TextView
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:text="@string/layer_image"
+                                android:textSize="14sp"
+                                android:textColor="?attr/colorOnSurface" />
+
+                            <TextView
+                                android:id="@+id/workerImageCount"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="12dp"
+                                android:textSize="14sp"
+                                android:textColor="?attr/colorOnSurface"
+                                android:textStyle="bold" />
+
+                        </LinearLayout>
+
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="12dp"
+                            android:orientation="horizontal"
+                            android:gravity="center_vertical">
+
+                            <TextView
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:text="@string/layer_video"
+                                android:textSize="14sp"
+                                android:textColor="?attr/colorOnSurface" />
+
+                            <TextView
+                                android:id="@+id/workerVideoCount"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="12dp"
+                                android:textSize="14sp"
+                                android:textColor="?attr/colorOnSurface"
+                                android:textStyle="bold" />
+
+                        </LinearLayout>
+
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="12dp"
+                            android:orientation="horizontal"
+                            android:gravity="center_vertical">
+
+                            <TextView
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:text="@string/worker_vbook"
+                                android:textSize="14sp"
+                                android:textColor="?attr/colorOnSurface" />
+
+                            <TextView
+                                android:id="@+id/workerVbookCount"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="12dp"
+                                android:textSize="14sp"
+                                android:textColor="?attr/colorOnSurface"
+                                android:textStyle="bold" />
+
+                        </LinearLayout>
+
+                    </LinearLayout>
+
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
 
             <!-- ── Profile Section ── -->
             <com.google.android.material.card.MaterialCardView
@@ -116,7 +260,7 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="8dp"
-                        android:text="@string/settings_profiles_determined_by_workflow"
+                        android:text="@string/settings_profiles_saved_and_applied"
                         android:textSize="12sp"
                         android:textColor="?attr/colorOnSurfaceVariant" />
 
@@ -180,9 +324,9 @@
                             android:layout_height="42dp"
                             android:layout_marginStart="8dp"
                             android:minWidth="0dp"
-                            android:paddingHorizontal="10dp"
+                            android:paddingHorizontal="12dp"
                             android:text="@string/worker_settings_default"
-                            android:textSize="11sp"
+                            android:textSize="13sp"
                             app:strokeWidth="1dp" />
 
                     </LinearLayout>
@@ -234,12 +378,11 @@
 
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/workflowButton"
-                        android:layout_width="wrap_content"
+                        android:layout_width="match_parent"
                         android:layout_height="42dp"
                         android:layout_marginTop="12dp"
-                        android:layout_gravity="end"
                         android:text="@string/workflow_manager_manage"
-                        android:textSize="14sp"
+                        android:textSize="13sp"
                         android:gravity="center"
                         style="@style/Widget.Animastor.Button.Outlined" />
 

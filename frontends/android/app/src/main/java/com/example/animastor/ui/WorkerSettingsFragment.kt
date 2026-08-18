@@ -11,14 +11,14 @@ import com.example.animastor.databinding.FragmentWorkerSettingsBinding
 import com.example.animastor.network.RetrofitClient
 import com.example.animastor.repository.LayerConfigUpdate
 import com.example.animastor.repository.UpdateProfileRequest
-import com.google.android.material.tabs.TabLayout
 import kotlinx.coroutines.launch
 
 /**
  * Unified per-worker settings screen (web parity: /settings/worker segmented
- * control). Shows profile selector, timeout configuration and workflow
- * management for one worker type (audio/image/video) at a time; the three
- * sections are switched through the [R.id.workerTabs] tab strip.
+ * control). Shows the Workers availability panel plus the profile selector,
+ * timeout configuration and workflow management for one worker type
+ * (audio/image/video) at a time; the three sections are switched through the
+ * [R.id.workerSeg] segmented buttons.
  *
  * Accepts [ARG_WORKER_TYPE] — the section to open initially. The Generator's
  * private gear icons pass the corresponding worker type (same settings, just a
@@ -62,24 +62,20 @@ class WorkerSettingsFragment : Fragment(R.layout.fragment_worker_settings) {
             return fragment
         }
 
-        private fun tabForWorkerType(type: String): Int = when (type) {
-            "image" -> 1
-            "video" -> 2
-            else -> 0
-        }
-
-        private fun workerTypeForTab(position: Int): String = when (position) {
-            1 -> "image"
-            2 -> "video"
-            else -> "audio"
-        }
-
         private fun workerTitle(context: android.content.Context, type: String): String = when (type) {
             "audio" -> context.getString(R.string.worker_settings_title_audio)
             "image" -> context.getString(R.string.worker_settings_title_image)
             "video" -> context.getString(R.string.worker_settings_title_video)
             else -> type
         }
+    }
+
+    /** Highlights the given worker type's segmented button (bordeaux fill). */
+    private fun selectSection(type: String) {
+        val b = binding ?: return
+        b.segAudioButton.isSelected = type == "audio"
+        b.segImageButton.isSelected = type == "image"
+        b.segVideoButton.isSelected = type == "video"
     }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
@@ -90,32 +86,42 @@ class WorkerSettingsFragment : Fragment(R.layout.fragment_worker_settings) {
         val initialType = arguments?.getString(ARG_WORKER_TYPE) ?: "audio"
 
         // Unified toolbar title (web parity: worker_settings_title); the section
-        // is shown by the tab strip below it.
+        // is shown by the segmented control below it.
         b.toolbar.title = getString(R.string.worker_settings_title)
         b.toolbar.setNavigationOnClickListener {
             parentFragmentManager.popBackStack()
         }
 
         // Rebuild the section content every time the selected section changes.
-        // The flag guards the initial select(): TabLayout may already have the
-        // initial tab selected on view-state restore, in which case select() is
-        // a no-op and the listener never fires — build explicitly then.
-        var rebuilt = false
-        b.workerTabs.addOnTabSelectedListener(object : TabLayout.OnTabSelectedListener {
-            override fun onTabSelected(tab: TabLayout.Tab) {
-                rebuilt = true
-                rebuildContent(workerTypeForTab(tab.position))
-            }
-            override fun onTabUnselected(tab: TabLayout.Tab) {}
-            override fun onTabReselected(tab: TabLayout.Tab) {
-                rebuilt = true
-                rebuildContent(workerTypeForTab(tab.position))
-            }
-        })
+        b.segAudioButton.setOnClickListener { selectSection("audio"); rebuildContent("audio") }
+        b.segImageButton.setOnClickListener { selectSection("image"); rebuildContent("image") }
+        b.segVideoButton.setOnClickListener { selectSection("video"); rebuildContent("video") }
 
-        b.workerTabs.getTabAt(tabForWorkerType(initialType))?.select()
-        if (!rebuilt) {
-            rebuildContent(initialType)
+        selectSection(initialType)
+        rebuildContent(initialType)
+        loadWorkerCounts()
+    }
+
+    /**
+     * Loads the worker availability counts (total/active per type) into the
+     * Workers panel. One fetch for the whole screen — counts are global, not
+     * per-section. On failure each row falls back to a dash (web parity).
+     */
+    private fun loadWorkerCounts() {
+        val b = binding ?: return
+        lifecycleScope.launch {
+            try {
+                val counts = RetrofitClient.api.getWorkerCounts()
+                b.workerAudioCount.text = getString(R.string.worker_counts_fmt, counts.audio, counts.active_audio)
+                b.workerImageCount.text = getString(R.string.worker_counts_fmt, counts.image, counts.active_image)
+                b.workerVideoCount.text = getString(R.string.worker_counts_fmt, counts.video, counts.active_video)
+                b.workerVbookCount.text = getString(R.string.worker_counts_fmt, counts.vbook, counts.active_vbook)
+            } catch (_: Exception) {
+                b.workerAudioCount.text = "\u2014"
+                b.workerImageCount.text = "\u2014"
+                b.workerVideoCount.text = "\u2014"
+                b.workerVbookCount.text = "\u2014"
+            }
         }
     }
 
