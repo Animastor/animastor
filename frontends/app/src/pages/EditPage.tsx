@@ -260,6 +260,8 @@ export function EditPage(props: { path?: string }) {
   const tabsScrollRef = useRef<HTMLDivElement | null>(null);
   const [canScrollLeft, setCanScrollLeft] = useState(false);
   const [canScrollRight, setCanScrollRight] = useState(false);
+  // Pending center-selected-tab retry (used while the strip has no layout yet).
+  const centerRafRef = useRef<number | null>(null);
 
   const bid = bookIdSignal.value;
   const bld = buildIdSignal.value;
@@ -1318,6 +1320,56 @@ export function EditPage(props: { path?: string }) {
 
   const scrollTabs = useCallback((direction: number) => {
     tabsScrollRef.current?.scrollBy({ left: direction * 160, behavior: 'smooth' });
+  }, []);
+
+  // Center the selected tab in the scrollable strip (Android parity:
+  // EditFragment.centerSelectedTab). Android computes the scroll position that
+  // puts the tab's center at the viewport's center —
+  //   target = tab.left − (viewportWidth − tabWidth)/2
+  // — clamps it to the scroll range and smooth-scrolls. If the selected tab is
+  // already centered (delta ≈ 0) the scroll is skipped. While the strip/tab
+  // has no layout (0 width) the attempt is retried on the next frame.
+  const centerSelectedTab = useCallback((index: number, attempts = 0) => {
+    const el = tabsScrollRef.current;
+    const tab = el ? (el.children[index] as HTMLElement | undefined) : undefined;
+    if (!el || !tab) return;
+    const viewport = el.clientWidth;
+    const tabWidth = tab.offsetWidth;
+    if (viewport <= 0 || tabWidth <= 0) {
+      if (attempts < 30) {
+        centerRafRef.current = requestAnimationFrame(() => centerSelectedTab(index, attempts + 1));
+      }
+      return;
+    }
+    const tabRect = tab.getBoundingClientRect();
+    const elRect = el.getBoundingClientRect();
+    // tab.left relative to the strip's content origin (scroll coordinate 0).
+    const tabLeft = tabRect.left - elRect.left;
+    const target = tabLeft - (viewport - tabWidth) / 2;
+    const maxScroll = Math.max(0, el.scrollWidth - viewport);
+    const clamped = Math.min(Math.max(target, 0), maxScroll);
+    // Already centered (or everything fits) — no redundant scroll.
+    if (Math.abs(clamped - el.scrollLeft) < 2) {
+      updateTabScrollIndicators();
+      return;
+    }
+    el.scrollTo({ left: clamped, behavior: 'smooth' });
+    updateTabScrollIndicators();
+  }, [updateTabScrollIndicators]);
+
+  // Center the selected tab on every switch — user taps AND programmatic
+  // switches (mount draft restore, draft-recover restore, default tab) all
+  // funnel through setTab, so this single effect covers both.
+  useEffect(() => {
+    if (centerRafRef.current != null) {
+      cancelAnimationFrame(centerRafRef.current);
+      centerRafRef.current = null;
+    }
+    centerSelectedTab(tab);
+  }, [tab, centerSelectedTab]);
+
+  useEffect(() => () => {
+    if (centerRafRef.current != null) cancelAnimationFrame(centerRafRef.current);
   }, []);
 
   // Initial + reactive scroll-indicator state. The chevrons must be computed on
