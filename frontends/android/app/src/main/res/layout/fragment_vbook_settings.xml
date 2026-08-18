@@ -53,9 +53,10 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:text="@string/vbook_settings_scenes_per_pass"
-                        android:textSize="15sp"
+                        android:textSize="13sp"
                         android:textColor="?attr/colorOnSurface"
-                        android:fontFamily="sans-serif-medium" />
+                        android:letterSpacing="0.06"
+                        android:textStyle="bold" />
 
                     <LinearLayout
                         android:layout_width="match_parent"
@@ -80,9 +81,9 @@
                             android:layout_height="42dp"
                             android:layout_marginStart="8dp"
                             android:minWidth="0dp"
-                            android:paddingHorizontal="10dp"
+                            android:paddingHorizontal="12dp"
                             android:text="@string/vbook_settings_default"
-                            android:textSize="11sp"
+                            android:textSize="13sp"
                             app:strokeWidth="1dp" />
 
                     </LinearLayout>

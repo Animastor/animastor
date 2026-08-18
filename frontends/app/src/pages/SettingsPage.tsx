@@ -445,7 +445,7 @@ function WorkerSection() {
         {error && <p class="settings-page__error">{error}</p>}
 
         {/* ── Workers (availability) — /worker/counts ── */}
-        <div class="card">
+        <div class="card card--counts">
           <h3 class="card__title">{t('worker_settings_workers_title')}</h3>
           {counts ? (
             COUNT_ROWS.map(({ key, activeKey, label }) => (
