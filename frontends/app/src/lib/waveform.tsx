@@ -215,6 +215,27 @@ export function Waveform(props: WaveformProps) {
   // Redraw on prop changes (invalidates()).
   useEffect(() => { draw(); }, [draw]);
 
+  // Redraw when the container resizes. Collapsing/expanding the desktop side
+  // wings (or resizing the window / rotating the device) changes the waveform's
+  // width without changing any prop — without a redraw the old canvas bitmap is
+  // CSS-stretched to the new box and the waveform smears, losing its
+  // proportions. The height stays fixed by CSS (4.5rem/72dp), so the redraw
+  // re-renders the peaks at the new width: more horizontal detail, same shape.
+  // ResizeObserver catches any layout change; window resize is the fallback
+  // where the API is unavailable (same pattern as the edit tab chevrons).
+  useEffect(() => {
+    const wrap = wrapRef.current;
+    if (!wrap) return;
+    if (typeof ResizeObserver === 'undefined') {
+      const onResize = () => draw();
+      window.addEventListener('resize', onResize);
+      return () => window.removeEventListener('resize', onResize);
+    }
+    const ro = new ResizeObserver(() => draw());
+    ro.observe(wrap);
+    return () => ro.disconnect();
+  }, [draw]);
+
   // Redraw per signal tick (playback rAF loop) without re-rendering the page.
   // The signal value must be written into playbackRef (which draw() reads) —
   // signal ticks alone never re-render, so without this the playhead would
