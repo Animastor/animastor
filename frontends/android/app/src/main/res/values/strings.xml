@@ -469,6 +469,9 @@
     <string name="worker_settings_timeout_unit">min</string>
     <string name="worker_settings_default">Default</string>
 
+    <!-- Unified worker settings screen title (web parity: worker_settings_title) -->
+    <string name="worker_settings_title">Generation Settings</string>
+
     <!-- VBook Settings -->
     <string name="vbook_settings_title">VBook Generation Settings</string>
     <string name="vbook_settings_scenes_per_pass">Scenes per pass</string>

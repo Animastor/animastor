@@ -441,6 +441,9 @@
     <string name="worker_settings_timeout_unit">мин</string>
     <string name="worker_settings_default">По умолчанию</string>
 
+    <!-- Unified worker settings screen title (web parity: worker_settings_title) -->
+    <string name="worker_settings_title">Настройки генерации контента</string>
+
     <!-- VBook Settings -->
     <string name="vbook_settings_title">Настройки генерации VBook</string>
     <string name="vbook_settings_scenes_per_pass">Сцен за раз</string>

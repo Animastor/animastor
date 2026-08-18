@@ -89,6 +89,26 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
         b.serverUrlInput.setText(BuildConfig.BASE_URL)
         b.debugInfo.text = "App: ${BuildConfig.VERSION_NAME}\nServer: ${BuildConfig.BASE_URL}"
 
+        // ── Generation settings nav rows (web parity) — the same settings as
+        // the Generator gear icons, but here the user picks the section. The
+        // VBook row opens the VBook screen; the Worker row opens the unified
+        // content screen with the Audio section first (the private gears on
+        // Generator pre-select their own section instead). ──
+        b.vbookSettingsButton.setOnClickListener {
+            val fragment = VBookSettingsFragment()
+            parentFragmentManager.beginTransaction()
+                .add(R.id.nav_host_container, fragment, "VBookSettingsFragment")
+                .addToBackStack(null)
+                .commit()
+        }
+        b.workerSettingsButton.setOnClickListener {
+            val fragment = WorkerSettingsFragment.newInstance("audio")
+            parentFragmentManager.beginTransaction()
+                .add(R.id.nav_host_container, fragment, "WorkerSettingsFragment")
+                .addToBackStack(null)
+                .commit()
+        }
+
         b.clearCacheButton.setOnClickListener {
             if (viewModel.bookId.isBlank()) {
                 // No book open — just clear local cache

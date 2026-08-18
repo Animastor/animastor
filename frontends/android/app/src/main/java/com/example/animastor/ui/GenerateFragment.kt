@@ -121,13 +121,13 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
             openVBookSettings()
         }
         b.audioSettingsButton.setOnClickListener {
-            openWorkerSettings("audio", getString(R.string.worker_settings_title_audio))
+            openWorkerSettings("audio")
         }
         b.imageSettingsButton.setOnClickListener {
-            openWorkerSettings("image", getString(R.string.worker_settings_title_image))
+            openWorkerSettings("image")
         }
         b.videoSettingsButton.setOnClickListener {
-            openWorkerSettings("video", getString(R.string.worker_settings_title_video))
+            openWorkerSettings("video")
         }
 
         // ── Observe layer config (toggle states) ──
@@ -777,8 +777,8 @@ class GenerateFragment : Fragment(R.layout.fragment_generate) {
             .commit()
     }
 
-    private fun openWorkerSettings(workerType: String, label: String) {
-        val fragment = WorkerSettingsFragment.newInstance(workerType, label)
+    private fun openWorkerSettings(workerType: String) {
+        val fragment = WorkerSettingsFragment.newInstance(workerType)
         parentFragmentManager.beginTransaction()
             .add(R.id.nav_host_container, fragment, "WorkerSettingsFragment")
             .addToBackStack(null)
