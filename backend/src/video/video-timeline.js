@@ -84,17 +84,19 @@ function rawFrameCounts(durations, fps) {
 }
 
 /** Tolerant frame-count match: a measured group frame count may equal the
- *  exact raw sum (non-LTX models) OR the LTX-rounded count (8n+1 tax) —
- *  anything in [rawSum, toValid(rawSum)] is a valid match. */
-function groupMatches(groupFrames, acc) {
-    return groupFrames >= acc && groupFrames <= toValidLTXFrames(acc);
+ *  exact raw sum (non-LTX models) OR the alignment-rounded count (frameAlignment
+ *  + 1 tax, 8n+1 for LTX) — anything in [rawSum, toValid(rawSum)] is a valid
+ *  match. frameAlignment defaults to the LTX 8n+1 tax. */
+function groupMatches(groupFrames, acc, frameAlignment) {
+    return groupFrames >= acc && groupFrames <= toValidLTXFrames(acc, frameAlignment);
 }
 
 /** Pure matching: given measured per-group clip durations, compute how many
  *  units each group contains and the per-group TARGET frame count — the exact
  *  audio-duration frame count the clip must be trimmed to so the merged video
- *  timeline aligns with the audio/start_ms timeline (removes the 8n+1 tax). */
-function computeGroupTargetFrames(rawFrames, groupSec, fps) {
+ *  timeline aligns with the audio/start_ms timeline (removes the alignment tax,
+ *  frameAlignment = the model's valid-frame step: 8 for LTX 8n+1). */
+function computeGroupTargetFrames(rawFrames, groupSec, fps, frameAlignment = 8) {
     const groupFrames = groupSec.map(s => Math.round(s * fps));
     const targets = [];
     let idx = 0;
@@ -105,7 +107,7 @@ function computeGroupTargetFrames(rawFrames, groupSec, fps) {
         while (idx < rawFrames.length) {
             acc += rawFrames[idx];
             idx++;
-            if (groupMatches(groupFrames[g], acc)) { matched = true; break; }
+            if (groupMatches(groupFrames[g], acc, frameAlignment)) { matched = true; break; }
             if (acc > groupFrames[g]) { idx = first; break; }
         }
         if (matched) {

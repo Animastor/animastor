@@ -545,8 +545,9 @@ function calculateFrames(iuDurations) {
     return { frameIndices, frameCounts, totalFrames };
 }
 
-function toValidLTXFrames(rawTotal) {
-    return Math.ceil((rawTotal - 1) / 8) * 8 + 1;
+function toValidLTXFrames(rawTotal, frameAlignment = 8) {
+    const n = Math.max(1, frameAlignment || 8);
+    return Math.ceil((rawTotal - 1) / n) * n + 1;
 }
 
 // ======================================================

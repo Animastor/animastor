@@ -98,7 +98,7 @@ async updateSceneVideoStatus(redis, bookId, chapterId, sceneId, status)
 **Особенности реализации:**
 - Группировка IU: максимум 4 изображения на группу (LTX limitation)
 - Выбор workflow: `video-ltx-1p`, `2p`, `3p`, `4p` по количеству IU в группе
-- FPS: 24, выравнивание кадров: 8n+1 (LTX requirement)
+- FPS: 24, выравнивание кадров: 8n+1 (LTX requirement; шаг и необходимость trim/keyframe-форсинга задаются видео-профилем — см. AUDIO_VIDEO_SYNC.md)
 - Видео-промпт включает: персонажи, timecode, окружение (из book.bible)
 - Возвращает `jobSpecs` для отправки в GPU Hub
 

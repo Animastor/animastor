@@ -39,7 +39,7 @@ Workflow в Animastor — это JSON-шаблоны, совместимые с 
 **Video Workflows** (`backend/src/workflows/video/video-workflows.js`):
 - `buildVideoWorkflows(sceneData, loadedBook, buildId, workflows)` — главный entry point
 - `selectWorkflowGroups(unitCount)` — выбирает шаблоны (1p/2p/3p/4p) в зависимости от количества IU
-- `calculateFrames(iuDurations)` — вычисляет индексы кадров с LTX-выравниванием (8n+1)
+- `calculateFrames(iuDurations)` — вычисляет индексы кадров с выравниванием (8n+1 для LTX; шаг выравнивания задаётся видео-профилем, см. AUDIO_VIDEO_SYNC.md)
 - `buildVideoPrompt(sceneData, loadedBook, units, iuDurations)` — собирает промпт с персонажами, временем, окружением
 - `buildVideoNegativePrompt(sceneData, units)` — собирает негативный промпт
 

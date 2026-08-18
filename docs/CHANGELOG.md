@@ -61,6 +61,27 @@ All notable changes to Animastor are documented here.
   (после добавления «Главы» таб по умолчанию уехал вправо); теперь после
   scroll-анимации выбора таб выравнивается по центру полосы (web-паритет).
 
+- **Видео: профильное выравнивание 8N+1 — trim и keyframe'ы как свойства
+  профиля** (backend, `video-merge.js`). Налог выравнивания LTX (8n+1) —
+  свойство активного видео-профиля (`ai/profiles/video/ltx-2.3.json`, секция
+  `video`: `frameAlignment=8`, `requiresTrim`, `requiresKeyframeForcing`), а не
+  безусловная глобальная логика. Экспорт получает то же выравнивание, что и
+  player-merge:
+  - `resolveVideoProfileMeta()` — резолвер по приоритету user override →
+    дефолт коннектора (`profile.videoProfile`) → null (старое поведение);
+  - `alignGroupClips()` обрезает каждый групповой чанк до точного аудио-числа
+    кадров (`trimVideoToFrames`, frame-exact `-c copy` + faststart) и пропускает
+    trim при `requiresTrim=false`; шаг матчинга берётся из `frameAlignment`
+    (threading в `computeGroupTargetFrames`/`toValidLTXFrames`);
+  - `forceKeyframesAtUnitBoundaries()` — keyframe'ы на границах юнитов на
+    заданном битрейте (SOURCE для экспорта, PLAYBACK для player);
+  - `mergeBookVideosFromSources()` выравнивает и форсирует keyframe'ы на
+    границах юнитов перед concat; одно-групповые сцены выравниваются так же
+    (таймлайн книги = аудио).
+  - Backward-compatible: `null`-профиль сохраняет прежнее безусловное
+    поведение (для чанков с точным числом кадров trim — no-op).
+  - Проверки: backend mocha-сьют (1164 passing).
+
 ### Changed
 
 - **Player: единая master timeline — аудио. Убран `video_start_ms` из Player.**
