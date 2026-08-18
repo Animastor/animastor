@@ -78,6 +78,7 @@
     <!-- Edit Screen -->
     <string name="edit_title">Редактор сцен</string>
     <string name="edit_placeholder">Выберите сцену для редактирования</string>
+    <string name="edit_chapter_tab">Глава</string>
     <string name="edit_scene">Сцена</string>
     <string name="edit_audio">Аудио</string>
     <string name="edit_units">Модули</string>
@@ -94,6 +95,7 @@
     <string name="edit_section_image">Изображение</string>
     <string name="edit_section_video">Видео</string>
     <!-- Секции сцены -->
+    <string name="edit_section_chapter_general">Общие параметры главы</string>
     <string name="edit_section_scene_general">Общие</string>
     <string name="edit_section_scene_characters">Персонажи</string>
     <string name="edit_section_scene_location">Локация</string>

@@ -38,6 +38,24 @@ All notable changes to Animastor are documented here.
     `entity-crud-routes.test.js`); web `tsc --noEmit` + vitest (38 passing) +
     `vite build`; Android `compileDebugKotlin` + `assembleDebug` + unit-тесты.
 
+- **Editor: «Глава» — отдельный первый селектор (Android + web).** Информация о
+  главе (ID + название) вынесена из таба «Сцена» в собственный первый таб
+  «Глава». Новая иерархия селекторов: Глава → Сцена → Аудио → Модуль/Юнит →
+  Characters/Voices/Locations/Global (порядок остальных табов не менялся).
+  - **Web** (`frontends/app/src/pages/EditPage.tsx`, `app/i18n.ts`): таб
+    `edit_chapter_tab` первым в `TABS`; отдельный chapter-level компонент
+    `buildChapterFields` (chapter_id read-only + редактируемый chapter_title —
+    сюда позже добавляются chapter-level параметры, напр. перекрытия паспортов);
+    `buildSceneFields` очищен от главы — остаются только Scene ID и scene-поля;
+    сохранение с таба «Глава» отправляет только `chapter_title`, с таба «Сцена»
+    он больше не отправляется.
+  - **Android** (`EditFragment.kt`, `fragment_edit.xml`, `strings.xml`): первый
+    TabItem «Глава»; `buildChapterFields` (id + название); `buildSceneFields`
+    очищен; индексы табов сдвинуты (rebuildContent, `ENTITY_TABS`, кнопка «+»,
+    таб по умолчанию, ветки сохранения Global/Locations/Characters/Voices).
+  - Проверки: web `tsc --noEmit` + vitest (38 passing); Android
+    `compileDebugKotlin` OK.
+
 ### Changed
 
 - **Player: единая master timeline — аудио. Убран `video_start_ms` из Player.**

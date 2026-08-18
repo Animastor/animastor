@@ -101,6 +101,7 @@
     <!-- Edit Screen -->
     <string name="edit_title">Scene Editor</string>
     <string name="edit_placeholder">Select a scene to edit</string>
+    <string name="edit_chapter_tab">Chapter</string>
     <string name="edit_scene">Scene</string>
     <string name="edit_audio">Audio</string>
     <string name="edit_units">Units</string>
@@ -268,6 +269,7 @@
     <string name="edit_section_video">Video</string>
 
     <!-- Edit Scene Section Labels -->
+    <string name="edit_section_chapter_general">Chapter general</string>
     <string name="edit_section_scene_general">General</string>
     <string name="edit_section_scene_characters">Characters</string>
     <string name="edit_section_scene_location">Location</string>

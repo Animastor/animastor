@@ -46,16 +46,19 @@ import { DeleteConfirmDialog, ENTITY_SCHEMAS, EntityAddButton, EntityDeleteButto
 import type { EntityKind } from '../lib/entityEditor';
 import { IconChevronDown, IconChevronLeft, IconChevronRight, IconChevronUp, IconClock, IconClose, IconFullscreen, IconImageOff, IconPlay, IconReset, IconSave, IconStop } from '../app/icons';
 
-// ── Tabs (propertyTabs) — default to Unit (index 2) like EditFragment ──
-const TABS = ['edit_scene', 'edit_audio', 'edit_units_tab', 'edit_characters_tab', 'edit_voices_tab', 'edit_locations_tab', 'edit_global_tab'] as const;
-const DEFAULT_TAB = 2;
-const SCENE_TAB = 0;
-const AUDIO_TAB = 1;
-const UNITS_TAB = 2;
-const CHARS_TAB = 3;
-const VOICES_TAB = 4;
-const LOCATIONS_TAB = 5;
-const GLOBAL_TAB = 6;
+// ── Tabs (propertyTabs) — Chapter is the first level, then Scene → Audio →
+//    Unit ("Модуль") → Characters/Voices/Locations/Global. Default to Unit
+//    (index 3) like EditFragment ──
+const TABS = ['edit_chapter_tab', 'edit_scene', 'edit_audio', 'edit_units_tab', 'edit_characters_tab', 'edit_voices_tab', 'edit_locations_tab', 'edit_global_tab'] as const;
+const DEFAULT_TAB = 3;
+const CHAPTER_TAB = 0;
+const SCENE_TAB = 1;
+const AUDIO_TAB = 2;
+const UNITS_TAB = 3;
+const CHARS_TAB = 4;
+const VOICES_TAB = 5;
+const LOCATIONS_TAB = 6;
+const GLOBAL_TAB = 7;
 
 const PASSPORT_OVERRIDE_FIELDS = ['appearance', 'clothes', 'video_tokens'];
 
@@ -1219,11 +1222,13 @@ export function EditPage(props: { path?: string }) {
       let fields: Record<string, string> = {};
       const body: Record<string, unknown> = { fields };
 
-      if (tab === SCENE_TAB) {
-        const sceneKeys = ['scene_title', 'type', 'style', 'participants', 'location.id', 'env.time', 'env.lighting', 'env.weather', 'env.mood', 'env.atmosphere', 'env.country', 'env.epoch'];
-        sceneKeys.forEach((k) => { if (k in fv) fields[k] = fv[k]; });
+      if (tab === CHAPTER_TAB) {
+        // Chapter-level fields only — chapter_title (and future chapter data).
         const chapterTitle = fv['chapter_title']?.trim();
         if (chapterTitle) body['chapter_title'] = chapterTitle;
+      } else if (tab === SCENE_TAB) {
+        const sceneKeys = ['scene_title', 'type', 'style', 'participants', 'location.id', 'env.time', 'env.lighting', 'env.weather', 'env.mood', 'env.atmosphere', 'env.country', 'env.epoch'];
+        sceneKeys.forEach((k) => { if (k in fv) fields[k] = fv[k]; });
       } else if (tab === AUDIO_TAB) {
         // Fixed routing deviation: write scene.audio.* (Android sends "voice"/
         // "full_text" which the server places at scene.voice — never read back).
@@ -1478,11 +1483,20 @@ export function EditPage(props: { path?: string }) {
     </div>
   );
 
-  const buildSceneFields = (sc: BookScene, ch: BookChapter | undefined): JSX.Element[] => {
+  // Chapter tab — a dedicated chapter-level component. Currently shows the
+  // chapter id + title; future chapter-level data (passport overrides, other
+  // chapter parameters) belongs here, NOT in the Scene tab.
+  const buildChapterFields = (ch: BookChapter | undefined): JSX.Element[] => {
+    const out: JSX.Element[] = [];
+    out.push(sectionLabel(t('edit_section_chapter_general')));
+    out.push(readonlyField('chapter_id', ch?.chapter_id ?? '—'));
+    out.push(inputCard(fieldLabel('chapter_title'), ch?.chapter_title ?? '', false, 'chapter_title'));
+    return out;
+  };
+
+  const buildSceneFields = (sc: BookScene): JSX.Element[] => {
     const out: JSX.Element[] = [];
     out.push(sectionLabel(t('edit_section_scene_general')));
-    out.push(readonlyField('chapter_id', ch?.chapter_id ?? '—'));
-    if (ch) out.push(inputCard(fieldLabel('chapter_title'), ch.chapter_title ?? '', false, 'chapter_title'));
     out.push(readonlyField('scene_id', sc.scene_id ?? '—'));
     ['scene_title', 'type', 'style'].forEach((key) => {
       out.push(inputCard(fieldLabel(key), readField(sc, key), (fieldValues.current[key]?.length ?? 0) > 80, key));
@@ -1709,13 +1723,14 @@ export function EditPage(props: { path?: string }) {
 
   // ── Tab content (rebuildContent) ──
   const renderContent = (): JSX.Element => {
+    if (tab === CHAPTER_TAB) return <>{buildChapterFields(chapters[currentChIndex])}</>;
     if (tab === CHARS_TAB) return <>{buildCharactersFields()}</>;
     if (tab === VOICES_TAB) return <>{buildVoicesFields()}</>;
     if (tab === LOCATIONS_TAB) return <>{buildLocationsFields()}</>;
     if (tab === GLOBAL_TAB) return <>{buildGlobalFields()}</>;
     const sc = currentScene();
     if (!sc) return <div class="edit-empty-inline" />;
-    if (tab === SCENE_TAB) return <>{buildSceneFields(sc, chapters[currentChIndex])}</>;
+    if (tab === SCENE_TAB) return <>{buildSceneFields(sc)}</>;
     if (tab === AUDIO_TAB) return <>{buildAudioFields(sc)}</>;
     return <>{buildUnitFields(sc)}</>;
   };

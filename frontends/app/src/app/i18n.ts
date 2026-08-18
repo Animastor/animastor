@@ -225,6 +225,7 @@ const dict = {
     navigate_open_in_player: 'Открыть в плеере',
     no_book_loaded: 'Книга не загружена',
     // Edit (strings.xml ru)
+    edit_chapter_tab: 'Глава',
     edit_scene: 'Сцена',
     edit_audio: 'Аудио',
     edit_units_tab: 'Модуль',
@@ -239,6 +240,7 @@ const dict = {
     edit_section_audio: 'Аудио',
     edit_section_image: 'Изображение',
     edit_section_video: 'Видео',
+    edit_section_chapter_general: 'Общие параметры главы',
     edit_section_scene_general: 'Общие',
     edit_section_scene_characters: 'Персонажи',
     edit_section_scene_location: 'Локация',
@@ -627,6 +629,7 @@ const dict = {
     navigate_open_in_player: 'Open in Player',
     no_book_loaded: 'No book loaded',
     // Edit (strings.xml en)
+    edit_chapter_tab: 'Chapter',
     edit_scene: 'Scene',
     edit_audio: 'Audio',
     edit_units_tab: 'Unit',
@@ -641,6 +644,7 @@ const dict = {
     edit_section_audio: 'Audio',
     edit_section_image: 'Image',
     edit_section_video: 'Video',
+    edit_section_chapter_general: 'Chapter general',
     edit_section_scene_general: 'General',
     edit_section_scene_characters: 'Characters',
     edit_section_scene_location: 'Location',

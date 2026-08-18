@@ -123,7 +123,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
     }
 
     /** Editor tab positions that render entity tables (characters/voices/locations). */
-    private val ENTITY_TABS = setOf(3, 4, 5)
+    private val ENTITY_TABS = setOf(4, 5, 6)
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
@@ -160,8 +160,8 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         // The button is only visible on the entity tabs (rebuildContent toggles it).
         b.entityAddButton.setOnClickListener {
             when (b.propertyTabs.selectedTabPosition) {
-                3 -> showAddEntityDialog(EntityKind.CHARACTER)
-                4 -> showAddEntityDialog(EntityKind.VOICE)
+                4 -> showAddEntityDialog(EntityKind.CHARACTER)
+                5 -> showAddEntityDialog(EntityKind.VOICE)
                 else -> showAddEntityDialog(EntityKind.LOCATION)
             }
         }
@@ -203,8 +203,8 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         b.timelineWaveform.onRangeChangeListener = { startMs, endMs -> handleRangeChange(startMs, endMs) }
         b.timelineWaveform.onRangeChangeEndListener = { _, _ -> handleRangeChangeEnd() }
 
-        // Default to Units tab
-        b.propertyTabs.getTabAt(2)?.select()
+        // Default to Units tab (index 3 — Chapter is now the first tab)
+        b.propertyTabs.getTabAt(3)?.select()
 
         // Initial scroll indicator state
         b.propertyTabs.post { updateTabScrollIndicators() }
@@ -1072,13 +1072,14 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
             val frame = binding?.contentFrame ?: return
             frame.removeAllViews()
             when (tab) {
-                0 -> buildSceneFields(frame)
-                1 -> buildFields(frame, listOf("voice", "full_text"))
-                2 -> buildUnitFields(frame)
-                3 -> buildCharactersFields(frame)
-                4 -> buildVoicesFields(frame)
-                5 -> buildLocationsFields(frame)
-                6 -> buildGlobalFields(frame)
+                0 -> buildChapterFields(frame)
+                1 -> buildSceneFields(frame)
+                2 -> buildFields(frame, listOf("voice", "full_text"))
+                3 -> buildUnitFields(frame)
+                4 -> buildCharactersFields(frame)
+                5 -> buildVoicesFields(frame)
+                6 -> buildLocationsFields(frame)
+                7 -> buildGlobalFields(frame)
             }
             // Entity tables (characters/voices/locations) get the floating "+"
             // overlay button — hidden on every other tab.
@@ -1535,10 +1536,33 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         b.tabScrollRight.alpha = if (canScrollRight) 1.0f else 0.3f
     }
 
+    /** Chapter tab — a dedicated chapter-level component. Currently shows the
+     *  chapter id + title; future chapter-level data (passport overrides, other
+     *  chapter parameters) belongs here, NOT in the Scene tab. */
+    private fun buildChapterFields(parent: ViewGroup) {
+        val ctx = parent.context
+        val ch = chapters.getOrNull(currentChIndex)
+        val ll = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, 0, 0, 8)
+        }
+
+        // ── Section: General chapter parameters ──
+        ll.addView(sectionLabel(ctx, getString(R.string.edit_section_chapter_general)))
+        // chapter_id is a read-only system field (kept in JSON style)
+        ll.addView(readOnlyCard(ctx, "chapter_id", ch?.chapter_id ?: "—"))
+        if (ch != null) {
+            val chTitleKey = "chapter_title"
+            if (!fieldValues.containsKey(chTitleKey)) fieldValues[chTitleKey] = ch.chapter_title ?: ""
+            ll.addView(inputCard(ctx, fieldLabel(chTitleKey), fieldValues[chTitleKey] ?: "", false, storeKey = chTitleKey))
+        }
+
+        parent.addView(ll)
+    }
+
     private fun buildSceneFields(parent: ViewGroup) {
         val ctx = parent.context
         val sc = currentScene() ?: return
-        val ch = chapters.getOrNull(currentChIndex)
         val ll = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(0, 0, 0, 8)
@@ -1546,13 +1570,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
 
         // ── Section: General scene parameters ──
         ll.addView(sectionLabel(ctx, getString(R.string.edit_section_scene_general)))
-        // chapter_id / scene_id are read-only system fields (kept in JSON style)
-        ll.addView(readOnlyCard(ctx, "chapter_id", ch?.chapter_id ?: "—"))
-        if (ch != null) {
-            val chTitleKey = "chapter_title"
-            if (!fieldValues.containsKey(chTitleKey)) fieldValues[chTitleKey] = ch.chapter_title ?: ""
-            ll.addView(inputCard(ctx, fieldLabel(chTitleKey), fieldValues[chTitleKey] ?: "", false, storeKey = chTitleKey))
-        }
+        // scene_id is a read-only system field (kept in JSON style)
         ll.addView(readOnlyCard(ctx, "scene_id", sc.scene_id ?: "—"))
         listOf("scene_title", "type", "style").forEach { key ->
             val v = readField(sc, key)
@@ -2020,8 +2038,8 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
 
             val selectedTab = binding?.propertyTabs?.selectedTabPosition ?: 0
 
-            // Global tab (6) — save book-level metadata via lightweight PATCH
-            if (selectedTab == 6) {
+            // Global tab (7) — save book-level metadata via lightweight PATCH
+            if (selectedTab == 7) {
                 setSaveLoading(true)
                 lifecycleScope.launch {
                     try {
@@ -2075,8 +2093,8 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                 return
             }
 
-            // Locations tab (5) — save per-location fields via dedicated PATCH
-            if (selectedTab == 5) {
+            // Locations tab (6) — save per-location fields via dedicated PATCH
+            if (selectedTab == 6) {
                 setSaveLoading(true)
                 lifecycleScope.launch {
                     try {
@@ -2122,12 +2140,12 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                 return
             }
 
-            // Characters tab (3) — dedicated PATCH per changed character
+            // Characters tab (4) — dedicated PATCH per changed character
             // (name + passport), mirroring the web EditPage CHARS_TAB branch.
             // Without this branch Android's generic save below pushed char.*
             // keys into the scene/unit object as junk that never reached
             // characters.json (the generator reads characters.json).
-            if (selectedTab == 3) {
+            if (selectedTab == 4) {
                 setSaveLoading(true)
                 lifecycleScope.launch {
                     try {
@@ -2192,10 +2210,10 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                 return
             }
 
-            // Voices tab (4) — dedicated PATCH per changed voice (instruction),
+            // Voices tab (5) — dedicated PATCH per changed voice (instruction),
             // mirroring the web EditPage VOICES_TAB branch. Same reasoning as
             // the characters branch: voice.* keys must not leak into scenes.
-            if (selectedTab == 4) {
+            if (selectedTab == 5) {
                 setSaveLoading(true)
                 lifecycleScope.launch {
                     try {
