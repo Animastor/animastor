@@ -47,10 +47,6 @@ object AppDialogs {
         // Hard content cap — never let the body alone exceed half the screen.
         val contentMaxHeight = (ctx.resources.displayMetrics.heightPixels * 0.45f).toInt()
 
-        // Body padding (web .modal__body: 0.75rem 1.25rem). Normalized here so
-        // every dialog gets the same comfortable insets regardless of caller.
-        content.setPadding(dp(20), dp(12), dp(20), 0)
-
         val titleView = TextView(ctx).apply {
             text = title
             textSize = 16f
@@ -81,7 +77,11 @@ object AppDialogs {
         // the dialog's bottom edge / rounded corners.
         footer.setPadding(dp(20), 0, dp(20), dp(28))
 
+        // Body insets (web .modal__body: 0.75rem 1.25rem) live on the scroll
+        // container, so caller content (form / notice panel / list) carries no
+        // outer padding of its own.
         val scroll = ScrollView(ctx).apply {
+            setPadding(dp(20), dp(12), dp(20), 0)
             addView(content)
         }
 
@@ -128,6 +128,20 @@ object AppDialogs {
         val dialog = AlertDialog.Builder(ctx)
             .setView(root)
             .create()
+
+        // Web-parity dialog surface: the theme's window background rendered a
+        // flat greyish panel in the dark theme; the web modal instead uses the
+        // theme surface (--surface ≈ colorSurface) with a thin outline border
+        // (--outline-2 ≈ colorOutlineVariant) and --radius-md corners. Set the
+        // window background explicitly so the surface relationship (app bg →
+        // dialog surface → hairline border) matches the web in both themes.
+        dialog.window?.setBackgroundDrawable(
+            android.graphics.drawable.GradientDrawable().apply {
+                cornerRadius = (18 * dm.density + 0.5f).toInt().toFloat()
+                setColor(MaterialColors.getColor(root, com.google.android.material.R.attr.colorSurface))
+                setStroke(dp(1), MaterialColors.getColor(root, com.google.android.material.R.attr.colorOutlineVariant))
+            },
+        )
 
         cancel.setOnClickListener { dialog.dismiss() }
         actionBtn.setOnClickListener { onAction(dialog) }

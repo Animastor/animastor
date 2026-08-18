@@ -4,12 +4,18 @@
     android:layout_height="wrap_content"
     android:orientation="vertical">
 
+    <!-- Web-parity notice panel (.modal__notice): surfaceVariant block with a
+         thin dashed outline around the warning text (bg_dialog_notice). -->
     <TextView
         android:id="@+id/dialogMessage"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:textSize="14sp"
         android:textColor="?attr/colorOnSurfaceVariant"
-        android:layout_marginBottom="4dp" />
+        android:background="@drawable/bg_dialog_notice"
+        android:padding="12dp"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp"
+        android:lineSpacingMultiplier="1.45" />
 
 </LinearLayout>

@@ -593,7 +593,8 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
 
         val container = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(24, 4, 24, 0)
+            // No own padding — AppDialogs' scroll container provides the body
+            // insets (12 top / 20 sides) like the web .modal__body.
         }
         val inputs = mutableMapOf<String, TextInputEditText>()
         val errorText = TextView(ctx).apply {
@@ -679,8 +680,15 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         val message = TextView(ctx).apply {
             text = getString(def.deleteConfirmRes)
             textSize = 14f
-            setTextColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorOnSurface))
+            setTextColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorOnSurfaceVariant))
             setLineSpacing(0f, 1.45f)
+            // Web-parity notice panel (.modal__notice): surfaceVariant block
+            // with a thin dashed outline around the warning text.
+            setBackgroundResource(R.drawable.bg_dialog_notice)
+            val dm = resources.displayMetrics
+            val pad = (12 * dm.density + 0.5f).toInt()
+            val padX = (16 * dm.density + 0.5f).toInt()
+            setPadding(padX, pad, padX, pad)
         }
         AppDialogs.action(
             ctx = ctx,
