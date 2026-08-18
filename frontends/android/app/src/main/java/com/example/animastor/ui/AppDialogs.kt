@@ -61,15 +61,16 @@ object AppDialogs {
         cancel.text = cancelText
         actionBtn.text = actionText
         if (destructive) {
-            // Filled destructive: colorError background + white label. The
-            // theme's colorOnError is dark in the light theme (reads as black
-            // on the rose fill), so the destructive label is explicitly white
-            // for a clear "danger" hierarchy — same role as the web's dark-red
-            // button with its near-white text.
+            // Filled destructive, matching the web's delete button exactly:
+            // the web uses --primary (#6E1F2A) with --on-primary (#F2E9DC) —
+            // the same values as Android's colorPrimary/colorOnPrimary tokens,
+            // so the button reads identically on both platforms.
             actionBtn.backgroundTintList = android.content.res.ColorStateList.valueOf(
-                MaterialColors.getColor(actionBtn, com.google.android.material.R.attr.colorError),
+                MaterialColors.getColor(actionBtn, com.google.android.material.R.attr.colorPrimary),
             )
-            actionBtn.setTextColor(android.graphics.Color.WHITE)
+            actionBtn.setTextColor(
+                MaterialColors.getColor(actionBtn, com.google.android.material.R.attr.colorOnPrimary),
+            )
         }
         // Footer insets (web .modal__footer: 0.75rem 1.25rem 1.25rem) — the top
         // gap is the layout margin below, sides/bottom live on the row itself.
