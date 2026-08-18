@@ -56,6 +56,11 @@ All notable changes to Animastor are documented here.
   - Проверки: web `tsc --noEmit` + vitest (38 passing); Android
     `compileDebugKotlin` OK.
 
+- **Android: выбранный по умолчанию таб «Модуль» центрируется в скролл-строке**
+  (`EditFragment.kt`) — `TabLayout.select()` прижимал таб к правому краю
+  (после добавления «Главы» таб по умолчанию уехал вправо); теперь после
+  scroll-анимации выбора таб выравнивается по центру полосы (web-паритет).
+
 ### Changed
 
 - **Player: единая master timeline — аудио. Убран `video_start_ms` из Player.**

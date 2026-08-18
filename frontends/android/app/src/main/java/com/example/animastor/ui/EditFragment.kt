@@ -206,6 +206,12 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         // Default to Units tab (index 3 — Chapter is now the first tab)
         b.propertyTabs.getTabAt(3)?.select()
 
+        // Center the default-selected tab in the scrollable strip: TabLayout's
+        // select() scrolls it into view but pins it to the right edge; wait out
+        // that scroll animation, then center the selected tab (web parity — the
+        // strip is scrollable and the initially selected tab must be centered).
+        b.propertyTabs.postDelayed({ centerSelectedTab() }, 350L)
+
         // Initial scroll indicator state
         b.propertyTabs.post { updateTabScrollIndicators() }
 
@@ -1523,6 +1529,25 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         val selectedTab = tabLayout.selectedTabPosition
         val newPos = (selectedTab + direction).coerceIn(0, tabLayout.tabCount - 1)
         tabLayout.getTabAt(newPos)?.select()
+    }
+
+    /** Center the selected tab in the scrollable tab strip. TabLayout's own
+     *  scroll-to-selected pins the tab to the viewport edge; this scrolls the
+     *  strip so the selected tab sits in the horizontal center. If the strip
+     *  isn't laid out yet (tab/viewport width 0), retry on the next frame. */
+    private fun centerSelectedTab() {
+        val tabLayout = binding?.propertyTabs ?: return
+        val tab = tabLayout.getTabAt(tabLayout.selectedTabPosition)?.view ?: return
+        if (tab.width <= 0 || tabLayout.width <= 0) {
+            tabLayout.post { centerSelectedTab() }
+            return
+        }
+        // tab.left is relative to the scrollable strip, so the scroll position
+        // that puts the tab's center at the viewport's center is:
+        //   tab.left + tab.width/2 − viewport/2 = tab.left − (viewport − tab.width)/2
+        val target = tab.left - (tabLayout.width - tab.width) / 2
+        tabLayout.smoothScrollTo(target.coerceAtLeast(0), 0)
+        updateTabScrollIndicators()
     }
 
     private fun updateTabScrollIndicators() {
