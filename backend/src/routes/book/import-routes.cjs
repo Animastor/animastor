@@ -55,6 +55,22 @@ module.exports = function(app, redis, deps) {
     } = deps;
     const { log } = utils;
 
+    // Workspace ownership (Account System foundation): every imported/loaded
+    // book gets a books row with a workspace. Non-fatal: PG down must not
+    // break imports — ownership self-heals via GET /api/v1/books.
+    const workspaceOwnership = deps.workspaceOwnership
+        || require('../../middleware/workspace-ownership');
+    const attachBookWorkspace = async (bookId, bookTitle, wsId) => {
+        try {
+            await workspaceOwnership.resolveWorkspaceForBook(bookId, {
+                bookTitle,
+                preferredWorkspaceId: wsId || null,
+            });
+        } catch (err) {
+            console.warn(`[IMPORT] Ownership attach failed for ${bookId} (non-fatal): ${err.message}`);
+        }
+    };
+
     // In-flight TXT trigger guard
     const inFlightTriggers = new Set();
 
@@ -169,6 +185,7 @@ app.post('/api/v1/book/import', multer().single('file'), async (req, res) => {
                 });
             }
 
+            await attachBookWorkspace(bookId, title, req.workspace?.id);
             return res.json({
                 format: 'vbook',
                 book_id: bookId, build_id: buildId, title,
@@ -242,6 +259,7 @@ app.post('/api/v1/book/import', multer().single('file'), async (req, res) => {
                     const em = JSON.parse(fs.readFileSync(lazyBook.getManifestPath(lazyBook.getBookDir(existingBookId)), 'utf8'));
                     existingBuildId = em.build_id || null;
                 } catch (_) {}
+                await attachBookWorkspace(existingBookId, title, req.workspace?.id);
                 return res.json({
                     format: 'txt',
                     book_id: existingBookId, build_id: existingBuildId, title, state: lazyBook.BookState.RAW_IMPORTED, dedup: true,
@@ -261,6 +279,7 @@ app.post('/api/v1/book/import', multer().single('file'), async (req, res) => {
             } catch (pgErr) {
                 console.warn(`[UNIFIED-IMPORT] Failed to register source (non-fatal): ${pgErr.message}`);
             }
+            await attachBookWorkspace(draft.bookId, title, req.workspace?.id);
 
             log(`[UNIFIED-IMPORT] RAW_IMPORTED: ${draft.bookId} (${sourceSize} bytes)`);
             return res.json({
@@ -384,6 +403,7 @@ function detectFileFormat(buf) {
                 });
             }
 
+            await attachBookWorkspace(bookId, title, req.workspace?.id);
             return res.json({
                 book_id: bookId, build_id: buildId, title,
                 chapter_count: chapterCount, scene_count: sceneCount,
@@ -523,6 +543,7 @@ function detectFileFormat(buf) {
                     const em = JSON.parse(fs.readFileSync(lazyBook.getManifestPath(lazyBook.getBookDir(existingBookId)), 'utf8'));
                     existingBuildId = em.build_id || null;
                 } catch (_) {}
+                await attachBookWorkspace(existingBookId, title, req.workspace?.id);
                 return res.json({
                     book_id: existingBookId, build_id: existingBuildId, title, state: lazyBook.BookState.RAW_IMPORTED, dedup: true,
                 });
@@ -541,6 +562,7 @@ function detectFileFormat(buf) {
             } catch (pgErr) {
                 console.warn(`[IMPORT-TXT] Failed to register source (non-fatal): ${pgErr.message}`);
             }
+            await attachBookWorkspace(draft.bookId, title, req.workspace?.id);
 
             log(`[IMPORT-TXT] RAW_IMPORTED: ${draft.bookId} (${sourceSize} bytes)`);
             return res.json({ book_id: draft.bookId, build_id: m.build_id, title, state: lazyBook.BookState.RAW_IMPORTED });

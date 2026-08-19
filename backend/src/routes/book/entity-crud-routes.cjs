@@ -580,7 +580,7 @@ module.exports = function (app, redis, deps) {
     //   manually with the Editor's +/- controls (AI stays an optional assistant).
     // Reuses generateBookId (paths.js) for the book id — no new id mechanism.
     // ======================================================
-    app.post('/api/v1/book/blank', (req, res) => {
+    app.post('/api/v1/book/blank', async (req, res) => {
         try {
             const { title } = req.body || {};
             const label = title && String(title).trim() ? String(title).trim() : 'Новая книга';
@@ -629,6 +629,16 @@ module.exports = function (app, redis, deps) {
                     }],
                 }],
             };
+
+            try {
+                const workspaceOwnership = require('../../middleware/workspace-ownership');
+                await workspaceOwnership.resolveWorkspaceForBook(bookId, {
+                    bookTitle: label,
+                    preferredWorkspaceId: req.workspace?.id || null,
+                });
+            } catch (err) {
+                console.warn(`[CREATE BLANK BOOK] Ownership attach failed for ${bookId} (non-fatal): ${err.message}`);
+            }
 
             book.saveBookBundle(blankBook, null);
             log(`[CREATE BLANK BOOK] ${bookId} (title=${label.slice(0, 40)})`);

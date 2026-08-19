@@ -121,6 +121,135 @@ describe('Recent Books (GET /api/v1/books)', () => {
     });
 });
 
+describe('Recent Books — workspace ownership filtering', () => {
+    // Account System foundation: GET /api/v1/books restricts to the caller's
+    // workspace once req.workspace.id is present. These tests pin the security
+    // contract:
+    //   * books owned by another workspace never leak;
+    //   * disk-scan fallback is skipped under a filter (no owner record);
+    //   * ownership rows are self-healed through resolveBookWorkspace;
+    //   * books known only to the books registry (blank/.vbook) still appear.
+    let tmpDir;
+    const WS_A = 'ws-workspace-a';
+    const WS_B = 'ws-workspace-b';
+
+    beforeEach(() => {
+        tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'animastor-recent-ws-'));
+    });
+
+    afterEach(() => {
+        try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (_) { /* ignore */ }
+    });
+
+    function makeDeps({ pgRows = [], ownedRows = [], onDisk = [] } = {}) {
+        const diskIds = new Set(onDisk);
+        for (const bookId of onDisk) {
+            fs.mkdirSync(path.join(tmpDir, bookId), { recursive: true });
+        }
+        const lazyBook = {
+            getBooksDir: () => tmpDir,
+            getBookStatus: (bookId) => {
+                if (!diskIds.has(bookId)) return null;
+                return { bookId, state: 'READY', title: `T ${bookId}`, parsedChapters: 1, parsedScenes: 2, updatedAt: 100 };
+            },
+            loadDraftBook: (bookId) => ({ manifest: { build_id: `build-${bookId}` } }),
+        };
+        return {
+            // Mirrors book-source-repo.listRecent: honours the workspace option —
+            // rows from other workspaces are filtered out server-side.
+            bookSourceRepo: {
+                listRecent: async (_limit, { workspaceId = null } = {}) => {
+                    if (!workspaceId) return pgRows;
+                    return pgRows.filter(r => r.workspace_id == null || r.workspace_id === workspaceId);
+                },
+            },
+            bookRepo: { listBookIdsByWorkspace: async (wsId) => ownedRows.filter(r => r.workspace_id === wsId) },
+            lazyBook,
+        };
+    }
+
+    it('pre-auth (no workspaceId) keeps listing everything including disk books', async () => {
+        const deps = makeDeps({
+            pgRows: [{ book_id: 'pg-1', file_hash: 'h', source_type: 'txt', created_at: 1, workspace_id: WS_A }],
+            onDisk: ['pg-1', 'disk-1'],
+        });
+        const books = await collectRecentBooks(deps);
+        expect(books.map(b => b.book_id).sort()).to.deep.equal(['disk-1', 'pg-1']);
+        const pgBook = books.find(b => b.book_id === 'pg-1');
+        expect(pgBook.workspace_id).to.equal(WS_A);
+    });
+
+    it('never lists books owned by another workspace', async () => {
+        const deps = makeDeps({
+            pgRows: [
+                { book_id: 'mine', file_hash: 'h1', source_type: 'txt', created_at: 1, workspace_id: WS_A },
+                { book_id: 'not-mine', file_hash: 'h2', source_type: 'txt', created_at: 2, workspace_id: WS_B },
+                { book_id: 'unowned', file_hash: 'h3', source_type: 'txt', created_at: 3, workspace_id: null },
+            ],
+            onDisk: ['mine', 'not-mine', 'unowned'],
+        });
+        // resolveBookWorkspace refuses to self-heal books owned elsewhere.
+        const books = await collectRecentBooks({
+            ...deps,
+            workspaceId: WS_A,
+            resolveBookWorkspace: async () => null,
+        });
+        expect(books.map(b => b.book_id)).to.deep.equal(['mine']);
+    });
+
+    it('self-heals unowned books through resolveBookWorkspace before filtering', async () => {
+        const deps = makeDeps({
+            pgRows: [{ book_id: 'heal-me', file_hash: 'h', source_type: 'txt', created_at: 1, workspace_id: null }],
+            onDisk: ['heal-me'],
+        });
+        const resolved = [];
+        const books = await collectRecentBooks({
+            ...deps,
+            workspaceId: WS_A,
+            resolveBookWorkspace: async (bookId) => { resolved.push(bookId); return WS_A; },
+        });
+        expect(books).to.have.length(1);
+        expect(books[0]).to.include({ book_id: 'heal-me', workspace_id: WS_A });
+        expect(resolved).to.deep.equal(['heal-me']);
+    });
+
+    it('skips the disk-scan fallback under a workspace filter', async () => {
+        const deps = makeDeps({
+            pgRows: [{ book_id: 'mine', file_hash: 'h', source_type: 'txt', created_at: 1, workspace_id: WS_A }],
+            onDisk: ['mine', 'disk-only'],
+        });
+        const books = await collectRecentBooks({ ...deps, workspaceId: WS_A });
+        expect(books.map(b => b.book_id)).to.deep.equal(['mine']);
+    });
+
+    it('includes registry-only books (blank/.vbook imports) via bookRepo', async () => {
+        const deps = makeDeps({
+            pgRows: [],
+            ownedRows: [{ book_id: 'ba_blank_1', workspace_id: WS_A }],
+            onDisk: ['ba_blank_1'],
+        });
+        const books = await collectRecentBooks({ ...deps, workspaceId: WS_A });
+        expect(books).to.have.length(1);
+        expect(books[0]).to.include({
+            book_id: 'ba_blank_1',
+            workspace_id: WS_A,
+            source_type: 'registry',
+        });
+    });
+
+    it('stays resilient when PG fails under a workspace filter', async () => {
+        const deps = makeDeps({ onDisk: ['disk-1'] });
+        deps.bookSourceRepo.listRecent = async () => { throw new Error('PG down'); };
+        deps.bookRepo.listBookIdsByWorkspace = async () => { throw new Error('PG down'); };
+        const books = await collectRecentBooks({
+            ...deps,
+            workspaceId: WS_A,
+            resolveBookWorkspace: async () => WS_A,
+        });
+        expect(books).to.deep.equal([]); // nothing may leak without ownership proof
+    });
+});
+
 describe('Recent Books route registration (production-shaped deps)', () => {
     // Regression: the route used to crash the container at startup with
     // `TypeError: log is not a function` because `log` lives in `deps.utils.log`,

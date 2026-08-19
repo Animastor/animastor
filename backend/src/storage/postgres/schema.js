@@ -892,10 +892,22 @@ async function runMigrations() {
         }
     }
 
-    // 4. Add unique constraint on username (only if all existing rows have username)
+    // 4. Enforce username: backfill nulls → NOT NULL → UNIQUE.
+    // Each step is independent: the UNIQUE constraint may already exist
+    // (earlier run) while NOT NULL is still absent on live databases.
     try {
-        // First, set a default username for any existing rows (should be none in practice)
         await query(`UPDATE users SET username = 'user_' || substr(user_id::text, 1, 8) WHERE username IS NULL`);
+    } catch (err) {
+        console.error('[PG] Failed to backfill users.username:', err.message);
+    }
+    try {
+        await query(`ALTER TABLE users ALTER COLUMN username SET NOT NULL`);
+    } catch (err) {
+        // Absent table/column covered by message check; NOT NULL on an already
+        // NOT NULL column is a no-op in PG, so any error here is worth logging.
+        console.error('[PG] Failed to set users.username NOT NULL:', err.message);
+    }
+    try {
         await query(`ALTER TABLE users ADD CONSTRAINT users_username_unique UNIQUE (username)`);
         console.log('[PG] Added unique constraint on users.username');
     } catch (err) {

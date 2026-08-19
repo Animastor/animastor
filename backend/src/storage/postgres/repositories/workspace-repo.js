@@ -3,7 +3,7 @@
 // ======================================================
 // Manages workspaces: creation, ownership, membership.
 
-const { query } = require('../database');
+const { query, getPool } = require('../database');
 
 const logPrefix = '[WORKSPACE-REPO]';
 
@@ -16,21 +16,32 @@ const logPrefix = '[WORKSPACE-REPO]';
  * @returns {Promise<object>} Created workspace row
  */
 async function createWorkspace({ name, ownerUserId, type = 'personal' }) {
-    const result = await query(`
-        INSERT INTO workspaces (name, owner_user_id, type)
-        VALUES ($1, $2, $3)
-        RETURNING *
-    `, [name, ownerUserId, type]);
-    const workspace = result.rows[0];
+    const client = await getPool().connect();
+    try {
+        await client.query('BEGIN');
+        const { rows } = await client.query(`
+            INSERT INTO workspaces (name, owner_user_id, type)
+            VALUES ($1, $2, $3)
+            RETURNING *
+        `, [name, ownerUserId, type]);
+        const workspace = rows[0];
 
-    // Automatically add owner as member with 'owner' role
-    await query(`
-        INSERT INTO workspace_members (workspace_id, user_id, role)
-        VALUES ($1, $2, 'owner')
-        ON CONFLICT (workspace_id, user_id) DO NOTHING
-    `, [workspace.id, ownerUserId]);
+        // Automatically add owner as member with 'owner' role (same transaction:
+        // a workspace must never exist without its owner membership).
+        await client.query(`
+            INSERT INTO workspace_members (workspace_id, user_id, role)
+            VALUES ($1, $2, 'owner')
+            ON CONFLICT (workspace_id, user_id) DO NOTHING
+        `, [workspace.id, ownerUserId]);
 
-    return workspace;
+        await client.query('COMMIT');
+        return workspace;
+    } catch (err) {
+        await client.query('ROLLBACK');
+        throw err;
+    } finally {
+        client.release();
+    }
 }
 
 /**
@@ -80,8 +91,8 @@ async function listUserWorkspaces(userId) {
 
 /**
  * Check if a user is a member of a workspace.
- * @param {string} workspaceId
- * @param {string} userId
+ * A workspace without any member row is treated as non-membership —
+ * membership is recorded in workspace_members, never implied by ownership.
  * @returns {Promise<object|null>} Membership row or null
  */
 async function getMembership(workspaceId, userId) {
@@ -112,6 +123,20 @@ async function checkBookAccess(bookId, userId) {
     return result.rows[0]?.workspace_id || null;
 }
 
+/**
+ * Direct workspace ownership lookup for a book (books.workspace_id).
+ * Does NOT perform membership checks — combine with checkBookAccess for auth.
+ * @returns {Promise<string|null>} workspace_id or null
+ */
+async function getWorkspaceIdForBook(bookId) {
+    if (!bookId) return null;
+    const result = await query(
+        `SELECT workspace_id FROM books WHERE book_id = $1 LIMIT 1`,
+        [bookId]
+    );
+    return result.rows[0]?.workspace_id || null;
+}
+
 module.exports = {
     createWorkspace,
     findById,
@@ -119,4 +144,5 @@ module.exports = {
     listUserWorkspaces,
     getMembership,
     checkBookAccess,
+    getWorkspaceIdForBook,
 };

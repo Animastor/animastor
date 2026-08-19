@@ -11,9 +11,17 @@
 // The route handler is exported separately as `collectRecentBooks` so unit
 // tests can exercise the merge logic without PG or an HTTP server.
 //
-// When auth is implemented, this endpoint will filter by workspace membership:
-// - Authenticated users see only books in their workspaces
-// - Unauthenticated users see all books (pre-auth mode)
+// Workspace ownership (Account System foundation):
+// - When `workspaceId` is provided the list is restricted to books whose
+//   books.workspace_id matches; PG rows are pre-filtered server-side
+//   (book_source JOIN books), so no row can leak by anything but the filter.
+// - The disk-scan fallback is skipped entirely under a workspace filter: a
+//   disk-only book has no known owner in PG, and listing it would leak the
+//   "knows the path → sees the book" assumption into a multi-tenant world.
+// - Books whose registry row is missing workspace_id are self-healed through
+//   an optional `resolveBookWorkspace` callback before filtering.
+// - Pre-auth mode (no workspaceId) keeps today's behaviour: all books, with
+//   workspace_id exposed as metadata on every entry.
 // ======================================================
 
 const fs = require('fs');
@@ -57,17 +65,27 @@ function toEntry(lazyBook, bookId, { title, state, sourceType, fileHash, updated
 /**
  * Build the recent-books list.
  *
- * @param {object} deps - { bookSourceRepo, lazyBook, limit?, workspaceId? }
+ * @param {object} deps
+ * @param {object} deps.bookSourceRepo
+ * @param {object} deps.lazyBook
+ * @param {number} [deps.limit]
+ * @param {string} [deps.workspaceId] - restrict the list to this workspace.
+ *   Under a filter only PG-known books with ownership are eligible; the
+ *   disk-scan fallback is skipped.
+ * @param {function} [deps.resolveBookWorkspace] - async (bookId, title) =>
+ *   workspaceId|null. Self-heals books whose registry row lacks a workspace
+ *   (e.g. created before ownership existed or while PG was down). When set,
+ *   every entry's workspace_id is resolved before (optional) filtering.
  * @returns {Promise<Array>} sorted newest-first, capped at `limit`.
  */
-async function collectRecentBooks({ bookSourceRepo, lazyBook, limit = DEFAULT_LIMIT, workspaceId }) {
+async function collectRecentBooks({ bookSourceRepo, lazyBook, limit = DEFAULT_LIMIT, workspaceId, resolveBookWorkspace, bookRepo }) {
     const entries = new Map(); // book_id -> entry
     const seen = new Set();
 
     // ── Phase 1: PG book_source (fast path — TXT imports register here) ──
     let pgRows = [];
     try {
-        pgRows = await bookSourceRepo.listRecent(limit * 2);
+        pgRows = await bookSourceRepo.listRecent(limit * 2, { workspaceId });
     } catch (err) {
         // PG may be down; the disk scan below still yields something.
     }
@@ -80,6 +98,7 @@ async function collectRecentBooks({ bookSourceRepo, lazyBook, limit = DEFAULT_LI
             state: status.state,
             sourceType: row.source_type || 'txt',
             fileHash: row.file_hash || null,
+            workspaceId: row.workspace_id || null,
             // Prefer manifest update time; fall back to the PG import timestamp
             // so a book whose manifest lacks updated_at still ranks by recency.
             updatedAt: status.updatedAt != null ? status.updatedAt : row.created_at,
@@ -88,38 +107,82 @@ async function collectRecentBooks({ bookSourceRepo, lazyBook, limit = DEFAULT_LI
         }));
     }
 
-    // ── Phase 2: disk scan — books not registered in PG (e.g. .vbook imports) ──
-    const booksDir = lazyBook.getBooksDir();
-    if (booksDir && fs.existsSync(booksDir)) {
-        let dirNames = [];
+    // ── Phase 1.5: ownership registry merge (workspace-scoped only) ──
+    // book_source indexes TXT imports only; blank books and .vbook imports have
+    // ownership in the books table alone. Merge them so the workspace list is
+    // complete. Never merged pre-auth (the books registry then adds nothing the
+    // disk scan doesn't already cover, and keeps the disk-only path intact).
+    if (workspaceId && bookRepo) {
         try {
-            dirNames = fs.readdirSync(booksDir, { withFileTypes: true })
-                .filter((e) => e.isDirectory())
-                .map((e) => e.name);
-        } catch (_) { /* books dir unreadable */ }
-        for (const bookId of dirNames) {
-            if (seen.has(bookId)) continue;
-            const status = safeStatus(lazyBook, bookId);
-            if (!status) continue;
-            entries.set(bookId, toEntry(lazyBook, bookId, {
-                title: status.title,
-                state: status.state,
-                sourceType: 'disk',
-                fileHash: null,
-                updatedAt: status.updatedAt,
-                parsedChapters: status.parsedChapters,
-                totalScenes: status.parsedScenes,
-            }));
+            const ownedRows = await bookRepo.listBookIdsByWorkspace(workspaceId);
+            for (const row of ownedRows || []) {
+                if (seen.has(row.book_id)) continue;
+                seen.add(row.book_id);
+                const status = safeStatus(lazyBook, row.book_id);
+                if (!status) continue; // book no longer on disk — skip stale reference
+                entries.set(row.book_id, toEntry(lazyBook, row.book_id, {
+                    title: status.title,
+                    state: status.state,
+                    sourceType: 'registry',
+                    fileHash: null,
+                    workspaceId: row.workspace_id,
+                    updatedAt: status.updatedAt,
+                    parsedChapters: status.parsedChapters,
+                    totalScenes: status.parsedScenes,
+                }));
+            }
+        } catch (err) {
+            // PG may be down; Phase 1 rows still apply.
+        }
+    }
+
+    // ── Phase 2: disk scan — books not registered in PG (e.g. .vbook imports) ──
+    // Skipped under a workspace filter: disk-only books have no owner record.
+    if (!workspaceId) {
+        const booksDir = lazyBook.getBooksDir();
+        if (booksDir && fs.existsSync(booksDir)) {
+            let dirNames = [];
+            try {
+                dirNames = fs.readdirSync(booksDir, { withFileTypes: true })
+                    .filter((e) => e.isDirectory())
+                    .map((e) => e.name);
+            } catch (_) { /* books dir unreadable */ }
+            for (const bookId of dirNames) {
+                if (seen.has(bookId)) continue;
+                const status = safeStatus(lazyBook, bookId);
+                if (!status) continue;
+                entries.set(bookId, toEntry(lazyBook, bookId, {
+                    title: status.title,
+                    state: status.state,
+                    sourceType: 'disk',
+                    fileHash: null,
+                    updatedAt: status.updatedAt,
+                    parsedChapters: status.parsedChapters,
+                    totalScenes: status.parsedScenes,
+                }));
+            }
         }
     }
 
     let result = [...entries.values()];
 
-    // ── Phase 3: workspace filtering (when auth is implemented) ──
-    // For now, this is a no-op. When auth is implemented:
-    // - If workspaceId is provided, filter to books in that workspace
-    // - If no workspaceId, return all books (pre-auth mode)
-    if (workspaceId) {
+    // ── Phase 3: workspace ownership resolution + filtering ──
+    if (resolveBookWorkspace) {
+        for (let i = 0; i < result.length; i++) {
+            const entry = result[i];
+            if (!entry.workspace_id) {
+                try {
+                    entry.workspace_id = await resolveBookWorkspace(entry.book_id, entry.title) || null;
+                } catch (_) {
+                    entry.workspace_id = null;
+                }
+            }
+        }
+        // Never leak books owned by another workspace.
+        result = workspaceId
+            ? result.filter(entry => entry.workspace_id === workspaceId)
+            : result.filter(entry => entry.workspace_id != null);
+    } else if (workspaceId) {
         result = result.filter(entry => entry.workspace_id === workspaceId);
     }
 
@@ -132,11 +195,14 @@ async function collectRecentBooks({ bookSourceRepo, lazyBook, limit = DEFAULT_LI
 module.exports = function registerRecentBooksRoutes(app, _redis, deps) {
     const { bookSourceRepo, lazyBook } = deps;
     const log = (deps.utils && deps.utils.log) || (() => {});
+    const bookRepo = require('../../storage/postgres/repositories/book-repo');
+    const workspaceOwnership = deps.workspaceOwnership
+        || require('../../middleware/workspace-ownership');
 
     app.get('/api/v1/books', async (req, res) => {
         try {
-            // When auth is implemented, get workspaceId from req.workspace
-            // For now, pass undefined to get all books (pre-auth mode)
+            // Pre-auth: req.workspace is always null → all books. Once auth
+            // lands, req.workspace.id restricts the list to the caller.
             const workspaceId = req.workspace?.id || null;
 
             const books = await collectRecentBooks({
@@ -144,6 +210,13 @@ module.exports = function registerRecentBooksRoutes(app, _redis, deps) {
                 lazyBook,
                 limit: parseInt(req.query.limit, 10) || DEFAULT_LIMIT,
                 workspaceId,
+                bookRepo: workspaceId ? bookRepo : undefined,
+                // Self-heal ownership rows under a workspace scope; pre-auth keeps
+                // listing everything so a brief PG outage never empties the page.
+                ...(workspaceId ? {
+                    resolveBookWorkspace: (bookId, title) => workspaceOwnership
+                        .resolveWorkspaceForBook(bookId, { bookTitle: title, preferredWorkspaceId: workspaceId }),
+                } : {}),
             });
             res.json({ books });
         } catch (err) {

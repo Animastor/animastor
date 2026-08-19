@@ -66,13 +66,35 @@ async function findCandidateBySize(fileSize) {
  * List the most recently imported source records (newest first).
  * Used by GET /api/v1/books so any client can discover which books exist on
  * the server (e.g. a book imported from the web app, then opened on Android).
+ *
+ * Every row is LEFT JOINed with the books registry so callers see the owning
+ * workspace (workspace_id is NULL for books with no registry row yet).
+ *
+ * @param {number} limit
+ * @param {object} [options]
+ * @param {string} [options.workspaceId] - When set, only return records that
+ *   already belong to this workspace OR have no owner row yet (self-heal
+ *   candidates). Books owned by a different workspace are never returned.
  */
-async function listRecent(limit = 20) {
+async function listRecent(limit = 20, { workspaceId = null } = {}) {
     const safeLimit = Math.max(1, Math.min(Number(limit) || 20, 100));
-    const result = await query(
-        `SELECT * FROM book_source ORDER BY created_at DESC LIMIT $1`,
-        [safeLimit]
-    );
+    let sql;
+    let params;
+    if (workspaceId) {
+        sql = `SELECT bs.*, b.workspace_id AS workspace_id
+               FROM book_source bs
+               LEFT JOIN books b ON b.book_id = bs.book_id
+               WHERE b.workspace_id IS NULL OR b.workspace_id = $1
+               ORDER BY bs.created_at DESC LIMIT $2`;
+        params = [workspaceId, safeLimit];
+    } else {
+        sql = `SELECT bs.*, b.workspace_id AS workspace_id
+               FROM book_source bs
+               LEFT JOIN books b ON b.book_id = bs.book_id
+               ORDER BY bs.created_at DESC LIMIT $1`;
+        params = [safeLimit];
+    }
+    const result = await query(sql, params);
     return result.rows;
 }
 

@@ -7,6 +7,17 @@ const { query } = require('../database');
 
 const logPrefix = '[USER-REPO]';
 
+/** Email uniqueness must not depend on case/whitespace (local part is
+ *  case-insensitive in practice and commonly treated as lowercase). */
+function normalizeEmail(email) {
+    return email ? String(email).trim().toLowerCase() : null;
+}
+
+/** Trim accidental whitespace; keep the value otherwise intact (unique). */
+function normalizeUsername(username) {
+    return username ? String(username).trim() : null;
+}
+
 /**
  * Create a new user.
  * @param {object} params
@@ -17,6 +28,8 @@ const logPrefix = '[USER-REPO]';
  * @returns {Promise<object>} Created user row
  */
 async function createUser({ username, passwordHash, email, displayName }) {
+    const uname = normalizeUsername(username);
+    if (!uname) return null;
     const result = await query(`
         INSERT INTO users (username, password_hash, email, display_name)
         VALUES ($1, $2, $3, $4)
@@ -26,7 +39,7 @@ async function createUser({ username, passwordHash, email, displayName }) {
             display_name = COALESCE(EXCLUDED.display_name, users.display_name),
             updated_at = EXTRACT(EPOCH FROM NOW())::bigint
         RETURNING *
-    `, [username, passwordHash || null, email || null, displayName || username]);
+    `, [uname, passwordHash || null, normalizeEmail(email), displayName || uname]);
     return result.rows[0];
 }
 
@@ -86,8 +99,11 @@ async function updateUser(userId, updates) {
 
     for (const [key, value] of Object.entries(updates)) {
         if (allowed.includes(key)) {
+            let normalized = value;
+            if (key === 'email') normalized = normalizeEmail(value);
+            if (key === 'username') normalized = normalizeUsername(value);
             setClauses.push(`${key} = $${idx}`);
-            values.push(value);
+            values.push(normalized);
             idx++;
         }
     }

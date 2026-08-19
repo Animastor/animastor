@@ -10,6 +10,7 @@
 
 module.exports = function registerParseRoutes(app, ctx) {
     const { config, txtImporter, lazyBook, placeholderAudio, taskHandler, log } = ctx;
+    const workspaceOwnership = require('../../middleware/workspace-ownership');
 
     // POST /api/v1/book/:bookId/lazy-parse — parse next window of chapters.
     app.post('/api/v1/book/:bookId/lazy-parse', async (req, res) => {
@@ -78,6 +79,14 @@ module.exports = function registerParseRoutes(app, ctx) {
             if (!validation.valid) return res.status(400).json({ error: validation.errors.join('; ') });
 
             const draft = lazyBook.createDraftBook(text, lazyBook.SourceType.AI_IMPORT, title || 'Imported Text');
+            try {
+                await workspaceOwnership.resolveWorkspaceForBook(draft.bookId, {
+                    bookTitle: title || 'Imported Text',
+                    preferredWorkspaceId: req.workspace?.id || null,
+                });
+            } catch (err) {
+                console.warn(`[IMPORT-TEXT] Ownership attach failed for ${draft.bookId} (non-fatal): ${err.message}`);
+            }
             log(`[IMPORT-TEXT] RAW_IMPORTED: ${draft.bookId} (${Buffer.byteLength(text, 'utf8')} bytes)`);
             return res.json({ book_id: draft.bookId, title: title || 'Imported Text', state: lazyBook.BookState.RAW_IMPORTED });
         } catch (err) {
