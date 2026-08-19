@@ -1,5 +1,5 @@
 const assert = require('assert');
-const { setDeep, findUnitInScene } = require('../src/routes/book/scene-patch-utils.cjs');
+const { setDeep, findUnitInScene, rebuildFullText } = require('../src/routes/book/scene-patch-utils.cjs');
 
 describe('scene-patch-utils', () => {
     describe('setDeep', () => {
@@ -55,6 +55,71 @@ describe('scene-patch-utils', () => {
         it('skips null entries in a units array without throwing', () => {
             const scene = { units: [null, { id: 'u9' }] };
             assert.strictEqual(findUnitInScene(scene, 'u9').id, 'u9');
+        });
+    });
+
+    describe('rebuildFullText', () => {
+        it('joins unit texts for narration scenes', () => {
+            const scene = { type: 'narration', units: [
+                { id: 'u1', text: 'Hello' },
+                { id: 'u2', text: 'World' },
+            ] };
+            rebuildFullText(scene);
+            assert.strictEqual(scene.audio.full_text, 'Hello World');
+        });
+
+        it('joins unit texts when scene.type is undefined (default narration)', () => {
+            const scene = { units: [
+                { id: 'u1', text: 'Alpha' },
+                { id: 'u2', text: 'Beta' },
+            ] };
+            rebuildFullText(scene);
+            assert.strictEqual(scene.audio.full_text, 'Alpha Beta');
+        });
+
+        it('does NOT overwrite full_text for dialogue scenes', () => {
+            const scene = { type: 'dialogue', audio: { full_text: 'custom text' }, units: [
+                { id: 'u1', text: 'A' },
+            ] };
+            rebuildFullText(scene);
+            assert.strictEqual(scene.audio.full_text, 'custom text');
+        });
+
+        it('clears full_text when all units have empty text', () => {
+            const scene = { type: 'narration', audio: { full_text: 'old text' }, units: [
+                { id: 'u1', text: '' },
+                { id: 'u2', text: '  ' },
+            ] };
+            rebuildFullText(scene);
+            assert.strictEqual(scene.audio.full_text, '');
+        });
+
+        it('filters out empty unit texts', () => {
+            const scene = { type: 'narration', units: [
+                { id: 'u1', text: 'Keep' },
+                { id: 'u2', text: '' },
+                { id: 'u3', text: 'Also' },
+            ] };
+            rebuildFullText(scene);
+            assert.strictEqual(scene.audio.full_text, 'Keep Also');
+        });
+
+        it('handles null scene gracefully', () => {
+            rebuildFullText(null); // should not throw
+        });
+
+        it('handles scene with no units', () => {
+            const scene = { type: 'narration', audio: { full_text: 'something' } };
+            rebuildFullText(scene);
+            assert.strictEqual(scene.audio.full_text, '');
+        });
+
+        it('handles chapter_intro type', () => {
+            const scene = { type: 'chapter_intro', units: [
+                { id: 'u1', text: 'Intro text' },
+            ] };
+            rebuildFullText(scene);
+            assert.strictEqual(scene.audio.full_text, 'Intro text');
         });
     });
 });

@@ -636,6 +636,125 @@ describe('ENTITY CRUD ROUTES — scene/unit delete deep cleanup', () => {
         const files = fs.readdirSync(buildDir);
         expect(files).to.deep.equal([`${keep}.mp3`, `${keep}_0000.png`, `${keep}_iu-q1.png`]);
     });
+
+    // ── Chapter cascade delete ──────────────────────────────────
+    const CHAPTER_DEL = '/api/v1/book/:bookId/chapters/:chapterId';
+    const CHAPTER2_ID = 'ch-cascade';
+    const SCENE2_ID = 'sc-cascade1';
+    const SCENE3_ID = 'sc-cascade2';
+
+    it('DELETE chapter cascades purgeScene for each of its scenes', async () => {
+        // Add a second chapter with 2 scenes to the book.
+        const ch2File = path.join(bookDir, 'chapters', `${CHAPTER2_ID}.json`);
+        fs.writeFileSync(ch2File, JSON.stringify({
+            chapter_id: CHAPTER2_ID,
+            chapter_title: 'Chapter to Delete',
+            scenes: [
+                {
+                    scene_id: SCENE2_ID,
+                    type: 'narration',
+                    participants: [],
+                    units: [{ id: 'iu-c1', text: 'cascade unit 1' }],
+                },
+                {
+                    scene_id: SCENE3_ID,
+                    type: 'narration',
+                    participants: [],
+                    units: [{ id: 'iu-c2', text: 'cascade unit 2' }],
+                },
+            ],
+        }, null, 2));
+        // Update book.json to reference both chapters.
+        const bookData = JSON.parse(fs.readFileSync(path.join(bookDir, 'book.json'), 'utf8'));
+        bookData.structure.chapters_order = [
+            `chapters/${CHAPTER_ID}.json`,
+            `chapters/${CHAPTER2_ID}.json`,
+        ];
+        fs.writeFileSync(path.join(bookDir, 'book.json'), JSON.stringify(bookData, null, 2));
+
+        // Seed Redis state for both scenes in the deleted chapter.
+        const store = redisMock._store;
+        const pfx2 = `${bookId}_${CHAPTER2_ID}_${SCENE2_ID}`;
+        const pfx3 = `${bookId}_${CHAPTER2_ID}_${SCENE3_ID}`;
+        store[`animastor:chunk:${pfx2}_0000`] = '{}';
+        store[`animastor:chunk:${pfx3}_0000`] = '{}';
+        store[`animastor:chunks:${bookId}`] = [`${pfx2}_0000`, `${pfx3}_0000`];
+
+        const res = await invoke(CHAPTER_DEL, { bookId, chapterId: CHAPTER2_ID });
+
+        expect(res.statusCode).to.equal(200);
+        expect(res.body).to.include({ saved: true, chapter_id: CHAPTER2_ID });
+        // Cascade cleanup ran for both scenes.
+        expect(res.body.cleanup.scenes_purged).to.equal(2);
+        expect(res.body.cleanup.failed_scenes).to.deep.equal([]);
+
+        // PG: purgeScene was called twice (once per scene).
+        expect(calls.purgeScenes).to.have.length(2);
+        const purgedKeys = calls.purgeScenes.map(k => k[0]);
+        expect(purgedKeys).to.include(`${CHAPTER2_ID}::${SCENE2_ID}`);
+        expect(purgedKeys).to.include(`${CHAPTER2_ID}::${SCENE3_ID}`);
+
+        // Dispatch cancelled for each scene.
+        expect(calls.cancellations).to.have.length(2);
+
+        // Redis: chunk keys for both scenes removed.
+        expect(store[`animastor:chunk:${pfx2}_0000`]).to.be.undefined;
+        expect(store[`animastor:chunk:${pfx3}_0000`]).to.be.undefined;
+
+        // JSON: chapter2 gone, chapter1 intact.
+        const fresh = bookModule.loadBook(bookId);
+        expect(fresh.chapters).to.have.length(1);
+        expect(fresh.chapters[0].chapter_id).to.equal(CHAPTER_ID);
+    });
+
+    it('DELETE chapter twice: first succeeds, second gets 400 (last chapter guard)', async () => {
+        // After deleting the only deletable chapter, the remaining chapter
+        // is the last one — the guard prevents deletion with 400.
+        const ch2File = path.join(bookDir, 'chapters', `${CHAPTER2_ID}.json`);
+        fs.writeFileSync(ch2File, JSON.stringify({
+            chapter_id: CHAPTER2_ID,
+            scenes: [{ scene_id: SCENE2_ID, type: 'narration', units: [] }],
+        }, null, 2));
+        const bookData = JSON.parse(fs.readFileSync(path.join(bookDir, 'book.json'), 'utf8'));
+        bookData.structure.chapters_order = [
+            `chapters/${CHAPTER_ID}.json`,
+            `chapters/${CHAPTER2_ID}.json`,
+        ];
+        fs.writeFileSync(path.join(bookDir, 'book.json'), JSON.stringify(bookData, null, 2));
+
+        const res1 = await invoke(CHAPTER_DEL, { bookId, chapterId: CHAPTER2_ID });
+        expect(res1.statusCode).to.equal(200);
+
+        // Now only one chapter remains — deleting it is blocked.
+        const res2 = await invoke(CHAPTER_DEL, { bookId, chapterId: CHAPTER_ID });
+        expect(res2.statusCode).to.equal(400);
+        expect(res2.body.error).to.include('Cannot delete the last chapter');
+    });
+
+    it('DELETE last chapter is rejected with 400', async () => {
+        const res = await invoke(CHAPTER_DEL, { bookId, chapterId: CHAPTER_ID });
+        expect(res.statusCode).to.equal(400);
+        expect(res.body.error).to.include('Cannot delete the last chapter');
+    });
+
+    it('DELETE unit rebuilds audio.full_text from remaining units', async () => {
+        // The scene has 2 units with text. After deleting one, full_text
+        // should contain only the remaining unit's text.
+        const fresh = bookModule.loadBook(bookId);
+        const sc = fresh.chapters[0].scenes.find(s => s.scene_id === SCENE_ID);
+        // Set initial full_text that includes both units.
+        sc.audio = { full_text: 'first unit second unit', voice: 'narrator' };
+        fs.writeFileSync(path.join(bookDir, 'chapters', `${CHAPTER_ID}.json`),
+            JSON.stringify(fresh.chapters[0], null, 2));
+
+        const res = await invoke(UNIT_DEL, { bookId, chapterId: CHAPTER_ID, sceneId: SCENE_ID, unitId: UNIT_ID });
+        expect(res.statusCode).to.equal(200);
+
+        // Reload and check full_text was rebuilt from remaining units.
+        const after = bookModule.loadBook(bookId);
+        const scAfter = after.chapters[0].scenes.find(s => s.scene_id === SCENE_ID);
+        expect(scAfter.audio.full_text).to.equal('second unit');
+    });
 });
 
 // ======================================================

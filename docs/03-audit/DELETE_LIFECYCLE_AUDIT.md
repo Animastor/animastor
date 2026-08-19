@@ -637,8 +637,8 @@ Audio (timeline) + Images (IU sequence) + Timing + Scene structure
 |---|---|---|
 | DELETE Unit during in-flight generation | `purgeUnit` cancels dispatch leases + GPU hub jobs via `clearLeasesForScenes` + `clearHubDispatches`. Stale GPU result keys deleted. | LOW — properly handled |
 | DELETE Scene during in-flight generation | `purgeScene` cancels dispatch leases + GPU hub jobs. | LOW — properly handled |
-| DELETE Chapter during in-flight generation | **NO cancellation** — in-flight jobs for chapter's scenes continue running. Jobs may complete and write results to PG/Redis/FS for deleted scenes. | HIGH — GAP-3 |
-| Generation started with version N → entity deleted → generation finishes → stale result lands back? | **Unit delete**: dispatch cancelled before result lands; `purgeUnit` deletes result keys. **Scene delete**: dispatch cancelled. **Chapter delete**: NO cancellation — result may land. | MEDIUM for chapter delete |
+| DELETE Chapter during in-flight generation | ✅ **FIXED**: Each scene in the deleted chapter is now purged via `purgeScene`, which cancels in-flight dispatch leases + GPU hub jobs. | LOW — handled |
+| Generation started with version N → entity deleted → generation finishes → stale result lands back? | **Unit delete**: dispatch cancelled before result lands; `purgeUnit` deletes result keys. **Scene delete**: dispatch cancelled. **Chapter delete**: ✅ dispatch cancelled via `purgeScene` per scene. | LOW — handled |
 | Version-stale protection after delete | `detectVersionStale` in runtime-scheduler checks `asset.scene_content_version < scene.content_version`. After delete-unit, `content_version` is bumped → stale assets detected. After delete-scene/chapter, no version bump → no staleness signal. | CORRECT for unit delete; N/A for scene/chapter (entities are gone) |
 
 ### 8.11 Recovery / Reconciliation
@@ -665,24 +665,24 @@ Audio (timeline) + Images (IU sequence) + Timing + Scene structure
 
 | # | Severity | Component | Current | Expected | Gap | Consequence |
 |---|---|---|---|---|---|---|
-| **G1** | **Critical** | entity-crud-routes.cjs (DELETE Chapter) | Only JSON save + orphan file delete. No PG/Redis/FS cleanup, no dispatch cancel. | Each scene in deleted chapter purged via `purgeScene` (PG+Redis+FS+dispatch). | Chapter delete leaves orphan PG rows, Redis keys, filesystem files, and potentially in-flight GPU jobs for all scenes in the deleted chapter. | Data leak, stale state, wasted GPU resources, potential resurrection via recovery. |
+| **G1** | **Critical** | entity-crud-routes.cjs (DELETE Chapter) | ✅ **FIXED**: DELETE Chapter now iterates all scenes and calls `cleanup.purgeScene()` for each, with per-scene error handling and cleanup result reporting. Reuses existing canonical `purgeScene` — no new mechanism. | — | — | — |
 | **G2** | **High** | entity-crud-routes.cjs (DELETE Scene) | `purgeScene` called — PG+Redis+FS+dispatch properly cleaned. | — (handled) | — | — |
 | **G3** | **High** | entity-cleanup.cjs (DELETE Unit) | `invalidateScene` marks parent scene dirty for audio+image+video, bumps content_version, cancels tasks. | — (handled) | — | — |
-| **G4** | **Medium** | audio/segments.js + pipeline-steps.js | `buildSegments` reads `scene.audio.full_text` (explicit field). When a unit is deleted, `full_text` may still contain the deleted unit's text (narration scenes). | `audio.full_text` is updated when units change, OR `buildSegments` derives text from current units. | No auto-sync between `audio.full_text` and units array. Narration audio regeneration reads stale `full_text`. | Narration audio may contain deleted unit's text after regeneration. Dialogue scenes unaffected (read `units[].audio.text` directly). |
+| **G4** | **Medium** | audio/segments.js + pipeline-steps.js + scene-patch-utils.cjs | ✅ **FIXED**: `rebuildFullText(scene)` in `scene-patch-utils.cjs` joins remaining unit texts into `audio.full_text` after unit add/delete/field-edit. Called from entity-crud-routes (add/delete unit) and core-routes (PATCH unit fields). Dialogue scenes preserved. | — | — | — |
 | **G5** | **Medium** | prompt-dependency-registry.js | Cross-scene dependencies (lookahead context) not tracked. Deleting Scene B does not mark Scene A dirty even though A's visual prompt used B as nextScene context. | Scene A marked dirty when adjacent scene deleted (for image layer only). | Visual prompt context for Scene A changes but Scene A is not regenerated. | Minor visual quality impact — character disambiguation context changes. Content correct. |
 | **G6** | **Low** | book-diff.cjs + entity-crud-routes.cjs | Entity-delete paths skip book-diff entirely. Only unit delete triggers dirty marking via entity-cleanup. | Chapter/scene delete should at minimum mark remaining scenes' reindex status. | No `reindex_needed` signal for remaining scenes after chapter/scene delete. | Display indices may be stale until next regeneration. |
 | **G7** | **Low** | reconciliation-engine.js | Reconciliation properly handles dirty_unit_ids and is_dirty flags after restart. | — (handled) | — | — |
 
 ### 8.14 Recommended Fix Plan
 
-**Priority 1 (Critical)**:
-1. **DELETE Chapter cleanup**: Call `purgeScene` for each scene in the deleted chapter before returning the response. Reuse existing `entity-cleanup.purgeScene` for each scene. Add `purgeChapter` helper that iterates scenes.
+**✅ Priority 1 (Critical) — FIXED**:
+1. **DELETE Chapter cleanup**: ✅ Each scene in the deleted chapter is now purged via `cleanup.purgeScene()`. Per-scene error handling with cleanup result reporting. Reuses existing canonical mechanism.
 
 **Priority 2 (High)**:
 2. **DELETE Chapter dirty marking**: After purging chapter scenes, remaining chapters need NO dirty marking (their content is unchanged). However, the book's `chapters_order` changes — consider bumping a book-level version if one exists.
 
-**Priority 3 (Medium)**:
-3. **`audio.full_text` sync**: After unit add/delete in entity-cleanup, recompute `audio.full_text` from remaining units (for narration scenes). Or: make `buildSegments` fall back to `units.map(u => u.text).join(' ')` when `full_text` is stale (detect via version mismatch).
+**✅ Priority 3 (Medium) — FIXED**:
+3. **`audio.full_text` sync**: ✅ `rebuildFullText(scene)` in `scene-patch-utils.cjs` joins remaining unit texts into `audio.full_text` after unit add/delete/field-edit. Called from entity-crud-routes and core-routes PATCH handler.
 4. **Cross-scene dirty propagation**: When a scene is deleted, mark the preceding scene's image layer dirty if it used lookahead context. Low priority — visual quality is minorly affected.
 
 **Priority 4 (Low)**:

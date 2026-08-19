@@ -6,7 +6,7 @@ const path = require('path');
 const fs = require('fs');
 const sceneAssetsRepo = require('../../storage/postgres/repositories/scene-assets-repo');
 const { restoreSceneChunkStatus } = require('../../orchestration/scene-restoration');
-const { setDeep, findUnitInScene, normalizeFieldValue } = require('./scene-patch-utils.cjs');
+const { setDeep, findUnitInScene, normalizeFieldValue, rebuildFullText } = require('./scene-patch-utils.cjs');
 const { recoverMissingRedisChunks } = require('./recover-chunks.cjs');
 const sourceCoverageAudit = require('../../services/source-coverage-audit');
 const { IMAGE_PROMPT_MAX_CHARS } = require('../../services/agent-prompts');
@@ -329,9 +329,13 @@ module.exports = function(app, redis, deps) {
                         const v = fields[a] && fields[a][b];
                         if (v !== undefined) assertPromptLength(field, v);
                     }
+                    const textChanged = fields.text !== undefined || fields.type !== undefined;
                     for (const [key, value] of Object.entries(fields)) {
                         setDeep(unit, key, value === '' ? null : value);
                     }
+                    // Rebuild audio.full_text when unit text or type changes so narration
+                    // audio generation uses the current unit structure.
+                    if (textChanged) rebuildFullText(targetScene);
                     log(`[PATCH BOOK] ${bookId}/${chapterId}/${sceneId}/${unit_id}: fields=${Object.keys(fields).join(', ')}`);
                 } else {
                     for (const [key, value] of Object.entries(fields)) {
@@ -371,9 +375,11 @@ module.exports = function(app, redis, deps) {
                     const v = unitFields[a] && unitFields[a][b];
                     if (v !== undefined) assertPromptLength(field, v);
                 }
+                const textChangedLegacy = unitFields.text !== undefined || unitFields.type !== undefined;
                 for (const [key, value] of Object.entries(unitFields)) {
                     setDeep(unit, key, value);
                 }
+                if (textChangedLegacy) rebuildFullText(targetScene);
                 log(`[PATCH BOOK] ${bookId}/${chapterId}/${sceneId}/${unit_id}: ${Object.keys(unitFields).join(', ')}`);
             } else {
                 const oversized = findOversizedPromptInScene(incomingScene);
@@ -381,6 +387,7 @@ module.exports = function(app, redis, deps) {
                     return res.status(400).json({ error: promptLengthError(oversized.path, oversized) });
                 }
                 oldBook.chapters.find(ch => ch.chapter_id === chapterId).scenes[sceneIndex] = incomingScene;
+                rebuildFullText(incomingScene);
                 log(`[PATCH BOOK] ${bookId}/${chapterId}/${sceneId}: full scene replaced`);
             }
 

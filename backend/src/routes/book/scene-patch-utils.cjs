@@ -55,4 +55,39 @@ function findUnitInScene(scene, unitId) {
     return null;
 }
 
-module.exports = { setDeep, findUnitInScene, normalizeFieldValue };
+// ── Audio full_text rebuild ──────────────────────────────────────────
+// After a unit is added, deleted, reordered, or its text changed, the
+// scene's audio.full_text must reflect the current units. For narration
+// scenes the full_text IS the TTS source (buildSegments reads it
+// directly); for dialogue scenes it serves as a reference/preview.
+//
+// This function is idempotent: calling it when full_text already matches
+// is a harmless no-op.
+function rebuildFullText(scene) {
+    if (!scene) return;
+    const units = scene.units || [];
+    // Only rebuild for narration-type scenes. Dialogue scenes derive audio
+    // from individual units[].audio.text — full_text is a preview, not the
+    // TTS source. But we still sync it so the Audio tab shows current text.
+    const isNarration = !scene.type || scene.type === 'narration'
+        || scene.type === 'chapter_intro' || scene.type === 'cover'
+        || scene.type === 'perception' || scene.type === 'description'
+        || scene.type === 'action' || scene.type === 'transition';
+    if (!isNarration) return; // dialogue scenes: full_text is preview-only, don't overwrite
+    const joined = units
+        .map(u => (u.text || '').trim())
+        .filter(t => t.length > 0)
+        .join(' ');
+    if (!scene.audio) scene.audio = {};
+    // Only update if the joined text differs — preserve manual edits to
+    // full_text that intentionally diverge from unit texts (edge case).
+    const current = (scene.audio.full_text || '').trim();
+    if (joined && current !== joined) {
+        scene.audio.full_text = joined;
+    } else if (!joined && current) {
+        // All units have empty text — clear full_text to match.
+        scene.audio.full_text = '';
+    }
+}
+
+module.exports = { setDeep, findUnitInScene, normalizeFieldValue, rebuildFullText };

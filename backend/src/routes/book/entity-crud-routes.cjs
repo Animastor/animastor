@@ -17,7 +17,7 @@
 // ======================================================
 
 const { toEntityId, isCanonicalEntityId } = require('../../utils/entity-id');
-const { normalizeFieldValue } = require('./scene-patch-utils.cjs');
+const { normalizeFieldValue, rebuildFullText } = require('./scene-patch-utils.cjs');
 // The project's single hex-id generator (lazy-book paths): ch-<hex8> / sc-<hex8>
 // / iu-<hex8>. No second generator is ever introduced on the clients.
 const { chapterId, sceneId, unitId, generateBookId } = require('../../book/lazy-book/paths');
@@ -329,7 +329,7 @@ module.exports = function (app, redis, deps) {
         }
     });
 
-    app.delete('/api/v1/book/:bookId/chapters/:chapterId', (req, res) => {
+    app.delete('/api/v1/book/:bookId/chapters/:chapterId', async (req, res) => {
         try {
             const { bookId, chapterId } = req.params;
             const oldBook = loadBook(bookId);
@@ -340,16 +340,48 @@ module.exports = function (app, redis, deps) {
                 // a state where the editor faces a completely empty structure.
                 return res.status(400).json({ error: 'Cannot delete the last chapter' });
             }
-            const before = chapters.length;
-            const after = chapters.filter((c) => !(c && (c.chapter_id === chapterId || c.chapter === chapterId)));
-            if (after.length === before) {
+            const targetChapter = chapters.find((c) => c && (c.chapter_id === chapterId || c.chapter === chapterId));
+            if (!targetChapter) {
                 return res.status(404).json({ error: `Chapter ${chapterId} not found` });
             }
+            // Collect scene IDs BEFORE modifying the book, so we know
+            // exactly which scenes need deep cleanup.
+            const scenesToPurge = (targetChapter.scenes || []).map((s) => s.scene_id).filter(Boolean);
+
+            const before = chapters.length;
+            const after = chapters.filter((c) => !(c && (c.chapter_id === chapterId || c.chapter === chapterId)));
             oldBook.chapters = after;
 
             book.saveBookBundle(oldBook, null);
-            log(`[DELETE CHAPTER] ${bookId}/${chapterId} (removed ${before - after.length})`);
-            return res.json({ saved: true, book_id: bookId, chapter_id: chapterId });
+
+            // Deep cleanup: for each scene in the deleted chapter, purge PG + Redis
+            // + filesystem + in-flight dispatch (reuses the canonical purgeScene from
+            // entity-cleanup). Partial failures are surfaced per-scene and retried
+            // by the pending-purge mechanism — a scene purge failure NEVER fails the
+            // already-successful chapter delete response.
+            const sceneCleanupResults = [];
+            for (const sceneId of scenesToPurge) {
+                let result;
+                try {
+                    result = await cleanup.purgeScene(bookId, chapterId, sceneId);
+                } catch (err) {
+                    console.warn(`[DELETE CHAPTER] scene cleanup error for ${bookId}/${chapterId}/${sceneId}: ${err.message}`);
+                    result = { complete: false, failed_steps: ['route_await'], steps: [] };
+                }
+                sceneCleanupResults.push({ scene_id: sceneId, ...result });
+            }
+            const allComplete = sceneCleanupResults.every((r) => r.complete);
+            const failedScenes = sceneCleanupResults.filter((r) => !r.complete);
+
+            log(`[DELETE CHAPTER] ${bookId}/${chapterId} (removed ${before - after.length}, scenes purged=${scenesToPurge.length}, complete=${allComplete})`);
+            return res.json({
+                saved: true, book_id: bookId, chapter_id: chapterId,
+                cleanup: {
+                    complete: allComplete,
+                    scenes_purged: scenesToPurge.length,
+                    failed_scenes: failedScenes.map((r) => r.scene_id),
+                },
+            });
         } catch (err) {
             console.error('[DELETE CHAPTER] Error:', err.message);
             return res.status(err.statusCode || 500).json({ error: err.message });
@@ -478,6 +510,7 @@ module.exports = function (app, redis, deps) {
             if (idx >= 0) units.splice(idx + 1, 0, newUnit);
             else units.push(newUnit);
             sc.units = units;
+            rebuildFullText(sc);
 
             book.saveBookBundle(oldBook, null);
             log(`[ADD UNIT] ${bookId}/${chapterId}/${sceneId}/${newId} (after=${after_unit_id || 'end'})`);
@@ -509,6 +542,9 @@ module.exports = function (app, redis, deps) {
                 return res.status(404).json({ error: `Unit ${unitId} not found` });
             }
             sc.units = after;
+            // Rebuild audio.full_text from remaining units so narration audio
+            // generation does not use stale text that included the deleted unit.
+            rebuildFullText(sc);
 
             book.saveBookBundle(oldBook, null);
             // Deep cleanup: PostgreSQL (image_units) + Redis (iu registry, in-flight,
