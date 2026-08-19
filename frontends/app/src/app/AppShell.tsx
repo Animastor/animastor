@@ -10,7 +10,7 @@ import type { IconProps } from './icons';
 import { FilePage } from '../pages/FilePage';
 import { NavigatePage } from '../pages/NavigatePage';
 import { AiAssistantPage } from '../pages/AiAssistantPage';
-import { bookId as openBookId, phase as playerPhase } from '../state/generateStore';
+import { bookId as openBookId, phase as playerPhase, blankBookJustCreated } from '../state/generateStore';
 import { getJson } from '../api/client';
 import type { BookData } from '../api/models';
 import { sceneRefs } from '../api/models';
@@ -289,6 +289,14 @@ function Toolbar({ path, isSecondary }: { path: string; isSecondary: boolean }) 
   // The AI assistant draws its own header row (back/session-list/new-chat) 1:1
   // with fragment_ai_assistant.xml — no standard toolbar, like the Android screen.
   if (path.startsWith('/ai')) return null;
+
+  // AI helper bubble: shown once after creating a blank book (editor opened).
+  // Dismissed by clicking the bubble or the AI chip; persists for the session only.
+  const AI_BUBBLE_DISMISSED = 'animastor_ai_bubble_dismissed';
+  const [aiBubbleDismissed, setAiBubbleDismissed] = useState(() => {
+    try { return sessionStorage.getItem(AI_BUBBLE_DISMISSED) === '1'; } catch { return false; }
+  });
+  const showAiBubble = !aiBubbleDismissed && path === '/edit' && blankBookJustCreated.value;
   if (isSecondary) {
     // Pages may override the title and add a trailing action chip (e.g. the "</>"
     // dev chip on WorkflowDetails) — mirroring Android fragments calling
@@ -316,13 +324,32 @@ function Toolbar({ path, isSecondary }: { path: string; isSecondary: boolean }) 
       <span class="toolbar__title">Animastor</span>
       {/* AI chip — 1:1 with activity_main.xml toolbarAiButton (MaterialCardView 48x40dp,
           radius 10dp, outline stroke, bold text in accent color) */}
-      <button
-        class="toolbar__ai-chip"
-        aria-label={t('toolbar_ai')}
-        onClick={() => navigate('/ai')}
-      >
-        {t('toolbar_ai')}
-      </button>
+      <span class="toolbar__ai-wrap">
+        {showAiBubble && (
+          <span class="toolbar__ai-bubble" onClick={() => {
+            try { sessionStorage.setItem(AI_BUBBLE_DISMISSED, '1'); } catch { /* ignore */ }
+            blankBookJustCreated.value = false;
+            setAiBubbleDismissed(true);
+            navigate('/ai');
+          }}>
+            {t('ai_helper_hint')}
+          </span>
+        )}
+        <button
+          class="toolbar__ai-chip"
+          aria-label={t('toolbar_ai')}
+          onClick={() => {
+            if (showAiBubble) {
+              try { sessionStorage.setItem(AI_BUBBLE_DISMISSED, '1'); } catch { /* ignore */ }
+              blankBookJustCreated.value = false;
+              setAiBubbleDismissed(true);
+            }
+            navigate('/ai');
+          }}
+        >
+          {t('toolbar_ai')}
+        </button>
+      </span>
       <button
         class="toolbar__btn"
         aria-label={t('settings')}

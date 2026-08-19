@@ -932,6 +932,46 @@ button { font: inherit; color: inherit; }
 }
 .toolbar__ai-chip:active { background: var(--surface-2); }
 
+/* AI helper bubble — contextual onboarding hint shown once after creating
+   a blank book. Visually connected to the AI chip via a small tail/arrow. */
+.toolbar__ai-wrap {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
+}
+.toolbar__ai-bubble {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  background: var(--surface);
+  border: 1px solid var(--outline);
+  border-radius: 0.5rem;
+  padding: 0.375rem 0.625rem;
+  font-size: 0.75rem;
+  color: var(--text-2);
+  white-space: nowrap;
+  cursor: pointer;
+  z-index: 10;
+  box-shadow: 0 2px 8px rgba(0,0,0,.12);
+  animation: ai-bubble-fade-in .25s ease-out;
+}
+.toolbar__ai-bubble::before {
+  content: '';
+  position: absolute;
+  right: 1.5rem;
+  top: -5px;
+  width: 8px;
+  height: 8px;
+  background: var(--surface);
+  border-left: 1px solid var(--outline);
+  border-top: 1px solid var(--outline);
+  transform: rotate(45deg);
+}
+@keyframes ai-bubble-fade-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
 /* Tab bar (BottomNavigationView) — 1:1 with Widget.Animastor.BottomNavigation
    + @color/bottom_nav_tint.xml:
      backgroundTint  = colorSurface

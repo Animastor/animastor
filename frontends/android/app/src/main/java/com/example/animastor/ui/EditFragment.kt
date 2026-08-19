@@ -917,6 +917,28 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                 addSpinner(getString(R.string.structure_parent_scene), sceneOptions(), cur.sceneId) { selectedSceneId = it }
             }
         }
+        // Onboarding hint — explains that a child entity is created automatically.
+        when (kind) {
+            StructureKind.CHAPTER -> {
+                val hint = TextView(ctx).apply {
+                    text = getString(R.string.chapter_auto_create_hint)
+                    textSize = 12f
+                    setTextColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorOnSurfaceVariant))
+                    setPadding(0, 8, 0, 0)
+                }
+                container.addView(hint)
+            }
+            StructureKind.SCENE -> {
+                val hint = TextView(ctx).apply {
+                    text = getString(R.string.scene_auto_create_hint)
+                    textSize = 12f
+                    setTextColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorOnSurfaceVariant))
+                    setPadding(0, 8, 0, 0)
+                }
+                container.addView(hint)
+            }
+            else -> {}
+        }
         container.addView(errorText)
 
         AppDialogs.action(

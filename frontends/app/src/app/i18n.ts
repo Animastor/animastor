@@ -419,7 +419,12 @@ const dict = {
     // Misc
     action_copy: 'Копировать',
     copied_to_clipboard: 'Скопировано',
-    voice_not_available: 'Распознавание речи недоступно'
+    voice_not_available: 'Распознавание речи недоступно',
+    // Onboarding hints (structure add dialogs)
+    chapter_auto_create_hint: 'Сцена и модуль будут добавлены автоматически.',
+    scene_auto_create_hint: 'Модуль будет добавлен автоматически.',
+    // AI helper bubble
+    ai_helper_hint: 'Я могу помочь.'
   },
   en: {
     // Bottom Navigation — sentence case (web density choice; NOT 1:1 with
@@ -836,7 +841,12 @@ const dict = {
     // Misc
     action_copy: 'Copy',
     copied_to_clipboard: 'Copied',
-    voice_not_available: 'Speech recognition not available'
+    voice_not_available: 'Speech recognition not available',
+    // Onboarding hints (structure add dialogs)
+    chapter_auto_create_hint: 'Scene and unit will be added automatically.',
+    scene_auto_create_hint: 'Unit will be added automatically.',
+    // AI helper bubble
+    ai_helper_hint: 'I can help.'
   }
 } as const;
 

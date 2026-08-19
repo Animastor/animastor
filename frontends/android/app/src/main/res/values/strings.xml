@@ -500,4 +500,10 @@
     <!-- Toggle chip labels -->
     <string name="toggle_on">On</string>
     <string name="toggle_off">Off</string>
+
+    <!-- Onboarding hints (structure add dialogs) -->
+    <string name="chapter_auto_create_hint">Scene and unit will be added automatically.</string>
+    <string name="scene_auto_create_hint">Unit will be added automatically.</string>
+    <!-- AI helper bubble -->
+    <string name="ai_helper_hint">I can help.</string>
 </resources>

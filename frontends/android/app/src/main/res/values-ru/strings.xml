@@ -477,4 +477,10 @@
 
     <string name="toggle_on">Вкл.</string>
     <string name="toggle_off">Выкл.</string>
+
+    <!-- Onboarding hints (structure add dialogs) -->
+    <string name="chapter_auto_create_hint">Сцена и модуль будут добавлены автоматически.</string>
+    <string name="scene_auto_create_hint">Модуль будет добавлен автоматически.</string>
+    <!-- AI helper bubble -->
+    <string name="ai_helper_hint">Я могу помочь.</string>
 </resources>

@@ -44,7 +44,8 @@ class MainActivity : AppCompatActivity() {
         binding.bottomNavigation.selectedItemId = R.id.playFragment
     }
 
-    fun switchToEditTab() {
+    fun switchToEditTab(isNewBlankBook: Boolean = false) {
+        if (isNewBlankBook) aiBubbleDismissed = false
         binding.bottomNavigation.selectedItemId = R.id.editFragment
     }
 
@@ -180,6 +181,14 @@ class MainActivity : AppCompatActivity() {
         }
 
         binding.toolbarAiButton.setOnClickListener {
+            dismissAiHelperBubble()
+            switchToAiTab()
+        }
+
+        // ── AI helper bubble: contextual onboarding after creating a blank book. ──
+        // Show once per session when the editor opens with no book loaded.
+        binding.aiHelperBubble.setOnClickListener {
+            dismissAiHelperBubble()
             switchToAiTab()
         }
 
@@ -220,6 +229,10 @@ class MainActivity : AppCompatActivity() {
                     }
                     .show(existing)
                     .commit()
+                // Show AI helper bubble when edit tab is shown (existing fragment)
+                if (item.itemId == R.id.editFragment) {
+                    showAiHelperBubbleIfApplicable()
+                }
             } else {
                 val fragment: Fragment = when (item.itemId) {
                     R.id.editFragment -> EditFragment()
@@ -227,6 +240,10 @@ class MainActivity : AppCompatActivity() {
                     R.id.navigateFragment -> NavigateFragment()
                     R.id.generateFragment -> GenerateFragment()
                     else -> FileFragment()
+                }
+                // Show AI helper bubble when edit tab is first opened with no book
+                if (item.itemId == R.id.editFragment) {
+                    showAiHelperBubbleIfApplicable()
                 }
                 supportFragmentManager.beginTransaction()
                     .apply {
@@ -458,6 +475,25 @@ class MainActivity : AppCompatActivity() {
                 null
             }
         }
+    }
+
+    // ── AI helper bubble (onboarding) ──────────────────────────────────
+    private var aiBubbleDismissed = false
+
+    /** Show the AI helper bubble when the editor opens with no book loaded.
+     *  Called from the bottom-nav listener when the Edit tab is selected. */
+    fun showAiHelperBubbleIfApplicable() {
+        if (aiBubbleDismissed) return
+        if (viewModel.bookId.isBlank()) {
+            binding.aiHelperBubble.visibility = View.VISIBLE
+        } else {
+            binding.aiHelperBubble.visibility = View.GONE
+        }
+    }
+
+    private fun dismissAiHelperBubble() {
+        aiBubbleDismissed = true
+        binding.aiHelperBubble.visibility = View.GONE
     }
 
     companion object {

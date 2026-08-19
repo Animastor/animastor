@@ -290,7 +290,8 @@ class FileFragment : Fragment(R.layout.fragment_file) {
                                 (requireActivity() as MainActivity).switchToPlayTab()
                             }
                             is GenerateViewModel.NavigationEvent.NavigateToEdit -> {
-                                (requireActivity() as MainActivity).switchToEditTab()
+                                val isBlank = event.reason == "blank_book_created"
+                                (requireActivity() as MainActivity).switchToEditTab(isNewBlankBook = isBlank)
                             }
                         }
                     }

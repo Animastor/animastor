@@ -337,6 +337,8 @@ export function StructureAddDialog({ kind, id, chapters, scenes, defaultChapterI
             onInput={(e) => setTitle((e.target as HTMLInputElement).value)}
           />
         </div>
+        {kind === 'chapter' && <p class="entity-form__hint" style="margin-top:4px;">{t('chapter_auto_create_hint')}</p>}
+        {kind === 'scene' && <p class="entity-form__hint" style="margin-top:4px;">{t('scene_auto_create_hint')}</p>}
         {(formError || error) && <div class="entity-form__error">{(formError ?? error) as string}</div>}
       </div>
     </Modal>

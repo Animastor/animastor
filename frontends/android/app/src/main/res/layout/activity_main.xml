@@ -32,31 +32,55 @@
                 android:textStyle="normal"
                 android:fontFamily="sans-serif-medium" />
 
-            <com.google.android.material.card.MaterialCardView
-                android:id="@+id/toolbarAiButton"
-                android:layout_width="48dp"
-                android:layout_height="40dp"
-                android:clickable="true"
-                android:focusable="true"
-                android:foreground="?attr/selectableItemBackgroundBorderless"
-                android:contentDescription="@string/toolbar_ai"
-                app:cardCornerRadius="10dp"
-                app:cardElevation="0dp"
-                app:cardBackgroundColor="?attr/colorSurface"
-                app:strokeColor="?attr/colorOutline"
-                app:strokeWidth="1dp">
+            <FrameLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center_vertical">
 
                 <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="match_parent"
-                    android:gravity="center"
-                    android:text="@string/toolbar_ai"
-                    android:textSize="14sp"
-                    android:textStyle="bold"
-                    android:textColor="?attr/colorSecondary"
-                    android:includeFontPadding="false" />
+                    android:id="@+id/aiHelperBubble"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="end|top"
+                    android:layout_marginTop="44dp"
+                    android:layout_marginEnd="0dp"
+                    android:paddingHorizontal="10dp"
+                    android:paddingVertical="6dp"
+                    android:text="@string/ai_helper_hint"
+                    android:textSize="12sp"
+                    android:textColor="?attr/colorOnSurfaceVariant"
+                    android:background="@drawable/bg_ai_bubble"
+                    android:visibility="gone"
+                    android:clickable="true"
+                    android:focusable="true" />
 
-            </com.google.android.material.card.MaterialCardView>
+                <com.google.android.material.card.MaterialCardView
+                    android:id="@+id/toolbarAiButton"
+                    android:layout_width="48dp"
+                    android:layout_height="40dp"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:foreground="?attr/selectableItemBackgroundBorderless"
+                    android:contentDescription="@string/toolbar_ai"
+                    app:cardCornerRadius="10dp"
+                    app:cardElevation="0dp"
+                    app:cardBackgroundColor="?attr/colorSurface"
+                    app:strokeColor="?attr/colorOutline"
+                    app:strokeWidth="1dp">
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:gravity="center"
+                        android:text="@string/toolbar_ai"
+                        android:textSize="14sp"
+                        android:textStyle="bold"
+                        android:textColor="?attr/colorSecondary"
+                        android:includeFontPadding="false" />
+
+                </com.google.android.material.card.MaterialCardView>
+
+            </FrameLayout>
 
             <ImageButton
                 android:id="@+id/settings_button"

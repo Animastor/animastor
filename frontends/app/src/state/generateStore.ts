@@ -39,6 +39,10 @@ export interface PlaybackPrepared {
 export const bookId = signal('');
 export const buildId = signal('');
 export const generationStatus = signal<GenerationStatus>('IDLE');
+/** Set to true after createBlankBook() succeeds, cleared when the user
+ *  navigates to AI or dismisses the bubble. Used by the toolbar AI helper
+ *  bubble to show contextual onboarding once. */
+export const blankBookJustCreated = signal(false);
 
 // Replays the `playbackPrepared` SharedFlow from MainActivity coordinator.
 const playbackPreparedListeners = new Set<(prep: PlaybackPrepared) => void>();
@@ -1200,6 +1204,7 @@ export async function createBlankBook(): Promise<string | null> {
     const first = scenes.find((s) => s.sceneType === 'cover') ?? scenes[0] ?? null;
     navigateTo({ chapterId: first?.chapterId ?? null, sceneId: first?.sceneId ?? null, unitIndex: 0 });
     phase.value = 'SCENE_READY';
+    blankBookJustCreated.value = true;
     return bId;
   } catch (e) {
     phase.value = 'IDLE';
