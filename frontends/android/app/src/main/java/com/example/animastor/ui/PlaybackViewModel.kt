@@ -825,7 +825,9 @@ class PlaybackViewModel(
         if (_uiState.value.phase == PlayerPhase.PLAYING || _uiState.value.phase == PlayerPhase.PAUSED) {
             needsContentRefresh = true
         }
-        _uiState.update { it.copy(sceneCount = sceneQueue.size, currentIndex = currentIndex) }
+        // PlaybackUiState does not carry sceneCount/currentIndex — those are
+        // module-level vars read directly by PlayFragment. The state update here
+        // only needs to trigger recomposition if the phase changed.
     }
 
     // ═══════════════════════════════════════════════════════════════
