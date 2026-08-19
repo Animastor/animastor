@@ -546,7 +546,7 @@ module.exports = function (app, redis, deps) {
                 locations: {},
                 chapters: [{
                     chapter_id: chFile.replace('.json', ''),
-                    chapter_title: label,
+                    chapter_title: 'Новая глава',
                     type: 'chapter',
                     scenes: [{
                         scene_id: scId,

@@ -10,7 +10,10 @@ async function openCache(): Promise<Cache> {
 }
 
 function key(buildId: string, sceneKey: string, kind: 'audio' | 'video' | 'image' | 'preview' | 'iu'): string {
-  return `/${buildId}/${sceneKey}/${kind}`;
+  // buildId is empty for blank/manual books — never emit a leading "//"
+  // (scheme-relative) URL, which Cache API match/put would reject.
+  const build = buildId || '_blank';
+  return `/${build}/${sceneKey}/${kind}`;
 }
 
 export async function getMedia(
