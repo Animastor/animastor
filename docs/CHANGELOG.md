@@ -8,6 +8,33 @@ All notable changes to Animastor are documented here.
 
 ### Added
 
+- **Backend: fix pass над глубоким cleanup при удалении Scene / Unit** — четыре
+  пункта из code-review (аудит → реализация → fix pass):
+  - **Partial cleanup / retry**: каждый шаг purge отчитывается отдельно
+    (`pg_purge`, `dispatch_cancel`, `redis_cleanup`, `active_index`, `filesystem`,
+    `invalidate_scene`). Частичный сбой НЕ прячется в успешный DELETE — статус
+    возвращается в `cleanup: { complete, failed_steps }` ответа, а неудачная
+    сцена/юнит попадает в set `animastor:pending-purge`, который ретраится
+    периодическим reconcile-циклом (новая фаза C7 в `reconciliation-engine`,
+    хелпер `retryPendingPurges`). После 5 неудачных попыток маркер снимается
+    (лог + счётчик попыток), чтобы не крутиться в hot loop. Всё идемпотентно.
+  - **Полный Unit lifecycle**: помимо `image_units` + IU keys + PNG purge теперь
+    удаляются legacy `animastor:result:*` и `animastor:error-processed:*` ключи
+    job_id юнита; добавлен отменяющий in-flight `dispatch_cancel` для всей сцены
+    (иначе уже отправленный на GPU-хаб job удалённого юнита мог «воскресить» IU
+    после purge).
+  - **Dirty/invalidation semantics**: удаление Unit помечает родительскую сцену
+    dirty по `audio`+`image`+`video` через тот же канонический путь, что и
+    редактирование (reuse `bookSync.reconcileFromDiff` + `sceneAssetsRepo.
+    bumpSceneVersions` → content_version++ / is_dirty), а `dirty_unit_ids`
+    удалённого юнита — вычищается (`array_remove`), т.е. «исчезает», а не
+    триггерит force-regen несуществующего юнита. Scene-делит ничего не инвалидирует
+    (сцена исчезает целиком).
+  - **Filesystem безопасность**: сопоставление файлов сцены по точным canonical
+    именам (`filesystem-store.makeSceneAudioFilename` + `{prefix}.mp4`) и границе
+    `{prefix}_` — более короткий id главы/сцены (напр. `sc-abc` vs `sc-abcX`)
+    больше НЕ удаляет файлы длинного соседнего id (prefix collision устранён).
+
 - **Backend: глубокий cleanup при удалении Scene / Unit (`entity-cleanup.cjs`)** —
   entity-delete раньше чистил только JSON-слой (saveBookBundle). Теперь после
   удаления сцены или модуля выполняются:

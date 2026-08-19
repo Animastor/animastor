@@ -127,6 +127,10 @@ const taskHandler = require('./services/task-handler.cjs')(redis, config, taskHa
 const bookDiffDeps = { state, book, layerConfig, genScope, activeScenes, getChunk, saveChunk, utils };
 const bookDiff = require('./services/book-diff.cjs')(redis, config, bookDiffDeps);
 
+const entityCleanup = require('./services/entity-cleanup.cjs')(redis, config, {
+    utils, storage, runtime, bookDiff, book,
+});
+
 // ======================================================
 // SERVICES — start periodic tasks
 // ======================================================
@@ -277,6 +281,7 @@ async function startServer() {
                     recoverAllBooksFromDisk,
                     resumeIncompleteSessions,
                     runBackgroundWindowGeneration: windowGenerator.runBackgroundWindowGeneration,
+                    entityCleanup,
                 };
 
                 // T7: Передаём deps в runtime loop для периодического reconcileCycle

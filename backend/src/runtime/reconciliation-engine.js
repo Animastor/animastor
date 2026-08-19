@@ -1412,7 +1412,23 @@ async function reconcileCycle(redis, deps = {}, options = {}) {
         }
 
         // ══════════════════════════════════════════════
-        // PHASE C7: WORK_TO_DO rebuild (Option E) — startup-only
+        // PHASE C7: Retry pending entity purges (deleted scenes/units)
+        // ══════════════════════════════════════════════
+        // The entity-delete cleanup records a marker in the pending-purge set
+        // whenever a purge is only partially complete. Retry here keeps the
+        // "delete = gone everywhere" guarantee without hiding failures.
+        if (deps.entityCleanup && typeof deps.entityCleanup.retryPendingPurges === 'function') {
+            try {
+                const pCount = await deps.entityCleanup.retryPendingPurges();
+                if (pCount > 0) phases.push(`pending_purge:${pCount}`);
+            } catch (err) {
+                warn(`Phase C7 failed: ${err.message}`);
+                summary.errors.push(`pending_purge: ${err.message}`);
+            }
+        }
+
+        // ══════════════════════════════════════════════
+        // PHASE C8: WORK_TO_DO rebuild (Option E) — startup-only
         // ══════════════════════════════════════════════
         // Авто-возобновление прерванной генерации после потери Redis. Только
         // первый цикл (startup:true) — периодический цикл работу НЕ возрождает
@@ -1422,7 +1438,7 @@ async function reconcileCycle(redis, deps = {}, options = {}) {
                 const c7Count = await rebuildWorkList(redis);
                 if (c7Count > 0) phases.push(`worklist_rebuild:${c7Count}`);
             } catch (err) {
-                warn(`Phase C7 failed: ${err.message}`);
+                warn(`Phase C8 failed: ${err.message}`);
                 summary.errors.push(`worklist_rebuild: ${err.message}`);
             }
         }

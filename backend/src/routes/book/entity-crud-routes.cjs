@@ -429,13 +429,23 @@ module.exports = function (app, redis, deps) {
             book.saveBookBundle(oldBook, null);
             // Deep cleanup: PostgreSQL + Redis + filesystem + in-flight dispatch
             // (reuses bookSync.purgeRemovedSceneRows / dispatch-engine / scheduler).
+            // Cleanup is best-effort and surfaced in the response — a partial
+            // failure is recorded for the reconcile cycle to retry, never hidden.
+            let cleanupResult;
             try {
-                await cleanup.purgeScene(bookId, chapterId, sceneId);
+                cleanupResult = await cleanup.purgeScene(bookId, chapterId, sceneId);
             } catch (err) {
                 console.warn(`[DELETE SCENE] cleanup error for ${bookId}/${chapterId}/${sceneId}: ${err.message}`);
+                cleanupResult = { complete: false, failed_steps: ['route_await'], steps: [] };
             }
             log(`[DELETE SCENE] ${bookId}/${chapterId}/${sceneId} (removed ${before - after.length})`);
-            return res.json({ saved: true, book_id: bookId, chapter_id: chapterId, scene_id: sceneId });
+            return res.json({
+                saved: true, book_id: bookId, chapter_id: chapterId, scene_id: sceneId,
+                cleanup: {
+                    complete: cleanupResult.complete,
+                    failed_steps: cleanupResult.failed_steps || [],
+                },
+            });
         } catch (err) {
             console.error('[DELETE SCENE] Error:', err.message);
             return res.status(err.statusCode || 500).json({ error: err.message });
@@ -502,14 +512,24 @@ module.exports = function (app, redis, deps) {
 
             book.saveBookBundle(oldBook, null);
             // Deep cleanup: PostgreSQL (image_units) + Redis (iu registry, in-flight,
-            // GPU dedup) + filesystem (IU/preview PNG).
+            // GPU dedup) + filesystem (IU/preview PNG) + cancel in-flight + mark the
+            // parent scene dirty for regeneration. Partial failures are surfaced in
+            // the response and retried by the reconcile cycle.
+            let cleanupResult;
             try {
-                await cleanup.purgeUnit(bookId, chapterId, sceneId, unitId);
+                cleanupResult = await cleanup.purgeUnit(bookId, chapterId, sceneId, unitId, oldBook);
             } catch (err) {
                 console.warn(`[DELETE UNIT] cleanup error for ${bookId}/${chapterId}/${sceneId}/${unitId}: ${err.message}`);
+                cleanupResult = { complete: false, failed_steps: ['route_await'], steps: [] };
             }
             log(`[DELETE UNIT] ${bookId}/${chapterId}/${sceneId}/${unitId} (removed ${before - after.length})`);
-            return res.json({ saved: true, book_id: bookId, chapter_id: chapterId, scene_id: sceneId, unit_id: unitId });
+            return res.json({
+                saved: true, book_id: bookId, chapter_id: chapterId, scene_id: sceneId, unit_id: unitId,
+                cleanup: {
+                    complete: cleanupResult.complete,
+                    failed_steps: cleanupResult.failed_steps || [],
+                },
+            });
         } catch (err) {
             console.error('[DELETE UNIT] Error:', err.message);
             return res.status(err.statusCode || 500).json({ error: err.message });

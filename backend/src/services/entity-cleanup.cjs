@@ -14,19 +14,38 @@
 //                  GPU job/result dedup keys
 //   Filesystem   → OUTPUT_DIR/<build> scene audio/chunk/IU/preview/video files
 //   In-flight    → cancels GPU dispatch leases + hub jobs (reuses dispatch-engine)
+//   Invalidation→ deleted Unit marks the parent scene dirty for regen (reuses
+//                  bookSync.reconcileFromDiff + sceneAssetsRepo.bumpSceneVersions)
 //
 // Reuses existing helpers instead of duplicating their logic:
-//   - bookSync.purgeRemovedSceneRows             (PG scene purge)
-//   - assetRegistry.deleteSceneAssetsRedis       (Redis asset registry)
-//   - scheduler.removeSceneFromActiveIndex       (active index)
+//   - bookSync.purgeRemovedSceneRows       (PG scene purge)
+//   - bookSync.reconcileFromDiff           (PG scene invalidation)
+//   - sceneAssetsRepo.bumpSceneVersions    (PG content version bump)
+//   - assetRegistry.deleteSceneAssetsRedis (Redis asset registry)
+//   - scheduler.removeSceneFromActiveIndex (active index)
 //   - dispatch.clearLeasesForScenes + clearHubDispatches (lease/hub cancel)
+//   - filesystem-store filename helpers    (collision-free FS matching)
 //
-// Every step is best-effort: a cleanup failure is logged and swallowed so it
-// never fails the already-successful entity delete response.
+// SAFETY SEMANTICS (fix pass):
+//   - Every step reports ok/error individually. A step failure NEVER fails the
+//     already-successful entity delete response, but it is surfaced in the
+//     `cleanup` field of the response instead of being swallowed.
+//   - On any incomplete purge a marker is recorded in the `animastor:pending-purge`
+//     set; the periodic reconciliation cycle retries it (retryPendingPurges),
+//     giving up after PENDING_PURGE_MAX_ATTEMPTS so a stuck marker cannot loop.
+//   - All operations are idempotent (delete-by-key/prefix), so retries are safe.
+//   - Filesystem matches use EXACT scene asset names (filesystem-store helpers)
+//     plus a `{prefix}_` boundary, so a shorter chapter/scene id can never
+//     delete files of a longer sibling id (prefix collision).
 // ======================================================
 
 const path = require('path');
 const fs = require('fs');
+const fsStore = require('../storage/filesystem-store');
+
+const PENDING_PURGE_SET = 'animastor:pending-purge';
+const PENDING_PURGE_ATTEMPTS_PREFIX = 'animastor:pending-purge-attempts';
+const PENDING_PURGE_MAX_ATTEMPTS = 5;
 
 module.exports = function (redis, config, deps) {
     const storage = deps.storage;
@@ -35,11 +54,36 @@ module.exports = function (redis, config, deps) {
     const assetRegistry = storage?.registry;
     const scheduler = runtime?.scheduler;
     const dispatchEngine = runtime?.dispatch;
+    const bookDiff = deps.bookDiff;
+    const sceneAssetsRepo = deps.sceneAssetsRepo;
+    const bookApi = deps.book;
 
     const OUTPUT_DIR = (config || {}).OUTPUT_DIR;
     const log = deps.utils?.log || ((...a) => console.log(new Date().toISOString(), ...a));
 
     const ALL_STAGES = ['audio', 'image', 'video'];
+    const ASSET_EXTENSIONS = ['.mp3', '.png', '.mp4'];
+
+    // ── Step bookkeeping ──────────────────────────────
+    function finish(steps, summary) {
+        const failed = steps.filter(s => !s.ok);
+        return {
+            complete: failed.length === 0,
+            steps,
+            failed_steps: failed.map(s => s.step),
+            summary,
+        };
+    }
+
+    async function guardedStep(steps, name, fn) {
+        try {
+            await fn();
+            steps.push({ step: name, ok: true });
+        } catch (err) {
+            console.warn(`[ENTITY-CLEANUP] step '${name}' failed: ${err.message}`);
+            steps.push({ step: name, ok: false, error: err.message });
+        }
+    }
 
     // ── Redis scan helpers ────────────────────────────
     async function scanKeys(pattern) {
@@ -109,12 +153,15 @@ module.exports = function (redis, config, deps) {
             });
     }
 
-    const ASSET_EXTENSIONS = ['.mp3', '.png', '.mp4'];
-
-    // Delete every scene asset file (audio, chunk audio/image, IU image,
-    // preview, video) across all build directories (best-effort multi-build).
+    // Collision-free scene file matching. Uses the canonical scene audio/video
+    // names verbatim (filesystem-store helpers) plus the `{prefix}_` boundary
+    // for chunk/IU/preview files — a shorter chapter/scene id (e.g. sc-a vs
+    // sc-aX) can never match a longer sibling id because after `{prefix}`
+    // the next char must be `_` (or end of the name).
     function deleteSceneFiles(bookId, chapterId, sceneId) {
-        const prefix = `${bookId}_${chapterId}_${sceneId}`;
+        const sceneAudio = fsStore.makeSceneAudioFilename(bookId, chapterId, sceneId);
+        const sceneVideo = `${bookId}_${chapterId}_${sceneId}.mp4`;
+        const chunkPrefix = `${bookId}_${chapterId}_${sceneId}_`;
         let deleted = 0;
         for (const buildPath of listBuildDirs()) {
             let files;
@@ -122,8 +169,11 @@ module.exports = function (redis, config, deps) {
                 files = fs.readdirSync(buildPath);
             } catch { continue; }
             for (const f of files) {
-                if (!f.startsWith(prefix)) continue;
-                if (!ASSET_EXTENSIONS.some(ext => f.endsWith(ext))) continue;
+                let match = f === sceneAudio || f === sceneVideo;
+                if (!match && f.startsWith(chunkPrefix)) {
+                    match = ASSET_EXTENSIONS.some(ext => f.endsWith(ext));
+                }
+                if (!match) continue;
                 try {
                     fs.unlinkSync(path.join(buildPath, f));
                     deleted++;
@@ -133,13 +183,12 @@ module.exports = function (redis, config, deps) {
         return deleted;
     }
 
-    // Delete a single unit's IU image + preview PNG across build directories.
+    // Exact per-unit files: IU image PNG + preview PNG (writer-verified names).
     function deleteUnitFiles(bookId, chapterId, sceneId, unitId) {
         const imageIUId = `${bookId}_${chapterId}_${sceneId}_${unitId}`;
-        const stripped = String(unitId).replace(/^iu/, '');
         const targets = [
             `${imageIUId}.png`,
-            `${bookId}_${chapterId}_${sceneId}_pr${stripped}.png`,
+            fsStore.makePreviewFilename(bookId, chapterId, sceneId, String(unitId).replace(/^iu/, '')),
         ];
         let deleted = 0;
         for (const buildPath of listBuildDirs()) {
@@ -156,22 +205,31 @@ module.exports = function (redis, config, deps) {
         return deleted;
     }
 
+    // ── Pending purge (retry) markers ─────────────────
+    async function recordPendingPurge(kind, ...ids) {
+        const marker = `${kind}:${ids.join(':')}`;
+        try {
+            await redis.sadd(PENDING_PURGE_SET, marker);
+        } catch (err) {
+            console.warn(`[ENTITY-CLEANUP] failed to record pending purge ${marker}: ${err.message}`);
+        }
+    }
+
     // ── Scene purge ───────────────────────────────────
     async function purgeScene(bookId, chapterId, sceneId) {
-        const out = { pg: {}, chunks: 0, files_deleted: 0 };
+        const steps = [];
+        const summary = { pg: {}, chunks: 0, files_deleted: 0, dispatch_cancelled: 0 };
 
         // 1. PostgreSQL — reuse the shared scene purge (also covers asset_states
         //    and cache_entries since the book-sync fix).
-        try {
+        await guardedStep(steps, 'pg_purge', async () => {
             if (bookSync && typeof bookSync.purgeRemovedSceneRows === 'function') {
-                out.pg = await bookSync.purgeRemovedSceneRows(bookId, [`${chapterId}::${sceneId}`]);
+                summary.pg = await bookSync.purgeRemovedSceneRows(bookId, [`${chapterId}::${sceneId}`]);
             }
-        } catch (err) {
-            console.warn(`[ENTITY-CLEANUP] PG purge failed for ${bookId}/${chapterId}/${sceneId}: ${err.message}`);
-        }
+        });
 
         // 2. Cancel in-flight generation — leases + GPU hub dispatches.
-        try {
+        await guardedStep(steps, 'dispatch_cancel', async () => {
             if (dispatchEngine && typeof dispatchEngine.clearLeasesForScenes === 'function') {
                 const cancelled = await dispatchEngine.clearLeasesForScenes(
                     redis, bookId,
@@ -180,14 +238,12 @@ module.exports = function (redis, config, deps) {
                 if (cancelled.dispatchIds && cancelled.dispatchIds.length > 0) {
                     await dispatchEngine.clearHubDispatches(cancelled.dispatchIds, { context: 'ENTITY-DELETE-SCENE' });
                 }
-                out.dispatch_cancelled = cancelled.cancelled || 0;
+                summary.dispatch_cancelled = cancelled.cancelled || 0;
             }
-        } catch (err) {
-            console.warn(`[ENTITY-CLEANUP] dispatch cancel failed for ${bookId}/${chapterId}/${sceneId}: ${err.message}`);
-        }
+        });
 
         // 3. Redis — exact scene keys + per-scene patterns.
-        try {
+        await guardedStep(steps, 'redis_cleanup', async () => {
             await delKeys(
                 `animastor:asset-state:${bookId}:${chapterId}:${sceneId}`,
                 `animastor:assets:${bookId}:${chapterId}:${sceneId}`,
@@ -198,90 +254,193 @@ module.exports = function (redis, config, deps) {
                 `animastor:iu-progress:${bookId}:${chapterId}:${sceneId}:image`,
             );
             const scenePrefix = `${bookId}_${chapterId}_${sceneId}`;
-            out.chunks += await deleteSceneChunks(bookId, chapterId, sceneId);
+            summary.chunks += await deleteSceneChunks(bookId, chapterId, sceneId);
             await scanAndDel(`animastor:iu-registry:${scenePrefix}_*`);
             await scanAndDel(`animastor:iu-in-flight:${scenePrefix}_*`);
             await scanAndDel(`animastor:job:${scenePrefix}_*`);
             await scanAndDel(`animastor:result:${scenePrefix}_*`);
             await scanAndDel(`animastor:result-processed:${scenePrefix}_*`);
+            await scanAndDel(`animastor:error-processed:*:${scenePrefix}_*:*`);
             await scanAndDel(`animastor:dispatch-lease:${bookId}:${chapterId}:${sceneId}:*`);
             await scanAndDel(`animastor:dispatch-meta:${bookId}:${chapterId}:${sceneId}:*`);
             await scanAndDel(`animastor:runtime:retry:${bookId}:${chapterId}:${sceneId}:*`);
-        } catch (err) {
-            console.warn(`[ENTITY-CLEANUP] Redis cleanup failed for ${bookId}/${chapterId}/${sceneId}: ${err.message}`);
-        }
+        });
 
         // 4. Active index — reuse the scheduler helper.
-        try {
+        await guardedStep(steps, 'active_index', async () => {
             if (scheduler && typeof scheduler.removeSceneFromActiveIndex === 'function') {
                 await scheduler.removeSceneFromActiveIndex(redis, bookId, chapterId, sceneId);
             } else {
                 await redis.srem('animastor:active-scenes', `${bookId}:${chapterId}:${sceneId}`);
             }
-        } catch (err) {
-            console.warn(`[ENTITY-CLEANUP] active-index removal failed for ${bookId}/${chapterId}/${sceneId}: ${err.message}`);
-        }
+        });
 
         // 5. Filesystem.
-        try {
-            out.files_deleted = deleteSceneFiles(bookId, chapterId, sceneId);
-        } catch (err) {
-            console.warn(`[ENTITY-CLEANUP] FS cleanup failed for ${bookId}/${chapterId}/${sceneId}: ${err.message}`);
-        }
+        await guardedStep(steps, 'filesystem', async () => {
+            summary.files_deleted = deleteSceneFiles(bookId, chapterId, sceneId);
+        });
 
-        log(`[ENTITY-CLEANUP] scene ${bookId}/${chapterId}/${sceneId} purged ` +
-            `(pg=${JSON.stringify(out.pg)}, chunks=${out.chunks}, files=${out.files_deleted})`);
-        return out;
+        const result = finish(steps, summary);
+        if (!result.complete) await recordPendingPurge('scene', bookId, chapterId, sceneId);
+        log(`[ENTITY-CLEANUP] scene ${bookId}/${chapterId}/${sceneId} → ${result.complete ? 'OK' : 'PARTIAL'} ` +
+            `(pg=${JSON.stringify(summary.pg)}, chunks=${summary.chunks}, files=${summary.files_deleted})`);
+        return result;
     }
 
     // ── Unit (module) purge ───────────────────────────
-    async function purgeUnit(bookId, chapterId, sceneId, unitId) {
-        const out = { pg: {}, files_deleted: 0 };
+    async function purgeUnit(bookId, chapterId, sceneId, unitId, loadedBook) {
+        const steps = [];
+        const summary = { pg: {}, files_deleted: 0, dispatch_cancelled: 0 };
         const imageIUId = `${bookId}_${chapterId}_${sceneId}_${unitId}`;
 
         // 1. PostgreSQL — the unit's image_units row + any dirty marker left on
-        //    the parent scene row.
-        try {
+        //    the parent scene row (the removed unit must simply disappear).
+        await guardedStep(steps, 'pg_purge', async () => {
             const r1 = await storage.postgres.query(
                 `DELETE FROM image_units
                  WHERE book_id = $1 AND chapter_id = $2 AND scene_id = $3 AND unit_id = $4`,
                 [bookId, chapterId, sceneId, unitId],
             );
-            out.pg.image_units = r1.rowCount || 0;
+            summary.pg.image_units = r1.rowCount || 0;
             const r2 = await storage.postgres.query(
                 `UPDATE scenes
                  SET dirty_unit_ids = array_remove(dirty_unit_ids, $4)
                  WHERE book_id = $1 AND chapter_id = $2 AND scene_id = $3`,
                 [bookId, chapterId, sceneId, unitId],
             );
-            out.pg.scenes_updated = r2.rowCount || 0;
-        } catch (err) {
-            console.warn(`[ENTITY-CLEANUP] PG purge failed for ${imageIUId}: ${err.message}`);
-        }
+            summary.pg.scenes_updated = r2.rowCount || 0;
+        });
 
-        // 2. Redis — iu registry, in-flight marker, GPU hub dedup keys.
-        try {
+        // 2. Cancel in-flight generation for the scene — otherwise a job that
+        //    was already dispatched for the removed unit could land AFTER the
+        //    purge and resurrect the deleted IU image (PNG/registry).
+        await guardedStep(steps, 'dispatch_cancel', async () => {
+            if (dispatchEngine && typeof dispatchEngine.clearLeasesForScenes === 'function') {
+                const cancelled = await dispatchEngine.clearLeasesForScenes(
+                    redis, bookId,
+                    [{ chapter_id: chapterId, scene_id: sceneId, stages: ALL_STAGES }],
+                );
+                if (cancelled.dispatchIds && cancelled.dispatchIds.length > 0) {
+                    await dispatchEngine.clearHubDispatches(cancelled.dispatchIds, { context: 'ENTITY-DELETE-UNIT' });
+                }
+                summary.dispatch_cancelled = cancelled.cancelled || 0;
+            }
+        });
+
+        // 3. Redis — iu registry, in-flight marker, GPU hub dedup + legacy
+        //    result/error keys keyed by the unit's image job id.
+        await guardedStep(steps, 'redis_cleanup', async () => {
             await delKeys(
                 `animastor:iu-registry:${imageIUId}`,
                 `animastor:iu-in-flight:${imageIUId}`,
                 `animastor:job:${imageIUId}:iu_image`,
                 `animastor:job:${imageIUId}:image`,
             );
+            await scanAndDel(`animastor:result:${imageIUId}:*`);
             await scanAndDel(`animastor:result-processed:${imageIUId}:*`);
-        } catch (err) {
-            console.warn(`[ENTITY-CLEANUP] Redis cleanup failed for ${imageIUId}: ${err.message}`);
-        }
+            await scanAndDel(`animastor:error-processed:*:${imageIUId}:*:*`);
+        });
 
-        // 3. Filesystem — IU image + preview PNG.
-        try {
-            out.files_deleted = deleteUnitFiles(bookId, chapterId, sceneId, unitId);
-        } catch (err) {
-            console.warn(`[ENTITY-CLEANUP] FS cleanup failed for ${imageIUId}: ${err.message}`);
-        }
+        // 4. Filesystem — IU image + preview PNG.
+        await guardedStep(steps, 'filesystem', async () => {
+            summary.files_deleted = deleteUnitFiles(bookId, chapterId, sceneId, unitId);
+        });
 
-        log(`[ENTITY-CLEANUP] unit ${imageIUId} purged (pg=${JSON.stringify(out.pg)}, files=${out.files_deleted})`);
-        return out;
+        // 5. Invalidate the parent scene. Removing a unit changes the scene's
+        //    text (audio) and its IU composition (image), and video depends on
+        //    both — so the scene becomes dirty for audio+image+video, exactly
+        //    like the canonical editor flow. The scheduler detects the stale
+        //    content version and regenerates the scene without the unit.
+        await guardedStep(steps, 'invalidate_scene', async () => {
+            await invalidateScene(bookId, chapterId, sceneId, loadedBook);
+        });
+
+        const result = finish(steps, summary);
+        if (!result.complete) await recordPendingPurge('unit', bookId, chapterId, sceneId, unitId);
+        log(`[ENTITY-CLEANUP] unit ${imageIUId} → ${result.complete ? 'OK' : 'PARTIAL'} ` +
+            `(pg=${JSON.stringify(summary.pg)}, files=${summary.files_deleted})`);
+        return result;
     }
 
-    return { purgeScene, purgeUnit };
+    // Mark the parent scene dirty via the same PG path the editor PUT-book flow
+    // uses: scene hash update + scene_assets stale + generation_tasks cancel
+    // (reconcileFromDiff) + content_version bump / is_dirty (bumpSceneVersions).
+    async function invalidateScene(bookId, chapterId, sceneId, loadedBook) {
+        const book = loadedBook || (bookApi && typeof bookApi.loadBook === 'function' ? bookApi.loadBook(bookId) : null);
+        const dirtyScenes = [{
+            chapter_id: chapterId,
+            scene_id: sceneId,
+            reason: 'changed',
+            dirty_layers: ['audio', 'image', 'video'],
+        }];
+        if (bookSync && typeof bookSync.reconcileFromDiff === 'function') {
+            await bookSync.reconcileFromDiff(bookId, dirtyScenes, book);
+        }
+        if (sceneAssetsRepo && typeof sceneAssetsRepo.bumpSceneVersions === 'function') {
+            await sceneAssetsRepo.bumpSceneVersions(bookId, dirtyScenes);
+        }
+    }
+
+    // ── Pending purge retry (consumed by reconcileCycle) ──
+    async function retryPendingPurges() {
+        let members = [];
+        try {
+            members = await redis.smembers(PENDING_PURGE_SET);
+        } catch (err) {
+            console.warn(`[ENTITY-CLEANUP] pending purge scan failed: ${err.message}`);
+            return 0;
+        }
+        let cleared = 0;
+        for (const marker of members) {
+            const parts = marker.split(':');
+            const kind = parts[0];
+            let result = null;
+            try {
+                if (kind === 'scene' && parts.length >= 4) {
+                    result = await purgeScene(parts[1], parts[2], parts[3]);
+                } else if (kind === 'unit' && parts.length >= 5) {
+                    result = await purgeUnit(parts[1], parts[2], parts[3], parts[4], undefined);
+                } else {
+                    console.warn(`[ENTITY-CLEANUP] unknown pending purge marker: ${marker}`);
+                }
+            } catch (err) {
+                console.warn(`[ENTITY-CLEANUP] retry failed for ${marker}: ${err.message}`);
+            }
+
+            if (result && result.complete) {
+                try {
+                    await redis.srem(PENDING_PURGE_SET, marker);
+                    await redis.del(`${PENDING_PURGE_ATTEMPTS_PREFIX}:${marker}`);
+                    cleared++;
+                } catch (err) {
+                    console.warn(`[ENTITY-CLEANUP] failed to clear pending purge ${marker}: ${err.message}`);
+                }
+            } else {
+                // Bump the attempt counter; give up after the cap so a stuck
+                // marker cannot hot-loop the cycle (residual state stays logged).
+                try {
+                    const key = `${PENDING_PURGE_ATTEMPTS_PREFIX}:${marker}`;
+                    const attempts = await redis.incr(key);
+                    if (attempts === 1) await redis.expire(key, 3600);
+                    if (attempts >= PENDING_PURGE_MAX_ATTEMPTS) {
+                        await redis.srem(PENDING_PURGE_SET, marker);
+                        await redis.del(key);
+                        console.warn(`[ENTITY-CLEANUP] giving up pending purge after ${attempts} attempts: ${marker}`);
+                    }
+                } catch (err) {
+                    console.warn(`[ENTITY-CLEANUP] pending purge counter failed for ${marker}: ${err.message}`);
+                }
+            }
+        }
+        if (cleared > 0) log(`[ENTITY-CLEANUP] retried ${cleared} pending purge(s)`);
+        return cleared;
+    }
+
+    return {
+        purgeScene,
+        purgeUnit,
+        recordPendingPurge,
+        retryPendingPurges,
+        PENDING_PURGE_SET,
+    };
 };

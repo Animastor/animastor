@@ -384,7 +384,7 @@ describe('ENTITY CRUD ROUTES — scene/unit delete deep cleanup', () => {
             patch() {},
             delete(path, handler) { handlers.set(path, handler); },
         };
-        calls = { pg: [], purgeScenes: [], cancellations: [], activeRemoved: [] };
+        calls = { pg: [], purgeScenes: [], cancellations: [], activeRemoved: [], reconcile: [], bump: [] };
         const deps = {
             book: bookModule,
             utils: { log: () => {} },
@@ -395,6 +395,10 @@ describe('ENTITY CRUD ROUTES — scene/unit delete deep cleanup', () => {
                         calls.purgeScenes.push(keys);
                         return { scenes: keys.length };
                     },
+                    reconcileFromDiff: async (_bookId, dirtyScenes) => {
+                        calls.reconcile.push(dirtyScenes);
+                        return { reconciled: 1 };
+                    },
                 },
                 registry: {},
                 postgres: {
@@ -402,6 +406,12 @@ describe('ENTITY CRUD ROUTES — scene/unit delete deep cleanup', () => {
                         calls.pg.push({ text: text.trim().replace(/\s+/g, ' '), params });
                         return { rowCount: 1 };
                     },
+                },
+            },
+            sceneAssetsRepo: {
+                bumpSceneVersions: async (_bookId, dirtyScenes) => {
+                    calls.bump.push(dirtyScenes);
+                    return 1;
                 },
             },
             runtime: {
@@ -544,13 +554,15 @@ describe('ENTITY CRUD ROUTES — scene/unit delete deep cleanup', () => {
         expect(scenes.map(s => s.scene_id)).to.include('sc-keep');
     });
 
-    it('DELETE unit purges image_units row + iu registry/in-flight/GPU keys + IU files', async () => {
+    it('DELETE unit purges image_units row + iu registry/in-flight/GPU keys + IU files and invalidates the scene', async () => {
         const store = redisMock._store;
         const iuPrefix = `${PREFIX}_${UNIT_ID}`;
         store[`animastor:iu-registry:${iuPrefix}`] = '{}';
         store[`animastor:iu-in-flight:${iuPrefix}`] = '1';
         store[`animastor:job:${iuPrefix}:image`] = '1';
         store[`animastor:result-processed:${iuPrefix}:iu_image:build-test`] = '1';
+        store[`animastor:result:${iuPrefix}:iu_image:build-test`] = 'legacy';
+        store[`animastor:error-processed:disp1:${iuPrefix}:iu_image:build-test`] = '1';
 
         const buildDir = path.join(tmpDir, 'build-test');
         fs.mkdirSync(buildDir, { recursive: true });
@@ -561,17 +573,40 @@ describe('ENTITY CRUD ROUTES — scene/unit delete deep cleanup', () => {
 
         expect(res.statusCode).to.equal(200);
         expect(res.body).to.include({ saved: true, unit_id: UNIT_ID });
+        expect(res.body.cleanup.complete).to.equal(true);
+        expect(res.body.cleanup.failed_steps).to.deep.equal([]);
 
         // PG: image_units DELETE with the unit params.
         const unitDel = calls.pg.find(c => c.text.startsWith('DELETE FROM image_units'));
         expect(unitDel).to.not.be.undefined;
         expect(unitDel.params).to.deep.equal([bookId, CHAPTER_ID, SCENE_ID, UNIT_ID]);
 
-        // Redis iu keys removed.
+        // PG invalidation: dirty_unit_ids scrub on the parent scene.
+        const scrub = calls.pg.find(c => c.text.startsWith('UPDATE scenes'));
+        expect(scrub).to.not.be.undefined;
+        expect(scrub.params).to.deep.equal([bookId, CHAPTER_ID, SCENE_ID, UNIT_ID]);
+
+        // Redis iu keys removed (registry, in-flight, job, result, error).
         expect(store[`animastor:iu-registry:${iuPrefix}`]).to.be.undefined;
         expect(store[`animastor:iu-in-flight:${iuPrefix}`]).to.be.undefined;
         expect(store[`animastor:job:${iuPrefix}:image`]).to.be.undefined;
         expect(store[`animastor:result-processed:${iuPrefix}:iu_image:build-test`]).to.be.undefined;
+        expect(store[`animastor:result:${iuPrefix}:iu_image:build-test`]).to.be.undefined;
+        expect(store[`animastor:error-processed:disp1:${iuPrefix}:iu_image:build-test`]).to.be.undefined;
+
+        // In-flight dispatch cancelled for the scene (all layers).
+        expect(calls.cancellations).to.have.length(1);
+        expect(calls.cancellations[0][0].stages).to.deep.equal(['audio', 'image', 'video']);
+
+        // Parent scene invalidated through the canonical path (changed + 3 layers).
+        expect(calls.reconcile).to.have.length(1);
+        expect(calls.reconcile[0]).to.deep.equal([{
+            chapter_id: CHAPTER_ID,
+            scene_id: SCENE_ID,
+            reason: 'changed',
+            dirty_layers: ['audio', 'image', 'video'],
+        }]);
+        expect(calls.bump).to.have.length(1);
 
         // IU image file removed.
         expect(fs.existsSync(iuFile)).to.equal(false);
@@ -582,5 +617,129 @@ describe('ENTITY CRUD ROUTES — scene/unit delete deep cleanup', () => {
         expect(sc.units.map(u => u.id)).to.not.include(UNIT_ID);
         expect(sc.units.map(u => u.id)).to.include('iu-deep2');
         expect(fresh.chapters[0].scenes).to.have.length(2);
+    });
+
+    it('DELETE scene does not remove files of a sibling scene that shares the id prefix', async () => {
+        // sc-deep vs sc-deepX: the longer id starts with the shorter id but the
+        // cleanup boundary requires `_` after the prefix, so sc-deepX survives.
+        const buildDir = path.join(tmpDir, 'build-test');
+        fs.mkdirSync(buildDir, { recursive: true });
+        const keep = `${bookId}_${CHAPTER_ID}_sc-deepX`;
+        for (const f of [`${keep}.mp3`, `${keep}_0000.png`, `${keep}_iu-q1.png`]) {
+            fs.writeFileSync(path.join(buildDir, f), 'x');
+        }
+
+        const res = await invoke(SCENE_DEL, { bookId, chapterId: CHAPTER_ID, sceneId: SCENE_ID });
+        expect(res.statusCode).to.equal(200);
+        expect(res.body.cleanup.complete).to.equal(true);
+
+        const files = fs.readdirSync(buildDir);
+        expect(files).to.deep.equal([`${keep}.mp3`, `${keep}_0000.png`, `${keep}_iu-q1.png`]);
+    });
+});
+
+// ======================================================
+// ENTITY CLEANUP SERVICE — partial failure & retry
+// ======================================================
+// The route surfaces cleanup failures and records a pending-purge marker; the
+// reconcile cycle retries it via retryPendingPurges. Verified at the service
+// level with mocked storage so a failing step can be injected.
+describe('ENTITY CLEANUP — partial failure → pending purge retry', () => {
+    let redisMock;
+
+    function makeRedis() {
+        const store = {};
+        return {
+            _store: store,
+            async scan(cursor, _mode, pattern) {
+                const re = new RegExp('^' + pattern
+                    .split('*').map(s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('.*') + '$');
+                return ['0', Object.keys(store).filter(k => re.test(k))];
+            },
+            async del(...keys) {
+                let n = 0;
+                for (const k of keys) { if (k in store) { delete store[k]; n++; } }
+                return n;
+            },
+            async srem(set, ...members) {
+                const s = store[set] || [];
+                let n = 0;
+                for (const m of members) { const i = s.indexOf(m); if (i >= 0) { s.splice(i, 1); n++; } }
+                store[set] = s;
+                return n;
+            },
+            async sadd(set, ...members) {
+                const s = store[set] || [];
+                for (const m of members) if (!s.includes(m)) s.push(m);
+                store[set] = s;
+                return s.length;
+            },
+            async smembers(set) { return store[set] || []; },
+            async incr(k) { store[k] = (store[k] || 0) + 1; return store[k]; },
+            async expire() { return 1; },
+            async get(k) { return store[k]; },
+        };
+    }
+
+    function buildService(postgresOverrides) {
+        const deps = {
+            utils: { log: () => {} },
+            config: { OUTPUT_DIR: '/tmp/nonexistent' },
+            storage: {
+                bookSync: {},
+                registry: {},
+                postgres: {
+                    query: async (t, p) => {
+                        if (postgresOverrides && postgresOverrides.fail) throw new Error('pg down');
+                        return { rowCount: 1 };
+                    },
+                },
+            },
+            runtime: {
+                dispatch: {
+                    clearLeasesForScenes: async () => ({ cancelled: 0, dispatchIds: [] }),
+                    clearHubDispatches: async () => ({}),
+                },
+                scheduler: { removeSceneFromActiveIndex: async () => ({ removed: true }) },
+            },
+            book: { loadBook: () => ({ chapters: [] }) },
+            bookDiff: {},
+            sceneAssetsRepo: {},
+        };
+        return require('../src/services/entity-cleanup.cjs')(redisMock, deps.config, deps);
+    }
+
+    beforeEach(() => {
+        redisMock = makeRedis();
+    });
+
+    it('partial failure surfaces in result, records a pending marker, and retry clears it', async () => {
+        const failing = buildService({ fail: true });
+        const result = await failing.purgeUnit('bk1', 'ch-1', 'sc-1', 'iu-zz1');
+
+        expect(result.complete).to.equal(false);
+        expect(result.failed_steps).to.deep.equal(['pg_purge']);
+
+        const markers = redisMock._store['animastor:pending-purge'] || [];
+        expect(markers).to.include('unit:bk1:ch-1:sc-1:iu-zz1');
+
+        // Retry with a healthy service clears the marker.
+        const healthy = buildService({});
+        const cleared = await healthy.retryPendingPurges();
+        expect(cleared).to.equal(1);
+        expect(redisMock._store['animastor:pending-purge'] || []).to.deep.equal([]);
+    });
+
+    it('gives up a marker after the attempt cap instead of hot-looping', async () => {
+        const failing = buildService({ fail: true });
+        await failing.purgeUnit('bk1', 'ch-1', 'sc-1', 'iu-zz1');
+
+        const healthy = buildService({ fail: true }); // still failing
+        for (let i = 0; i < 5; i++) {
+            await healthy.retryPendingPurges();
+        }
+        // Marker dropped after the cap, attempt counter removed.
+        expect(redisMock._store['animastor:pending-purge'] || []).to.deep.equal([]);
+        expect(redisMock._store['animastor:pending-purge-attempts:unit:bk1:ch-1:sc-1:iu-zz1']).to.be.undefined;
     });
 });
