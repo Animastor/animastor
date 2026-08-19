@@ -398,6 +398,298 @@ web (Cache API + player queue) и Android (LruCache + SimpleDiskCache + player q
 
 ---
 
+## 8. Dirty / Invalidation / Regeneration Audit
+
+> READ-ONLY аудит: production-код не менялся.
+> Дата: 2026-08-19. Продолжение DELETE Lifecycle Audit (§1-7).
+
+### 8.1 Current Architecture — Dirty-State Flow
+
+**CANONICAL dirty-state pipeline** (PUT /book → regenerate):
+
+```
+PUT /book/:bookId
+  → saveBookBundle (JSON to disk)
+  → loadBook (read new)
+  → bookDiff.computeBookDiff(old, new)
+      → promptDependencyRegistry.computeSceneDirtyLayers(oldScene, newScene)
+      → cross-field diff (characters.passport, characters.voice, bible.locations, book.voices)
+  → bookSync.reconcileFromDiff(bookId, dirtyScenes, newBook)
+      → updateSceneHashes (PG)
+      → markSceneAssetsStale (PG scene_assets.status → 'stale')
+      → markGenerationTasksStale (PG generation_tasks.status → 'cancelled')
+      → purgeRemovedSceneRows (PG DELETE for removed scenes)
+  → sceneAssetsRepo.bumpSceneVersions(bookId, dirtyScenes)
+      → content_version++ (if image or video dirty)
+      → audio_config_version++ (if audio dirty)
+      → is_dirty = TRUE
+  → sceneAssetsRepo.setDirtyUnitIds(bookId, chapterId, sceneId, unitIds)
+      → dirty_unit_ids = [list of changed unit IDs]
+  → markDirtyScenes (Redis: chunk status → pending, asset states → pending)
+```
+
+**Entity-delete paths** (entity-crud-routes.cjs):
+
+| Operation | saveBookBundle | book-diff | reconcileFromDiff | bumpSceneVersions | setDirtyUnitIds | markDirtyScenes | entity-cleanup |
+|---|---|---|---|---|---|---|---|
+| DELETE Chapter | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| DELETE Scene | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ (purgeScene) |
+| DELETE Unit | ✅ | ❌ | ❌ | ✅ (via invalidateScene) | ✅ (remove deleted) | ✅ (via invalidateScene) | ✅ (purgeUnit) |
+
+**Key difference**: entity-delete paths SKIP the book-diff pipeline entirely. Only DELETE Unit triggers dirty marking (via `entity-cleanup.invalidateScene`). DELETE Chapter and DELETE Scene do NOT mark any remaining entities dirty.
+
+### 8.2 Dirty Sources
+
+| Source | Where set | When cleared | Who reads |
+|---|---|---|---|
+| **is_dirty** (PG scenes table) | `bumpSceneVersions` (PUT, delete unit) | Generation completion callback | runtime-scheduler, reconciliation-engine |
+| **content_version** (PG scenes) | `bumpSceneVersions` (PUT, delete unit) | Never (monotonic) | scene-assets-repo (staleness check), scene-window, orchestrator |
+| **audio_config_version** (PG scenes) | `bumpSceneVersions` (PUT) | Never (monotonic) | scene-assets-repo (staleness check), scene-window |
+| **dirty_unit_ids** (PG scenes) | `setDirtyUnitIds` (PUT, delete unit callback) | `clearDirtyUnitIdsAfterImageDispatch` (image callback) | executeImageDispatch (granular force-regen), reconciliation-engine |
+| **scene_assets.status** (PG) | `markSceneAssetsStale` (PUT, delete unit invalidateScene) | Generation completion (scene_assets.status → 'ready') | runtime-scheduler (dispatch decision) |
+| **Redis chunk status** | `markDirtyScenes` (PUT) | Generation executor | audio/image/video orchestrators |
+| **Redis per-asset states** | `markDirtyScenes` (PUT), `fallbackMarkSceneDirty` | Generation executor | runtime-scheduler |
+| **Redis active-scenes** | `addActiveScene` (PUT markDirty), `removeSceneFromActiveIndex` | Scheduler (post-generation) | runtime-scheduler (dispatch scan) |
+
+### 8.3 Version Semantics
+
+| Entity | Version Field | Who bumps | Trigger | Consumers |
+|---|---|---|---|---|
+| Scene | `content_version` (INTEGER, default 1) | `bumpSceneVersions` | image or video layer dirty (PUT, delete unit) | scene-assets-repo (staleness: asset.scene_content_version < scene.content_version), scene-window, orchestrator, reconciliation-engine |
+| Scene | `audio_config_version` (INTEGER, default 1) | `bumpSceneVersions` | audio layer dirty (PUT) | scene-assets-repo (staleness: asset.scene_audio_config_version < scene.audio_config_version), scene-window |
+| Scene | `is_dirty` (BOOLEAN) | `bumpSceneVersions` | Same as content_version bump | runtime-scheduler (secondary dirty detection after Redis flush) |
+| Scene | `dirty_unit_ids` (TEXT[]) | `setDirtyUnitIds` | Unit content changed (PUT), unit deleted (cleanup) | executeImageDispatch (granular force-regen of specific IUs), reconciliation-engine |
+| Scene | `scene_hash` (TEXT) | `updateSceneHashes` (PUT only) | Content hash changed | reconcileFromDiff (hash-based staleness detection) |
+| Scene_asset | `scene_content_version` (INTEGER) | Asset generation callback | Written when asset is generated | scene-assets-repo (staleness comparison with scene.content_version) |
+| Scene_asset | `scene_audio_config_version` (INTEGER) | Asset generation callback | Written when audio asset is generated | scene-assets-repo (staleness comparison with scene.audio_config_version) |
+| Scene_asset | `status` (TEXT) | markSceneAssetsStale / generation callback | Content changed / generation completed | runtime-scheduler (dispatch decision: 'stale' → PENDING) |
+
+### 8.4 Module (Unit) Deletion
+
+**Scenario**: Scene has Units A, B, C. Unit B is deleted.
+
+**What is deleted**:
+- Unit B from JSON (in-memory + saved via saveBookBundle)
+- PG: `image_units` row for unit B
+- PG: `dirty_unit_ids` entry for unit B removed from parent scene
+- Redis: `iu-registry`, `iu-in-flight`, `job`, `result` keys for unit B
+- Redis: dispatch leases + GPU hub jobs for unit B (cancelled)
+- Filesystem: IU image PNG + preview PNG for unit B
+
+**What is marked dirty (via `invalidateScene` in entity-cleanup)**:
+- Parent scene: `dirty_layers: ['audio', 'image', 'video']`
+- `reconcileFromDiff`: scene hash updated, scene_assets → stale, generation_tasks → cancelled
+- `bumpSceneVersions`: `content_version++`, `is_dirty = TRUE`
+
+**What is NOT marked dirty**:
+- Sibling units (A, C) — NOT dirty
+- Other scenes — NOT dirty
+- Other chapters — NOT dirty
+
+**Audio dependency chain analysis**:
+
+```
+Unit B deleted
+  → units array changes (prompt-dependency-registry detects)
+  → dirty_layers includes 'audio' (unit order/content changed)
+  → content_version++ (image or video dirty)
+  → scene regenerated
+```
+
+**Critical finding — narration scene audio**:
+- `buildSegments` reads `scene.audio.full_text` (explicit field, NOT derived from units)
+- When Unit B is deleted, `audio.full_text` may still contain Unit B's text
+- The dirty marking triggers audio regeneration, but `audio.full_text` is not automatically updated
+- **Consequence**: narration scene audio may re-generate with stale text (including deleted unit's content)
+- **Mitigation**: dialogue scenes read from `units[].audio.text` directly — deletion works correctly
+- **GAP**: no mechanism to auto-update `audio.full_text` when units are added/removed
+
+**Image dependency chain analysis**:
+
+```
+Unit B deleted
+  → units array changes
+  → dirty_layers includes 'image' (unit content changed)
+  → dirty_unit_ids set to [B] (if via PUT) OR full scene marked dirty (via delete)
+  → image dispatch reads current units array
+  → Unit B is absent from units → no image generated for it
+  → Scene IU composition correct
+```
+
+**Video dependency chain analysis**:
+
+```
+Image regenerated → video depends on images → video dirty
+  → dirty_layers includes 'video' (cascading from image)
+  → video regenerated with new IU composition
+```
+
+**Verdict**: Unit deletion → parent scene correctly invalidated for all three layers. Sibling units NOT affected. Narration scene `audio.full_text` may be stale (GAP-1).
+
+### 8.5 Scene Deletion
+
+**Scenario**: Chapter has Scenes A, B, C. Scene B is deleted.
+
+**What is deleted**:
+- Scene B from JSON
+- PG: `scene_assets`, `generation_tasks`, `image_units`, `storyboard_elements`, `audio_layers`, `asset_states`, `cache_entries`, `scenes` rows
+- Redis: chunks, chunk set, asset-state, asset-registry, active-index, audio/video orchestrator, dispatch leases, iu-progress/registry/in-flight, GPU job/result keys
+- Filesystem: scene audio, chunks, IU images, previews, video
+- Active index: scene removed
+- In-flight: dispatch leases + GPU hub jobs cancelled
+
+**What is NOT marked dirty**:
+- Sibling scenes (A, C) — NOT dirty
+- Chapter — NOT dirty (no chapter-level dirty mechanism exists)
+- Book — NOT dirty
+
+**Minimal regeneration scope**: NONE. The deleted scene is gone; remaining scenes have unchanged content.
+
+**GAP-2**: Scene A's image prompts may use lookahead context from Scene B (`nextScene` parameter in `stepCreateScenes`). After Scene B is deleted, Scene A's visual prompt context changes — but Scene A is NOT marked dirty. This is a minor issue because:
+- Lookahead context is advisory (character disambiguation), not core content
+- The dirty marking system does not track cross-scene dependencies
+- Visual quality may be slightly affected but content is correct
+
+### 8.6 Chapter Deletion
+
+**Scenario**: Book has Chapters 1, 2, 3. Chapter 2 is deleted.
+
+**What is deleted**:
+- Chapter 2 from JSON
+- Chapter 2 orphan file removed from `chapters/` directory
+- Guard: cannot delete last chapter (HTTP 400)
+
+**What is NOT done**:
+- No PG cleanup (scene_assets, generation_tasks, etc. for chapter 2's scenes remain)
+- No Redis cleanup (chunks, asset-state, active-index for chapter 2's scenes remain)
+- No filesystem cleanup (audio/video/image files for chapter 2's scenes remain)
+- No dispatch cancellation (in-flight generation for chapter 2's scenes continues)
+- No version bump for any remaining entity
+- No dirty marking for any remaining entity
+- No book-diff computation
+
+**GAP-3 (Critical)**: Chapter deletion performs ONLY JSON save. No derived state is cleaned up. Chapter 2's scenes leave orphan PG rows, Redis keys, filesystem files, and potentially in-flight GPU jobs.
+
+**What SHOULD happen** (per DELETE /book ethalon): For each scene in the deleted chapter, call `purgeScene` (PG + Redis + FS + dispatch cancel).
+
+**Minimal regeneration scope**: NONE for remaining chapters (their content hasn't changed).
+
+### 8.7 Audio Dependencies
+
+```
+Scene Text (audio.full_text)
+  → buildSegments (TTS input)
+  → generateSceneAudio (GPU dispatch)
+  → audio chunks (Redis + filesystem)
+  → mergeSceneAudioChunks (FFmpeg)
+  → scene audio file
+  → waveform
+  → player
+```
+
+| DELETE | Scene Text | buildSegments | Audio Regen Needed? |
+|---|---|---|---|
+| Unit B | `audio.full_text` NOT auto-updated (narration) / Units[].audio.text changed (dialogue) | Reads `full_text` (narration) or `units[].audio.text` (dialogue) | YES (dirty marked) |
+| Scene B | Deleted | N/A | NO (scene gone) |
+| Chapter 2 | Deleted scenes' text gone; remaining scenes unchanged | N/A for deleted; unchanged for remaining | NO |
+
+**GAP-1 detail**: For narration scenes, `audio.full_text` is an explicit field set by the AI during scene generation. It is NOT derived from unit texts. When a unit is deleted, `full_text` remains stale unless manually edited. The dirty marking triggers audio regeneration, but the regenerated audio reads the stale `full_text`. This means narration audio may contain the deleted unit's text.
+
+For dialogue scenes, `buildSegments` reads `units[].audio.text` directly — deletion correctly excludes the deleted unit's dialogue.
+
+### 8.8 Image Dependencies
+
+```
+Scene payload (units, participants, location, passport)
+  → buildImagePrompt (per IU)
+  → GPU dispatch (image generation)
+  → IU images
+  → scene composition
+```
+
+| DELETE | Units Array | Participants | Location | Image Regen? |
+|---|---|---|---|---|
+| Unit B | Array changes (B removed) | Unchanged | Unchanged | YES (parent scene) |
+| Scene B | Deleted | Deleted | Deleted | NO (scene gone) |
+| Chapter 2 | Deleted scenes' units gone; remaining unchanged | Unchanged | Unchanged | NO |
+
+**Image reads units directly**: `iu-processor.js:178` calls `promptBuilder.buildImagePrompt(unit, sceneData.payload, ...)` — reads current units array. Deleted unit absent → no image generated. Correct behavior.
+
+### 8.9 Video Dependencies
+
+```
+Audio (timeline) + Images (IU sequence) + Timing + Scene structure
+  → video generation (GPU dispatch)
+  → scene video
+```
+
+| DELETE | Audio Changed? | Images Changed? | Timing Changed? | Video Regen? |
+|---|---|---|---|---|
+| Unit B | YES (dirty marked) | YES (dirty marked) | YES (waveform changes) | YES (cascading from image) |
+| Scene B | N/A | N/A | N/A | NO (scene gone) |
+| Chapter 2 | N/A | N/A | N/A | NO |
+
+**Video depends on images** (pipeline dependency): when images are regenerated, video is automatically marked dirty via cascading dirty layers.
+
+### 8.10 Generation Race Conditions
+
+| Scenario | Current Behavior | Risk |
+|---|---|---|
+| DELETE Unit during in-flight generation | `purgeUnit` cancels dispatch leases + GPU hub jobs via `clearLeasesForScenes` + `clearHubDispatches`. Stale GPU result keys deleted. | LOW — properly handled |
+| DELETE Scene during in-flight generation | `purgeScene` cancels dispatch leases + GPU hub jobs. | LOW — properly handled |
+| DELETE Chapter during in-flight generation | **NO cancellation** — in-flight jobs for chapter's scenes continue running. Jobs may complete and write results to PG/Redis/FS for deleted scenes. | HIGH — GAP-3 |
+| Generation started with version N → entity deleted → generation finishes → stale result lands back? | **Unit delete**: dispatch cancelled before result lands; `purgeUnit` deletes result keys. **Scene delete**: dispatch cancelled. **Chapter delete**: NO cancellation — result may land. | MEDIUM for chapter delete |
+| Version-stale protection after delete | `detectVersionStale` in runtime-scheduler checks `asset.scene_content_version < scene.content_version`. After delete-unit, `content_version` is bumped → stale assets detected. After delete-scene/chapter, no version bump → no staleness signal. | CORRECT for unit delete; N/A for scene/chapter (entities are gone) |
+
+### 8.11 Recovery / Reconciliation
+
+| Scenario | Current Behavior | Risk |
+|---|---|---|
+| App restart after DELETE Unit | JSON saved → book loads without deleted unit. PG has `is_dirty=TRUE` + bumped `content_version` → reconciliation detects stale assets → regenerates. | LOW — self-heals |
+| App restart after DELETE Scene | JSON saved → book loads without scene. PG rows purged by `purgeScene`. Redis cleaned. Remaining scenes unchanged. | LOW if purge succeeded; MEDIUM if purge partial (pending-purge retry mechanism exists) |
+| App restart after DELETE Chapter | JSON saved → book loads without chapter. PG rows NOT purged (GAP-3). Redis NOT cleaned. Orphan state remains. | HIGH — orphan PG/Redis/FS state persists until manual cleanup |
+| Old dirty_unit_ids after restart | `reconciliation-engine.js:1960-1965` reads `dirty_unit_ids` from PG and marks image PENDING. Correctly restores regeneration intent. | LOW — properly handled |
+| Old is_dirty after restart | runtime-scheduler reads `is_dirty` from PG as secondary detection. Correctly re-activates dispatch. | LOW — properly handled |
+
+### 8.12 Minimal Regeneration Matrix
+
+| Operation | Deleted | Must Dirty | Must Version Bump | Must Regenerate | Must NOT Regenerate |
+|---|---|---|---|---|---|
+| **Delete Unit** | Unit from scene | Parent scene (audio+image+video) | Parent scene content_version++ | Parent scene audio, image, video | Sibling units, other scenes, other chapters |
+| **Delete Scene** | Scene from chapter | NONE (remaining scenes unchanged) | NONE | NONE | Sibling scenes, chapter, book |
+| **Delete Chapter** | Chapter from book | NONE (remaining chapters unchanged) | NONE | NONE | Other chapters, book |
+
+**Key principle**: DELETE ≠ regenerate everything. Only the deleted entity's parent needs regeneration (for unit delete). Scene/chapter delete requires NO regeneration of remaining content.
+
+### 8.13 Findings
+
+| # | Severity | Component | Current | Expected | Gap | Consequence |
+|---|---|---|---|---|---|---|
+| **G1** | **Critical** | entity-crud-routes.cjs (DELETE Chapter) | Only JSON save + orphan file delete. No PG/Redis/FS cleanup, no dispatch cancel. | Each scene in deleted chapter purged via `purgeScene` (PG+Redis+FS+dispatch). | Chapter delete leaves orphan PG rows, Redis keys, filesystem files, and potentially in-flight GPU jobs for all scenes in the deleted chapter. | Data leak, stale state, wasted GPU resources, potential resurrection via recovery. |
+| **G2** | **High** | entity-crud-routes.cjs (DELETE Scene) | `purgeScene` called — PG+Redis+FS+dispatch properly cleaned. | — (handled) | — | — |
+| **G3** | **High** | entity-cleanup.cjs (DELETE Unit) | `invalidateScene` marks parent scene dirty for audio+image+video, bumps content_version, cancels tasks. | — (handled) | — | — |
+| **G4** | **Medium** | audio/segments.js + pipeline-steps.js | `buildSegments` reads `scene.audio.full_text` (explicit field). When a unit is deleted, `full_text` may still contain the deleted unit's text (narration scenes). | `audio.full_text` is updated when units change, OR `buildSegments` derives text from current units. | No auto-sync between `audio.full_text` and units array. Narration audio regeneration reads stale `full_text`. | Narration audio may contain deleted unit's text after regeneration. Dialogue scenes unaffected (read `units[].audio.text` directly). |
+| **G5** | **Medium** | prompt-dependency-registry.js | Cross-scene dependencies (lookahead context) not tracked. Deleting Scene B does not mark Scene A dirty even though A's visual prompt used B as nextScene context. | Scene A marked dirty when adjacent scene deleted (for image layer only). | Visual prompt context for Scene A changes but Scene A is not regenerated. | Minor visual quality impact — character disambiguation context changes. Content correct. |
+| **G6** | **Low** | book-diff.cjs + entity-crud-routes.cjs | Entity-delete paths skip book-diff entirely. Only unit delete triggers dirty marking via entity-cleanup. | Chapter/scene delete should at minimum mark remaining scenes' reindex status. | No `reindex_needed` signal for remaining scenes after chapter/scene delete. | Display indices may be stale until next regeneration. |
+| **G7** | **Low** | reconciliation-engine.js | Reconciliation properly handles dirty_unit_ids and is_dirty flags after restart. | — (handled) | — | — |
+
+### 8.14 Recommended Fix Plan
+
+**Priority 1 (Critical)**:
+1. **DELETE Chapter cleanup**: Call `purgeScene` for each scene in the deleted chapter before returning the response. Reuse existing `entity-cleanup.purgeScene` for each scene. Add `purgeChapter` helper that iterates scenes.
+
+**Priority 2 (High)**:
+2. **DELETE Chapter dirty marking**: After purging chapter scenes, remaining chapters need NO dirty marking (their content is unchanged). However, the book's `chapters_order` changes — consider bumping a book-level version if one exists.
+
+**Priority 3 (Medium)**:
+3. **`audio.full_text` sync**: After unit add/delete in entity-cleanup, recompute `audio.full_text` from remaining units (for narration scenes). Or: make `buildSegments` fall back to `units.map(u => u.text).join(' ')` when `full_text` is stale (detect via version mismatch).
+4. **Cross-scene dirty propagation**: When a scene is deleted, mark the preceding scene's image layer dirty if it used lookahead context. Low priority — visual quality is minorly affected.
+
+**Priority 4 (Low)**:
+5. **Reindex signal**: After scene/chapter delete, set a `reindex_needed` flag so the frontend display indices update on next load.
+
+---
+
 ## Приложение: проверенные области
 
 - Backend: `entity-crud-routes.cjs`, `core-routes.cjs` (DELETE book — эталон),
@@ -410,6 +702,11 @@ web (Cache API + player queue) и Android (LruCache + SimpleDiskCache + player q
   `reconciliation-engine.js`, `runtime-persistence.js`, `startup-resume.js`,
   `chunks-routes.cjs`, `generation-routes.cjs`, `recovery-routes.cjs`,
   `book-routes.cjs` (wiring).
+  - Dirty/invalidation: `prompt-dependency-registry.js`, `entity-cleanup.cjs`,
+    `scene-assets-repo.js` (bumpSceneVersions, setDirtyUnitIds),
+    `versions-routes.cjs`.
+  - Audio: `audio/generation.js`, `audio/segments.js` (buildSegments),
+    `agent/pipeline-steps.js` (sceneFullText derivation).
 - Web: `EditPage.tsx`, `generateStore.ts`, `playbackStore.ts`, `mediaCache.ts`,
   `entityEditor.tsx`, `idgen.ts`.
   - Tests: `playbackCacheInvalidation.test.ts`, `mediaCache.test.ts`.
