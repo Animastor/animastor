@@ -597,6 +597,55 @@ Scene Text (audio.full_text)
 
 For dialogue scenes, `buildSegments` reads `units[].audio.text` directly — deletion correctly excludes the deleted unit's dialogue.
 
+### 8.7a audio.full_text — VERIFIED (code-level audit)
+
+**Canonical pipeline** (traced from source):
+
+```
+scene-orchestrator.executeAudioDispatch
+  → book.findSceneRuntimeData(bookData, ch, sc)
+      returns { runtime_type: 'scene', scene_type: scene.type || 'narration', payload: scene }
+  → audio.generateSceneAudio(redis, sceneData, loadedBook, buildId, ...)
+      → segments.buildSegments(sceneData)
+```
+
+**buildSegments (segments.js:200+)** — two paths:
+
+| Path | Condition | Text Source | full_text used? |
+|---|---|---|---|
+| **Narration** | `runtime_type === 'scene'` AND `scene_type ∈ {narration, chapter_intro, cover}` | `runtimeEntry.payload?.audio?.full_text` | ✅ YES — ONLY source |
+| **Dialogue** | `runtime_type === 'scene'` AND `scene_type === 'dialogue'` | `units[].audio.text` (dialogue) + `units[].text` (narration units within dialogue) | ❌ NO — not used for TTS |
+| **Other** | Neither of the above | Returns `[]` (no segments) | N/A |
+
+**Key finding**: For narration scenes, `buildSegments` reads `audio.full_text` EXCLUSIVELY. It does NOT read `unit.text` at all. The `assignNarrationUnitIds` call at the end is research-only (binds segment→unit mapping), not a text source.
+
+**Semantics of `audio.full_text`**:
+- Initially set by AI during scene generation (`pipeline-steps.js:1163`)
+- Editable in the Editor Audio tab (PATCH endpoint)
+- `rebuildFullText()` (scene-patch-utils.cjs) syncs it from unit texts after mutations
+- Acts as **derived field with manual override**: normally matches unit texts, but user can diverge
+- After unit mutation, `rebuildFullText` overwrites to match current units (correct: units are the structural source)
+
+**Unit.type dependency**:
+- `Unit.type` does NOT affect narration text source (all unit texts joined regardless of type)
+- `Unit.type` IS significant in dialogue path (determines dialogue vs narration segment type)
+- `rebuildFullText` triggers on type change as safety measure (structural change → rebuild)
+- Verified correct: rebuild produces identical text for type-only changes, but handles edge cases (type change from dialogue→narration within mixed scene)
+
+**Mutation matrix** (verified against code):
+
+| Mutation | full_text change? | Triggered by | Audio dirty? |
+|---|---|---|---|
+| Delete Unit | ✅ rebuilt from remaining units | `entity-crud-routes.cjs` → `rebuildFullText(sc)` | YES (via purgeUnit → invalidateScene) |
+| Edit Unit.text | ✅ rebuilt from updated units | `core-routes.cjs` PATCH → `rebuildFullText(targetScene)` | YES (via book-diff → bumpSceneVersions) |
+| Add Unit | ✅ rebuilt with new unit | `entity-crud-routes.cjs` → `rebuildFullText(sc)` | YES (via book-diff) |
+| Edit Unit.type | ✅ rebuilt (safety measure) | `core-routes.cjs` PATCH → `rebuildFullText(targetScene)` | YES (if type changes affect generation) |
+| Replace scene (full) | ✅ rebuilt from incoming units | `core-routes.cjs` PATCH → `rebuildFullText(incomingScene)` | YES (via book-diff) |
+| Edit audio.full_text directly | ✅ set by user (no rebuild) | `core-routes.cjs` PATCH → `setDeep(targetScene, 'audio.full_text', value)` | YES (via book-diff) |
+| Reorder units | N/A — no reorder endpoint | — | — |
+
+**Dialogue scene verification**: `buildSegments` for dialogue scenes reads `units[].audio.text` (dialogue) and `units[].text` (narration-perception units). `audio.full_text` is NOT used for TTS. `rebuildFullText` correctly skips dialogue scenes. VERIFIED.
+
 ### 8.8 Image Dependencies
 
 ```

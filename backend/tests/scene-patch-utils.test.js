@@ -121,5 +121,53 @@ describe('scene-patch-utils', () => {
             rebuildFullText(scene);
             assert.strictEqual(scene.audio.full_text, 'Intro text');
         });
+
+        it('includes all unit types in narration rebuild (perception, description, etc.)', () => {
+            const scene = { type: 'narration', units: [
+                { id: 'u1', type: 'narration', text: 'A' },
+                { id: 'u2', type: 'perception', text: 'B' },
+                { id: 'u3', type: 'description', text: 'C' },
+                { id: 'u4', type: 'action', text: 'D' },
+            ] };
+            rebuildFullText(scene);
+            assert.strictEqual(scene.audio.full_text, 'A B C D');
+        });
+
+        it('does NOT rebuild for dialogue scenes even with type changes', () => {
+            const scene = { type: 'dialogue', audio: { full_text: 'original' }, units: [
+                { id: 'u1', type: 'dialogue', text: 'X' },
+            ] };
+            scene.units[0].type = 'narration'; // simulate type change
+            rebuildFullText(scene);
+            // dialogue scenes: full_text is preview-only, not rebuilt
+            assert.strictEqual(scene.audio.full_text, 'original');
+        });
+
+        it('rebuild removes stale text from deleted unit', () => {
+            // Simulates: scene had units A+B, unit B deleted, rebuild from A only
+            const scene = { type: 'narration', audio: { full_text: 'Hello World' }, units: [
+                { id: 'u1', text: 'Hello' },
+                // u2 ("World") was deleted
+            ] };
+            rebuildFullText(scene);
+            assert.strictEqual(scene.audio.full_text, 'Hello');
+        });
+
+        it('rebuild includes newly added unit text', () => {
+            const scene = { type: 'narration', audio: { full_text: 'A' }, units: [
+                { id: 'u1', text: 'A' },
+                { id: 'u2', text: 'B' },  // newly added
+            ] };
+            rebuildFullText(scene);
+            assert.strictEqual(scene.audio.full_text, 'A B');
+        });
+
+        it('cover type is treated as narration ( rebuilds full_text)', () => {
+            const scene = { type: 'cover', units: [
+                { id: 'u1', text: 'Book Title' },
+            ] };
+            rebuildFullText(scene);
+            assert.strictEqual(scene.audio.full_text, 'Book Title');
+        });
     });
 });
