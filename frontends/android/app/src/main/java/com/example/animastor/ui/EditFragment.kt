@@ -1973,9 +1973,10 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         // Header row with delete (scene may not be removed while it is the only
         // scene of its chapter — the backend guards that).
         val chId = chapters.getOrNull(currentChIndex)?.chapter_id
-        if (chId != null && sc.scene_id != null) {
-            ll.addView(entityCardHead(ctx, sc.scene_id) {
-                showDeleteStructureConfirm(StructureKind.SCENE, chId, null, sc.scene_id ?: return@entityCardHead)
+        val scId = sc.scene_id
+        if (chId != null && scId != null) {
+            ll.addView(entityCardHead(ctx, scId) {
+                showDeleteStructureConfirm(StructureKind.SCENE, chId, null, scId)
             })
         }
         // scene_id is a read-only system field (kept in JSON style)
