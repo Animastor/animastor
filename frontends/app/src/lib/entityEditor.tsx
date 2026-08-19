@@ -229,3 +229,116 @@ export function DeleteConfirmDialog({ title, message, busy, error, onConfirm, on
     </Modal>
   );
 }
+
+// ═════════════════════════════════════════════════════════════════
+// STRUCTURE add/delete — chapters / scenes / units (editor hierarchy)
+//
+// Глава → Сцена → Модуль. The add dialog always shows the readonly id
+// preview; a scene additionally picks its PARENT chapter (pre-filled with the
+// current chapter, still changeable) and a unit picks its parent scene (the
+// chapter is derived from the scene — no chapter selection for modules).
+// Titles are optional (the entity's name/title is edited in the tab after).
+// ═════════════════════════════════════════════════════════════════
+
+export type StructureKind = 'chapter' | 'scene' | 'unit';
+
+export interface StructureParentOption {
+  /** chapter_id (for scenes) / scene_id (for units). */
+  id: string;
+  /** Human label: «Глава 3 — «Прибытие в Москву»» / scene title; hex fallback. */
+  label: string;
+}
+
+export function StructureAddDialog({ kind, id, chapters, scenes, defaultChapterId, defaultSceneId, busy, error, onSave, onClose }: {
+  kind: StructureKind;
+  /** Readonly preview id (generated client-side, verified server-side). */
+  id: string;
+  /** Chapters available as the parent for a scene. */
+  chapters: StructureParentOption[];
+  /** Scenes available as the parent for a unit. */
+  scenes: StructureParentOption[];
+  /** Pre-filled parent (current selection), still changeable. */
+  defaultChapterId: string | null;
+  defaultSceneId: string | null;
+  busy: boolean;
+  error: string | null;
+  onSave: (values: { chapterId: string | null; sceneId: string | null; title: string }) => void;
+  onClose: () => void;
+}): JSX.Element {
+  const [title, setTitle] = useState('');
+  const [chapterId, setChapterId] = useState(defaultChapterId ?? chapters[0]?.id ?? '');
+  const [sceneId, setSceneId] = useState(defaultSceneId ?? scenes[0]?.id ?? '');
+  const [formError, setFormError] = useState<string | null>(null);
+
+  const titleKey: StrKey =
+    kind === 'chapter' ? 'field_chapter_title' : kind === 'scene' ? 'field_scene_title' : 'field_name';
+
+  const handleSave = () => {
+    if (kind === 'scene' && !chapterId) {
+      setFormError(t('structure_parent_required'));
+      return;
+    }
+    if (kind === 'unit' && !sceneId) {
+      setFormError(t('structure_parent_required'));
+      return;
+    }
+    setFormError(null);
+    onSave({ chapterId: kind === 'scene' ? chapterId : null, sceneId: kind === 'unit' ? sceneId : null, title: title.trim() });
+  };
+
+  return (
+    <Modal title={t(kind === 'chapter' ? 'structure_add_chapter' : kind === 'scene' ? 'structure_add_scene' : 'structure_add_unit')} onClose={onClose} footer={
+      <>
+        <button type="button" class="btn btn--outlined" disabled={busy} onClick={onClose}>{t('dialog_cancel')}</button>
+        <button type="button" class="btn" disabled={busy} onClick={handleSave}>
+          {busy ? t('edit_saving') : t('edit_save')}
+        </button>
+      </>
+    }>
+      <div class="entity-form">
+        <div class="edit-field">
+          <label class="edit-field__label" for="structure-id">{t('entity_id')}</label>
+          <input id="structure-id" class="edit-field__input" type="text" value={id} readOnly />
+          <span class="entity-form__hint">{t('structure_id_hint')}</span>
+        </div>
+        {kind === 'scene' && (
+          <div class="edit-field">
+            <label class="edit-field__label" for="structure-chapter">{t('field_chapter_title')}</label>
+            <select
+              id="structure-chapter"
+              class="edit-field__input"
+              value={chapterId}
+              onChange={(e) => setChapterId((e.target as HTMLSelectElement).value)}
+            >
+              {chapters.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
+            </select>
+          </div>
+        )}
+        {kind === 'unit' && (
+          <div class="edit-field">
+            <label class="edit-field__label" for="structure-scene">{t('field_scene_title')}</label>
+            <select
+              id="structure-scene"
+              class="edit-field__input"
+              value={sceneId}
+              onChange={(e) => setSceneId((e.target as HTMLSelectElement).value)}
+            >
+              {scenes.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
+            </select>
+          </div>
+        )}
+        <div class="edit-field">
+          <label class="edit-field__label" for="structure-title">{t(titleKey)}</label>
+          <input
+            id="structure-title"
+            class="edit-field__input"
+            type="text"
+            value={title}
+            onInput={(e) => setTitle((e.target as HTMLInputElement).value)}
+          />
+        </div>
+        {(formError || error) && <div class="entity-form__error">{(formError ?? error) as string}</div>}
+      </div>
+    </Modal>
+  );
+}

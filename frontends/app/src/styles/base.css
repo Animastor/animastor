@@ -2267,6 +2267,21 @@ button { font: inherit; color: inherit; }
      edge sits 8px in from the button, i.e. 16px from the page edge). */
   margin-right: 0.5rem;
 }
+/* Unit header left group — delete button + "Модуль N/M" label (the delete sits
+   on the LEFT like the entity cards, away from the floating "+"). */
+.edit-section__label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.edit-section__delete {
+  display: inline-flex;
+  align-items: center;
+}
 /* Field cards (TextInputLayout outline in MaterialCardView 12dp) */
 .edit-field {
   display: flex; flex-direction: column;

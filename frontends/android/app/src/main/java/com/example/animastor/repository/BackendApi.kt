@@ -186,6 +186,55 @@ interface BackendApi {
         @Path("voiceId") voiceId: String
     ): GenericResponse
 
+    // ── Structure add/delete (Editor — chapters/scenes/units) ──
+
+    @POST("/api/v1/book/blank")
+    suspend fun createBlankBook(
+        @Body body: Map<String, @JvmSuppressWildcards Any?>
+    ): BlankBookResponse
+
+    @POST("/api/v1/book/{bookId}/chapters")
+    suspend fun createChapter(
+        @Path("bookId") bookId: String,
+        @Body body: Map<String, @JvmSuppressWildcards Any?>
+    ): StructureCreateResponse
+
+    @HTTP(method = "DELETE", path = "/api/v1/book/{bookId}/chapters/{chapterId}", hasBody = false)
+    suspend fun deleteChapter(
+        @Path("bookId") bookId: String,
+        @Path("chapterId") chapterId: String
+    ): GenericResponse
+
+    @POST("/api/v1/book/{bookId}/chapters/{chapterId}/scenes")
+    suspend fun createScene(
+        @Path("bookId") bookId: String,
+        @Path("chapterId") chapterId: String,
+        @Body body: Map<String, @JvmSuppressWildcards Any?>
+    ): StructureCreateResponse
+
+    @HTTP(method = "DELETE", path = "/api/v1/book/{bookId}/chapters/{chapterId}/scenes/{sceneId}", hasBody = false)
+    suspend fun deleteScene(
+        @Path("bookId") bookId: String,
+        @Path("chapterId") chapterId: String,
+        @Path("sceneId") sceneId: String
+    ): GenericResponse
+
+    @POST("/api/v1/book/{bookId}/chapters/{chapterId}/scenes/{sceneId}/units")
+    suspend fun createUnit(
+        @Path("bookId") bookId: String,
+        @Path("chapterId") chapterId: String,
+        @Path("sceneId") sceneId: String,
+        @Body body: Map<String, @JvmSuppressWildcards Any?>
+    ): StructureCreateResponse
+
+    @HTTP(method = "DELETE", path = "/api/v1/book/{bookId}/chapters/{chapterId}/scenes/{sceneId}/units/{unitId}", hasBody = false)
+    suspend fun deleteUnit(
+        @Path("bookId") bookId: String,
+        @Path("chapterId") chapterId: String,
+        @Path("sceneId") sceneId: String,
+        @Path("unitId") unitId: String
+    ): GenericResponse
+
     @Streaming
     @GET("/api/v1/book/{bookId}/export")
     suspend fun exportBook(

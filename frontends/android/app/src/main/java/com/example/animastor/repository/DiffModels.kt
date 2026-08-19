@@ -40,6 +40,27 @@ data class GenericResponse(
     val book_id: String? = null
 )
 
+/** POST /book/blank — scaffolds a blank book with minimal base structure. */
+data class BlankBookResponse(
+    val saved: Boolean = false,
+    val book_id: String? = null,
+    val title: String? = null
+)
+
+/**
+ * Structure create responses (POST chapters/scenes/units). The backend returns
+ * the persisted ids (kept as proposed or regenerated) plus, for units, the
+ * index of the appended unit inside its scene.
+ */
+data class StructureCreateResponse(
+    val saved: Boolean = false,
+    val book_id: String? = null,
+    val chapter_id: String? = null,
+    val scene_id: String? = null,
+    val unit_id: String? = null,
+    val unit_index: Int = 0
+)
+
 data class RegenerateResponse(
     val book_id: String? = null,
     val build_id: String? = null,

@@ -272,6 +272,45 @@ class Repository(
         api.deleteVoice(bookId, voiceId)
     }
 
+    // ── Structure add/delete (Editor — chapters/scenes/units) ──
+    // POSTs return the persisted ids (the server keeps the proposed id when
+    // unique, otherwise regenerates it); units also get their appended index.
+
+    suspend fun createBlankBook(): BlankBookResponse {
+        Log.i("Repo", "createBlankBook")
+        return api.createBlankBook(mapOf("title" to "Новая книга"))
+    }
+
+    suspend fun createChapter(bookId: String, body: Map<String, @JvmSuppressWildcards Any?>): StructureCreateResponse {
+        Log.d("Repo", "createChapter: $bookId body=${body.keys}")
+        return api.createChapter(bookId, body)
+    }
+
+    suspend fun deleteChapter(bookId: String, chapterId: String) {
+        Log.i("Repo", "deleteChapter: $bookId/$chapterId")
+        api.deleteChapter(bookId, chapterId)
+    }
+
+    suspend fun createScene(bookId: String, chapterId: String, body: Map<String, @JvmSuppressWildcards Any?>): StructureCreateResponse {
+        Log.d("Repo", "createScene: $bookId/$chapterId body=${body.keys}")
+        return api.createScene(bookId, chapterId, body)
+    }
+
+    suspend fun deleteScene(bookId: String, chapterId: String, sceneId: String) {
+        Log.i("Repo", "deleteScene: $bookId/$chapterId/$sceneId")
+        api.deleteScene(bookId, chapterId, sceneId)
+    }
+
+    suspend fun createUnit(bookId: String, chapterId: String, sceneId: String, body: Map<String, @JvmSuppressWildcards Any?>): StructureCreateResponse {
+        Log.d("Repo", "createUnit: $bookId/$chapterId/$sceneId body=${body.keys}")
+        return api.createUnit(bookId, chapterId, sceneId, body)
+    }
+
+    suspend fun deleteUnit(bookId: String, chapterId: String, sceneId: String, unitId: String) {
+        Log.i("Repo", "deleteUnit: $bookId/$chapterId/$sceneId/$unitId")
+        api.deleteUnit(bookId, chapterId, sceneId, unitId)
+    }
+
     suspend fun chatWithAiFull(request: AiChatRequest): AiChatResponse {
         Log.d("Repo", "chatWithAiFull: ${request.messages.size} messages")
         val response = api.chatWithAi(request)

@@ -18,6 +18,9 @@
 
 const { toEntityId, isCanonicalEntityId } = require('../../utils/entity-id');
 const { normalizeFieldValue } = require('./scene-patch-utils.cjs');
+// The project's single hex-id generator (lazy-book paths): ch-<hex8> / sc-<hex8>
+// / iu-<hex8>. No second generator is ever introduced on the clients.
+const { chapterId, sceneId, unitId, generateBookId } = require('../../book/lazy-book/paths');
 
 module.exports = function (app, redis, deps) {
     const { book, utils } = deps;
@@ -31,6 +34,17 @@ module.exports = function (app, redis, deps) {
             throw err;
         }
         return b;
+    }
+
+    // ── Structure id resolution: a client-proposed id (the readonly dialog
+    //    preview) is kept when unique; otherwise the canonical generator from
+    //    lazy-book/paths.js produces a fresh one. The server stays the authority. ──
+    function resolveStructureId(proposed, generate, isTaken) {
+        if (proposed && !isTaken(proposed)) return proposed;
+        let id = generate();
+        let guard = 0;
+        while (isTaken(id) && guard < 24) { id = generate(); guard++; }
+        return id;
     }
 
     // ── Resolve the entity id: canonical input kept, otherwise the existing
@@ -248,6 +262,309 @@ module.exports = function (app, redis, deps) {
         } catch (err) {
             console.error('[DELETE VOICE] Error:', err.message);
             return res.status(err.statusCode || 500).json({ error: err.message });
+        }
+    });
+
+    // ======================================================
+    // CHAPTERS — add / delete (Editor structure CRUD)
+    //
+    // New chapters get a canonical hex id (lazy-book paths), sensible JSON
+    // defaults and are inserted AFTER a given chapter (after_chapter_id) so the
+    // reading order stays exactly where the user asked. saveBookBundle keeps
+    // book.json's chapters_order in sync and cleans up the deleted chapter file.
+    // ======================================================
+    function findChapterIndex(chapters, chapterIdLike) {
+        return chapters.findIndex((c) =>
+            c && (c.chapter_id === chapterIdLike || c.chapter === chapterIdLike));
+    }
+
+    app.post('/api/v1/book/:bookId/chapters', (req, res) => {
+        try {
+            const { bookId } = req.params;
+            const { title, after_chapter_id, id } = req.body || {};
+            const oldBook = loadBook(bookId);
+
+            const chapters = oldBook.chapters || [];
+            const newId = resolveStructureId(
+                String(id || '').trim(),
+                chapterId,
+                (proposed) => findChapterIndex(chapters, proposed) >= 0,
+            );
+            // A chapter is only reachable/usable in the editor through a valid
+            // chapter+scene position — an empty chapter would be unreachable, so
+            // every new chapter is seeded with one narration scene + one unit
+            // (same minimal structure as POST /book/blank). The user edits or
+            // adds more scenes/units afterwards.
+            const seedScId = sceneId();
+            const seedUnitId = unitId();
+            const newChapter = {
+                chapter_id: newId,
+                chapter_title: title && String(title).trim() ? String(title).trim() : null,
+                type: 'chapter',
+                scenes: [{
+                    scene_id: seedScId,
+                    scene_title: null,
+                    type: 'narration',
+                    participants: [],
+                    audio: { voice: 'narrator', full_text: '' },
+                    units: [{ id: seedUnitId, type: 'narration', text: '' }],
+                }],
+            };
+
+            const idx = after_chapter_id ? findChapterIndex(chapters, after_chapter_id) : -1;
+            if (idx >= 0) chapters.splice(idx + 1, 0, newChapter);
+            else chapters.push(newChapter);
+            oldBook.chapters = chapters;
+
+            book.saveBookBundle(oldBook, null);
+            log(`[ADD CHAPTER] ${bookId}/${newId} (after=${after_chapter_id || 'end'})`);
+            return res.json({
+                saved: true, book_id: bookId, chapter_id: newId,
+                scene_id: seedScId, unit_id: seedUnitId,
+            });
+        } catch (err) {
+            console.error('[ADD CHAPTER] Error:', err.message);
+            return res.status(err.statusCode || 500).json({ error: err.message });
+        }
+    });
+
+    app.delete('/api/v1/book/:bookId/chapters/:chapterId', (req, res) => {
+        try {
+            const { bookId, chapterId } = req.params;
+            const oldBook = loadBook(bookId);
+
+            const chapters = oldBook.chapters || [];
+            if (chapters.length <= 1) {
+                // A book must always keep its initial/zero chapter — never allow
+                // a state where the editor faces a completely empty structure.
+                return res.status(400).json({ error: 'Cannot delete the last chapter' });
+            }
+            const before = chapters.length;
+            const after = chapters.filter((c) => !(c && (c.chapter_id === chapterId || c.chapter === chapterId)));
+            if (after.length === before) {
+                return res.status(404).json({ error: `Chapter ${chapterId} not found` });
+            }
+            oldBook.chapters = after;
+
+            book.saveBookBundle(oldBook, null);
+            log(`[DELETE CHAPTER] ${bookId}/${chapterId} (removed ${before - after.length})`);
+            return res.json({ saved: true, book_id: bookId, chapter_id: chapterId });
+        } catch (err) {
+            console.error('[DELETE CHAPTER] Error:', err.message);
+            return res.status(err.statusCode || 500).json({ error: err.message });
+        }
+    });
+
+    // ======================================================
+    // SCENES — add / delete inside a chapter
+    // ======================================================
+    app.post('/api/v1/book/:bookId/chapters/:chapterId/scenes', (req, res) => {
+        try {
+            const { bookId, chapterId } = req.params;
+            const { title, after_scene_id, id } = req.body || {};
+            const oldBook = loadBook(bookId);
+
+            const chIdx = findChapterIndex(oldBook.chapters || [], chapterId);
+            if (chIdx < 0) return res.status(404).json({ error: `Chapter ${chapterId} not found` });
+            const ch = oldBook.chapters[chIdx];
+            const scenes = ch.scenes || [];
+
+            const newId = resolveStructureId(
+                String(id || '').trim(),
+                sceneId,
+                (proposed) => (oldBook.chapters || []).some((c) =>
+                    (c.scenes || []).some((s) => s.scene_id === proposed)),
+            );
+            // Like chapters, a scene is seeded with one unit so the editor has a
+            // usable anchor (module) right away; the user edits or adds more.
+            const seedUnitId = unitId();
+            const newScene = {
+                scene_id: newId,
+                scene_title: title && String(title).trim() ? String(title).trim() : null,
+                type: 'narration',
+                participants: [],
+                audio: { voice: 'narrator', full_text: '' },
+                units: [{ id: seedUnitId, type: 'narration', text: '' }],
+            };
+
+            const idx = after_scene_id ? scenes.findIndex((s) => s.scene_id === after_scene_id) : -1;
+            if (idx >= 0) scenes.splice(idx + 1, 0, newScene);
+            else scenes.push(newScene);
+            ch.scenes = scenes;
+
+            book.saveBookBundle(oldBook, null);
+            log(`[ADD SCENE] ${bookId}/${chapterId}/${newId} (after=${after_scene_id || 'end'})`);
+            return res.json({
+                saved: true, book_id: bookId, chapter_id: chapterId,
+                scene_id: newId, unit_id: seedUnitId,
+            });
+        } catch (err) {
+            console.error('[ADD SCENE] Error:', err.message);
+            return res.status(err.statusCode || 500).json({ error: err.message });
+        }
+    });
+
+    app.delete('/api/v1/book/:bookId/chapters/:chapterId/scenes/:sceneId', (req, res) => {
+        try {
+            const { bookId, chapterId, sceneId } = req.params;
+            const oldBook = loadBook(bookId);
+
+            const chIdx = findChapterIndex(oldBook.chapters || [], chapterId);
+            if (chIdx < 0) return res.status(404).json({ error: `Chapter ${chapterId} not found` });
+            const ch = oldBook.chapters[chIdx];
+            const scenes = ch.scenes || [];
+            if (scenes.length <= 1) {
+                // A chapter always keeps at least one scene — an empty chapter is
+                // unreachable through the editor's chapter+scene position.
+                return res.status(400).json({ error: 'Cannot delete the last scene of a chapter' });
+            }
+            const before = scenes.length;
+            const after = scenes.filter((s) => !(s && s.scene_id === sceneId));
+            if (after.length === before) {
+                return res.status(404).json({ error: `Scene ${sceneId} not found` });
+            }
+            ch.scenes = after;
+
+            book.saveBookBundle(oldBook, null);
+            log(`[DELETE SCENE] ${bookId}/${chapterId}/${sceneId} (removed ${before - after.length})`);
+            return res.json({ saved: true, book_id: bookId, chapter_id: chapterId, scene_id: sceneId });
+        } catch (err) {
+            console.error('[DELETE SCENE] Error:', err.message);
+            return res.status(err.statusCode || 500).json({ error: err.message });
+        }
+    });
+
+    // ======================================================
+    // UNITS (modules) — add / delete inside a scene
+    // ======================================================
+    app.post('/api/v1/book/:bookId/chapters/:chapterId/scenes/:sceneId/units', (req, res) => {
+        try {
+            const { bookId, chapterId, sceneId } = req.params;
+            const { after_unit_id, id } = req.body || {};
+            const oldBook = loadBook(bookId);
+
+            const chIdx = findChapterIndex(oldBook.chapters || [], chapterId);
+            if (chIdx < 0) return res.status(404).json({ error: `Chapter ${chapterId} not found` });
+            const sc = (oldBook.chapters[chIdx].scenes || []).find((s) => s.scene_id === sceneId);
+            if (!sc) return res.status(404).json({ error: `Scene ${sceneId} not found` });
+
+            const units = sc.units || [];
+            const newId = resolveStructureId(
+                String(id || '').trim(),
+                unitId,
+                (proposed) => units.some((u) => u.id === proposed),
+            );
+            const newUnit = { id: newId, type: 'narration', text: '' };
+
+            const idx = after_unit_id ? units.findIndex((u) => u.id === after_unit_id) : -1;
+            if (idx >= 0) units.splice(idx + 1, 0, newUnit);
+            else units.push(newUnit);
+            sc.units = units;
+
+            book.saveBookBundle(oldBook, null);
+            log(`[ADD UNIT] ${bookId}/${chapterId}/${sceneId}/${newId} (after=${after_unit_id || 'end'})`);
+            return res.json({
+                saved: true, book_id: bookId, chapter_id: chapterId,
+                scene_id: sceneId, unit_id: newId,
+                unit_index: idx >= 0 ? idx + 1 : units.length - 1,
+            });
+        } catch (err) {
+            console.error('[ADD UNIT] Error:', err.message);
+            return res.status(err.statusCode || 500).json({ error: err.message });
+        }
+    });
+
+    app.delete('/api/v1/book/:bookId/chapters/:chapterId/scenes/:sceneId/units/:unitId', (req, res) => {
+        try {
+            const { bookId, chapterId, sceneId, unitId } = req.params;
+            const oldBook = loadBook(bookId);
+
+            const chIdx = findChapterIndex(oldBook.chapters || [], chapterId);
+            if (chIdx < 0) return res.status(404).json({ error: `Chapter ${chapterId} not found` });
+            const sc = (oldBook.chapters[chIdx].scenes || []).find((s) => s.scene_id === sceneId);
+            if (!sc) return res.status(404).json({ error: `Scene ${sceneId} not found` });
+
+            const units = sc.units || [];
+            const before = units.length;
+            const after = units.filter((u) => !(u && u.id === unitId));
+            if (after.length === before) {
+                return res.status(404).json({ error: `Unit ${unitId} not found` });
+            }
+            sc.units = after;
+
+            book.saveBookBundle(oldBook, null);
+            log(`[DELETE UNIT] ${bookId}/${chapterId}/${sceneId}/${unitId} (removed ${before - after.length})`);
+            return res.json({ saved: true, book_id: bookId, chapter_id: chapterId, scene_id: sceneId, unit_id: unitId });
+        } catch (err) {
+            console.error('[DELETE UNIT] Error:', err.message);
+            return res.status(err.statusCode || 500).json({ error: err.message });
+        }
+    });
+
+    // ======================================================
+    // BLANK BOOK — "Create visual book" scaffold (File page)
+    //
+    // Builds the minimal valid structure the Editor can anchor on right away:
+    //   chapters[0] → one scene → one module. The user then builds the book
+    //   manually with the Editor's +/- controls (AI stays an optional assistant).
+    // Reuses generateBookId (paths.js) for the book id — no new id mechanism.
+    // ======================================================
+    app.post('/api/v1/book/blank', (req, res) => {
+        try {
+            const { title } = req.body || {};
+            const label = title && String(title).trim() ? String(title).trim() : 'Новая книга';
+            const bookId = generateBookId(label);
+            if (book.loadBook(bookId)) {
+                // Extremely unlikely (timestamp-suffixed), but never clobber.
+                return res.status(409).json({ error: `Book ${bookId} already exists` });
+            }
+
+            const chFile = `${chapterId()}.json`;
+            const scId = sceneId();
+            const uId = unitId();
+            const now = new Date().toISOString();
+
+            const blankBook = {
+                manifest: {
+                    vbook_version: '3.1',
+                    book_id: bookId,
+                    build_id: `manual_${Date.now()}`,
+                    created_at: now,
+                },
+                book: {
+                    book_id: bookId,
+                    version: '3.0',
+                    title: label,
+                    author: '',
+                    language: 'ru',
+                    structure: { chapters_order: [chFile] },
+                    defaults: { narration_voice: 'narrator' },
+                },
+                bible: {},
+                characters: [],
+                voices: {},
+                locations: {},
+                chapters: [{
+                    chapter_id: chFile.replace('.json', ''),
+                    chapter_title: label,
+                    type: 'chapter',
+                    scenes: [{
+                        scene_id: scId,
+                        scene_title: 'Сцена 1',
+                        type: 'narration',
+                        participants: [],
+                        audio: { voice: 'narrator', full_text: '' },
+                        units: [{ id: uId, type: 'narration', text: '' }],
+                    }],
+                }],
+            };
+
+            book.saveBookBundle(blankBook, null);
+            log(`[CREATE BLANK BOOK] ${bookId} (title=${label.slice(0, 40)})`);
+            return res.json({ saved: true, book_id: bookId, title: label });
+        } catch (err) {
+            console.error('[CREATE BLANK BOOK] Error:', err.message);
+            return res.status(500).json({ error: err.message });
         }
     });
 };

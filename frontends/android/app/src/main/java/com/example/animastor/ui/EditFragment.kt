@@ -30,6 +30,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.io.File
 import java.util.Locale
+import kotlin.random.Random
 
 class EditFragment : Fragment(R.layout.fragment_edit) {
 
@@ -125,6 +126,58 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
     /** Editor tab positions that render entity tables (characters/voices/locations). */
     private val ENTITY_TABS = setOf(4, 5, 6)
 
+    // ======================================================
+    // Structure add/delete (chapters / scenes / units)
+    // ======================================================
+    // Same add/delete pattern as the entity tables, applied to the structure
+    // tabs: 0=chapter, 1=scene, 3=unit. The id shown in the dialog is a readonly
+    // preview — the server keeps it when unique, otherwise it regenerates.
+
+    private enum class StructureKind { CHAPTER, SCENE, UNIT }
+
+    private class StructureDef(
+        val kind: StructureKind,
+        val addTitleRes: Int,
+        val deleteTitleRes: Int,
+        val deleteConfirmRes: Int
+    )
+
+    /** Editor tab positions that render structure content (chapter/scene/unit). */
+    private val STRUCTURE_TABS = setOf(0, 1, 3)
+
+    private fun structureDef(kind: StructureKind): StructureDef = when (kind) {
+        StructureKind.CHAPTER -> StructureDef(
+            kind,
+            R.string.structure_add_chapter,
+            R.string.structure_delete_chapter,
+            R.string.structure_delete_chapter_confirm
+        )
+        StructureKind.SCENE -> StructureDef(
+            kind,
+            R.string.structure_add_scene,
+            R.string.structure_delete_scene,
+            R.string.structure_delete_scene_confirm
+        )
+        StructureKind.UNIT -> StructureDef(
+            kind,
+            R.string.structure_add_unit,
+            R.string.structure_delete_unit,
+            R.string.structure_delete_unit_confirm
+        )
+    }
+
+    /** Readonly hex-style id preview mirroring the server's idgen format
+     *  (server-side cyrToLatin transliteration stays server-only). */
+    private fun previewStructureId(kind: StructureKind): String {
+        val prefix = when (kind) {
+            StructureKind.CHAPTER -> "ch"
+            StructureKind.SCENE -> "sc"
+            StructureKind.UNIT -> "iu"
+        }
+        val hex = (0 until 4).joinToString("") { "%02x".format(Random.nextInt(256)) }
+        return "$prefix-$hex"
+    }
+
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         binding = FragmentEditBinding.bind(view)
@@ -156,10 +209,14 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         b.tabScrollLeft.setOnClickListener { scrollTabs(-1) }
         b.tabScrollRight.setOnClickListener { scrollTabs(1) }
 
-        // Floating "+" — manual entity add (characters/voices/locations tables).
-        // The button is only visible on the entity tabs (rebuildContent toggles it).
+        // Floating "+" — manual add. Structure tabs (chapter/scene/unit) open
+        // the structure dialogs; entity tabs (characters/voices/locations) open
+        // the entity tables' add form. Only visible on those tabs (rebuildContent).
         b.entityAddButton.setOnClickListener {
             when (b.propertyTabs.selectedTabPosition) {
+                0 -> showAddStructureDialog(StructureKind.CHAPTER)
+                1 -> showAddStructureDialog(StructureKind.SCENE)
+                3 -> showAddStructureDialog(StructureKind.UNIT)
                 4 -> showAddEntityDialog(EntityKind.CHARACTER)
                 5 -> showAddEntityDialog(EntityKind.VOICE)
                 else -> showAddEntityDialog(EntityKind.LOCATION)
@@ -732,6 +789,287 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         }
     }
 
+    // ======================================================
+    // Structure add/delete (chapters / scenes / units)
+    // ======================================================
+
+    /** Chapter picker option for the scene-add dialog (Глава N — «Title»). */
+    private data class StructureParentOption(val id: String, val label: String)
+
+    private fun chapterOptions(): List<StructureParentOption> =
+        chapters.mapIndexed { i, ch ->
+            StructureParentOption(
+                id = ch.chapter_id ?: "",
+                label = if (ch.is_special) {
+                    ch.chapter_title ?: (ch.chapter_id ?: "")
+                } else {
+                    val n = ch.display_number ?: (i + 1)
+                    val t = ch.chapter_title?.takeIf { it.isNotBlank() } ?: (ch.chapter_id ?: "")
+                    getString(R.string.structure_chapter_option, n, t)
+                }
+            )
+        }
+
+    private fun sceneOptions(): List<StructureParentOption> =
+        chapters.flatMap { ch ->
+            (ch.scenes ?: emptyList()).map { sc ->
+                StructureParentOption(
+                    id = sc.scene_id ?: "",
+                    label = sc.scene_title?.takeIf { it.isNotBlank() } ?: (sc.scene_id ?: "")
+                )
+            }
+        }
+
+    private fun chapterIdForScene(sceneId: String): String? =
+        chapters.firstOrNull { ch ->
+            (ch.scenes ?: emptyList()).any { it.scene_id == sceneId }
+        }?.chapter_id
+
+    private fun showAddStructureDialog(kind: StructureKind) {
+        val ctx = requireContext()
+        val def = structureDef(kind)
+        val bookId = viewModel.bookId.takeIf { it.isNotBlank() } ?: return
+        val previewId = previewStructureId(kind)
+
+        val container = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
+        val errorText = TextView(ctx).apply {
+            textSize = 12f
+            setTextColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorError))
+            visibility = View.GONE
+            setPadding(0, 8, 0, 0)
+        }
+
+        val inputEt = mutableMapOf<String, TextInputEditText>()
+        var selectedChapterId: String? = null
+        var selectedSceneId: String? = null
+
+        fun addField(label: String, key: String, multiline: Boolean = false) {
+            val til = TextInputLayout(ctx).apply {
+                this.hint = label
+                isHintEnabled = true
+                boxBackgroundMode = TextInputLayout.BOX_BACKGROUND_OUTLINE
+            }
+            val et = TextInputEditText(ctx).apply {
+                textSize = 14f
+                if (multiline) {
+                    minLines = 3
+                    gravity = android.view.Gravity.TOP or android.view.Gravity.START
+                }
+                setPadding(12, 10, 12, 10)
+            }
+            til.addView(et)
+            inputEt[key] = et
+            container.addView(til)
+        }
+
+        // Id — readonly preview (the server is the id authority).
+        val idEt = TextInputEditText(ctx).apply {
+            setText(previewId)
+            isEnabled = false
+            textSize = 14f
+            setPadding(12, 10, 12, 10)
+        }
+        val tilId = TextInputLayout(ctx).apply {
+            hint = getString(R.string.entity_id)
+            isHintEnabled = true
+            boxBackgroundMode = TextInputLayout.BOX_BACKGROUND_OUTLINE
+            helperText = getString(R.string.structure_id_hint)
+        }
+        tilId.addView(idEt)
+        container.addView(tilId)
+
+        fun addSpinner(label: String, options: List<StructureParentOption>, initial: String?, onSelected: (String?) -> Unit) {
+            if (options.isEmpty()) return
+            val til = TextInputLayout(ctx).apply {
+                hint = label
+                isHintEnabled = true
+                boxBackgroundMode = TextInputLayout.BOX_BACKGROUND_OUTLINE
+            }
+            val sp = android.widget.Spinner(ctx)
+            val items = options.map { it.label }
+            val adapter = android.widget.ArrayAdapter(ctx, android.R.layout.simple_spinner_item, items)
+            adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+            sp.adapter = adapter
+            val initIdx = options.indexOfFirst { it.id == initial }.takeIf { it >= 0 } ?: 0
+            sp.setSelection(initIdx)
+            onSelected(options.getOrNull(initIdx)?.id)
+            sp.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+                override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: View?, position: Int, id: Long) {
+                    onSelected(options.getOrNull(position)?.id)
+                }
+                override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {
+                    onSelected(null)
+                }
+            }
+            til.addView(sp)
+            container.addView(til)
+        }
+
+        when (kind) {
+            StructureKind.CHAPTER -> addField(getString(R.string.field_chapter_title), "title")
+            StructureKind.SCENE -> {
+                val cur = SharedPositionManager.current.value
+                addSpinner(getString(R.string.structure_parent_chapter), chapterOptions(), cur.chapterId) { selectedChapterId = it }
+                addField(getString(R.string.field_scene_title), "title")
+            }
+            StructureKind.UNIT -> {
+                val cur = SharedPositionManager.current.value
+                addSpinner(getString(R.string.structure_parent_scene), sceneOptions(), cur.sceneId) { selectedSceneId = it }
+            }
+        }
+        container.addView(errorText)
+
+        AppDialogs.action(
+            ctx = ctx,
+            title = getString(def.addTitleRes),
+            content = container,
+            cancelText = getString(R.string.dialog_cancel),
+            actionText = getString(R.string.edit_save),
+        ) { dlg ->
+            val title = inputEt["title"]?.text?.toString()?.trim() ?: ""
+            when (kind) {
+                StructureKind.SCENE -> if (selectedChapterId == null) {
+                    errorText.text = getString(R.string.structure_parent_required)
+                    errorText.visibility = View.VISIBLE
+                    return@action
+                }
+                StructureKind.UNIT -> if (selectedSceneId == null) {
+                    errorText.text = getString(R.string.structure_parent_required)
+                    errorText.visibility = View.VISIBLE
+                    return@action
+                }
+                StructureKind.CHAPTER -> {}
+            }
+            errorText.visibility = View.GONE
+            dlg.dismiss()
+            createStructure(kind, selectedChapterId, selectedSceneId, title, previewId, bookId)
+        }.show()
+    }
+
+    private fun createStructure(kind: StructureKind, chapterId: String?, sceneId: String?, title: String, previewId: String, bookId: String) {
+        lifecycleScope.launch {
+            try {
+                val res: StructureCreateResponse = when (kind) {
+                    StructureKind.CHAPTER -> {
+                        val body = mutableMapOf<String, Any?>("id" to previewId, "title" to title)
+                        SharedPositionManager.current.value.chapterId?.let { body["after_chapter_id"] = it }
+                        viewModel.repository.createChapter(bookId, body)
+                    }
+                    StructureKind.SCENE -> {
+                        val body = mutableMapOf<String, Any?>("id" to previewId, "title" to title)
+                        viewModel.repository.createScene(bookId, chapterId ?: "", body)
+                    }
+                    StructureKind.UNIT -> {
+                        val body = mutableMapOf<String, Any?>("id" to previewId)
+                        viewModel.repository.createUnit(bookId, chapterIdForScene(sceneId ?: "") ?: "", sceneId ?: "", body)
+                    }
+                }
+                // Reposition to the created element — the position observer's
+                // loadAndSync re-fetches the book and rebuilds the tab.
+                when (kind) {
+                    StructureKind.CHAPTER -> SharedPositionManager.navigateTo(
+                        chapterId = res.chapter_id,
+                        sceneId = res.scene_id,
+                        unitId = res.unit_id,
+                        chunkId = null,
+                        unitIndex = 0
+                    )
+                    StructureKind.SCENE -> SharedPositionManager.navigateTo(
+                        chapterId = chapterId,
+                        sceneId = res.scene_id,
+                        unitId = res.unit_id,
+                        chunkId = null,
+                        unitIndex = 0
+                    )
+                    StructureKind.UNIT -> SharedPositionManager.navigateTo(
+                        chapterId = chapterIdForScene(sceneId ?: "") ?: SharedPositionManager.current.value.chapterId,
+                        sceneId = sceneId,
+                        unitId = res.unit_id,
+                        chunkId = null,
+                        unitIndex = res.unit_index
+                    )
+                }
+            } catch (e: Exception) {
+                Log.e("EditFragment", "structure create failed", e)
+                showSaveError("${e::class.simpleName}: ${e.message ?: "unknown"}")
+            }
+        }
+    }
+
+    /** Delete confirmation — destructive structure actions never fire without
+     *  confirmation (mirror of the web DeleteConfirmDialog). */
+    private fun showDeleteStructureConfirm(kind: StructureKind, chapterId: String, sceneId: String?, id: String) {
+        val def = structureDef(kind)
+        val ctx = requireContext()
+        val bookId = viewModel.bookId.takeIf { it.isNotBlank() } ?: return
+        val message = TextView(ctx).apply {
+            text = getString(def.deleteConfirmRes)
+            textSize = 14f
+            setTextColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorOnSurfaceVariant))
+            setLineSpacing(0f, 1.45f)
+            setBackgroundResource(R.drawable.bg_dialog_notice)
+            val dm = resources.displayMetrics
+            val pad = (12 * dm.density + 0.5f).toInt()
+            val padX = (16 * dm.density + 0.5f).toInt()
+            setPadding(padX, pad, padX, pad)
+        }
+        AppDialogs.action(
+            ctx = ctx,
+            title = getString(def.deleteTitleRes),
+            content = message,
+            cancelText = getString(R.string.dialog_cancel),
+            actionText = getString(R.string.entity_delete_btn),
+            destructive = true,
+        ) { dlg ->
+            dlg.dismiss()
+            lifecycleScope.launch {
+                try {
+                    when (kind) {
+                        StructureKind.CHAPTER -> viewModel.repository.deleteChapter(bookId, id)
+                        StructureKind.SCENE -> viewModel.repository.deleteScene(bookId, chapterId, id)
+                        StructureKind.UNIT -> viewModel.repository.deleteUnit(bookId, chapterId, sceneId ?: "", id)
+                    }
+                    reloadStructureAndReposition()
+                } catch (e: Exception) {
+                    Log.e("EditFragment", "structure delete failed", e)
+                    showSaveError("${e::class.simpleName}: ${e.message ?: "unknown"}")
+                }
+            }
+        }.show()
+    }
+
+    /** After a structure delete: re-fetch, re-anchor the shared position to a
+     *  still-existing neighbor (clamp indexes; fall back to the first remaining
+     *  chapter's first scene when the current chapter is gone), and rebuild. */
+    private fun reloadStructureAndReposition() {
+        val bookId = viewModel.bookId.takeIf { it.isNotBlank() } ?: return
+        lifecycleScope.launch {
+            val fresh = runCatching { viewModel.repository.getBook(bookId) }.getOrNull() ?: return@launch
+            bookData = fresh
+            chapters = fresh.chapters ?: emptyList()
+            val pos = SharedPositionManager.current.value
+            val chs = chapters
+            if (chs.isNotEmpty()) {
+                var chIdx = chs.indexOfFirst { it.chapter_id == pos.chapterId }
+                if (chIdx < 0) chIdx = 0
+                val ch = chs[chIdx]
+                var scIdx = (ch.scenes ?: emptyList()).indexOfFirst { it.scene_id == pos.sceneId }
+                if (scIdx < 0) scIdx = 0
+                val sc = ch.scenes?.getOrNull(scIdx)
+                val units = sc?.units ?: emptyList()
+                val unitIndex = pos.unitIndex.coerceIn(0, maxOf(0, units.size - 1))
+                SharedPositionManager.navigateTo(
+                    chapterId = ch.chapter_id,
+                    sceneId = sc?.scene_id,
+                    unitId = units.getOrNull(unitIndex)?.id,
+                    chunkId = null,
+                    unitIndex = unitIndex
+                )
+            }
+            rebuildContent(binding?.propertyTabs?.selectedTabPosition ?: 0)
+        }
+    }
+
     private fun updateCarousel() {
         val b = binding ?: return
         val pos = SharedPositionManager.current.value
@@ -1087,10 +1425,11 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                 6 -> buildLocationsFields(frame)
                 7 -> buildGlobalFields(frame)
             }
-            // Entity tables (characters/voices/locations) get the floating "+"
-            // overlay button — hidden on every other tab.
+            // Entity tables (characters/voices/locations) and structure tabs
+            // (chapters/scenes/units) get the floating "+" overlay button —
+            // hidden on every other tab.
             binding?.entityAddButton?.visibility =
-                if (tab in ENTITY_TABS) View.VISIBLE else View.GONE
+                if (tab in ENTITY_TABS || tab in STRUCTURE_TABS) View.VISIBLE else View.GONE
             // Update scroll indicators after rebuilding
             updateTabScrollIndicators()
         } catch (e: Exception) {
@@ -1151,6 +1490,35 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                 marginStart = (4 * dm.density + 0.5f).toInt()
             }
         }
+        // Unit delete — sits at the right of the header, before the clock/duration
+        // (web parity: the delete button leads the section label group).
+        val delBtn = ImageButton(ctx).apply {
+            contentDescription = getString(R.string.structure_delete_unit)
+            setImageResource(R.drawable.ic_remove)
+            val dm = resources.displayMetrics
+            val sz = (24 * dm.density + 0.5f).toInt()
+            val pad = (5 * dm.density + 0.5f).toInt()
+            layoutParams = LinearLayout.LayoutParams(sz, sz).apply {
+                marginEnd = (6 * dm.density + 0.5f).toInt()
+            }
+            val errorColor = MaterialColors.getColor(this, com.google.android.material.R.attr.colorError)
+            val errorContainerColor = MaterialColors.getColor(this, com.google.android.material.R.attr.colorErrorContainer)
+            imageTintList = android.content.res.ColorStateList.valueOf(errorColor)
+            background = android.graphics.drawable.GradientDrawable().apply {
+                shape = android.graphics.drawable.GradientDrawable.RECTANGLE
+                cornerRadius = (5 * dm.density + 0.5f).toInt().toFloat()
+                setColor(errorContainerColor)
+                setStroke((1 * dm.density + 0.5f).toInt(), errorColor)
+            }
+            setPadding(pad, pad, pad, pad)
+            stateListAnimator = null
+            setOnClickListener {
+                val chId = chapters.getOrNull(currentChIndex)?.chapter_id ?: return@setOnClickListener
+                val scId = sc.scene_id ?: return@setOnClickListener
+                val iuId = u.id ?: return@setOnClickListener
+                showDeleteStructureConfirm(StructureKind.UNIT, chId, scId, iuId)
+            }
+        }
         val clock = ImageView(ctx).apply {
             setImageResource(R.drawable.ic_clock)
             val dm = resources.displayMetrics
@@ -1173,6 +1541,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                 marginStart = (2 * dm.density + 0.5f).toInt()
             }
         }
+        meta.addView(delBtn)
         meta.addView(clock)
         meta.addView(dur)
         header.addView(title)
@@ -1577,6 +1946,12 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         // chapter_id is a read-only system field (kept in JSON style)
         ll.addView(readOnlyCard(ctx, "chapter_id", ch?.chapter_id ?: "—"))
         if (ch != null) {
+            // Header row with delete (chapter may not be removed while it is
+            // the only chapter — the backend guards that).
+            ll.addView(entityCardHead(ctx, ch.chapter_id ?: "") {
+                val chId = ch.chapter_id ?: return@entityCardHead
+                showDeleteStructureConfirm(StructureKind.CHAPTER, chId, null, chId)
+            })
             val chTitleKey = "chapter_title"
             if (!fieldValues.containsKey(chTitleKey)) fieldValues[chTitleKey] = ch.chapter_title ?: ""
             ll.addView(inputCard(ctx, fieldLabel(chTitleKey), fieldValues[chTitleKey] ?: "", false, storeKey = chTitleKey))
@@ -1595,6 +1970,14 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
 
         // ── Section: General scene parameters ──
         ll.addView(sectionLabel(ctx, getString(R.string.edit_section_scene_general)))
+        // Header row with delete (scene may not be removed while it is the only
+        // scene of its chapter — the backend guards that).
+        val chId = chapters.getOrNull(currentChIndex)?.chapter_id
+        if (chId != null && sc.scene_id != null) {
+            ll.addView(entityCardHead(ctx, sc.scene_id) {
+                showDeleteStructureConfirm(StructureKind.SCENE, chId, null, sc.scene_id ?: return@entityCardHead)
+            })
+        }
         // scene_id is a read-only system field (kept in JSON style)
         ll.addView(readOnlyCard(ctx, "scene_id", sc.scene_id ?: "—"))
         listOf("scene_title", "type", "style").forEach { key ->

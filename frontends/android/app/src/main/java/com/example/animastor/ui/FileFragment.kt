@@ -105,7 +105,7 @@ class FileFragment : Fragment(R.layout.fragment_file) {
 
         binding?.createCard?.setOnClickListener {
             viewModel.closeBook()
-            (requireActivity() as MainActivity).switchToAiTab(createMode = true)
+            viewModel.createBlankBook()
         }
 
         binding?.libraryCard?.setOnClickListener {
@@ -288,6 +288,9 @@ class FileFragment : Fragment(R.layout.fragment_file) {
                             }
                             is GenerateViewModel.NavigationEvent.NavigateToPlay -> {
                                 (requireActivity() as MainActivity).switchToPlayTab()
+                            }
+                            is GenerateViewModel.NavigationEvent.NavigateToEdit -> {
+                                (requireActivity() as MainActivity).switchToEditTab()
                             }
                         }
                     }

@@ -47,7 +47,7 @@
 
     <!-- File Create -->
     <string name="file_create">Create</string>
-    <string name="file_create_desc">Create a new visual book with AI</string>
+    <string name="file_create_desc">Create an empty book and open it in the editor</string>
     <string name="file_status_opening">Opening book…</string>
     <string name="file_status_generating">Generating scenes…</string>
     <string name="file_status_checking">Checking media…</string>
@@ -354,6 +354,22 @@
     <string name="entity_delete_location_confirm">Are you sure you want to delete this location?</string>
     <string name="entity_delete_voice">Delete voice?</string>
     <string name="entity_delete_voice_confirm">Are you sure you want to delete this voice?</string>
+
+    <!-- Structure (chapters / scenes / units) -->
+    <string name="structure_add_chapter">Add chapter</string>
+    <string name="structure_add_scene">Add scene</string>
+    <string name="structure_add_unit">Add module</string>
+    <string name="structure_delete_chapter">Delete chapter?</string>
+    <string name="structure_delete_chapter_confirm">Are you sure you want to delete this chapter? All its scenes and units will be removed.</string>
+    <string name="structure_delete_scene">Delete scene?</string>
+    <string name="structure_delete_scene_confirm">Are you sure you want to delete this scene? All its units will be removed.</string>
+    <string name="structure_delete_unit">Delete module?</string>
+    <string name="structure_delete_unit_confirm">Are you sure you want to delete this module?</string>
+    <string name="structure_id_hint">The ID is assigned by the server — this preview is used when unique</string>
+    <string name="structure_parent_required">Choose the parent chapter/scene</string>
+    <string name="structure_parent_chapter">Chapter</string>
+    <string name="structure_parent_scene">Scene</string>
+    <string name="structure_chapter_option">Chapter %1$d — \"%2$s\"</string>
 
     <!-- Audio Timeline -->
     <string name="timeline_play">Play scene audio</string>

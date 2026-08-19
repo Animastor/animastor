@@ -171,6 +171,22 @@
     <string name="entity_delete_location_confirm">Вы действительно хотите удалить эту локацию?</string>
     <string name="entity_delete_voice">Удалить голос?</string>
     <string name="entity_delete_voice_confirm">Вы действительно хотите удалить этот голос?</string>
+
+    <!-- Structure (главы / сцены / модули) -->
+    <string name="structure_add_chapter">Добавить главу</string>
+    <string name="structure_add_scene">Добавить сцену</string>
+    <string name="structure_add_unit">Добавить модуль</string>
+    <string name="structure_delete_chapter">Удалить главу?</string>
+    <string name="structure_delete_chapter_confirm">Вы действительно хотите удалить эту главу? Все её сцены и модули будут удалены.</string>
+    <string name="structure_delete_scene">Удалить сцену?</string>
+    <string name="structure_delete_scene_confirm">Вы действительно хотите удалить эту сцену? Все её модули будут удалены.</string>
+    <string name="structure_delete_unit">Удалить модуль?</string>
+    <string name="structure_delete_unit_confirm">Вы действительно хотите удалить этот модуль?</string>
+    <string name="structure_id_hint">ID назначает сервер — этот предпросмотр используется, если он уникален</string>
+    <string name="structure_parent_required">Выберите родительскую главу/сцену</string>
+    <string name="structure_parent_chapter">Глава</string>
+    <string name="structure_parent_scene">Сцена</string>
+    <string name="structure_chapter_option">Глава %1$d — «%2$s»</string>
     <string name="edit_field_chapter_id">ID главы</string>
     <string name="edit_field_scene_id">ID сцены</string>
     <string name="edit_save">Сохранить</string>
@@ -290,7 +306,7 @@
 
     <!-- File Create -->
     <string name="file_create">Создать</string>
-    <string name="file_create_desc">Создать новую визуальную книгу с помощью AI</string>
+    <string name="file_create_desc">Создать пустую книгу и открыть в редакторе</string>
     <string name="ai_creation_welcome">Я готов создать новую визуальную книгу. Как назовём нашу книгу? Напишите или надиктуйте название и текст, и я превращу его в полноценную визуальную книгу.</string>
 
     <!-- Navigate Screen -->

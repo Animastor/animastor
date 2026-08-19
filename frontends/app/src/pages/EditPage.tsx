@@ -42,8 +42,9 @@ import {
 import { navigateTo, position as positionSignal } from '../state/positionStore';
 import { seekToPosition } from '../state/playbackStore';
 import { Waveform } from '../lib/waveform';
-import { DeleteConfirmDialog, ENTITY_SCHEMAS, EntityAddButton, EntityDeleteButton, EntityEditorDialog } from '../lib/entityEditor';
-import type { EntityKind } from '../lib/entityEditor';
+import { DeleteConfirmDialog, ENTITY_SCHEMAS, EntityAddButton, EntityDeleteButton, EntityEditorDialog, StructureAddDialog } from '../lib/entityEditor';
+import type { EntityKind, StructureKind, StructureParentOption } from '../lib/entityEditor';
+import { chapterId as genChapterId, sceneId as genSceneId, unitId as genUnitId } from '../lib/idgen';
 import { IconChevronDown, IconChevronLeft, IconChevronRight, IconChevronUp, IconClock, IconClose, IconFullscreen, IconImageOff, IconPlay, IconReset, IconSave, IconStop } from '../app/icons';
 
 // ── Tabs (propertyTabs) — Chapter is the first level, then Scene → Audio →
@@ -222,6 +223,20 @@ export function EditPage(props: { path?: string }) {
   const [deleteTarget, setDeleteTarget] = useState<{ kind: EntityKind; id: string } | null>(null);
   const [entityBusy, setEntityBusy] = useState(false);
   const [entityError, setEntityError] = useState<string | null>(null);
+
+  // Structure Add/Delete (chapters / scenes / units — the editor hierarchy).
+  // Reuses the entity busy/error state: only one dialog is open at a time.
+  const [structureAddKind, setStructureAddKind] = useState<StructureKind | null>(null);
+  // Readonly id preview for the open add dialog (generated client-side, the
+  // server keeps it when unique and otherwise regenerates it).
+  const [structurePreviewId, setStructurePreviewId] = useState('');
+  interface StructureDeleteTarget {
+    kind: StructureKind;
+    chapterId: string;
+    sceneId: string | null;
+    id: string;
+  }
+  const [structureDelete, setStructureDelete] = useState<StructureDeleteTarget | null>(null);
 
   // Timeline (waveform + timings + audio playback).
   const [waveformData, setWaveformData] = useState<WaveformData | null>(null);
@@ -1480,7 +1495,133 @@ export function EditPage(props: { path?: string }) {
     return new Set(Object.keys(bd.voices ?? {}));
   }, [bookData, entityAddKind]);
 
+  // ── Structure add/delete (chapters / scenes / units) ──
+  // POST/DELETE through the dedicated endpoints; after success the canonical book
+  // is re-fetched and the shared position is re-anchored, so the position
+  // observer reloads the editor onto the new/nearest element. The ids come from
+  // the server (the readonly dialog preview is used verbatim when unique). New
+  // chapters/scenes are seeded with one unit by the backend — the editor is
+  // always anchored on a valid chapter+scene+unit position.
+
+  const openStructureAdd = useCallback((kind: StructureKind) => {
+    setEntityError(null);
+    setStructurePreviewId(kind === 'chapter' ? genChapterId() : kind === 'scene' ? genSceneId() : genUnitId());
+    setStructureAddKind(kind);
+  }, []);
+
+  const structureChapters = useMemo<StructureParentOption[]>(() =>
+    (bookData?.chapters ?? []).map((c, i) => ({
+      id: c.chapter_id ?? '',
+      label: c.chapter_title?.trim()
+        ? tf('structure_chapter_option', c.display_number ?? i + 1, c.chapter_title.trim())
+        : (c.chapter_id ?? `ch-${i}`),
+    })), [bookData]);
+
+  const structureScenes = useMemo<StructureParentOption[]>(() =>
+    (bookData?.chapters ?? []).flatMap((c) =>
+      (c.scenes ?? []).map((s) => ({
+        chapterId: c.chapter_id ?? '',
+        id: s.scene_id ?? '',
+        label: s.scene_title?.trim() ? s.scene_title.trim() : (s.scene_id ?? ''),
+      }))), [bookData]);
+
+  const saveStructure = useCallback(async (kind: StructureKind, values: { chapterId: string | null; sceneId: string | null; title: string }) => {
+    const bId = bookIdSignal.value;
+    if (!bId) return;
+    setEntityBusy(true);
+    setEntityError(null);
+    try {
+      let position: { chapterId: string; sceneId: string; unitId: string; unitIndex: number } | null = null;
+      if (kind === 'chapter') {
+        const res = await postJson<{ chapter_id: string; scene_id: string; unit_id: string }>(`/book/${encodeURIComponent(bId)}/chapters`, {
+          id: structurePreviewId,
+          title: values.title,
+          after_chapter_id: positionSignal.value.chapterId ?? null,
+        });
+        position = { chapterId: res.chapter_id, sceneId: res.scene_id, unitId: res.unit_id, unitIndex: 0 };
+      } else if (kind === 'scene') {
+        const res = await postJson<{ scene_id: string; unit_id: string }>(`/book/${encodeURIComponent(bId)}/chapters/${encodeURIComponent(values.chapterId ?? '')}/scenes`, {
+          id: structurePreviewId,
+          title: values.title,
+        });
+        position = { chapterId: values.chapterId ?? '', sceneId: res.scene_id, unitId: res.unit_id, unitIndex: 0 };
+      } else {
+        const chosenChapter = (bookData?.chapters ?? []).find((c) =>
+          (c.scenes ?? []).some((s) => s.scene_id === values.sceneId))?.chapter_id ?? positionSignal.value.chapterId ?? '';
+        const res = await postJson<{ unit_id: string; unit_index: number }>(`/book/${encodeURIComponent(bId)}/chapters/${encodeURIComponent(chosenChapter)}/scenes/${encodeURIComponent(values.sceneId ?? '')}/units`, {
+          id: structurePreviewId,
+        });
+        position = { chapterId: chosenChapter, sceneId: values.sceneId ?? '', unitId: res.unit_id, unitIndex: res.unit_index };
+      }
+      setStructureAddKind(null);
+      const fresh = await getJson<BookData>(`/book/${encodeURIComponent(bId)}`);
+      setBookData(fresh);
+      if (position) {
+        navigateTo({
+          chapterId: position.chapterId || null,
+          sceneId: position.sceneId || null,
+          unitId: position.unitId || null,
+          chunkId: null,
+          unitIndex: position.unitIndex,
+        });
+      }
+    } catch (e) {
+      setEntityError((e as Error).message);
+    } finally {
+      setEntityBusy(false);
+    }
+  }, [structurePreviewId, bookData]);
+
+  const confirmDeleteStructure = useCallback(async () => {
+    const target = structureDelete;
+    const bId = bookIdSignal.value;
+    if (!target || !bId) return;
+    setEntityBusy(true);
+    setEntityError(null);
+    try {
+      const scId = target.sceneId ?? '';
+      const path = target.kind === 'chapter'
+        ? `/book/${encodeURIComponent(bId)}/chapters/${encodeURIComponent(target.id)}`
+        : target.kind === 'scene'
+          ? `/book/${encodeURIComponent(bId)}/chapters/${encodeURIComponent(target.chapterId)}/scenes/${encodeURIComponent(target.id)}`
+          : `/book/${encodeURIComponent(bId)}/chapters/${encodeURIComponent(target.chapterId)}/scenes/${encodeURIComponent(scId)}/units/${encodeURIComponent(target.id)}`;
+      await deleteJson(path);
+      setStructureDelete(null);
+      const fresh = await getJson<BookData>(`/book/${encodeURIComponent(bId)}`);
+      setBookData(fresh);
+      // Re-anchor the position to a valid chapter+scene+unit. The current
+      // chapter/scene are kept when they still exist (the scene index clamps to
+      // a neighbour); the deleted element shifts indexes down. When the current
+      // chapter was deleted, fall back to the first remaining chapter.
+      const chs = fresh.chapters ?? [];
+      if (chs.length > 0) {
+        const curChId = positionSignal.value.chapterId;
+        let chIdx = chs.findIndex((c) => c.chapter_id === curChId);
+        if (chIdx < 0) chIdx = 0;
+        const ch = chs[chIdx];
+        const curScId = positionSignal.value.sceneId;
+        let scIdx = (ch.scenes ?? []).findIndex((s) => s.scene_id === curScId);
+        if (scIdx < 0) scIdx = 0;
+        const sc = ch.scenes?.[scIdx];
+        const units = sc?.units ?? [];
+        const unitIndex = Math.max(0, Math.min(positionSignal.value.unitIndex, units.length - 1));
+        navigateTo({
+          chapterId: ch.chapter_id ?? null,
+          sceneId: sc?.scene_id ?? null,
+          unitId: units[unitIndex]?.id ?? null,
+          chunkId: null,
+          unitIndex,
+        });
+      }
+    } catch (e) {
+      setEntityError((e as Error).message);
+    } finally {
+      setEntityBusy(false);
+    }
+  }, [structureDelete]);
+
   const isEntityTab = tab === CHARS_TAB || tab === VOICES_TAB || tab === LOCATIONS_TAB;
+  const isStructureTab = tab === CHAPTER_TAB || tab === SCENE_TAB || tab === UNITS_TAB;
   const currentEntityKind: EntityKind = tab === CHARS_TAB ? 'character' : tab === LOCATIONS_TAB ? 'location' : 'voice';
 
   // ── Content builders ──
@@ -1540,6 +1681,15 @@ export function EditPage(props: { path?: string }) {
   // chapter parameters) belongs here, NOT in the Scene tab.
   const buildChapterFields = (ch: BookChapter | undefined): JSX.Element[] => {
     const out: JSX.Element[] = [];
+    const chId = ch?.chapter_id;
+    if (chId) {
+      out.push(
+        <div class="edit-card__head" key="chapter-head">
+          <EntityDeleteButton onClick={() => { setEntityError(null); setStructureDelete({ kind: 'chapter', chapterId: chId, sceneId: null, id: chId }); }} />
+          <span class="edit-card__title">{chId}</span>
+        </div>
+      );
+    }
     out.push(sectionLabel(t('edit_section_chapter_general')));
     out.push(readonlyField('chapter_id', ch?.chapter_id ?? '—'));
     out.push(inputCard(fieldLabel('chapter_title'), ch?.chapter_title ?? '', false, 'chapter_title'));
@@ -1548,6 +1698,16 @@ export function EditPage(props: { path?: string }) {
 
   const buildSceneFields = (sc: BookScene): JSX.Element[] => {
     const out: JSX.Element[] = [];
+    const scId = sc.scene_id;
+    const chId = chapters[currentChIndex]?.chapter_id;
+    if (scId && chId) {
+      out.push(
+        <div class="edit-card__head" key="scene-head">
+          <EntityDeleteButton onClick={() => { setEntityError(null); setStructureDelete({ kind: 'scene', chapterId: chId, sceneId: scId, id: scId }); }} />
+          <span class="edit-card__title">{scId}</span>
+        </div>
+      );
+    }
     out.push(sectionLabel(t('edit_section_scene_general')));
     out.push(readonlyField('scene_id', sc.scene_id ?? '—'));
     ['scene_title', 'type', 'style'].forEach((key) => {
@@ -1587,7 +1747,17 @@ export function EditPage(props: { path?: string }) {
       : 0;
     out.push(
       <div class="edit-section edit-section--row">
-        <span>{tf('edit_unit_label', idx + 1, units.length)}</span>
+        <span class="edit-section__label">
+          <span class="edit-section__delete">
+            <EntityDeleteButton onClick={() => {
+              setEntityError(null);
+              const chId = chapters[currentChIndex]?.chapter_id;
+              const scId = currentScene()?.scene_id;
+              if (chId && scId && u.id) setStructureDelete({ kind: 'unit', chapterId: chId, sceneId: scId, id: u.id });
+            }} />
+          </span>
+          {tf('edit_unit_label', idx + 1, units.length)}
+        </span>
         <span class="edit-section__meta">
           <IconClock width={14} height={14} />
           {tf('edit_unit_duration', (durTenths / 10).toFixed(1))}
@@ -2042,13 +2212,18 @@ export function EditPage(props: { path?: string }) {
         </button>
       </div>
 
-      {/* Content area — entity tables (characters/voices/locations) get the
-          floating "+" overlay in the top-right corner (zero layout space). */}
+      {/* Content area — entity tables (characters/voices/locations) AND the
+          structure tabs (chapter/scene/unit) get the floating "+" overlay in the
+          top-right corner (zero layout space). */}
       <div class="edit-content">
         {loading ? <div class="progress"><div class="progress__bar" /></div> : (
-          isEntityTab ? (
+          isEntityTab || isStructureTab ? (
             <div class="edit-entity-table">
-              <EntityAddButton onClick={() => { setEntityError(null); setEntityAddKind(currentEntityKind); }} />
+              <EntityAddButton onClick={() => {
+                setEntityError(null);
+                if (isStructureTab) openStructureAdd(tab === CHAPTER_TAB ? 'chapter' : tab === SCENE_TAB ? 'scene' : 'unit');
+                else setEntityAddKind(currentEntityKind);
+              }} />
               {renderContent()}
             </div>
           ) : renderContent()
@@ -2139,6 +2314,37 @@ export function EditPage(props: { path?: string }) {
           error={entityError}
           onConfirm={() => void confirmDeleteEntity()}
           onClose={() => { if (!entityBusy) { setDeleteTarget(null); setEntityError(null); } }}
+        />
+      )}
+
+      {/* Structure add dialog (chapters / scenes / units) — readonly id preview
+          + optional parent dropdown (scene→chapter, unit→scene, pre-filled with
+          the current selection) + title. The parent is the explicit user choice;
+          the server anchors the insert point. */}
+      {structureAddKind && (
+        <StructureAddDialog
+          kind={structureAddKind}
+          id={structurePreviewId}
+          chapters={structureChapters}
+          scenes={structureScenes}
+          defaultChapterId={positionSignal.value.chapterId}
+          defaultSceneId={positionSignal.value.sceneId}
+          busy={entityBusy}
+          error={entityError}
+          onSave={(values) => void saveStructure(structureAddKind, values)}
+          onClose={() => { if (!entityBusy) { setStructureAddKind(null); setEntityError(null); } }}
+        />
+      )}
+
+      {/* Structure delete confirmation — chapter/scene/unit (destructive). */}
+      {structureDelete && (
+        <DeleteConfirmDialog
+          title={t(structureDelete.kind === 'chapter' ? 'structure_delete_chapter' : structureDelete.kind === 'scene' ? 'structure_delete_scene' : 'structure_delete_unit')}
+          message={t(structureDelete.kind === 'chapter' ? 'structure_delete_chapter_confirm' : structureDelete.kind === 'scene' ? 'structure_delete_scene_confirm' : 'structure_delete_unit_confirm')}
+          busy={entityBusy}
+          error={entityError}
+          onConfirm={() => void confirmDeleteStructure()}
+          onClose={() => { if (!entityBusy) { setStructureDelete(null); setEntityError(null); } }}
         />
       )}
 

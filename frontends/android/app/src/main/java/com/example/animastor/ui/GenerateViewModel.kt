@@ -189,6 +189,7 @@ class GenerateViewModel(
     sealed class NavigationEvent {
         data class NavigateToGenerate(val reason: String = "") : NavigationEvent()
         data class NavigateToPlay(val reason: String = "") : NavigationEvent()
+        data class NavigateToEdit(val reason: String = "") : NavigationEvent()
     }
 
     private val _navigationEvent = MutableSharedFlow<NavigationEvent>(extraBufferCapacity = 4)
@@ -883,6 +884,72 @@ class GenerateViewModel(
                 val msg = if (e is java.io.IOException && e.message != null) e.message!! else "Import failed: ${e.message}"
                 _uiState.update { it.copy(phase = PlayerPhase.IDLE, errorMessage = msg) }
                 stopTimer()  // 🕐 ошибка импорта — останавливаем таймер
+            }
+        }
+    }
+
+    /**
+     * Create New Visual Book → Editor. POST /book/blank scaffolds the minimal
+     * valid structure (zero chapter → one scene → one unit); we load it, anchor
+     * the shared position at its first scene and route the user to the Edit tab.
+     * The AI assistant stays available but is no longer the mandatory entry point.
+     */
+    fun createBlankBook() {
+        Log.i(TAG, "createBlankBook")
+        resetProgressState()
+        _uiState.update { it.copy(vbookProgress = VBookProgress(stage = VBookStage.IDLE)) }
+        vbookPollToken++
+        generationJob?.cancel()
+        generationJob = null
+        stopTimer()
+        hasUnsavedChanges = false
+        _dirtySummary.value = null
+        _dirtyScenes.value = emptyList()
+        _isRegenerating.value = false
+        _importCompleteReceived = false
+
+        generationJob = viewModelScope.launch {
+            try {
+                _uiState.update { it.copy(phase = PlayerPhase.LOADING_BOOK, errorMessage = null) }
+                val res = _repository.createBlankBook()
+                val bId = res.book_id
+                if (bId.isNullOrBlank()) {
+                    throw java.io.IOException("Empty book_id from /book/blank")
+                }
+                persistBookId(bId)
+                persistBuildId("")
+
+                val bookData = runCatching { _repository.getBook(bId) }.getOrNull()
+                val scenes = mutableListOf<SceneRef>()
+                var coverScene: SceneRef? = null
+                if (bookData != null) {
+                    scenes.addAll(bookData.sceneRefs())
+                    coverScene = scenes.firstOrNull { it.sceneType == "cover" }
+                }
+
+                val firstScene = coverScene ?: scenes.firstOrNull()
+                if (firstScene != null) {
+                    SharedPositionManager.navigateTo(
+                        chapterId = firstScene.chapterId,
+                        sceneId = firstScene.sceneId,
+                        unitIndex = 0
+                    )
+                } else {
+                    SharedPositionManager.navigateTo(chapterId = null, sceneId = null)
+                }
+
+                _uiState.update {
+                    it.copy(
+                        phase = if (scenes.isNotEmpty()) PlayerPhase.SCENE_READY else PlayerPhase.IDLE,
+                        previewImage = null,
+                        coverImage = null,
+                        errorMessage = null
+                    )
+                }
+                _navigationEvent.tryEmit(NavigationEvent.NavigateToEdit("blank_book_created"))
+            } catch (e: Exception) {
+                Log.e(TAG, "createBlankBook failed: ${e.message}", e)
+                _uiState.update { it.copy(phase = PlayerPhase.IDLE, errorMessage = "Create book failed: ${e.message}") }
             }
         }
     }

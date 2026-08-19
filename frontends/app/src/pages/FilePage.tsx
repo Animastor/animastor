@@ -4,7 +4,7 @@ import { t, tf } from '../app/i18n';
 import { navigate } from '../app/router';
 import {
   bookId, buildId, phase, errorMessage, importMessages, isExporting,
-  navigationEvent, importBookFromFile, openBookById, closeBook, setExporting, setExportProgress
+  navigationEvent, importBookFromFile, openBookById, closeBook, setExporting, setExportProgress, createBlankBook
 } from '../state/generateStore';
 import { getBlob } from '../api/client';
 import { toast } from '../lib/ui';
@@ -15,7 +15,10 @@ import { IconFolder, IconAdd, IconLibrary, IconDownload, IconImage, IconVolumeUp
 //    (multipart, server-side format detection). Shows import progress/status and
 //    navigates to Play/Generate when done (navigationEvent, like the Android
 //    NavigationEvent flow).
-//  - Create New Book: closeBook() + → /ai (create-mode welcome).
+//  - Create New Book: scaffolds a blank server-side book (POST /book/blank,
+//    minimal valid structure with a zero chapter) and opens the Editor on it.
+//    The AI assistant remains available but is no longer the mandatory entry
+//    point.
 //  - Library card → /library (public route on the app domain, nginx-served).
 //  - Download section: book (.vbook) needs only bookId; storyboard/audio/video
 //    need bookId + buildId + a ready phase — with the same enable rules and
@@ -195,7 +198,12 @@ export function FilePage(props: { path?: string }) {
         type="button"
         class="file-card"
         aria-label={t('file_create')}
-        onClick={() => { closeBook(); navigate('/ai'); }}
+        onClick={() => {
+          closeBook();
+          void createBlankBook().then((id) => {
+            if (id) navigate('/edit');
+          });
+        }}
       >
         {/* ic_create.xml — same glyph as ic_add */}
         <span class="file-card__icon"><IconAdd width={24} height={24} /></span>

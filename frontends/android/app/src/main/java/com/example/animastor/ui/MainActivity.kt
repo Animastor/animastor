@@ -44,6 +44,10 @@ class MainActivity : AppCompatActivity() {
         binding.bottomNavigation.selectedItemId = R.id.playFragment
     }
 
+    fun switchToEditTab() {
+        binding.bottomNavigation.selectedItemId = R.id.editFragment
+    }
+
     fun switchToNavigateTab() {
         binding.bottomNavigation.selectedItemId = R.id.navigateFragment
     }

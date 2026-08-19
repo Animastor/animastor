@@ -1170,3 +1170,40 @@ export function closeBook(): void {
   clearPosition();
   closePlayerBook();
 }
+
+/**
+ * Create New Visual Book → Editor (Create New Book card).
+ * POST /book/blank scaffolds the minimal valid structure (zero chapter → one
+ * scene → one unit); we load it and anchor the shared position at its first
+ * scene so the Edit screen opens ready. The AI assistant stays available but is
+ * no longer the mandatory entry point.
+ *
+ * @returns the new book id, or null on failure.
+ */
+export async function createBlankBook(): Promise<string | null> {
+  resetProgressState();
+  clearVBookProgress();
+  vbookPollToken++;
+  isRegenerating.value = false;
+  importCompleteReceived = false;
+  dirtySummary.value = null;
+  phase.value = 'LOADING_BOOK';
+  errorMessage.value = null;
+  importMessages.value = [];
+  navigationEvent.value = null;
+  try {
+    const res = await postJson<{ book_id: string }>('/book/blank', { title: 'Новая книга' });
+    const bId = res.book_id;
+    loadBook(bId, '');
+    const bookData = await getJson<BookData>(`/book/${encodeURIComponent(bId)}`);
+    const scenes = sceneRefs(bookData);
+    const first = scenes.find((s) => s.sceneType === 'cover') ?? scenes[0] ?? null;
+    navigateTo({ chapterId: first?.chapterId ?? null, sceneId: first?.sceneId ?? null, unitIndex: 0 });
+    phase.value = 'SCENE_READY';
+    return bId;
+  } catch (e) {
+    phase.value = 'IDLE';
+    errorMessage.value = (e as Error).message || 'Failed to create book';
+    return null;
+  }
+}
