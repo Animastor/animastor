@@ -8,6 +8,14 @@ All notable changes to Animastor are documented here.
 
 ### Added
 
+- **Документация: аудит жизненного цикла удаления Chapter / Scene / Unit
+  (`docs/03-audit/DELETE_LIFECYCLE_AUDIT.md`)** — read-only-аудит по всему стеку
+  (JSON → filesystem → PostgreSQL → Redis → генерационные очереди → recovery →
+  локальные кеши → dirty/regeneration → frontend state). Вывод: entity-delete
+  чистит только JSON-слой; найдены 3 Critical (утечка PG-строк, «призрачные»
+  сцены в Redis-очереди воспроизведения, неотменяемая in-flight генерация),
+  2 High, 5 Medium, 3 Low. Исправления не вносились.
+
 - **Editor: ручное добавление и удаление персонажей, локаций и голосов
   (Android + web)** — единый переиспользуемый паттерн Add/Delete на странице
   «Редактор», поверх существующих таблиц селекторов Characters/Locations/Voices:
