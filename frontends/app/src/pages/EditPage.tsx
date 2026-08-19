@@ -10,8 +10,8 @@
 //    WaveformView canvas (lib/waveform.tsx, R10) with draggable range handles,
 //    and a reset-to-original button. Drag preview is local; PUT /timings on
 //    release applies the server-side cascade (N2, 1:1).
-//  - 7 property tabs (Scene/Audio/Unit/Characters/Voices/Locations/Global) with
-//    scroll indicators; default tab = Unit (index 2).
+//  - 8 property tabs (Global/Chapter/Scene/Audio/Unit/Characters/Voices/
+//    Locations) with scroll indicators; default tab = Unit (index 4).
 //  - Field editors per tab (inputCard/readOnlyCard ports). Characters/Voices are
 //    editable and save through dedicated endpoints (PATCH /characters/{id},
 //    PATCH /voices/{id}) — the Android save path routed their keys into the
@@ -47,19 +47,19 @@ import type { EntityKind, StructureKind, StructureParentOption } from '../lib/en
 import { chapterId as genChapterId, sceneId as genSceneId, unitId as genUnitId } from '../lib/idgen';
 import { IconChevronDown, IconChevronLeft, IconChevronRight, IconChevronUp, IconClock, IconClose, IconFullscreen, IconImageOff, IconPlay, IconReset, IconSave, IconStop } from '../app/icons';
 
-// ── Tabs (propertyTabs) — Chapter is the first level, then Scene → Audio →
-//    Unit ("Модуль") → Characters/Voices/Locations/Global. Default to Unit
-//    (index 3) like EditFragment ──
-const TABS = ['edit_chapter_tab', 'edit_scene', 'edit_audio', 'edit_units_tab', 'edit_characters_tab', 'edit_voices_tab', 'edit_locations_tab', 'edit_global_tab'] as const;
-const DEFAULT_TAB = 3;
-const CHAPTER_TAB = 0;
-const SCENE_TAB = 1;
-const AUDIO_TAB = 2;
-const UNITS_TAB = 3;
-const CHARS_TAB = 4;
-const VOICES_TAB = 5;
-const LOCATIONS_TAB = 6;
-const GLOBAL_TAB = 7;
+// ── Tabs (propertyTabs) — Global is the first level (mirrors the top-level
+//    book metadata in the JSON), then Chapter → Scene → Audio → Unit ("Модуль")
+//    → Characters/Voices/Locations. Default to Unit (index 4) like EditFragment ──
+const TABS = ['edit_global_tab', 'edit_chapter_tab', 'edit_scene', 'edit_audio', 'edit_units_tab', 'edit_characters_tab', 'edit_voices_tab', 'edit_locations_tab'] as const;
+const DEFAULT_TAB = 4;
+const GLOBAL_TAB = 0;
+const CHAPTER_TAB = 1;
+const SCENE_TAB = 2;
+const AUDIO_TAB = 3;
+const UNITS_TAB = 4;
+const CHARS_TAB = 5;
+const VOICES_TAB = 6;
+const LOCATIONS_TAB = 7;
 
 const PASSPORT_OVERRIDE_FIELDS = ['appearance', 'clothes', 'video_tokens'];
 

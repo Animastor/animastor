@@ -124,7 +124,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
     }
 
     /** Editor tab positions that render entity tables (characters/voices/locations). */
-    private val ENTITY_TABS = setOf(4, 5, 6)
+    private val ENTITY_TABS = setOf(5, 6, 7)
 
     // ======================================================
     // Structure add/delete (chapters / scenes / units)
@@ -142,8 +142,8 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         val deleteConfirmRes: Int
     )
 
-    /** Editor tab positions that render structure content (chapter/scene/unit). */
-    private val STRUCTURE_TABS = setOf(0, 1, 3)
+    /** Editor tab positions that render structure content (global=0, chapter=1, scene=2, unit=4). */
+    private val STRUCTURE_TABS = setOf(1, 2, 4)
 
     private fun structureDef(kind: StructureKind): StructureDef = when (kind) {
         StructureKind.CHAPTER -> StructureDef(
@@ -214,11 +214,11 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         // the entity tables' add form. Only visible on those tabs (rebuildContent).
         b.entityAddButton.setOnClickListener {
             when (b.propertyTabs.selectedTabPosition) {
-                0 -> showAddStructureDialog(StructureKind.CHAPTER)
-                1 -> showAddStructureDialog(StructureKind.SCENE)
-                3 -> showAddStructureDialog(StructureKind.UNIT)
-                4 -> showAddEntityDialog(EntityKind.CHARACTER)
-                5 -> showAddEntityDialog(EntityKind.VOICE)
+                1 -> showAddStructureDialog(StructureKind.CHAPTER)
+                2 -> showAddStructureDialog(StructureKind.SCENE)
+                4 -> showAddStructureDialog(StructureKind.UNIT)
+                5 -> showAddEntityDialog(EntityKind.CHARACTER)
+                6 -> showAddEntityDialog(EntityKind.VOICE)
                 else -> showAddEntityDialog(EntityKind.LOCATION)
             }
         }
@@ -260,8 +260,8 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
         b.timelineWaveform.onRangeChangeListener = { startMs, endMs -> handleRangeChange(startMs, endMs) }
         b.timelineWaveform.onRangeChangeEndListener = { _, _ -> handleRangeChangeEnd() }
 
-        // Default to Units tab (index 3 — Chapter is now the first tab)
-        b.propertyTabs.getTabAt(3)?.select()
+        // Default to Units tab (index 4 — Global is now the first tab)
+        b.propertyTabs.getTabAt(4)?.select()
 
         // Center the default-selected tab in the scrollable strip: TabLayout's
         // select() scrolls it into view but pins it to the right edge; wait out
@@ -1416,14 +1416,14 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
             val frame = binding?.contentFrame ?: return
             frame.removeAllViews()
             when (tab) {
-                0 -> buildChapterFields(frame)
-                1 -> buildSceneFields(frame)
-                2 -> buildFields(frame, listOf("voice", "full_text"))
-                3 -> buildUnitFields(frame)
-                4 -> buildCharactersFields(frame)
-                5 -> buildVoicesFields(frame)
-                6 -> buildLocationsFields(frame)
-                7 -> buildGlobalFields(frame)
+                0 -> buildGlobalFields(frame)
+                1 -> buildChapterFields(frame)
+                2 -> buildSceneFields(frame)
+                3 -> buildFields(frame, listOf("voice", "full_text"))
+                4 -> buildUnitFields(frame)
+                5 -> buildCharactersFields(frame)
+                6 -> buildVoicesFields(frame)
+                7 -> buildLocationsFields(frame)
             }
             // Entity tables (characters/voices/locations) and structure tabs
             // (chapters/scenes/units) get the floating "+" overlay button —
@@ -2447,8 +2447,8 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
 
             val selectedTab = binding?.propertyTabs?.selectedTabPosition ?: 0
 
-            // Global tab (7) — save book-level metadata via lightweight PATCH
-            if (selectedTab == 7) {
+            // Global tab (0) — save book-level metadata via lightweight PATCH
+            if (selectedTab == 0) {
                 setSaveLoading(true)
                 lifecycleScope.launch {
                     try {
@@ -2502,8 +2502,8 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                 return
             }
 
-            // Locations tab (6) — save per-location fields via dedicated PATCH
-            if (selectedTab == 6) {
+            // Locations tab (7) — save per-location fields via dedicated PATCH
+            if (selectedTab == 7) {
                 setSaveLoading(true)
                 lifecycleScope.launch {
                     try {
@@ -2549,12 +2549,12 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                 return
             }
 
-            // Characters tab (4) — dedicated PATCH per changed character
+            // Characters tab (5) — dedicated PATCH per changed character
             // (name + passport), mirroring the web EditPage CHARS_TAB branch.
             // Without this branch Android's generic save below pushed char.*
             // keys into the scene/unit object as junk that never reached
             // characters.json (the generator reads characters.json).
-            if (selectedTab == 4) {
+            if (selectedTab == 5) {
                 setSaveLoading(true)
                 lifecycleScope.launch {
                     try {
@@ -2619,10 +2619,10 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                 return
             }
 
-            // Voices tab (5) — dedicated PATCH per changed voice (instruction),
+            // Voices tab (6) — dedicated PATCH per changed voice (instruction),
             // mirroring the web EditPage VOICES_TAB branch. Same reasoning as
             // the characters branch: voice.* keys must not leak into scenes.
-            if (selectedTab == 5) {
+            if (selectedTab == 6) {
                 setSaveLoading(true)
                 lifecycleScope.launch {
                     try {
@@ -2712,7 +2712,7 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
                     //   - empty string → null
                     // Exclude chapter_title from fields (sent separately below).
                     // Characters/Voices are saved through their dedicated PATCH
-                    // endpoints (tabs 3/4 above) — char.* / voice.* keys must NOT
+                    // endpoints (tabs 5/6 above) — char.* / voice.* keys must NOT
                     // reach the scene PATCH here: setDeep would write them into
                     // the unit/scene object as junk keys that never persist to
                     // characters.json / voices.json.
