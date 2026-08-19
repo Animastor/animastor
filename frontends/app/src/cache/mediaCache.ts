@@ -47,3 +47,37 @@ export async function clearCache(buildId?: string): Promise<number> {
   await Promise.all(targets.map((k) => cache.delete(k)));
   return targets.length;
 }
+
+// ── Scene-level cache invalidation (delete chapter/scene/unit) ──
+// Evicts all media cache entries whose URL path contains the scene key
+// "${chapterId}:${sceneId}". Safe for partial eviction: a unit delete
+// clears only that scene's cached blobs (audio/video/IU/etc.).
+export async function evictSceneMedia(buildId: string, chapterId: string, sceneId: string): Promise<number> {
+  const cache = await openCache();
+  const keys = await cache.keys();
+  // Scene key format in URL path: /${buildId}/${chapterId}:${sceneId}/...
+  const sceneSegment = `${chapterId}:${sceneId}`;
+  const targets = keys.filter((k) => {
+    const url = k.url;
+    return url.includes(`/${buildId}/`) && url.includes(sceneSegment);
+  });
+  await Promise.all(targets.map((k) => cache.delete(k)));
+  return targets.length;
+}
+
+// ── Chapter-level cache invalidation (delete chapter) ──
+// Evicts all media cache entries for every scene belonging to the chapter.
+// Since scene keys are "${chapterId}:${sceneId}", matching on the chapter
+// prefix is sufficient — every scene in the chapter has the same prefix.
+export async function evictChapterMedia(buildId: string, chapterId: string): Promise<number> {
+  const cache = await openCache();
+  const keys = await cache.keys();
+  // Match any URL containing "chapterId:" followed by anything (the scene part)
+  const prefix = `${chapterId}:`;
+  const targets = keys.filter((k) => {
+    const url = k.url;
+    return url.includes(`/${buildId}/`) && url.includes(prefix);
+  });
+  await Promise.all(targets.map((k) => cache.delete(k)));
+  return targets.length;
+}

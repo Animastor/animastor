@@ -791,6 +791,44 @@ class PlaybackViewModel(
     }
 
     // ═══════════════════════════════════════════════════════════════
+    //  CACHE INVALIDATION — delete chapter/scene/unit
+    // ═══════════════════════════════════════════════════════════════
+
+    /**
+     * Remove deleted scenes from the player queue and invalidate their
+     * preloaded data. Called from EditFragment after a successful DELETE.
+     * Does NOT trigger playback — only cleans state so the deleted
+     * scene cannot be resurrected from cache.
+     */
+    fun removeDeletedScenesFromQueue(deletedSceneKeys: List<String>) {
+        if (deletedSceneKeys.isEmpty()) return
+        Log.i(TAG, "removeDeletedScenesFromQueue: removing ${deletedSceneKeys.size} scenes")
+        val deleted = deletedSceneKeys.toSet()
+        // Remove from preload cache
+        for (key in deleted) {
+            preloadCache.remove("${buildId}_$key")
+        }
+        // Remove from scene queue
+        sceneQueue.removeAll { it in deleted }
+        // Clamp current index
+        if (currentIndex >= sceneQueue.size) {
+            currentIndex = maxOf(0, sceneQueue.size - 1)
+        }
+        // If queue is empty, reset to IDLE
+        if (sceneQueue.isEmpty()) {
+            Log.i(TAG, "removeDeletedScenesFromQueue: queue empty → IDLE")
+            _repository.clearCache()
+            _uiState.update { PlaybackUiState() }
+            return
+        }
+        // Mark content stale so the next play/resume re-fetches
+        if (_uiState.value.phase == PlayerPhase.PLAYING || _uiState.value.phase == PlayerPhase.PAUSED) {
+            needsContentRefresh = true
+        }
+        _uiState.update { it.copy(sceneCount = sceneQueue.size, currentIndex = currentIndex) }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
     //  INTERNAL — playback logic
     // ═══════════════════════════════════════════════════════════════
 

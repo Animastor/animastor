@@ -28,7 +28,7 @@ import { navigateTo } from './positionStore';
 import type { ActivePosition } from './positionStore';
 import { onPlaybackPrepared } from './generateStore';
 import type { SceneRef } from './generateStore';
-import { getMedia, putMedia, clearCache as clearMediaCache } from '../cache/mediaCache';
+import { getMedia, putMedia, clearCache as clearMediaCache, evictSceneMedia, evictChapterMedia } from '../cache/mediaCache';
 
 export type PlayerPhase =
   | 'IDLE' | 'LOADING_BOOK' | 'GENERATING' | 'DOWNLOADING'
@@ -751,6 +751,74 @@ export function closeBook(): void {
   pendingExternalUnitId = null;
   sessionStorage.removeItem(SAVED_POS_KEY);
   navigateTo({ chapterId: null, sceneId: null, unitId: null, chunkId: null, unitIndex: 0 });
+  uiState.value = { ...initial };
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  CACHE INVALIDATION — delete chapter/scene/unit
+//  Removes deleted entities from the player queue, preload cache,
+//  and media cache. Called from the EditPage after a successful
+//  DELETE, before the editor re-fetches fresh book data.
+// ═══════════════════════════════════════════════════════════════
+
+/** Remove a scene from the player queue and invalidate its media cache.
+ *  If the current scene is the one being deleted, advance to the next valid
+ *  scene (or clamp). Does NOT trigger playback — only cleans state.
+ *  Returns the updated scene queue. */
+export function invalidateDeletedScene(
+  chapterId: string, sceneId: string, buildId_: string,
+): void {
+  const deletedKey = `${chapterId}:${sceneId}`;
+  bumpSceneEpoch();
+  clearPreloadCache();
+  // Evict media cache entries for the deleted scene (async, fire-and-forget)
+  void evictSceneMedia(buildId_, chapterId, sceneId);
+  // Remove from scene queue
+  const queue = sceneQueue.value.filter((s) => sceneKeyOf(s) !== deletedKey);
+  sceneQueue.value = queue;
+  // If the current index pointed at or past the deleted scene, clamp
+  if (currentIndex >= queue.length) {
+    currentIndex = Math.max(0, queue.length - 1);
+  }
+  // If the currently playing scene was the one deleted, stop playback
+  if (queue.length === 0) {
+    stopAll();
+  } else if (uiState.value.phase === 'PLAYING' || uiState.value.phase === 'PAUSED') {
+    // Mark content as stale — the next play/resume will re-fetch
+    needsContentRefresh = true;
+  }
+  uiState.value = { ...uiState.value, sceneCount: queue.length, currentIndex };
+}
+
+/** Remove all scenes of a chapter from the player queue and media cache.
+ *  Used when a whole chapter is deleted. */
+export function invalidateDeletedChapter(
+  chapterId: string, chapterSceneIds: string[], buildId_: string,
+): void {
+  bumpSceneEpoch();
+  clearPreloadCache();
+  // Evict all media for this chapter (async, fire-and-forget)
+  void evictChapterMedia(buildId_, chapterId);
+  // Remove all matching scenes from queue
+  const deletedKeys = new Set(chapterSceneIds.map((sid) => `${chapterId}:${sid}`));
+  const queue = sceneQueue.value.filter((s) => !deletedKeys.has(sceneKeyOf(s)));
+  sceneQueue.value = queue;
+  if (currentIndex >= queue.length) {
+    currentIndex = Math.max(0, queue.length - 1);
+  }
+  uiState.value = { ...uiState.value, sceneCount: queue.length, currentIndex };
+}
+
+/** Full book-level cache invalidation. Used when the book is deleted or
+ *  when a complete rebuild occurs. */
+export function invalidateDeletedBook(): void {
+  bumpSceneEpoch();
+  stopAll();
+  clearPreloadCache();
+  void clearMediaCache();
+  sceneQueue.value = [];
+  currentIndex = 0;
+  currentUnitIndex = 0;
   uiState.value = { ...initial };
 }
 

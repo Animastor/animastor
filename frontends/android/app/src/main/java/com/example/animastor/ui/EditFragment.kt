@@ -1024,11 +1024,31 @@ class EditFragment : Fragment(R.layout.fragment_edit) {
             dlg.dismiss()
             lifecycleScope.launch {
                 try {
+                    // Collect scene keys of the entity being deleted BEFORE
+                    // the API call so we can invalidate the player queue.
+                    val deletedSceneKeys = mutableListOf<String>()
                     when (kind) {
-                        StructureKind.CHAPTER -> viewModel.repository.deleteChapter(bookId, id)
-                        StructureKind.SCENE -> viewModel.repository.deleteScene(bookId, chapterId, id)
-                        StructureKind.UNIT -> viewModel.repository.deleteUnit(bookId, chapterId, sceneId ?: "", id)
+                        StructureKind.CHAPTER -> {
+                            // All scenes in this chapter
+                            val ch = chapters.find { it.chapter_id == id }
+                            ch?.scenes?.forEach { sc ->
+                                if (sc.scene_id != null) deletedSceneKeys.add("$id:${sc.scene_id}")
+                            }
+                            viewModel.repository.deleteChapter(bookId, id)
+                        }
+                        StructureKind.SCENE -> {
+                            deletedSceneKeys.add("$chapterId:$id")
+                            viewModel.repository.deleteScene(bookId, chapterId, id)
+                        }
+                        StructureKind.UNIT -> {
+                            // Unit delete invalidates parent scene's media cache
+                            deletedSceneKeys.add("$chapterId:${sceneId ?: ""}")
+                            viewModel.repository.deleteUnit(bookId, chapterId, sceneId ?: "", id)
+                        }
                     }
+                    // Local Cache Invalidation: remove deleted scenes from the
+                    // player queue so they cannot be played from stale state.
+                    playbackViewModel.removeDeletedScenesFromQueue(deletedSceneKeys)
                     reloadStructureAndReposition()
                 } catch (e: Exception) {
                     Log.e("EditFragment", "structure delete failed", e)

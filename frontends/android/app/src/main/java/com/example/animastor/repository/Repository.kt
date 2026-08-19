@@ -289,6 +289,9 @@ class Repository(
     suspend fun deleteChapter(bookId: String, chapterId: String) {
         Log.i("Repo", "deleteChapter: $bookId/$chapterId")
         api.deleteChapter(bookId, chapterId)
+        // Local Cache Invalidation: clear all caches so deleted entities
+        // are not resurrected from stale data.
+        clearCache()
     }
 
     suspend fun createScene(bookId: String, chapterId: String, body: Map<String, @JvmSuppressWildcards Any?>): StructureCreateResponse {
@@ -299,6 +302,7 @@ class Repository(
     suspend fun deleteScene(bookId: String, chapterId: String, sceneId: String) {
         Log.i("Repo", "deleteScene: $bookId/$chapterId/$sceneId")
         api.deleteScene(bookId, chapterId, sceneId)
+        clearCache()
     }
 
     suspend fun createUnit(bookId: String, chapterId: String, sceneId: String, body: Map<String, @JvmSuppressWildcards Any?>): StructureCreateResponse {
@@ -309,6 +313,7 @@ class Repository(
     suspend fun deleteUnit(bookId: String, chapterId: String, sceneId: String, unitId: String) {
         Log.i("Repo", "deleteUnit: $bookId/$chapterId/$sceneId/$unitId")
         api.deleteUnit(bookId, chapterId, sceneId, unitId)
+        clearCache()
     }
 
     suspend fun chatWithAiFull(request: AiChatRequest): AiChatResponse {

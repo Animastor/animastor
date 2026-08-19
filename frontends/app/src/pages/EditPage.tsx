@@ -40,7 +40,7 @@ import {
   bookId as bookIdSignal, buildId as buildIdSignal, dirtySummary as dirtySignal, onPlaybackPrepared,
 } from '../state/generateStore';
 import { navigateTo, position as positionSignal } from '../state/positionStore';
-import { seekToPosition } from '../state/playbackStore';
+import { seekToPosition, invalidateDeletedScene, invalidateDeletedChapter } from '../state/playbackStore';
 import { Waveform } from '../lib/waveform';
 import { DeleteConfirmDialog, ENTITY_SCHEMAS, EntityAddButton, EntityDeleteButton, EntityEditorDialog, StructureAddDialog } from '../lib/entityEditor';
 import type { EntityKind, StructureKind, StructureParentOption } from '../lib/entityEditor';
@@ -1587,6 +1587,25 @@ export function EditPage(props: { path?: string }) {
           : `/book/${encodeURIComponent(bId)}/chapters/${encodeURIComponent(target.chapterId)}/scenes/${encodeURIComponent(scId)}/units/${encodeURIComponent(target.id)}`;
       await deleteJson(path);
       setStructureDelete(null);
+      // ── Cache invalidation (Local Cache Invalidation, §4-6) ──
+      // Invalidate media cache + player queue for the deleted entity
+      // BEFORE re-fetching fresh book data. The server is now the
+      // source of truth — local cache must not resurrect deleted entities.
+      const bld = buildIdSignal.value;
+      if (target.kind === 'chapter') {
+        // Collect all scene IDs in this chapter from the CURRENT book data
+        // (before the fresh fetch replaces it)
+        const currentBook = bookData;
+        const ch = currentBook?.chapters?.find((c) => c.chapter_id === target.id);
+        const sceneIds = (ch?.scenes ?? []).map((s) => s.scene_id ?? '').filter(Boolean);
+        invalidateDeletedChapter(target.id, sceneIds, bld);
+      } else if (target.kind === 'scene') {
+        invalidateDeletedScene(target.chapterId, target.id, bld);
+      } else {
+        // Unit delete: invalidate the parent scene's media cache
+        // (the scene still exists, but its cached blobs may reference the unit)
+        invalidateDeletedScene(target.chapterId, target.sceneId ?? '', bld);
+      }
       const fresh = await getJson<BookData>(`/book/${encodeURIComponent(bId)}`);
       setBookData(fresh);
       // Re-anchor the position to a valid chapter+scene+unit. The current

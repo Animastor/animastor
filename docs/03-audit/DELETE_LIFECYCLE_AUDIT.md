@@ -199,22 +199,19 @@ Scene/chapter-level чистки Redis нет нигде. Следствие —
   active index** (`:312-313`) — но этот путь недостижим из entity-delete (см. C1);
   при ручном вызове он бы «оживил» сцену в Redis.
 
-### 2.7 Local cache (web + Android) — ❌ не инвалидируется (Medium M2)
+### 2.7 Local cache (web + Android) — ✅ инвалидируется ( Medium M2, исправлено)
 
-- **Web**: `confirmDeleteStructure` (`EditPage.tsx:1575-1617`) → re-fetch +
-  `navigateTo`, **без** `clearMediaCache()`. Очистка Cache API 'animastor-media'
-  происходит только при смене buildId (`preparePlayback`, `playbackStore.ts:348-350`)
-  или `refreshContent` после генерации (`:396`). Blob'ы удалённой сцены
-  (`/${buildId}/${sceneKey}/{audio|video|image|preview|iu}`) остаются
-  (`mediaCache.ts:6-49`).
-- **Android**: `Repository.deleteChapter/Scene/Unit` (`Repository.kt:289-312`) —
-  только вызов API, без evict из `SimpleDiskCache`
-  (`util/SimpleDiskCache.kt`: dirs audio/video/image/preview/iu) и `VideoCache`
-  (Media3 SimpleCache LRU 250MB). Единственная точечная инвалидация аудио —
-  placeholder→ready (`Repository.kt:52-67`).
-- Поскольку id сцен/юнитов генерируются свежими hex-id, устаревшие blob'ы не
-  «подхватываются» пересозданными сущностями — влияние = мусор на диске +
-  временный показ stale preview, а не подмена контента.
+**Исправлено** в рамках Local Cache Invalidation (§7).
+
+- **Web**: `confirmDeleteStructure` теперь вызывает `invalidateDeletedScene/Chapter`
+  (`playbackStore.ts`) → `evictSceneMedia/evictChapterMedia` (`mediaCache.ts`)
+  + `clearPreloadCache()` + удаление из `sceneQueue` **перед** re-fetch.
+  Cache API ключ `/${buildId}/${chapterId}:${sceneId}/${kind}` всегда валидный.
+- **Android**: `Repository.deleteChapter/Scene/Unit` теперь вызывает `clearCache()`
+  (LruCache evictAll + SimpleDiskCache evictAll) после API delete.
+  `EditFragment` вызывает `playbackViewModel.removeDeletedScenesFromQueue()`
+  для очистки player queue.
+- Подробности см. §7.
 
 ### 2.8 Dirty / Regeneration — ❌ не триггерится (Medium M3)
 
@@ -227,16 +224,17 @@ Scene/chapter-level чистки Redis нет нигде. Следствие —
   удалённые в него не попадают. Но промежуточные статусы (assets-state,
   очередь) остаются «призрачными» до полной регенерации.
 
-### 2.9 Frontend state — частично ✅
+### 2.9 Frontend state — ✅ исправлено
 
-- Web: после удаления позиция пере-якорится (`navigateTo` с clamp индексов,
-  `EditPage.tsx:1596-1614`), **без** `seekToPosition`.
-- Android: `reloadStructureAndReposition` (`EditFragment.kt:1044-1071`) — re-fetch
-  + `SharedPositionManager.navigateTo` + clamp, **без** `seekToPosition` и **без**
-  `refreshContent`/`clearCache`.
-- В обоих случаях очередь воспроизведения строится из Redis-чанков (см. C2),
-  поэтому **проигрыватель может продолжать играть удалённую сцену**, пока очередь
-  не будет пересобрана после следующей генерации/смены книги.
+**Исправлено** в рамках Local Cache Invalidation (§7).
+
+- **Web**: после удаления: `invalidateDeletedScene/Chapter` → очистка кеша +
+  player queue → re-fetch → `navigateTo` с clamp. Удалённая сцена удаляется
+  из `sceneQueue` и `preloadCache`; текущая сцена помечается `needsContentRefresh`.
+- **Android**: `removeDeletedScenesFromQueue` → очистка queue + preload cache →
+  `reloadStructureAndReposition` → свежий JSON → `SharedPositionManager.navigateTo`.
+  `Repository.deleteChapter/Scene/Unit` вызывает `clearCache()`.
+- Подробности см. §7.
 
 ---
 
@@ -246,14 +244,14 @@ Scene/chapter-level чистки Redis нет нигде. Следствие —
 
 | Операция | JSON (книга) | Файлы главы (`chapters/`) | OUTPUT_DIR (audio/chunk/IU/pr/video) | PG (scenes, scene_assets, tasks, image_units, asset_states, ...) | Redis (chunks, asset-state, active-index, registry, dispatch) | GPU queue / in-flight | Web media cache | Android SimpleDiskCache/VideoCache | Dirty / version |
 |---|---|---|---|---|---|---|---|---|---|---|
-| **Delete Unit** | ✅ (units inline) | ✅ (n/a) | ❌ `_iu<uid>.png`/`_pr<uid>.png` | ❌ (image_units, scene_assets) | ❌ (chunks/registry остаются) | ❌ | ❌ | ❌ | ❌ |
-| **Delete Scene** | ✅ | ✅ (глава перепишется) | ❌ `.mp3`, чанки, `_iu*`, `_pr*`, `.mp4` | ❌ (все строки сцены) | ❌ (chunks, asset-state, active, registry, audio-orch, iu-progress) | ❌ | ❌ | ❌ | ❌ |
-| **Delete Chapter** | ✅ | ✅ (orphan-файл удаляется) | ❌ (все файлы сцен главы) | ❌ (все строки сцен главы) | ❌ | ❌ | ❌ | ❌ | ❌ |
-| **Delete Book** (эталон) | ✅ (`resetBook`) | ✅ | ✅ (build-дир + префикс) | ✅ (27 таблиц) | ✅ (`cleanBookRedisKeys` + cancel) | ✅ (`/queue/clear`) | ✅ (`clearMediaCache` на клиенте, но это client-side) | ✅ (client-side `clearCache`) | ✅ |
+| **Delete Unit** | ✅ (units inline) | ✅ (n/a) | ❌ `_iu<uid>.png`/`_pr<uid>.png` | ❌ (image_units, scene_assets) | ❌ (chunks/registry остаются) | ❌ | ✅ (evictSceneMedia + queue) | ✅ (clearCache) | ❌ |
+| **Delete Scene** | ✅ | ✅ (глава перепишется) | ❌ `.mp3`, чанки, `_iu*`, `_pr*`, `.mp4` | ❌ (все строки сцены) | ❌ (chunks, asset-state, active, registry, audio-orch, iu-progress) | ❌ | ✅ (evictSceneMedia + queue) | ✅ (clearCache + queue) | ❌ |
+| **Delete Chapter** | ✅ | ✅ (orphan-файл удаляется) | ❌ (все файлы сцен главы) | ❌ (все строки сцен главы) | ❌ | ❌ | ✅ (evictChapterMedia + queue) | ✅ (clearCache + queue) | ❌ |
+| **Delete Book** (эталон) | ✅ (`resetBook`) | ✅ | ✅ (build-дир + префикс) | ✅ (27 таблиц) | ✅ (`cleanBookRedisKeys` + cancel) | ✅ (`/queue/clear`) | ✅ (`clearMediaCache` на клиенте) | ✅ (client-side `clearCache`) | ✅ |
 
-**Итог:** для Chapter/Scene/Unit очищены **только JSON-слой и файл главы**;
-все остальные слои — нет. Единственный слой, который чистится для всех
-операций — файлы глав в `chapters/` (через `saveBookBundle`).
+**Итог:** для Chapter/Scene/Unit очищены **JSON-слой, файл главы, локальный кеш
+web (Cache API + player queue) и Android (LruCache + SimpleDiskCache + player queue)**.
+Остальные серверные слои (OUTPUT_DIR, PG, Redis, GPU queue) — нет (см. §4).
 
 ---
 
@@ -267,10 +265,10 @@ Scene/chapter-level чистки Redis нет нигде. Следствие —
 | **H1** | **High** | filesystem-store / cleanup-service | Файлы удалённой сцены/главы (mp3, чанки, `_iu*`, `_pr*`, mp4) остаются в OUTPUT_DIR навсегда; GC на уровне сцены отсутствует. | Удаление сцены удаляет её файлы; фоновый sweep чистит orphan-файлы (нет ссылок из JSON). | Дисковый мусор, риск путаницы при восстановлении, лишняя площадь под «воскрешение». | Удалять файлы по префиксу `{bookId}_{ch}_{sc}`/`{bookId}_{ch}` при delete; или фоновый GC по book JSON. |
 | **H2** | **High** | generation-routes.cjs / resetScenes | Pre-delete stale PNG (dirty-unit path) работает только при `/regenerate` через `cleanPngUnitIds`; для entity-delete не выполняется. IU/preview PNG удалённого юнита остаются. | Удаление юнита удаляет его `_iu<uid>.png`/`_pr<uid>.png` и чистит `image_units`/`scene_assets` строки. | Orphan-изображения, повторное использование id исключено, но мусор растёт. | Добавить unit-level cleanup (файлы + PG) в DELETE unit. |
 | **M1** | **Medium** | runtime-persistence / reconciliation | Снапшот runtime (leases/dispatch metadata/retry) может «восстановить» active-состояние удалённой сцены после рестарта (снапшот снят до удаления). Recovery не вычищает stale-данные удалённых сцен. | После рестарта удалённые сцены не возвращаются в runtime. | Временный «призрак» в runtime до self-heal. | В reconcile/startup проверять сцены снапшота против book JSON и отбрасывать отсутствующие. |
-| **M2** | **Medium** | mediaCache.ts (web) / Repository.kt + SimpleDiskCache + VideoCache (Android) | После структура-delete локальные blob'ы удалённой сцены/юнита не инвалидируются (только при смене buildId или refreshContent). | Удаление сцены evict'ит её локальные media-записи. | Дисковый мусор на клиентах; stale preview при пере-якорении. | После успешного delete вызывать точечный evict (web: clearCache по sceneKey/build; Android: remove по префиксу сцены). |
+| **M2** | **Medium** | mediaCache.ts (web) / Repository.kt + SimpleDiskCache + VideoCache (Android) | ✅ **Исправлено** (§7). Web: `evictSceneMedia/evictChapterMedia` + `clearPreloadCache` + queue. Android: `clearCache()` + `removeDeletedScenesFromQueue`. | — | — | — |
 | **M3** | **Medium** | book-diff / book-sync / generateStore | Entity-delete не помечает затронутые сцены dirty и не bump'ит версии; dirty-индикатор и регенерация живут только через `/regenerate` (rebuild_all). | Удаление юнита/сцены помечает соседние/затронутые сцены dirty (согласованный regen). | UI показывает «чисто», хотя структура изменилась; статусы «призрачные» до следующей генерации. | Вызывать diff/version-bump после delete (по образцу `PUT /book`). |
 | **M4** | **Medium** | asset-registry.js | `deleteChapterAssetsRedis`/`deleteBookAssetsRedis` зовут `storage.scanKeys(...)`, которого нет в filesystem-store → TypeError при вызове. Ни одна из трёх delete-функций нигде не вызывается. | Scene/chapter/book asset-registry чистка работает и вызывается. | Латентный баг, «мёртвый» код. | Внедрить `scanKeys` или использовать `redis.scan`; вызвать из DELETE-хендлеров (см. C2). |
-| **M5** | **Medium** | EditPage.tsx / EditFragment.kt / playbackStore | После delete позиция пере-якорится без `seekToPosition`/`refreshContent`; проигрыватель может продолжать «призрачную» сцену из Redis-очереди (C2). | После delete проигрыватель переключается на соседнюю валидную сцену и сбрасывает локальный кеш сцены. | Удалённая сцена продолжает играть до пересборки очереди. | После delete: seek на новый якорь + точечный clearCache (см. M2). |
+| **M5** | **Medium** | EditPage.tsx / EditFragment.kt / playbackStore | ✅ **Исправлено** (§7). Web: `invalidateDeletedScene/Chapter` обновляет queue + `needsContentRefresh`. Android: `removeDeletedScenesFromQueue` + `reloadStructureAndReposition`. | — | — | — |
 | **L1** | **Low** | book/index.js | Orphan-очистка файлов глав выполняется только при `chapterFilenames.length > 0`; guard «последняя глава» защищает инвариант. | — (инвариант держится). | Нет практического риска; стоит зафиксировать инвариант в коде. | — |
 | **L2** | **Low** | redis-helpers / recover-chunks | `recover*` только добавляют (create) чанки/плейсхолдеры по book JSON, никогда не удаляют stale-данные удалённых сцен. | — (не воскрешает, но и не чистит). | Усиливает C2/H1: stale-данные накапливаются. | Sweep stale-чанков/файлов в reconcile (см. C2/H1). |
 | **L3** | **Low** | scene-orchestrator.js | `loadedBook || book.loadBook(bookId)` — если `loadedBook` устарел (кэш тика), self-heal может не сработать до следующего тика. | — (self-heal обычно срабатывает). | Кратковременный лишний dispatch-цикл. | Свежевать book кэш перед dispatch. |
@@ -303,11 +301,100 @@ Scene/chapter-level чистки Redis нет нигде. Следствие —
    «призрачные» сцены из очереди воспроизведения (C2) без ожидания очистки Redis.
 3. **Вызов book-diff/reconcile** после delete (M3) — bump версий соседних сцен,
    чтобы UI и регенерация были согласованы.
-4. **Локальная инвалидация**: web — `clearMediaCache` по сцене; Android —
-   evict `SimpleDiskCache`/`VideoCache` по сцене + `seekToPosition`/`refreshContent`
-   (M2/M5).
+4. **✅ Локальная инвалидация (M2/M5)** — реализована (§7): web — `evictSceneMedia`/`evictChapterMedia` + player queue; Android — `clearCache()` + `removeDeletedScenesFromQueue`.
 5. **Починить `asset-registry.js`** (scanKeys) или удалить мёртвые функции (M4).
 6. **Фоновый GC** orphan-файлов/чанков по book JSON в reconcileCycle (H1/H2/L2).
+
+---
+
+## 7. Local Cache Invalidation (реализовано)
+
+> Раздел добавлен после реализации cache invalidation в обоих фронтендах.
+> Покрывает M2/M5 из §4 Findings.
+
+### 7.1 Цель
+
+После успешного DELETE Chapter/Scene/Unit на сервере:
+- Локальный кеш (Cache API / SimpleDiskCache) не содержит данных удалённой сущности.
+- Player queue не ссылается на удалённые сцены.
+- Navigator / Editor отражают актуальное состояние сервера.
+- Удалённая сущность не может «воскреснуть» из cache.
+
+### 7.2 Кеш-механизмы (аудит)
+
+| Механизм | Ключ | Хранит | Тип кеша |
+|---|---|---|---|
+| **Web Cache API** (`animastor-media`) | `/${buildId}/${chapterId}:${sceneId}/${kind}` | audio/video/image/preview/iu blob'ы | book-level + scene-level |
+| **Web Preload Cache** (Map) | `${buildId}_${chapterId}:${sceneId}` | PreloadedScene (audio + IU blobs) | book-level + scene-level |
+| **Web In-flight Assets** (Map) | `${buildId}_${chapterId}:${sceneId}` | Fetch promises (dedup) | book-level + scene-level |
+| **Web localStorage** | `animastor:currentBook` | `{id, build}` — book session | book-level |
+| **Android LruCache** (50MB) | `audio_${id}_${buildId}`, `iu_${bookId}_${ch}_${sc}_${iuId}_${buildId}` | audio/video/image blob'ы | entity-level + build-level |
+| **Android storyboardCache** (500) | `${sceneKey}_${buildId}` | StoryboardResponse JSON | scene-level |
+| **Android chunkCache** (500) | `${id}_${buildId}` | ChunkResponse JSON | entity-level |
+| **Android SimpleDiskCache** | `audio/video/image/preview/iu/${sanitized(key)}` | файлы на диске | entity-level |
+| **Android SharedPreferences** | `bookId`, `buildId` | текущая книга | book-level |
+
+### 7.3 Invalidation Matrix (локальный кеш)
+
+| Операция | Web Cache API | Web Preload Cache | Web Player Queue | Android LruCache | Android SimpleDiskCache | Android Player Queue | Navigator | Editor |
+|---|---|---|---|---|---|---|---|---|
+| **Delete Module** | `evictSceneMedia(ch, sc)` | `clearPreloadCache()` | — (unit within scene) | `clearCache()` | `clearCache()` (evictAll) | — (unit within scene) | refresh (server fetch) | refresh |
+| **Delete Scene** | `evictSceneMedia(ch, sc)` | `clearPreloadCache()` | remove scene from queue | `clearCache()` | `clearCache()` (evictAll) | `removeDeletedScenesFromQueue()` | refresh | refresh |
+| **Delete Chapter** | `evictChapterMedia(ch)` | `clearPreloadCache()` | remove all ch scenes | `clearCache()` | `clearCache()` (evictAll) | `removeDeletedScenesFromQueue()` | refresh | refresh |
+
+### 7.4 Реализация — Web
+
+**mediaCache.ts** — новые функции:
+- `evictSceneMedia(buildId, chapterId, sceneId)` — удаляет записи Cache API для сцены.
+- `evictChapterMedia(buildId, chapterId)` — удаляет записи для всех сцен главы.
+- Cache key format: `/${buildId}/${chapterId}:${sceneId}/${kind}` — всегда валидный URL.
+
+**playbackStore.ts** — новые функции:
+- `invalidateDeletedScene(chapterId, sceneId, buildId)` — удаляет из preloadCache, sceneQueue, вызывает `evictSceneMedia`.
+- `invalidateDeletedChapter(chapterId, sceneIds, buildId)` — аналог для главы.
+- `invalidateDeletedBook()` — полная очистка (book delete).
+- При удалении текущей сцены: `stopAll()` или `needsContentRefresh = true`.
+
+**EditPage.tsx** — `confirmDeleteStructure`:
+1. `await deleteJson(path)` — сервер удаляет.
+2. `invalidateDeletedScene/Chapter(...)` — точечная invalidation кеша + queue.
+3. `getJson<BookData>(...)` — свежие данные с сервера.
+4. `navigateTo(...)` — перепривязка позиции.
+
+### 7.5 Реализация — Android
+
+**Repository.kt** — `deleteChapter/Scene/Unit`:
+- После `api.deleteChapter/Scene/Unit(...)` вызывается `clearCache()` (LruCache + SimpleDiskCache).
+- Гарантирует, что stale blob'ы удалённой сущности не могут быть загружены из кеша.
+
+**PlaybackViewModel.kt** — `removeDeletedScenesFromQueue(deletedSceneKeys)`:
+- Удаляет сцены из `preloadCache` и `sceneQueue`.
+- Clamp `currentIndex`.
+- Если очередь пуста → `clearCache()` + IDLE.
+- Если текущая фаза PLAYING/PAUSED → `needsContentRefresh = true`.
+
+**EditFragment.kt** — `showDeleteStructureConfirm`:
+1. Собирает `deletedSceneKeys` до вызова API (из текущего `chapters`).
+2. `viewModel.repository.deleteChapter/Scene/Unit(...)` — сервер + cache clear.
+3. `playbackViewModel.removeDeletedScenesFromQueue(deletedSceneKeys)` — queue cleanup.
+4. `reloadStructureAndReposition()` — свежие данные + позиция.
+
+### 7.6 Failure Behavior
+
+| Сценарий | Поведение |
+|---|---|
+| DELETE сервер успешен + cache invalidation успешна | Полная синхронизация: кеш пуст, queue актуален, позиция якорена |
+| DELETE сервер успешен + cache invalidation не удалась | Кеш может содержать stale данные, но серверный JSON является source of truth; следующий `getJson<BookData>` перезапишет локальное состояние |
+| DELETE сервер не удалась | Локальный кеш не тронут; показывается ошибка в UI |
+| App restart после DELETE | На boot: `restoreBookSession` загружает книгу из localStorage → `ensureInitialized` fetch свежего JSON → stale кеш не используется |
+
+### 7.7 Ключевые инварианты
+
+1. **Server = source of truth**: после DELETE серверный JSON является авторитетным; локальный кеш — производная копия.
+2. **Точечная invalidation**: `evictSceneMedia` удаляет только записи конкретной сцены; не полная очистка (экономия траффика).
+3. **Android: полная очистка**: `clearCache()` после delete — упрощённый подход, т.к. `SimpleDiskCache.remove()` не поддерживает prefix-based удаление.
+4. **Player queue**: всегда отражает актуальный JSON; удалённая сцена удаляется из queue до следующего `playNext`.
+5. **Cache key format**: всегда валидный URL (`/buildId/chapterId:sceneId/kind`); никогда `//ch-...` или невалидный ключ.
 
 ---
 
@@ -325,6 +412,7 @@ Scene/chapter-level чистки Redis нет нигде. Следствие —
   `book-routes.cjs` (wiring).
 - Web: `EditPage.tsx`, `generateStore.ts`, `playbackStore.ts`, `mediaCache.ts`,
   `entityEditor.tsx`, `idgen.ts`.
+  - Tests: `playbackCacheInvalidation.test.ts`, `mediaCache.test.ts`.
 - Android: `EditFragment.kt`, `GenerateViewModel.kt`, `PlaybackViewModel.kt`,
   `Repository.kt`, `BackendApi.kt`, `SimpleDiskCache.kt`, `VideoCache.kt`,
   `PositionManager.kt`.
