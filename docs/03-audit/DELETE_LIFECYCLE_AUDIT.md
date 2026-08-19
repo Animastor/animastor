@@ -739,6 +739,160 @@ Audio (timeline) + Images (IU sequence) + Timing + Scene structure
 
 ---
 
+## 9. Cross-Scene Dependency / nextScene Audit
+
+> READ-ONLY аудит. Production-код не менялся.
+> Дата: 2026-08-19.
+
+### 9.1 Pipeline — Traced from Source
+
+**Execution path** (verified from code):
+
+```
+pipeline-runner.js:580,984
+  → nextScene = windowScenes[si + 1] || null
+  → pipelineSteps.stepCreateVisuals(..., nextScene, ...)
+
+pipeline-steps.js:1080 (stepCreateVisuals)
+  → builds contextParts[] with scene info, characters, full_text
+  → if (nextScene && (nextScene.text || nextScene.audio?.full_text)):
+       nextText = nextScene.audio?.full_text || nextScene.text || ''
+       contextParts.push('## Context from next scene (character name disambiguation)')
+       contextParts.push(nextText.substring(0, 1000))
+  → contextStr → SYSTEM_PROMPTS.visuals → AI call → visual prompts per unit
+```
+
+**What nextScene IS**:
+- Advisory text context for the LLM (character name disambiguation)
+- Only the TEXT of the next scene is used (`audio.full_text` or `text`)
+- NOT characters, location, modules, images, or any generated content
+- Optional: when null, the lookahead section is simply omitted from the prompt
+
+**Where nextScene is NOT used**:
+- `audio/` directory — no reference to nextScene
+- `image/prompt-builder.js` — no reference to nextScene
+- `image/iu-processor.js` — no reference to nextScene
+- `video/` directory — no reference to nextScene
+- `state/` / `playbackStore` — no reference to nextScene
+- `orchestration/` — no reference to nextScene
+
+### 9.2 Chapter Boundaries
+
+**How windowScenes is built**:
+- `pipeline-runner.js` processes scenes in windows (chunks of text)
+- `windowScenes` is the array of scenes within ONE processing window
+- `nextScene = windowScenes[si + 1]` — ONLY looks within the same window
+- If the current scene is the last in the window, `nextScene = null`
+
+**Cross-chapter lookahead**: DOES NOT EXIST.
+- Each window is processed independently
+- The last scene of Chapter 1 does NOT use the first scene of Chapter 2 as nextScene
+- When a window ends, nextScene is null for the last scene
+
+**Verification**: `pipeline-runner.js:580` and `:984` both use `windowScenes[si + 1]` — a local array index, not a global scene list traversal.
+
+### 9.3 Delete Scene — What Happens to Predecessor
+
+**Scenario**: Chapter has Scenes A → B → C. Delete Scene B.
+
+**During AI generation** (nextScene determined at generation time):
+- Scene A was generated with nextScene = B's text (character disambiguation context)
+- After B is deleted, Scene A's images still exist with the old prompt
+- Scene A is NOT marked dirty by the delete
+
+**During regeneration** (rebuild from current book JSON):
+- `windowScenes` is rebuilt from current book JSON (no B)
+- `nextScene = windowScenes[si + 1]` → for Scene A, this is now Scene C
+- Scene A would get correct nextScene context if regenerated
+
+**Conclusion**: nextScene is a READ-TIME dependency, not a stored dependency. It resolves from the current book JSON at generation/regeneration time. Deleting B does NOT leave A with stale nextScene — the next regeneration will correctly use C.
+
+### 9.4 Edit Scene — Dependency Matrix
+
+| Changed field in Scene B | Affects Scene A's nextScene? | Why |
+|---|---|---|
+| B.text | YES (if A is regenerated) | nextScene reads `nextScene.text` as fallback |
+| B.audio.full_text | YES (if A is regenerated) | nextScene reads `nextScene.audio?.full_text` first |
+| B.characters/participants | NO | Not used by nextScene |
+| B.location | NO | Not used by nextScene |
+| B.units (structure) | NO | Not used by nextScene |
+| B.image prompt | NO | Not used by nextScene |
+| B.video action | NO | Not used by nextScene |
+| B.type | NO | Not used by nextScene |
+
+**Key insight**: Only `audio.full_text` and `text` fields of the next scene are used. All other fields are irrelevant to the cross-scene dependency.
+
+### 9.5 Dirty Propagation — Current Behavior
+
+**prompt-dependency-registry.js** tracks:
+- Scene-level fields (audio.full_text, voice, visual.style, location, participants, etc.)
+- Cross-cutting entities (characters, locations, voices)
+- Unit changes (add/delete/reorder/text)
+
+**NOT tracked**:
+- Cross-scene dependencies (nextScene text dependency)
+- When Scene B changes, Scene A is NOT marked dirty
+
+**GAP**: Cross-scene dirty propagation does not exist in the current canonical dirty pipeline. When Scene B's text changes, Scene A's visual prompt (which used B's text for character disambiguation) is NOT invalidated.
+
+### 9.6 Generation Race
+
+**Scenario**: Scene A visual generation started → Scene B changed/deleted → Scene A generation finishes.
+
+**Protection**:
+- `buildId` is set at generation start; stale results use old buildId
+- `content_version` bump on scene change → stale assets detected by `detectVersionStale`
+- Redis generation locks prevent duplicate dispatch
+- `sceneEpoch` discard mechanism in playbackStore (web)
+
+**For nextScene specifically**: The nextScene text is embedded in the LLM prompt at generation time. A stale result from before B's change would contain B's old text in the context. However:
+- The visual prompts themselves are per-unit, not per-nextScene
+- The disambiguation context affects prompt quality, not correctness
+- No data corruption occurs from stale nextScene context
+
+### 9.7 Sequential Delete
+
+**Scenario**: A → B → C → D. Delete B.
+
+**Result**: A → C → D.
+- A's nextScene was B; after deletion, nextScene resolves to C (at next regeneration)
+- C's nextScene was D; unchanged (B was before C, not after)
+- D's nextScene was null; unchanged
+
+**Delete last scene**: A → B. Delete B.
+- A's nextScene was B; after deletion, nextScene = null (B was the last scene)
+- A's visual prompt context simply omits the lookahead section
+
+### 9.8 Severity Assessment
+
+| GAP | Severity | Impact | Justification |
+|---|---|---|---|
+| Cross-scene dirty propagation absent | **Low** | Stale character disambiguation context in visual prompts after neighbor scene edit/delete | The dependency is advisory (LLM context), not structural (actual image data). Characters are already correctly bound in the prompt. The visual quality impact is minimal — context helps the LLM name unnamed characters more accurately, but does not change which characters appear or their visual appearance. |
+| No re-regeneration of predecessor after neighbor delete | **Low** | Scene A keeps old prompt with B's text context | Correct behavior per the "minimal regeneration" principle. The generated images for A are still valid. B's text served as disambiguation, not as image content. |
+
+### 9.9 Confirmed Dependencies
+
+- **nextScene.text / nextScene.audio.full_text** → Scene A visual prompt LLM context (advisory)
+- **nextScene is READ-TIME only** — resolves from current book JSON at generation time
+- **No stored cross-scene dependency** — no version bump, no dirty marking
+
+### 9.10 False Dependencies
+
+- Scene B characters → Scene A visual prompt: NOT a dependency (characters are resolved from global book characters, not from nextScene)
+- Scene B location → Scene A visual prompt: NOT a dependency
+- Scene B generated image/video → Scene A: NOT a dependency
+
+### 9.11 Recommended Fixes
+
+**None required for this audit scope.** The cross-scene dependency is advisory text context for the LLM, not a structural dependency that affects generated content correctness. The current behavior (no dirty propagation) is acceptable.
+
+If future requirements demand stricter cross-scene invalidation:
+1. Add a `nextScene` field to `prompt-dependency-registry` SCENE_FIELDS
+2. When a scene changes, mark the preceding scene's image layer dirty
+3. Scope: image layer only (audio and video are not affected by nextScene)
+
+---
+
 ## Приложение: проверенные области
 
 - Backend: `entity-crud-routes.cjs`, `core-routes.cjs` (DELETE book — эталон),
