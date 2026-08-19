@@ -8,6 +8,28 @@ All notable changes to Animastor are documented here.
 
 ### Added
 
+- **Backend: глубокий cleanup при удалении Scene / Unit (`entity-cleanup.cjs`)** —
+  entity-delete раньше чистил только JSON-слой (saveBookBundle). Теперь после
+  удаления сцены или модуля выполняются:
+  - **PostgreSQL**: переиспользован `bookSync.purgeRemovedSceneRows` (scene_assets,
+    generation_tasks, image_units, storyboard_elements, audio_layers, scenes) +
+    добавлены ранее пропущенные таблицы `asset_states` и `cache_entries`;
+    для unit — удаление строки `image_units` и чистка `dirty_unit_ids` сцены.
+  - **Redis**: чанки сцены + их id из set `animastor:chunks:{bookId}`, per-asset
+    states (`asset-state`, `assets`), audio/video-orch state machines,
+    `audio-scene-lock`, `scene-video`, `iu-progress`, iu-registry/iu-in-flight,
+    dispatch-lease/dispatch-meta, retry-счётчики, GPU dedup `job`/`result`/
+    `result-processed`; для unit — iu-registry/in-flight/GPU-dedup ключи.
+  - **Active index**: переиспользован `scheduler.removeSceneFromActiveIndex` — сцена
+    снимается с `animastor:active-scenes`.
+  - **In-flight генерация**: переиспользованы `dispatch.clearLeasesForScenes`
+    (снятие lease + возврат квоты) и `clearHubDispatches` (отмена на GPU Hub).
+  - **Filesystem**: удаление файлов сцены (mp3, chunk-аудио/PNG, IU/превью PNG,
+    mp4) и unit (IU/превью PNG) по префиксу во всех build-каталогах OUTPUT_DIR.
+  Все шаги best-effort (ошибка cleanup логируется, но не отменяет успешный
+  ответ delete). Встраивание — в DELETE-хендлеры `/scenes/:sceneId` и
+  `/units/:unitId` (`entity-crud-routes.cjs`).
+
 - **Документация: аудит жизненного цикла удаления Chapter / Scene / Unit
   (`docs/03-audit/DELETE_LIFECYCLE_AUDIT.md`)** — read-only-аудит по всему стеку
   (JSON → filesystem → PostgreSQL → Redis → генерационные очереди → recovery →

@@ -296,8 +296,12 @@ async function purgeRemovedSceneRows(bookId, removedKeys) {
 
     for (const key of removedKeys) {
         const [chapterId, sceneId] = splitKey(key);
+        // Per-scene tables referenced by (book_id, chapter_id, scene_id). asset_states
+        // and cache_entries were missing before — scenes referenced them via plain TEXT
+        // columns (no FK/cascade), so orphan rows survived scene deletion.
         for (const table of ['scene_assets', 'generation_tasks', 'image_units',
-                              'storyboard_elements', 'audio_layers']) {
+                              'storyboard_elements', 'audio_layers',
+                              'asset_states', 'cache_entries']) {
             const r = await query(`
                 DELETE FROM ${table}
                 WHERE book_id = $1 AND chapter_id = $2 AND scene_id = $3

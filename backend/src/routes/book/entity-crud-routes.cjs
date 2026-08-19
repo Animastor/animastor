@@ -25,6 +25,7 @@ const { chapterId, sceneId, unitId, generateBookId } = require('../../book/lazy-
 module.exports = function (app, redis, deps) {
     const { book, utils } = deps;
     const { log } = utils;
+    const cleanup = require('../../services/entity-cleanup.cjs')(redis, deps.config, deps);
 
     function loadBook(bookId) {
         const b = book.loadBook(bookId);
@@ -404,7 +405,7 @@ module.exports = function (app, redis, deps) {
         }
     });
 
-    app.delete('/api/v1/book/:bookId/chapters/:chapterId/scenes/:sceneId', (req, res) => {
+    app.delete('/api/v1/book/:bookId/chapters/:chapterId/scenes/:sceneId', async (req, res) => {
         try {
             const { bookId, chapterId, sceneId } = req.params;
             const oldBook = loadBook(bookId);
@@ -426,6 +427,13 @@ module.exports = function (app, redis, deps) {
             ch.scenes = after;
 
             book.saveBookBundle(oldBook, null);
+            // Deep cleanup: PostgreSQL + Redis + filesystem + in-flight dispatch
+            // (reuses bookSync.purgeRemovedSceneRows / dispatch-engine / scheduler).
+            try {
+                await cleanup.purgeScene(bookId, chapterId, sceneId);
+            } catch (err) {
+                console.warn(`[DELETE SCENE] cleanup error for ${bookId}/${chapterId}/${sceneId}: ${err.message}`);
+            }
             log(`[DELETE SCENE] ${bookId}/${chapterId}/${sceneId} (removed ${before - after.length})`);
             return res.json({ saved: true, book_id: bookId, chapter_id: chapterId, scene_id: sceneId });
         } catch (err) {
@@ -474,7 +482,7 @@ module.exports = function (app, redis, deps) {
         }
     });
 
-    app.delete('/api/v1/book/:bookId/chapters/:chapterId/scenes/:sceneId/units/:unitId', (req, res) => {
+    app.delete('/api/v1/book/:bookId/chapters/:chapterId/scenes/:sceneId/units/:unitId', async (req, res) => {
         try {
             const { bookId, chapterId, sceneId, unitId } = req.params;
             const oldBook = loadBook(bookId);
@@ -493,6 +501,13 @@ module.exports = function (app, redis, deps) {
             sc.units = after;
 
             book.saveBookBundle(oldBook, null);
+            // Deep cleanup: PostgreSQL (image_units) + Redis (iu registry, in-flight,
+            // GPU dedup) + filesystem (IU/preview PNG).
+            try {
+                await cleanup.purgeUnit(bookId, chapterId, sceneId, unitId);
+            } catch (err) {
+                console.warn(`[DELETE UNIT] cleanup error for ${bookId}/${chapterId}/${sceneId}/${unitId}: ${err.message}`);
+            }
             log(`[DELETE UNIT] ${bookId}/${chapterId}/${sceneId}/${unitId} (removed ${before - after.length})`);
             return res.json({ saved: true, book_id: bookId, chapter_id: chapterId, scene_id: sceneId, unit_id: unitId });
         } catch (err) {

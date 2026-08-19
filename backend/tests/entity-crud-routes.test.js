@@ -318,3 +318,269 @@ describe('ENTITY CRUD ROUTES — manual add/delete', () => {
         expect(fresh.voices).to.have.property('kisa');
     });
 });
+
+// ======================================================
+// SCENE / UNIT DELETE — deep cleanup
+// ======================================================
+// The DELETE handlers now run entity-cleanup after saveBookBundle:
+// PostgreSQL purge (reuses bookSync.purgeRemovedSceneRows), in-flight dispatch
+// cancellation (dispatch-engine), active-index removal (scheduler), Redis key
+// cleanup (chunks/asset-states/registry/dedup) and filesystem asset removal.
+// These tests mount the real sub-registrar with mocked storage/runtime/redis and
+// assert the cleanup side-effects for scene and unit deletion.
+describe('ENTITY CRUD ROUTES — scene/unit delete deep cleanup', () => {
+    let tmpDir;
+    let bookId;
+    let bookDir;
+    let handlers;
+    let app;
+    let calls;
+    let redisMock;
+
+    const CHAPTER_ID = 'ch-deep';
+    const SCENE_ID = 'sc-deep';
+    const UNIT_ID = 'iu-deep1';
+    let PREFIX;
+
+    function globToRe(pattern) {
+        return new RegExp('^' + pattern
+            .split('*')
+            .map(s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+            .join('.*') + '$');
+    }
+
+    function makeRedis() {
+        const store = {};
+        return {
+            _store: store,
+            async scan(cursor, _mode, pattern) {
+                return ['0', Object.keys(store).filter(k => globToRe(pattern).test(k))];
+            },
+            async del(...keys) {
+                let n = 0;
+                for (const k of keys) { if (k in store) { delete store[k]; n++; } }
+                return n;
+            },
+            async srem(set, ...members) {
+                const s = store[set] || [];
+                let n = 0;
+                for (const m of members) {
+                    const i = s.indexOf(m);
+                    if (i >= 0) { s.splice(i, 1); n++; }
+                }
+                store[set] = s;
+                return n;
+            },
+            async set(k, v) { store[k] = v; },
+        };
+    }
+
+    function registerRoutes() {
+        handlers = new Map();
+        app = {
+            post(path, handler) { handlers.set(path, handler); },
+            get() {},
+            put() {},
+            patch() {},
+            delete(path, handler) { handlers.set(path, handler); },
+        };
+        calls = { pg: [], purgeScenes: [], cancellations: [], activeRemoved: [] };
+        const deps = {
+            book: bookModule,
+            utils: { log: () => {} },
+            config: { OUTPUT_DIR: tmpDir },
+            storage: {
+                bookSync: {
+                    purgeRemovedSceneRows: async (_bookId, keys) => {
+                        calls.purgeScenes.push(keys);
+                        return { scenes: keys.length };
+                    },
+                },
+                registry: {},
+                postgres: {
+                    query: async (text, params) => {
+                        calls.pg.push({ text: text.trim().replace(/\s+/g, ' '), params });
+                        return { rowCount: 1 };
+                    },
+                },
+            },
+            runtime: {
+                dispatch: {
+                    clearLeasesForScenes: async (_r, _b, scenes) => {
+                        calls.cancellations.push(scenes);
+                        return { cancelled: 0, dispatchIds: [] };
+                    },
+                    clearHubDispatches: async () => ({}),
+                },
+                scheduler: {
+                    removeSceneFromActiveIndex: async (_r, bookId2, chapterId2, sceneId2) => {
+                        calls.activeRemoved.push(true);
+                        await redisMock.srem('animastor:active-scenes', `${bookId2}:${chapterId2}:${sceneId2}`);
+                        return { removed: true };
+                    },
+                },
+            },
+        };
+        require('../src/routes/book/entity-crud-routes.cjs')(app, redisMock, deps);
+    }
+
+    async function invoke(pathTemplate, params, body) {
+        const handler = handlers.get(pathTemplate);
+        if (!handler) throw new Error(`No handler for ${pathTemplate}`);
+        const res = createResponse();
+        const ret = await handler({ params, body: body || {} }, res);
+        return ret || res;
+    }
+
+    function writeBook() {
+        fs.mkdirSync(bookDir, { recursive: true });
+        fs.mkdirSync(path.join(bookDir, 'chapters'), { recursive: true });
+        fs.writeFileSync(path.join(bookDir, 'manifest.json'), JSON.stringify({
+            book_id: bookId, vbook_version: '3.1', build_id: 'build-test',
+            state: 'BOOTSTRAPPED', created_at: new Date().toISOString(),
+        }));
+        fs.writeFileSync(path.join(bookDir, 'book.json'), JSON.stringify({
+            book_id: bookId, version: '3.0', title: 'Test Book', author: 'Test Author', language: 'ru',
+            structure: { chapters_order: [`chapters/${CHAPTER_ID}.json`] },
+        }));
+        fs.writeFileSync(path.join(bookDir, 'chapters', `${CHAPTER_ID}.json`), JSON.stringify({
+            chapter_id: CHAPTER_ID,
+            chapter_title: 'Chapter',
+            scenes: [
+                {
+                    scene_id: SCENE_ID,
+                    scene_title: 'Scene A',
+                    type: 'narration',
+                    participants: ['hero'],
+                    units: [
+                        { id: UNIT_ID, text: 'first unit' },
+                        { id: 'iu-deep2', text: 'second unit' },
+                    ],
+                },
+                {
+                    scene_id: 'sc-keep',
+                    scene_title: 'Scene B',
+                    type: 'narration',
+                    participants: [],
+                    units: [{ id: 'iu-keep1', text: 'keep' }],
+                },
+            ],
+        }));
+        fs.writeFileSync(path.join(bookDir, 'characters.json'), JSON.stringify([
+            { id: 'hero', name: 'Hero', passport: {} },
+        ]));
+        fs.writeFileSync(path.join(bookDir, 'locations.json'), JSON.stringify({}));
+        fs.writeFileSync(path.join(bookDir, 'voices.json'), JSON.stringify({}));
+    }
+
+    const SCENE_DEL = '/api/v1/book/:bookId/chapters/:chapterId/scenes/:sceneId';
+    const UNIT_DEL = '/api/v1/book/:bookId/chapters/:chapterId/scenes/:sceneId/units/:unitId';
+
+    beforeEach(() => {
+        tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'entity-crud-deep-'));
+        bookId = 'test-deep-' + Date.now();
+        PREFIX = `${bookId}_${CHAPTER_ID}_${SCENE_ID}`;
+        bookDir = path.join(tmpDir, bookId);
+        config.BOOKS_DIR = tmpDir;
+        redisMock = makeRedis();
+        writeBook();
+        registerRoutes();
+    });
+
+    afterEach(() => {
+        config.BOOKS_DIR = ORIG_BOOKS_DIR;
+        try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (_) {}
+    });
+
+    it('DELETE scene purges PG/Redis/FS and cancels in-flight dispatch', async () => {
+        // Seed derived state for the deleted scene.
+        const store = redisMock._store;
+        store[`animastor:chunk:${PREFIX}_0000`] = '{}';
+        store[`animastor:chunks:${bookId}`] = [`${PREFIX}_0000`, 'other_chunk'];
+        store[`animastor:asset-state:${bookId}:${CHAPTER_ID}:${SCENE_ID}`] = '{}';
+        store[`animastor:assets:${bookId}:${CHAPTER_ID}:${SCENE_ID}`] = '{}';
+        store[`animastor:audio-orch:${bookId}:${CHAPTER_ID}:${SCENE_ID}`] = '{}';
+        store[`animastor:active-scenes`] = [`${bookId}:${CHAPTER_ID}:${SCENE_ID}`, 'bk9:x:y'];
+        store[`animastor:iu-registry:${PREFIX}_${UNIT_ID}`] = '{}';
+
+        // Fake output build directory with scene asset files.
+        const buildDir = path.join(tmpDir, 'build-test');
+        fs.mkdirSync(buildDir, { recursive: true });
+        const fakeFiles = [`${PREFIX}.mp3`, `${PREFIX}_0000.png`, `${PREFIX}_0000.mp3`];
+        for (const f of fakeFiles) fs.writeFileSync(path.join(buildDir, f), 'x');
+
+        const res = await invoke(SCENE_DEL, { bookId, chapterId: CHAPTER_ID, sceneId: SCENE_ID });
+
+        expect(res.statusCode).to.equal(200);
+        expect(res.body).to.include({ saved: true, scene_id: SCENE_ID });
+
+        // PG purge reuses bookSync.purgeRemovedSceneRows with the scene key.
+        expect(calls.purgeScenes).to.have.length(1);
+        expect(calls.purgeScenes[0]).to.deep.equal([`${CHAPTER_ID}::${SCENE_ID}`]);
+
+        // In-flight cancellation + active-index removal ran.
+        expect(calls.cancellations).to.have.length(1);
+        expect(calls.activeRemoved).to.have.length(1);
+
+        // Redis: chunk key gone, chunk set updated, asset-state/registry gone,
+        // active-scenes member removed.
+        expect(store[`animastor:chunk:${PREFIX}_0000`]).to.be.undefined;
+        expect(store[`animastor:chunks:${bookId}`]).to.not.include(`${PREFIX}_0000`);
+        expect(store[`animastor:chunks:${bookId}`]).to.include('other_chunk');
+        expect(store[`animastor:asset-state:${bookId}:${CHAPTER_ID}:${SCENE_ID}`]).to.be.undefined;
+        expect(store[`animastor:assets:${bookId}:${CHAPTER_ID}:${SCENE_ID}`]).to.be.undefined;
+        expect(store[`animastor:audio-orch:${bookId}:${CHAPTER_ID}:${SCENE_ID}`]).to.be.undefined;
+        expect(store['animastor:active-scenes']).to.not.include(`${bookId}:${CHAPTER_ID}:${SCENE_ID}`);
+        expect(store['animastor:active-scenes']).to.include('bk9:x:y');
+
+        // Filesystem: scene files removed, sibling build files untouched.
+        for (const f of fakeFiles) expect(fs.existsSync(path.join(buildDir, f))).to.equal(false);
+        expect(fs.readdirSync(buildDir)).to.be.empty;
+
+        // JSON: scene removed, other scene stays.
+        const fresh = bookModule.loadBook(bookId);
+        const scenes = fresh.chapters[0].scenes;
+        expect(scenes.map(s => s.scene_id)).to.not.include(SCENE_ID);
+        expect(scenes.map(s => s.scene_id)).to.include('sc-keep');
+    });
+
+    it('DELETE unit purges image_units row + iu registry/in-flight/GPU keys + IU files', async () => {
+        const store = redisMock._store;
+        const iuPrefix = `${PREFIX}_${UNIT_ID}`;
+        store[`animastor:iu-registry:${iuPrefix}`] = '{}';
+        store[`animastor:iu-in-flight:${iuPrefix}`] = '1';
+        store[`animastor:job:${iuPrefix}:image`] = '1';
+        store[`animastor:result-processed:${iuPrefix}:iu_image:build-test`] = '1';
+
+        const buildDir = path.join(tmpDir, 'build-test');
+        fs.mkdirSync(buildDir, { recursive: true });
+        const iuFile = path.join(buildDir, `${iuPrefix}.png`);
+        fs.writeFileSync(iuFile, 'x');
+
+        const res = await invoke(UNIT_DEL, { bookId, chapterId: CHAPTER_ID, sceneId: SCENE_ID, unitId: UNIT_ID });
+
+        expect(res.statusCode).to.equal(200);
+        expect(res.body).to.include({ saved: true, unit_id: UNIT_ID });
+
+        // PG: image_units DELETE with the unit params.
+        const unitDel = calls.pg.find(c => c.text.startsWith('DELETE FROM image_units'));
+        expect(unitDel).to.not.be.undefined;
+        expect(unitDel.params).to.deep.equal([bookId, CHAPTER_ID, SCENE_ID, UNIT_ID]);
+
+        // Redis iu keys removed.
+        expect(store[`animastor:iu-registry:${iuPrefix}`]).to.be.undefined;
+        expect(store[`animastor:iu-in-flight:${iuPrefix}`]).to.be.undefined;
+        expect(store[`animastor:job:${iuPrefix}:image`]).to.be.undefined;
+        expect(store[`animastor:result-processed:${iuPrefix}:iu_image:build-test`]).to.be.undefined;
+
+        // IU image file removed.
+        expect(fs.existsSync(iuFile)).to.equal(false);
+
+        // JSON: unit gone, sibling unit + other scene intact.
+        const fresh = bookModule.loadBook(bookId);
+        const sc = fresh.chapters[0].scenes.find(s => s.scene_id === SCENE_ID);
+        expect(sc.units.map(u => u.id)).to.not.include(UNIT_ID);
+        expect(sc.units.map(u => u.id)).to.include('iu-deep2');
+        expect(fresh.chapters[0].scenes).to.have.length(2);
+    });
+});
