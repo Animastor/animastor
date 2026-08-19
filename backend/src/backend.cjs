@@ -76,6 +76,10 @@ app.use('/api/', rateLimit({
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 
+// Auth context middleware (foundation for future authentication)
+const { authContext } = require('./middleware/auth-context');
+app.use(authContext);
+
 // Request ID + HTTP logging
 app.use((req, res, next) => {
     req.requestId = crypto.randomUUID().slice(0, 8);

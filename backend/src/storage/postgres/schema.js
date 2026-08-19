@@ -6,22 +6,48 @@ const SCHEMA_SQL = `
 -- Canonical persistent state layer
 -- ======================================================
 
--- Users / accounts (future)
+-- Users / accounts
 CREATE TABLE IF NOT EXISTS users (
-    user_id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    email           TEXT UNIQUE NOT NULL,
-    password_hash   TEXT,
-    display_name    TEXT,
-    avatar_url      TEXT,
-    role            TEXT NOT NULL DEFAULT 'user' CHECK(role IN ('user','admin','premium')),
-    settings        JSONB DEFAULT '{}',
+    user_id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    username            TEXT UNIQUE NOT NULL,
+    password_hash       TEXT,
+    email               TEXT UNIQUE,
+    recovery_key_hash   TEXT,
+    display_name        TEXT,
+    avatar_url          TEXT,
+    role                TEXT NOT NULL DEFAULT 'user' CHECK(role IN ('user','admin','premium')),
+    settings            JSONB DEFAULT '{}',
+    created_at          BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::bigint),
+    updated_at          BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::bigint)
+);
+
+-- Workspaces (ownership boundary for books)
+CREATE TABLE IF NOT EXISTS workspaces (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name            TEXT NOT NULL,
+    owner_user_id   UUID NOT NULL REFERENCES users(user_id),
+    type            TEXT NOT NULL DEFAULT 'personal' CHECK(type IN ('personal','temporary','team')),
     created_at      BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::bigint),
     updated_at      BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::bigint)
 );
 
+CREATE INDEX IF NOT EXISTS idx_workspaces_owner ON workspaces(owner_user_id);
+
+-- Workspace members (collaboration foundation)
+CREATE TABLE IF NOT EXISTS workspace_members (
+    workspace_id    UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    user_id         UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    role            TEXT NOT NULL DEFAULT 'viewer' CHECK(role IN ('owner','editor','viewer')),
+    created_at      BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::bigint),
+    PRIMARY KEY (workspace_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_workspace_members_user ON workspace_members(user_id);
+
 -- Books registry
 CREATE TABLE IF NOT EXISTS books (
     book_id         TEXT PRIMARY KEY,
+    workspace_id    UUID REFERENCES workspaces(id),
     user_id         UUID REFERENCES users(user_id),
     title           TEXT,
     author          TEXT,
@@ -430,7 +456,7 @@ async function runMigrations() {
         { table: 'chat_messages', column: 'session_id', type: 'UUID' },
         { table: 'agent_sessions', column: 'knowledge_base', type: 'JSONB' },
         { table: 'agent_sessions', column: 'window_data', type: 'JSONB' },
-        { table: 'ai_chat_sessions', column: 'topic_id', type: 'TEXT NOT NULL DEFAULT \'book\'' },
+        { table: 'ai_chat_sessions', column: 'topic_id', type: "TEXT NOT NULL DEFAULT 'book'" },
     ];
 
     for (const { table, column, type } of columnAdditions) {
@@ -829,6 +855,134 @@ async function runMigrations() {
             console.error('[PG] Failed to create generation_cancellations:', err.message);
         }
     }
+
+    // ======================================================
+    // Account & Workspace Foundation (Account System Phase 1)
+    // ======================================================
+    // Migrate the dormant users table to support username-based auth
+    // and create workspace/membership tables.
+
+    // 1. Add username column to users (nullable initially for migration)
+    try {
+        await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS username TEXT`);
+        console.log('[PG] Added users.username column');
+    } catch (err) {
+        if (!err.message.includes('already exists')) {
+            console.error('[PG] Failed to add users.username:', err.message);
+        }
+    }
+
+    // 2. Make email nullable (was UNIQUE NOT NULL)
+    try {
+        await query(`ALTER TABLE users ALTER COLUMN email DROP NOT NULL`);
+        console.log('[PG] Made users.email nullable');
+    } catch (err) {
+        if (!err.message.includes('does not exist')) {
+            console.error('[PG] Failed to make users.email nullable:', err.message);
+        }
+    }
+
+    // 3. Add recovery_key_hash column
+    try {
+        await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS recovery_key_hash TEXT`);
+        console.log('[PG] Added users.recovery_key_hash column');
+    } catch (err) {
+        if (!err.message.includes('already exists')) {
+            console.error('[PG] Failed to add users.recovery_key_hash:', err.message);
+        }
+    }
+
+    // 4. Add unique constraint on username (only if all existing rows have username)
+    try {
+        // First, set a default username for any existing rows (should be none in practice)
+        await query(`UPDATE users SET username = 'user_' || substr(user_id::text, 1, 8) WHERE username IS NULL`);
+        await query(`ALTER TABLE users ADD CONSTRAINT users_username_unique UNIQUE (username)`);
+        console.log('[PG] Added unique constraint on users.username');
+    } catch (err) {
+        if (!err.message.includes('already exists')) {
+            console.error('[PG] Failed to add unique constraint on users.username:', err.message);
+        }
+    }
+
+    // 5. Add workspace_id to books (nullable initially)
+    try {
+        await query(`ALTER TABLE books ADD COLUMN IF NOT EXISTS workspace_id UUID REFERENCES workspaces(id)`);
+        console.log('[PG] Added books.workspace_id column');
+    } catch (err) {
+        if (!err.message.includes('already exists')) {
+            console.error('[PG] Failed to add books.workspace_id:', err.message);
+        }
+    }
+
+    // 6. Create index on books.workspace_id
+    try {
+        await query(`CREATE INDEX IF NOT EXISTS idx_books_workspace ON books(workspace_id)`);
+        console.log('[PG] Created index on books.workspace_id');
+    } catch (err) {
+        if (!err.message.includes('already exists')) {
+            console.error('[PG] Failed to create idx_books_workspace:', err.message);
+        }
+    }
+
+    // 7. Seed development user and personal workspace for existing books
+    // This ensures all existing test/development books have an owner.
+    try {
+        const { rows: existingUsers } = await query(`SELECT user_id FROM users WHERE username = 'developer' LIMIT 1`);
+        let devUserId;
+
+        if (existingUsers.length === 0) {
+            // Create developer user
+            const { rows: newUser } = await query(`
+                INSERT INTO users (username, display_name, role)
+                VALUES ('developer', 'Developer', 'admin')
+                ON CONFLICT (username) DO UPDATE SET username = 'developer'
+                RETURNING user_id
+            `);
+            devUserId = newUser[0].user_id;
+            console.log(`[PG] Created development user: ${devUserId}`);
+        } else {
+            devUserId = existingUsers[0].user_id;
+        }
+
+        // Create personal workspace for developer
+        const { rows: existingWorkspaces } = await query(
+            `SELECT id FROM workspaces WHERE owner_user_id = $1 AND type = 'personal' LIMIT 1`,
+            [devUserId]
+        );
+        let workspaceId;
+
+        if (existingWorkspaces.length === 0) {
+            const { rows: newWorkspace } = await query(`
+                INSERT INTO workspaces (name, owner_user_id, type)
+                VALUES ('Developer Workspace', $1, 'personal')
+                RETURNING id
+            `, [devUserId]);
+            workspaceId = newWorkspace[0].id;
+            console.log(`[PG] Created personal workspace for developer: ${workspaceId}`);
+
+            // Add developer as owner member
+            await query(`
+                INSERT INTO workspace_members (workspace_id, user_id, role)
+                VALUES ($1, $2, 'owner')
+                ON CONFLICT (workspace_id, user_id) DO NOTHING
+            `, [workspaceId, devUserId]);
+        } else {
+            workspaceId = existingWorkspaces[0].id;
+        }
+
+        // Link existing books without workspace to developer workspace
+        const { rows: unlinkedBooks } = await query(
+            `UPDATE books SET workspace_id = $1 WHERE workspace_id IS NULL RETURNING book_id`,
+            [workspaceId]
+        );
+        if (unlinkedBooks.length > 0) {
+            console.log(`[PG] Linked ${unlinkedBooks.length} existing books to developer workspace`);
+        }
+    } catch (err) {
+        console.error('[PG] Failed to seed development user/workspace:', err.message);
+    }
+
+    console.log('[PG] Account & Workspace foundation initialized');
 }
 
 module.exports = { runMigrations, SCHEMA_SQL };

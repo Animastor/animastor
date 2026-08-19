@@ -10,6 +10,10 @@
 //
 // The route handler is exported separately as `collectRecentBooks` so unit
 // tests can exercise the merge logic without PG or an HTTP server.
+//
+// When auth is implemented, this endpoint will filter by workspace membership:
+// - Authenticated users see only books in their workspaces
+// - Unauthenticated users see all books (pre-auth mode)
 // ======================================================
 
 const fs = require('fs');
@@ -35,7 +39,7 @@ function buildIdOf(lazyBook, bookId) {
     }
 }
 
-function toEntry(lazyBook, bookId, { title, state, sourceType, fileHash, updatedAt, parsedChapters, totalScenes }) {
+function toEntry(lazyBook, bookId, { title, state, sourceType, fileHash, updatedAt, parsedChapters, totalScenes, workspaceId }) {
     return {
         book_id: bookId,
         build_id: buildIdOf(lazyBook, bookId),
@@ -46,16 +50,17 @@ function toEntry(lazyBook, bookId, { title, state, sourceType, fileHash, updated
         updated_at: updatedAt || 0,
         parsed_chapters: parsedChapters || 0,
         total_scenes: totalScenes || 0,
+        workspace_id: workspaceId || null,
     };
 }
 
 /**
  * Build the recent-books list.
  *
- * @param {object} deps - { bookSourceRepo, lazyBook, limit? }
+ * @param {object} deps - { bookSourceRepo, lazyBook, limit?, workspaceId? }
  * @returns {Promise<Array>} sorted newest-first, capped at `limit`.
  */
-async function collectRecentBooks({ bookSourceRepo, lazyBook, limit = DEFAULT_LIMIT }) {
+async function collectRecentBooks({ bookSourceRepo, lazyBook, limit = DEFAULT_LIMIT, workspaceId }) {
     const entries = new Map(); // book_id -> entry
     const seen = new Set();
 
@@ -108,8 +113,18 @@ async function collectRecentBooks({ bookSourceRepo, lazyBook, limit = DEFAULT_LI
         }
     }
 
+    let result = [...entries.values()];
+
+    // ── Phase 3: workspace filtering (when auth is implemented) ──
+    // For now, this is a no-op. When auth is implemented:
+    // - If workspaceId is provided, filter to books in that workspace
+    // - If no workspaceId, return all books (pre-auth mode)
+    if (workspaceId) {
+        result = result.filter(entry => entry.workspace_id === workspaceId);
+    }
+
     const sortKey = (entry) => Number(entry.updated_at) || 0;
-    return [...entries.values()]
+    return result
         .sort((a, b) => sortKey(b) - sortKey(a))
         .slice(0, Math.max(1, Number(limit) || DEFAULT_LIMIT));
 }
@@ -120,10 +135,15 @@ module.exports = function registerRecentBooksRoutes(app, _redis, deps) {
 
     app.get('/api/v1/books', async (req, res) => {
         try {
+            // When auth is implemented, get workspaceId from req.workspace
+            // For now, pass undefined to get all books (pre-auth mode)
+            const workspaceId = req.workspace?.id || null;
+
             const books = await collectRecentBooks({
                 bookSourceRepo,
                 lazyBook,
                 limit: parseInt(req.query.limit, 10) || DEFAULT_LIMIT,
+                workspaceId,
             });
             res.json({ books });
         } catch (err) {

@@ -8,4 +8,6 @@ module.exports = {
     genSession: require('./gen-session-repo'),
     bookSource: require('./book-source-repo'),
     generationCancel: require('./generation-cancel-repo'),
+    user: require('./user-repo'),
+    workspace: require('./workspace-repo'),
 };
