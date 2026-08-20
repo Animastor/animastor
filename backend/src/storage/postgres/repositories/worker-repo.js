@@ -159,6 +159,25 @@ async function listActive() {
 }
 
 /**
+ * PW-2 dispatch routing: does this workspace have at least one active
+ * (non-revoked) PRIVATE worker of the given type? The backend uses this at
+ * dispatch time to decide workspace queue vs system pool — a workspace with
+ * no private worker of the type keeps flowing to the operator's system pool
+ * (backward compatibility). Never client-supplied; server-resolved only.
+ * @returns {Promise<boolean>}
+ */
+async function hasActivePrivateWorkerOfType(workspaceId, workerType) {
+    if (!workspaceId || !WORKER_TYPES.includes(workerType)) return false;
+    const { rows } = await query(`
+        SELECT 1 FROM workers
+        WHERE workspace_id = $1 AND worker_type = $2
+          AND mode = 'private' AND revoked_at IS NULL
+        LIMIT 1
+    `, [workspaceId, workerType]);
+    return rows.length > 0;
+}
+
+/**
  * Rotate a worker credential: replace the token hash (old token dies the
  * moment this commits). Returns the new one-time token or null when the
  * worker does not belong to the workspace / is revoked.
@@ -214,6 +233,7 @@ module.exports = {
     findById,
     listByWorkspace,
     listActive,
+    hasActivePrivateWorkerOfType,
     rotateCredential,
     revokeWorker,
     touchLastSeen,

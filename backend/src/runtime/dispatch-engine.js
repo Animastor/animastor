@@ -13,6 +13,7 @@ const runtimeMetrics = require('./runtime-metrics');
 const storage = require('../storage');
 const circuitBreaker = require('./circuit-breaker');
 const retryBudget = require('./retry-budget-manager');
+const crypto = require('crypto');
 
 const logPrefix = '[DISPATCH]';
 
@@ -102,9 +103,12 @@ function getActiveCounterKey(stage) {
 
 /**
  * Generate unique dispatch token.
+ * PW-2: cryptographic randomness (128-bit) instead of Math.random — the
+ * dispatch_id is an ownership/claim token on the hub hot path; predictable
+ * ids would let a caller guess or collide dispatch identities.
  */
 function generateDispatchToken() {
-    return `dispatch-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    return `dispatch-${Date.now()}-${crypto.randomBytes(16).toString('hex')}`;
 }
 
 /**
@@ -1369,5 +1373,8 @@ module.exports = {
 
     // Constants
     QUOTAS,
-    LEASE_TTLS
+    LEASE_TTLS,
+
+    // PW-2: dispatch identity generation (crypto-hardened)
+    generateDispatchToken
 };

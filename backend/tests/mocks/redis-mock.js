@@ -38,7 +38,20 @@ function createMockRedis() {
             }
             return Object.keys(result).length > 0 ? result : null;
         },
-        hdel: async (key, field) => { store.delete(`${key}:${field}`); return 1; },
+        hdel: async (key, ...fields) => {
+            let n = 0;
+            for (const field of fields) {
+                if (store.delete(`${key}:${field}`)) n++;
+            }
+            return n;
+        },
+        hlen: async (key) => {
+            const prefix = key + ':';
+            let n = 0;
+            for (const k of store.keys()) if (k.startsWith(prefix)) n++;
+            return n;
+        },
+        hexists: async (key, field) => store.has(`${key}:${field}`) ? 1 : 0,
         get: async (key) => store.get(key) || null,
         set: async (key, value, ...args) => {
             const nx = args.includes('NX');
@@ -61,7 +74,16 @@ function createMockRedis() {
             const matched = [...store.keys()].filter(k => regex.test(k));
             return ['0', matched];
         },
-        hscan: async (key, cursor, ...args) => ['0', []],
+        hscan: async (key, cursor, ...args) => {
+            const prefix = key + ':';
+            const entries = [];
+            for (const [k, v] of store) {
+                if (k.startsWith(prefix)) {
+                    entries.push(k.slice(prefix.length), v);
+                }
+            }
+            return ['0', entries];
+        },
         eval: async (script, keysCount, ...args) => {
             if (script.includes('local metadata') && script.includes("ARGV[5] == '1'")) {
                 const [metadataKey, completedKey, leaseKey, quotaKey] = args.slice(0, keysCount);
@@ -117,6 +139,17 @@ function createMockRedis() {
             return ['true', 'corrected', current, target];
         },
         rpush: async (key, ...values) => { const arr = store.get(key) || []; arr.push(...values); store.set(key, arr); return arr.length; },
+        lpush: async (key, ...values) => { const arr = store.get(key) || []; arr.unshift(...values); store.set(key, arr); return arr.length; },
+        rpoplpush: async (source, destination) => {
+            const arr = store.get(source);
+            if (!arr || arr.length === 0) return null;
+            const value = arr.pop();
+            if (arr.length === 0) store.delete(source);
+            const dest = store.get(destination) || [];
+            dest.unshift(value);
+            store.set(destination, dest);
+            return value;
+        },
         llen: async (key) => { const arr = store.get(key); return arr ? arr.length : 0; },
         lrange: async (key, start, stop) => {
             const arr = store.get(key) || [];

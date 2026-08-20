@@ -8,6 +8,7 @@ const sceneAssetsRepo = require('../../storage/postgres/repositories/scene-asset
 const generationProgress = require('../../services/generation-progress');
 const dispatchEngine = require('../../runtime/dispatch-engine');
 const taskRepo = require('../../storage/postgres/repositories/task-repo');
+const bookRepo = require('../../storage/postgres/repositories/book-repo');
 const generationCancelRepo = require('../../storage/postgres/repositories/generation-cancel-repo');
 
 module.exports = function(app, redis, deps) {
@@ -556,6 +557,16 @@ module.exports = function(app, redis, deps) {
                 filteredDirty
             );
 
+            // PW-2: server-derived workspace ownership for persisted tasks.
+            // Resolved from book → books.workspace_id (never client-supplied);
+            // null keeps the task in the system-pool lane.
+            let taskWorkspaceId = null;
+            try {
+                taskWorkspaceId = await bookRepo.getWorkspaceId(bookId);
+            } catch (wsErr) {
+                console.warn(`[REGENERATE] workspace resolution failed for ${bookId}: ${wsErr.message}`);
+            }
+
             for (const task of generationTasks) {
                 for (const target of task.targets || []) {
                     try {
@@ -569,7 +580,8 @@ module.exports = function(app, redis, deps) {
                                 scope: task.scope,
                                 chapter_id: task.chapter_id,
                                 scene_id: task.scene_id,
-                            }
+                            },
+                            taskWorkspaceId
                         );
                         await taskRepo.updateTaskStatus(task.task_id, 'running');
                     } catch (pgErr) {

@@ -1,12 +1,34 @@
 const { query } = require('../database');
 
-async function createTask(taskId, bookId, chapterId, sceneId, taskType, metadata) {
+async function createTask(taskId, bookId, chapterId, sceneId, taskType, metadata, workspaceId) {
     await query(`
-        INSERT INTO generation_tasks (task_id, book_id, chapter_id, scene_id, task_type, metadata)
-        VALUES ($1, $2, $3, $4, $5, $6::jsonb)
+        INSERT INTO generation_tasks (task_id, book_id, chapter_id, scene_id, task_type, metadata, workspace_id)
+        VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)
     `, [taskId, bookId, chapterId || null, sceneId || null, taskType,
-        metadata ? JSON.stringify(metadata) : null]);
+        metadata ? JSON.stringify(metadata) : null, workspaceId || null]);
     return { task_id: taskId };
+}
+
+/**
+ * PW-2: record the claimer on running tasks of a scene stage. Called from the
+ * GPU result/error path with the hub-forwarded worker_id/workspace_id AFTER
+ * the backend has re-verified job→book→workspace (the forwarded values are
+ * never trusted for authorization — audit/persistence only). Best-effort:
+ * matches running tasks of the scene+type; idempotent.
+ */
+async function recordTaskClaim(bookId, chapterId, sceneId, taskType, workerId, workspaceId) {
+    if (!bookId || !taskType) return 0;
+    const result = await query(`
+        UPDATE generation_tasks
+        SET worker_id = COALESCE($5, worker_id),
+            workspace_id = COALESCE($6, workspace_id)
+        WHERE book_id = $1
+          AND COALESCE(chapter_id, '') = COALESCE($2, '')
+          AND COALESCE(scene_id, '') = COALESCE($3, '')
+          AND task_type = $4
+          AND status = 'running'
+    `, [bookId, chapterId || null, sceneId || null, taskType, workerId || null, workspaceId || null]);
+    return result.rowCount || 0;
 }
 
 async function updateTaskStatus(taskId, status, error) {
@@ -77,6 +99,7 @@ async function cancelActiveTasksForBook(bookId, error = 'Cancelled by user') {
 
 module.exports = {
     createTask,
+    recordTaskClaim,
     updateTaskStatus,
     incrementRetry,
     getPendingTasks,

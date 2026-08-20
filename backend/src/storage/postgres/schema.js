@@ -181,6 +181,10 @@ CREATE TABLE IF NOT EXISTS asset_dependencies (
 );
 
 -- Generation task history
+-- workspace_id (PW-2): server-derived ownership anchor for workspace-aware
+-- job ownership. Resolved at dispatch from book → books.workspace_id and
+-- never client-supplied. Nullable: legacy rows and system-pool tasks may
+-- lack it.
 CREATE TABLE IF NOT EXISTS generation_tasks (
     id              BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     task_id         TEXT NOT NULL,
@@ -190,6 +194,7 @@ CREATE TABLE IF NOT EXISTS generation_tasks (
     task_type       TEXT NOT NULL CHECK(task_type IN ('audio','image','video')),
     status          TEXT NOT NULL DEFAULT 'queued' CHECK(status IN ('queued','running','completed','failed','cancelled')),
     worker_id       TEXT,
+    workspace_id    UUID REFERENCES workspaces(id),
     retry_count     INTEGER DEFAULT 0,
     max_retries     INTEGER DEFAULT 3,
     error           TEXT,
@@ -201,6 +206,9 @@ CREATE TABLE IF NOT EXISTS generation_tasks (
 
 CREATE INDEX IF NOT EXISTS idx_tasks_book ON generation_tasks(book_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON generation_tasks(status);
+-- NOTE: idx_tasks_workspace is created by migration PW-2 below — it must run
+-- AFTER the workspace_id column exists (on existing databases the CREATE
+-- TABLE IF NOT EXISTS above does not add the column).
 
 -- Private Worker registry (Experimental Beta — Private Worker Phase 1)
 -- Durable source of truth for private worker identity and credentials.
@@ -1233,6 +1241,42 @@ async function runMigrations() {
     }
 
     console.log('[PG] Private worker registry initialized');
+
+    // ======================================================
+    // PW-2: Workspace-aware job ownership (Experimental Beta — Phase 2)
+    // ======================================================
+    // Add the server-derived workspace ownership anchor to generation_tasks.
+    // Idempotent: column add + backfill from books + index. The backfill only
+    // touches rows whose workspace_id IS NULL, so re-runs are safe and rows
+    // written by the new dispatch path are never overwritten.
+    try {
+        const { rows: taskCols } = await query(`
+            SELECT column_name FROM information_schema.columns
+            WHERE table_name = 'generation_tasks' AND column_name = 'workspace_id'
+        `);
+        if (taskCols.length === 0) {
+            await query(`ALTER TABLE generation_tasks
+                ADD COLUMN workspace_id UUID REFERENCES workspaces(id)`);
+            console.log('[PG] PW-2: added generation_tasks.workspace_id');
+        }
+        const backfill = await query(`
+            UPDATE generation_tasks t
+            SET workspace_id = b.workspace_id
+            FROM books b
+            WHERE t.book_id = b.book_id
+              AND t.workspace_id IS NULL
+              AND b.workspace_id IS NOT NULL
+        `);
+        if (backfill.rowCount > 0) {
+            console.log(`[PG] PW-2: backfilled workspace_id on ${backfill.rowCount} generation_tasks row(s)`);
+        }
+        await query(`CREATE INDEX IF NOT EXISTS idx_tasks_workspace ON generation_tasks(workspace_id)`);
+    } catch (err) {
+        console.error('[PG] PW-2 generation_tasks migration failed:', err.message);
+        throw err;
+    }
+
+    console.log('[PG] Workspace-aware generation task ownership initialized');
 }
 
 module.exports = { runMigrations, SCHEMA_SQL };

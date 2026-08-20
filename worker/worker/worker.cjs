@@ -17,6 +17,13 @@ const HUB_URL = process.env.HUB_URL || "https://animastor.in/gpu";
 const COMFY_PORT = process.env.COMFY_PORT || 8188;
 const WORKER_TYPE = process.env.WORKER_TYPE || "image";
 
+// PW-2 (Experimental Beta — Private Worker): private worker credential
+// (`wrk.<worker_id>.<secret>`, issued once at registration). When set, every
+// hub call carries `Authorization: Bearer <token>` and the hub derives
+// identity/workspace from it — WORKER_ID then becomes a label only. Unset =
+// legacy system-pool worker (backward compatible).
+const ANIMASTOR_WORKER_TOKEN = process.env.ANIMASTOR_WORKER_TOKEN || null;
+
 const NOTEBOOK_PATH = process.env.NOTEBOOK_PATH || "";
 const WORKER_ID = process.env.WORKER_ID || "gpu-" + os.hostname();
 const WORKER_VERSION = process.env.WORKER_VERSION || null;
@@ -62,6 +69,14 @@ async function fetchTimeout(url, options = {}, timeout = 30000) {
 
 function comfyUrl(p) {
   return `http://127.0.0.1:${COMFY_PORT}${NOTEBOOK_PATH}${p}`;
+}
+
+// PW-2: hub request headers — Bearer credential when a private worker token
+// is configured, plain JSON otherwise (system-pool backward compatibility).
+function hubHeaders() {
+  const headers = { "Content-Type": "application/json" };
+  if (ANIMASTOR_WORKER_TOKEN) headers["Authorization"] = `Bearer ${ANIMASTOR_WORKER_TOKEN}`;
+  return headers;
 }
 
 // ======================================================
@@ -137,7 +152,7 @@ async function sendBeacon() {
 
     const res = await fetchTimeout(`${HUB_URL}/beacon`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: hubHeaders(),
       body: JSON.stringify({
         id: WORKER_ID,
         type: WORKER_TYPE,
@@ -163,7 +178,8 @@ async function sendBeacon() {
 async function getTask() {
   try {
     const res = await fetchTimeout(
-      `${HUB_URL}/task/next?worker=${WORKER_ID}&type=${WORKER_TYPE}`
+      `${HUB_URL}/task/next?worker=${WORKER_ID}&type=${WORKER_TYPE}`,
+      { headers: hubHeaders() }
     );
 
     if (!res.ok) return null;
@@ -427,7 +443,7 @@ async function sendResult(task, data) {
   const { job_id, build_id, dispatch_id } = task;
   const res = await fetchTimeout(`${HUB_URL}/task/result`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: hubHeaders(),
     body: JSON.stringify({
       job_id,
       build_id,
@@ -446,7 +462,7 @@ async function sendResult(task, data) {
 async function sendTaskError(task, reason) {
   const res = await fetchTimeout(`${HUB_URL}/task/error`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: hubHeaders(),
     body: JSON.stringify({
       job_id: task.job_id,
       build_id: task.build_id || null,
@@ -549,6 +565,7 @@ async function main() {
   log("info", `Worker image tag: ${WORKER_IMAGE_TAG || 'unknown'}`);
   log("info", `Hub URL: ${HUB_URL}`);
   log("info", `Protocol version: ${PROTOCOL_VERSION}`);
+  log("info", `Mode: ${ANIMASTOR_WORKER_TOKEN ? 'private worker (Bearer credential)' : 'system pool (no credential)'}`);
   await waitForComfyUI();
   await workerLoop();
 }

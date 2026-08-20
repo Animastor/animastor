@@ -40,6 +40,60 @@ module.exports = function(app, redis, deps) {
     }
 
     // ======================================================
+    // PW-2: GPU HUB → BACKEND CALLBACK GUARD
+    // ======================================================
+    // The hub forwards worker_id/workspace_id with result/error callbacks.
+    // These fields are AUDIT-ONLY: the backend re-verifies job→book→workspace
+    // itself (one indexed query) and never trusts the forwarded identity for
+    // authorization. When GPU_HUB_API_KEY is configured the hop is
+    // key-authenticated (header-only); unset keeps the legacy open behaviour.
+    function requireHubCallbackAuth(req, res, next) {
+        if (!config.GPU_HUB_API_KEY) return next();
+        if (req.headers['x-api-key'] !== config.GPU_HUB_API_KEY) {
+            return res.status(401).json({ error: 'unauthorized' });
+        }
+        next();
+    }
+
+    /**
+     * Re-verify the forwarded workspace against the book's owning workspace.
+     * Rules (fail closed on mismatch, permissive on degraded lanes):
+     *   - forwarded workspace_id present → MUST equal books.workspace_id;
+     *   - forwarded null (system-lane claim) → accepted (backward compat;
+     *     routing may have degraded to the system pool);
+     *   - book unattached (no workspace row) → accepted.
+     * @returns {Promise<{ok:boolean, reason?:string, workspaceId:string|null}>}
+     */
+    async function verifyCallbackWorkspace(bookId, forwardedWorkspaceId) {
+        const bookRepo = require('../storage/postgres/repositories/book-repo');
+        let bookWorkspaceId = null;
+        try {
+            bookWorkspaceId = await bookRepo.getWorkspaceId(bookId);
+        } catch (err) {
+            // PG outage on the re-verify path: fail closed for workspace-scoped
+            // callbacks (a mismatch cannot be ruled out), accept system-lane.
+            if (forwardedWorkspaceId) {
+                return { ok: false, reason: 'workspace_reverify_unavailable', workspaceId: null };
+            }
+            return { ok: true, workspaceId: null };
+        }
+        if (forwardedWorkspaceId && forwardedWorkspaceId !== bookWorkspaceId) {
+            return { ok: false, reason: 'workspace_mismatch', workspaceId: bookWorkspaceId };
+        }
+        return { ok: true, workspaceId: bookWorkspaceId };
+    }
+
+    /** Best-effort persistence of the claimer on running tasks (PW-2). */
+    async function persistTaskClaim(bookId, chapterId, sceneId, stage, workerId, workspaceId) {
+        try {
+            const taskRepo = require('../storage/postgres/repositories/task-repo');
+            await taskRepo.recordTaskClaim(bookId, chapterId, sceneId, stage, workerId, workspaceId);
+        } catch (err) {
+            console.warn(`[GPU] recordTaskClaim failed for ${bookId}/${chapterId}/${sceneId}:${stage}: ${err.message}`);
+        }
+    }
+
+    // ======================================================
     // BUILD ID RESOLUTION
     // ======================================================
     // manifest.json is the single source of truth for build_id. The frontend is a
@@ -1245,10 +1299,10 @@ module.exports = function(app, redis, deps) {
     // Н.1: Idempotent callback handling.
     // T4: dispatch_id проверяется перед обработкой — stale callback
     // от предыдущего dispatch отклоняется, не влияя на текущий.
-    app.post('/gpu/task/result', async (req, res) => {
+    app.post('/gpu/task/result', requireHubCallbackAuth, async (req, res) => {
         try {
             const jobSchema = require('../runtime/job-schema');
-            const { job_id, result_base64, build_id, dispatch_id, protocol_version } = req.body || {};
+            const { job_id, result_base64, build_id, dispatch_id, protocol_version, worker_id, workspace_id } = req.body || {};
             log(`[GPU RESULT] Received: job_id=${job_id} build_id=${build_id} dispatch_id=${dispatch_id} proto=${protocol_version} size=${(result_base64 || '').length}B`);
 
             if (
@@ -1270,6 +1324,15 @@ module.exports = function(app, redis, deps) {
                 return res.status(400).json({ error: 'invalid job_id' });
             }
             log(`[GPU RESULT] Parsed: kind=${parsed.kind} book=${parsed.bookId} ch=${parsed.chapterId} sc=${parsed.sceneId} stage=${stage}`);
+
+            // PW-2: re-verify job→book→workspace (forwarded identity is
+            // audit-only; the backend never trusts it for authorization).
+            const wsCheck = await verifyCallbackWorkspace(parsed.bookId, workspace_id || null);
+            if (!wsCheck.ok) {
+                log(`[GPU RESULT] Rejected ${job_id}: ${wsCheck.reason} (forwarded_ws=${workspace_id || 'null'} book_ws=${wsCheck.workspaceId || 'null'})`);
+                return res.status(403).json({ error: wsCheck.reason });
+            }
+            await persistTaskClaim(parsed.bookId, parsed.chapterId, parsed.sceneId, stage, worker_id || null, wsCheck.workspaceId);
 
             const dispatchEngine = require('../runtime/dispatch-engine');
             const identity = await dispatchEngine.verifyDispatchIdentity(
@@ -1333,10 +1396,10 @@ module.exports = function(app, redis, deps) {
 
     // ── GPU task error callback ─────────────────────────
     // T4: dispatch_id проверяется перед обработкой
-    app.post('/gpu/task/error', async (req, res) => {
+    app.post('/gpu/task/error', requireHubCallbackAuth, async (req, res) => {
         try {
             const jobSchema = require('../runtime/job-schema');
-            const { job_id, build_id, reason, dispatch_id, protocol_version } = req.body || {};
+            const { job_id, build_id, reason, dispatch_id, protocol_version, worker_id, workspace_id } = req.body || {};
             if (
                 !job_id ||
                 !build_id ||
@@ -1359,6 +1422,15 @@ module.exports = function(app, redis, deps) {
             if (!stage) {
                 return res.status(400).json({ error: 'unsupported job type' });
             }
+
+            // PW-2: re-verify job→book→workspace (forwarded identity is
+            // audit-only; the backend never trusts it for authorization).
+            const wsCheck = await verifyCallbackWorkspace(bookId, workspace_id || null);
+            if (!wsCheck.ok) {
+                log(`[GPU ERROR] Rejected ${job_id}: ${wsCheck.reason} (forwarded_ws=${workspace_id || 'null'} book_ws=${wsCheck.workspaceId || 'null'})`);
+                return res.status(403).json({ error: wsCheck.reason });
+            }
+            await persistTaskClaim(bookId, chapterId, sceneId, stage, worker_id || null, wsCheck.workspaceId);
 
             const dispatchEngine = require('../runtime/dispatch-engine');
             const identity = await dispatchEngine.verifyDispatchIdentity(
