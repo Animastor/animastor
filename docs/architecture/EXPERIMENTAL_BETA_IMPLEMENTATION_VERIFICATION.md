@@ -281,3 +281,135 @@ is **PASS WITH ISSUES**.
 2. Fix 2.2: private-IP blocklist + HTTPS requirement + redirect policy on user endpoints.
 3. Add the missing timeouts (2.4) and correct the test-connection fallback (2.3).
 4. Add regression tests for 2.1/2.2 (see test gaps).
+
+---
+
+## 6. Final verification of the remediation (FINAL VERIFICATION)
+
+**Reviewed commit:** `85d24144d1461343541e2f78d608d6d7ca2f7a4e` — `fix(beta): remediate workspace AI security findings`
+**Base for diff:** `4698147b9ad8b6847323db7084416d0009707705` (independent verification audit, §1–5 above).
+**Date:** 2026-08-20
+**Rule followed:** source code was NOT modified; verification only (read-only + test runs).
+
+### 6.1 Remediation mapping
+
+| Finding | Remediation | Verified |
+|---|---|---|
+| 2.1 CRITICAL guard/handler `book_id` mismatch | Guard extracted to `middleware/ai-book-guard.js`, sets `req.scopedBookId`; all `/api/v1/ai` handlers consume `req.scopedBookId` first and never re-derive from body | PASS |
+| 2.2 HIGH SSRF | New `services/url-safety.js` (`assertPublicEndpoint` + `safeFetch`); save-time + per-fetch + per-redirect validation; applied to every workspace-controlled fetch (chat, stream, prompt, test, ai-service/agent, health) | PASS |
+| 2.3 MEDIUM test-connection wrong base URL | `/settings/ai/test` builds ONE snapshot: endpoint, key AND model all come from the same source (explicit body wins, else stored provider) | PASS |
+| 2.4 MEDIUM `/ai/prompt` no timeout | `AI_FETCH_TIMEOUT_MS` (60s) AbortController; AbortError → 504 `ai_timeout` | PASS |
+
+### 6.2 Book isolation (2.1)
+
+Production middleware chain (`backend.cjs:126-133`): `/api/v1/ai/sessions/:id` → `aiBookGuard`;
+all other `/api/v1/ai/*` → `aiBookGuard`. The guard resolves the book once
+(`query.book_id` || `body.book_id` || session lookup) and sets `req.scopedBookId`.
+
+Matrix verified against the real-PG HTTP suite (`backend/tests/workspace-ai-security.test.js`):
+
+| Scenario | Expected | Result |
+|---|---|---|
+| Workspace A → own book → own provider | ALLOW (provider A) | PASS — attacker.example + sk-attacker used |
+| Workspace A → book B (body) | DENY | PASS — 403, no provider contact |
+| Workspace A → book B (query) | DENY | PASS — 403 |
+| query.book_id=A, body.book_id=B | DENY | PASS — 400 `book_id_mismatch`, no fetch |
+| session(B) + body.book_id(A) | DENY | PASS — 400 `session_book_mismatch`, no fetch |
+| /ai/lock query/body mismatch | DENY | PASS — 400 `book_id_mismatch` |
+| /ai/chat own book | ALLOW | PASS — attacker provider used |
+
+`req.scopedBookId` is consumed first in every handler: `/ai/chat` (:285), `/ai/chat/stream` (:520),
+`/ai/prompt` (:764), `/ai/lock` (:672), `/ai/sessions` create (:215). Provider resolution
+(`resolveChatAI` → `resolveAIForBook` → `resolveWorkspaceForBook({allowCreate:false})`) is strictly
+server-side via `books.workspace_id`; a foreign book_id never reaches it because the guard denies
+before the handler runs.
+
+### 6.3 Pre-auth / legacy path (2.1 + 2.4)
+
+- `if (!hasIdentity(req)) return next()` (`ai-book-guard.js:30`) fires only when `req.user` AND
+  `req.guest` are both absent. An authenticated user/guest always has identity → guard enforces.
+- All three audited endpoints are POST under `/api/v1`, and `authContext` auto-provisions a guest on
+  every content write (`auth-context.js:79-87`), so even an anonymous POST gets an identity and the
+  guard runs. The pass-through is reachable only on pre-auth GETs (`/ai/sessions`, `/ai/sessions/:id`,
+  `/:id/messages`) — read-only, no provider fetch, matching the app-wide legacy pre-auth behaviour.
+- Legacy fallback `req.scopedBookId || book_id || session.book_id` is reachable only when
+  `req.scopedBookId` is unset (pre-auth GET or guard pass-through with no scope). When identity is
+  present and a scope exists, `scopedBookId` is always set to the authorized book, so the fallback
+  never re-introduces a cross-tenant provider/data/write path. A guest cannot reach a victim book
+  (`checkBookAccess` → `resolveGuestBookWorkspace`).
+
+### 6.4 SSRF (2.2)
+
+`url-safety.js` empirically verified (node REPL against the real module, plus the suite):
+
+- Blocked: `127.0.0.1`, `127.1`, `0x7f000001`, `0x7f.1`, `017700000001`, `0177.0.0.1`,
+  `0x7f.0.0.1`, `2130706433`, `10.0.0.1`, `169.254.169.254`, `0.0.0.0`, `[::1]`,
+  `[::ffff:127.0.0.1]`, `[::ffff:7f00:1]`, `[::7f00:1]`, `[fc00::1]`, `[fe80::1]`,
+  `255.255.255.255`, trailing-dot `127.0.0.1.`/`10.0.0.1.`, `localhost` (resolves to `::1`),
+  `ftp:`, `file:`.
+- DNS: a hostname resolving (any A/AAAA record) to a private/special address is blocked (DNS-rebinding
+  shape); unresolvable hostnames fail closed; round-robin with one private record is blocked.
+- Redirects: `safeFetch` follows `redirect:'manual'` and re-validates every hop; public → private
+  redirect raises `ENDPOINT_NOT_PUBLIC`.
+- Public OpenAI-compatible HTTPS endpoint: ALLOW (`api.openai.com`, `api.anthropic.com`).
+- Coverage: `validatePublic` is `provider.source === 'workspace' && !!provider.endpoint` in
+  ai-routes (chat/stream/prompt), ai-service (`callAI`, `checkAIHealth`), and testConnection
+  (`!!endpoint`). Operator-controlled env endpoints are exempt by design (documented).
+- Residual (LOW, acknowledged, not introduced by this fix): guard-lookup→undici-connect TOCTOU
+  (check-then-connect) is the standard limitation of DNS-based SSRF filters; a DNS-rebinding
+  domain with sub-millisecond TTL could race the two lookups. Practical exploitability is low;
+  hardening would require connect-then-validate.
+
+### 6.5 Test Connection snapshot (2.3)
+
+Saved provider (endpoint + key + model) is re-tested against its own endpoint with its own key and
+model — never the global default. Verified: empty body → `attacker.example/v1/chat/completions` +
+`Bearer sk-attacker` + `att-model`; explicit endpoint (no key) → new endpoint + stored key;
+explicit endpoint+key+model → full override. A stored workspace provider always has a non-empty
+endpoint (PUT requires it), so the saved key cannot reach the global base URL.
+
+### 6.6 `/ai/prompt` timeout (2.4)
+
+`AI_FETCH_TIMEOUT_MS = 60000`; the route attaches an AbortController and maps AbortError to
+504 `ai_timeout`. Verified by test (mocked hanging provider → 504) and by code inspection; the
+normal response path is unchanged (clearTimeout after a successful fetch).
+
+### 6.7 Test execution
+
+| Command | Result |
+|---|---|
+| `npx mocha tests/workspace-ai-security.test.js` | 38/38 pass |
+| `npx mocha tests/workspace-ai-provider.test.js` | 12/12 pass |
+| `npx mocha tests/auth-mvp.test.js tests/guest-workspace.test.js tests/account-workspace.test.js` | 71 pass, 1 pre-existing flaky (guest-workspace.test.js:397, finding 2.12; passes in isolation) |
+| `npx mocha 'tests/**/*.test.js'` (full backend suite) | **1314 pass, 0 fail** |
+| `npm run test:syntax` (syntax-smoke.sh, full repo) | all OK |
+| `npm run typecheck` (frontends/app) | pass |
+
+### 6.8 Final verdict (remediation)
+
+### CRITICAL
+None remaining.
+
+### HIGH
+None remaining.
+
+### MEDIUM
+None remaining.
+
+### LOW
+- DNS-rebinding TOCTOU in `safeFetch` (check-then-connect window between `assertPublicEndpoint`'s
+  DNS lookup and undici's independent lookup). Acknowledged limitation of DNS-based SSRF filtering;
+  not a blocker.
+
+### Tests
+PASS — full backend suite 1314/1314; security regression 38/38; one pre-existing flaky test
+(`guest-workspace.test.js:397`, documented in 2.12) that passes in isolation.
+
+### Production readiness
+READY
+
+### Remaining issues
+No remaining security blocker found. The only open item is the documented LOW DNS-rebinding TOCTOU
+residual (recommended hardening: connect-then-validate), and the pre-existing non-security findings
+2.5–2.11 from the first audit (dev-key fallback, key rotation UX, cache eviction, endpoint length
+cap) which were intentionally out of scope for this remediation.
