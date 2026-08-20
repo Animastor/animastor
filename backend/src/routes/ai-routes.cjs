@@ -22,8 +22,10 @@ module.exports = function(app, redis, deps) {
     // ── Workspace AI provider (Experimental Beta) ──────────────────────
     // Resolve the provider for the book: its workspace's provider first,
     // then the global env fallback. Transport separation: the routes only
-    // build endpoint/key/model — the fetch stays local.
+    // build endpoint/key/model — the fetch stays local (safeFetch, which
+    // also enforces the SSRF guard on USER-controlled endpoints).
     const workspaceAi = require('../services/workspace-ai-provider');
+    const { safeFetch } = require('../services/url-safety');
     async function resolveChatAI(bookId) {
         const provider = bookId
             ? await workspaceAi.resolveAIForBook(bookId)
@@ -32,8 +34,13 @@ module.exports = function(app, redis, deps) {
             baseUrl: provider.endpoint || chatEngine.AI_API_BASE_URL,
             apiKey: provider.apiKey || config.OPENROUTER_API_KEY || process.env.AI_API_KEY || '',
             model: provider.model || process.env.AI_MODEL || 'qwen/qwen3-32b',
+            // Only the user-controlled workspace endpoint is an SSRF surface;
+            // operator-controlled env config (global fallback) is trusted.
+            validatePublic: provider.source === 'workspace' && !!provider.endpoint,
         };
     }
+
+    const AI_FETCH_TIMEOUT_MS = 60000;
 
     // ── Hermesian tool call parser ──────────────────────
     // Qwen3-32B (reasoning model) sometimes outputs tool_call as text in content
@@ -205,11 +212,12 @@ module.exports = function(app, redis, deps) {
     app.post('/api/v1/ai/sessions', async (req, res) => {
         try {
             const { book_id, mode, topic_id } = req.body || {};
-            if (!book_id) return res.status(400).json({ error: 'book_id required' });
+            const scopedBookId = req.scopedBookId || book_id || null;
+            if (!scopedBookId) return res.status(400).json({ error: 'book_id required' });
 
             const id = `ai-session-${Date.now()}-${++sessionIdCounter}`;
             const session = {
-                id, book_id, mode: mode || 'chat',
+                id, book_id: scopedBookId, mode: mode || 'chat',
                 topic_id: topic_id || 'book',
                 messages: [], created_at: Date.now(), updated_at: Date.now(),
                 context: null, locked: false,
@@ -245,21 +253,25 @@ module.exports = function(app, redis, deps) {
                 return res.status(400).json({ error: 'messages or message required' });
             }
 
+            // The AUTHORIZED book — set by aiBookGuard. Never re-derive a
+            // different one from the body (cross-tenant provider/data/write).
+            const scopedBookId = req.scopedBookId || book_id || null;
+
             // Auto-create session if session_id not provided
             let activeSessionId = session_id;
             if (!activeSessionId) {
-                if (!book_id) {
+                if (!scopedBookId) {
                     return res.status(400).json({ error: 'book_id required when no session_id' });
                 }
                 const id = `ai-session-${Date.now()}-${++sessionIdCounter}`;
                 await storage.postgres.query(
                     `INSERT INTO ai_chat_sessions (id, book_id, mode, topic_id, messages, created_at, updated_at, context, locked)
                      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-                    [id, book_id, mode || 'chat', topic_id || 'book',
+                    [id, scopedBookId, mode || 'chat', topic_id || 'book',
                      JSON.stringify([]), Date.now(), Date.now(), null, false]
                 );
                 activeSessionId = id;
-                log('[AI] Auto-created session:', id, 'for book:', book_id);
+                log('[AI] Auto-created session:', id, 'for book:', scopedBookId);
             }
 
             const result = await storage.postgres.query(
@@ -270,7 +282,7 @@ module.exports = function(app, redis, deps) {
             const session = result.rows[0];
             const storedMessages = typeof session.messages === 'string'
                 ? JSON.parse(session.messages) : session.messages || [];
-            const bookId = book_id || session.book_id;
+            const bookId = req.scopedBookId || book_id || session.book_id;
 
             // Load book data for context
             let bookData = null;
@@ -329,8 +341,8 @@ module.exports = function(app, redis, deps) {
             const ai = await resolveChatAI(bookId);
 
             const controller = new AbortController();
-            const timeout = setTimeout(() => controller.abort(), 60000);
-            const response = await fetch(`${ai.baseUrl}/chat/completions`, {
+            const timeout = setTimeout(() => controller.abort(), AI_FETCH_TIMEOUT_MS);
+            const response = await safeFetch(`${ai.baseUrl}/chat/completions`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${ai.apiKey}` },
                 body: JSON.stringify({
@@ -342,6 +354,7 @@ module.exports = function(app, redis, deps) {
                     enable_thinking: true,
                 }),
                 signal: controller.signal,
+                validatePublic: ai.validatePublic,
             });
             clearTimeout(timeout);
 
@@ -481,6 +494,9 @@ module.exports = function(app, redis, deps) {
             });
         } catch (err) {
             console.error('[AI CHAT] Error:', err.message);
+            if (err.code === 'ENDPOINT_NOT_PUBLIC') {
+                return res.status(502).json({ error: err.message });
+            }
             res.status(500).json({ error: err.message });
         }
     });
@@ -500,7 +516,8 @@ module.exports = function(app, redis, deps) {
 
             const session = result.rows[0];
             const messages = typeof session.messages === 'string' ? JSON.parse(session.messages) : session.messages || [];
-            const bookId = book_id || session.book_id;
+            // The AUTHORIZED book — set by aiBookGuard (see /ai/chat).
+            const bookId = req.scopedBookId || book_id || session.book_id;
 
             let bookData = null;
             try { bookData = book.loadBook(bookId) || lazyBook.loadDraftBook(bookId); } catch (_) {}
@@ -527,8 +544,8 @@ module.exports = function(app, redis, deps) {
             const ai = await resolveChatAI(bookId);
 
             const controller = new AbortController();
-            const timeout = setTimeout(() => controller.abort(), 60000);
-            const aiResponse = await fetch(`${ai.baseUrl}/chat/completions`, {
+            const timeout = setTimeout(() => controller.abort(), AI_FETCH_TIMEOUT_MS);
+            const aiResponse = await safeFetch(`${ai.baseUrl}/chat/completions`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${ai.apiKey}` },
                 body: JSON.stringify({
@@ -541,6 +558,7 @@ module.exports = function(app, redis, deps) {
                     stream: true,
                 }),
                 signal: controller.signal,
+                validatePublic: ai.validatePublic,
             });
             clearTimeout(timeout);
 
@@ -606,6 +624,12 @@ module.exports = function(app, redis, deps) {
             );
         } catch (err) {
             console.error('[AI STREAM] Error:', err.message);
+            if (err.code === 'ENDPOINT_NOT_PUBLIC') {
+                if (!res.headersSent) return res.status(502).json({ error: err.message });
+                res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);
+                res.end();
+                return;
+            }
             if (!res.headersSent) return res.status(500).json({ error: err.message });
             res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);
             res.end();
@@ -643,22 +667,24 @@ module.exports = function(app, redis, deps) {
     // ======================================================
     app.post('/api/v1/ai/lock', async (req, res) => {
         try {
-            const { book_id, locked } = req.body || {};
-            if (!book_id) return res.status(400).json({ error: 'book_id required' });
+            const { locked } = req.body || {};
+            // The AUTHORIZED book — set by aiBookGuard (book write endpoint).
+            const bookId = req.scopedBookId || (req.body && req.body.book_id) || null;
+            if (!bookId) return res.status(400).json({ error: 'book_id required' });
 
-            const bookData = book.loadBook(book_id) || lazyBook.loadDraftBook(book_id);
+            const bookData = book.loadBook(bookId) || lazyBook.loadDraftBook(bookId);
             if (!bookData) return res.status(404).json({ error: 'Book not found' });
 
             if (locked !== undefined) bookData.manifest.locked = locked;
             else bookData.manifest.locked = !bookData.manifest.locked;
 
             const finalLocked = bookData.manifest.locked;
-            const bookDir = lazyBook.getBookDir(book_id);
+            const bookDir = lazyBook.getBookDir(bookId);
             const bookPath = require('path').join(bookDir, 'book.json');
             fs.writeFileSync(bookPath, JSON.stringify(bookData, null, 2));
 
-            log(`[AI] Book ${book_id} ${finalLocked ? 'locked' : 'unlocked'}`);
-            res.json({ book_id, locked: finalLocked });
+            log(`[AI] Book ${bookId} ${finalLocked ? 'locked' : 'unlocked'}`);
+            res.json({ book_id: bookId, locked: finalLocked });
         } catch (err) {
             console.error('[AI LOCK] Error:', err.message);
             res.status(500).json({ error: err.message });
@@ -732,7 +758,10 @@ module.exports = function(app, redis, deps) {
     // ======================================================
     app.post('/api/v1/ai/prompt', async (req, res) => {
         try {
-            const { book_id, prompt, image_base64 } = req.body || {};
+            const { prompt, image_base64 } = req.body || {};
+            // The AUTHORIZED book — set by aiBookGuard. Never re-derive a
+            // different one from the body (cross-tenant provider/data/write).
+            const book_id = req.scopedBookId || (req.body && req.body.book_id) || null;
             if (!book_id || !prompt) return res.status(400).json({ error: 'book_id and prompt required' });
 
             let bookData = null;
@@ -757,7 +786,11 @@ module.exports = function(app, redis, deps) {
 
             const ai = await resolveChatAI(book_id);
 
-            const response = await fetch(`${ai.baseUrl}/chat/completions`, {
+            // Same timeout contract as chat/stream: a hung provider must not
+            // hold the request thread indefinitely.
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), AI_FETCH_TIMEOUT_MS);
+            const response = await safeFetch(`${ai.baseUrl}/chat/completions`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${ai.apiKey}` },
                 body: JSON.stringify({
@@ -768,7 +801,10 @@ module.exports = function(app, redis, deps) {
                     max_tokens: 4096,
                     enable_thinking: true,
                 }),
+                signal: controller.signal,
+                validatePublic: ai.validatePublic,
             });
+            clearTimeout(timeout);
 
             if (!response.ok) {
                 const errText = await response.text();
@@ -803,6 +839,12 @@ module.exports = function(app, redis, deps) {
             res.json({ reply: parsed.reply, patches_applied: patches.length, book_updated: !!patchedBook });
         } catch (err) {
             console.error('[AI PROMPT] Error:', err.message);
+            if (err.code === 'ENDPOINT_NOT_PUBLIC') {
+                return res.status(502).json({ error: err.message });
+            }
+            if (err.name === 'AbortError' || err.code === 'ABORT_ERR') {
+                return res.status(504).json({ error: 'AI request timed out', code: 'ai_timeout' });
+            }
             res.status(500).json({ error: err.message });
         }
     });

@@ -21,6 +21,7 @@
 
 const { expect } = require('chai');
 const express = require('express');
+const dns = require('dns');
 
 // Global fallback key for the suite so the backward-compat path
 // (no workspace provider → global env) is exercised, not skipped.
@@ -89,9 +90,16 @@ function okJsonResponse(payload, overrides = {}) {
 }
 
 describe('Workspace AI Provider', () => {
+    const originalDnsLookup = dns.promises.lookup;
+
     before(async () => {
         await runMigrations();
         bookWorkspaceId = await createWorkspaceRow('wspai-book', 'personal');
+        // The SSRF guard (url-safety) resolves the endpoint hostname before
+        // every fetch. This suite uses reserved *.example hostnames (RFC 2606,
+        // intentionally unresolvable), so DNS is stubbed to a public address —
+        // deterministic, no real network.
+        dns.promises.lookup = async () => [{ address: '93.184.216.34', family: 4 }];
     });
 
     afterEach(async () => {
@@ -100,7 +108,10 @@ describe('Workspace AI Provider', () => {
         workspaceAi.invalidateCache(bookWorkspaceId);
     });
 
-    after(cleanup);
+    after(async () => {
+        dns.promises.lookup = originalDnsLookup;
+        await cleanup();
+    });
 
     // 1 ── schema contract ───────────────────────────────────────────────
     it('workspace_ai_providers table exists with workspace_id PK and cascade FK', async () => {

@@ -121,31 +121,9 @@ app.use('/api/v1/preview/:bookId', requireBookAccess('bookId'));
 // The target book comes from query/body/session lookup rather than the URL,
 // so it is resolved here pre-route. Pre-auth passes through; authenticated
 // callers must own the book (fail closed when ownership cannot be proven).
-const aiSessionRepoQuery = (id) => storage.postgres.query(
-    'SELECT book_id FROM ai_chat_sessions WHERE id = $1 LIMIT 1', [id]
-).catch(() => null);
-const aiBookGuard = async (req, res, next) => {
-    const { hasIdentity, checkBookAccess, WorkspaceExpiredError } = require('./middleware/auth-context');
-    if (!hasIdentity(req)) return next(); // pre-auth compatibility
-    try {
-        let bookId = (req.query && req.query.book_id) || (req.body && req.body.book_id) || null;
-        const sessionId = (req.query && req.query.session_id) || (req.body && req.body.session_id) || (req.params && req.params.id) || null;
-        if (!bookId && sessionId) {
-            const row = await aiSessionRepoQuery(sessionId);
-            bookId = (row && row.rows && row.rows[0] && row.rows[0].book_id) || null;
-        }
-        if (!bookId) return next(); // endpoint without a book scope — nothing to guard
-        const ws = await checkBookAccess(req, bookId);
-        if (!ws) return res.status(403).json({ error: 'Access denied: not a member of the book\'s workspace' });
-        return next();
-    } catch (err) {
-        if (err instanceof WorkspaceExpiredError) {
-            return res.status(410).json({ error: 'Guest workspace expired', code: 'workspace_expired' });
-        }
-        console.error('[AUTH] AI book guard failed (fail closed):', err.message);
-        return res.status(403).json({ error: 'Access denied' });
-    }
-};
+// The guard sets `req.scopedBookId` — the single authorized book identity
+// that every /api/v1/ai handler MUST operate on.
+const { aiBookGuard } = require('./middleware/ai-book-guard');
 // /sessions/:id and /sessions/:id/messages carry the id in the path.
 app.use('/api/v1/ai/sessions/:id', aiBookGuard);
 // The rest resolve the book from query/body (session_id or book_id).

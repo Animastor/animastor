@@ -15,6 +15,7 @@
 // ======================================================
 
 const crypto = require('crypto');
+const { safeFetch } = require('./url-safety');
 
 let _logEmitted = false;
 
@@ -286,7 +287,10 @@ async function testConnection({ endpoint, apiKey, model }) {
 
     const usedModel = model || process.env.AI_MODEL || process.env.OPENROUTER_MODEL || 'qwen/qwen3-32b';
     try {
-        const response = await fetch(`${base}/chat/completions`, {
+        // safeFetch validates the endpoint is public (SSRF guard) when an
+        // explicit endpoint is being tested; the env fallback is
+        // operator-controlled and exempt. Redirects are re-validated per hop.
+        const response = await safeFetch(`${base}/chat/completions`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -299,6 +303,7 @@ async function testConnection({ endpoint, apiKey, model }) {
                 temperature: 0,
             }),
             signal: AbortSignal.timeout(20_000),
+            validatePublic: !!endpoint,
         });
         if (!response.ok) {
             // Truncated, sanitized — never echo request headers/key back.

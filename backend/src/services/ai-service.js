@@ -6,6 +6,7 @@
 // ======================================================
 
 const config = require('../config/runtime-config');
+const { safeFetch } = require('./url-safety');
 
 const AI_API_BASE_URL = process.env.AI_API_BASE_URL || 'https://api.aicredits.in/v1';
 
@@ -43,7 +44,7 @@ async function callAI(messages, options = {}, provider = null) {
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
-            const response = await fetch(`${baseUrl}/chat/completions`, {
+            const response = await safeFetch(`${baseUrl}/chat/completions`, {
                 method: 'POST',
                 headers,
                 body: JSON.stringify({
@@ -54,6 +55,9 @@ async function callAI(messages, options = {}, provider = null) {
                     stream: false,
                 }),
                 signal: AbortSignal.timeout(options.timeout || 60000),
+                // SSRF guard applies to the USER-controlled workspace endpoint;
+                // the env fallback is operator-controlled and trusted.
+                validatePublic: provider?.source === 'workspace' && !!provider.endpoint,
             });
 
             if (!response.ok) {
@@ -485,7 +489,7 @@ async function checkAIHealth(cfg, provider = null) {
     try {
         // Minimal chat completion — verifies key is valid AND quota is available
         const baseUrl = (provider && provider.endpoint) || AI_API_BASE_URL;
-        const response = await fetch(`${baseUrl}/chat/completions`, {
+        const response = await safeFetch(`${baseUrl}/chat/completions`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -498,6 +502,7 @@ async function checkAIHealth(cfg, provider = null) {
                 temperature: 0,
             }),
             signal: AbortSignal.timeout(15_000),
+            validatePublic: provider?.source === 'workspace' && !!provider.endpoint,
         });
         _healthCacheMap.set(cacheKey, { alive: response.ok, at: now });
         if (!response.ok) {

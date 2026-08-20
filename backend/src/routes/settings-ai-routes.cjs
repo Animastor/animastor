@@ -15,6 +15,7 @@
 // request body, so cross-workspace writes are impossible.
 
 const workspaceAi = require('../services/workspace-ai-provider');
+const { assertPublicEndpoint } = require('../services/url-safety');
 
 function identityGuard(req, res) {
     if (req.guest && req.workspace && req.workspace.status === 'expired') {
@@ -64,6 +65,13 @@ module.exports = function(app) {
         const endpoint = normalizeEndpoint(body.endpoint);
         if (!endpoint) {
             return res.status(400).json({ error: 'endpoint must be a valid http(s) URL' });
+        }
+        // SSRF guard: a workspace provider endpoint is USER-controlled, so it
+        // must never point at loopback/private/link-local/metadata addresses
+        // (checked at save time AND again at every fetch — see safeFetch).
+        const verdict = await assertPublicEndpoint(endpoint);
+        if (!verdict.ok) {
+            return res.status(400).json({ error: `endpoint not allowed: ${verdict.reason}` });
         }
         if (body.model !== undefined && body.model !== null
             && (typeof body.model !== 'string' || body.model.length > 256)) {
@@ -115,21 +123,28 @@ module.exports = function(app) {
         if (!workspaceId) return;
 
         const body = req.body || {};
-        const endpoint = normalizeEndpoint(body.endpoint);
         try {
-            // Explicit key wins; otherwise fall back to the STORED workspace
-            // key so the saved provider can be re-tested without re-typing.
-            let apiKey = (typeof body.api_key === 'string' && body.api_key.trim())
-                ? body.api_key.trim() : null;
-            if (!apiKey) {
-                const stored = await workspaceAi.resolveAIForWorkspace(workspaceId);
-                if (stored.source === 'workspace') apiKey = stored.apiKey;
-            }
+            // Build ONE consistent snapshot of the provider under test:
+            // explicit body values win, otherwise the STORED workspace
+            // provider fills in every missing field — endpoint, key AND
+            // model come from the same source so a saved custom provider is
+            // re-tested against its own endpoint, never the global default.
+            const stored = await workspaceAi.resolveAIForWorkspace(workspaceId);
+            const fromStored = stored && stored.source === 'workspace';
+
+            const endpoint = normalizeEndpoint(body.endpoint)
+                || (fromStored ? normalizeEndpoint(stored.endpoint) : null);
+            const apiKey = (typeof body.api_key === 'string' && body.api_key.trim())
+                ? body.api_key.trim()
+                : (fromStored ? stored.apiKey : null);
+            const model = (typeof body.model === 'string' && body.model.trim())
+                ? body.model.trim()
+                : (fromStored ? stored.model : null);
 
             const result = await workspaceAi.testConnection({
                 endpoint: endpoint || undefined,
                 apiKey: apiKey || undefined,
-                model: body.model || null,
+                model: model || undefined,
             });
 
             delete result.apiKey; // never echo credentials
