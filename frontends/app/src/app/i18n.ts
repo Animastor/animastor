@@ -120,6 +120,21 @@ const dict = {
     worker_settings_workers_title: 'Workers',
     worker_counts_fmt: '{0} доступно · {1} активно',
     worker_vbook: 'VBook',
+    // AI Provider settings (Experimental Beta — workspace-scoped providers)
+    ai_provider_title: 'AI провайдер',
+    ai_provider_desc: 'Провайдер LLM для этого рабочего пространства. Используется для чата, импорта и генерации VBook. Если не задан — применяется глобальный ключ сервера.',
+    ai_provider_endpoint: 'Endpoint',
+    ai_provider_api_key: 'API-ключ',
+    ai_provider_key_saved: 'Ключ сохранён (не отображается)',
+    ai_provider_key_hint: 'Введите новый ключ для замены сохранённого',
+    ai_provider_model: 'Модель',
+    ai_provider_model_hint: 'Пусто — модель по умолчанию',
+    ai_provider_save: 'Сохранить',
+    ai_provider_delete: 'Удалить провайдера',
+    ai_provider_test: 'Проверить подключение',
+    ai_provider_test_ok: 'Подключение успешно',
+    ai_provider_test_fail: 'Ошибка: {0}',
+    ai_provider_none: 'Отдельный провайдер не настроен — используется глобальная конфигурация сервера',
     // Library
     library_open_external: 'Открыть в браузере',
     // Без открытой книги
@@ -557,6 +572,21 @@ const dict = {
     worker_settings_workers_title: 'Workers',
     worker_counts_fmt: '{0} available · {1} active',
     worker_vbook: 'VBook',
+    // AI Provider configuration (Experimental Beta — workspace-isolated provider)
+    ai_provider_title: 'AI Provider',
+    ai_provider_desc: 'The LLM provider for this workspace. Used for chat, import, and VBook generation. When empty, the server global key applies.',
+    ai_provider_endpoint: 'Endpoint',
+    ai_provider_api_key: 'API Key',
+    ai_provider_key_saved: 'Key saved (never displayed)',
+    ai_provider_key_hint: 'Enter a new key to replace the saved one',
+    ai_provider_model: 'Model',
+    ai_provider_model_hint: 'Leave empty to use the default model',
+    ai_provider_save: 'Save',
+    ai_provider_delete: 'Delete provider',
+    ai_provider_test: 'Test connection',
+    ai_provider_test_ok: 'Connection OK',
+    ai_provider_test_fail: 'Error: {0}',
+    ai_provider_none: 'No dedicated provider configured — the server global configuration applies',
     // Library
     library_open_external: 'Open in browser',
     // No book open

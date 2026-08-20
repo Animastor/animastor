@@ -248,6 +248,9 @@ require('./routes/workflow-routes.cjs')(app, redis, routeDeps);
 // Editor limits / app config
 require('./routes/config-routes.cjs')(app, redis, routeDeps);
 
+// Workspace AI provider settings (Experimental Beta — Milestone 1)
+require('./routes/settings-ai-routes.cjs')(app);
+
 // ======================================================
 // PROMETHEUS METRICS
 // ======================================================

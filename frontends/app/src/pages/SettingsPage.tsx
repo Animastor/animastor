@@ -3,7 +3,7 @@ import { applyTheme, applyLanguage, readPrefs, writePrefs } from '../app/theme';
 import type { ThemePref } from '../app/theme';
 import { t, tf } from '../app/i18n';
 import type { StrKey } from '../app/i18n';
-import { getJson, putJson, deleteJson } from '../api/client';
+import { getJson, postJson, putJson, deleteJson } from '../api/client';
 import { bookId, resetProgressState, closeBook as closeGenerateBook } from '../state/generateStore';
 import { closeBook as closePlayerBook } from '../state/playbackStore';
 import { clearCache as clearMediaCache } from '../cache/mediaCache';
@@ -19,6 +19,7 @@ export function SettingsPage(props: { section?: string; path?: string }) {
   const { section } = props;
   if (section === 'vbook') return <VBookSection />;
   if (section === 'worker') return <WorkerSection />;
+  if (section === 'ai') return <AIProviderSection />;
   return <GeneralSection />;
 }
 
@@ -135,6 +136,7 @@ function GeneralSection() {
         <div class="settings__group">
           <NavRow label={t('vbook_settings_title')} onClick={() => navigate('/settings/vbook')} />
           <NavRow label={t('worker_settings_title')} onClick={() => navigate('/settings/worker')} />
+          <NavRow label={t('ai_provider_title')} onClick={() => navigate('/settings/ai')} />
         </div>
 
         {/* Cache / Storyboard — settings_cache + clearCacheButton + deleteVbookButton
@@ -186,6 +188,177 @@ function NavRow({ label, onClick }: { label: string; onClick: () => void }) {
       <span>{label}</span>
       <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><path d="M9 6l6 6-6 6" /></svg>
     </button>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// /settings/ai — AI Provider (Experimental Beta — Milestone 1)
+// Workspace-scoped LLM provider + endpoint + model; the key is stored
+// encrypted server-side and is NEVER returned (only a masked hint).
+// ─────────────────────────────────────────────────────────────
+
+interface AiProviderMeta {
+  workspace_id: string;
+  provider: string;
+  endpoint: string;
+  model: string | null;
+  enabled: boolean;
+  has_api_key: boolean;
+  api_key_masked: string;
+}
+interface AiProviderRead { provider: AiProviderMeta | null; has_workspace_provider: boolean }
+interface AiProviderTest { ok: boolean; model?: string; status?: number; error?: string }
+
+function AIProviderSection() {
+  const [endpoint, setEndpoint] = useState('');
+  const [apiKey, setApiKey] = useState('');
+  const [model, setModel] = useState('');
+  const [saved, setSaved] = useState<AiProviderMeta | null>(null);
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const res = await getJson<AiProviderRead>('/settings/ai/provider');
+        if (!alive) return;
+        setSaved(res.provider ?? null);
+        if (res.provider) {
+          setEndpoint(res.provider.endpoint || '');
+          setModel(res.provider.model || '');
+        }
+      } catch (e) {
+        if (alive) setError((e as Error).message);
+      } finally {
+        if (alive) setLoaded(true);
+      }
+    })();
+    return () => { alive = false; };
+  }, []);
+
+  const onSave = async () => {
+    if (busy) return;
+    setBusy(true); setError(''); setNotice('');
+    try {
+      const body: Record<string, unknown> = { endpoint, model: model || null };
+      if (apiKey.trim()) body.api_key = apiKey.trim();
+      const res = await putJson<{ provider: AiProviderMeta }>('/settings/ai/provider', body);
+      setSaved(res.provider);
+      setApiKey('');
+      setNotice(t('ai_provider_key_saved'));
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onDelete = async () => {
+    if (busy) return;
+    setBusy(true); setError(''); setNotice('');
+    try {
+      await deleteJson('/settings/ai/provider');
+      setSaved(null);
+      setEndpoint(''); setApiKey(''); setModel('');
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onTest = async () => {
+    if (testing || busy) return;
+    setTesting(true); setError(''); setNotice('');
+    try {
+      const body: Record<string, unknown> = {};
+      if (endpoint) body.endpoint = endpoint;
+      if (apiKey.trim()) body.api_key = apiKey.trim();
+      if (model) body.model = model;
+      const res = await postJson<AiProviderTest>('/settings/ai/test', body);
+      if (res.ok) setNotice(t('ai_provider_test_ok') + (res.model ? ` · ${res.model}` : ''));
+      else setError(tf('ai_provider_test_fail', res.error || `${res.status ?? ''}`));
+    } catch (e) {
+      setError(tf('ai_provider_test_fail', (e as Error).message));
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  return (
+    <section class="page settings-page">
+      <div class="settings-page__scroll">
+        <div class="card card--stack">
+          <h3 class="card__title">{t('ai_provider_title')}</h3>
+          <p class="card__hint card__hint--wrap">{t('ai_provider_desc')}</p>
+
+          {!loaded ? (
+            <p class="card__hint">{t('play_loading')}</p>
+          ) : (
+            <>
+              <p class="card__hint card__hint--wrap">
+                {saved
+                  ? `${saved.endpoint}${saved.model ? ` · ${saved.model}` : ''} · ${saved.api_key_masked}`
+                  : t('ai_provider_none')}
+              </p>
+
+              <p class="card__label">{t('ai_provider_endpoint')}</p>
+              <input
+                class="settings__input"
+                value={endpoint}
+                placeholder="https://api.example.com/v1"
+                aria-label={t('ai_provider_endpoint')}
+                disabled={busy}
+                onInput={(e) => setEndpoint((e.target as HTMLInputElement).value)}
+              />
+
+              <p class="card__label">{t('ai_provider_api_key')}</p>
+              <input
+                class="settings__input"
+                type="password"
+                autocomplete="off"
+                value={apiKey}
+                placeholder={saved?.has_api_key ? t('ai_provider_key_hint') : 'sk-...'}
+                aria-label={t('ai_provider_api_key')}
+                disabled={busy}
+                onInput={(e) => setApiKey((e.target as HTMLInputElement).value)}
+              />
+
+              <p class="card__label">{t('ai_provider_model')}</p>
+              <input
+                class="settings__input"
+                value={model}
+                placeholder={t('ai_provider_model_hint')}
+                aria-label={t('ai_provider_model')}
+                disabled={busy}
+                onInput={(e) => setModel((e.target as HTMLInputElement).value)}
+              />
+
+              <div class="settings__group">
+                <button class="btn" onClick={onSave} disabled={busy || !endpoint}>
+                  {busy ? t('play_loading') : t('ai_provider_save')}
+                </button>
+                <button class="btn btn--outlined" onClick={onTest} disabled={testing || busy}>
+                  {testing ? t('play_loading') : t('ai_provider_test')}
+                </button>
+                {saved && (
+                  <button class="btn btn--outlined btn--error" onClick={onDelete} disabled={busy}>
+                    {t('ai_provider_delete')}
+                  </button>
+                )}
+              </div>
+            </>
+          )}
+
+          {notice && <p class="card__hint">{notice}</p>}
+          {error && <p class="settings-page__error">{error}</p>}
+        </div>
+      </div>
+    </section>
   );
 }
 

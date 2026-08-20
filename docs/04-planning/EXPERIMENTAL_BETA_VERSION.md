@@ -691,6 +691,24 @@ No major code changes during reconnaissance.
 
 ## Phase B — Workspace AI Provider
 
+> **Status: IMPLEMENTED (commit `feat(beta): add workspace-scoped AI providers`).**
+> Storage: `workspace_ai_providers` (PK `workspace_id` enforces ONE provider
+> per workspace; FK → `workspaces(id) ON DELETE CASCADE`; `api_key_enc` is
+> AES-256-GCM ciphertext keyed by `WORKSPACE_SECRET_KEY`).
+> Service: `backend/src/services/workspace-ai-provider.js` (CRUD + resolver
+> `resolveAIForWorkspace`/`resolveAIForBook` + 30s cache invalidated on
+> writes + `testConnection`). Global env config stays the fallback.
+> Transport separation: `ai-service.callAI(messages, options, provider)`;
+> the agent receives the provider once via `ai-caller.runWithProvider`
+> (AsyncLocalStorage) around `bootstrapWithAgent`/`bootstrapNextWindow`.
+> Chat (`/api/v1/ai/chat|stream|prompt`) and worker health
+> (`/worker/counts`) resolve the book's workspace provider first.
+> Settings API: `GET/PUT/DELETE /api/v1/settings/ai/provider`,
+> `POST /api/v1/settings/ai/test` — plaintext key never leaves the server.
+> Frontend: `/settings/ai` section in SettingsPage.
+> Tests: `backend/tests/workspace-ai-provider.test.js` (real PG, mocked LLM).
+> Fixed in passing: `/api/v1/ai/prompt` `parsed.reply` scope bug.
+
 Implement:
 
 ```text

@@ -62,6 +62,21 @@ CREATE TABLE IF NOT EXISTS guests (
 
 CREATE INDEX IF NOT EXISTS idx_guests_workspace ON guests(workspace_id);
 
+-- Workspace AI provider (Experimental Beta — Milestone 1)
+-- ONE active provider per workspace — PK enforces the single-row invariant.
+-- api_key_enc is AES-256-GCM ciphertext (iv:tag:payload) — never plaintext.
+-- ON DELETE CASCADE: purging a (guest) workspace purges its AI provider too.
+CREATE TABLE IF NOT EXISTS workspace_ai_providers (
+    workspace_id    UUID PRIMARY KEY REFERENCES workspaces(id) ON DELETE CASCADE,
+    provider        TEXT NOT NULL DEFAULT 'custom',
+    endpoint        TEXT NOT NULL,
+    api_key_enc     TEXT NOT NULL,
+    model           TEXT,
+    enabled         BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at      BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::bigint),
+    updated_at      BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::bigint)
+);
+
 -- Sessions (server-side auth sessions, hardened by migration step AM-*)
 CREATE TABLE IF NOT EXISTS sessions (
     session_id      UUID PRIMARY KEY,

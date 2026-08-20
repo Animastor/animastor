@@ -537,8 +537,18 @@ module.exports = function(app, redis, deps) {
             // VBook agent: check if the AI API is alive (key set + responds).
             // vbook = number of available AI agents (1 if alive, 0 if not).
             // active_vbook = 1 when a VBook agent session is actually running.
+            // Health is workspace-aware: an authenticated workspace provider
+            // (Experimental Beta) can be alive while the global env key is not
+            // (and vice versa) — cache is keyed per provider inside ai-service.
             const aiService = require('../services/ai-service');
-            const vbookCount = await aiService.checkAIHealth(config);
+            let workspaceProvider = null;
+            if (req.workspace && req.workspace.id) {
+                try {
+                    const workspaceAi = require('../services/workspace-ai-provider');
+                    workspaceProvider = await workspaceAi.resolveAIForWorkspace(req.workspace.id);
+                } catch (_) { /* global fallback below */ }
+            }
+            const vbookCount = await aiService.checkAIHealth(config, workspaceProvider);
             let activeVBook = 0;
             try {
                 const result = await storage.postgres.query(

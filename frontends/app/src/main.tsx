@@ -41,6 +41,7 @@ function Routes() {
       <SettingsPage path="/settings" />
       <SettingsPage path="/settings/vbook" section="vbook" />
       <SettingsPage path="/settings/worker" section="worker" />
+      <SettingsPage path="/settings/ai" section="ai" />
       <AiAssistantPage path="/ai" />
       <LibraryPage path="/library" />
       <WorkflowsPage path="/workflows" />

@@ -56,9 +56,15 @@ services:
       - PG_USER=animastor
       - PG_PASSWORD=${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
       - AI_API_BASE_URL=https://api.aicredits.in/v1
-      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:?set OPENROUTER_API_KEY in .env}
+      # Global AI key is now OPTIONAL (Experimental Beta): each workspace may
+      # carry its own provider stored in PG; global env config stays the
+      # backward-compatible fallback. Leave empty to rely on workspace keys.
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
       - OPENROUTER_MODEL=qwen/qwen3-32b
       - AI_MODEL=qwen/qwen3-32b
+      # Workspace AI provider secret store: encrypts apiKey at rest (AES-256-GCM).
+      # REQUIRED — no weak dev fallback in deployment.
+      - WORKSPACE_SECRET_KEY=${WORKSPACE_SECRET_KEY:?set WORKSPACE_SECRET_KEY in .env}
       # T9: GPU Hub API key — должно совпадать с GPU_HUB_API_KEY в gpu-hub секции
       - GPU_HUB_API_KEY=${GPU_HUB_API_KEY:-}
       # TEMPORARY (research): keep source audio chunks after merge

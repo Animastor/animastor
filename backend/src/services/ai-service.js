@@ -12,14 +12,21 @@ const AI_API_BASE_URL = process.env.AI_API_BASE_URL || 'https://api.aicredits.in
 // ======================================================
 // LOW-LEVEL AI CALL
 // ======================================================
+// Transport separation: the provider ({ endpoint, apiKey, model }) is a
+// DEPENDENCY passed by the caller (ai-caller / routes). When no workspace
+// provider is supplied the call keeps the historical global env behaviour.
 
-async function callAI(messages, options = {}) {
-    const apiKey = config.OPENROUTER_API_KEY;
+async function callAI(messages, options = {}, provider = null) {
+    const apiKey = (provider && provider.apiKey) || config.OPENROUTER_API_KEY;
     if (!apiKey) {
-        throw new Error('OPENROUTER_API_KEY not set');
+        throw new Error('No AI provider configured (OPENROUTER_API_KEY not set)');
     }
 
-    const model = options.model || config.OPENROUTER_MODEL || 'qwen/qwen3.5-122b-a10b';
+    const model = options.model
+        || (provider && provider.model)
+        || config.OPENROUTER_MODEL
+        || 'qwen/qwen3.5-122b-a10b';
+    const baseUrl = (provider && provider.endpoint) || AI_API_BASE_URL;
     const maxTokens = options.maxTokens || 8192;
     const temperature = options.temperature ?? 0.3;
 
@@ -36,7 +43,7 @@ async function callAI(messages, options = {}) {
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
-            const response = await fetch(`${AI_API_BASE_URL}/chat/completions`, {
+            const response = await fetch(`${baseUrl}/chat/completions`, {
                 method: 'POST',
                 headers,
                 body: JSON.stringify({
@@ -443,8 +450,17 @@ function validateAnalysis(analysis, chapterText) {
 // Checks if the AI API key is set and the models endpoint responds.
 // Result is cached for 60 seconds to avoid hammering the API on every poll.
 
-let _healthCache = { alive: false, at: 0 };
 const HEALTH_CACHE_TTL_MS = 60_000;
+// Keyed per provider: 'global' for the env-based fallback, otherwise
+// `${workspaceId}:${keyId}` — one workspace's provider must not poison or
+// shadow another workspace's health state.
+const _healthCacheMap = new Map();
+
+function _healthCacheKey(provider) {
+    if (!provider || !provider.apiKey) return 'global';
+    const keyId = String(provider.apiKey).slice(-6);
+    return `${provider.workspaceId || 'global'}:${keyId}`;
+}
 
 /**
  * Check if the AI API is alive (key configured + LLM can generate).
@@ -452,34 +468,38 @@ const HEALTH_CACHE_TTL_MS = 60_000;
  * key validity AND available quota (token balance).
  * Caches the result for 60s to avoid hammering the API on every poll.
  * @param {object} [cfg] - optional config object (for OPENROUTER_API_KEY)
+ * @param {object} [provider] - resolved workspace provider (transport separation)
  * @returns {Promise<number>} 1 if alive, 0 if not
  */
-async function checkAIHealth(cfg) {
-    const apiKey = cfg?.OPENROUTER_API_KEY || process.env.OPENROUTER_API_KEY;
+async function checkAIHealth(cfg, provider = null) {
+    const apiKey = (provider && provider.apiKey) || cfg?.OPENROUTER_API_KEY || process.env.OPENROUTER_API_KEY;
     if (!apiKey) return 0;
 
+    const cacheKey = _healthCacheKey(provider);
+    const cached = _healthCacheMap.get(cacheKey);
     const now = Date.now();
-    if (now - _healthCache.at < HEALTH_CACHE_TTL_MS) {
-        return _healthCache.alive ? 1 : 0;
+    if (cached && now - cached.at < HEALTH_CACHE_TTL_MS) {
+        return cached.alive ? 1 : 0;
     }
 
     try {
         // Minimal chat completion — verifies key is valid AND quota is available
-        const response = await fetch(`${AI_API_BASE_URL}/chat/completions`, {
+        const baseUrl = (provider && provider.endpoint) || AI_API_BASE_URL;
+        const response = await fetch(`${baseUrl}/chat/completions`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
                 'Authorization': `Bearer ${apiKey}`,
             },
             body: JSON.stringify({
-                model: 'qwen/qwen3-8b',  // cheapest model for health check
+                model: (provider && provider.model) || 'qwen/qwen3-8b',  // cheapest model for health check
                 messages: [{ role: 'user', content: 'ok' }],
                 max_tokens: 1,
                 temperature: 0,
             }),
             signal: AbortSignal.timeout(15_000),
         });
-        _healthCache = { alive: response.ok, at: now };
+        _healthCacheMap.set(cacheKey, { alive: response.ok, at: now });
         if (!response.ok) {
             const text = await response.text().catch(() => '');
             console.warn(`[AI-HEALTH] API returned ${response.status}: ${text.substring(0, 200)}`);
@@ -487,7 +507,7 @@ async function checkAIHealth(cfg) {
         return response.ok ? 1 : 0;
     } catch (err) {
         console.warn(`[AI-HEALTH] API check failed: ${err.message}`);
-        _healthCache = { alive: false, at: now };
+        _healthCacheMap.set(cacheKey, { alive: false, at: now });
         return 0;
     }
 }

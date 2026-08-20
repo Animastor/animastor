@@ -40,9 +40,23 @@ async function bootstrapWithAgent(bookId, progress, publishProgress, redis) {
         return { bookId, state: lazyBook.BookState.BOOTSTRAPPED };
     }
 
-    if (!config.OPENROUTER_API_KEY) {
-        throw new Error('AI assistant is not available — cannot import book');
+    // AI provider resolution (Experimental Beta): the book's workspace may
+    // carry its own provider; global env config remains the fallback.
+    const aiProviderSvc = require('../workspace-ai-provider');
+    const aiProvider = await aiProviderSvc.resolveAIForBook(bookId);
+    if (!aiProvider.apiKey) {
+        throw new Error('AI assistant is not available — cannot import book (no workspace provider, no global key)');
     }
+
+    // Wrap the pipeline in the resolved provider context: agent/ai-caller
+    // reads it from the AsyncLocalStorage inside callAI, so every pipeline
+    // step + unit-splitter AI call uses the SAME workspace provider.
+    return await require('./ai-caller').runWithProvider(aiProvider, () => bootstrapWithAgentInner(bookId, draft, progress, publishProgress, redis, language, aiProvider));
+}
+
+async function bootstrapWithAgentInner(bookId, draft, progress, publishProgress, redis, language, aiProvider) {
+    const _progress = progress || (() => {});
+    console.log(`[AGENT] bootstrapWithAgent: provider=${aiProvider.source} for book ${bookId}`);
 
     // ── Clear old cancellation state from PREVIOUS sessions ──
     // isBookCancelled() checks ANY session with status='cancelled' for this book.
@@ -298,6 +312,20 @@ async function bootstrapNextWindow(bookId, progress, publishProgress, redis) {
 
     // Book language — localizes only user-facing text (titles, names); AI-facing fields stay English.
     const language = resolveBookLanguage(draft);
+
+    // AI provider resolution (Experimental Beta): same contract as
+    // bootstrapWithAgent — workspace provider first, global env fallback.
+    const aiProviderSvc = require('../workspace-ai-provider');
+    const aiProvider = await aiProviderSvc.resolveAIForBook(bookId);
+    // Wrap the whole window run in the provider context so the cached-scene
+    // path and the regular AI path (pipeline + unit-splitter) both use it.
+    return await require('./ai-caller').runWithProvider(aiProvider, () =>
+        _bootstrapNextWindowInner(bookId, progress, publishProgress, redis, draft, language)
+    );
+}
+
+async function _bootstrapNextWindowInner(bookId, progress, publishProgress, redis, draft, language) {
+    const _progress = progress || (() => {});
 
     // ── Clear stale cancellation state so a MANUAL continuation works ──
     // This route is only ever triggered by the user explicitly pressing

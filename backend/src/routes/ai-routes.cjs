@@ -19,6 +19,22 @@ module.exports = function(app, redis, deps) {
     // ── Session ID counter ───────────────────────────
     let sessionIdCounter = 0;
 
+    // ── Workspace AI provider (Experimental Beta) ──────────────────────
+    // Resolve the provider for the book: its workspace's provider first,
+    // then the global env fallback. Transport separation: the routes only
+    // build endpoint/key/model — the fetch stays local.
+    const workspaceAi = require('../services/workspace-ai-provider');
+    async function resolveChatAI(bookId) {
+        const provider = bookId
+            ? await workspaceAi.resolveAIForBook(bookId)
+            : workspaceAi.globalFallbackProvider();
+        return {
+            baseUrl: provider.endpoint || chatEngine.AI_API_BASE_URL,
+            apiKey: provider.apiKey || config.OPENROUTER_API_KEY || process.env.AI_API_KEY || '',
+            model: provider.model || process.env.AI_MODEL || 'qwen/qwen3-32b',
+        };
+    }
+
     // ── Hermesian tool call parser ──────────────────────
     // Qwen3-32B (reasoning model) sometimes outputs tool_call as text in content
     // instead of using the structured tool_calls field. This parser extracts those.
@@ -310,13 +326,15 @@ module.exports = function(app, redis, deps) {
                 ];
             }
 
+            const ai = await resolveChatAI(bookId);
+
             const controller = new AbortController();
             const timeout = setTimeout(() => controller.abort(), 60000);
-            const response = await fetch(`${chatEngine.AI_API_BASE_URL}/chat/completions`, {
+            const response = await fetch(`${ai.baseUrl}/chat/completions`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${config.OPENROUTER_API_KEY || process.env.AI_API_KEY || ''}` },
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${ai.apiKey}` },
                 body: JSON.stringify({
-                    model: process.env.AI_MODEL || 'qwen/qwen3-32b',
+                    model: ai.model,
                     messages: apiMessages,
                     tools: tools.length > 0 ? tools : undefined,
                     tool_choice: tools.length > 0 ? 'required' : undefined,
@@ -506,13 +524,15 @@ module.exports = function(app, redis, deps) {
             res.setHeader('Cache-Control', 'no-cache');
             res.setHeader('Connection', 'keep-alive');
 
+            const ai = await resolveChatAI(bookId);
+
             const controller = new AbortController();
             const timeout = setTimeout(() => controller.abort(), 60000);
-            const aiResponse = await fetch(`${chatEngine.AI_API_BASE_URL}/chat/completions`, {
+            const aiResponse = await fetch(`${ai.baseUrl}/chat/completions`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${config.OPENROUTER_API_KEY || process.env.AI_API_KEY || ''}` },
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${ai.apiKey}` },
                 body: JSON.stringify({
-                    model: process.env.AI_MODEL || 'qwen/qwen3-32b',
+                    model: ai.model,
                     messages: apiMessages,
                     tools: tools.length > 0 ? tools : undefined,
                     tool_choice: tools.length > 0 ? 'required' : undefined,
@@ -735,11 +755,13 @@ module.exports = function(app, redis, deps) {
                 });
             }
 
-            const response = await fetch(`${chatEngine.AI_API_BASE_URL}/chat/completions`, {
+            const ai = await resolveChatAI(book_id);
+
+            const response = await fetch(`${ai.baseUrl}/chat/completions`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${config.OPENROUTER_API_KEY || process.env.AI_API_KEY || ''}` },
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${ai.apiKey}` },
                 body: JSON.stringify({
-                    model: process.env.AI_MODEL || 'qwen/qwen3-32b',
+                    model: ai.model,
                     messages: apiMessages,
                     tools: tools.length > 0 ? tools : undefined,
                     tool_choice: tools.length > 0 ? 'required' : undefined,
@@ -758,11 +780,13 @@ module.exports = function(app, redis, deps) {
             // Strip thinking blocks (internal reasoning, not for the UI)
             replyText = replyText.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
 
-            // Parse patches from response
+            // Parse patches from response. Declare parsed before the
+            // conditional so the reply text is available even when the book
+            // is locked or unknown (previously parsed was block-scoped).
+            const parsed = chatEngine.parseAIResponse(replyText);
             let patches = [];
             let patchedBook = null;
             if (bookData && !isLocked) {
-                const parsed = chatEngine.parseAIResponse(replyText);
                 patches = parsed.patches;
                 if (patches.length > 0) {
                     const patchResult = chatEngine.applyPatches(bookData, patches);
