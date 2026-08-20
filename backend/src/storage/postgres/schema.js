@@ -25,13 +25,15 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE TABLE IF NOT EXISTS workspaces (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name            TEXT NOT NULL,
-    owner_user_id   UUID NOT NULL REFERENCES users(user_id),
+    owner_user_id   UUID REFERENCES users(user_id),
     type            TEXT NOT NULL DEFAULT 'personal' CHECK(type IN ('personal','temporary','team')),
+    expires_at      BIGINT,
     created_at      BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::bigint),
     updated_at      BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::bigint)
 );
 
 CREATE INDEX IF NOT EXISTS idx_workspaces_owner ON workspaces(owner_user_id);
+CREATE INDEX IF NOT EXISTS idx_workspaces_expires ON workspaces(expires_at);
 
 -- Workspace members (collaboration foundation)
 CREATE TABLE IF NOT EXISTS workspace_members (
@@ -43,6 +45,18 @@ CREATE TABLE IF NOT EXISTS workspace_members (
 );
 
 CREATE INDEX IF NOT EXISTS idx_workspace_members_user ON workspace_members(user_id);
+
+-- Guest identities (temporary workspace access, no username/password)
+CREATE TABLE IF NOT EXISTS guests (
+    guest_id        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    token_hash      TEXT NOT NULL UNIQUE,
+    workspace_id    UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    created_at      BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::bigint * 1000),
+    expires_at      BIGINT NOT NULL,
+    revoked_at      BIGINT
+);
+
+CREATE INDEX IF NOT EXISTS idx_guests_workspace ON guests(workspace_id);
 
 -- Sessions (server-side auth sessions, hardened by migration step AM-*)
 CREATE TABLE IF NOT EXISTS sessions (
@@ -1078,6 +1092,45 @@ async function runMigrations() {
     }
 
     console.log('[PG] Authentication sessions initialized');
+
+    // ======================================================
+    // Guest Workspace MVP (Account System Phase 4)
+    // ======================================================
+    // Temporary identities for visitors without accounts + workspace
+    // expiration support. Converted (not copied) when the guest registers.
+
+    // GW-1: workspaces owner becomes optional (guest workspaces are unowned
+    // until conversion) — NULL means "temporary, no human owner yet".
+    try {
+        await query(`ALTER TABLE workspaces ALTER COLUMN owner_user_id DROP NOT NULL`);
+    } catch (err) {
+        if (!err.message.includes('does not exist')) console.error('[PG] Failed to relax workspaces.owner_user_id:', err.message);
+    }
+    // GW-2: workspace expiration (temporary workspaces carry a deadline;
+    // personal workspaces keep NULL = no expiry).
+    try {
+        await query(`ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS expires_at BIGINT`);
+        await query(`CREATE INDEX IF NOT EXISTS idx_workspaces_expires ON workspaces(expires_at)`);
+    } catch (err) {
+        if (!err.message.includes('already exists')) console.error('[PG] Failed to add workspaces.expires_at:', err.message);
+    }
+    // GW-3: guests table (token-hash-only, like sessions — raw tokens never
+    // persisted).
+    try {
+        await query(`CREATE TABLE IF NOT EXISTS guests (
+            guest_id        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            token_hash      TEXT NOT NULL UNIQUE,
+            workspace_id    UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+            created_at      BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::bigint * 1000),
+            expires_at      BIGINT NOT NULL,
+            revoked_at      BIGINT
+        )`);
+        await query(`CREATE INDEX IF NOT EXISTS idx_guests_workspace ON guests(workspace_id)`);
+    } catch (err) {
+        if (!err.message.includes('already exists')) console.error('[PG] Failed to create guests table:', err.message);
+    }
+
+    console.log('[PG] Guest identity support initialized');
 }
 
 module.exports = { runMigrations, SCHEMA_SQL };

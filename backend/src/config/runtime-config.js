@@ -241,6 +241,17 @@ const STUCK_THRESHOLDS = {
 };
 
 // ======================================================
+// GUEST / TEMPORARY WORKSPACES (Guest Workspace MVP)
+// ======================================================
+// Development defaults, deliberately configurable — exact retention numbers
+// are an operational decision, not architecture. TTL counts from creation/
+// last user activity; after TTL the workspace is EXPIRED but recoverable
+// through the grace period; hard deletion happens only past TTL+grace.
+const GUEST_WORKSPACE_TTL_DAYS = Number(process.env.GUEST_WORKSPACE_TTL_DAYS ?? 7);
+const GUEST_WORKSPACE_GRACE_PERIOD_DAYS = Number(process.env.GUEST_WORKSPACE_GRACE_PERIOD_DAYS ?? 23);
+const GUEST_SESSION_TTL_DAYS = Number(process.env.GUEST_SESSION_TTL_DAYS ?? 30);
+
+// ======================================================
 // EXPORTS
 // ======================================================
 module.exports = {
@@ -281,6 +292,11 @@ module.exports = {
     // Video playback profile
     PLAYBACK_VIDEO_BITRATE_KBPS,
     SOURCE_VIDEO_BITRATE_KBPS,
+
+    // Guest / temporary workspaces
+    GUEST_WORKSPACE_TTL_DAYS,
+    GUEST_WORKSPACE_GRACE_PERIOD_DAYS,
+    GUEST_SESSION_TTL_DAYS,
 
 };
 
