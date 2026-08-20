@@ -40,7 +40,9 @@ async function defaultWorkspace() {
  * 1. Book row has a workspace → return it.
  * 2. Book row exists without workspace → attach the preferred/default
  *    workspace (never overwrites a concurrent attach).
- * 3. No book row → create the registry row bound to that workspace.
+ * 3. No book row → create the registry row bound to that workspace
+ *    (only when allowCreate !== false — access-check paths must not seed
+ *    registry rows for unknown book ids).
  *
  * @param {string} bookId
  * @param {object} [options]
@@ -48,10 +50,12 @@ async function defaultWorkspace() {
  * @param {string} [options.preferredWorkspaceId] - Workspace to attach when the
  *   book is unowned (e.g. req.workspace.id once auth lands). Defaults to the
  *   seeded developer workspace.
+ * @param {boolean} [options.allowCreate] - Create a missing registry row
+ *   (default: true). set false when resolving inside authorization checks.
  * @returns {Promise<string|null>} workspace_id (UUID) or null when unresolvable
  */
 async function resolveWorkspaceForBook(bookId, options = {}) {
-    const { bookTitle, preferredWorkspaceId } = options;
+    const { bookTitle, preferredWorkspaceId, allowCreate = true } = options;
     if (!bookId) return null;
     try {
         const existing = await bookRepo.getWorkspaceId(bookId);
@@ -62,6 +66,7 @@ async function resolveWorkspaceForBook(bookId, options = {}) {
 
         const attached = await bookRepo.attachWorkspaceIfMissing(bookId, targetId);
         if (attached) return targetId;
+        if (!allowCreate) return bookRepo.getWorkspaceId(bookId);
 
         // Row may have appeared concurrently — re-check before creating.
         const rechecked = await bookRepo.getWorkspaceId(bookId);

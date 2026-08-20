@@ -1,6 +1,9 @@
 # Animastor Account & Workspace Concept
 
-**Status:** Concept / Architecture Direction  
+**Status:** Concept / Architecture Direction
+*(Phase 1 username/password authentication MVP implemented — see
+`docs/architecture/AUTH_IMPLEMENTATION.md`; deviations from this concept are
+noted inline in §6, §7, §29.)*
 **Purpose:** Define a simple, low-friction identity and workspace model for Animastor, with a natural path from anonymous use to persistent personal and team workspaces.
 
 ---
@@ -178,6 +181,12 @@ The generated suffix is a public uniqueness mechanism, not the internal security
 
 The internal user ID should be a separate opaque identifier.
 
+> **Implementation note (MVP):** no auto-generated suffix is added. Uniqueness is
+> full-username, enforced database-side by a case-insensitive unique index
+> (`lower(username)`); the display form keeps the user's capitalization. A
+> public suffix generator may be added later as a UX option, but registration
+> currently just reports "username taken".
+
 ---
 
 ## 7. Password Security
@@ -185,6 +194,13 @@ The internal user ID should be a separate opaque identifier.
 Passwords must never be stored in plaintext.
 
 Store a strong password hash using a modern password hashing scheme such as Argon2id (or an equivalent approved implementation).
+
+> **Implementation note (MVP):** the backend uses Node's built-in
+> `crypto.scrypt` (memory-hard, OWASP-approved, no native dependency) —
+> Argon2id was not adopted because the current stack has no native-addon
+> dependency pipeline. Storage format is self-describing
+> (`scrypt$N=..,r=..,p=..$salt$hash`), so a future Argon2id switch is a
+> per-password rehash, not a migration.
 
 If the user forgets the password, Animastor must not send the original password by email.
 

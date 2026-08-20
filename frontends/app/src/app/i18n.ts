@@ -424,7 +424,22 @@ const dict = {
     chapter_auto_create_hint: 'Сцена и модуль будут добавлены автоматически.',
     scene_auto_create_hint: 'Модуль будет добавлен автоматически.',
     // AI helper bubble
-    ai_helper_hint: 'Я могу помочь.'
+    ai_helper_hint: 'Я могу помочь.',
+    // Account & Workspace MVP (user menu, login/register dialog)
+    auth_menu: 'Аккаунт',
+    auth_anonymous: 'Гость',
+    auth_login: 'Войти',
+    auth_logout: 'Выйти',
+    auth_register: 'Создать аккаунт',
+    auth_username: 'Имя пользователя',
+    auth_password: 'Пароль',
+    auth_email_optional: 'Email (необязательно)',
+    auth_email_hint: 'Укажите email, если хотите восстановить доступ к аккаунту, забыв пароль.',
+    auth_switch_to_register: 'Нет аккаунта? Создать',
+    auth_switch_to_login: 'Уже есть аккаунт? Войти',
+    auth_personal_workspace: 'Личное пространство',
+    auth_register_hint: 'Созданное можно будет сохранить навсегда',
+    auth_error: 'Ошибка'
   },
   en: {
     // Bottom Navigation — sentence case (web density choice; NOT 1:1 with
@@ -846,7 +861,22 @@ const dict = {
     chapter_auto_create_hint: 'Scene and unit will be added automatically.',
     scene_auto_create_hint: 'Unit will be added automatically.',
     // AI helper bubble
-    ai_helper_hint: 'I can help.'
+    ai_helper_hint: 'I can help.',
+    // Account & Workspace MVP (user menu, login/register dialog)
+    auth_menu: 'Account',
+    auth_anonymous: 'Anonymous',
+    auth_login: 'Sign in',
+    auth_logout: 'Sign out',
+    auth_register: 'Create account',
+    auth_username: 'Username',
+    auth_password: 'Password',
+    auth_email_optional: 'Email (optional)',
+    auth_email_hint: 'Add your email if you want to recover your account if you forget your password.',
+    auth_switch_to_register: 'No account? Sign up',
+    auth_switch_to_login: 'Have an account? Sign in',
+    auth_personal_workspace: 'Personal workspace',
+    auth_register_hint: 'Keep your work forever',
+    auth_error: 'Error'
   }
 } as const;
 

@@ -71,6 +71,13 @@ module.exports = function(app, redis, deps) {
         }
     };
 
+    // Cross-tenant guards for authenticated imports (see middleware/auth-context):
+    //  - dedupOwnedByCaller: re-importing the same file must never return
+    //    another user's book (hash-based dedup is cross-tenant otherwise).
+    //  - importBookAllowed: a bundle re-import must never touch a book owned
+    //    by a foreign workspace (bundle book_id is client-controlled).
+    const { dedupOwnedByCaller, importBookAllowed } = require('../../middleware/auth-context');
+
     // In-flight TXT trigger guard
     const inFlightTriggers = new Set();
 
@@ -112,6 +119,16 @@ app.post('/api/v1/book/import', multer().single('file'), async (req, res) => {
             const buildId = bookData.manifest.build_id || 'default';
 
             const existingBook = book.loadBook(bookId);
+
+            // Cross-workspace guard (authenticated): a bundle re-import must
+            // never touch or reveal a book that belongs elsewhere — neither
+            // the disk copy nor the ownership registry (bundle ids are
+            // client-controlled). Pre-auth imports keep historical behaviour.
+            const unifiedImportCheck = await importBookAllowed(req, bookId, { diskCopyExists: !!existingBook });
+            if (!unifiedImportCheck.allowed) {
+                log(`[UNIFIED-IMPORT] Book ${bookId} import rejected (${unifiedImportCheck.error})`);
+                return res.status(unifiedImportCheck.status).json({ error: unifiedImportCheck.error });
+            }
             let loadedBook;
             if (existingBook) {
                 log(`[UNIFIED-IMPORT] Book ${bookId} already exists — keeping existing (edited) version`);
@@ -218,8 +235,12 @@ app.post('/api/v1/book/import', multer().single('file'), async (req, res) => {
                         if (existingStatus && existingStatus.state) {
                             // Always return existing book on dedup — even if completed.
                             // User re-importing the same file expects to get the same book back,
-                            // not a brand new import.
-                            existingBookId = existing.book_id;
+                            // not a brand new import. Never across workspaces though.
+                            if (await dedupOwnedByCaller(req, existing.book_id)) {
+                                existingBookId = existing.book_id;
+                            } else {
+                                log(`[UNIFIED-IMPORT] DEDUP: ${existing.book_id} belongs to another workspace — fresh import`);
+                            }
                         } else {
                             await bookSourceRepo.deleteByBookId(existing.book_id);
                             log(`[UNIFIED-IMPORT] DEDUP: book ${existing.book_id} not on disk — cleaning up reference`);
@@ -231,10 +252,9 @@ app.post('/api/v1/book/import', multer().single('file'), async (req, res) => {
             }
 
             // ── Phase 2: Fallback — scan books on disk (covers deleted book_source records) ──
-            // Optimisation: pre-filter by file size (cheap stat) then by SHA256.
-            // This only runs once per book — after PG record is re-registered,
-            // subsequent imports use the fast PG path.
-            if (!existingBookId) {
+            // Pre-auth only: an authenticated caller must never pick up an
+            // unknown-owner directory through a raw disk scan (cross-tenant).
+            if (!existingBookId && !req.user) {
                 const diskFound = findLazyBookByHash(fileHash, lazyBook.getBooksDir(), sourceSize);
                 if (diskFound) {
                     const existingStatus = lazyBook.getBookStatus(diskFound);
@@ -330,6 +350,13 @@ function detectFileFormat(buf) {
             const buildId = bookData.manifest.build_id || 'default';
 
             const existingBook = book.loadBook(bookId);
+
+            // Cross-workspace guard for authenticated imports (see /book/import).
+            const loadVbookCheck = await importBookAllowed(req, bookId, { diskCopyExists: !!existingBook });
+            if (!loadVbookCheck.allowed) {
+                log(`[LOAD-VBOOK] Book ${bookId} import rejected (${loadVbookCheck.error})`);
+                return res.status(loadVbookCheck.status).json({ error: loadVbookCheck.error });
+            }
             let loadedBook;
             if (existingBook) {
                 log(`[LOAD-VBOOK] Book ${bookId} already exists — keeping existing (edited) version`);
@@ -502,8 +529,12 @@ function detectFileFormat(buf) {
                         if (existingStatus && existingStatus.state) {
                             // Always return existing book on dedup — even if completed.
                             // User re-importing the same file expects to get the same book back,
-                            // not a brand new import.
-                            existingBookId = existing.book_id;
+                            // not a brand new import. Never across workspaces though.
+                            if (await dedupOwnedByCaller(req, existing.book_id)) {
+                                existingBookId = existing.book_id;
+                            } else {
+                                log(`[IMPORT-TXT] DEDUP: ${existing.book_id} belongs to another workspace — fresh import`);
+                            }
                         } else {
                             await bookSourceRepo.deleteByBookId(existing.book_id);
                             log(`[IMPORT-TXT] DEDUP: book ${existing.book_id} not on disk — cleaning up reference`);
@@ -515,10 +546,9 @@ function detectFileFormat(buf) {
             }
 
             // ── Phase 2: Fallback — scan books on disk (covers deleted book_source records) ──
-            // Optimisation: pre-filter by file size (cheap stat) then by SHA256.
-            // This only runs once per book — after PG record is re-registered,
-            // subsequent imports use the fast PG path.
-            if (!existingBookId) {
+            // Pre-auth only: an authenticated caller must never pick up an
+            // unknown-owner directory through a raw disk scan (cross-tenant).
+            if (!existingBookId && !req.user) {
                 const diskFound = findLazyBookByHash(fileHash, lazyBook.getBooksDir(), sourceSize);
                 if (diskFound) {
                     const existingStatus = lazyBook.getBookStatus(diskFound);

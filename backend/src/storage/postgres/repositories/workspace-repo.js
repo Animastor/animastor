@@ -13,13 +13,16 @@ const logPrefix = '[WORKSPACE-REPO]';
  * @param {string} params.name - Workspace name
  * @param {string} params.ownerUserId - Owner user UUID
  * @param {string} [params.type] - 'personal', 'temporary', 'team' (default: 'personal')
+ * @param {object} [client] - pooled PG client to join an OUTER transaction
+ *   (registration). When omitted the workspace gets its own transaction.
  * @returns {Promise<object>} Created workspace row
  */
-async function createWorkspace({ name, ownerUserId, type = 'personal' }) {
-    const client = await getPool().connect();
+async function createWorkspace({ name, ownerUserId, type = 'personal' }, client) {
+    const ownClient = client || await getPool().connect();
+    const ownTransaction = !client;
     try {
-        await client.query('BEGIN');
-        const { rows } = await client.query(`
+        if (ownTransaction) await ownClient.query('BEGIN');
+        const { rows } = await ownClient.query(`
             INSERT INTO workspaces (name, owner_user_id, type)
             VALUES ($1, $2, $3)
             RETURNING *
@@ -28,19 +31,19 @@ async function createWorkspace({ name, ownerUserId, type = 'personal' }) {
 
         // Automatically add owner as member with 'owner' role (same transaction:
         // a workspace must never exist without its owner membership).
-        await client.query(`
+        await ownClient.query(`
             INSERT INTO workspace_members (workspace_id, user_id, role)
             VALUES ($1, $2, 'owner')
             ON CONFLICT (workspace_id, user_id) DO NOTHING
         `, [workspace.id, ownerUserId]);
 
-        await client.query('COMMIT');
+        if (ownTransaction) await ownClient.query('COMMIT');
         return workspace;
     } catch (err) {
-        await client.query('ROLLBACK');
+        if (ownTransaction) await ownClient.query('ROLLBACK');
         throw err;
     } finally {
-        client.release();
+        if (!client) ownClient.release();
     }
 }
 

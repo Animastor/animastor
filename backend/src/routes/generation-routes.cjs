@@ -12,6 +12,7 @@ const path = require('path');
 const fs = require('fs');
 const multer = require('multer');
 const videoTimeline = require('../video/video-timeline');
+const authContextMiddleware = require('../middleware/auth-context');
 
 module.exports = function(app, redis, deps) {
     const {
@@ -23,6 +24,20 @@ module.exports = function(app, redis, deps) {
     } = deps;
     const { log } = utils;
     const OUTPUT_DIR = config.OUTPUT_DIR;
+
+    // Book ownership guard for chunk-keyed (Redis-backed) routes: the target
+    // book comes from the chunk record, not the URL, so it is verified
+    // in-handler after the chunk is loaded. Pre-auth passes through (existing
+    // behaviour); authenticated requests must own the book.
+    // Returns true (and responds 403) when access is denied.
+    async function rejectIfChunkBookDenied(req, res, bookId) {
+        const ws = await authContextMiddleware.checkBookAccess(req, bookId);
+        if (!ws) {
+            res.status(403).json({ error: 'Access denied: not a member of the book\'s workspace' });
+            return true;
+        }
+        return false;
+    }
 
     // ======================================================
     // BUILD ID RESOLUTION
@@ -57,6 +72,21 @@ module.exports = function(app, redis, deps) {
             log('📦 bundle loaded:', Object.keys(files));
             const bookData = book.buildBookFromBundle(files);
             const bookId = bookData.manifest.book_id;
+
+            // Cross-workspace guard for authenticated callers: the bundle
+            // book_id is client-controlled — never overwrite a foreign book.
+            const generateImportCheck = await authContextMiddleware.importBookAllowed(req, bookId, {
+                diskCopyExists: !!book.loadBook(bookId),
+            });
+            if (!generateImportCheck.allowed) {
+                return res.status(generateImportCheck.status).json({ error: generateImportCheck.error });
+            }
+            try {
+                const workspaceOwnership = require('../middleware/workspace-ownership');
+                await workspaceOwnership.resolveWorkspaceForBook(bookId, { preferredWorkspaceId: req.workspace?.id || null });
+            } catch (wsErr) {
+                console.warn(`[GENERATE] Ownership attach failed for ${bookId} (non-fatal): ${wsErr.message}`);
+            }
 
             // Cathedral Recon #3 §5.4 option 1: an explicit full-book generate is a
             // new run — clear any cancellation tombstone so it can't linger and be
@@ -179,6 +209,7 @@ module.exports = function(app, redis, deps) {
         try {
             const c = await getChunk(req.params.id);
             if (!c) return res.json({ status: 'processing' });
+            if (await rejectIfChunkBookDenied(req, res, c.book_id)) return;
 
             const buildDir = path.join(OUTPUT_DIR, c.build_id);
             const audioPath = path.join(buildDir, `${c.book_id}_${c.chapter_id}_${c.scene_id}.mp3`);
@@ -289,6 +320,7 @@ module.exports = function(app, redis, deps) {
             const { id } = req.params;
             const c = await getChunk(id);
             if (!c) return res.status(404).json({ error: 'chunk not found' });
+            if (await rejectIfChunkBookDenied(req, res, c.book_id)) return;
 
             const { build_id, book_id, chapter_id, scene_id } = c;
             const dir = path.join(OUTPUT_DIR, build_id);
@@ -600,6 +632,7 @@ module.exports = function(app, redis, deps) {
         try {
             const c = await getChunk(req.params.id);
             if (!c) return res.status(404).json({ error: 'chunk not found' });
+            if (await rejectIfChunkBookDenied(req, res, c.book_id)) return;
             const audioPath = path.join(OUTPUT_DIR, c.build_id, `${c.book_id}_${c.chapter_id}_${c.scene_id}.mp3`);
             if (!fs.existsSync(audioPath)) return res.status(404).json({ error: 'audio not ready' });
             res.setHeader('Content-Type', 'audio/mpeg');
@@ -612,6 +645,7 @@ module.exports = function(app, redis, deps) {
     app.get('/api/v1/chunk/:id/image', async (req, res) => {
         const c = await getChunk(req.params.id);
         if (!c) return res.status(404).json({ error: 'chunk not found' });
+        if (await rejectIfChunkBookDenied(req, res, c.book_id)) return;
         if (!c.image) return res.status(404).json({ error: 'image not ready' });
         const dir = path.join(OUTPUT_DIR, c.build_id);
         if (!fs.existsSync(dir)) return res.status(404).json({ error: 'build directory not found' });
@@ -655,6 +689,7 @@ module.exports = function(app, redis, deps) {
         try {
             const c = await getChunk(req.params.id);
             if (!c) return res.status(404).json({ error: 'chunk not found' });
+            if (await rejectIfChunkBookDenied(req, res, c.book_id)) return;
             const dir = path.join(OUTPUT_DIR, c.build_id);
             if (!fs.existsSync(dir)) return res.status(404).json({ error: 'build directory not found' });
             const filePath = resolveSceneVideoFile(dir, c.book_id, c.chapter_id, c.scene_id);

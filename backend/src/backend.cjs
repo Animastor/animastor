@@ -76,9 +76,79 @@ app.use('/api/', rateLimit({
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 
-// Auth context middleware (foundation for future authentication)
-const { authContext } = require('./middleware/auth-context');
+// Auth context middleware (session cookie → req.user / req.workspace).
+// Requests without a valid session stay anonymous (pre-auth compatibility —
+// no global requireAuth); authenticated requests get real identity.
+const { authContext, requireBookAccess } = require('./middleware/auth-context');
 app.use(authContext);
+
+// Authentication MVP: strict rate limit on credential endpoints (brute-force
+// surface), registered BEFORE the auth route handlers.
+app.use('/api/v1/auth/login', rateLimit({
+    windowMs: 60_000,
+    max: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Too many attempts, try again later' },
+}));
+app.use('/api/v1/auth/register', rateLimit({
+    windowMs: 60_000,
+    max: 5,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Too many attempts, try again later' },
+}));
+
+// Auth endpoints (public/pre-auth): register, login, logout, me.
+require('./routes/auth-routes.cjs')(app, redis, { utils: { log: (m) => console.log(m) } });
+
+// Book ownership guards (Authentication MVP): every /api/v1/book/:bookId/*
+// endpoint plus book-keyed media serving requires workspace membership when
+// authenticated. Pre-auth requests pass through unchanged. Book-CREATION
+// paths (import/blank/load-vbook) are exempt — they must run so ownership can
+// attach to the caller's workspace inside the handler.
+const CREATE_BOOK_SUBPATHS = new Set(['import', 'import-txt', 'import-text', 'load-vbook', 'blank']);
+const bookAccessGuard = requireBookAccess('bookId');
+app.use('/api/v1/book/:bookId', (req, res, next) => {
+    if (CREATE_BOOK_SUBPATHS.has(req.params.bookId)) return next();
+    return bookAccessGuard(req, res, next);
+});
+app.use('/api/v1/scene/:bookId', requireBookAccess('bookId'));
+app.use('/api/v1/iu-image/:bookId', requireBookAccess('bookId'));
+app.use('/api/v1/preview/:bookId', requireBookAccess('bookId'));
+
+// AI chat endpoints are book-scoped too (session contents belong to a book).
+// The target book comes from query/body/session lookup rather than the URL,
+// so it is resolved here pre-route. Pre-auth passes through; authenticated
+// callers must own the book (fail closed when ownership cannot be proven).
+const aiSessionRepoQuery = (id) => storage.postgres.query(
+    'SELECT book_id FROM ai_chat_sessions WHERE id = $1 LIMIT 1', [id]
+).catch(() => null);
+const aiBookGuard = async (req, res, next) => {
+    if (!req.user) return next(); // pre-auth compatibility
+    try {
+        let bookId = (req.query && req.query.book_id) || (req.body && req.body.book_id) || null;
+        const sessionId = (req.query && req.query.session_id) || (req.body && req.body.session_id) || (req.params && req.params.id) || null;
+        if (!bookId && sessionId) {
+            const row = await aiSessionRepoQuery(sessionId);
+            bookId = (row && row.rows && row.rows[0] && row.rows[0].book_id) || null;
+        }
+        if (!bookId) return next(); // endpoint without a book scope — nothing to guard
+        const ws = await require('./middleware/auth-context').checkBookAccess(req, bookId);
+        if (!ws) return res.status(403).json({ error: 'Access denied: not a member of the book\'s workspace' });
+        return next();
+    } catch (err) {
+        console.error('[AUTH] AI book guard failed (fail closed):', err.message);
+        return res.status(403).json({ error: 'Access denied' });
+    }
+};
+// /sessions/:id and /sessions/:id/messages carry the id in the path.
+app.use('/api/v1/ai/sessions/:id', aiBookGuard);
+// The rest resolve the book from query/body (session_id or book_id).
+app.use('/api/v1/ai', (req, res, next) => {
+    if (/^\/sessions\/[^/]+/.test(req.path)) return next(); // handled above
+    return aiBookGuard(req, res, next);
+});
 
 // Request ID + HTTP logging
 app.use((req, res, next) => {
@@ -257,6 +327,22 @@ async function startServer() {
         log('[STARTUP] PostgreSQL initialized');
     } catch (pgErr) {
         console.error('[STARTUP] PostgreSQL initialization failed (non-fatal):', pgErr.message);
+    }
+
+    // Authentication MVP: periodic housekeeping for expired/revoked sessions
+    // (PG stays bounded; failures are harmless and only logged).
+    try {
+        const sessionRepo = require('./storage/postgres/repositories/session-repo');
+        setInterval(async () => {
+            try {
+                const n = await sessionRepo.purgeExpired();
+                if (n > 0) log(`[SESSIONS] Purged ${n} expired sessions`);
+            } catch (err) {
+                console.warn('[SESSIONS] purge failed (non-fatal):', err.message);
+            }
+        }, 6 * 60 * 60 * 1000).unref(); // every 6h
+    } catch (err) {
+        console.warn('[SESSIONS] periodic purge setup failed (non-fatal):', err.message);
     }
 
     // Start server

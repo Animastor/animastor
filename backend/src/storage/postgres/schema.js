@@ -44,6 +44,19 @@ CREATE TABLE IF NOT EXISTS workspace_members (
 
 CREATE INDEX IF NOT EXISTS idx_workspace_members_user ON workspace_members(user_id);
 
+-- Sessions (server-side auth sessions, hardened by migration step AM-*)
+CREATE TABLE IF NOT EXISTS sessions (
+    session_id      UUID PRIMARY KEY,
+    user_id         UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    token_hash      TEXT NOT NULL,
+    created_at      BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::bigint * 1000),
+    expires_at      BIGINT NOT NULL,
+    revoked_at      BIGINT
+);
+
+CREATE INDEX IF NOT EXISTS idx_sessions_token_hash ON sessions(token_hash);
+CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+
 -- Books registry
 CREATE TABLE IF NOT EXISTS books (
     book_id         TEXT PRIMARY KEY,
@@ -915,6 +928,16 @@ async function runMigrations() {
             console.error('[PG] Failed to add unique constraint on users.username:', err.message);
         }
     }
+    // 4b. Canonical (case-insensitive) username uniqueness — enforced DB-side.
+    // Display form keeps its original case; comparison is lower().
+    try {
+        await query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username_lower ON users(lower(username))`);
+        console.log('[PG] Added case-insensitive unique index on users.username');
+    } catch (err) {
+        if (!err.message.includes('already exists')) {
+            console.error('[PG] Failed to create lower-username unique index:', err.message);
+        }
+    }
 
     // 5. Add workspace_id to books (nullable initially)
     try {
@@ -995,6 +1018,66 @@ async function runMigrations() {
     }
 
     console.log('[PG] Account & Workspace foundation initialized');
+
+    // ======================================================
+    // Authentication MVP (Account System Phase 3)
+    // ======================================================
+    // Server-side sessions table (fresh) + hardening for any DB that already
+    // ran an earlier iteration of this migration.
+
+    // AM-1: token_hash column (safe db representation — raw tokens never stored)
+    try {
+        await query(`ALTER TABLE sessions ADD COLUMN IF NOT EXISTS token_hash TEXT`);
+    } catch (err) {
+        if (!err.message.includes('already exists') && !err.message.includes('does not exist')) {
+            console.error('[PG] Failed to add sessions.token_hash:', err.message);
+        }
+    }
+    // AM-2: purge sessions from any earlier iteration (they lack token hashes
+    // and are unusable). Keeps NOT NULL enforcement below total-safe.
+    try {
+        await query(`DELETE FROM sessions WHERE token_hash IS NULL OR token_hash = ''`);
+    } catch (err) {
+        console.error('[PG] Failed to purge legacy sessions:', err.message);
+    }
+    try {
+        await query(`ALTER TABLE sessions ALTER COLUMN token_hash SET NOT NULL`);
+    } catch (err) {
+        console.error('[PG] Failed to set sessions.token_hash NOT NULL:', err.message);
+    }
+    // AM-3: explicit created_at (epoch ms), expires_at, revoked_at hardening
+    try {
+        await query(`ALTER TABLE sessions ADD COLUMN IF NOT EXISTS created_at BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::bigint * 1000)`);
+    } catch (err) {
+        if (!err.message.includes('already exists')) console.error('[PG] Failed to add sessions.created_at:', err.message);
+    }
+    try {
+        await query(`ALTER TABLE sessions ADD COLUMN IF NOT EXISTS expires_at BIGINT`);
+        await query(`ALTER TABLE sessions ALTER COLUMN expires_at SET NOT NULL`);
+    } catch (err) {
+        if (!err.message.includes('does not exist')) console.error('[PG] Failed to harden sessions.expires_at:', err.message);
+    }
+    try {
+        await query(`ALTER TABLE sessions ADD COLUMN IF NOT EXISTS revoked_at BIGINT`);
+    } catch (err) {
+        if (!err.message.includes('already exists')) console.error('[PG] Failed to add sessions.revoked_at:', err.message);
+    }
+    // AM-4: session_id no longer needs a server default (the app supplies it
+    // together with the token — they must never drift apart).
+    try {
+        await query(`ALTER TABLE sessions ALTER COLUMN session_id DROP DEFAULT`);
+    } catch (err) {
+        if (!err.message.includes('does not exist')) console.error('[PG] Failed to drop sessions.session_id default:', err.message);
+    }
+    // AM-5: lookup indexes
+    try {
+        await query(`CREATE INDEX IF NOT EXISTS idx_sessions_token_hash ON sessions(token_hash)`);
+        await query(`CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id)`);
+    } catch (err) {
+        if (!err.message.includes('already exists')) console.error('[PG] Failed to create session indexes:', err.message);
+    }
+
+    console.log('[PG] Authentication sessions initialized');
 }
 
 module.exports = { runMigrations, SCHEMA_SQL };

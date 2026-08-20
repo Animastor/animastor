@@ -10,6 +10,7 @@ import type { IconProps } from './icons';
 import { FilePage } from '../pages/FilePage';
 import { NavigatePage } from '../pages/NavigatePage';
 import { AiAssistantPage } from '../pages/AiAssistantPage';
+import { UserMenu } from '../features/auth/UserMenu';
 import { bookId as openBookId, phase as playerPhase, blankBookJustCreated } from '../state/generateStore';
 import { getJson } from '../api/client';
 import type { BookData } from '../api/models';
@@ -170,6 +171,8 @@ function DesktopWorkspace({ path, isSecondary, children }: { path: string; isSec
           >
             {t('toolbar_ai')}
           </button>
+          {/* Account & Workspace MVP (§19): [ User ] before [ Settings ] */}
+          <UserMenu />
           <button
             class="toolbar__btn"
             aria-label={t('settings')}
@@ -350,6 +353,7 @@ function Toolbar({ path, isSecondary }: { path: string; isSecondary: boolean }) 
           {t('toolbar_ai')}
         </button>
       </span>
+      <UserMenu />
       <button
         class="toolbar__btn"
         aria-label={t('settings')}

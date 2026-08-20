@@ -2733,3 +2733,33 @@ button { font: inherit; color: inherit; }
 .play-page--fs .play-layerbar,
 .play-page--fs .play-meta,
 .play-page--fs .play-btn { display: none; }
+
+/* ── Account & Workspace MVP: user menu + auth dialog ─────────────── */
+.user-menu { position: relative; display: inline-flex; }
+.user-menu__panel {
+  position: absolute; top: calc(100% + 0.375rem); right: 0; z-index: 120;
+  min-width: 15rem; padding: 0.75rem;
+  background: var(--surface); border: 1px solid var(--outline-2);
+  border-radius: var(--radius-md); box-shadow: var(--elev-3);
+  display: flex; flex-direction: column; gap: 0.5rem;
+}
+.user-menu__head { display: flex; flex-direction: column; gap: 0.125rem; padding: 0 0 0.25rem; }
+.user-menu__head strong { font-size: 0.9375rem; color: var(--text); }
+.user-menu__workspace { color: var(--text-2); font-size: 0.75rem; }
+.user-menu__item {
+  width: 100%; text-align: left; padding: 0.5rem 0.625rem;
+  border-radius: var(--radius-sm); border: 1px solid transparent;
+  background: transparent; color: var(--text);
+  font-size: 0.8125rem; cursor: pointer;
+}
+.user-menu__item:hover { background: var(--surface-2); }
+.user-menu__item--primary { color: var(--accent); font-weight: 600; }
+.user-menu__note { color: var(--text-2); font-size: 0.6875rem; padding: 0 0.125rem; }
+.auth-form__hint { display: block; font-size: 0.75rem; color: var(--text-2); margin: 0.25rem 0 0.5rem; }
+.auth-form__error { color: var(--error); font-size: 0.8125rem; margin-top: 0.5rem; }
+.auth-form__switch {
+  background: none; border: none; color: var(--accent);
+  font-size: 0.8125rem; cursor: pointer; padding: 0.5rem 0.25rem;
+  margin-right: auto;
+}
+.auth-form label + input { margin-bottom: 0.75rem; }
