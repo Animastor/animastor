@@ -506,4 +506,19 @@
     <string name="scene_auto_create_hint">Unit will be added automatically.</string>
     <!-- AI helper bubble -->
     <string name="ai_helper_hint">I can help.</string>
+
+    <!-- Account & authentication (web parity: i18n auth_* keys) -->
+    <string name="auth_menu">Account</string>
+    <string name="auth_login">Sign in</string>
+    <string name="auth_logout">Sign out</string>
+    <string name="auth_register">Create account</string>
+    <string name="auth_username">Username</string>
+    <string name="auth_password">Password</string>
+    <string name="auth_email_optional">Email (optional)</string>
+    <string name="auth_email_hint">Add your email if you want to recover your account if you forget your password.</string>
+    <string name="auth_switch_to_register">No account? Sign up</string>
+    <string name="auth_switch_to_login">Have an account? Sign in</string>
+    <string name="auth_personal_workspace">Personal workspace</string>
+    <string name="auth_register_hint">Keep your work forever</string>
+    <string name="auth_error">Error</string>
 </resources>

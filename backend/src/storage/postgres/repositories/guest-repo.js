@@ -128,7 +128,7 @@ async function touchWorkspaceActivity(workspaceId, workspaceTtlMs, now = Date.no
         UPDATE workspaces
         SET expires_at = $2, updated_at = EXTRACT(EPOCH FROM NOW())::bigint
         WHERE id = $1 AND type = 'temporary' AND (expires_at IS NULL OR expires_at < $2)
-    `, [workspaceId, newExpiry, now]);
+    `, [workspaceId, newExpiry]);
     return rowCount;
 }
 
@@ -169,24 +169,48 @@ async function convertTemporaryWorkspace(client, workspaceId, ownerUserId, now =
     return workspace;
 }
 
-/** Housekeeping (safe to call from a periodic job): drop expired guests and
- *  hard-delete temporary workspaces past TTL+grace (book rows cascade). */
-async function purgeExpired({ graceMs }, now = Date.now()) {
+/** Housekeeping (safe to call from a periodic job): drop expired/revoked
+ *  guests and hard-delete temporary workspaces past TTL+grace.
+ *  Order matters: `books.workspace_id` is a plain FK, so a workspace's books
+ *  are deleted BEFORE the workspace itself (child tables cascade off books). */
+async function purgeExpired({ graceMs } = {}, now = Date.now()) {
+    const grace = typeof graceMs === 'number' ? graceMs : 23 * 24 * 60 * 60 * 1000;
+    // 1. Identities whose cookie token may no longer resolve.
     const guestRows = await query(
         `DELETE FROM guests WHERE expires_at < $1 OR revoked_at IS NOT NULL RETURNING guest_id`,
         [now]
     );
-    const wsRows = await query(`
-        DELETE FROM workspaces
+    // 2. Temporary workspaces past TTL+grace → hard delete (books + workspace
+    //    in one tx so either both go or neither does).
+    const { rows: expiring } = await query(`
+        SELECT id FROM workspaces
         WHERE type = 'temporary' AND expires_at IS NOT NULL AND expires_at < $1
-        RETURNING id, expires_at
-    `, [now - graceMs]);
-    const hardDeletes = [];
-    for (const ws of wsRows.rows) {
-        const books = await query(`DELETE FROM books WHERE workspace_id = $1 RETURNING book_id`, [ws.id]);
-        hardDeletes.push({ workspace_id: ws.id, books: books.rows.length });
+    `, [now - grace]);
+
+    let workspaces = 0;
+    let books = 0;
+    const client = await getPool().connect();
+    try {
+        for (const ws of expiring) {
+            await client.query('BEGIN');
+            try {
+                const deletedBooks = await client.query(
+                    `DELETE FROM books WHERE workspace_id = $1 RETURNING book_id`,
+                    [ws.id]
+                );
+                await client.query(`DELETE FROM workspaces WHERE id = $1`, [ws.id]);
+                await client.query('COMMIT');
+                workspaces += 1;
+                books += deletedBooks.rowCount;
+            } catch (err) {
+                await client.query('ROLLBACK').catch(() => {});
+                console.error(`[GUESTS] purge workspace ${ws.id} failed (skipped): ${err.message}`);
+            }
+        }
+    } finally {
+        client.release();
     }
-    return { guests: guestRows.rowCount, workspaces: hardDeletes };
+    return { guests: guestRows.rowCount, workspaces, books };
 }
 
 module.exports = {

@@ -577,4 +577,23 @@ interface BackendApi {
 
     @GET("/api/v1/workflows/summary")
     suspend fun getWorkflowSummary(): WorkflowSummaryResponse
+
+    // ======================================================
+    // Authentication MVP (web parity with frontends/app authStore)
+    // ======================================================
+    // Server sets an HttpOnly session/guest cookie on these calls; the
+    // client never stores tokens. AuthMe mirrors the /auth/me shape
+    // (authenticated + identity: 'user' | 'guest' | 'none').
+
+    @POST("/api/v1/auth/login")
+    suspend fun login(@Body request: AuthLoginRequest): AuthMe
+
+    @POST("/api/v1/auth/register")
+    suspend fun register(@Body request: AuthRegisterRequest): AuthMe
+
+    @HTTP(method = "POST", path = "/api/v1/auth/logout", hasBody = false)
+    suspend fun logout(): GenericResponse
+
+    @GET("/api/v1/auth/me")
+    suspend fun me(): AuthMe
 }

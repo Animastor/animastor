@@ -18,6 +18,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
 import com.example.animastor.R
 import com.example.animastor.databinding.ActivityMainBinding
+import com.example.animastor.repository.AuthStore
 import com.example.animastor.ui.GenerationStatus
 import com.example.animastor.ui.VBookStage
 
@@ -140,6 +141,19 @@ class MainActivity : AppCompatActivity() {
                 .addToBackStack(null)
                 .commit()
         }
+
+        // Account button (web parity: UserMenu). Identity is server-owned:
+        // refresh /auth/me on tap, show login/register or account panel; on
+        // auth change re-validate the persisted book against the new scope.
+        binding.authButton.setOnClickListener {
+            lifecycleScope.launch {
+                AuthStore.refresh()
+                AuthDialog.show(this@MainActivity) {
+                    lifecycleScope.launch { viewModel.restoreBookSession() }
+                }
+            }
+        }
+        lifecycleScope.launch { AuthStore.refresh() }
 
         setupPlaybackCoordination()
 

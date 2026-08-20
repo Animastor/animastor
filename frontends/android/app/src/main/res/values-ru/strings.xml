@@ -483,4 +483,19 @@
     <string name="scene_auto_create_hint">Модуль будет добавлен автоматически.</string>
     <!-- AI helper bubble -->
     <string name="ai_helper_hint">Я могу помочь.</string>
+
+    <!-- Account & authentication (web parity: i18n auth_* keys) -->
+    <string name="auth_menu">Аккаунт</string>
+    <string name="auth_login">Войти</string>
+    <string name="auth_logout">Выйти</string>
+    <string name="auth_register">Создать аккаунт</string>
+    <string name="auth_username">Имя пользователя</string>
+    <string name="auth_password">Пароль</string>
+    <string name="auth_email_optional">Email (необязательно)</string>
+    <string name="auth_email_hint">Укажите email, если хотите восстановить доступ к аккаунту, забыв пароль.</string>
+    <string name="auth_switch_to_register">Нет аккаунта? Создать</string>
+    <string name="auth_switch_to_login">Уже есть аккаунт? Войти</string>
+    <string name="auth_personal_workspace">Личное пространство</string>
+    <string name="auth_register_hint">Созданное можно будет сохранить навсегда</string>
+    <string name="auth_error">Ошибка</string>
 </resources>

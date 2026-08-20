@@ -33,7 +33,11 @@ CREATE TABLE IF NOT EXISTS workspaces (
 );
 
 CREATE INDEX IF NOT EXISTS idx_workspaces_owner ON workspaces(owner_user_id);
-CREATE INDEX IF NOT EXISTS idx_workspaces_expires ON workspaces(expires_at);
+-- NOTE: idx_workspaces_expires is created by migration GW-2 together with the
+-- expires_at column — it cannot live here because on a pre-existing DB the
+-- workspaces table already lacks that column and the index statement would
+-- fail before GW-2 gets a chance to add it.
+
 
 -- Workspace members (collaboration foundation)
 CREATE TABLE IF NOT EXISTS workspace_members (

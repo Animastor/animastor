@@ -8,9 +8,12 @@
 //   user  : `animastor_sid` → sessions → users      → req.user + req.workspace
 //   guest : `animastor_gid` → guests  → workspaces  → req.guest + req.workspace
 //                                                     (type 'temporary')
-//   none  : no cookie at all — requests under /api/v1/* silently become a
-//           fresh guest (first-visit flow); everything outside /api/v1 stays
-//           unauthenticated.
+//   none  : no cookie at all — pre-auth reads keep the historical "everyone
+//           sees everything" behaviour. A guest identity is provisioned only
+//           on content-generating WRITE requests (POST/PUT/PATCH under
+//           /api/v1, never on /auth) so work persists server-side the moment
+//           it is created, yet plain browsing never scatters throwaway
+//           workspaces. Everything outside /api/v1 stays unauthenticated.
 //
 // The guest is NEVER a fake user: req.user stays null, the identity lives on
 // req.guest, and ownership resolution (`checkBookAccess`/guards) treats the
@@ -67,10 +70,14 @@ async function authContext(req, res, next) {
             }
         }
 
-        // First visit (no cookies): an /api/v1 request becomes a guest so
-        // anonymous work is owned server-side. Outside /api/v1 (/health,
-        // /metrics, /gpu/*) stays unauthenticated.
-        if (!sessionToken && !guestToken && req.path && req.path.startsWith('/api/v1')
+        // First visit (no cookies): a WRITE under /api/v1 becomes a guest so
+        // the content just created persists inside an owned temporary
+        // workspace. GET/HEAD stay pre-auth (legacy "list all" behaviour, no
+        // throwaway workspace on mere browsing); DELETE needs no fresh
+        // identity. Outside /api/v1 (/health, /metrics, /gpu/*) stays
+        // unauthenticated.
+        const isContentWrite = req.method === 'POST' || req.method === 'PUT' || req.method === 'PATCH';
+        if (isContentWrite && req.path && req.path.startsWith('/api/v1')
             && !req.path.startsWith('/api/v1/auth')) {
             const created = await authService.createGuest();
             req.guest = { guestId: created.guestId };

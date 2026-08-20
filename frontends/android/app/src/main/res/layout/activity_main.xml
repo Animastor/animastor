@@ -82,6 +82,17 @@
 
             </FrameLayout>
 
+            <!-- Account (web parity: UserMenu icon button, top-right toolbar actions) -->
+            <ImageButton
+                android:id="@+id/auth_button"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:layout_marginStart="12dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:src="@drawable/ic_person"
+                android:contentDescription="@string/auth_menu"
+                android:tint="?attr/colorOnSurfaceVariant" />
+
             <ImageButton
                 android:id="@+id/settings_button"
                 android:layout_width="40dp"

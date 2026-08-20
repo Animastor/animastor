@@ -5,6 +5,7 @@ import com.example.animastor.BuildConfig
 import com.example.animastor.repository.BackendApi
 import com.google.gson.Gson
 import com.google.gson.GsonBuilder
+import okhttp3.CookieJar
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
@@ -16,6 +17,16 @@ object RetrofitClient {
     val gson: Gson = GsonBuilder()
         .create()
 
+    // Injected by AnimastorApp (Application.onCreate) before any network use.
+    // The backend authenticates via an HttpOnly session cookie (`animastor_sid`)
+    // and a guest cookie (`animastor_gid`); OkHttp drops cookies by default, so
+    // without a jar the app would lose its session on every cold start.
+    private var cookieJar: CookieJar = CookieJar.NO_COOKIES
+
+    fun setCookieJar(jar: CookieJar) {
+        cookieJar = jar
+    }
+
     val httpClient: OkHttpClient by lazy {
         val logging = HttpLoggingInterceptor { msg -> Log.i("HTTP", msg) }
         logging.level = HttpLoggingInterceptor.Level.BODY
@@ -26,6 +37,7 @@ object RetrofitClient {
             .readTimeout(15, TimeUnit.MINUTES)
             .callTimeout(15, TimeUnit.MINUTES)
             .retryOnConnectionFailure(true)
+            .cookieJar(cookieJar)
             .addInterceptor(logging)
             .build()
     }
