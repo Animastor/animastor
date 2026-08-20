@@ -229,6 +229,10 @@ require('./routes/config-routes.cjs')(app, redis, routeDeps);
 // Workspace AI provider settings (Experimental Beta — Milestone 1)
 require('./routes/settings-ai-routes.cjs')(app);
 
+// Private worker registration & lifecycle (Experimental Beta — Private Worker
+// Phase 1). Users only; workspace always resolved server-side.
+require('./routes/worker-routes.cjs')(app, redis);
+
 // ======================================================
 // PROMETHEUS METRICS
 // ======================================================
@@ -347,6 +351,16 @@ async function startServer() {
         }, 6 * 60 * 60 * 1000).unref(); // every 6h
     } catch (err) {
         console.warn('[GUESTS] periodic purge setup failed (non-fatal):', err.message);
+    }
+
+    // Private Worker (Experimental Beta Phase 1): keep the Redis worker-auth
+    // mirror in sync with PG (startup rebuild + periodic resync — heals Redis
+    // loss and revoke-during-blip races). Non-fatal.
+    try {
+        const workerAuth = require('./services/worker-auth');
+        workerAuth.startWorkerAuthMirrorSync(redis);
+    } catch (err) {
+        console.warn('[WORKER-AUTH] mirror sync setup failed (non-fatal):', err.message);
     }
 
     // Start server

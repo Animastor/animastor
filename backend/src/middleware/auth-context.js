@@ -76,9 +76,16 @@ async function authContext(req, res, next) {
         // throwaway workspace on mere browsing); DELETE needs no fresh
         // identity. Outside /api/v1 (/health, /metrics, /gpu/*) stays
         // unauthenticated.
+        //
+        // EXEMPT: /api/v1/worker* — machine/worker-facing surface. Anonymous
+        // writes there must never auto-provision guest + workspace rows (the
+        // removed legacy heartbeat endpoint was exactly that DB-churn
+        // vector). Worker identity uses its own credential namespace (wrk.*),
+        // never guest auto-provision.
         const isContentWrite = req.method === 'POST' || req.method === 'PUT' || req.method === 'PATCH';
         if (isContentWrite && req.path && req.path.startsWith('/api/v1')
-            && !req.path.startsWith('/api/v1/auth')) {
+            && !req.path.startsWith('/api/v1/auth')
+            && !req.path.startsWith('/api/v1/worker')) {
             const created = await authService.createGuest();
             req.guest = { guestId: created.guestId };
             req.workspace = { ...created.workspace, status: 'active', expiresAt: created.workspaceExpiresAt };

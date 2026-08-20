@@ -202,17 +202,36 @@ CREATE TABLE IF NOT EXISTS generation_tasks (
 CREATE INDEX IF NOT EXISTS idx_tasks_book ON generation_tasks(book_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON generation_tasks(status);
 
--- Worker registry
+-- Private Worker registry (Experimental Beta — Private Worker Phase 1)
+-- Durable source of truth for private worker identity and credentials.
+-- Identity is server-assigned (UUID) and NEVER client-supplied. The
+-- credential secret exists only as a SHA-256 hash (sessions/guests
+-- pattern). workspace_id is the ownership anchor, ON DELETE CASCADE
+-- purges a workspace's workers together with the workspace itself.
+-- NOTE: the original dormant version of this table (self-chosen TEXT PK,
+-- no workspace/token columns, worker_type CHECK including 'upscale') is
+-- rebuilt by migration PW-1 below, a real migration not a free ALTER.
 CREATE TABLE IF NOT EXISTS workers (
-    worker_id       TEXT PRIMARY KEY,
-    worker_type     TEXT NOT NULL CHECK(worker_type IN ('audio','image','video','upscale')),
+    worker_id       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    workspace_id    UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    name            TEXT NOT NULL,
+    worker_type     TEXT NOT NULL CHECK(worker_type IN ('audio','image','video')),
     capabilities    JSONB,
+    mode            TEXT NOT NULL DEFAULT 'private' CHECK(mode IN ('private','share')),
     status          TEXT NOT NULL DEFAULT 'offline' CHECK(status IN ('online','offline','busy','error')),
+    token_hash      TEXT NOT NULL UNIQUE,
+    token_prefix    TEXT,
+    created_by      UUID REFERENCES users(user_id),
+    revoked_at      BIGINT,
     last_seen       BIGINT,
     version         TEXT,
     metadata        JSONB,
     created_at      BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::bigint)
 );
+
+-- (index idx_workers_workspace is created by migration PW-1 below — it must
+-- not run from SCHEMA_SQL: on a pre-existing legacy workers table the
+-- workspace_id column does not yet exist, and PW-1 is the real migration)
 
 -- Reconciliation & recovery log
 CREATE TABLE IF NOT EXISTS reconciliation_events (
@@ -1150,6 +1169,70 @@ async function runMigrations() {
     }
 
     console.log('[PG] Guest identity support initialized');
+
+    // ======================================================
+    // PW-1: Private Worker registry (Experimental Beta — Phase 1)
+    // ======================================================
+    // Repurpose the dormant `workers` table into the durable source of
+    // truth for private worker identity & credentials. This is a REAL
+    // migration, not a free ALTER: the original table had a self-chosen
+    // TEXT primary key, no workspace/token columns and a worker_type
+    // CHECK that included 'upscale'. The table was verified empty in
+    // every environment it ever ran in (zero code paths ever wrote to
+    // it), so the rebuild drops and recreates it. If rows ever exist,
+    // the rebuild is skipped loudly rather than destroying data.
+    try {
+        const { rows: shapeRows } = await query(`
+            SELECT data_type FROM information_schema.columns
+            WHERE table_name = 'workers' AND column_name = 'worker_id'
+        `);
+        if (shapeRows.length === 0) {
+            // Table absent — the canonical CREATE TABLE IF NOT EXISTS above
+            // already produced the new shape.
+            await query(`CREATE INDEX IF NOT EXISTS idx_workers_workspace ON workers(workspace_id)`);
+        } else if (shapeRows[0].data_type === 'uuid') {
+            // Already migrated — keep the canonical CHECK constraints in sync
+            // (PostgreSQL cannot ALTER a CHECK to add/remove values).
+            await query(`ALTER TABLE workers DROP CONSTRAINT IF EXISTS workers_worker_type_check`);
+            await query(`ALTER TABLE workers ADD CONSTRAINT workers_worker_type_check
+                CHECK (worker_type IN ('audio','image','video'))`);
+            await query(`ALTER TABLE workers DROP CONSTRAINT IF EXISTS workers_mode_check`);
+            await query(`ALTER TABLE workers ADD CONSTRAINT workers_mode_check
+                CHECK (mode IN ('private','share'))`);
+            await query(`CREATE INDEX IF NOT EXISTS idx_workers_workspace ON workers(workspace_id)`);
+        } else {
+            const { rows: countRows } = await query(`SELECT COUNT(*)::int AS n FROM workers`);
+            if ((countRows[0]?.n || 0) > 0) {
+                console.error('[PG] PW-1: legacy workers table has rows — rebuild SKIPPED, manual migration required');
+            } else {
+                await query(`DROP TABLE workers`);
+                await query(`CREATE TABLE workers (
+                    worker_id       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    workspace_id    UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+                    name            TEXT NOT NULL,
+                    worker_type     TEXT NOT NULL CHECK(worker_type IN ('audio','image','video')),
+                    capabilities    JSONB,
+                    mode            TEXT NOT NULL DEFAULT 'private' CHECK(mode IN ('private','share')),
+                    status          TEXT NOT NULL DEFAULT 'offline' CHECK(status IN ('online','offline','busy','error')),
+                    token_hash      TEXT NOT NULL UNIQUE,
+                    token_prefix    TEXT,
+                    created_by      UUID REFERENCES users(user_id),
+                    revoked_at      BIGINT,
+                    last_seen       BIGINT,
+                    version         TEXT,
+                    metadata        JSONB,
+                    created_at      BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::bigint)
+                )`);
+                await query(`CREATE INDEX IF NOT EXISTS idx_workers_workspace ON workers(workspace_id)`);
+                console.log('[PG] PW-1: rebuilt dormant workers table for private worker identity');
+            }
+        }
+    } catch (err) {
+        console.error('[PG] PW-1 workers migration failed:', err.message);
+        throw err;
+    }
+
+    console.log('[PG] Private worker registry initialized');
 }
 
 module.exports = { runMigrations, SCHEMA_SQL };

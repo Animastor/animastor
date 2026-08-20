@@ -487,20 +487,13 @@ module.exports = function(app, redis, deps) {
     // ======================================================
     // WORKER HEARTBEAT
     // ======================================================
-    app.post('/api/v1/worker/heartbeat', async (req, res) => {
-        try {
-            const workerHealth = require('../runtime/worker-health');
-            const { type, worker_id, current_job_id } = req.body || {};
-            if (!type || !worker_id) return res.status(400).json({ error: 'type and worker_id required' });
-            if (!config.WORKER_HEARTBEAT_TYPES.includes(type)) {
-                return res.status(400).json({ error: `invalid type, must be one of: ${config.WORKER_HEARTBEAT_TYPES.join(', ')}` });
-            }
-            await workerHealth.reportHeartbeat(redis, type, worker_id, current_job_id || null);
-            res.json({ ok: true, type, worker_id, current_job_id: current_job_id || null, ttl: config.WORKER_HEARTBEAT_TTL });
-        } catch (err) {
-            res.status(500).json({ error: err.message });
-        }
-    });
+    // NOTE: the legacy POST /api/v1/worker/heartbeat endpoint was REMOVED
+    // (Experimental Beta — Private Worker Phase 1). It was unauthenticated,
+    // unused by real workers (the GPU hub writes heartbeats itself), and —
+    // worse — every anonymous POST auto-provisioned a guest + temporary
+    // workspace via authContext, making it a DB row-churn vector. Worker
+    // liveness now flows through the token-authenticated hub path; the
+    // read-only status/counts endpoints below remain.
 
     app.get('/api/v1/worker/status', async (req, res) => {
         try {
