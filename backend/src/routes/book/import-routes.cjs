@@ -76,7 +76,7 @@ module.exports = function(app, redis, deps) {
     //    another user's book (hash-based dedup is cross-tenant otherwise).
     //  - importBookAllowed: a bundle re-import must never touch a book owned
     //    by a foreign workspace (bundle book_id is client-controlled).
-    const { dedupOwnedByCaller, importBookAllowed } = require('../../middleware/auth-context');
+    const { dedupOwnedByCaller, importBookAllowed, hasIdentity } = require('../../middleware/auth-context');
 
     // In-flight TXT trigger guard
     const inFlightTriggers = new Set();
@@ -252,9 +252,9 @@ app.post('/api/v1/book/import', multer().single('file'), async (req, res) => {
             }
 
             // ── Phase 2: Fallback — scan books on disk (covers deleted book_source records) ──
-            // Pre-auth only: an authenticated caller must never pick up an
+            // Pre-auth only: any identity (user OR guest) must never pick up an
             // unknown-owner directory through a raw disk scan (cross-tenant).
-            if (!existingBookId && !req.user) {
+            if (!existingBookId && !hasIdentity(req)) {
                 const diskFound = findLazyBookByHash(fileHash, lazyBook.getBooksDir(), sourceSize);
                 if (diskFound) {
                     const existingStatus = lazyBook.getBookStatus(diskFound);
@@ -546,9 +546,9 @@ function detectFileFormat(buf) {
             }
 
             // ── Phase 2: Fallback — scan books on disk (covers deleted book_source records) ──
-            // Pre-auth only: an authenticated caller must never pick up an
+            // Pre-auth only: any identity (user OR guest) must never pick up an
             // unknown-owner directory through a raw disk scan (cross-tenant).
-            if (!existingBookId && !req.user) {
+            if (!existingBookId && !hasIdentity(req)) {
                 const diskFound = findLazyBookByHash(fileHash, lazyBook.getBooksDir(), sourceSize);
                 if (diskFound) {
                     const existingStatus = lazyBook.getBookStatus(diskFound);

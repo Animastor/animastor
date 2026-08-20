@@ -125,7 +125,8 @@ const aiSessionRepoQuery = (id) => storage.postgres.query(
     'SELECT book_id FROM ai_chat_sessions WHERE id = $1 LIMIT 1', [id]
 ).catch(() => null);
 const aiBookGuard = async (req, res, next) => {
-    if (!req.user) return next(); // pre-auth compatibility
+    const { hasIdentity, checkBookAccess, WorkspaceExpiredError } = require('./middleware/auth-context');
+    if (!hasIdentity(req)) return next(); // pre-auth compatibility
     try {
         let bookId = (req.query && req.query.book_id) || (req.body && req.body.book_id) || null;
         const sessionId = (req.query && req.query.session_id) || (req.body && req.body.session_id) || (req.params && req.params.id) || null;
@@ -134,10 +135,13 @@ const aiBookGuard = async (req, res, next) => {
             bookId = (row && row.rows && row.rows[0] && row.rows[0].book_id) || null;
         }
         if (!bookId) return next(); // endpoint without a book scope — nothing to guard
-        const ws = await require('./middleware/auth-context').checkBookAccess(req, bookId);
+        const ws = await checkBookAccess(req, bookId);
         if (!ws) return res.status(403).json({ error: 'Access denied: not a member of the book\'s workspace' });
         return next();
     } catch (err) {
+        if (err instanceof WorkspaceExpiredError) {
+            return res.status(410).json({ error: 'Guest workspace expired', code: 'workspace_expired' });
+        }
         console.error('[AUTH] AI book guard failed (fail closed):', err.message);
         return res.status(403).json({ error: 'Access denied' });
     }
@@ -343,6 +347,25 @@ async function startServer() {
         }, 6 * 60 * 60 * 1000).unref(); // every 6h
     } catch (err) {
         console.warn('[SESSIONS] periodic purge setup failed (non-fatal):', err.message);
+    }
+
+    // Guest Workspace MVP: expired guest identities + temporary workspaces
+    // past TTL+grace are hard-deleted. Duplication-safe by design (each
+    // backend process purges, inner-loop lock contention is harmless).
+    try {
+        const guestRepo = require('./storage/postgres/repositories/guest-repo');
+        setInterval(async () => {
+            try {
+                const deleted = await guestRepo.purgeExpired();
+                if ((deleted && deleted.guests) || (deleted && deleted.workspaces)) {
+                    log(`[GUESTS] Purged ${deleted.guests} stale guest identities, ${deleted.workspaces} expired temporary workspaces`);
+                }
+            } catch (err) {
+                console.warn('[GUESTS] purge failed (non-fatal):', err.message);
+            }
+        }, 6 * 60 * 60 * 1000).unref(); // every 6h
+    } catch (err) {
+        console.warn('[GUESTS] periodic purge setup failed (non-fatal):', err.message);
     }
 
     // Start server
