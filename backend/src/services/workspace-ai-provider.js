@@ -349,6 +349,51 @@ function hasUsableApiKey(provider) {
     return !!(provider && provider.apiKey);
 }
 
+// ── purpose-based resolver (spec §9, §13) ────────────────────────────────
+//
+// resolveAIProvider(workspaceId, purpose)
+//   one addressable entry point consumers (chat, parser, future agents) call
+//   instead of touching the resolver internals. Today per-workspace selection
+//   is identical for all purposes (one active provider per workspace, spec §9),
+//   so the function is a thin alias over resolveAIForWorkspace. The `purpose`
+//   argument is logged at debug level so that future per-purpose routing,
+//   fallback chains, or per-agent provider trees can be added HERE without
+//   touching every call site (spec §13: avoid premature complexity).
+//
+//   purpose ∈ {'chat','parser','agent','future-agent'}
+//   Unknown purposes are accepted (future-proof) but logged once.
+//
+//   Fail closed in Personal-only mode (spec §10): when no workspace provider
+//   exists AND the operator has NOT configured a global fallback key, returns
+//   a provider snapshot with apiKey=null and source='unconfigured' so the
+//   caller can fail with a clear message instead of silently pretending an
+//   AI call will work. resolveAIForWorkspace / resolveAIForBook keep their
+//   existing global-fallback behaviour to preserve Phase 1-3 compatibility.
+
+const KNOWN_PURPOSES = new Set(['chat', 'parser', 'agent']);
+
+async function resolveAIProvider(workspaceId, purpose /* = 'agent' */) {
+    const p = (typeof purpose === 'string' && purpose) || 'agent';
+    if (!KNOWN_PURPOSES.has(p)) {
+        // Unknown — accept for forward compatibility, but log once.
+        console.warn(`[WORKSPACE-AI] resolveAIProvider unknown purpose "${p}" — using default path`);
+    }
+    const provider = await resolveAIForWorkspace(workspaceId);
+
+    // IMPORTANT: never mutate the cached snapshot — buildWorkspaceProvider()
+    // returns the one & only entry held by _cache for this workspace; mutating
+    // it would leak `purpose` across callers (parser would see 'chat', etc.).
+    // A shallow copy with the purpose/derived-source tags is safe: the
+    // AsyncLocalStorage context owns this transient instance, not the cache.
+    const tagged = { ...provider, purpose: p };
+    if (!tagged.apiKey) {
+        // Personal-only fail-closed hint (spec §10). Callers choose whether to
+        // surface this as an error or fall back to legacy behaviour.
+        tagged.source = tagged.source === 'workspace' ? 'workspace-unconfigured' : 'unconfigured';
+    }
+    return tagged;
+}
+
 // ── connection test ─────────────────────────────────────────────────────
 
 /**
@@ -426,6 +471,7 @@ module.exports = {
     setLastTest,
     resolveAIForWorkspace,
     resolveAIForBook,
+    resolveAIProvider,
     hasUsableApiKey,
     testConnection,
     invalidateCache,

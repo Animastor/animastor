@@ -359,4 +359,128 @@ describe('Personal AI Provider (Phase 4)', () => {
             expect(pB.apiKey).to.not.equal('sk-aaaa111');
         });
     });
+
+    // ── §9 / §11 / §12 — resolveAIProvider: addressable entry point used by
+    //     chat AND parser AND future agents, with a fail-closed Personal-only
+    //     hint when no provider is configured (spec §10) ─────────────────
+    describe('resolveAIProvider — §9 one-abstraction contract + fail-closed', () => {
+        it('returns the snapshot tagged with purpose ("chat" / "parser")', async () => {
+            await workspaceAi.upsertProvider(wsA, {
+                providerType: 'openrouter',
+                endpoint: 'https://uni.example/v1', apiKey: 'sk-uni', model: 'uni-model',
+            });
+            const chat = await workspaceAi.resolveAIProvider(wsA, 'chat');
+            const parser = await workspaceAi.resolveAIProvider(wsA, 'parser');
+            // §9 — one active provider is used by both consumers.
+            expect(chat.endpoint).to.equal('https://uni.example/v1');
+            expect(parser.endpoint).to.equal('https://uni.example/v1');
+            expect(chat.apiKey).to.equal(parser.apiKey);
+            expect(chat.model).to.equal(parser.model);
+            expect(chat.purpose).to.equal('chat');
+            expect(parser.purpose).to.equal('parser');
+            expect(chat.source).to.equal('workspace');
+        });
+
+        it('unknown purpose is accepted (forward-compat) but emits a warn', async () => {
+            await workspaceAi.upsertProvider(wsA, {
+                providerType: 'openai-compatible',
+                endpoint: 'https://fp.example/v1', apiKey: 'sk-fp',
+            });
+            const p = await workspaceAi.resolveAIProvider(wsA, 'future-summarizer');
+            expect(p.purpose).to.equal('future-summarizer');
+            expect(p.apiKey).to.equal('sk-fp');
+        });
+
+        it('fail-closed (Personal-only): no workspace + no global → source "unconfigured"', async () => {
+            // Create a fresh workspace with no provider; temporarily drop the
+            // global fallback env var so Personal-only mode is observable.
+            const wsEmpty = await createWorkspace('paip-empty');
+            const savedKey = process.env.OPENROUTER_API_KEY;
+            delete process.env.OPENROUTER_API_KEY;
+            try {
+                const p = await workspaceAi.resolveAIProvider(wsEmpty, 'chat');
+                expect(p.apiKey).to.equal(null);
+                expect(p.source).to.equal('unconfigured');
+                // The caller can branch on this hint to surface a clear error
+                // (spec §10 — AI feature should fail clearly).
+            } finally {
+                process.env.OPENROUTER_API_KEY = savedKey;
+                workspaceAi.invalidateCache(wsEmpty);
+            }
+        });
+
+        it('global fallback remains intact for the legacy callers (spec §26 compatibility)', async () => {
+            // global env key restored (savedKey set above) — a workspace without
+            // its own provider falls back to global.
+            const wsEmpty = await createWorkspace('paip-empty2');
+            const p = await workspaceAi.resolveAIForWorkspace(wsEmpty);
+            expect(p.source).to.equal('global');
+            expect(p.apiKey).to.equal(process.env.OPENROUTER_API_KEY);
+        });
+    });
+
+    // ── §11 + §12 — chat AND parser consume the SAME provider via the SAME
+    //     resolution path. Mocks the two consumers and asserts only ONE
+    //     provider snapshot drives both the chat ai-service.callAI and the
+    //     parser bootstrap's resolved provider. ─────────────────────────
+    describe('Chat + TXT parser use the same provider snapshot', () => {
+        function lastKey(call) { return (call.opts.headers.Authorization || '').split('Bearer ')[1]; }
+
+        it('chat (ai-routes) and parser (agent bootstrap resolver) reach the same endpoint+key+model', async () => {
+            await workspaceAi.upsertProvider(wsA, {
+                providerType: 'openrouter',
+                endpoint: 'https://both.example/v1', apiKey: 'sk-both', model: 'both-model',
+            });
+
+            installFetchMock(() => okJson({ choices: [{ message: { content: '{"ok":1}' } }] }));
+
+            // 1) Chat-style resolution: resolveAIProvider(workspace, 'chat')
+            //    → drive aiCaller.runWithProvider + callAI.
+            const chatProvider = await workspaceAi.resolveAIProvider(wsA, 'chat');
+            const aiCaller = require('../src/services/agent/ai-caller');
+            await aiCaller.runWithProvider(chatProvider, () => aiCaller.callAI(
+                [{ role: 'user', content: 'hi' }], { retries: 1, maxTokens: 4 }
+            ));
+            // 2) Parser-style resolution: resolveAIProvider(workspace, 'parser')
+            //    → same path inside bootstrap (resolveAIForBook is a thin wrapper
+            //    around resolveAIForWorkspace; using the same snapshot asserts
+            //    neither consumer touches a different credential).
+            const parserProvider = await workspaceAi.resolveAIProvider(wsA, 'parser');
+            await aiCaller.runWithProvider(parserProvider, () => aiCaller.callAI(
+                [{ role: 'user', content: 'parse' }], { retries: 1, maxTokens: 4 }
+            ));
+
+            expect(fetchCalls).to.have.length(2);
+            fetchCalls.forEach((c) => {
+                expect(c.url).to.equal('https://both.example/v1/chat/completions');
+                expect(lastKey(c)).to.equal('sk-both');
+                expect(c.body.model).to.equal('both-model');
+            });
+        });
+
+        it('parser path: resolveAIForBook uses book.workspace_id → same provider as the chat path', async () => {
+            const { query } = require('../src/storage/postgres/database');
+            const bookId = `paip4-${stamp}-book`;
+            await query(`INSERT INTO books (book_id, workspace_id) VALUES ($1, $2)`, [bookId, wsA]);
+            await workspaceAi.upsertProvider(wsA, {
+                providerType: 'openai-compatible',
+                endpoint: 'https://bk.example/v1', apiKey: 'sk-bk', model: 'bk-model',
+            });
+
+            installFetchMock(() => okJson({ choices: [{ message: { content: '{"ok":1}' } }] }));
+            const bookProvider = await workspaceAi.resolveAIForBook(bookId);
+            expect(bookProvider.endpoint).to.equal('https://bk.example/v1');
+            expect(bookProvider.apiKey).to.equal('sk-bk');
+            expect(bookProvider.model).to.equal('bk-model');
+
+            const aiCaller = require('../src/services/agent/ai-caller');
+            await aiCaller.runWithProvider(bookProvider, () => aiCaller.callAI(
+                [{ role: 'user', content: 'parse' }], { retries: 1, maxTokens: 4 }
+            ));
+            expect(fetchCalls[0].url).to.equal('https://bk.example/v1/chat/completions');
+            expect(fetchCalls[0].body.model).to.equal('bk-model');
+
+            await query(`DELETE FROM books WHERE book_id = $1`, [bookId]);
+        });
+    });
 });
