@@ -47,20 +47,55 @@ const DEFAULT_STATUS = 'untested';
 // ── secret key management ───────────────────────────────────────────────
 
 /**
+ * Validate that a raw env-string is a usable secret key.
+ * Rejects: undefined, empty string, whitespace-only.
+ * @param {string|undefined} value
+ * @returns {string} trimmed non-empty value
+ * @throws if invalid
+ */
+function _validateSecretKeyRaw(value) {
+    if (value == null || typeof value !== 'string') {
+        throw new Error('WORKSPACE_SECRET_KEY is required in production');
+    }
+    const trimmed = value.trim();
+    if (trimmed.length === 0) {
+        throw new Error('WORKSPACE_SECRET_KEY is required in production');
+    }
+    return trimmed;
+}
+
+/**
  * Encryption key derivation: WORKSPACE_SECRET_KEY (any length) → 32 bytes.
- * Dev-only deterministic fallback when the env var is absent: a warning is
- * logged once — production MUST set a real key (docker-compose passes it).
+ *
+ * Production (NODE_ENV=production): the key is mandatory; a missing, empty,
+ * or whitespace-only value throws immediately — no fallback.
+ *
+ * Development / test: a deterministic dev-only fallback is used when the
+ * env var is absent.  The fallback is clearly marked and MUST NOT be
+ * deployed to a real environment.
  */
 function getSecretKey() {
     const raw = process.env.WORKSPACE_SECRET_KEY;
-    if (!raw) {
+    const isProduction = process.env.NODE_ENV === 'production';
+
+    // Production: fail closed — no fallback, no silent generation.
+    if (isProduction) {
+        _validateSecretKeyRaw(raw);
+        return crypto.createHash('sha256').update(raw.trim()).digest();
+    }
+
+    // Development / test: allow the legacy dev fallback.
+    if (!raw || raw.trim().length === 0) {
         if (!_logEmitted) {
             _logEmitted = true;
-            console.warn('[WORKSPACE-AI] WORKSPACE_SECRET_KEY not set — using insecure development key');
+            console.warn(
+                '[WORKSPACE-AI] WORKSPACE_SECRET_KEY not set — using INSECURE development-only key. ' +
+                'This key is publicly visible and MUST NOT be used in production.'
+            );
         }
         return crypto.createHash('sha256').update('animastor-dev-workspace-secret-key-do-not-use-in-prod').digest();
     }
-    return crypto.createHash('sha256').update(raw).digest();
+    return crypto.createHash('sha256').update(raw.trim()).digest();
 }
 
 /** @returns {string} `iv64:tag64:cipher64` for `plain` */
@@ -514,6 +549,8 @@ async function testConnection({ endpoint, apiKey, model }) {
 }
 
 module.exports = {
+    getSecretKey,
+    validateSecretKeyRaw: _validateSecretKeyRaw,
     encryptSecret,
     decryptSecret,
     globalFallbackProvider,
