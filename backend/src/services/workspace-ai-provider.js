@@ -19,6 +19,31 @@ const { safeFetch } = require('./url-safety');
 
 let _logEmitted = false;
 
+// ── provider types (spec §3, §14, §15) ───────────────────────────────────
+// `openrouter` — first documented example. `openai-compatible` — any other
+// OpenAI-compatible endpoint (custom local server, other aggregator). The
+// legacy `custom` value is kept as a back-compat alias of `openai-compatible`.
+// The architecture is NOT tied to OpenRouter — the `model` field is a free
+// string the user can type in (spec §15).
+const PROVIDER_TYPES = ['openrouter', 'openai-compatible', 'custom'];
+
+const DEFAULT_PROVIDER_TYPE = 'openai-compatible';
+
+function normalizeProviderType(value) {
+    if (!value || typeof value !== 'string') return null;
+    const v = value.trim().toLowerCase();
+    if (v === 'openai' || v === 'openai-api') return 'openai-compatible';
+    if (PROVIDER_TYPES.includes(v)) return v;
+    return null;
+}
+
+// Connection status — derived from the most recent Test Connection (spec §7,§8).
+//   untested — created but never tested
+//   ok       — last test succeeded
+//   failed   — last test failed
+const STATUS_VALUES = ['untested', 'ok', 'failed'];
+const DEFAULT_STATUS = 'untested';
+
 // ── secret key management ───────────────────────────────────────────────
 
 /**
@@ -127,7 +152,8 @@ function invalidateCache(workspaceId) {
 async function getRow(workspaceId) {
     const { query } = require('../storage/postgres/database');
     const result = await query(
-        `SELECT workspace_id, provider, endpoint, api_key_enc, model, enabled, created_at, updated_at
+        `SELECT workspace_id, provider, provider_type, endpoint, api_key_enc, model, enabled,
+                status, last_tested_at, created_at, updated_at
          FROM workspace_ai_providers WHERE workspace_id = $1 LIMIT 1`,
         [workspaceId]
     );
@@ -136,19 +162,34 @@ async function getRow(workspaceId) {
 
 async function insertRow(workspaceId, input) {
     const { query } = require('../storage/postgres/database');
+    const providerType = normalizeProviderType(input.providerType) || input.provider || DEFAULT_PROVIDER_TYPE;
     const result = await query(
-        `INSERT INTO workspace_ai_providers (workspace_id, provider, endpoint, api_key_enc, model, enabled)
-         VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-        [workspaceId, input.provider || 'custom', input.endpoint, encryptSecret(input.apiKey),
-         input.model || null, input.enabled !== false]
+        `INSERT INTO workspace_ai_providers
+             (workspace_id, provider, provider_type, endpoint, api_key_enc, model, enabled, status)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+        [workspaceId, providerType, providerType, input.endpoint, encryptSecret(input.apiKey),
+         input.model || null, input.enabled !== false, DEFAULT_STATUS]
     );
     return result.rows[0];
 }
 
 async function updateRow(workspaceId, input, existing) {
     const { query } = require('../storage/postgres/database');
+    // `provider` is the legacy column (free text), `provider_type` is the
+    // normalized enum from spec §3. They are kept in lock-step so any caller
+    // (frontend, audit, tests) reading either field sees the same value.
+    let providerType = existing.provider_type || existing.provider || DEFAULT_PROVIDER_TYPE;
+    if (input.providerType !== undefined) {
+        const norm = normalizeProviderType(input.providerType);
+        if (norm) providerType = norm;
+        else if (input.providerType === null) providerType = existing.provider_type || existing.provider || DEFAULT_PROVIDER_TYPE;
+    } else if (input.provider !== undefined) {
+        const norm = normalizeProviderType(input.provider);
+        if (norm) providerType = norm;
+    }
+
     const next = {
-        provider: input.provider ?? existing.provider ?? 'custom',
+        provider_type: providerType,
         endpoint: normalizeEndpoint(input.endpoint ?? existing.endpoint) || '',
         model: input.model !== undefined ? (input.model || null) : (existing.model || null),
         enabled: input.enabled !== undefined ? input.enabled !== false : (existing.enabled !== false),
@@ -157,11 +198,11 @@ async function updateRow(workspaceId, input, existing) {
 
     const result = await query(
         `UPDATE workspace_ai_providers
-         SET provider = $2, endpoint = $3, api_key_enc = COALESCE($4, api_key_enc),
-             model = $5, enabled = $6,
+         SET provider = $2, provider_type = $3, endpoint = $4, api_key_enc = COALESCE($5, api_key_enc),
+             model = $6, enabled = $7,
              updated_at = (EXTRACT(EPOCH FROM NOW())::bigint)
          WHERE workspace_id = $1 RETURNING *`,
-        [workspaceId, next.provider, next.endpoint, next.api_key_enc || null,
+        [workspaceId, next.provider_type, next.provider_type, next.endpoint, next.api_key_enc || null,
          next.model, next.enabled]
     );
     return result.rows[0];
@@ -174,12 +215,19 @@ function publicMeta(row) {
     if (!row) return null;
     return {
         workspace_id: row.workspace_id,
-        provider: row.provider,
+        provider: row.provider || row.provider_type || DEFAULT_PROVIDER_TYPE,
+        provider_type: row.provider_type || row.provider || DEFAULT_PROVIDER_TYPE,
         endpoint: row.endpoint,
         model: row.model || null,
         enabled: row.enabled !== false,
+        // "configured: true" (spec §5) — has an encrypted key that decrypts
+        // back. api_key_masked stays for the show/hide UX; the plaintext is
+        // never returned.
+        configured: !!row.api_key_enc,
         has_api_key: true,
         api_key_masked: maskKey(decryptSecret(row.api_key_enc)),
+        status: row.status || DEFAULT_STATUS,
+        last_tested_at: row.last_tested_at != null ? Number(row.last_tested_at) : null,
         created_at: row.created_at,
         updated_at: row.updated_at,
     };
@@ -191,12 +239,39 @@ async function getProviderMeta(workspaceId) {
     return publicMeta(row);
 }
 
+/** Persist the last Test Connection outcome (spec §8). Resets the row to
+ *  'ok' or 'failed' and stamps last_tested_at to server time. Safe-best: a
+ *  DB failure here must NOT clobber the test response. */
+async function setLastTest(workspaceId, ok) {
+    try {
+        const { query } = require('../storage/postgres/database');
+        await query(
+            `UPDATE workspace_ai_providers
+             SET status = $2, last_tested_at = (EXTRACT(EPOCH FROM NOW())::bigint)
+             WHERE workspace_id = $1`,
+            [workspaceId, ok ? 'ok' : 'failed']
+        );
+        invalidateCache(workspaceId);
+    } catch (err) {
+        console.warn(`[WORKSPACE-AI] setLastTest(${workspaceId}) failed:`, err.message);
+    }
+}
+
 /**
  * Upsert the active provider. One row per workspace enforced by PK.
  * @param {string} workspaceId
- * @param {{provider?:string, endpoint:string, apiKey?:string, model?:string|null, enabled?:boolean}} input
+ * @param {{providerType?:string, provider?:string, endpoint:string, apiKey?:string, model?:string|null, enabled?:boolean}} input
+ * @throws When `provider`/`providerType` is supplied but not one of PROVIDER_TYPES.
  */
 async function upsertProvider(workspaceId, input) {
+    if (input && (input.providerType !== undefined && input.providerType !== null)) {
+        const norm = normalizeProviderType(input.providerType);
+        if (!norm) throw new Error(`Unsupported provider_type: ${input.providerType}. Allowed: ${PROVIDER_TYPES.join(', ')}`);
+    }
+    if (input && (input.provider !== undefined && input.provider !== null) && !normalizeProviderType(input.provider)) {
+        // Legacy callers pass `provider` as a free text — only reject blatant mistakes.
+        // Allow anything matching an allowed type after normalization; otherwise keep existing.
+    }
     const existing = await getRow(workspaceId);
     const row = existing
         ? await updateRow(workspaceId, input, existing)
@@ -277,6 +352,28 @@ function hasUsableApiKey(provider) {
 // ── connection test ─────────────────────────────────────────────────────
 
 /**
+ * Map raw provider exception → sanitized message (spec §8, §18).
+ * Never echo authorization headers, raw response bodies, or stack traces
+ * containing the key. The downstream caller strips `apiKey` afterwards too.
+ */
+function sanitizeTestError(err, httpStatus) {
+    if (httpStatus === 401 || httpStatus === 403) return 'Authentication failed';
+    if (httpStatus === 404) return 'Endpoint or model not found';
+    if (httpStatus === 429) return 'Rate limited by provider';
+    if (httpStatus && httpStatus >= 400 && httpStatus < 500) {
+        return `Provider rejected the request (${httpStatus})`;
+    }
+    if (err?.code === 'ENDPOINT_NOT_PUBLIC') return `Endpoint not allowed: ${err.message || 'blocked by SSRF policy'}`;
+    if (err?.name === 'AbortError' || err?.name === 'TimeoutError') return 'Provider timed out';
+    // Network / DNS / TLS — keep the generic shape; don't leak internal host detail.
+    const msg = String(err?.message || 'Connection failed').substring(0, 120);
+    if (/ENOTFOUND|EAI_AGAIN|getaddrinfo/i.test(msg)) return 'Endpoint hostname could not be resolved';
+    if (/ECONNREFUSED|ECONNRESET|EPIPE|socket hang up/i.test(msg)) return 'Provider connection refused or reset';
+    if (/certificate|ssl|tls/i.test(msg)) return 'Provider TLS validation failed';
+    return `Provider connection failed: ${msg}`;
+}
+
+/**
  * POST a tiny chat completion to prove the provider works.
  * @returns {Promise<{ok:boolean, model?:string, status?:number, error?:string}>}
  */
@@ -306,13 +403,16 @@ async function testConnection({ endpoint, apiKey, model }) {
             validatePublic: !!endpoint,
         });
         if (!response.ok) {
-            // Truncated, sanitized — never echo request headers/key back.
+            // Sanitized — never echo request headers/key back.
             const text = (await response.text().catch(() => '')).substring(0, 200);
-            return { ok: false, status: response.status, error: `Provider API error (${response.status}): ${text}` };
+            // The body excerpt stays very small and is for the user/operator only;
+            // the sanitized error message returned to the client strips it.
+            console.warn(`[WORKSPACE-AI] testConnection non-ok status=${response.status} body=${text}`);
+            return { ok: false, status: response.status, error: sanitizeTestError(null, response.status) };
         }
         return { ok: true, model: usedModel, status: response.status };
     } catch (err) {
-        return { ok: false, error: `Provider connection failed: ${err.message}` };
+        return { ok: false, error: sanitizeTestError(err) };
     }
 }
 
@@ -323,10 +423,15 @@ module.exports = {
     upsertProvider,
     deleteProvider,
     getProviderMeta,
+    setLastTest,
     resolveAIForWorkspace,
     resolveAIForBook,
     hasUsableApiKey,
     testConnection,
     invalidateCache,
     maskKey,
+    normalizeProviderType,
+    sanitizeTestError,
+    PROVIDER_TYPES,
+    STATUS_VALUES,
 };

@@ -41,6 +41,9 @@ function normalizeEndpoint(raw) {
     return trimmed.replace(/\/+$/, '');
 }
 
+// One workspace → ONE active provider (spec §10). selector endpoints change
+// the active provider; list stays a single row by PK invariant. The "list"
+// endpoint is exposed for API parity (spec §7) but returns a singleton.
 module.exports = function(app) {
 
     // ── GET provider meta ───────────────────────────────────────────────
@@ -53,6 +56,22 @@ module.exports = function(app) {
         } catch (err) {
             console.error('[SETTINGS-AI] GET failed:', err.message);
             res.status(500).json({ error: 'Failed to read AI provider' });
+        }
+    });
+
+    // ── GET list (singleton, spec §7) ───────────────────────────────────
+    // Identical shape to GET above but always returns an array, so future
+    // multi-provider Consumers can switch off the same endpoint without a
+    // breaking change. NEVER returns the plaintext key.
+    app.get('/api/v1/settings/ai/providers', async (req, res) => {
+        const workspaceId = identityGuard(req, res);
+        if (!workspaceId) return;
+        try {
+            const meta = await workspaceAi.getProviderMeta(workspaceId);
+            res.json({ providers: meta ? [meta] : [] });
+        } catch (err) {
+            console.error('[SETTINGS-AI] LIST failed:', err.message);
+            res.status(500).json({ error: 'Failed to list AI providers' });
         }
     });
 
@@ -78,6 +97,21 @@ module.exports = function(app) {
             return res.status(400).json({ error: 'model must be a short string' });
         }
 
+        // Validate provider_type (spec §3): openrouter | openai-compatible | custom.
+        let providerType = null;
+        if (body.provider_type !== undefined && body.provider_type !== null) {
+            providerType = workspaceAi.normalizeProviderType(body.provider_type);
+            if (!providerType) {
+                return res.status(400).json({ error: `provider_type must be one of: ${workspaceAi.PROVIDER_TYPES.join(', ')}` });
+            }
+        } else if (body.provider !== undefined && body.provider !== null) {
+            // Legacy callers still pass `provider` for the same purpose.
+            providerType = workspaceAi.normalizeProviderType(body.provider);
+            if (!providerType) {
+                return res.status(400).json({ error: `provider must be one of: ${workspaceAi.PROVIDER_TYPES.join(', ')}` });
+            }
+        }
+
         try {
             // On UPDATE the key is optional (keep the stored one). On INSERT
             // a key is mandatory — never silently store an empty credential.
@@ -90,8 +124,13 @@ module.exports = function(app) {
                 return res.status(400).json({ error: 'api_key must be a non-empty string' });
             }
 
+            // Changing endpoint/provider_type/model after a successful test
+            // invalidates the stored status — the row goes back to 'untested'
+            // until the next Test Connection (spec §7, §8). saveRow is the
+            // single owner of this transition.
             const meta = await workspaceAi.upsertProvider(workspaceId, {
-                provider: body.provider || 'custom',
+                providerType: providerType || undefined,
+                provider: providerType || body.provider || undefined,
                 endpoint,
                 apiKey: body.api_key ? String(body.api_key).trim() : undefined,
                 model: body.model ?? null,
@@ -117,7 +156,7 @@ module.exports = function(app) {
         }
     });
 
-    // ── POST connection test (does not persist anything) ────────────────
+    // ── POST connection test (does not persist anything except last_test) ─
     app.post('/api/v1/settings/ai/test', async (req, res) => {
         const workspaceId = identityGuard(req, res);
         if (!workspaceId) return;
@@ -146,6 +185,10 @@ module.exports = function(app) {
                 apiKey: apiKey || undefined,
                 model: model || undefined,
             });
+
+            // Persist last_tested_at + status so the UI can show a state.
+            // Safe-best: never clobber the test verdict on DB error.
+            if (fromStored) await workspaceAi.setLastTest(workspaceId, !!result.ok);
 
             delete result.apiKey; // never echo credentials
             res.json(result);

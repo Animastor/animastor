@@ -65,14 +65,22 @@ CREATE INDEX IF NOT EXISTS idx_guests_workspace ON guests(workspace_id);
 -- Workspace AI provider (Experimental Beta — Milestone 1)
 -- ONE active provider per workspace — PK enforces the single-row invariant.
 -- api_key_enc is AES-256-GCM ciphertext (iv:tag:payload) — never plaintext.
--- ON DELETE CASCADE: purging a (guest) workspace purges its AI provider too.
+-- provider_type is a TEXT enum-like: 'openrouter' | 'openai-compatible' | 'custom'
+--   (custom kept for back-compat with the very first rollout). The 'provider'
+--   column is the legacy duplicate of provider_type — kept for one release so
+--   any caller still reading the old field keeps seeing the same value.
+-- status is derived from the most recent Test Connection. ON DELETE CASCADE:
+-- purging a (guest) workspace purges its AI provider too.
 CREATE TABLE IF NOT EXISTS workspace_ai_providers (
     workspace_id    UUID PRIMARY KEY REFERENCES workspaces(id) ON DELETE CASCADE,
-    provider        TEXT NOT NULL DEFAULT 'custom',
+    provider        TEXT NOT NULL DEFAULT 'openai-compatible',
+    provider_type   TEXT NOT NULL DEFAULT 'openai-compatible',
     endpoint        TEXT NOT NULL,
     api_key_enc     TEXT NOT NULL,
     model           TEXT,
     enabled         BOOLEAN NOT NULL DEFAULT TRUE,
+    status          TEXT NOT NULL DEFAULT 'untested' CHECK(status IN ('untested','ok','failed')),
+    last_tested_at  BIGINT,
     created_at      BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::bigint),
     updated_at      BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::bigint)
 );
@@ -1277,6 +1285,55 @@ async function runMigrations() {
     }
 
     console.log('[PG] Workspace-aware generation task ownership initialized');
+
+    // ======================================================
+    // PAP-1: Personal AI Provider schema extension (Phase 4)
+    // ======================================================
+    // Adds the provider_type / status / last_tested_at columns that the spec
+    // §2 requires, and a CHECK constraint on status. Idempotent: each step can
+    // run on a brand-new DB (the CREATE TABLE already has the columns) or an
+    // existing one. `provider` is backfilled in lock-step with provider_type
+    // so legacy callers reading the old field see the same value.
+    try {
+        await query(`ALTER TABLE workspace_ai_providers
+            ADD COLUMN IF NOT EXISTS provider_type TEXT`);
+        await query(`ALTER TABLE workspace_ai_providers
+            ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'untested'`);
+        await query(`ALTER TABLE workspace_ai_providers
+            ADD COLUMN IF NOT EXISTS last_tested_at BIGINT`);
+
+        // Backfill provider_type from the legacy provider column when the new
+        // column is NULL or empty. Map known aliases to the canonical enum.
+        await query(`
+            UPDATE workspace_ai_providers SET provider_type = CASE
+                WHEN provider IN ('openrouter','openai-compatible','custom') THEN provider
+                WHEN provider IS NULL OR provider = '' THEN 'openai-compatible'
+                WHEN lower(provider) IN ('openai','openai-api') THEN 'openai-compatible'
+                ELSE 'custom'
+            END
+            WHERE provider_type IS NULL OR provider_type = ''
+        `);
+        // Drop legacy 'custom' rows that arose before a real provider_type was
+        // selected — normalized to openai-compatible (OpenAI-compatible default).
+        await query(`
+            UPDATE workspace_ai_providers SET provider = provider_type
+            WHERE provider IS NULL OR provider = '' OR provider NOT IN ('openrouter','openai-compatible','custom')
+        `);
+
+        // CHECK on status — recreate idempotently. PG doesn't allow IF NOT EXISTS.
+        await query(`ALTER TABLE workspace_ai_providers
+            DROP CONSTRAINT IF EXISTS workspace_ai_providers_status_check`);
+        await query(`ALTER TABLE workspace_ai_providers
+            ADD CONSTRAINT workspace_ai_providers_status_check
+            CHECK (status IN ('untested','ok','failed'))`);
+
+        console.log('[PG] PAP-1: workspace_ai_providers extended (provider_type/status/last_tested_at)');
+    } catch (err) {
+        console.error('[PG] PAP-1 workspace_ai_providers extension failed:', err.message);
+        throw err;
+    }
+
+    console.log('[PG] Personal AI provider schema initialized');
 }
 
 module.exports = { runMigrations, SCHEMA_SQL };
