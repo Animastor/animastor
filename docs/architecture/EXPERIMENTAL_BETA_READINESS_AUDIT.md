@@ -318,22 +318,15 @@ These block a Beta launch completely.
 - **Why P0:** a Beta release to a third party requires their `docker-compose up` to
   work. These volumes are operator-only artifacts from the dev environment.
 
-### P0-3 — `WORKSPACE_SECRET_KEY` dev fallback in the backend process
+### ~~P0-3~~ — `WORKSPACE_SECRET_KEY` dev fallback in the backend process
 
-- **Location:** `backend/src/services/workspace-ai-provider.js:54-64`.
-- **Behavior:** when the env var is missing OR empty, the server silently uses the
-  **publicly-visible** hardcoded string
-  `'animastor-dev-workspace-secret-key-do-not-use-in-prod'` SHA-256-ed to a 32-byte
-  key. Only a one-time `console.warn`.
-- **Note:** `docker-compose.yml:67` uses `${WORKSPACE_SECRET_KEY:?...}`, so
-  `docker-compose up` DOES fail-fast. But anyone running the backend outside compose
-  (bare `node`, k8s manifest, run-from-source on a GPU box the user is already on)
-  silently encrypts every Beta user's AI key with a public key. Anyone reading the
-  source (which Beta assumes the user has, since `worker.cjs` ships in-repo) can
-  decrypt every stored API key.
-- **Why P0:** a Beta user reusing the open-source tree is exactly the deployment
-  model this Beta expects ("own worker on own GPU"). The fallback must refuse to
-  start when `NODE_ENV=production` and the key is missing.
+**RESOLVED** by commit `0fa55ac`.
+
+- **Fix:** `getSecretKey()` now validates the key and throws when `NODE_ENV=production`
+  and the key is missing, empty, or whitespace-only. The dev fallback is preserved
+  only when `NODE_ENV !== production` and is clearly marked as insecure.
+- **Tests:** 13 new tests cover fail-closed behavior, validation, and encryption
+  compatibility. All 99 existing tests pass.
 
 ### P0-4 — Worker setup instructions are incomplete
 
@@ -512,9 +505,7 @@ UI text, or single-file edits. Total estimated work: a small focused PR.
    host-volume mounts (`docker-compose.yml:117-118`). These are operator-dev
    artifacts that will crash a fresh operator's `docker-compose up`.
 
-3. **P0-3 — Make `WORKSPACE_SECRET_KEY` mandatory at runtime**. In
-   `backend/src/services/workspace-ai-provider.js:54-64`, throw on missing key when
-   `NODE_ENV=production` (mirroring the compose-level `${VAR:?}`). One-line guard.
+3. ~~**P0-3 — Make `WORKSPACE_SECRET_KEY` mandatory at runtime**~~. **RESOLVED** (`0fa55ac`) — `getSecretKey()` throws when `NODE_ENV=production` and key is missing/empty/whitespace. Dev fallback preserved only for `NODE_ENV !== production`. Tests: 13 new + 99 existing passing.
 
 4. **P0-4 — Finish worker setup instructions in the UI**.
    - Add a download link / copy button for `worker/worker/worker.cjs` (or a tiny zip

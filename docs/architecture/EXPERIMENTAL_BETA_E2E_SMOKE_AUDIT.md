@@ -242,7 +242,7 @@ Working for the configured case but with gaps that affect fresh-user experience.
 | 3 | **Generate stalls silently when no worker** | `GeneratePage.tsx:181` — only paints section icon red | No toast, no banner, no link to `/settings/private-workers` |
 | 4 | **Nginx Basic Auth gates the entire SPA** | `proxy/conf/default.conf:286` | External user must know shared htpasswd before seeing the app |
 | 5 | **`docker-compose.yml` operator-only host paths** | `docker-compose.yml:117-118` — `/home/sureg/net-disk`, `/home/sureg/sureg-dev/site` | Fresh operator's `docker-compose up` fails if those paths don't exist |
-| 6 | **`WORKSPACE_SECRET_KEY` dev fallback** | `workspace-ai-provider.js:54-64` — hardcoded key when env missing | Safe in docker-compose (fails fast via `${:?}`), but insecure when running outside compose |
+| ~~6~~ | ~~**`WORKSPACE_SECRET_KEY` dev fallback**~~ | **RESOLVED** (`0fa55ac`) — production throws; dev fallback only when `NODE_ENV !== production` | Was insecure when running outside docker-compose |
 | 7 | **Chat and parser base URLs differ** | Chat default: `nvidia.com/v1` (`chat-engine.cjs:15`); parser default: `aicredits.in/v1` (`ai-service.js:11`) | Confusing when user omits endpoint and gets different providers for chat vs parse |
 | 8 | **`COMFY_INPUT_DIR` default assumes Jovyan notebook layout** | `worker.cjs:43` — `/home/jovyan/ComfyUI/input` | Vanilla Linux GPU box must override or jobs fail silently |
 | 9 | **Synchronous TXT parsing** | `import-routes.cjs:608` — HTTP socket held for full AI pipeline | Fine for 1-2 Beta users; not for production load |
@@ -262,10 +262,10 @@ None identified. All critical paths are functional when the prerequisites are me
 |---|-------------|-----------------|--------|
 | P0-1 | **Nginx Basic Auth gates entire SPA** | UNCHANGED | `proxy/conf/default.conf:286` — external user cannot reach register/login without shared htpasswd |
 | P0-2 | **`docker-compose.yml` operator-only host paths** | UNCHANGED | `/home/sureg/net-disk` and `/home/sureg/sureg-dev/site` crash fresh operator's `docker-compose up` |
-| P0-3 | **`WORKSPACE_SECRET_KEY` dev fallback** | UNCHANGED (code still has fallback; compose fails fast) | `workspace-ai-provider.js:54-64` — insecure when running outside docker-compose |
+| ~~P0-3~~ | ~~`WORKSPACE_SECRET_KEY` dev fallback~~ | **RESOLVED** by `0fa55ac` | `getSecretKey()` now throws in production when key is missing/empty/whitespace; dev fallback preserved only when `NODE_ENV !== production` |
 | ~~P0-4~~ | ~~Worker setup instructions incomplete~~ | **RESOLVED** by `c7cc302..2d55dbf` | Download command, prereqs, env block, run command all present in credential disclosure modal. `start-worker.sh` loads `.env` including token. `.env.example` has all vars. |
 
-**P0 count: 3** (down from 4)
+**P0 count: 2** (down from 4)
 
 ---
 
@@ -341,7 +341,7 @@ Smallest scope-first. None are architecture changes.
 
 2. **P0-2 — Make `docker-compose.yml` portable**. Remove or make conditional the `/home/sureg/net-disk` and `/home/sureg/sureg-dev/site` host-volume mounts (`docker-compose.yml:117-118`).
 
-3. **P0-3 — Make `WORKSPACE_SECRET_KEY` mandatory at runtime**. In `workspace-ai-provider.js:54-64`, throw when `NODE_ENV=production` and key is missing. One-line guard.
+3. ~~**P0-3 — Make `WORKSPACE_SECRET_KEY` mandatory at runtime**~~. **RESOLVED** — `getSecretKey()` throws when `NODE_ENV=production` and key is missing/empty/whitespace. Commit `0fa55ac`.
 
 4. **P1-2 — Add a warning when Generate is clicked with no worker**. `GeneratePage.tsx:181` should toast + link to `/settings/private-workers` when worker count = 0.
 
