@@ -17,6 +17,15 @@ android {
 
     val baseUrl = project.findProperty("BASE_URL") as? String ?: "https://app.animastor.in/"
 
+    signingConfigs {
+        create("release") {
+            storeFile = file("../release-key.jks")
+            storePassword = "animastor123"
+            keyAlias = "animastor"
+            keyPassword = "animastor123"
+        }
+    }
+
     buildTypes {
 
         debug {
@@ -29,7 +38,7 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-
+            signingConfig = signingConfigs.getByName("release")
             buildConfigField("String", "BASE_URL", "\"${baseUrl}\"")
         }
     }

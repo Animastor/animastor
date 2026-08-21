@@ -98,5 +98,12 @@ certs/
 *.key
 *.crt
 
+# ========== Signing keys ==========
+*.jks
+*.keystore
+
+# ========== Release artifacts ==========
+frontends/website/downloads/*.apk
+
 # ========== Other tools ==========
 .aider*
