@@ -1224,6 +1224,8 @@ button { font: inherit; color: inherit; }
 }
 .worker__steps { margin: 0 0 0 1.25rem; font-size: 0.8125rem; color: var(--text-2); line-height: 1.5; }
 .worker__env { font-size: 0.7rem; white-space: pre-wrap; word-break: break-all; }
+.worker__trouble { margin-top: 0.4rem; font-size: 0.75rem; color: var(--text-2); }
+.worker__trouble summary { cursor: pointer; font-weight: 600; }
 
 
 /* Spinner → <select> (Widget.Animastor: match_parent/weight=1 width, 40dp height) */

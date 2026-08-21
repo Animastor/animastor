@@ -101,6 +101,10 @@ services:
       # S3.4: GPU task hard timeout (ms, must be < min backend dispatch-lease TTL).
       # Default: 600000 = 10 min. Override per-deployment if GPU stop is set longer.
       - GPU_TIMEOUT=${GPU_TIMEOUT:-600000}
+    volumes:
+      # Experimental Beta onboarding: hub serves worker.cjs at GET /gpu/worker-source
+      # (self-contained file, no secrets — same as worker/worker/worker.cjs).
+      - ./worker/worker/worker.cjs:/app/worker-source/worker.cjs:ro
 
   nginx:
     image: nginx:alpine

@@ -17,6 +17,7 @@ import {
   type PrivateWorker, type WorkerType, type WorkerStatus,
   WORKER_TYPE_OPTIONS, validateCreateInput, looksLikeWorkerToken,
   statusClass, statusKey, formatLastSeen, buildSetupContract,
+  renderEnvBlock, OFFLINE_TROUBLESHOOT_KEYS,
 } from './privateWorkers';
 
 export function PrivateWorkersSection() {
@@ -131,6 +132,17 @@ export function PrivateWorkersSection() {
                     <span>·</span>
                     <span>{t('worker_last_seen')} {formatLastSeen(w.last_seen)}</span>
                   </div>
+                  {w.status === 'OFFLINE' && (
+                    <details class="worker__trouble">
+                      <summary>{t('worker_trouble_title')}</summary>
+                      <p class="card__hint card__hint--wrap">{t('worker_offline_hint')}</p>
+                      <ul class="worker__steps">
+                        {OFFLINE_TROUBLESHOOT_KEYS.map((k) => (
+                          <li key={k}>{t(k)}</li>
+                        ))}
+                      </ul>
+                    </details>
+                  )}
                   <div class="settings__group">
                     {w.status !== 'REVOKED' && (
                       <>
@@ -221,7 +233,9 @@ function CredentialDisclosure({ token, worker, onDone }: {
   onDone: () => void;
 }) {
   const [copied, setCopied] = useState(false);
+  const [envCopied, setEnvCopied] = useState(false);
   const contract = buildSetupContract(token, worker.worker_type, worker.name);
+  const envBlock = renderEnvBlock(contract.env);
 
   const onCopy = useCallback(async () => {
     try {
@@ -232,6 +246,16 @@ function CredentialDisclosure({ token, worker, onDone }: {
       toast(t('worker_copy_failed'));
     }
   }, [token]);
+
+  const onCopyEnv = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(envBlock);
+      setEnvCopied(true);
+      setTimeout(() => setEnvCopied(false), 1800);
+    } catch (_) {
+      toast(t('worker_copy_failed'));
+    }
+  }, [envBlock]);
 
   return (
     <Modal
@@ -252,15 +276,37 @@ function CredentialDisclosure({ token, worker, onDone }: {
         <p class="card__label">{t('worker_setup_title')}</p>
         <ol class="worker__steps">
           {contract.steps.map((s, i) => (
-            <li key={i}>{t(s as StrKey)}</li>
+            <li key={i}>
+              {t(s as StrKey)}
+              {i === 0 && (
+                <>
+                  <pre class="settings__debug worker__env">{contract.downloadCommand}</pre>
+                  <p class="card__hint card__hint--wrap">
+                    {t('worker_source_label').replace('{0}', contract.sourceUrl)}
+                  </p>
+                </>
+              )}
+              {i === 3 && (
+                <pre class="settings__debug worker__env">{contract.runCommand}</pre>
+              )}
+            </li>
           ))}
         </ol>
-        <pre class="settings__debug worker__env">{[
-          `HUB_URL=${contract.env.HUB_URL}`,
-          `ANIMASTOR_WORKER_TOKEN=${contract.env.ANIMASTOR_WORKER_TOKEN}`,
-          `WORKER_TYPE=${contract.env.WORKER_TYPE}`,
-          `WORKER_ID=${contract.env.WORKER_ID}`,
-        ].join('\n')}</pre>
+
+        <p class="card__label">{t('worker_prereq_title')}</p>
+        <ul class="worker__steps">
+          {contract.prereqs.map((p) => (
+            <li key={p}>{t(p as StrKey)}</li>
+          ))}
+        </ul>
+
+        <p class="card__label">{t('worker_run_label')}</p>
+        <pre class="settings__debug worker__env">{envBlock}</pre>
+        <div class="settings__group">
+          <button class="btn btn--outlined" onClick={() => void onCopyEnv()}>
+            {envCopied ? t('worker_env_copied') : t('worker_copy_env')}
+          </button>
+        </div>
         <p class="card__hint card__hint--wrap">{t('worker_setup_hint')}</p>
 
         <div class="modal__footer">

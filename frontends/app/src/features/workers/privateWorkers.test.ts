@@ -10,6 +10,8 @@ import {
   statusKey,
   formatLastSeen,
   buildSetupContract,
+  renderEnvBlock,
+  OFFLINE_TROUBLESHOOT_KEYS,
   VALID_WORKER_TYPES,
 } from './privateWorkers';
 
@@ -89,15 +91,54 @@ describe('buildSetupContract', () => {
     expect(c.env.WORKER_TYPE).toBe('image');
     // WORKER_ID is derived from the human label: spaces → dashes, lowercased.
     expect(c.env.WORKER_ID).toBe('home-rtx-3090');
-    // Four setup steps in order — the UI must present this exact sequence.
-    expect(c.steps).toHaveLength(4);
+    // Five setup steps in order — the UI must present this exact sequence.
+    expect(c.steps).toHaveLength(5);
     expect(c.steps[0]).toBe('worker_setup_step_1');
-    expect(c.steps[3]).toBe('worker_setup_step_4');
+    expect(c.steps[4]).toBe('worker_setup_step_5');
   });
 
   it('never embeds the token in the HUB_URL (it goes only in ANIMASTOR_WORKER_TOKEN)', () => {
     const c = buildSetupContract('wrk.id.secret', 'audio', 'w');
     expect(c.env.HUB_URL).not.to.contain('wrk.id.secret');
     expect(c.env.WORKER_ID).not.to.contain('secret');
+  });
+
+  it('exposes the worker source + run command for onboarding', () => {
+    const c = buildSetupContract('wrk.id.secret', 'image', 'w');
+    // Source is served by the GPU Hub itself (repo mirror is private).
+    expect(c.sourceUrl).toBe(`${c.env.HUB_URL}/worker-source`);
+    expect(c.downloadCommand).toBe(`curl -o worker.cjs ${c.env.HUB_URL}/worker-source`);
+    // The real start command matching the worker implementation.
+    expect(c.runCommand).toBe('node worker.cjs');
+    // Prerequisites are i18n keys, not hardcoded prose.
+    expect(c.prereqs).toContain('worker_prereq_node');
+    expect(c.prereqs).toContain('worker_prereq_comfy');
+    expect(c.prereqs).toContain('worker_prereq_models');
+  });
+});
+
+// ── copyable env block ─────────────────────────────────────────────────────
+describe('renderEnvBlock', () => {
+  it('renders EXACTLY the four vars worker.cjs reads, one per line', () => {
+    const c = buildSetupContract('wrk.id.secret', 'video', 'My GPU');
+    const block = renderEnvBlock(c.env);
+    expect(block).toBe([
+      `HUB_URL=${c.env.HUB_URL}`,
+      'ANIMASTOR_WORKER_TOKEN=wrk.id.secret',
+      'WORKER_TYPE=video',
+      'WORKER_ID=my-gpu',
+    ].join('\n'));
+  });
+});
+
+// ── offline troubleshooting hints ──────────────────────────────────────────
+describe('OFFLINE_TROUBLESHOOT_KEYS', () => {
+  it('covers hub url / token / process / network without server internals', () => {
+    expect(OFFLINE_TROUBLESHOOT_KEYS).toEqual([
+      'worker_trouble_hub_url',
+      'worker_trouble_token',
+      'worker_trouble_process',
+      'worker_trouble_network',
+    ]);
   });
 });

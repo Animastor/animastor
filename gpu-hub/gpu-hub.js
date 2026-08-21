@@ -21,6 +21,8 @@
 const express = require("express")
 const cors = require("cors")
 const crypto = require("crypto")
+const fs = require("fs")
+const path = require("path")
 
 // SYNC: backend/src/runtime/job-schema.js (PROTOCOL_VERSION)
 const PROTOCOL_VERSION = 2;
@@ -986,6 +988,29 @@ function buildHubApp({ redis, config = {}, fetchImpl, intervals = true } = {}) {
 
     res.json({ ok: true })
   })
+
+  // ======================================================
+  // WORKER SOURCE (Experimental Beta — onboarding)
+  // ======================================================
+  // Serves the self-contained worker.cjs so a Private Worker operator can
+  // obtain it from the hub itself (the repo mirror is private). No secrets
+  // here — this is the same file that ships in the repo at
+  // worker/worker/worker.cjs. Mounted read-only into the container.
+
+  const WORKER_SOURCE_PATH =
+    config.WORKER_SOURCE_PATH || "/app/worker-source/worker.cjs";
+
+  app.get("/worker-source", (req, res) => {
+    fs.readFile(WORKER_SOURCE_PATH, (err, buf) => {
+      if (err) {
+        return res.status(404).json({ error: "worker_source_unavailable" });
+      }
+      res.setHeader("Content-Type", "application/javascript; charset=utf-8");
+      res.setHeader("Content-Disposition", 'attachment; filename="worker.cjs"');
+      res.setHeader("Cache-Control", "no-store");
+      res.send(buf);
+    });
+  });
 
   // ======================================================
   // HEALTH

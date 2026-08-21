@@ -92,6 +92,14 @@ export function formatLastSeen(ts: number | null, now: number = Date.now()): str
 export interface WorkerSetupContract {
   env: { HUB_URL: string; ANIMASTOR_WORKER_TOKEN: string; WORKER_TYPE: WorkerType; WORKER_ID: string };
   steps: readonly string[];
+  /** Where to obtain worker.cjs (served by the GPU Hub itself). */
+  sourceUrl: string;
+  /** Copy-paste command to download worker.cjs. */
+  downloadCommand: string;
+  /** The actual start command matching the worker implementation. */
+  runCommand: string;
+  /** i18n keys of the minimum prerequisites. */
+  prereqs: readonly string[];
 }
 
 export function buildSetupContract(token: string, workerType: WorkerType, workerName: string): WorkerSetupContract {
@@ -110,6 +118,33 @@ export function buildSetupContract(token: string, workerType: WorkerType, worker
       'worker_setup_step_2',
       'worker_setup_step_3',
       'worker_setup_step_4',
+      'worker_setup_step_5',
+    ],
+    sourceUrl: `${HUB_URL}/worker-source`,
+    downloadCommand: `curl -o worker.cjs ${HUB_URL}/worker-source`,
+    runCommand: 'node worker.cjs',
+    prereqs: [
+      'worker_prereq_node',
+      'worker_prereq_comfy',
+      'worker_prereq_models',
     ],
   };
 }
+
+/** Render the copyable env block — EXACTLY the vars worker.cjs reads. */
+export function renderEnvBlock(env: WorkerSetupContract['env']): string {
+  return [
+    `HUB_URL=${env.HUB_URL}`,
+    `ANIMASTOR_WORKER_TOKEN=${env.ANIMASTOR_WORKER_TOKEN}`,
+    `WORKER_TYPE=${env.WORKER_TYPE}`,
+    `WORKER_ID=${env.WORKER_ID}`,
+  ].join('\n');
+}
+
+/** i18n keys of concise troubleshooting hints for a worker stuck OFFLINE. */
+export const OFFLINE_TROUBLESHOOT_KEYS = [
+  'worker_trouble_hub_url',
+  'worker_trouble_token',
+  'worker_trouble_process',
+  'worker_trouble_network',
+] as const;
