@@ -40,7 +40,7 @@ cp .env.example .env
 #   POSTGRES_PASSWORD
 #   WORKSPACE_SECRET_KEY (32+ random chars)
 #   GPU_HUB_API_KEY
-#   LETSENCRYPT_DIR (defaults to /etc/letsencrypt)
+#   LETS_ENCRYPT_DIR (defaults to /etc/letsencrypt)
 ```
 
 ### 3. Obtain TLS certificates
