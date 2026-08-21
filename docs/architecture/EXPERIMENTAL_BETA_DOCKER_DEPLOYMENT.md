@@ -91,17 +91,9 @@ docker compose up -d
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `LETS_ENCRYPT_DIR` | `/etc/letsencrypt` | Host path to TLS certificates |
-| `SUREG_SITE_DIR` | `./data/sureg-placeholder` | Host path to sureg.dev site content (optional domain) |
 | `OPENROUTER_API_KEY` | _(empty)_ | Global AI provider key (fallback; workspaces can carry their own) |
 | `GPU_HUB_API_KEY` | _(empty)_ | Shared secret for backend ↔ GPU Hub |
 | `GPU_TIMEOUT` | `600000` | GPU task hard timeout in ms |
-
-### Sureg.dev (Optional)
-
-sureg.dev is the developer's personal domain, separate from Animastor.
-
-- On a **fresh deployment**: leave `SUREG_SITE_DIR` unset. The placeholder directory will be mounted; sureg.dev server blocks exist in nginx but will serve 404s (harmless).
-- On the **original server**: set `SUREG_SITE_DIR=/home/sureg/sureg-dev/site` in `.env` to restore the existing behavior.
 
 ---
 
@@ -136,12 +128,6 @@ $LETS_ENCRYPT_DIR/live/animastor.in/fullchain.pem
 $LETS_ENCRYPT_DIR/live/animastor.in/privkey.pem
 ```
 
-Optional (only if serving sureg.dev):
-```
-$LETS_ENCRYPT_DIR/live/sureg.dev/fullchain.pem
-$LETS_ENCRYPT_DIR/live/sureg.dev/privkey.pem
-```
-
 ---
 
 ## Domain Routing
@@ -168,10 +154,7 @@ After deployment, verify no personal paths remain in deployment config:
 grep -r '/home/sureg/' docker-compose.yml proxy/ .env*
 ```
 
-Expected result: only the commented-out example in `.env.example`:
-```
-# SUREG_SITE_DIR=/home/sureg/sureg-dev/site
-```
+Expected result: no matches.
 
 ---
 
@@ -180,9 +163,9 @@ Expected result: only the commented-out example in `.env.example`:
 | Before | After |
 |--------|-------|
 | `/home/sureg/net-disk:/net-disk:ro` | **Removed** — net-disk is no longer served |
-| `/home/sureg/sureg-dev/site:/usr/share/nginx/sureg:ro` | `${SUREG_SITE_DIR:-./data/sureg-placeholder}:/usr/share/nginx/sureg:ro` |
+| `/home/sureg/sureg-dev/site:/usr/share/nginx/sureg:ro` | **Removed** — sureg.dev is not part of the Animastor stack |
 | `/etc/letsencrypt:/etc/letsencrypt:ro` | `${LETS_ENCRYPT_DIR:-/etc/letsencrypt}:/etc/letsencrypt:ro` |
-| sureg.dev blocks in `default.conf` | Extracted to `proxy/conf/sureg.conf` (separate include) |
+| sureg.dev blocks in `default.conf` | **Removed** — nginx serves only animastor.in domains |
 
 ---
 
@@ -194,21 +177,8 @@ Expected result: only the commented-out example in `.env.example`:
 - [ ] Basic Auth prompts on `app.animastor.in`
 - [ ] `/library` on `app.animastor.in` is accessible without auth
 - [ ] `animastor.in` serves the public website
-- [ ] No `/home/sureg/` references in deployment config (except `.env.example` comment)
+- [ ] No `/home/sureg/` references in deployment config
 - [ ] Persistent data directories exist and are populated
-
----
-
-## Manual Verification (Current Server Only)
-
-On the original server, verify sureg.dev still works:
-
-```bash
-curl -I https://sureg.dev/
-# Should return 200 with the existing site content
-```
-
-This cannot be automatically tested on a fresh server since sureg.dev requires the original server's DNS, TLS certs, and site content.
 
 ---
 

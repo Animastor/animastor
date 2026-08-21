@@ -8,7 +8,6 @@
 |--------------------|----------------------------------------------------------------------------|------|
 | `animastor.in`     | **Публичный сайт**: landing, документация, публичная Library              | нет  |
 | `app.animastor.in` | **Веб-приложение** — responsive: `MobileShell` / `DesktopShell`             | Basic Auth, кроме `/library` |
-| `sureg.dev`        | **Личный сайт разработчика** — optional, separate from Animastor deployment | нет (отдельный домен) |
 
 Правило: **hostname определяет приложение, viewport определяет presentation**.
 Один frontend, один API, одни stores. Layout зависит только от ширины вьюпорта:

@@ -1,1 +1,0 @@
-# Placeholder for sureg.dev site content.\n# Set SUREG_SITE_DIR in .env to serve sureg.dev from this container.\n# This directory is never used in production — it exists only so the\n# default Docker Compose bind mount succeeds without configuration.
