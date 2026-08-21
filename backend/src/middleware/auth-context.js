@@ -85,7 +85,8 @@ async function authContext(req, res, next) {
         const isContentWrite = req.method === 'POST' || req.method === 'PUT' || req.method === 'PATCH';
         if (isContentWrite && req.path && req.path.startsWith('/api/v1')
             && !req.path.startsWith('/api/v1/auth')
-            && !req.path.startsWith('/api/v1/worker')) {
+            && !req.path.startsWith('/api/v1/worker')
+            && !req.path.startsWith('/api/v1/admin')) {
             const created = await authService.createGuest();
             req.guest = { guestId: created.guestId };
             req.workspace = { ...created.workspace, status: 'active', expiresAt: created.workspaceExpiresAt };
@@ -113,6 +114,31 @@ function isHttpsRequest(req) {
 function requireAuth(req, res, next) {
     if (!req.user) {
         return res.status(401).json({ error: 'Authentication required' });
+    }
+    next();
+}
+
+/**
+ * Require admin middleware (System AI Control / Admin Foundation).
+ * Grants access when the authenticated user has role='admin' OR their
+ * username is listed in the ADMIN_USERNAMES env allowlist (comma-separated,
+ * case-insensitive). Guests and regular users get 403; anonymous gets 401.
+ * The allowlist exists so an operator can grant admin before a password
+ * login exists for the seeded account (the seeded 'developer' user has no
+ * password and cannot log in yet).
+ */
+function requireAdmin(req, res, next) {
+    if (!req.user) {
+        return res.status(401).json({ error: 'Authentication required' });
+    }
+    const allowlist = (process.env.ADMIN_USERNAMES || '')
+        .split(',')
+        .map(s => s.trim().toLowerCase())
+        .filter(Boolean);
+    const isAdminRole = req.user.role === 'admin';
+    const inAllowlist = allowlist.includes(String(req.user.username || '').toLowerCase());
+    if (!isAdminRole && !inAllowlist) {
+        return res.status(403).json({ error: 'Admin access required' });
     }
     next();
 }
@@ -339,6 +365,7 @@ function getCurrentWorkspace(req) {
 module.exports = {
     authContext,
     requireAuth,
+    requireAdmin,
     requireWorkspaceMembership,
     checkBookAccess,
     requireBookAccess,

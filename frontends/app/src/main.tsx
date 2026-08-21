@@ -14,6 +14,7 @@ import { WorkflowTypeListPage } from './pages/WorkflowTypeListPage';
 import { WorkflowDetailsPage } from './pages/WorkflowDetailsPage';
 import { DeveloperViewPage } from './pages/DeveloperViewPage';
 import { AiAssistantPage } from './pages/AiAssistantPage';
+import { AdminPage } from './pages/AdminPage';
 import { applyTheme, applyLanguage } from './app/theme';
 import { wirePlaybackCoordination, wirePlaybackLifecycle } from './state/playbackStore';
 import { restoreBookSession } from './state/generateStore';
@@ -51,6 +52,7 @@ function Routes() {
       <WorkflowTypeListPage path="/workflows/type/:type" />
       <WorkflowDetailsPage path="/workflows/:name" />
       <DeveloperViewPage path="/dev" />
+      <AdminPage path="/admin" />
     </Router>
   );
 }

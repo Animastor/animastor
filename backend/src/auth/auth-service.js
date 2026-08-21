@@ -243,7 +243,7 @@ async function resolveSession(token) {
     if (!row) return null;
     const workspace = await resolveDefaultWorkspace(row.user_id);
     return {
-        user: { userId: row.user_id, username: row.username, displayName: row.display_name },
+        user: { userId: row.user_id, username: row.username, displayName: row.display_name, role: row.role || 'user' },
         workspace: publicWorkspace(workspace),
     };
 }

@@ -300,7 +300,7 @@ describe('Personal AI Provider (Phase 4)', () => {
             expect(lastKey(fetchCalls[0])).to.equal('sk-NEW-rot');
         });
 
-        it('disabled provider falls back to the global env provider (sk-test global)', async () => {
+        it('disabled provider falls back to the system provider (env key, kill switch ON)', async () => {
             process.env.OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || 'sk-global-fallback-test';
             await workspaceAi.upsertProvider(wsA, {
                 providerType: 'openai-compatible',
@@ -309,11 +309,11 @@ describe('Personal AI Provider (Phase 4)', () => {
             });
             installFetchMock(() => okJson({ choices: [{ message: { content: 'ok' } }] }));
             const p = await workspaceAi.resolveAIForWorkspace(wsA);
-            expect(p.source).to.equal('global');
+            expect(p.source).to.equal('system');
             expect(p.apiKey).to.equal(process.env.OPENROUTER_API_KEY);
         });
 
-        it('deleted provider falls back to global; the stored key never reaches the network', async () => {
+        it('deleted provider falls back to system; the stored key never reaches the network', async () => {
             await workspaceAi.upsertProvider(wsA, {
                 providerType: 'openai-compatible',
                 endpoint: 'https://gone.example/v1', apiKey: 'sk-gone-deleted',
@@ -321,7 +321,7 @@ describe('Personal AI Provider (Phase 4)', () => {
             const deleted = await workspaceAi.deleteProvider(wsA);
             expect(deleted).to.equal(true);
             const p = await workspaceAi.resolveAIForWorkspace(wsA);
-            expect(p.source).to.equal('global');
+            expect(p.source).to.equal('system');
             expect(p.apiKey).to.equal(process.env.OPENROUTER_API_KEY);
         });
 
@@ -409,12 +409,12 @@ describe('Personal AI Provider (Phase 4)', () => {
             }
         });
 
-        it('global fallback remains intact for the legacy callers (spec §26 compatibility)', async () => {
+        it('system fallback remains intact for the legacy callers (spec §26 compatibility)', async () => {
             // global env key restored (savedKey set above) — a workspace without
-            // its own provider falls back to global.
+            // its own provider falls back to the gated system provider.
             const wsEmpty = await createWorkspace('paip-empty2');
             const p = await workspaceAi.resolveAIForWorkspace(wsEmpty);
-            expect(p.source).to.equal('global');
+            expect(p.source).to.equal('system');
             expect(p.apiKey).to.equal(process.env.OPENROUTER_API_KEY);
         });
     });

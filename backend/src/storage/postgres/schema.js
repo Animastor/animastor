@@ -85,6 +85,39 @@ CREATE TABLE IF NOT EXISTS workspace_ai_providers (
     updated_at      BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::bigint)
 );
 
+-- System settings (platform-level JSONB key/value store, SYS-1)
+-- Used by the admin kill-switch: 'system_ai' key -> { enabled: boolean }.
+-- Generic enough to host future platform toggles without new tables.
+CREATE TABLE IF NOT EXISTS system_settings (
+    key         TEXT PRIMARY KEY,
+    value       JSONB NOT NULL,
+    updated_at  BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::bigint)
+);
+
+-- System AI provider (platform-level, admin-configured)
+-- One row keyed by id='default'. Stores the encrypted key, model and endpoint
+-- the admin configures for the platform — independent of any workspace.
+-- Reuses the same AES-256-GCM ciphertext envelope as workspace_ai_providers
+-- (encrypted by encryptSecret in workspace-ai-provider.js — see migration
+-- SYS-1 below). Source: env vars still act as a secondary fallback.
+CREATE TABLE IF NOT EXISTS system_ai_providers (
+    id             TEXT PRIMARY KEY DEFAULT 'default',
+    provider_type  TEXT NOT NULL DEFAULT 'openai-compatible',
+    endpoint       TEXT NOT NULL,
+    api_key_enc    TEXT NOT NULL,
+    model          TEXT,
+    status         TEXT NOT NULL DEFAULT 'untested' CHECK(status IN ('untested','ok','failed')),
+    last_tested_at BIGINT,
+    created_at     BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::bigint),
+    updated_at     BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::bigint)
+);
+
+-- Insert the default key only when not yet seeded. The value is the kill-switch
+-- default: ON (preserves existing beta behaviour — explicit, not implicit).
+INSERT INTO system_settings (key, value)
+VALUES ('system_ai', '{"enabled": true}'::jsonb)
+ON CONFLICT (key) DO NOTHING;
+
 -- Sessions (server-side auth sessions, hardened by migration step AM-*)
 CREATE TABLE IF NOT EXISTS sessions (
     session_id      UUID PRIMARY KEY,
@@ -1334,6 +1367,46 @@ async function runMigrations() {
     }
 
     console.log('[PG] Personal AI provider schema initialized');
+
+    // ======================================================
+    // SYS-1: System AI control + provider (kill switch)
+    // ======================================================
+    // Adds two tables behind the admin kill-switch:
+    //   system_settings      — generic JSONB key/value store.
+    //                          Seeded with `system_ai` = { enabled: true } so
+    //                          the existing beta keeps working (explicit
+    //                          switch, default ON; admin flips OFF to cut
+    //                          the cost boundary).
+    //   system_ai_providers  — admin-configured platform provider. AES-256-GCM
+    //                          ciphertext only — the admin UI never sees the
+    //                          plaintext key after saving it.
+    //
+    // The CREATE TABLE IF NOT EXISTS above is idempotent; this migration
+    // block only hardens an existing row (CHECK on status, default seed for
+    // system_ai.enabled, status CHECK for system_ai_providers) and logs.
+    try {
+        await query(`ALTER TABLE system_ai_providers
+            DROP CONSTRAINT IF EXISTS system_ai_providers_status_check`);
+        await query(`ALTER TABLE system_ai_providers
+            ADD CONSTRAINT system_ai_providers_status_check
+            CHECK (status IN ('untested','ok','failed'))`);
+        console.log('[PG] SYS-1: system_ai_providers status check constraint ensured');
+    } catch (err) {
+        if (!err.message.includes('does not exist')) {
+            console.error('[PG] SYS-1 status constraint failed:', err.message);
+        }
+    }
+
+    try {
+        await query(`INSERT INTO system_settings (key, value)
+            VALUES ('system_ai', '{"enabled": true}'::jsonb)
+            ON CONFLICT (key) DO NOTHING`);
+        console.log('[PG] SYS-1: system_settings seeded (system_ai.enabled = true default)');
+    } catch (err) {
+        console.error('[PG] SYS-1 seed failed:', err.message);
+    }
+
+    console.log('[PG] System AI control schema initialized');
 }
 
 module.exports = { runMigrations, SCHEMA_SQL };

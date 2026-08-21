@@ -21,23 +21,34 @@ module.exports = function(app, redis, deps) {
 
     // ── Workspace AI provider (Experimental Beta) ──────────────────────
     // Resolve the provider for the book: its workspace's provider first,
-    // then the global env fallback. Transport separation: the routes only
-    // build endpoint/key/model — the fetch stays local (safeFetch, which
-    // also enforces the SSRF guard on USER-controlled endpoints).
+    // then the GATED system fallback (admin kill switch enforced). Transport
+    // separation: the routes only build endpoint/key/model — the fetch stays
+    // local (safeFetch, which also enforces the SSRF guard on USER-controlled
+    // endpoints). NO env re-fallback here: the resolver is the single source
+    // of truth for the key, so the kill switch cannot be bypassed.
     const workspaceAi = require('../services/workspace-ai-provider');
     const { safeFetch } = require('../services/url-safety');
     async function resolveChatAI(bookId) {
         const provider = bookId
             ? await workspaceAi.resolveAIForBook(bookId)
-            : workspaceAi.globalFallbackProvider();
+            : await workspaceAi.resolveSystemFallback();
         return {
             baseUrl: provider.endpoint || chatEngine.AI_API_BASE_URL,
-            apiKey: provider.apiKey || config.OPENROUTER_API_KEY || process.env.AI_API_KEY || '',
+            apiKey: provider.apiKey || '',
             model: provider.model || process.env.AI_MODEL || 'qwen/qwen3-32b',
+            source: provider.source,
             // Only the user-controlled workspace endpoint is an SSRF surface;
-            // operator-controlled env config (global fallback) is trusted.
+            // operator-controlled env config (system fallback) is trusted.
             validatePublic: provider.source === 'workspace' && !!provider.endpoint,
         };
+    }
+
+    /** 503 guard — no usable AI provider (kill switch OFF / unconfigured). */
+    function aiUnavailable(res) {
+        return res.status(503).json({
+            error: 'AI is currently unavailable. No AI provider is configured or system AI is disabled.',
+            code: 'ai_unavailable',
+        });
     }
 
     const AI_FETCH_TIMEOUT_MS = 60000;
@@ -339,6 +350,7 @@ module.exports = function(app, redis, deps) {
             }
 
             const ai = await resolveChatAI(bookId);
+            if (!ai.apiKey) return aiUnavailable(res);
 
             const controller = new AbortController();
             const timeout = setTimeout(() => controller.abort(), AI_FETCH_TIMEOUT_MS);
@@ -536,12 +548,18 @@ module.exports = function(app, redis, deps) {
                 { role: 'user', content: message },
             ];
 
+            const ai = await resolveChatAI(bookId);
+            if (!ai.apiKey) {
+                return res.status(503).json({
+                    error: 'AI is currently unavailable. No AI provider is configured or system AI is disabled.',
+                    code: 'ai_unavailable',
+                });
+            }
+
             // Set up SSE response
             res.setHeader('Content-Type', 'text/event-stream');
             res.setHeader('Cache-Control', 'no-cache');
             res.setHeader('Connection', 'keep-alive');
-
-            const ai = await resolveChatAI(bookId);
 
             const controller = new AbortController();
             const timeout = setTimeout(() => controller.abort(), AI_FETCH_TIMEOUT_MS);
@@ -785,6 +803,7 @@ module.exports = function(app, redis, deps) {
             }
 
             const ai = await resolveChatAI(book_id);
+            if (!ai.apiKey) return aiUnavailable(res);
 
             // Same timeout contract as chat/stream: a hung provider must not
             // hold the request thread indefinitely.

@@ -18,9 +18,18 @@ const AI_API_BASE_URL = process.env.AI_API_BASE_URL || 'https://api.aicredits.in
 // provider is supplied the call keeps the historical global env behaviour.
 
 async function callAI(messages, options = {}, provider = null) {
-    const apiKey = (provider && provider.apiKey) || config.OPENROUTER_API_KEY;
+    // A passed provider (workspace/personal) always wins — the kill switch
+    // only governs SYSTEM/provider AI. The env fallback is gated behind the
+    // admin kill switch so it can never bypass it.
+    let apiKey = provider && provider.apiKey;
     if (!apiKey) {
-        throw new Error('No AI provider configured (OPENROUTER_API_KEY not set)');
+        const systemAi = require('./system-ai');
+        if (await systemAi.isSystemAiEnabled()) {
+            apiKey = config.OPENROUTER_API_KEY;
+        }
+    }
+    if (!apiKey) {
+        throw new Error('No AI provider configured (system AI disabled or no key configured)');
     }
 
     const model = options.model
@@ -476,7 +485,15 @@ function _healthCacheKey(provider) {
  * @returns {Promise<number>} 1 if alive, 0 if not
  */
 async function checkAIHealth(cfg, provider = null) {
-    const apiKey = (provider && provider.apiKey) || cfg?.OPENROUTER_API_KEY || process.env.OPENROUTER_API_KEY;
+    // Workspace/personal provider keys are always usable; the env fallback is
+    // gated behind the admin kill switch (system AI control).
+    let apiKey = provider && provider.apiKey;
+    if (!apiKey) {
+        const systemAi = require('./system-ai');
+        if (await systemAi.isSystemAiEnabled()) {
+            apiKey = cfg?.OPENROUTER_API_KEY || process.env.OPENROUTER_API_KEY;
+        }
+    }
     if (!apiKey) return 0;
 
     const cacheKey = _healthCacheKey(provider);

@@ -41,11 +41,12 @@ async function bootstrapWithAgent(bookId, progress, publishProgress, redis) {
     }
 
     // AI provider resolution (Experimental Beta): the book's workspace may
-    // carry its own provider; global env config remains the fallback.
+    // carry its own provider; the gated system fallback (admin kill switch)
+    // is the only other source. No hidden env bypass.
     const aiProviderSvc = require('../workspace-ai-provider');
     const aiProvider = await aiProviderSvc.resolveAIForBook(bookId);
     if (!aiProvider.apiKey) {
-        throw new Error('AI assistant is not available — cannot import book (no workspace provider, no global key)');
+        throw new Error('AI assistant is not available — cannot import book (no workspace provider and system AI is disabled or unconfigured)');
     }
 
     // Wrap the pipeline in the resolved provider context: agent/ai-caller
@@ -314,9 +315,13 @@ async function bootstrapNextWindow(bookId, progress, publishProgress, redis) {
     const language = resolveBookLanguage(draft);
 
     // AI provider resolution (Experimental Beta): same contract as
-    // bootstrapWithAgent — workspace provider first, global env fallback.
+    // bootstrapWithAgent — workspace provider first, gated system fallback
+    // second (admin kill switch enforced).
     const aiProviderSvc = require('../workspace-ai-provider');
     const aiProvider = await aiProviderSvc.resolveAIForBook(bookId);
+    if (!aiProvider.apiKey) {
+        throw new Error('AI assistant is not available — cannot continue generation (no workspace provider and system AI is disabled or unconfigured)');
+    }
     // Wrap the whole window run in the provider context so the cached-scene
     // path and the regular AI path (pipeline + unit-splitter) both use it.
     return await require('./ai-caller').runWithProvider(aiProvider, () =>

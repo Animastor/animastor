@@ -68,14 +68,14 @@ async function createSession(userId, expiresAtMs) {
 /**
  * Find a live, unexpired session by raw token.
  * @param {string} token
- * @returns {Promise<object|null>} { session_id, user_id, expires_at, username, display_name, email }
+ * @returns {Promise<object|null>} { session_id, user_id, expires_at, username, display_name, email, role }
  */
 async function findByToken(token) {
     const parsed = parseToken(token);
     if (!parsed) return null;
     const { rows } = await query(`
         SELECT s.session_id, s.user_id, s.expires_at,
-               u.username, u.display_name, u.email
+               u.username, u.display_name, u.email, u.role
         FROM sessions s
         JOIN users u ON u.user_id = s.user_id
         WHERE s.session_id = $1 AND s.token_hash = $2 AND s.revoked_at IS NULL AND s.expires_at > $3

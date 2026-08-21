@@ -179,11 +179,11 @@ describe('Workspace AI Provider', () => {
     });
 
     // 4 ── resolver precedence ──────────────────────────────────────────
-    it('workspace row wins; missing/disabled row degrades to global fallback', async () => {
+    it('workspace row wins; missing/disabled row degrades to system fallback', async () => {
         const wsId = await createWorkspaceRow('wspai-resolve', 'personal');
 
         let p = await workspaceAi.resolveAIForWorkspace(wsId);
-        expect(p.source).to.equal('global');
+        expect(p.source).to.equal('system');
         expect(p.apiKey).to.equal(process.env.OPENROUTER_API_KEY || null);
 
         await workspaceAi.upsertProvider(wsId, { endpoint: 'https://ws.example/v1', apiKey: 'sk-ws', model: 'ws-model' });
@@ -193,22 +193,22 @@ describe('Workspace AI Provider', () => {
         expect(p.apiKey).to.equal('sk-ws');
         expect(p.model).to.equal('ws-model');
 
-        // disable → global
+        // disable → system fallback
         await workspaceAi.upsertProvider(wsId, { enabled: false });
         p = await workspaceAi.resolveAIForWorkspace(wsId);
-        expect(p.source).to.equal('global');
+        expect(p.source).to.equal('system');
 
-        // corrupted ciphertext → global (never crash)
+        // corrupted ciphertext → system fallback (never crash)
         await query(`UPDATE workspace_ai_providers SET api_key_enc = 'garbage' WHERE workspace_id = $1`, [wsId]);
         workspaceAi.invalidateCache(wsId);
         p = await workspaceAi.resolveAIForWorkspace(wsId);
-        expect(p.source).to.equal('global');
+        expect(p.source).to.equal('system');
 
         await query(`DELETE FROM workspace_ai_providers WHERE workspace_id = $1`, [wsId]);
     });
 
     // 4b ── book resolution follows the owning workspace ────────────────
-    it('resolveAIForBook resolves the book workspace provider; unknown book → global', async () => {
+    it('resolveAIForBook resolves the book workspace provider; unknown book → system fallback', async () => {
         const bookId = `wspai-${stamp}-book`;
         await query(`INSERT INTO books (book_id, workspace_id) VALUES ($1, $2)`, [bookId, bookWorkspaceId]);
         await workspaceAi.upsertProvider(bookWorkspaceId, { endpoint: 'https://bookws.example/v1', apiKey: 'sk-bookws' });
@@ -218,7 +218,7 @@ describe('Workspace AI Provider', () => {
         expect(p.apiKey).to.equal('sk-bookws');
 
         const unknown = await workspaceAi.resolveAIForBook('wspai-nonexistent-book-id');
-        expect(unknown.source).to.equal('global');
+        expect(unknown.source).to.equal('system');
 
         await query(`DELETE FROM books WHERE book_id = $1`, [bookId]);
     });

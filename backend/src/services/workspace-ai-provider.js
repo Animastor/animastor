@@ -106,6 +106,48 @@ function maskKey(plain) {
     return '••••' + s.slice(-4);
 }
 
+/**
+ * No-provider snapshot — returned when neither a workspace provider nor a
+ * usable system provider exists (kill switch OFF, or nothing configured).
+ * Callers must treat `apiKey === null` as "AI unavailable" and fail with a
+ * clear message instead of silently attempting a call.
+ */
+function noProvider() {
+    return {
+        source: 'none',
+        provider: null,
+        endpoint: null,
+        apiKey: null,
+        model: FALLBACK_MODEL,
+        workspaceId: null,
+    };
+}
+
+/**
+ * Gated system/provider fallback (System AI Control).
+ * Delegates to the system-ai service which enforces the admin kill switch:
+ *   - kill switch OFF  → null → noProvider()
+ *   - kill switch ON   → admin-configured system provider, else env key, else null
+ * Never throws — degrades to noProvider() on any resolution error.
+ * @returns {Promise<{source:string, provider:string|null, endpoint:string|null, apiKey:string|null, model:string|null, workspaceId:null}>}
+ */
+async function resolveSystemFallback() {
+    try {
+        const systemAi = require('./system-ai');
+        const p = await systemAi.resolveSystemProvider();
+        if (p) return p; // source: 'system'
+    } catch (err) {
+        console.error('[WORKSPACE-AI] system fallback resolution failed:', err.message);
+    }
+    return noProvider();
+}
+
+/**
+ * Legacy sync global fallback. Kept for backward compatibility with callers
+ * that still reference it, but the resolver no longer uses it — all fallback
+ * now goes through the gated resolveSystemFallback(). New code should not
+ * call this directly.
+ */
 function globalFallbackProvider() {
     return {
         source: 'global',
@@ -120,9 +162,11 @@ function globalFallbackProvider() {
 function buildWorkspaceProvider(row) {
     const apiKey = decryptSecret(row.api_key_enc);
     if (!apiKey) {
-        // Rotated key or corrupted ciphertext — degrade to global, never crash.
+        // Rotated key or corrupted ciphertext — the workspace row is unusable.
+        // Return null so the resolver falls through to the gated system
+        // fallback instead of silently using a global env key.
         console.warn(`[WORKSPACE-AI] Failed to decrypt provider key for workspace ${row.workspace_id}`);
-        return globalFallbackProvider();
+        return null;
     }
     return {
         source: 'workspace',
@@ -145,6 +189,11 @@ function cacheSet(workspaceId, provider) {
 
 function invalidateCache(workspaceId) {
     _cache.delete(workspaceId);
+}
+
+/** Clear the ENTIRE workspace resolver cache (admin kill-switch toggle). */
+function invalidateAllCache() {
+    _cache.clear();
 }
 
 // ── repository ──────────────────────────────────────────────────────────
@@ -294,12 +343,13 @@ async function deleteProvider(workspaceId) {
 // ── resolver (transport layer / callers) ────────────────────────────────
 
 /**
- * Resolve the AI provider for a workspace: workspace row first, global env
- * fallback second. Never throws on config errors (degrades to global).
- * @returns {Promise<{source:string, provider:string, endpoint:string|null, apiKey:string|null, model:string|null, workspaceId:string|null}>}
+ * Resolve the AI provider for a workspace: workspace row first, then the
+ * GATED system fallback (admin kill switch enforced). Never throws on config
+ * errors (degrades to the system fallback / noProvider).
+ * @returns {Promise<{source:string, provider:string|null, endpoint:string|null, apiKey:string|null, model:string|null, workspaceId:string|null}>}
  */
 async function resolveAIForWorkspace(workspaceId) {
-    if (!workspaceId) return globalFallbackProvider();
+    if (!workspaceId) return resolveSystemFallback();
 
     const cached = _cache.get(workspaceId);
     if (cached && Date.now() - cached.resolvedAt < CACHE_TTL_MS) {
@@ -310,14 +360,16 @@ async function resolveAIForWorkspace(workspaceId) {
     try {
         const row = await getRow(workspaceId);
         if (row && row.enabled !== false) {
-            provider = buildWorkspaceProvider(row);
-        } else {
-            provider = globalFallbackProvider();
+            provider = buildWorkspaceProvider(row); // null on decrypt failure
+        }
+        if (!provider) {
+            provider = await resolveSystemFallback();
         }
         provider.workspaceId = workspaceId;
     } catch (err) {
-        console.error(`[WORKSPACE-AI] resolve for ${workspaceId} failed, using global:`, err.message);
-        provider = globalFallbackProvider();
+        console.error(`[WORKSPACE-AI] resolve for ${workspaceId} failed, using system fallback:`, err.message);
+        provider = await resolveSystemFallback();
+        provider.workspaceId = workspaceId;
     }
 
     cacheSet(workspaceId, provider);
@@ -326,21 +378,21 @@ async function resolveAIForWorkspace(workspaceId) {
 
 /**
  * Resolve the provider for a book: book → its workspace → provider.
- * Pre-auth / unresolvable book → global fallback (legacy behaviour).
+ * Pre-auth / unresolvable book → gated system fallback.
  * allowCreate=false: resolution must never seed registry rows for ghost
  * book ids (old sessions pointing at deleted books) — when the book is
- * unregistered, the global fallback applies (same as before Beta).
+ * unregistered, the system fallback applies.
  */
 async function resolveAIForBook(bookId) {
-    if (!bookId) return globalFallbackProvider();
+    if (!bookId) return resolveSystemFallback();
     try {
         const ownership = require('../middleware/workspace-ownership');
         const workspaceId = await ownership.resolveWorkspaceForBook(bookId, { allowCreate: false });
-        if (!workspaceId) return globalFallbackProvider();
+        if (!workspaceId) return resolveSystemFallback();
         return await resolveAIForWorkspace(workspaceId);
     } catch (err) {
-        console.error(`[WORKSPACE-AI] resolveForBook(${bookId}) failed, using global:`, err.message);
-        return globalFallbackProvider();
+        console.error(`[WORKSPACE-AI] resolveForBook(${bookId}) failed, using system fallback:`, err.message);
+        return resolveSystemFallback();
     }
 }
 
@@ -465,6 +517,8 @@ module.exports = {
     encryptSecret,
     decryptSecret,
     globalFallbackProvider,
+    noProvider,
+    resolveSystemFallback,
     upsertProvider,
     deleteProvider,
     getProviderMeta,
@@ -475,6 +529,7 @@ module.exports = {
     hasUsableApiKey,
     testConnection,
     invalidateCache,
+    invalidateAllCache,
     maskKey,
     normalizeProviderType,
     sanitizeTestError,
