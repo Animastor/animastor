@@ -745,6 +745,72 @@ Reuse existing orchestration infrastructure.
 
 Do not create a second worker system.
 
+> **Status: IMPLEMENTED (Phase 1 + 2 + 3).**
+>
+> **Identity & auth (Phase 1, commit `feat(beta): add private worker identity
+> and auth`):** the `workers` table (real PW-1 migration — UUID PK, workspace_id
+> FK ON DELETE CASCADE, token_hash UNIQUE, mode/type CHECKs, token_prefix,
+> revoked_at). Credential contract `wrk.<worker_id_b64>.<secret_b64>` (32-byte
+> secret, SHA-256 hash stored only — never the raw token); `worker-repo`
+> issue/parse/rotate/revoke with timing-safe lookup; `worker-auth` service +
+> `requireWorkerAuth` middleware — fail-closed boundary; Redis mirror
+> `animastor:worker-auth` for the hub hot path.
+>
+> **Workspace-aware job ownership (Phase 2, commit `feat(beta): add
+> workspace-aware job ownership`):** dispatch routing — a workspace with an
+> active private worker of the task type flows to its private queue, otherwise
+> to the operator's system pool (backward compatible); gpu-hub Bearer auth.
+>
+> **Worker management UX (Phase 3, commit `feat(beta): add private worker
+> management`):** turns the Phase 1 backend into a usable user capability.
+>
+>   - **Backend management API** (`backend/src/routes/worker-routes.cjs`):
+>     `POST /api/v1/workers` (create + one-time credential), `GET
+>     /api/v1/workers` (list own), `GET /api/v1/workers/:workerId` (detail
+>     — Phase 3), `POST /api/v1/workers/:workerId/rotate` (new one-time
+>     credential; old dies immediately), `DELETE
+>     /api/v1/workers/:workerId` (revoke — soft delete, kept for audit).
+>     Registered users only; **workspace_id always server-resolved** from
+>     `req.workspace` (authContext) — never from the body/query. Foreign /
+>     unknown ids answer a single indistinct 404 (no existence oracle).
+>   - **Operational status (ONLINE / OFFLINE / REVOKED)** — DERIVED, never
+>     authoritative: `REVOKED` when `revoked_at` is set; otherwise `ONLINE`
+>     while the live Redis heartbeat key
+>     `animastor:worker:heartbeat:<type>:<worker_id>` exists (the GPU hub
+>     refreshes it every 10s with a 30s TTL on each `/beacon`), else
+>     `OFFLINE`. Fail closed: a Redis outage → `OFFLINE`, never an
+>     unsolicited `ONLINE`. **Authorization is always decided by the
+>     credential / revocation, never by this status.**
+>   - **Frontend** (`frontends/app/src/features/workers/`): a new
+>     `/settings/private-workers` section in SettingsPage — list of the
+>     caller's workers (name, status pill, type, last-seen), Add / Rotate /
+>     Revoke (with confirmation), and a one-time credential disclosure modal
+>     with the worker setup contract.
+>   - **Credential lifecycle / secret UX:** the plaintext credential is
+>     returned by the server ONLY on create/rotate and lives transiently in
+>     React `useState` (component memory) only while the modal is open; the
+>     Done action clears it. It is NEVER written to localStorage /
+>     sessionStorage / the URL / Redux / IndexedDB, and never logged. List
+>     and detail responses never return the token (only `token_prefix`).
+>   - **Worker setup contract** (kept in parity with `worker/worker/worker.cjs`):
+>     `HUB_URL` (the GPU hub origin, `${origin}/gpu` in prod / proxied in dev),
+>     `ANIMASTOR_WORKER_TOKEN` (the `wrk.*` credential, passed as a Bearer
+>     header — never in the URL), `WORKER_TYPE` (`audio`/`image`/`video`),
+>     `WORKER_ID` (a label). The UI presents these exact names + a 4-step
+>     sequence; no second incompatible configuration format.
+>   - **Tests:** `backend/tests/private-worker-phase3.test.js` (21 passing)
+>     — list/create/rotate/revoke cross-workspace isolation, credential
+>     one-time disclosure, detail endpoint, revoked-cannot-authenticate,
+>     derived status matrix; `frontends/app/src/features/workers/privateWorkers.test.ts`
+>     (create-input validation, token contract, status classification,
+>     last-seen formatting, setup-contract env parity with `worker.cjs`).
+>
+> **Out of scope for Phase 3** (separate phases): Share Workers, GPU
+> marketplace, billing, Admin UI, System Workers UI, system AI providers,
+> Docker packaging, a Home Worker installer, automatic GPU discovery and AI
+> provider settings. Revoke ≠ destructive delete (revoked rows stay for
+> audit); hard delete is intentionally absent.
+
 ---
 
 ## Phase D — End-to-End Beta Test

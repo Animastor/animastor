@@ -11,15 +11,17 @@ import { Modal, toast } from '../lib/ui';
 import { workerType } from '../app/routeState';
 import { navigate } from '../app/router';
 import type { Route } from '../app/router';
+import { PrivateWorkersSection } from '../features/workers/PrivateWorkersSection';
 
 // SettingsPage covers: /settings (general), /settings/vbook (section="vbook"),
-// /settings/worker (section="worker"). 1:1 with SettingsFragment +
-// VBookSettingsFragment + WorkerSettingsFragment (stage 1).
+// /settings/worker (section="worker"), /settings/ai (section="ai"),
+// /settings/private-workers (section="private-workers", Phase 3).
 export function SettingsPage(props: { section?: string; path?: string }) {
   const { section } = props;
   if (section === 'vbook') return <VBookSection />;
   if (section === 'worker') return <WorkerSection />;
   if (section === 'ai') return <AIProviderSection />;
+  if (section === 'private-workers') return <PrivateWorkersSection />;
   return <GeneralSection />;
 }
 
@@ -136,6 +138,7 @@ function GeneralSection() {
         <div class="settings__group">
           <NavRow label={t('vbook_settings_title')} onClick={() => navigate('/settings/vbook')} />
           <NavRow label={t('worker_settings_title')} onClick={() => navigate('/settings/worker')} />
+          <NavRow label={t('worker_mgmt_title')} onClick={() => navigate('/settings/private-workers')} />
           <NavRow label={t('ai_provider_title')} onClick={() => navigate('/settings/ai')} />
         </div>
 

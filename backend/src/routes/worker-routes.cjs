@@ -1,12 +1,13 @@
 // ======================================================
-// ANIMASTOR BACKEND — PRIVATE WORKER ROUTES (Experimental Beta — Phase 1)
+// ANIMASTOR BACKEND — PRIVATE WORKER ROUTES (Experimental Beta)
 // ======================================================
 // Registration & lifecycle for private workers of the CALLER'S workspace:
 //
-//   POST   /api/v1/workers                 — create worker + issue credential
-//   GET    /api/v1/workers                 — list (never returns secrets)
-//   POST   /api/v1/workers/:workerId/rotate — new credential (old dies)
-//   DELETE /api/v1/workers/:workerId       — revoke (immediate)
+//   POST   /api/v1/workers                       — create worker + issue credential (one-time)
+//   GET    /api/v1/workers                       — list (never returns secrets)
+//   GET    /api/v1/workers/:workerId             — one worker detail (never returns secrets)
+//   POST   /api/v1/workers/:workerId/rotate      — new credential (old dies; one-time)
+//   DELETE /api/v1/workers/:workerId             — revoke (immediate; soft delete)
 //
 // Identity rules (Phase 1 invariants):
 //   - requireAuth: REGISTERED USERS ONLY. Guests may NOT create workers — a
@@ -19,11 +20,21 @@
 //   - The plaintext credential is returned ONLY by the create/rotate
 //     responses; every other response carries at most token_prefix.
 //
+// Operational status (Phase 3):
+//   REVOKED — revoked_at is set (authorization dead; liveness irrelevant);
+//   ONLINE  — the live Redis heartbeat key exists (the GPU hub refreshes it
+//             every 10s with a 30s TTL while the worker beacons);
+//   OFFLINE — no live heartbeat seen (fail closed: Redis outage → OFFLINE,
+//             never an unsolicited ONLINE).
+//   The status is a DERIVED liveness hint ONLY — authorization is ALWAYS
+//   decided by the credential / revocation, never by this status.
+//
 // Usage:
 //   require('./routes/worker-routes.cjs')(app, redis);
 
 const workerRepo = require('../storage/postgres/repositories/worker-repo');
 const workerAuth = require('../services/worker-auth');
+const config = require('../config/runtime-config');
 
 const MAX_NAME_LEN = 120;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -46,8 +57,37 @@ function userWorkspaceGuard(req, res) {
     return req.workspace.id;
 }
 
-/** Public worker shape — never includes token_hash or the raw credential. */
-function publicWorker(row) {
+/**
+ * Derived operational liveness for a worker row.
+ * Returns { status: 'ONLINE'|'OFFLINE'|'REVOKED', last_seen: number|null }.
+ * A revoked worker has status REVOKED regardless of any heartbeat. Otherwise
+ * the live Redis heartbeat key drives ONLINE/OFFLINE (the GPU hub writes
+ * `animastor:worker:heartbeat:<type>:<worker_id>` on every beacon, TTL 30s).
+ * Any Redis error → OFFLINE (never an unsolicited ONLINE).
+ */
+async function liveInfo(redis, row) {
+    if (row.revoked_at != null) {
+        return { status: 'REVOKED', last_seen: null };
+    }
+    try {
+        const key = config.WORKER_HEARTBEAT_KEY(row.worker_type, row.worker_id);
+        const raw = await redis.get(key);
+        if (raw) {
+            let ts = null;
+            try { ts = JSON.parse(raw).ts; } catch (_) { /* keep null */ }
+            return { status: 'ONLINE', last_seen: (typeof ts === 'number' ? ts : Date.now()) };
+        }
+    } catch (_) { /* non-fatal — treat as offline */ }
+    return { status: 'OFFLINE', last_seen: row.last_seen != null ? Number(row.last_seen) : null };
+}
+
+/**
+ * Public worker shape — never includes token_hash or the raw credential.
+ * The Operational `status` is DERIVED (ONLINE/OFFLINE/REVOKED); the raw DB
+ * `status` column (online/offline/busy/error) is intentionally NOT exposed.
+ */
+async function publicWorker(redis, row) {
+    const live = await liveInfo(redis, row);
     return {
         worker_id: row.worker_id,
         workspace_id: row.workspace_id,
@@ -55,9 +95,9 @@ function publicWorker(row) {
         worker_type: row.worker_type,
         capabilities: row.capabilities || null,
         mode: row.mode,
-        status: row.status,
+        status: live.status,
         token_prefix: row.token_prefix || null,
-        last_seen: row.last_seen != null ? Number(row.last_seen) : null,
+        last_seen: live.last_seen,
         revoked_at: row.revoked_at != null ? Number(row.revoked_at) : null,
         created_at: row.created_at != null ? Number(row.created_at) : null,
     };
@@ -93,7 +133,7 @@ module.exports = function(app, redis) {
             });
             await workerAuth.mirrorPut(redis, { ...worker, token_hash: workerRepo.parseToken(token).secretHash });
             res.status(201).json({
-                worker: publicWorker(worker),
+                worker: await publicWorker(redis, worker),
                 token, // one-time disclosure — never returned again
             });
         } catch (err) {
@@ -108,10 +148,31 @@ module.exports = function(app, redis) {
         if (!workspaceId) return;
         try {
             const rows = await workerRepo.listByWorkspace(workspaceId);
-            res.json({ workers: rows.map(publicWorker) });
+            const workers = await Promise.all(rows.map((r) => publicWorker(redis, r)));
+            res.json({ workers });
         } catch (err) {
             console.error('[WORKERS] list failed:', err.message);
             res.status(500).json({ error: 'Failed to list workers' });
+        }
+    });
+
+    // ── GET one worker detail (caller's workspace only) ─────────────────
+    app.get('/api/v1/workers/:workerId', async (req, res) => {
+        const workspaceId = userWorkspaceGuard(req, res);
+        if (!workspaceId) return;
+        if (!UUID_RE.test(req.params.workerId)) {
+            return res.status(404).json({ error: 'Worker not found' });
+        }
+        try {
+            const row = await workerRepo.findById(req.params.workerId);
+            if (!row || row.workspace_id !== workspaceId) {
+                // Foreign/unknown — one indistinct answer (no existence oracle).
+                return res.status(404).json({ error: 'Worker not found' });
+            }
+            res.json({ worker: await publicWorker(redis, row) });
+        } catch (err) {
+            console.error('[WORKERS] detail failed:', err.message);
+            res.status(500).json({ error: 'Failed to load worker' });
         }
     });
 
@@ -134,14 +195,14 @@ module.exports = function(app, redis) {
                 ...result.worker,
                 token_hash: workerRepo.parseToken(result.token).secretHash,
             });
-            res.json({ worker: publicWorker(result.worker), token: result.token });
+            res.json({ worker: await publicWorker(redis, result.worker), token: result.token });
         } catch (err) {
             console.error('[WORKERS] rotate failed:', err.message);
             res.status(500).json({ error: 'Failed to rotate worker credential' });
         }
     });
 
-    // ── DELETE revoke worker (immediate) ────────────────────────────────
+    // ── DELETE revoke worker (immediate; soft delete — kept for audit) ───
     app.delete('/api/v1/workers/:workerId', async (req, res) => {
         const workspaceId = userWorkspaceGuard(req, res);
         if (!workspaceId) return;
