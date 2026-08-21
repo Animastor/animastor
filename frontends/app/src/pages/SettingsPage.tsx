@@ -12,6 +12,15 @@ import { workerType } from '../app/routeState';
 import { navigate } from '../app/router';
 import type { Route } from '../app/router';
 import { PrivateWorkersSection } from '../features/workers/PrivateWorkersSection';
+import {
+  PROVIDER_TYPE_OPTIONS,
+  OPENROUTER_DEFAULT_ENDPOINT,
+  validateProviderInput,
+  describeTestResult,
+  statusLabel,
+  formatLastTested,
+} from '../features/aiProviders/aiProviders';
+import type { ProviderType, ProviderStatus } from '../features/aiProviders/aiProviders';
 
 // SettingsPage covers: /settings (general), /settings/vbook (section="vbook"),
 // /settings/worker (section="worker"), /settings/ai (section="ai"),
@@ -195,24 +204,33 @@ function NavRow({ label, onClick }: { label: string; onClick: () => void }) {
 }
 
 // ─────────────────────────────────────────────────────────────
-// /settings/ai — AI Provider (Experimental Beta — Milestone 1)
-// Workspace-scoped LLM provider + endpoint + model; the key is stored
-// encrypted server-side and is NEVER returned (only a masked hint).
+// /settings/ai — AI Provider (Experimental Beta — Phase 4)
+// Workspace-scoped LLM provider + endpoint + model + provider_type; the key
+// is stored encrypted server-side and is NEVER returned (only a masked hint
+// + a `configured`/`status`/`last_tested_at` pill). Provider_type is the
+// spec §3 / §14 distinction: openrouter | openai-compatible | custom.
 // ─────────────────────────────────────────────────────────────
 
 interface AiProviderMeta {
   workspace_id: string;
   provider: string;
+  provider_type: string;
   endpoint: string;
   model: string | null;
   enabled: boolean;
+  configured: boolean;
   has_api_key: boolean;
   api_key_masked: string;
+  status: ProviderStatus;
+  last_tested_at: number | null;
 }
 interface AiProviderRead { provider: AiProviderMeta | null; has_workspace_provider: boolean }
 interface AiProviderTest { ok: boolean; model?: string; status?: number; error?: string }
 
 function AIProviderSection() {
+  // Provider type selector — defaults to openai-compatible (spec §3 first
+  // documented example is openrouter, but the user picks in the dropdown).
+  const [providerType, setProviderType] = useState<ProviderType>('openai-compatible');
   const [endpoint, setEndpoint] = useState('');
   const [apiKey, setApiKey] = useState('');
   const [model, setModel] = useState('');
@@ -229,10 +247,12 @@ function AIProviderSection() {
       try {
         const res = await getJson<AiProviderRead>('/settings/ai/provider');
         if (!alive) return;
-        setSaved(res.provider ?? null);
-        if (res.provider) {
-          setEndpoint(res.provider.endpoint || '');
-          setModel(res.provider.model || '');
+        const meta = res.provider ?? null;
+        setSaved(meta);
+        if (meta) {
+          setProviderType((meta.provider_type as ProviderType) || 'openai-compatible');
+          setEndpoint(meta.endpoint || '');
+          setModel(meta.model || '');
         }
       } catch (e) {
         if (alive) setError((e as Error).message);
@@ -245,11 +265,23 @@ function AIProviderSection() {
 
   const onSave = async () => {
     if (busy) return;
+    // Validate on the client first (spec §16 — http(s) only, type allowlist,
+    // key required on a fresh ADD). The backend re-validates everything.
+    const v = validateProviderInput({
+      providerType, endpoint, apiKey, model, isExisting: !!saved,
+    });
+    if (!v.ok) { setError(t(v.error as StrKey)); return; }
     setBusy(true); setError(''); setNotice('');
     try {
-      const body: Record<string, unknown> = { endpoint, model: model || null };
-      if (apiKey.trim()) body.api_key = apiKey.trim();
+      const body: Record<string, unknown> = {
+        provider_type: v.body.provider_type,
+        endpoint: v.body.endpoint,
+        model: v.body.model,
+      };
+      if (v.body.api_key) body.api_key = v.body.api_key;
       const res = await putJson<{ provider: AiProviderMeta }>('/settings/ai/provider', body);
+      // SECURITY INVARIANT (spec §5): immediately drop the API key from React
+      // state — the saved meta only carries the masked hint + configured flag.
       setSaved(res.provider);
       setApiKey('');
       setNotice(t('ai_provider_key_saved'));
@@ -266,6 +298,7 @@ function AIProviderSection() {
     try {
       await deleteJson('/settings/ai/provider');
       setSaved(null);
+      setProviderType('openai-compatible');
       setEndpoint(''); setApiKey(''); setModel('');
     } catch (e) {
       setError((e as Error).message);
@@ -283,14 +316,34 @@ function AIProviderSection() {
       if (apiKey.trim()) body.api_key = apiKey.trim();
       if (model) body.model = model;
       const res = await postJson<AiProviderTest>('/settings/ai/test', body);
-      if (res.ok) setNotice(t('ai_provider_test_ok') + (res.model ? ` · ${res.model}` : ''));
-      else setError(tf('ai_provider_test_fail', res.error || `${res.status ?? ''}`));
+      const r = describeTestResult(res);
+      if (r.kind === 'ok') setNotice(t('ai_provider_test_ok') + (res.model ? ` · ${res.model}` : ''));
+      else setError(tf('ai_provider_test_fail', r.text));
+      // Re-read meta so the status pill (ok/failed/untested) + last_tested_at
+      // reflect what the backend persisted on Test Connection.
+      try {
+        const meta = await getJson<AiProviderRead>('/settings/ai/provider');
+        if (meta.provider) setSaved(meta.provider);
+      } catch { /* status pill is best-effort */ }
     } catch (e) {
       setError(tf('ai_provider_test_fail', (e as Error).message));
     } finally {
       setTesting(false);
     }
   };
+
+  // Changing provider_type autofills the OpenRouter default endpoint (spec §14)
+  // ONLY when the endpoint field is empty or still holds the OpenRouter default.
+  const onTypeChange = (next: ProviderType) => {
+    setProviderType(next);
+    if (next === 'openrouter' && (!endpoint || endpoint === 'https://api.example.com/v1')) {
+      setEndpoint(OPENROUTER_DEFAULT_ENDPOINT);
+    } else if (next !== 'openrouter' && endpoint === OPENROUTER_DEFAULT_ENDPOINT) {
+      setEndpoint('');
+    }
+  };
+
+  const statusPill = saved ? statusLabel(saved.status) : null;
 
   return (
     <section class="page settings-page">
@@ -309,11 +362,30 @@ function AIProviderSection() {
                   : t('ai_provider_none')}
               </p>
 
+              {saved && statusPill && (
+                <p class="card__hint">
+                  {t('ai_provider_last_tested')}: {formatLastTested(saved.last_tested_at)} · {t(statusPill.i18nKey)}
+                </p>
+              )}
+
+              <p class="card__label">{t('ai_provider_type')}</p>
+              <select
+                class="select"
+                value={providerType}
+                aria-label={t('ai_provider_type')}
+                disabled={busy}
+                onChange={(e) => onTypeChange((e.target as HTMLSelectElement).value as ProviderType)}
+              >
+                {PROVIDER_TYPE_OPTIONS.map(({ type, labelKey }) => (
+                  <option key={type} value={type}>{t(labelKey)}</option>
+                ))}
+              </select>
+
               <p class="card__label">{t('ai_provider_endpoint')}</p>
               <input
                 class="settings__input"
                 value={endpoint}
-                placeholder="https://api.example.com/v1"
+                placeholder={providerType === 'openrouter' ? OPENROUTER_DEFAULT_ENDPOINT : 'https://api.example.com/v1'}
                 aria-label={t('ai_provider_endpoint')}
                 disabled={busy}
                 onInput={(e) => setEndpoint((e.target as HTMLInputElement).value)}
@@ -330,6 +402,9 @@ function AIProviderSection() {
                 disabled={busy}
                 onInput={(e) => setApiKey((e.target as HTMLInputElement).value)}
               />
+              {saved?.configured && (
+                <p class="card__hint">{t('ai_provider_configured')}</p>
+              )}
 
               <p class="card__label">{t('ai_provider_model')}</p>
               <input
