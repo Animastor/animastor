@@ -596,4 +596,55 @@ interface BackendApi {
 
     @GET("/api/v1/auth/me")
     suspend fun me(): AuthMe
+
+    // ======================================================
+    // Workspace AI Provider (Experimental Beta — Phase 4)
+    // ======================================================
+    // Web parity: frontends/app features/aiProviders + /settings/ai. The
+    // workspace id is ALWAYS server-resolved from the session cookie — never
+    // sent by the client. The plaintext api_key travels only in the PUT body
+    // (one-time entry) and is never returned (meta carries the masked hint).
+
+    @GET("/api/v1/settings/ai/provider")
+    suspend fun getAiProvider(): AiProviderRead
+
+    @PUT("/api/v1/settings/ai/provider")
+    suspend fun putAiProvider(
+        @Body body: Map<String, @JvmSuppressWildcards Any?>
+    ): AiProviderUpsertResponse
+
+    @HTTP(method = "DELETE", path = "/api/v1/settings/ai/provider", hasBody = false)
+    suspend fun deleteAiProvider(): AiProviderDeleteResponse
+
+    @POST("/api/v1/settings/ai/test")
+    suspend fun testAiProvider(
+        @Body body: Map<String, @JvmSuppressWildcards Any?>
+    ): AiProviderTestResponse
+
+    // ======================================================
+    // Private Workers (Experimental Beta — Phase 3)
+    // ======================================================
+    // Web parity: frontends/app features/workers + /settings/private-workers.
+    // Registered users only (guests get 401/403 by design). The plaintext
+    // token is disclosed ONE time by create/rotate; list/detail carry at most
+    // token_prefix.
+
+    @GET("/api/v1/workers")
+    suspend fun listWorkers(): PrivateWorkerListResponse
+
+    @POST("/api/v1/workers")
+    suspend fun createWorker(
+        @Body request: CreateWorkerRequest
+    ): CreateWorkerResponse
+
+    @POST("/api/v1/workers/{workerId}/rotate")
+    suspend fun rotateWorker(
+        @Path("workerId") workerId: String,
+        @Body body: Map<String, @JvmSuppressWildcards Any?>
+    ): RotateWorkerResponse
+
+    @HTTP(method = "DELETE", path = "/api/v1/workers/{workerId}", hasBody = false)
+    suspend fun revokeWorker(
+        @Path("workerId") workerId: String
+    ): RevokeWorkerResponse
 }

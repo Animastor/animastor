@@ -108,6 +108,23 @@ class SettingsFragment : Fragment(R.layout.fragment_settings) {
                 .addToBackStack(null)
                 .commit()
         }
+        // Experimental Beta (web parity: /settings/private-workers and
+        // /settings/ai nav rows) — private worker management and the
+        // workspace AI provider configuration.
+        b.privateWorkersButton.setOnClickListener {
+            val fragment = PrivateWorkersFragment()
+            parentFragmentManager.beginTransaction()
+                .add(R.id.nav_host_container, fragment, "PrivateWorkersFragment")
+                .addToBackStack(null)
+                .commit()
+        }
+        b.aiProviderButton.setOnClickListener {
+            val fragment = AiProviderSettingsFragment()
+            parentFragmentManager.beginTransaction()
+                .add(R.id.nav_host_container, fragment, "AiProviderSettingsFragment")
+                .addToBackStack(null)
+                .commit()
+        }
 
         b.clearCacheButton.setOnClickListener {
             if (viewModel.bookId.isBlank()) {

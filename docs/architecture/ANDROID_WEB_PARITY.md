@@ -119,6 +119,16 @@ Android is missing exactly the two bolded steps' management UIs.
 7. Pure-helper JUnit tests (validation, token shape) — same convention as
    `PlayerGateTest.kt` / web `privateWorkers.test.ts`.
 
+**Status: implemented** (Checkpoint C). Files: `AiProviderModels.kt`,
+`PrivateWorkerModels.kt`, `BackendApi.kt` (+8 endpoints),
+`BetaSettingsHelpers.kt` (pure, JVM-tested — `BetaSettingsHelpersTest.kt`,
+15 tests), `AiProviderSettingsFragment` + `fragment_ai_provider_settings.xml`,
+`PrivateWorkersFragment` + `fragment_private_workers.xml` +
+`item_private_worker.xml`, `SettingsFragment` nav rows, en+ru strings.
+Verified: `assembleDebug` green; live contract smoke test against the running
+stack (register → GET/PUT/DELETE settings/ai/provider → POST settings/ai/test
+→ workers create/rotate/revoke) — all response shapes match the Kotlin models.
+
 Security invariants to keep (identical to web):
 - API key / worker token are ONE-TIME entries; never written to
   SharedPreferences, files, logs or URLs; cleared from view state after use.
