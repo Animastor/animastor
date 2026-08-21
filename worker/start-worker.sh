@@ -35,6 +35,31 @@ mkdir -p $BASE_DIR/worker
 cd $BASE_DIR/worker || exit 1
 
 # ======================================================
+# 1.5. LOAD .env (worker-local configuration)
+# ======================================================
+# The Private Worker credential (ANIMASTOR_WORKER_TOKEN) and optional
+# overrides (HUB_URL, WORKER_ID, COMFY_PORT, COMFY_INPUT_DIR, ...) are read
+# from ./.env so the token is actually loaded, not silently dropped.
+# Format: KEY=VALUE lines, '#' comments. Values are NOT shell-evaluated.
+
+if [ -f .env ]; then
+  echo "Loading .env from $(pwd)/.env"
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      ''|\#*) continue ;;
+      *=*) ;;
+      *) continue ;;
+    esac
+    ENV_KEY="${line%%=*}"
+    ENV_VAL="${line#*=}"
+    # strip optional surrounding quotes
+    ENV_VAL="${ENV_VAL%\"}"; ENV_VAL="${ENV_VAL#\"}"
+    ENV_VAL="${ENV_VAL%\'}"; ENV_VAL="${ENV_VAL#\'}"
+    export "$ENV_KEY=$ENV_VAL"
+  done < .env
+fi
+
+# ======================================================
 # 2. GPU CHECK
 # ======================================================
 
@@ -67,8 +92,11 @@ echo "Node: $(node -v)"
 # ======================================================
 # 4. DETECT COMFY PORT (AUTO)
 # ======================================================
+# An explicit COMFY_PORT (env or .env) wins over auto-detection.
 
-COMFY_PORT=""
+COMFY_PORT="${COMFY_PORT:-}"
+
+if [ -z "$COMFY_PORT" ]; then
 
 COMFY_PID=$(pgrep -f "main.py" | head -1)
 
@@ -81,6 +109,8 @@ fi
 if [ -z "$COMFY_PORT" ]; then
   echo "⚠️ Port not detected, fallback 8188"
   COMFY_PORT=8188
+fi
+
 fi
 
 echo "ComfyUI port: $COMFY_PORT"
@@ -129,12 +159,26 @@ fi
 # ======================================================
 # 8. ENV
 # ======================================================
+# Required by worker.cjs: HUB_URL, ANIMASTOR_WORKER_TOKEN, WORKER_TYPE,
+# WORKER_ID. Optional: COMFY_PORT, COMFY_INPUT_DIR, NOTEBOOK_PATH, ...
+# Values already present in the environment or loaded from .env WIN over
+# the defaults below (so a private worker token is never overwritten).
 
-export HUB_URL="https://animastor.in/gpu"
+export HUB_URL="${HUB_URL:-https://animastor.in/gpu}"
 export NOTEBOOK_PATH="$NOTEBOOK_PATH"
 export COMFY_PORT="$COMFY_PORT"
 export WORKER_TYPE="$WORKER_TYPE"
-export COMFY_INPUT_DIR="$HOME/ComfyUI/input"
+export COMFY_INPUT_DIR="${COMFY_INPUT_DIR:-$HOME/ComfyUI/input}"
+export WORKER_ID="${WORKER_ID:-gpu-$(hostname)}"
+
+if [ -z "$ANIMASTOR_WORKER_TOKEN" ]; then
+  echo "⚠️ ANIMASTOR_WORKER_TOKEN is not set."
+  echo "   The worker will run in LEGACY SYSTEM-POOL mode (no workspace binding)."
+  echo "   For a Private Worker, set ANIMASTOR_WORKER_TOKEN in ./.env or the"
+  echo "   environment (Settings → Private Workers shows it once at creation)."
+else
+  echo "ANIMASTOR_WORKER_TOKEN: set (private worker mode)"
+fi
 
 # ======================================================
 # 9. STOP OLD WORKERS (FIX)
