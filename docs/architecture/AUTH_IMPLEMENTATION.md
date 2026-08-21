@@ -34,6 +34,12 @@ recovery keys, workspace switcher, anonymous/guest workspaces, billing, RBAC.
 - Cookie: `animastor_sid = sid.<session_id_b64url>.<secret_b64url>`,
   HttpOnly, SameSite=Lax, Secure over HTTPS (`X-Forwarded-Proto`,
   `NODE_ENV=production`). TTL 30 days.
+- Cookie scope: host-only by default; when `COOKIE_DOMAIN` is set
+  (e.g. `animastor.in`) the session and guest cookies carry that `Domain=`
+  suffix, so one login authenticates on every subdomain (public website
+  `animastor.in` + application `app.animastor.in` — same backend, same
+  session store, no second auth system). The value is charset-validated
+  before it is written into `Set-Cookie`.
 - **Raw tokens never stored** — only SHA-256 of the secret
   (`token_hash`, indexed). Session id + hash are generated together (never
   drift); a leaked DB yields no usable tokens.

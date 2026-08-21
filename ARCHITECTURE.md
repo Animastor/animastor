@@ -6,8 +6,15 @@
 
 | Домен              | Что отдаёт                                                                 | Auth |
 |--------------------|----------------------------------------------------------------------------|------|
-| `animastor.in`     | **Публичный сайт**: landing, документация, публичная Library              | нет  |
+| `animastor.in`     | **Публичный сайт**: beta-портал, `/docs/` (markdown-дерево), публичная Library, вход/регистрация | нет |
 | `app.animastor.in` | **Веб-приложение** — responsive: `MobileShell` / `DesktopShell`             | Basic Auth, кроме `/library` |
+| `admin.animastor.in` | **Админ** — тот же SPA dist, корень → `/admin`                            | Basic Auth + backend `requireAdmin` |
+
+Публичный сайт и приложение используют **один backend и одну систему
+аутентификации** (`/api/v1/auth/*`): сессия — HttpOnly cookie
+`animastor_sid` c `Domain=animastor.in` (env `COOKIE_DOMAIN`), поэтому
+вход на `animastor.in` действует и на `app.animastor.in`. Админ в публичной
+навигации сайта не упоминается.
 
 Правило: **hostname определяет приложение, viewport определяет presentation**.
 Один frontend, один API, одни stores. Layout зависит только от ширины вьюпорта:

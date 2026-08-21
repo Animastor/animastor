@@ -465,6 +465,41 @@ describe('Authentication MVP', () => {
             expect(await verifyPassword(null, await hashPassword('x'))).to.equal(false);
         });
     });
+
+    // ── Cross-subdomain cookie domain (public website + app on one parent) ─
+
+    describe('Cookie domain (COOKIE_DOMAIN)', () => {
+        const saved = process.env.COOKIE_DOMAIN;
+        afterEach(() => {
+            if (saved === undefined) delete process.env.COOKIE_DOMAIN;
+            else process.env.COOKIE_DOMAIN = saved;
+        });
+
+        it('unset → host-only cookies (no Domain attribute)', () => {
+            delete process.env.COOKIE_DOMAIN;
+            const v = authService.sessionCookieHeader('tok', { secure: true });
+            expect(v).to.not.contain('Domain=');
+            expect(v).to.contain('HttpOnly');
+            expect(v).to.contain('SameSite=Lax');
+        });
+
+        it('set → session, guest and clear cookies carry the Domain suffix', () => {
+            process.env.COOKIE_DOMAIN = 'animastor.in';
+            expect(authService.sessionCookieHeader('tok', { secure: true })).to.contain('; Domain=animastor.in');
+            expect(authService.clearSessionCookieHeader({ secure: true })).to.contain('; Domain=animastor.in');
+            expect(authService.guestCookieHeader('tok', { secure: false })).to.contain('; Domain=animastor.in');
+            expect(authService.clearGuestCookieHeader({ secure: false })).to.contain('; Domain=animastor.in');
+        });
+
+        it('leading dot is normalized; invalid values fall back to host-only', () => {
+            process.env.COOKIE_DOMAIN = '.animastor.in';
+            expect(authService.sessionCookieHeader('tok', { secure: true })).to.contain('; Domain=animastor.in');
+            for (const bad of ['animastor.in; Path=/x', 'evil com', 'a b', '']) {
+                process.env.COOKIE_DOMAIN = bad;
+                expect(authService.sessionCookieHeader('tok', { secure: true })).to.not.contain('Domain=');
+            }
+        });
+    });
 });
 
 describe('Authentication MVP — pre-auth regression (dev books)', () => {

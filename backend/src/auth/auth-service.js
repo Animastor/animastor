@@ -22,6 +22,20 @@ const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 const SESSION_COOKIE_NAME = 'animastor_sid';
 const GUEST_COOKIE_NAME = 'animastor_gid';
 
+// Cross-subdomain sessions (public website + application on one parent
+// domain). OPTIONAL: when COOKIE_DOMAIN is set (e.g. `animastor.in`), the
+// session/guest cookies carry `Domain=animastor.in` so a login on
+// animastor.in also authenticates on app.animastor.in — one backend, one
+// cookie, one session store. Unset (default) keeps host-only cookies, the
+// historical single-host behaviour. The value is validated against a strict
+// domain charset so it can never inject cookie attributes.
+const COOKIE_DOMAIN_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/i;
+function cookieDomainSuffix() {
+    const d = (process.env.COOKIE_DOMAIN || '').trim().toLowerCase().replace(/^\./, '');
+    if (!d || !COOKIE_DOMAIN_RE.test(d)) return '';
+    return `; Domain=${d}`;
+}
+
 // Guest / temporary workspace retention — development defaults, override via
 // env (GUEST_WORKSPACE_TTL_DAYS, GUEST_WORKSPACE_GRACE_PERIOD_DAYS,
 // GUEST_SESSION_TTL_DAYS). TTL resets on activity; hard deletion only past
@@ -341,14 +355,14 @@ async function bookAccessDecision(identity, bookId) {
 /** Set-Cookie for a fresh guest identity. */
 function guestCookieHeader(token, { secure }) {
     const maxAgeSec = Math.floor(GUEST_SESSION_TTL_MS / 1000);
-    let v = `${GUEST_COOKIE_NAME}=${token}; Path=/; Max-Age=${maxAgeSec}; HttpOnly; SameSite=Lax`;
+    let v = `${GUEST_COOKIE_NAME}=${token}; Path=/; Max-Age=${maxAgeSec}; HttpOnly; SameSite=Lax${cookieDomainSuffix()}`;
     if (secure) v += '; Secure';
     return v;
 }
 
 /** Set-Cookie that clears the guest cookie (after conversion). */
 function clearGuestCookieHeader({ secure }) {
-    let v = `${GUEST_COOKIE_NAME}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax`;
+    let v = `${GUEST_COOKIE_NAME}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax${cookieDomainSuffix()}`;
     if (secure) v += '; Secure';
     return v;
 }
@@ -356,14 +370,14 @@ function clearGuestCookieHeader({ secure }) {
 /** Build the Set-Cookie value for a session token. */
 function sessionCookieHeader(token, { secure }) {
     const maxAgeSec = Math.floor(SESSION_TTL_MS / 1000);
-    let v = `${SESSION_COOKIE_NAME}=${token}; Path=/; Max-Age=${maxAgeSec}; HttpOnly; SameSite=Lax`;
+    let v = `${SESSION_COOKIE_NAME}=${token}; Path=/; Max-Age=${maxAgeSec}; HttpOnly; SameSite=Lax${cookieDomainSuffix()}`;
     if (secure) v += '; Secure';
     return v;
 }
 
 /** Build the Set-Cookie value that clears the session cookie. */
 function clearSessionCookieHeader({ secure }) {
-    let v = `${SESSION_COOKIE_NAME}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax`;
+    let v = `${SESSION_COOKIE_NAME}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax${cookieDomainSuffix()}`;
     if (secure) v += '; Secure';
     return v;
 }

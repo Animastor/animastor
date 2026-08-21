@@ -91,6 +91,7 @@ docker compose up -d
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `LETS_ENCRYPT_DIR` | `/etc/letsencrypt` | Host path to TLS certificates |
+| `COOKIE_DOMAIN` | `animastor.in` | Cross-subdomain session cookie scope. Set to the registered domain so a login on `animastor.in` also authenticates on `app.animastor.in` (one backend, one HttpOnly cookie). Empty = host-only cookies (legacy single-host). |
 | `OPENROUTER_API_KEY` | _(empty)_ | Global AI provider key (fallback; workspaces can carry their own) |
 | `GPU_HUB_API_KEY` | _(empty)_ | Shared secret for backend ↔ GPU Hub |
 | `GPU_TIMEOUT` | `600000` | GPU task hard timeout in ms |

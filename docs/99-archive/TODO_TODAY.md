@@ -14,7 +14,7 @@
 
 В `docker-compose.yml` (отслеживается git) — боевые секреты в открытом виде:
 - `OPENROUTER_API_KEY=sk-live-…bd0b` (строка 59)
-- `POSTGRES_PASSWORD=animastor_secret_2026` (строка 22) + `PG_PASSWORD` (строка 57)
+- `POSTGRES_PASSWORD=<redacted>` (строка 22) + `PG_PASSWORD` (строка 57)
 
 `.gitignore` уже покрывает `.env` / `*.env` — инфраструктура для выноса готова, `.env`-файлов пока нет.
 
