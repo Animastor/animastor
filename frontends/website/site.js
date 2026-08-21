@@ -127,4 +127,15 @@
   });
 
   refreshMe();
+
+  // Fetch Android version from downloads/version.json
+  var versionEl = document.getElementById('android-version');
+  if (versionEl) {
+    fetch('/downloads/version.json')
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (v) {
+        if (v && v.version) versionEl.textContent = 'v' + v.version;
+      })
+      .catch(function () { /* keep default */ });
+  }
 })();

@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Animastor — Documentation</title>
+  <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16.png">
+  <script>
+    (function () {
+      try {
+        var PREFS = 'animastor_settings';
+        var p = localStorage.getItem(PREFS) ? JSON.parse(localStorage.getItem(PREFS)) : {};
+        var theme = p.theme || 'auto';
+        var resolved = theme === 'auto'
+          ? (new Date().getHours() >= 6 && new Date().getHours() <= 19 ? 'light' : 'dark')
+          : theme;
+        document.documentElement.setAttribute('data-theme', resolved);
+      } catch (e) {
+        document.documentElement.setAttribute('data-theme', 'dark');
+      }
+    })();
+  </script>
+  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/docs-browser.css">
+</head>
+<body>
+
+  <header class="header">
+    <div class="site header__inner">
+      <a class="header__brand" href="/">
+        <img class="header__logo" src="/logo.png" alt="">
+        Animastor
+      </a>
+      <nav class="header__nav" aria-label="Main">
+        <a class="header__link" href="/docs/">Documentation</a>
+        <a class="header__link" href="/#android">Android</a>
+        <span class="header__user" id="header-user" hidden></span>
+        <button class="btn btn--outlined btn--sm" id="btn-login" type="button">Login</button>
+        <button class="btn btn--outlined btn--sm" id="btn-register" type="button">Register</button>
+        <a class="btn btn--sm" href="https://app.animastor.in/">Open App</a>
+      </nav>
+    </div>
+  </header>
+
+  <div class="docs-layout">
+    <button class="docs-sidebar-toggle" id="docs-sidebar-toggle" type="button" aria-label="Toggle sidebar">
+      <span class="docs-sidebar-toggle__icon">&#9776;</span>
+    </button>
+
+    <aside class="docs-sidebar">
+      <div class="docs-sidebar__header">Documentation</div>
+      <div class="docs-tree" id="docs-tree"></div>
+    </aside>
+
+    <main class="docs-main">
+      <nav class="docs-breadcrumb" id="docs-breadcrumb"></nav>
+      <div class="docs-content" id="docs-content">
+        <p>Loading...</p>
+      </div>
+    </main>
+  </div>
+
+  <div class="modal-backdrop" id="auth-backdrop" hidden>
+    <form class="modal" id="auth-form" role="dialog" aria-modal="true">
+      <div class="modal__title" id="auth-title">Sign in</div>
+      <div class="modal__body">
+        <label class="field__label" for="auth-username">Username</label>
+        <input class="field__input" id="auth-username" type="text" autocomplete="username" required>
+        <label class="field__label" for="auth-password" style="margin-top:0.75rem">Password</label>
+        <input class="field__input" id="auth-password" type="password" autocomplete="current-password" required>
+        <span id="auth-email-wrap" hidden>
+          <label class="field__label" for="auth-email" style="margin-top:0.75rem">Email (optional)</label>
+          <input class="field__input" id="auth-email" type="email" autocomplete="email">
+          <span class="field__hint">Add your email if you want to recover your account if you forget your password.</span>
+        </span>
+        <div class="form__error" id="auth-error" role="alert" hidden></div>
+      </div>
+      <div class="modal__footer">
+        <button type="button" class="auth-switch" id="auth-switch">No account? Sign up</button>
+        <button type="button" class="btn btn--outlined" id="auth-cancel">Back</button>
+        <button type="submit" class="btn" id="auth-submit">Sign in</button>
+      </div>
+    </form>
+  </div>
+
+  <script src="/site.js"></script>
+  <script src="/docs-browser.js"></script>
+</body>
+</html>
