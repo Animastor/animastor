@@ -6,8 +6,9 @@
 
 | Домен              | Что отдаёт                                                                 | Auth |
 |--------------------|----------------------------------------------------------------------------|------|
-| `animastor.in`     | **Публичный сайт**: landing, документация, публичная Library, net-disk      | нет  |
+| `animastor.in`     | **Публичный сайт**: landing, документация, публичная Library              | нет  |
 | `app.animastor.in` | **Веб-приложение** — responsive: `MobileShell` / `DesktopShell`             | Basic Auth, кроме `/library` |
+| `sureg.dev`        | **Личный сайт разработчика** — optional, separate from Animastor deployment | нет (отдельный домен) |
 
 Правило: **hostname определяет приложение, viewport определяет presentation**.
 Один frontend, один API, одни stores. Layout зависит только от ширины вьюпорта:
@@ -49,8 +50,10 @@ docs/                 ← подробная документация (по фа
 - API: `/api/v1` → backend:3000, `/gpu` → gpu-hub:5000 — на обоих доменах.
 - Basic Auth на текущем этапе — существующая Nginx-авторизация; отдельной системы
   авторизации нет.
-- SSL: Let's Encrypt, `/etc/letsencrypt/live/animastor.in/` — один сертификат на всё
-  семейство: `animastor.in, app.animastor.in, www.animastor.in` (SANs обновлены
-  2026-08-12; `m.animastor.in` выведен из эксплуатации). Продление — webroot на
+- SSL: Let's Encrypt — один сертификат на всё семейство: `animastor.in,
+  app.animastor.in, www.animastor.in` (SANs обновлены 2026-08-12;
+  `m.animastor.in` выведен из эксплуатации). Продление — webroot на
   `frontends/website` (ACME HTTP-01, `certbot.timer` ежедневно), проверено
   `--dry-run` — success.
+- TLS certificates: configurable via `LETS_ENCRYPT_DIR` env var (default: `/etc/letsencrypt`).
+  See `docs/architecture/EXPERIMENTAL_BETA_DOCKER_DEPLOYMENT.md`.

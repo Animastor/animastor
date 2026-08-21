@@ -117,11 +117,11 @@ services:
       - net
     volumes:
       - ./proxy/conf/default.conf:/etc/nginx/conf.d/default.conf:ro
-      - /etc/letsencrypt:/etc/letsencrypt:ro
-      - /home/sureg/net-disk:/net-disk:ro
-      - /home/sureg/sureg-dev/site:/usr/share/nginx/sureg:ro
+      - ${LETS_ENCRYPT_DIR:-/etc/letsencrypt}:/etc/letsencrypt:ro
       - ./frontends/website:/usr/share/nginx/frontends/website:ro
       - ./frontends/app:/usr/share/nginx/frontends/app:ro
       - ./proxy/conf/.htpasswd:/etc/nginx/.htpasswd:ro
+      - ./proxy/conf/sureg.conf:/etc/nginx/conf.d/sureg.conf:ro
+      - ${SUREG_SITE_DIR:-./data/sureg-placeholder}:/usr/share/nginx/sureg:ro
     depends_on:
       - backend
