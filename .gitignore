@@ -16,6 +16,7 @@ out/
 gradle-*/
 gradlew.bat
 local.properties
+gradle.properties
 
 # ========== Worker runtime ==========
 worker/models/
