@@ -109,11 +109,11 @@ h1, h2, h3 { line-height: 1.25; margin: 0; }
 }
 .header__brand {
   display: flex; align-items: center; gap: 0.6rem;
-  color: var(--accent); font-weight: 500; font-size: 1.125rem;
+  color: var(--accent); font-weight: 500; font-size: 1.25rem;
   letter-spacing: 0.08em;
 }
 .header__brand:hover { text-decoration: none; }
-.header__logo { width: 2.5rem; height: 2.5rem; border-radius: 50%; }
+.header__logo { width: 3rem; height: 3rem; border-radius: 50%; }
 .header__nav {
   display: flex; align-items: center; gap: 0.25rem; flex-wrap: wrap;
 }
