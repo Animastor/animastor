@@ -243,6 +243,7 @@ h1, h2, h3 { line-height: 1.25; margin: 0; }
   .header__inner {
     flex-wrap: wrap;
     gap: 0;
+    padding: 0.5rem 1.5rem;
   }
   /* Row 1: brand left, toggle right — both at natural width */
   .header__brand { flex: 0 0 auto; }
