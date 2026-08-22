@@ -106,6 +106,7 @@ h1, h2, h3 { line-height: 1.25; margin: 0; }
   display: flex; align-items: center; gap: 1rem;
   min-height: 4rem;
   padding: 0.5rem 0;
+  position: relative;
 }
 .header__brand {
   display: flex; align-items: center; gap: 0.6rem;
@@ -130,9 +131,12 @@ h1, h2, h3 { line-height: 1.25; margin: 0; }
 /* ── Theme toggle (sun ↔ moon, single click) ── */
 
 .theme-toggle {
+  position: absolute;
+  top: 50%;
+  right: 1.25rem;
+  transform: translateY(-50%);
   display: inline-flex; align-items: center; justify-content: center;
   width: 2rem; height: 2rem;
-  margin-left: auto;
   padding: 0;
   background: transparent;
   color: var(--text-2);
@@ -245,12 +249,8 @@ h1, h2, h3 { line-height: 1.25; margin: 0; }
     gap: 0;
     padding: 0.5rem 1.5rem;
   }
-  /* Row 1: brand left, toggle right — both at natural width */
+  /* Row 1: brand left — toggle is absolute in header__inner */
   .header__brand { flex: 0 0 auto; }
-  .theme-toggle {
-    margin-left: auto;
-    flex-shrink: 0;
-  }
   /* Row 2: nav takes full second line, centered */
   .header__nav {
     flex: 1 1 100%;
