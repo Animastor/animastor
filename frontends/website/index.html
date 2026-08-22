@@ -9,14 +9,11 @@
   <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png">
   <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16.png">
   <script>
-    // Theme before paint: respect explicit localStorage choice, otherwise
-    // follow the OS preference via prefers-color-scheme.  Shares the
-    // 'animastor_settings' localStorage key with the app.
     (function () {
       try {
         var PREFS = 'animastor_settings';
         var p = localStorage.getItem(PREFS) ? JSON.parse(localStorage.getItem(PREFS)) : {};
-        var stored = p.theme; // 'light' | 'dark' | undefined (auto)
+        var stored = p.theme;
         var resolved;
         if (stored === 'light' || stored === 'dark') {
           resolved = stored;
@@ -41,27 +38,21 @@
         <img class="header__logo" src="/logo.png" alt="">
         Animastor
       </a>
+      <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle theme" title="Toggle theme">
+        <svg class="theme-toggle__icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>
+        <svg class="theme-toggle__icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+      </button>
       <nav class="header__nav" aria-label="Main">
         <a class="header__link" href="#how-to-use">How to use</a>
         <a class="header__link" href="#android">Android</a>
         <a class="header__link" href="#development">Development</a>
         <a class="btn btn--sm" href="https://app.animastor.in/">Open App</a>
       </nav>
-      <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle theme" title="Toggle theme">
-        <svg class="theme-toggle__icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <circle cx="12" cy="12" r="4"/>
-          <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
-        </svg>
-        <svg class="theme-toggle__icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
-        </svg>
-      </button>
     </div>
   </header>
 
   <main class="site">
 
-    <!-- Hero -->
     <section class="hero">
       <span class="beta-badge">Experimental Beta — currently in development</span>
       <h1 class="hero__title">Animastor</h1>
@@ -72,7 +63,6 @@
       </div>
     </section>
 
-    <!-- What is Animastor? -->
     <section class="section" id="about">
       <h2 class="section__title">What is Animastor?</h2>
       <p class="section__lead">
@@ -87,7 +77,6 @@
       </p>
     </section>
 
-    <!-- How to use Animastor -->
     <section class="section" id="how-to-use">
       <h2 class="section__title">How to use Animastor</h2>
       <p class="section__lead">
@@ -95,28 +84,17 @@
         animated book.
       </p>
       <ol class="steps">
-        <li>
-          <span><strong>Open a book</strong> — upload your story as a plain <code>.txt</code> file inside the app.</span>
-        </li>
-        <li>
-          <span><strong>Generate</strong> — Animastor reads the text, splits it into scenes, and creates a visual version of the story.</span>
-        </li>
-        <li>
-          <span><strong>Listen & Watch</strong> — open the result as a visual book with audio: a scene at a time, like flipping through an animated picture book.</span>
-        </li>
-        <li>
-          <span><strong>Edit & regenerate</strong> — change the text, tweak a scene's visual style, or adjust audio. Regenerate only the parts you want to update.</span>
-        </li>
-        <li>
-          <span><strong>Export</strong> — when you are happy with the result, export the finished visual book.</span>
-        </li>
+        <li><span><strong>Open a book</strong> — upload your story as a plain <code>.txt</code> file inside the app.</span></li>
+        <li><span><strong>Generate</strong> — Animastor reads the text, splits it into scenes, and creates a visual version of the story.</span></li>
+        <li><span><strong>Listen &amp; Watch</strong> — open the result as a visual book with audio: a scene at a time, like flipping through an animated picture book.</span></li>
+        <li><span><strong>Edit &amp; regenerate</strong> — change the text, tweak a scene's visual style, or adjust audio. Regenerate only the parts you want to update.</span></li>
+        <li><span><strong>Export</strong> — when you are happy with the result, export the finished visual book.</span></li>
       </ol>
       <p class="section__lead" style="margin-top:1.5rem">
         Ready to try? <a href="https://app.animastor.in/">Open the app</a> and create an account — or sign in if you already have one.
       </p>
     </section>
 
-    <!-- Android -->
     <section class="section" id="android">
       <h2 class="section__title">Android</h2>
       <p class="section__lead">
@@ -144,7 +122,6 @@
       </div>
     </section>
 
-    <!-- Development -->
     <section class="section" id="development">
       <h2 class="section__title">Development</h2>
       <p class="section__lead">
@@ -152,7 +129,6 @@
         technical documentation live in a public GitHub repository — feel
         free to read, fork, or contribute.
       </p>
-
       <div class="grid grid--2">
         <div class="card">
           <a class="doc-link" href="https://github.com/Animastor/animastor" target="_blank" rel="noopener">GitHub repository &rarr;</a>
@@ -169,7 +145,6 @@
           </p>
         </div>
       </div>
-
       <p class="section__lead" style="margin-top:1.5rem">
         <strong>User Guide</strong> — everything on this page is for people
         who just want to use Animastor.<br>
@@ -179,7 +154,6 @@
       </p>
     </section>
 
-    <!-- Beta notice -->
     <p class="beta-notice">
       Animastor is experimental beta software and is actively under
       development. Features and workflows may change.

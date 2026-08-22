@@ -114,7 +114,6 @@ h1, h2, h3 { line-height: 1.25; margin: 0; }
 .header__brand:hover { text-decoration: none; }
 .header__logo { width: 1.75rem; height: 1.75rem; border-radius: 50%; }
 .header__nav {
-  margin-left: auto;
   display: flex; align-items: center; gap: 0.25rem; flex-wrap: wrap;
 }
 .header__link {
@@ -132,6 +131,7 @@ h1, h2, h3 { line-height: 1.25; margin: 0; }
 .theme-toggle {
   display: inline-flex; align-items: center; justify-content: center;
   width: 2rem; height: 2rem;
+  margin-left: auto;
   padding: 0;
   background: transparent;
   color: var(--text-2);
@@ -243,15 +243,14 @@ h1, h2, h3 { line-height: 1.25; margin: 0; }
     flex-wrap: wrap;
     gap: 0;
   }
-  /* Row 1: brand left, toggle right */
-  .header__brand { flex: 1 1 auto; min-width: 0; }
+  /* Row 1: brand left, toggle right — both at natural width */
+  .header__brand { flex: 0 0 auto; }
   .theme-toggle {
     margin-left: auto;
     flex-shrink: 0;
   }
   /* Row 2: nav takes full second line, centered */
   .header__nav {
-    margin-left: 0;
     flex: 1 1 100%;
     justify-content: center;
     padding-top: 0.45rem;
