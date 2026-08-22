@@ -13,12 +13,10 @@
     return document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
   }
 
-  // Mirror the toggle state onto the button: pressed = currently dark.
+  // Set the button title to describe what the click will do.
   function syncAria() {
     if (!btn) return;
-    var isDark = currentTheme() === 'dark';
-    btn.setAttribute('aria-pressed', String(isDark));
-    btn.title = isDark ? 'Switch to light theme' : 'Switch to dark theme';
+    btn.title = currentTheme() === 'dark' ? 'Switch to light theme' : 'Switch to dark theme';
   }
 
   function readStoredPrefs() {
@@ -40,7 +38,7 @@
     var next = currentTheme() === 'dark' ? 'light' : 'dark';
     applyTheme(next);
     var prefs = readStoredPrefs();
-    prefs.theme = next; // explicit user choice — overrides 'auto' elsewhere
+    prefs.theme = next;
     writeStoredPrefs(prefs);
   }
 
