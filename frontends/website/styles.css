@@ -104,7 +104,8 @@ h1, h2, h3 { line-height: 1.25; margin: 0; }
 }
 .header__inner {
   display: flex; align-items: center; gap: 1rem;
-  min-height: 3.25rem; /* app toolbar-h */
+  min-height: 4rem;
+  padding: 0.5rem 0;
 }
 .header__brand {
   display: flex; align-items: center; gap: 0.6rem;
