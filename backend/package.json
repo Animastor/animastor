@@ -1,6 +1,6 @@
 {
   "name": "animastor-backend",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "description": "Animastor backend",
   "main": "src/backend.cjs",
   "type": "commonjs",

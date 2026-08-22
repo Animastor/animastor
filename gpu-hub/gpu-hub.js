@@ -1,5 +1,5 @@
 // ======================================================
-// GPU HUB - v1.1.0 (Experimental Beta — Private Worker Phase 2)
+// GPU HUB - v0.1.0 (Experimental Beta — Private Worker Phase 2)
 // ======================================================
 // Workspace-aware job ownership:
 //   - worker identity comes ONLY from a Bearer credential resolved via the

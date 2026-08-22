@@ -1,6 +1,6 @@
 {
   "name": "gpu-hub",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "main": "server.js",
   "dependencies": {
     "cors": "^2.8.5",
