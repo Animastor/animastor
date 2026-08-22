@@ -127,6 +127,37 @@ h1, h2, h3 { line-height: 1.25; margin: 0; }
   max-width: 10rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
+/* ── Theme toggle (sun ↔ moon, single click) ── */
+
+.theme-toggle {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 2.25rem; height: 2.25rem;
+  margin-left: 0.25rem;
+  padding: 0;
+  background: transparent;
+  color: var(--text-2);
+  border: 1px solid var(--outline-2);
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  transition: color 120ms ease, background 120ms ease, border-color 120ms ease;
+}
+.theme-toggle:hover {
+  color: var(--text);
+  background: var(--surface-2);
+  border-color: var(--outline);
+}
+.theme-toggle:active { transform: translateY(1px); }
+.theme-toggle__icon { display: none; }
+.theme-toggle__icon--sun  { color: var(--accent); }
+.theme-toggle__icon--moon { color: var(--accent); }
+
+/* In dark mode → show the sun (action: switch to light). */
+[data-theme="dark"] .theme-toggle__icon--sun  { display: block; }
+[data-theme="dark"] .theme-toggle__icon--moon { display: none; }
+/* In light mode → show the moon (action: switch to dark). */
+[data-theme="light"] .theme-toggle__icon--sun  { display: none; }
+[data-theme="light"] .theme-toggle__icon--moon { display: block; }
+
 /* ── Buttons (app .btn / .btn--outlined) ── */
 
 .btn {
@@ -212,6 +243,7 @@ h1, h2, h3 { line-height: 1.25; margin: 0; }
   .grid--2, .grid--3 { grid-template-columns: 1fr; }
   .hero { padding: 3rem 0; }
   .hero__title { font-size: 2rem; }
+  .theme-toggle { margin-left: 0; }
 }
 
 /* ── Getting started steps ── */
