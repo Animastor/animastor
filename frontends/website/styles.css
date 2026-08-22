@@ -108,11 +108,11 @@ h1, h2, h3 { line-height: 1.25; margin: 0; }
 }
 .header__brand {
   display: flex; align-items: center; gap: 0.6rem;
-  color: var(--accent); font-weight: 500; font-size: 1.0625rem;
+  color: var(--accent); font-weight: 500; font-size: 1.125rem;
   letter-spacing: 0.08em;
 }
 .header__brand:hover { text-decoration: none; }
-.header__logo { width: 1.75rem; height: 1.75rem; border-radius: 50%; }
+.header__logo { width: 2.5rem; height: 2.5rem; border-radius: 50%; }
 .header__nav {
   display: flex; align-items: center; gap: 0.25rem; flex-wrap: wrap;
 }
@@ -193,8 +193,8 @@ h1, h2, h3 { line-height: 1.25; margin: 0; }
   padding: 0.3rem 0.9rem;
   border: 1px solid var(--outline);
   border-radius: var(--radius-pill);
-  background: var(--accent-container);
-  color: var(--on-accent-container);
+  background: var(--primary-container);
+  color: var(--error);
   font-size: 0.75rem; font-weight: 700;
   letter-spacing: 0.06em; text-transform: uppercase;
 }
