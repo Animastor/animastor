@@ -237,6 +237,37 @@ h1, h2, h3 { line-height: 1.25; margin: 0; }
   .grid--2, .grid--3 { grid-template-columns: 1fr; }
   .hero { padding: 3rem 0; }
   .hero__title { font-size: 2rem; }
+
+  /* ── Responsive header: two clean rows ── */
+  .header__inner {
+    flex-wrap: wrap;
+    gap: 0;
+  }
+  /* Row 1: brand left, toggle right */
+  .header__brand { flex: 1 1 auto; min-width: 0; }
+  .theme-toggle {
+    margin-left: auto;
+    flex-shrink: 0;
+  }
+  /* Row 2: nav takes full second line, centered */
+  .header__nav {
+    margin-left: 0;
+    flex: 1 1 100%;
+    justify-content: center;
+    padding-top: 0.45rem;
+    margin-top: 0.45rem;
+    border-top: 1px solid var(--outline-2);
+    gap: 0.15rem;
+  }
+  .header__link {
+    font-size: 0.8125rem;
+    padding: 0.35rem 0.55rem;
+  }
+  .header__nav .btn--sm {
+    font-size: 0.75rem;
+    padding: 0 0.7rem;
+    height: 2rem;
+  }
 }
 
 /* ── Getting started steps ── */
