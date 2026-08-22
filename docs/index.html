@@ -33,11 +33,9 @@
         Animastor
       </a>
       <nav class="header__nav" aria-label="Main">
-        <a class="header__link" href="/docs/">Documentation</a>
+        <a class="header__link" href="/">Home</a>
+        <a class="header__link" href="/#how-to-use">How to use</a>
         <a class="header__link" href="/#android">Android</a>
-        <span class="header__user" id="header-user" hidden></span>
-        <button class="btn btn--outlined btn--sm" id="btn-login" type="button">Login</button>
-        <button class="btn btn--outlined btn--sm" id="btn-register" type="button">Register</button>
         <a class="btn btn--sm" href="https://app.animastor.in/">Open App</a>
       </nav>
     </div>
@@ -61,28 +59,7 @@
     </main>
   </div>
 
-  <div class="modal-backdrop" id="auth-backdrop" hidden>
-    <form class="modal" id="auth-form" role="dialog" aria-modal="true">
-      <div class="modal__title" id="auth-title">Sign in</div>
-      <div class="modal__body">
-        <label class="field__label" for="auth-username">Username</label>
-        <input class="field__input" id="auth-username" type="text" autocomplete="username" required>
-        <label class="field__label" for="auth-password" style="margin-top:0.75rem">Password</label>
-        <input class="field__input" id="auth-password" type="password" autocomplete="current-password" required>
-        <span id="auth-email-wrap" hidden>
-          <label class="field__label" for="auth-email" style="margin-top:0.75rem">Email (optional)</label>
-          <input class="field__input" id="auth-email" type="email" autocomplete="email">
-          <span class="field__hint">Add your email if you want to recover your account if you forget your password.</span>
-        </span>
-        <div class="form__error" id="auth-error" role="alert" hidden></div>
-      </div>
-      <div class="modal__footer">
-        <button type="button" class="auth-switch" id="auth-switch">No account? Sign up</button>
-        <button type="button" class="btn btn--outlined" id="auth-cancel">Back</button>
-        <button type="submit" class="btn" id="auth-submit">Sign in</button>
-      </div>
-    </form>
-  </div>
+  <div class="modal-backdrop" id="auth-backdrop" hidden></div>
 
   <script src="/site.js"></script>
   <script src="/docs-browser.js"></script>

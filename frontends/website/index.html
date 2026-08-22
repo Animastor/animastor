@@ -3,9 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="Animastor — AI-powered animated storytelling platform. Experimental beta.">
+  <meta name="description" content="Animastor — turn written stories into animated visual books with audio. Open experimental project.">
   <meta name="theme-color" content="#12110F">
-  <title>Animastor — AI-powered animated storytelling</title>
+  <title>Animastor — Animated storytelling from text</title>
   <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png">
   <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16.png">
   <script>
@@ -37,11 +37,9 @@
         Animastor
       </a>
       <nav class="header__nav" aria-label="Main">
-        <a class="header__link" href="/docs/">Documentation</a>
+        <a class="header__link" href="#how-to-use">How to use</a>
         <a class="header__link" href="#android">Android</a>
-        <span class="header__user" id="header-user" hidden></span>
-        <button class="btn btn--outlined btn--sm" id="btn-login" type="button">Login</button>
-        <button class="btn btn--outlined btn--sm" id="btn-register" type="button">Register</button>
+        <a class="header__link" href="#development">Development</a>
         <a class="btn btn--sm" href="https://app.animastor.in/">Open App</a>
       </nav>
     </div>
@@ -53,10 +51,10 @@
     <section class="hero">
       <span class="beta-badge">Experimental Beta — currently in development</span>
       <h1 class="hero__title">Animastor</h1>
-      <p class="hero__tagline">AI-powered animated storytelling platform.</p>
+      <p class="hero__tagline">Turn written stories into animated visual books — with audio, scenes, and a player.</p>
       <div class="hero__actions">
         <a class="btn" href="https://app.animastor.in/">Open App</a>
-        <a class="btn btn--outlined" href="#getting-started">Get Started</a>
+        <a class="btn btn--outlined" href="#how-to-use">How to use</a>
       </div>
     </section>
 
@@ -64,60 +62,44 @@
     <section class="section" id="about">
       <h2 class="section__title">What is Animastor?</h2>
       <p class="section__lead">
-        Animastor turns written stories into animated storytelling. You import a
-        text, the platform parses it into scenes, and a generation pipeline
-        produces the image, audio and video layers of each scene.
+        Animastor is a simple way to bring a text story to life. You give it a
+        book (a plain <code>.txt</code> file), and it turns that text into a
+        sequence of visual scenes with audio — something you can read, listen
+        to, and watch like a short animated film of the story.
       </p>
       <p class="section__lead">
-        It is built for bring-your-own resources: you configure your own AI
-        provider (any OpenAI-compatible API) and, for GPU generation, connect
-        your own GPU as a Private Worker. Animastor provides the application,
-        orchestration and pipeline — the compute is yours.
+        You don't need to be a designer, animator, or programmer. Open the
+        app, upload your book, and watch it come alive scene by scene.
       </p>
     </section>
 
-    <!-- Getting started -->
-    <section class="section" id="getting-started">
-      <h2 class="section__title">Getting Started</h2>
+    <!-- How to use Animastor -->
+    <section class="section" id="how-to-use">
+      <h2 class="section__title">How to use Animastor</h2>
+      <p class="section__lead">
+        A simple workflow — five steps from a plain text file to a finished
+        animated book.
+      </p>
       <ol class="steps">
-        <li><span><a href="#" data-auth="register">Create an account</a> — or use the app directly; registration is also available inside the application.</span></li>
-        <li><span>Open the application at <a href="https://app.animastor.in/">app.animastor.in</a>.</span></li>
-        <li><span>Configure your AI provider in Settings → AI Providers (<a href="/docs/architecture/EXPERIMENTAL_BETA_PERSONAL_AI_PROVIDER.md">guide</a>).</span></li>
-        <li><span>Connect a Private Worker if GPU generation is required (<a href="/docs/architecture/EXPERIMENTAL_BETA_WORKER_SETUP.md">guide</a>).</span></li>
-        <li><span>Import a story and generate your first scenes.</span></li>
+        <li>
+          <span><strong>Open a book</strong> — upload your story as a plain <code>.txt</code> file inside the app.</span>
+        </li>
+        <li>
+          <span><strong>Generate</strong> — Animastor reads the text, splits it into scenes, and creates a visual version of the story.</span>
+        </li>
+        <li>
+          <span><strong>Listen & Watch</strong> — open the result as a visual book with audio: a scene at a time, like flipping through an animated picture book.</span>
+        </li>
+        <li>
+          <span><strong>Edit & regenerate</strong> — change the text, tweak a scene's visual style, or adjust audio. Regenerate only the parts you want to update.</span>
+        </li>
+        <li>
+          <span><strong>Export</strong> — when you are happy with the result, export the finished visual book.</span>
+        </li>
       </ol>
-    </section>
-
-    <!-- Documentation -->
-    <section class="section" id="docs">
-      <h2 class="section__title">Documentation</h2>
-      <p class="section__lead">Technical documentation lives in the repository <code>docs/</code> tree, served read-only below.</p>
-      <div class="grid grid--3">
-        <div class="card">
-          <a class="doc-link" href="/docs/architecture/EXPERIMENTAL_BETA_DOCKER_DEPLOYMENT.md">Quick Start</a>
-          <p class="doc-desc">Docker deployment for a fresh server: prerequisites, TLS, environment variables.</p>
-        </div>
-        <div class="card">
-          <a class="doc-link" href="/docs/architecture/EXPERIMENTAL_BETA_WORKER_SETUP.md">Private Worker</a>
-          <p class="doc-desc">Connect your own GPU: prerequisites, models, worker.cjs download and run command.</p>
-        </div>
-        <div class="card">
-          <a class="doc-link" href="/docs/architecture/EXPERIMENTAL_BETA_PERSONAL_AI_PROVIDER.md">AI Providers</a>
-          <p class="doc-desc">Configure a workspace-owned AI provider: provider types, model field, test flow.</p>
-        </div>
-        <div class="card">
-          <a class="doc-link" href="#android">Android</a>
-          <p class="doc-desc">Experimental Android client — see the Android section below.</p>
-        </div>
-        <div class="card">
-          <a class="doc-link" href="/docs/architecture/AUTH_IMPLEMENTATION.md">Authentication</a>
-          <p class="doc-desc">Accounts, sessions and workspace ownership (Authentication MVP).</p>
-        </div>
-        <div class="card">
-          <a class="doc-link" href="/docs/">All documentation</a>
-          <p class="doc-desc">Full docs tree: architecture, orchestration, workflows, planning.</p>
-        </div>
-      </div>
+      <p class="section__lead" style="margin-top:1.5rem">
+        Ready to try? <a href="https://app.animastor.in/">Open the app</a> and create an account — or sign in if you already have one.
+      </p>
     </section>
 
     <!-- Android -->
@@ -126,8 +108,7 @@
       <p class="section__lead">
         The Android client is experimental beta software, built from the same
         backend as the web application. It currently tracks the web app with a
-        small feature lag (AI provider and Private Worker settings are being
-        brought to parity).
+        small feature lag.
       </p>
       <div class="card card--download">
         <div class="card__row">
@@ -149,10 +130,45 @@
       </div>
     </section>
 
+    <!-- Development -->
+    <section class="section" id="development">
+      <h2 class="section__title">Development</h2>
+      <p class="section__lead">
+        Animastor is an open project. The source code, architecture, and
+        technical documentation live in a public GitHub repository — feel
+        free to read, fork, or contribute.
+      </p>
+
+      <div class="grid grid--2">
+        <div class="card">
+          <a class="doc-link" href="https://github.com/Animastor/animastor" target="_blank" rel="noopener">GitHub repository &rarr;</a>
+          <p class="doc-desc">
+            The full source code of Animastor: backend, frontend, Android
+            client, workers, and infrastructure.
+          </p>
+        </div>
+        <div class="card">
+          <a class="doc-link" href="https://github.com/Animastor/animastor/tree/master/docs" target="_blank" rel="noopener">Docs folder &rarr;</a>
+          <p class="doc-desc">
+            Technical documentation for developers and LLMs: architecture,
+            technical decisions, algorithms, workflows, and planning notes.
+          </p>
+        </div>
+      </div>
+
+      <p class="section__lead" style="margin-top:1.5rem">
+        <strong>User Guide</strong> — everything on this page is for people
+        who just want to use Animastor.<br>
+        <strong>Development / Docs</strong> — the GitHub repository and the
+        <code>Docs</code> folder are for people who want to understand how
+        Animastor works under the hood, or take part in building it.
+      </p>
+    </section>
+
     <!-- Beta notice -->
     <p class="beta-notice">
       Animastor is experimental beta software and is actively under
-      development. Features, APIs and workflows may change.
+      development. Features and workflows may change.
     </p>
 
   </main>
@@ -160,42 +176,13 @@
   <footer class="footer">
     <div class="site footer__inner">
       <span class="footer__brand">Animastor</span>
-      <a href="/docs/">Documentation</a>
-      <!-- GitHub link intentionally omitted: the repository is private.
-           When it becomes public, add here:
-           <a href="https://github.com/sureg-dev/animastor">GitHub</a> -->
-      <a href="mailto:support@animastor.in">support@animastor.in</a>
+      <a href="https://github.com/Animastor/animastor" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://github.com/Animastor/animastor/tree/master/docs" target="_blank" rel="noopener">Docs</a>
       <a href="#android">Android</a>
+      <a href="mailto:support@animastor.in">support@animastor.in</a>
       <span class="footer__beta">Experimental Beta</span>
     </div>
   </footer>
-
-  <!-- Auth dialog (login/register) — reuses the existing backend auth flow:
-       POST /api/v1/auth/login|register on the SAME backend that serves
-       app.animastor.in. No credentials or tokens are stored by this page;
-       the session lives in the HttpOnly cookie set by the backend. -->
-  <div class="modal-backdrop" id="auth-backdrop" hidden>
-    <form class="modal" id="auth-form" role="dialog" aria-modal="true">
-      <div class="modal__title" id="auth-title">Sign in</div>
-      <div class="modal__body">
-        <label class="field__label" for="auth-username">Username</label>
-        <input class="field__input" id="auth-username" type="text" autocomplete="username" required>
-        <label class="field__label" for="auth-password" style="margin-top:0.75rem">Password</label>
-        <input class="field__input" id="auth-password" type="password" autocomplete="current-password" required>
-        <span id="auth-email-wrap" hidden>
-          <label class="field__label" for="auth-email" style="margin-top:0.75rem">Email (optional)</label>
-          <input class="field__input" id="auth-email" type="email" autocomplete="email">
-          <span class="field__hint">Add your email if you want to recover your account if you forget your password.</span>
-        </span>
-        <div class="form__error" id="auth-error" role="alert" hidden></div>
-      </div>
-      <div class="modal__footer">
-        <button type="button" class="auth-switch" id="auth-switch">No account? Sign up</button>
-        <button type="button" class="btn btn--outlined" id="auth-cancel">Back</button>
-        <button type="submit" class="btn" id="auth-submit">Sign in</button>
-      </div>
-    </form>
-  </div>
 
   <script src="/site.js"></script>
 </body>
