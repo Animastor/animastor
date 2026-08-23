@@ -101,6 +101,11 @@ async function resolveDefaultWorkspace(userId) {
     let ws = await workspaceRepo.findPersonalWorkspace(userId);
     if (!ws) {
         ws = await workspaceRepo.createWorkspace({ name: 'Personal workspace', ownerUserId: userId, type: 'personal' });
+    } else if (ws.name !== 'Personal workspace') {
+        // Self-heal: legacy guest→user conversions may have left the name
+        // as 'Guest workspace'. Fix once, subsequent reads are fast.
+        await query(`UPDATE workspaces SET name = 'Personal workspace' WHERE id = $1 AND name != 'Personal workspace'`, [ws.id]).catch(() => {});
+        ws.name = 'Personal workspace';
     }
     return ws;
 }
