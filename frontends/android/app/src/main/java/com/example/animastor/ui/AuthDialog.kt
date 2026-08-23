@@ -74,11 +74,19 @@ object AuthDialog {
         })
         me.workspace?.let { ws ->
             root.addView(TextView(activity).apply {
-                text = "${activity.getString(R.string.auth_personal_workspace)}: ${ws.name ?: ""}"
+                text = activity.getString(R.string.auth_personal_workspace)
                 textSize = 13f
                 setTextColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorOnSurfaceVariant))
                 setPadding(0, dp(4), 0, 0)
             })
+            if (!ws.name.isNullOrBlank()) {
+                root.addView(TextView(activity).apply {
+                    text = ws.name
+                    textSize = 13f
+                    setTextColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorOnSurfaceVariant))
+                    setPadding(0, dp(2), 0, 0)
+                })
+            }
         }
 
         val dialog = AlertDialog.Builder(activity).setView(root).create()

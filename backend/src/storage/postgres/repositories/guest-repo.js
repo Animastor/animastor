@@ -149,14 +149,15 @@ async function revokeByToken(token) {
  * personal workspace in place — books keep their workspace_id untouched.
  * @param {object} client - pooled PG client with an open transaction
  */
-async function convertTemporaryWorkspace(client, workspaceId, ownerUserId, now = Date.now()) {
+async function convertTemporaryWorkspace(client, workspaceId, ownerUserId, username, now = Date.now()) {
+    const wsName = username ? username + "'s Workspace" : 'Personal workspace';
     const { rows } = await client.query(`
         UPDATE workspaces
-        SET owner_user_id = $2, type = 'personal', name = 'Personal workspace',
+        SET owner_user_id = $2, type = 'personal', name = $3,
             expires_at = NULL, updated_at = EXTRACT(EPOCH FROM NOW())::bigint
         WHERE id = $1 AND type = 'temporary'
         RETURNING *
-    `, [workspaceId, ownerUserId]);
+    `, [workspaceId, ownerUserId, wsName]);
     const workspace = rows[0];
     if (!workspace) {
         throw new Error(`workspace ${workspaceId} is not a convertible temporary workspace`);

@@ -140,7 +140,10 @@ export function UserMenu() {
           <div class="user-menu__head">
             <strong>{me.authenticated && me.user ? me.user.username : t('auth_anonymous')}</strong>
             {me.authenticated && me.workspace && (
-              <small class="user-menu__workspace">{t('auth_personal_workspace')}: {me.workspace.name}</small>
+              <>
+                <small class="user-menu__workspace">{t('auth_personal_workspace')}</small>
+                <small class="user-menu__workspace">{me.workspace.name}</small>
+              </>
             )}
           </div>
           {me.authenticated ? (

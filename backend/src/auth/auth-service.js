@@ -97,15 +97,22 @@ function publicWorkspace(ws) {
  * the active workspace for authenticated requests. A future workspace
  * switcher may override this selection without touching req.user resolution.
  */
-async function resolveDefaultWorkspace(userId) {
+const LEGACY_WORKSPACE_NAMES = new Set(['Personal workspace', 'Guest workspace']);
+function personalWorkspaceName(username) {
+    return `${username}'s Workspace`;
+}
+async function resolveDefaultWorkspace(userId, username) {
     let ws = await workspaceRepo.findPersonalWorkspace(userId);
     if (!ws) {
-        ws = await workspaceRepo.createWorkspace({ name: 'Personal workspace', ownerUserId: userId, type: 'personal' });
-    } else if (ws.name !== 'Personal workspace') {
-        // Self-heal: legacy guest→user conversions may have left the name
-        // as 'Guest workspace'. Fix once, subsequent reads are fast.
-        await query(`UPDATE workspaces SET name = 'Personal workspace' WHERE id = $1 AND name != 'Personal workspace'`, [ws.id]).catch(() => {});
-        ws.name = 'Personal workspace';
+        const name = username ? personalWorkspaceName(username) : 'Personal workspace';
+        ws = await workspaceRepo.createWorkspace({ name, ownerUserId: userId, type: 'personal' });
+    } else if (LEGACY_WORKSPACE_NAMES.has(ws.name)) {
+        // Self-heal: legacy guest→user conversions or pre-rename registrations
+        // left the name as 'Personal workspace' or 'Guest workspace'. Fix once,
+        // subsequent reads are fast. Never overwrite a user-chosen name.
+        const newName = username ? personalWorkspaceName(username) : 'Personal workspace';
+        await query(`UPDATE workspaces SET name = $2 WHERE id = $1`, [ws.id, newName]).catch(() => {});
+        ws.name = newName;
     }
     return ws;
 }
@@ -178,7 +185,7 @@ async function register({ username, password, email, guestToken }) {
         if (guest) {
             // CONVERSION: the guest's temporary workspace becomes this user's
             // personal workspace — books keep their workspace_id.
-            workspaceRow = await guestRepo.convertTemporaryWorkspace(client, guest.workspace_id, userRow.user_id);
+            workspaceRow = await guestRepo.convertTemporaryWorkspace(client, guest.workspace_id, userRow.user_id, uname);
             await client.query(`
                 INSERT INTO workspace_members (workspace_id, user_id, role)
                 VALUES ($1, $2, 'owner')
@@ -189,7 +196,7 @@ async function register({ username, password, email, guestToken }) {
                 INSERT INTO workspaces (name, owner_user_id, type)
                 VALUES ($1, $2, 'personal')
                 RETURNING *
-            `, ['Personal workspace', userRow.user_id]);
+            `, [personalWorkspaceName(uname), userRow.user_id]);
             workspaceRow = wsRows[0];
             await client.query(`
                 INSERT INTO workspace_members (workspace_id, user_id, role)
@@ -244,7 +251,7 @@ async function login({ username, password }) {
         throw new AuthError(401, 'Invalid username or password', 'login_no_password');
     }
 
-    const workspace = await resolveDefaultWorkspace(user.user_id);
+    const workspace = await resolveDefaultWorkspace(user.user_id, user.username);
     const session = await sessionRepo.createSession(user.user_id, Date.now() + SESSION_TTL_MS);
     console.log(`[AUTH] login ok user=${user.user_id}`);
     return { user: publicUser(user), workspace: publicWorkspace(workspace), session };
@@ -260,7 +267,7 @@ async function logout(token) {
 async function resolveSession(token) {
     const row = token ? await sessionRepo.findByToken(token) : null;
     if (!row) return null;
-    const workspace = await resolveDefaultWorkspace(row.user_id);
+    const workspace = await resolveDefaultWorkspace(row.user_id, row.username);
     return {
         user: { userId: row.user_id, username: row.username, displayName: row.display_name, role: row.role || 'user' },
         workspace: publicWorkspace(workspace),
