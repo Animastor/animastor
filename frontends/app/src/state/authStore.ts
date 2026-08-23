@@ -61,7 +61,8 @@ export async function logout(): Promise<void> {
     await postJson<unknown>('/auth/logout', {});
   } catch { /* logout is idempotent server-side; cookie clear best-effort */ }
   authMe.value = { authenticated: false, user: null, workspace: null };
-  // Clear persisted book session so the previous user's book is not restored
-  // on the next page load (restoreBookSession reads localStorage).
-  try { localStorage.removeItem('animastor:currentBook'); } catch { /* ignore */ }
+  // NOTE: localStorage 'animastor:currentBook' is intentionally NOT cleared
+  // here — it preserves the user's last-opened book so restoreBookSession()
+  // can reopen it on next login. The backend enforces workspace ownership:
+  // anonymous visitors cannot access workspace-owned books.
 }

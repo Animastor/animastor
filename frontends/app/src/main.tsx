@@ -17,7 +17,8 @@ import { AiAssistantPage } from './pages/AiAssistantPage';
 import { AdminPage } from './pages/AdminPage';
 import { applyTheme, applyLanguage } from './app/theme';
 import { wirePlaybackCoordination, wirePlaybackLifecycle } from './state/playbackStore';
-import { restoreBookSession } from './state/generateStore';
+import { restoreBookSession, bookId } from './state/generateStore';
+import { authMe } from './state/authStore';
 
 // MainActivity.setupPlaybackCoordination() equivalent — forwards
 // generateStore.playbackPrepared to PlaybackViewModel (stage 4).
@@ -65,6 +66,16 @@ function Root() {
     window.addEventListener('popstate', onPop);
     return () => window.removeEventListener('popstate', onPop);
   }, []);
+
+  // Restore the user's last-opened book when they log in (auth transition
+  // from anonymous → authenticated). restoreBookSession() reads the persisted
+  // book ID from localStorage and validates it against the server.
+  useEffect(() => {
+    if (authMe.value.authenticated && !bookId.value) {
+      void restoreBookSession();
+    }
+  }, [authMe.value.authenticated]);
+
   return (
     <AppShell>
       <Routes />
