@@ -180,6 +180,18 @@ module.exports = function(app) {
                 ? body.model.trim()
                 : (fromStored ? stored.model : null);
 
+            // Ghost-provider guard: when there is NO stored workspace provider
+            // AND the request body is empty (no explicit endpoint/key/model),
+            // reject immediately instead of silently falling back to the server
+            // global env key — that would produce a false-positive "connection
+            // OK" for a provider the user already deleted.
+            if (!fromStored && !endpoint && !apiKey) {
+                return res.status(400).json({
+                    ok: false,
+                    error: 'No provider configured — add a provider first',
+                });
+            }
+
             const result = await workspaceAi.testConnection({
                 endpoint: endpoint || undefined,
                 apiKey: apiKey || undefined,

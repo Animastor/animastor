@@ -239,6 +239,7 @@ function AIProviderSection() {
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
   const [testing, setTesting] = useState(false);
+  const [testSuccess, setTestSuccess] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
@@ -271,7 +272,7 @@ function AIProviderSection() {
       providerType, endpoint, apiKey, model, isExisting: !!saved,
     });
     if (!v.ok) { setError(t(v.error as StrKey)); return; }
-    setBusy(true); setError(''); setNotice('');
+    setBusy(true); setError(''); setNotice(''); setTestSuccess(null);
     try {
       const body: Record<string, unknown> = {
         provider_type: v.body.provider_type,
@@ -294,7 +295,7 @@ function AIProviderSection() {
 
   const onDelete = async () => {
     if (busy) return;
-    setBusy(true); setError(''); setNotice('');
+    setBusy(true); setError(''); setNotice(''); setTestSuccess(null);
     try {
       await deleteJson('/settings/ai/provider');
       setSaved(null);
@@ -309,6 +310,14 @@ function AIProviderSection() {
 
   const onTest = async () => {
     if (testing || busy) return;
+    // Ghost-provider guard: if there is no saved provider AND the form has
+    // no endpoint/key filled in, there is nothing meaningful to test.
+    // The backend would reject this too, but a client-side check gives an
+    // immediate, clear message instead of a network round-trip.
+    if (!saved && !endpoint && !apiKey.trim()) {
+      setError(t('ai_provider_test_no_provider'));
+      return;
+    }
     setTesting(true); setError(''); setNotice('');
     try {
       const body: Record<string, unknown> = {};
@@ -317,8 +326,13 @@ function AIProviderSection() {
       if (model) body.model = model;
       const res = await postJson<AiProviderTest>('/settings/ai/test', body);
       const r = describeTestResult(res);
-      if (r.kind === 'ok') setNotice(t('ai_provider_test_ok') + (res.model ? ` · ${res.model}` : ''));
-      else setError(tf('ai_provider_test_fail', r.text));
+      if (r.kind === 'ok') {
+        setNotice('');
+        setTestSuccess(res.model || null);
+      } else {
+        setError(tf('ai_provider_test_fail', r.text));
+        setTestSuccess(null);
+      }
       // Re-read meta so the status pill (ok/failed/untested) + last_tested_at
       // reflect what the backend persisted on Test Connection.
       try {
@@ -327,6 +341,7 @@ function AIProviderSection() {
       } catch { /* status pill is best-effort */ }
     } catch (e) {
       setError(tf('ai_provider_test_fail', (e as Error).message));
+      setTestSuccess(null);
     } finally {
       setTesting(false);
     }
@@ -432,6 +447,12 @@ function AIProviderSection() {
             </>
           )}
 
+          {testSuccess && (
+            <p class="settings-page__success">
+              <svg class="settings-page__success-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="16" height="16"><path d="M20 6L9 17l-5-5" /></svg>
+              {t('ai_provider_test_ok')}{testSuccess ? ` · ${testSuccess}` : ''}
+            </p>
+          )}
           {notice && <p class="card__hint">{notice}</p>}
           {error && <p class="settings-page__error">{error}</p>}
         </div>

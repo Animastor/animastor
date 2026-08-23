@@ -1162,6 +1162,18 @@ button { font: inherit; color: inherit; }
   color: var(--error); font-size: var(--fs-caption);
   margin: 0 0 0.5rem;
 }
+.settings-page__success {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  color: var(--success); font-size: var(--fs-caption); font-weight: 600;
+  margin: 0 0 0.5rem;
+  padding: 0.25rem 0.5rem;
+  background: rgba(107, 158, 107, 0.12);
+  border: 1px solid var(--success);
+  border-radius: var(--radius-sm);
+}
+.settings-page__success-icon { flex-shrink: 0; }
 .settings-page__notice {
   color: var(--text-2); font-size: 0.875rem;
   background: var(--surface-2); border: 1px dashed var(--outline);
