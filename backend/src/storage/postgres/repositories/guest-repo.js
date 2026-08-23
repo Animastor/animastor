@@ -152,8 +152,8 @@ async function revokeByToken(token) {
 async function convertTemporaryWorkspace(client, workspaceId, ownerUserId, now = Date.now()) {
     const { rows } = await client.query(`
         UPDATE workspaces
-        SET owner_user_id = $2, type = 'personal', expires_at = NULL,
-            updated_at = EXTRACT(EPOCH FROM NOW())::bigint
+        SET owner_user_id = $2, type = 'personal', name = 'Personal workspace',
+            expires_at = NULL, updated_at = EXTRACT(EPOCH FROM NOW())::bigint
         WHERE id = $1 AND type = 'temporary'
         RETURNING *
     `, [workspaceId, ownerUserId]);
