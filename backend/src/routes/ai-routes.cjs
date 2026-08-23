@@ -303,6 +303,9 @@ module.exports = function(app, redis, deps) {
             const sessionMode = mode || session.mode || 'chat';
             const tools = chatEngine.getToolsForMode(sessionMode, bookId, isLocked);
 
+            const ai = await resolveChatAI(bookId);
+            if (!ai.apiKey) return aiUnavailable(res);
+
             // Build system prompt:
             // - If `system` is explicitly provided (legacy clients), use it as base
             // - Otherwise, build from structured fields (mode, topic, lang, position)
@@ -349,9 +352,6 @@ module.exports = function(app, redis, deps) {
                     { role: 'user', content: message },
                 ];
             }
-
-            const ai = await resolveChatAI(bookId);
-            if (!ai.apiKey) return aiUnavailable(res);
 
             const controller = new AbortController();
             const timeout = setTimeout(() => controller.abort(), AI_FETCH_TIMEOUT_MS);
