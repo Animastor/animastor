@@ -567,6 +567,7 @@
     <string name="ai_provider_test">Проверить подключение</string>
     <string name="ai_provider_test_ok">Подключение успешно</string>
     <string name="ai_provider_test_fail">Ошибка: %1$s</string>
+    <string name="ai_provider_test_no_provider">Провайдер не настроен — сначала добавьте провайдера</string>
     <string name="ai_provider_none">Отдельный провайдер не настроен — используется глобальная конфигурация сервера</string>
     <string name="ai_provider_type">Тип провайдера</string>
     <string name="ai_provider_type_openrouter">OpenRouter</string>

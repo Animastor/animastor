@@ -590,6 +590,7 @@
     <string name="ai_provider_test">Test connection</string>
     <string name="ai_provider_test_ok">Connection OK</string>
     <string name="ai_provider_test_fail">Error: %1$s</string>
+    <string name="ai_provider_test_no_provider">No provider configured — add a provider first</string>
     <string name="ai_provider_none">No dedicated provider configured — the server global configuration applies</string>
     <string name="ai_provider_type">Provider type</string>
     <string name="ai_provider_type_openrouter">OpenRouter</string>

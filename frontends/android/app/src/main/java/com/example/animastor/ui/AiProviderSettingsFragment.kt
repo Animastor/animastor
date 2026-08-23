@@ -206,15 +206,23 @@ class AiProviderSettingsFragment : Fragment(R.layout.fragment_ai_provider_settin
     private fun onTest() {
         val b = binding ?: return
         if (testing || busy) return
+        // Ghost-provider guard: if there is no saved provider AND the form has
+        // no endpoint/key filled in, there is nothing meaningful to test.
+        // The backend would reject this too, but a client-side check gives an
+        // immediate, clear message instead of a network round-trip.
+        val endpoint = (b.endpointInput.text ?: "").toString().trim()
+        val apiKey = (b.apiKeyInput.text ?: "").toString().trim()
+        val model = (b.modelInput.text ?: "").toString().trim()
+        if (saved == null && endpoint.isEmpty() && apiKey.isEmpty()) {
+            showError(getString(R.string.ai_provider_test_no_provider))
+            return
+        }
         testing = true
         setTesting(true)
         clearMessages()
         lifecycleScope.launch {
             try {
                 val body = mutableMapOf<String, Any?>()
-                val endpoint = (b.endpointInput.text ?: "").toString().trim()
-                val apiKey = (b.apiKeyInput.text ?: "").toString().trim()
-                val model = (b.modelInput.text ?: "").toString().trim()
                 if (endpoint.isNotEmpty()) body["endpoint"] = endpoint
                 if (apiKey.isNotEmpty()) body["api_key"] = apiKey
                 if (model.isNotEmpty()) body["model"] = model
@@ -222,7 +230,7 @@ class AiProviderSettingsFragment : Fragment(R.layout.fragment_ai_provider_settin
                 val res = RetrofitClient.api.testAiProvider(body)
                 if (res.ok) {
                     val modelPart = res.model?.let { " \u00B7 $it" } ?: ""
-                    showNotice(getString(R.string.ai_provider_test_ok) + modelPart)
+                    showSuccess(getString(R.string.ai_provider_test_ok) + modelPart)
                 } else {
                     showError(getString(R.string.ai_provider_test_fail, res.error ?: "unknown error"))
                 }
@@ -236,7 +244,17 @@ class AiProviderSettingsFragment : Fragment(R.layout.fragment_ai_provider_settin
                     }
                 }
             } catch (e: Throwable) {
-                showError(getString(R.string.ai_provider_test_fail, friendlyError(e)))
+                // Ghost-provider guard safety net: the backend returns 400 with an
+                // English error when no provider is configured and the body is empty.
+                // Map it to the localized string resource so the user never sees
+                // mixed languages.
+                if (e is HttpException && e.code() == 400 &&
+                    friendlyError(e).contains("no provider", ignoreCase = true)
+                ) {
+                    showError(getString(R.string.ai_provider_test_no_provider))
+                } else {
+                    showError(getString(R.string.ai_provider_test_fail, friendlyError(e)))
+                }
             } finally {
                 testing = false
                 setTesting(false)
@@ -289,12 +307,22 @@ class AiProviderSettingsFragment : Fragment(R.layout.fragment_ai_provider_settin
 
     private fun clearMessages() {
         val b = binding ?: return
+        b.successLabel.visibility = View.GONE
+        b.noticeLabel.visibility = View.GONE
+        b.errorLabel.visibility = View.GONE
+    }
+
+    private fun showSuccess(msg: String) {
+        val b = binding ?: return
+        b.successLabel.text = msg
+        b.successLabel.visibility = View.VISIBLE
         b.noticeLabel.visibility = View.GONE
         b.errorLabel.visibility = View.GONE
     }
 
     private fun showNotice(msg: String) {
         val b = binding ?: return
+        b.successLabel.visibility = View.GONE
         b.noticeLabel.text = msg
         b.noticeLabel.visibility = View.VISIBLE
         b.errorLabel.visibility = View.GONE
@@ -302,6 +330,7 @@ class AiProviderSettingsFragment : Fragment(R.layout.fragment_ai_provider_settin
 
     private fun showError(msg: String) {
         val b = binding ?: return
+        b.successLabel.visibility = View.GONE
         b.errorLabel.text = msg
         b.errorLabel.visibility = View.VISIBLE
         b.noticeLabel.visibility = View.GONE

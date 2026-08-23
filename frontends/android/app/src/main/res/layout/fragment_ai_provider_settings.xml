@@ -205,6 +205,21 @@
                         android:visibility="gone"
                         style="@style/Widget.Animastor.Button.Outlined.Error" />
 
+                    <!-- Feedback area — separated from buttons by 12dp -->
+
+                    <TextView
+                        android:id="@+id/successLabel"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="12dp"
+                        android:drawablePadding="6dp"
+                        android:textSize="12sp"
+                        android:textStyle="bold"
+                        android:textColor="@color/cinema_success"
+                        android:background="@drawable/success_badge_bg"
+                        android:padding="8dp"
+                        android:visibility="gone" />
+
                     <TextView
                         android:id="@+id/noticeLabel"
                         android:layout_width="match_parent"
