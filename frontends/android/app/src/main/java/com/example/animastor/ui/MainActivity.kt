@@ -459,7 +459,8 @@ class MainActivity : AppCompatActivity() {
 
         lifecycleScope.launch {
             try {
-                val tempFile = File(cacheDir, "opened-${System.currentTimeMillis()}")
+                val originalName = getFileName(uri) ?: "opened-${System.currentTimeMillis()}"
+                val tempFile = File(cacheDir, originalName)
 
                 contentResolver.openInputStream(uri)?.use { input ->
                     tempFile.outputStream().use { output ->

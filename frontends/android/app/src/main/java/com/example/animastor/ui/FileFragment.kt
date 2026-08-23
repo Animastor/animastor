@@ -75,9 +75,12 @@ class FileFragment : Fragment(R.layout.fragment_file) {
     ) { uri ->
         if (uri == null) return@registerForActivityResult
         runCatching {
+            // Preserve the original filename for multipart upload (web parity).
+            // The backend uses it for title derivation and import metadata.
+            val originalName = getFileName(uri) ?: "import-${System.currentTimeMillis()}"
             val tempFile = File(
                 requireContext().cacheDir,
-                "import-${System.currentTimeMillis()}"
+                originalName
             )
             requireContext().contentResolver.openInputStream(uri)?.use { input ->
                 tempFile.outputStream().use { output -> input.copyTo(output) }
@@ -89,6 +92,8 @@ class FileFragment : Fragment(R.layout.fragment_file) {
             Toast.makeText(requireContext(), "${getString(R.string.upload_failed)}: ${it.message}", Toast.LENGTH_SHORT).show()
         }
     }
+
+
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
