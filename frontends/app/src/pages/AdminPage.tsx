@@ -117,7 +117,7 @@ function AdminLoginForm() {
             class="settings__input"
             type="text"
             value={username}
-            placeholder="developer"
+            placeholder="User"
             aria-label="Username"
             disabled={loading}
             onInput={(e) => setUsername((e.target as HTMLInputElement).value)}
@@ -224,8 +224,18 @@ function AdminDashboard(props: { onLogout: () => void }) {
       if (model) body.model = model;
       const res = await postJson<SystemAiTest>('/admin/system-ai/test', body);
       const r = describeTestResult(res);
-      if (r.kind === 'ok') setNotice('Connection OK' + (res.model ? ` · ${res.model}` : ''));
-      else setError(`Connection failed: ${r.text}`);
+      if (r.kind === 'ok') {
+        setNotice('Connection OK' + (res.model ? ` · ${res.model}` : ''));
+        // Refetch state to pick up the updated status from setSystemLastTest
+        try {
+          const fresh = await getJson<SystemAiState>('/admin/system-ai');
+          setEnabled(fresh.enabled);
+          const meta = normalizeSystemMeta(fresh.provider);
+          setSaved(meta);
+        } catch { /* ignore — test itself succeeded */ }
+      } else {
+        setError(`Connection failed: ${r.text}`);
+      }
     } catch (e) {
       setError(`Connection failed: ${(e as Error).message}`);
     } finally {
