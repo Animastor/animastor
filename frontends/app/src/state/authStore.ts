@@ -4,7 +4,7 @@
 import { signal } from '@preact/signals';
 import { getJson, postJson } from '../api/client';
 
-export interface AuthUser { id: string; username: string; display_name?: string | null; }
+export interface AuthUser { id: string; username: string; display_name?: string | null; role?: string; }
 export interface AuthWorkspace { id: string; name: string; type: string; }
 export interface AuthMe { authenticated: boolean; user: AuthUser | null; workspace: AuthWorkspace | null; }
 

@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'preact/hooks';
+import { useSignal } from '@preact/signals';
 import { getJson, putJson, postJson } from '../api/client';
 import { Switch, ErrorText } from '../lib/ui';
+import { authMe, authLoading, authError, login, logout, fetchMe, type AuthMe } from '../state/authStore';
 import {
   type ProviderType,
   type SystemAiState,
@@ -15,7 +17,7 @@ import {
 } from '../features/admin/systemAi';
 
 // AdminPage — System AI Control (Admin Foundation).
-// Served on admin.animastor.in (nginx Basic Auth + backend requireAdmin).
+// Served on admin.animastor.in — no Basic Auth, internal app login only.
 // Two concerns:
 //   1. Kill switch — toggle platform/system AI on or off. Personal (workspace)
 //      providers are unaffected.
@@ -24,6 +26,125 @@ import {
 
 export function AdminPage(props: { path?: string }) {
   void props;
+  const me = useSignal(authMe.value);
+  const [checking, setChecking] = useState(true);
+
+  // Check session on mount
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const result = await fetchMe();
+        if (alive) me.value = result;
+      } catch {
+        if (alive) me.value = { authenticated: false, user: null, workspace: null };
+      } finally {
+        if (alive) setChecking(false);
+      }
+    })();
+    return () => { alive = false; };
+  }, []);
+
+  // Subscribe to authMe changes
+  useEffect(() => {
+    return authMe.subscribe((v) => { me.value = v; });
+  }, []);
+
+  if (checking) {
+    return (
+      <section class="page page--centered">
+        <p class="page__ph">Loading...</p>
+      </section>
+    );
+  }
+
+  if (!me.value.authenticated || !me.value.user) {
+    return <AdminLoginForm />;
+  }
+
+  // Check admin role
+  const user = me.value.user!;
+  const isAdmin = user.role === 'admin';
+  if (!isAdmin) {
+    return (
+      <section class="page page--centered">
+        <div class="card" style={{ maxWidth: '24rem', width: '100%' }}>
+          <h3 class="card__title">Access Denied</h3>
+          <p class="card__hint">Your account does not have admin privileges.</p>
+          <button class="btn btn--outlined" onClick={() => { logout(); me.value = { authenticated: false, user: null, workspace: null }; }}>
+            Logout
+          </button>
+        </div>
+      </section>
+    );
+  }
+
+  return <AdminDashboard onLogout={() => { logout(); me.value = { authenticated: false, user: null, workspace: null }; }} />;
+}
+
+// ── Login Form ─────────────────────────────────────────────────────
+function AdminLoginForm() {
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  const handleSubmit = async (e: Event) => {
+    e.preventDefault();
+    if (!username.trim() || !password) return;
+    setLoading(true);
+    setError('');
+    try {
+      const result = await login(username.trim(), password);
+      if (!result.authenticated) {
+        setError('Invalid credentials');
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Login failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <section class="page page--centered">
+      <div class="card" style={{ maxWidth: '24rem', width: '100%' }}>
+        <h3 class="card__title">Admin Login</h3>
+        <p class="card__hint">Sign in with your admin account.</p>
+        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginTop: '0.5rem' }}>
+          <p class="card__label">Username</p>
+          <input
+            class="settings__input"
+            type="text"
+            value={username}
+            placeholder="developer"
+            aria-label="Username"
+            disabled={loading}
+            onInput={(e) => setUsername((e.target as HTMLInputElement).value)}
+            autofocus
+          />
+          <p class="card__label">Password</p>
+          <input
+            class="settings__input"
+            type="password"
+            value={password}
+            placeholder="Password"
+            aria-label="Password"
+            disabled={loading}
+            onInput={(e) => setPassword((e.target as HTMLInputElement).value)}
+          />
+          {error && <ErrorText message={error} />}
+          <button class="btn btn--block" type="submit" disabled={loading || !username.trim() || !password}>
+            {loading ? 'Signing in...' : 'Sign in'}
+          </button>
+        </form>
+      </div>
+    </section>
+  );
+}
+
+// ── Admin Dashboard (authenticated + admin) ────────────────────────
+function AdminDashboard(props: { onLogout: () => void }) {
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [saved, setSaved] = useState<SystemProviderMeta | null>(null);
   const [providerType, setProviderType] = useState<ProviderType>('openai-compatible');
@@ -84,7 +205,6 @@ export function AdminPage(props: { path?: string }) {
       const res = await putJson<SystemAiState>('/admin/system-ai', { provider: v.body });
       const meta = normalizeSystemMeta(res.provider);
       setSaved(meta);
-      // SECURITY INVARIANT: drop the plaintext key from state immediately.
       setApiKey('');
       setNotice('System provider saved');
     } catch (e) {
@@ -128,14 +248,19 @@ export function AdminPage(props: { path?: string }) {
     <section class="page settings-page">
       <div class="settings-page__scroll">
         <div class="card card--stack">
-          <h3 class="card__title">System AI Control</h3>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
+            <h3 class="card__title" style={{ margin: 0 }}>System AI Control</h3>
+            <button class="btn btn--outlined" style={{ height: '2rem', fontSize: '0.75rem', padding: '0 0.625rem' }} onClick={props.onLogout}>
+              Logout
+            </button>
+          </div>
           <p class="card__hint card__hint--wrap">
             Platform-level AI. Turning this off blocks all system/provider AI
             calls. Personal (workspace) providers are not affected.
           </p>
 
           {!loaded ? (
-            <p class="card__hint">Loading…</p>
+            <p class="card__hint">Loading...</p>
           ) : (
             <>
               <div class="settings__group" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
@@ -191,7 +316,7 @@ export function AdminPage(props: { path?: string }) {
                 type="password"
                 autocomplete="off"
                 value={apiKey}
-                placeholder={saved?.configured ? '•••• (leave empty to keep)' : 'sk-...'}
+                placeholder={saved?.configured ? '.... (leave empty to keep)' : 'sk-...'}
                 aria-label="API key"
                 disabled={busy}
                 onInput={(e) => setApiKey((e.target as HTMLInputElement).value)}
@@ -212,10 +337,10 @@ export function AdminPage(props: { path?: string }) {
 
               <div class="settings__group">
                 <button class="btn" onClick={onSave} disabled={busy || !endpoint}>
-                  {busy ? 'Saving…' : 'Save provider'}
+                  {busy ? 'Saving...' : 'Save provider'}
                 </button>
                 <button class="btn btn--outlined" onClick={onTest} disabled={testing || busy}>
-                  {testing ? 'Testing…' : 'Test connection'}
+                  {testing ? 'Testing...' : 'Test connection'}
                 </button>
               </div>
 

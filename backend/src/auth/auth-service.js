@@ -85,7 +85,7 @@ function validateEmail(email) {
 
 /** Safe public shape — never include password_hash / recovery_key_hash / settings. */
 function publicUser(user) {
-    return { id: user.user_id, username: user.username, display_name: user.display_name || null };
+    return { id: user.user_id, username: user.username, display_name: user.display_name || null, role: user.role || 'user' };
 }
 function publicWorkspace(ws) {
     return { id: ws.id, name: ws.name, type: ws.type };

@@ -116,7 +116,7 @@ module.exports = function(app, _redis, deps) {
                 return res.json({
                     authenticated: true,
                     identity: 'user',
-                    user: { id: req.user.userId, username: req.user.username, display_name: req.user.displayName || null },
+                    user: { id: req.user.userId, username: req.user.username, display_name: req.user.displayName || null, role: req.user.role || 'user' },
                     workspace: req.workspace,
                 });
             }
