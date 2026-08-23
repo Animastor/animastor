@@ -2,7 +2,7 @@ import { useEffect, useState } from 'preact/hooks';
 import { useSignal } from '@preact/signals';
 import { getJson, putJson, postJson } from '../api/client';
 import { Switch, ErrorText } from '../lib/ui';
-import { authMe, authLoading, authError, login, logout, fetchMe, type AuthMe } from '../state/authStore';
+import { authMe, login, logout, fetchMe } from '../state/authStore';
 import {
   type ProviderType,
   type SystemAiState,
