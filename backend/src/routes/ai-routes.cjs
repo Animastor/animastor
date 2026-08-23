@@ -322,6 +322,7 @@ module.exports = function(app, redis, deps) {
                     bookData,
                     sceneId: req.body?.scene_id || null,
                     unitIndex: req.body?.unit_index ?? null,
+                    modelName: ai.model,
                 });
             }
             const bookContext = chatEngine.buildBookContext(bookData);

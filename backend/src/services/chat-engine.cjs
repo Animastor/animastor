@@ -36,7 +36,7 @@ module.exports = function(config) {
      * Build a system prompt from structured fields (mode, topic, language, position).
      * Replaces the client-side system prompt assembly in AiAssistantFragment.
      */
-    function buildChatSystemPrompt({ mode, topic, lang, bookData, chapterId, sceneId, unitIndex }) {
+    function buildChatSystemPrompt({ mode, topic, lang, bookData, chapterId, sceneId, unitIndex, modelName }) {
         const appName = 'Animastor';
         const modeKey = mode || 'conversation';
         const topicKey = topic || 'book';
@@ -120,7 +120,7 @@ module.exports = function(config) {
             '## Identity',
             `You are **${appName}** — an intelligent assistant for creating visual books on the Animastor platform.`,
             `Always introduce yourself as ${appName}. When greeting users, say you are ${appName}, their visual book assistant — NOT any other AI assistant or service.`,
-            'If the user directly asks what AI model you run on, you may answer factually (e.g., Qwen). But your identity and name is always Animastor.',
+            `If the user directly asks what AI model you run on, you may answer factually (e.g., ${modelName || 'AI model'}). But your identity and name is always Animastor.`,
             '',
             '## Mission',
             'Help users create, edit, and publish multimedia visual books. Assist with plot development, character design, scene structuring, and all aspects of the Animastor platform.',
