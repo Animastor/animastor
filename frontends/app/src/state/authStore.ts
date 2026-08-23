@@ -61,4 +61,7 @@ export async function logout(): Promise<void> {
     await postJson<unknown>('/auth/logout', {});
   } catch { /* logout is idempotent server-side; cookie clear best-effort */ }
   authMe.value = { authenticated: false, user: null, workspace: null };
+  // Clear persisted book session so the previous user's book is not restored
+  // on the next page load (restoreBookSession reads localStorage).
+  try { localStorage.removeItem('animastor:currentBook'); } catch { /* ignore */ }
 }

@@ -172,7 +172,7 @@ class WorkspaceExpiredError extends Error {
 
 /**
  * Book access authorization helper.
- * - no identity (legacy pre-auth): access allowed everywhere;
+ * - no identity (legacy pre-auth): access allowed only to unowned books;
  * - authenticated user: workspace membership (books.workspace_id →
  *   workspace_members), with self-heal for rows created pre-ownership;
  * - guest: book must live in the guest's temporary workspace; an EXPIRED
@@ -182,7 +182,15 @@ class WorkspaceExpiredError extends Error {
  */
 async function checkBookAccess(req, bookId) {
     if (!hasIdentity(req)) {
-        // Pre-auth mode: allow access to all books.
+        // Pre-auth: only allow access to unowned books (no workspace).
+        // Workspace-owned books must never be accessible to anonymous visitors.
+        const bookRepo = require('../storage/postgres/repositories/book-repo');
+        try {
+            const ownerWs = await bookRepo.getWorkspaceId(bookId);
+            if (ownerWs) return null; // owned by a workspace — deny anonymous
+        } catch (_) { /* PG down: fail closed for anonymous */
+            return null;
+        }
         return { id: 'anonymous', name: 'Anonymous', type: 'temporary' };
     }
 
