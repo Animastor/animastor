@@ -305,6 +305,7 @@ module.exports = function(app, redis, deps) {
 
             const ai = await resolveChatAI(bookId);
             if (!ai.apiKey) return aiUnavailable(res);
+            console.log('[AI-CHAT] resolveChatAI → model:', ai.model, 'source:', ai.source, 'baseUrl:', ai.baseUrl);
 
             // Build system prompt:
             // - If `system` is explicitly provided (legacy clients), use it as base
@@ -315,6 +316,7 @@ module.exports = function(app, redis, deps) {
             if (system) {
                 // Legacy path: frontend sent fully assembled prompt
                 systemPrompt = system;
+                console.log('[AI-CHAT] Using legacy system prompt from frontend');
             } else {
                 // F6 path: assemble from structured fields on the server.
                 // buildChatSystemPrompt resolves chapterId from sceneId internally.
@@ -327,6 +329,7 @@ module.exports = function(app, redis, deps) {
                     unitIndex: req.body?.unit_index ?? null,
                     modelName: ai.model,
                 });
+                console.log('[AI-CHAT] Server-side prompt, modelName:', ai.model);
             }
             const bookContext = chatEngine.buildBookContext(bookData);
             if (bookContext) systemPrompt += '\n\n' + bookContext;
