@@ -3,7 +3,7 @@ import { applyTheme, applyLanguage, readPrefs, writePrefs } from '../app/theme';
 import type { ThemePref } from '../app/theme';
 import { t, tf } from '../app/i18n';
 import type { StrKey } from '../app/i18n';
-import { getJson, postJson, putJson, deleteJson } from '../api/client';
+import { getJson, postJson, putJson, deleteJson, ApiError } from '../api/client';
 import { bookId, resetProgressState, closeBook as closeGenerateBook } from '../state/generateStore';
 import { closeBook as closePlayerBook } from '../state/playbackStore';
 import { clearCache as clearMediaCache } from '../cache/mediaCache';
@@ -340,7 +340,15 @@ function AIProviderSection() {
         if (meta.provider) setSaved(meta.provider);
       } catch { /* status pill is best-effort */ }
     } catch (e) {
-      setError(tf('ai_provider_test_fail', (e as Error).message));
+      // Ghost-provider guard safety net: the backend returns 400 with an
+      // English error when no provider is configured and the body is empty.
+      // Map it to the localized i18n key so the user never sees mixed languages.
+      const msg = (e as Error).message;
+      if (e instanceof ApiError && e.status === 400 && /no provider/i.test(msg)) {
+        setError(t('ai_provider_test_no_provider'));
+      } else {
+        setError(tf('ai_provider_test_fail', msg));
+      }
       setTestSuccess(null);
     } finally {
       setTesting(false);
@@ -447,14 +455,18 @@ function AIProviderSection() {
             </>
           )}
 
-          {testSuccess && (
-            <p class="settings-page__success">
-              <svg class="settings-page__success-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="16" height="16"><path d="M20 6L9 17l-5-5" /></svg>
-              {t('ai_provider_test_ok')}{testSuccess ? ` · ${testSuccess}` : ''}
-            </p>
+          {(testSuccess || notice || error) && (
+            <div class="settings__feedback">
+              {testSuccess && (
+                <p class="settings-page__success">
+                  <svg class="settings-page__success-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="16" height="16"><path d="M20 6L9 17l-5-5" /></svg>
+                  {t('ai_provider_test_ok')}{testSuccess ? ` · ${testSuccess}` : ''}
+                </p>
+              )}
+              {notice && <p class="card__hint">{notice}</p>}
+              {error && <p class="settings-page__error">{error}</p>}
+            </div>
           )}
-          {notice && <p class="card__hint">{notice}</p>}
-          {error && <p class="settings-page__error">{error}</p>}
         </div>
       </div>
     </section>
