@@ -184,6 +184,11 @@ async function collectRecentBooks({ bookSourceRepo, lazyBook, limit = DEFAULT_LI
             : result.filter(entry => entry.workspace_id != null);
     } else if (workspaceId) {
         result = result.filter(entry => entry.workspace_id === workspaceId);
+    } else {
+        // Anonymous (no identity): only show unowned books (workspace_id IS
+        // NULL). Books belonging to a user/guest workspace must never leak to
+        // unauthenticated visitors.
+        result = result.filter(entry => !entry.workspace_id);
     }
 
     const sortKey = (entry) => Number(entry.updated_at) || 0;

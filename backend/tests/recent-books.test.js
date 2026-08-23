@@ -168,15 +168,28 @@ describe('Recent Books — workspace ownership filtering', () => {
         };
     }
 
-    it('pre-auth (no workspaceId) keeps listing everything including disk books', async () => {
+    it('pre-auth (no workspaceId) only lists unowned books — workspace-owned books are hidden', async () => {
         const deps = makeDeps({
             pgRows: [{ book_id: 'pg-1', file_hash: 'h', source_type: 'txt', created_at: 1, workspace_id: WS_A }],
             onDisk: ['pg-1', 'disk-1'],
         });
         const books = await collectRecentBooks(deps);
-        expect(books.map(b => b.book_id).sort()).to.deep.equal(['disk-1', 'pg-1']);
-        const pgBook = books.find(b => b.book_id === 'pg-1');
-        expect(pgBook.workspace_id).to.equal(WS_A);
+        // pg-1 belongs to WS_A and must NOT leak to anonymous visitors.
+        // disk-1 has no workspace ownership and is visible.
+        expect(books.map(b => b.book_id)).to.deep.equal(['disk-1']);
+    });
+
+    it('pre-auth shows unowned disk books even when owned books exist', async () => {
+        const deps = makeDeps({
+            pgRows: [
+                { book_id: 'owned-a', file_hash: 'h1', source_type: 'txt', created_at: 2, workspace_id: WS_A },
+                { book_id: 'owned-b', file_hash: 'h2', source_type: 'txt', created_at: 3, workspace_id: WS_B },
+            ],
+            onDisk: ['owned-a', 'owned-b', 'orphan'],
+        });
+        const books = await collectRecentBooks(deps);
+        // Only orphan (no workspace_id) should be visible to anonymous.
+        expect(books.map(b => b.book_id)).to.deep.equal(['orphan']);
     });
 
     it('never lists books owned by another workspace', async () => {
