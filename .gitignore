@@ -108,3 +108,4 @@ frontends/website/downloads/*.apk
 
 # ========== Other tools ==========
 .aider*
+frontends/android/gradle-8.12
