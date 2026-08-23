@@ -118,8 +118,12 @@ module.exports = function(app) {
                 model: model || undefined,
             });
 
-            // Stamp status only when the stored provider was the one tested.
-            if (fromStored && !body.api_key && !body.endpoint) {
+            // Stamp status when the stored provider was the source and the
+            // resolved endpoint matches the stored one (body overrides for
+            // ad-hoc testing are fine — the stored provider is still the
+            // one being validated).
+            const storedEndpoint = fromStored ? normalizeEndpoint(stored.endpoint) : null;
+            if (fromStored && endpoint === storedEndpoint) {
                 await systemAi.setSystemLastTest(!!result.ok);
             }
 
