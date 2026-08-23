@@ -60,7 +60,7 @@ const aiBookGuard = async (req, res, next) => {
         if (!bookId) return next(); // endpoint without a book scope — nothing to guard
 
         const ws = await checkBookAccess(req, bookId);
-        console.log('[AI-BOOK-GUARD] bookId:', bookId, 'userId:', req.user?.userId, 'guestId:', req.guest?.guestId, 'ws:', req.workspace?.id, 'access:', ws?.id || null);
+
         if (!ws) {
             return res.status(403).json({ error: 'Access denied: not a member of the book\'s workspace' });
         }
