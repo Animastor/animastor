@@ -72,11 +72,11 @@ module.exports = function(app, redis, deps) {
     };
 
     // Cross-tenant guards for authenticated imports (see middleware/auth-context):
-    //  - dedupOwnedByCaller: re-importing the same file must never return
-    //    another user's book (hash-based dedup is cross-tenant otherwise).
+    //  - dedup: re-importing the same file returns the existing book (hash-based).
+    //    Cross-workspace dedup is allowed; the book is re-assigned to the caller's workspace.
     //  - importBookAllowed: a bundle re-import must never touch a book owned
     //    by a foreign workspace (bundle book_id is client-controlled).
-    const { dedupOwnedByCaller, importBookAllowed, hasIdentity } = require('../../middleware/auth-context');
+    const { importBookAllowed, hasIdentity } = require('../../middleware/auth-context');
 
     // In-flight TXT trigger guard
     const inFlightTriggers = new Set();
@@ -235,12 +235,11 @@ app.post('/api/v1/book/import', multer().single('file'), async (req, res) => {
                         if (existingStatus && existingStatus.state) {
                             // Always return existing book on dedup — even if completed.
                             // User re-importing the same file expects to get the same book back,
-                            // not a brand new import. Never across workspaces though.
-                            if (await dedupOwnedByCaller(req, existing.book_id)) {
-                                existingBookId = existing.book_id;
-                            } else {
-                                log(`[UNIFIED-IMPORT] DEDUP: ${existing.book_id} belongs to another workspace — fresh import`);
-                            }
+                            // not a brand new import. Cross-workspace dedup is allowed: the
+                            // book is re-assigned to the caller's workspace via
+                            // attachBookWorkspace below. This handles the common case where a
+                            // guest imported a file, then registered/logged in and re-imports.
+                            existingBookId = existing.book_id;
                         } else {
                             await bookSourceRepo.deleteByBookId(existing.book_id);
                             log(`[UNIFIED-IMPORT] DEDUP: book ${existing.book_id} not on disk — cleaning up reference`);
@@ -529,12 +528,9 @@ function detectFileFormat(buf) {
                         if (existingStatus && existingStatus.state) {
                             // Always return existing book on dedup — even if completed.
                             // User re-importing the same file expects to get the same book back,
-                            // not a brand new import. Never across workspaces though.
-                            if (await dedupOwnedByCaller(req, existing.book_id)) {
-                                existingBookId = existing.book_id;
-                            } else {
-                                log(`[IMPORT-TXT] DEDUP: ${existing.book_id} belongs to another workspace — fresh import`);
-                            }
+                            // not a brand new import. Cross-workspace dedup is allowed
+                            // (same rationale as UNIFIED-IMPORT).
+                            existingBookId = existing.book_id;
                         } else {
                             await bookSourceRepo.deleteByBookId(existing.book_id);
                             log(`[IMPORT-TXT] DEDUP: book ${existing.book_id} not on disk — cleaning up reference`);
