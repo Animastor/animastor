@@ -9,6 +9,7 @@ const fs = require("fs");
 const fsp = require("fs").promises;
 const path = require("path");
 const { cleanupJobArtifacts } = require("./worker-cleanup.cjs");
+const journal = require("./worker-cleanup-journal.cjs");
 
 // ======================================================
 // CONFIG
@@ -583,11 +584,19 @@ async function workerLoop() {
     // Точечная уборка: удаляются ТОЛЬКО файлы этой job. Output удаляется
     // только после успешной доставки результата (downloadResult + sendResult),
     // чтобы при ошибке sendResult() единственный результат не потерялся.
+    // Journal (worker-local persistent) фиксирует lifecycle
+    // CREATED→GENERATED→DELIVERED→CLEANED, чтобы после crash restart мог
+    // дочистить файлы job, результат которой уже доставлен в hub.
     const createdInputFiles = [];
     let outputPath = null;
     let outputDelivered = false;
+    const jobId = task.job_id;
+    const dispatchId = task.dispatch_id;
 
     try {
+      // Journal: CREATED — создаётся ДО первого временного input-файла.
+      await journal.createJob({ jobId, dispatchId, log });
+
       if (task.assets?.images) {
         const [jobBase] = task.job_id.split(/:(iu_image|image|audio|video)$/);
         const scenePrefix = jobBase.replace(/_g\d+$/, '');
@@ -596,6 +605,8 @@ async function workerLoop() {
           const filePath = path.join(COMFY_INPUT_DIR, filename);
           createdInputFiles.push(filePath);
           const { expectedSize } = await saveBase64ImageSafe(base64, filename);
+          // Journal: каждый фактически созданный reference image.
+          await journal.addInputFile({ jobId, dispatchId, log }, filePath);
           log("info", `Multi-image saved: ${filename}`);
           await waitForFileReady(filePath, expectedSize);
           log("info", `Multi-image ready: ${filename}`);
@@ -606,6 +617,7 @@ async function workerLoop() {
         const filePath = path.join(COMFY_INPUT_DIR, filename);
         createdInputFiles.push(filePath);
         const { expectedSize } = await saveBase64ImageSafe(task.assets.image, filename);
+        await journal.addInputFile({ jobId, dispatchId, log }, filePath);
         log("info", `Image saved: ${filename}`);
         await waitForFileReady(filePath, expectedSize);
         log("info", `Image ready: ${filename}`);
@@ -621,11 +633,16 @@ async function workerLoop() {
       // для video — реально выбранный mp4 из history/fallback/fs-scan).
       if (result.meta && result.meta.filename) {
         outputPath = path.resolve(COMFY_OUTPUT_DIR, result.meta.subfolder || "", result.meta.filename);
+        // Journal: GENERATED — известен конкретный output-файл.
+        await journal.setOutputAndGenerated({ jobId, dispatchId, log }, outputPath);
       }
 
       const base64 = await downloadResult(result);
       log("debug", `result for ${task.job_id}: type=${result.type} size=${Math.round(base64.length / 1024)}KB`);
       await sendResult(task, base64);
+      // Journal: DELIVERED — HTTP 200 от hub = результат уже durable в hub
+      // Redis (animastor:result:* записан до ответа 200). Output можно удалять.
+      await journal.setDelivered({ jobId, dispatchId, log });
       outputDelivered = true;
       log("info", `Done ${task.job_id}`);
 
@@ -655,6 +672,15 @@ async function workerLoop() {
         }
         for (const f of cleanupResult.failed) {
           log("warn", `Cleanup ${task.job_id}: failed to remove ${f.path}: ${f.reason}`);
+        }
+
+        if (cleanupResult.failed.length === 0) {
+          // CLEANED: все файлы job удалены → journal больше не нужен.
+          await journal.removeJob({ jobId, dispatchId, log });
+        } else {
+          // Частичный cleanup: journal остаётся — следующий recovery дочистит
+          // оставшиеся файлы (например, один input из видео-набора).
+          log("warn", `Cleanup ${task.job_id}: partial cleanup (${cleanupResult.failed.length} failed) — journal kept for recovery`);
         }
       } catch (cleanupErr) {
         // Cleanup никогда не должен маскировать исходную ошибку job.
@@ -693,6 +719,12 @@ async function main() {
   await verifyCredential();
 
   await waitForComfyUI();
+
+  // Crash-safe recovery: завершить cleanup незакрытых job упавшего worker.
+  // delivered → удаляем input+output; created/generated → только input
+  // (output без proof DELIVERED не трогаем — защита единственной копии).
+  await journal.recoverCleanupJournal({ log });
+
   await workerLoop();
 }
 
