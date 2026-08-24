@@ -144,12 +144,13 @@ class MainActivity : AppCompatActivity() {
 
         // Account button (web parity: UserMenu). Identity is server-owned:
         // refresh /auth/me on tap, show login/register or account panel; on
-        // auth change re-validate the persisted book against the new scope.
+        // auth change isolate/restore the book session for the new identity.
         binding.authButton.setOnClickListener {
             lifecycleScope.launch {
                 AuthStore.refresh()
+                val before = AuthStore.state.value
                 AuthDialog.show(this@MainActivity) {
-                    lifecycleScope.launch { viewModel.restoreBookSession() }
+                    lifecycleScope.launch { handleAuthTransition(before) }
                 }
             }
         }
@@ -267,6 +268,34 @@ class MainActivity : AppCompatActivity() {
                     .commit()
             }
             true
+        }
+    }
+
+    /**
+     * Book session isolation across auth transitions (web parity with
+     * authStore.ts logout/login + generateStore.ts stash/restore).
+     *
+     *  - logout (authenticated → anonymous/guest): stash the open book under
+     *    the outgoing user's own key and clear the live session, so the previous
+     *    user's book never survives into the guest context (the backend answers
+     *    cookie-less requests in pre-auth mode, which would otherwise re-open it).
+     *  - login/register (→ authenticated): re-attach this user's stashed book,
+     *    then validate + warm it via restoreBookSession().
+     *
+     * The book itself is never deleted — ownership in the DB is untouched; only the
+     * client-side session pointer moves.
+     */
+    private suspend fun handleAuthTransition(before: AuthStore.AuthState) {
+        val after = AuthStore.state.value
+        when {
+            before.authenticated && before.user != null && !after.authenticated -> {
+                viewModel.stashBookSessionForUser(before.user.id)
+            }
+            after.authenticated && after.user != null -> {
+                viewModel.restoreStashedBookSessionForUser(after.user.id)
+                viewModel.restoreBookSession()
+            }
+            else -> viewModel.restoreBookSession()
         }
     }
 

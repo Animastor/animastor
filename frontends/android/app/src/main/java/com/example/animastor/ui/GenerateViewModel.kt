@@ -11,7 +11,9 @@ import androidx.lifecycle.viewmodel.CreationExtras
 import com.example.animastor.network.ProgressStream
 import com.example.animastor.network.RetrofitClient
 import com.example.animastor.repository.AssetsStateResponse
+import com.example.animastor.repository.BookSessionStore
 import com.example.animastor.repository.DiffSummary
+import com.example.animastor.repository.SharedPrefsKeyValueStore
 import java.util.concurrent.ConcurrentHashMap
 import com.example.animastor.repository.DirtyScene
 import com.example.animastor.repository.ImportTxtResponse
@@ -205,27 +207,75 @@ class GenerateViewModel(
     var buildId: String = ""
         private set
 
+    /**
+     * Single source of truth for the persisted book session + per-user
+     * logout/login stash (web parity: generateStore.ts BOOK_STORE_KEY /
+     * userStashKey). Backed by the "animastor" SharedPreferences.
+     */
+    val bookSessionStore: BookSessionStore by lazy {
+        BookSessionStore(
+            SharedPrefsKeyValueStore(
+                getApplication<Application>().getSharedPreferences("animastor", 0)
+            )
+        )
+    }
+
     @Volatile private var _firstWindowDone = false
 
     /** Set true when SSE import_complete event arrives (F10). */
     @Volatile private var _importCompleteReceived = false
 
     init {
-        val prefs = getApplication<Application>().getSharedPreferences("animastor", 0)
-        bookId = prefs.getString("bookId", "") ?: ""
-        buildId = prefs.getString("buildId", "") ?: ""
+        val live = bookSessionStore.loadLive()
+        bookId = live.bookId
+        buildId = live.buildId
     }
 
     private fun persistBookId(id: String) {
         bookId = id
-        val prefs = getApplication<Application>().getSharedPreferences("animastor", 0)
-        prefs.edit().putString("bookId", id).apply()
+        bookSessionStore.persistLive(id, buildId)
     }
 
     private fun persistBuildId(id: String) {
         buildId = id
-        val prefs = getApplication<Application>().getSharedPreferences("animastor", 0)
-        prefs.edit().putString("buildId", id).apply()
+        bookSessionStore.persistLive(bookId, id)
+    }
+
+    /**
+     * Logout isolation (web parity: stashBookSessionForUser). Stash the open
+     * book session under the outgoing user's own key and clear the live session
+     * (persisted + in-memory), so the previous user's book never survives into
+     * the anonymous/guest context. The book itself stays owned by the user in
+     * the DB — only the client-side session pointer moves.
+     */
+    fun stashBookSessionForUser(userId: String?) {
+        bookSessionStore.stashForUser(userId)
+        bookId = ""
+        buildId = ""
+        _uiState.update {
+            it.copy(
+                phase = PlayerPhase.IDLE,
+                previewImage = null,
+                coverImage = null,
+                errorMessage = null
+            )
+        }
+        Log.i(TAG, "stashBookSessionForUser: stashed + cleared live session for user=$userId")
+    }
+
+    /**
+     * Login restore (web parity: restoreStashedBookSessionForUser). Re-attach
+     * this user's stashed session (unless a live one already exists) and sync
+     * the in-memory pointers so restoreBookSession() picks it up.
+     */
+    fun restoreStashedBookSessionForUser(userId: String?) {
+        bookSessionStore.restoreStashedForUser(userId)
+        val live = bookSessionStore.loadLive()
+        bookId = live.bookId
+        buildId = live.buildId
+        if (live.bookId.isNotBlank()) {
+            Log.i(TAG, "restoreStashedBookSessionForUser: re-attached ${live.bookId} for user=$userId")
+        }
     }
 
     private var generationJob: Job? = null
@@ -1231,8 +1281,13 @@ class GenerateViewModel(
      * @return true if a book was restored.
      */
     suspend fun restoreBookSession(): Boolean {
-        val savedId = bookId.takeIf { it.isNotBlank() }
-        val restoredBuildId = buildId.takeIf { it.isNotBlank() }
+        // Re-read the persisted session: a login may have re-attached a per-user
+        // stash (restoreStashedBookSessionForUser) after this ViewModel cached a
+        // blank session, and a process recreation reads it fresh in init. Prefer
+        // the in-memory pointer when present, else fall back to the store.
+        val persisted = bookSessionStore.loadLive()
+        val savedId = bookId.ifBlank { persisted.bookId }.takeIf { it.isNotBlank() }
+        val restoredBuildId = buildId.ifBlank { persisted.buildId }.takeIf { it.isNotBlank() }
         var candidateId: String? = null
         var candidateBuildId: String? = null
 
