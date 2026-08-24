@@ -101,6 +101,7 @@ h1, h2, h3 { line-height: 1.25; margin: 0; }
   position: sticky; top: 0; z-index: 50;
   background: var(--bg);
   border-bottom: 1px solid var(--outline-2);
+  overflow-x: hidden;
 }
 .header__inner {
   display: flex; align-items: center; gap: 1rem;
@@ -217,10 +218,51 @@ body.landing .header__nav {
   justify-content: flex-end;
 }
 
-/* ── Landing page responsive: header ── */
+/* ── Landing page responsive: single-row header ── */
+/* Override the generic 720px two-row layout for the landing page. */
 @media (max-width: 720px) {
+  body.landing .header__inner {
+    flex-wrap: nowrap;
+    gap: 0;
+    padding: 0.45rem 0.75rem;
+  }
   body.landing .header__nav {
-    gap: 0.15rem;
+    flex: 1 1 auto;
+    justify-content: flex-end;
+    flex-wrap: nowrap;
+    gap: 0.1rem;
+    border-top: none;
+    padding-top: 0;
+    margin-top: 0;
+  }
+  body.landing .header__link {
+    font-size: 0.75rem;
+    padding: 0.3rem 0.45rem;
+  }
+  body.landing .header__nav .btn--sm {
+    font-size: 0.7rem;
+    padding: 0 0.55rem;
+    height: 1.875rem;
+  }
+}
+@media (max-width: 400px) {
+  body.landing .header__inner {
+    padding: 0.4rem 0.5rem;
+  }
+  body.landing .header__link {
+    font-size: 0.6875rem;
+    padding: 0.25rem 0.3rem;
+  }
+  body.landing .header__nav .btn--sm {
+    font-size: 0.625rem;
+    padding: 0 0.4rem;
+    height: 1.75rem;
+  }
+  body.landing .theme-toggle {
+    width: 1.75rem; height: 1.75rem;
+  }
+  body.landing .theme-toggle__icon {
+    width: 14px; height: 14px;
   }
 }
 
